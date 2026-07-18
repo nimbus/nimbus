@@ -1564,6 +1564,8 @@ struct RetryableThenBlockingAppendFaultInjector {
 }
 
 struct BlockingDefinitiveAppendFaultInjector {
+    append_visits: std::sync::atomic::AtomicU64,
+    fail_on_visit: u64,
     failed: AtomicBool,
     entered: (Mutex<bool>, Condvar),
     released: (Mutex<bool>, Condvar),
@@ -1571,7 +1573,13 @@ struct BlockingDefinitiveAppendFaultInjector {
 
 impl BlockingDefinitiveAppendFaultInjector {
     fn new() -> Arc<Self> {
+        Self::new_on_visit(1)
+    }
+
+    fn new_on_visit(fail_on_visit: u64) -> Arc<Self> {
         Arc::new(Self {
+            append_visits: std::sync::atomic::AtomicU64::new(0),
+            fail_on_visit,
             failed: AtomicBool::new(false),
             entered: (Mutex::new(false), Condvar::new()),
             released: (Mutex::new(false), Condvar::new()),
@@ -1599,9 +1607,11 @@ impl BlockingDefinitiveAppendFaultInjector {
 
 impl nimbus_storage::FaultInjector for BlockingDefinitiveAppendFaultInjector {
     fn check(&self, point: FaultPoint) -> nimbus_core::Result<()> {
-        if point != FaultPoint::JournalAppendBeforeDurableFlush
-            || self.failed.swap(true, Ordering::AcqRel)
-        {
+        if point != FaultPoint::JournalAppendBeforeDurableFlush {
+            return Ok(());
+        }
+        let visit = self.append_visits.fetch_add(1, Ordering::AcqRel) + 1;
+        if visit != self.fail_on_visit || self.failed.swap(true, Ordering::AcqRel) {
             return Ok(());
         }
         let (entered_lock, entered_condvar) = &self.entered;
@@ -2357,6 +2367,113 @@ async fn definitive_recovery_drains_batches_behind_response_fences() {
         .expect("recovered journal should read");
     assert_eq!(journal.len(), 1);
     assert_eq!(journal[0].sequence, SequenceNumber(1));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn definitive_recovery_retries_fence_conflict_whose_sequence_was_discarded() {
+    let data_dir = tempdir().expect("discarded conflict tempdir should build");
+    let faults = BlockingDefinitiveAppendFaultInjector::new();
+    let engine = Arc::new(
+        Engine::new_with_simulation_and_memory_persistence(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(46_787))),
+            faults.clone(),
+            Arc::new(nimbus_core::SeededIdSource::new(46_787)),
+        )
+        .expect("discarded conflict engine should create"),
+    );
+    let tenant_id = TenantId::new("discarded-conflict-retry").expect("tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("tenant should create");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+    let failing = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            engine
+                .insert_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("value".to_string(), json!(1))]),
+                )
+                .await
+        }
+    });
+    expect_blocking_wait_reaches_state("assigned sequence 2 should block before failing", {
+        let faults = faults.clone();
+        move |timeout| faults.wait_until_blocked(timeout)
+    })
+    .await;
+
+    let fence = engine
+        .enqueue_publisher_conflict_response_fence_for_testing(&tenant_id, SequenceNumber(1))
+        .await
+        .expect("conflict response fence should enqueue");
+    let retrying = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            let response = fence.await.map_err(|_| {
+                Error::Internal("publisher dropped the conflict response fence".to_string())
+            })?;
+            match response {
+                Err(error)
+                    if error.retryability() == nimbus_core::Retryability::Retryable
+                        && error.conflicting_sequence().is_none() =>
+                {
+                    engine
+                        .insert_document_async(
+                            tenant_id,
+                            tasks_table(),
+                            serde_json::Map::from_iter([("value".to_string(), json!(2))]),
+                        )
+                        .await
+                }
+                Err(error) => Err(error),
+                Ok(_) => Err(Error::Internal(
+                    "discarded conflict fence unexpectedly succeeded".to_string(),
+                )),
+            }
+        }
+    });
+    wait_for_mutation_journal_stats(
+        &engine,
+        &tenant_id,
+        "conflict response fence should queue behind the failing assignment",
+        |stats| stats.publisher_queue_depth == 1,
+    )
+    .await;
+
+    faults.release_failure();
+    let failing_error = expect_catch_up_future_within(
+        failing,
+        "the definitive batch should fail without durable advance",
+    )
+    .await
+    .expect("failing update task should join")
+    .expect_err("the injected definitive append should fail");
+    assert!(
+        matches!(failing_error, Error::InvalidInput(ref message) if message == "injected definitive publisher failure")
+    );
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        expect_catch_up_future_within(retrying, "discarded conflict waiter should retry"),
+    )
+    .await
+    .expect("discarded conflict target must not hang the caller")
+    .expect("retrying update task should join")
+    .expect("retrying update should re-prepare and commit");
+
+    let documents = engine
+        .query_documents_async(tenant_id.clone(), query_for("tasks"))
+        .await
+        .expect("updated document should query");
+    assert_eq!(documents.len(), 1);
+    assert_eq!(documents[0].fields.get("value"), Some(&json!(2)));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

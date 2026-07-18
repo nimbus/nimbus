@@ -382,6 +382,26 @@ impl DeferredPublisherResponse {
         let _ = self.response.send(self.result);
     }
 
+    pub(crate) fn complete_after_recovery(
+        self,
+        discarded_first_sequence: SequenceNumber,
+        recovery_error: &Error,
+    ) {
+        let discarded_wait_target = self
+            .result
+            .as_ref()
+            .err()
+            .and_then(Error::conflicting_sequence)
+            .filter(|sequence| *sequence >= discarded_first_sequence);
+        if let Some(sequence) = discarded_wait_target {
+            self.fail(&Error::rejected_before_execution(format!(
+                "publisher recovery discarded conflict wait target {sequence} at or after {discarded_first_sequence}: {recovery_error}"
+            )));
+        } else {
+            self.complete();
+        }
+    }
+
     pub(crate) fn fail(self, error: &Error) {
         let _ = self.response.send(Err(error.clone()));
     }

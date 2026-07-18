@@ -506,6 +506,10 @@ async fn fail_definitive_batch_and_recover(
     // recovery has re-anchored the write log.
     let _recovery_guard = runtime.lock_publisher_assignment_recovery().await;
     let mut drained_messages = Vec::new();
+    // Assigned-batch producers hold the same gate across reserve + send, so
+    // no outstanding batch permit can deliver after this drain. Other message
+    // kinds may reserve outside the gate, but they do not own an assigned
+    // suffix and the live publisher loop will receive them after recovery.
     loop {
         let message = pending_message.take().or_else(|| receiver.try_recv().ok());
         let Some(message) = message else {
@@ -550,7 +554,7 @@ async fn fail_definitive_batch_and_recover(
             }
             PublisherMessage::ResponseFence(responses) => {
                 for response in responses {
-                    response.complete();
+                    response.complete_after_recovery(first_sequence, &error);
                 }
             }
             PublisherMessage::SerialJob { job, drained } => {
@@ -598,7 +602,11 @@ async fn fail_and_restart(
     if let Some(pending) = pending_message.take() {
         queued_messages.push(pending);
     }
-    while let Ok(queued) = receiver.try_recv() {
+    // `Receiver::close` prevents new reservations but permits reserved before
+    // close remain valid. Awaiting `None` is the Tokio clean-shutdown pattern:
+    // it drains messages sent by every outstanding permit before eviction can
+    // wait on the operation guards carried by those messages.
+    while let Some(queued) = receiver.recv().await {
         queued_messages.push(queued);
     }
     runtime.record_mutation_worker_failure();
@@ -668,6 +676,32 @@ async fn fail_and_restart(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn failure_test_batch(
+        engine: Arc<crate::Engine>,
+        runtime: &Arc<TenantRuntime>,
+    ) -> (
+        AssignedPublisherBatch,
+        tokio::sync::oneshot::Receiver<nimbus_core::Result<crate::tenant::QueuedMutationResult>>,
+    ) {
+        let (response, result) = tokio::sync::oneshot::channel();
+        (
+            AssignedPublisherBatch {
+                engine,
+                records: Arc::new(Vec::new()),
+                responses: vec![crate::tenant::PendingPublisherResponse {
+                    _operation: runtime
+                        .enter_operation(runtime.tenant_id())
+                        .expect("failure-test operation should enter"),
+                    response: crate::tenant::MutationResponseSender::new(response),
+                    result: crate::tenant::QueuedMutationResult::Scheduled(false),
+                }],
+                phases: crate::engine::CommitPhaseDurations::default(),
+                sample_started_at: Instant::now(),
+            },
+            result,
+        )
+    }
 
     #[test]
     fn publisher_current_batch_responses_do_not_create_assignment_pressure() {
@@ -771,5 +805,67 @@ mod tests {
                 .as_ref(),
             Some(Error::RejectedBeforeExecution { .. })
         ));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn fail_and_restart_drains_batch_sent_by_permit_reserved_before_close() {
+        let data_dir = tempfile::tempdir().expect("late-permit tempdir should build");
+        let engine = Arc::new(crate::Engine::new(data_dir.path()).expect("engine should create"));
+        let tenant_id = nimbus_core::TenantId::new("late-permit-eviction").expect("tenant id");
+        engine
+            .create_tenant(tenant_id.clone())
+            .expect("tenant should create");
+        let runtime = engine
+            .get_existing_tenant(&tenant_id)
+            .expect("runtime should load");
+        let runtime_before = Arc::as_ptr(&runtime) as usize;
+        let (sender, receiver) = mpsc::channel(1);
+        let permit = sender
+            .reserve()
+            .await
+            .expect("late batch should reserve before receiver close");
+        let (failed_batch, failed_result) = failure_test_batch(engine.clone(), &runtime);
+        let (late_batch, late_result) = failure_test_batch(engine.clone(), &runtime);
+        let typed = Error::Internal("typed late-permit replay failure".to_string());
+
+        let eviction = tokio::spawn({
+            let runtime = runtime.clone();
+            let typed = typed.clone();
+            async move {
+                let mut receiver = receiver;
+                let mut pending = None;
+                fail_and_restart(runtime, failed_batch, typed, &mut receiver, &mut pending).await;
+            }
+        });
+        sender.closed().await;
+        assert!(
+            !eviction.is_finished(),
+            "eviction must wait for the already-reserved permit"
+        );
+        permit.send(PublisherMessage::Batch(late_batch));
+        drop(sender);
+
+        tokio::time::timeout(Duration::from_secs(5), eviction)
+            .await
+            .expect("eviction should drain the late permit batch")
+            .expect("eviction task should join");
+        for result in [failed_result, late_result] {
+            let error = match result.await.expect("typed failure should be sent") {
+                Err(error) => error,
+                Ok(_) => panic!("evicted batch should fail"),
+            };
+            assert!(
+                matches!(error, Error::Internal(ref message) if message == "typed late-permit replay failure")
+            );
+        }
+
+        let reopened = tokio::time::timeout(
+            Duration::from_secs(5),
+            engine.get_existing_tenant_async(&tenant_id),
+        )
+        .await
+        .expect("tenant reload should not hang behind a leaked operation guard")
+        .expect("tenant should reopen after eviction");
+        assert_ne!(Arc::as_ptr(&reopened) as usize, runtime_before);
     }
 }
