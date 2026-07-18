@@ -1003,7 +1003,11 @@ async fn bounded_committer_inbox_times_out_with_typed_retryable_error_and_report
         .expect("committer diagnostics should load")
         .mutation_journal
         .committer_inbox_capacity;
-    assert!(inbox_capacity > 0);
+    assert_eq!(
+        inbox_capacity, 2,
+        "the per-tenant test override must be in effect; a default-capacity \
+         inbox would let this test pass without exercising the bounded path"
+    );
 
     let pause = engine
         .mutation_journal_pause_handle_for_testing(&tenant_id)
