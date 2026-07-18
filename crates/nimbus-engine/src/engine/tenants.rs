@@ -372,6 +372,69 @@ impl Engine {
     }
 }
 
+#[cfg(test)]
+impl Engine {
+    pub(crate) async fn get_existing_tenant_async_for_testing(
+        self: &Arc<Self>,
+        tenant_id: &TenantId,
+    ) -> Result<usize> {
+        self.get_existing_tenant_async(tenant_id)
+            .await
+            .map(|runtime| Arc::as_ptr(&runtime) as usize)
+    }
+
+    pub(crate) fn runtime_is_registered_for_testing(
+        &self,
+        tenant_id: &TenantId,
+        runtime: &Arc<TenantRuntime>,
+    ) -> bool {
+        self.tenants
+            .read()
+            .expect("tenant registry lock should not be poisoned")
+            .get(tenant_id)
+            .is_some_and(|registered| Arc::ptr_eq(registered, runtime))
+    }
+
+    pub(crate) fn registered_runtime_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Option<Arc<TenantRuntime>> {
+        self.tenants
+            .read()
+            .expect("tenant registry lock should not be poisoned")
+            .get(tenant_id)
+            .cloned()
+    }
+
+    pub(crate) fn remove_runtime_if_same_for_testing(
+        &self,
+        tenant_id: &TenantId,
+        runtime: &Arc<TenantRuntime>,
+    ) {
+        let mut tenants = self
+            .tenants
+            .write()
+            .expect("tenant registry lock should not be poisoned");
+        if tenants
+            .get(tenant_id)
+            .is_some_and(|registered| Arc::ptr_eq(registered, runtime))
+        {
+            tenants.remove(tenant_id);
+        }
+    }
+
+    pub(crate) fn publisher_failure_diagnostics_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Option<(u64, u64, u64)> {
+        self.publisher_failure_diagnostics
+            .read()
+            .expect("publisher failure diagnostics lock should not be poisoned")
+            .get(tenant_id)
+            .map(|counts| (counts.transient, counts.fatal, counts.ambiguous))
+    }
+}
+
 struct TenantLoadProfileSample<'a> {
     tenant_id: &'a TenantId,
     cache_hit: bool,

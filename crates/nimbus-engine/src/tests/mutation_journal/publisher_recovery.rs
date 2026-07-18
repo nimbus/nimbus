@@ -554,6 +554,188 @@ async fn quiesce_racing_serial_crash_replay_completes_without_panic() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn shutdown_serial_recovery_deregisters_and_preserves_diagnostics() {
+    let data_dir = tempdir().expect("serial shutdown eviction tempdir should build");
+    let faults = BlockingAmbiguousApplyFaultInjector::new();
+    let engine = Arc::new(
+        Engine::new_with_simulation_and_id_source(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(46_584))),
+            faults.clone(),
+            Arc::new(nimbus_core::SeededIdSource::new(46_584)),
+        )
+        .expect("serial shutdown eviction engine should create"),
+    );
+    let tenant_id = TenantId::new("serial-shutdown-eviction").expect("tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("tenant should create");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+    engine
+        .set_committer_pipeline_requested_for_testing(&tenant_id, false)
+        .expect("test should request the serial arm");
+    let evicted_runtime = engine
+        .registered_runtime_for_testing(&tenant_id)
+        .expect("runtime identity should load before the fault");
+
+    let writer = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            engine
+                .insert_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("index".to_string(), json!(1))]),
+                )
+                .await
+        }
+    });
+    expect_blocking_wait_reaches_state("serial append should block before ambiguous apply", {
+        let faults = faults.clone();
+        move |timeout| faults.wait_until_blocked(timeout)
+    })
+    .await;
+
+    let residual = tokio::task::spawn_blocking({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        move || {
+            engine.insert_document(
+                &tenant_id,
+                tasks_table(),
+                serde_json::Map::from_iter([("index".to_string(), json!(2))]),
+            )
+        }
+    });
+    wait_for_mutation_journal_stats(
+        &engine,
+        &tenant_id,
+        "direct commit should queue before shutdown",
+        |stats| stats.committer_inbox_depth == 1,
+    )
+    .await;
+
+    let quiesce = tokio::spawn({
+        let engine = engine.clone();
+        async move { engine.quiesce().await }
+    });
+    expect_future_within(
+        async {
+            while !engine.background_shutdown_started() {
+                tokio::task::yield_now().await;
+            }
+        },
+        "quiesce should close the background spawn gate",
+    )
+    .await;
+    faults.release_failure();
+
+    let writer_error = expect_catch_up_future_within(
+        writer,
+        "serial crash-and-replay should resolve during shutdown",
+    )
+    .await
+    .expect("writer task should join")
+    .expect_err("ambiguous serial write should fail for replay");
+    assert!(
+        matches!(writer_error, Error::Internal(ref message) if message.contains("crash-and-replay"))
+    );
+    let residual_error = expect_catch_up_future_within(
+        residual,
+        "residual direct commit should be failed during shutdown",
+    )
+    .await
+    .expect("residual direct task should join")
+    .expect_err("the old runtime must reject residual direct work");
+    assert_eq!(
+        residual_error.storage_kind(),
+        Some(nimbus_core::StorageErrorKind::Unavailable)
+    );
+    expect_catch_up_future_within(quiesce, "quiesce should await inline eviction completion")
+        .await
+        .expect("quiesce task should join");
+
+    let remained_registered =
+        engine.runtime_is_registered_for_testing(&tenant_id, &evicted_runtime);
+    let diagnostics = engine.publisher_failure_diagnostics_for_testing(&tenant_id);
+    let mut accessor = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            engine
+                .get_existing_tenant_async_for_testing(&tenant_id)
+                .await
+        }
+    });
+    let accessor_completed = timeout(Duration::from_millis(250), &mut accessor)
+        .await
+        .is_ok();
+    if !accessor_completed {
+        engine.remove_runtime_if_same_for_testing(&tenant_id, &evicted_runtime);
+        accessor.abort();
+    }
+
+    assert!(
+        !remained_registered,
+        "shutdown recovery must remove the evicted runtime from the registry"
+    );
+    assert_eq!(
+        diagnostics,
+        Some((0, 0, 1)),
+        "shutdown recovery must preserve publisher failure diagnostics"
+    );
+    assert!(
+        accessor_completed,
+        "an accessor after completed shutdown eviction must not hot-spin"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn accessor_does_not_spin_on_registered_completed_eviction() {
+    let data_dir = tempdir().expect("completed eviction accessor tempdir should build");
+    let engine = Arc::new(Engine::new(data_dir.path()).expect("engine should create"));
+    let tenant_id = TenantId::new("registered-completed-eviction").expect("tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("tenant should create");
+    let evicted_runtime = engine
+        .begin_runtime_eviction_for_testing(&tenant_id)
+        .expect("runtime should enter eviction");
+    evicted_runtime.finish_eviction();
+    assert!(engine.runtime_is_registered_for_testing(&tenant_id, &evicted_runtime));
+
+    let mut accessor = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            engine
+                .get_existing_tenant_async_for_testing(&tenant_id)
+                .await
+        }
+    });
+    let accessor_completed = timeout(Duration::from_millis(250), &mut accessor)
+        .await
+        .is_ok();
+    if !accessor_completed {
+        engine.remove_runtime_if_same_for_testing(&tenant_id, &evicted_runtime);
+        expect_catch_up_future_within(accessor, "accessor should stop after bounded cleanup")
+            .await
+            .expect("accessor task should join after cleanup")
+            .expect("accessor should reload after cleanup");
+    }
+
+    assert!(
+        accessor_completed,
+        "a registered runtime with completed eviction must not hot-spin the accessor"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn serial_crash_replay_rejects_residual_direct_commit_without_running_it() {
     let data_dir = tempdir().expect("serial residual direct tempdir should build");
     let faults = BlockingAmbiguousApplyFaultInjector::new();
