@@ -48,6 +48,7 @@ use transactions::TransactionSessionRegistry;
 
 pub use committed_mutations::{
     CommittedMutationEvent, CommittedMutationObserver, CommittedMutationObserverWorkStats,
+    TenantRuntimeObserverIdentity,
 };
 pub use committed_mutations::{TableSchemaChangeEvent, TableSchemaChangeObserver};
 pub use encryption::{EncryptionStatus, InitializedKeyProvider};

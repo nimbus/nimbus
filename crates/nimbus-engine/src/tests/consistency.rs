@@ -106,6 +106,7 @@ async fn assert_engine_reload_recovers_durable_journal_before_serving_async_read
             observer_spawned_work_high_watermark: 0,
             observer_spawned_work_high_water_warning_count: 0,
             observer_spawned_work_cap_breach_count: 0,
+            observer_spawned_work_dropped_event_count: 0,
             observer_spawned_work_poisoned: false,
         }
     );

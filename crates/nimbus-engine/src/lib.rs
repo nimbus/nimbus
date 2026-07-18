@@ -17,7 +17,7 @@ pub use engine::{
     CommittedMutationObserver, CommittedMutationObserverWorkStats, EncryptionStatus, Engine,
     InitializedKeyProvider, MutationActor, MutationExecutionUnit, MutationIsolatePermit,
     SubscribeOptions, SubscriptionBootstrapCancellation, TableSchemaChangeEvent,
-    TableSchemaChangeObserver, TenantObjectMeta,
+    TableSchemaChangeObserver, TenantObjectMeta, TenantRuntimeObserverIdentity,
 };
 #[cfg(any(test, feature = "test-hooks"))]
 pub use engine::{CommitFaultHandle, Fault, commit_fault_labels};

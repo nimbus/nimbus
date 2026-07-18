@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use nimbus_core::{CommitEntry, TableName, TenantId};
 use tokio::sync::mpsc;
@@ -16,6 +16,33 @@ use crate::{Engine, tenant::TenantRuntime};
 pub struct CommittedMutationEvent {
     pub tenant_id: TenantId,
     pub commit: CommitEntry,
+}
+
+/// Opaque identity for one loaded tenant-runtime generation.
+///
+/// Observers that retain per-runtime state can use this token to distinguish a
+/// replayed replacement from the evicted runtime that preceded it without
+/// retaining the runtime itself.
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct TenantRuntimeObserverIdentity {
+    lifetime: Weak<()>,
+}
+
+impl TenantRuntimeObserverIdentity {
+    pub(crate) fn new(lifetime: &Arc<()>) -> Self {
+        Self {
+            lifetime: Arc::downgrade(lifetime),
+        }
+    }
+
+    pub fn same_runtime(&self, other: &Self) -> bool {
+        Weak::ptr_eq(&self.lifetime, &other.lifetime)
+    }
+
+    pub fn is_live(&self) -> bool {
+        self.lifetime.strong_count() != 0
+    }
 }
 
 /// Observer for committed mutation events.
@@ -51,6 +78,7 @@ pub struct CommittedMutationObserverWorkStats {
     pub high_watermark: usize,
     pub high_water_warning_count: u64,
     pub cap_breach_count: u64,
+    pub dropped_event_count: u64,
     pub poisoned: bool,
 }
 
@@ -309,6 +337,9 @@ impl Engine {
                     aggregate.cap_breach_count = aggregate
                         .cap_breach_count
                         .saturating_add(observer.cap_breach_count);
+                    aggregate.dropped_event_count = aggregate
+                        .dropped_event_count
+                        .saturating_add(observer.dropped_event_count);
                     aggregate.poisoned |= observer.poisoned;
                     aggregate
                 },
@@ -318,7 +349,19 @@ impl Engine {
         stats.observer_spawned_work_high_watermark = aggregate.high_watermark;
         stats.observer_spawned_work_high_water_warning_count = aggregate.high_water_warning_count;
         stats.observer_spawned_work_cap_breach_count = aggregate.cap_breach_count;
+        stats.observer_spawned_work_dropped_event_count = aggregate.dropped_event_count;
         stats.observer_spawned_work_poisoned = aggregate.poisoned;
+    }
+
+    /// Returns an opaque identity for the tenant runtime currently responsible
+    /// for observer work.
+    #[doc(hidden)]
+    pub fn committed_mutation_observer_runtime_identity(
+        &self,
+        tenant_id: &TenantId,
+    ) -> nimbus_core::Result<TenantRuntimeObserverIdentity> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        Ok(runtime.observer_identity())
     }
 
     /// Installs a named table-schema observer.

@@ -136,6 +136,7 @@ pub struct TenantRuntime {
     committer: Arc<CommitterActor>,
     publisher: Arc<PublisherHandoff>,
     observer_dispatch: Arc<ObserverHandoff>,
+    observer_lifetime: Arc<()>,
     write_rate: TenantWriteRateLimiter,
     last_assigned_commit_timestamp: AtomicU64,
     prepared_table_ids: Mutex<HashMap<TableName, TableId>>,
@@ -240,6 +241,7 @@ impl TenantRuntime {
             committer,
             publisher,
             observer_dispatch,
+            observer_lifetime: Arc::new(()),
             write_rate: TenantWriteRateLimiter::new(),
             last_assigned_commit_timestamp: AtomicU64::new(last_commit_timestamp.0),
             prepared_table_ids: Mutex::new(HashMap::new()),
@@ -349,6 +351,10 @@ impl TenantRuntime {
 
     pub(crate) fn store(&self) -> &TenantPersistence {
         &self.store
+    }
+
+    pub(crate) fn observer_identity(&self) -> crate::engine::TenantRuntimeObserverIdentity {
+        crate::engine::TenantRuntimeObserverIdentity::new(&self.observer_lifetime)
     }
 
     /// Reserves one stable identity while concurrent prepares race to create a
