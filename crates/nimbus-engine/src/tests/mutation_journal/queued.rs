@@ -2159,7 +2159,7 @@ async fn serial_assignment_failure_discards_staged_suffix_and_keeps_tenant_live(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn serial_recovery_failure_syncs_observed_durable_head_before_next_assignment() {
+async fn serial_lost_ack_evicts_and_replays_without_retryable_error() {
     let data_dir = tempdir().expect("serial recovery fallback tempdir should build");
     let faults = Arc::new(DurableAppendThenRecoveryFaultInjector::default());
     let engine = Arc::new(
@@ -2182,6 +2182,10 @@ async fn serial_recovery_failure_syncs_observed_durable_head_before_next_assignm
     engine
         .set_committer_pipeline_requested_for_testing(&tenant_id, false)
         .expect("test should request the serial arm");
+    let runtime_before = engine
+        .tenant_runtime_identity_for_testing(&tenant_id)
+        .expect("serial runtime identity should load");
+    engine.fail_serial_recovery_reads_for_testing(tenant_id.clone(), false, true);
     faults.arm();
 
     let error = engine
@@ -2191,26 +2195,30 @@ async fn serial_recovery_failure_syncs_observed_durable_head_before_next_assignm
             serde_json::Map::from_iter([("index".to_string(), json!(1))]),
         )
         .await
-        .expect_err("the post-durable append acknowledgement should fail cleanly");
+        .expect_err("the lost append acknowledgement must force crash-and-replay");
     assert_eq!(
-        error.storage_kind(),
-        Some(nimbus_core::StorageErrorKind::Unavailable),
-        "the intermediate batch must preserve the typed storage failure"
+        error.retryability(),
+        nimbus_core::Retryability::Terminal,
+        "a write that may have landed must never receive a safe-retry marker"
     );
-    let after_failure = wait_for_mutation_journal_stats(
-        &engine,
-        &tenant_id,
-        "recovery fallback should synchronize the observed durable head",
-        |stats| stats.durable_head == SequenceNumber(1) && stats.applied_head == SequenceNumber(1),
-    )
-    .await;
-    let (assigned_through, pending) = engine
-        .write_log_assignment_for_testing(&tenant_id)
-        .expect("fallback write-log state should load");
-    assert_eq!(after_failure.durable_head, SequenceNumber(1));
-    assert_eq!(after_failure.applied_head, SequenceNumber(1));
-    assert_eq!(assigned_through, SequenceNumber(1));
-    assert!(pending.is_empty());
+    assert!(
+        matches!(error, Error::Internal(ref message) if message.contains("crash-and-replay")),
+        "the terminal error must identify the replay policy: {error}"
+    );
+
+    let replayed = engine
+        .query_documents_async(tenant_id.clone(), query_for("tasks"))
+        .await
+        .expect("the replacement runtime should replay the landed record");
+    assert_eq!(replayed.len(), 1);
+    assert_eq!(replayed[0].fields.get("index"), Some(&json!(1)));
+    assert_ne!(
+        engine
+            .tenant_runtime_identity_for_testing(&tenant_id)
+            .expect("replacement runtime identity should load"),
+        runtime_before,
+        "an uncertain serial append must evict its runtime"
+    );
 
     engine
         .insert_document_async(
@@ -2235,6 +2243,88 @@ async fn serial_recovery_failure_syncs_observed_durable_head_before_next_assignm
             .collect::<Vec<_>>(),
         vec![SequenceNumber(1), SequenceNumber(2)]
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn serial_err_err_recovery_evicts_when_append_did_not_land() {
+    let data_dir = tempdir().expect("serial unlanded ambiguity tempdir should build");
+    let faults = Arc::new(nimbus_storage::ScriptedFaultInjector::new([
+        nimbus_storage::FaultOccurrence {
+            point: FaultPoint::JournalAppendBeforeDurableFlush,
+            visit: 1,
+        },
+    ]));
+    let engine = Arc::new(
+        Engine::new_with_simulation_and_memory_persistence(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(46_585))),
+            faults,
+            Arc::new(nimbus_core::SeededIdSource::new(46_585)),
+        )
+        .expect("serial unlanded ambiguity engine should create"),
+    );
+    let tenant_id = TenantId::new("serial-unlanded-ambiguity").expect("tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("tenant should create");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+    engine
+        .set_committer_pipeline_requested_for_testing(&tenant_id, false)
+        .expect("test should request the serial arm");
+    let runtime_before = engine
+        .tenant_runtime_identity_for_testing(&tenant_id)
+        .expect("serial runtime identity should load");
+    engine.fail_serial_recovery_reads_for_testing(tenant_id.clone(), true, true);
+
+    let error = engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("index".to_string(), json!(1))]),
+        )
+        .await
+        .expect_err("an unknowable serial append must force crash-and-replay");
+    assert_eq!(error.retryability(), nimbus_core::Retryability::Terminal);
+    assert!(matches!(error, Error::Internal(ref message) if message.contains("crash-and-replay")));
+
+    let replayed = engine
+        .query_documents_async(tenant_id.clone(), query_for("tasks"))
+        .await
+        .expect("the replacement runtime should load the durable truth");
+    assert!(
+        replayed.is_empty(),
+        "the replacement runtime must not invent the unlanded record"
+    );
+    assert_ne!(
+        engine
+            .tenant_runtime_identity_for_testing(&tenant_id)
+            .expect("replacement runtime identity should load"),
+        runtime_before,
+        "Err/Err recovery must evict even when replay later proves no record landed"
+    );
+    assert!(
+        engine
+            .read_durable_journal(&tenant_id, SequenceNumber(0))
+            .expect("reloaded journal should remain readable")
+            .is_empty()
+    );
+
+    engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("index".to_string(), json!(2))]),
+        )
+        .await
+        .expect("the replacement runtime should reuse sequence one safely");
+    let journal = engine
+        .read_durable_journal(&tenant_id, SequenceNumber(0))
+        .expect("replacement journal should read");
+    assert_eq!(journal.len(), 1);
+    assert_eq!(journal[0].sequence, SequenceNumber(1));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

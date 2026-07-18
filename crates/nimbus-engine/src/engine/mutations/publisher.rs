@@ -6,6 +6,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, warn};
 
+use crate::Engine;
 use crate::engine::execution_units::{CommitFaultClient, labels};
 use crate::tenant::{AssignedPublisherBatch, PublisherMessage, TenantRuntime};
 
@@ -610,19 +611,7 @@ async fn fail_and_restart(
         queued_messages.push(queued);
     }
     runtime.record_mutation_worker_failure();
-    // Close admission before stopping the actor so any producer that already
-    // entered the tenant is either rejected at the queue lock or included in
-    // the explicit queue drain below.
-    runtime.mark_deleting_for_eviction();
-    runtime.shutdown_committer();
-
-    let tenant_id = runtime.tenant_id().clone();
-    runtime.shutdown_trigger_candidates();
-    runtime.shutdown_trigger_execution();
-    runtime.shutdown_subscription_delivery();
-    runtime.subscriptions.shutdown_all(format!(
-        "tenant committer stopped for durable recovery: {error}"
-    ));
+    begin_durable_recovery_eviction(&runtime, &error);
 
     // Converting queued work to deferred completions drops every publisher
     // operation guard immediately. Run the sender-only completions before any
@@ -641,6 +630,29 @@ async fn fail_and_restart(
         .wait_for_committed_mutation_observers_drained()
         .await;
     runtime.wait_for_operation_drain_for_eviction().await;
+
+    finish_durable_recovery_eviction(engine, runtime).await;
+}
+
+pub(super) fn begin_durable_recovery_eviction(runtime: &TenantRuntime, error: &Error) {
+    // Close admission before stopping the actor so any producer that already
+    // entered the tenant is either rejected at the queue lock or included in
+    // the explicit queue drain below.
+    runtime.mark_deleting_for_eviction();
+    runtime.shutdown_committer();
+    runtime.shutdown_trigger_candidates();
+    runtime.shutdown_trigger_execution();
+    runtime.shutdown_subscription_delivery();
+    runtime.subscriptions.shutdown_all(format!(
+        "tenant committer stopped for durable recovery: {error}"
+    ));
+}
+
+pub(super) async fn finish_durable_recovery_eviction(
+    engine: Arc<Engine>,
+    runtime: Arc<TenantRuntime>,
+) {
+    let tenant_id = runtime.tenant_id().clone();
 
     // No tenant operation guard crosses this engine-wide gate. Explicit
     // deletion takes the gate before waiting for operations, so this order is

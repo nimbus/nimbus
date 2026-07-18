@@ -25,6 +25,7 @@ use super::enforce_mutation_authorization;
 use super::inline_reprepare::{InlineReprepareOutcome, reprepare_single_document_from_window};
 use super::phase_metrics::CommitPhaseDurations;
 use super::prepared::PreparedCommit;
+use super::publisher::{begin_durable_recovery_eviction, finish_durable_recovery_eviction};
 use super::shadow_conflicts::{observe_shadow_conflicts, prepared_document_dependencies};
 use super::window_prepare::{WindowPreparedWrite, prepare_single_document_write_from_window};
 
@@ -55,6 +56,13 @@ struct FailedSerialQueuedMutationBatch {
     deferred: Vec<DeferredPublisherResponse>,
 }
 
+enum SerialBatchRecovery {
+    Definitive {
+        discarded_first_sequence: Option<SequenceNumber>,
+    },
+    CrashAndReplay(Error),
+}
+
 impl FailedSerialQueuedMutationBatch {
     fn without_deferred(error: Error) -> Self {
         Self {
@@ -75,6 +83,11 @@ static STRIP_NEXT_INLINE_REPREPARE_FOR_TESTING: std::sync::OnceLock<
 > = std::sync::OnceLock::new();
 
 #[cfg(test)]
+static SERIAL_RECOVERY_READ_FAILURES_FOR_TESTING: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<TenantId, (bool, bool)>>,
+> = std::sync::OnceLock::new();
+
+#[cfg(test)]
 fn take_strip_next_inline_reprepare_for_testing(tenant_id: &TenantId) -> bool {
     STRIP_NEXT_INLINE_REPREPARE_FOR_TESTING
         .get_or_init(|| std::sync::Mutex::new(HashSet::new()))
@@ -83,7 +96,36 @@ fn take_strip_next_inline_reprepare_for_testing(tenant_id: &TenantId) -> bool {
         .remove(tenant_id)
 }
 
+#[cfg(test)]
+fn take_serial_recovery_read_failures_for_testing(tenant_id: &TenantId) -> (bool, bool) {
+    SERIAL_RECOVERY_READ_FAILURES_FOR_TESTING
+        .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+        .lock()
+        .expect("serial recovery test-hook lock should not be poisoned")
+        .remove(tenant_id)
+        .unwrap_or_default()
+}
+
+#[cfg(not(test))]
+fn take_serial_recovery_read_failures_for_testing(_tenant_id: &TenantId) -> (bool, bool) {
+    (false, false)
+}
+
 impl Engine {
+    #[cfg(test)]
+    pub(crate) fn fail_serial_recovery_reads_for_testing(
+        &self,
+        tenant_id: TenantId,
+        durable_recovery: bool,
+        progress_fallback: bool,
+    ) {
+        SERIAL_RECOVERY_READ_FAILURES_FOR_TESTING
+            .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+            .lock()
+            .expect("serial recovery test-hook lock should not be poisoned")
+            .insert(tenant_id, (durable_recovery, progress_fallback));
+    }
+
     pub(crate) async fn run_one_committer_journal_batch(
         self: Arc<Self>,
         runtime: Arc<TenantRuntime>,
@@ -246,20 +288,44 @@ impl Engine {
             Ok(Err(mut failure)) => {
                 runtime.record_mutation_worker_failure();
                 warn!(error = %failure.error, "mutation journal batch failed");
-                let discarded_first_sequence = recover_failed_serial_batch(
+                let recovery = recover_failed_serial_batch(
                     runtime.clone(),
                     assignment_baseline,
                     "serial mutation batch failed",
                 )
                 .await;
-                for response in failure.deferred.drain(..) {
-                    if let Some(first_sequence) = discarded_first_sequence {
-                        response.complete_after_recovery(first_sequence, &failure.error);
-                    } else {
-                        response.complete();
+                match recovery {
+                    SerialBatchRecovery::Definitive {
+                        discarded_first_sequence,
+                    } => {
+                        for response in failure.deferred.drain(..) {
+                            if let Some(first_sequence) = discarded_first_sequence {
+                                response.complete_after_recovery(first_sequence, &failure.error);
+                            } else {
+                                response.complete();
+                            }
+                        }
+                        fail_mutation_responses(&assignment_responses, &failure.error);
+                    }
+                    SerialBatchRecovery::CrashAndReplay(error) => {
+                        runtime.publisher_record_ambiguous_error();
+                        begin_durable_recovery_eviction(&runtime, &error);
+                        for response in failure.deferred.drain(..) {
+                            response.fail(&error);
+                        }
+                        fail_mutation_responses(&assignment_responses, &error);
+                        runtime.fail_and_drain_mutation_queues(&error);
+                        runtime.close_committed_mutation_observers();
+                        let engine = self.clone();
+                        self.spawn_background("serial_durable_recovery_eviction", async move {
+                            runtime
+                                .wait_for_committed_mutation_observers_drained()
+                                .await;
+                            runtime.wait_for_operation_drain_for_eviction().await;
+                            finish_durable_recovery_eviction(engine, runtime).await;
+                        });
                     }
                 }
-                fail_mutation_responses(&assignment_responses, &failure.error);
             }
             Err(join_error) => {
                 let error = Error::Internal(format!(
@@ -267,13 +333,32 @@ impl Engine {
                 ));
                 runtime.record_mutation_worker_failure();
                 warn!(error = %error, "committer queued batch panicked");
-                let _ = recover_failed_serial_batch(
+                let recovery = recover_failed_serial_batch(
                     runtime.clone(),
                     assignment_baseline,
                     "serial mutation batch panicked",
                 )
                 .await;
-                fail_mutation_responses(&assignment_responses, &error);
+                match recovery {
+                    SerialBatchRecovery::Definitive { .. } => {
+                        fail_mutation_responses(&assignment_responses, &error);
+                    }
+                    SerialBatchRecovery::CrashAndReplay(recovery_error) => {
+                        runtime.publisher_record_ambiguous_error();
+                        begin_durable_recovery_eviction(&runtime, &recovery_error);
+                        fail_mutation_responses(&assignment_responses, &recovery_error);
+                        runtime.fail_and_drain_mutation_queues(&recovery_error);
+                        runtime.close_committed_mutation_observers();
+                        let engine = self.clone();
+                        self.spawn_background("serial_durable_recovery_eviction", async move {
+                            runtime
+                                .wait_for_committed_mutation_observers_drained()
+                                .await;
+                            runtime.wait_for_operation_drain_for_eviction().await;
+                            finish_durable_recovery_eviction(engine, runtime).await;
+                        });
+                    }
+                }
             }
         }
     }
@@ -625,56 +710,79 @@ async fn recover_failed_serial_batch(
     runtime: Arc<TenantRuntime>,
     assignment_baseline: SequenceNumber,
     context: &'static str,
-) -> Option<SequenceNumber> {
-    match runtime
-        .read_storage
-        .execute(|store| store.recover_durable_journal())
-        .await
-    {
+) -> SerialBatchRecovery {
+    let forced_failures = take_serial_recovery_read_failures_for_testing(runtime.tenant_id());
+    let durable_recovery = if forced_failures.0 {
+        Err(Error::Internal(
+            "injected serial durable recovery read failure".to_string(),
+        ))
+    } else {
+        runtime
+            .read_storage
+            .execute(|store| store.recover_durable_journal())
+            .await
+    };
+    match durable_recovery {
         Ok(progress) => {
-            // A serial worker can panic on either side of durable append. Only
-            // discard its staged suffix when recovery proves storage never
-            // advanced; otherwise retain the full images so recovered durable
-            // records can publish through the live write log.
-            let discarded_first_sequence = if progress.durable_head == assignment_baseline {
+            if progress.durable_head == assignment_baseline {
                 discard_failed_assignment_suffix(runtime.as_ref(), assignment_baseline);
-                assignment_baseline.0.checked_add(1).map(SequenceNumber)
+                let discarded_first_sequence =
+                    assignment_baseline.0.checked_add(1).map(SequenceNumber);
+                // Already on the tenant's committer task: sending a
+                // JournalProgressSync message here would wait on our own inbox.
+                runtime.publish_mutation_journal_progress_in_actor(progress);
+                SerialBatchRecovery::Definitive {
+                    discarded_first_sequence,
+                }
             } else {
-                None
-            };
-            // Already on the tenant's committer task: sending a
-            // JournalProgressSync message here would wait on our own inbox.
-            runtime.publish_mutation_journal_progress_in_actor(progress);
-            discarded_first_sequence
+                SerialBatchRecovery::CrashAndReplay(Error::Internal(format!(
+                    "serial append outcome requires crash-and-replay: durable head advanced from {assignment_baseline} to {}",
+                    progress.durable_head
+                )))
+            }
         }
         Err(error) => {
-            let discarded_first_sequence = match runtime.store.journal_progress() {
+            let progress_fallback = if forced_failures.1 {
+                Err(Error::Internal(
+                    "injected serial journal progress fallback failure".to_string(),
+                ))
+            } else {
+                runtime.store.journal_progress()
+            };
+            let recovery = match progress_fallback {
                 Ok(progress) => {
-                    let first_unpersisted = progress
-                        .durable_head
-                        .0
-                        .checked_add(1)
-                        .map(SequenceNumber)
-                        .filter(|first| *first <= runtime.assigned_head());
-                    if let Some(first) = first_unpersisted {
-                        runtime.discard_unpersisted_write_log_suffix(first);
+                    if progress.durable_head != assignment_baseline {
+                        SerialBatchRecovery::CrashAndReplay(Error::Internal(format!(
+                            "serial append outcome requires crash-and-replay: durable head advanced from {assignment_baseline} to {} after recovery failed: {error}",
+                            progress.durable_head
+                        )))
+                    } else {
+                        let first_unpersisted = progress
+                            .durable_head
+                            .0
+                            .checked_add(1)
+                            .map(SequenceNumber)
+                            .filter(|first| *first <= runtime.assigned_head());
+                        if let Some(first) = first_unpersisted {
+                            runtime.discard_unpersisted_write_log_suffix(first);
+                        }
+                        // The fallback progress is authoritative for both heads
+                        // only when it proves that the append did not land.
+                        runtime.publish_mutation_journal_progress_in_actor(progress);
+                        SerialBatchRecovery::Definitive {
+                            discarded_first_sequence: first_unpersisted,
+                        }
                     }
-                    // The fallback progress is authoritative for both heads.
-                    // Publish any retained full images it proves applied, and
-                    // always rebase assignment to its durable head. Otherwise
-                    // the next serial batch stages from the stale baseline and
-                    // trips the contiguous write-log invariant.
-                    runtime.publish_mutation_journal_progress_in_actor(progress);
-                    first_unpersisted
                 }
                 Err(progress_error) => {
-                    discard_failed_assignment_suffix(runtime.as_ref(), assignment_baseline);
                     warn!(
                         tenant = %runtime.tenant_id(),
                         error = %progress_error,
-                        "{context}; journal progress fallback failed; discarded the uncertain serial suffix"
+                        "{context}; journal progress fallback failed; evicting the runtime because the serial append outcome is ambiguous"
                     );
-                    assignment_baseline.0.checked_add(1).map(SequenceNumber)
+                    SerialBatchRecovery::CrashAndReplay(Error::Internal(format!(
+                        "serial append outcome is ambiguous; crash-and-replay required: durable recovery failed ({error}) and journal progress failed ({progress_error})"
+                    )))
                 }
             };
             warn!(
@@ -682,7 +790,7 @@ async fn recover_failed_serial_batch(
                 error = %error,
                 "{context}; durable journal recovery failed"
             );
-            discarded_first_sequence
+            recovery
         }
     }
 }
@@ -750,19 +858,7 @@ fn process_serial_queued_mutation_batch(
     let write_log_guard = runtime.arm_write_log_append();
     if let Err(error) = runtime.store.append_durable_records_batch(&records) {
         let mapped_error = map_durable_journal_append_error(&error);
-        for active_request in active.drain(..) {
-            let _ = active_request
-                .response
-                .send(Err(map_durable_journal_append_error(&error)));
-        }
-        if runtime
-            .store
-            .journal_progress()
-            .is_ok_and(|progress| progress.durable_head == append_baseline)
-            && let Some(first) = first_staged_sequence
-        {
-            runtime.discard_unpersisted_write_log_suffix(first);
-        }
+        drop(active);
         return Err(FailedSerialQueuedMutationBatch {
             error: mapped_error,
             deferred: work.deferred,
