@@ -467,10 +467,12 @@ impl ObserverHandoff {
         first_sequence: SequenceNumber,
         requested_through: SequenceNumber,
     ) -> bool {
-        self.catch_up_next_sequence
-            .fetch_min(first_sequence.0, Ordering::AcqRel);
+        // Publish the upper bound first so taking a newly visible start can
+        // never pair it with an older frontier.
         self.catch_up_requested_through
             .fetch_max(requested_through.0, Ordering::AcqRel);
+        self.catch_up_next_sequence
+            .fetch_min(first_sequence.0, Ordering::AcqRel);
         self.catch_up_pending
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_ok()
@@ -505,10 +507,11 @@ impl ObserverHandoff {
         first_sequence: SequenceNumber,
         requested_through: SequenceNumber,
     ) {
-        self.catch_up_next_sequence
-            .fetch_min(first_sequence.0, Ordering::AcqRel);
+        // Match request_catch_up's publication order for a returned request.
         self.catch_up_requested_through
             .fetch_max(requested_through.0, Ordering::AcqRel);
+        self.catch_up_next_sequence
+            .fetch_min(first_sequence.0, Ordering::AcqRel);
         self.catch_up_pending.store(false, Ordering::Release);
         self.catch_up_state_changed.notify_waiters();
     }
