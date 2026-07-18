@@ -2324,6 +2324,25 @@ async fn quiesce_racing_serial_crash_replay_completes_without_panic() {
     })
     .await;
 
+    let residual = tokio::task::spawn_blocking({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        move || {
+            engine.insert_document(
+                &tenant_id,
+                tasks_table(),
+                serde_json::Map::from_iter([("index".to_string(), json!(2))]),
+            )
+        }
+    });
+    wait_for_mutation_journal_stats(
+        &engine,
+        &tenant_id,
+        "direct commit should queue before the quiesce race",
+        |stats| stats.committer_inbox_depth == 1,
+    )
+    .await;
+
     let quiesce = tokio::spawn({
         let engine = engine.clone();
         async move { engine.quiesce().await }
@@ -2347,6 +2366,17 @@ async fn quiesce_racing_serial_crash_replay_completes_without_panic() {
     .expect("writer task should join without a background-task panic")
     .expect_err("ambiguous serial write should fail for replay");
     assert!(matches!(error, Error::Internal(ref message) if message.contains("crash-and-replay")));
+    let residual_error = expect_catch_up_future_within(
+        residual,
+        "residual direct commit should receive a typed error during quiesce",
+    )
+    .await
+    .expect("residual direct task should join without a panic")
+    .expect_err("the old runtime must reject residual direct work");
+    assert_eq!(
+        residual_error.storage_kind(),
+        Some(nimbus_core::StorageErrorKind::Unavailable)
+    );
     expect_catch_up_future_within(quiesce, "quiesce should await inline eviction completion")
         .await
         .expect("quiesce task should join without a spawn rejection panic");

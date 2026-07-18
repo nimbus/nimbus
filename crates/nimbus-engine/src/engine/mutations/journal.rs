@@ -317,21 +317,29 @@ impl Engine {
                         runtime.fail_and_drain_mutation_queues(&error);
                         runtime.close_committed_mutation_observers();
                         let engine = self.clone();
+                        let runtime_for_eviction = runtime.clone();
                         let eviction = async move {
-                            runtime
+                            runtime_for_eviction
                                 .wait_for_committed_mutation_observers_drained()
                                 .await;
-                            runtime.wait_for_operation_drain_for_eviction().await;
-                            finish_durable_recovery_eviction(engine, runtime).await;
+                            runtime_for_eviction
+                                .wait_for_operation_drain_for_eviction()
+                                .await;
+                            finish_durable_recovery_eviction(engine, runtime_for_eviction).await;
                         };
                         if let Err((spawn_error, eviction)) =
                             self.try_spawn_background("serial_durable_recovery_eviction", eviction)
                         {
+                            drop(eviction);
                             warn!(
                                 error = %spawn_error,
-                                "engine quiesce rejected serial recovery task; completing eviction inline"
+                                "engine quiesce rejected serial recovery task; completing eviction inline without drain waits"
                             );
-                            eviction.await;
+                            // A residual committer job may itself own an operation
+                            // guard. Quiesce is already draining every background
+                            // task, so remove the failed runtime before the actor
+                            // rejects that residual work instead of self-deadlocking.
+                            finish_durable_recovery_eviction(self.clone(), runtime).await;
                         }
                     }
                 }
@@ -359,21 +367,27 @@ impl Engine {
                         runtime.fail_and_drain_mutation_queues(&recovery_error);
                         runtime.close_committed_mutation_observers();
                         let engine = self.clone();
+                        let runtime_for_eviction = runtime.clone();
                         let eviction = async move {
-                            runtime
+                            runtime_for_eviction
                                 .wait_for_committed_mutation_observers_drained()
                                 .await;
-                            runtime.wait_for_operation_drain_for_eviction().await;
-                            finish_durable_recovery_eviction(engine, runtime).await;
+                            runtime_for_eviction
+                                .wait_for_operation_drain_for_eviction()
+                                .await;
+                            finish_durable_recovery_eviction(engine, runtime_for_eviction).await;
                         };
                         if let Err((spawn_error, eviction)) =
                             self.try_spawn_background("serial_durable_recovery_eviction", eviction)
                         {
+                            drop(eviction);
                             warn!(
                                 error = %spawn_error,
-                                "engine quiesce rejected serial recovery task; completing eviction inline"
+                                "engine quiesce rejected serial recovery task; completing eviction inline without drain waits"
                             );
-                            eviction.await;
+                            // See the queued-error arm above: waiting here can
+                            // deadlock on a residual job's operation guard.
+                            finish_durable_recovery_eviction(self.clone(), runtime).await;
                         }
                     }
                 }
