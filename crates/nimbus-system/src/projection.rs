@@ -42,6 +42,13 @@ struct TableProjectionObserver {
 /// rather than one retained event per drop, and the catch-up re-samples the
 /// source table instead of replaying the dropped commit. Lossless
 /// commit-by-commit projection replay belongs to PPSC5-B durable-journal replay.
+///
+/// A dirty marker and the in-flight work that replaces it are the two things
+/// the observer flush seam can see, so a catch-up hands off from one to the
+/// other without ever being neither: the drain reserves its in-flight slot
+/// before it claims the marker. That makes a returning flush mean what it says
+/// — no projection for this tenant is pending or in flight — for catch-up work
+/// on the same terms as ordinary projections.
 struct ProjectionWork {
     engine: Weak<Engine>,
     epoch: Arc<str>,
@@ -148,6 +155,11 @@ impl TenantProjectionWork {
     }
 
     /// Claims this tenant's dirty scopes for exactly one catch-up projection.
+    ///
+    /// The caller must already hold a registered [`ProjectionWorkGuard`] for
+    /// this tenant. Releasing a marker is what makes the tenant look clean, so
+    /// the replacement in-flight work has to exist first; see
+    /// [`ProjectionWork::drain_dirty_projections`].
     fn take_dirty_tables(&self, dirty_tenants: &AtomicUsize) -> Vec<TableName> {
         let mut dirty = self
             .dirty_tables
@@ -172,6 +184,13 @@ struct ProjectionWorkGuard {
     tenant_work: Arc<TenantProjectionWork>,
     tenant_id: TenantId,
     generation: u64,
+    /// Whether releasing this guard should look for catch-up work.
+    ///
+    /// Cleared only for a reservation the drain took but did not use: that
+    /// release happens inside the drain loop, which is still walking its
+    /// remaining candidates, so re-entering the drain from it would only
+    /// recurse.
+    drain_on_release: bool,
 }
 
 impl ProjectionWork {
@@ -475,6 +494,7 @@ impl ProjectionWork {
             tenant_work,
             tenant_id: tenant_id.clone(),
             generation,
+            drain_on_release: true,
         })
     }
 
@@ -522,6 +542,21 @@ impl ProjectionWork {
         let Some(projection_work) = self.register(&tenant_id, runtime_identity, &tables) else {
             return;
         };
+        self.spawn_registered_projection(engine, handle, tenant_id, projection_work, tables);
+    }
+
+    /// Spawns projection work whose in-flight slot is already registered.
+    ///
+    /// Splitting this out lets the catch-up drain reserve its slot before it
+    /// claims the dirty markers that the slot stands in for.
+    fn spawn_registered_projection(
+        self: &Arc<Self>,
+        engine: &Arc<Engine>,
+        handle: &tokio::runtime::Handle,
+        tenant_id: TenantId,
+        projection_work: ProjectionWorkGuard,
+        tables: Vec<TableName>,
+    ) {
         let tenant_work = projection_work.tenant_work.clone();
         let projection_epoch = self.epoch.clone();
         let projection_generation = projection_work.generation;
@@ -618,14 +653,34 @@ impl ProjectionWork {
             else {
                 continue;
             };
-            let tables = tenant_work.take_dirty_tables(&self.dirty_tenants);
+            // Reserve the in-flight slot before claiming the markers, for the
+            // same reason `spawn_projection` registers before it spawns: a
+            // dirty marker and its replacement work are the two things the
+            // flush seam can see, so they must never both be absent. Claiming
+            // first would leave a window where the tenant reports no dirty
+            // scope and no in-flight work while a catch-up is still owed, and a
+            // flush landing in that window returns on a projection plane that
+            // is not actually quiescent.
+            //
+            // Registering with no tables is deliberate: the markers are already
+            // recorded, so a cap breach here must not re-mark them.
+            let Some(projection_work) = self.register(&tenant_id, runtime_identity, &[]) else {
+                continue;
+            };
+            let mut tables = tenant_work.take_dirty_tables(&self.dirty_tenants);
             if tables.is_empty() {
+                // A concurrent drain claimed this tenant first. Release the
+                // reservation without re-entering the drain; this loop still
+                // owns the remaining candidates.
+                let mut unused = projection_work;
+                unused.drain_on_release = false;
                 continue;
             }
             tenant_work
                 .catch_up_projection_count
                 .fetch_add(1, Ordering::Relaxed);
-            self.spawn_projection(&engine, &handle, tenant_id, runtime_identity, tables);
+            tables.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+            self.spawn_registered_projection(&engine, &handle, tenant_id, projection_work, tables);
         }
     }
 
@@ -758,7 +813,9 @@ impl Drop for ProjectionWorkGuard {
         // Capacity has returned, so spend it on the scopes an overload dropped.
         // This runs before waking idle waiters: a tenant that still owes a
         // catch-up must not look drained to the observer flush seam.
-        self.work.drain_dirty_projections();
+        if self.drain_on_release {
+            self.work.drain_dirty_projections();
+        }
         if tenant_previous == 1 {
             self.tenant_work.idle.notify_waiters();
         }
@@ -1229,6 +1286,139 @@ mod tests {
             recovered.dropped_event_count, 5,
             "catching up must not erase the drops that already happened"
         );
+        assert!(!recovered.poisoned);
+    }
+
+    /// A claimed catch-up must hold the tenant busy for the whole interval
+    /// between losing its dirty marker and landing in `_nimbus`. The drain
+    /// reserves its in-flight slot before it claims, so there is no point at
+    /// which the tenant reports neither a dirty scope nor in-flight work while
+    /// a catch-up is still owed.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_claimed_catch_up_keeps_the_tenant_busy_until_it_lands() {
+        let fixture = EngineFixture::new(|path| Engine::new(path));
+        let engine = fixture.engine();
+        let tenant_id = fixture.create_tenant("projection-catch-up-fence", Engine::create_tenant);
+        let tasks = TableName::new("tasks").expect("table name should build");
+        let filler = TableName::new("filler").expect("table name should build");
+        let (observer, projection_work) = test_observer(&engine, 2, 1);
+        engine.install_committed_mutation_observer("projection-catch-up-fence-test", observer);
+
+        engine
+            .insert_document_async(
+                tenant_id.clone(),
+                tasks.clone(),
+                serde_json::Map::from_iter([("index".to_string(), json!(0))]),
+            )
+            .await
+            .expect("seed row should commit");
+        engine
+            .flush_committed_mutation_observers_for_testing(&tenant_id)
+            .await
+            .expect("seed projection should drain");
+        assert_eq!(
+            projected_table_row_count(&engine, &tenant_id, &tasks).await,
+            Some(1),
+            "the seed projection must land before the cap is saturated"
+        );
+
+        // Hold the projection lock so the catch-up cannot finish once spawned,
+        // which is what makes the busy window observable.
+        let work = tenant_work(&engine, &projection_work, &tenant_id);
+        let held_projection = work.projection_lock.clone().lock_owned().await;
+
+        let saturating = (0..2)
+            .map(|_| {
+                projection_work
+                    .register(
+                        &tenant_id,
+                        engine
+                            .committed_mutation_observer_runtime_identity(&tenant_id)
+                            .expect("tenant runtime identity should load"),
+                        std::slice::from_ref(&filler),
+                    )
+                    .expect("saturating work should register up to the cap")
+            })
+            .collect::<Vec<_>>();
+
+        for index in 1..4 {
+            engine
+                .insert_document_async(
+                    tenant_id.clone(),
+                    tasks.clone(),
+                    serde_json::Map::from_iter([("index".to_string(), json!(index))]),
+                )
+                .await
+                .expect("projection saturation must not block durable mutation responses");
+        }
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while projection_work.stats(&tenant_id).dropped_event_count < 3 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("every commit past the cap should drop");
+
+        drop(saturating);
+        let claimed = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let stats = projection_work.stats(&tenant_id);
+                if stats.catch_up_projection_count == 1 {
+                    break stats;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("returned capacity should claim the dirty scope");
+        assert_eq!(
+            claimed.dirty_projection_scope_count, 0,
+            "claiming a catch-up clears the marker it stands in for"
+        );
+        assert_eq!(
+            claimed.depth, 1,
+            "the claim must be covered by an in-flight reservation the flush seam can see"
+        );
+
+        // The seed flush above already tripped this seam, so re-arm it before
+        // asserting on the flush that matters.
+        work.flush_waiting.store(false, Ordering::Release);
+        let mut flush = tokio::spawn({
+            let engine = engine.clone();
+            let tenant_id = tenant_id.clone();
+            async move {
+                engine
+                    .flush_committed_mutation_observers_for_testing(&tenant_id)
+                    .await
+            }
+        });
+        projection_work.wait_until_flush_waits(&tenant_id).await;
+        assert!(
+            !flush.is_finished(),
+            "a flush must not return while a claimed catch-up has not landed"
+        );
+        assert_eq!(
+            projected_table_row_count(&engine, &tenant_id, &tasks).await,
+            Some(1),
+            "the catch-up must not have projected while it is still blocked"
+        );
+
+        drop(held_projection);
+        tokio::time::timeout(Duration::from_secs(5), &mut flush)
+            .await
+            .expect("the catch-up should land and release the flush")
+            .expect("flush task should join")
+            .expect("flush should succeed");
+
+        assert_eq!(
+            projected_table_row_count(&engine, &tenant_id, &tasks).await,
+            Some(4),
+            "the flush must only return once the catch-up reached _nimbus"
+        );
+        let recovered = projection_work.stats(&tenant_id);
+        assert_eq!(recovered.depth, 0);
+        assert_eq!(recovered.dirty_projection_scope_count, 0);
+        assert_eq!(recovered.catch_up_projection_count, 1);
         assert!(!recovered.poisoned);
     }
 
