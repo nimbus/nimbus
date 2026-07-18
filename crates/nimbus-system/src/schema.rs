@@ -179,6 +179,8 @@ pub(crate) fn system_table_schemas() -> Result<Vec<TableSchema>> {
                 object("schema", false),
                 number("rowCount", false),
                 number("lastWriteAt", false),
+                string("projectionEpoch", false),
+                number("projectionGeneration", false),
             ],
             &[
                 index("by_tenantId", &["tenantId"]),

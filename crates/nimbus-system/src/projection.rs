@@ -4,18 +4,21 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
-use nimbus_core::{TableName, TenantId};
+use nimbus_core::{DocumentId, TableName, TenantId};
 use nimbus_engine::{
     CommittedMutationEvent, CommittedMutationObserver, CommittedMutationObserverWorkStats, Engine,
     TableSchemaChangeEvent, TableSchemaChangeObserver, TenantRuntimeObserverIdentity,
 };
 use tracing::{error, warn};
 
-use super::{is_reserved_tenant_id, record_table_state_async};
+use super::{is_reserved_tenant_id, record_table_state_for_generation_async};
 
 const TABLE_PROJECTION_OBSERVER: &str = "nimbus-system-table-projection";
-const DEFAULT_PROJECTION_WORK_CAPACITY: usize = 4_096;
-const DEFAULT_PROJECTION_WORK_HIGH_WATERMARK: usize = 3_072;
+const DEFAULT_PROJECTION_WORK_CAPACITY: usize = 1_024;
+const DEFAULT_PROJECTION_WORK_HIGH_WATERMARK: usize = 768;
+const DEFAULT_PROJECTION_AGGREGATE_WORK_CAPACITY: usize = 8_192;
+const DEFAULT_PROJECTION_AGGREGATE_WORK_HIGH_WATERMARK: usize = 6_144;
+const PROJECTION_TENANT_SWEEP_INTERVAL: usize = 1_024;
 
 struct TableProjectionObserver {
     engine: Weak<Engine>,
@@ -23,15 +26,32 @@ struct TableProjectionObserver {
 }
 
 struct ProjectionWork {
+    epoch: Arc<str>,
     capacity: usize,
     high_watermark: usize,
-    tenants: Mutex<HashMap<TenantId, Arc<TenantProjectionWork>>>,
+    aggregate_capacity: usize,
+    aggregate_high_watermark: usize,
+    aggregate_in_flight: AtomicUsize,
+    aggregate_high_water_warning_active: AtomicBool,
+    aggregate_high_water_warning_count: AtomicU64,
+    aggregate_cap_breach_count: AtomicU64,
+    next_generation: AtomicU64,
+    tenants: Mutex<ProjectionTenantRegistry>,
     #[cfg(test)]
     registered: tokio::sync::Notify,
+    #[cfg(test)]
+    sweep_count: AtomicU64,
+}
+
+#[derive(Default)]
+struct ProjectionTenantRegistry {
+    tenants: HashMap<TenantId, Arc<TenantProjectionWork>>,
+    registrations_since_sweep: usize,
 }
 
 struct TenantProjectionWork {
-    runtime_identity: TenantRuntimeObserverIdentity,
+    runtime_identity: Mutex<TenantRuntimeObserverIdentity>,
+    generation: AtomicU64,
     in_flight: AtomicUsize,
     projection_lock: Arc<tokio::sync::Mutex<()>>,
     high_water_warning_active: AtomicBool,
@@ -50,11 +70,12 @@ struct ProjectionWorkGuard {
     work: Arc<ProjectionWork>,
     tenant_work: Arc<TenantProjectionWork>,
     tenant_id: TenantId,
+    generation: u64,
 }
 
 impl ProjectionWork {
     fn from_env() -> Self {
-        Self::new(
+        Self::new_with_aggregate(
             env_positive_usize(
                 "NIMBUS_SYSTEM_PROJECTION_WORK_CAPACITY",
                 DEFAULT_PROJECTION_WORK_CAPACITY,
@@ -63,17 +84,55 @@ impl ProjectionWork {
                 "NIMBUS_SYSTEM_PROJECTION_WORK_HIGH_WATERMARK",
                 DEFAULT_PROJECTION_WORK_HIGH_WATERMARK,
             ),
+            env_positive_usize(
+                "NIMBUS_SYSTEM_PROJECTION_AGGREGATE_WORK_CAPACITY",
+                DEFAULT_PROJECTION_AGGREGATE_WORK_CAPACITY,
+            ),
+            env_positive_usize(
+                "NIMBUS_SYSTEM_PROJECTION_AGGREGATE_WORK_HIGH_WATERMARK",
+                DEFAULT_PROJECTION_AGGREGATE_WORK_HIGH_WATERMARK,
+            ),
         )
     }
 
     fn new(capacity: usize, high_watermark: usize) -> Self {
+        let aggregate_capacity = capacity.saturating_mul(8).max(capacity).max(1);
+        let aggregate_high_watermark = high_watermark
+            .saturating_mul(8)
+            .max(high_watermark)
+            .min(aggregate_capacity);
+        Self::new_with_aggregate(
+            capacity,
+            high_watermark,
+            aggregate_capacity,
+            aggregate_high_watermark,
+        )
+    }
+
+    fn new_with_aggregate(
+        capacity: usize,
+        high_watermark: usize,
+        aggregate_capacity: usize,
+        aggregate_high_watermark: usize,
+    ) -> Self {
         let capacity = capacity.max(1);
+        let aggregate_capacity = aggregate_capacity.max(1);
         Self {
+            epoch: DocumentId::new().to_string().into(),
             capacity,
             high_watermark: high_watermark.max(1).min(capacity),
-            tenants: Mutex::new(HashMap::new()),
+            aggregate_capacity,
+            aggregate_high_watermark: aggregate_high_watermark.max(1).min(aggregate_capacity),
+            aggregate_in_flight: AtomicUsize::new(0),
+            aggregate_high_water_warning_active: AtomicBool::new(false),
+            aggregate_high_water_warning_count: AtomicU64::new(0),
+            aggregate_cap_breach_count: AtomicU64::new(0),
+            next_generation: AtomicU64::new(0),
+            tenants: Mutex::new(ProjectionTenantRegistry::default()),
             #[cfg(test)]
             registered: tokio::sync::Notify::new(),
+            #[cfg(test)]
+            sweep_count: AtomicU64::new(0),
         }
     }
 
@@ -82,20 +141,43 @@ impl ProjectionWork {
         tenant_id: &TenantId,
         runtime_identity: TenantRuntimeObserverIdentity,
     ) -> Arc<TenantProjectionWork> {
-        let mut tenants = self
+        let mut registry = self
             .tenants
             .lock()
             .expect("projection tenant-work lock should not be poisoned");
-        tenants.retain(|_, work| {
-            work.in_flight.load(Ordering::Acquire) != 0 || work.runtime_identity.is_live()
-        });
-        if let Some(work) = tenants.get(tenant_id)
-            && work.runtime_identity.same_runtime(&runtime_identity)
-        {
+        self.tenant_work_locked(&mut registry, tenant_id, runtime_identity)
+    }
+
+    fn tenant_work_locked(
+        &self,
+        registry: &mut ProjectionTenantRegistry,
+        tenant_id: &TenantId,
+        runtime_identity: TenantRuntimeObserverIdentity,
+    ) -> Arc<TenantProjectionWork> {
+        if let Some(work) = registry.tenants.get(tenant_id) {
+            let mut current_identity = work
+                .runtime_identity
+                .lock()
+                .expect("projection runtime-identity lock should not be poisoned");
+            if current_identity.same_runtime(&runtime_identity) {
+                return work.clone();
+            }
+            *current_identity = runtime_identity;
+            drop(current_identity);
+            let generation = self.next_generation.fetch_add(1, Ordering::AcqRel) + 1;
+            work.generation.store(generation, Ordering::Release);
+            work.high_water_warning_active
+                .store(false, Ordering::Release);
+            work.high_water_warning_count.store(0, Ordering::Relaxed);
+            work.cap_breach_count.store(0, Ordering::Relaxed);
+            work.dropped_event_count.store(0, Ordering::Relaxed);
+            work.poisoned.store(false, Ordering::Release);
             return work.clone();
         }
+        let generation = self.next_generation.fetch_add(1, Ordering::AcqRel) + 1;
         let work = Arc::new(TenantProjectionWork {
-            runtime_identity,
+            runtime_identity: Mutex::new(runtime_identity),
+            generation: AtomicU64::new(generation),
             in_flight: AtomicUsize::new(0),
             projection_lock: Arc::new(tokio::sync::Mutex::new(())),
             high_water_warning_active: AtomicBool::new(false),
@@ -109,14 +191,37 @@ impl ProjectionWork {
             #[cfg(test)]
             flush_waiting_notify: tokio::sync::Notify::new(),
         });
-        tenants.insert(tenant_id.clone(), work.clone());
+        registry.tenants.insert(tenant_id.clone(), work.clone());
         work
+    }
+
+    fn maybe_sweep_dead_tenants_locked(&self, registry: &mut ProjectionTenantRegistry) {
+        registry.registrations_since_sweep = registry.registrations_since_sweep.saturating_add(1);
+        if registry.registrations_since_sweep < PROJECTION_TENANT_SWEEP_INTERVAL {
+            return;
+        }
+        registry.registrations_since_sweep = 0;
+        Self::sweep_dead_tenants_locked(registry);
+        #[cfg(test)]
+        self.sweep_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn sweep_dead_tenants_locked(registry: &mut ProjectionTenantRegistry) {
+        registry.tenants.retain(|_, work| {
+            work.in_flight.load(Ordering::Acquire) != 0
+                || work
+                    .runtime_identity
+                    .lock()
+                    .expect("projection runtime-identity lock should not be poisoned")
+                    .is_live()
+        });
     }
 
     fn existing_tenant_work(&self, tenant_id: &TenantId) -> Option<Arc<TenantProjectionWork>> {
         self.tenants
             .lock()
             .expect("projection tenant-work lock should not be poisoned")
+            .tenants
             .get(tenant_id)
             .cloned()
     }
@@ -126,7 +231,12 @@ impl ProjectionWork {
         tenant_id: &TenantId,
         runtime_identity: TenantRuntimeObserverIdentity,
     ) -> Option<ProjectionWorkGuard> {
-        let tenant_work = self.tenant_work(tenant_id, runtime_identity);
+        let mut registry = self
+            .tenants
+            .lock()
+            .expect("projection tenant-work lock should not be poisoned");
+        self.maybe_sweep_dead_tenants_locked(&mut registry);
+        let tenant_work = self.tenant_work_locked(&mut registry, tenant_id, runtime_identity);
         if tenant_work.poisoned.load(Ordering::Acquire) {
             tenant_work
                 .dropped_event_count
@@ -136,31 +246,59 @@ impl ProjectionWork {
         let previous = match tenant_work.in_flight.fetch_update(
             Ordering::AcqRel,
             Ordering::Acquire,
-            |depth| {
-                (!tenant_work.poisoned.load(Ordering::Acquire) && depth < self.capacity)
-                    .then_some(depth + 1)
-            },
+            |depth| (depth < self.capacity).then_some(depth + 1),
         ) {
             Ok(previous) => previous,
             Err(depth) => {
                 tenant_work
                     .dropped_event_count
                     .fetch_add(1, Ordering::Relaxed);
-                if tenant_work.poisoned.load(Ordering::Acquire) {
-                    return None;
-                }
                 tenant_work.cap_breach_count.fetch_add(1, Ordering::Relaxed);
                 if !tenant_work.poisoned.swap(true, Ordering::AcqRel) {
                     error!(
                         projection_work_depth = depth,
                         projection_work_capacity = self.capacity,
                         tenant = %tenant_id,
-                        "system table projection work cap breached; tenant projection observer poisoned and no new projection tasks will be spawned for this runtime"
+                        "system table projection per-tenant work cap breached; tenant projection observer poisoned and no new projection tasks will be spawned for this runtime"
                     );
                 }
                 return None;
             }
         };
+        let aggregate_previous = match self.aggregate_in_flight.fetch_update(
+            Ordering::AcqRel,
+            Ordering::Acquire,
+            |depth| (depth < self.aggregate_capacity).then_some(depth + 1),
+        ) {
+            Ok(previous) => previous,
+            Err(depth) => {
+                let rollback_previous = tenant_work.in_flight.fetch_sub(1, Ordering::AcqRel);
+                debug_assert!(
+                    rollback_previous != 0,
+                    "projection cap rollback cannot underflow"
+                );
+                if rollback_previous == 1 {
+                    tenant_work.idle.notify_waiters();
+                }
+                tenant_work
+                    .dropped_event_count
+                    .fetch_add(1, Ordering::Relaxed);
+                tenant_work.cap_breach_count.fetch_add(1, Ordering::Relaxed);
+                self.aggregate_cap_breach_count
+                    .fetch_add(1, Ordering::Relaxed);
+                if !tenant_work.poisoned.swap(true, Ordering::AcqRel) {
+                    error!(
+                        projection_aggregate_work_depth = depth,
+                        projection_aggregate_work_capacity = self.aggregate_capacity,
+                        tenant = %tenant_id,
+                        "system table projection aggregate work cap breached; offending tenant projection observer poisoned and the committed event was dropped"
+                    );
+                }
+                return None;
+            }
+        };
+        let generation = tenant_work.generation.load(Ordering::Acquire);
+        drop(registry);
         let depth = previous + 1;
         if depth >= self.high_watermark
             && !tenant_work
@@ -178,12 +316,29 @@ impl ProjectionWork {
                 "system table projection work crossed its high-water mark"
             );
         }
+        let aggregate_depth = aggregate_previous + 1;
+        if aggregate_depth >= self.aggregate_high_watermark
+            && !self
+                .aggregate_high_water_warning_active
+                .swap(true, Ordering::AcqRel)
+        {
+            self.aggregate_high_water_warning_count
+                .fetch_add(1, Ordering::Relaxed);
+            warn!(
+                tenant = %tenant_id,
+                projection_aggregate_work_depth = aggregate_depth,
+                projection_aggregate_work_high_watermark = self.aggregate_high_watermark,
+                projection_aggregate_work_capacity = self.aggregate_capacity,
+                "system table projection aggregate work crossed its high-water mark"
+            );
+        }
         #[cfg(test)]
         self.registered.notify_waiters();
         Some(ProjectionWorkGuard {
             work: self.clone(),
             tenant_work,
             tenant_id: tenant_id.clone(),
+            generation,
         })
     }
 
@@ -258,14 +413,17 @@ impl ProjectionWork {
 
     #[cfg(test)]
     fn tenant_count(&self) -> usize {
-        let mut tenants = self
+        let mut registry = self
             .tenants
             .lock()
             .expect("projection tenant-work lock should not be poisoned");
-        tenants.retain(|_, work| {
-            work.in_flight.load(Ordering::Acquire) != 0 || work.runtime_identity.is_live()
-        });
-        tenants.len()
+        Self::sweep_dead_tenants_locked(&mut registry);
+        registry.tenants.len()
+    }
+
+    #[cfg(test)]
+    fn sweep_count(&self) -> u64 {
+        self.sweep_count.load(Ordering::Relaxed)
     }
 }
 
@@ -283,6 +441,16 @@ impl Drop for ProjectionWorkGuard {
         if tenant_previous.saturating_sub(1) < self.work.high_watermark {
             self.tenant_work
                 .high_water_warning_active
+                .store(false, Ordering::Release);
+        }
+        let aggregate_previous = self.work.aggregate_in_flight.fetch_sub(1, Ordering::AcqRel);
+        debug_assert!(
+            aggregate_previous != 0,
+            "aggregate projection work count cannot underflow"
+        );
+        if aggregate_previous.saturating_sub(1) < self.work.aggregate_high_watermark {
+            self.work
+                .aggregate_high_water_warning_active
                 .store(false, Ordering::Release);
         }
     }
@@ -358,11 +526,24 @@ impl TableProjectionObserver {
             return;
         };
         let tenant_work = projection_work.tenant_work.clone();
+        let projection_epoch = self.projection_work.epoch.clone();
+        let projection_generation = projection_work.generation;
         handle.spawn(async move {
             let _projection_work = projection_work;
             let _projection_guard = tenant_work.projection_lock.lock().await;
+            if projection_generation < tenant_work.generation.load(Ordering::Acquire) {
+                return;
+            }
             for table in tables {
-                if let Err(error) = record_table_state_async(&engine, &tenant_id, &table).await {
+                if let Err(error) = record_table_state_for_generation_async(
+                    &engine,
+                    &tenant_id,
+                    &table,
+                    &projection_epoch,
+                    projection_generation,
+                )
+                .await
+                {
                     warn!(
                         tenant_id = %tenant_id,
                         table = %table,
@@ -676,6 +857,214 @@ mod tests {
             projection_work.tenant_count(),
             0,
             "dead runtime generations must not accumulate in projection state"
+        );
+    }
+
+    #[test]
+    fn projection_register_hot_path_does_not_scan_before_amortized_sweep() {
+        let fixture = EngineFixture::new(|path| Engine::new(path));
+        let engine = fixture.engine();
+        let tenant_id = fixture.create_tenant("projection-hot-path", Engine::create_tenant);
+        let projection_work = Arc::new(ProjectionWork::new(64, 48));
+
+        for _ in 0..64 {
+            let guard = projection_work
+                .register(
+                    &tenant_id,
+                    engine
+                        .committed_mutation_observer_runtime_identity(&tenant_id)
+                        .expect("tenant runtime identity should load"),
+                )
+                .expect("hot-path projection should register below its cap");
+            drop(guard);
+        }
+
+        assert_eq!(
+            projection_work.sweep_count(),
+            0,
+            "ordinary projection registration must not scan the tenant map"
+        );
+    }
+
+    #[test]
+    fn projection_aggregate_cap_rejects_only_the_offending_tenant() {
+        let fixture = EngineFixture::new(|path| Engine::new(path));
+        let engine = fixture.engine();
+        let tenant_a = fixture.create_tenant("projection-aggregate-a", Engine::create_tenant);
+        let tenant_b = fixture.create_tenant("projection-aggregate-b", Engine::create_tenant);
+        let tenant_c = fixture.create_tenant("projection-aggregate-c", Engine::create_tenant);
+        let tenant_d = fixture.create_tenant("projection-aggregate-d", Engine::create_tenant);
+        let projection_work = Arc::new(ProjectionWork::new_with_aggregate(4, 3, 2, 1));
+
+        let register = |tenant_id: &TenantId| {
+            projection_work.register(
+                tenant_id,
+                engine
+                    .committed_mutation_observer_runtime_identity(tenant_id)
+                    .expect("tenant runtime identity should load"),
+            )
+        };
+        let guard_a = register(&tenant_a).expect("tenant A should fit below both caps");
+        let guard_b = register(&tenant_b).expect("tenant B should fill the aggregate cap");
+        assert!(
+            register(&tenant_c).is_none(),
+            "the aggregate cap must reject the offending third registration"
+        );
+        let rejected = projection_work.stats(&tenant_c);
+        assert_eq!(rejected.depth, 0);
+        assert_eq!(rejected.cap_breach_count, 1);
+        assert_eq!(rejected.dropped_event_count, 1);
+        assert!(rejected.poisoned);
+        assert!(!projection_work.stats(&tenant_a).poisoned);
+        assert!(!projection_work.stats(&tenant_b).poisoned);
+        assert_eq!(
+            projection_work
+                .aggregate_cap_breach_count
+                .load(Ordering::Relaxed),
+            1
+        );
+
+        drop(guard_a);
+        drop(guard_b);
+        let quiet_guard = register(&tenant_d)
+            .expect("a quiet process must admit a tenant below its per-tenant cap");
+        assert_eq!(projection_work.stats(&tenant_d).depth, 1);
+        assert!(!projection_work.stats(&tenant_d).poisoned);
+        drop(quiet_guard);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn newer_projection_generation_rejects_stale_row_count_write() {
+        let fixture = EngineFixture::new(|path| Engine::new(path));
+        let engine = fixture.engine();
+        let tenant_id = fixture.create_tenant("projection-generation", Engine::create_tenant);
+        let tasks = TableName::new("tasks").expect("table name should build");
+        let first = engine
+            .insert_document_async(
+                tenant_id.clone(),
+                tasks.clone(),
+                serde_json::Map::from_iter([("index".to_string(), json!(1))]),
+            )
+            .await
+            .expect("first source row should commit");
+        let second = engine
+            .insert_document_async(
+                tenant_id.clone(),
+                tasks.clone(),
+                serde_json::Map::from_iter([("index".to_string(), json!(2))]),
+            )
+            .await
+            .expect("second source row should commit");
+        record_table_state_for_generation_async(
+            &engine,
+            &tenant_id,
+            &tasks,
+            "projection-test-epoch",
+            2,
+        )
+        .await
+        .expect("new-generation projection should record two rows");
+
+        engine
+            .delete_document_async(tenant_id.clone(), tasks.clone(), second)
+            .await
+            .expect("source row should delete");
+        record_table_state_for_generation_async(
+            &engine,
+            &tenant_id,
+            &tasks,
+            "projection-test-epoch",
+            1,
+        )
+        .await
+        .expect("stale generation should be rejected without an error");
+        assert_eq!(
+            projected_table_row_count(&engine, &tenant_id, &tasks).await,
+            Some(2),
+            "an old runtime generation must not overwrite the newer projected count"
+        );
+
+        record_table_state_for_generation_async(
+            &engine,
+            &tenant_id,
+            &tasks,
+            "projection-restarted-process-epoch",
+            1,
+        )
+        .await
+        .expect("a fresh process epoch should refresh despite its lower generation");
+        assert_eq!(
+            projected_table_row_count(&engine, &tenant_id, &tasks).await,
+            Some(1)
+        );
+        engine
+            .delete_document_async(tenant_id, tasks, first)
+            .await
+            .expect("remaining source row should delete");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn reloaded_runtime_skips_parked_old_generation_projection() {
+        let fixture = EngineFixture::new(|path| Engine::new(path));
+        let engine = fixture.engine();
+        let tenant_id = fixture.create_tenant("projection-generation-race", Engine::create_tenant);
+        let tasks = TableName::new("tasks").expect("table name should build");
+        let (observer, projection_work) = test_observer(&engine, 16, 12);
+        let held_projection = tenant_work(&engine, &projection_work, &tenant_id)
+            .projection_lock
+            .clone()
+            .lock_owned()
+            .await;
+
+        for index in 0..2 {
+            engine
+                .insert_document_async(
+                    tenant_id.clone(),
+                    tasks.clone(),
+                    serde_json::Map::from_iter([("index".to_string(), json!(index))]),
+                )
+                .await
+                .expect("old-generation source row should commit");
+        }
+        observer.project_tables(tenant_id.clone(), vec![tasks.clone()]);
+        projection_work.wait_until_registered(&tenant_id).await;
+
+        engine
+            .delete_tenant_async(tenant_id.clone())
+            .await
+            .expect("old runtime should evict while its projection is parked");
+        engine
+            .create_tenant_async(tenant_id.clone())
+            .await
+            .expect("tenant should reload with a fresh runtime generation");
+        engine
+            .insert_document_async(
+                tenant_id.clone(),
+                tasks.clone(),
+                serde_json::Map::from_iter([("index".to_string(), json!(10))]),
+            )
+            .await
+            .expect("new-generation source row should commit");
+        observer.project_tables(tenant_id.clone(), vec![tasks.clone()]);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while projection_work.stats(&tenant_id).depth != 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("both runtime generations should register before the lock is released");
+
+        drop(held_projection);
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            projection_work.wait_for_idle(&tenant_id),
+        )
+        .await
+        .expect("new-generation projection should drain");
+        assert_eq!(
+            projected_table_row_count(&engine, &tenant_id, &tasks).await,
+            Some(1),
+            "the parked old generation must not overwrite the reloaded runtime's count"
         );
     }
 

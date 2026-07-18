@@ -2,7 +2,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use nimbus_core::{
-    Document, DocumentId, Error, Filter, FilterOp, Query, Result, TableName, TenantId,
+    Document, DocumentId, Error, Filter, FilterOp, PrincipalContext, Query, Result, Retryability,
+    TableName, TenantId,
 };
 use nimbus_engine::Engine;
 use nimbus_node::{
@@ -274,6 +275,17 @@ pub async fn record_table_state_async(
     tenant_id: &TenantId,
     table: &TableName,
 ) -> Result<()> {
+    let projection_epoch = DocumentId::new().to_string();
+    record_table_state_for_generation_async(engine, tenant_id, table, &projection_epoch, 0).await
+}
+
+pub(crate) async fn record_table_state_for_generation_async(
+    engine: &Arc<Engine>,
+    tenant_id: &TenantId,
+    table: &TableName,
+    projection_epoch: &str,
+    projection_generation: u64,
+) -> Result<()> {
     ensure_system_tenant_async(engine).await?;
     let schema = match engine
         .get_table_schema_async(tenant_id.clone(), table.clone())
@@ -287,16 +299,15 @@ pub async fn record_table_state_async(
         .count_table_documents_async(tenant_id.clone(), table.clone())
         .await?;
     let document_id = table_document_id(tenant_id, table);
-    if schema.is_none() && row_count == 0 {
-        delete_system_document_if_exists_async(engine, SystemTable::Tables, &document_id).await?;
-        return Ok(());
-    }
+    let delete = schema.is_none() && row_count == 0;
 
     let mut fields = object_fields(json!({
         "tenantId": tenant_id.as_str(),
         "name": table.as_str(),
         "rowCount": row_count,
         "lastWriteAt": unix_time_millis()?,
+        "projectionEpoch": projection_epoch,
+        "projectionGeneration": projection_generation,
     }));
     if let Some(schema) = schema {
         fields.insert(
@@ -305,7 +316,82 @@ pub async fn record_table_state_async(
                 .map_err(|error| Error::Serialization(error.to_string()))?,
         );
     }
-    upsert_system_document_async(engine, SystemTable::Tables, &document_id, fields).await
+    write_table_projection_if_current_async(
+        engine,
+        &document_id,
+        fields,
+        projection_epoch,
+        projection_generation,
+        delete,
+    )
+    .await
+}
+
+async fn write_table_projection_if_current_async(
+    engine: &Arc<Engine>,
+    document_id: &str,
+    fields: Map<String, Value>,
+    projection_epoch: &str,
+    projection_generation: u64,
+    delete: bool,
+) -> Result<()> {
+    const MAX_CONFLICT_ATTEMPTS: usize = 4;
+
+    let engine = engine.clone();
+    let document_id = DocumentId::from_key(document_id.to_owned())?;
+    let projection_epoch = projection_epoch.to_owned();
+    let table = SystemTable::Tables.table_name()?;
+    let tenant_id = system_tenant_id()?;
+    tokio::task::spawn_blocking(move || {
+        for attempt in 1..=MAX_CONFLICT_ATTEMPTS {
+            let unit = engine
+                .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())?;
+            let current = unit.get_document(&table, document_id.clone())?;
+            let current_generation = current
+                .as_ref()
+                .and_then(|document| document.fields.get("projectionGeneration"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            let current_epoch = current
+                .as_ref()
+                .and_then(|document| document.fields.get("projectionEpoch"))
+                .and_then(Value::as_str);
+            if current_epoch == Some(projection_epoch.as_str())
+                && current_generation > projection_generation
+            {
+                return Ok(());
+            }
+
+            match (delete, current) {
+                (true, Some(_)) => unit.delete_document(table.clone(), document_id.clone())?,
+                (true, None) => return Ok(()),
+                (false, Some(_)) => {
+                    unit.update_document(table.clone(), document_id.clone(), fields.clone())?;
+                }
+                (false, None) => {
+                    unit.insert_document_with_id(
+                        table.clone(),
+                        Some(document_id.clone()),
+                        fields.clone(),
+                    )?;
+                }
+            }
+
+            match unit.commit() {
+                Ok(_) => return Ok(()),
+                Err(error)
+                    if error.retryability() == Retryability::Retryable
+                        && attempt < MAX_CONFLICT_ATTEMPTS =>
+                {
+                    continue;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        unreachable!("table projection conflict loop returns on its final attempt")
+    })
+    .await
+    .map_err(|error| Error::Internal(format!("table projection task panicked: {error}")))?
 }
 
 async fn delete_system_document_if_exists_async(
