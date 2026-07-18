@@ -671,9 +671,13 @@ async fn shutdown_serial_recovery_deregisters_and_preserves_diagnostics() {
                 .await
         }
     });
-    let accessor_completed = timeout(Duration::from_millis(250), &mut accessor)
-        .await
-        .is_ok();
+    let accessor_completed = match timeout(Duration::from_millis(250), &mut accessor).await {
+        Ok(joined) => {
+            let _ = joined.expect("post-shutdown accessor must not panic");
+            true
+        }
+        Err(_) => false,
+    };
     if !accessor_completed {
         engine.remove_runtime_if_same_for_testing(&tenant_id, &evicted_runtime);
         accessor.abort();
@@ -718,9 +722,13 @@ async fn accessor_does_not_spin_on_registered_completed_eviction() {
                 .await
         }
     });
-    let accessor_completed = timeout(Duration::from_millis(250), &mut accessor)
-        .await
-        .is_ok();
+    let accessor_completed = match timeout(Duration::from_millis(250), &mut accessor).await {
+        Ok(joined) => {
+            let _ = joined.expect("completed-eviction accessor must not panic");
+            true
+        }
+        Err(_) => false,
+    };
     if !accessor_completed {
         engine.remove_runtime_if_same_for_testing(&tenant_id, &evicted_runtime);
         expect_catch_up_future_within(accessor, "accessor should stop after bounded cleanup")

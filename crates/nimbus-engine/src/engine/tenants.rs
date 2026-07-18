@@ -231,6 +231,9 @@ impl Engine {
             if let Some(runtime) = cached_runtime {
                 if runtime.eviction_started() {
                     runtime.wait_for_eviction_complete().await;
+                    if self.runtime_remains_registered(tenant_id, &runtime) {
+                        return Err(runtime.durable_recovery_eviction_error());
+                    }
                     continue;
                 }
                 maybe_emit_tenant_load_profile(TenantLoadProfileSample {
@@ -246,6 +249,11 @@ impl Engine {
                     total: total_started.elapsed(),
                 });
                 return Ok(runtime);
+            }
+            if self.background_shutdown_started() {
+                return Err(Error::ResourceExhausted(
+                    "engine is quiescing and cannot load a tenant runtime".to_string(),
+                ));
             }
 
             let tenant_load_guard = self.tenant_load_gate.lock().await;
@@ -260,6 +268,9 @@ impl Engine {
                 if runtime.eviction_started() {
                     drop(tenant_load_guard);
                     runtime.wait_for_eviction_complete().await;
+                    if self.runtime_remains_registered(tenant_id, &runtime) {
+                        return Err(runtime.durable_recovery_eviction_error());
+                    }
                     continue;
                 }
                 maybe_emit_tenant_load_profile(TenantLoadProfileSample {
@@ -276,11 +287,28 @@ impl Engine {
                 });
                 return Ok(runtime);
             }
+            if self.background_shutdown_started() {
+                return Err(Error::ResourceExhausted(
+                    "engine is quiescing and cannot load a tenant runtime".to_string(),
+                ));
+            }
 
             return self
                 .load_existing_tenant_async_locked(tenant_id, total_started, tenant_load_guard)
                 .await;
         }
+    }
+
+    fn runtime_remains_registered(
+        &self,
+        tenant_id: &TenantId,
+        runtime: &Arc<TenantRuntime>,
+    ) -> bool {
+        self.tenants
+            .read()
+            .expect("tenant registry lock should not be poisoned")
+            .get(tenant_id)
+            .is_some_and(|registered| Arc::ptr_eq(registered, runtime))
     }
 
     async fn load_existing_tenant_async_locked(

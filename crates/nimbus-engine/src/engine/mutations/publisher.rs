@@ -707,7 +707,10 @@ pub(super) fn finish_durable_recovery_eviction_blocking(
     drop(_tenant_load_guard);
 }
 
-fn finish_durable_recovery_eviction_locked(engine: &Engine, runtime: &Arc<TenantRuntime>) {
+pub(crate) fn finish_durable_recovery_eviction_locked(
+    engine: &Engine,
+    runtime: &Arc<TenantRuntime>,
+) {
     let tenant_id = runtime.tenant_id().clone();
     engine
         .publisher_failure_diagnostics

@@ -12,6 +12,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::Engine;
+use crate::engine::finish_durable_recovery_eviction_locked;
 
 use super::super::TenantRuntime;
 
@@ -610,20 +611,21 @@ async fn run_committer_actor_loop(
             runtime.set_mutation_worker_running(true);
             let _running = WorkerRunning(runtime.as_ref());
             let finish_shutdown_eviction = engine
+                .clone()
                 .run_one_committer_journal_batch(runtime.clone())
                 .await;
             if finish_shutdown_eviction {
-                // The background spawn gate is closed, so no replacement
-                // runtime can be loaded and this registry is dying with the
-                // engine. Fail every residual actor job to wake blocked
-                // submitters, then finish the lifecycle without acquiring the
-                // tenant-load gate: a synchronous deleter may hold that gate
-                // while waiting for one of these jobs' operation guards.
+                // Fail every residual actor job to wake blocked submitters,
+                // then finish the eviction without acquiring tenant_load_gate:
+                // a synchronous deleter may hold that gate while waiting for
+                // one of these jobs' operation guards. The shared finisher
+                // takes only the registry RwLock, removes this exact Arc, and
+                // preserves its publisher failure diagnostics.
                 receiver.close();
                 while let Some(message) = receiver.recv().await {
                     fail_committer_message_during_shutdown_eviction(runtime.as_ref(), message);
                 }
-                runtime.finish_eviction();
+                finish_durable_recovery_eviction_locked(engine.as_ref(), &runtime);
                 break;
             }
             continue;
