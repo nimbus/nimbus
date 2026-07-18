@@ -98,9 +98,14 @@ fn take_publisher_limits_for_testing(tenant_id: &TenantId) -> Option<(usize, Dur
 }
 
 #[cfg(test)]
-static OBSERVER_LIMITS_FOR_TESTING: std::sync::OnceLock<
-    Mutex<std::collections::HashMap<TenantId, (usize, usize, usize)>>,
-> = std::sync::OnceLock::new();
+type ObserverLimitsForTesting = (usize, usize, usize);
+
+#[cfg(test)]
+type ObserverLimitOverrides = Mutex<std::collections::HashMap<TenantId, ObserverLimitsForTesting>>;
+
+#[cfg(test)]
+static OBSERVER_LIMITS_FOR_TESTING: std::sync::OnceLock<ObserverLimitOverrides> =
+    std::sync::OnceLock::new();
 
 #[cfg(test)]
 pub(crate) fn configure_observer_limits_for_testing(
@@ -124,7 +129,7 @@ pub(crate) fn configure_observer_limits_for_testing(
 }
 
 #[cfg(test)]
-fn take_observer_limits_for_testing(tenant_id: &TenantId) -> Option<(usize, usize, usize)> {
+fn take_observer_limits_for_testing(tenant_id: &TenantId) -> Option<ObserverLimitsForTesting> {
     OBSERVER_LIMITS_FOR_TESTING
         .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
         .lock()
