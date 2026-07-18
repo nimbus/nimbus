@@ -114,6 +114,31 @@ pub(crate) fn subscription_channel() -> (
     mpsc::channel(16)
 }
 
+/// Bounded blocking receive for synchronous tests, which have no runtime to
+/// `.await` on. It parks on the channel itself rather than spin-polling, and a
+/// subscription that never publishes fails with a diagnostic instead of
+/// hanging the suite.
+pub(crate) fn expect_subscription_update_within(
+    receiver: &mut mpsc::Receiver<SubscriptionUpdate>,
+    description: &str,
+) -> SubscriptionUpdate {
+    let timeout_budget = ci_or_local_duration(Duration::from_secs(5), Duration::from_secs(15));
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .expect("bounded subscription receive runtime should build")
+        .block_on(async {
+            tokio::time::timeout(timeout_budget, receiver.recv())
+                .await
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "{description} within the bounded state-transition timeout of {timeout_budget:?}"
+                    )
+                })
+        })
+        .unwrap_or_else(|| panic!("{description}; the subscription channel disconnected instead"))
+}
+
 pub(crate) async fn wait_for_mutation_journal_stats(
     engine: &Arc<Engine>,
     tenant_id: &TenantId,
