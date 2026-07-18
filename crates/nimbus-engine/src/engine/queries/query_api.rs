@@ -4,8 +4,8 @@ use std::time::{Duration, Instant};
 
 use futures::FutureExt;
 use nimbus_core::{
-    Document, Page, PaginatedQuery, PrincipalContext, Query, Result, SequenceNumber, TableId,
-    TableName, TenantId,
+    Document, Error, Page, PaginatedQuery, PrincipalContext, Query, Result, SequenceNumber,
+    TableId, TableName, TenantId,
 };
 
 use super::materialized::{
@@ -562,8 +562,10 @@ where
             ) => {
                 if let Err(error) = result {
                     if runtime.eviction_started() {
-                        runtime.wait_for_eviction_complete().await;
-                        continue;
+                        tokio::select! {
+                            () = runtime.wait_for_eviction_complete() => continue,
+                            () = cancel_wait.clone() => return Err(Error::Cancelled),
+                        }
                     }
                     return Err(error);
                 }

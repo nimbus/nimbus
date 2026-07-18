@@ -100,6 +100,16 @@ impl Engine {
     }
 
     #[cfg(test)]
+    pub(crate) fn begin_runtime_eviction_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<Arc<crate::tenant::TenantRuntime>> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        runtime.mark_deleting_for_eviction();
+        Ok(runtime)
+    }
+
+    #[cfg(test)]
     pub(crate) fn write_log_assignment_for_testing(
         &self,
         tenant_id: &TenantId,
