@@ -3240,6 +3240,256 @@ async fn provider_catch_up_chunks_observers_to_capacity_in_sequence_order() {
 }
 
 #[derive(Default)]
+struct TenantSelectiveBlockingObserver {
+    blocked_tenant: Mutex<Option<TenantId>>,
+    state: Mutex<(
+        std::collections::HashMap<TenantId, Vec<SequenceNumber>>,
+        bool,
+        bool,
+    )>,
+    entered: Condvar,
+    release: Condvar,
+}
+
+impl TenantSelectiveBlockingObserver {
+    fn block_tenant(&self, tenant_id: TenantId) {
+        *self
+            .blocked_tenant
+            .lock()
+            .expect("blocked tenant lock should acquire") = Some(tenant_id);
+    }
+
+    fn wait_until_blocked(&self, timeout: Duration) -> bool {
+        let state = self
+            .state
+            .lock()
+            .expect("selective observer state should lock");
+        let (state, _) = self
+            .entered
+            .wait_timeout_while(state, timeout, |state| !state.1)
+            .expect("selective observer entered wait should succeed");
+        state.1
+    }
+
+    fn release_blocked_tenant(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .expect("selective observer state should lock");
+        state.2 = true;
+        self.release.notify_all();
+    }
+
+    fn sequences(&self, tenant_id: &TenantId) -> Vec<SequenceNumber> {
+        self.state
+            .lock()
+            .expect("selective observer state should lock")
+            .0
+            .get(tenant_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+}
+
+impl crate::CommittedMutationObserver for TenantSelectiveBlockingObserver {
+    fn committed_mutation_applied(&self, event: crate::CommittedMutationEvent) {
+        let should_block = self
+            .blocked_tenant
+            .lock()
+            .expect("blocked tenant lock should acquire")
+            .as_ref()
+            == Some(&event.tenant_id);
+        let mut state = self
+            .state
+            .lock()
+            .expect("selective observer state should lock");
+        let first_for_tenant = state
+            .0
+            .entry(event.tenant_id.clone())
+            .or_default()
+            .is_empty();
+        state
+            .0
+            .get_mut(&event.tenant_id)
+            .expect("tenant observer sequence should exist")
+            .push(event.commit.sequence);
+        if should_block && first_for_tenant {
+            state.1 = true;
+            self.entered.notify_all();
+            while !state.2 {
+                state = self
+                    .release
+                    .wait(state)
+                    .expect("selective observer release wait should succeed");
+            }
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn poisoned_provider_catch_up_tenant_does_not_block_fresh_tenant() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_a = fixture.create_tenant("provider-poison-a", Engine::create_tenant);
+    let tenant_b = fixture.create_tenant("provider-poison-b", Engine::create_tenant);
+    for tenant_id in [&tenant_a, &tenant_b] {
+        engine
+            .shutdown_trigger_candidates_for_testing(tenant_id)
+            .expect("trigger cursor should not add unrelated records");
+        engine
+            .insert_document_async(
+                tenant_id.clone(),
+                tasks_table(),
+                serde_json::Map::from_iter([("index".to_string(), json!(1))]),
+            )
+            .await
+            .expect("provider catch-up fixture write should commit");
+    }
+    let records_a = engine
+        .read_durable_journal(&tenant_a, SequenceNumber(0))
+        .expect("tenant A journal should read");
+    let records_b = engine
+        .read_durable_journal(&tenant_b, SequenceNumber(0))
+        .expect("tenant B journal should read");
+    let observer = Arc::new(TenantSelectiveBlockingObserver::default());
+    engine.install_committed_mutation_observer("provider-poison-isolation-test", observer.clone());
+    engine
+        .poison_committed_mutation_observers_for_testing(&tenant_a)
+        .expect("tenant A observer dispatcher should poison");
+
+    let error = engine
+        .enqueue_provider_catch_up_observers_for_testing(&tenant_a, &records_a)
+        .await
+        .expect_err("poisoned tenant A must refuse catch-up observers");
+    assert!(error.to_string().contains("poisoned"));
+    let stats_a = engine
+        .mutation_journal_stats_for_testing(&tenant_a)
+        .expect("tenant A observer diagnostics should load");
+    assert_eq!(stats_a.observer_catch_up_enqueue_failure_count, 1);
+
+    tokio::time::timeout(
+        Duration::from_secs(2),
+        engine.enqueue_provider_catch_up_observers_for_testing(&tenant_b, &records_b),
+    )
+    .await
+    .expect("tenant B catch-up must not wait behind poisoned tenant A")
+    .expect("tenant B catch-up should succeed");
+    engine
+        .flush_committed_mutation_observers_for_testing(&tenant_b)
+        .await
+        .expect("tenant B observers should flush");
+    assert_eq!(observer.sequences(&tenant_b), vec![SequenceNumber(1)]);
+    let stats_b = engine
+        .mutation_journal_stats_for_testing(&tenant_b)
+        .expect("tenant B observer diagnostics should load");
+    assert_eq!(stats_b.observer_catch_up_enqueue_failure_count, 0);
+    assert!(!stats_b.observer_dispatch_poisoned);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn busy_provider_catch_up_tenant_does_not_head_of_line_block_other_tenant() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_a = TenantId::new("provider-busy-a").expect("tenant A id should build");
+    let tenant_b = TenantId::new("provider-busy-b").expect("tenant B id should build");
+    crate::tenant::configure_observer_limits_for_testing(tenant_a.clone(), 2, 1, 1, 1);
+    crate::tenant::configure_observer_limits_for_testing(tenant_b.clone(), 2, 1, 1, 1);
+    assert_eq!(
+        fixture.create_tenant("provider-busy-a", Engine::create_tenant),
+        tenant_a
+    );
+    assert_eq!(
+        fixture.create_tenant("provider-busy-b", Engine::create_tenant),
+        tenant_b
+    );
+    for tenant_id in [&tenant_a, &tenant_b] {
+        engine
+            .shutdown_trigger_candidates_for_testing(tenant_id)
+            .expect("trigger cursor should not add unrelated records");
+    }
+    for index in 0..5 {
+        engine
+            .insert_document_async(
+                tenant_a.clone(),
+                tasks_table(),
+                serde_json::Map::from_iter([("index".to_string(), json!(index))]),
+            )
+            .await
+            .expect("tenant A provider tail should commit");
+    }
+    engine
+        .insert_document_async(
+            tenant_b.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("index".to_string(), json!(10))]),
+        )
+        .await
+        .expect("tenant B provider tail should commit");
+    let records_a = engine
+        .read_durable_journal(&tenant_a, SequenceNumber(0))
+        .expect("tenant A journal should read");
+    let expected_a = records_a
+        .iter()
+        .filter(|record| !record.writes.is_empty())
+        .map(|record| record.sequence)
+        .collect::<Vec<_>>();
+    let records_b = engine
+        .read_durable_journal(&tenant_b, SequenceNumber(0))
+        .expect("tenant B journal should read");
+    let observer = Arc::new(TenantSelectiveBlockingObserver::default());
+    observer.block_tenant(tenant_a.clone());
+    engine.install_committed_mutation_observer("provider-busy-isolation-test", observer.clone());
+
+    let mut catch_up_a = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_a = tenant_a.clone();
+        async move {
+            engine
+                .enqueue_provider_catch_up_observers_for_testing(&tenant_a, &records_a)
+                .await
+        }
+    });
+    expect_blocking_wait_reaches_state("tenant A observer should sustain a full backlog", {
+        let observer = observer.clone();
+        move |timeout| observer.wait_until_blocked(timeout)
+    })
+    .await;
+    assert_future_stays_pending(
+        &mut catch_up_a,
+        "tenant A catch-up should wait for its own partial-capacity chunks",
+    )
+    .await;
+
+    tokio::time::timeout(
+        Duration::from_secs(2),
+        engine.enqueue_provider_catch_up_observers_for_testing(&tenant_b, &records_b),
+    )
+    .await
+    .expect("tenant B hint must stay responsive while tenant A is saturated")
+    .expect("tenant B catch-up should enqueue");
+    engine
+        .flush_committed_mutation_observers_for_testing(&tenant_b)
+        .await
+        .expect("tenant B observer should drain");
+    assert_eq!(observer.sequences(&tenant_b), vec![SequenceNumber(1)]);
+
+    observer.release_blocked_tenant();
+    expect_catch_up_future_within(catch_up_a, "tenant A chunks should eventually drain")
+        .await
+        .expect("tenant A catch-up task should join")
+        .expect("tenant A catch-up should succeed");
+    engine
+        .flush_committed_mutation_observers_for_testing(&tenant_a)
+        .await
+        .expect("tenant A observer should flush");
+    assert_eq!(
+        observer.sequences(&tenant_a),
+        expected_a,
+        "tenant A catch-up chunks must preserve commit order"
+    );
+}
+
+#[derive(Default)]
 struct BlockingPanickingObserver {
     state: Mutex<(bool, bool)>,
     entered: Condvar,

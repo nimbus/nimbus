@@ -100,6 +100,7 @@ async fn assert_engine_reload_recovers_durable_journal_before_serving_async_read
             observer_queue_high_watermark: 3_072,
             observer_queue_high_water_warning_count: 0,
             observer_queue_cap_breach_count: 0,
+            observer_catch_up_enqueue_failure_count: 0,
             observer_dispatch_poisoned: false,
             observer_spawned_work_depth: 0,
             observer_spawned_work_capacity: 0,

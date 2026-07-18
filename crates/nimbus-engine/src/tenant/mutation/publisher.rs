@@ -153,11 +153,15 @@ pub(crate) struct ObserverHandoff {
     high_water_warning_active: AtomicBool,
     high_water_warning_count: AtomicU64,
     cap_breach_count: AtomicU64,
+    catch_up_enqueue_failure_count: AtomicU64,
     poisoned: AtomicBool,
     started: AtomicBool,
     drained: AtomicBool,
     drained_notify: tokio::sync::Notify,
     capacity_available: tokio::sync::Notify,
+    next_catch_up_ticket: AtomicU64,
+    serving_catch_up_ticket: AtomicU64,
+    catch_up_turn_available: tokio::sync::Notify,
 }
 
 struct ObserverSender {
@@ -193,11 +197,15 @@ impl ObserverHandoff {
             high_water_warning_active: AtomicBool::new(false),
             high_water_warning_count: AtomicU64::new(0),
             cap_breach_count: AtomicU64::new(0),
+            catch_up_enqueue_failure_count: AtomicU64::new(0),
             poisoned: AtomicBool::new(false),
             started: AtomicBool::new(false),
             drained: AtomicBool::new(false),
             drained_notify: tokio::sync::Notify::new(),
             capacity_available: tokio::sync::Notify::new(),
+            next_catch_up_ticket: AtomicU64::new(0),
+            serving_catch_up_ticket: AtomicU64::new(0),
+            catch_up_turn_available: tokio::sync::Notify::new(),
         }
     }
 
@@ -334,6 +342,7 @@ impl ObserverHandoff {
         {
             self.mark_drained();
         }
+        self.capacity_available.notify_waiters();
     }
 
     pub(crate) fn poison(&self, reason: &str) {
@@ -369,6 +378,7 @@ impl ObserverHandoff {
             );
             self.mark_drained();
         }
+        self.capacity_available.notify_waiters();
     }
 
     #[cfg(any(test, feature = "test-hooks"))]
@@ -439,8 +449,44 @@ impl ObserverHandoff {
             high_watermark: self.queue_high_watermark,
             high_water_warning_count: self.high_water_warning_count.load(Ordering::Relaxed),
             cap_breach_count: self.cap_breach_count.load(Ordering::Relaxed),
+            catch_up_enqueue_failure_count: self
+                .catch_up_enqueue_failure_count
+                .load(Ordering::Relaxed),
             poisoned: self.poisoned.load(Ordering::Acquire),
         }
+    }
+
+    pub(crate) fn reserve_catch_up_ticket(&self) -> u64 {
+        self.next_catch_up_ticket.fetch_add(1, Ordering::AcqRel)
+    }
+
+    pub(crate) async fn wait_for_catch_up_turn(&self, ticket: u64) {
+        loop {
+            let notified = self.catch_up_turn_available.notified();
+            if self.serving_catch_up_ticket.load(Ordering::Acquire) == ticket {
+                return;
+            }
+            notified.await;
+        }
+    }
+
+    pub(crate) fn complete_catch_up_turn(&self, ticket: u64) {
+        let advanced = self.serving_catch_up_ticket.compare_exchange(
+            ticket,
+            ticket.saturating_add(1),
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
+        debug_assert!(
+            advanced.is_ok(),
+            "observer catch-up turns must complete in order"
+        );
+        self.catch_up_turn_available.notify_waiters();
+    }
+
+    pub(crate) fn record_catch_up_enqueue_failure(&self) {
+        self.catch_up_enqueue_failure_count
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     pub(crate) async fn wait_drained(&self) {
@@ -478,6 +524,7 @@ pub(crate) struct ObserverQueueStats {
     pub(crate) high_watermark: usize,
     pub(crate) high_water_warning_count: u64,
     pub(crate) cap_breach_count: u64,
+    pub(crate) catch_up_enqueue_failure_count: u64,
     pub(crate) poisoned: bool,
 }
 

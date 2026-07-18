@@ -696,7 +696,24 @@ impl Engine {
             .iter()
             .map(TenantEventRecord::as_commit_entry)
             .collect::<Vec<_>>();
-        self.enqueue_provider_catch_up_commit_observers(runtime, &applied)
-            .await
+        let Some(completion) = self.enqueue_provider_catch_up_commit_observers(runtime, &applied)
+        else {
+            return Ok(());
+        };
+        completion.await.map_err(|_| {
+            nimbus_core::Error::Internal(
+                "provider catch-up observer task dropped its completion".to_string(),
+            )
+        })?
+    }
+
+    #[cfg(test)]
+    pub(crate) fn poison_committed_mutation_observers_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<()> {
+        self.with_runtime_for_testing(tenant_id, |runtime| {
+            runtime.poison_committed_mutation_observers("injected provider catch-up poison");
+        })
     }
 }

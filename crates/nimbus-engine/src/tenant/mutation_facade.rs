@@ -85,6 +85,22 @@ impl TenantRuntime {
         self.observer_dispatch.stats().capacity
     }
 
+    pub(crate) fn reserve_committed_mutation_observer_catch_up_ticket(&self) -> u64 {
+        self.observer_dispatch.reserve_catch_up_ticket()
+    }
+
+    pub(crate) async fn wait_for_committed_mutation_observer_catch_up_turn(&self, ticket: u64) {
+        self.observer_dispatch.wait_for_catch_up_turn(ticket).await;
+    }
+
+    pub(crate) fn complete_committed_mutation_observer_catch_up_turn(&self, ticket: u64) {
+        self.observer_dispatch.complete_catch_up_turn(ticket);
+    }
+
+    pub(crate) fn record_committed_mutation_observer_catch_up_enqueue_failure(&self) {
+        self.observer_dispatch.record_catch_up_enqueue_failure();
+    }
+
     pub(crate) fn close_committed_mutation_observers(&self) {
         self.observer_dispatch.close();
     }
@@ -599,6 +615,7 @@ impl TenantRuntime {
         stats.observer_queue_high_watermark = observer.high_watermark;
         stats.observer_queue_high_water_warning_count = observer.high_water_warning_count;
         stats.observer_queue_cap_breach_count = observer.cap_breach_count;
+        stats.observer_catch_up_enqueue_failure_count = observer.catch_up_enqueue_failure_count;
         stats.observer_dispatch_poisoned = observer.poisoned;
         stats
     }

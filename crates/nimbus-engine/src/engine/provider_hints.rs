@@ -220,8 +220,7 @@ impl Engine {
                     commit_identity,
                     emit_trigger_candidates,
                 );
-                self.enqueue_provider_catch_up_commit_observers(runtime, &commits)
-                    .await?;
+                let _ = self.enqueue_provider_catch_up_commit_observers(runtime, &commits);
             }
         }
 

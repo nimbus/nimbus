@@ -316,11 +316,11 @@ impl Engine {
         }
     }
 
-    pub(crate) async fn enqueue_provider_catch_up_commit_observers(
+    pub(crate) fn enqueue_provider_catch_up_commit_observers(
         &self,
         runtime: Arc<TenantRuntime>,
         applied: &[CommitEntry],
-    ) -> nimbus_core::Result<()> {
+    ) -> Option<tokio::sync::oneshot::Receiver<nimbus_core::Result<()>>> {
         let observers = self
             .committed_mutation_observers
             .read()
@@ -329,7 +329,7 @@ impl Engine {
             .cloned()
             .collect::<Vec<_>>();
         if observers.is_empty() {
-            return Ok(());
+            return None;
         }
         let events = applied
             .iter()
@@ -340,19 +340,44 @@ impl Engine {
                 commit,
             })
             .collect::<Vec<_>>();
-        let capacity = runtime.committed_mutation_observer_capacity().max(1);
-        for chunk in events.chunks(capacity) {
-            runtime
-                .enqueue_committed_mutation_observer_catch_up_dispatch(
-                    CommittedMutationObserverDispatch {
-                        observers: observers.clone(),
-                        events: chunk.to_vec(),
-                        completion: None,
-                    },
-                )
-                .await?;
+        if events.is_empty() {
+            return None;
         }
-        Ok(())
+        let capacity = runtime.committed_mutation_observer_capacity().max(1);
+        let chunk_size = (capacity / 2).max(1);
+        let ticket = runtime.reserve_committed_mutation_observer_catch_up_ticket();
+        let (completed, completion) = tokio::sync::oneshot::channel();
+        self.spawn_background("provider_catch_up_observers", async move {
+            runtime
+                .wait_for_committed_mutation_observer_catch_up_turn(ticket)
+                .await;
+            let result = async {
+                for chunk in events.chunks(chunk_size) {
+                    runtime
+                        .enqueue_committed_mutation_observer_catch_up_dispatch(
+                            CommittedMutationObserverDispatch {
+                                observers: observers.clone(),
+                                events: chunk.to_vec(),
+                                completion: None,
+                            },
+                        )
+                        .await?;
+                }
+                Ok(())
+            }
+            .await;
+            runtime.complete_committed_mutation_observer_catch_up_turn(ticket);
+            if let Err(error) = &result {
+                runtime.record_committed_mutation_observer_catch_up_enqueue_failure();
+                tracing::error!(
+                    tenant = %runtime.tenant_id(),
+                    %error,
+                    "provider catch-up observer enqueue failed; other tenants and scheduler work remain active"
+                );
+            }
+            let _ = completed.send(result);
+        });
+        Some(completion)
     }
 
     pub(crate) fn apply_committed_mutation_observer_work_stats(
