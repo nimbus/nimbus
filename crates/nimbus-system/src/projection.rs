@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -21,7 +21,6 @@ const DEFAULT_PROJECTION_AGGREGATE_WORK_HIGH_WATERMARK: usize = 6_144;
 const PROJECTION_TENANT_SWEEP_INTERVAL: usize = 1_024;
 
 struct TableProjectionObserver {
-    engine: Weak<Engine>,
     projection_work: Arc<ProjectionWork>,
 }
 
@@ -32,9 +31,19 @@ struct TableProjectionObserver {
 /// may turn into permanent state: in-flight work drains on its own and the
 /// tenant resumes projecting without replacing its runtime. Blocking either
 /// path can deadlock nested observer writes, while unbounded spawning can
-/// exhaust process memory. Lossless projection catch-up belongs to PPSC5-B
-/// durable-journal replay.
+/// exhaust process memory.
+///
+/// Dropping the event alone would still lose it: an already-accepted projection
+/// may have sampled the source table before the dropped mutation committed, so
+/// draining in-flight work does not incorporate what the drop skipped. Each drop
+/// therefore leaves a coalesced dirty marker for its `(tenant, table)` scope, and
+/// the first guard release that returns capacity re-projects one catch-up per
+/// dirty scope. Markers coalesce, so overload costs one table name per scope
+/// rather than one retained event per drop, and the catch-up re-samples the
+/// source table instead of replaying the dropped commit. Lossless
+/// commit-by-commit projection replay belongs to PPSC5-B durable-journal replay.
 struct ProjectionWork {
+    engine: Weak<Engine>,
     epoch: Arc<str>,
     capacity: usize,
     high_watermark: usize,
@@ -45,6 +54,10 @@ struct ProjectionWork {
     aggregate_high_water_warning_count: AtomicU64,
     aggregate_cap_warning_active: AtomicBool,
     aggregate_cap_breach_count: AtomicU64,
+    /// Tenants holding at least one dirty marker. Read lock-free so an ordinary
+    /// guard release never locks the tenant registry to look for catch-up work.
+    dirty_tenants: AtomicUsize,
+    catch_up_drain_scheduled: AtomicBool,
     next_generation: AtomicU64,
     tenants: Mutex<ProjectionTenantRegistry>,
     #[cfg(test)]
@@ -69,11 +82,89 @@ struct TenantProjectionWork {
     cap_warning_active: AtomicBool,
     cap_breach_count: AtomicU64,
     dropped_event_count: AtomicU64,
+    /// Tables whose committed projection was dropped and still owes a catch-up.
+    /// Repeated drops for one table collapse into a single entry, which is what
+    /// keeps overload bounded where retaining the dropped events would not.
+    dirty_tables: Mutex<BTreeSet<TableName>>,
+    dirty_table_count: AtomicUsize,
+    catch_up_projection_count: AtomicU64,
     idle: tokio::sync::Notify,
     #[cfg(test)]
     flush_waiting: AtomicBool,
     #[cfg(test)]
     flush_waiting_notify: tokio::sync::Notify,
+}
+
+/// Projection work diagnostics.
+///
+/// This is a superset of [`CommittedMutationObserverWorkStats`]: the dirty and
+/// catch-up counters live here because the engine-owned stats struct cannot
+/// carry them without a `nimbus-engine` change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ProjectionWorkStats {
+    depth: usize,
+    capacity: usize,
+    high_watermark: usize,
+    high_water_warning_count: u64,
+    cap_breach_count: u64,
+    dropped_event_count: u64,
+    dirty_projection_scope_count: usize,
+    catch_up_projection_count: u64,
+    poisoned: bool,
+}
+
+impl From<ProjectionWorkStats> for CommittedMutationObserverWorkStats {
+    fn from(stats: ProjectionWorkStats) -> Self {
+        Self {
+            depth: stats.depth,
+            capacity: stats.capacity,
+            high_watermark: stats.high_watermark,
+            high_water_warning_count: stats.high_water_warning_count,
+            cap_breach_count: stats.cap_breach_count,
+            dropped_event_count: stats.dropped_event_count,
+            poisoned: stats.poisoned,
+        }
+    }
+}
+
+impl TenantProjectionWork {
+    /// Records a coalesced catch-up marker for every dropped table.
+    fn mark_tables_dirty(&self, tables: &[TableName], dirty_tenants: &AtomicUsize) {
+        if tables.is_empty() {
+            return;
+        }
+        let mut dirty = self
+            .dirty_tables
+            .lock()
+            .expect("projection dirty-table lock should not be poisoned");
+        let was_clean = dirty.is_empty();
+        for table in tables {
+            dirty.insert(table.clone());
+        }
+        self.dirty_table_count.store(dirty.len(), Ordering::Release);
+        if was_clean {
+            dirty_tenants.fetch_add(1, Ordering::AcqRel);
+        }
+    }
+
+    /// Claims this tenant's dirty scopes for exactly one catch-up projection.
+    fn take_dirty_tables(&self, dirty_tenants: &AtomicUsize) -> Vec<TableName> {
+        let mut dirty = self
+            .dirty_tables
+            .lock()
+            .expect("projection dirty-table lock should not be poisoned");
+        if dirty.is_empty() {
+            return Vec::new();
+        }
+        let tables = std::mem::take(&mut *dirty).into_iter().collect::<Vec<_>>();
+        self.dirty_table_count.store(0, Ordering::Release);
+        dirty_tenants.fetch_sub(1, Ordering::AcqRel);
+        tables
+    }
+
+    fn is_dirty(&self) -> bool {
+        self.dirty_table_count.load(Ordering::Acquire) != 0
+    }
 }
 
 struct ProjectionWorkGuard {
@@ -84,8 +175,9 @@ struct ProjectionWorkGuard {
 }
 
 impl ProjectionWork {
-    fn from_env() -> Self {
+    fn from_env(engine: &Arc<Engine>) -> Self {
         Self::new_with_aggregate(
+            engine,
             env_positive_usize(
                 "NIMBUS_SYSTEM_PROJECTION_WORK_CAPACITY",
                 DEFAULT_PROJECTION_WORK_CAPACITY,
@@ -106,13 +198,14 @@ impl ProjectionWork {
     }
 
     #[cfg(test)]
-    fn new(capacity: usize, high_watermark: usize) -> Self {
+    fn new(engine: &Arc<Engine>, capacity: usize, high_watermark: usize) -> Self {
         let aggregate_capacity = capacity.saturating_mul(8).max(capacity).max(1);
         let aggregate_high_watermark = high_watermark
             .saturating_mul(8)
             .max(high_watermark)
             .min(aggregate_capacity);
         Self::new_with_aggregate(
+            engine,
             capacity,
             high_watermark,
             aggregate_capacity,
@@ -121,6 +214,7 @@ impl ProjectionWork {
     }
 
     fn new_with_aggregate(
+        engine: &Arc<Engine>,
         capacity: usize,
         high_watermark: usize,
         aggregate_capacity: usize,
@@ -129,6 +223,7 @@ impl ProjectionWork {
         let capacity = capacity.max(1);
         let aggregate_capacity = aggregate_capacity.max(1);
         Self {
+            engine: Arc::downgrade(engine),
             epoch: DocumentId::new().to_string().into(),
             capacity,
             high_watermark: high_watermark.max(1).min(capacity),
@@ -139,6 +234,8 @@ impl ProjectionWork {
             aggregate_high_water_warning_count: AtomicU64::new(0),
             aggregate_cap_warning_active: AtomicBool::new(false),
             aggregate_cap_breach_count: AtomicU64::new(0),
+            dirty_tenants: AtomicUsize::new(0),
+            catch_up_drain_scheduled: AtomicBool::new(false),
             next_generation: AtomicU64::new(0),
             tenants: Mutex::new(ProjectionTenantRegistry::default()),
             #[cfg(test)]
@@ -185,6 +282,12 @@ impl ProjectionWork {
             work.cap_warning_active.store(false, Ordering::Release);
             work.cap_breach_count.store(0, Ordering::Relaxed);
             work.dropped_event_count.store(0, Ordering::Relaxed);
+            work.catch_up_projection_count.store(0, Ordering::Relaxed);
+            // Dirty markers survive the reload on purpose. Clearing them would
+            // reintroduce the permanent staleness they exist to close, and a
+            // catch-up re-samples the table under the new generation anyway. A
+            // marker for a runtime that never comes back is swept with its
+            // tenant entry.
             return work.clone();
         }
         let generation = self.next_generation.fetch_add(1, Ordering::AcqRel) + 1;
@@ -198,6 +301,9 @@ impl ProjectionWork {
             cap_warning_active: AtomicBool::new(false),
             cap_breach_count: AtomicU64::new(0),
             dropped_event_count: AtomicU64::new(0),
+            dirty_tables: Mutex::new(BTreeSet::new()),
+            dirty_table_count: AtomicUsize::new(0),
+            catch_up_projection_count: AtomicU64::new(0),
             idle: tokio::sync::Notify::new(),
             #[cfg(test)]
             flush_waiting: AtomicBool::new(false),
@@ -214,19 +320,25 @@ impl ProjectionWork {
             return;
         }
         registry.registrations_since_sweep = 0;
-        Self::sweep_dead_tenants_locked(registry);
+        self.sweep_dead_tenants_locked(registry);
         #[cfg(test)]
         self.sweep_count.fetch_add(1, Ordering::Relaxed);
     }
 
-    fn sweep_dead_tenants_locked(registry: &mut ProjectionTenantRegistry) {
+    fn sweep_dead_tenants_locked(&self, registry: &mut ProjectionTenantRegistry) {
         registry.tenants.retain(|_, work| {
-            work.in_flight.load(Ordering::Acquire) != 0
+            let live = work.in_flight.load(Ordering::Acquire) != 0
                 || work
                     .runtime_identity
                     .lock()
                     .expect("projection runtime-identity lock should not be poisoned")
-                    .is_live()
+                    .is_live();
+            // A dead runtime cannot be projected into, so its markers go with
+            // it; leaving the tenant counter behind would strand the drain.
+            if !live && work.is_dirty() {
+                self.dirty_tenants.fetch_sub(1, Ordering::AcqRel);
+            }
+            live
         });
     }
 
@@ -243,6 +355,7 @@ impl ProjectionWork {
         self: &Arc<Self>,
         tenant_id: &TenantId,
         runtime_identity: TenantRuntimeObserverIdentity,
+        tables: &[TableName],
     ) -> Option<ProjectionWorkGuard> {
         let mut registry = self
             .tenants
@@ -257,6 +370,7 @@ impl ProjectionWork {
         ) {
             Ok(previous) => previous,
             Err(depth) => {
+                tenant_work.mark_tables_dirty(tables, &self.dirty_tenants);
                 let dropped = tenant_work
                     .dropped_event_count
                     .fetch_add(1, Ordering::Relaxed)
@@ -268,10 +382,14 @@ impl ProjectionWork {
                         projection_work_capacity = self.capacity,
                         projection_work_cap_breach_count = breaches,
                         projection_work_dropped_event_count = dropped,
+                        projection_dirty_scope_count =
+                            tenant_work.dirty_table_count.load(Ordering::Acquire),
                         tenant = %tenant_id,
-                        "system table projection per-tenant work cap breached; committed events dropped until this tenant's projection work drains"
+                        "system table projection per-tenant work cap breached; committed events dropped and marked for catch-up until this tenant's projection work drains"
                     );
                 }
+                drop(registry);
+                self.schedule_catch_up_drain();
                 return None;
             }
         };
@@ -282,6 +400,7 @@ impl ProjectionWork {
         ) {
             Ok(previous) => previous,
             Err(depth) => {
+                tenant_work.mark_tables_dirty(tables, &self.dirty_tenants);
                 let rollback_previous = tenant_work.in_flight.fetch_sub(1, Ordering::AcqRel);
                 debug_assert!(
                     rollback_previous != 0,
@@ -303,10 +422,14 @@ impl ProjectionWork {
                     warn!(
                         projection_aggregate_work_depth = depth,
                         projection_aggregate_work_capacity = self.aggregate_capacity,
+                        projection_dirty_tenant_count =
+                            self.dirty_tenants.load(Ordering::Acquire),
                         tenant = %tenant_id,
-                        "system table projection aggregate work cap breached; committed event dropped until aggregate work drains"
+                        "system table projection aggregate work cap breached; committed event dropped and marked for catch-up until aggregate work drains"
                     );
                 }
+                drop(registry);
+                self.schedule_catch_up_drain();
                 return None;
             }
         };
@@ -355,13 +478,166 @@ impl ProjectionWork {
         })
     }
 
+    /// Projects `tables` for `tenant_id` on the current tokio runtime.
+    ///
+    /// Never blocks: a rejected registration leaves a dirty marker behind and
+    /// returns, so the commit path and the observer dispatcher keep moving.
+    fn project_tables(self: &Arc<Self>, tenant_id: TenantId, tables: Vec<TableName>) {
+        let Some(engine) = self.engine.upgrade() else {
+            return;
+        };
+        let runtime_identity = match engine.committed_mutation_observer_runtime_identity(&tenant_id)
+        {
+            Ok(identity) => identity,
+            Err(error) => {
+                warn!(
+                    tenant_id = %tenant_id,
+                    error = %error,
+                    "skipping system table projection because its tenant runtime is unavailable"
+                );
+                return;
+            }
+        };
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            warn!(
+                tenant_id = %tenant_id,
+                "skipping system table projection because no tokio runtime is active"
+            );
+            return;
+        };
+        self.spawn_projection(&engine, &handle, tenant_id, runtime_identity, tables);
+    }
+
+    fn spawn_projection(
+        self: &Arc<Self>,
+        engine: &Arc<Engine>,
+        handle: &tokio::runtime::Handle,
+        tenant_id: TenantId,
+        runtime_identity: TenantRuntimeObserverIdentity,
+        mut tables: Vec<TableName>,
+    ) {
+        tables.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+        // Register before spawning so a dispatcher fence followed immediately
+        // by a test flush cannot overtake a task that has not been polled yet.
+        let Some(projection_work) = self.register(&tenant_id, runtime_identity, &tables) else {
+            return;
+        };
+        let tenant_work = projection_work.tenant_work.clone();
+        let projection_epoch = self.epoch.clone();
+        let projection_generation = projection_work.generation;
+        let engine = engine.clone();
+        handle.spawn(async move {
+            let _projection_work = projection_work;
+            let _projection_guard = tenant_work.projection_lock.lock().await;
+            if projection_generation < tenant_work.generation.load(Ordering::Acquire) {
+                return;
+            }
+            for table in tables {
+                if let Err(error) = record_table_state_for_generation_async(
+                    &engine,
+                    &tenant_id,
+                    &table,
+                    &projection_epoch,
+                    projection_generation,
+                )
+                .await
+                {
+                    warn!(
+                        tenant_id = %tenant_id,
+                        table = %table,
+                        error = %error,
+                        "failed to project committed table state into _nimbus"
+                    );
+                }
+            }
+        });
+    }
+
+    /// Defers one catch-up drain onto the runtime after a drop marked a scope.
+    ///
+    /// The drop that recorded the marker may race a concurrent guard release
+    /// that already looked for catch-up work, so the marking side always gets a
+    /// second look. Only one drain is ever pending, which keeps a sustained
+    /// overload from turning every dropped event into a spawned task.
+    fn schedule_catch_up_drain(self: &Arc<Self>) {
+        if self.catch_up_drain_scheduled.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            self.catch_up_drain_scheduled
+                .store(false, Ordering::Release);
+            return;
+        };
+        let work = self.clone();
+        handle.spawn(async move {
+            work.catch_up_drain_scheduled
+                .store(false, Ordering::Release);
+            work.drain_dirty_projections();
+        });
+    }
+
+    /// Enqueues exactly one catch-up projection per dirty scope that now fits
+    /// under both caps, and clears the markers it claims.
+    ///
+    /// Runs on guard release, so it must not block or await: it takes the
+    /// tenant registry lock only long enough to snapshot the dirty tenants.
+    fn drain_dirty_projections(self: &Arc<Self>) {
+        if self.dirty_tenants.load(Ordering::Acquire) == 0 {
+            return;
+        }
+        let Some(engine) = self.engine.upgrade() else {
+            return;
+        };
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            // Without a runtime there is nothing to spawn onto. Markers stay
+            // put so the next capacity return retries them.
+            return;
+        };
+        let candidates = {
+            let registry = self
+                .tenants
+                .lock()
+                .expect("projection tenant-work lock should not be poisoned");
+            registry
+                .tenants
+                .iter()
+                .filter(|(_, work)| work.is_dirty())
+                .map(|(tenant_id, work)| (tenant_id.clone(), work.clone()))
+                .collect::<Vec<_>>()
+        };
+        for (tenant_id, tenant_work) in candidates {
+            if tenant_work.in_flight.load(Ordering::Acquire) >= self.capacity
+                || self.aggregate_in_flight.load(Ordering::Acquire) >= self.aggregate_capacity
+            {
+                continue;
+            }
+            // Resolve the runtime before claiming the markers so an unavailable
+            // tenant keeps them instead of losing its catch-up.
+            let Ok(runtime_identity) =
+                engine.committed_mutation_observer_runtime_identity(&tenant_id)
+            else {
+                continue;
+            };
+            let tables = tenant_work.take_dirty_tables(&self.dirty_tenants);
+            if tables.is_empty() {
+                continue;
+            }
+            tenant_work
+                .catch_up_projection_count
+                .fetch_add(1, Ordering::Relaxed);
+            self.spawn_projection(&engine, &handle, tenant_id, runtime_identity, tables);
+        }
+    }
+
     async fn wait_for_idle(&self, tenant_id: &TenantId) {
         let Some(tenant_work) = self.existing_tenant_work(tenant_id) else {
             return;
         };
         loop {
             let notified = tenant_work.idle.notified();
-            if tenant_work.in_flight.load(Ordering::Acquire) == 0 {
+            // A tenant that still owes a catch-up is not idle: its dropped
+            // events have not reached `_nimbus` yet.
+            if tenant_work.in_flight.load(Ordering::Acquire) == 0 && !tenant_work.is_dirty() {
                 return;
             }
             #[cfg(test)]
@@ -373,9 +649,9 @@ impl ProjectionWork {
         }
     }
 
-    fn stats(&self, tenant_id: &TenantId) -> CommittedMutationObserverWorkStats {
+    fn stats(&self, tenant_id: &TenantId) -> ProjectionWorkStats {
         let tenant_work = self.existing_tenant_work(tenant_id);
-        CommittedMutationObserverWorkStats {
+        ProjectionWorkStats {
             depth: tenant_work
                 .as_ref()
                 .map_or(0, |work| work.in_flight.load(Ordering::Acquire)),
@@ -390,6 +666,12 @@ impl ProjectionWork {
             dropped_event_count: tenant_work
                 .as_ref()
                 .map_or(0, |work| work.dropped_event_count.load(Ordering::Relaxed)),
+            dirty_projection_scope_count: tenant_work
+                .as_ref()
+                .map_or(0, |work| work.dirty_table_count.load(Ordering::Acquire)),
+            catch_up_projection_count: tenant_work.as_ref().map_or(0, |work| {
+                work.catch_up_projection_count.load(Ordering::Relaxed)
+            }),
             // Projection overload is recoverable backpressure, so this observer
             // never reports poison; a fatal dispatcher poison is the engine's.
             poisoned: false,
@@ -430,7 +712,7 @@ impl ProjectionWork {
             .tenants
             .lock()
             .expect("projection tenant-work lock should not be poisoned");
-        Self::sweep_dead_tenants_locked(&mut registry);
+        self.sweep_dead_tenants_locked(&mut registry);
         registry.tenants.len()
     }
 
@@ -448,9 +730,6 @@ impl Drop for ProjectionWorkGuard {
             "tenant projection work count cannot underflow for {}",
             self.tenant_id
         );
-        if tenant_previous == 1 {
-            self.tenant_work.idle.notify_waiters();
-        }
         if tenant_previous.saturating_sub(1) < self.work.high_watermark {
             self.tenant_work
                 .high_water_warning_active
@@ -476,6 +755,13 @@ impl Drop for ProjectionWorkGuard {
                 .aggregate_cap_warning_active
                 .store(false, Ordering::Release);
         }
+        // Capacity has returned, so spend it on the scopes an overload dropped.
+        // This runs before waking idle waiters: a tenant that still owes a
+        // catch-up must not look drained to the observer flush seam.
+        self.work.drain_dirty_projections();
+        if tenant_previous == 1 {
+            self.tenant_work.idle.notify_waiters();
+        }
     }
 }
 
@@ -496,7 +782,7 @@ impl CommittedMutationObserver for TableProjectionObserver {
     }
 
     fn spawned_work_stats(&self, tenant_id: &TenantId) -> CommittedMutationObserverWorkStats {
-        self.projection_work.stats(tenant_id)
+        self.projection_work.stats(tenant_id).into()
     }
 
     fn flush_spawned_work_for_testing(
@@ -518,71 +804,14 @@ impl TableSchemaChangeObserver for TableProjectionObserver {
 }
 
 impl TableProjectionObserver {
-    fn project_tables(&self, tenant_id: TenantId, mut tables: Vec<TableName>) {
-        let Some(engine) = self.engine.upgrade() else {
-            return;
-        };
-        let runtime_identity = match engine.committed_mutation_observer_runtime_identity(&tenant_id)
-        {
-            Ok(identity) => identity,
-            Err(error) => {
-                warn!(
-                    tenant_id = %tenant_id,
-                    error = %error,
-                    "skipping system table projection because its tenant runtime is unavailable"
-                );
-                return;
-            }
-        };
-        tables.sort_by(|left, right| left.as_str().cmp(right.as_str()));
-        let Ok(handle) = tokio::runtime::Handle::try_current() else {
-            warn!(
-                tenant_id = %tenant_id,
-                "skipping system table projection because no tokio runtime is active"
-            );
-            return;
-        };
-        // Register before spawning so a dispatcher fence followed immediately
-        // by a test flush cannot overtake a task that has not been polled yet.
-        let Some(projection_work) = self.projection_work.register(&tenant_id, runtime_identity)
-        else {
-            return;
-        };
-        let tenant_work = projection_work.tenant_work.clone();
-        let projection_epoch = self.projection_work.epoch.clone();
-        let projection_generation = projection_work.generation;
-        handle.spawn(async move {
-            let _projection_work = projection_work;
-            let _projection_guard = tenant_work.projection_lock.lock().await;
-            if projection_generation < tenant_work.generation.load(Ordering::Acquire) {
-                return;
-            }
-            for table in tables {
-                if let Err(error) = record_table_state_for_generation_async(
-                    &engine,
-                    &tenant_id,
-                    &table,
-                    &projection_epoch,
-                    projection_generation,
-                )
-                .await
-                {
-                    warn!(
-                        tenant_id = %tenant_id,
-                        table = %table,
-                        error = %error,
-                        "failed to project committed table state into _nimbus"
-                    );
-                }
-            }
-        });
+    fn project_tables(&self, tenant_id: TenantId, tables: Vec<TableName>) {
+        self.projection_work.project_tables(tenant_id, tables);
     }
 }
 
 pub fn install_table_projection_observer(engine: &Arc<Engine>) {
     let observer = Arc::new(TableProjectionObserver {
-        engine: Arc::downgrade(engine),
-        projection_work: Arc::new(ProjectionWork::from_env()),
+        projection_work: Arc::new(ProjectionWork::from_env(engine)),
     });
     engine.install_committed_mutation_observer(TABLE_PROJECTION_OBSERVER, observer.clone());
     engine.install_table_schema_change_observer(TABLE_PROJECTION_OBSERVER, observer);
@@ -610,10 +839,9 @@ mod tests {
         capacity: usize,
         high_watermark: usize,
     ) -> (Arc<TableProjectionObserver>, Arc<ProjectionWork>) {
-        let projection_work = Arc::new(ProjectionWork::new(capacity, high_watermark));
+        let projection_work = Arc::new(ProjectionWork::new(engine, capacity, high_watermark));
         (
             Arc::new(TableProjectionObserver {
-                engine: Arc::downgrade(engine),
                 projection_work: projection_work.clone(),
             }),
             projection_work,
@@ -638,7 +866,7 @@ mod tests {
         tenant_id: &TenantId,
         table: &TableName,
     ) -> Option<u64> {
-        let rows = engine
+        let rows = match engine
             .list_documents_async(
                 crate::system_tenant_id().expect("system tenant id should build"),
                 crate::schema::SystemTable::Tables
@@ -646,7 +874,13 @@ mod tests {
                     .expect("system tables name should build"),
             )
             .await
-            .expect("projected table records should list");
+        {
+            Ok(rows) => rows,
+            // The system tenant is seeded by the first projection, so its
+            // absence means nothing has been projected yet.
+            Err(nimbus_core::Error::TenantNotFound(_)) => return None,
+            Err(error) => panic!("projected table records should list: {error}"),
+        };
         rows.into_iter()
             .find(|row| {
                 row.fields.get("tenantId") == Some(&json!(tenant_id.as_str()))
@@ -895,6 +1129,182 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn dropped_projection_events_catch_up_once_per_table_after_capacity_returns() {
+        let fixture = EngineFixture::new(|path| Engine::new(path));
+        let engine = fixture.engine();
+        let tenant_id = fixture.create_tenant("projection-catch-up", Engine::create_tenant);
+        let tasks = TableName::new("tasks").expect("table name should build");
+        let filler = TableName::new("filler").expect("table name should build");
+        let (observer, projection_work) = test_observer(&engine, 2, 1);
+        engine.install_committed_mutation_observer("projection-catch-up-test", observer);
+
+        engine
+            .insert_document_async(
+                tenant_id.clone(),
+                tasks.clone(),
+                serde_json::Map::from_iter([("index".to_string(), json!(0))]),
+            )
+            .await
+            .expect("seed row should commit");
+        engine
+            .flush_committed_mutation_observers_for_testing(&tenant_id)
+            .await
+            .expect("seed projection should drain");
+        assert_eq!(
+            projected_table_row_count(&engine, &tenant_id, &tasks).await,
+            Some(1),
+            "the seed projection must land before the cap is saturated"
+        );
+
+        // Saturate the cap with work that never projects `tasks`, so no
+        // in-flight task can incorporate what the drops below skip.
+        let saturating = (0..2)
+            .map(|_| {
+                projection_work
+                    .register(
+                        &tenant_id,
+                        engine
+                            .committed_mutation_observer_runtime_identity(&tenant_id)
+                            .expect("tenant runtime identity should load"),
+                        std::slice::from_ref(&filler),
+                    )
+                    .expect("saturating work should register up to the cap")
+            })
+            .collect::<Vec<_>>();
+
+        for index in 1..6 {
+            engine
+                .insert_document_async(
+                    tenant_id.clone(),
+                    tasks.clone(),
+                    serde_json::Map::from_iter([("index".to_string(), json!(index))]),
+                )
+                .await
+                .expect("projection saturation must not block durable mutation responses");
+        }
+        let dropped = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let stats = projection_work.stats(&tenant_id);
+                if stats.dropped_event_count == 5 {
+                    break stats;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("every commit past the cap should drop");
+        assert_eq!(
+            dropped.dirty_projection_scope_count, 1,
+            "five drops on one table must coalesce into a single catch-up scope"
+        );
+        assert_eq!(dropped.catch_up_projection_count, 0);
+        assert_eq!(
+            projected_table_row_count(&engine, &tenant_id, &tasks).await,
+            Some(1),
+            "the dropped commits must not be projected while the cap is breached"
+        );
+
+        drop(saturating);
+        engine
+            .flush_committed_mutation_observers_for_testing(&tenant_id)
+            .await
+            .expect("the catch-up projection should drain");
+
+        assert_eq!(
+            projected_table_row_count(&engine, &tenant_id, &tasks).await,
+            Some(6),
+            "a dropped projection event must be caught up without a further mutation"
+        );
+        let recovered = projection_work.stats(&tenant_id);
+        assert_eq!(recovered.depth, 0);
+        assert_eq!(
+            recovered.dirty_projection_scope_count, 0,
+            "a completed catch-up must clear its dirty marker"
+        );
+        assert_eq!(
+            recovered.catch_up_projection_count, 1,
+            "coalesced drops must cost exactly one catch-up projection"
+        );
+        assert_eq!(
+            recovered.dropped_event_count, 5,
+            "catching up must not erase the drops that already happened"
+        );
+        assert!(!recovered.poisoned);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn aggregate_cap_drop_catches_up_the_victim_tenant_after_capacity_returns() {
+        let fixture = EngineFixture::new(|path| Engine::new(path));
+        let engine = fixture.engine();
+        let hog = fixture.create_tenant("projection-aggregate-catch-up-hog", Engine::create_tenant);
+        let victim = fixture.create_tenant(
+            "projection-aggregate-catch-up-victim",
+            Engine::create_tenant,
+        );
+        let tasks = TableName::new("tasks").expect("table name should build");
+        let filler = TableName::new("filler").expect("table name should build");
+        let projection_work = Arc::new(ProjectionWork::new_with_aggregate(&engine, 4, 3, 2, 1));
+        let observer = Arc::new(TableProjectionObserver {
+            projection_work: projection_work.clone(),
+        });
+
+        engine
+            .insert_document_async(
+                victim.clone(),
+                tasks.clone(),
+                serde_json::Map::from_iter([("index".to_string(), json!(0))]),
+            )
+            .await
+            .expect("victim source row should commit");
+
+        let saturating = (0..2)
+            .map(|_| {
+                projection_work
+                    .register(
+                        &hog,
+                        engine
+                            .committed_mutation_observer_runtime_identity(&hog)
+                            .expect("hog runtime identity should load"),
+                        std::slice::from_ref(&filler),
+                    )
+                    .expect("the hog should fill the aggregate cap")
+            })
+            .collect::<Vec<_>>();
+
+        observer.project_tables(victim.clone(), vec![tasks.clone()]);
+        let dropped = projection_work.stats(&victim);
+        assert_eq!(
+            dropped.dropped_event_count, 1,
+            "the aggregate cap must reject the victim while the hog holds it"
+        );
+        assert_eq!(dropped.dirty_projection_scope_count, 1);
+        assert_eq!(
+            projected_table_row_count(&engine, &victim, &tasks).await,
+            None,
+            "the aggregate-cap victim must not be projected while the cap is breached"
+        );
+
+        drop(saturating);
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            projection_work.wait_for_idle(&victim),
+        )
+        .await
+        .expect("the victim catch-up should drain");
+
+        assert_eq!(
+            projected_table_row_count(&engine, &victim, &tasks).await,
+            Some(1),
+            "an aggregate-cap drop must be caught up from another tenant's drain"
+        );
+        let recovered = projection_work.stats(&victim);
+        assert_eq!(recovered.dirty_projection_scope_count, 0);
+        assert_eq!(recovered.catch_up_projection_count, 1);
+        assert_eq!(recovered.dropped_event_count, 1);
+        assert!(!recovered.poisoned);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn tenant_scoped_diagnostics_ignore_other_tenant_projection_work() {
         let fixture = EngineFixture::new(|path| Engine::new(path));
         let engine = fixture.engine();
@@ -908,6 +1318,7 @@ mod tests {
                 engine
                     .committed_mutation_observer_runtime_identity(&tenant_b)
                     .expect("tenant B runtime identity should load"),
+                &[TableName::new("tasks").expect("table name should build")],
             )
             .expect("tenant B background work should register");
 
@@ -968,7 +1379,8 @@ mod tests {
         let fixture = EngineFixture::new(|path| Engine::new(path));
         let engine = fixture.engine();
         let tenant_id = fixture.create_tenant("projection-hot-path", Engine::create_tenant);
-        let projection_work = Arc::new(ProjectionWork::new(64, 48));
+        let projection_work = Arc::new(ProjectionWork::new(&engine, 64, 48));
+        let tasks = TableName::new("tasks").expect("table name should build");
 
         for _ in 0..64 {
             let guard = projection_work
@@ -977,6 +1389,7 @@ mod tests {
                     engine
                         .committed_mutation_observer_runtime_identity(&tenant_id)
                         .expect("tenant runtime identity should load"),
+                    std::slice::from_ref(&tasks),
                 )
                 .expect("hot-path projection should register below its cap");
             drop(guard);
@@ -997,7 +1410,8 @@ mod tests {
         let tenant_b = fixture.create_tenant("projection-aggregate-b", Engine::create_tenant);
         let tenant_c = fixture.create_tenant("projection-aggregate-c", Engine::create_tenant);
         let tenant_d = fixture.create_tenant("projection-aggregate-d", Engine::create_tenant);
-        let projection_work = Arc::new(ProjectionWork::new_with_aggregate(4, 3, 2, 1));
+        let projection_work = Arc::new(ProjectionWork::new_with_aggregate(&engine, 4, 3, 2, 1));
+        let tasks = TableName::new("tasks").expect("table name should build");
 
         let register = |tenant_id: &TenantId| {
             projection_work.register(
@@ -1005,6 +1419,7 @@ mod tests {
                 engine
                     .committed_mutation_observer_runtime_identity(tenant_id)
                     .expect("tenant runtime identity should load"),
+                std::slice::from_ref(&tasks),
             )
         };
         let guard_a = register(&tenant_a).expect("tenant A should fit below both caps");
