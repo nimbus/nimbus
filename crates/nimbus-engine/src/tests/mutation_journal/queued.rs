@@ -3181,7 +3181,10 @@ async fn provider_catch_up_chunks_observers_to_capacity_in_sequence_order() {
     }
     let records = engine
         .read_durable_journal(&tenant_id, SequenceNumber(0))
-        .expect("provider-tail fixture journal should read");
+        .expect("provider-tail fixture journal should read")
+        .into_iter()
+        .filter(|record| !record.writes.is_empty())
+        .collect::<Vec<_>>();
     let expected_sequences = records
         .iter()
         .filter(|record| !record.writes.is_empty())
@@ -3237,6 +3240,99 @@ async fn provider_catch_up_chunks_observers_to_capacity_in_sequence_order() {
     assert_eq!(drained.observer_queue_depth, 0);
     assert_eq!(drained.observer_queue_cap_breach_count, 0);
     assert!(!drained.observer_dispatch_poisoned);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn rapid_provider_catch_up_triggers_coalesce_into_one_tail_reader() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = TenantId::new("provider-observer-coalescing").expect("tenant id should build");
+    crate::tenant::configure_observer_limits_for_testing(tenant_id.clone(), 1, 1, 1, 1);
+    assert_eq!(
+        fixture.create_tenant("provider-observer-coalescing", Engine::create_tenant),
+        tenant_id
+    );
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+
+    const RECORDS: usize = 12;
+    for index in 0..RECORDS {
+        engine
+            .insert_document_async(
+                tenant_id.clone(),
+                tasks_table(),
+                serde_json::Map::from_iter([("index".to_string(), json!(index))]),
+            )
+            .await
+            .expect("provider-tail fixture write should commit");
+    }
+    let records = engine
+        .read_durable_journal(&tenant_id, SequenceNumber(0))
+        .expect("provider-tail fixture journal should read")
+        .into_iter()
+        .filter(|record| !record.writes.is_empty())
+        .collect::<Vec<_>>();
+    assert_eq!(records.len(), RECORDS);
+
+    let observer = Arc::new(OrderedBlockingObserver::default());
+    engine.install_committed_mutation_observer("provider-coalescing-test", observer.clone());
+    assert!(
+        engine
+            .trigger_provider_catch_up_observers_for_testing(&tenant_id, &records[..2])
+            .expect("initial catch-up trigger should start"),
+        "the first trigger must own the tenant's sole catch-up task"
+    );
+    expect_blocking_wait_reaches_state("the first coalesced catch-up callback should block", {
+        let observer = observer.clone();
+        move |timeout| observer.wait_for_first(timeout)
+    })
+    .await;
+
+    for record in &records[2..] {
+        assert!(
+            !engine
+                .trigger_provider_catch_up_observers_for_testing(
+                    &tenant_id,
+                    std::slice::from_ref(record),
+                )
+                .expect("later catch-up trigger should coalesce"),
+            "a later frontier must not spawn another parked catch-up task"
+        );
+    }
+    assert_eq!(
+        engine
+            .provider_catch_up_observer_task_count_for_testing(&tenant_id)
+            .expect("catch-up task count should load"),
+        1,
+        "one stalled tenant must retain only one catch-up task regardless of trigger count"
+    );
+
+    observer.release_first();
+    engine
+        .enqueue_provider_catch_up_observers_for_testing(
+            &tenant_id,
+            std::slice::from_ref(records.last().expect("journal should have a tail")),
+        )
+        .await
+        .expect("coalesced catch-up should reach the latest requested frontier");
+    engine
+        .flush_committed_mutation_observers_for_testing(&tenant_id)
+        .await
+        .expect("coalesced observer work should drain");
+    let state = observer.state.lock().expect("observer state should lock");
+    assert_eq!(
+        state.0,
+        records
+            .iter()
+            .map(|record| record.sequence)
+            .collect::<Vec<_>>(),
+        "the sole tail reader must deliver the latest durable frontier exactly once and in order"
+    );
+    assert_eq!(
+        state.2, 1,
+        "coalesced observer callbacks must remain serial"
+    );
 }
 
 #[derive(Default)]

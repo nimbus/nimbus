@@ -4,7 +4,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::pin::Pin;
 use std::sync::{Arc, Weak};
 
-use nimbus_core::{CommitEntry, TableName, TenantId};
+use nimbus_core::{CommitEntry, Error, SequenceNumber, TableName, TenantEventRecord, TenantId};
 use tokio::sync::mpsc;
 #[cfg(any(test, feature = "test-hooks"))]
 use tokio::sync::oneshot;
@@ -331,42 +331,23 @@ impl Engine {
         if observers.is_empty() {
             return None;
         }
-        let events = applied
+        let first_sequence = applied
             .iter()
             .filter(|commit| !commit.writes.is_empty())
-            .cloned()
-            .map(|commit| CommittedMutationEvent {
-                tenant_id: runtime.tenant_id().clone(),
-                commit,
-            })
-            .collect::<Vec<_>>();
-        if events.is_empty() {
+            .map(|commit| commit.sequence)
+            .next()?;
+        let requested_through = applied.last()?.sequence;
+        if !runtime.request_committed_mutation_observer_catch_up(first_sequence, requested_through)
+        {
             return None;
         }
-        let capacity = runtime.committed_mutation_observer_capacity().max(1);
-        let chunk_size = (capacity / 2).max(1);
-        let ticket = runtime.reserve_committed_mutation_observer_catch_up_ticket();
         let (completed, completion) = tokio::sync::oneshot::channel();
         self.spawn_background("provider_catch_up_observers", async move {
-            runtime
-                .wait_for_committed_mutation_observer_catch_up_turn(ticket)
-                .await;
-            let result = async {
-                for chunk in events.chunks(chunk_size) {
-                    runtime
-                        .enqueue_committed_mutation_observer_catch_up_dispatch(
-                            CommittedMutationObserverDispatch {
-                                observers: observers.clone(),
-                                events: chunk.to_vec(),
-                                completion: None,
-                            },
-                        )
-                        .await?;
-                }
-                Ok(())
-            }
-            .await;
-            runtime.complete_committed_mutation_observer_catch_up_turn(ticket);
+            #[cfg(test)]
+            runtime.record_committed_mutation_observer_catch_up_task_started();
+            let result = run_provider_catch_up_observers(runtime.clone(), observers).await;
+            #[cfg(test)]
+            runtime.record_committed_mutation_observer_catch_up_task_finished();
             if let Err(error) = &result {
                 runtime.record_committed_mutation_observer_catch_up_enqueue_failure();
                 tracing::error!(
@@ -472,5 +453,85 @@ impl Engine {
         for observer in observers {
             observer.table_schema_changed(event.clone());
         }
+    }
+}
+
+async fn run_provider_catch_up_observers(
+    runtime: Arc<TenantRuntime>,
+    observers: Vec<Arc<dyn CommittedMutationObserver>>,
+) -> nimbus_core::Result<()> {
+    let capacity = runtime.committed_mutation_observer_capacity().max(1);
+    let chunk_size = (capacity / 2).max(1);
+    let mut delivered_through = None::<SequenceNumber>;
+    loop {
+        let Some((requested_first, requested_through)) =
+            runtime.take_committed_mutation_observer_catch_up_request()
+        else {
+            if runtime.complete_committed_mutation_observer_catch_up() {
+                continue;
+            }
+            return Ok(());
+        };
+        if delivered_through.is_some_and(|delivered| requested_through <= delivered) {
+            continue;
+        }
+        let first_sequence = delivered_through
+            .and_then(|delivered| delivered.0.checked_add(1).map(SequenceNumber))
+            .map_or(requested_first, |next| next.max(requested_first));
+        let records = match runtime
+            .store
+            .read_durable_journal_from_async(&runtime.read_storage, first_sequence)
+            .await
+        {
+            Ok(records) => records,
+            Err(error) => {
+                runtime.abandon_committed_mutation_observer_catch_up(
+                    first_sequence,
+                    requested_through,
+                );
+                return Err(error);
+            }
+        };
+        if records
+            .iter()
+            .take_while(|record| record.sequence <= requested_through)
+            .last()
+            .map(|record| record.sequence)
+            != Some(requested_through)
+        {
+            runtime.abandon_committed_mutation_observer_catch_up(first_sequence, requested_through);
+            return Err(Error::Internal(format!(
+                "provider catch-up journal re-read did not reach requested sequence {requested_through} from {first_sequence}"
+            )));
+        }
+        let events = records
+            .into_iter()
+            .take_while(|record| record.sequence <= requested_through)
+            .map(|record| TenantEventRecord::as_commit_entry(&record))
+            .filter(|commit| !commit.writes.is_empty())
+            .map(|commit| CommittedMutationEvent {
+                tenant_id: runtime.tenant_id().clone(),
+                commit,
+            })
+            .collect::<Vec<_>>();
+        for chunk in events.chunks(chunk_size) {
+            if let Err(error) = runtime
+                .enqueue_committed_mutation_observer_catch_up_dispatch(
+                    CommittedMutationObserverDispatch {
+                        observers: observers.clone(),
+                        events: chunk.to_vec(),
+                        completion: None,
+                    },
+                )
+                .await
+            {
+                runtime.abandon_committed_mutation_observer_catch_up(
+                    first_sequence,
+                    requested_through,
+                );
+                return Err(error);
+            }
+        }
+        delivered_through = Some(requested_through);
     }
 }

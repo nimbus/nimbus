@@ -85,16 +85,52 @@ impl TenantRuntime {
         self.observer_dispatch.stats().capacity
     }
 
-    pub(crate) fn reserve_committed_mutation_observer_catch_up_ticket(&self) -> u64 {
-        self.observer_dispatch.reserve_catch_up_ticket()
+    pub(crate) fn request_committed_mutation_observer_catch_up(
+        &self,
+        first_sequence: SequenceNumber,
+        requested_through: SequenceNumber,
+    ) -> bool {
+        self.observer_dispatch
+            .request_catch_up(first_sequence, requested_through)
     }
 
-    pub(crate) async fn wait_for_committed_mutation_observer_catch_up_turn(&self, ticket: u64) {
-        self.observer_dispatch.wait_for_catch_up_turn(ticket).await;
+    pub(crate) fn take_committed_mutation_observer_catch_up_request(
+        &self,
+    ) -> Option<(SequenceNumber, SequenceNumber)> {
+        self.observer_dispatch.take_catch_up_request()
     }
 
-    pub(crate) fn complete_committed_mutation_observer_catch_up_turn(&self, ticket: u64) {
-        self.observer_dispatch.complete_catch_up_turn(ticket);
+    pub(crate) fn complete_committed_mutation_observer_catch_up(&self) -> bool {
+        self.observer_dispatch.complete_catch_up()
+    }
+
+    pub(crate) fn abandon_committed_mutation_observer_catch_up(
+        &self,
+        first_sequence: SequenceNumber,
+        requested_through: SequenceNumber,
+    ) {
+        self.observer_dispatch
+            .abandon_catch_up(first_sequence, requested_through);
+    }
+
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) async fn wait_for_committed_mutation_observer_catch_up_idle(&self) {
+        self.observer_dispatch.wait_for_catch_up_idle().await;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn record_committed_mutation_observer_catch_up_task_started(&self) {
+        self.observer_dispatch.record_catch_up_task_started();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn record_committed_mutation_observer_catch_up_task_finished(&self) {
+        self.observer_dispatch.record_catch_up_task_finished();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn committed_mutation_observer_catch_up_task_count(&self) -> usize {
+        self.observer_dispatch.catch_up_task_count()
     }
 
     pub(crate) fn record_committed_mutation_observer_catch_up_enqueue_failure(&self) {

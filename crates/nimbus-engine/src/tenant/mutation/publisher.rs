@@ -159,9 +159,12 @@ pub(crate) struct ObserverHandoff {
     drained: AtomicBool,
     drained_notify: tokio::sync::Notify,
     capacity_available: tokio::sync::Notify,
-    next_catch_up_ticket: AtomicU64,
-    serving_catch_up_ticket: AtomicU64,
-    catch_up_turn_available: tokio::sync::Notify,
+    catch_up_pending: AtomicBool,
+    catch_up_next_sequence: AtomicU64,
+    catch_up_requested_through: AtomicU64,
+    catch_up_state_changed: tokio::sync::Notify,
+    #[cfg(test)]
+    catch_up_task_count: AtomicUsize,
 }
 
 struct ObserverSender {
@@ -203,9 +206,12 @@ impl ObserverHandoff {
             drained: AtomicBool::new(false),
             drained_notify: tokio::sync::Notify::new(),
             capacity_available: tokio::sync::Notify::new(),
-            next_catch_up_ticket: AtomicU64::new(0),
-            serving_catch_up_ticket: AtomicU64::new(0),
-            catch_up_turn_available: tokio::sync::Notify::new(),
+            catch_up_pending: AtomicBool::new(false),
+            catch_up_next_sequence: AtomicU64::new(u64::MAX),
+            catch_up_requested_through: AtomicU64::new(0),
+            catch_up_state_changed: tokio::sync::Notify::new(),
+            #[cfg(test)]
+            catch_up_task_count: AtomicUsize::new(0),
         }
     }
 
@@ -456,32 +462,85 @@ impl ObserverHandoff {
         }
     }
 
-    pub(crate) fn reserve_catch_up_ticket(&self) -> u64 {
-        self.next_catch_up_ticket.fetch_add(1, Ordering::AcqRel)
+    pub(crate) fn request_catch_up(
+        &self,
+        first_sequence: SequenceNumber,
+        requested_through: SequenceNumber,
+    ) -> bool {
+        self.catch_up_next_sequence
+            .fetch_min(first_sequence.0, Ordering::AcqRel);
+        self.catch_up_requested_through
+            .fetch_max(requested_through.0, Ordering::AcqRel);
+        self.catch_up_pending
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
     }
 
-    pub(crate) async fn wait_for_catch_up_turn(&self, ticket: u64) {
+    pub(crate) fn take_catch_up_request(&self) -> Option<(SequenceNumber, SequenceNumber)> {
+        let first_sequence = self.catch_up_next_sequence.swap(u64::MAX, Ordering::AcqRel);
+        (first_sequence != u64::MAX).then(|| {
+            (
+                SequenceNumber(first_sequence),
+                SequenceNumber(self.catch_up_requested_through.load(Ordering::Acquire)),
+            )
+        })
+    }
+
+    pub(crate) fn complete_catch_up(&self) -> bool {
+        if self.catch_up_next_sequence.load(Ordering::Acquire) != u64::MAX {
+            return true;
+        }
+        self.catch_up_pending.store(false, Ordering::Release);
+        self.catch_up_state_changed.notify_waiters();
+        if self.catch_up_next_sequence.load(Ordering::Acquire) == u64::MAX {
+            return false;
+        }
+        self.catch_up_pending
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+
+    pub(crate) fn abandon_catch_up(
+        &self,
+        first_sequence: SequenceNumber,
+        requested_through: SequenceNumber,
+    ) {
+        self.catch_up_next_sequence
+            .fetch_min(first_sequence.0, Ordering::AcqRel);
+        self.catch_up_requested_through
+            .fetch_max(requested_through.0, Ordering::AcqRel);
+        self.catch_up_pending.store(false, Ordering::Release);
+        self.catch_up_state_changed.notify_waiters();
+    }
+
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) async fn wait_for_catch_up_idle(&self) {
         loop {
-            let notified = self.catch_up_turn_available.notified();
-            if self.serving_catch_up_ticket.load(Ordering::Acquire) == ticket {
+            let changed = self.catch_up_state_changed.notified();
+            if !self.catch_up_pending.load(Ordering::Acquire) {
                 return;
             }
-            notified.await;
+            changed.await;
         }
     }
 
-    pub(crate) fn complete_catch_up_turn(&self, ticket: u64) {
-        let advanced = self.serving_catch_up_ticket.compare_exchange(
-            ticket,
-            ticket.saturating_add(1),
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        );
+    #[cfg(test)]
+    pub(crate) fn record_catch_up_task_started(&self) {
+        self.catch_up_task_count.fetch_add(1, Ordering::AcqRel);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn record_catch_up_task_finished(&self) {
+        let previous = self.catch_up_task_count.fetch_sub(1, Ordering::AcqRel);
         debug_assert!(
-            advanced.is_ok(),
-            "observer catch-up turns must complete in order"
+            previous != 0,
+            "observer catch-up task count cannot underflow"
         );
-        self.catch_up_turn_available.notify_waiters();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn catch_up_task_count(&self) -> usize {
+        self.catch_up_task_count.load(Ordering::Acquire)
     }
 
     pub(crate) fn record_catch_up_enqueue_failure(&self) {

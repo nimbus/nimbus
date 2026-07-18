@@ -706,8 +706,12 @@ impl Engine {
             .iter()
             .map(TenantEventRecord::as_commit_entry)
             .collect::<Vec<_>>();
-        let Some(completion) = self.enqueue_provider_catch_up_commit_observers(runtime, &applied)
+        let Some(completion) =
+            self.enqueue_provider_catch_up_commit_observers(runtime.clone(), &applied)
         else {
+            runtime
+                .wait_for_committed_mutation_observer_catch_up_idle()
+                .await;
             return Ok(());
         };
         completion.await.map_err(|_| {
@@ -715,6 +719,33 @@ impl Engine {
                 "provider catch-up observer task dropped its completion".to_string(),
             )
         })?
+    }
+
+    #[cfg(test)]
+    pub(crate) fn trigger_provider_catch_up_observers_for_testing(
+        &self,
+        tenant_id: &TenantId,
+        records: &[TenantEventRecord],
+    ) -> Result<bool> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let _operation = runtime.enter_operation(tenant_id)?;
+        let applied = records
+            .iter()
+            .map(TenantEventRecord::as_commit_entry)
+            .collect::<Vec<_>>();
+        Ok(self
+            .enqueue_provider_catch_up_commit_observers(runtime, &applied)
+            .is_some())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn provider_catch_up_observer_task_count_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<usize> {
+        self.with_runtime_for_testing(tenant_id, |runtime| {
+            runtime.committed_mutation_observer_catch_up_task_count()
+        })
     }
 
     #[cfg(test)]
