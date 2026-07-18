@@ -1575,6 +1575,44 @@ struct BlockingDefinitiveAppendFaultInjector {
     released: (Mutex<bool>, Condvar),
 }
 
+#[derive(Default)]
+struct DurableAppendThenRecoveryFaultInjector {
+    armed: AtomicBool,
+    append_failed: AtomicBool,
+    recovery_failed: AtomicBool,
+}
+
+impl DurableAppendThenRecoveryFaultInjector {
+    fn arm(&self) {
+        self.armed.store(true, Ordering::Release);
+    }
+}
+
+impl nimbus_storage::FaultInjector for DurableAppendThenRecoveryFaultInjector {
+    fn check(&self, point: FaultPoint) -> nimbus_core::Result<()> {
+        if !self.armed.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        if point == FaultPoint::JournalFlushBeforeVisibility
+            && !self.append_failed.swap(true, Ordering::AcqRel)
+        {
+            return Err(Error::storage(
+                nimbus_core::StorageErrorKind::Unavailable,
+                "injected append acknowledgement failure after durable visibility",
+            ));
+        }
+        if point == FaultPoint::StorageCommitAfterVisibilityBeforeReturn
+            && !self.recovery_failed.swap(true, Ordering::AcqRel)
+        {
+            return Err(Error::storage(
+                nimbus_core::StorageErrorKind::Unavailable,
+                "injected durable journal recovery failure",
+            ));
+        }
+        Ok(())
+    }
+}
+
 impl BlockingDefinitiveAppendFaultInjector {
     fn new() -> Arc<Self> {
         Self::new_on_visit(1)
@@ -2121,6 +2159,85 @@ async fn serial_assignment_failure_discards_staged_suffix_and_keeps_tenant_live(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn serial_recovery_failure_syncs_observed_durable_head_before_next_assignment() {
+    let data_dir = tempdir().expect("serial recovery fallback tempdir should build");
+    let faults = Arc::new(DurableAppendThenRecoveryFaultInjector::default());
+    let engine = Arc::new(
+        Engine::new_with_simulation_and_memory_persistence(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(46_580))),
+            faults.clone(),
+            Arc::new(nimbus_core::SeededIdSource::new(46_580)),
+        )
+        .expect("serial recovery fallback engine should create"),
+    );
+    let tenant_id = TenantId::new("serial-recovery-fallback").expect("tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("tenant should create");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+    engine
+        .set_committer_pipeline_requested_for_testing(&tenant_id, false)
+        .expect("test should request the serial arm");
+    faults.arm();
+
+    let error = engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("index".to_string(), json!(1))]),
+        )
+        .await
+        .expect_err("the post-durable append acknowledgement should fail cleanly");
+    assert_eq!(
+        error.storage_kind(),
+        Some(nimbus_core::StorageErrorKind::Unavailable),
+        "the intermediate batch must preserve the typed storage failure"
+    );
+    let after_failure = wait_for_mutation_journal_stats(
+        &engine,
+        &tenant_id,
+        "recovery fallback should synchronize the observed durable head",
+        |stats| stats.durable_head == SequenceNumber(1) && stats.applied_head == SequenceNumber(1),
+    )
+    .await;
+    let (assigned_through, pending) = engine
+        .write_log_assignment_for_testing(&tenant_id)
+        .expect("fallback write-log state should load");
+    assert_eq!(after_failure.durable_head, SequenceNumber(1));
+    assert_eq!(after_failure.applied_head, SequenceNumber(1));
+    assert_eq!(assigned_through, SequenceNumber(1));
+    assert!(pending.is_empty());
+
+    engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("index".to_string(), json!(2))]),
+        )
+        .await
+        .expect("the next serial assignment should heal without a write-log assertion");
+    let after_heal = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("healed diagnostics should load");
+    assert_eq!(after_heal.durable_head, SequenceNumber(2));
+    assert_eq!(after_heal.applied_head, SequenceNumber(2));
+    let journal = engine
+        .read_durable_journal(&tenant_id, SequenceNumber(0))
+        .expect("healed durable journal should read");
+    assert_eq!(
+        journal
+            .iter()
+            .map(|record| record.sequence)
+            .collect::<Vec<_>>(),
+        vec![SequenceNumber(1), SequenceNumber(2)]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn assignment_worker_panic_discards_staged_suffix_and_keeps_tenant_live() {
     let data_dir = tempdir().expect("assignment panic tempdir should build");
     let engine = Arc::new(
@@ -2560,6 +2677,129 @@ async fn definitive_recovery_retries_fence_conflict_whose_sequence_was_discarded
         .expect("updated document should query");
     assert_eq!(documents.len(), 1);
     assert_eq!(documents[0].fields.get("value"), Some(&json!(2)));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn serial_discard_rewrites_same_batch_conflict_before_retry() {
+    let data_dir = tempdir().expect("serial deferred conflict tempdir should build");
+    let faults = BlockingDefinitiveAppendFaultInjector::new_on_visit(2);
+    let engine = Arc::new(
+        Engine::new_with_simulation_and_memory_persistence(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(46_790))),
+            faults.clone(),
+            Arc::new(nimbus_core::SeededIdSource::new(46_790)),
+        )
+        .expect("serial deferred conflict engine should create"),
+    );
+    let tenant_id = TenantId::new("serial-deferred-conflict").expect("tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("tenant should create");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+    engine
+        .set_committer_pipeline_requested_for_testing(&tenant_id, false)
+        .expect("test should request the serial arm");
+    let document_id = engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("value".to_string(), json!("seed"))]),
+        )
+        .await
+        .expect("seed write should consume the healthy first append");
+
+    let pause = engine
+        .mutation_journal_pause_handle_for_testing(&tenant_id)
+        .expect("journal pause handle should load");
+    pause.arm();
+    let first = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        let document_id = document_id.clone();
+        async move {
+            engine
+                .update_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    document_id,
+                    serde_json::Map::from_iter([("first".to_string(), json!(1))]),
+                )
+                .await
+        }
+    });
+    expect_blocking_wait_reaches_state("first serial update should reach the paused drainer", {
+        let pause = pause.clone();
+        move |timeout| pause.wait_until_entered(timeout)
+    })
+    .await;
+
+    // Force the second prepared write through the ordinary CallerWait branch
+    // so its dependency resolves against M1's staged B+1 image. Production
+    // callers without an inline plan use this exact branch.
+    engine.strip_next_inline_reprepare_for_testing(&tenant_id);
+    let mut second = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        let document_id = document_id.clone();
+        async move {
+            engine
+                .update_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    document_id,
+                    serde_json::Map::from_iter([("second".to_string(), json!(2))]),
+                )
+                .await
+        }
+    });
+    wait_for_mutation_admission_stats(
+        &engine,
+        &tenant_id,
+        "second same-document prepare should join M1's serial batch",
+        |stats| stats.queue_depth == 1,
+    )
+    .await;
+    pause.release();
+    expect_blocking_wait_reaches_state(
+        "the same-document batch should block before append failure",
+        {
+            let faults = faults.clone();
+            move |timeout| faults.wait_until_blocked(timeout)
+        },
+    )
+    .await;
+    assert_future_stays_pending(
+        &mut second,
+        "deferred CallerWait must not complete before the append outcome is known",
+    )
+    .await;
+
+    faults.release_failure();
+    let first_error = expect_catch_up_future_within(first, "M1 should receive the append failure")
+        .await
+        .expect("first update task should join")
+        .expect_err("M1 should fail with the definitive append error");
+    assert!(
+        matches!(first_error, Error::InvalidInput(ref message) if message == "injected definitive publisher failure")
+    );
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        expect_catch_up_future_within(second, "rewritten M2 conflict should retry"),
+    )
+    .await
+    .expect("discarded B+1 must not strand M2")
+    .expect("second update task should join")
+    .expect("M2 should retry from a fresh snapshot and commit");
+
+    let document = engine
+        .get_document(&tenant_id, &tasks_table(), document_id)
+        .expect("retried document should remain readable");
+    assert_eq!(document.fields.get("first"), None);
+    assert_eq!(document.fields.get("second"), Some(&json!(2)));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

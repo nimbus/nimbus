@@ -50,9 +50,37 @@ struct QueuedMutationBatchResult {
     responses: Vec<PendingPublisherResponse>,
 }
 
+struct FailedSerialQueuedMutationBatch {
+    error: Error,
+    deferred: Vec<DeferredPublisherResponse>,
+}
+
+impl FailedSerialQueuedMutationBatch {
+    fn without_deferred(error: Error) -> Self {
+        Self {
+            error,
+            deferred: Vec::new(),
+        }
+    }
+}
+
 struct AssignedPublisherWork {
     batch: Option<AssignedPublisherBatch>,
     deferred: Vec<DeferredPublisherResponse>,
+}
+
+#[cfg(test)]
+static STRIP_NEXT_INLINE_REPREPARE_FOR_TESTING: std::sync::OnceLock<
+    std::sync::Mutex<HashSet<TenantId>>,
+> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+fn take_strip_next_inline_reprepare_for_testing(tenant_id: &TenantId) -> bool {
+    STRIP_NEXT_INLINE_REPREPARE_FOR_TESTING
+        .get_or_init(|| std::sync::Mutex::new(HashSet::new()))
+        .lock()
+        .expect("inline re-prepare test-hook lock should not be poisoned")
+        .remove(tenant_id)
 }
 
 impl Engine {
@@ -215,16 +243,23 @@ impl Engine {
                 }
                 self.enqueue_applied_commit_batch_observers(runtime, &batch_result.applied);
             }
-            Ok(Err(error)) => {
+            Ok(Err(mut failure)) => {
                 runtime.record_mutation_worker_failure();
-                warn!(error = %error, "mutation journal batch failed");
-                recover_failed_serial_batch(
+                warn!(error = %failure.error, "mutation journal batch failed");
+                let discarded_first_sequence = recover_failed_serial_batch(
                     runtime.clone(),
                     assignment_baseline,
                     "serial mutation batch failed",
                 )
                 .await;
-                fail_mutation_responses(&assignment_responses, &error);
+                for response in failure.deferred.drain(..) {
+                    if let Some(first_sequence) = discarded_first_sequence {
+                        response.complete_after_recovery(first_sequence, &failure.error);
+                    } else {
+                        response.complete();
+                    }
+                }
+                fail_mutation_responses(&assignment_responses, &failure.error);
             }
             Err(join_error) => {
                 let error = Error::Internal(format!(
@@ -232,7 +267,7 @@ impl Engine {
                 ));
                 runtime.record_mutation_worker_failure();
                 warn!(error = %error, "committer queued batch panicked");
-                recover_failed_serial_batch(
+                let _ = recover_failed_serial_batch(
                     runtime.clone(),
                     assignment_baseline,
                     "serial mutation batch panicked",
@@ -312,6 +347,12 @@ impl Engine {
                     Error::Internal(format!("mutation prepare task failed: {error}"))
                 })??
             };
+            #[cfg(test)]
+            let mut prepared = prepared;
+            #[cfg(test)]
+            if take_strip_next_inline_reprepare_for_testing(tenant_id) {
+                prepared.prepared_commit.inline_reprepare = None;
+            }
             runtime
                 .commit_phase_metrics()
                 .record_prepare_pool(Duration::from_nanos(prepared.prepare_nanos));
@@ -584,7 +625,7 @@ async fn recover_failed_serial_batch(
     runtime: Arc<TenantRuntime>,
     assignment_baseline: SequenceNumber,
     context: &'static str,
-) {
+) -> Option<SequenceNumber> {
     match runtime
         .read_storage
         .execute(|store| store.recover_durable_journal())
@@ -595,26 +636,53 @@ async fn recover_failed_serial_batch(
             // discard its staged suffix when recovery proves storage never
             // advanced; otherwise retain the full images so recovered durable
             // records can publish through the live write log.
-            if progress.durable_head == assignment_baseline {
+            let discarded_first_sequence = if progress.durable_head == assignment_baseline {
                 discard_failed_assignment_suffix(runtime.as_ref(), assignment_baseline);
-            }
+                assignment_baseline.0.checked_add(1).map(SequenceNumber)
+            } else {
+                None
+            };
             // Already on the tenant's committer task: sending a
             // JournalProgressSync message here would wait on our own inbox.
             runtime.publish_mutation_journal_progress_in_actor(progress);
+            discarded_first_sequence
         }
         Err(error) => {
-            if runtime
-                .store
-                .journal_progress()
-                .is_ok_and(|progress| progress.durable_head == assignment_baseline)
-            {
-                discard_failed_assignment_suffix(runtime.as_ref(), assignment_baseline);
-            }
+            let discarded_first_sequence = match runtime.store.journal_progress() {
+                Ok(progress) => {
+                    let first_unpersisted = progress
+                        .durable_head
+                        .0
+                        .checked_add(1)
+                        .map(SequenceNumber)
+                        .filter(|first| *first <= runtime.assigned_head());
+                    if let Some(first) = first_unpersisted {
+                        runtime.discard_unpersisted_write_log_suffix(first);
+                    }
+                    // The fallback progress is authoritative for both heads.
+                    // Publish any retained full images it proves applied, and
+                    // always rebase assignment to its durable head. Otherwise
+                    // the next serial batch stages from the stale baseline and
+                    // trips the contiguous write-log invariant.
+                    runtime.publish_mutation_journal_progress_in_actor(progress);
+                    first_unpersisted
+                }
+                Err(progress_error) => {
+                    discard_failed_assignment_suffix(runtime.as_ref(), assignment_baseline);
+                    warn!(
+                        tenant = %runtime.tenant_id(),
+                        error = %progress_error,
+                        "{context}; journal progress fallback failed; discarded the uncertain serial suffix"
+                    );
+                    assignment_baseline.0.checked_add(1).map(SequenceNumber)
+                }
+            };
             warn!(
                 tenant = %runtime.tenant_id(),
                 error = %error,
                 "{context}; durable journal recovery failed"
             );
+            discarded_first_sequence
         }
     }
 }
@@ -624,7 +692,7 @@ fn process_serial_queued_mutation_batch(
     batch: Vec<QueuedMutationRequest>,
     engine: Arc<Engine>,
     commit_faults: &CommitFaultClient,
-) -> Result<QueuedMutationBatchResult> {
+) -> std::result::Result<QueuedMutationBatchResult, FailedSerialQueuedMutationBatch> {
     let previous_sequence = runtime.durable_head();
     let assignment_responses = batch
         .iter()
@@ -644,13 +712,13 @@ fn process_serial_queued_mutation_batch(
             // outer error path then refreshes durable progress from storage.
             discard_failed_assignment_suffix(runtime.as_ref(), previous_sequence);
             fail_mutation_responses(&assignment_responses, &error);
-            return Err(error);
+            return Err(FailedSerialQueuedMutationBatch::without_deferred(error));
         }
     };
-    for response in std::mem::take(&mut work.deferred) {
-        response.complete();
-    }
     let Some(mut assigned) = work.batch else {
+        for response in std::mem::take(&mut work.deferred) {
+            response.complete();
+        }
         return Ok(QueuedMutationBatchResult {
             applied: Vec::new(),
             responses: Vec::new(),
@@ -674,7 +742,10 @@ fn process_serial_queued_mutation_batch(
         for active_request in active.drain(..) {
             let _ = active_request.response.send(Err(error.clone()));
         }
-        return Err(error);
+        return Err(FailedSerialQueuedMutationBatch {
+            error,
+            deferred: work.deferred,
+        });
     }
     let write_log_guard = runtime.arm_write_log_append();
     if let Err(error) = runtime.store.append_durable_records_batch(&records) {
@@ -692,13 +763,19 @@ fn process_serial_queued_mutation_batch(
         {
             runtime.discard_unpersisted_write_log_suffix(first);
         }
-        return Err(mapped_error);
+        return Err(FailedSerialQueuedMutationBatch {
+            error: mapped_error,
+            deferred: work.deferred,
+        });
     }
 
     if let Some(last_record) = records.last() {
         runtime.mark_durable_head(last_record.sequence);
     }
     write_log_guard.disarm();
+    for response in std::mem::take(&mut work.deferred) {
+        response.complete();
+    }
     phases.durable_append = durable_append_started.elapsed();
 
     let mut applied = Vec::with_capacity(records.len());
@@ -715,15 +792,23 @@ fn process_serial_queued_mutation_batch(
     let apply_started = Instant::now();
     runtime
         .store
-        .check_fault(nimbus_storage::FaultPoint::JournalDurableAppendBeforeApply)?;
+        .check_fault(nimbus_storage::FaultPoint::JournalDurableAppendBeforeApply)
+        .map_err(FailedSerialQueuedMutationBatch::without_deferred)?;
     commit_faults
         .wait(labels::DURABLE_BEFORE_PUBLISH)
-        .into_result()?;
+        .into_result()
+        .map_err(FailedSerialQueuedMutationBatch::without_deferred)?;
 
     let applied_head = match runtime.store.apply_durable_records_batch(&records) {
-        Ok(()) => runtime.store.applied_head_after_durable_apply(&records)?,
+        Ok(()) => runtime
+            .store
+            .applied_head_after_durable_apply(&records)
+            .map_err(FailedSerialQueuedMutationBatch::without_deferred)?,
         Err(_) => {
-            let progress = runtime.store.recover_durable_journal()?;
+            let progress = runtime
+                .store
+                .recover_durable_journal()
+                .map_err(FailedSerialQueuedMutationBatch::without_deferred)?;
             progress.applied_head
         }
     };
@@ -746,6 +831,17 @@ fn process_serial_queued_mutation_batch(
     );
 
     Ok(QueuedMutationBatchResult { applied, responses })
+}
+
+#[cfg(test)]
+impl Engine {
+    pub(crate) fn strip_next_inline_reprepare_for_testing(&self, tenant_id: &TenantId) {
+        STRIP_NEXT_INLINE_REPREPARE_FOR_TESTING
+            .get_or_init(|| std::sync::Mutex::new(HashSet::new()))
+            .lock()
+            .expect("inline re-prepare test-hook lock should not be poisoned")
+            .insert(tenant_id.clone());
+    }
 }
 
 fn normalize_queued_insert_id(id_source: &dyn IdSource, mutation: Mutation) -> Mutation {
@@ -1036,7 +1132,7 @@ fn duration_nanos(duration: Duration) -> u64 {
 
 fn map_durable_journal_append_error(error: &Error) -> Error {
     match error {
-        Error::InvalidInput(message) => Error::InvalidInput(message.clone()),
+        Error::InvalidInput(_) | Error::Storage { .. } => error.clone(),
         _ => Error::Internal(format!("durable journal append failed: {error}")),
     }
 }

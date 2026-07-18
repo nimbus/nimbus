@@ -392,9 +392,10 @@ impl MemoryTenantStore {
             expected = expected.saturating_add(1);
         }
         self.check_fault(FaultPoint::JournalAppendBeforeDurableFlush)?;
-        self.check_fault(FaultPoint::JournalFlushBeforeVisibility)?;
         next.revision = state.revision.saturating_add(1);
         *state = next;
+        drop(state);
+        self.check_fault(FaultPoint::JournalFlushBeforeVisibility)?;
         Ok(())
     }
 
