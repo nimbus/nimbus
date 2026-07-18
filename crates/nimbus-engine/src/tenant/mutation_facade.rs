@@ -157,8 +157,8 @@ impl TenantRuntime {
         self.observer_dispatch.wait_drained().await;
     }
 
-    pub(crate) fn wait_for_committed_mutation_observers_drained_blocking(&self) {
-        self.observer_dispatch.wait_drained_blocking();
+    pub(crate) fn wait_for_committed_mutation_observers_drained_blocking(&self) -> Result<()> {
+        self.observer_dispatch.wait_drained_blocking()
     }
 
     #[cfg(any(test, feature = "test-hooks"))]

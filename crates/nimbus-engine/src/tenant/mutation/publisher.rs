@@ -20,6 +20,7 @@ const DEFAULT_PUBLISHER_QUEUE_CAPACITY: usize = 32;
 const DEFAULT_PUBLISHER_SEND_TIMEOUT_MS: u64 = 500;
 const DEFAULT_OBSERVER_QUEUE_CAPACITY: usize = 4_096;
 const DEFAULT_OBSERVER_QUEUE_HIGH_WATERMARK: usize = 3_072;
+const OBSERVER_DRAIN_BLOCKING_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn publisher_limits_from_env() -> (usize, Duration) {
     (
@@ -584,9 +585,33 @@ impl ObserverHandoff {
         }
     }
 
-    pub(crate) fn wait_drained_blocking(&self) {
-        while !self.drained.load(Ordering::Acquire) {
-            std::thread::park_timeout(Duration::from_millis(1));
+    pub(crate) fn wait_drained_blocking(&self) -> Result<()> {
+        let deadline = Instant::now() + OBSERVER_DRAIN_BLOCKING_TIMEOUT;
+        loop {
+            if self.drained.load(Ordering::Acquire) {
+                return Ok(());
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                let stats = self.stats();
+                tracing::error!(
+                    tenant = %self.tenant_id,
+                    timeout = ?OBSERVER_DRAIN_BLOCKING_TIMEOUT,
+                    observer_queue_depth = stats.depth,
+                    observer_queue_capacity = stats.capacity,
+                    observer_dispatcher_poisoned = stats.poisoned,
+                    "timed out waiting for committed-mutation observer dispatcher to drain during durable-recovery eviction"
+                );
+                return Err(Error::Internal(format!(
+                    "committed-mutation observer dispatcher for tenant {} did not drain within {:?}",
+                    self.tenant_id, OBSERVER_DRAIN_BLOCKING_TIMEOUT
+                )));
+            }
+            std::thread::park_timeout(
+                deadline
+                    .saturating_duration_since(now)
+                    .min(Duration::from_millis(1)),
+            );
         }
     }
 

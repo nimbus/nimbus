@@ -36,6 +36,17 @@ impl Engine {
         mutation: Mutation,
         principal: &PrincipalContext,
     ) -> Result<MutationExecutionResult> {
+        if crate::engine::committed_mutations::on_committed_mutation_observer_dispatcher() {
+            tracing::error!(
+                tenant = %tenant_id,
+                "rejected synchronous mutation from a committed-mutation observer callback"
+            );
+            return Err(Error::InvalidInput(
+                "committed-mutation observer callbacks must spawn asynchronous engine writes; \
+                 synchronous mutation re-entry from an observer callback is rejected"
+                    .to_string(),
+            ));
+        }
         let runtime = self.get_existing_tenant(tenant_id)?;
         let mut initiated_eviction = false;
         let result = with_tenant_runtime_operation(runtime.clone(), tenant_id, |runtime| {
@@ -137,7 +148,7 @@ impl Engine {
             }
         });
         if initiated_eviction {
-            runtime.wait_for_committed_mutation_observers_drained_blocking();
+            runtime.wait_for_committed_mutation_observers_drained_blocking()?;
             runtime.wait_for_operation_drain_for_eviction_blocking();
             finish_durable_recovery_eviction_blocking(self, runtime);
         }

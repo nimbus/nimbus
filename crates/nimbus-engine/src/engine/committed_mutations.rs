@@ -11,6 +11,12 @@ use tokio::sync::oneshot;
 
 use crate::{Engine, tenant::TenantRuntime};
 
+thread_local! {
+    static COMMITTED_MUTATION_OBSERVER_DISPATCH_ACTIVE: std::cell::Cell<bool> = const {
+        std::cell::Cell::new(false)
+    };
+}
+
 #[cfg(test)]
 static PANIC_PROVIDER_CATCH_UP_FOR_TESTING: std::sync::OnceLock<
     std::sync::Mutex<std::collections::HashSet<TenantId>>,
@@ -251,7 +257,25 @@ impl Drop for DispatchCompletion {
 }
 
 fn run_dispatch(dispatch: CommittedMutationObserverDispatch) -> bool {
-    catch_unwind(AssertUnwindSafe(|| dispatch.run())).is_ok()
+    COMMITTED_MUTATION_OBSERVER_DISPATCH_ACTIVE.with(|active| {
+        let previous = active.replace(true);
+        debug_assert!(!previous, "observer dispatch callbacks must not nest");
+        struct Reset<'a> {
+            active: &'a std::cell::Cell<bool>,
+            previous: bool,
+        }
+        impl Drop for Reset<'_> {
+            fn drop(&mut self) {
+                self.active.set(self.previous);
+            }
+        }
+        let _reset = Reset { active, previous };
+        catch_unwind(AssertUnwindSafe(|| dispatch.run())).is_ok()
+    })
+}
+
+pub(crate) fn on_committed_mutation_observer_dispatcher() -> bool {
+    COMMITTED_MUTATION_OBSERVER_DISPATCH_ACTIVE.with(std::cell::Cell::get)
 }
 
 pub(crate) async fn run_committed_mutation_observer_dispatcher(
@@ -319,8 +343,10 @@ impl Engine {
     /// observer wins so repeated router construction does not duplicate
     /// projection work for the same engine instance.
     ///
-    /// Callbacks run serially on a per-tenant dispatcher and may synchronously
-    /// perform nested writes. Publishing therefore never blocks on observer
+    /// Callbacks run serially on a per-tenant dispatcher. They must not call
+    /// the engine's blocking mutation APIs synchronously; those calls return
+    /// [`Error::InvalidInput`] to prevent dispatcher self-deadlock. Spawn
+    /// asynchronous mutation work instead. Publishing never blocks on observer
     /// backlog. Installations must budget callback throughput so the queue
     /// stays below `NIMBUS_COMMITTED_OBSERVER_QUEUE_HIGH_WATERMARK` (3,072
     /// events by default) and its hard

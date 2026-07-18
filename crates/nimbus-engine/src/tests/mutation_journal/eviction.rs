@@ -8,6 +8,93 @@ use super::support::{
 use super::*;
 use std::time::Instant;
 
+struct EvictingNestedWriteObserver {
+    engine: std::sync::Weak<Engine>,
+    faults: Arc<ArmedOneShotDirectFaultInjector>,
+    result: std::sync::mpsc::SyncSender<nimbus_core::Result<()>>,
+}
+
+impl crate::CommittedMutationObserver for EvictingNestedWriteObserver {
+    fn committed_mutation_applied(&self, event: crate::CommittedMutationEvent) {
+        let engine = self
+            .engine
+            .upgrade()
+            .expect("engine should remain live during observer callback");
+        engine.fail_direct_recovery_read_for_testing(event.tenant_id.clone());
+        self.faults.arm();
+        let result = engine
+            .insert_document(
+                &event.tenant_id,
+                tasks_table(),
+                serde_json::Map::from_iter([("index".to_string(), json!(1))]),
+            )
+            .map(|_| ());
+        self.result
+            .send(result)
+            .expect("test should wait for the nested write result");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn observer_sync_nested_write_that_would_evict_is_rejected_without_deadlock() {
+    let data_dir = tempdir().expect("nested eviction contract tempdir should build");
+    let faults =
+        ArmedOneShotDirectFaultInjector::new(FaultPoint::StorageCommitAfterVisibilityBeforeReturn);
+    let engine = Arc::new(
+        Engine::new_with_simulation_and_memory_persistence(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(46_580))),
+            faults.clone(),
+            Arc::new(nimbus_core::SeededIdSource::new(46_581)),
+        )
+        .expect("nested eviction contract engine should create"),
+    );
+    let tenant_id = TenantId::new("observer-nested-write-contract")
+        .expect("nested eviction contract tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("tenant should create");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+    let (result, result_receiver) = std::sync::mpsc::sync_channel(1);
+    engine.install_committed_mutation_observer(
+        "nested-write-contract-test",
+        Arc::new(EvictingNestedWriteObserver {
+            engine: Arc::downgrade(&engine),
+            faults,
+            result,
+        }),
+    );
+
+    engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("index".to_string(), json!(0))]),
+        )
+        .await
+        .expect("seed write should reach the observer dispatcher");
+
+    let nested_error =
+        tokio::task::spawn_blocking(move || result_receiver.recv_timeout(Duration::from_secs(5)))
+            .await
+            .expect("nested write result wait should join")
+            .expect("nested write should be rejected within the bounded timeout")
+            .expect_err("synchronous observer re-entry must be rejected");
+    assert!(
+        matches!(nested_error, Error::InvalidInput(ref message) if message.contains("observer callback")),
+        "unexpected nested-write rejection: {nested_error}"
+    );
+
+    let documents = engine
+        .query_documents_async(tenant_id, query_for("tasks"))
+        .await
+        .expect("rejected nested write should leave the runtime healthy");
+    assert_eq!(documents.len(), 1);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn observer_nested_sync_write_rejected_during_direct_eviction_does_not_self_deadlock() {
     let data_dir = tempdir().expect("nested direct eviction tempdir should build");
@@ -95,13 +182,9 @@ async fn observer_nested_sync_write_rejected_during_direct_eviction_does_not_sel
             .expect("nested write result wait should join")
             .expect("nested observer write should return promptly")
             .expect_err("nested write must be rejected by eviction admission");
-    assert_eq!(
-        nested_error.storage_kind(),
-        Some(nimbus_core::StorageErrorKind::Unavailable)
-    );
-    assert_eq!(
-        nested_error.retryability(),
-        nimbus_core::Retryability::RetryableAfterBackoff
+    assert!(
+        matches!(nested_error, Error::InvalidInput(ref message) if message.contains("observer callback")),
+        "unexpected nested-write rejection: {nested_error}"
     );
 
     let writer_error = expect_catch_up_future_within(writer, "direct eviction should finish")
