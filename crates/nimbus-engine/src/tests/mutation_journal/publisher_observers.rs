@@ -5,7 +5,7 @@ use super::support::{
     expect_future_within,
 };
 use super::*;
-use nimbus_core::ScheduleRequest;
+use nimbus_core::{ScheduleRequest, TenantEventRecord};
 
 #[derive(Default)]
 struct OrderedBlockingObserver {
@@ -1164,4 +1164,172 @@ async fn committed_observers_preserve_order_across_execution_unit_and_direct_han
         .expect("first execution-unit task should join")
         .expect("first execution-unit commit should succeed")
         .expect("first execution-unit insert should commit");
+}
+
+/// Inserts `count` documents and returns the write-bearing journal records the
+/// provider catch-up path would have to replay for them.
+async fn write_provider_catch_up_tail(
+    engine: &Arc<Engine>,
+    tenant_id: &TenantId,
+    count: usize,
+) -> Vec<TenantEventRecord> {
+    for index in 0..count {
+        engine
+            .insert_document_async(
+                tenant_id.clone(),
+                tasks_table(),
+                serde_json::Map::from_iter([("index".to_string(), json!(index))]),
+            )
+            .await
+            .expect("provider catch-up tail fixture write should commit");
+    }
+    let records = engine
+        .read_durable_journal(tenant_id, SequenceNumber(0))
+        .expect("provider catch-up tail journal should read")
+        .into_iter()
+        .filter(|record| !record.writes.is_empty())
+        .collect::<Vec<_>>();
+    assert_eq!(records.len(), count);
+    records
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn provider_catch_up_pages_a_large_tail_instead_of_materialising_it() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = TenantId::new("provider-catch-up-paged-tail").expect("tenant id should build");
+    // capacity 4 with a single-event live reservation yields a catch-up chunk
+    // budget of 2, so a 9-record tail cannot be read in one page.
+    crate::tenant::configure_observer_limits_for_testing(tenant_id.clone(), 4, 1, 1, 1);
+    assert_eq!(
+        fixture.create_tenant("provider-catch-up-paged-tail", Engine::create_tenant),
+        tenant_id
+    );
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+
+    let records = write_provider_catch_up_tail(&engine, &tenant_id, 9).await;
+    let expected_sequences = records
+        .iter()
+        .map(|record| record.sequence)
+        .collect::<Vec<_>>();
+
+    let observer = Arc::new(TenantSelectiveBlockingObserver::default());
+    engine.install_committed_mutation_observer("provider-paged-tail-test", observer.clone());
+    engine
+        .enqueue_provider_catch_up_observers_for_testing(&tenant_id, &records)
+        .await
+        .expect("a paged provider catch-up should deliver its whole tail");
+    engine
+        .flush_committed_mutation_observers_for_testing(&tenant_id)
+        .await
+        .expect("paged provider catch-up work should drain");
+
+    assert_eq!(
+        observer.sequences(&tenant_id),
+        expected_sequences,
+        "every catch-up event must be delivered exactly once, in sequence order"
+    );
+
+    let pages =
+        crate::engine::committed_mutations::provider_catch_up_page_reads_for_testing(&tenant_id);
+    assert!(
+        pages.len() >= 5,
+        "a 9-record tail read two records at a time needs at least 5 pages, saw {pages:?}"
+    );
+    assert!(
+        pages.iter().all(|page| *page <= 2),
+        "no catch-up journal read may exceed the chunk budget that bounds it, saw {pages:?}"
+    );
+    let stats = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("paged catch-up diagnostics should load");
+    assert_eq!(stats.observer_queue_depth, 0);
+    assert_eq!(stats.observer_catch_up_enqueue_failure_count, 0);
+    assert!(!stats.observer_dispatch_poisoned);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn provider_catch_up_page_failure_republishes_the_undelivered_tail() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id =
+        TenantId::new("provider-catch-up-page-failure").expect("tenant id should build");
+    crate::tenant::configure_observer_limits_for_testing(tenant_id.clone(), 4, 1, 1, 1);
+    assert_eq!(
+        fixture.create_tenant("provider-catch-up-page-failure", Engine::create_tenant),
+        tenant_id
+    );
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+
+    let records = write_provider_catch_up_tail(&engine, &tenant_id, 9).await;
+    let expected_sequences = records
+        .iter()
+        .map(|record| record.sequence)
+        .collect::<Vec<_>>();
+
+    let observer = Arc::new(TenantSelectiveBlockingObserver::default());
+    engine.install_committed_mutation_observer("provider-page-failure-test", observer.clone());
+    // Fail deep enough into the tail that whole dispatch chunks have already
+    // been handed off, so the failure lands partway through paging rather than
+    // before any delivery.
+    engine.fail_provider_catch_up_after_pages_for_testing(tenant_id.clone(), 4);
+
+    let error = engine
+        .enqueue_provider_catch_up_observers_for_testing(&tenant_id, &records)
+        .await
+        .expect_err("a failed page read must surface as a catch-up failure");
+    assert!(
+        error
+            .to_string()
+            .contains("injected provider catch-up page"),
+        "the page read failure should propagate verbatim: {error}"
+    );
+    engine
+        .flush_committed_mutation_observers_for_testing(&tenant_id)
+        .await
+        .expect("the pages delivered before the failure should drain");
+    // Delivery must have stopped at a strict prefix of the requested tail.
+    let delivered_before_failure = observer.sequences(&tenant_id);
+    assert!(
+        !delivered_before_failure.is_empty()
+            && delivered_before_failure.len() < expected_sequences.len(),
+        "the failing read must leave a non-empty strict prefix delivered, saw {delivered_before_failure:?} of {expected_sequences:?}"
+    );
+    assert_eq!(
+        delivered_before_failure,
+        expected_sequences[..delivered_before_failure.len()],
+        "the pages delivered before the failure must be the tail's leading events, in order"
+    );
+    let failed = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("failed catch-up diagnostics should load");
+    assert_eq!(failed.observer_catch_up_enqueue_failure_count, 1);
+    assert!(
+        !failed.observer_dispatch_poisoned,
+        "a failed page read must not poison the tenant's dispatcher"
+    );
+
+    // Ownership was abandoned back to the request's original first sequence,
+    // so a successor replays the whole range rather than resuming past the
+    // records the failed attempt never delivered.
+    engine
+        .enqueue_provider_catch_up_observers_for_testing(&tenant_id, &records)
+        .await
+        .expect("a successor catch-up should acquire the republished request");
+    engine
+        .flush_committed_mutation_observers_for_testing(&tenant_id)
+        .await
+        .expect("successor catch-up work should drain");
+
+    let mut expected_total = delivered_before_failure.clone();
+    expected_total.extend(expected_sequences.iter().copied());
+    assert_eq!(
+        observer.sequences(&tenant_id),
+        expected_total,
+        "the successor must redeliver the abandoned request from its original first sequence"
+    );
 }

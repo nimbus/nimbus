@@ -5,6 +5,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Weak};
 
 use nimbus_core::{CommitEntry, Error, SequenceNumber, TableName, TenantEventRecord, TenantId};
+use nimbus_storage::MAX_DURABLE_JOURNAL_STREAM_LIMIT;
 use tokio::sync::mpsc;
 #[cfg(any(test, feature = "test-hooks"))]
 use tokio::sync::oneshot;
@@ -36,6 +37,73 @@ fn panic_provider_catch_up_for_testing(tenant_id: &TenantId) {
 
 #[cfg(not(test))]
 fn panic_provider_catch_up_for_testing(_tenant_id: &TenantId) {}
+
+/// Number of catch-up journal pages a tenant may still read before the next
+/// one fails. One-shot: the injected failure is consumed when it fires, so a
+/// successor task exercises the real recovery path.
+#[cfg(test)]
+static FAIL_PROVIDER_CATCH_UP_PAGE_FOR_TESTING: std::sync::OnceLock<
+    std::sync::Mutex<HashMap<TenantId, usize>>,
+> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+fn fail_provider_catch_up_page_for_testing(tenant_id: &TenantId) -> nimbus_core::Result<()> {
+    let mut injected = FAIL_PROVIDER_CATCH_UP_PAGE_FOR_TESTING
+        .get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+        .lock()
+        .expect("provider catch-up page-failure test-hook lock should not be poisoned");
+    let Some(remaining) = injected.get_mut(tenant_id) else {
+        return Ok(());
+    };
+    if *remaining == 0 {
+        injected.remove(tenant_id);
+        return Err(Error::Internal(
+            "injected provider catch-up page read failure".to_string(),
+        ));
+    }
+    *remaining -= 1;
+    Ok(())
+}
+
+#[cfg(not(test))]
+fn fail_provider_catch_up_page_for_testing(_tenant_id: &TenantId) -> nimbus_core::Result<()> {
+    Ok(())
+}
+
+/// Record counts returned by each journal page a provider catch-up read, so
+/// tests can prove the tail is paged rather than materialised whole.
+#[cfg(test)]
+static PROVIDER_CATCH_UP_PAGE_READS_FOR_TESTING: std::sync::OnceLock<
+    std::sync::Mutex<HashMap<TenantId, Vec<usize>>>,
+> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+fn provider_catch_up_page_reads_lock_for_testing()
+-> std::sync::MutexGuard<'static, HashMap<TenantId, Vec<usize>>> {
+    PROVIDER_CATCH_UP_PAGE_READS_FOR_TESTING
+        .get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+        .lock()
+        .expect("provider catch-up page-read test-hook lock should not be poisoned")
+}
+
+#[cfg(test)]
+fn record_provider_catch_up_page_for_testing(tenant_id: &TenantId, record_count: usize) {
+    provider_catch_up_page_reads_lock_for_testing()
+        .entry(tenant_id.clone())
+        .or_default()
+        .push(record_count);
+}
+
+#[cfg(not(test))]
+fn record_provider_catch_up_page_for_testing(_tenant_id: &TenantId, _record_count: usize) {}
+
+#[cfg(test)]
+pub(crate) fn provider_catch_up_page_reads_for_testing(tenant_id: &TenantId) -> Vec<usize> {
+    provider_catch_up_page_reads_lock_for_testing()
+        .get(tenant_id)
+        .cloned()
+        .unwrap_or_default()
+}
 
 struct CatchUpOwnership {
     runtime: Arc<TenantRuntime>,
@@ -499,6 +567,21 @@ impl Engine {
         }
     }
 
+    /// Lets the next provider catch-up for `tenant_id` read `pages` journal
+    /// pages before its following page read fails once.
+    #[cfg(test)]
+    pub(crate) fn fail_provider_catch_up_after_pages_for_testing(
+        &self,
+        tenant_id: TenantId,
+        pages: usize,
+    ) {
+        FAIL_PROVIDER_CATCH_UP_PAGE_FOR_TESTING
+            .get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+            .lock()
+            .expect("provider catch-up page-failure test-hook lock should not be poisoned")
+            .insert(tenant_id, pages);
+    }
+
     #[cfg(test)]
     pub(crate) fn panic_next_provider_catch_up_for_testing(&self, tenant_id: TenantId) {
         PANIC_PROVIDER_CATCH_UP_FOR_TESTING
@@ -624,54 +707,108 @@ async fn run_provider_catch_up_observers(
         let first_sequence = delivered_through
             .and_then(|delivered| delivered.0.checked_add(1).map(SequenceNumber))
             .map_or(requested_first, |next| next.max(requested_first));
-        let records = match runtime
-            .store
-            .read_durable_journal_from_async(&runtime.read_storage, first_sequence)
-            .await
-        {
-            Ok(records) => records,
-            Err(error) => {
-                ownership.abandon(first_sequence, requested_through);
-                return Err(error);
-            }
-        };
-        if records
-            .iter()
-            .take_while(|record| record.sequence <= requested_through)
-            .last()
-            .map(|record| record.sequence)
-            != Some(requested_through)
+        if let Err(error) = deliver_provider_catch_up_tail(
+            &runtime,
+            &observers,
+            first_sequence,
+            requested_through,
+            chunk_size,
+        )
+        .await
         {
             ownership.abandon(first_sequence, requested_through);
+            return Err(error);
+        }
+        delivered_through = Some(requested_through);
+    }
+}
+
+/// Streams `first_sequence..=requested_through` to the observer queue one
+/// bounded page at a time.
+///
+/// Reading the tail in pages is what keeps catch-up memory proportional to the
+/// dispatch chunk budget instead of the tenant's whole journal history: a
+/// tenant that missed a large tail would otherwise materialise every record of
+/// it before dispatching the first event, defeating the bounded observer queue
+/// this path is built around.
+///
+/// Page boundaries stay invisible to observers. Zero-write records are dropped
+/// after the read, so a page yields fewer events than it read; carrying the
+/// remainder into the next page keeps dispatches the same full `chunk_size`
+/// batches an unpaged read produced, while holding at most one chunk plus one
+/// page in memory.
+async fn deliver_provider_catch_up_tail(
+    runtime: &Arc<TenantRuntime>,
+    observers: &[Arc<dyn CommittedMutationObserver>],
+    first_sequence: SequenceNumber,
+    requested_through: SequenceNumber,
+    chunk_size: usize,
+) -> nimbus_core::Result<()> {
+    let page_limit = chunk_size.min(MAX_DURABLE_JOURNAL_STREAM_LIMIT);
+    let mut cursor = SequenceNumber(first_sequence.0.saturating_sub(1));
+    let mut pending = Vec::<CommittedMutationEvent>::new();
+    loop {
+        fail_provider_catch_up_page_for_testing(runtime.tenant_id())?;
+        let page = runtime
+            .store
+            .stream_durable_journal_async(&runtime.read_storage, cursor, page_limit)
+            .await?;
+        record_provider_catch_up_page_for_testing(runtime.tenant_id(), page.records.len());
+        // The durable head is the cheapest proof that the requested frontier is
+        // reachable at all, so a journal that never got there still fails
+        // before any event is handed to an observer.
+        if page.latest_sequence < requested_through {
             return Err(Error::Internal(format!(
                 "provider catch-up journal re-read did not reach requested sequence {requested_through} from {first_sequence}"
             )));
         }
-        let events = records
+        let page_len = page.records.len();
+        let records = page
+            .records
             .into_iter()
             .take_while(|record| record.sequence <= requested_through)
-            .map(|record| TenantEventRecord::as_commit_entry(&record))
-            .filter(|commit| !commit.writes.is_empty())
-            .map(|commit| CommittedMutationEvent {
-                tenant_id: runtime.tenant_id().clone(),
-                commit,
-            })
             .collect::<Vec<_>>();
-        for chunk in events.chunks(chunk_size) {
-            if let Err(error) = runtime
+        let Some(last_sequence) = records.last().map(|record| record.sequence) else {
+            return Err(Error::Internal(format!(
+                "provider catch-up journal re-read made no progress toward sequence {requested_through} from {cursor}"
+            )));
+        };
+        if records.len() < page_len && last_sequence != requested_through {
+            return Err(Error::Internal(format!(
+                "provider catch-up journal re-read did not reach requested sequence {requested_through} from {first_sequence}"
+            )));
+        }
+        pending.extend(
+            records
+                .into_iter()
+                .map(|record| TenantEventRecord::as_commit_entry(&record))
+                .filter(|commit| !commit.writes.is_empty())
+                .map(|commit| CommittedMutationEvent {
+                    tenant_id: runtime.tenant_id().clone(),
+                    commit,
+                }),
+        );
+        let reached_frontier = last_sequence >= requested_through;
+        let mut dispatched = 0;
+        while pending.len() - dispatched >= chunk_size
+            || (reached_frontier && dispatched < pending.len())
+        {
+            let end = pending.len().min(dispatched + chunk_size);
+            runtime
                 .enqueue_committed_mutation_observer_catch_up_dispatch(
                     CommittedMutationObserverDispatch {
-                        observers: observers.clone(),
-                        events: chunk.to_vec(),
+                        observers: observers.to_vec(),
+                        events: pending[dispatched..end].to_vec(),
                         completion: None,
                     },
                 )
-                .await
-            {
-                ownership.abandon(first_sequence, requested_through);
-                return Err(error);
-            }
+                .await?;
+            dispatched = end;
         }
-        delivered_through = Some(requested_through);
+        pending.drain(..dispatched);
+        if reached_frontier {
+            return Ok(());
+        }
+        cursor = last_sequence;
     }
 }

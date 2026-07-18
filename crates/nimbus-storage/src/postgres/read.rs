@@ -277,6 +277,17 @@ impl PostgresTenantStore {
         })
     }
 
+    pub async fn stream_durable_journal_async(
+        &self,
+        after: SequenceNumber,
+        limit: usize,
+    ) -> Result<DurableJournalPage> {
+        validate_durable_journal_stream_limit(limit)?;
+
+        let client = self.provider.client().await?;
+        stream_durable_journal_from_session(&client, &self.schema_name, after, limit).await
+    }
+
     pub fn export_durable_journal_bootstrap(&self) -> Result<DurableJournalBootstrap> {
         let snapshot = self
             .read_snapshot()?
