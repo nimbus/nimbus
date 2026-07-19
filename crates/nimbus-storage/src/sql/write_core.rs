@@ -50,6 +50,10 @@ pub(crate) trait SqlWriteBackend {
 
     // Durable-journal application.
     fn applied_sequence(&mut self) -> Result<SequenceNumber>;
+    fn load_durable_record(
+        &mut self,
+        sequence: SequenceNumber,
+    ) -> Result<Option<TenantEventRecord>>;
     fn apply_durable_record(&mut self, record: &TenantEventRecord) -> Result<()>;
     fn write_applied_sequence(&mut self, sequence: SequenceNumber) -> Result<()>;
 
@@ -118,6 +122,8 @@ pub(crate) fn sql_apply_durable_records_batch<B: SqlWriteBackend>(
     for record in records {
         backend.check_cancel()?;
         if record.sequence.0 <= applied_head {
+            let durable = backend.load_durable_record(record.sequence)?;
+            crate::commit_log::ensure_applied_record_matches(record, durable.as_ref())?;
             continue;
         }
         if record.sequence.0 != applied_head.saturating_add(1) {

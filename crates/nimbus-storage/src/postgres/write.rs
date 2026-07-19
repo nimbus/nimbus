@@ -1229,6 +1229,29 @@ impl PostgresWriteTransaction {
         })
     }
 
+    fn load_durable_record(
+        &mut self,
+        sequence: SequenceNumber,
+    ) -> Result<Option<TenantEventRecord>> {
+        let query = format!(
+            "SELECT record_blob FROM {} WHERE sequence = $1",
+            qualified_table(&self.schema_name, "commit_log")
+        );
+        let sequence = i64_from_sequence(sequence)?;
+        let client = self.session()?;
+        self.block_on(async move {
+            client
+                .query_opt(query.as_str(), &[&sequence])
+                .await
+                .map_err(map_postgres_error)?
+                .map(|row| {
+                    let payload: Vec<u8> = row.get(0);
+                    deserialize_tenant_event_record(payload.as_slice())
+                })
+                .transpose()
+        })
+    }
+
     fn append_commit_entry(
         &mut self,
         writes: Vec<WriteOp>,
@@ -1504,6 +1527,13 @@ impl crate::sql::write_core::SqlWriteBackend for PostgresWriteTransaction {
 
     fn applied_sequence(&mut self) -> Result<SequenceNumber> {
         PostgresWriteTransaction::applied_sequence(self)
+    }
+
+    fn load_durable_record(
+        &mut self,
+        sequence: SequenceNumber,
+    ) -> Result<Option<TenantEventRecord>> {
+        PostgresWriteTransaction::load_durable_record(self, sequence)
     }
 
     fn apply_durable_record(&mut self, record: &TenantEventRecord) -> Result<()> {

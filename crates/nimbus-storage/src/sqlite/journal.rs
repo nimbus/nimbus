@@ -260,6 +260,19 @@ impl SqliteTenantStore {
         let mut applied_head = applied_sequence_in_conn(&conn)?.0;
         for record in records {
             if record.sequence.0 <= applied_head {
+                let payload = conn
+                    .query_row(
+                        "SELECT record_blob FROM commit_log WHERE sequence = ?1",
+                        params![record.sequence.0],
+                        |row| row.get::<_, Vec<u8>>(0),
+                    )
+                    .optional()
+                    .map_err(map_sqlite_error)?;
+                let durable = payload
+                    .as_deref()
+                    .map(deserialize_tenant_event_record)
+                    .transpose()?;
+                crate::commit_log::ensure_applied_record_matches(record, durable.as_ref())?;
                 continue;
             }
             if record.sequence.0 != applied_head.saturating_add(1) {

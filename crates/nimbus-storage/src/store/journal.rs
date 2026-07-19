@@ -103,6 +103,8 @@ impl TenantStore {
         let mut applied_head = self.applied_sequence()?.0;
         for record in records {
             if record.sequence.0 <= applied_head {
+                let durable = durable_record_in_write_txn(&write_txn, record.sequence)?;
+                crate::commit_log::ensure_applied_record_matches(record, durable.as_ref())?;
                 continue;
             }
             if record.sequence.0 != applied_head.saturating_add(1) {
@@ -133,6 +135,17 @@ impl TenantStore {
         self.apply_durable_records_batch(&pending)?;
         self.journal_progress()
     }
+}
+
+fn durable_record_in_write_txn(
+    write_txn: &redb::WriteTransaction,
+    sequence: SequenceNumber,
+) -> Result<Option<TenantEventRecord>> {
+    let log = write_txn.open_table(COMMIT_LOG).map_err(map_redb_error)?;
+    let payload = log.get(sequence.0).map_err(map_redb_error)?;
+    payload
+        .map(|payload| crate::commit_log::deserialize_tenant_event_record(payload.value()))
+        .transpose()
 }
 
 pub(super) fn append_commit(

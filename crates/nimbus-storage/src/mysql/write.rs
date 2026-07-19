@@ -1229,6 +1229,25 @@ impl MySqlWriteTransaction {
         })
     }
 
+    fn load_durable_record(
+        &mut self,
+        sequence: SequenceNumber,
+    ) -> Result<Option<TenantEventRecord>> {
+        let query = format!(
+            "SELECT record_blob FROM {} WHERE sequence = ?",
+            qualified_table(&self.database_name, "commit_log")
+        );
+        let runtime_handle = self.provider.runtime_handle.clone();
+        let conn = self.session()?;
+        Self::block_on(&runtime_handle, async move {
+            conn.exec_first::<Vec<u8>, _, _>(query, (sequence.0,))
+                .await
+                .map_err(map_mysql_error)?
+                .map(|payload| deserialize_tenant_event_record(payload.as_slice()))
+                .transpose()
+        })
+    }
+
     fn append_commit_entry(
         &mut self,
         writes: Vec<WriteOp>,
@@ -1479,6 +1498,13 @@ impl crate::sql::write_core::SqlWriteBackend for MySqlWriteTransaction {
 
     fn applied_sequence(&mut self) -> Result<SequenceNumber> {
         MySqlWriteTransaction::applied_sequence(self)
+    }
+
+    fn load_durable_record(
+        &mut self,
+        sequence: SequenceNumber,
+    ) -> Result<Option<TenantEventRecord>> {
+        MySqlWriteTransaction::load_durable_record(self, sequence)
     }
 
     fn apply_durable_record(&mut self, record: &TenantEventRecord) -> Result<()> {
