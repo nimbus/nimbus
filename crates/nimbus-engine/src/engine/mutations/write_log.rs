@@ -646,7 +646,10 @@ impl WriteLog {
             .state
             .lock()
             .expect("write-log lock should not be poisoned");
-        state.coverage_known && head >= state.bootstrap_sequence && head <= state.published_through
+        state.coverage_known
+            && head >= state.bootstrap_sequence
+            && head <= state.covered_through
+            && head <= state.published_through
     }
 
     /// Returns the latest retained published image for a document at the
@@ -664,6 +667,7 @@ impl WriteLog {
             .expect("write-log lock should not be poisoned");
         if !state.coverage_known
             || head < state.bootstrap_sequence
+            || head > state.covered_through
             || head > state.published_through
         {
             return None;
@@ -1077,6 +1081,31 @@ mod tests {
             log.validation_source(SequenceNumber(1), SequenceNumber(2)),
             Ok(ValidationSource::StorageFallback)
         ));
+    }
+
+    #[test]
+    fn current_views_refuse_head_beyond_full_image_coverage() {
+        let log = test_log(WriteLogConfig::for_tests(30, 300, usize::MAX));
+        let staged = commit_for_id(1, "shared", 8);
+        let table = staged.writes[0].table.clone();
+        let id = staged.writes[0].doc_id.clone();
+        log.stage_pending([staged], Timestamp(1_000));
+        log.publish_pending_through(SequenceNumber(1), Timestamp(1_000), SequenceNumber(0));
+
+        log.observe_assigned_through_without_coverage(SequenceNumber(2));
+        let published =
+            log.observe_applied_through(SequenceNumber(2), Timestamp(1_001), SequenceNumber(0));
+        assert_eq!(published, SequenceNumber(2));
+
+        assert_eq!(
+            (
+                log.current_prepare_view_available(published),
+                log.current_document_state(published, &table, &id)
+                    .is_some(),
+            ),
+            (false, false),
+            "current views must not serve images beyond proven full-image coverage"
+        );
     }
 
     #[test]
