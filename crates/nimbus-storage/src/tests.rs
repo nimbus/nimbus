@@ -272,13 +272,10 @@ pub(crate) fn exercise_pending_prefix_blocks_generic_zero_write<S>(
         "pending document must remain physically unapplied"
     );
 
-    store
-        .apply_durable_records_batch(std::slice::from_ref(pending))
-        .expect("pending durable record should still apply after rejection");
     assert_eq!(
         store
-            .journal_progress()
-            .expect("applied journal progress should load"),
+            .recover_durable_journal()
+            .expect("pending durable record should still recover after rejection"),
         crate::JournalProgress {
             durable_head: pending.sequence,
             applied_head: pending.sequence,
