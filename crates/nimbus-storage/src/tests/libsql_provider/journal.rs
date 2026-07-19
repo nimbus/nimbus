@@ -1,4 +1,7 @@
 use super::support::*;
+use crate::tests::{
+    exercise_applied_sequence_corruption_rejection, exercise_applied_sequence_recovery_replay,
+};
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
