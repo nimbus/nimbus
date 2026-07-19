@@ -391,7 +391,8 @@ fn subscription_initial_evaluation_uses_materialized_serving_path_for_full_scan_
         )
         .expect("subscribe should succeed");
 
-    let initial = rx.blocking_recv().expect("initial update should arrive");
+    let initial =
+        expect_subscription_update_within(&mut rx, "the initial subscription update should arrive");
     match initial {
         SubscriptionUpdate::Result {
             subscription_id,
@@ -1111,6 +1112,48 @@ async fn query_documents_async_cancellable_returns_cancelled_while_blocking_work
     )
     .await
     .expect("blocking cancellation check should unwind after release");
+}
+
+#[tokio::test]
+async fn query_cancellation_interrupts_eviction_completion_wait() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("query-eviction-cancel", Engine::create_tenant);
+    engine
+        .park_applied_sequence_waiters_for_testing(&tenant_id, SequenceNumber(1))
+        .expect("test should expose a durable-but-unapplied target");
+    let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
+    let query = engine.query_documents_async_cancellable(
+        tenant_id.clone(),
+        query_for("tasks"),
+        async move {
+            let _ = cancel_rx.await;
+        },
+        || Ok(()),
+    );
+    tokio::pin!(query);
+
+    assert!(
+        matches!(futures::poll!(query.as_mut()), Poll::Pending),
+        "query should park on its durable visibility target"
+    );
+    let evicted_runtime = engine
+        .begin_runtime_eviction_for_testing(&tenant_id)
+        .expect("test runtime should begin eviction");
+    assert!(
+        matches!(futures::poll!(query.as_mut()), Poll::Pending),
+        "failed visibility wait should transition into eviction-completion wait"
+    );
+
+    cancel_tx
+        .send(())
+        .expect("parked query should retain its cancellation receiver");
+    let error = timeout(Duration::from_secs(1), query.as_mut())
+        .await
+        .expect("cancellation should interrupt the eviction-completion wait promptly")
+        .expect_err("query should report cancellation");
+    assert!(matches!(error, Error::Cancelled));
+    evicted_runtime.finish_eviction();
 }
 
 #[tokio::test]

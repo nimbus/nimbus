@@ -1,6 +1,6 @@
 #![cfg(loom)]
 
-use loom::sync::atomic::{AtomicBool, Ordering};
+use loom::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use loom::sync::{Arc, Condvar, Mutex};
 use loom::thread;
 
@@ -856,6 +856,543 @@ fn legacy_clear_then_check_closes_the_184_window() {
         assert!(
             worker_running.load(Ordering::Acquire),
             "clear-before-check guarantees either side owns the wake"
+        );
+    });
+}
+
+#[derive(Debug, Default)]
+struct PublisherQueueState {
+    queue: Vec<u8>,
+    published: Vec<u8>,
+    closed: bool,
+}
+
+#[derive(Debug, Default)]
+struct PublisherQueueHandoff {
+    state: Mutex<PublisherQueueState>,
+    ready: Condvar,
+}
+
+impl PublisherQueueHandoff {
+    fn enqueue(&self, batch: u8) -> bool {
+        let mut state = self.state.lock().expect("publisher handoff lock");
+        if state.closed {
+            return false;
+        }
+        state.queue.push(batch);
+        self.ready.notify_all();
+        true
+    }
+
+    fn drain_until_shutdown(&self) {
+        loop {
+            let mut state = self.state.lock().expect("publisher drain lock");
+            while state.queue.is_empty() && !state.closed {
+                state = self.ready.wait(state).expect("publisher drain wait");
+            }
+            if let Some(batch) = state.queue.first().copied() {
+                state.queue.remove(0);
+                if let Some(previous) = state.published.last() {
+                    assert!(*previous < batch, "publisher batches must drain in order");
+                }
+                state.published.push(batch);
+            } else if state.closed {
+                return;
+            }
+        }
+    }
+
+    fn shutdown(&self) {
+        let mut state = self.state.lock().expect("publisher shutdown lock");
+        state.closed = true;
+        self.ready.notify_all();
+    }
+}
+
+#[test]
+fn actor_to_publisher_enqueue_drain_shutdown_loses_no_accepted_batch() {
+    loom::model(|| {
+        let handoff = Arc::new(PublisherQueueHandoff::default());
+        let first_accepted = Arc::new(AtomicBool::new(false));
+        let second_accepted = Arc::new(AtomicBool::new(false));
+
+        let actor = {
+            let handoff = handoff.clone();
+            let first_accepted = first_accepted.clone();
+            let second_accepted = second_accepted.clone();
+            thread::spawn(move || {
+                first_accepted.store(handoff.enqueue(1), Ordering::Release);
+                second_accepted.store(handoff.enqueue(2), Ordering::Release);
+            })
+        };
+        let publisher = {
+            let handoff = handoff.clone();
+            thread::spawn(move || handoff.drain_until_shutdown())
+        };
+        let shutdown = {
+            let handoff = handoff.clone();
+            thread::spawn(move || handoff.shutdown())
+        };
+
+        actor.join().expect("publisher model actor thread");
+        shutdown.join().expect("publisher model shutdown thread");
+        publisher.join().expect("publisher model drain thread");
+
+        let state = handoff.state.lock().expect("final publisher model lock");
+        assert!(state.queue.is_empty());
+        assert_eq!(
+            state.published.contains(&1),
+            first_accepted.load(Ordering::Acquire),
+            "the first accepted batch must publish exactly once"
+        );
+        assert_eq!(
+            state.published.contains(&2),
+            second_accepted.load(Ordering::Acquire),
+            "the second accepted batch must publish exactly once"
+        );
+        assert!(
+            !second_accepted.load(Ordering::Acquire) || first_accepted.load(Ordering::Acquire),
+            "one actor cannot accept its second batch after rejecting its first"
+        );
+    });
+}
+
+#[derive(Debug, Default)]
+struct ObserverDispatchState {
+    queue: Vec<u64>,
+    observed: Vec<u64>,
+    closed: bool,
+    drained: bool,
+}
+
+#[derive(Debug, Default)]
+struct ObserverDispatchHandoff {
+    state: Mutex<ObserverDispatchState>,
+    ready: Condvar,
+}
+
+impl ObserverDispatchHandoff {
+    fn enqueue(&self, sequence: u64) {
+        let mut state = self.state.lock().expect("observer handoff lock");
+        assert!(
+            !state.closed,
+            "observer work cannot follow the close marker"
+        );
+        state.queue.push(sequence);
+        self.ready.notify_all();
+    }
+
+    fn close(&self) {
+        let mut state = self.state.lock().expect("observer close lock");
+        state.closed = true;
+        self.ready.notify_all();
+    }
+
+    fn dispatch_until_drained(&self) {
+        loop {
+            let mut state = self.state.lock().expect("observer dispatch lock");
+            while state.queue.is_empty() && !state.closed {
+                state = self.ready.wait(state).expect("observer dispatch wait");
+            }
+            if let Some(sequence) = state.queue.first().copied() {
+                state.queue.remove(0);
+                if let Some(previous) = state.observed.last() {
+                    assert!(*previous < sequence, "observers must see commit order");
+                }
+                state.observed.push(sequence);
+                drop(state);
+                thread::yield_now();
+                continue;
+            }
+            state.drained = true;
+            self.ready.notify_all();
+            return;
+        }
+    }
+}
+
+#[test]
+fn ordered_observer_dispatch_drains_every_commit_before_shutdown_returns() {
+    loom::model(|| {
+        let handoff = Arc::new(ObserverDispatchHandoff::default());
+        let publisher = {
+            let handoff = handoff.clone();
+            thread::spawn(move || {
+                handoff.enqueue(1);
+                handoff.enqueue(2);
+                handoff.close();
+            })
+        };
+        let dispatcher = {
+            let handoff = handoff.clone();
+            thread::spawn(move || handoff.dispatch_until_drained())
+        };
+        publisher.join().expect("observer publisher model thread");
+        dispatcher.join().expect("observer dispatcher model thread");
+
+        let state = handoff.state.lock().expect("final observer model lock");
+        assert_eq!(state.observed, vec![1, 2]);
+        assert!(state.drained);
+        assert!(state.closed);
+        assert!(state.queue.is_empty());
+    });
+}
+
+#[derive(Debug, Default)]
+struct TenantAwareReentryState {
+    tenant_b_queued: bool,
+    tenant_b_committing: bool,
+    tenant_b_commits: usize,
+}
+
+#[derive(Debug, Default)]
+struct TenantAwareReentry {
+    state: Mutex<TenantAwareReentryState>,
+    ready: Condvar,
+}
+
+impl TenantAwareReentry {
+    fn write_from_handler(&self, active_tenant: u8, target_tenant: u8) {
+        let mut state = self.state.lock().expect("tenant-aware reentry lock");
+        if active_tenant == target_tenant {
+            assert!(!state.tenant_b_committing);
+            state.tenant_b_commits += 1;
+        } else {
+            assert_eq!(target_tenant, 2, "the model targets tenant B");
+            state.tenant_b_queued = true;
+            self.ready.notify_all();
+        }
+    }
+
+    fn commit_tenant_b_from_its_actor(&self) {
+        let mut state = self.state.lock().expect("tenant B actor lock");
+        while !state.tenant_b_queued {
+            state = self.ready.wait(state).expect("tenant B actor wait");
+        }
+        assert!(!state.tenant_b_committing);
+        state.tenant_b_committing = true;
+        state.tenant_b_queued = false;
+        drop(state);
+        thread::yield_now();
+        let mut state = self.state.lock().expect("tenant B completion lock");
+        assert!(state.tenant_b_committing);
+        state.tenant_b_commits += 1;
+        state.tenant_b_committing = false;
+    }
+}
+
+#[test]
+fn cross_tenant_handler_write_never_bypasses_the_target_tenant_actor() {
+    loom::model(|| {
+        let handoff = Arc::new(TenantAwareReentry::default());
+        let handler = {
+            let handoff = handoff.clone();
+            thread::spawn(move || handoff.write_from_handler(1, 2))
+        };
+        let tenant_b_actor = {
+            let handoff = handoff.clone();
+            thread::spawn(move || handoff.commit_tenant_b_from_its_actor())
+        };
+
+        handler.join().expect("tenant A handler model thread");
+        tenant_b_actor.join().expect("tenant B actor model thread");
+
+        let state = handoff.state.lock().expect("final tenant reentry lock");
+        assert!(!state.tenant_b_queued);
+        assert!(!state.tenant_b_committing);
+        assert_eq!(state.tenant_b_commits, 1);
+    });
+}
+
+#[derive(Debug, Clone, Copy)]
+enum RecoveryQueueMessage {
+    Batch(u64),
+    Fence,
+}
+
+#[derive(Debug)]
+struct AssignmentRecoveryState {
+    durable_head: u64,
+    assigned_through: u64,
+    pending: Vec<u64>,
+    queue: Vec<RecoveryQueueMessage>,
+}
+
+#[test]
+fn definitive_recovery_racing_actor_reassignment_keeps_one_contiguous_suffix() {
+    loom::model(|| {
+        let gate = Arc::new(Mutex::new(AssignmentRecoveryState {
+            durable_head: 4,
+            assigned_through: 8,
+            pending: vec![5, 6, 7, 8],
+            queue: vec![
+                RecoveryQueueMessage::Batch(5),
+                RecoveryQueueMessage::Fence,
+                RecoveryQueueMessage::Batch(7),
+            ],
+        }));
+
+        let recovery = {
+            let gate = gate.clone();
+            thread::spawn(move || {
+                let mut state = gate.lock().expect("assignment recovery gate");
+                let drained = std::mem::take(&mut state.queue);
+                let first_failed = drained
+                    .iter()
+                    .filter_map(|message| match message {
+                        RecoveryQueueMessage::Batch(first) => Some(*first),
+                        RecoveryQueueMessage::Fence => None,
+                    })
+                    .min()
+                    .expect("the failed suffix contains a batch");
+                state.pending.retain(|sequence| *sequence < first_failed);
+                state.assigned_through =
+                    state.pending.last().copied().unwrap_or(state.durable_head);
+            })
+        };
+        let actor = {
+            let gate = gate.clone();
+            thread::spawn(move || {
+                let mut state = gate.lock().expect("actor assignment gate");
+                let sequence = state.assigned_through + 1;
+                state.pending.push(sequence);
+                state.assigned_through = sequence;
+                state.queue.push(RecoveryQueueMessage::Batch(sequence));
+            })
+        };
+
+        recovery.join().expect("recovery model thread");
+        actor.join().expect("actor model thread");
+        let state = gate.lock().expect("final assignment recovery state");
+        assert!(matches!(state.pending.as_slice(), [] | [5]));
+        assert_eq!(
+            state.assigned_through,
+            state.pending.last().copied().unwrap_or(state.durable_head)
+        );
+        assert!(
+            state
+                .pending
+                .windows(2)
+                .all(|window| window[1] == window[0] + 1)
+        );
+        assert!(state.queue.iter().all(|message| {
+            matches!(message, RecoveryQueueMessage::Batch(sequence) if state.pending.contains(sequence))
+        }));
+    });
+}
+
+#[test]
+fn ambiguous_eviction_drops_operation_before_waiting_for_tenant_load_gate() {
+    loom::model(|| {
+        let load_gate = Arc::new(Mutex::new(()));
+        let operations = Arc::new((Mutex::new(1usize), Condvar::new()));
+
+        let deletion = {
+            let load_gate = load_gate.clone();
+            let operations = operations.clone();
+            thread::spawn(move || {
+                let _load_guard = load_gate.lock().expect("delete load gate");
+                let (lock, drained) = &*operations;
+                let mut active = lock.lock().expect("delete operation count");
+                while *active != 0 {
+                    active = drained.wait(active).expect("delete operation drain");
+                }
+            })
+        };
+        let eviction = {
+            let load_gate = load_gate.clone();
+            let operations = operations.clone();
+            thread::spawn(move || {
+                let (lock, drained) = &*operations;
+                {
+                    let mut active = lock.lock().expect("eviction operation count");
+                    *active -= 1;
+                    drained.notify_all();
+                }
+                let _load_guard = load_gate.lock().expect("eviction load gate");
+            })
+        };
+
+        deletion.join().expect("delete model thread");
+        eviction.join().expect("eviction model thread");
+        assert_eq!(*operations.0.lock().expect("final operation count"), 0);
+    });
+}
+
+const NO_CATCH_UP_START: u64 = u64::MAX;
+
+#[derive(Debug)]
+struct CatchUpRequestHandoff {
+    pending: AtomicBool,
+    next_sequence: AtomicU64,
+    requested_through: AtomicU64,
+}
+
+impl CatchUpRequestHandoff {
+    fn new(pending: bool) -> Self {
+        Self {
+            pending: AtomicBool::new(pending),
+            next_sequence: AtomicU64::new(NO_CATCH_UP_START),
+            requested_through: AtomicU64::new(0),
+        }
+    }
+
+    fn request(&self, first_sequence: u64, requested_through: u64) -> bool {
+        self.requested_through
+            .fetch_max(requested_through, Ordering::AcqRel);
+        self.next_sequence
+            .fetch_min(first_sequence, Ordering::AcqRel);
+        self.pending
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+
+    fn take(&self) -> Option<(u64, u64)> {
+        let first_sequence = self.next_sequence.swap(NO_CATCH_UP_START, Ordering::AcqRel);
+        (first_sequence != NO_CATCH_UP_START).then(|| {
+            (
+                first_sequence,
+                self.requested_through.load(Ordering::Acquire),
+            )
+        })
+    }
+
+    fn complete(&self) -> bool {
+        if self.next_sequence.load(Ordering::Acquire) != NO_CATCH_UP_START {
+            return true;
+        }
+        self.pending.store(false, Ordering::Release);
+        if self.next_sequence.load(Ordering::Acquire) == NO_CATCH_UP_START {
+            return false;
+        }
+        self.pending
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+
+    fn abandon(&self, first_sequence: u64, requested_through: u64) {
+        self.requested_through
+            .fetch_max(requested_through, Ordering::AcqRel);
+        self.next_sequence
+            .fetch_min(first_sequence, Ordering::AcqRel);
+        self.pending.store(false, Ordering::Release);
+    }
+}
+
+fn assert_catch_up_request(request: (u64, u64), expected_start: u64, minimum_frontier: u64) {
+    assert_eq!(request.0, expected_start);
+    assert!(
+        request.1 >= minimum_frontier,
+        "a visible catch-up start must not pair with an older frontier"
+    );
+}
+
+#[test]
+fn catch_up_request_publication_never_pairs_stale_frontier() {
+    loom::model(|| {
+        // A take racing the two request publications either sees no start or
+        // sees both the start and its preceding upper frontier.
+        let visible = Arc::new(CatchUpRequestHandoff::new(false));
+        let concurrently_taken = Arc::new(Mutex::new(None));
+        let requester = {
+            let visible = visible.clone();
+            thread::spawn(move || visible.request(2, 4))
+        };
+        let taker = {
+            let visible = visible.clone();
+            let concurrently_taken = concurrently_taken.clone();
+            thread::spawn(move || {
+                if let Some(request) = visible.take() {
+                    assert_catch_up_request(request, 2, 4);
+                    *concurrently_taken.lock().expect("concurrent take lock") = Some(request);
+                }
+            })
+        };
+        requester.join().expect("catch-up requester model thread");
+        taker.join().expect("catch-up taker model thread");
+        let request = concurrently_taken
+            .lock()
+            .expect("final concurrent take lock")
+            .take()
+            .or_else(|| visible.take())
+            .expect("published catch-up request must remain available");
+        assert_catch_up_request(request, 2, 4);
+    });
+
+    loom::model(|| {
+        // Force the owner to take after the frontier write but before the
+        // start write. Completion clears ownership; the requester then sees
+        // that clear, claims ownership, and leaves its range available.
+        let window = Arc::new(CatchUpRequestHandoff::new(true));
+        let stage = Arc::new((Mutex::new(0_u8), Condvar::new()));
+        let requester_owns = Arc::new(AtomicBool::new(false));
+        let owner_continues = Arc::new(AtomicBool::new(false));
+        let requester = {
+            let window = window.clone();
+            let stage = stage.clone();
+            let requester_owns = requester_owns.clone();
+            thread::spawn(move || {
+                window.requested_through.fetch_max(6, Ordering::AcqRel);
+                let (stage_lock, changed) = &*stage;
+                let mut current = stage_lock.lock().expect("window stage lock");
+                *current = 1;
+                changed.notify_all();
+                while *current < 2 {
+                    current = changed.wait(current).expect("window requester wait");
+                }
+                drop(current);
+                window.next_sequence.fetch_min(5, Ordering::AcqRel);
+                requester_owns.store(
+                    window
+                        .pending
+                        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                        .is_ok(),
+                    Ordering::Release,
+                );
+            })
+        };
+        let owner = {
+            let window = window.clone();
+            let stage = stage.clone();
+            let owner_continues = owner_continues.clone();
+            thread::spawn(move || {
+                let (stage_lock, changed) = &*stage;
+                let mut current = stage_lock.lock().expect("window stage lock");
+                while *current < 1 {
+                    current = changed.wait(current).expect("window owner wait");
+                }
+                assert!(window.take().is_none());
+                owner_continues.store(window.complete(), Ordering::Release);
+                *current = 2;
+                changed.notify_all();
+            })
+        };
+        requester.join().expect("window requester model thread");
+        owner.join().expect("window owner model thread");
+
+        assert!(!owner_continues.load(Ordering::Acquire));
+        assert!(requester_owns.load(Ordering::Acquire));
+        assert_catch_up_request(window.take().expect("window request must publish"), 5, 6);
+        assert!(!window.complete());
+    });
+
+    loom::model(|| {
+        // Abandoning an older taken range concurrently with a newer request
+        // re-publishes their minimum start and maximum frontier.
+        let abandoned = Arc::new(CatchUpRequestHandoff::new(true));
+        let newer = {
+            let abandoned = abandoned.clone();
+            thread::spawn(move || abandoned.request(8, 12))
+        };
+        let failed_owner = {
+            let abandoned = abandoned.clone();
+            thread::spawn(move || abandoned.abandon(5, 9))
+        };
+        newer.join().expect("newer request model thread");
+        failed_owner.join().expect("abandon model thread");
+        assert_eq!(
+            abandoned.take().expect("abandoned request must republish"),
+            (5, 12)
         );
     });
 }

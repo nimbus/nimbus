@@ -1,4 +1,4 @@
-use std::sync::Barrier;
+use crate::test_support::BoundedTestBarrier as Barrier;
 
 use super::*;
 

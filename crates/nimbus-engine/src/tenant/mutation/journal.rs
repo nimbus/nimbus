@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use std::future::Future;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex};
 use std::time::Instant;
 
@@ -17,13 +17,15 @@ use std::sync::Arc;
 
 pub(in crate::tenant) struct MutationJournalState {
     queue: Mutex<VecDeque<QueuedMutationRequest>>,
+    queue_depth: AtomicUsize,
     capacity: AtomicUsize,
-    worker_running: AtomicBool,
+    worker_running: AtomicUsize,
     worker_start_count: AtomicU64,
     queue_rejection_count: AtomicU64,
     worker_failure_count: AtomicU64,
+    provider_catch_up_failure_count: AtomicU64,
     pending_response_count: AtomicU64,
-    applied_wait_lock: Mutex<()>,
+    applied_wait_lock: Mutex<Option<Error>>,
     applied_wait: Condvar,
     durable_head: AtomicU64,
     applied_head: AtomicU64,
@@ -40,13 +42,15 @@ impl MutationJournalState {
     pub(in crate::tenant) fn new(progress: JournalProgress) -> Self {
         Self {
             queue: Mutex::new(VecDeque::new()),
+            queue_depth: AtomicUsize::new(0),
             capacity: AtomicUsize::new(DEFAULT_MUTATION_JOURNAL_QUEUE_CAPACITY),
-            worker_running: AtomicBool::new(false),
+            worker_running: AtomicUsize::new(0),
             worker_start_count: AtomicU64::new(0),
             queue_rejection_count: AtomicU64::new(0),
             worker_failure_count: AtomicU64::new(0),
+            provider_catch_up_failure_count: AtomicU64::new(0),
             pending_response_count: AtomicU64::new(0),
-            applied_wait_lock: Mutex::new(()),
+            applied_wait_lock: Mutex::new(None),
             applied_wait: Condvar::new(),
             durable_head: AtomicU64::new(progress.durable_head.0),
             applied_head: AtomicU64::new(progress.applied_head.0),
@@ -78,6 +82,7 @@ impl MutationJournalState {
             )));
         }
         queue.push_back(request);
+        self.queue_depth.fetch_add(1, Ordering::Release);
         Ok(())
     }
 
@@ -90,14 +95,23 @@ impl MutationJournalState {
             .lock()
             .expect("mutation journal queue lock should not be poisoned");
         let batch_size = queue.len().min(max_batch_size.max(1));
-        queue.drain(..batch_size).collect()
+        let batch = queue.drain(..batch_size).collect::<Vec<_>>();
+        self.queue_depth.fetch_sub(batch.len(), Ordering::Release);
+        batch
+    }
+
+    pub(in crate::tenant) fn drain_all(&self) -> VecDeque<QueuedMutationRequest> {
+        let mut queue = self
+            .queue
+            .lock()
+            .expect("mutation journal queue lock should not be poisoned");
+        let drained = std::mem::take(&mut *queue);
+        self.queue_depth.store(0, Ordering::Release);
+        drained
     }
 
     pub(in crate::tenant) fn queue_depth(&self) -> usize {
-        self.queue
-            .lock()
-            .expect("mutation journal queue lock should not be poisoned")
-            .len()
+        self.queue_depth.load(Ordering::Acquire)
     }
 
     #[cfg(any(test, feature = "test-hooks"))]
@@ -112,11 +126,21 @@ impl MutationJournalState {
     }
 
     pub(in crate::tenant) fn set_worker_running(&self, running: bool) {
-        self.worker_running.store(running, Ordering::Release);
+        if running {
+            self.worker_running.fetch_add(1, Ordering::AcqRel);
+        } else {
+            let previous = self.worker_running.fetch_sub(1, Ordering::AcqRel);
+            debug_assert!(previous > 0, "mutation worker activity cannot underflow");
+        }
     }
 
     pub(in crate::tenant) fn record_worker_failure(&self) {
         self.worker_failure_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(in crate::tenant) fn record_provider_catch_up_failure(&self) {
+        self.provider_catch_up_failure_count
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     pub(in crate::tenant) fn begin_pending_response(&self) {
@@ -151,6 +175,25 @@ impl MutationJournalState {
         }
     }
 
+    pub(in crate::tenant) fn fail_applied_waiters(&self, error: Error) {
+        let mut failure = self
+            .applied_wait_lock
+            .lock()
+            .expect("mutation journal applied wait lock should not be poisoned");
+        if failure.is_none() {
+            *failure = Some(error);
+        }
+        self.applied_wait.notify_all();
+        self.applied_notify.notify_waiters();
+    }
+
+    fn applied_wait_failure(&self) -> Option<Error> {
+        self.applied_wait_lock
+            .lock()
+            .expect("mutation journal applied wait lock should not be poisoned")
+            .clone()
+    }
+
     pub(in crate::tenant) async fn wait_for_applied_sequence_cancellable<Fut>(
         &self,
         required: SequenceNumber,
@@ -176,6 +219,10 @@ impl MutationJournalState {
                 self.record_read_wait(started);
                 return Ok(());
             }
+            if let Some(error) = self.applied_wait_failure() {
+                self.record_read_wait(started);
+                return Err(error);
+            }
             tokio::select! {
                 _ = &mut cancel_wait => {
                     self.record_read_wait(started);
@@ -186,9 +233,12 @@ impl MutationJournalState {
         }
     }
 
-    pub(in crate::tenant) fn wait_for_applied_sequence_blocking(&self, required: SequenceNumber) {
+    pub(in crate::tenant) fn wait_for_applied_sequence_blocking(
+        &self,
+        required: SequenceNumber,
+    ) -> Result<()> {
         if self.applied_head().0 >= required.0 {
-            return;
+            return Ok(());
         }
 
         let started = Instant::now();
@@ -197,6 +247,10 @@ impl MutationJournalState {
             .lock()
             .expect("mutation journal applied wait lock should not be poisoned");
         while self.applied_head().0 < required.0 {
+            if let Some(error) = guard.as_ref() {
+                self.record_read_wait(started);
+                return Err(error.clone());
+            }
             guard = self
                 .applied_wait
                 .wait(guard)
@@ -204,6 +258,7 @@ impl MutationJournalState {
         }
         drop(guard);
         self.record_read_wait(started);
+        Ok(())
     }
 
     fn record_read_wait(&self, started: Instant) {
@@ -235,7 +290,7 @@ impl MutationJournalState {
             queue_capacity: self.capacity.load(Ordering::Relaxed),
             oldest_queue_age_nanos,
             pending_response_count: self.pending_response_count.load(Ordering::Relaxed),
-            worker_running: self.worker_running.load(Ordering::Relaxed),
+            worker_running: self.worker_running.load(Ordering::Relaxed) > 0,
             worker_start_count,
             worker_restart_count: worker_start_count.saturating_sub(1),
             queue_rejection_count: self.queue_rejection_count.load(Ordering::Relaxed),
@@ -245,6 +300,32 @@ impl MutationJournalState {
             committer_inbox_depth: 0,
             committer_inbox_capacity: 0,
             committer_send_timeout_count: 0,
+            publisher_queue_depth: 0,
+            publisher_queue_capacity: 0,
+            publisher_send_timeout_count: 0,
+            publisher_transient_error_count: 0,
+            publisher_fatal_error_count: 0,
+            publisher_ambiguous_error_count: 0,
+            publisher_mode: super::CommitterPipelineMode::Serial,
+            publisher_mode_transition_count: 0,
+            publisher_mode_transition_failure_count: 0,
+            observer_queue_depth: 0,
+            observer_queue_capacity: 0,
+            observer_queue_high_watermark: 0,
+            observer_queue_high_water_warning_count: 0,
+            observer_queue_cap_breach_count: 0,
+            observer_catch_up_enqueue_failure_count: 0,
+            provider_catch_up_failure_count: self
+                .provider_catch_up_failure_count
+                .load(Ordering::Relaxed),
+            observer_dispatch_poisoned: false,
+            observer_spawned_work_depth: 0,
+            observer_spawned_work_capacity: 0,
+            observer_spawned_work_high_watermark: 0,
+            observer_spawned_work_high_water_warning_count: 0,
+            observer_spawned_work_cap_breach_count: 0,
+            observer_spawned_work_dropped_event_count: 0,
+            observer_spawned_work_poisoned: false,
         }
     }
 

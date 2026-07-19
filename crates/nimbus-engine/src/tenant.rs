@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwap;
-use nimbus_core::{Result, Schema, TableId, TableName, TenantId, Timestamp};
+use nimbus_core::{Error, Result, Schema, TableId, TableName, TenantId, Timestamp};
 use nimbus_storage::LibsqlReplicaFreshnessStats;
 use serde::Serialize;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -64,20 +64,29 @@ pub(crate) use self::mutation::MutationIsolateAdmissionPermit;
 pub use self::mutation::MutationJournalPauseHandle;
 #[cfg(any(test, feature = "test-hooks"))]
 use self::mutation::MutationJournalPauseState;
+#[cfg(test)]
+pub(crate) use self::mutation::configure_committer_limits_for_testing;
 pub(crate) use self::mutation::{
-    CommitterActor, CommitterMessage, assign_and_validate, run_committer_actor,
-    validate_append_sequences,
+    AssignedPublisherBatch, DeferredPublisherResponse, MutationResponseSender,
+    PendingPublisherResponse, PreparedPayloadAccounting, PublisherErrorCounts, PublisherMessage,
+    PublisherQueueError, QueuedMutationRequest, QueuedMutationResult,
+};
+pub(crate) use self::mutation::{
+    CommitterActor, CommitterJob, CommitterMessage, assign_and_validate, run_committer_actor,
+    run_job, validate_append_sequences,
+};
+pub use self::mutation::{
+    CommitterPipelineMode, MutationAdmissionPhase, MutationAdmissionStats,
+    MutationIsolateAdmissionStats, MutationJournalStats,
 };
 use self::mutation::{
     MutationAdmissionDecision, MutationAdmissionGate, MutationIsolateAdmission,
-    MutationJournalState,
+    MutationJournalState, ObserverHandoff, PublisherHandoff,
 };
-pub use self::mutation::{
-    MutationAdmissionPhase, MutationAdmissionStats, MutationIsolateAdmissionStats,
-    MutationJournalStats,
-};
+#[cfg(test)]
 pub(crate) use self::mutation::{
-    PreparedPayloadAccounting, QueuedMutationRequest, QueuedMutationResult,
+    configure_observer_drain_blocking_timeout_for_testing, configure_observer_limits_for_testing,
+    configure_publisher_limits_for_testing,
 };
 use self::query_planning::QueryPlanningMetrics;
 pub use self::query_planning::QueryPlanningStats;
@@ -126,6 +135,9 @@ pub struct TenantRuntime {
     mutation_isolate_admission: Arc<MutationIsolateAdmission>,
     mutation_journal: Arc<MutationJournalState>,
     committer: Arc<CommitterActor>,
+    publisher: Arc<PublisherHandoff>,
+    observer_dispatch: Arc<ObserverHandoff>,
+    observer_lifetime: Arc<()>,
     write_rate: TenantWriteRateLimiter,
     last_assigned_commit_timestamp: AtomicU64,
     prepared_table_ids: Mutex<HashMap<TableName, TableId>>,
@@ -197,6 +209,13 @@ impl TenantRuntime {
         progress: nimbus_storage::JournalProgress,
         last_commit_timestamp: Timestamp,
     ) -> Self {
+        let publisher_pipeline_capable = store.has_process_local_sequence_authority();
+        let committer = Arc::new(CommitterActor::new(tenant_id.clone()));
+        let publisher = Arc::new(PublisherHandoff::new(
+            publisher_pipeline_capable,
+            &tenant_id,
+        ));
+        let observer_dispatch = Arc::new(ObserverHandoff::new(&tenant_id));
         Self {
             tenant_id,
             store,
@@ -220,7 +239,10 @@ impl TenantRuntime {
             mutation_admission: Arc::new(MutationAdmissionGate::new()),
             mutation_isolate_admission: Arc::new(MutationIsolateAdmission::from_env()),
             mutation_journal: Arc::new(MutationJournalState::new(progress)),
-            committer: Arc::new(CommitterActor::new()),
+            committer,
+            publisher,
+            observer_dispatch,
+            observer_lifetime: Arc::new(()),
             write_rate: TenantWriteRateLimiter::new(),
             last_assigned_commit_timestamp: AtomicU64::new(last_commit_timestamp.0),
             prepared_table_ids: Mutex::new(HashMap::new()),
@@ -330,6 +352,10 @@ impl TenantRuntime {
 
     pub(crate) fn store(&self) -> &TenantPersistence {
         &self.store
+    }
+
+    pub(crate) fn observer_identity(&self) -> crate::engine::TenantRuntimeObserverIdentity {
+        crate::engine::TenantRuntimeObserverIdentity::new(&self.observer_lifetime)
     }
 
     /// Reserves one stable identity while concurrent prepares race to create a
@@ -448,6 +474,47 @@ impl TenantRuntime {
     pub async fn begin_delete_async(&self) -> TenantDeletionGuard {
         self.lifecycle.begin_delete_async().await;
         TenantDeletionGuard
+    }
+
+    pub(crate) fn mark_deleting_for_eviction(&self) {
+        self.lifecycle.begin_eviction();
+        self.mutation_journal.fail_applied_waiters(Error::storage(
+            nimbus_core::StorageErrorKind::Unavailable,
+            format!(
+                "tenant {} runtime was evicted before the required sequence became applied",
+                self.tenant_id
+            ),
+        ));
+    }
+
+    pub(crate) async fn wait_for_operation_drain_for_eviction(&self) {
+        self.lifecycle.wait_for_operations_async().await;
+    }
+
+    pub(crate) fn wait_for_operation_drain_for_eviction_blocking(&self) {
+        self.lifecycle.wait_for_operations_blocking();
+    }
+
+    pub(crate) fn eviction_started(&self) -> bool {
+        self.lifecycle.eviction_started()
+    }
+
+    pub(crate) fn durable_recovery_eviction_error(&self) -> Error {
+        Error::storage(
+            nimbus_core::StorageErrorKind::Unavailable,
+            format!(
+                "tenant {} runtime is restarting after durable recovery",
+                self.tenant_id
+            ),
+        )
+    }
+
+    pub(crate) async fn wait_for_eviction_complete(&self) {
+        self.lifecycle.wait_for_eviction_complete().await;
+    }
+
+    pub(crate) fn finish_eviction(&self) {
+        self.lifecycle.finish_eviction();
     }
 
     pub(crate) fn trigger_registry(&self) -> &TriggerRegistry {

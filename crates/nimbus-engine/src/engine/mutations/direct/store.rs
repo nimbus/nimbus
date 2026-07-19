@@ -1,7 +1,8 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
-use nimbus_core::{CommitEntry, Result};
+use nimbus_core::{CommitEntry, Error, Result};
 
 use crate::{Engine, tenant::TenantRuntime};
 
@@ -10,11 +11,36 @@ use super::super::inline_reprepare::{
 };
 use super::super::phase_metrics::CommitPhaseDurations;
 use super::super::prepared::PreparedCommit;
+use super::super::publisher::begin_durable_recovery_eviction;
+
+#[cfg(test)]
+static DIRECT_RECOVERY_READ_FAILURES_FOR_TESTING: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashSet<nimbus_core::TenantId>>,
+> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+fn take_direct_recovery_read_failure_for_testing(tenant_id: &nimbus_core::TenantId) -> bool {
+    DIRECT_RECOVERY_READ_FAILURES_FOR_TESTING
+        .get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+        .lock()
+        .expect("direct recovery test-hook lock should not be poisoned")
+        .remove(tenant_id)
+}
+
+#[cfg(not(test))]
+fn take_direct_recovery_read_failure_for_testing(_tenant_id: &nimbus_core::TenantId) -> bool {
+    false
+}
 
 #[derive(Clone, Copy)]
 pub(super) struct DirectMutationProfile {
     started_at: Instant,
     phases: CommitPhaseDurations,
+}
+
+pub(super) struct DirectMutationRunOutcome {
+    pub(super) result: Result<Option<CommitEntry>>,
+    pub(super) initiated_eviction: bool,
 }
 
 impl DirectMutationProfile {
@@ -35,11 +61,13 @@ impl Engine {
         runtime: Arc<TenantRuntime>,
         mut prepared_commit: PreparedCommit,
         mut profile: DirectMutationProfile,
-    ) -> Result<Option<CommitEntry>> {
+    ) -> DirectMutationRunOutcome {
         let runtime_for_commit = runtime.clone();
         let runtime_for_fanout = runtime.clone();
+        let initiated_eviction = Arc::new(AtomicBool::new(false));
+        let initiated_eviction_for_commit = initiated_eviction.clone();
         let queued_at = Instant::now();
-        let (commit, profile) = runtime.submit_direct_committer_then(
+        let submitted = runtime.submit_direct_committer_then(
             move || {
                 let runtime = runtime_for_commit;
                 profile.phases.queue_wait = queued_at.elapsed();
@@ -80,14 +108,44 @@ impl Engine {
                 ) {
                     Ok(commit) => commit,
                     Err(error) => {
-                        if runtime
-                            .store
-                            .journal_progress()
-                            .is_ok_and(|progress| progress.durable_head == previous_sequence)
-                        {
-                            runtime.discard_unpersisted_write_log_suffix(sequence);
+                        let progress = if take_direct_recovery_read_failure_for_testing(
+                            runtime.tenant_id(),
+                        ) {
+                            Err(Error::Internal(
+                                "injected direct journal progress read failure".to_string(),
+                            ))
+                        } else {
+                            runtime.store.journal_progress()
+                        };
+                        match progress {
+                            Ok(progress) if progress.durable_head == previous_sequence => {
+                                runtime.discard_unpersisted_write_log_suffix(sequence);
+                                return Err(error);
+                            }
+                            Ok(progress) => {
+                                let recovery_error = Error::Internal(format!(
+                                    "direct append outcome requires crash-and-replay: durable head advanced from {previous_sequence} to {} after {error}",
+                                    progress.durable_head
+                                ));
+                                runtime.publisher_record_ambiguous_error();
+                                begin_durable_recovery_eviction(&runtime, &recovery_error);
+                                runtime.fail_and_drain_mutation_queues(&recovery_error);
+                                runtime.close_committed_mutation_observers();
+                                initiated_eviction_for_commit.store(true, Ordering::Release);
+                                return Err(recovery_error);
+                            }
+                            Err(progress_error) => {
+                                let recovery_error = Error::Internal(format!(
+                                    "direct append outcome is ambiguous; crash-and-replay required: write failed ({error}) and journal progress failed ({progress_error})"
+                                ));
+                                runtime.publisher_record_ambiguous_error();
+                                begin_durable_recovery_eviction(&runtime, &recovery_error);
+                                runtime.fail_and_drain_mutation_queues(&recovery_error);
+                                runtime.close_committed_mutation_observers();
+                                initiated_eviction_for_commit.store(true, Ordering::Release);
+                                return Err(recovery_error);
+                            }
                         }
-                        return Err(error);
                     }
                 };
                 let Some(commit) = commit else {
@@ -110,20 +168,43 @@ impl Engine {
             },
             |(commit, _)| {
                 if let Some(commit) = commit {
-                    self.process_commit_fanout(runtime_for_fanout, commit);
+                    self.process_commit_fanout(runtime_for_fanout.clone(), commit);
+                    self.enqueue_applied_commit_batch_observers(
+                        runtime_for_fanout,
+                        std::slice::from_ref(commit),
+                    );
                 }
             },
-        )?;
-        let Some(commit) = commit else {
-            return Ok(None);
-        };
-        runtime.record_commit_phase_sample(
-            "direct",
-            1,
-            profile.phases,
-            profile.started_at.elapsed(),
         );
-        self.notify_committed_mutation_observers(runtime.as_ref(), &commit);
-        Ok(Some(commit))
+        let (result, profile) = match submitted {
+            Ok(submitted) => submitted,
+            Err(error) => {
+                return DirectMutationRunOutcome {
+                    result: Err(error),
+                    initiated_eviction: initiated_eviction.load(Ordering::Acquire),
+                };
+            }
+        };
+        if result.is_some() {
+            runtime.record_commit_phase_sample(
+                "direct",
+                1,
+                profile.phases,
+                profile.started_at.elapsed(),
+            );
+        }
+        DirectMutationRunOutcome {
+            result: Ok(result),
+            initiated_eviction: initiated_eviction.load(Ordering::Acquire),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_direct_recovery_read_for_testing(&self, tenant_id: nimbus_core::TenantId) {
+        DIRECT_RECOVERY_READ_FAILURES_FOR_TESTING
+            .get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+            .lock()
+            .expect("direct recovery test-hook lock should not be poisoned")
+            .insert(tenant_id);
     }
 }

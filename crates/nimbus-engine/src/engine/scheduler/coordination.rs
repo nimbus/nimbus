@@ -90,8 +90,34 @@ impl Engine {
 
     /// Loads tenants with scheduled work asynchronously across the active provider.
     pub async fn load_tenants_with_scheduled_work_async(self: &Arc<Self>) -> Result<()> {
-        self.load_tenants_with_scheduled_work_from_provider_async(true)
-            .await
+        self.ensure_provider_background_tasks_started();
+        let tenant_ids = self.persistence_provider.list_tenants().await?;
+        let mut loaded_any = false;
+        for tenant_id in tenant_ids {
+            match self
+                .load_tenant_with_scheduled_work_if_present(tenant_id.clone())
+                .await
+            {
+                Ok(loaded) => loaded_any |= loaded,
+                Err(error) => {
+                    if self.background_shutdown_started() {
+                        return Err(error);
+                    }
+                    if let Some(runtime) = self.loaded_runtime_for_scheduler(&tenant_id) {
+                        runtime.record_provider_catch_up_failure();
+                    }
+                    tracing::warn!(
+                        tenant = %tenant_id,
+                        error = %error,
+                        "failed to inspect provider tenant for scheduled work; continuing scheduled-work load"
+                    );
+                }
+            }
+        }
+        if loaded_any {
+            self.wake_scheduler();
+        }
+        Ok(())
     }
 
     /// Preloads scheduled-work tenants during startup, recovers orphaned
@@ -184,7 +210,9 @@ impl Engine {
             .persistence
             .recover_durable_journal_async(&opened.executor)
             .await?;
-        runtime.sync_mutation_journal_progress_async(progress).await;
+        runtime
+            .sync_mutation_journal_progress_async(progress)
+            .await?;
         if !self.provider_background_ready() {
             self.catch_up_loaded_provider_tenant_async(
                 runtime.clone(),

@@ -7,7 +7,10 @@ use std::collections::{HashMap, hash_map::Entry};
 #[cfg(any(test, feature = "test-hooks"))]
 use std::sync::{Arc, Condvar, Mutex};
 #[cfg(any(test, feature = "test-hooks"))]
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+#[cfg(any(test, feature = "test-hooks"))]
+const COMMIT_FAULT_RELEASE_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Label(&'static str);
@@ -23,6 +26,7 @@ pub mod labels {
 
     pub const PREPARE_COMPLETE: Label = Label::new("PREPARE_COMPLETE");
     pub const PRE_ASSIGN: Label = Label::new("PRE_ASSIGN");
+    pub const JOURNAL_ASSIGN_AFTER_STAGE: Label = Label::new("JOURNAL_ASSIGN_AFTER_STAGE");
     pub const POST_VALIDATE_PRE_STAGE: Label = Label::new("POST_VALIDATE_PRE_STAGE");
     pub const PRE_PERSIST: Label = Label::new("PRE_PERSIST");
     pub const DURABLE_BEFORE_PUBLISH: Label = Label::new("DURABLE_BEFORE_PUBLISH");
@@ -109,6 +113,13 @@ enum ArmedFault {
         released: bool,
     },
     Error(Error),
+    ErrorOnNthHit {
+        remaining: usize,
+        error: Error,
+    },
+    PanicOnNthHit {
+        remaining: usize,
+    },
     RetryableConflicts {
         remaining: usize,
         conflicting_sequence: Option<SequenceNumber>,
@@ -160,6 +171,39 @@ impl CommitFaultHandle {
                     }
                 };
             }
+        }
+    }
+
+    pub fn inject_error_on_nth_hit(&self, label: Label, hit: usize, error: Error) {
+        assert!(hit > 0, "fault hit index must be positive");
+        let mut armed = self
+            .state
+            .armed
+            .lock()
+            .expect("execution unit commit fault lock should not be poisoned");
+        match armed.entry(label) {
+            Entry::Vacant(entry) => {
+                entry.insert(ArmedFault::ErrorOnNthHit {
+                    remaining: hit,
+                    error,
+                });
+            }
+            Entry::Occupied(_) => panic!("commit fault label {label:?} is already armed"),
+        }
+    }
+
+    pub fn inject_panic_on_nth_hit(&self, label: Label, hit: usize) {
+        assert!(hit > 0, "fault hit index must be positive");
+        let mut armed = self
+            .state
+            .armed
+            .lock()
+            .expect("execution unit commit fault lock should not be poisoned");
+        match armed.entry(label) {
+            Entry::Vacant(entry) => {
+                entry.insert(ArmedFault::PanicOnNthHit { remaining: hit });
+            }
+            Entry::Occupied(_) => panic!("commit fault label {label:?} is already armed"),
         }
     }
 
@@ -295,6 +339,34 @@ impl CommitFaultState {
         };
         match fault {
             ArmedFault::Error(error) => Fault::Error(error),
+            ArmedFault::ErrorOnNthHit { remaining, error } => {
+                if remaining > 1 {
+                    armed.insert(
+                        label,
+                        ArmedFault::ErrorOnNthHit {
+                            remaining: remaining - 1,
+                            error,
+                        },
+                    );
+                    Fault::Noop
+                } else {
+                    Fault::Error(error)
+                }
+            }
+            ArmedFault::PanicOnNthHit { remaining } => {
+                if remaining > 1 {
+                    armed.insert(
+                        label,
+                        ArmedFault::PanicOnNthHit {
+                            remaining: remaining - 1,
+                        },
+                    );
+                    Fault::Noop
+                } else {
+                    drop(armed);
+                    panic!("injected commit fault panic at {label:?}")
+                }
+            }
             ArmedFault::RetryableConflicts {
                 remaining,
                 conflicting_sequence,
@@ -340,16 +412,42 @@ impl CommitFaultState {
                         Some(ArmedFault::Pause {
                             released: false, ..
                         }) => {
-                            armed = self
+                            let (next, _) = self
                                 .condvar
-                                .wait(armed)
+                                .wait_timeout_while(armed, COMMIT_FAULT_RELEASE_TIMEOUT, |armed| {
+                                    matches!(
+                                        armed.get(&label),
+                                        Some(ArmedFault::Pause {
+                                            released: false,
+                                            ..
+                                        })
+                                    )
+                                })
                                 .expect("execution unit commit fault wait should not be poisoned");
+                            armed = next;
+                            assert!(
+                                !matches!(
+                                    armed.get(&label),
+                                    Some(ArmedFault::Pause {
+                                        released: false,
+                                        ..
+                                    })
+                                ),
+                                "commit fault pause {label:?} was not released within \
+                                 {COMMIT_FAULT_RELEASE_TIMEOUT:?}; the test likely exited before \
+                                 calling release()"
+                            );
                         }
                         Some(ArmedFault::Pause { released: true, .. }) => {
                             armed.remove(&label);
                             return Fault::Noop;
                         }
-                        Some(ArmedFault::Error(_) | ArmedFault::RetryableConflicts { .. }) => {
+                        Some(
+                            ArmedFault::Error(_)
+                            | ArmedFault::ErrorOnNthHit { .. }
+                            | ArmedFault::PanicOnNthHit { .. }
+                            | ArmedFault::RetryableConflicts { .. },
+                        ) => {
                             unreachable!("an entered pause cannot change fault kind")
                         }
                         None => return Fault::Noop,

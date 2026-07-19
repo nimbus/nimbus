@@ -1,6 +1,6 @@
 mod background_executor;
 mod bootstrap;
-mod committed_mutations;
+pub(crate) mod committed_mutations;
 mod diagnostics;
 mod encryption;
 mod execution_units;
@@ -40,18 +40,22 @@ use tokio::task::JoinHandle;
 
 use crate::persistence::{ControlPlaneProvider, PersistenceProvider, TenantPersistence};
 use crate::persistence_config::EnginePersistenceConfig;
-use crate::tenant::TenantRuntime;
+use crate::tenant::{PublisherErrorCounts, TenantRuntime};
 use crate::triggers::{TriggerRegistration, execution::SharedTriggerInvocationExecutor};
 use background_executor::BackgroundExecutor;
 use tenant_load_gate::{TenantLoadGate, TenantLoadGateGuard};
 use transactions::TransactionSessionRegistry;
 
-pub use committed_mutations::{CommittedMutationEvent, CommittedMutationObserver};
+pub use committed_mutations::{
+    CommittedMutationEvent, CommittedMutationObserver, CommittedMutationObserverWorkStats,
+    TenantRuntimeObserverIdentity,
+};
 pub use committed_mutations::{TableSchemaChangeEvent, TableSchemaChangeObserver};
 pub use encryption::{EncryptionStatus, InitializedKeyProvider};
 pub use execution_units::MutationExecutionUnit;
 #[cfg(any(test, feature = "test-hooks"))]
 pub use execution_units::{CommitFaultHandle, Fault, labels as commit_fault_labels};
+pub(crate) use mutations::finish_durable_recovery_eviction_locked;
 pub use mutations::phase_metrics::CommitPhaseMetricsSnapshot;
 pub(crate) use mutations::phase_metrics::{
     CommitPhaseDurations, CommitPhaseMetrics, CommitTraceSample, maybe_emit_commit_trace,
@@ -73,6 +77,7 @@ pub use subscriptions::{SubscribeOptions, SubscriptionBootstrapCancellation};
 pub struct Engine {
     data_dir: PathBuf,
     tenants: RwLock<HashMap<TenantId, Arc<TenantRuntime>>>,
+    publisher_failure_diagnostics: RwLock<HashMap<TenantId, PublisherErrorCounts>>,
     transaction_sessions: RwLock<TransactionSessionRegistry>,
     tenant_load_gate: TenantLoadGate,
     embedded_provider_kind: Option<EmbeddedProviderKind>,
@@ -247,6 +252,7 @@ impl Engine {
         Self {
             data_dir: parts.data_dir,
             tenants: RwLock::new(HashMap::new()),
+            publisher_failure_diagnostics: RwLock::new(HashMap::new()),
             transaction_sessions: RwLock::new(TransactionSessionRegistry::default()),
             tenant_load_gate: TenantLoadGate::new(),
             embedded_provider_kind: parts.embedded_provider_kind,
@@ -291,6 +297,10 @@ impl Engine {
             .load(std::sync::atomic::Ordering::Acquire)
     }
 
+    pub(crate) fn background_shutdown_started(&self) -> bool {
+        self.engine_executor.shutdown_token().is_cancelled()
+    }
+
     pub(crate) fn spawn_background<F>(&self, name: &'static str, future: F) -> JoinHandle<()>
     where
         F: Future<Output = ()> + Send + 'static,
@@ -300,12 +310,59 @@ impl Engine {
             .expect("engine executor should accept background work before quiesce")
     }
 
+    pub(crate) fn try_spawn_background<F>(
+        &self,
+        name: &'static str,
+        future: F,
+    ) -> std::result::Result<JoinHandle<()>, (Error, F)>
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        self.engine_executor
+            .spawn_mapped(future, |future| ENGINE_BACKGROUND_TASK.scope(name, future))
+    }
+
     pub(crate) fn start_committer_actor(&self, runtime: Arc<TenantRuntime>) {
         let receiver = runtime.take_committer_receiver();
-        let shutdown = self.engine_executor.shutdown_token();
+        if runtime.publisher_pipeline_capable() {
+            let publisher_receiver = runtime.take_publisher_receiver();
+            let engine_shutdown = self.engine_executor.shutdown_token();
+            let tenant_shutdown = runtime.committer_shutdown_token();
+            let publisher_runtime = Arc::downgrade(&runtime);
+            self.spawn_background("mutation_publisher", async move {
+                crate::engine::mutations::run_ordered_publisher(
+                    publisher_runtime,
+                    publisher_receiver,
+                    engine_shutdown,
+                    tenant_shutdown,
+                )
+                .await;
+            });
+        }
+
+        let observer_receiver = runtime.take_observer_dispatch_receiver();
+        let observer_runtime = Arc::downgrade(&runtime);
+        self.spawn_background("committed_mutation_observers", async move {
+            committed_mutations::run_committed_mutation_observer_dispatcher(
+                observer_receiver,
+                observer_runtime,
+            )
+            .await;
+        });
+
+        let engine_shutdown = self.engine_executor.shutdown_token();
+        let tenant_shutdown = runtime.committer_shutdown_token();
+        let closes_observer_dispatch = !runtime.publisher_pipeline_capable();
         let runtime = Arc::downgrade(&runtime);
         self.spawn_background("mutation_committer", async move {
-            crate::tenant::run_committer_actor(runtime, receiver, shutdown).await;
+            crate::tenant::run_committer_actor(
+                runtime,
+                receiver,
+                engine_shutdown,
+                tenant_shutdown,
+                closes_observer_dispatch,
+            )
+            .await;
         });
     }
 
@@ -373,6 +430,7 @@ impl Engine {
             store.clone(),
             read_storage,
         )?);
+        self.restore_publisher_error_counts(&runtime);
         self.start_committer_actor(runtime.clone());
         runtime.replace_trigger_registrations(
             self.trigger_registrations
@@ -385,6 +443,18 @@ impl Engine {
         self.bootstrap_trigger_candidate_feed(runtime.clone())?;
         self.bootstrap_trigger_execution(runtime.clone())?;
         Ok(runtime)
+    }
+
+    pub(crate) fn restore_publisher_error_counts(&self, runtime: &TenantRuntime) {
+        if let Some(counts) = self
+            .publisher_failure_diagnostics
+            .read()
+            .expect("publisher failure diagnostics lock should not be poisoned")
+            .get(runtime.tenant_id())
+            .copied()
+        {
+            runtime.restore_publisher_error_counts(counts);
+        }
     }
 
     pub(crate) fn trigger_invocation_executor(&self) -> Option<SharedTriggerInvocationExecutor> {

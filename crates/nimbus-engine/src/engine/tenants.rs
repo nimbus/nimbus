@@ -6,7 +6,7 @@ use nimbus_core::{Error, Result, TenantId};
 
 use crate::tenant::TenantRuntime;
 
-use super::Engine;
+use super::{Engine, TenantLoadGateGuard};
 
 pub(in crate::engine) fn with_tenant_runtime_operation<T, F>(
     runtime: Arc<TenantRuntime>,
@@ -131,6 +131,10 @@ impl Engine {
                 .subscriptions
                 .shutdown_all(format!("tenant deleted: {tenant_id}"));
         }
+        self.publisher_failure_diagnostics
+            .write()
+            .expect("publisher failure diagnostics lock should not be poisoned")
+            .remove(tenant_id);
         std::fs::remove_file(path).map_err(|error| Error::Internal(error.to_string()))?;
         Ok(())
     }
@@ -157,6 +161,10 @@ impl Engine {
                 .subscriptions
                 .shutdown_all(format!("tenant deleted: {tenant_id}"));
         }
+        self.publisher_failure_diagnostics
+            .write()
+            .expect("publisher failure diagnostics lock should not be poisoned")
+            .remove(&tenant_id);
         self.persistence_provider.delete_tenant(&tenant_id).await?;
         Ok(())
     }
@@ -212,51 +220,103 @@ impl Engine {
     ) -> Result<Arc<TenantRuntime>> {
         self.ensure_provider_background_tasks_started();
         let total_started = Instant::now();
-        if let Some(runtime) = self
-            .tenants
+        loop {
+            let cached_runtime = {
+                self.tenants
+                    .read()
+                    .expect("tenant registry lock should not be poisoned")
+                    .get(tenant_id)
+                    .cloned()
+            };
+            if let Some(runtime) = cached_runtime {
+                if runtime.eviction_started() {
+                    runtime.wait_for_eviction_complete().await;
+                    if self.runtime_remains_registered(tenant_id, &runtime) {
+                        return Err(runtime.durable_recovery_eviction_error());
+                    }
+                    continue;
+                }
+                maybe_emit_tenant_load_profile(TenantLoadProfileSample {
+                    tenant_id,
+                    cache_hit: true,
+                    open_existing: Duration::ZERO,
+                    runtime_init: Duration::ZERO,
+                    runtime_schema_load: Duration::ZERO,
+                    runtime_journal_progress: Duration::ZERO,
+                    runtime_profile_total: Duration::ZERO,
+                    recover_durable: Duration::ZERO,
+                    catch_up: Duration::ZERO,
+                    total: total_started.elapsed(),
+                });
+                return Ok(runtime);
+            }
+            if self.background_shutdown_started() {
+                return Err(Error::ResourceExhausted(
+                    "engine is quiescing and cannot load a tenant runtime".to_string(),
+                ));
+            }
+
+            let tenant_load_guard = self.tenant_load_gate.lock().await;
+            let cached_runtime = {
+                self.tenants
+                    .read()
+                    .expect("tenant registry lock should not be poisoned")
+                    .get(tenant_id)
+                    .cloned()
+            };
+            if let Some(runtime) = cached_runtime {
+                if runtime.eviction_started() {
+                    drop(tenant_load_guard);
+                    runtime.wait_for_eviction_complete().await;
+                    if self.runtime_remains_registered(tenant_id, &runtime) {
+                        return Err(runtime.durable_recovery_eviction_error());
+                    }
+                    continue;
+                }
+                maybe_emit_tenant_load_profile(TenantLoadProfileSample {
+                    tenant_id,
+                    cache_hit: true,
+                    open_existing: Duration::ZERO,
+                    runtime_init: Duration::ZERO,
+                    runtime_schema_load: Duration::ZERO,
+                    runtime_journal_progress: Duration::ZERO,
+                    runtime_profile_total: Duration::ZERO,
+                    recover_durable: Duration::ZERO,
+                    catch_up: Duration::ZERO,
+                    total: total_started.elapsed(),
+                });
+                return Ok(runtime);
+            }
+            if self.background_shutdown_started() {
+                return Err(Error::ResourceExhausted(
+                    "engine is quiescing and cannot load a tenant runtime".to_string(),
+                ));
+            }
+
+            return self
+                .load_existing_tenant_async_locked(tenant_id, total_started, tenant_load_guard)
+                .await;
+        }
+    }
+
+    fn runtime_remains_registered(
+        &self,
+        tenant_id: &TenantId,
+        runtime: &Arc<TenantRuntime>,
+    ) -> bool {
+        self.tenants
             .read()
             .expect("tenant registry lock should not be poisoned")
             .get(tenant_id)
-            .cloned()
-        {
-            maybe_emit_tenant_load_profile(TenantLoadProfileSample {
-                tenant_id,
-                cache_hit: true,
-                open_existing: Duration::ZERO,
-                runtime_init: Duration::ZERO,
-                runtime_schema_load: Duration::ZERO,
-                runtime_journal_progress: Duration::ZERO,
-                runtime_profile_total: Duration::ZERO,
-                recover_durable: Duration::ZERO,
-                catch_up: Duration::ZERO,
-                total: total_started.elapsed(),
-            });
-            return Ok(runtime);
-        }
+            .is_some_and(|registered| Arc::ptr_eq(registered, runtime))
+    }
 
-        let _tenant_load_guard = self.tenant_load_gate.lock().await;
-        if let Some(runtime) = self
-            .tenants
-            .read()
-            .expect("tenant registry lock should not be poisoned")
-            .get(tenant_id)
-            .cloned()
-        {
-            maybe_emit_tenant_load_profile(TenantLoadProfileSample {
-                tenant_id,
-                cache_hit: true,
-                open_existing: Duration::ZERO,
-                runtime_init: Duration::ZERO,
-                runtime_schema_load: Duration::ZERO,
-                runtime_journal_progress: Duration::ZERO,
-                runtime_profile_total: Duration::ZERO,
-                recover_durable: Duration::ZERO,
-                catch_up: Duration::ZERO,
-                total: total_started.elapsed(),
-            });
-            return Ok(runtime);
-        }
-
+    async fn load_existing_tenant_async_locked(
+        self: &Arc<Self>,
+        tenant_id: &TenantId,
+        total_started: Instant,
+        _tenant_load_guard: TenantLoadGateGuard<'_>,
+    ) -> Result<Arc<TenantRuntime>> {
         let open_started = Instant::now();
         let Some(opened) = self
             .persistence_provider
@@ -276,6 +336,7 @@ impl Engine {
             opened_executor,
             initial_state,
         ));
+        self.restore_publisher_error_counts(&runtime);
         self.start_committer_actor(runtime.clone());
         let runtime_init_elapsed = runtime_init_started.elapsed();
         let recover_started = Instant::now();
@@ -291,7 +352,9 @@ impl Engine {
             }
         };
         let recover_elapsed = recover_started.elapsed();
-        runtime.sync_mutation_journal_progress_async(progress).await;
+        runtime
+            .sync_mutation_journal_progress_async(progress)
+            .await?;
         let catch_up_started = Instant::now();
         if !self.provider_background_ready() {
             self.catch_up_loaded_provider_tenant_async(
@@ -334,6 +397,69 @@ impl Engine {
             tenant_id.as_str(),
             embedded_provider_kind.tenant_file_extension()
         ))
+    }
+}
+
+#[cfg(test)]
+impl Engine {
+    pub(crate) async fn get_existing_tenant_async_for_testing(
+        self: &Arc<Self>,
+        tenant_id: &TenantId,
+    ) -> Result<usize> {
+        self.get_existing_tenant_async(tenant_id)
+            .await
+            .map(|runtime| Arc::as_ptr(&runtime) as usize)
+    }
+
+    pub(crate) fn runtime_is_registered_for_testing(
+        &self,
+        tenant_id: &TenantId,
+        runtime: &Arc<TenantRuntime>,
+    ) -> bool {
+        self.tenants
+            .read()
+            .expect("tenant registry lock should not be poisoned")
+            .get(tenant_id)
+            .is_some_and(|registered| Arc::ptr_eq(registered, runtime))
+    }
+
+    pub(crate) fn registered_runtime_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Option<Arc<TenantRuntime>> {
+        self.tenants
+            .read()
+            .expect("tenant registry lock should not be poisoned")
+            .get(tenant_id)
+            .cloned()
+    }
+
+    pub(crate) fn remove_runtime_if_same_for_testing(
+        &self,
+        tenant_id: &TenantId,
+        runtime: &Arc<TenantRuntime>,
+    ) {
+        let mut tenants = self
+            .tenants
+            .write()
+            .expect("tenant registry lock should not be poisoned");
+        if tenants
+            .get(tenant_id)
+            .is_some_and(|registered| Arc::ptr_eq(registered, runtime))
+        {
+            tenants.remove(tenant_id);
+        }
+    }
+
+    pub(crate) fn publisher_failure_diagnostics_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Option<(u64, u64, u64)> {
+        self.publisher_failure_diagnostics
+            .read()
+            .expect("publisher failure diagnostics lock should not be poisoned")
+            .get(tenant_id)
+            .map(|counts| (counts.transient, counts.fatal, counts.ambiguous))
     }
 }
 

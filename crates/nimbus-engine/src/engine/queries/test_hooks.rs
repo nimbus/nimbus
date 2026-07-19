@@ -54,7 +54,148 @@ impl Engine {
         &self,
         tenant_id: &TenantId,
     ) -> Result<crate::tenant::MutationJournalStats> {
-        self.with_runtime_for_testing(tenant_id, |runtime| runtime.mutation_journal_stats())
+        let mut stats =
+            self.with_runtime_for_testing(tenant_id, |runtime| runtime.mutation_journal_stats())?;
+        self.apply_committed_mutation_observer_work_stats(tenant_id, &mut stats);
+        Ok(stats)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn provider_catch_up_failure_count_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<u64> {
+        Ok(self
+            .get_existing_tenant(tenant_id)?
+            .mutation_journal_stats()
+            .provider_catch_up_failure_count)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn tenant_runtime_identity_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<usize> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        Ok(Arc::as_ptr(&runtime) as usize)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn tenant_operation_guard_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<crate::tenant::TenantOperationGuard> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        runtime.enter_operation(tenant_id)
+    }
+
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn park_applied_sequence_waiters_for_testing(
+        &self,
+        tenant_id: &TenantId,
+        required_sequence: nimbus_core::SequenceNumber,
+    ) -> Result<()> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        runtime.mark_durable_head(required_sequence);
+        Ok(())
+    }
+
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn fail_applied_sequence_waiters_for_testing(&self, tenant_id: &TenantId) -> Result<()> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        runtime.fail_applied_waiters_for_testing(nimbus_core::Error::storage(
+            nimbus_core::StorageErrorKind::Unavailable,
+            format!("tenant {tenant_id} runtime evicted during test"),
+        ));
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn begin_runtime_eviction_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<Arc<crate::tenant::TenantRuntime>> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        runtime.mark_deleting_for_eviction();
+        Ok(runtime)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn write_log_assignment_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<(SequenceNumber, Vec<SequenceNumber>)> {
+        self.with_runtime_for_testing(tenant_id, |runtime| {
+            (
+                runtime.assigned_head(),
+                runtime.write_log.pending_sequences_for_testing(),
+            )
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn enqueue_publisher_response_fence_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<tokio::sync::oneshot::Receiver<Result<crate::tenant::QueuedMutationResult>>> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let operation = runtime.enter_operation(tenant_id)?;
+        let (response, completion) = tokio::sync::oneshot::channel();
+        runtime
+            .send_publisher_response_fence(vec![crate::tenant::DeferredPublisherResponse {
+                _operation: operation,
+                response: crate::tenant::MutationResponseSender::new(response),
+                result: Ok(crate::tenant::QueuedMutationResult::Scheduled(false)),
+            }])
+            .await
+            .map_err(|error| error.1)?;
+        Ok(completion)
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn enqueue_publisher_conflict_response_fence_for_testing(
+        &self,
+        tenant_id: &TenantId,
+        conflicting_sequence: SequenceNumber,
+    ) -> Result<tokio::sync::oneshot::Receiver<Result<crate::tenant::QueuedMutationResult>>> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let operation = runtime.enter_operation(tenant_id)?;
+        let (response, completion) = tokio::sync::oneshot::channel();
+        runtime
+            .send_publisher_response_fence(vec![crate::tenant::DeferredPublisherResponse {
+                _operation: operation,
+                response: crate::tenant::MutationResponseSender::new(response),
+                result: Err(nimbus_core::Error::retryable_conflict(
+                    "assigned conflict target is not yet applied",
+                    Some(conflicting_sequence),
+                )),
+            }])
+            .await
+            .map_err(|error| error.1)?;
+        Ok(completion)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_committer_pipeline_requested_for_testing(
+        &self,
+        tenant_id: &TenantId,
+        enabled: bool,
+    ) -> Result<()> {
+        self.with_runtime_for_testing(tenant_id, |runtime| {
+            runtime.set_committer_pipeline_requested_for_testing(enabled);
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_prepared_table_id_for_testing(
+        &self,
+        tenant_id: &TenantId,
+        table: &TableName,
+        table_id: nimbus_core::TableId,
+    ) -> Result<()> {
+        self.with_runtime_for_testing(tenant_id, |runtime| {
+            runtime.prepared_table_id(table, Some(table_id));
+        })
     }
 
     #[cfg(test)]
@@ -559,7 +700,72 @@ impl Engine {
             .map(TenantEventRecord::as_commit_entry)
             .collect::<Vec<_>>();
         let commit_identity = document_bearing_commit_identity(records);
-        self.process_applied_commit_batch(runtime, &applied, commit_identity, false);
+        self.process_applied_commit_batch_fanout(runtime.clone(), &applied, commit_identity, false);
+        self.enqueue_applied_commit_batch_observers(runtime, &applied);
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn enqueue_provider_catch_up_observers_for_testing(
+        &self,
+        tenant_id: &TenantId,
+        records: &[TenantEventRecord],
+    ) -> Result<()> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let _operation = runtime.enter_operation(tenant_id)?;
+        let applied = records
+            .iter()
+            .map(TenantEventRecord::as_commit_entry)
+            .collect::<Vec<_>>();
+        let Some(completion) =
+            self.enqueue_provider_catch_up_commit_observers(runtime.clone(), &applied)
+        else {
+            runtime
+                .wait_for_committed_mutation_observer_catch_up_idle()
+                .await;
+            return Ok(());
+        };
+        completion.await.map_err(|_| {
+            nimbus_core::Error::Internal(
+                "provider catch-up observer task dropped its completion".to_string(),
+            )
+        })?
+    }
+
+    #[cfg(test)]
+    pub(crate) fn trigger_provider_catch_up_observers_for_testing(
+        &self,
+        tenant_id: &TenantId,
+        records: &[TenantEventRecord],
+    ) -> Result<bool> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let _operation = runtime.enter_operation(tenant_id)?;
+        let applied = records
+            .iter()
+            .map(TenantEventRecord::as_commit_entry)
+            .collect::<Vec<_>>();
+        Ok(self
+            .enqueue_provider_catch_up_commit_observers(runtime, &applied)
+            .is_some())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn provider_catch_up_observer_task_count_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<usize> {
+        self.with_runtime_for_testing(tenant_id, |runtime| {
+            runtime.committed_mutation_observer_catch_up_task_count()
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn poison_committed_mutation_observers_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<()> {
+        self.with_runtime_for_testing(tenant_id, |runtime| {
+            runtime.poison_committed_mutation_observers("injected provider catch-up poison");
+        })
     }
 }

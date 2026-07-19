@@ -14,10 +14,32 @@ use super::super::journal::{
     mutation_occ_backoff, mutation_occ_max_attempts, validate_prepared_for_provider,
 };
 use super::super::prepared::PreparedCommit;
+use super::super::publisher::finish_durable_recovery_eviction_blocking;
 use super::super::shadow_conflicts::{observe_shadow_conflicts, prepared_document_dependencies};
 use super::super::window_prepare::prepare_single_document_write_from_window;
 use super::store::DirectMutationProfile;
 use super::types::{MutationExecutionMode, MutationExecutionResult};
+
+/// Finishes a direct-path durable-recovery eviction on every exit path.
+///
+/// Eviction begins inside the committer closure but can only be completed by
+/// the caller, after its own tenant operation guard has dropped. Making that
+/// completion a drop obligation keeps "eviction that starts always finishes"
+/// true even when the steps before it fail.
+struct DirectEvictionCompletion<'a> {
+    engine: &'a Engine,
+    runtime: Option<Arc<TenantRuntime>>,
+}
+
+impl Drop for DirectEvictionCompletion<'_> {
+    fn drop(&mut self) {
+        let Some(runtime) = self.runtime.take() else {
+            return;
+        };
+        runtime.wait_for_operation_drain_for_eviction_blocking();
+        finish_durable_recovery_eviction_blocking(self.engine, runtime);
+    }
+}
 
 enum PreparedDirectMutation {
     DuplicateScheduledExecution,
@@ -35,7 +57,20 @@ impl Engine {
         mutation: Mutation,
         principal: &PrincipalContext,
     ) -> Result<MutationExecutionResult> {
-        with_tenant_runtime_operation(self.get_existing_tenant(tenant_id)?, tenant_id, |runtime| {
+        if crate::engine::committed_mutations::on_committed_mutation_observer_dispatcher() {
+            tracing::error!(
+                tenant = %tenant_id,
+                "rejected synchronous mutation from a committed-mutation observer callback"
+            );
+            return Err(Error::InvalidInput(
+                "committed-mutation observer callbacks must spawn asynchronous engine writes; \
+                 synchronous mutation re-entry from an observer callback is rejected"
+                    .to_string(),
+            ));
+        }
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let mut initiated_eviction = false;
+        let result = with_tenant_runtime_operation(runtime.clone(), tenant_id, |runtime| {
             // A generated insert id is part of the logical mutation and must
             // survive transparent stale-prepare retries unchanged.
             let mutation = normalize_direct_insert_id(self, mutation);
@@ -98,8 +133,10 @@ impl Engine {
                 let _prepared_payload =
                     crate::tenant::PreparedPayloadAccounting::new(runtime.clone(), prepared_bytes);
                 let profile = DirectMutationProfile::after_prepare(prepare_started);
-                match self.run_prepared_direct_mutation(runtime.clone(), *prepared_commit, profile)
-                {
+                let outcome =
+                    self.run_prepared_direct_mutation(runtime.clone(), *prepared_commit, profile);
+                initiated_eviction |= outcome.initiated_eviction;
+                match outcome.result {
                     Ok(Some(_)) => {
                         return Ok(match &mode {
                             MutationExecutionMode::Immediate => {
@@ -119,7 +156,7 @@ impl Engine {
                             return Err(error.with_conflict_attempts(attempt));
                         }
                         if let Some(sequence) = error.conflicting_sequence() {
-                            runtime.wait_for_applied_sequence_blocking(sequence);
+                            runtime.wait_for_applied_sequence_blocking(sequence)?;
                         }
                         runtime
                             .commit_phase_metrics()
@@ -130,7 +167,34 @@ impl Engine {
                     Err(error) => return Err(error),
                 }
             }
-        })
+        });
+        if initiated_eviction {
+            // The commit closure already marked this runtime for eviction, and
+            // nothing else owns finishing a direct-path eviction. Arm completion
+            // before the bounded observer drain so a drain timeout, an early
+            // return, or an unwind still deregisters the runtime: one left
+            // registered with an unfinished eviction parks every later accessor
+            // in `wait_for_eviction_complete`, which has no timeout, forever.
+            let _completion = DirectEvictionCompletion {
+                engine: self,
+                runtime: Some(runtime.clone()),
+            };
+            if let Err(drain_error) =
+                runtime.wait_for_committed_mutation_observers_drained_blocking()
+            {
+                // A wedged observer degrades eviction to "loud but complete".
+                // The dispatcher holds no tenant operation guard, so the
+                // operation drain still finishes, and the caller keeps the
+                // write's own crash-and-replay error rather than this
+                // secondary drain diagnostic.
+                tracing::error!(
+                    tenant = %tenant_id,
+                    error = %drain_error,
+                    "completing direct durable-recovery eviction without a drained committed-mutation observer dispatcher"
+                );
+            }
+        }
+        result
     }
 
     pub(super) fn apply_mutation_with_principal(

@@ -4,17 +4,18 @@ pub(crate) use nimbus_core::{
     TableAccessPolicy, TableName, TableSchema, TenantId, Timestamp,
 };
 pub(crate) use nimbus_testing::{
-    BlockingFaultInjector, CountedFaultInjector, EngineFixture, GeneratedTaskHistory,
-    GeneratedTaskHistorySeedCase, GeneratedTaskPageExpectation, GeneratedTaskRecord,
-    VerificationHarnessMode, ci_or_local_duration, replay_generated_task_history_async,
-    selected_generated_task_history_seed_corpus, wait_for_value,
+    BlockingFaultInjector, BoundedTestBarrier as Barrier, CountedFaultInjector, EngineFixture,
+    GeneratedTaskHistory, GeneratedTaskHistorySeedCase, GeneratedTaskPageExpectation,
+    GeneratedTaskRecord, VerificationHarnessMode, ci_or_local_duration,
+    replay_generated_task_history_async, selected_generated_task_history_seed_corpus,
+    wait_for_value,
 };
 pub(crate) use serde_json::json;
 pub(crate) use std::collections::BTreeSet;
 pub(crate) use std::future::Future;
 pub(crate) use std::pin::Pin;
 pub(crate) use std::sync::atomic::{AtomicBool, Ordering};
-pub(crate) use std::sync::{Arc, Barrier, Condvar, Mutex};
+pub(crate) use std::sync::{Arc, Condvar, Mutex};
 pub(crate) use std::task::{Context, Poll};
 pub(crate) use tempfile::{TempDir, tempdir};
 pub(crate) use tokio::sync::{Notify, mpsc};
@@ -111,6 +112,31 @@ pub(crate) fn subscription_channel() -> (
     mpsc::Receiver<SubscriptionUpdate>,
 ) {
     mpsc::channel(16)
+}
+
+/// Bounded blocking receive for synchronous tests, which have no runtime to
+/// `.await` on. It parks on the channel itself rather than spin-polling, and a
+/// subscription that never publishes fails with a diagnostic instead of
+/// hanging the suite.
+pub(crate) fn expect_subscription_update_within(
+    receiver: &mut mpsc::Receiver<SubscriptionUpdate>,
+    description: &str,
+) -> SubscriptionUpdate {
+    let timeout_budget = ci_or_local_duration(Duration::from_secs(5), Duration::from_secs(15));
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .expect("bounded subscription receive runtime should build")
+        .block_on(async {
+            tokio::time::timeout(timeout_budget, receiver.recv())
+                .await
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "{description} within the bounded state-transition timeout of {timeout_budget:?}"
+                    )
+                })
+        })
+        .unwrap_or_else(|| panic!("{description}; the subscription channel disconnected instead"))
 }
 
 pub(crate) async fn wait_for_mutation_journal_stats(
@@ -691,6 +717,8 @@ pub(crate) struct BlockingCancellationProbe {
     release_gate: (Mutex<bool>, Condvar),
 }
 
+const BLOCKING_CANCELLATION_RELEASE_TIMEOUT: Duration = Duration::from_secs(60);
+
 pub(crate) struct DropAwarePendingCancellation {
     dropped: Arc<AtomicBool>,
 }
@@ -755,11 +783,20 @@ impl BlockingCancellationProbe {
                 let mut released = lock
                     .lock()
                     .expect("blocking cancellation probe should acquire release lock");
-                while !*released {
-                    released = cvar
-                        .wait(released)
-                        .expect("blocking cancellation probe should wait for release");
-                }
+                let (next, _) = cvar
+                    .wait_timeout_while(
+                        released,
+                        BLOCKING_CANCELLATION_RELEASE_TIMEOUT,
+                        |released| !*released,
+                    )
+                    .expect("blocking cancellation probe should wait for release");
+                released = next;
+                assert!(
+                    *released,
+                    "blocking cancellation probe was not released within \
+                     {BLOCKING_CANCELLATION_RELEASE_TIMEOUT:?}; the test likely exited before \
+                     calling release()"
+                );
                 self.released.notify_one();
             }
 

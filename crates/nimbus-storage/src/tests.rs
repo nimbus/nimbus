@@ -43,6 +43,8 @@ mod sqlite_foundation;
 mod store_basics;
 mod usage_store;
 
+const BLOCKING_TEST_RELEASE_TIMEOUT: Duration = Duration::from_secs(60);
+
 pub(crate) use provider_fixtures::{
     implicit_external_provider_fixtures_disabled, require_explicit_external_provider_fixture_envs,
 };
@@ -95,14 +97,19 @@ impl FaultInjector for BlockingFaultInjector {
         }
         self.entered.notify_one();
         let (lock, cvar) = &self.release_gate;
-        let mut released = lock
+        let released = lock
             .lock()
             .expect("blocking fault injector should acquire release lock");
-        while !*released {
-            released = cvar
-                .wait(released)
-                .expect("blocking fault injector should wait for release");
-        }
+        let (released, _) = cvar
+            .wait_timeout_while(released, BLOCKING_TEST_RELEASE_TIMEOUT, |released| {
+                !*released
+            })
+            .expect("blocking fault injector should wait for release");
+        assert!(
+            *released,
+            "blocking storage fault injector was not released within \
+             {BLOCKING_TEST_RELEASE_TIMEOUT:?}; the test likely exited before calling release()"
+        );
         Ok(())
     }
 }
@@ -122,14 +129,19 @@ impl BlockingReadGate {
     pub(crate) fn block(&self) {
         self.entered.notify_one();
         let (lock, cvar) = &self.release_gate;
-        let mut released = lock
+        let released = lock
             .lock()
             .expect("blocking read gate should acquire release lock");
-        while !*released {
-            released = cvar
-                .wait(released)
-                .expect("blocking read gate should wait for release");
-        }
+        let (released, _) = cvar
+            .wait_timeout_while(released, BLOCKING_TEST_RELEASE_TIMEOUT, |released| {
+                !*released
+            })
+            .expect("blocking read gate should wait for release");
+        assert!(
+            *released,
+            "blocking storage read gate was not released within \
+             {BLOCKING_TEST_RELEASE_TIMEOUT:?}; the test likely exited before calling release()"
+        );
     }
 
     pub(crate) fn release(&self) {

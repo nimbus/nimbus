@@ -14,7 +14,12 @@ impl Engine {
     ) -> Result<TenantEngineDiagnosticsSnapshot> {
         let runtime = self.get_existing_tenant(tenant_id)?;
         let _operation = runtime.enter_operation(tenant_id)?;
-        Ok(runtime.engine_diagnostics_snapshot())
+        let mut snapshot = runtime.engine_diagnostics_snapshot();
+        self.apply_committed_mutation_observer_work_stats(
+            tenant_id,
+            &mut snapshot.mutation_journal,
+        );
+        Ok(snapshot)
     }
 
     /// Returns a per-tenant snapshot of engine durability, worker, and serving health.
@@ -24,6 +29,11 @@ impl Engine {
     ) -> Result<TenantEngineDiagnosticsSnapshot> {
         let runtime = self.get_existing_tenant_async(&tenant_id).await?;
         let _operation = runtime.enter_operation(&tenant_id)?;
-        Ok(runtime.engine_diagnostics_snapshot())
+        let mut snapshot = runtime.engine_diagnostics_snapshot();
+        self.apply_committed_mutation_observer_work_stats(
+            &tenant_id,
+            &mut snapshot.mutation_journal,
+        );
+        Ok(snapshot)
     }
 }

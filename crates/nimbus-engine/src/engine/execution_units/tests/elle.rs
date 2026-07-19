@@ -9,9 +9,11 @@
 
 use super::*;
 use nimbus_core::{Result, TableName};
-use nimbus_testing::{ElleHistoryRecorder, ElleListAppendOp, validate_elle_edn_history};
+use nimbus_testing::{
+    BoundedTestBarrier as Barrier, ElleHistoryRecorder, ElleListAppendOp, validate_elle_edn_history,
+};
 use std::path::PathBuf;
-use std::sync::{Barrier, Mutex};
+use std::sync::Mutex;
 
 const ELLE_SEED: u64 = 0x4e49_4d42_5553_0002;
 const ELLE_WORKERS: usize = 4;

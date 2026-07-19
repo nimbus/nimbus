@@ -1,5 +1,6 @@
 //! Nimbus engine crate.
 
+mod config;
 mod engine;
 mod evaluator;
 mod persistence;
@@ -13,10 +14,10 @@ mod verification;
 
 pub use engine::{
     AsyncMutationContext, CommitPhaseMetricsSnapshot, CommittedMutationEvent,
-    CommittedMutationObserver, EncryptionStatus, Engine, InitializedKeyProvider, MutationActor,
-    MutationExecutionUnit, MutationIsolatePermit, SubscribeOptions,
-    SubscriptionBootstrapCancellation, TableSchemaChangeEvent, TableSchemaChangeObserver,
-    TenantObjectMeta,
+    CommittedMutationObserver, CommittedMutationObserverWorkStats, EncryptionStatus, Engine,
+    InitializedKeyProvider, MutationActor, MutationExecutionUnit, MutationIsolatePermit,
+    SubscribeOptions, SubscriptionBootstrapCancellation, TableSchemaChangeEvent,
+    TableSchemaChangeObserver, TenantObjectMeta, TenantRuntimeObserverIdentity,
 };
 #[cfg(any(test, feature = "test-hooks"))]
 pub use engine::{CommitFaultHandle, Fault, commit_fault_labels};
@@ -53,10 +54,10 @@ pub use subscriptions::{
 #[cfg(any(test, feature = "test-hooks"))]
 pub use tenant::MutationJournalPauseHandle;
 pub use tenant::{
-    MaterializedReadSurfaceStats, MutationAdmissionPhase, MutationAdmissionStats,
-    MutationIsolateAdmissionStats, MutationJournalStats, PinnedServingReadSnapshot,
-    QueryPlanningStats, ServingSnapshotManagerStats, SubscriptionDeliveryStats,
-    TenantEngineDiagnosticsSnapshot, TenantOperationGuard,
+    CommitterPipelineMode, MaterializedReadSurfaceStats, MutationAdmissionPhase,
+    MutationAdmissionStats, MutationIsolateAdmissionStats, MutationJournalStats,
+    PinnedServingReadSnapshot, QueryPlanningStats, ServingSnapshotManagerStats,
+    SubscriptionDeliveryStats, TenantEngineDiagnosticsSnapshot, TenantOperationGuard,
 };
 pub use triggers::{
     TriggerInvocationExecution, TriggerInvocationExecutor, TriggerLookupMatch, TriggerRegistration,

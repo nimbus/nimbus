@@ -2,7 +2,7 @@ use super::*;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use nimbus_core::{DependencySet, Error, SequenceNumber};
+use nimbus_core::{DependencySet, Error, Retryability, SequenceNumber, StorageErrorKind};
 use tokio::sync::oneshot;
 
 fn queued_request(enqueued_at: Instant) -> QueuedMutationRequest {
@@ -20,7 +20,7 @@ fn queued_request(enqueued_at: Instant) -> QueuedMutationRequest {
         _operation: TenantOperationGuard {
             lifecycle: Arc::new(TenantLifecycle::new()),
         },
-        response,
+        response: MutationResponseSender::new(response),
         enqueued_at,
         shadow_snapshot_sequence: nimbus_core::SequenceNumber(0),
     }
@@ -32,9 +32,9 @@ fn mutation_admission_gate_codel_sheds_stale_request_after_interval() {
     gate.set_codel_for_testing(Duration::from_millis(5), Duration::from_millis(10));
 
     let now = Instant::now();
-    gate.enqueue(queued_request(now - Duration::from_millis(40)))
+    gate.enqueue(queued_request(now - Duration::from_millis(40)), || None)
         .expect("first request should enqueue");
-    gate.enqueue(queued_request(now - Duration::from_millis(40)))
+    gate.enqueue(queued_request(now - Duration::from_millis(40)), || None)
         .expect("second request should enqueue");
 
     assert!(matches!(
@@ -76,11 +76,11 @@ fn mutation_admission_gate_full_is_typed_overload() {
     let gate = MutationAdmissionGate::new();
     gate.set_capacity_for_testing(1);
     let now = Instant::now();
-    gate.enqueue(queued_request(now))
+    gate.enqueue(queued_request(now), || None)
         .expect("first request should enqueue");
 
     let error = gate
-        .enqueue(queued_request(now))
+        .enqueue(queued_request(now), || None)
         .expect_err("request beyond the bounded admission queue should fail");
 
     assert!(matches!(
@@ -91,4 +91,21 @@ fn mutation_admission_gate_full_is_typed_overload() {
     let stats = gate.stats();
     assert_eq!(stats.queue_depth, 1);
     assert_eq!(stats.queue_rejection_count, 1);
+}
+
+#[test]
+fn mutation_admission_gate_rejects_after_eviction_mark_before_enqueue() {
+    let gate = MutationAdmissionGate::new();
+    let tenant_id = nimbus_core::TenantId::new("evicted").expect("tenant id should build");
+    let lifecycle = TenantLifecycle::new();
+    lifecycle.begin_eviction();
+    let error = gate
+        .enqueue(queued_request(Instant::now()), || {
+            lifecycle.operation_rejection_if_deleted(&tenant_id)
+        })
+        .expect_err("a request racing eviction must not enter the admission queue");
+    assert_eq!(error.storage_kind(), Some(StorageErrorKind::Unavailable));
+    assert_eq!(error.retryability(), Retryability::RetryableAfterBackoff);
+    assert!(!matches!(error, Error::TenantNotFound(_)));
+    assert_eq!(gate.stats().queue_depth, 0);
 }

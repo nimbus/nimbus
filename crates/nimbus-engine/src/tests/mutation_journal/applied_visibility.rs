@@ -1,5 +1,87 @@
-use super::support::new_faulted_engine;
+use super::support::{
+    expect_blocking_wait_reaches_state, expect_catch_up_future_within, new_faulted_engine,
+};
 use super::*;
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn fanout_never_precedes_applied_head() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("fanout-order", Engine::create_tenant);
+    let (tx, mut rx) = subscription_channel();
+    let _subscription = engine
+        .subscribe(
+            &tenant_id,
+            query_for("tasks"),
+            "fanout-order".to_string(),
+            tx,
+            SubscribeOptions::anonymous(),
+        )
+        .expect("fanout-order subscription should register");
+    rx.recv()
+        .await
+        .expect("initial subscription result should arrive");
+
+    let faults = engine.commit_fault_handle_for_testing();
+    let pause_label = crate::engine::commit_fault_labels::POST_PUBLISH_PRE_FANOUT;
+    faults.arm(pause_label);
+    let insert = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            engine
+                .insert_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("title".to_string(), json!("ordered"))]),
+                )
+                .await
+        }
+    });
+    expect_blocking_wait_reaches_state(
+        "publisher should pause after applied_head and before fanout",
+        {
+            let faults = faults.clone();
+            move |timeout| faults.wait_until_entered(pause_label, timeout)
+        },
+    )
+    .await;
+
+    let sequence = engine
+        .read_durable_journal(&tenant_id, SequenceNumber(0))
+        .expect("paused commit should already be durable")
+        .last()
+        .expect("paused commit should exist")
+        .sequence;
+    let stats = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("paused applied-head stats should load");
+    assert!(
+        stats.applied_head >= sequence,
+        "applied_head {} must cover commit {} before fanout",
+        stats.applied_head,
+        sequence
+    );
+    assert!(
+        matches!(rx.try_recv(), Err(mpsc::error::TryRecvError::Empty)),
+        "subscriber must not observe the commit across the pre-fanout pause"
+    );
+
+    faults.release(pause_label);
+    expect_catch_up_future_within(insert, "fanout-order mutation should complete")
+        .await
+        .expect("fanout-order insert task should join")
+        .expect("fanout-order insert should succeed");
+    let update = expect_catch_up_future_within(rx.recv(), "post-release fanout should arrive")
+        .await
+        .expect("post-release subscription should remain open");
+    match update {
+        SubscriptionUpdate::Result { snapshot, .. } => {
+            assert!(snapshot.covered_sequence >= sequence);
+        }
+        other => panic!("unexpected subscription update: {other:?}"),
+    }
+}
 
 #[tokio::test]
 async fn mutation_journal_returns_only_after_apply_visibility() {

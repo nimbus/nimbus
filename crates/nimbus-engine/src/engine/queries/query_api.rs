@@ -4,8 +4,8 @@ use std::time::{Duration, Instant};
 
 use futures::FutureExt;
 use nimbus_core::{
-    Document, Page, PaginatedQuery, PrincipalContext, Query, Result, SequenceNumber, TableId,
-    TableName, TenantId,
+    Document, Error, Page, PaginatedQuery, PrincipalContext, Query, Result, SequenceNumber,
+    TableId, TableName, TenantId,
 };
 
 use super::materialized::{
@@ -532,7 +532,7 @@ fn query_plan_metric_kind_label(kind: QueryPlanMetricKind) -> &'static str {
 fn load_query_runtime(engine: &Engine, tenant_id: &TenantId) -> Result<LoadedQueryRuntime> {
     let runtime = engine.get_existing_tenant(tenant_id)?;
     let visibility_started = Instant::now();
-    let required_sequence = wait_for_latest_applied_visibility_blocking(&runtime);
+    let required_sequence = wait_for_latest_applied_visibility_blocking(&runtime)?;
     Ok(LoadedQueryRuntime {
         runtime,
         required_sequence,
@@ -549,21 +549,40 @@ async fn load_query_runtime_async<Fut>(
 where
     Fut: Future<Output = ()> + Clone + Send,
 {
-    let tenant_load_timer = budgeted_segment(LatencySegment::TenantLoad);
-    let runtime = engine.get_existing_tenant_async(tenant_id).await?;
-    let tenant_load = tenant_load_timer.finish();
-    let required_sequence = runtime.durable_head();
-    let visibility_timer = budgeted_segment(LatencySegment::WaitVisibility);
-    runtime
-        .wait_for_applied_sequence_cancellable(required_sequence, cancel_wait)
-        .await?;
-    let wait_visibility = visibility_timer.finish();
-    Ok(LoadedQueryRuntime {
-        runtime,
-        required_sequence,
-        tenant_load,
-        wait_visibility,
-    })
+    loop {
+        let tenant_load_timer = budgeted_segment(LatencySegment::TenantLoad);
+        let runtime = engine.get_existing_tenant_async(tenant_id).await?;
+        let tenant_load = tenant_load_timer.finish();
+        let required_sequence = runtime.durable_head();
+        let visibility_timer = budgeted_segment(LatencySegment::WaitVisibility);
+        tokio::select! {
+            result = runtime.wait_for_applied_sequence_cancellable(
+                required_sequence,
+                cancel_wait.clone(),
+            ) => {
+                if let Err(error) = result {
+                    if runtime.eviction_started() {
+                        tokio::select! {
+                            () = runtime.wait_for_eviction_complete() => continue,
+                            () = cancel_wait.clone() => return Err(Error::Cancelled),
+                        }
+                    }
+                    return Err(error);
+                }
+                let wait_visibility = visibility_timer.finish();
+                return Ok(LoadedQueryRuntime {
+                    runtime,
+                    required_sequence,
+                    tenant_load,
+                    wait_visibility,
+                });
+            }
+            () = runtime.wait_for_eviction_complete() => {
+                // The durable head may have advanced while the failed runtime's
+                // applied head cannot. Retry against the replayed replacement.
+            }
+        }
+    }
 }
 
 fn empty_page() -> Page {

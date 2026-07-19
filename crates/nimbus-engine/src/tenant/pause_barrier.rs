@@ -11,6 +11,8 @@
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
+const PAUSE_BARRIER_RELEASE_TIMEOUT: Duration = Duration::from_secs(60);
+
 #[derive(Debug)]
 struct PauseBarrierControl<S> {
     armed: bool,
@@ -60,12 +62,18 @@ impl<S> PauseBarrier<S> {
         }
         control.entered = Some(payload);
         self.condvar.notify_all();
-        while !control.released {
-            control = self
-                .condvar
-                .wait(control)
-                .expect("pause barrier wait should not be poisoned");
-        }
+        let (next, _) = self
+            .condvar
+            .wait_timeout_while(control, PAUSE_BARRIER_RELEASE_TIMEOUT, |control| {
+                !control.released
+            })
+            .expect("pause barrier wait should not be poisoned");
+        control = next;
+        assert!(
+            control.released,
+            "pause barrier was not released within {PAUSE_BARRIER_RELEASE_TIMEOUT:?}; the test \
+             likely exited before calling release()"
+        );
         *control = PauseBarrierControl::default();
     }
 

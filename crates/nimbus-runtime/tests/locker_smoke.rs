@@ -4,6 +4,7 @@
 use std::pin::pin;
 use std::sync::mpsc;
 use std::thread;
+use std::time::Duration;
 
 /// Helper: initialize V8 platform via deno_core (required before any V8 usage).
 fn ensure_v8_init() {
@@ -34,7 +35,11 @@ fn unentered_isolate_is_send() {
     .join()
     .unwrap();
 
-    assert_eq!(rx.recv().unwrap(), 42);
+    assert_eq!(
+        rx.recv_timeout(Duration::from_secs(60))
+            .expect("locker result should arrive within the test timeout"),
+        42
+    );
 }
 
 #[test]
@@ -90,7 +95,11 @@ fn sequential_lock_unlock_across_threads() {
     .join()
     .unwrap();
 
-    assert_eq!(rx.recv().unwrap(), 4);
+    assert_eq!(
+        rx.recv_timeout(Duration::from_secs(60))
+            .expect("locker result should arrive within the test timeout"),
+        4
+    );
 }
 
 #[test]

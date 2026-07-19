@@ -22,6 +22,7 @@ use keys::{
 pub use projection::install_table_projection_observer;
 pub use records::SystemTenantStatusEvidenceWriter;
 pub use records::ensure_system_tenant_async;
+pub(crate) use records::record_table_state_for_generation_async;
 pub use records::{
     ModuleSource, SystemModuleRecordInput, SystemSourcePackageRecordInput,
     read_active_source_package_modules_async, read_module_source_async,

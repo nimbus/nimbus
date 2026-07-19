@@ -1,5 +1,7 @@
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+const MATERIALIZED_READ_PAUSE_RELEASE_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone)]
 pub(crate) struct MaterializedReadPublishPauseHandle {
@@ -81,12 +83,21 @@ impl MaterializedReadPublishPauseState {
         control.armed = false;
         control.entered = true;
         self.condvar.notify_all();
-        while !control.released {
-            control = self
-                .condvar
-                .wait(control)
-                .expect("materialized publish pause wait should not be poisoned");
-        }
+        let (next, _) = self
+            .condvar
+            .wait_timeout_while(
+                control,
+                MATERIALIZED_READ_PAUSE_RELEASE_TIMEOUT,
+                |control| !control.released,
+            )
+            .expect("materialized publish pause wait should not be poisoned");
+        control = next;
+        assert!(
+            control.released,
+            "materialized read publish pause was not released within \
+             {MATERIALIZED_READ_PAUSE_RELEASE_TIMEOUT:?}; the test likely exited before calling \
+             release()"
+        );
         *control = MaterializedReadPublishPauseControl::default();
     }
 }

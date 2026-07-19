@@ -1,7 +1,9 @@
+mod bounded_barrier;
 mod isolation;
 mod profiles;
 mod repro;
 
+pub(crate) use self::bounded_barrier::BoundedTestBarrier;
 #[cfg(feature = "v8-pointer-compression")]
 pub(crate) use self::isolation::run_v8_crash_control_in_subprocess;
 pub(crate) use self::isolation::{

@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex};
 
-use nimbus_core::{Error, Result, TenantId};
+use nimbus_core::{Error, Result, StorageErrorKind, TenantId};
 use tokio::sync::Notify;
 
 // Tenant lifecycle is a close-then-drain protocol:
@@ -11,33 +11,55 @@ use tokio::sync::Notify;
 // but both are driven by the same atomic state and RAII operation guards.
 pub(super) struct TenantLifecycle {
     deleted: AtomicBool,
+    eviction_started: AtomicBool,
+    eviction_complete: AtomicBool,
     active_operations: AtomicUsize,
     zero_active_lock: Mutex<()>,
     zero_active: Condvar,
     zero_active_notify: Notify,
+    eviction_complete_notify: Notify,
 }
 
 impl TenantLifecycle {
     pub(super) fn new() -> Self {
         Self {
             deleted: AtomicBool::new(false),
+            eviction_started: AtomicBool::new(false),
+            eviction_complete: AtomicBool::new(false),
             active_operations: AtomicUsize::new(0),
             zero_active_lock: Mutex::new(()),
             zero_active: Condvar::new(),
             zero_active_notify: Notify::new(),
+            eviction_complete_notify: Notify::new(),
         }
     }
 
     pub(super) fn enter_operation(&self, tenant_id: &TenantId) -> Result<()> {
-        if self.deleted.load(Ordering::Acquire) {
-            return Err(Error::TenantNotFound(tenant_id.clone()));
+        if let Some(error) = self.operation_rejection_if_deleted(tenant_id) {
+            return Err(error);
         }
         self.active_operations.fetch_add(1, Ordering::AcqRel);
-        if self.deleted.load(Ordering::Acquire) {
+        if let Some(error) = self.operation_rejection_if_deleted(tenant_id) {
             self.release_operation();
-            return Err(Error::TenantNotFound(tenant_id.clone()));
+            return Err(error);
         }
         Ok(())
+    }
+
+    pub(super) fn operation_rejection_if_deleted(&self, tenant_id: &TenantId) -> Option<Error> {
+        if !self.deleted.load(Ordering::Acquire) {
+            return None;
+        }
+        if self.eviction_started.load(Ordering::Acquire) {
+            // Durable-recovery eviction is transient: the tenant still exists,
+            // and async load paths fence on this runtime before reopening it.
+            // Sync/admission races must not turn that window into a false 404.
+            return Some(Error::storage(
+                StorageErrorKind::Unavailable,
+                format!("tenant {tenant_id} runtime is restarting after durable recovery"),
+            ));
+        }
+        Some(Error::TenantNotFound(tenant_id.clone()))
     }
 
     pub(super) fn release_operation(&self) {
@@ -52,7 +74,42 @@ impl TenantLifecycle {
     }
 
     pub(super) fn begin_delete_blocking(&self) {
+        self.mark_deleted();
+        self.wait_for_operations_blocking();
+    }
+
+    pub(super) fn mark_deleted(&self) {
         self.deleted.store(true, Ordering::Release);
+    }
+
+    pub(super) fn begin_eviction(&self) {
+        self.eviction_started.store(true, Ordering::Release);
+        self.mark_deleted();
+    }
+
+    pub(super) fn eviction_started(&self) -> bool {
+        self.eviction_started.load(Ordering::Acquire)
+    }
+
+    pub(super) fn finish_eviction(&self) {
+        self.eviction_complete.store(true, Ordering::Release);
+        self.eviction_complete_notify.notify_waiters();
+    }
+
+    pub(super) async fn wait_for_eviction_complete(&self) {
+        loop {
+            if self.eviction_complete.load(Ordering::Acquire) {
+                return;
+            }
+            let notified = self.eviction_complete_notify.notified();
+            if self.eviction_complete.load(Ordering::Acquire) {
+                return;
+            }
+            notified.await;
+        }
+    }
+
+    pub(super) fn wait_for_operations_blocking(&self) {
         let mut guard = self
             .zero_active_lock
             .lock()
@@ -66,7 +123,11 @@ impl TenantLifecycle {
     }
 
     pub(super) async fn begin_delete_async(&self) {
-        self.deleted.store(true, Ordering::Release);
+        self.mark_deleted();
+        self.wait_for_operations_async().await;
+    }
+
+    pub(super) async fn wait_for_operations_async(&self) {
         loop {
             if self.active_operations.load(Ordering::Acquire) == 0 {
                 return;
@@ -187,5 +248,37 @@ mod tests {
         releaser
             .join()
             .expect("release thread should not panic during lifecycle test");
+    }
+
+    #[test]
+    fn operation_racing_eviction_is_retryable_not_tenant_not_found() {
+        let lifecycle = TenantLifecycle::new();
+        let tenant_id = TenantId::new("evicted").expect("tenant id should be valid");
+        lifecycle.begin_eviction();
+
+        let error = lifecycle
+            .enter_operation(&tenant_id)
+            .expect_err("operation must not enter an evicting runtime");
+        assert_eq!(error.storage_kind(), Some(StorageErrorKind::Unavailable));
+        assert_eq!(
+            error.retryability(),
+            nimbus_core::Retryability::RetryableAfterBackoff
+        );
+        assert!(
+            !matches!(error, Error::TenantNotFound(_)),
+            "durable-recovery eviction must not masquerade as tenant deletion"
+        );
+    }
+
+    #[test]
+    fn operation_after_explicit_delete_remains_tenant_not_found() {
+        let lifecycle = TenantLifecycle::new();
+        let tenant_id = TenantId::new("deleted").expect("tenant id should be valid");
+        lifecycle.mark_deleted();
+
+        assert!(matches!(
+            lifecycle.enter_operation(&tenant_id),
+            Err(Error::TenantNotFound(found)) if found == tenant_id
+        ));
     }
 }

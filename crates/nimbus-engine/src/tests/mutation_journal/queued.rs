@@ -1,6 +1,6 @@
 use super::support::{
     assert_future_stays_pending, expect_blocking_wait_reaches_state, expect_catch_up_future_within,
-    expect_future_within, new_faulted_engine,
+    expect_future_within,
 };
 use super::*;
 use nimbus_core::TriggerDeliveryCursor;
@@ -987,37 +987,29 @@ async fn assign_time_stamping_is_monotonic_under_concurrent_prepares() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn bounded_committer_inbox_times_out_with_typed_retryable_error_and_reports_depth() {
-    struct RestoreEnv {
-        inbox: Option<std::ffi::OsString>,
-        timeout: Option<std::ffi::OsString>,
-    }
-    impl Drop for RestoreEnv {
-        fn drop(&mut self) {
-            unsafe {
-                match self.inbox.take() {
-                    Some(value) => std::env::set_var("NIMBUS_COMMITTER_INBOX_SIZE", value),
-                    None => std::env::remove_var("NIMBUS_COMMITTER_INBOX_SIZE"),
-                }
-                match self.timeout.take() {
-                    Some(value) => std::env::set_var("NIMBUS_COMMITTER_SEND_TIMEOUT_MS", value),
-                    None => std::env::remove_var("NIMBUS_COMMITTER_SEND_TIMEOUT_MS"),
-                }
-            }
-        }
-    }
+    const COMMITTER_SEND_TIMEOUT: Duration = Duration::from_millis(25);
 
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();
-    let restore = RestoreEnv {
-        inbox: std::env::var_os("NIMBUS_COMMITTER_INBOX_SIZE"),
-        timeout: std::env::var_os("NIMBUS_COMMITTER_SEND_TIMEOUT_MS"),
-    };
-    unsafe {
-        std::env::set_var("NIMBUS_COMMITTER_INBOX_SIZE", "2");
-        std::env::set_var("NIMBUS_COMMITTER_SEND_TIMEOUT_MS", "25");
-    }
-    let tenant_id = fixture.create_tenant("bounded-committer", Engine::create_tenant);
-    drop(restore);
+    let tenant_id = TenantId::new("bounded-committer").expect("tenant id should build");
+    crate::tenant::configure_committer_limits_for_testing(
+        tenant_id.clone(),
+        2,
+        COMMITTER_SEND_TIMEOUT,
+    );
+    engine
+        .create_tenant(tenant_id.clone())
+        .expect("bounded-committer tenant should create");
+    let inbox_capacity = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("committer diagnostics should load")
+        .mutation_journal
+        .committer_inbox_capacity;
+    assert_eq!(
+        inbox_capacity, 2,
+        "the per-tenant test override must be in effect; a default-capacity \
+         inbox would let this test pass without exercising the bounded path"
+    );
 
     let pause = engine
         .mutation_journal_pause_handle_for_testing(&tenant_id)
@@ -1047,34 +1039,47 @@ async fn bounded_committer_inbox_times_out_with_typed_retryable_error_and_report
     )
     .await;
 
-    let schema = |table: &'static str| TableSchema {
-        table: TableName::new(table).expect("test table name should build"),
-        fields: vec![],
-        indexes: vec![],
-        access_policy: None,
-    };
-    let spawn_schema = |table: &'static str| {
+    let spawn_schema = |index: usize| {
         let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         tokio::spawn(async move {
             engine
-                .set_table_schema_async(tenant_id, schema(table))
+                .set_table_schema_async(
+                    tenant_id,
+                    TableSchema {
+                        table: TableName::new(format!("inbox_{index}"))
+                            .expect("test table name should build"),
+                        fields: vec![],
+                        indexes: vec![],
+                        access_policy: None,
+                    },
+                )
                 .await
         })
     };
-    let second = spawn_schema("inbox_one");
-    let third = spawn_schema("inbox_two");
+    let accepted = (0..inbox_capacity).map(spawn_schema).collect::<Vec<_>>();
     let full = wait_for_mutation_journal_stats(
         &engine,
         &tenant_id,
-        "both bounded committer slots should become observable",
-        |stats| stats.committer_inbox_depth == 2,
+        "all bounded committer slots should become observable",
+        |stats| stats.committer_inbox_depth == inbox_capacity,
     )
     .await;
-    assert_eq!(full.committer_inbox_capacity, 2);
+    assert_eq!(full.committer_inbox_capacity, inbox_capacity);
 
     let started = std::time::Instant::now();
     let rejected = [spawn_insert("rejected_one"), spawn_insert("rejected_two")];
+    // Wait on the typed diagnostic rather than on wall time: the counter
+    // reaching two proves both senders gave up at the bounded send timeout
+    // instead of queueing behind the saturated inbox.
+    wait_for_mutation_journal_stats(
+        &engine,
+        &tenant_id,
+        "both rejected senders should record a bounded committer send timeout",
+        |stats| stats.committer_send_timeout_count == 2,
+    )
+    .await;
+    let elapsed = started.elapsed();
     let mut errors = Vec::new();
     for rejected_insert in rejected {
         errors.push(
@@ -1084,15 +1089,22 @@ async fn bounded_committer_inbox_times_out_with_typed_retryable_error_and_report
                 .expect_err("each sender beyond the bounded inbox must time out"),
         );
     }
+    // Both senders wait out COMMITTER_SEND_TIMEOUT concurrently, so a healthy
+    // run reaches the diagnostic in ~25ms. The budget keeps an order of
+    // magnitude of scheduling slack for loaded CI while staying well under the
+    // ~500ms this takes on the default send timeout, so losing the per-tenant
+    // override -- or reintroducing unbounded queueing -- still fails here.
+    let elapsed_budget =
+        ci_or_local_duration(Duration::from_millis(250), Duration::from_millis(300));
     assert!(
-        started.elapsed() < Duration::from_millis(250),
-        "the configured 25ms send timeout must not turn into unbounded queueing"
+        elapsed < elapsed_budget,
+        "the bounded send timeout of {COMMITTER_SEND_TIMEOUT:?} per sender must not turn into \
+         unbounded queueing; two senders took {elapsed:?} against a budget of {elapsed_budget:?}"
     );
     for error in &errors {
-        assert!(matches!(
-            error,
-            nimbus_core::Error::CommitterFull { capacity: 2, .. }
-        ));
+        assert!(
+            matches!(error, nimbus_core::Error::CommitterFull { capacity, .. } if *capacity == inbox_capacity)
+        );
         assert_eq!(
             error.retryability(),
             nimbus_core::Retryability::RetryableAfterBackoff
@@ -1102,9 +1114,15 @@ async fn bounded_committer_inbox_times_out_with_typed_retryable_error_and_report
     let diagnostics = engine
         .tenant_engine_diagnostics(&tenant_id)
         .expect("committer diagnostics should load while saturated");
-    assert_eq!(diagnostics.mutation_journal.committer_inbox_depth, 2);
+    assert_eq!(
+        diagnostics.mutation_journal.committer_inbox_depth,
+        inbox_capacity
+    );
     assert_eq!(diagnostics.mutation_journal.committer_send_timeout_count, 2);
-    assert_eq!(diagnostics.commit_phases.committer_inbox_depth, 2);
+    assert_eq!(
+        diagnostics.commit_phases.committer_inbox_depth,
+        u64::try_from(inbox_capacity).expect("committer capacity should fit diagnostics")
+    );
     assert_eq!(diagnostics.commit_phases.committer_send_timeout_total, 2);
 
     pause.release();
@@ -1112,7 +1130,7 @@ async fn bounded_committer_inbox_times_out_with_typed_retryable_error_and_report
         .await
         .expect("accepted insert task should join")
         .expect("accepted insert should commit");
-    for schema_write in [second, third] {
+    for schema_write in accepted {
         expect_future_within(
             schema_write,
             "accepted direct committer work should drain after release",
@@ -1139,7 +1157,179 @@ async fn bounded_committer_inbox_times_out_with_typed_retryable_error_and_report
     assert_eq!(drained.committer_send_timeout_count, 2);
 }
 
-async fn run_paused_insert_burst(engine: &Arc<Engine>, tenant_id: &TenantId, count: usize) {
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn rejected_serial_job_returns_typed_retryable_publisher_error() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = TenantId::new("serial-job-rejection").expect("tenant id should build");
+    crate::tenant::configure_publisher_limits_for_testing(
+        tenant_id.clone(),
+        1,
+        Duration::from_millis(50),
+    );
+    engine
+        .create_tenant(tenant_id.clone())
+        .expect("serial-job-rejection tenant should create");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+    let faults = engine.commit_fault_handle_for_testing();
+    faults.arm(crate::engine::commit_fault_labels::DURABLE_BEFORE_PUBLISH);
+
+    let first = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            engine
+                .insert_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("index".to_string(), json!(1))]),
+                )
+                .await
+        }
+    });
+    expect_blocking_wait_reaches_state("first publisher batch should pause", {
+        let faults = faults.clone();
+        move |timeout| {
+            faults.wait_until_entered(
+                crate::engine::commit_fault_labels::DURABLE_BEFORE_PUBLISH,
+                timeout,
+            )
+        }
+    })
+    .await;
+    let second = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            engine
+                .insert_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("index".to_string(), json!(2))]),
+                )
+                .await
+        }
+    });
+    wait_for_mutation_journal_stats(
+        &engine,
+        &tenant_id,
+        "second batch should fill the publisher queue",
+        |stats| stats.publisher_queue_depth == 1,
+    )
+    .await;
+
+    let schema_error = engine
+        .set_table_schema_async(
+            tenant_id.clone(),
+            TableSchema {
+                table: TableName::new("serial_rejected").expect("table name should build"),
+                fields: Vec::new(),
+                indexes: Vec::new(),
+                access_policy: None,
+            },
+        )
+        .await
+        .expect_err("full publisher queue should reject the opaque serial job");
+    assert!(matches!(schema_error, Error::CommitterFull { .. }));
+    assert_eq!(
+        schema_error.retryability(),
+        nimbus_core::Retryability::RetryableAfterBackoff
+    );
+
+    faults.release(crate::engine::commit_fault_labels::DURABLE_BEFORE_PUBLISH);
+    expect_catch_up_future_within(first, "first batch should finish after release")
+        .await
+        .expect("first task should join")
+        .expect("first batch should succeed");
+    expect_catch_up_future_within(second, "second batch should finish after release")
+        .await
+        .expect("second task should join")
+        .expect("second batch should succeed");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn pipeline_mode_reconcile_timeout_processes_client_batch_in_current_mode() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = TenantId::new("mode-reconcile-timeout").expect("tenant id should build");
+    crate::tenant::configure_publisher_limits_for_testing(
+        tenant_id.clone(),
+        1,
+        Duration::from_millis(100),
+    );
+    engine
+        .create_tenant(tenant_id.clone())
+        .expect("mode-reconcile-timeout tenant should create");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+    let faults = engine.commit_fault_handle_for_testing();
+    faults.arm(crate::engine::commit_fault_labels::DURABLE_BEFORE_PUBLISH);
+    let spawn_insert = |index: usize| {
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        tokio::spawn(async move {
+            engine
+                .insert_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("index".to_string(), json!(index))]),
+                )
+                .await
+        })
+    };
+    let first = spawn_insert(1);
+    expect_blocking_wait_reaches_state("first publisher batch should pause", {
+        let faults = faults.clone();
+        move |timeout| {
+            faults.wait_until_entered(
+                crate::engine::commit_fault_labels::DURABLE_BEFORE_PUBLISH,
+                timeout,
+            )
+        }
+    })
+    .await;
+    let second = spawn_insert(2);
+    wait_for_mutation_journal_stats(
+        &engine,
+        &tenant_id,
+        "second batch should fill the publisher queue",
+        |stats| stats.publisher_queue_depth == 1,
+    )
+    .await;
+    engine
+        .set_committer_pipeline_requested_for_testing(&tenant_id, false)
+        .expect("test should request serial mode");
+    let third = spawn_insert(3);
+    wait_for_mutation_journal_stats(
+        &engine,
+        &tenant_id,
+        "mode barrier should time out without failing the client batch",
+        |stats| stats.publisher_mode_transition_failure_count == 1,
+    )
+    .await;
+    faults.release(crate::engine::commit_fault_labels::DURABLE_BEFORE_PUBLISH);
+
+    for write in [first, second, third] {
+        expect_catch_up_future_within(write, "client batch should finish in current mode")
+            .await
+            .expect("insert task should join")
+            .expect("mode reconciliation failure must not fail client writes");
+    }
+    let stats = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("mode diagnostics should load");
+    assert_eq!(stats.publisher_mode_transition_failure_count, 1);
+    assert_eq!(stats.durable_head, stats.applied_head);
+}
+
+pub(super) async fn run_paused_insert_burst(
+    engine: &Arc<Engine>,
+    tenant_id: &TenantId,
+    count: usize,
+) {
     assert!(count > 0, "a burst must contain at least one mutation");
     engine
         .set_mutation_admission_codel_for_testing(
@@ -1313,247 +1503,20 @@ async fn adaptive_batch_never_splits_the_durable_round_trip() {
     );
 }
 
-#[tokio::test]
-async fn mutation_admission_gate_buffers_while_journal_is_paused_without_losing_in_flight_response()
-{
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn publisher_accumulator_preserves_fsync_amortization_when_assignment_gets_ahead() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();
-    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let tenant_id = fixture.create_tenant("publisher-accumulator", Engine::create_tenant);
+    let before = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("phase metrics before publisher backlog should load")
+        .commit_phases;
+    let faults = engine.commit_fault_handle_for_testing();
+    let pause_label = crate::engine::commit_fault_labels::DURABLE_BEFORE_PUBLISH;
+    faults.arm(pause_label);
 
-    engine
-        .set_mutation_journal_queue_capacity_for_testing(&tenant_id, 1)
-        .expect("queue capacity should be configurable for tests");
-    let pause = engine
-        .mutation_journal_pause_handle_for_testing(&tenant_id)
-        .expect("journal pause handle should load");
-    pause.arm();
-
-    let first_insert = {
-        let engine = Arc::clone(&engine);
-        let tenant_id = tenant_id.clone();
-        tokio::spawn(async move {
-            engine
-                .insert_document_async(
-                    tenant_id,
-                    tasks_table(),
-                    serde_json::Map::from_iter([("title".to_string(), json!("queued-first"))]),
-                )
-                .await
-        })
-    };
-
-    expect_blocking_wait_reaches_state(
-        "journal worker should pause before draining the queued request",
-        {
-            let pause = pause.clone();
-            move |timeout| pause.wait_until_entered(timeout)
-        },
-    )
-    .await;
-
-    let blocked_stats = engine
-        .mutation_journal_stats_for_testing(&tenant_id)
-        .expect("journal stats should load while the queue is paused");
-    assert_eq!(blocked_stats.queue_depth, 1);
-    assert_eq!(blocked_stats.queue_capacity, 1);
-    assert!(blocked_stats.oldest_queue_age_nanos > 0);
-    assert_eq!(blocked_stats.pending_response_count, 1);
-    assert!(blocked_stats.worker_running);
-    assert_eq!(blocked_stats.worker_start_count, 1);
-    assert_eq!(blocked_stats.worker_restart_count, 0);
-    assert_eq!(blocked_stats.queue_rejection_count, 0);
-    assert_eq!(blocked_stats.worker_failure_count, 0);
-
-    let mut second_insert = tokio::spawn({
-        let engine = Arc::clone(&engine);
-        let tenant_id = tenant_id.clone();
-        async move {
-            engine
-                .insert_document_async(
-                    tenant_id,
-                    tasks_table(),
-                    serde_json::Map::from_iter([("title".to_string(), json!("queued-second"))]),
-                )
-                .await
-        }
-    });
-
-    wait_for_mutation_admission_stats(
-        &engine,
-        &tenant_id,
-        "second mutation should remain buffered at the admission gate",
-        |stats| stats.queue_depth == 1,
-    )
-    .await;
-
-    assert_future_stays_pending(
-        &mut second_insert,
-        "second mutation should stay pending while the journal worker is paused",
-    )
-    .await;
-
-    let buffered_stats = engine
-        .mutation_admission_stats_for_testing(&tenant_id)
-        .expect("admission stats should load after the second mutation is buffered");
-    assert_eq!(buffered_stats.queue_depth, 1);
-    assert_eq!(
-        buffered_stats.queue_capacity,
-        crate::tenant::DEFAULT_MUTATION_ADMISSION_QUEUE_CAPACITY
-    );
-    assert!(buffered_stats.oldest_queue_age_nanos > 0);
-    assert_eq!(buffered_stats.shed_count, 0);
-    assert_eq!(buffered_stats.queue_rejection_count, 0);
-
-    pause.release();
-
-    let first_id = expect_future_within(
-        first_insert,
-        "first mutation should resolve after the pause is released",
-    )
-    .await
-    .expect("first mutation task should join successfully")
-    .expect("first mutation should succeed");
-    let second_id = expect_future_within(
-        second_insert,
-        "second mutation should resolve after the journal drains",
-    )
-    .await
-    .expect("second mutation task should join successfully")
-    .expect("second mutation should succeed");
-
-    let visible = engine
-        .query_documents_async(tenant_id.clone(), query_for("tasks"))
-        .await
-        .expect("final query should succeed after the buffered mutation drains");
-    assert_eq!(visible.len(), 2);
-    assert_eq!(
-        visible
-            .into_iter()
-            .map(|document| document.id.clone())
-            .collect::<BTreeSet<_>>(),
-        BTreeSet::from([first_id, second_id])
-    );
-
-    let final_stats = wait_for_mutation_journal_stats(
-        &engine,
-        &tenant_id,
-        "mutation journal worker to go idle after the buffered queue drains",
-        |stats| !stats.worker_running,
-    )
-    .await;
-    assert!(final_stats.durable_head.0 >= 2);
-    assert_eq!(final_stats.applied_head, final_stats.durable_head);
-    assert_eq!(final_stats.apply_lag, 0);
-    assert_eq!(final_stats.queue_depth, 0);
-    assert_eq!(final_stats.queue_capacity, 1);
-    assert_eq!(final_stats.oldest_queue_age_nanos, 0);
-    assert_eq!(final_stats.pending_response_count, 0);
-    assert!(!final_stats.worker_running);
-    assert_eq!(final_stats.worker_start_count, 1);
-    assert_eq!(final_stats.worker_restart_count, 0);
-    assert_eq!(final_stats.queue_rejection_count, 0);
-    assert_eq!(final_stats.worker_failure_count, 0);
-    assert_eq!(
-        durable_journal_commits(engine.as_ref(), &tenant_id, SequenceNumber(0)).len(),
-        2
-    );
-
-    let final_admission_stats = engine
-        .mutation_admission_stats_for_testing(&tenant_id)
-        .expect("admission stats should load after the gate drains");
-    assert_eq!(final_admission_stats.queue_depth, 0);
-    assert_eq!(final_admission_stats.shed_count, 0);
-    assert_eq!(final_admission_stats.queue_rejection_count, 0);
-}
-
-#[tokio::test]
-async fn mutation_journal_never_expires_admitted_work() {
-    let fixture = EngineFixture::new(|path| Engine::new(path));
-    let engine = fixture.engine();
-    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
-
-    engine
-        .set_mutation_admission_codel_for_testing(
-            &tenant_id,
-            Duration::from_millis(5),
-            Duration::from_millis(10),
-        )
-        .expect("admission CoDel should be configurable for tests");
-    let pause = engine
-        .mutation_journal_pause_handle_for_testing(&tenant_id)
-        .expect("journal pause handle should load");
-    pause.arm();
-
-    let mut admitted_insert = {
-        let engine = Arc::clone(&engine);
-        let tenant_id = tenant_id.clone();
-        tokio::spawn(async move {
-            engine
-                .insert_document_async(
-                    tenant_id,
-                    tasks_table(),
-                    serde_json::Map::from_iter([("title".to_string(), json!("admitted"))]),
-                )
-                .await
-        })
-    };
-
-    expect_blocking_wait_reaches_state(
-        "journal worker should pause after admitting the mutation to the journal queue",
-        {
-            let pause = pause.clone();
-            move |timeout| pause.wait_until_entered(timeout)
-        },
-    )
-    .await;
-
-    assert_future_stays_pending(
-        &mut admitted_insert,
-        "admitted mutation should remain pending while the journal worker pause is armed",
-    )
-    .await;
-    pause.release();
-
-    let document_id = expect_future_within(
-        admitted_insert,
-        "admitted mutation should resolve after the pause is released",
-    )
-    .await
-    .expect("admitted mutation task should join successfully")
-    .expect("admitted mutation should still succeed");
-
-    let visible = engine
-        .query_documents_async(tenant_id.clone(), query_for("tasks"))
-        .await
-        .expect("final query should succeed after the admitted mutation drains");
-    assert_eq!(visible.len(), 1);
-    assert_eq!(visible[0].id, document_id);
-
-    let admission_stats = engine
-        .mutation_admission_stats_for_testing(&tenant_id)
-        .expect("admission stats should load after the queue drains");
-    assert_eq!(admission_stats.queue_depth, 0);
-    assert_eq!(admission_stats.shed_count, 0);
-    assert_eq!(admission_stats.queue_rejection_count, 0);
-
-    let journal_stats = engine
-        .mutation_journal_stats_for_testing(&tenant_id)
-        .expect("journal stats should load after the admitted mutation commits");
-    assert!(journal_stats.durable_head.0 >= 1);
-    assert_eq!(journal_stats.applied_head, journal_stats.durable_head);
-    assert_eq!(journal_stats.apply_lag, 0);
-    assert_eq!(journal_stats.queue_depth, 0);
-    assert_eq!(
-        durable_journal_commits(engine.as_ref(), &tenant_id, SequenceNumber(0)).len(),
-        1
-    );
-}
-
-#[tokio::test]
-async fn queued_mutation_response_still_resolves_after_blocked_read_catches_up() {
-    let (_data_dir, engine, tenant_id, faults) = new_faulted_engine(42_500);
-
-    let mut first_insert = tokio::spawn({
+    let mut inserts = vec![tokio::spawn({
         let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         async move {
@@ -1561,487 +1524,64 @@ async fn queued_mutation_response_still_resolves_after_blocked_read_catches_up()
                 .insert_document_async(
                     tenant_id,
                     tasks_table(),
-                    serde_json::Map::from_iter([("title".to_string(), json!("first"))]),
+                    serde_json::Map::from_iter([("index".to_string(), json!(0))]),
                 )
                 .await
         }
-    });
-
-    expect_future_within(
-        faults.wait_until_entered(),
-        "journal worker should block after durable append",
-    )
-    .await;
-    assert_future_stays_pending(
-        &mut first_insert,
-        "first mutation should remain pending while apply is blocked",
-    )
+    })];
+    expect_blocking_wait_reaches_state("first publisher batch should pause after append", {
+        let faults = faults.clone();
+        move |timeout| faults.wait_until_entered(pause_label, timeout)
+    })
     .await;
 
-    let mut blocked_query = tokio::spawn({
-        let engine = engine.clone();
-        let tenant_id = tenant_id.clone();
-        async move {
-            engine
-                .query_documents_async(tenant_id, query_for("tasks"))
-                .await
-        }
-    });
-    assert_future_stays_pending(
-        &mut blocked_query,
-        "query should remain pending while the first durable write is not yet applied",
-    )
-    .await;
-
-    let mut second_insert = tokio::spawn({
-        let engine = engine.clone();
-        let tenant_id = tenant_id.clone();
-        async move {
-            engine
-                .insert_document_async(
-                    tenant_id,
-                    tasks_table(),
-                    serde_json::Map::from_iter([("title".to_string(), json!("second"))]),
-                )
-                .await
-        }
-    });
-    assert_future_stays_pending(
-        &mut second_insert,
-        "queued follow-up mutation should remain pending until the blocked apply resumes",
-    )
-    .await;
-
-    faults.release();
-
-    let first_id = expect_future_within(
-        first_insert,
-        "first mutation should resolve after apply resumes",
-    )
-    .await
-    .expect("first mutation task should join successfully")
-    .expect("first mutation should succeed");
-    let query_results = expect_future_within(
-        blocked_query,
-        "blocked query should resolve after apply resumes",
-    )
-    .await
-    .expect("blocked query task should join successfully")
-    .expect("blocked query should succeed");
-    assert!(
-        query_results
-            .iter()
-            .any(|document| document.fields.get("title") == Some(&json!("first"))),
-        "blocked query should observe the first applied write"
-    );
-
-    let second_id = match timeout(Duration::from_secs(3), second_insert).await {
-        Ok(result) => result
-            .expect("second mutation task should join successfully")
-            .expect("second mutation should succeed"),
-        Err(error) => {
-            let visible = engine
-                .query_documents_async(tenant_id.clone(), query_for("tasks"))
-                .await
-                .expect("live query should still succeed");
-            let visible_titles = visible
-                .iter()
-                .map(|document| {
-                    document.fields["title"]
-                        .as_str()
-                        .expect("title should be present and a string")
-                })
-                .collect::<Vec<_>>();
-            panic!(
-                "queued follow-up mutation should resolve after the blocked read catches up: {error:?}; visible documents: {:?}; first_id={first_id}",
-                visible_titles
-            );
-        }
-    };
-
-    let visible = engine
-        .query_documents_async(tenant_id, query_for("tasks"))
-        .await
-        .expect("final query should succeed");
-    assert_eq!(visible.len(), 2);
-    assert!(visible.iter().any(|document| document.id == first_id));
-    assert!(visible.iter().any(|document| document.id == second_id));
-}
-
-#[tokio::test]
-async fn queued_cancellable_mutation_response_still_resolves_after_blocked_read_catches_up() {
-    let data_dir = tempdir().expect("engine tempdir should build");
-    let faults = BlockingFaultInjector::new(FaultPoint::JournalDurableAppendBeforeApply);
-    let engine = Arc::new(
-        Engine::new_with_simulation(
-            data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(42_750))),
-            faults.clone(),
-        )
-        .expect("engine should create"),
-    );
-    let tenant_id = TenantId::new("demo").expect("tenant id should build");
-    engine
-        .create_tenant(tenant_id.clone())
-        .expect("tenant should create");
-
-    let mut first_insert = tokio::spawn({
-        let engine = engine.clone();
-        let tenant_id = tenant_id.clone();
-        async move {
-            engine
-                .insert_document_async_with(
-                    tenant_id,
-                    tasks_table(),
-                    None,
-                    serde_json::Map::from_iter([("title".to_string(), json!("first-cancellable"))]),
-                    crate::AsyncMutationContext::anonymous(std::future::pending::<()>(), || Ok(())),
-                )
-                .await
-        }
-    });
-
-    expect_future_within(
-        faults.wait_until_entered(),
-        "journal worker should block after durable append",
-    )
-    .await;
-    assert_future_stays_pending(
-        &mut first_insert,
-        "first cancellable mutation should remain pending while apply is blocked",
-    )
-    .await;
-
-    let mut blocked_query = tokio::spawn({
-        let engine = engine.clone();
-        let tenant_id = tenant_id.clone();
-        async move {
-            engine
-                .query_documents_async(tenant_id, query_for("tasks"))
-                .await
-        }
-    });
-    assert_future_stays_pending(
-        &mut blocked_query,
-        "query should remain pending while the first durable write is not yet applied",
-    )
-    .await;
-
-    let mut second_insert = tokio::spawn({
-        let engine = engine.clone();
-        let tenant_id = tenant_id.clone();
-        async move {
-            engine
-                .insert_document_async_with(
-                    tenant_id,
-                    tasks_table(),
-                    None,
-                    serde_json::Map::from_iter([(
-                        "title".to_string(),
-                        json!("second-cancellable"),
-                    )]),
-                    crate::AsyncMutationContext::anonymous(std::future::pending::<()>(), || Ok(())),
-                )
-                .await
-        }
-    });
-    assert_future_stays_pending(
-        &mut second_insert,
-        "queued follow-up cancellable mutation should remain pending until the blocked apply resumes",
-    )
-    .await;
-
-    faults.release();
-
-    let first_id = expect_future_within(
-        first_insert,
-        "first cancellable mutation should resolve after apply resumes",
-    )
-    .await
-    .expect("first cancellable mutation task should join successfully")
-    .expect("first cancellable mutation should succeed");
-    let query_results = expect_future_within(
-        blocked_query,
-        "blocked query should resolve after apply resumes",
-    )
-    .await
-    .expect("blocked query task should join successfully")
-    .expect("blocked query should succeed");
-    assert!(
-        query_results
-            .iter()
-            .any(|document| document.fields.get("title") == Some(&json!("first-cancellable"))),
-        "blocked query should observe the first applied cancellable write"
-    );
-
-    let second_id = match timeout(Duration::from_secs(3), second_insert).await {
-        Ok(result) => result
-            .expect("second cancellable mutation task should join successfully")
-            .expect("second cancellable mutation should succeed"),
-        Err(error) => {
-            let visible = engine
-                .query_documents_async(tenant_id.clone(), query_for("tasks"))
-                .await
-                .expect("live query should still succeed");
-            let visible_titles = visible
-                .iter()
-                .map(|document| {
-                    document.fields["title"]
-                        .as_str()
-                        .expect("title should be present and a string")
-                })
-                .collect::<Vec<_>>();
-            panic!(
-                "queued follow-up cancellable mutation should resolve after the blocked read catches up: {error:?}; visible documents: {:?}; first_id={first_id}",
-                visible_titles
-            );
-        }
-    };
-
-    let visible = engine
-        .query_documents_async(tenant_id, query_for("tasks"))
-        .await
-        .expect("final query should succeed");
-    assert_eq!(visible.len(), 2);
-    assert!(visible.iter().any(|document| document.id == first_id));
-    assert!(visible.iter().any(|document| document.id == second_id));
-}
-
-#[tokio::test]
-async fn queued_mutation_response_still_resolves_after_blocked_cancellable_read_catches_up() {
-    let data_dir = tempdir().expect("engine tempdir should build");
-    let faults = BlockingFaultInjector::new(FaultPoint::JournalDurableAppendBeforeApply);
-    let engine = Arc::new(
-        Engine::new_with_simulation(
-            data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(42_900))),
-            faults.clone(),
-        )
-        .expect("engine should create"),
-    );
-    let tenant_id = TenantId::new("demo").expect("tenant id should build");
-    engine
-        .create_tenant(tenant_id.clone())
-        .expect("tenant should create");
-
-    let mut first_insert = tokio::spawn({
-        let engine = engine.clone();
-        let tenant_id = tenant_id.clone();
-        async move {
-            engine
-                .insert_document_async(
-                    tenant_id,
-                    tasks_table(),
-                    serde_json::Map::from_iter([(
-                        "title".to_string(),
-                        json!("first-query-cancellable"),
-                    )]),
-                )
-                .await
-        }
-    });
-
-    expect_future_within(
-        faults.wait_until_entered(),
-        "journal worker should block after durable append",
-    )
-    .await;
-    assert_future_stays_pending(
-        &mut first_insert,
-        "first mutation should remain pending while apply is blocked",
-    )
-    .await;
-
-    let mut blocked_query = tokio::spawn({
-        let engine = engine.clone();
-        let tenant_id = tenant_id.clone();
-        async move {
-            engine
-                .query_documents_async_cancellable(
-                    tenant_id,
-                    query_for("tasks"),
-                    std::future::pending::<()>(),
-                    || Ok(()),
-                )
-                .await
-        }
-    });
-    assert_future_stays_pending(
-        &mut blocked_query,
-        "cancellable query should remain pending while the first durable write is not yet applied",
-    )
-    .await;
-
-    let mut second_insert = tokio::spawn({
-        let engine = engine.clone();
-        let tenant_id = tenant_id.clone();
-        async move {
-            engine
-                .insert_document_async(
-                    tenant_id,
-                    tasks_table(),
-                    serde_json::Map::from_iter([(
-                        "title".to_string(),
-                        json!("second-query-cancellable"),
-                    )]),
-                )
-                .await
-        }
-    });
-    assert_future_stays_pending(
-        &mut second_insert,
-        "queued follow-up mutation should remain pending until the blocked apply resumes",
-    )
-    .await;
-
-    faults.release();
-
-    let first_id = expect_future_within(
-        first_insert,
-        "first mutation should resolve after apply resumes",
-    )
-    .await
-    .expect("first mutation task should join successfully")
-    .expect("first mutation should succeed");
-    let query_results = expect_future_within(
-        blocked_query,
-        "blocked query should resolve after apply resumes",
-    )
-    .await
-    .expect("blocked query task should join successfully")
-    .expect("blocked query should succeed");
-    assert!(
-        query_results.iter().any(
-            |document| document.fields.get("title") == Some(&json!("first-query-cancellable"))
-        ),
-        "blocked query should observe the first applied write"
-    );
-
-    let second_id = match timeout(Duration::from_secs(3), second_insert).await {
-        Ok(result) => result
-            .expect("second mutation task should join successfully")
-            .expect("second mutation should succeed"),
-        Err(error) => {
-            let visible = engine
-                .query_documents_async(tenant_id.clone(), query_for("tasks"))
-                .await
-                .expect("live query should still succeed");
-            let visible_titles = visible
-                .iter()
-                .map(|document| {
-                    document.fields["title"]
-                        .as_str()
-                        .expect("title should be present and a string")
-                })
-                .collect::<Vec<_>>();
-            panic!(
-                "queued follow-up mutation should resolve after the blocked cancellable read catches up: {error:?}; visible documents: {:?}; first_id={first_id}",
-                visible_titles
-            );
-        }
-    };
-
-    let visible = engine
-        .query_documents_async(tenant_id, query_for("tasks"))
-        .await
-        .expect("final query should succeed");
-    assert_eq!(visible.len(), 2);
-    assert!(visible.iter().any(|document| document.id == first_id));
-    assert!(visible.iter().any(|document| document.id == second_id));
-}
-
-#[tokio::test]
-async fn queued_mutation_response_resolves_when_worker_starts_on_ephemeral_current_thread_runtime()
-{
-    let data_dir = tempdir().expect("engine tempdir should build");
-    let faults = BlockingFaultInjector::new(FaultPoint::JournalDurableAppendBeforeApply);
-    let engine = Arc::new(
-        Engine::new_with_simulation(
-            data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(43_050))),
-            faults.clone(),
-        )
-        .expect("engine should create"),
-    );
-    let tenant_id = TenantId::new("demo").expect("tenant id should build");
-    engine
-        .create_tenant(tenant_id.clone())
-        .expect("tenant should create");
-
-    let first_runtime = std::thread::spawn({
-        let engine = engine.clone();
-        let tenant_id = tenant_id.clone();
-        move || {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("ephemeral current-thread runtime should build");
-            runtime.block_on(async move {
+    const QUEUED_BATCHES: usize = 16;
+    for index in 1..=QUEUED_BATCHES {
+        inserts.push(tokio::spawn({
+            let engine = engine.clone();
+            let tenant_id = tenant_id.clone();
+            async move {
                 engine
                     .insert_document_async(
                         tenant_id,
                         tasks_table(),
-                        serde_json::Map::from_iter([(
-                            "title".to_string(),
-                            json!("first-ephemeral-runtime"),
-                        )]),
+                        serde_json::Map::from_iter([("index".to_string(), json!(index))]),
                     )
                     .await
-            })
-        }
-    });
+            }
+        }));
+        wait_for_mutation_journal_stats(
+            &engine,
+            &tenant_id,
+            "each assigned singleton should reach the bounded publisher queue",
+            |stats| stats.publisher_queue_depth == index,
+        )
+        .await;
+    }
 
-    expect_future_within(
-        faults.wait_until_entered(),
-        "journal worker should block after durable append",
-    )
-    .await;
+    faults.release(pause_label);
+    for insert in inserts {
+        expect_catch_up_future_within(insert, "accumulated mutation should publish")
+            .await
+            .expect("accumulated insert task should join")
+            .expect("accumulated insert should succeed");
+    }
 
-    let mut second_insert = tokio::spawn({
-        let engine = engine.clone();
-        let tenant_id = tenant_id.clone();
-        async move {
-            engine
-                .insert_document_async(
-                    tenant_id,
-                    tasks_table(),
-                    serde_json::Map::from_iter([(
-                        "title".to_string(),
-                        json!("second-after-ephemeral-runtime"),
-                    )]),
-                )
-                .await
-        }
-    });
-    assert_future_stays_pending(
-        &mut second_insert,
-        "queued follow-up mutation should remain pending until the blocked apply resumes",
-    )
-    .await;
-
-    faults.release();
-
-    let first_id = tokio::task::spawn_blocking(move || {
-        first_runtime
-            .join()
-            .expect("ephemeral runtime thread should join successfully")
-    })
-    .await
-    .expect("join worker should finish")
-    .expect("first mutation should succeed");
-    let second_id = expect_catch_up_future_within(
-        second_insert,
-        "queued follow-up mutation should still resolve after the ephemeral runtime exits",
-    )
-    .await
-    .expect("second mutation task should join successfully")
-    .expect("second mutation should succeed");
-
-    let visible = engine
-        .query_documents_async(tenant_id, query_for("tasks"))
-        .await
-        .expect("final query should succeed");
-    assert_eq!(visible.len(), 2);
-    assert!(visible.iter().any(|document| document.id == first_id));
-    assert!(visible.iter().any(|document| document.id == second_id));
+    let after = engine
+        .tenant_engine_diagnostics(&tenant_id)
+        .expect("phase metrics after publisher backlog should load")
+        .commit_phases;
+    assert_eq!(
+        after
+            .journal_batch_count
+            .saturating_sub(before.journal_batch_count),
+        2,
+        "the paused singleton plus all queued assignments should require two fsyncs"
+    );
+    assert_eq!(
+        after
+            .journal_batch_size_sum
+            .saturating_sub(before.journal_batch_size_sum),
+        (QUEUED_BATCHES + 1) as u64
+    );
 }

@@ -1,5 +1,5 @@
 use nimbus_core::{Result, Schema, SequenceNumber, TenantEventRecord};
-use nimbus_storage::JournalProgress;
+use nimbus_storage::{DurableJournalPage, JournalProgress};
 
 use super::*;
 
@@ -87,6 +87,33 @@ impl TenantPersistence {
             Self::Memory(_) => {
                 read_storage
                     .execute(move |store| store.read_durable_journal_from(next_sequence))
+                    .await
+            }
+        }
+    }
+
+    /// Reads one bounded page of the provider's journal after `after`.
+    ///
+    /// Callers that walk an unbounded tail must page through this instead of
+    /// `read_durable_journal_from_async`, whose result grows with the whole
+    /// remaining journal.
+    pub(crate) async fn stream_durable_journal_async(
+        &self,
+        read_storage: &TenantPersistenceExecutor,
+        after: SequenceNumber,
+        limit: usize,
+    ) -> Result<DurableJournalPage> {
+        match self {
+            Self::Postgres(store) => store.stream_durable_journal_async(after, limit).await,
+            Self::Redb(_) | Self::Sqlite(_) | Self::LibsqlReplica(_) | Self::MySql(_) => {
+                read_storage
+                    .execute(move |store| store.stream_durable_journal(after, limit))
+                    .await
+            }
+            #[cfg(any(test, feature = "test-hooks"))]
+            Self::Memory(_) => {
+                read_storage
+                    .execute(move |store| store.stream_durable_journal(after, limit))
                     .await
             }
         }

@@ -5,8 +5,8 @@ use tracing::warn;
 
 use crate::tenant::TenantRuntime;
 
-use super::phase_metrics::env_positive_usize;
 use super::prepared::PreparedCommit;
+use crate::config::env_positive_usize;
 
 /// Upper bound on how many recent commits one shadow observation may scan.
 ///

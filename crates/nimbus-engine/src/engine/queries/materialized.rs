@@ -18,10 +18,10 @@ use super::snapshot::snapshot_table_documents;
 
 pub(super) fn wait_for_latest_applied_visibility_blocking(
     runtime: &TenantRuntime,
-) -> SequenceNumber {
+) -> Result<SequenceNumber> {
     let required_sequence = runtime.durable_head();
-    runtime.wait_for_applied_sequence_blocking(required_sequence);
-    required_sequence
+    runtime.wait_for_applied_sequence_blocking(required_sequence)?;
+    Ok(required_sequence)
 }
 
 pub(crate) fn evaluate_with_index_cancellable_for_principal(
@@ -49,7 +49,7 @@ pub(crate) fn evaluate_with_index_cancellable_for_principal(
             Ok(documents)
         }
         Some(prepared) => {
-            runtime.wait_for_applied_sequence_blocking(required_sequence);
+            runtime.wait_for_applied_sequence_blocking(required_sequence)?;
             check_cancel()?;
             let plan_kind = query_plan_metric_kind(&prepared.plan);
             let documents = query_documents_for_read_surface_prepared_cancellable(

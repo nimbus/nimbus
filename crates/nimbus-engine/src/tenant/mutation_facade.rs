@@ -1,7 +1,9 @@
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-use nimbus_core::{CommitEntry, Result, SequenceNumber, TableName, TenantEventRecord, Timestamp};
+use nimbus_core::{
+    CommitEntry, Error, Result, SequenceNumber, TableName, TenantEventRecord, Timestamp,
+};
 use nimbus_storage::JournalProgress;
 
 use super::*;
@@ -49,6 +51,170 @@ fn append_exit_requires_storage_fallback(
 impl TenantRuntime {
     pub(crate) fn take_committer_receiver(&self) -> tokio::sync::mpsc::Receiver<CommitterMessage> {
         self.committer.take_receiver()
+    }
+
+    pub(crate) fn take_publisher_receiver(&self) -> tokio::sync::mpsc::Receiver<PublisherMessage> {
+        self.publisher.take_receiver()
+    }
+
+    pub(crate) fn take_observer_dispatch_receiver(
+        &self,
+    ) -> tokio::sync::mpsc::UnboundedReceiver<
+        crate::engine::committed_mutations::CommittedMutationObserverMessage,
+    > {
+        self.observer_dispatch.take_receiver()
+    }
+
+    pub(crate) fn enqueue_committed_mutation_observer_dispatch(
+        self: &Arc<Self>,
+        dispatch: crate::engine::committed_mutations::CommittedMutationObserverDispatch,
+    ) -> Result<()> {
+        self.observer_dispatch.send(dispatch, Arc::downgrade(self))
+    }
+
+    pub(crate) async fn enqueue_committed_mutation_observer_catch_up_dispatch(
+        self: &Arc<Self>,
+        dispatch: crate::engine::committed_mutations::CommittedMutationObserverDispatch,
+    ) -> Result<()> {
+        self.observer_dispatch
+            .send_when_capacity_available(dispatch, Arc::downgrade(self))
+            .await
+    }
+
+    pub(crate) fn committed_mutation_observer_catch_up_chunk_size(&self) -> usize {
+        self.observer_dispatch.catch_up_chunk_size()
+    }
+
+    pub(crate) fn request_committed_mutation_observer_catch_up(
+        &self,
+        first_sequence: SequenceNumber,
+        requested_through: SequenceNumber,
+    ) -> bool {
+        self.observer_dispatch
+            .request_catch_up(first_sequence, requested_through)
+    }
+
+    pub(crate) fn take_committed_mutation_observer_catch_up_request(
+        &self,
+    ) -> Option<(SequenceNumber, SequenceNumber)> {
+        self.observer_dispatch.take_catch_up_request()
+    }
+
+    pub(crate) fn complete_committed_mutation_observer_catch_up(&self) -> bool {
+        self.observer_dispatch.complete_catch_up()
+    }
+
+    pub(crate) fn abandon_committed_mutation_observer_catch_up(
+        &self,
+        first_sequence: SequenceNumber,
+        requested_through: SequenceNumber,
+    ) {
+        self.observer_dispatch
+            .abandon_catch_up(first_sequence, requested_through);
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn wait_for_committed_mutation_observer_catch_up_idle(&self) {
+        self.observer_dispatch.wait_for_catch_up_idle().await;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn record_committed_mutation_observer_catch_up_task_started(&self) {
+        self.observer_dispatch.record_catch_up_task_started();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn record_committed_mutation_observer_catch_up_task_finished(&self) {
+        self.observer_dispatch.record_catch_up_task_finished();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn committed_mutation_observer_catch_up_task_count(&self) -> usize {
+        self.observer_dispatch.catch_up_task_count()
+    }
+
+    pub(crate) fn record_committed_mutation_observer_catch_up_enqueue_failure(&self) {
+        self.observer_dispatch.record_catch_up_enqueue_failure();
+    }
+
+    pub(crate) fn close_committed_mutation_observers(&self) {
+        self.observer_dispatch.close();
+    }
+
+    pub(crate) fn mark_committed_mutation_observers_drained(&self) {
+        self.observer_dispatch.mark_drained();
+    }
+
+    pub(crate) fn complete_committed_mutation_observer_dispatch(&self, event_count: usize) {
+        self.observer_dispatch.complete_dispatch(event_count);
+    }
+
+    pub(crate) fn poison_committed_mutation_observers(&self, reason: &str) {
+        self.observer_dispatch.poison(reason);
+    }
+
+    pub(crate) async fn wait_for_committed_mutation_observers_drained(&self) {
+        self.observer_dispatch.wait_drained().await;
+    }
+
+    pub(crate) fn wait_for_committed_mutation_observers_drained_blocking(&self) -> Result<()> {
+        self.observer_dispatch.wait_drained_blocking()
+    }
+
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) async fn flush_committed_mutation_observers_for_testing(&self) -> Result<()> {
+        self.observer_dispatch.fence().await
+    }
+
+    pub(crate) fn publisher_pipeline_capable(&self) -> bool {
+        self.publisher.pipeline_capable()
+    }
+
+    pub(crate) async fn lock_publisher_assignment_recovery(
+        &self,
+    ) -> tokio::sync::MutexGuard<'_, ()> {
+        self.publisher.lock_assignment_recovery().await
+    }
+
+    pub(crate) fn committer_shutdown_token(&self) -> tokio_util::sync::CancellationToken {
+        self.committer.shutdown_token()
+    }
+
+    pub(crate) fn shutdown_committer(&self) {
+        self.committer.shutdown();
+    }
+
+    pub(crate) fn publisher_record_transient_error(&self) {
+        self.publisher.record_transient_error();
+    }
+
+    pub(crate) fn publisher_record_fatal_error(&self) {
+        self.publisher.record_fatal_error();
+    }
+
+    pub(crate) fn publisher_record_ambiguous_error(&self) {
+        self.publisher.record_ambiguous_error();
+    }
+
+    pub(crate) async fn send_assigned_publisher_batch(
+        &self,
+        batch: AssignedPublisherBatch,
+    ) -> std::result::Result<(), PublisherQueueError> {
+        self.publisher.send(batch).await
+    }
+
+    pub(crate) async fn send_publisher_response_fence(
+        &self,
+        responses: Vec<DeferredPublisherResponse>,
+    ) -> std::result::Result<(), Box<(Vec<DeferredPublisherResponse>, nimbus_core::Error)>> {
+        self.publisher.send_response_fence(responses).await
+    }
+
+    pub(crate) async fn send_publisher_serial_job(
+        &self,
+        job: super::CommitterJob,
+    ) -> std::result::Result<tokio::sync::oneshot::Receiver<()>, (super::CommitterJob, Error)> {
+        self.publisher.send_serial_job(job).await
     }
 
     pub(crate) async fn send_queued_committer_batch(
@@ -175,11 +341,26 @@ impl TenantRuntime {
         &self,
         request: QueuedMutationRequest,
     ) -> Result<()> {
-        if let Err(error) = self.mutation_admission.enqueue(request) {
+        if let Err(error) = self.mutation_admission.enqueue(request, || {
+            self.lifecycle
+                .operation_rejection_if_deleted(&self.tenant_id)
+        }) {
             self.maybe_report_overload_error(&error);
             return Err(error);
         }
         Ok(())
+    }
+
+    pub(crate) fn fail_and_drain_mutation_queues(&self, error: &Error) {
+        let mut requests = self.mutation_admission.drain_all();
+        requests.extend(self.mutation_journal.drain_all());
+        for request in requests {
+            let response = request.response.clone();
+            // Drop prepared accounting and the tenant operation guard before
+            // waking the caller or waiting on any engine-wide lock.
+            drop(request);
+            let _ = response.send(Err(error.clone()));
+        }
     }
 
     fn maybe_report_overload_error(&self, error: &nimbus_core::Error) {
@@ -210,6 +391,12 @@ impl TenantRuntime {
                 MutationAdmissionDecision::Empty => break,
             }
         }
+    }
+
+    pub(crate) fn mutation_assignment_backlog_depth(&self) -> usize {
+        self.mutation_journal
+            .queue_depth()
+            .saturating_add(self.mutation_admission.queue_depth())
     }
 
     pub(crate) async fn drain_mutation_batch_adaptive(
@@ -275,6 +462,10 @@ impl TenantRuntime {
         self.mutation_journal.record_worker_failure();
     }
 
+    pub(crate) fn record_provider_catch_up_failure(&self) {
+        self.mutation_journal.record_provider_catch_up_failure();
+    }
+
     pub(crate) fn begin_pending_mutation_response(&self) {
         self.mutation_journal.begin_pending_response();
     }
@@ -305,12 +496,21 @@ impl TenantRuntime {
         self.mutation_journal.mark_applied_head(sequence);
     }
 
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) fn fail_applied_waiters_for_testing(&self, error: Error) {
+        self.mutation_journal.fail_applied_waiters(error);
+    }
+
     pub(crate) fn stage_pending_write_log_commits(
         &self,
         commits: impl IntoIterator<Item = CommitEntry>,
         observed_at: Timestamp,
     ) {
         self.write_log.stage_pending(commits, observed_at);
+    }
+
+    pub(crate) fn assigned_head(&self) -> SequenceNumber {
+        self.write_log.assigned_through()
     }
 
     pub(crate) fn discard_unpersisted_write_log_suffix(&self, first: SequenceNumber) {
@@ -377,9 +577,12 @@ impl TenantRuntime {
             .await
     }
 
-    pub(crate) fn wait_for_applied_sequence_blocking(&self, sequence: SequenceNumber) {
+    pub(crate) fn wait_for_applied_sequence_blocking(
+        &self,
+        sequence: SequenceNumber,
+    ) -> Result<()> {
         self.mutation_journal
-            .wait_for_applied_sequence_blocking(sequence);
+            .wait_for_applied_sequence_blocking(sequence)
     }
 
     pub(crate) fn sync_mutation_journal_progress(self: &Arc<Self>, progress: JournalProgress) {
@@ -399,10 +602,8 @@ impl TenantRuntime {
     pub(crate) async fn sync_mutation_journal_progress_async(
         self: &Arc<Self>,
         progress: JournalProgress,
-    ) {
-        self.submit_journal_progress_committer(progress)
-            .await
-            .expect("tenant committer should synchronize journal progress");
+    ) -> Result<()> {
+        self.submit_journal_progress_committer(progress).await
     }
 
     /// Observes storage-side heads from within the committer task. Callers
@@ -439,7 +640,47 @@ impl TenantRuntime {
         stats.committer_inbox_depth = self.committer.depth();
         stats.committer_inbox_capacity = self.committer.capacity();
         stats.committer_send_timeout_count = self.committer.send_timeout_count();
+        stats.publisher_queue_depth = self.publisher.depth();
+        stats.publisher_queue_capacity = self.publisher.capacity();
+        stats.publisher_send_timeout_count = self.publisher.send_timeout_count();
+        let errors = self.publisher.error_counts();
+        stats.publisher_transient_error_count = errors.transient;
+        stats.publisher_fatal_error_count = errors.fatal;
+        stats.publisher_ambiguous_error_count = errors.ambiguous;
+        stats.publisher_mode = self.publisher.mode();
+        stats.publisher_mode_transition_count = self.publisher.mode_transition_count();
+        stats.publisher_mode_transition_failure_count =
+            self.publisher.mode_transition_failure_count();
+        let observer = self.observer_dispatch.stats();
+        stats.observer_queue_depth = observer.depth;
+        stats.observer_queue_capacity = observer.capacity;
+        stats.observer_queue_high_watermark = observer.high_watermark;
+        stats.observer_queue_high_water_warning_count = observer.high_water_warning_count;
+        stats.observer_queue_cap_breach_count = observer.cap_breach_count;
+        stats.observer_catch_up_enqueue_failure_count = observer.catch_up_enqueue_failure_count;
+        stats.observer_dispatch_poisoned = observer.poisoned;
         stats
+    }
+
+    pub(crate) fn publisher_error_counts(&self) -> super::PublisherErrorCounts {
+        self.publisher.error_counts()
+    }
+
+    pub(crate) fn restore_publisher_error_counts(&self, counts: super::PublisherErrorCounts) {
+        self.publisher.restore_error_counts(counts);
+    }
+
+    pub(crate) async fn reconcile_committer_pipeline_mode(&self) -> Result<bool> {
+        self.publisher.reconcile_mode().await
+    }
+
+    pub(crate) fn committer_pipeline_mode(&self) -> super::CommitterPipelineMode {
+        self.publisher.mode()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_committer_pipeline_requested_for_testing(&self, enabled: bool) {
+        self.publisher.set_pipeline_requested_for_testing(enabled);
     }
 
     #[cfg(test)]

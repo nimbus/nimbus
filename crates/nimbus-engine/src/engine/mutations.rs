@@ -6,6 +6,7 @@ mod inline_reprepare;
 mod journal;
 pub(in crate::engine) mod phase_metrics;
 pub(crate) mod prepared;
+mod publisher;
 mod shadow_conflicts;
 mod window_prepare;
 pub(crate) mod write_log;
@@ -20,6 +21,7 @@ use crate::tenant::{MutationIsolateAdmissionPermit, TenantOperationGuard};
 pub(crate) use authorization::enforce_mutation_authorization;
 pub(in crate::engine) use commit_processing::document_bearing_commit_identity;
 pub use direct::{AsyncMutationContext, MutationActor};
+pub(crate) use publisher::{finish_durable_recovery_eviction_locked, run_ordered_publisher};
 
 use super::Engine;
 
