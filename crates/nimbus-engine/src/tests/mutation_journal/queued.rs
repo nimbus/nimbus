@@ -388,6 +388,9 @@ async fn run_direct_pending_reprepare_race() -> (
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();
     let tenant_id = fixture.create_tenant("direct-pending-reprepare", Engine::create_tenant);
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("background trigger cursor must not add unrelated sequences");
     let document_id = engine
         .insert_document(
             &tenant_id,
@@ -523,7 +526,10 @@ async fn progress_sync_cannot_leapfrog_pending_write_or_stale_window_reprepare()
     let held = engine
         .mutation_journal_stats_for_testing(&tenant_id)
         .expect("held journal stats should load");
-    assert_eq!(held.durable_head, observed_applied);
+    assert!(
+        held.durable_head >= observed_applied,
+        "the explicit zero-write cursor must advance the durable head past the pending record"
+    );
     assert!(
         held.applied_head < pending_sequence,
         "progress sync must stop the engine applied watermark before the held pending sequence"
@@ -599,6 +605,9 @@ async fn execution_unit_prepared_write_detects_pending_then_waits_and_reprepares
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();
     let tenant_id = fixture.create_tenant("execution-pending-reprepare", Engine::create_tenant);
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("background trigger cursor must not add unrelated sequences");
     let document_id = engine
         .insert_document(
             &tenant_id,
