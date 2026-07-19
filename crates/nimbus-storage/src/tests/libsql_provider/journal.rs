@@ -12,7 +12,7 @@ async fn libsql_applied_sequence_recovery_replay_is_idempotent_for_all_write_sha
             .create_opened_tenant(&tenant)
             .await
             .expect("tenant should create and open");
-        exercise_applied_sequence_recovery_replay(&opened.store, "libsql_duplicate_replay");
+        exercise_applied_sequence_recovery_replay(opened.store.as_ref(), "libsql_duplicate_replay");
     })
     .await;
 }
@@ -27,7 +27,7 @@ async fn libsql_applied_sequence_rejects_divergent_content_for_all_write_shapes(
             .await
             .expect("tenant should create and open");
         exercise_applied_sequence_corruption_rejection(
-            &opened.store,
+            opened.store.as_ref(),
             "libsql_duplicate_corruption",
         );
     })
