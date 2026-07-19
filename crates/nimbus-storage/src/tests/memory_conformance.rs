@@ -202,13 +202,9 @@ fn redb_applied_sequence_rejects_divergent_content_for_all_write_shapes() {
 #[test]
 fn redb_pending_prefix_blocks_generic_zero_write() {
     let store = TenantStore::create_in_memory().expect("redb store should open");
-    exercise_pending_prefix_blocks_generic_zero_write(
-        &store,
-        "redb_pending_prefix",
-        || {
-            store.set_trigger_delivery_cursor(TriggerDeliveryCursor::new(SequenceNumber(1)))
-        },
-    );
+    exercise_pending_prefix_blocks_generic_zero_write(&store, "redb_pending_prefix", || {
+        store.set_trigger_delivery_cursor(TriggerDeliveryCursor::new(SequenceNumber(1)))
+    });
 }
 
 #[test]
@@ -224,12 +220,30 @@ fn memory_tenant_store_durable_journal_conformance() {
 #[test]
 fn memory_pending_prefix_blocks_generic_zero_write() {
     let store = MemoryTenantStore::new();
-    exercise_pending_prefix_blocks_generic_zero_write(
-        &store,
-        "memory_pending_prefix",
-        || {
-            store.set_trigger_delivery_cursor(TriggerDeliveryCursor::new(SequenceNumber(1)))
-        },
+    exercise_pending_prefix_blocks_generic_zero_write(&store, "memory_pending_prefix", || {
+        store.set_trigger_delivery_cursor(TriggerDeliveryCursor::new(SequenceNumber(1)))
+    });
+}
+
+#[test]
+fn redb_durable_update_guard_reports_corruption() {
+    let missing = TenantStore::create_in_memory().expect("redb store should open");
+    exercise_durable_update_guard_is_corruption(&missing, "redb_missing_preimage", false);
+    let mismatched = TenantStore::create_in_memory().expect("redb store should open");
+    exercise_durable_update_guard_is_corruption(&mismatched, "redb_mismatched_preimage", true);
+}
+
+#[test]
+fn memory_durable_update_guard_reports_corruption() {
+    exercise_durable_update_guard_is_corruption(
+        &MemoryTenantStore::new(),
+        "memory_missing_preimage",
+        false,
+    );
+    exercise_durable_update_guard_is_corruption(
+        &MemoryTenantStore::new(),
+        "memory_mismatched_preimage",
+        true,
     );
 }
 

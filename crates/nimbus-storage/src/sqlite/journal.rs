@@ -432,7 +432,7 @@ pub(super) fn apply_durable_record_in_conn(
             &record.writes,
         )?;
         record_index_versions_for_writes_in_conn(conn, record.sequence, &record.writes)?;
-        return apply_document_writes_in_conn(conn, &record.writes);
+        return apply_document_writes_in_conn(conn, record.sequence, &record.writes);
     }
 
     record_document_versions_for_events_in_conn(
@@ -443,14 +443,20 @@ pub(super) fn apply_durable_record_in_conn(
     )?;
     record_index_versions_for_events_in_conn(conn, record.sequence, &record.events)?;
     for event in &record.events {
-        apply_tenant_event_in_conn(conn, event)?;
+        apply_tenant_event_in_conn(conn, record.sequence, event)?;
     }
     Ok(())
 }
 
-fn apply_tenant_event_in_conn(conn: &Connection, event: &TenantEventKind) -> Result<()> {
+fn apply_tenant_event_in_conn(
+    conn: &Connection,
+    sequence: SequenceNumber,
+    event: &TenantEventKind,
+) -> Result<()> {
     match event {
-        TenantEventKind::DocumentWrite { writes } => apply_document_writes_in_conn(conn, writes),
+        TenantEventKind::DocumentWrite { writes } => {
+            apply_document_writes_in_conn(conn, sequence, writes)
+        }
         TenantEventKind::SchemaChange { change } => apply_schema_change_in_conn(conn, change),
         TenantEventKind::TableLifecycle { lifecycle } => {
             apply_table_lifecycle_in_conn(conn, lifecycle)
@@ -468,14 +474,22 @@ fn apply_tenant_event_in_conn(conn: &Connection, event: &TenantEventKind) -> Res
     }
 }
 
-fn apply_document_writes_in_conn(conn: &Connection, writes: &[WriteOp]) -> Result<()> {
+fn apply_document_writes_in_conn(
+    conn: &Connection,
+    sequence: SequenceNumber,
+    writes: &[WriteOp],
+) -> Result<()> {
     for write in writes {
-        apply_document_write_in_conn(conn, write)?;
+        apply_document_write_in_conn(conn, sequence, write)?;
     }
     Ok(())
 }
 
-fn apply_document_write_in_conn(conn: &Connection, write: &WriteOp) -> Result<()> {
+fn apply_document_write_in_conn(
+    conn: &Connection,
+    sequence: SequenceNumber,
+    write: &WriteOp,
+) -> Result<()> {
     match (&write.previous, &write.current) {
         (None, Some(current)) => {
             ensure_table_id_in_conn(conn, &write.table, &write.table_id)?;
@@ -488,10 +502,12 @@ fn apply_document_write_in_conn(conn: &Connection, write: &WriteOp) -> Result<()
             match existing {
                 Some(existing) if existing == *current => return Ok(()),
                 Some(_) => {
-                    return Err(Error::conflict(format!(
-                        "durable journal insert replay found conflicting state for document {}",
-                        write.doc_id
-                    )));
+                    return Err(crate::commit_log::durable_replay_preimage_corruption(
+                        sequence,
+                        "insert",
+                        write.doc_id.as_str(),
+                        "found unexpected state",
+                    ));
                 }
                 None => {
                     conn.execute(
@@ -521,18 +537,24 @@ fn apply_document_write_in_conn(conn: &Connection, write: &WriteOp) -> Result<()
                 &write.table_id,
                 &write.doc_id,
             )?
-            .ok_or(Error::conflict(format!(
-                "durable journal update replay missing document {}",
-                write.doc_id
-            )))?;
+            .ok_or_else(|| {
+                crate::commit_log::durable_replay_preimage_corruption(
+                    sequence,
+                    "update",
+                    write.doc_id.as_str(),
+                    "is missing the expected pre-image",
+                )
+            })?;
             if existing == *current {
                 return Ok(());
             }
             if existing != *previous {
-                return Err(Error::conflict(format!(
-                    "durable journal update replay found conflicting state for document {}",
-                    write.doc_id
-                )));
+                return Err(crate::commit_log::durable_replay_preimage_corruption(
+                    sequence,
+                    "update",
+                    write.doc_id.as_str(),
+                    "found a pre-image mismatch",
+                ));
             }
             conn.execute(
                 "UPDATE documents
@@ -561,10 +583,12 @@ fn apply_document_write_in_conn(conn: &Connection, write: &WriteOp) -> Result<()
                 &write.doc_id,
             )? {
                 Some(existing) if existing != *previous => {
-                    return Err(Error::conflict(format!(
-                        "durable journal delete replay found conflicting state for document {}",
-                        write.doc_id
-                    )));
+                    return Err(crate::commit_log::durable_replay_preimage_corruption(
+                        sequence,
+                        "delete",
+                        write.doc_id.as_str(),
+                        "found a pre-image mismatch",
+                    ));
                 }
                 Some(_) => {
                     conn.execute(

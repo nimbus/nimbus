@@ -1287,7 +1287,9 @@ impl LibsqlReplicaWriteTransaction {
             APPLIED_SEQUENCE_KEY,
         ))?;
         crate::commit_log::ensure_applied_prefix_precedes(
-            applied_head.map(SequenceNumber).unwrap_or(SequenceNumber(0)),
+            applied_head
+                .map(SequenceNumber)
+                .unwrap_or(SequenceNumber(0)),
             sequence,
         )?;
         let timestamp = self
@@ -1352,7 +1354,9 @@ impl LibsqlReplicaWriteTransaction {
             APPLIED_SEQUENCE_KEY,
         ))?;
         crate::commit_log::ensure_applied_prefix_precedes(
-            applied_head.map(SequenceNumber).unwrap_or(SequenceNumber(0)),
+            applied_head
+                .map(SequenceNumber)
+                .unwrap_or(SequenceNumber(0)),
             record.sequence,
         )?;
         let payload = serialize_tenant_event_record(record)?;

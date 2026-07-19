@@ -293,6 +293,109 @@ pub(crate) fn exercise_pending_prefix_blocks_generic_zero_write<S>(
     );
 }
 
+pub(crate) fn exercise_durable_update_guard_is_corruption<S>(
+    store: &S,
+    table_name: &str,
+    materialize_unexpected_state: bool,
+) where
+    S: crate::DurableJournal + crate::TenantPointRead,
+{
+    let table = TableName::new(table_name).expect("table name should be valid");
+    let table_id = TableId::new();
+    let unexpected = sample_document(table_name, "unexpected");
+    let mut expected_previous = unexpected.clone();
+    expected_previous
+        .fields
+        .insert("title".to_string(), json!("expected previous"));
+    let mut current = expected_previous.clone();
+    current.fields.insert("title".to_string(), json!("current"));
+    current.update_time = Timestamp(expected_previous.update_time.0.saturating_add(1));
+
+    let sequence = if materialize_unexpected_state {
+        let insert = TenantEventRecord::new(
+            SequenceNumber(1),
+            Timestamp(100),
+            vec![WriteOp {
+                table: table.clone(),
+                table_id: table_id.clone(),
+                op_type: WriteOpType::Insert,
+                doc_id: unexpected.id.clone(),
+                resource_path_binding: None,
+                trigger_write_origin: None,
+                previous: None,
+                current: Some(unexpected.clone()),
+            }],
+            None,
+        )
+        .expect("setup insert record should build");
+        store
+            .append_durable_records_batch(std::slice::from_ref(&insert))
+            .expect("setup insert should append");
+        store
+            .apply_durable_records_batch(std::slice::from_ref(&insert))
+            .expect("setup insert should apply");
+        SequenceNumber(2)
+    } else {
+        SequenceNumber(1)
+    };
+
+    let update = TenantEventRecord::new(
+        sequence,
+        Timestamp(200),
+        vec![WriteOp {
+            table,
+            table_id,
+            op_type: WriteOpType::Update,
+            doc_id: unexpected.id.clone(),
+            resource_path_binding: None,
+            trigger_write_origin: None,
+            previous: Some(expected_previous),
+            current: Some(current),
+        }],
+        None,
+    )
+    .expect("guard update record should build");
+    store
+        .append_durable_records_batch(std::slice::from_ref(&update))
+        .expect("guard update should append");
+    let error = store
+        .apply_durable_records_batch(std::slice::from_ref(&update))
+        .expect_err("inconsistent materialized pre-image must be rejected");
+    match &error {
+        Error::Storage {
+            kind: nimbus_core::StorageErrorKind::Corruption,
+            message,
+        } => {
+            assert!(
+                message.contains(&sequence.0.to_string()),
+                "corruption must name durable sequence {}: {message}",
+                sequence.0
+            );
+            assert!(
+                message.contains(unexpected.id.as_str()),
+                "corruption must name document {}: {message}",
+                unexpected.id
+            );
+            let expected_reason = if materialize_unexpected_state {
+                "pre-image mismatch"
+            } else {
+                "missing the expected pre-image"
+            };
+            assert!(
+                message.contains(expected_reason),
+                "corruption must identify {expected_reason}: {message}"
+            );
+        }
+        other => panic!("expected typed storage corruption, got {other:?}"),
+    }
+    assert_eq!(error.retryability(), nimbus_core::Retryability::Terminal);
+    assert_eq!(
+        error.conflicting_sequence(),
+        None,
+        "storage corruption must not carry conflict-specific sequence metadata"
+    );
+}
+
 pub(crate) struct BlockingReadGate {
     entered: Notify,
     release_gate: (Mutex<bool>, Condvar),

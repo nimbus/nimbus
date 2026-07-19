@@ -73,6 +73,21 @@ pub(crate) fn ensure_applied_prefix_precedes(
     )))
 }
 
+pub(crate) fn durable_replay_preimage_corruption(
+    sequence: SequenceNumber,
+    operation: &str,
+    document_id: &str,
+    reason: &str,
+) -> Error {
+    Error::storage(
+        StorageErrorKind::Corruption,
+        format!(
+            "durable journal {operation} replay at sequence {} {reason} for document {document_id}",
+            sequence.0
+        ),
+    )
+}
+
 fn applied_record_corruption(record: &TenantEventRecord, reason: &str) -> Error {
     let mut document_ids: Vec<&str> = record
         .writes

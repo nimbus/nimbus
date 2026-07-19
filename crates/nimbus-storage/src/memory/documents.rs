@@ -203,10 +203,7 @@ impl MemoryTenantStore {
                     record.sequence.0
                 )));
             }
-            crate::commit_log::ensure_applied_prefix_precedes(
-                state.applied_head,
-                record.sequence,
-            )?;
+            crate::commit_log::ensure_applied_prefix_precedes(state.applied_head, record.sequence)?;
             state
                 .durable_journal
                 .insert(record.sequence.0, record.clone());

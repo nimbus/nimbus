@@ -16,17 +16,19 @@ use super::MemoryTenantStore;
 use super::state::{MemoryState, MemoryTableIdentity};
 
 impl MemoryState {
-    fn apply_write(&mut self, write: &WriteOp) -> Result<()> {
+    fn apply_write(&mut self, sequence: SequenceNumber, write: &WriteOp) -> Result<()> {
         self.ensure_active_table_id(&write.table, &write.table_id)?;
         let documents = self.documents.entry(write.table_id.clone()).or_default();
         match (&write.previous, &write.current) {
             (None, Some(current)) => match documents.get(&write.doc_id) {
                 Some(existing) if existing == current => {}
                 Some(_) => {
-                    return Err(Error::conflict(format!(
-                        "durable journal insert replay found conflicting state for document {}",
-                        write.doc_id
-                    )));
+                    return Err(crate::commit_log::durable_replay_preimage_corruption(
+                        sequence,
+                        "insert",
+                        write.doc_id.as_str(),
+                        "found unexpected state",
+                    ));
                 }
                 None => {
                     documents.insert(write.doc_id.clone(), current.clone());
@@ -34,17 +36,21 @@ impl MemoryState {
             },
             (Some(previous), Some(current)) => {
                 let existing = documents.get(&write.doc_id).ok_or_else(|| {
-                    Error::conflict(format!(
-                        "durable journal update replay missing document {}",
-                        write.doc_id
-                    ))
+                    crate::commit_log::durable_replay_preimage_corruption(
+                        sequence,
+                        "update",
+                        write.doc_id.as_str(),
+                        "is missing the expected pre-image",
+                    )
                 })?;
                 if existing != current {
                     if existing != previous {
-                        return Err(Error::conflict(format!(
-                            "durable journal update replay found conflicting state for document {}",
-                            write.doc_id
-                        )));
+                        return Err(crate::commit_log::durable_replay_preimage_corruption(
+                            sequence,
+                            "update",
+                            write.doc_id.as_str(),
+                            "found a pre-image mismatch",
+                        ));
                     }
                     documents.insert(write.doc_id.clone(), current.clone());
                 }
@@ -53,10 +59,12 @@ impl MemoryState {
                 if let Some(existing) = documents.get(&write.doc_id)
                     && existing != previous
                 {
-                    return Err(Error::conflict(format!(
-                        "durable journal delete replay found conflicting state for document {}",
-                        write.doc_id
-                    )));
+                    return Err(crate::commit_log::durable_replay_preimage_corruption(
+                        sequence,
+                        "delete",
+                        write.doc_id.as_str(),
+                        "found a pre-image mismatch",
+                    ));
                 }
                 documents.remove(&write.doc_id);
             }
@@ -178,11 +186,11 @@ impl MemoryState {
         Ok(())
     }
 
-    fn apply_event(&mut self, event: &TenantEventKind) -> Result<()> {
+    fn apply_event(&mut self, sequence: SequenceNumber, event: &TenantEventKind) -> Result<()> {
         match event {
             TenantEventKind::DocumentWrite { writes } => {
                 for write in writes {
-                    self.apply_write(write)?;
+                    self.apply_write(sequence, write)?;
                 }
             }
             TenantEventKind::SchemaChange { change } => self.apply_schema_change(change)?,
@@ -204,7 +212,7 @@ impl MemoryState {
         record.validate_integrity()?;
         if record.events.is_empty() {
             for write in &record.writes {
-                self.apply_write(write)?;
+                self.apply_write(record.sequence, write)?;
             }
             if let Some(execution_id) = &record.scheduled_execution_id {
                 self.scheduled_execution_ids.insert(execution_id.clone());
@@ -212,7 +220,7 @@ impl MemoryState {
             return Ok(());
         }
         for event in &record.events {
-            self.apply_event(event)?;
+            self.apply_event(record.sequence, event)?;
         }
         Ok(())
     }

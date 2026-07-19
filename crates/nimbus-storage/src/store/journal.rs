@@ -231,7 +231,7 @@ pub(super) fn apply_durable_record_in_write_txn(
             &record.writes,
         )?;
         record_index_versions_for_writes(write_txn, record.sequence, &record.writes)?;
-        return apply_document_writes_in_write_txn(write_txn, &record.writes);
+        return apply_document_writes_in_write_txn(write_txn, record.sequence, &record.writes);
     }
 
     record_document_versions_for_events(
@@ -242,7 +242,7 @@ pub(super) fn apply_durable_record_in_write_txn(
     )?;
     record_index_versions_for_events(write_txn, record.sequence, &record.events)?;
     for event in &record.events {
-        apply_tenant_event_in_write_txn(write_txn, event)?;
+        apply_tenant_event_in_write_txn(write_txn, record.sequence, event)?;
     }
     Ok(())
 }
@@ -276,11 +276,12 @@ fn record_index_versions_for_events(
 
 fn apply_tenant_event_in_write_txn(
     write_txn: &redb::WriteTransaction,
+    sequence: SequenceNumber,
     event: &TenantEventKind,
 ) -> Result<()> {
     match event {
         TenantEventKind::DocumentWrite { writes } => {
-            apply_document_writes_in_write_txn(write_txn, writes)
+            apply_document_writes_in_write_txn(write_txn, sequence, writes)
         }
         TenantEventKind::SchemaChange { change } => {
             apply_schema_change_in_write_txn(write_txn, change)
@@ -308,11 +309,12 @@ fn apply_tenant_event_in_write_txn(
 
 fn apply_document_writes_in_write_txn(
     write_txn: &redb::WriteTransaction,
+    sequence: SequenceNumber,
     writes: &[WriteOp],
 ) -> Result<()> {
     let mut documents = write_txn.open_table(DOCUMENTS).map_err(map_redb_error)?;
     for write in writes {
-        apply_document_write_in_write_txn(write_txn, &mut documents, write)?;
+        apply_document_write_in_write_txn(write_txn, &mut documents, sequence, write)?;
     }
     Ok(())
 }
@@ -320,6 +322,7 @@ fn apply_document_writes_in_write_txn(
 fn apply_document_write_in_write_txn(
     write_txn: &redb::WriteTransaction,
     documents: &mut redb::Table<'_, &[u8], &[u8]>,
+    sequence: SequenceNumber,
     write: &WriteOp,
 ) -> Result<()> {
     match (&write.previous, &write.current) {
@@ -332,10 +335,12 @@ fn apply_document_write_in_write_txn(
                     let existing = decode_document_msgpack(existing.value())
                         .map_err(|error| Error::Serialization(error.to_string()))?;
                     if existing != *current {
-                        return Err(Error::conflict(format!(
-                            "durable journal insert replay found conflicting state for document {}",
-                            write.doc_id
-                        )));
+                        return Err(crate::commit_log::durable_replay_preimage_corruption(
+                            sequence,
+                            "insert",
+                            write.doc_id.as_str(),
+                            "found unexpected state",
+                        ));
                     }
                     true
                 } else {
@@ -357,10 +362,14 @@ fn apply_document_write_in_write_txn(
                 let existing = documents
                     .get(key.as_slice())
                     .map_err(map_redb_error)?
-                    .ok_or(Error::conflict(format!(
-                        "durable journal update replay missing document {}",
-                        write.doc_id
-                    )))?;
+                    .ok_or_else(|| {
+                        crate::commit_log::durable_replay_preimage_corruption(
+                            sequence,
+                            "update",
+                            write.doc_id.as_str(),
+                            "is missing the expected pre-image",
+                        )
+                    })?;
                 decode_document_msgpack(existing.value())
                     .map_err(|error| Error::Serialization(error.to_string()))?
             };
@@ -368,10 +377,12 @@ fn apply_document_write_in_write_txn(
                 return Ok(());
             }
             if existing != *previous {
-                return Err(Error::conflict(format!(
-                    "durable journal update replay found conflicting state for document {}",
-                    write.doc_id
-                )));
+                return Err(crate::commit_log::durable_replay_preimage_corruption(
+                    sequence,
+                    "update",
+                    write.doc_id.as_str(),
+                    "found a pre-image mismatch",
+                ));
             }
             let payload = encode_document_msgpack(current)
                 .map_err(|error| Error::Serialization(error.to_string()))?;
@@ -387,10 +398,12 @@ fn apply_document_write_in_write_txn(
                     let removed = decode_document_msgpack(removed.value())
                         .map_err(|error| Error::Serialization(error.to_string()))?;
                     if removed != *previous {
-                        return Err(Error::conflict(format!(
-                            "durable journal delete replay found conflicting state for document {}",
-                            write.doc_id
-                        )));
+                        return Err(crate::commit_log::durable_replay_preimage_corruption(
+                            sequence,
+                            "delete",
+                            write.doc_id.as_str(),
+                            "found a pre-image mismatch",
+                        ));
                     }
                 }
                 None => return Ok(()),
@@ -625,9 +638,7 @@ fn write_applied_sequence(
     Ok(())
 }
 
-fn applied_sequence_in_write_txn(
-    write_txn: &redb::WriteTransaction,
-) -> Result<SequenceNumber> {
+fn applied_sequence_in_write_txn(write_txn: &redb::WriteTransaction) -> Result<SequenceNumber> {
     let metadata = write_txn.open_table(METADATA).map_err(map_redb_error)?;
     metadata
         .get(APPLIED_SEQUENCE_KEY)

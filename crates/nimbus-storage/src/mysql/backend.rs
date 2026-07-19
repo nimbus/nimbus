@@ -973,7 +973,13 @@ where
             &record.writes,
         )
         .await?;
-        return apply_document_writes_in_session(session, database_name, &record.writes).await;
+        return apply_document_writes_in_session(
+            session,
+            database_name,
+            record.sequence,
+            &record.writes,
+        )
+        .await;
     }
 
     record_document_versions_for_events_in_session(
@@ -992,7 +998,7 @@ where
     )
     .await?;
     for event in &record.events {
-        apply_tenant_event_in_session(session, database_name, event).await?;
+        apply_tenant_event_in_session(session, database_name, record.sequence, event).await?;
     }
 
     Ok(())
@@ -1001,6 +1007,7 @@ where
 async fn apply_tenant_event_in_session<C>(
     session: &mut C,
     database_name: &str,
+    sequence: SequenceNumber,
     event: &TenantEventKind,
 ) -> Result<()>
 where
@@ -1008,7 +1015,7 @@ where
 {
     match event {
         TenantEventKind::DocumentWrite { writes } => {
-            apply_document_writes_in_session(session, database_name, writes).await
+            apply_document_writes_in_session(session, database_name, sequence, writes).await
         }
         TenantEventKind::SchemaChange { change } => {
             apply_schema_change_in_session(session, database_name, change).await
@@ -1044,6 +1051,7 @@ where
 async fn apply_document_writes_in_session<C>(
     session: &mut C,
     database_name: &str,
+    sequence: SequenceNumber,
     writes: &[WriteOp],
 ) -> Result<()>
 where
@@ -1065,10 +1073,12 @@ where
                 match existing {
                     Some(existing) if existing == *current => {}
                     Some(_) => {
-                        return Err(Error::conflict(format!(
-                            "durable journal insert replay found conflicting state for document {}",
-                            write.doc_id
-                        )));
+                        return Err(crate::commit_log::durable_replay_preimage_corruption(
+                            sequence,
+                            "insert",
+                            write.doc_id.as_str(),
+                            "found unexpected state",
+                        ));
                     }
                     None => {
                         let query = format!(
@@ -1103,15 +1113,21 @@ where
                     &write.doc_id,
                 )
                 .await?
-                .ok_or(Error::conflict(format!(
-                    "durable journal update replay missing document {}",
-                    write.doc_id
-                )))?;
+                .ok_or_else(|| {
+                    crate::commit_log::durable_replay_preimage_corruption(
+                        sequence,
+                        "update",
+                        write.doc_id.as_str(),
+                        "is missing the expected pre-image",
+                    )
+                })?;
                 if existing != *current && existing != *previous {
-                    return Err(Error::conflict(format!(
-                        "durable journal update replay found conflicting state for document {}",
-                        write.doc_id
-                    )));
+                    return Err(crate::commit_log::durable_replay_preimage_corruption(
+                        sequence,
+                        "update",
+                        write.doc_id.as_str(),
+                        "found a pre-image mismatch",
+                    ));
                 }
                 if existing != *current {
                     let query = format!(
@@ -1147,10 +1163,12 @@ where
                 .await?
                 {
                     Some(existing) if existing != *previous => {
-                        return Err(Error::conflict(format!(
-                            "durable journal delete replay found conflicting state for document {}",
-                            write.doc_id
-                        )));
+                        return Err(crate::commit_log::durable_replay_preimage_corruption(
+                            sequence,
+                            "delete",
+                            write.doc_id.as_str(),
+                            "found a pre-image mismatch",
+                        ));
                     }
                     Some(_) => {
                         let query = format!(

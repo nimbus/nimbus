@@ -71,13 +71,20 @@ fn sqlite_pending_prefix_blocks_generic_zero_write() {
     let dir = tempdir().expect("temporary directory should create");
     let store = SqliteTenantStore::open(dir.path().join("tenant.sqlite3"))
         .expect("sqlite tenant store should open");
-    exercise_pending_prefix_blocks_generic_zero_write(
-        &store,
-        "sqlite_pending_prefix",
-        || {
-            store.set_trigger_delivery_cursor(TriggerDeliveryCursor::new(SequenceNumber(1)))
-        },
-    );
+    exercise_pending_prefix_blocks_generic_zero_write(&store, "sqlite_pending_prefix", || {
+        store.set_trigger_delivery_cursor(TriggerDeliveryCursor::new(SequenceNumber(1)))
+    });
+}
+
+#[test]
+fn sqlite_durable_update_guard_reports_corruption() {
+    let dir = tempdir().expect("temporary directory should create");
+    let missing = SqliteTenantStore::open(dir.path().join("missing.sqlite3"))
+        .expect("sqlite tenant store should open");
+    exercise_durable_update_guard_is_corruption(&missing, "sqlite_missing_preimage", false);
+    let mismatched = SqliteTenantStore::open(dir.path().join("mismatched.sqlite3"))
+        .expect("sqlite tenant store should open");
+    exercise_durable_update_guard_is_corruption(&mismatched, "sqlite_mismatched_preimage", true);
 }
 
 #[test]
