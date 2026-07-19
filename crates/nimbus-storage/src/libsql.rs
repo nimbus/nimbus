@@ -896,6 +896,21 @@ impl LibsqlReplicaTenantStore {
             .unwrap_or(SequenceNumber(0));
         for record in records {
             if record.sequence.0 <= applied_head.0 {
+                let mut rows = tx
+                    .query(
+                        "SELECT record_blob FROM commit_log WHERE sequence = ?1",
+                        libsql::params![i64_from_u64(record.sequence.0)?],
+                    )
+                    .await
+                    .map_err(map_libsql_error)?;
+                let durable = match rows.next().await.map_err(map_libsql_error)? {
+                    Some(row) => {
+                        let payload = row.get::<Vec<u8>>(0).map_err(map_libsql_error)?;
+                        Some(deserialize_tenant_event_record(payload.as_slice())?)
+                    }
+                    None => None,
+                };
+                crate::commit_log::ensure_applied_record_matches(record, durable.as_ref())?;
                 continue;
             }
             if record.sequence.0 != applied_head.0.saturating_add(1) {

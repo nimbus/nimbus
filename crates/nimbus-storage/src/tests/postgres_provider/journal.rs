@@ -1,4 +1,36 @@
 use super::support::*;
+use crate::tests::{
+    exercise_applied_sequence_corruption_rejection, exercise_applied_sequence_recovery_replay,
+};
+
+#[tokio::test(flavor = "multi_thread")]
+async fn postgres_applied_sequence_recovery_replay_is_idempotent_for_all_write_shapes() {
+    with_test_provider(|provider, _config| async move {
+        let tenant = TenantId::new("duplicate-replay").expect("tenant id should build");
+        let opened = provider
+            .create_opened_tenant(&tenant)
+            .await
+            .expect("tenant should create and open");
+        exercise_applied_sequence_recovery_replay(opened.store.as_ref(), "pg_duplicate_replay");
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn postgres_applied_sequence_rejects_divergent_content_for_all_write_shapes() {
+    with_test_provider(|provider, _config| async move {
+        let tenant = TenantId::new("duplicate-corruption").expect("tenant id should build");
+        let opened = provider
+            .create_opened_tenant(&tenant)
+            .await
+            .expect("tenant should create and open");
+        exercise_applied_sequence_corruption_rejection(
+            opened.store.as_ref(),
+            "pg_duplicate_corruption",
+        );
+    })
+    .await;
+}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn postgres_direct_writes_dedupe_and_journal_progress_round_trip() {

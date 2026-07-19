@@ -188,6 +188,18 @@ fn redb_tenant_store_durable_journal_conformance() {
 }
 
 #[test]
+fn redb_applied_sequence_recovery_replay_is_idempotent_for_all_write_shapes() {
+    let store = TenantStore::create_in_memory().expect("redb store should open");
+    exercise_applied_sequence_recovery_replay(&store, "redb_duplicate_replay");
+}
+
+#[test]
+fn redb_applied_sequence_rejects_divergent_content_for_all_write_shapes() {
+    let store = TenantStore::create_in_memory().expect("redb store should open");
+    exercise_applied_sequence_corruption_rejection(&store, "redb_duplicate_corruption");
+}
+
+#[test]
 fn memory_tenant_store_durable_journal_conformance() {
     let store = MemoryTenantStore::new();
     exercise_durable_journal_lifecycle(store, |store| {

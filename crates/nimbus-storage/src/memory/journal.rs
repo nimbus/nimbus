@@ -407,6 +407,10 @@ impl MemoryTenantStore {
             let mut applied_head = state.applied_head.0;
             for record in records {
                 if record.sequence.0 <= applied_head {
+                    crate::commit_log::ensure_applied_record_matches(
+                        record,
+                        state.durable_journal.get(&record.sequence.0),
+                    )?;
                     continue;
                 }
                 let expected = applied_head.saturating_add(1);
