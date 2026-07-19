@@ -85,6 +85,7 @@ async fn assert_engine_reload_recovers_durable_journal_before_serving_async_read
             total_read_wait_nanos: 0,
             committer_inbox_depth: 0,
             committer_inbox_capacity: 128,
+            committer_send_timeout_millis: 500,
             committer_send_timeout_count: 0,
             publisher_queue_depth: 0,
             publisher_queue_capacity: 32,

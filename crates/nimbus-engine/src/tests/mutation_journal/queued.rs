@@ -1019,6 +1019,15 @@ async fn bounded_committer_inbox_times_out_with_typed_retryable_error_and_report
         "the per-tenant test override must be in effect; a default-capacity \
          inbox would let this test pass without exercising the bounded path"
     );
+    assert_eq!(
+        engine
+            .mutation_journal_stats_for_testing(&tenant_id)
+            .expect("committer diagnostics should expose the configured send timeout")
+            .committer_send_timeout_millis,
+        u64::try_from(COMMITTER_SEND_TIMEOUT.as_millis())
+            .expect("test timeout should fit diagnostics"),
+        "the per-tenant timeout override must be installed deterministically"
+    );
 
     let pause = engine
         .mutation_journal_pause_handle_for_testing(&tenant_id)
@@ -1076,7 +1085,6 @@ async fn bounded_committer_inbox_times_out_with_typed_retryable_error_and_report
     .await;
     assert_eq!(full.committer_inbox_capacity, inbox_capacity);
 
-    let started = std::time::Instant::now();
     let rejected = [spawn_insert("rejected_one"), spawn_insert("rejected_two")];
     // Wait on the typed diagnostic rather than on wall time: the counter
     // reaching two proves both senders gave up at the bounded send timeout
@@ -1088,7 +1096,6 @@ async fn bounded_committer_inbox_times_out_with_typed_retryable_error_and_report
         |stats| stats.committer_send_timeout_count == 2,
     )
     .await;
-    let elapsed = started.elapsed();
     let mut errors = Vec::new();
     for rejected_insert in rejected {
         errors.push(
@@ -1098,18 +1105,6 @@ async fn bounded_committer_inbox_times_out_with_typed_retryable_error_and_report
                 .expect_err("each sender beyond the bounded inbox must time out"),
         );
     }
-    // Both senders wait out COMMITTER_SEND_TIMEOUT concurrently, so a healthy
-    // run reaches the diagnostic in ~25ms. The budget keeps an order of
-    // magnitude of scheduling slack for loaded CI while staying well under the
-    // ~500ms this takes on the default send timeout, so losing the per-tenant
-    // override -- or reintroducing unbounded queueing -- still fails here.
-    let elapsed_budget =
-        ci_or_local_duration(Duration::from_millis(250), Duration::from_millis(300));
-    assert!(
-        elapsed < elapsed_budget,
-        "the bounded send timeout of {COMMITTER_SEND_TIMEOUT:?} per sender must not turn into \
-         unbounded queueing; two senders took {elapsed:?} against a budget of {elapsed_budget:?}"
-    );
     for error in &errors {
         assert!(
             matches!(error, nimbus_core::Error::CommitterFull { capacity, .. } if *capacity == inbox_capacity)

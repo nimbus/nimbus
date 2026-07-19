@@ -299,6 +299,7 @@ impl MutationJournalState {
             total_read_wait_nanos: self.total_read_wait_nanos.load(Ordering::Relaxed),
             committer_inbox_depth: 0,
             committer_inbox_capacity: 0,
+            committer_send_timeout_millis: 0,
             committer_send_timeout_count: 0,
             publisher_queue_depth: 0,
             publisher_queue_capacity: 0,

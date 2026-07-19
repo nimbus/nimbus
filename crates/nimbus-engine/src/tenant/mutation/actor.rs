@@ -503,6 +503,10 @@ impl CommitterActor {
         self.inbox_capacity
     }
 
+    pub(crate) fn send_timeout(&self) -> Duration {
+        self.send_timeout
+    }
+
     pub(crate) fn send_timeout_count(&self) -> u64 {
         self.send_timeout_count.load(Ordering::Relaxed)
     }
