@@ -1,6 +1,8 @@
 mod authorization;
 pub(in crate::engine) mod caps;
 mod commit_processing;
+#[cfg(test)]
+mod crash_recovery;
 mod direct;
 mod inline_reprepare;
 mod journal;
