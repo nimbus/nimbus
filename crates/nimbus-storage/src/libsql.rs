@@ -110,6 +110,7 @@ DROP TABLE IF EXISTS scheduled_job_executions;
 DROP TABLE IF EXISTS cron_jobs;
 DROP TABLE IF EXISTS commit_log;
 DROP TABLE IF EXISTS metadata;
+DROP TABLE IF EXISTS committer_lease;
 "#;
 
 #[derive(Clone)]
