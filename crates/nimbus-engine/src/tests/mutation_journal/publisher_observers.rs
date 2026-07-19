@@ -242,10 +242,6 @@ async fn provider_catch_up_chunks_observers_to_allowance_in_sequence_order() {
     crate::tenant::configure_observer_limits_for_testing(tenant_id.clone(), 2, 1, 1, 1);
     let created = fixture.create_tenant("provider-observer-chunks", Engine::create_tenant);
     assert_eq!(created, tenant_id);
-    engine
-        .shutdown_trigger_candidates_for_testing(&tenant_id)
-        .expect("trigger cursor should not add unrelated records");
-
     for index in 0..5 {
         engine
             .insert_document_async(
@@ -256,6 +252,9 @@ async fn provider_catch_up_chunks_observers_to_allowance_in_sequence_order() {
             .await
             .expect("provider-tail fixture write should commit");
     }
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
     let records = engine
         .read_durable_journal(&tenant_id, SequenceNumber(0))
         .expect("provider-tail fixture journal should read")
@@ -330,9 +329,6 @@ async fn provider_catch_up_reserves_live_max_dispatch_headroom_without_poison() 
         fixture.create_tenant("provider-observer-live-headroom", Engine::create_tenant),
         tenant_id
     );
-    engine
-        .shutdown_trigger_candidates_for_testing(&tenant_id)
-        .expect("trigger cursor should not add unrelated records");
     for index in 0..6 {
         engine
             .insert_document_async(
@@ -343,6 +339,9 @@ async fn provider_catch_up_reserves_live_max_dispatch_headroom_without_poison() 
             .await
             .expect("provider observer headroom fixture write should commit");
     }
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
     let records = engine
         .read_durable_journal(&tenant_id, SequenceNumber(0))
         .expect("provider observer headroom journal should read")
@@ -422,10 +421,6 @@ async fn rapid_provider_catch_up_triggers_coalesce_into_one_tail_reader() {
         fixture.create_tenant("provider-observer-coalescing", Engine::create_tenant),
         tenant_id
     );
-    engine
-        .shutdown_trigger_candidates_for_testing(&tenant_id)
-        .expect("trigger cursor should not add unrelated records");
-
     const RECORDS: usize = 12;
     for index in 0..RECORDS {
         engine
@@ -437,6 +432,9 @@ async fn rapid_provider_catch_up_triggers_coalesce_into_one_tail_reader() {
             .await
             .expect("provider-tail fixture write should commit");
     }
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
     let records = engine
         .read_durable_journal(&tenant_id, SequenceNumber(0))
         .expect("provider-tail fixture journal should read")
@@ -602,9 +600,6 @@ async fn poisoned_provider_catch_up_tenant_does_not_block_fresh_tenant() {
         fixture.create_tenant("provider-poison-scheduled", Engine::create_tenant);
     for tenant_id in [&tenant_a, &tenant_b] {
         engine
-            .shutdown_trigger_candidates_for_testing(tenant_id)
-            .expect("trigger cursor should not add unrelated records");
-        engine
             .insert_document_async(
                 tenant_id.clone(),
                 tasks_table(),
@@ -612,6 +607,9 @@ async fn poisoned_provider_catch_up_tenant_does_not_block_fresh_tenant() {
             )
             .await
             .expect("provider catch-up fixture write should commit");
+        engine
+            .shutdown_trigger_candidates_for_testing(tenant_id)
+            .expect("trigger cursor should not add unrelated records");
     }
     let records_a = engine
         .read_durable_journal(&tenant_a, SequenceNumber(0))
@@ -697,11 +695,9 @@ async fn provider_attach_contains_mid_eviction_tenant_and_loads_remaining_work()
     let tenant_b = fixture.create_tenant("provider-refresh-b", Engine::create_tenant);
     let scheduled_tenant =
         fixture.create_tenant("provider-refresh-scheduled", Engine::create_tenant);
-    for tenant_id in [&tenant_a, &tenant_b] {
-        engine
-            .shutdown_trigger_candidates_for_testing(tenant_id)
-            .expect("trigger cursor should not add unrelated records");
-    }
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_a)
+        .expect("trigger cursor should not add unrelated records");
 
     let document_id = engine
         .insert_document_async(
@@ -711,6 +707,9 @@ async fn provider_attach_contains_mid_eviction_tenant_and_loads_remaining_work()
         )
         .await
         .expect("tenant B seed should commit");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_b)
+        .expect("trigger cursor should not add unrelated records");
     engine
         .schedule_mutation_async(
             scheduled_tenant.clone(),
@@ -802,11 +801,6 @@ async fn busy_provider_catch_up_tenant_does_not_head_of_line_block_other_tenant(
         fixture.create_tenant("provider-busy-b", Engine::create_tenant),
         tenant_b
     );
-    for tenant_id in [&tenant_a, &tenant_b] {
-        engine
-            .shutdown_trigger_candidates_for_testing(tenant_id)
-            .expect("trigger cursor should not add unrelated records");
-    }
     for index in 0..5 {
         engine
             .insert_document_async(
@@ -818,6 +812,9 @@ async fn busy_provider_catch_up_tenant_does_not_head_of_line_block_other_tenant(
             .expect("tenant A provider tail should commit");
     }
     engine
+        .shutdown_trigger_candidates_for_testing(&tenant_a)
+        .expect("trigger cursor should not add unrelated records");
+    engine
         .insert_document_async(
             tenant_b.clone(),
             tasks_table(),
@@ -825,6 +822,9 @@ async fn busy_provider_catch_up_tenant_does_not_head_of_line_block_other_tenant(
         )
         .await
         .expect("tenant B provider tail should commit");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_b)
+        .expect("trigger cursor should not add unrelated records");
     let records_a = engine
         .read_durable_journal(&tenant_a, SequenceNumber(0))
         .expect("tenant A journal should read");
@@ -895,9 +895,6 @@ async fn provider_catch_up_spawn_rejection_releases_task_state_after_quiesce() {
     let engine = fixture.engine();
     let tenant_id = fixture.create_tenant("provider-catch-up-quiesce", Engine::create_tenant);
     engine
-        .shutdown_trigger_candidates_for_testing(&tenant_id)
-        .expect("trigger cursor should not add unrelated records");
-    engine
         .insert_document_async(
             tenant_id.clone(),
             tasks_table(),
@@ -905,6 +902,9 @@ async fn provider_catch_up_spawn_rejection_releases_task_state_after_quiesce() {
         )
         .await
         .expect("provider catch-up fixture write should commit");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
     let records = engine
         .read_durable_journal(&tenant_id, SequenceNumber(0))
         .expect("provider catch-up fixture journal should read")
@@ -943,9 +943,6 @@ async fn panicking_provider_catch_up_releases_ownership_and_successor_delivers()
     let engine = fixture.engine();
     let tenant_id = fixture.create_tenant("provider-catch-up-panic", Engine::create_tenant);
     engine
-        .shutdown_trigger_candidates_for_testing(&tenant_id)
-        .expect("trigger cursor should not add unrelated records");
-    engine
         .insert_document_async(
             tenant_id.clone(),
             tasks_table(),
@@ -953,6 +950,9 @@ async fn panicking_provider_catch_up_releases_ownership_and_successor_delivers()
         )
         .await
         .expect("provider catch-up fixture write should commit");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
     let records = engine
         .read_durable_journal(&tenant_id, SequenceNumber(0))
         .expect("provider catch-up fixture journal should read")
@@ -1213,11 +1213,10 @@ async fn provider_catch_up_pages_a_large_tail_instead_of_materialising_it() {
         fixture.create_tenant("provider-catch-up-paged-tail", Engine::create_tenant),
         tenant_id
     );
+    let records = write_provider_catch_up_tail(&engine, &tenant_id, 9).await;
     engine
         .shutdown_trigger_candidates_for_testing(&tenant_id)
         .expect("trigger cursor should not add unrelated records");
-
-    let records = write_provider_catch_up_tail(&engine, &tenant_id, 9).await;
     let expected_sequences = records
         .iter()
         .map(|record| record.sequence)
@@ -1269,11 +1268,10 @@ async fn provider_catch_up_page_failure_republishes_the_undelivered_tail() {
         fixture.create_tenant("provider-catch-up-page-failure", Engine::create_tenant),
         tenant_id
     );
+    let records = write_provider_catch_up_tail(&engine, &tenant_id, 9).await;
     engine
         .shutdown_trigger_candidates_for_testing(&tenant_id)
         .expect("trigger cursor should not add unrelated records");
-
-    let records = write_provider_catch_up_tail(&engine, &tenant_id, 9).await;
     let expected_sequences = records
         .iter()
         .map(|record| record.sequence)

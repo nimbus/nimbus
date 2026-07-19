@@ -388,9 +388,6 @@ async fn run_direct_pending_reprepare_race() -> (
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();
     let tenant_id = fixture.create_tenant("direct-pending-reprepare", Engine::create_tenant);
-    engine
-        .shutdown_trigger_candidates_for_testing(&tenant_id)
-        .expect("background trigger cursor must not add unrelated sequences");
     let document_id = engine
         .insert_document(
             &tenant_id,
@@ -398,6 +395,9 @@ async fn run_direct_pending_reprepare_race() -> (
             serde_json::Map::from_iter([("title".to_string(), json!("original"))]),
         )
         .expect("seed insert should succeed");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("background trigger cursor must not add unrelated sequences");
     let before = engine
         .tenant_engine_diagnostics(&tenant_id)
         .expect("diagnostics should load");
@@ -476,9 +476,6 @@ async fn progress_sync_cannot_leapfrog_pending_write_or_stale_window_reprepare()
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();
     let tenant_id = fixture.create_tenant("progress-pending-reprepare", Engine::create_tenant);
-    engine
-        .shutdown_trigger_candidates_for_testing(&tenant_id)
-        .expect("background trigger candidate worker should shut down");
     let document_id = engine
         .insert_document(
             &tenant_id,
@@ -486,6 +483,9 @@ async fn progress_sync_cannot_leapfrog_pending_write_or_stale_window_reprepare()
             serde_json::Map::from_iter([("title".to_string(), json!("original"))]),
         )
         .expect("seed insert should succeed");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("background trigger candidate worker should shut down");
     let pending = AssignedPendingUpdate::stage(
         &engine,
         &tenant_id,
@@ -563,15 +563,15 @@ async fn uncovered_progress_advances_applied_watermark_without_local_window_imag
     let engine = fixture.engine();
     let tenant_id = fixture.create_tenant("uncovered-progress", Engine::create_tenant);
     engine
-        .shutdown_trigger_candidates_for_testing(&tenant_id)
-        .expect("background trigger candidate worker should shut down");
-    engine
         .insert_document(
             &tenant_id,
             tasks_table(),
             serde_json::Map::from_iter([("title".to_string(), json!("covered"))]),
         )
         .expect("covered seed insert should succeed");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("background trigger candidate worker should shut down");
     let before = engine
         .mutation_journal_stats_for_testing(&tenant_id)
         .expect("initial journal stats should load");
@@ -602,9 +602,6 @@ async fn execution_unit_prepared_write_detects_pending_then_waits_and_reprepares
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();
     let tenant_id = fixture.create_tenant("execution-pending-reprepare", Engine::create_tenant);
-    engine
-        .shutdown_trigger_candidates_for_testing(&tenant_id)
-        .expect("background trigger cursor must not add unrelated sequences");
     let document_id = engine
         .insert_document(
             &tenant_id,
@@ -612,6 +609,9 @@ async fn execution_unit_prepared_write_detects_pending_then_waits_and_reprepares
             serde_json::Map::from_iter([("title".to_string(), json!("original"))]),
         )
         .expect("seed insert should succeed");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("background trigger cursor must not add unrelated sequences");
     let stale_unit = engine
         .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
         .expect("stale execution unit should begin");
