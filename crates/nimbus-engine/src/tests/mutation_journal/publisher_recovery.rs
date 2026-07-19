@@ -5,7 +5,7 @@ use super::publisher_test_seams::{
 };
 use super::support::{
     assert_future_stays_pending, expect_blocking_wait_reaches_state, expect_catch_up_future_within,
-    expect_future_within,
+    expect_future_within, mutation_journal_progress_timeout,
 };
 use super::*;
 use nimbus_storage::NoopFaultInjector;
@@ -671,7 +671,8 @@ async fn shutdown_serial_recovery_deregisters_and_preserves_diagnostics() {
                 .await
         }
     });
-    let accessor_completed = match timeout(Duration::from_millis(250), &mut accessor).await {
+    let accessor_timeout = mutation_journal_progress_timeout();
+    let accessor_completed = match timeout(accessor_timeout, &mut accessor).await {
         Ok(joined) => {
             let _ = joined.expect("post-shutdown accessor must not panic");
             true
@@ -694,7 +695,7 @@ async fn shutdown_serial_recovery_deregisters_and_preserves_diagnostics() {
     );
     assert!(
         accessor_completed,
-        "an accessor after completed shutdown eviction must not hot-spin"
+        "an accessor after completed shutdown eviction must finish within the bounded state-transition timeout of {accessor_timeout:?}"
     );
 }
 
@@ -722,7 +723,8 @@ async fn accessor_does_not_spin_on_registered_completed_eviction() {
                 .await
         }
     });
-    let accessor_completed = match timeout(Duration::from_millis(250), &mut accessor).await {
+    let accessor_timeout = mutation_journal_progress_timeout();
+    let accessor_completed = match timeout(accessor_timeout, &mut accessor).await {
         Ok(joined) => {
             let _ = joined.expect("completed-eviction accessor must not panic");
             true
@@ -739,7 +741,7 @@ async fn accessor_does_not_spin_on_registered_completed_eviction() {
 
     assert!(
         accessor_completed,
-        "a registered runtime with completed eviction must not hot-spin the accessor"
+        "a registered runtime with completed eviction must not hot-spin past the bounded state-transition timeout of {accessor_timeout:?}"
     );
 }
 

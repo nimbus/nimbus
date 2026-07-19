@@ -639,6 +639,8 @@ impl TenantRuntime {
         let mut stats = self.mutation_journal.stats();
         stats.committer_inbox_depth = self.committer.depth();
         stats.committer_inbox_capacity = self.committer.capacity();
+        stats.committer_send_timeout_millis =
+            u64::try_from(self.committer.send_timeout().as_millis()).unwrap_or(u64::MAX);
         stats.committer_send_timeout_count = self.committer.send_timeout_count();
         stats.publisher_queue_depth = self.publisher.depth();
         stats.publisher_queue_capacity = self.publisher.capacity();
