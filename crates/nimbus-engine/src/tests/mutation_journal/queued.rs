@@ -526,10 +526,7 @@ async fn progress_sync_cannot_leapfrog_pending_write_or_stale_window_reprepare()
     let held = engine
         .mutation_journal_stats_for_testing(&tenant_id)
         .expect("held journal stats should load");
-    assert!(
-        held.durable_head >= observed_applied,
-        "the explicit zero-write cursor must advance the durable head past the pending record"
-    );
+    assert_eq!(held.durable_head, observed_applied);
     assert!(
         held.applied_head < pending_sequence,
         "progress sync must stop the engine applied watermark before the held pending sequence"
