@@ -184,6 +184,7 @@ pub(crate) struct ObserverHandoff {
     sender: Mutex<ObserverSender>,
     receiver: Mutex<Option<mpsc::UnboundedReceiver<CommittedMutationObserverMessage>>>,
     queue_depth: AtomicUsize,
+    queue_peak_depth: AtomicUsize,
     queue_capacity: usize,
     queue_high_watermark: usize,
     max_live_dispatch: usize,
@@ -238,6 +239,7 @@ impl ObserverHandoff {
             }),
             receiver: Mutex::new(Some(receiver)),
             queue_depth: AtomicUsize::new(0),
+            queue_peak_depth: AtomicUsize::new(0),
             queue_capacity,
             queue_high_watermark,
             max_live_dispatch,
@@ -360,6 +362,10 @@ impl ObserverHandoff {
                 "committed mutation observer queue crossed its high-water mark"
             );
         }
+        // Publish the peak before handing the dispatch to the receiver. Tests
+        // and diagnostics awakened by the callback must not race this update.
+        self.queue_peak_depth
+            .fetch_max(next_depth, Ordering::Release);
         if let Err(rejected) = sender
             .sender
             .send(CommittedMutationObserverMessage::Dispatch(dispatch))
@@ -499,6 +505,7 @@ impl ObserverHandoff {
     pub(crate) fn stats(&self) -> ObserverQueueStats {
         ObserverQueueStats {
             depth: self.queue_depth.load(Ordering::Acquire),
+            peak_depth: self.queue_peak_depth.load(Ordering::Acquire),
             capacity: self.queue_capacity,
             high_watermark: self.queue_high_watermark,
             high_water_warning_count: self.high_water_warning_count.load(Ordering::Relaxed),
@@ -668,6 +675,7 @@ impl ObserverHandoff {
 #[derive(Clone, Copy)]
 pub(crate) struct ObserverQueueStats {
     pub(crate) depth: usize,
+    pub(crate) peak_depth: usize,
     pub(crate) capacity: usize,
     pub(crate) high_watermark: usize,
     pub(crate) high_water_warning_count: u64,

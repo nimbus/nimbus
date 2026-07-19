@@ -333,7 +333,7 @@ async fn provider_catch_up_reserves_live_max_dispatch_headroom_without_poison() 
     engine
         .shutdown_trigger_candidates_for_testing(&tenant_id)
         .expect("trigger cursor should not add unrelated records");
-    for index in 0..4 {
+    for index in 0..6 {
         engine
             .insert_document_async(
                 tenant_id.clone(),
@@ -349,12 +349,12 @@ async fn provider_catch_up_reserves_live_max_dispatch_headroom_without_poison() 
         .into_iter()
         .filter(|record| !record.writes.is_empty())
         .collect::<Vec<_>>();
-    assert_eq!(records.len(), 4);
-    let catch_up_records = records[..2].to_vec();
+    assert_eq!(records.len(), 6);
+    let catch_up_records = records[..4].to_vec();
     let observer = Arc::new(OrderedBlockingObserver::default());
     engine.install_committed_mutation_observer("provider-live-headroom-test", observer.clone());
 
-    let catch_up = tokio::spawn({
+    let mut catch_up = tokio::spawn({
         let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         async move {
@@ -368,19 +368,24 @@ async fn provider_catch_up_reserves_live_max_dispatch_headroom_without_poison() 
         move |timeout| observer.wait_for_first(timeout)
     })
     .await;
+    assert_future_stays_pending(
+        &mut catch_up,
+        "catch-up must stop at its allowance and preserve live dispatch headroom",
+    )
+    .await;
     let catch_up_full = engine
         .mutation_journal_stats_for_testing(&tenant_id)
         .expect("catch-up headroom diagnostics should load");
-    assert_eq!(catch_up_full.observer_queue_depth, 2);
+    assert_eq!(catch_up_full.observer_queue_peak_depth, 2);
     assert_eq!(catch_up_full.observer_queue_capacity, 4);
 
     engine
-        .process_applied_commit_batch_for_testing(&tenant_id, &records[2..])
+        .process_applied_commit_batch_for_testing(&tenant_id, &records[4..])
         .expect("a live maximum-size dispatch should use the reserved headroom");
     let live_full = engine
         .mutation_journal_stats_for_testing(&tenant_id)
         .expect("live headroom diagnostics should load");
-    assert_eq!(live_full.observer_queue_depth, 4);
+    assert_eq!(live_full.observer_queue_peak_depth, 4);
     assert_eq!(live_full.observer_queue_cap_breach_count, 0);
     assert!(!live_full.observer_dispatch_poisoned);
 
@@ -394,12 +399,15 @@ async fn provider_catch_up_reserves_live_max_dispatch_headroom_without_poison() 
         .await
         .expect("catch-up and live observer work should drain");
     let state = observer.state.lock().expect("observer state should lock");
+    let expected_dispatch_order = records[..2]
+        .iter()
+        .chain(&records[4..])
+        .chain(&records[2..4])
+        .map(|record| record.sequence)
+        .collect::<Vec<_>>();
     assert_eq!(
-        state.0,
-        records
-            .iter()
-            .map(|record| record.sequence)
-            .collect::<Vec<_>>()
+        state.0, expected_dispatch_order,
+        "the reserved live dispatch must enter FIFO order before catch-up resumes"
     );
     assert_eq!(state.2, 1, "catch-up and live callbacks must stay serial");
 }

@@ -508,18 +508,19 @@ fn complete_published_batch(
         commit_identity,
         true,
     );
+    // Accept observer work before making commit success visible. Otherwise a
+    // caller can race its observer fence ahead of this handoff and flush a
+    // commit whose projection dispatch has not entered the queue yet. The send
+    // is non-blocking; callbacks still run only on the separate dispatcher.
+    batch
+        .engine
+        .enqueue_applied_commit_batch_observers(runtime, &published.applied);
     for deferred in batch.deferred {
         deferred.complete();
     }
     for pending in batch.responses {
         let _ = pending.response.send(Ok(pending.result));
     }
-    // The per-tenant observer dispatcher is the sole callback owner. Enqueue
-    // after responses so synchronous nested writes remain supported without
-    // ever running an observer on this publisher task.
-    batch
-        .engine
-        .enqueue_applied_commit_batch_observers(runtime, &published.applied);
 }
 
 async fn fail_definitive_batch_and_recover(

@@ -310,6 +310,7 @@ impl MutationJournalState {
             publisher_mode_transition_count: 0,
             publisher_mode_transition_failure_count: 0,
             observer_queue_depth: 0,
+            observer_queue_peak_depth: 0,
             observer_queue_capacity: 0,
             observer_queue_high_watermark: 0,
             observer_queue_high_water_warning_count: 0,

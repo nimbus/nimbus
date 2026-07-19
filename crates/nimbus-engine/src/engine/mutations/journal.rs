@@ -294,10 +294,14 @@ impl Engine {
                     commit_identity,
                     true,
                 );
+                // The observer dispatch must be accepted before commit success
+                // becomes visible, so a caller's flush fence cannot overtake it.
+                // Enqueueing is non-blocking and callbacks stay on the separate
+                // per-tenant dispatcher.
+                self.enqueue_applied_commit_batch_observers(runtime, &batch_result.applied);
                 for pending_response in batch_result.responses {
                     let _ = pending_response.response.send(Ok(pending_response.result));
                 }
-                self.enqueue_applied_commit_batch_observers(runtime, &batch_result.applied);
             }
             Ok(Err(mut failure)) => {
                 runtime.record_mutation_worker_failure();
