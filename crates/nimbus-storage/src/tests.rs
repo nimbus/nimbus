@@ -56,6 +56,174 @@ pub(crate) fn sample_document(table: &str, title: &str) -> Document {
     )
 }
 
+fn duplicate_write_replay_records(
+    table_name: &str,
+) -> (Document, Document, [TenantEventRecord; 3]) {
+    let table = TableName::new(table_name).expect("table name should be valid");
+    let table_id = TableId::new();
+    let inserted = sample_document(table_name, "inserted");
+    let mut updated = inserted.clone();
+    updated.fields.insert("title".to_string(), json!("updated"));
+    updated.update_time = Timestamp(inserted.update_time.0.saturating_add(1));
+    let records = [
+        TenantEventRecord::new(
+            SequenceNumber(1),
+            Timestamp(100),
+            vec![WriteOp {
+                table: table.clone(),
+                table_id: table_id.clone(),
+                op_type: WriteOpType::Insert,
+                doc_id: inserted.id.clone(),
+                resource_path_binding: None,
+                trigger_write_origin: None,
+                previous: None,
+                current: Some(inserted.clone()),
+            }],
+            None,
+        )
+        .expect("insert replay record should build"),
+        TenantEventRecord::new(
+            SequenceNumber(2),
+            Timestamp(200),
+            vec![WriteOp {
+                table: table.clone(),
+                table_id: table_id.clone(),
+                op_type: WriteOpType::Update,
+                doc_id: inserted.id.clone(),
+                resource_path_binding: None,
+                trigger_write_origin: None,
+                previous: Some(inserted.clone()),
+                current: Some(updated.clone()),
+            }],
+            None,
+        )
+        .expect("update replay record should build"),
+        TenantEventRecord::new(
+            SequenceNumber(3),
+            Timestamp(300),
+            vec![WriteOp {
+                table,
+                table_id,
+                op_type: WriteOpType::Delete,
+                doc_id: inserted.id.clone(),
+                resource_path_binding: None,
+                trigger_write_origin: None,
+                previous: Some(updated.clone()),
+                current: None,
+            }],
+            None,
+        )
+        .expect("delete replay record should build"),
+    ];
+    (inserted, updated, records)
+}
+
+pub(crate) fn exercise_applied_sequence_recovery_replay<S>(store: &S, table_name: &str)
+where
+    S: crate::DurableJournal + crate::TenantPointRead,
+{
+    let (inserted, updated, records) = duplicate_write_replay_records(table_name);
+    let expected_states = [Some(inserted.clone()), Some(updated), None];
+
+    for (index, (record, expected_state)) in records.iter().zip(expected_states).enumerate() {
+        store
+            .append_durable_records_batch(std::slice::from_ref(record))
+            .expect("durable record should append");
+        store
+            .apply_durable_records_batch(std::slice::from_ref(record))
+            .expect("durable record should apply");
+        store
+            .apply_durable_records_batch(std::slice::from_ref(record))
+            .expect("identical already-applied record should be an idempotent replay");
+
+        assert_eq!(
+            store
+                .get(&inserted.table, &inserted.id)
+                .expect("materialized state should load after replay"),
+            expected_state,
+            "identical {:?} replay must not duplicate its materialized effect",
+            record.writes[0].op_type
+        );
+        assert_eq!(
+            store
+                .read_durable_journal_from(SequenceNumber(1))
+                .expect("durable journal should remain readable")
+                .len(),
+            index + 1,
+            "replay must not append a duplicate durable record"
+        );
+    }
+}
+
+pub(crate) fn exercise_applied_sequence_corruption_rejection<S>(store: &S, table_name: &str)
+where
+    S: crate::DurableJournal + crate::TenantPointRead,
+{
+    let (inserted, updated, records) = duplicate_write_replay_records(table_name);
+    let expected_states = [Some(inserted.clone()), Some(updated), None];
+
+    for (record, expected_state) in records.iter().zip(expected_states) {
+        store
+            .append_durable_records_batch(std::slice::from_ref(record))
+            .expect("durable record should append");
+        store
+            .apply_durable_records_batch(std::slice::from_ref(record))
+            .expect("durable record should apply");
+
+        let mut divergent_write = record.writes[0].clone();
+        let divergent_document = divergent_write
+            .current
+            .as_mut()
+            .or(divergent_write.previous.as_mut())
+            .expect("document write should carry a current or previous image");
+        divergent_document
+            .fields
+            .insert("corruption".to_string(), json!(record.sequence.0));
+        let divergent = TenantEventRecord::new(
+            record.sequence,
+            record.timestamp,
+            vec![divergent_write],
+            record.scheduled_execution_id.clone(),
+        )
+        .expect("divergent replay record should build with valid integrity");
+
+        let error = store
+            .apply_durable_records_batch(&[divergent])
+            .expect_err("divergent already-applied record must be rejected as corruption");
+        match &error {
+            Error::Storage {
+                kind: nimbus_core::StorageErrorKind::Corruption,
+                message,
+            } => {
+                assert!(
+                    message.contains(&record.sequence.0.to_string()),
+                    "corruption error must name sequence {}: {message}",
+                    record.sequence.0
+                );
+                assert!(
+                    message.contains(inserted.id.as_str()),
+                    "corruption error must name document {}: {message}",
+                    inserted.id
+                );
+            }
+            other => panic!("expected typed storage corruption, got {other:?}"),
+        }
+        assert_eq!(
+            error.retryability(),
+            nimbus_core::Retryability::Terminal,
+            "corruption must never be advertised as retryable"
+        );
+        assert_eq!(
+            store
+                .get(&inserted.table, &inserted.id)
+                .expect("materialized state should load after corruption rejection"),
+            expected_state,
+            "rejected {:?} replay must leave stored state unchanged",
+            record.writes[0].op_type
+        );
+    }
+}
+
 pub(crate) struct BlockingReadGate {
     entered: Notify,
     release_gate: (Mutex<bool>, Condvar),

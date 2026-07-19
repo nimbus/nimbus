@@ -51,6 +51,22 @@ fn sqlite_direct_writes_emit_commit_entries_and_round_trip_journal_reads() {
 }
 
 #[test]
+fn sqlite_applied_sequence_recovery_replay_is_idempotent_for_all_write_shapes() {
+    let dir = tempdir().expect("temporary directory should create");
+    let store = SqliteTenantStore::open(dir.path().join("tenant.sqlite3"))
+        .expect("sqlite tenant store should open");
+    exercise_applied_sequence_recovery_replay(&store, "sqlite_duplicate_replay");
+}
+
+#[test]
+fn sqlite_applied_sequence_rejects_divergent_content_for_all_write_shapes() {
+    let dir = tempdir().expect("temporary directory should create");
+    let store = SqliteTenantStore::open(dir.path().join("tenant.sqlite3"))
+        .expect("sqlite tenant store should open");
+    exercise_applied_sequence_corruption_rejection(&store, "sqlite_duplicate_corruption");
+}
+
+#[test]
 fn sqlite_document_versions_track_insert_update_delete_history() {
     let dir = tempdir().expect("temporary directory should create");
     let store = SqliteTenantStore::open(dir.path().join("tenant.sqlite3"))

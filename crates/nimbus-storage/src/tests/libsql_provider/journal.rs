@@ -2,6 +2,37 @@ use super::support::*;
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
+async fn libsql_applied_sequence_recovery_replay_is_idempotent_for_all_write_shapes() {
+    with_test_provider(|provider, _config| async move {
+        let tenant = TenantId::new("duplicate-replay").expect("tenant id should build");
+        let opened = provider
+            .create_opened_tenant(&tenant)
+            .await
+            .expect("tenant should create and open");
+        exercise_applied_sequence_recovery_replay(&opened.store, "libsql_duplicate_replay");
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn libsql_applied_sequence_rejects_divergent_content_for_all_write_shapes() {
+    with_test_provider(|provider, _config| async move {
+        let tenant = TenantId::new("duplicate-corruption").expect("tenant id should build");
+        let opened = provider
+            .create_opened_tenant(&tenant)
+            .await
+            .expect("tenant should create and open");
+        exercise_applied_sequence_corruption_rejection(
+            &opened.store,
+            "libsql_duplicate_corruption",
+        );
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
 async fn libsql_direct_writes_refresh_derivative_cache_and_round_trip_journal_progress() {
     with_test_provider(|provider, _config| async move {
         let tenant = TenantId::new("writes").expect("tenant id should build");
