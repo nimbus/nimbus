@@ -383,7 +383,7 @@ pub(super) async fn apply_durable_record_in_remote_conn(
         )
         .await?;
         record_index_versions_for_writes_remote(conn, record.sequence, &record.writes).await?;
-        return apply_document_writes_in_remote_conn(conn, &record.writes).await;
+        return apply_document_writes_in_remote_conn(conn, record.sequence, &record.writes).await;
     }
 
     record_document_versions_for_events_remote(
@@ -395,7 +395,7 @@ pub(super) async fn apply_durable_record_in_remote_conn(
     .await?;
     record_index_versions_for_events_remote(conn, record.sequence, &record.events).await?;
     for event in &record.events {
-        apply_tenant_event_in_remote_conn(conn, event).await?;
+        apply_tenant_event_in_remote_conn(conn, record.sequence, event).await?;
     }
 
     Ok(())
@@ -403,11 +403,12 @@ pub(super) async fn apply_durable_record_in_remote_conn(
 
 async fn apply_tenant_event_in_remote_conn(
     conn: &Connection,
+    sequence: SequenceNumber,
     event: &TenantEventKind,
 ) -> Result<()> {
     match event {
         TenantEventKind::DocumentWrite { writes } => {
-            apply_document_writes_in_remote_conn(conn, writes).await
+            apply_document_writes_in_remote_conn(conn, sequence, writes).await
         }
         TenantEventKind::SchemaChange { change } => {
             apply_schema_change_in_remote_conn(conn, change).await
@@ -431,7 +432,11 @@ async fn apply_tenant_event_in_remote_conn(
     }
 }
 
-async fn apply_document_writes_in_remote_conn(conn: &Connection, writes: &[WriteOp]) -> Result<()> {
+async fn apply_document_writes_in_remote_conn(
+    conn: &Connection,
+    sequence: SequenceNumber,
+    writes: &[WriteOp],
+) -> Result<()> {
     for write in writes {
         match (&write.previous, &write.current) {
             (None, Some(current)) => {
@@ -446,10 +451,12 @@ async fn apply_document_writes_in_remote_conn(conn: &Connection, writes: &[Write
                 match existing {
                     Some(existing) if existing == *current => continue,
                     Some(_) => {
-                        return Err(Error::conflict(format!(
-                            "durable journal insert replay found conflicting state for document {}",
-                            write.doc_id
-                        )));
+                        return Err(crate::commit_log::durable_replay_preimage_corruption(
+                            sequence,
+                            "insert",
+                            write.doc_id.as_str(),
+                            "found unexpected state",
+                        ));
                     }
                     None => {
                         conn.execute(
@@ -484,18 +491,24 @@ async fn apply_document_writes_in_remote_conn(conn: &Connection, writes: &[Write
                     &write.doc_id,
                 )
                 .await?
-                .ok_or(Error::conflict(format!(
-                    "durable journal update replay missing document {}",
-                    write.doc_id
-                )))?;
+                .ok_or_else(|| {
+                    crate::commit_log::durable_replay_preimage_corruption(
+                        sequence,
+                        "update",
+                        write.doc_id.as_str(),
+                        "is missing the expected pre-image",
+                    )
+                })?;
                 if existing == *current {
                     continue;
                 }
                 if existing != *previous {
-                    return Err(Error::conflict(format!(
-                        "durable journal update replay found conflicting state for document {}",
-                        write.doc_id
-                    )));
+                    return Err(crate::commit_log::durable_replay_preimage_corruption(
+                        sequence,
+                        "update",
+                        write.doc_id.as_str(),
+                        "found a pre-image mismatch",
+                    ));
                 }
                 conn.execute(
                     "UPDATE documents
@@ -524,10 +537,12 @@ async fn apply_document_writes_in_remote_conn(conn: &Connection, writes: &[Write
                 .await?
                 {
                     Some(existing) if existing != *previous => {
-                        return Err(Error::conflict(format!(
-                            "durable journal delete replay found conflicting state for document {}",
-                            write.doc_id
-                        )));
+                        return Err(crate::commit_log::durable_replay_preimage_corruption(
+                            sequence,
+                            "delete",
+                            write.doc_id.as_str(),
+                            "found a pre-image mismatch",
+                        ));
                     }
                     Some(_) => {
                         conn.execute(

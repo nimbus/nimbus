@@ -1124,6 +1124,10 @@ impl MySqlWriteTransaction {
                 record.sequence.0
             )));
         }
+        crate::commit_log::ensure_applied_prefix_precedes(
+            self.applied_sequence()?,
+            record.sequence,
+        )?;
         self.append_durable_records_batch(std::slice::from_ref(record))?;
         let sequence = record.sequence;
         self.write_applied_sequence(sequence)?;
@@ -1254,6 +1258,7 @@ impl MySqlWriteTransaction {
         events: Vec<TenantEventKind>,
     ) -> Result<CommitEntry> {
         let sequence = SequenceNumber(self.latest_sequence()?.0.saturating_add(1));
+        crate::commit_log::ensure_applied_prefix_precedes(self.applied_sequence()?, sequence)?;
         let timestamp = self
             .commit_timestamp
             .unwrap_or_else(|| self.provider.clock.now());

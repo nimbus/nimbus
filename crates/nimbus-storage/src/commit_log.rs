@@ -1,4 +1,6 @@
-use nimbus_core::{CommitEntry, Error, Result, StorageErrorKind, TenantEventRecord};
+use nimbus_core::{
+    CommitEntry, Error, Result, SequenceNumber, StorageErrorKind, TenantEventRecord,
+};
 
 /// Serializes a tenant event record for persistence.
 pub fn serialize_tenant_event_record(entry: &TenantEventRecord) -> Result<Vec<u8>> {
@@ -47,6 +49,43 @@ pub(crate) fn ensure_applied_record_matches(
             "diverges from the durable journal record",
         ))
     }
+}
+
+/// Refuses to publish a newly materialized record across an unapplied durable
+/// predecessor.
+///
+/// Generic write transactions have already staged their document and index
+/// effects by the time they append their journal record. Applying an older
+/// durable record at that point could invert same-document write order, so the
+/// only safe backend-neutral policy is to abort the enclosing transaction.
+pub(crate) fn ensure_applied_prefix_precedes(
+    applied_head: SequenceNumber,
+    next_sequence: SequenceNumber,
+) -> Result<()> {
+    let required_predecessor = SequenceNumber(next_sequence.0.saturating_sub(1));
+    if applied_head == required_predecessor {
+        return Ok(());
+    }
+
+    Err(Error::Internal(format!(
+        "cannot append applied journal sequence {} while applied head is {}; required contiguous predecessor {}",
+        next_sequence.0, applied_head.0, required_predecessor.0
+    )))
+}
+
+pub(crate) fn durable_replay_preimage_corruption(
+    sequence: SequenceNumber,
+    operation: &str,
+    document_id: &str,
+    reason: &str,
+) -> Error {
+    Error::storage(
+        StorageErrorKind::Corruption,
+        format!(
+            "durable journal {operation} replay at sequence {} {reason} for document {document_id}",
+            sequence.0
+        ),
+    )
 }
 
 fn applied_record_corruption(record: &TenantEventRecord, reason: &str) -> Error {

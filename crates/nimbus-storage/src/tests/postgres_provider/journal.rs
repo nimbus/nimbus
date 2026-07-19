@@ -1,6 +1,7 @@
 use super::support::*;
 use crate::tests::{
     exercise_applied_sequence_corruption_rejection, exercise_applied_sequence_recovery_replay,
+    exercise_durable_update_guard_is_corruption, exercise_pending_prefix_blocks_generic_zero_write,
 };
 
 #[tokio::test(flavor = "multi_thread")]
@@ -27,6 +28,52 @@ async fn postgres_applied_sequence_rejects_divergent_content_for_all_write_shape
         exercise_applied_sequence_corruption_rejection(
             opened.store.as_ref(),
             "pg_duplicate_corruption",
+        );
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn postgres_pending_prefix_blocks_generic_zero_write() {
+    with_test_provider(|provider, _config| async move {
+        let tenant = TenantId::new("pending-prefix").expect("tenant id should build");
+        let opened = provider
+            .create_opened_tenant(&tenant)
+            .await
+            .expect("tenant should create and open");
+        exercise_pending_prefix_blocks_generic_zero_write(
+            opened.store.as_ref(),
+            "pg_pending_prefix",
+            || {
+                opened
+                    .store
+                    .set_trigger_delivery_cursor(TriggerDeliveryCursor::new(SequenceNumber(1)))
+            },
+        );
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn postgres_durable_update_guard_reports_corruption() {
+    with_test_provider(|provider, _config| async move {
+        let missing = provider
+            .create_opened_tenant(&TenantId::new("missing-preimage").expect("tenant id"))
+            .await
+            .expect("tenant should create and open");
+        exercise_durable_update_guard_is_corruption(
+            missing.store.as_ref(),
+            "pg_missing_preimage",
+            false,
+        );
+        let mismatched = provider
+            .create_opened_tenant(&TenantId::new("mismatched-preimage").expect("tenant id"))
+            .await
+            .expect("tenant should create and open");
+        exercise_durable_update_guard_is_corruption(
+            mismatched.store.as_ref(),
+            "pg_mismatched_preimage",
+            true,
         );
     })
     .await;
