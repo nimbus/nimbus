@@ -129,6 +129,7 @@ impl MemoryState {
             );
         }
         let sequence = SequenceNumber(self.durable_head().0.saturating_add(1));
+        crate::commit_log::ensure_applied_prefix_precedes(self.applied_head, sequence)?;
         let record = TenantEventRecord::from_events(sequence, timestamp, events)?;
         self.durable_journal.insert(sequence.0, record);
         self.durable_head = sequence;

@@ -368,6 +368,10 @@ pub(super) fn append_prepared_commit_entry(
             record.sequence.0
         )));
     }
+    crate::commit_log::ensure_applied_prefix_precedes(
+        applied_sequence_in_conn(conn)?,
+        record.sequence,
+    )?;
     let payload = serialize_tenant_event_record(record)?;
     conn.execute(
         "INSERT INTO commit_log (sequence, record_blob) VALUES (?1, ?2)",
@@ -389,6 +393,7 @@ pub(super) fn append_tenant_event_record(
     timestamp: Timestamp,
     events: Vec<TenantEventKind>,
 ) -> Result<TenantEventRecord> {
+    crate::commit_log::ensure_applied_prefix_precedes(applied_sequence_in_conn(conn)?, sequence)?;
     let record = TenantEventRecord::from_events(sequence, timestamp, events)?;
     record_document_versions_for_events_in_conn(
         conn,

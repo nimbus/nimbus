@@ -200,6 +200,18 @@ fn redb_applied_sequence_rejects_divergent_content_for_all_write_shapes() {
 }
 
 #[test]
+fn redb_pending_prefix_blocks_generic_zero_write() {
+    let store = TenantStore::create_in_memory().expect("redb store should open");
+    exercise_pending_prefix_blocks_generic_zero_write(
+        &store,
+        "redb_pending_prefix",
+        || {
+            store.set_trigger_delivery_cursor(TriggerDeliveryCursor::new(SequenceNumber(1)))
+        },
+    );
+}
+
+#[test]
 fn memory_tenant_store_durable_journal_conformance() {
     let store = MemoryTenantStore::new();
     exercise_durable_journal_lifecycle(store, |store| {
@@ -207,6 +219,18 @@ fn memory_tenant_store_durable_journal_conformance() {
             .restart_from_durable_state()
             .expect("volatile restart image should clone")
     });
+}
+
+#[test]
+fn memory_pending_prefix_blocks_generic_zero_write() {
+    let store = MemoryTenantStore::new();
+    exercise_pending_prefix_blocks_generic_zero_write(
+        &store,
+        "memory_pending_prefix",
+        || {
+            store.set_trigger_delivery_cursor(TriggerDeliveryCursor::new(SequenceNumber(1)))
+        },
+    );
 }
 
 #[test]

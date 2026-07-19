@@ -1282,6 +1282,14 @@ impl LibsqlReplicaWriteTransaction {
             self.store
                 .block_on(load_next_sequence_from_session(self.session()?))?,
         );
+        let applied_head = self.store.block_on(load_remote_metadata_u64(
+            self.session()?,
+            APPLIED_SEQUENCE_KEY,
+        ))?;
+        crate::commit_log::ensure_applied_prefix_precedes(
+            applied_head.map(SequenceNumber).unwrap_or(SequenceNumber(0)),
+            sequence,
+        )?;
         let timestamp = self
             .commit_timestamp
             .unwrap_or_else(|| self.store.provider.clock.now());
@@ -1339,6 +1347,14 @@ impl LibsqlReplicaWriteTransaction {
                 record.sequence.0
             )));
         }
+        let applied_head = self.store.block_on(load_remote_metadata_u64(
+            self.session()?,
+            APPLIED_SEQUENCE_KEY,
+        ))?;
+        crate::commit_log::ensure_applied_prefix_precedes(
+            applied_head.map(SequenceNumber).unwrap_or(SequenceNumber(0)),
+            record.sequence,
+        )?;
         let payload = serialize_tenant_event_record(record)?;
         let record_sequence = record.sequence;
         self.store.block_on(async {

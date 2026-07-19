@@ -1,6 +1,7 @@
 use super::support::*;
 use crate::tests::{
     exercise_applied_sequence_corruption_rejection, exercise_applied_sequence_recovery_replay,
+    exercise_pending_prefix_blocks_generic_zero_write,
 };
 
 #[tokio::test(flavor = "multi_thread")]
@@ -27,6 +28,27 @@ async fn mysql_applied_sequence_rejects_divergent_content_for_all_write_shapes()
         exercise_applied_sequence_corruption_rejection(
             opened.store.as_ref(),
             "mysql_duplicate_corruption",
+        );
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mysql_pending_prefix_blocks_generic_zero_write() {
+    with_test_provider(|provider, _config| async move {
+        let tenant = TenantId::new("pending-prefix").expect("tenant id should build");
+        let opened = provider
+            .create_opened_tenant(&tenant)
+            .await
+            .expect("tenant should create and open");
+        exercise_pending_prefix_blocks_generic_zero_write(
+            opened.store.as_ref(),
+            "mysql_pending_prefix",
+            || {
+                opened
+                    .store
+                    .set_trigger_delivery_cursor(TriggerDeliveryCursor::new(SequenceNumber(1)))
+            },
         );
     })
     .await;

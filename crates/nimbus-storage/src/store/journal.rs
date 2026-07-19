@@ -176,6 +176,10 @@ pub(super) fn append_prepared_commit(
             record.sequence.0
         )));
     }
+    crate::commit_log::ensure_applied_prefix_precedes(
+        applied_sequence_in_write_txn(write_txn)?,
+        record.sequence,
+    )?;
     let mut log = write_txn.open_table(COMMIT_LOG).map_err(map_redb_error)?;
     let payload = crate::commit_log::serialize_tenant_event_record(record)?;
     log.insert(record.sequence.0, payload.as_slice())
@@ -191,6 +195,10 @@ pub(super) fn append_tenant_event(
     timestamp: Timestamp,
     events: Vec<TenantEventKind>,
 ) -> Result<TenantEventRecord> {
+    crate::commit_log::ensure_applied_prefix_precedes(
+        applied_sequence_in_write_txn(write_txn)?,
+        sequence,
+    )?;
     let record = TenantEventRecord::from_events(sequence, timestamp, events)?;
     record_document_versions_for_events(
         write_txn,
@@ -615,6 +623,18 @@ fn write_applied_sequence(
         .insert(APPLIED_SEQUENCE_KEY, encode_u64(sequence.0).as_slice())
         .map_err(map_redb_error)?;
     Ok(())
+}
+
+fn applied_sequence_in_write_txn(
+    write_txn: &redb::WriteTransaction,
+) -> Result<SequenceNumber> {
+    let metadata = write_txn.open_table(METADATA).map_err(map_redb_error)?;
+    metadata
+        .get(APPLIED_SEQUENCE_KEY)
+        .map_err(map_redb_error)?
+        .map(|value| decode_u64(value.value()).map(SequenceNumber))
+        .transpose()
+        .map(|sequence| sequence.unwrap_or(SequenceNumber(0)))
 }
 
 fn write_next_sequence(write_txn: &redb::WriteTransaction, sequence: u64) -> Result<()> {

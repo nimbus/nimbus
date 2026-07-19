@@ -224,6 +224,75 @@ where
     }
 }
 
+pub(crate) fn exercise_pending_prefix_blocks_generic_zero_write<S>(
+    store: &S,
+    table_name: &str,
+    generic_zero_write: impl FnOnce() -> nimbus_core::Result<()>,
+) where
+    S: crate::DurableJournal + crate::TenantPointRead,
+{
+    let (pending_document, _, records) = duplicate_write_replay_records(table_name);
+    let pending = &records[0];
+    store
+        .append_durable_records_batch(std::slice::from_ref(pending))
+        .expect("pending durable record should append without applying");
+    assert_eq!(
+        store
+            .journal_progress()
+            .expect("pending journal progress should load"),
+        crate::JournalProgress {
+            durable_head: pending.sequence,
+            applied_head: SequenceNumber(0),
+        }
+    );
+
+    let error = generic_zero_write()
+        .expect_err("generic zero-write transaction must not advance across a pending record");
+    assert!(
+        error
+            .to_string()
+            .contains("required contiguous predecessor"),
+        "prefix rejection should explain the unapplied predecessor: {error:?}"
+    );
+    assert_eq!(
+        store
+            .journal_progress()
+            .expect("journal progress should survive rejected generic transaction"),
+        crate::JournalProgress {
+            durable_head: pending.sequence,
+            applied_head: SequenceNumber(0),
+        },
+        "rejected generic transaction must leave both journal heads unchanged"
+    );
+    assert_eq!(
+        store
+            .get(&pending_document.table, &pending_document.id)
+            .expect("pending document lookup should succeed"),
+        None,
+        "pending document must remain physically unapplied"
+    );
+
+    store
+        .apply_durable_records_batch(std::slice::from_ref(pending))
+        .expect("pending durable record should still apply after rejection");
+    assert_eq!(
+        store
+            .journal_progress()
+            .expect("applied journal progress should load"),
+        crate::JournalProgress {
+            durable_head: pending.sequence,
+            applied_head: pending.sequence,
+        }
+    );
+    assert_eq!(
+        store
+            .get(&pending_document.table, &pending_document.id)
+            .expect("applied document lookup should succeed"),
+        Some(pending_document),
+        "pending durable document must remain recoverable"
+    );
+}
+
 pub(crate) struct BlockingReadGate {
     entered: Notify,
     release_gate: (Mutex<bool>, Condvar),
