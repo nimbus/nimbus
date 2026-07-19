@@ -653,6 +653,7 @@ impl TenantRuntime {
             self.publisher.mode_transition_failure_count();
         let observer = self.observer_dispatch.stats();
         stats.observer_queue_depth = observer.depth;
+        stats.observer_queue_peak_depth = observer.peak_depth;
         stats.observer_queue_capacity = observer.capacity;
         stats.observer_queue_high_watermark = observer.high_watermark;
         stats.observer_queue_high_water_warning_count = observer.high_water_warning_count;
