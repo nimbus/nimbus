@@ -1100,8 +1100,7 @@ mod tests {
         assert_eq!(
             (
                 log.current_prepare_view_available(published),
-                log.current_document_state(published, &table, &id)
-                    .is_some(),
+                log.current_document_state(published, &table, &id).is_some(),
             ),
             (false, false),
             "current views must not serve images beyond proven full-image coverage"
