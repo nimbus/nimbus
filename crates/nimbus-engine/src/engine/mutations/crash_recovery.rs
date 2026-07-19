@@ -385,12 +385,12 @@ async fn run_crash_case(case: CrashCase) {
         .create_tenant_async(tenant_id.clone())
         .await
         .expect("crash matrix tenant should create");
-    engine
-        .shutdown_trigger_candidates_for_testing(&tenant_id)
-        .expect("trigger cursor must not add unrelated matrix records");
     insert_case_document(&engine, &tenant_id, "stable-prefix")
         .await
         .expect("stable prefix should commit");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor must not add unrelated matrix records");
 
     let runtime = engine
         .registered_runtime_for_testing(&tenant_id)
