@@ -380,7 +380,7 @@ fn run_trigger_candidate_worker(
     }
 }
 
-fn materialize_trigger_invocations_and_sync(
+pub(crate) fn materialize_trigger_invocations_and_sync(
     runtime: &Arc<TenantRuntime>,
     records: &[nimbus_core::TriggerInvocationRecord],
     cursor: nimbus_core::TriggerDeliveryCursor,

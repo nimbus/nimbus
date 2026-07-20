@@ -492,6 +492,45 @@ pub(crate) fn persist_assigned_batch_once(
     })
 }
 
+#[cfg(test)]
+impl Engine {
+    pub(crate) fn persist_provider_publisher_barrier_for_testing(
+        &self,
+        tenant_id: &nimbus_core::TenantId,
+        label: &str,
+    ) -> nimbus_core::Result<()> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let runtime_for_commit = runtime.clone();
+        let commit_faults = self.commit_faults.clone();
+        let label = label.to_string();
+        runtime.submit_internal_committer(move || {
+            runtime_for_commit.ensure_committer_lease_for_assignment()?;
+            let previous = runtime_for_commit.durable_head();
+            let sequence = crate::tenant::assign_and_validate(previous, 1)?[0];
+            let record = TenantEventRecord::barrier(
+                sequence,
+                runtime_for_commit.assign_commit_timestamp(),
+                label,
+            )?;
+            runtime_for_commit.stage_zero_write_record_in_write_log(&record);
+            let result = persist_assigned_batch_once(
+                &runtime_for_commit,
+                std::slice::from_ref(&record),
+                previous,
+                &commit_faults,
+            );
+            if result.is_err() {
+                runtime_for_commit.discard_unpersisted_write_log_suffix(sequence);
+            }
+            result.map(|_| ()).map_err(|error| match error {
+                PublishAttemptError::Definitive(error) | PublishAttemptError::Ambiguous(error) => {
+                    error
+                }
+            })
+        })
+    }
+}
+
 fn complete_published_batch(
     runtime: Arc<TenantRuntime>,
     mut batch: AssignedPublisherBatch,
