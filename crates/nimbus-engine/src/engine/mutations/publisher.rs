@@ -405,7 +405,13 @@ pub(crate) fn persist_assigned_batch_once(
 
     let durable_append_started = Instant::now();
     let write_log_guard = runtime.arm_write_log_append();
-    if let Err(error) = runtime.store.append_durable_records_batch(records) {
+    let provider_applied = match runtime.persist_fenced_provider_batch(expected_previous, records) {
+        Ok(provider_applied) => provider_applied,
+        Err(error) => {
+            return Err(PublishAttemptError::Definitive(error));
+        }
+    };
+    if !provider_applied && let Err(error) = runtime.store.append_durable_records_batch(records) {
         let progress = runtime.store.journal_progress();
         return match progress {
             Ok(progress) if progress.durable_head == expected_previous => {
@@ -429,28 +435,34 @@ pub(crate) fn persist_assigned_batch_once(
     let durable_append = durable_append_started.elapsed();
 
     let apply_started = Instant::now();
-    runtime
-        .store
-        .check_fault(nimbus_storage::FaultPoint::JournalDurableAppendBeforeApply)
-        .map_err(PublishAttemptError::Ambiguous)?;
-    commit_faults
-        .wait(labels::DURABLE_BEFORE_PUBLISH)
-        .into_result()
-        .map_err(PublishAttemptError::Ambiguous)?;
-    let applied_head = match runtime.store.apply_durable_records_batch(records) {
-        Ok(()) => runtime
+    if !provider_applied {
+        runtime
             .store
-            .applied_head_after_durable_apply(records)
-            .map_err(PublishAttemptError::Ambiguous)?,
-        Err(apply_error) => runtime
-            .store
-            .recover_durable_journal()
-            .map(|progress| progress.applied_head)
-            .map_err(|recovery_error| {
-                PublishAttemptError::Ambiguous(Error::Internal(format!(
-                    "durable batch apply failed ({apply_error}) and recovery failed ({recovery_error})"
-                )))
-            })?,
+            .check_fault(nimbus_storage::FaultPoint::JournalDurableAppendBeforeApply)
+            .map_err(PublishAttemptError::Ambiguous)?;
+        commit_faults
+            .wait(labels::DURABLE_BEFORE_PUBLISH)
+            .into_result()
+            .map_err(PublishAttemptError::Ambiguous)?;
+    }
+    let applied_head = if provider_applied {
+        last_sequence
+    } else {
+        match runtime.store.apply_durable_records_batch(records) {
+            Ok(()) => runtime
+                .store
+                .applied_head_after_durable_apply(records)
+                .map_err(PublishAttemptError::Ambiguous)?,
+            Err(apply_error) => runtime
+                .store
+                .recover_durable_journal()
+                .map(|progress| progress.applied_head)
+                .map_err(|recovery_error| {
+                    PublishAttemptError::Ambiguous(Error::Internal(format!(
+                        "durable batch apply failed ({apply_error}) and recovery failed ({recovery_error})"
+                    )))
+                })?,
+        }
     };
     let mut applied = records
         .iter()

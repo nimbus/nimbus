@@ -49,4 +49,36 @@ impl TenantPersistence {
             Self::Memory(_) => Err(CommitterLeaseError::Unsupported),
         }
     }
+
+    pub(crate) fn fenced_append_and_apply_durable_records_batch(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        expected_previous: nimbus_core::SequenceNumber,
+        records: &[nimbus_core::TenantEventRecord],
+    ) -> CommitterLeaseResult<()> {
+        match self {
+            Self::Postgres(store) => store.fenced_append_and_apply_durable_records_batch(
+                owner_id,
+                epoch,
+                expected_previous,
+                records,
+            ),
+            Self::LibsqlReplica(store) => store.fenced_append_and_apply_durable_records_batch(
+                owner_id,
+                epoch,
+                expected_previous,
+                records,
+            ),
+            Self::MySql(store) => store.fenced_append_and_apply_durable_records_batch(
+                owner_id,
+                epoch,
+                expected_previous,
+                records,
+            ),
+            Self::Redb(_) | Self::Sqlite(_) => Err(CommitterLeaseError::Unsupported),
+            #[cfg(any(test, feature = "test-hooks"))]
+            Self::Memory(_) => Err(CommitterLeaseError::Unsupported),
+        }
+    }
 }
