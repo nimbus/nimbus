@@ -120,6 +120,24 @@ impl FencedDurableApply for LibsqlReplicaTenantStore {
     }
 }
 
+impl FencedDurableApply for MySqlTenantStore {
+    fn fenced_append_and_apply_durable_records_batch(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        expected_previous: SequenceNumber,
+        records: &[TenantEventRecord],
+    ) -> CommitterLeaseResult<()> {
+        MySqlTenantStore::fenced_append_and_apply_durable_records_batch(
+            self,
+            owner_id,
+            epoch,
+            expected_previous,
+            records,
+        )
+    }
+}
+
 macro_rules! impl_unsupported_fenced_durable_apply {
     ($($ty:ty),+ $(,)?) => {
         $(
@@ -138,12 +156,7 @@ macro_rules! impl_unsupported_fenced_durable_apply {
     };
 }
 
-impl_unsupported_fenced_durable_apply!(
-    TenantStore,
-    SqliteTenantStore,
-    MySqlTenantStore,
-    MemoryTenantStore,
-);
+impl_unsupported_fenced_durable_apply!(TenantStore, SqliteTenantStore, MemoryTenantStore,);
 
 impl TenantLifecycle for EmbeddedRedbProvider {
     type OpenedTenant = OpenedEmbeddedRedbTenant;
