@@ -82,11 +82,23 @@ discussion, not a workaround.
 2. **`nimbus-runtime` has zero workspace dependencies.** It defines the V8
    execution surface and the `HostBridge` trait; all Nimbus-specific
    integration lives in the bridge implementation outside the crate.
-3. **Every mutation flows through the engine-owned mutation path.** HTTP,
-   WebSocket, scheduler, and runtime-originated writes all converge on the
-   `apply_mutation_with_mode*` family behind the public `insert_document*`,
-   `update_document*`, and `delete_document*` methods on `Engine`
-   (`crates/nimbus-engine/src/engine/mutations/`). There is no side channel.
+3. **Every mutation flows through an engine-owned commit path.** HTTP,
+   WebSocket, scheduler, and runtime-originated writes never reach storage
+   directly. There are three such paths, all engine-owned, and naming all
+   three matters: an audit boundary that lists only the first will not notice
+   a defect living in the other two.
+   - The **queued journal path**, where client mutations are batched and
+     committed in sequence order by the per-tenant committer.
+   - The **direct path**, `apply_mutation_with_mode*` behind the public
+     `insert_document*`, `update_document*`, and `delete_document*` methods on
+     `Engine` (`crates/nimbus-engine/src/engine/mutations/`).
+   - The **execution-unit path**, `MutationExecutionUnit`, which runtime
+     mutations use so that all writes in one function invocation commit as a
+     single transaction (`crates/nimbus-engine/src/engine/execution_units/`).
+
+   There is no side channel, and no fourth path may be added. Every one of
+   these routes must classify an ambiguous durable outcome the same way — see
+   the crash-and-replay obligation in the mutation-path docs.
 4. **Storage commits are atomic.** The document write, its supporting index
    effects, and the commit-log append happen in one storage transaction.
    Never a document without its index entries; never a commit entry without
