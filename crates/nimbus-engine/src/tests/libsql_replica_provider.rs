@@ -16,7 +16,7 @@ use nimbus_core::{
 };
 use nimbus_crypto::{KeyManifest, LocalKeySubject, ManifestCipher};
 use nimbus_storage::libsql::libsql_transport_connector;
-use nimbus_storage::{LibsqlReplicaProvider, LibsqlReplicaProviderConfig};
+use nimbus_storage::{LibsqlReplicaProvider, LibsqlReplicaProviderConfig, NoopFaultInjector};
 use testcontainers_modules::testcontainers::core::{IntoContainerPort, WaitFor};
 use testcontainers_modules::testcontainers::{
     ContainerAsync, GenericImage, ImageExt, runners::AsyncRunner,
@@ -34,6 +34,87 @@ const LIBSQL_AUTH_TOKEN_ENV: &str = "NIMBUS_LIBSQL_AUTH_TOKEN";
 const LIBSQL_ADMIN_URL_ENV: &str = "NIMBUS_LIBSQL_ADMIN_URL";
 const LIBSQL_ADMIN_AUTH_HEADER_ENV: &str = "NIMBUS_LIBSQL_ADMIN_AUTH_HEADER";
 static TEST_SUFFIX_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial(libsql_replica_provider)]
+async fn libsql_replica_lease_is_lazy_and_renews_from_manual_clock_wakeup() {
+    with_libsql_replica_engine_config(|engine_config, provider_config| async move {
+        let clock = Arc::new(ManualClock::new(Timestamp(9_000)));
+        let engine = Arc::new(
+            Engine::new_with_simulation_and_persistence_config(
+                engine_config,
+                clock.clone(),
+                Arc::new(NoopFaultInjector),
+            )
+            .await
+            .expect("replica-backed engine should create"),
+        );
+        let tenant_id = TenantId::new("libsql-replica-lazy-lease").expect("tenant id should build");
+        engine
+            .create_tenant_async(tenant_id.clone())
+            .await
+            .expect("tenant should create");
+
+        let provider = LibsqlReplicaProvider::connect(provider_config)
+            .await
+            .expect("inspection provider should connect");
+        let opened = provider
+            .open_existing_opened_tenant(&tenant_id)
+            .await
+            .expect("tenant lookup should succeed")
+            .expect("tenant should exist");
+        let loaded = engine
+            .mutation_journal_stats_for_testing(&tenant_id)
+            .expect("loaded stats should read");
+        assert!(!loaded.committer_lease_acquired);
+        assert_eq!(loaded.committer_lease_acquire_count, 0);
+        assert!(
+            opened
+                .store
+                .read_committer_lease()
+                .expect("lease read should succeed")
+                .is_none()
+        );
+
+        engine
+            .insert_document_async(
+                tenant_id.clone(),
+                tasks_table(),
+                serde_json::Map::from_iter([("title".to_string(), json!("first"))]),
+            )
+            .await
+            .expect("first assignment should acquire and commit");
+        let acquired = engine
+            .mutation_journal_stats_for_testing(&tenant_id)
+            .expect("acquired stats should read");
+        assert!(acquired.committer_lease_acquired);
+        assert_eq!(acquired.committer_lease_epoch, 1);
+        assert_eq!(acquired.committer_lease_acquire_count, 1);
+        let initial_expiry = acquired.committer_lease_expires_at;
+
+        clock.advance(Duration::from_secs(10));
+        engine
+            .wake_committer_lease_renewal_for_testing(&tenant_id)
+            .expect("renewal worker should wake");
+        let renewed = wait_for_mutation_journal_stats(
+            &engine,
+            &tenant_id,
+            "libsql manual-clock renewal should complete",
+            |stats| stats.committer_lease_renewal_count == 1,
+        )
+        .await;
+        assert!(renewed.committer_lease_expires_at > initial_expiry);
+
+        engine.quiesce().await;
+        assert!(
+            !engine
+                .mutation_journal_stats_for_testing(&tenant_id)
+                .expect("quiesced stats should read")
+                .committer_lease_renewal_worker_running
+        );
+    })
+    .await;
+}
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(libsql_replica_provider)]

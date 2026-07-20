@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex};
 use std::time::Instant;
 
-use nimbus_core::{Error, Result, SequenceNumber};
+use nimbus_core::{Error, Result, SequenceNumber, Timestamp};
 use nimbus_storage::JournalProgress;
 use tokio::sync::Notify;
 
@@ -301,6 +301,14 @@ impl MutationJournalState {
             committer_inbox_capacity: 0,
             committer_send_timeout_millis: 0,
             committer_send_timeout_count: 0,
+            committer_lease_acquired: false,
+            committer_lease_epoch: 0,
+            committer_lease_expires_at: Timestamp(0),
+            committer_lease_fenced: false,
+            committer_lease_acquire_count: 0,
+            committer_lease_renewal_count: 0,
+            committer_lease_renewal_failure_count: 0,
+            committer_lease_renewal_worker_running: false,
             publisher_queue_depth: 0,
             publisher_queue_capacity: 0,
             publisher_send_timeout_count: 0,

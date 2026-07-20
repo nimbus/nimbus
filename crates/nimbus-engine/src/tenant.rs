@@ -21,6 +21,7 @@ use crate::triggers::execution::SharedTriggerInvocationExecutor;
 use nimbus_storage::Clock;
 
 mod background;
+mod committer_lease;
 mod document_cache;
 mod document_cache_facade;
 mod lifecycle;
@@ -38,6 +39,7 @@ mod trigger_candidates;
 mod trigger_execution;
 mod write_rate;
 
+use self::committer_lease::CommitterLeaseLifecycle;
 #[cfg(test)]
 pub(crate) use self::document_cache::DocumentCacheStats;
 use self::document_cache::TenantDocumentCache;
@@ -135,6 +137,7 @@ pub struct TenantRuntime {
     mutation_isolate_admission: Arc<MutationIsolateAdmission>,
     mutation_journal: Arc<MutationJournalState>,
     committer: Arc<CommitterActor>,
+    committer_lease: Option<Arc<CommitterLeaseLifecycle>>,
     publisher: Arc<PublisherHandoff>,
     observer_dispatch: Arc<ObserverHandoff>,
     observer_lifetime: Arc<()>,
@@ -205,10 +208,15 @@ impl TenantRuntime {
         tenant_id: TenantId,
         store: TenantPersistence,
         read_storage: TenantPersistenceExecutor,
-        schema: Schema,
-        progress: nimbus_storage::JournalProgress,
-        last_commit_timestamp: Timestamp,
+        initial_state: TenantRuntimeInitialState,
+        clock: Arc<dyn Clock>,
+        committer_owner_id: Option<String>,
     ) -> Self {
+        let TenantRuntimeInitialState {
+            schema,
+            progress,
+            last_commit_timestamp,
+        } = initial_state;
         let publisher_pipeline_capable = store.has_process_local_sequence_authority();
         let committer = Arc::new(CommitterActor::new(tenant_id.clone()));
         let publisher = Arc::new(PublisherHandoff::new(
@@ -240,6 +248,8 @@ impl TenantRuntime {
             mutation_isolate_admission: Arc::new(MutationIsolateAdmission::from_env()),
             mutation_journal: Arc::new(MutationJournalState::new(progress)),
             committer,
+            committer_lease: committer_owner_id
+                .map(|owner_id| Arc::new(CommitterLeaseLifecycle::new(owner_id, clock))),
             publisher,
             observer_dispatch,
             observer_lifetime: Arc::new(()),
@@ -257,14 +267,16 @@ impl TenantRuntime {
         store: TenantPersistence,
         read_storage: TenantPersistenceExecutor,
         initial_state: TenantRuntimeInitialState,
+        clock: Arc<dyn Clock>,
+        committer_owner_id: Option<String>,
     ) -> Self {
         Self::from_initialized_parts(
             tenant_id,
             store,
             read_storage,
-            initial_state.schema,
-            initial_state.progress,
-            initial_state.last_commit_timestamp,
+            initial_state,
+            clock,
+            committer_owner_id,
         )
     }
 
@@ -308,6 +320,8 @@ impl TenantRuntime {
         tenant_id: TenantId,
         store: TenantPersistence,
         read_storage: TenantPersistenceExecutor,
+        clock: Arc<dyn Clock>,
+        committer_owner_id: Option<String>,
     ) -> Result<Self> {
         let schema = store.load_schema()?;
         let progress = store.journal_progress()?;
@@ -324,9 +338,13 @@ impl TenantRuntime {
             tenant_id,
             store,
             read_storage,
-            schema,
-            progress,
-            last_commit_timestamp,
+            TenantRuntimeInitialState {
+                schema,
+                progress,
+                last_commit_timestamp,
+            },
+            clock,
+            committer_owner_id,
         ))
     }
 
@@ -335,6 +353,8 @@ impl TenantRuntime {
         tenant_id: TenantId,
         store: TenantPersistence,
         read_storage: TenantPersistenceExecutor,
+        clock: Arc<dyn Clock>,
+        committer_owner_id: Option<String>,
     ) -> Result<Self> {
         let (initial_state, _) = Self::load_initial_state_async(&store, &read_storage).await?;
         Ok(Self::from_loaded_state(
@@ -342,6 +362,8 @@ impl TenantRuntime {
             store,
             read_storage,
             initial_state,
+            clock,
+            committer_owner_id,
         ))
     }
 
@@ -478,6 +500,7 @@ impl TenantRuntime {
 
     pub(crate) fn mark_deleting_for_eviction(&self) {
         self.lifecycle.begin_eviction();
+        self.shutdown_committer_lease_renewal();
         self.mutation_journal.fail_applied_waiters(Error::storage(
             nimbus_core::StorageErrorKind::Unavailable,
             format!(

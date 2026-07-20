@@ -115,6 +115,7 @@ impl MutationExecutionUnit {
                     let runtime = runtime_for_commit;
                     let engine = engine_for_commit;
                     phases.queue_wait = queued_at.elapsed();
+                    runtime.ensure_committer_lease_for_assignment()?;
                     let conflict_check_started = Instant::now();
                     ensure_schema_unchanged(
                         &runtime,

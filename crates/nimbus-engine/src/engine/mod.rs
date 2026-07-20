@@ -367,6 +367,16 @@ impl Engine {
     }
 
     pub async fn quiesce(&self) {
+        let runtimes = self
+            .tenants
+            .read()
+            .expect("tenant registry lock should not be poisoned")
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        for runtime in runtimes {
+            runtime.shutdown_committer_lease_renewal();
+        }
         self.engine_executor.quiesce().await;
         self.storage_executor.quiesce().await;
     }
@@ -387,6 +397,12 @@ impl Engine {
 
     pub(crate) fn next_document_id(&self) -> DocumentId {
         self.id_source.next_document_id()
+    }
+
+    fn committer_owner_id_for_store(&self, store: &TenantPersistence) -> Option<String> {
+        store
+            .requires_committer_lease()
+            .then(|| format!("nimbus-{}", self.id_source.next_document_id()))
     }
 
     pub(in crate::engine) fn wait_for_commit_fault(
@@ -429,6 +445,8 @@ impl Engine {
             tenant_id.clone(),
             store.clone(),
             read_storage,
+            self.clock.clone(),
+            self.committer_owner_id_for_store(&store),
         )?);
         self.restore_publisher_error_counts(&runtime);
         self.start_committer_actor(runtime.clone());

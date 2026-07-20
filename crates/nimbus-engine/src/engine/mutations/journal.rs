@@ -870,6 +870,12 @@ fn process_serial_queued_mutation_batch(
     engine: Arc<Engine>,
     commit_faults: &CommitFaultClient,
 ) -> std::result::Result<QueuedMutationBatchResult, FailedSerialQueuedMutationBatch> {
+    if let Err(error) = runtime.ensure_committer_lease_for_assignment() {
+        return Err(FailedSerialQueuedMutationBatch {
+            error,
+            deferred: Vec::new(),
+        });
+    }
     let previous_sequence = runtime.durable_head();
     let work = match assign_queued_mutation_batch(
         runtime.clone(),
