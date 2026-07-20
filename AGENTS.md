@@ -296,9 +296,19 @@ These are architecture invariants — do not violate them:
 
 ### Mutation path
 
-Every mutation — HTTP, WebSocket, scheduler, or V8 runtime — flows through the
-engine-owned mutation path (`apply_mutation_with_mode*` plus the queued journal
-path). There is no separate code path. Do not create one.
+Every mutation — HTTP, WebSocket, scheduler, or V8 runtime — flows through an
+engine-owned commit path. There are exactly three, and all three are engine
+owned: the **queued journal path** (client mutations batched and committed in
+sequence order by the per-tenant committer), the **direct path**
+(`apply_mutation_with_mode*`), and the **execution-unit path**
+(`MutationExecutionUnit`, used by runtime mutations so one function
+invocation commits as a single transaction). There is no separate code path.
+Do not create one.
+
+Name all three when auditing. A change that reasons about only
+`apply_mutation_with_mode*` will miss defects living in the other two — that
+is not hypothetical: ambiguous-outcome handling silently diverged across
+these paths, and only the direct route escalated to crash-and-replay.
 
 ### Storage atomicity
 
