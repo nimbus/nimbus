@@ -758,7 +758,7 @@ async fn fail_and_restart(
     finish_durable_recovery_eviction(engine, runtime).await;
 }
 
-pub(super) fn begin_durable_recovery_eviction(runtime: &TenantRuntime, error: &Error) {
+pub(crate) fn begin_durable_recovery_eviction(runtime: &TenantRuntime, error: &Error) {
     begin_tenant_runtime_eviction(runtime, error, true);
 }
 

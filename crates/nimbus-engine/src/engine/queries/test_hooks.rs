@@ -98,6 +98,14 @@ impl Engine {
     }
 
     #[cfg(test)]
+    pub(crate) fn tenant_runtime_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<Arc<crate::tenant::TenantRuntime>> {
+        self.get_existing_tenant(tenant_id)
+    }
+
+    #[cfg(test)]
     pub(crate) fn tenant_runtime_identity_for_testing(
         &self,
         tenant_id: &TenantId,

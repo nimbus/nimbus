@@ -564,25 +564,33 @@ pub(crate) async fn run_committer_actor(
             run_committer_actor_loop(runtime.clone(), receiver, engine_shutdown, tenant_shutdown),
         )
         .await;
-    let fenced = runtime.upgrade().and_then(|runtime| {
-        runtime
-            .committer_fenced_error()
-            .map(|error| (runtime, error))
+    let eviction = runtime.upgrade().and_then(|runtime| {
+        if let Some(error) = runtime.committer_fenced_error() {
+            // A fence is definitive: the provider CAS rejected and rolled back
+            // the transaction. Eviction only surrenders sequence authority;
+            // unlike an ambiguous outcome, this path does not probe or claim
+            // crash replay.
+            begin_definitive_fence_eviction(&runtime, &error);
+            runtime.fail_and_drain_mutation_queues(&error);
+            Some(runtime)
+        } else if runtime.eviction_started() {
+            // Internal serial jobs do not have a route-specific outer caller
+            // that can finish eviction after their operation guard drops. The
+            // actor is the common owner that survives every durable route.
+            let error = runtime.durable_recovery_eviction_error();
+            runtime.fail_and_drain_mutation_queues(&error);
+            Some(runtime)
+        } else {
+            None
+        }
     });
-    if let Some((runtime, error)) = &fenced {
-        // A fence is definitive: the provider CAS rejected and rolled back the
-        // transaction. Eviction only surrenders sequence authority; unlike an
-        // ambiguous outcome, this path does not probe or claim crash replay.
-        begin_definitive_fence_eviction(runtime, error);
-        runtime.fail_and_drain_mutation_queues(error);
-    }
     if closes_observer_dispatch && let Some(runtime) = runtime.upgrade() {
         runtime.close_committed_mutation_observers();
         runtime
             .wait_for_committed_mutation_observers_drained()
             .await;
     }
-    if let Some((runtime, _)) = fenced {
+    if let Some(runtime) = eviction {
         if !closes_observer_dispatch {
             runtime.close_committed_mutation_observers();
             runtime

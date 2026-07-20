@@ -602,6 +602,12 @@ async fn postgres_fences_every_provider_record_writer_without_partial_persistenc
                 .get_table(&tasks_table()),
             Some(&healthy_schema)
         );
+        assert_eq!(
+            engine_a
+                .durable_outcome_probe_count_for_testing(&tenant_id, DurableWriteRoute::SchemaSet,),
+            0,
+            "a fenced schema set must be definitive without a durable-progress probe"
+        );
 
         // Schema delete uses its own provider transaction entry point.
         let tenant_id = create_shared_tenant(&engine_a, &engine_b, "pg-fence-schema-delete").await;
@@ -638,6 +644,14 @@ async fn postgres_fences_every_provider_record_writer_without_partial_persistenc
                 .expect("schema after delete should read")
                 .get_table(&tasks_table())
                 .is_none()
+        );
+        assert_eq!(
+            engine_a.durable_outcome_probe_count_for_testing(
+                &tenant_id,
+                DurableWriteRoute::SchemaDelete,
+            ),
+            0,
+            "a fenced schema delete must be definitive without a durable-progress probe"
         );
 
         // Internal trigger-materialization/cursor path.

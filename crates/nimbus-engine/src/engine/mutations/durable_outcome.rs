@@ -15,12 +15,16 @@ pub(crate) enum DurableWriteOutcome {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum DurableWriteRoute {
     Direct,
+    SchemaSet,
+    SchemaDelete,
 }
 
 impl DurableWriteRoute {
     fn description(self) -> &'static str {
         match self {
             Self::Direct => "direct mutation",
+            Self::SchemaSet => "schema set",
+            Self::SchemaDelete => "schema delete",
         }
     }
 }
