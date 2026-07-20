@@ -5,6 +5,7 @@ use nimbus_storage::{ManualClock, NoopFaultInjector};
 
 use super::support::*;
 use crate::commit_fault_labels as labels;
+use crate::engine::DurableWriteRoute;
 
 async fn provider_engine(config: EnginePersistenceConfig, clock: Arc<ManualClock>) -> Arc<Engine> {
     Arc::new(
@@ -490,6 +491,15 @@ async fn postgres_fences_every_provider_record_writer_without_partial_persistenc
                 .get(&tasks_table(), &fenced_id)
                 .expect("direct document lookup should succeed")
                 .is_none()
+        );
+        // A lease CAS rejection is settled inside the write transaction, so it
+        // proves rollback on its own. Probing durable progress could only turn
+        // a certain outcome into an uncertain one, so the classifier must not
+        // probe at all on this path.
+        assert_eq!(
+            engine_a.durable_outcome_probe_count_for_testing(&tenant_id, DurableWriteRoute::Direct),
+            0,
+            "a committer fence must be classified definitive without probing durable progress"
         );
 
         // Mutation execution-unit path.

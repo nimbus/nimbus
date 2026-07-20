@@ -7,6 +7,8 @@ mod execution_units;
 mod kv;
 mod latency;
 mod mutations;
+#[cfg(test)]
+pub(crate) use mutations::durable_outcome::DurableWriteRoute;
 pub(crate) use mutations::prepared::PreparedCommit;
 pub(crate) use mutations::write_log::{WriteLog, WriteLogConfig};
 mod object_placement;
