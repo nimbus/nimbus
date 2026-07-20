@@ -167,4 +167,40 @@ impl TenantPersistence {
             Self::Memory(_) => Err(CommitterLeaseError::Unsupported),
         }
     }
+
+    pub(crate) fn fenced_materialize_trigger_invocations(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        expected_previous: nimbus_core::SequenceNumber,
+        records: &[nimbus_core::TriggerInvocationRecord],
+        cursor: nimbus_core::TriggerDeliveryCursor,
+    ) -> CommitterLeaseResult<()> {
+        match self {
+            Self::Postgres(store) => store.fenced_materialize_trigger_invocations(
+                owner_id,
+                epoch,
+                expected_previous,
+                records,
+                cursor,
+            ),
+            Self::LibsqlReplica(store) => store.fenced_materialize_trigger_invocations(
+                owner_id,
+                epoch,
+                expected_previous,
+                records,
+                cursor,
+            ),
+            Self::MySql(store) => store.fenced_materialize_trigger_invocations(
+                owner_id,
+                epoch,
+                expected_previous,
+                records,
+                cursor,
+            ),
+            Self::Redb(_) | Self::Sqlite(_) => Err(CommitterLeaseError::Unsupported),
+            #[cfg(any(test, feature = "test-hooks"))]
+            Self::Memory(_) => Err(CommitterLeaseError::Unsupported),
+        }
+    }
 }

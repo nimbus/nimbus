@@ -714,7 +714,7 @@ impl LibsqlReplicaTenantStore {
     }
 }
 
-fn map_fenced_write_result<T>(
+pub(super) fn map_fenced_write_result<T>(
     result: Result<T>,
     owner_id: String,
     epoch: u64,
@@ -752,7 +752,7 @@ impl LibsqlReplicaWriteTransaction {
         })
     }
 
-    fn advance_fenced_committer_lease(
+    pub(super) fn advance_fenced_committer_lease(
         &mut self,
         owner_id: &str,
         epoch: u64,

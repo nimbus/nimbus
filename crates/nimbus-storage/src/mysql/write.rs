@@ -10,7 +10,8 @@ use super::write_schema_events::{
 use super::*;
 use crate::{CommitterLeaseError, CommitterLeaseResult};
 
-const FENCED_COMMITTER_LEASE_MARKER: &str = "fenced committer lease during durable apply";
+pub(super) const FENCED_COMMITTER_LEASE_MARKER: &str =
+    "fenced committer lease during durable apply";
 
 impl MySqlTenantStore {
     pub fn apply_prepared_write_batch(
@@ -701,7 +702,7 @@ impl MySqlTenantStore {
     }
 }
 
-fn map_fenced_write_result<T>(
+pub(super) fn map_fenced_write_result<T>(
     result: Result<T>,
     owner_id: String,
     epoch: u64,
@@ -716,7 +717,7 @@ fn map_fenced_write_result<T>(
 }
 
 impl MySqlWriteTransaction {
-    fn advance_fenced_committer_lease(
+    pub(super) fn advance_fenced_committer_lease(
         &mut self,
         owner_id: &str,
         epoch: u64,
