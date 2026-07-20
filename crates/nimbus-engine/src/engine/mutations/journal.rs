@@ -306,6 +306,24 @@ impl Engine {
             Ok(Err(mut failure)) => {
                 runtime.record_mutation_worker_failure();
                 warn!(error = %failure.error, "mutation journal batch failed");
+                if matches!(failure.error, Error::CommitterFenced { .. }) {
+                    discard_failed_assignment_suffix(runtime.as_ref(), assignment_baseline);
+                    if let Ok(progress) = runtime
+                        .read_storage
+                        .execute(|store| store.recover_durable_journal())
+                        .await
+                    {
+                        runtime.publish_mutation_journal_progress_in_actor(progress);
+                    }
+                    for response in failure.deferred.drain(..) {
+                        response.complete_after_recovery(
+                            SequenceNumber(assignment_baseline.0.saturating_add(1)),
+                            &failure.error,
+                        );
+                    }
+                    fail_mutation_responses(&assignment_responses, &failure.error);
+                    return false;
+                }
                 let recovery = recover_failed_serial_batch(
                     runtime.clone(),
                     assignment_baseline,

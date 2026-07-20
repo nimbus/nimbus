@@ -110,6 +110,10 @@ impl Engine {
                 ) {
                     Ok(commit) => commit,
                     Err(error) => {
+                        if matches!(error, Error::CommitterFenced { .. }) {
+                            runtime.discard_unpersisted_write_log_suffix(sequence);
+                            return Err(error);
+                        }
                         let progress = if take_direct_recovery_read_failure_for_testing(
                             runtime.tenant_id(),
                         ) {

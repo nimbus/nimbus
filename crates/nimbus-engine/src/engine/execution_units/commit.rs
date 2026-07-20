@@ -168,6 +168,12 @@ impl MutationExecutionUnit {
                     let commit = match commit_result {
                         Ok(commit) => commit,
                         Err(error) => {
+                            if matches!(error, Error::CommitterFenced { .. }) {
+                                if record.is_some() {
+                                    runtime.discard_unpersisted_write_log_suffix(expected_sequence);
+                                }
+                                return Err(error);
+                            }
                             if record.is_some() {
                                 match runtime.store.journal_progress() {
                                     Ok(progress) if progress.durable_head == previous_sequence => {

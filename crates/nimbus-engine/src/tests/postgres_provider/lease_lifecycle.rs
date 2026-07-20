@@ -570,6 +570,43 @@ async fn postgres_fences_every_provider_record_writer_without_partial_persistenc
             Some(&healthy_schema)
         );
 
+        // Schema delete uses its own provider transaction entry point.
+        let tenant_id = create_shared_tenant(&engine_a, &engine_b, "pg-fence-schema-delete").await;
+        engine_a
+            .set_table_schema_async(tenant_id.clone(), tasks_schema())
+            .await
+            .expect("old holder should seed schema before delete");
+        expire_postgres_committer_lease(&provider_config, &tenant_id)
+            .await
+            .expect("schema-delete lease should expire");
+        engine_b
+            .delete_table_schema_async(tenant_id.clone(), tasks_table())
+            .await
+            .expect("healthy schema-delete holder should take over and write");
+        let store = inspection_store(&provider_config, &tenant_id).await;
+        let before = store
+            .journal_progress()
+            .expect("schema-delete head should read");
+        assert_terminal_fenced(
+            engine_a
+                .delete_table_schema_async(tenant_id.clone(), tasks_table())
+                .await
+                .expect_err("stale schema-delete holder must be fenced"),
+        );
+        assert_eq!(
+            store
+                .journal_progress()
+                .expect("schema-delete head should reread"),
+            before
+        );
+        assert!(
+            store
+                .load_schema()
+                .expect("schema after delete should read")
+                .get_table(&tasks_table())
+                .is_none()
+        );
+
         // Internal trigger-materialization/cursor path.
         let tenant_id = create_shared_tenant(&engine_a, &engine_b, "pg-fence-internal").await;
         engine_a
@@ -649,6 +686,7 @@ async fn postgres_fences_every_provider_record_writer_without_partial_persistenc
             "pg-fence-direct",
             "pg-fence-execution-unit",
             "pg-fence-schema",
+            "pg-fence-schema-delete",
             "pg-fence-internal",
             "pg-fence-publisher",
         ] {

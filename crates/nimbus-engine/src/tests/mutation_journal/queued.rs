@@ -111,6 +111,10 @@ async fn embedded_record_writers_never_interact_with_committer_lease() {
         .await
         .expect("embedded schema write should retain its existing path");
     engine
+        .delete_table_schema_async(tenant_id.clone(), tasks_table())
+        .await
+        .expect("embedded schema delete should retain its existing path");
+    engine
         .materialize_trigger_cursor_for_testing(
             &tenant_id,
             nimbus_core::TriggerDeliveryCursor::new(SequenceNumber(3)),
