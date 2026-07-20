@@ -102,7 +102,8 @@ impl Engine {
                 );
                 let durable_append_started = Instant::now();
                 let write_log_guard = runtime.arm_write_log_append();
-                let commit = match runtime.store.apply_prepared_write_batch(
+                let commit = match runtime.persist_prepared_write_batch(
+                    previous_sequence,
                     record,
                     schedule_ops,
                     scheduled_execution_id,

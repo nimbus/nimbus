@@ -81,4 +81,44 @@ impl TenantPersistence {
             Self::Memory(_) => Err(CommitterLeaseError::Unsupported),
         }
     }
+
+    pub(crate) fn fenced_apply_prepared_write_batch(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        expected_previous: nimbus_core::SequenceNumber,
+        record: &nimbus_core::TenantEventRecord,
+        schedule_ops: &[ResolvedScheduleOp],
+        scheduled_execution_id: Option<&str>,
+    ) -> CommitterLeaseResult<Option<nimbus_core::CommitEntry>> {
+        match self {
+            Self::Postgres(store) => store.fenced_apply_prepared_write_batch(
+                owner_id,
+                epoch,
+                expected_previous,
+                record,
+                schedule_ops,
+                scheduled_execution_id,
+            ),
+            Self::LibsqlReplica(store) => store.fenced_apply_prepared_write_batch(
+                owner_id,
+                epoch,
+                expected_previous,
+                record,
+                schedule_ops,
+                scheduled_execution_id,
+            ),
+            Self::MySql(store) => store.fenced_apply_prepared_write_batch(
+                owner_id,
+                epoch,
+                expected_previous,
+                record,
+                schedule_ops,
+                scheduled_execution_id,
+            ),
+            Self::Redb(_) | Self::Sqlite(_) => Err(CommitterLeaseError::Unsupported),
+            #[cfg(any(test, feature = "test-hooks"))]
+            Self::Memory(_) => Err(CommitterLeaseError::Unsupported),
+        }
+    }
 }

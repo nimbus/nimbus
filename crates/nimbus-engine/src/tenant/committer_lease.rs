@@ -99,13 +99,45 @@ impl TenantRuntime {
         let Some((owner_id, epoch)) = self.held_committer_lease()? else {
             return Ok(false);
         };
-        match self.store.fenced_append_and_apply_durable_records_batch(
+        self.map_fenced_write_result(self.store.fenced_append_and_apply_durable_records_batch(
             &owner_id,
             epoch,
             expected_previous,
             records,
-        ) {
-            Ok(()) => Ok(true),
+        ))?;
+        Ok(true)
+    }
+
+    pub(crate) fn persist_prepared_write_batch(
+        &self,
+        expected_previous: nimbus_core::SequenceNumber,
+        record: &nimbus_core::TenantEventRecord,
+        schedule_ops: &[nimbus_storage::ResolvedScheduleOp],
+        scheduled_execution_id: Option<&str>,
+    ) -> Result<Option<nimbus_core::CommitEntry>> {
+        let Some((owner_id, epoch)) = self.held_committer_lease()? else {
+            return self.store.apply_prepared_write_batch(
+                record,
+                schedule_ops,
+                scheduled_execution_id,
+            );
+        };
+        self.map_fenced_write_result(self.store.fenced_apply_prepared_write_batch(
+            &owner_id,
+            epoch,
+            expected_previous,
+            record,
+            schedule_ops,
+            scheduled_execution_id,
+        ))
+    }
+
+    fn map_fenced_write_result<T>(
+        &self,
+        result: nimbus_storage::CommitterLeaseResult<T>,
+    ) -> Result<T> {
+        match result {
+            Ok(value) => Ok(value),
             Err(CommitterLeaseError::Fenced { owner_id, epoch }) => {
                 self.record_committer_fenced(owner_id.clone(), epoch);
                 Err(Error::CommitterFenced { owner_id, epoch })

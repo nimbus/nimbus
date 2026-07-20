@@ -39,6 +39,58 @@ impl PostgresTenantStore {
         Ok(committed.value.then_some(committed.commit).flatten())
     }
 
+    pub fn fenced_apply_prepared_write_batch(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        expected_previous: SequenceNumber,
+        record: &TenantEventRecord,
+        schedule_ops: &[ResolvedScheduleOp],
+        scheduled_execution_id: Option<&str>,
+    ) -> CommitterLeaseResult<Option<CommitEntry>> {
+        if record.writes.is_empty() {
+            return Err(Error::Internal(
+                "prepared write batch must contain at least one document write".to_string(),
+            )
+            .into());
+        }
+        let owner_id = owner_id.to_string();
+        let fenced_owner_id = owner_id.clone();
+        let record = record.clone();
+        let schedule_ops = schedule_ops.to_vec();
+        let scheduled_execution_id = scheduled_execution_id.map(str::to_string);
+        let result = self.execute_write(move |transaction| {
+            if !transaction.begin_scheduled_execution(scheduled_execution_id.as_deref())? {
+                return Ok(false);
+            }
+            if transaction.advance_fenced_committer_lease(
+                &owner_id,
+                epoch,
+                expected_previous,
+                record.sequence,
+            )? != 1
+            {
+                return Err(Error::PreconditionFailed(
+                    FENCED_COMMITTER_LEASE_MARKER.to_string(),
+                ));
+            }
+            transaction.apply_durable_record(&record)?;
+            apply_schedule_ops_in_transaction(transaction, &schedule_ops)?;
+            transaction.set_prepared_record(record);
+            Ok(true)
+        });
+        match result {
+            Ok(committed) => Ok(committed.value.then_some(committed.commit).flatten()),
+            Err(Error::PreconditionFailed(message)) if message == FENCED_COMMITTER_LEASE_MARKER => {
+                Err(CommitterLeaseError::Fenced {
+                    owner_id: fenced_owner_id,
+                    epoch,
+                })
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
     pub fn retention_gc_watermarks(
         &self,
         config: crate::RetentionGcConfig,
