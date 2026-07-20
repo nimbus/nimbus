@@ -70,6 +70,7 @@ impl TenantPersistence {
     }
 }
 
+mod committer_lease;
 mod journal;
 mod objects;
 mod provider_state;

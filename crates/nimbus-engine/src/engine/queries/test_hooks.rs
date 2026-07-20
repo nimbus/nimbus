@@ -61,6 +61,16 @@ impl Engine {
     }
 
     #[cfg(test)]
+    pub(crate) fn wake_committer_lease_renewal_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<()> {
+        self.with_runtime_for_testing(tenant_id, |runtime| {
+            runtime.wake_committer_lease_renewal_for_testing();
+        })
+    }
+
+    #[cfg(test)]
     pub(crate) fn provider_catch_up_failure_count_for_testing(
         &self,
         tenant_id: &TenantId,
@@ -233,6 +243,7 @@ impl Engine {
         let field = field.to_string();
         runtime.submit_internal_committer(move || {
             let runtime = runtime_for_commit;
+            runtime.ensure_committer_lease_for_assignment()?;
             let previous = runtime
                 .store
                 .get(&table, &document_id)?

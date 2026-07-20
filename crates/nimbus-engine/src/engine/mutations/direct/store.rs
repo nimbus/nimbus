@@ -71,6 +71,7 @@ impl Engine {
             move || {
                 let runtime = runtime_for_commit;
                 profile.phases.queue_wait = queued_at.elapsed();
+                runtime.ensure_committer_lease_for_assignment()?;
 
                 // DirectCommit's serial boundary is intentionally limited to
                 // full-image window validation, assignment, assignment-only

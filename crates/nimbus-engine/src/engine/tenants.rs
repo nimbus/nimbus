@@ -58,9 +58,16 @@ impl Engine {
         }
 
         let opened = self.persistence_provider.create_tenant(&tenant_id).await?;
+        let committer_owner_id = self.committer_owner_id_for_store(&opened.persistence);
         let runtime = Arc::new(
-            TenantRuntime::from_parts_async(tenant_id.clone(), opened.persistence, opened.executor)
-                .await?,
+            TenantRuntime::from_parts_async(
+                tenant_id.clone(),
+                opened.persistence,
+                opened.executor,
+                self.clock.clone(),
+                committer_owner_id,
+            )
+            .await?,
         );
         self.start_committer_actor(runtime.clone());
         if !self.provider_background_ready() {
@@ -335,6 +342,8 @@ impl Engine {
             opened.persistence.clone(),
             opened_executor,
             initial_state,
+            self.clock.clone(),
+            self.committer_owner_id_for_store(&opened.persistence),
         ));
         self.restore_publisher_error_counts(&runtime);
         self.start_committer_actor(runtime.clone());

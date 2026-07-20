@@ -1,0 +1,52 @@
+use std::time::Duration;
+
+use nimbus_storage::{CommitterLease, CommitterLeaseError, CommitterLeaseResult};
+
+use super::*;
+
+impl TenantPersistence {
+    /// Whether this store needs a durable committer lease before assigning.
+    ///
+    /// Embedded stores retain process-local sequence authority and never enter
+    /// the lease path. Provider stores share their tenant namespace across
+    /// processes and therefore require fencing before assignment.
+    pub(crate) fn requires_committer_lease(&self) -> bool {
+        matches!(
+            self,
+            Self::Postgres(_) | Self::LibsqlReplica(_) | Self::MySql(_)
+        )
+    }
+
+    pub(crate) fn acquire_committer_lease(
+        &self,
+        owner_id: &str,
+        lease_duration: Duration,
+    ) -> CommitterLeaseResult<CommitterLease> {
+        match self {
+            Self::Postgres(store) => store.acquire_committer_lease(owner_id, lease_duration),
+            Self::LibsqlReplica(store) => store.acquire_committer_lease(owner_id, lease_duration),
+            Self::MySql(store) => store.acquire_committer_lease(owner_id, lease_duration),
+            Self::Redb(_) | Self::Sqlite(_) => Err(CommitterLeaseError::Unsupported),
+            #[cfg(any(test, feature = "test-hooks"))]
+            Self::Memory(_) => Err(CommitterLeaseError::Unsupported),
+        }
+    }
+
+    pub(crate) fn renew_committer_lease(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        lease_duration: Duration,
+    ) -> CommitterLeaseResult<CommitterLease> {
+        match self {
+            Self::Postgres(store) => store.renew_committer_lease(owner_id, epoch, lease_duration),
+            Self::LibsqlReplica(store) => {
+                store.renew_committer_lease(owner_id, epoch, lease_duration)
+            }
+            Self::MySql(store) => store.renew_committer_lease(owner_id, epoch, lease_duration),
+            Self::Redb(_) | Self::Sqlite(_) => Err(CommitterLeaseError::Unsupported),
+            #[cfg(any(test, feature = "test-hooks"))]
+            Self::Memory(_) => Err(CommitterLeaseError::Unsupported),
+        }
+    }
+}

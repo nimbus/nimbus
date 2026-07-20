@@ -642,6 +642,14 @@ impl TenantRuntime {
         stats.committer_send_timeout_millis =
             u64::try_from(self.committer.send_timeout().as_millis()).unwrap_or(u64::MAX);
         stats.committer_send_timeout_count = self.committer.send_timeout_count();
+        let lease = self.committer_lease_stats();
+        stats.committer_lease_acquired = lease.acquired;
+        stats.committer_lease_epoch = lease.epoch;
+        stats.committer_lease_expires_at = lease.expires_at;
+        stats.committer_lease_fenced = lease.fenced;
+        stats.committer_lease_acquire_count = lease.acquire_count;
+        stats.committer_lease_renewal_count = lease.renewal_count;
+        stats.committer_lease_renewal_failure_count = lease.renewal_failure_count;
         stats.publisher_queue_depth = self.publisher.depth();
         stats.publisher_queue_capacity = self.publisher.capacity();
         stats.publisher_send_timeout_count = self.publisher.send_timeout_count();
