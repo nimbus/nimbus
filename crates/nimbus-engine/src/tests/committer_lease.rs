@@ -21,6 +21,9 @@ async fn embedded_stores_never_enter_the_committer_lease_lifecycle() {
             .create_tenant_async(tenant_id.clone())
             .await
             .expect("tenant should create");
+        let runtime_identity = engine
+            .tenant_runtime_identity_for_testing(&tenant_id)
+            .expect("embedded runtime identity should read");
 
         let loaded = engine
             .mutation_journal_stats_for_testing(&tenant_id)
@@ -47,6 +50,13 @@ async fn embedded_stores_never_enter_the_committer_lease_lifecycle() {
         assert_eq!(mutated.committer_lease_renewal_count, 0);
         assert_eq!(mutated.committer_lease_renewal_failure_count, 0);
         assert!(!mutated.committer_lease_renewal_worker_running);
+        assert_eq!(
+            engine
+                .tenant_runtime_identity_for_testing(&tenant_id)
+                .expect("embedded runtime identity should remain readable"),
+            runtime_identity,
+            "lease-free embedded writes must never enter fence eviction"
+        );
 
         engine.quiesce().await;
     }

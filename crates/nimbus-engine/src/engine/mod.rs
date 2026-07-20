@@ -28,6 +28,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::RwLock;
+use std::sync::Weak;
 use std::sync::atomic::AtomicBool;
 
 use nimbus_core::{DocumentId, Error, IdSource, Result, SystemIdSource, TenantId, Timestamp};
@@ -55,12 +56,14 @@ pub use encryption::{EncryptionStatus, InitializedKeyProvider};
 pub use execution_units::MutationExecutionUnit;
 #[cfg(any(test, feature = "test-hooks"))]
 pub use execution_units::{CommitFaultHandle, Fault, labels as commit_fault_labels};
-pub(crate) use mutations::finish_durable_recovery_eviction_locked;
 pub use mutations::phase_metrics::CommitPhaseMetricsSnapshot;
 pub(crate) use mutations::phase_metrics::{
     CommitPhaseDurations, CommitPhaseMetrics, CommitTraceSample, maybe_emit_commit_trace,
 };
 pub use mutations::{AsyncMutationContext, MutationActor, MutationIsolatePermit};
+pub(crate) use mutations::{
+    begin_definitive_fence_eviction, finish_durable_recovery_eviction_locked,
+};
 pub use objects::TenantObjectMeta;
 pub(crate) use provider_hints::ProviderPollWorker;
 pub(crate) use queries::{
@@ -76,8 +79,8 @@ pub use subscriptions::{SubscribeOptions, SubscriptionBootstrapCancellation};
 /// Top-level Nimbus engine coordinator.
 pub struct Engine {
     data_dir: PathBuf,
-    tenants: RwLock<HashMap<TenantId, Arc<TenantRuntime>>>,
-    publisher_failure_diagnostics: RwLock<HashMap<TenantId, PublisherErrorCounts>>,
+    tenants: Arc<RwLock<HashMap<TenantId, Arc<TenantRuntime>>>>,
+    publisher_failure_diagnostics: Arc<RwLock<HashMap<TenantId, PublisherErrorCounts>>>,
     transaction_sessions: RwLock<TransactionSessionRegistry>,
     tenant_load_gate: TenantLoadGate,
     embedded_provider_kind: Option<EmbeddedProviderKind>,
@@ -97,6 +100,47 @@ pub struct Engine {
     engine_executor: BackgroundExecutor,
     storage_executor: BackgroundExecutor,
     encryption_status: Option<encryption::EncryptionStatus>,
+}
+
+#[derive(Clone)]
+pub(crate) struct TenantEvictionRegistry {
+    tenants: Weak<RwLock<HashMap<TenantId, Arc<TenantRuntime>>>>,
+    publisher_failure_diagnostics: Weak<RwLock<HashMap<TenantId, PublisherErrorCounts>>>,
+}
+
+impl TenantEvictionRegistry {
+    pub(crate) fn finish(&self, runtime: &Arc<TenantRuntime>) {
+        let tenant_id = runtime.tenant_id().clone();
+        if let Some(diagnostics) = self.publisher_failure_diagnostics.upgrade() {
+            diagnostics
+                .write()
+                .expect("publisher failure diagnostics lock should not be poisoned")
+                .insert(tenant_id.clone(), runtime.publisher_error_counts());
+        }
+        if let Some(tenants) = self.tenants.upgrade() {
+            let removed = {
+                let mut tenants = tenants
+                    .write()
+                    .expect("tenant registry lock should not be poisoned");
+                if tenants
+                    .get(&tenant_id)
+                    .is_some_and(|loaded| Arc::ptr_eq(loaded, runtime))
+                {
+                    tenants.remove(&tenant_id)
+                } else {
+                    None
+                }
+            };
+            drop(removed);
+        } else {
+            // The Engine already dropped its registry. There is nothing left
+            // to deregister, but wake any accessor still holding this runtime.
+            tracing::debug!(tenant = %tenant_id, "engine registry dropped before eviction finished");
+        }
+        // Wake accessors only after the failed runtime is absent from the
+        // registry. They will then serialize a fresh open behind the load gate.
+        runtime.finish_eviction();
+    }
 }
 
 pub(super) struct EngineBootstrapParts {
@@ -251,8 +295,8 @@ impl Engine {
     fn from_bootstrap_parts(parts: EngineBootstrapParts) -> Self {
         Self {
             data_dir: parts.data_dir,
-            tenants: RwLock::new(HashMap::new()),
-            publisher_failure_diagnostics: RwLock::new(HashMap::new()),
+            tenants: Arc::new(RwLock::new(HashMap::new())),
+            publisher_failure_diagnostics: Arc::new(RwLock::new(HashMap::new())),
             transaction_sessions: RwLock::new(TransactionSessionRegistry::default()),
             tenant_load_gate: TenantLoadGate::new(),
             embedded_provider_kind: parts.embedded_provider_kind,
@@ -353,6 +397,10 @@ impl Engine {
         let engine_shutdown = self.engine_executor.shutdown_token();
         let tenant_shutdown = runtime.committer_shutdown_token();
         let closes_observer_dispatch = !runtime.publisher_pipeline_capable();
+        let eviction_registry = TenantEvictionRegistry {
+            tenants: Arc::downgrade(&self.tenants),
+            publisher_failure_diagnostics: Arc::downgrade(&self.publisher_failure_diagnostics),
+        };
         let runtime = Arc::downgrade(&runtime);
         self.spawn_background("mutation_committer", async move {
             crate::tenant::run_committer_actor(
@@ -361,6 +409,7 @@ impl Engine {
                 engine_shutdown,
                 tenant_shutdown,
                 closes_observer_dispatch,
+                eviction_registry,
             )
             .await;
         });

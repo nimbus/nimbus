@@ -363,23 +363,46 @@ async fn postgres_acquisition_reconciles_predecessor_heads_and_records_fenced_re
         );
 
         clock_b.advance(Duration::from_secs(10));
+        let stale_runtime = engine_b
+            .registered_runtime_for_testing(&tenant_id)
+            .expect("old owner runtime should still be registered before renewal fencing");
         engine_b
             .wake_committer_lease_renewal_for_testing(&tenant_id)
             .expect("old owner renewal should wake");
-        let fenced = wait_for_mutation_journal_stats(
-            &engine_b,
-            &tenant_id,
+        wait_for_value(
             "old owner renewal should record fencing",
+            Duration::from_secs(1),
+            Duration::ZERO,
+            || async { stale_runtime.mutation_journal_stats() },
             |stats| stats.committer_lease_fenced,
         )
         .await;
-        assert_eq!(fenced.committer_lease_epoch, 1);
-        assert_eq!(fenced.committer_lease_renewal_failure_count, 1);
-        assert!(!fenced.committer_lease_renewal_worker_running);
-        engine_b
-            .ensure_tenant_exists_async(tenant_id.clone())
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            stale_runtime.wait_for_eviction_complete(),
+        )
+        .await
+        .expect("renewal-fenced runtime eviction should complete");
+        let replacement_identity = engine_b
+            .get_existing_tenant_async_for_testing(&tenant_id)
             .await
-            .expect("unit 3 records fencing without evicting the runtime");
+            .expect("renewal fencing should evict and reload the provider runtime");
+        assert_ne!(replacement_identity, Arc::as_ptr(&stale_runtime) as usize);
+        assert!(
+            stale_runtime
+                .mutation_journal_stats()
+                .committer_lease_fenced
+        );
+        assert_eq!(
+            stale_runtime
+                .mutation_journal_stats()
+                .committer_lease_renewal_failure_count,
+            1
+        );
+        assert!(
+            !engine_b.runtime_is_registered_for_testing(&tenant_id, &stale_runtime),
+            "a renewal CAS fence must surrender the stale runtime's sequence authority"
+        );
 
         engine_a.quiesce().await;
         engine_b.quiesce().await;
@@ -777,12 +800,162 @@ async fn postgres_fences_every_provider_record_writer_without_partial_persistenc
             "pg-fence-restore-stale",
         ] {
             let tenant_id = TenantId::new(tenant_id).expect("tenant id should rebuild");
+            engine_a
+                .get_existing_tenant_async_for_testing(&tenant_id)
+                .await
+                .expect("fenced provider runtime should evict and reload");
+            assert_eq!(
+                engine_a
+                    .publisher_failure_diagnostics_for_testing(&tenant_id)
+                    .expect("fence eviction should preserve runtime diagnostics")
+                    .2,
+                0,
+                "definitive fencing must not increment ambiguous crash-replay diagnostics"
+            );
             let stats = engine_a
                 .mutation_journal_stats_for_testing(&tenant_id)
-                .expect("stale runtime should remain loaded");
-            assert!(stats.committer_lease_fenced);
-            assert_eq!(stats.committer_lease_epoch, 1);
+                .expect("replacement runtime stats should read");
+            assert!(!stats.committer_lease_acquired);
+            assert!(!stats.committer_lease_fenced);
         }
+
+        engine_a.quiesce().await;
+        engine_b.quiesce().await;
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial(postgres_provider)]
+async fn postgres_fence_eviction_reloads_without_unfenced_fallback_or_ping_pong() {
+    with_shared_postgres_engine_configs(|config_a, config_b, provider_config| async move {
+        let engine_a =
+            provider_engine(config_a, Arc::new(ManualClock::new(Timestamp(50_000)))).await;
+        let engine_b =
+            provider_engine(config_b, Arc::new(ManualClock::new(Timestamp(50_000)))).await;
+        let tenant_id = create_shared_tenant(&engine_a, &engine_b, "pg-fence-evict").await;
+
+        engine_a
+            .insert_document_async(tenant_id.clone(), tasks_table(), title("old-holder"))
+            .await
+            .expect("old holder should acquire epoch one");
+        let stale_runtime = engine_a
+            .registered_runtime_for_testing(&tenant_id)
+            .expect("old holder runtime should be registered");
+        let stale_identity = Arc::as_ptr(&stale_runtime) as usize;
+
+        expire_postgres_committer_lease(&provider_config, &tenant_id)
+            .await
+            .expect("old holder lease should expire deterministically");
+        let healthy_id = DocumentId::new();
+        engine_b
+            .insert_document_async_with_id(
+                tenant_id.clone(),
+                tasks_table(),
+                healthy_id.clone(),
+                title("healthy-holder"),
+            )
+            .await
+            .expect("healthy holder should acquire epoch two");
+
+        let rejected_id = DocumentId::new();
+        assert_terminal_fenced(
+            engine_a
+                .insert_document_async_with_id(
+                    tenant_id.clone(),
+                    tasks_table(),
+                    rejected_id.clone(),
+                    title("must-not-persist"),
+                )
+                .await
+                .expect_err("stale holder must lose its definitive CAS"),
+        );
+
+        let replacement_identity = engine_a
+            .get_existing_tenant_async_for_testing(&tenant_id)
+            .await
+            .expect("fenced runtime should be replaced");
+        assert_ne!(replacement_identity, stale_identity);
+        assert!(!engine_a.runtime_is_registered_for_testing(&tenant_id, &stale_runtime));
+        assert_eq!(
+            engine_a
+                .publisher_failure_diagnostics_for_testing(&tenant_id)
+                .expect("fence eviction diagnostics should persist")
+                .2,
+            0,
+            "the definitive CAS rollback is never an ambiguous outcome"
+        );
+
+        let store = inspection_store(&provider_config, &tenant_id).await;
+        assert!(
+            store
+                .get(&tasks_table(), &healthy_id)
+                .expect("healthy record should read")
+                .is_some()
+        );
+        assert!(
+            store
+                .get(&tasks_table(), &rejected_id)
+                .expect("rejected record lookup should succeed")
+                .is_none(),
+            "the fenced writer's rolled-back record must never appear"
+        );
+
+        // The replacement is lazy and unacquired. Repeated attempts while B
+        // legitimately holds epoch two fail at acquisition and keep the same
+        // runtime; they neither write unfenced nor evict the rightful holder.
+        for attempt in 0..3 {
+            let contender_id = DocumentId::new();
+            let error = engine_a
+                .insert_document_async_with_id(
+                    tenant_id.clone(),
+                    tasks_table(),
+                    contender_id.clone(),
+                    title("still-not-holder"),
+                )
+                .await
+                .expect_err("an unexpired healthy lease must defeat every contender attempt");
+            assert!(
+                !matches!(error, nimbus_core::Error::CommitterFenced { .. }),
+                "a freshly reloaded contender has no stale token to fence"
+            );
+            assert!(
+                store
+                    .get(&tasks_table(), &contender_id)
+                    .expect("contender record lookup should succeed")
+                    .is_none()
+            );
+            assert_eq!(
+                engine_a
+                    .get_existing_tenant_async_for_testing(&tenant_id)
+                    .await
+                    .expect("contender runtime should remain serviceable"),
+                replacement_identity,
+                "held-lease contention attempt {attempt} must not ping-pong runtimes"
+            );
+        }
+
+        engine_b
+            .insert_document_async(tenant_id.clone(), tasks_table(), title("still-healthy"))
+            .await
+            .expect("rightful epoch-two holder should remain serviceable");
+
+        // A handoff occurs only after explicit expiry. Then A legitimately
+        // acquires epoch three; no automatic eviction loop can manufacture it.
+        expire_postgres_committer_lease(&provider_config, &tenant_id)
+            .await
+            .expect("healthy holder lease should expire for an intentional handoff");
+        engine_a
+            .insert_document_async(tenant_id.clone(), tasks_table(), title("rightful-again"))
+            .await
+            .expect("replacement runtime should lazily acquire epoch three");
+        assert_eq!(
+            engine_a
+                .mutation_journal_stats_for_testing(&tenant_id)
+                .expect("replacement lease stats should read")
+                .committer_lease_epoch,
+            3
+        );
 
         engine_a.quiesce().await;
         engine_b.quiesce().await;
