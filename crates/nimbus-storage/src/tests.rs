@@ -217,7 +217,7 @@ where
         .acquire_committer_lease("holder", Duration::from_secs(60))
         .expect("lease should be acquired");
     let document = sample_document(table_name, "must-not-land");
-    let stale_epoch = lease.epoch.saturating_add(1);
+    let stale_epoch = lease.epoch.saturating_sub(1);
     assert_fenced(
         store.fenced_append_and_apply_durable_records_batch(
             "holder",
