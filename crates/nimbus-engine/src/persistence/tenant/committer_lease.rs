@@ -203,4 +203,36 @@ impl TenantPersistence {
             Self::Memory(_) => Err(CommitterLeaseError::Unsupported),
         }
     }
+
+    pub(crate) fn fenced_import_point_in_time_restore_archive(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        expected_previous: nimbus_core::SequenceNumber,
+        archive: &nimbus_storage::PointInTimeRestoreArchive,
+    ) -> CommitterLeaseResult<nimbus_storage::JournalProgress> {
+        match self {
+            Self::Postgres(store) => store.fenced_import_point_in_time_restore_archive(
+                owner_id,
+                epoch,
+                expected_previous,
+                archive,
+            ),
+            Self::LibsqlReplica(store) => store.fenced_import_point_in_time_restore_archive(
+                owner_id,
+                epoch,
+                expected_previous,
+                archive,
+            ),
+            Self::MySql(store) => store.fenced_import_point_in_time_restore_archive(
+                owner_id,
+                epoch,
+                expected_previous,
+                archive,
+            ),
+            Self::Redb(_) | Self::Sqlite(_) => Err(CommitterLeaseError::Unsupported),
+            #[cfg(any(test, feature = "test-hooks"))]
+            Self::Memory(_) => Err(CommitterLeaseError::Unsupported),
+        }
+    }
 }

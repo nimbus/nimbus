@@ -163,6 +163,44 @@ impl LibsqlReplicaTenantStore {
         Ok(progress)
     }
 
+    pub fn fenced_import_point_in_time_restore_archive(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        expected_previous: SequenceNumber,
+        archive: &PointInTimeRestoreArchive,
+    ) -> CommitterLeaseResult<JournalProgress> {
+        crate::store::validate_point_in_time_archive_for_journal_replay_import(archive)?;
+        let current = self.export_materialized_journal_snapshot()?;
+        crate::store::validate_materialized_journal_replay_base_is_empty(&current)?;
+        if archive.journal_tail.is_empty() {
+            return self
+                .import_point_in_time_restore_archive(archive)
+                .map_err(Into::into);
+        }
+        self.fenced_append_and_apply_durable_records_batch(
+            owner_id,
+            epoch,
+            expected_previous,
+            &archive.journal_tail,
+        )?;
+        let progress = self.journal_progress()?;
+        let restored_fingerprint = self
+            .export_materialized_journal_snapshot()?
+            .canonical_fingerprint()?;
+        if restored_fingerprint != archive.target_fingerprint {
+            return Err(Error::storage(
+                nimbus_core::StorageErrorKind::Corruption,
+                format!(
+                    "point-in-time restore fingerprint mismatch: restored {} expected {}",
+                    restored_fingerprint, archive.target_fingerprint
+                ),
+            )
+            .into());
+        }
+        Ok(progress)
+    }
+
     pub fn replace_table_schema(&self, table_schema: &TableSchema) -> Result<()> {
         let table_schema = table_schema.clone();
         self.execute_write(move |transaction| transaction.replace_table_schema(&table_schema))?;

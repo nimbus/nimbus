@@ -182,6 +182,22 @@ impl TenantRuntime {
         ))
     }
 
+    pub(crate) fn persist_point_in_time_restore_archive(
+        &self,
+        expected_previous: nimbus_core::SequenceNumber,
+        archive: &nimbus_storage::PointInTimeRestoreArchive,
+    ) -> Result<nimbus_storage::JournalProgress> {
+        let Some((owner_id, epoch)) = self.held_committer_lease()? else {
+            return self.store.import_point_in_time_restore_archive(archive);
+        };
+        self.map_fenced_write_result(self.store.fenced_import_point_in_time_restore_archive(
+            &owner_id,
+            epoch,
+            expected_previous,
+            archive,
+        ))
+    }
+
     fn map_fenced_write_result<T>(
         &self,
         result: nimbus_storage::CommitterLeaseResult<T>,
