@@ -6,7 +6,10 @@ use nimbus_storage::{
     DurableJournalPage, PointInTimeRestoreArchive, PointInTimeRestoreTarget, RetentionGcConfig,
 };
 
-use crate::engine::Engine;
+use crate::engine::{
+    DurableWriteOutcome, DurableWriteRoute, Engine, begin_durable_recovery_eviction,
+    classify_durable_write_error,
+};
 use crate::persistence::TenantPersistence;
 
 // Each helper below is generic over `S: DurableJournal` even though the
@@ -232,19 +235,36 @@ impl Engine {
     ) -> Result<()> {
         let runtime = self.get_existing_tenant(tenant_id)?;
         let _operation = runtime.enter_operation(tenant_id)?;
-        if runtime.store.has_process_local_sequence_authority() {
-            runtime
-                .store
-                .import_point_in_time_restore_archive(archive)?;
-            return Ok(());
-        }
         let runtime_for_commit = runtime.clone();
         let archive = archive.clone();
         runtime.submit_internal_committer(move || {
             runtime_for_commit.ensure_committer_lease_for_assignment()?;
             let expected_previous = runtime_for_commit.durable_head();
-            let progress = runtime_for_commit
-                .persist_point_in_time_restore_archive(expected_previous, &archive)?;
+            let progress = match runtime_for_commit
+                .persist_point_in_time_restore_archive(expected_previous, &archive)
+            {
+                Ok(progress) => progress,
+                Err(error) => {
+                    return match classify_durable_write_error(
+                        runtime_for_commit.as_ref(),
+                        DurableWriteRoute::PointInTimeRestore,
+                        expected_previous,
+                        error,
+                    ) {
+                        DurableWriteOutcome::Definitive(error) => Err(error),
+                        DurableWriteOutcome::Ambiguous(recovery_error) => {
+                            runtime_for_commit.publisher_record_ambiguous_error();
+                            begin_durable_recovery_eviction(
+                                runtime_for_commit.as_ref(),
+                                &recovery_error,
+                            );
+                            runtime_for_commit.fail_and_drain_mutation_queues(&recovery_error);
+                            runtime_for_commit.close_committed_mutation_observers();
+                            Err(recovery_error)
+                        }
+                    };
+                }
+            };
             runtime_for_commit.publish_mutation_journal_progress_in_actor(progress);
             Ok(())
         })?;

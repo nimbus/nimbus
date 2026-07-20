@@ -5,6 +5,7 @@ use nimbus_storage::{ManualClock, NoopFaultInjector};
 
 use super::support::*;
 use crate::commit_fault_labels as labels;
+use crate::engine::DurableWriteRoute;
 
 async fn provider_engine(config: EnginePersistenceConfig, clock: Arc<ManualClock>) -> Arc<Engine> {
     Arc::new(
@@ -491,6 +492,15 @@ async fn postgres_fences_every_provider_record_writer_without_partial_persistenc
                 .expect("direct document lookup should succeed")
                 .is_none()
         );
+        // A lease CAS rejection is settled inside the write transaction, so it
+        // proves rollback on its own. Probing durable progress could only turn
+        // a certain outcome into an uncertain one, so the classifier must not
+        // probe at all on this path.
+        assert_eq!(
+            engine_a.durable_outcome_probe_count_for_testing(&tenant_id, DurableWriteRoute::Direct),
+            0,
+            "a committer fence must be classified definitive without probing durable progress"
+        );
 
         // Mutation execution-unit path.
         let tenant_id = create_shared_tenant(&engine_a, &engine_b, "pg-fence-execution-unit").await;
@@ -547,6 +557,14 @@ async fn postgres_fences_every_provider_record_writer_without_partial_persistenc
                 .expect("execution document lookup should succeed")
                 .is_none()
         );
+        assert_eq!(
+            engine_a.durable_outcome_probe_count_for_testing(
+                &tenant_id,
+                DurableWriteRoute::ExecutionUnit,
+            ),
+            0,
+            "a fenced execution unit must be definitive without a durable-progress probe"
+        );
 
         // Schema set path (delete shares the same fenced schema transaction seam).
         let tenant_id = create_shared_tenant(&engine_a, &engine_b, "pg-fence-schema").await;
@@ -592,6 +610,12 @@ async fn postgres_fences_every_provider_record_writer_without_partial_persistenc
                 .get_table(&tasks_table()),
             Some(&healthy_schema)
         );
+        assert_eq!(
+            engine_a
+                .durable_outcome_probe_count_for_testing(&tenant_id, DurableWriteRoute::SchemaSet,),
+            0,
+            "a fenced schema set must be definitive without a durable-progress probe"
+        );
 
         // Schema delete uses its own provider transaction entry point.
         let tenant_id = create_shared_tenant(&engine_a, &engine_b, "pg-fence-schema-delete").await;
@@ -628,6 +652,14 @@ async fn postgres_fences_every_provider_record_writer_without_partial_persistenc
                 .expect("schema after delete should read")
                 .get_table(&tasks_table())
                 .is_none()
+        );
+        assert_eq!(
+            engine_a.durable_outcome_probe_count_for_testing(
+                &tenant_id,
+                DurableWriteRoute::SchemaDelete,
+            ),
+            0,
+            "a fenced schema delete must be definitive without a durable-progress probe"
         );
 
         // Internal trigger-materialization/cursor path.

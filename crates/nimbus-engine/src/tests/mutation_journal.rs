@@ -2,6 +2,7 @@ use super::*;
 
 mod applied_visibility;
 mod cancellation;
+mod durable_outcomes;
 mod eviction;
 mod kill_switch;
 mod publisher_observers;

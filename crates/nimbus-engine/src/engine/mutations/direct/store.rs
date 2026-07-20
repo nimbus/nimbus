@@ -2,35 +2,19 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
-use nimbus_core::{CommitEntry, Error, Result};
+use nimbus_core::{CommitEntry, Result};
 
 use crate::{Engine, tenant::TenantRuntime};
 
+use super::super::durable_outcome::{
+    DurableWriteOutcome, DurableWriteRoute, classify_durable_write_error,
+};
 use super::super::inline_reprepare::{
     InlineReprepareOutcome, reprepare_single_document_from_window,
 };
 use super::super::phase_metrics::CommitPhaseDurations;
 use super::super::prepared::PreparedCommit;
 use super::super::publisher::begin_durable_recovery_eviction;
-
-#[cfg(test)]
-static DIRECT_RECOVERY_READ_FAILURES_FOR_TESTING: std::sync::OnceLock<
-    std::sync::Mutex<std::collections::HashSet<nimbus_core::TenantId>>,
-> = std::sync::OnceLock::new();
-
-#[cfg(test)]
-fn take_direct_recovery_read_failure_for_testing(tenant_id: &nimbus_core::TenantId) -> bool {
-    DIRECT_RECOVERY_READ_FAILURES_FOR_TESTING
-        .get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
-        .lock()
-        .expect("direct recovery test-hook lock should not be poisoned")
-        .remove(tenant_id)
-}
-
-#[cfg(not(test))]
-fn take_direct_recovery_read_failure_for_testing(_tenant_id: &nimbus_core::TenantId) -> bool {
-    false
-}
 
 #[derive(Clone, Copy)]
 pub(super) struct DirectMutationProfile {
@@ -110,40 +94,17 @@ impl Engine {
                 ) {
                     Ok(commit) => commit,
                     Err(error) => {
-                        if matches!(error, Error::CommitterFenced { .. }) {
-                            runtime.discard_unpersisted_write_log_suffix(sequence);
-                            return Err(error);
-                        }
-                        let progress = if take_direct_recovery_read_failure_for_testing(
-                            runtime.tenant_id(),
+                        match classify_durable_write_error(
+                            runtime.as_ref(),
+                            DurableWriteRoute::Direct,
+                            previous_sequence,
+                            error,
                         ) {
-                            Err(Error::Internal(
-                                "injected direct journal progress read failure".to_string(),
-                            ))
-                        } else {
-                            runtime.store.journal_progress()
-                        };
-                        match progress {
-                            Ok(progress) if progress.durable_head == previous_sequence => {
+                            DurableWriteOutcome::Definitive(error) => {
                                 runtime.discard_unpersisted_write_log_suffix(sequence);
                                 return Err(error);
                             }
-                            Ok(progress) => {
-                                let recovery_error = Error::Internal(format!(
-                                    "direct append outcome requires crash-and-replay: durable head advanced from {previous_sequence} to {} after {error}",
-                                    progress.durable_head
-                                ));
-                                runtime.publisher_record_ambiguous_error();
-                                begin_durable_recovery_eviction(&runtime, &recovery_error);
-                                runtime.fail_and_drain_mutation_queues(&recovery_error);
-                                runtime.close_committed_mutation_observers();
-                                initiated_eviction_for_commit.store(true, Ordering::Release);
-                                return Err(recovery_error);
-                            }
-                            Err(progress_error) => {
-                                let recovery_error = Error::Internal(format!(
-                                    "direct append outcome is ambiguous; crash-and-replay required: write failed ({error}) and journal progress failed ({progress_error})"
-                                ));
+                            DurableWriteOutcome::Ambiguous(recovery_error) => {
                                 runtime.publisher_record_ambiguous_error();
                                 begin_durable_recovery_eviction(&runtime, &recovery_error);
                                 runtime.fail_and_drain_mutation_queues(&recovery_error);
@@ -207,10 +168,6 @@ impl Engine {
 
     #[cfg(test)]
     pub(crate) fn fail_direct_recovery_read_for_testing(&self, tenant_id: nimbus_core::TenantId) {
-        DIRECT_RECOVERY_READ_FAILURES_FOR_TESTING
-            .get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
-            .lock()
-            .expect("direct recovery test-hook lock should not be poisoned")
-            .insert(tenant_id);
+        self.fail_durable_outcome_progress_for_testing(tenant_id, DurableWriteRoute::Direct);
     }
 }

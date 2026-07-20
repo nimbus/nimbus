@@ -256,6 +256,8 @@ pub(super) struct ArmedOneShotDirectFaultInjector {
     point: FaultPoint,
     armed: AtomicBool,
     failed: AtomicBool,
+    fail_on_visit: u64,
+    visits_after_arm: std::sync::atomic::AtomicU64,
 }
 
 impl ArmedOneShotDirectFaultInjector {
@@ -264,6 +266,18 @@ impl ArmedOneShotDirectFaultInjector {
             point,
             armed: AtomicBool::new(false),
             failed: AtomicBool::new(false),
+            fail_on_visit: 1,
+            visits_after_arm: std::sync::atomic::AtomicU64::new(0),
+        })
+    }
+
+    pub(super) fn new_on_visit(point: FaultPoint, fail_on_visit: u64) -> Arc<Self> {
+        Arc::new(Self {
+            point,
+            armed: AtomicBool::new(false),
+            failed: AtomicBool::new(false),
+            fail_on_visit,
+            visits_after_arm: std::sync::atomic::AtomicU64::new(0),
         })
     }
 
@@ -274,10 +288,11 @@ impl ArmedOneShotDirectFaultInjector {
 
 impl nimbus_storage::FaultInjector for ArmedOneShotDirectFaultInjector {
     fn check(&self, point: FaultPoint) -> nimbus_core::Result<()> {
-        if point == self.point
-            && self.armed.load(Ordering::Acquire)
-            && !self.failed.swap(true, Ordering::AcqRel)
-        {
+        if point != self.point || !self.armed.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        let visit = self.visits_after_arm.fetch_add(1, Ordering::AcqRel) + 1;
+        if visit == self.fail_on_visit && !self.failed.swap(true, Ordering::AcqRel) {
             return Err(Error::storage(
                 nimbus_core::StorageErrorKind::Transient,
                 format!("injected one-shot direct fault at {}", point.as_str()),

@@ -4,6 +4,10 @@ use std::sync::Arc;
 use nimbus_core::{Error, Result, Schema, TableName, TableSchema, TenantId, policy_revision_id};
 
 use crate::engine::execution_units::{CommitFaultClient, labels};
+use crate::engine::mutations::begin_durable_recovery_eviction;
+use crate::engine::mutations::durable_outcome::{
+    DurableWriteOutcome, DurableWriteRoute, classify_durable_write_error,
+};
 use crate::tenant::TenantRuntime;
 
 use super::Engine;
@@ -228,12 +232,33 @@ fn apply_set_table_schema(
     });
 
     if let Err(error) = runtime.persist_table_schema(previous_durable_head, &table_schema) {
-        if let Some(pending) = pending_policy_termination {
-            runtime
-                .subscription_registry()
-                .restore_policy_revision_mismatches(pending);
-        }
-        return Err(error);
+        return match classify_durable_write_error(
+            runtime.as_ref(),
+            DurableWriteRoute::SchemaSet,
+            previous_durable_head,
+            error,
+        ) {
+            DurableWriteOutcome::Definitive(error) => {
+                if let Some(pending) = pending_policy_termination {
+                    runtime
+                        .subscription_registry()
+                        .restore_policy_revision_mismatches(pending);
+                }
+                Err(error)
+            }
+            DurableWriteOutcome::Ambiguous(recovery_error) => {
+                if let Some(pending) = pending_policy_termination {
+                    runtime
+                        .subscription_registry()
+                        .finish_policy_revision_mismatches(
+                            pending,
+                            POLICY_REVISION_CHANGED_MESSAGE,
+                        );
+                }
+                begin_ambiguous_schema_eviction(runtime, &recovery_error);
+                Err(recovery_error)
+            }
+        };
     }
     let journal_progress = match runtime.store().journal_progress() {
         Ok(journal_progress) => journal_progress,
@@ -290,12 +315,33 @@ fn apply_delete_table_schema(
     });
 
     if let Err(error) = runtime.persist_table_schema_deletion(previous_durable_head, table) {
-        if let Some(pending) = pending_policy_termination {
-            runtime
-                .subscription_registry()
-                .restore_policy_revision_mismatches(pending);
-        }
-        return Err(error);
+        return match classify_durable_write_error(
+            runtime.as_ref(),
+            DurableWriteRoute::SchemaDelete,
+            previous_durable_head,
+            error,
+        ) {
+            DurableWriteOutcome::Definitive(error) => {
+                if let Some(pending) = pending_policy_termination {
+                    runtime
+                        .subscription_registry()
+                        .restore_policy_revision_mismatches(pending);
+                }
+                Err(error)
+            }
+            DurableWriteOutcome::Ambiguous(recovery_error) => {
+                if let Some(pending) = pending_policy_termination {
+                    runtime
+                        .subscription_registry()
+                        .finish_policy_revision_mismatches(
+                            pending,
+                            POLICY_REVISION_CHANGED_MESSAGE,
+                        );
+                }
+                begin_ambiguous_schema_eviction(runtime, &recovery_error);
+                Err(recovery_error)
+            }
+        };
     }
     let journal_progress = match runtime.store().journal_progress() {
         Ok(journal_progress) => journal_progress,
@@ -323,6 +369,13 @@ fn apply_delete_table_schema(
     }
     runtime.publish_mutation_journal_progress_in_actor(journal_progress);
     Ok(())
+}
+
+fn begin_ambiguous_schema_eviction(runtime: &TenantRuntime, error: &Error) {
+    runtime.publisher_record_ambiguous_error();
+    begin_durable_recovery_eviction(runtime, error);
+    runtime.fail_and_drain_mutation_queues(error);
+    runtime.close_committed_mutation_observers();
 }
 
 fn stage_assigned_schema_record(

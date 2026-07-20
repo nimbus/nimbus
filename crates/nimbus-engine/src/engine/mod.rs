@@ -7,6 +7,9 @@ mod execution_units;
 mod kv;
 mod latency;
 mod mutations;
+pub(crate) use mutations::durable_outcome::{
+    DurableWriteOutcome, DurableWriteRoute, classify_durable_write_error,
+};
 pub(crate) use mutations::prepared::PreparedCommit;
 pub(crate) use mutations::write_log::{WriteLog, WriteLogConfig};
 mod object_placement;
@@ -62,7 +65,8 @@ pub(crate) use mutations::phase_metrics::{
 };
 pub use mutations::{AsyncMutationContext, MutationActor, MutationIsolatePermit};
 pub(crate) use mutations::{
-    begin_definitive_fence_eviction, finish_durable_recovery_eviction_locked,
+    begin_definitive_fence_eviction, begin_durable_recovery_eviction,
+    finish_durable_recovery_eviction_locked,
 };
 pub use objects::TenantObjectMeta;
 pub(crate) use provider_hints::ProviderPollWorker;
