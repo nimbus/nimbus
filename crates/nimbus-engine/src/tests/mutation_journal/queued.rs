@@ -124,16 +124,62 @@ async fn embedded_record_writers_never_interact_with_committer_lease() {
         .persist_provider_publisher_barrier_for_testing(&tenant_id, "embedded-publisher")
         .expect("embedded publisher persistence should retain append/apply behavior");
 
-    let stats = engine
-        .mutation_journal_stats_for_testing(&tenant_id)
-        .expect("embedded journal stats should read");
-    assert!(!stats.committer_lease_acquired);
-    assert!(!stats.committer_lease_fenced);
-    assert_eq!(stats.committer_lease_epoch, 0);
-    assert_eq!(stats.committer_lease_acquire_count, 0);
-    assert_eq!(stats.committer_lease_renewal_count, 0);
-    assert_eq!(stats.committer_lease_renewal_failure_count, 0);
-    assert!(!stats.committer_lease_renewal_worker_running);
+    let restore_source = fixture.create_tenant("embedded-restore-source", Engine::create_tenant);
+    engine
+        .set_table_schema(
+            &restore_source,
+            TableSchema {
+                table: tasks_table(),
+                fields: vec![FieldSchema {
+                    name: "title".to_string(),
+                    field_type: FieldType::String,
+                    required: true,
+                }],
+                indexes: Vec::new(),
+                access_policy: None,
+            },
+        )
+        .expect("embedded restore source schema should persist");
+    let restored_document_id = DocumentId::new();
+    engine
+        .insert_document_with_id(
+            &restore_source,
+            tasks_table(),
+            restored_document_id.clone(),
+            serde_json::Map::from_iter([("title".to_string(), json!("restored"))]),
+        )
+        .expect("embedded restore source document should persist");
+    let archive = engine
+        .export_latest_point_in_time_restore_archive(&restore_source)
+        .expect("embedded restore archive should export");
+    let restore_destination =
+        fixture.create_tenant("embedded-restore-destination", Engine::create_tenant);
+    engine
+        .import_point_in_time_restore_archive(&restore_destination, &archive)
+        .expect("embedded restore should retain its existing import path");
+    let restored = engine
+        .get_document(&restore_destination, &tasks_table(), restored_document_id)
+        .expect("embedded restored document lookup should succeed");
+    assert_eq!(
+        restored
+            .fields
+            .get("title")
+            .and_then(serde_json::Value::as_str),
+        Some("restored")
+    );
+
+    for tenant_id in [tenant_id, restore_source, restore_destination] {
+        let stats = engine
+            .mutation_journal_stats_for_testing(&tenant_id)
+            .expect("embedded journal stats should read");
+        assert!(!stats.committer_lease_acquired);
+        assert!(!stats.committer_lease_fenced);
+        assert_eq!(stats.committer_lease_epoch, 0);
+        assert_eq!(stats.committer_lease_acquire_count, 0);
+        assert_eq!(stats.committer_lease_renewal_count, 0);
+        assert_eq!(stats.committer_lease_renewal_failure_count, 0);
+        assert!(!stats.committer_lease_renewal_worker_running);
+    }
 }
 
 /// Liveness smoke for the real `insert_document_async` path under concurrency:

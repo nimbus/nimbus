@@ -71,6 +71,12 @@ impl Engine {
     }
 
     #[cfg(test)]
+    pub(crate) fn acquire_committer_lease_for_testing(&self, tenant_id: &TenantId) -> Result<()> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        runtime.ensure_committer_lease_for_assignment()
+    }
+
+    #[cfg(test)]
     pub(crate) fn materialize_trigger_cursor_for_testing(
         &self,
         tenant_id: &TenantId,

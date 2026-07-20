@@ -681,6 +681,91 @@ async fn postgres_fences_every_provider_record_writer_without_partial_persistenc
                 .is_empty()
         );
 
+        // Point-in-time restore journal import, which sits outside the mutation API.
+        let source_id = create_shared_tenant(&engine_a, &engine_b, "pg-fence-restore-source").await;
+        engine_a
+            .set_table_schema_async(source_id.clone(), tasks_schema())
+            .await
+            .expect("restore source schema should persist");
+        let restored_document_id = DocumentId::new();
+        engine_a
+            .insert_document_async_with_id(
+                source_id.clone(),
+                tasks_table(),
+                restored_document_id.clone(),
+                title("restored"),
+            )
+            .await
+            .expect("restore source document should persist");
+        let archive = engine_a
+            .export_latest_point_in_time_restore_archive(&source_id)
+            .expect("restore archive should export");
+
+        let healthy_id =
+            create_shared_tenant(&engine_a, &engine_b, "pg-fence-restore-healthy").await;
+        engine_a
+            .import_point_in_time_restore_archive(&healthy_id, &archive)
+            .expect("healthy restore holder should import through the fence");
+        let healthy_store = inspection_store(&provider_config, &healthy_id).await;
+        assert_eq!(
+            healthy_store
+                .journal_progress()
+                .expect("healthy restore progress should read")
+                .applied_head,
+            archive.target_sequence
+        );
+        assert!(
+            healthy_store
+                .get(&tasks_table(), &restored_document_id)
+                .expect("healthy restored document should read")
+                .is_some()
+        );
+
+        let fenced_id = create_shared_tenant(&engine_a, &engine_b, "pg-fence-restore-stale").await;
+        engine_a
+            .acquire_committer_lease_for_testing(&fenced_id)
+            .expect("old restore holder should acquire without populating the tenant");
+        expire_postgres_committer_lease(&provider_config, &fenced_id)
+            .await
+            .expect("restore lease should expire");
+        engine_b
+            .acquire_committer_lease_for_testing(&fenced_id)
+            .expect("healthy restore holder should take over the empty tenant");
+        let fenced_store = inspection_store(&provider_config, &fenced_id).await;
+        let lease_before = fenced_store
+            .read_committer_lease()
+            .expect("restore lease should read");
+        assert_terminal_fenced(
+            engine_a
+                .import_point_in_time_restore_archive(&fenced_id, &archive)
+                .expect_err("stale restore holder must be fenced"),
+        );
+        let fenced_progress = fenced_store
+            .journal_progress()
+            .expect("fenced restore progress should read");
+        assert_eq!(fenced_progress.durable_head, SequenceNumber(0));
+        assert_eq!(fenced_progress.applied_head, SequenceNumber(0));
+        assert!(
+            fenced_store
+                .load_schema()
+                .expect("fenced restore schema should read")
+                .tables
+                .is_empty()
+        );
+        assert!(
+            fenced_store
+                .get(&tasks_table(), &restored_document_id)
+                .expect("fenced restored document lookup should succeed")
+                .is_none()
+        );
+        assert_eq!(
+            fenced_store
+                .read_committer_lease()
+                .expect("restore lease should reread"),
+            lease_before,
+            "a rejected restore must not alter the healthy holder's lease"
+        );
+
         for tenant_id in [
             "pg-fence-queued",
             "pg-fence-direct",
@@ -689,6 +774,7 @@ async fn postgres_fences_every_provider_record_writer_without_partial_persistenc
             "pg-fence-schema-delete",
             "pg-fence-internal",
             "pg-fence-publisher",
+            "pg-fence-restore-stale",
         ] {
             let tenant_id = TenantId::new(tenant_id).expect("tenant id should rebuild");
             let stats = engine_a
