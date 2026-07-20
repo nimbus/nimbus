@@ -6,7 +6,11 @@ use nimbus_core::{
 };
 use nimbus_storage::ResolvedWrite;
 
+use super::super::mutations::begin_durable_recovery_eviction;
 use super::super::mutations::caps::check_mutation_caps;
+use super::super::mutations::durable_outcome::{
+    DurableWriteOutcome, DurableWriteRoute, classify_durable_write_error,
+};
 use super::super::mutations::phase_metrics::{CommitPhaseDurations, maybe_warn_wide_read_set};
 use super::super::mutations::prepared::PreparedCommit;
 use super::super::mutations::write_log::ValidationSource;
@@ -168,35 +172,29 @@ impl MutationExecutionUnit {
                     let commit = match commit_result {
                         Ok(commit) => commit,
                         Err(error) => {
-                            if matches!(error, Error::CommitterFenced { .. }) {
-                                if record.is_some() {
-                                    runtime.discard_unpersisted_write_log_suffix(expected_sequence);
-                                }
+                            if record.is_none() {
+                                // Schedule-only units have no durable journal
+                                // record and retain their established path.
                                 return Err(error);
                             }
-                            if record.is_some() {
-                                match runtime.store.journal_progress() {
-                                    Ok(progress) if progress.durable_head == previous_sequence => {
-                                        runtime.discard_unpersisted_write_log_suffix(
-                                            expected_sequence,
-                                        );
-                                    }
-                                    Ok(_) => {
-                                        if let Ok(progress) =
-                                            runtime.store.recover_durable_journal()
-                                        {
-                                            runtime.publish_mutation_journal_progress_in_actor(
-                                                progress,
-                                            );
-                                            if progress.applied_head >= expected_sequence {
-                                                write_log_guard.disarm();
-                                            }
-                                        }
-                                    }
-                                    Err(_) => {}
+                            match classify_durable_write_error(
+                                runtime.as_ref(),
+                                DurableWriteRoute::ExecutionUnit,
+                                previous_sequence,
+                                error,
+                            ) {
+                                DurableWriteOutcome::Definitive(error) => {
+                                    runtime.discard_unpersisted_write_log_suffix(expected_sequence);
+                                    return Err(error);
+                                }
+                                DurableWriteOutcome::Ambiguous(recovery_error) => {
+                                    runtime.publisher_record_ambiguous_error();
+                                    begin_durable_recovery_eviction(&runtime, &recovery_error);
+                                    runtime.fail_and_drain_mutation_queues(&recovery_error);
+                                    runtime.close_committed_mutation_observers();
+                                    return Err(recovery_error);
                                 }
                             }
-                            return Err(error);
                         }
                     };
                     if let Some(commit) = &commit {

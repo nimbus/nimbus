@@ -266,3 +266,165 @@ async fn schema_delete_unreadable_progress_evicts_and_replays() {
     )
     .await;
 }
+
+async fn exercise_execution_unit_outcome(case: OutcomeCase, tenant: &str) {
+    let point = match case {
+        OutcomeCase::Advanced => FaultPoint::StorageCommitAfterVisibilityBeforeReturn,
+        OutcomeCase::Unchanged | OutcomeCase::Unreadable => {
+            FaultPoint::StorageCommitBeforeVisibility
+        }
+    };
+    let data_dir = tempdir().expect("execution-unit outcome tempdir should build");
+    let faults = ArmedOneShotDirectFaultInjector::new(point);
+    let engine = Arc::new(
+        Engine::new_with_simulation_and_memory_persistence(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(47_100))),
+            faults.clone(),
+            Arc::new(nimbus_core::SeededIdSource::new(47_101)),
+        )
+        .expect("execution-unit outcome engine should create"),
+    );
+    let tenant_id = TenantId::new(tenant).expect("execution-unit tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("execution-unit tenant should create");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+    let runtime_before = engine
+        .tenant_runtime_for_testing(&tenant_id)
+        .expect("execution-unit runtime should stay retained for identity proof");
+    let runtime_identity_before = engine
+        .tenant_runtime_identity_for_testing(&tenant_id)
+        .expect("execution-unit runtime identity should load");
+
+    let table =
+        TableName::new(format!("{tenant}_documents")).expect("execution-unit table should build");
+    let unit = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("execution unit should begin");
+    unit.insert_document(
+        table.clone(),
+        serde_json::Map::from_iter([("value".to_string(), json!("first"))]),
+    )
+    .expect("execution-unit insert should stage");
+    if matches!(case, OutcomeCase::Unreadable) {
+        engine.fail_durable_outcome_progress_for_testing(
+            tenant_id.clone(),
+            DurableWriteRoute::ExecutionUnit,
+        );
+    }
+    faults.arm();
+
+    let error = unit
+        .commit()
+        .expect_err("faulted execution-unit commit should return an error");
+    match case {
+        OutcomeCase::Unchanged => {
+            assert!(
+                !error.to_string().contains("crash-and-replay"),
+                "unchanged durable head should preserve the typed execution-unit error: {error}"
+            );
+            assert_eq!(
+                engine
+                    .tenant_runtime_identity_for_testing(&tenant_id)
+                    .expect("definitive execution-unit runtime should stay loaded"),
+                runtime_identity_before,
+                "definitive execution-unit failure must keep the tenant runtime live"
+            );
+            let (_, pending) = engine
+                .write_log_assignment_for_testing(&tenant_id)
+                .expect("definitive execution-unit assignment state should load");
+            assert!(
+                pending.is_empty(),
+                "definitive execution-unit failure must discard its staged write-log suffix"
+            );
+        }
+        OutcomeCase::Advanced | OutcomeCase::Unreadable => {
+            assert!(
+                error.to_string().contains("crash-and-replay"),
+                "ambiguous execution-unit outcome should demand crash-and-replay: {error}"
+            );
+        }
+    }
+
+    let documents = engine
+        .query_documents_async(
+            tenant_id.clone(),
+            Query {
+                table: table.clone(),
+                filters: Vec::new(),
+                order: None,
+                limit: None,
+            },
+        )
+        .await
+        .expect("execution-unit outcome should remain queryable after classification");
+    assert_eq!(
+        documents.len(),
+        usize::from(matches!(case, OutcomeCase::Advanced)),
+        "replay must expose exactly the execution-unit write that durably landed"
+    );
+
+    if matches!(case, OutcomeCase::Unchanged) {
+        assert!(
+            engine.runtime_is_registered_for_testing(&tenant_id, &runtime_before),
+            "definitive execution-unit failure must retain the original runtime"
+        );
+    } else {
+        assert_ne!(
+            engine
+                .tenant_runtime_identity_for_testing(&tenant_id)
+                .expect("replacement execution-unit runtime identity should load"),
+            runtime_identity_before,
+            "ambiguous execution-unit outcome must replace the tenant runtime"
+        );
+        assert!(
+            !engine.runtime_is_registered_for_testing(&tenant_id, &runtime_before),
+            "ambiguous execution-unit outcome must deregister the failed runtime"
+        );
+    }
+
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("replacement trigger cursor should not add unrelated records");
+    let head_before_follow_up = engine
+        .latest_sequence(&tenant_id)
+        .expect("execution-unit durable head should load");
+    let follow_up = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("follow-up execution unit should begin");
+    follow_up
+        .insert_document(
+            table,
+            serde_json::Map::from_iter([("value".to_string(), json!("follow-up"))]),
+        )
+        .expect("follow-up execution-unit insert should stage");
+    follow_up
+        .commit()
+        .expect("execution-unit route should commit after classification");
+    assert_eq!(
+        engine
+            .latest_sequence(&tenant_id)
+            .expect("follow-up execution-unit durable head should load"),
+        SequenceNumber(head_before_follow_up.0 + 1),
+        "execution-unit route must continue at the next durable sequence"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn execution_unit_unchanged_head_is_definitive_discards_suffix_and_stays_live() {
+    exercise_execution_unit_outcome(OutcomeCase::Unchanged, "execution-unit-definitive").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn execution_unit_advanced_head_evicts_replays_and_does_not_reuse_sequence() {
+    exercise_execution_unit_outcome(OutcomeCase::Advanced, "execution-unit-advanced").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn execution_unit_unreadable_progress_evicts_and_replays() {
+    exercise_execution_unit_outcome(OutcomeCase::Unreadable, "execution-unit-unreadable").await;
+}

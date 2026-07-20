@@ -557,6 +557,14 @@ async fn postgres_fences_every_provider_record_writer_without_partial_persistenc
                 .expect("execution document lookup should succeed")
                 .is_none()
         );
+        assert_eq!(
+            engine_a.durable_outcome_probe_count_for_testing(
+                &tenant_id,
+                DurableWriteRoute::ExecutionUnit,
+            ),
+            0,
+            "a fenced execution unit must be definitive without a durable-progress probe"
+        );
 
         // Schema set path (delete shares the same fenced schema transaction seam).
         let tenant_id = create_shared_tenant(&engine_a, &engine_b, "pg-fence-schema").await;
