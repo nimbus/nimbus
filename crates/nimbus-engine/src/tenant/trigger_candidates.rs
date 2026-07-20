@@ -9,6 +9,10 @@ use std::time::Duration;
 use nimbus_core::CommitEntry;
 use tracing::warn;
 
+use crate::engine::{
+    DurableWriteOutcome, DurableWriteRoute, begin_durable_recovery_eviction,
+    classify_durable_write_error,
+};
 #[cfg(test)]
 use crate::triggers::dispatch::TriggerCommitCandidate;
 use crate::triggers::dispatch::build_trigger_commit_candidates;
@@ -23,6 +27,11 @@ const TRIGGER_CANDIDATE_RETRY_BACKOFF: Duration = Duration::from_millis(10);
 
 struct QueuedTriggerCommitBatch {
     commits: Vec<CommitEntry>,
+}
+
+enum TriggerInvocationCommitOutcome {
+    Persisted,
+    Failed(DurableWriteOutcome),
 }
 
 struct TriggerCandidateQueueState {
@@ -387,26 +396,53 @@ pub(crate) fn materialize_trigger_invocations_and_sync(
 ) -> nimbus_core::Result<()> {
     let runtime_for_commit = runtime.clone();
     let records = records.to_vec();
-    runtime.submit_internal_committer(move || {
+    let outcome = runtime.submit_internal_committer(move || {
         materialize_trigger_invocations_and_sync_in_actor(
             &runtime_for_commit,
             records.as_slice(),
             cursor,
         )
-    })
+    })?;
+    match outcome {
+        TriggerInvocationCommitOutcome::Persisted => Ok(()),
+        TriggerInvocationCommitOutcome::Failed(DurableWriteOutcome::Definitive(error)) => {
+            Err(error)
+        }
+        TriggerInvocationCommitOutcome::Failed(DurableWriteOutcome::Ambiguous(recovery_error)) => {
+            runtime.publisher_record_ambiguous_error();
+            // Begin eviction after leaving the committer task. The production
+            // caller is the trigger-candidate worker itself, so this ordering
+            // lets BackgroundWorker recognize self-shutdown instead of making
+            // the committer task join a worker blocked on that same task.
+            begin_durable_recovery_eviction(runtime.as_ref(), &recovery_error);
+            runtime.fail_and_drain_mutation_queues(&recovery_error);
+            runtime.close_committed_mutation_observers();
+            Err(recovery_error)
+        }
+    }
 }
 
 fn materialize_trigger_invocations_and_sync_in_actor(
     runtime: &Arc<TenantRuntime>,
     records: &[nimbus_core::TriggerInvocationRecord],
     cursor: nimbus_core::TriggerDeliveryCursor,
-) -> nimbus_core::Result<()> {
+) -> nimbus_core::Result<TriggerInvocationCommitOutcome> {
     runtime.ensure_committer_lease_for_assignment()?;
     let previous_durable_head = runtime.durable_head();
     runtime
         .store
         .check_fault(nimbus_storage::FaultPoint::TriggerInvocationMaterializeBeforeCommit)?;
-    runtime.persist_trigger_invocations(previous_durable_head, records, cursor)?;
+    if let Err(error) = runtime.persist_trigger_invocations(previous_durable_head, records, cursor)
+    {
+        return Ok(TriggerInvocationCommitOutcome::Failed(
+            classify_durable_write_error(
+                runtime.as_ref(),
+                DurableWriteRoute::TriggerCursor,
+                previous_durable_head,
+                error,
+            ),
+        ));
+    }
     let progress = runtime.store.journal_progress()?;
     // The cursor-advance commit `materialize_trigger_invocations` just
     // appended is zero-write by construction, so it can never change what a
@@ -459,7 +495,7 @@ fn materialize_trigger_invocations_and_sync_in_actor(
         }
     }
     runtime.sync_mutation_journal_progress_in_actor(progress);
-    Ok(())
+    Ok(TriggerInvocationCommitOutcome::Persisted)
 }
 
 /// True when every record in a re-read journal gap is provably inert, i.e.

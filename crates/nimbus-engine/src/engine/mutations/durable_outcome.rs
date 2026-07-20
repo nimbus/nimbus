@@ -18,6 +18,7 @@ pub(crate) enum DurableWriteRoute {
     ExecutionUnit,
     SchemaSet,
     SchemaDelete,
+    TriggerCursor,
 }
 
 impl DurableWriteRoute {
@@ -27,6 +28,7 @@ impl DurableWriteRoute {
             Self::ExecutionUnit => "mutation execution unit",
             Self::SchemaSet => "schema set",
             Self::SchemaDelete => "schema delete",
+            Self::TriggerCursor => "trigger cursor",
         }
     }
 }

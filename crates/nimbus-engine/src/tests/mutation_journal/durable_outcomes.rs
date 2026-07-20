@@ -1,4 +1,5 @@
 use super::publisher_test_seams::ArmedOneShotDirectFaultInjector;
+use super::support::{mutation_journal_poll_interval, mutation_journal_progress_timeout};
 use super::*;
 use crate::engine::DurableWriteRoute;
 
@@ -427,4 +428,171 @@ async fn execution_unit_advanced_head_evicts_replays_and_does_not_reuse_sequence
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn execution_unit_unreadable_progress_evicts_and_replays() {
     exercise_execution_unit_outcome(OutcomeCase::Unreadable, "execution-unit-unreadable").await;
+}
+
+async fn exercise_trigger_cursor_outcome(case: OutcomeCase, tenant: &str) {
+    let point = match case {
+        OutcomeCase::Advanced => FaultPoint::StorageCommitAfterVisibilityBeforeReturn,
+        OutcomeCase::Unchanged | OutcomeCase::Unreadable => {
+            FaultPoint::StorageCommitBeforeVisibility
+        }
+    };
+    let data_dir = tempdir().expect("trigger-cursor outcome tempdir should build");
+    let faults = ArmedOneShotDirectFaultInjector::new(point);
+    let engine = Arc::new(
+        Engine::new_with_simulation_and_memory_persistence(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(47_200))),
+            faults.clone(),
+            Arc::new(nimbus_core::SeededIdSource::new(47_201)),
+        )
+        .expect("trigger-cursor outcome engine should create"),
+    );
+    let tenant_id = TenantId::new(tenant).expect("trigger-cursor tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("trigger-cursor tenant should create");
+    engine
+        .replace_trigger_registrations_for_testing(&tenant_id, Vec::new())
+        .expect("empty trigger registry should be ready");
+
+    let pause = engine
+        .trigger_candidate_pause_handle_for_testing(&tenant_id)
+        .expect("trigger-cursor pause handle should load");
+    pause.arm();
+    let table =
+        TableName::new(format!("{tenant}_documents")).expect("trigger-cursor table should build");
+    engine
+        .insert_document_async(
+            tenant_id.clone(),
+            table.clone(),
+            serde_json::Map::from_iter([("value".to_string(), json!("seed"))]),
+        )
+        .await
+        .expect("trigger-cursor seed insert should commit");
+    assert!(
+        pause.wait_until_entered(Duration::from_secs(1)),
+        "trigger-cursor worker should pause before materialization"
+    );
+
+    let runtime_before = engine
+        .tenant_runtime_for_testing(&tenant_id)
+        .expect("trigger-cursor runtime should stay retained for identity proof");
+    let runtime_identity_before = engine
+        .tenant_runtime_identity_for_testing(&tenant_id)
+        .expect("trigger-cursor runtime identity should load");
+    if matches!(case, OutcomeCase::Unreadable) {
+        engine.fail_durable_outcome_progress_for_testing(
+            tenant_id.clone(),
+            DurableWriteRoute::TriggerCursor,
+        );
+    }
+    faults.arm();
+    pause.release();
+
+    if matches!(case, OutcomeCase::Unchanged) {
+        wait_for_value(
+            "definitive trigger-cursor failure should requeue and retry",
+            mutation_journal_progress_timeout(),
+            mutation_journal_poll_interval(),
+            || async {
+                engine
+                    .trigger_delivery_cursor_for_testing(&tenant_id)
+                    .expect("trigger delivery cursor should load")
+            },
+            |cursor| *cursor == nimbus_core::TriggerDeliveryCursor::new(SequenceNumber(1)),
+        )
+        .await;
+        assert_eq!(
+            engine
+                .tenant_runtime_identity_for_testing(&tenant_id)
+                .expect("definitive trigger-cursor runtime should stay loaded"),
+            runtime_identity_before,
+            "definitive trigger-cursor failure must keep the tenant runtime live"
+        );
+        assert!(
+            engine.runtime_is_registered_for_testing(&tenant_id, &runtime_before),
+            "definitive trigger-cursor failure must retain the original runtime"
+        );
+        assert_eq!(
+            engine
+                .latest_sequence(&tenant_id)
+                .expect("retried trigger-cursor durable head should load"),
+            SequenceNumber(2),
+            "caller cleanup must retry exactly one cursor record after the definitive failure"
+        );
+        return;
+    }
+
+    wait_for_value(
+        "ambiguous trigger-cursor failure should replace the runtime",
+        mutation_journal_progress_timeout(),
+        mutation_journal_poll_interval(),
+        || async {
+            engine
+                .get_schema_async(tenant_id.clone())
+                .await
+                .expect("trigger-cursor replacement schema should load");
+            engine
+                .tenant_runtime_identity_for_testing(&tenant_id)
+                .expect("trigger-cursor replacement runtime identity should load")
+        },
+        |runtime_identity| *runtime_identity != runtime_identity_before,
+    )
+    .await;
+    assert!(
+        !engine.runtime_is_registered_for_testing(&tenant_id, &runtime_before),
+        "ambiguous trigger-cursor outcome must deregister the failed runtime"
+    );
+
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("replacement trigger-cursor worker should shut down");
+    if matches!(case, OutcomeCase::Advanced) {
+        assert_eq!(
+            engine
+                .trigger_delivery_cursor_for_testing(&tenant_id)
+                .expect("replayed trigger delivery cursor should load"),
+            nimbus_core::TriggerDeliveryCursor::new(SequenceNumber(1)),
+            "crash replay must retain the cursor record that durably landed"
+        );
+        let head_before_follow_up = engine
+            .latest_sequence(&tenant_id)
+            .expect("trigger-cursor durable head should load");
+        engine
+            .set_table_schema_async(
+                tenant_id.clone(),
+                TableSchema {
+                    table,
+                    fields: Vec::new(),
+                    indexes: Vec::new(),
+                    access_policy: None,
+                },
+            )
+            .await
+            .expect("replacement runtime should commit after trigger-cursor replay");
+        assert_eq!(
+            engine
+                .latest_sequence(&tenant_id)
+                .expect("follow-up trigger-cursor durable head should load"),
+            SequenceNumber(head_before_follow_up.0 + 1),
+            "replacement runtime must continue after the durable head without reusing a sequence"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn trigger_cursor_unchanged_head_is_definitive_requeues_and_stays_live() {
+    exercise_trigger_cursor_outcome(OutcomeCase::Unchanged, "trigger-cursor-definitive").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn trigger_cursor_advanced_head_evicts_replays_and_does_not_reuse_sequence() {
+    exercise_trigger_cursor_outcome(OutcomeCase::Advanced, "trigger-cursor-advanced").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn trigger_cursor_unreadable_progress_evicts_and_replays() {
+    exercise_trigger_cursor_outcome(OutcomeCase::Unreadable, "trigger-cursor-unreadable").await;
 }
