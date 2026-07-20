@@ -1,22 +1,53 @@
 use nimbus_core::{
     PrincipalContext, SequenceNumber, TenantEventKind, TenantEventRecord, TriggerDeliveryCursor,
 };
-use nimbus_storage::{ManualClock, NoopFaultInjector};
+use nimbus_storage::{FaultInjector, FaultPoint, ManualClock, NoopFaultInjector};
 
 use super::support::*;
 use crate::commit_fault_labels as labels;
 use crate::engine::DurableWriteRoute;
 
 async fn provider_engine(config: EnginePersistenceConfig, clock: Arc<ManualClock>) -> Arc<Engine> {
+    provider_engine_with_faults(config, clock, Arc::new(NoopFaultInjector)).await
+}
+
+async fn provider_engine_with_faults(
+    config: EnginePersistenceConfig,
+    clock: Arc<ManualClock>,
+    faults: Arc<dyn FaultInjector>,
+) -> Arc<Engine> {
     Arc::new(
-        Engine::new_with_simulation_and_persistence_config(
-            config,
-            clock,
-            Arc::new(NoopFaultInjector),
-        )
-        .await
-        .expect("postgres-backed engine should create"),
+        Engine::new_with_simulation_and_persistence_config(config, clock, faults)
+            .await
+            .expect("postgres-backed engine should create"),
     )
+}
+
+#[derive(Default)]
+struct ArmedProviderCommitAcknowledgementLoss {
+    armed: std::sync::atomic::AtomicBool,
+    fired: std::sync::atomic::AtomicBool,
+}
+
+impl ArmedProviderCommitAcknowledgementLoss {
+    fn arm(&self) {
+        self.armed.store(true, std::sync::atomic::Ordering::Release);
+    }
+}
+
+impl FaultInjector for ArmedProviderCommitAcknowledgementLoss {
+    fn check(&self, point: FaultPoint) -> nimbus_core::Result<()> {
+        if point == FaultPoint::StorageCommitAfterVisibilityBeforeReturn
+            && self.armed.load(std::sync::atomic::Ordering::Acquire)
+            && !self.fired.swap(true, std::sync::atomic::Ordering::AcqRel)
+        {
+            return Err(nimbus_core::Error::storage(
+                nimbus_core::StorageErrorKind::Transient,
+                "injected provider publisher acknowledgement loss",
+            ));
+        }
+        Ok(())
+    }
 }
 
 async fn create_shared_tenant(
@@ -66,6 +97,89 @@ fn assert_terminal_fenced(error: nimbus_core::Error) {
 
 fn title(value: &str) -> serde_json::Map<String, serde_json::Value> {
     serde_json::Map::from_iter([("title".to_string(), json!(value))])
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial(postgres_provider)]
+async fn postgres_provider_publisher_ack_loss_is_classified_before_retry_fence() {
+    with_postgres_engine_config(|engine_config, provider_config| async move {
+        let clock = Arc::new(ManualClock::new(Timestamp(9_500)));
+        let faults = Arc::new(ArmedProviderCommitAcknowledgementLoss::default());
+        let engine = provider_engine_with_faults(engine_config, clock, faults.clone()).await;
+        let tenant_id =
+            TenantId::new("pg-publisher-ack-loss").expect("tenant id should build");
+        engine
+            .create_tenant_async(tenant_id.clone())
+            .await
+            .expect("tenant should create");
+        engine
+            .shutdown_trigger_candidates_for_testing(&tenant_id)
+            .expect("trigger cursor should not add unrelated records");
+        engine
+            .persist_provider_publisher_barrier_for_testing(&tenant_id, "seed")
+            .expect("seed publisher barrier should acquire the lease and persist");
+
+        faults.arm();
+        let acknowledgement_loss = engine
+            .persist_provider_publisher_barrier_for_testing(&tenant_id, "landed-without-ack")
+            .expect_err("a lost provider acknowledgement must be terminally ambiguous");
+        assert_eq!(
+            acknowledgement_loss.retryability(),
+            nimbus_core::Retryability::Terminal
+        );
+        assert!(
+            acknowledgement_loss.to_string().contains("crash-and-replay"),
+            "provider acknowledgement loss must preserve the first attempt's ambiguity: {acknowledgement_loss}"
+        );
+        assert_eq!(
+            engine.durable_outcome_probe_count_for_testing(
+                &tenant_id,
+                DurableWriteRoute::Publisher,
+            ),
+            1,
+            "the failed provider attempt must be probed before retry is considered"
+        );
+
+        let store = inspection_store(&provider_config, &tenant_id).await;
+        let progress = store
+            .journal_progress()
+            .expect("provider progress should remain readable");
+        assert_eq!(progress.durable_head, SequenceNumber(2));
+        assert_eq!(progress.applied_head, SequenceNumber(2));
+        assert_eq!(
+            store
+                .read_durable_journal_from(SequenceNumber(1))
+                .expect("provider journal should read")
+                .iter()
+                .map(|record| record.sequence)
+                .collect::<Vec<_>>(),
+            vec![SequenceNumber(1), SequenceNumber(2)],
+            "the acknowledgement-loss attempt must land exactly once"
+        );
+
+        engine
+            .persist_provider_publisher_barrier_for_testing(&tenant_id, "next-independent-batch")
+            .expect("the progress probe should reconcile the runtime head for later work");
+        assert_eq!(
+            engine.durable_outcome_probe_count_for_testing(
+                &tenant_id,
+                DurableWriteRoute::Publisher,
+            ),
+            1,
+            "later successful work must not add another failure-classification probe"
+        );
+        assert_eq!(
+            store
+                .read_durable_journal_from(SequenceNumber(1))
+                .expect("provider journal should reread")
+                .iter()
+                .map(|record| record.sequence)
+                .collect::<Vec<_>>(),
+            vec![SequenceNumber(1), SequenceNumber(2), SequenceNumber(3)],
+            "the next independent batch must continue after, rather than duplicate, the ambiguous sequence"
+        );
+    })
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -734,6 +848,12 @@ async fn postgres_fences_every_provider_record_writer_without_partial_persistenc
                 .read_durable_journal_from(SequenceNumber(before.durable_head.0.saturating_add(1)))
                 .expect("publisher suffix should read")
                 .is_empty()
+        );
+        assert_eq!(
+            engine_a
+                .durable_outcome_probe_count_for_testing(&tenant_id, DurableWriteRoute::Publisher,),
+            0,
+            "a first-attempt publisher fence proves rollback without a progress probe"
         );
 
         // Point-in-time restore journal import, which sits outside the mutation API.

@@ -6,8 +6,8 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, warn};
 
-use crate::Engine;
 use crate::engine::execution_units::{CommitFaultClient, labels};
+use crate::engine::{DurableWriteOutcome, DurableWriteRoute, Engine, classify_durable_write_error};
 use crate::tenant::{AssignedPublisherBatch, PublisherMessage, TenantRuntime};
 
 const DEFAULT_PUBLISHER_RETRY_LIMIT: usize = 4;
@@ -440,23 +440,19 @@ pub(crate) fn persist_assigned_batch_once(
     let provider_applied = match runtime.persist_fenced_provider_batch(expected_previous, records) {
         Ok(provider_applied) => provider_applied,
         Err(error) => {
-            return Err(PublishAttemptError::Definitive(error));
+            return Err(classify_publisher_persistence_error(
+                runtime,
+                expected_previous,
+                error,
+            ));
         }
     };
     if !provider_applied && let Err(error) = runtime.store.append_durable_records_batch(records) {
-        let progress = runtime.store.journal_progress();
-        return match progress {
-            Ok(progress) if progress.durable_head == expected_previous => {
-                Err(PublishAttemptError::Definitive(error))
-            }
-            Ok(progress) => Err(PublishAttemptError::Ambiguous(Error::Internal(format!(
-                "append returned {error}, but durable head advanced from {expected_previous} to {}",
-                progress.durable_head
-            )))),
-            Err(progress_error) => Err(PublishAttemptError::Ambiguous(Error::Internal(format!(
-                "append returned {error}, and durable progress could not be read: {progress_error}"
-            )))),
-        };
+        return Err(classify_publisher_persistence_error(
+            runtime,
+            expected_previous,
+            error,
+        ));
     }
     let last_sequence = records
         .last()
@@ -522,6 +518,26 @@ pub(crate) fn persist_assigned_batch_once(
         apply,
         publish,
     })
+}
+
+/// Classifies every ordered-publisher persistence error before the retry loop
+/// decides whether another attempt is legal. In particular, a provider
+/// acknowledgement-loss error must be probed on the attempt that observed it;
+/// a later stale-head fence cannot replace that earlier ambiguous outcome.
+fn classify_publisher_persistence_error(
+    runtime: &TenantRuntime,
+    expected_previous: SequenceNumber,
+    error: Error,
+) -> PublishAttemptError {
+    match classify_durable_write_error(
+        runtime,
+        DurableWriteRoute::Publisher,
+        expected_previous,
+        error,
+    ) {
+        DurableWriteOutcome::Definitive(error) => PublishAttemptError::Definitive(error),
+        DurableWriteOutcome::Ambiguous(error) => PublishAttemptError::Ambiguous(error),
+    }
 }
 
 #[cfg(test)]
@@ -846,6 +862,145 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn classifier_test_runtime(
+        tenant: &str,
+    ) -> (
+        tempfile::TempDir,
+        Arc<Engine>,
+        nimbus_core::TenantId,
+        Arc<TenantRuntime>,
+    ) {
+        let data_dir = tempfile::tempdir().expect("classifier tempdir should build");
+        let engine = Arc::new(
+            Engine::new_with_memory_persistence(data_dir.path())
+                .expect("classifier engine should create"),
+        );
+        let tenant_id = nimbus_core::TenantId::new(tenant).expect("classifier tenant id");
+        engine
+            .create_tenant_async(tenant_id.clone())
+            .await
+            .expect("classifier tenant should create");
+        let runtime = engine
+            .get_existing_tenant(&tenant_id)
+            .expect("classifier runtime should load");
+        (data_dir, engine, tenant_id, runtime)
+    }
+
+    fn retryable_persistence_error(message: &str) -> Error {
+        Error::storage(nimbus_core::StorageErrorKind::Transient, message)
+    }
+
+    #[tokio::test]
+    async fn publisher_first_attempt_fence_is_definitive_without_progress_probe() {
+        let (_data_dir, engine, tenant_id, runtime) =
+            classifier_test_runtime("publisher-first-fence").await;
+        let outcome = classify_publisher_persistence_error(
+            runtime.as_ref(),
+            SequenceNumber(0),
+            Error::CommitterFenced {
+                owner_id: "stale-owner".to_string(),
+                epoch: 7,
+            },
+        );
+
+        assert!(matches!(
+            outcome,
+            PublishAttemptError::Definitive(Error::CommitterFenced {
+                ref owner_id,
+                epoch: 7,
+            }) if owner_id == "stale-owner"
+        ));
+        assert_eq!(
+            engine
+                .durable_outcome_probe_count_for_testing(&tenant_id, DurableWriteRoute::Publisher,),
+            0,
+            "a first-attempt lease fence proves rollback and must not be diluted by a progress read"
+        );
+    }
+
+    #[tokio::test]
+    async fn publisher_retryable_error_with_unchanged_head_stays_definitive_and_retries() {
+        let (_data_dir, engine, tenant_id, runtime) =
+            classifier_test_runtime("publisher-definitive-retry").await;
+        let outcome = classify_publisher_persistence_error(
+            runtime.as_ref(),
+            SequenceNumber(0),
+            retryable_persistence_error("publisher attempt failed before visibility"),
+        );
+
+        assert!(matches!(
+            outcome,
+            PublishAttemptError::Definitive(ref error)
+                if error.retryability() == Retryability::RetryableAfterBackoff
+        ));
+        assert_eq!(
+            engine
+                .durable_outcome_probe_count_for_testing(&tenant_id, DurableWriteRoute::Publisher,),
+            1,
+            "a non-fence error needs one durable-evidence read before retry"
+        );
+    }
+
+    #[tokio::test]
+    async fn publisher_advanced_head_classifier_is_ambiguous() {
+        let (_data_dir, engine, tenant_id, runtime) =
+            classifier_test_runtime("publisher-advanced-head").await;
+        let record = TenantEventRecord::barrier(
+            SequenceNumber(1),
+            nimbus_core::Timestamp(1),
+            "landed publisher attempt".to_string(),
+        )
+        .expect("advanced-head barrier should build");
+        runtime
+            .store()
+            .append_durable_records_batch(&[record])
+            .expect("advanced-head record should become durable");
+
+        let outcome = classify_publisher_persistence_error(
+            runtime.as_ref(),
+            SequenceNumber(0),
+            retryable_persistence_error("publisher acknowledgement was lost"),
+        );
+        assert!(matches!(
+            outcome,
+            PublishAttemptError::Ambiguous(ref error)
+                if error.retryability() == Retryability::Terminal
+                    && error.to_string().contains("crash-and-replay")
+        ));
+        assert_eq!(
+            engine
+                .durable_outcome_probe_count_for_testing(&tenant_id, DurableWriteRoute::Publisher,),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn publisher_unreadable_progress_classifier_is_ambiguous() {
+        let (_data_dir, engine, tenant_id, runtime) =
+            classifier_test_runtime("publisher-unreadable-progress").await;
+        engine.fail_durable_outcome_progress_for_testing(
+            tenant_id.clone(),
+            DurableWriteRoute::Publisher,
+        );
+
+        let outcome = classify_publisher_persistence_error(
+            runtime.as_ref(),
+            SequenceNumber(0),
+            retryable_persistence_error("publisher outcome could not be acknowledged"),
+        );
+        assert!(matches!(
+            outcome,
+            PublishAttemptError::Ambiguous(ref error)
+                if error.retryability() == Retryability::Terminal
+                    && error.to_string().contains("could not be read")
+        ));
+        assert_eq!(
+            engine
+                .durable_outcome_probe_count_for_testing(&tenant_id, DurableWriteRoute::Publisher,),
+            1
+        );
+    }
 
     fn failure_test_batch(
         engine: Arc<crate::Engine>,
