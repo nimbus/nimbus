@@ -124,6 +124,7 @@ pub use table_identity::{
     apply_table_lifecycle_transition,
 };
 pub use traits::{
+    CommitterLease, CommitterLeaseError, CommitterLeaseResult, CommitterLeaseStore,
     ControlPlaneUsage, DurableJournal, KeyProviderSurface, KvBatchOp, KvBatchOutcome, KvEntry,
     KvMutation, KvPut, KvScanPage, KvStorageEngine, KvSweepOutcome, MaterializedRebuild,
     OBJECT_MANIFEST_TABLE, OBJECT_MULTIPART_TABLE, ObjectBlobLayout, ObjectChecksums,

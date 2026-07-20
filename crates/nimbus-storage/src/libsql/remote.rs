@@ -722,6 +722,17 @@ pub(super) async fn bootstrap_tenant_namespace(
     conn.execute_batch(SQLITE_INIT_SQL)
         .await
         .map_err(map_libsql_error)?;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS committer_lease (
+            singleton INTEGER NOT NULL PRIMARY KEY DEFAULT 1 CHECK (singleton = 1),
+            owner_id TEXT NOT NULL,
+            epoch INTEGER NOT NULL CHECK (epoch >= 1),
+            expires_at INTEGER NOT NULL,
+            durable_sequence INTEGER NOT NULL CHECK (durable_sequence >= 0)
+        );",
+    )
+    .await
+    .map_err(map_libsql_error)?;
     Ok(())
 }
 

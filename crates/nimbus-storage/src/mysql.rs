@@ -36,6 +36,7 @@ use crate::store::{
 use crate::{ResolvedScheduleOp, ResolvedWrite};
 
 mod backend;
+mod committer_lease;
 mod document_versions;
 mod index_versions;
 mod provider;

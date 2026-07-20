@@ -1,3 +1,4 @@
+mod committer_lease;
 mod execution_units;
 mod foundation;
 mod journal;

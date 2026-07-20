@@ -18,14 +18,15 @@ pub(crate) use tokio::time::{Duration, timeout};
 
 pub(crate) use crate::keys::{document_key, prefix_end, table_prefix};
 pub(crate) use crate::{
-    DeterministicHarness, FaultInjector, FaultOccurrence, FaultPoint, GeneratedTaskHistory,
-    GeneratedTaskHistorySeedCase, GeneratedTaskRecord, HardDeleteDecision, LibsqlReplicaProvider,
-    LibsqlReplicaProviderConfig, ManualClock, MemoryTenantStore, MySqlProvider,
-    MySqlProviderConfig, PostgresProvider, PostgresProviderConfig, RedbTenantStorage,
-    RestartBoundary, RetentionFloor, RetentionParticipant, ScriptedRestartSchedule,
-    SeededFaultInjector, ShadowMaterializer, ShadowMaterializerConfig, ShadowMaterializerManifest,
-    SqliteTenantStorage, SqliteTenantStore, TenantReadStorage, TenantStore, TenantWriteOutcome,
-    TenantWriteStorage, UsageStore, VerificationHarnessMode, replay_generated_task_history,
+    CommitterLeaseError, CommitterLeaseStore, DeterministicHarness, FaultInjector, FaultOccurrence,
+    FaultPoint, GeneratedTaskHistory, GeneratedTaskHistorySeedCase, GeneratedTaskRecord,
+    HardDeleteDecision, LibsqlReplicaProvider, LibsqlReplicaProviderConfig, ManualClock,
+    MemoryTenantStore, MySqlProvider, MySqlProviderConfig, PostgresProvider,
+    PostgresProviderConfig, RedbTenantStorage, RestartBoundary, RetentionFloor,
+    RetentionParticipant, ScriptedRestartSchedule, SeededFaultInjector, ShadowMaterializer,
+    ShadowMaterializerConfig, ShadowMaterializerManifest, SqliteTenantStorage, SqliteTenantStore,
+    TenantReadStorage, TenantStore, TenantWriteOutcome, TenantWriteStorage, UsageStore,
+    VerificationHarnessMode, replay_generated_task_history,
     selected_generated_task_history_seed_corpus,
 };
 
@@ -44,6 +45,104 @@ mod store_basics;
 mod usage_store;
 
 const BLOCKING_TEST_RELEASE_TIMEOUT: Duration = Duration::from_secs(60);
+
+pub(crate) fn exercise_committer_lease_transitions<S>(store: &S)
+where
+    S: CommitterLeaseStore,
+{
+    assert_eq!(
+        store
+            .read_committer_lease()
+            .expect("absent lease should read"),
+        None
+    );
+
+    let first = store
+        .acquire_committer_lease("owner-a", Duration::ZERO)
+        .expect("absent lease should be acquired");
+    assert_eq!(first.owner_id, "owner-a");
+    assert_eq!(first.epoch, 1);
+    assert_eq!(first.durable_sequence, SequenceNumber(0));
+
+    let takeover = store
+        .acquire_committer_lease("owner-b", Duration::from_secs(60))
+        .expect("provider-expired lease should be acquired");
+    assert_eq!(takeover.owner_id, "owner-b");
+    assert_eq!(takeover.epoch, 2);
+    assert_eq!(takeover.durable_sequence, SequenceNumber(0));
+
+    let held = store.acquire_committer_lease("owner-c", Duration::from_secs(60));
+    assert!(matches!(held, Err(CommitterLeaseError::Held)));
+
+    let reacquired = store
+        .acquire_committer_lease("owner-b", Duration::from_secs(60))
+        .expect("current owner should reacquire its lease");
+    assert_eq!(reacquired.epoch, takeover.epoch);
+    assert!(reacquired.expires_at >= takeover.expires_at);
+
+    let renewed = store
+        .renew_committer_lease("owner-b", reacquired.epoch, Duration::from_secs(60))
+        .expect("current owner and epoch should renew");
+    assert_eq!(renewed.owner_id, "owner-b");
+    assert_eq!(renewed.epoch, 2);
+    assert!(renewed.expires_at >= reacquired.expires_at);
+
+    let fenced = store.renew_committer_lease("owner-a", 1, Duration::from_secs(60));
+    assert!(matches!(
+        fenced,
+        Err(CommitterLeaseError::Fenced {
+            ref owner_id,
+            epoch: 1,
+        }) if owner_id == "owner-a"
+    ));
+
+    assert_eq!(
+        store
+            .read_committer_lease()
+            .expect("acquired lease should read"),
+        Some(renewed)
+    );
+}
+
+pub(crate) fn exercise_concurrent_committer_lease_acquire<S>(store: S)
+where
+    S: CommitterLeaseStore + Clone + Send + Sync + 'static,
+{
+    let barrier = Arc::new(std::sync::Barrier::new(3));
+    let mut handles = Vec::new();
+    for owner_id in ["concurrent-a", "concurrent-b"] {
+        let store = store.clone();
+        let barrier = barrier.clone();
+        handles.push(std::thread::spawn(move || {
+            barrier.wait();
+            store.acquire_committer_lease(owner_id, Duration::from_secs(60))
+        }));
+    }
+    barrier.wait();
+    let results: Vec<_> = handles
+        .into_iter()
+        .map(|handle| handle.join().expect("acquirer thread should not panic"))
+        .collect();
+    assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+    assert_eq!(
+        results
+            .iter()
+            .filter(|result| matches!(result, Err(CommitterLeaseError::Held)))
+            .count(),
+        1
+    );
+    let winner = results
+        .into_iter()
+        .find_map(Result::ok)
+        .expect("one concurrent acquirer should win");
+    assert_eq!(winner.epoch, 1);
+    assert_eq!(
+        store
+            .read_committer_lease()
+            .expect("winning lease should read"),
+        Some(winner)
+    );
+}
 
 pub(crate) use provider_fixtures::{
     implicit_external_provider_fixtures_disabled, require_explicit_external_provider_fixture_envs,

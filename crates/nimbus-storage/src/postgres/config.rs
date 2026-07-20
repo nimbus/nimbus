@@ -272,6 +272,13 @@ pub(super) fn tenant_init_sql(schema_name: &str) -> String {
         CREATE TABLE IF NOT EXISTS {} (\
             key TEXT PRIMARY KEY,\
             value_blob BYTEA NOT NULL\
+        );\
+        CREATE TABLE IF NOT EXISTS {} (\
+            singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),\
+            owner_id TEXT NOT NULL,\
+            epoch BIGINT NOT NULL CHECK (epoch >= 1),\
+            expires_at TIMESTAMPTZ NOT NULL,\
+            durable_sequence BIGINT NOT NULL CHECK (durable_sequence >= 0)\
         );",
         qualified_table(schema_name, "table_catalog"),
         qualified_table(schema_name, "documents"),
@@ -292,6 +299,7 @@ pub(super) fn tenant_init_sql(schema_name: &str) -> String {
         qualified_table(schema_name, "cron_jobs"),
         qualified_table(schema_name, "commit_log"),
         qualified_table(schema_name, "metadata"),
+        qualified_table(schema_name, "committer_lease"),
     )
 }
 

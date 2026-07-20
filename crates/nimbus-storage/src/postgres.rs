@@ -41,6 +41,7 @@ use crate::store::{
 };
 
 mod backend;
+mod committer_lease;
 mod config;
 mod document_versions;
 mod index_versions;

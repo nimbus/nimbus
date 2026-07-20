@@ -7,11 +7,15 @@
 //! capability families they actually support.
 #![allow(async_fn_in_trait)]
 
+mod committer_lease;
 mod core;
 mod kv;
 mod object_metadata;
 mod provider_impls;
 
+pub use committer_lease::{
+    CommitterLease, CommitterLeaseError, CommitterLeaseResult, CommitterLeaseStore,
+};
 pub use core::{
     ControlPlaneUsage, DurableJournal, KeyProviderSurface, MaterializedRebuild, ReadCapabilities,
     ResourcePathScan, ResourcePathSnapshot, SchedulerStore, StorageEngine, TenantLifecycle,

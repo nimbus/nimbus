@@ -232,6 +232,16 @@ pub(super) fn tenant_init_statements(database_name: &str) -> Vec<String> {
             qualified_table(database_name, "metadata")
         ),
         format!(
+            "CREATE TABLE IF NOT EXISTS {} (\
+                singleton BOOLEAN NOT NULL PRIMARY KEY DEFAULT TRUE CHECK (singleton = TRUE),\
+                owner_id VARCHAR(191) NOT NULL,\
+                epoch BIGINT UNSIGNED NOT NULL CHECK (epoch >= 1),\
+                expires_at DATETIME(6) NOT NULL,\
+                durable_sequence BIGINT UNSIGNED NOT NULL\
+            ) ENGINE=InnoDB",
+            qualified_table(database_name, "committer_lease")
+        ),
+        format!(
             "INSERT IGNORE INTO {} (key_name, value_u64) VALUES ('{}', 0)",
             qualified_table(database_name, "metadata"),
             APPLIED_SEQUENCE_KEY
