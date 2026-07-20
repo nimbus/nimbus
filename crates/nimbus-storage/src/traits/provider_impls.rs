@@ -33,10 +33,46 @@ use super::object_metadata::{
     put_multipart_upload_for_store, put_object_manifest_for_store,
 };
 use super::{
-    ControlPlaneUsage, DurableJournal, KeyProviderSurface, MaterializedRebuild, ObjectManifest,
-    ObjectMetaStore, ObjectMultipartUpload, ResourcePathScan, ResourcePathSnapshot, SchedulerStore,
-    StorageEngine, TenantLifecycle, TenantPointRead, TenantPointWrite, TenantRangeScan,
+    CommitterLease, CommitterLeaseResult, CommitterLeaseStore, ControlPlaneUsage, DurableJournal,
+    KeyProviderSurface, MaterializedRebuild, ObjectManifest, ObjectMetaStore,
+    ObjectMultipartUpload, ResourcePathScan, ResourcePathSnapshot, SchedulerStore, StorageEngine,
+    TenantLifecycle, TenantPointRead, TenantPointWrite, TenantRangeScan,
 };
+
+macro_rules! impl_committer_lease_store {
+    ($($ty:ty),+ $(,)?) => {
+        $(
+            impl CommitterLeaseStore for $ty {
+                fn read_committer_lease(&self) -> Result<Option<CommitterLease>> {
+                    <$ty>::read_committer_lease(self)
+                }
+
+                fn acquire_committer_lease(
+                    &self,
+                    owner_id: &str,
+                    lease_duration: std::time::Duration,
+                ) -> CommitterLeaseResult<CommitterLease> {
+                    <$ty>::acquire_committer_lease(self, owner_id, lease_duration)
+                }
+
+                fn renew_committer_lease(
+                    &self,
+                    owner_id: &str,
+                    epoch: u64,
+                    lease_duration: std::time::Duration,
+                ) -> CommitterLeaseResult<CommitterLease> {
+                    <$ty>::renew_committer_lease(self, owner_id, epoch, lease_duration)
+                }
+            }
+        )+
+    };
+}
+
+impl_committer_lease_store!(
+    PostgresTenantStore,
+    MySqlTenantStore,
+    LibsqlReplicaTenantStore
+);
 
 impl TenantLifecycle for EmbeddedRedbProvider {
     type OpenedTenant = OpenedEmbeddedRedbTenant;
