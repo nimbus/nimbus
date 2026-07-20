@@ -206,6 +206,7 @@ fn apply_set_table_schema(
     commit_faults: &CommitFaultClient,
 ) -> Result<()> {
     let _operation = runtime.enter_operation(tenant_id)?;
+    runtime.ensure_committer_lease_for_assignment()?;
     let previous_durable_head = runtime.durable_head();
     let table = table_schema.table.clone();
     let mut table_schema = table_schema;
@@ -226,7 +227,7 @@ fn apply_set_table_schema(
             .begin_policy_revision_mismatches(&table, &next_policy_revision)
     });
 
-    if let Err(error) = runtime.store().replace_table_schema(&table_schema) {
+    if let Err(error) = runtime.persist_table_schema(previous_durable_head, &table_schema) {
         if let Some(pending) = pending_policy_termination {
             runtime
                 .subscription_registry()
@@ -271,6 +272,7 @@ fn apply_delete_table_schema(
     commit_faults: &CommitFaultClient,
 ) -> Result<()> {
     let _operation = runtime.enter_operation(tenant_id)?;
+    runtime.ensure_committer_lease_for_assignment()?;
     let previous_durable_head = runtime.durable_head();
     let previous_schema = runtime.schema();
     let previous_policy_revision = previous_schema
@@ -287,7 +289,7 @@ fn apply_delete_table_schema(
             .begin_policy_revision_mismatches(table, &removed_policy_revision)
     });
 
-    if let Err(error) = runtime.store().delete_table_schema(table) {
+    if let Err(error) = runtime.persist_table_schema_deletion(previous_durable_head, table) {
         if let Some(pending) = pending_policy_termination {
             runtime
                 .subscription_registry()

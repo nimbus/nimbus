@@ -132,6 +132,38 @@ impl TenantRuntime {
         ))
     }
 
+    pub(crate) fn persist_table_schema(
+        &self,
+        expected_previous: nimbus_core::SequenceNumber,
+        table_schema: &nimbus_core::TableSchema,
+    ) -> Result<()> {
+        let Some((owner_id, epoch)) = self.held_committer_lease()? else {
+            return self.store.replace_table_schema(table_schema);
+        };
+        self.map_fenced_write_result(self.store.fenced_replace_table_schema(
+            &owner_id,
+            epoch,
+            expected_previous,
+            table_schema,
+        ))
+    }
+
+    pub(crate) fn persist_table_schema_deletion(
+        &self,
+        expected_previous: nimbus_core::SequenceNumber,
+        table: &nimbus_core::TableName,
+    ) -> Result<()> {
+        let Some((owner_id, epoch)) = self.held_committer_lease()? else {
+            return self.store.delete_table_schema(table);
+        };
+        self.map_fenced_write_result(self.store.fenced_delete_table_schema(
+            &owner_id,
+            epoch,
+            expected_previous,
+            table,
+        ))
+    }
+
     fn map_fenced_write_result<T>(
         &self,
         result: nimbus_storage::CommitterLeaseResult<T>,

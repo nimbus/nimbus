@@ -121,4 +121,50 @@ impl TenantPersistence {
             Self::Memory(_) => Err(CommitterLeaseError::Unsupported),
         }
     }
+
+    pub(crate) fn fenced_replace_table_schema(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        expected_previous: nimbus_core::SequenceNumber,
+        table_schema: &nimbus_core::TableSchema,
+    ) -> CommitterLeaseResult<()> {
+        match self {
+            Self::Postgres(store) => {
+                store.fenced_replace_table_schema(owner_id, epoch, expected_previous, table_schema)
+            }
+            Self::LibsqlReplica(store) => {
+                store.fenced_replace_table_schema(owner_id, epoch, expected_previous, table_schema)
+            }
+            Self::MySql(store) => {
+                store.fenced_replace_table_schema(owner_id, epoch, expected_previous, table_schema)
+            }
+            Self::Redb(_) | Self::Sqlite(_) => Err(CommitterLeaseError::Unsupported),
+            #[cfg(any(test, feature = "test-hooks"))]
+            Self::Memory(_) => Err(CommitterLeaseError::Unsupported),
+        }
+    }
+
+    pub(crate) fn fenced_delete_table_schema(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        expected_previous: nimbus_core::SequenceNumber,
+        table: &nimbus_core::TableName,
+    ) -> CommitterLeaseResult<()> {
+        match self {
+            Self::Postgres(store) => {
+                store.fenced_delete_table_schema(owner_id, epoch, expected_previous, table)
+            }
+            Self::LibsqlReplica(store) => {
+                store.fenced_delete_table_schema(owner_id, epoch, expected_previous, table)
+            }
+            Self::MySql(store) => {
+                store.fenced_delete_table_schema(owner_id, epoch, expected_previous, table)
+            }
+            Self::Redb(_) | Self::Sqlite(_) => Err(CommitterLeaseError::Unsupported),
+            #[cfg(any(test, feature = "test-hooks"))]
+            Self::Memory(_) => Err(CommitterLeaseError::Unsupported),
+        }
+    }
 }

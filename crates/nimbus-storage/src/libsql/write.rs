@@ -169,10 +169,66 @@ impl LibsqlReplicaTenantStore {
         Ok(())
     }
 
+    pub fn fenced_replace_table_schema(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        expected_previous: SequenceNumber,
+        table_schema: &TableSchema,
+    ) -> CommitterLeaseResult<()> {
+        let owner_id = owner_id.to_string();
+        let fenced_owner_id = owner_id.clone();
+        let table_schema = table_schema.clone();
+        let durable_sequence = SequenceNumber(expected_previous.0.saturating_add(1));
+        let result = self.execute_write(move |transaction| {
+            if transaction.advance_fenced_committer_lease(
+                &owner_id,
+                epoch,
+                expected_previous,
+                durable_sequence,
+            )? != 1
+            {
+                return Err(Error::PreconditionFailed(
+                    FENCED_COMMITTER_LEASE_MARKER.to_string(),
+                ));
+            }
+            transaction.replace_table_schema(&table_schema)
+        });
+        map_fenced_write_result(result.map(|_| ()), fenced_owner_id, epoch)
+    }
+
     pub fn delete_table_schema(&self, table: &TableName) -> Result<()> {
         let table = table.clone();
         self.execute_write(move |transaction| transaction.delete_table_schema(&table))?;
         Ok(())
+    }
+
+    pub fn fenced_delete_table_schema(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        expected_previous: SequenceNumber,
+        table: &TableName,
+    ) -> CommitterLeaseResult<()> {
+        let owner_id = owner_id.to_string();
+        let fenced_owner_id = owner_id.clone();
+        let table = table.clone();
+        let durable_sequence = SequenceNumber(expected_previous.0.saturating_add(1));
+        let result = self.execute_write(move |transaction| {
+            if transaction.advance_fenced_committer_lease(
+                &owner_id,
+                epoch,
+                expected_previous,
+                durable_sequence,
+            )? != 1
+            {
+                return Err(Error::PreconditionFailed(
+                    FENCED_COMMITTER_LEASE_MARKER.to_string(),
+                ));
+            }
+            transaction.delete_table_schema(&table)
+        });
+        map_fenced_write_result(result.map(|_| ()), fenced_owner_id, epoch)
     }
 
     pub fn append_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
@@ -655,6 +711,20 @@ impl LibsqlReplicaTenantStore {
         Check: Fn() -> Result<()> + Send + 'static,
     {
         LibsqlReplicaWriteTransaction::begin(self.clone(), check_cancel)
+    }
+}
+
+fn map_fenced_write_result<T>(
+    result: Result<T>,
+    owner_id: String,
+    epoch: u64,
+) -> CommitterLeaseResult<T> {
+    match result {
+        Ok(value) => Ok(value),
+        Err(Error::PreconditionFailed(message)) if message == FENCED_COMMITTER_LEASE_MARKER => {
+            Err(CommitterLeaseError::Fenced { owner_id, epoch })
+        }
+        Err(error) => Err(error.into()),
     }
 }
 
