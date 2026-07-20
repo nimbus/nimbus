@@ -5,6 +5,7 @@ use super::index_versions::{
     prune_index_versions_before_remote, record_index_versions_for_events_remote,
 };
 use super::*;
+use crate::{CommitterLeaseError, CommitterLeaseResult};
 
 impl LibsqlReplicaTenantStore {
     pub fn apply_prepared_write_batch(
@@ -133,6 +134,37 @@ impl LibsqlReplicaTenantStore {
         let records = records.to_vec();
         let applied_head =
             self.block_on(self.apply_remote_durable_records_batch(records.as_slice()))?;
+        self.note_required_cache_sequence_with_cause(
+            applied_head,
+            LibsqlReplicaRefreshCause::DurableJournalReplay,
+        );
+        Ok(())
+    }
+
+    pub fn fenced_append_and_apply_durable_records_batch(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        expected_previous: SequenceNumber,
+        records: &[TenantEventRecord],
+    ) -> CommitterLeaseResult<()> {
+        let fenced_owner_id = owner_id.to_string();
+        let result = self.block_on(self.fenced_append_and_apply_remote_durable_records_batch(
+            owner_id,
+            epoch,
+            expected_previous,
+            records,
+        ));
+        let applied_head = match result {
+            Ok(applied_head) => applied_head,
+            Err(Error::PreconditionFailed(message)) if message == FENCED_COMMITTER_LEASE_MARKER => {
+                return Err(CommitterLeaseError::Fenced {
+                    owner_id: fenced_owner_id,
+                    epoch,
+                });
+            }
+            Err(error) => return Err(error.into()),
+        };
         self.note_required_cache_sequence_with_cause(
             applied_head,
             LibsqlReplicaRefreshCause::DurableJournalReplay,

@@ -8,6 +8,9 @@ use super::write_schema_events::{
     durable_record_changes_schema_cache, record_postgres_schema_set_events,
 };
 use super::*;
+use crate::{CommitterLeaseError, CommitterLeaseResult};
+
+const FENCED_COMMITTER_LEASE_MARKER: &str = "fenced committer lease during durable apply";
 
 impl PostgresTenantStore {
     pub fn apply_prepared_write_batch(
@@ -184,6 +187,57 @@ impl PostgresTenantStore {
         let records = records.to_vec();
         self.execute_write(move |transaction| transaction.apply_durable_records_batch(&records))?;
         Ok(())
+    }
+
+    pub fn fenced_append_and_apply_durable_records_batch(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        expected_previous: SequenceNumber,
+        records: &[TenantEventRecord],
+    ) -> CommitterLeaseResult<()> {
+        if records.is_empty() {
+            return Err(Error::InvalidInput(
+                "fenced durable apply requires at least one record".to_string(),
+            )
+            .into());
+        }
+        let owner_id = owner_id.to_string();
+        let fenced_owner_id = owner_id.clone();
+        let records = records.to_vec();
+        let result = self.execute_write(move |transaction| {
+            let durable_sequence = records
+                .last()
+                .expect("non-empty fenced durable apply batch")
+                .sequence;
+            if transaction.advance_fenced_committer_lease(
+                &owner_id,
+                epoch,
+                expected_previous,
+                durable_sequence,
+            )? != 1
+            {
+                return Err(Error::PreconditionFailed(
+                    FENCED_COMMITTER_LEASE_MARKER.to_string(),
+                ));
+            }
+            crate::commit_log::ensure_applied_prefix_precedes(
+                transaction.applied_sequence()?,
+                records[0].sequence,
+            )?;
+            transaction.append_durable_records_batch(&records)?;
+            transaction.apply_durable_records_batch(&records)
+        });
+        match result {
+            Ok(_) => Ok(()),
+            Err(Error::PreconditionFailed(message)) if message == FENCED_COMMITTER_LEASE_MARKER => {
+                Err(CommitterLeaseError::Fenced {
+                    owner_id: fenced_owner_id,
+                    epoch,
+                })
+            }
+            Err(error) => Err(error.into()),
+        }
     }
 
     pub fn insert_scheduled_job(&self, job: &ScheduledJob) -> Result<()> {
@@ -558,6 +612,37 @@ impl PostgresTenantStore {
 }
 
 impl PostgresWriteTransaction {
+    fn advance_fenced_committer_lease(
+        &mut self,
+        owner_id: &str,
+        epoch: u64,
+        expected_previous: SequenceNumber,
+        durable_sequence: SequenceNumber,
+    ) -> Result<u64> {
+        let epoch = i64::try_from(epoch)
+            .map_err(|_| Error::InvalidInput("lease epoch exceeds BIGINT".to_string()))?;
+        let expected_previous = i64_from_sequence(expected_previous)?;
+        let durable_sequence = i64_from_sequence(durable_sequence)?;
+        let query = format!(
+            "UPDATE {} SET durable_sequence = $4::BIGINT \
+             WHERE singleton = TRUE AND owner_id = $1::TEXT AND epoch = $2::BIGINT \
+                   AND expires_at > CURRENT_TIMESTAMP \
+                   AND durable_sequence = $3::BIGINT",
+            qualified_table(&self.schema_name, "committer_lease")
+        );
+        let owner_id = owner_id.to_string();
+        let client = self.session()?;
+        self.block_on(async move {
+            client
+                .execute(
+                    query.as_str(),
+                    &[&owner_id, &epoch, &expected_previous, &durable_sequence],
+                )
+                .await
+                .map_err(map_postgres_error)
+        })
+    }
+
     pub(super) fn begin<Check>(store: PostgresTenantStore, check_cancel: Check) -> Result<Self>
     where
         Check: Fn() -> Result<()> + Send + 'static,

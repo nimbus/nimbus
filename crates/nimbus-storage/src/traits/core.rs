@@ -16,6 +16,7 @@ use crate::store::{
     PointInTimeRestoreTarget,
 };
 
+use super::CommitterLeaseResult;
 use super::object_metadata::ObjectMetaStore;
 
 pub trait TenantLifecycle {
@@ -151,6 +152,20 @@ pub trait DurableJournal {
     fn append_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()>;
     /// Appends and applies records to the durable journal in one step.
     fn apply_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()>;
+    /// Atomically fences a provider committer lease, appends and applies a
+    /// contiguous record batch, and advances the lease's durable sequence.
+    ///
+    /// Embedded stores do not use provider committer leases and fail closed.
+    fn fenced_append_and_apply_durable_records_batch(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        expected_previous: SequenceNumber,
+        records: &[TenantEventRecord],
+    ) -> CommitterLeaseResult<()> {
+        let _ = (owner_id, epoch, expected_previous, records);
+        Err(super::CommitterLeaseError::Unsupported)
+    }
     fn export_point_in_time_restore_archive(
         &self,
         target: PointInTimeRestoreTarget,

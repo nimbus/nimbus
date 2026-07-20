@@ -18,15 +18,15 @@ pub(crate) use tokio::time::{Duration, timeout};
 
 pub(crate) use crate::keys::{document_key, prefix_end, table_prefix};
 pub(crate) use crate::{
-    CommitterLeaseError, CommitterLeaseStore, DeterministicHarness, FaultInjector, FaultOccurrence,
-    FaultPoint, GeneratedTaskHistory, GeneratedTaskHistorySeedCase, GeneratedTaskRecord,
-    HardDeleteDecision, LibsqlReplicaProvider, LibsqlReplicaProviderConfig, ManualClock,
-    MemoryTenantStore, MySqlProvider, MySqlProviderConfig, PostgresProvider,
+    CommitterLeaseError, CommitterLeaseStore, DeterministicHarness, DurableJournal, FaultInjector,
+    FaultOccurrence, FaultPoint, GeneratedTaskHistory, GeneratedTaskHistorySeedCase,
+    GeneratedTaskRecord, HardDeleteDecision, LibsqlReplicaProvider, LibsqlReplicaProviderConfig,
+    ManualClock, MemoryTenantStore, MySqlProvider, MySqlProviderConfig, PostgresProvider,
     PostgresProviderConfig, RedbTenantStorage, RestartBoundary, RetentionFloor,
     RetentionParticipant, ScriptedRestartSchedule, SeededFaultInjector, ShadowMaterializer,
     ShadowMaterializerConfig, ShadowMaterializerManifest, SqliteTenantStorage, SqliteTenantStore,
-    TenantReadStorage, TenantStore, TenantWriteOutcome, TenantWriteStorage, UsageStore,
-    VerificationHarnessMode, replay_generated_task_history,
+    TenantPointRead, TenantReadStorage, TenantStore, TenantWriteOutcome, TenantWriteStorage,
+    UsageStore, VerificationHarnessMode, replay_generated_task_history,
     selected_generated_task_history_seed_corpus,
 };
 
@@ -141,6 +141,204 @@ where
             .read_committer_lease()
             .expect("winning lease should read"),
         Some(winner)
+    );
+}
+
+fn fenced_insert_record(sequence: u64, document: &Document) -> TenantEventRecord {
+    TenantEventRecord::new(
+        SequenceNumber(sequence),
+        Timestamp(sequence.saturating_mul(100)),
+        vec![WriteOp {
+            table: document.table.clone(),
+            table_id: TableId::new(),
+            op_type: WriteOpType::Insert,
+            doc_id: document.id.clone(),
+            resource_path_binding: None,
+            trigger_write_origin: None,
+            previous: None,
+            current: Some(document.clone()),
+        }],
+        None,
+    )
+    .expect("fenced insert record should build")
+}
+
+fn assert_fenced(result: crate::CommitterLeaseResult<()>, owner_id: &str, epoch: u64) {
+    assert!(matches!(
+        result,
+        Err(CommitterLeaseError::Fenced {
+            owner_id: ref fenced_owner,
+            epoch: fenced_epoch,
+        }) if fenced_owner == owner_id && fenced_epoch == epoch
+    ));
+}
+
+pub(crate) fn exercise_fenced_durable_apply_happy_path<S>(store: &S, table_name: &str)
+where
+    S: CommitterLeaseStore + DurableJournal + TenantPointRead,
+{
+    let lease = store
+        .acquire_committer_lease("holder", Duration::from_secs(60))
+        .expect("lease should be acquired");
+    let document = sample_document(table_name, "committed");
+    let record = fenced_insert_record(1, &document);
+    store
+        .fenced_append_and_apply_durable_records_batch(
+            "holder",
+            lease.epoch,
+            SequenceNumber(0),
+            &[record],
+        )
+        .expect("current lease holder should publish");
+
+    assert_eq!(
+        store
+            .get(&document.table, &document.id)
+            .expect("document should read"),
+        Some(document)
+    );
+    assert_eq!(store.latest_sequence().unwrap(), SequenceNumber(1));
+    assert_eq!(store.applied_sequence().unwrap(), SequenceNumber(1));
+    assert_eq!(
+        store
+            .read_committer_lease()
+            .unwrap()
+            .unwrap()
+            .durable_sequence,
+        SequenceNumber(1)
+    );
+}
+
+pub(crate) fn exercise_fenced_durable_apply_total_rollback<S>(store: &S, table_name: &str)
+where
+    S: CommitterLeaseStore + DurableJournal + TenantPointRead,
+{
+    let lease = store
+        .acquire_committer_lease("holder", Duration::from_secs(60))
+        .expect("lease should be acquired");
+    let document = sample_document(table_name, "must-not-land");
+    let stale_epoch = lease.epoch.saturating_sub(1);
+    assert_fenced(
+        store.fenced_append_and_apply_durable_records_batch(
+            "holder",
+            stale_epoch,
+            SequenceNumber(0),
+            &[fenced_insert_record(1, &document)],
+        ),
+        "holder",
+        stale_epoch,
+    );
+
+    assert!(
+        store
+            .read_durable_journal_from(SequenceNumber(1))
+            .unwrap()
+            .is_empty(),
+        "fenced transaction must not leave an appended record"
+    );
+    assert_eq!(store.get(&document.table, &document.id).unwrap(), None);
+    assert_eq!(store.latest_sequence().unwrap(), SequenceNumber(0));
+    assert_eq!(store.applied_sequence().unwrap(), SequenceNumber(0));
+    let persisted = store.read_committer_lease().unwrap().unwrap();
+    assert_eq!(persisted.epoch, lease.epoch);
+    assert_eq!(persisted.durable_sequence, SequenceNumber(0));
+}
+
+pub(crate) fn exercise_fenced_durable_apply_expired<S>(store: &S, table_name: &str)
+where
+    S: CommitterLeaseStore + DurableJournal + TenantPointRead,
+{
+    let lease = store
+        .acquire_committer_lease("expired-holder", Duration::ZERO)
+        .expect("zero-duration lease should be acquired");
+    let document = sample_document(table_name, "expired");
+    assert_fenced(
+        store.fenced_append_and_apply_durable_records_batch(
+            "expired-holder",
+            lease.epoch,
+            SequenceNumber(0),
+            &[fenced_insert_record(1, &document)],
+        ),
+        "expired-holder",
+        lease.epoch,
+    );
+    assert!(
+        store
+            .read_durable_journal_from(SequenceNumber(1))
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(store.get(&document.table, &document.id).unwrap(), None);
+}
+
+pub(crate) fn exercise_fenced_durable_apply_sequence_gap<S>(store: &S, table_name: &str)
+where
+    S: CommitterLeaseStore + DurableJournal + TenantPointRead,
+{
+    let lease = store
+        .acquire_committer_lease("holder", Duration::from_secs(60))
+        .expect("lease should be acquired");
+    let document = sample_document(table_name, "gap");
+    assert_fenced(
+        store.fenced_append_and_apply_durable_records_batch(
+            "holder",
+            lease.epoch,
+            SequenceNumber(1),
+            &[fenced_insert_record(1, &document)],
+        ),
+        "holder",
+        lease.epoch,
+    );
+    assert!(
+        store
+            .read_durable_journal_from(SequenceNumber(1))
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(store.get(&document.table, &document.id).unwrap(), None);
+}
+
+pub(crate) fn exercise_fenced_durable_apply_prefix_guard<S>(store: &S, table_name: &str)
+where
+    S: CommitterLeaseStore + DurableJournal + TenantPointRead,
+{
+    let lease = store
+        .acquire_committer_lease("holder", Duration::from_secs(60))
+        .expect("lease should be acquired");
+    let predecessor = sample_document(table_name, "unapplied-predecessor");
+    store
+        .append_durable_records_batch(&[fenced_insert_record(1, &predecessor)])
+        .expect("predecessor should append without applying");
+    let refused = sample_document(table_name, "must-not-pass-prefix");
+    let result = store.fenced_append_and_apply_durable_records_batch(
+        "holder",
+        lease.epoch,
+        SequenceNumber(0),
+        &[fenced_insert_record(2, &refused)],
+    );
+    assert!(matches!(
+        result,
+        Err(CommitterLeaseError::Storage(Error::Internal(ref message)))
+            if message.contains("required contiguous predecessor 1")
+    ));
+
+    let records = store.read_durable_journal_from(SequenceNumber(1)).unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].sequence, SequenceNumber(1));
+    assert_eq!(store.applied_sequence().unwrap(), SequenceNumber(0));
+    assert_eq!(
+        store.get(&predecessor.table, &predecessor.id).unwrap(),
+        None
+    );
+    assert_eq!(store.get(&refused.table, &refused.id).unwrap(), None);
+    assert_eq!(
+        store
+            .read_committer_lease()
+            .unwrap()
+            .unwrap()
+            .durable_sequence,
+        SequenceNumber(0),
+        "failed prefix check must roll the earlier lease update back"
     );
 }
 
