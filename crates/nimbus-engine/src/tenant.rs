@@ -208,12 +208,15 @@ impl TenantRuntime {
         tenant_id: TenantId,
         store: TenantPersistence,
         read_storage: TenantPersistenceExecutor,
-        schema: Schema,
-        progress: nimbus_storage::JournalProgress,
-        last_commit_timestamp: Timestamp,
+        initial_state: TenantRuntimeInitialState,
         clock: Arc<dyn Clock>,
         committer_owner_id: Option<String>,
     ) -> Self {
+        let TenantRuntimeInitialState {
+            schema,
+            progress,
+            last_commit_timestamp,
+        } = initial_state;
         let publisher_pipeline_capable = store.has_process_local_sequence_authority();
         let committer = Arc::new(CommitterActor::new(tenant_id.clone()));
         let publisher = Arc::new(PublisherHandoff::new(
@@ -271,9 +274,7 @@ impl TenantRuntime {
             tenant_id,
             store,
             read_storage,
-            initial_state.schema,
-            initial_state.progress,
-            initial_state.last_commit_timestamp,
+            initial_state,
             clock,
             committer_owner_id,
         )
@@ -337,9 +338,11 @@ impl TenantRuntime {
             tenant_id,
             store,
             read_storage,
-            schema,
-            progress,
-            last_commit_timestamp,
+            TenantRuntimeInitialState {
+                schema,
+                progress,
+                last_commit_timestamp,
+            },
             clock,
             committer_owner_id,
         ))

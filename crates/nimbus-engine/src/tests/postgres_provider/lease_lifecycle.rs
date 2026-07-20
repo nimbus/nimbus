@@ -6,21 +6,16 @@ use nimbus_storage::{ManualClock, NoopFaultInjector};
 use super::support::*;
 use crate::commit_fault_labels as labels;
 
-fn provider_engine(
-    config: EnginePersistenceConfig,
-    clock: Arc<ManualClock>,
-) -> impl std::future::Future<Output = Arc<Engine>> {
-    async move {
-        Arc::new(
-            Engine::new_with_simulation_and_persistence_config(
-                config,
-                clock,
-                Arc::new(NoopFaultInjector),
-            )
-            .await
-            .expect("postgres-backed engine should create"),
+async fn provider_engine(config: EnginePersistenceConfig, clock: Arc<ManualClock>) -> Arc<Engine> {
+    Arc::new(
+        Engine::new_with_simulation_and_persistence_config(
+            config,
+            clock,
+            Arc::new(NoopFaultInjector),
         )
-    }
+        .await
+        .expect("postgres-backed engine should create"),
+    )
 }
 
 #[tokio::test(flavor = "multi_thread")]
