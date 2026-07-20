@@ -102,6 +102,24 @@ impl FencedDurableApply for PostgresTenantStore {
     }
 }
 
+impl FencedDurableApply for LibsqlReplicaTenantStore {
+    fn fenced_append_and_apply_durable_records_batch(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        expected_previous: SequenceNumber,
+        records: &[TenantEventRecord],
+    ) -> CommitterLeaseResult<()> {
+        LibsqlReplicaTenantStore::fenced_append_and_apply_durable_records_batch(
+            self,
+            owner_id,
+            epoch,
+            expected_previous,
+            records,
+        )
+    }
+}
+
 macro_rules! impl_unsupported_fenced_durable_apply {
     ($($ty:ty),+ $(,)?) => {
         $(
@@ -124,7 +142,6 @@ impl_unsupported_fenced_durable_apply!(
     TenantStore,
     SqliteTenantStore,
     MySqlTenantStore,
-    LibsqlReplicaTenantStore,
     MemoryTenantStore,
 );
 

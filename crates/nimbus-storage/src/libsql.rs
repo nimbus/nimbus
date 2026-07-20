@@ -55,6 +55,8 @@ use crate::store::{
     ResolvedWrite, TRIGGER_DELIVERY_CURSOR_KEY, TenantWriteCommit,
 };
 
+const FENCED_COMMITTER_LEASE_MARKER: &str = "fenced committer lease during durable apply";
+
 mod backend;
 mod committer_lease;
 mod document_versions;
@@ -930,6 +932,111 @@ impl LibsqlReplicaTenantStore {
         }
         tx.commit().await.map_err(map_libsql_error)?;
         Ok(applied_head)
+    }
+
+    async fn fenced_append_and_apply_remote_durable_records_batch(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        expected_previous: SequenceNumber,
+        records: &[TenantEventRecord],
+    ) -> Result<SequenceNumber> {
+        if records.is_empty() {
+            return Err(Error::InvalidInput(
+                "fenced durable apply requires at least one record".to_string(),
+            ));
+        }
+        let epoch_i64 = i64::try_from(epoch)
+            .map_err(|_| Error::InvalidInput("lease epoch exceeds INTEGER".to_string()))?;
+        let expected_previous_i64 = i64_from_u64(expected_previous.0)?;
+        let durable_sequence = records
+            .last()
+            .expect("non-empty fenced durable apply batch")
+            .sequence;
+        let durable_sequence_i64 = i64_from_u64(durable_sequence.0)?;
+        let conn = self.remote_connection()?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .await
+            .map_err(map_libsql_error)?;
+        let result: Result<SequenceNumber> = async {
+            let changed = tx
+                .execute(
+                    "UPDATE committer_lease
+                     SET durable_sequence = ?4
+                     WHERE singleton = 1 AND owner_id = ?1 AND epoch = ?2
+                           AND expires_at >
+                               CAST(unixepoch('subsec') * 1000 AS INTEGER)
+                           AND durable_sequence = ?3",
+                    libsql::params![
+                        owner_id,
+                        epoch_i64,
+                        expected_previous_i64,
+                        durable_sequence_i64
+                    ],
+                )
+                .await
+                .map_err(map_libsql_error)?;
+            if changed != 1 {
+                return Err(Error::PreconditionFailed(
+                    FENCED_COMMITTER_LEASE_MARKER.to_string(),
+                ));
+            }
+
+            let applied_head = load_remote_metadata_u64(&tx, APPLIED_SEQUENCE_KEY)
+                .await?
+                .map(SequenceNumber)
+                .unwrap_or(SequenceNumber(0));
+            crate::commit_log::ensure_applied_prefix_precedes(applied_head, records[0].sequence)?;
+
+            let mut next = load_next_sequence_from_session(&tx).await?;
+            for record in records {
+                if record.sequence.0 != next {
+                    return Err(Error::Internal(format!(
+                        "durable journal append expected sequence {}, got {}",
+                        next, record.sequence.0
+                    )));
+                }
+                tx.execute(
+                    "INSERT INTO commit_log (sequence, record_blob) VALUES (?1, ?2)",
+                    libsql::params![
+                        i64_from_u64(record.sequence.0)?,
+                        serialize_tenant_event_record(record)?
+                    ],
+                )
+                .await
+                .map_err(map_libsql_error)?;
+                next = next.saturating_add(1);
+            }
+            put_remote_metadata_u64(&tx, NEXT_SEQUENCE_KEY, next).await?;
+
+            let mut applied = applied_head;
+            for record in records {
+                if record.sequence.0 != applied.0.saturating_add(1) {
+                    return Err(Error::Internal(format!(
+                        "durable journal apply expected sequence {}, got {}",
+                        applied.0.saturating_add(1),
+                        record.sequence.0
+                    )));
+                }
+                apply_durable_record_in_remote_conn(&tx, record).await?;
+                applied = record.sequence;
+            }
+            put_remote_metadata_u64(&tx, APPLIED_SEQUENCE_KEY, applied.0).await?;
+            Ok(applied)
+        }
+        .await;
+
+        match result {
+            Ok(applied) => {
+                tx.commit().await.map_err(map_libsql_error)?;
+                Ok(applied)
+            }
+            Err(error) => {
+                let _ = tx.rollback().await;
+                Err(error)
+            }
+        }
     }
 }
 
