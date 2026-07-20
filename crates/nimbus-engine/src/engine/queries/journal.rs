@@ -232,9 +232,22 @@ impl Engine {
     ) -> Result<()> {
         let runtime = self.get_existing_tenant(tenant_id)?;
         let _operation = runtime.enter_operation(tenant_id)?;
-        runtime
-            .store
-            .import_point_in_time_restore_archive(archive)?;
+        if runtime.store.has_process_local_sequence_authority() {
+            runtime
+                .store
+                .import_point_in_time_restore_archive(archive)?;
+            return Ok(());
+        }
+        let runtime_for_commit = runtime.clone();
+        let archive = archive.clone();
+        runtime.submit_internal_committer(move || {
+            runtime_for_commit.ensure_committer_lease_for_assignment()?;
+            let expected_previous = runtime_for_commit.durable_head();
+            let progress = runtime_for_commit
+                .persist_point_in_time_restore_archive(expected_previous, &archive)?;
+            runtime_for_commit.publish_mutation_journal_progress_in_actor(progress);
+            Ok(())
+        })?;
         Ok(())
     }
 

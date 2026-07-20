@@ -206,6 +206,9 @@ pub enum Error {
     #[error("committer full: {message}")]
     CommitterFull { message: String, capacity: usize },
 
+    #[error("committer lease fenced: owner {owner_id} at epoch {epoch}")]
+    CommitterFenced { owner_id: String, epoch: u64 },
+
     #[error("rejected before execution: {message}")]
     RejectedBeforeExecution { message: String },
 
@@ -397,6 +400,7 @@ impl Error {
             | Self::Conflict { .. }
             | Self::Overloaded { .. }
             | Self::CommitterFull { .. }
+            | Self::CommitterFenced { .. }
             | Self::RejectedBeforeExecution { .. }
             | Self::RateLimited { .. }
             | Self::OutOfRetention { .. }
@@ -442,6 +446,7 @@ impl Error {
                 | Self::ResourceExhausted(_)
                 | Self::Overloaded { .. }
                 | Self::CommitterFull { .. }
+                | Self::CommitterFenced { .. }
                 | Self::RejectedBeforeExecution { .. }
                 | Self::RateLimited { .. }
                 | Self::OutOfRetention { .. }

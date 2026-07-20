@@ -10,7 +10,8 @@ use super::write_schema_events::{
 use super::*;
 use crate::{CommitterLeaseError, CommitterLeaseResult};
 
-const FENCED_COMMITTER_LEASE_MARKER: &str = "fenced committer lease during durable apply";
+pub(super) const FENCED_COMMITTER_LEASE_MARKER: &str =
+    "fenced committer lease during durable apply";
 
 impl PostgresTenantStore {
     pub fn apply_prepared_write_batch(
@@ -37,6 +38,58 @@ impl PostgresTenantStore {
             Ok(true)
         })?;
         Ok(committed.value.then_some(committed.commit).flatten())
+    }
+
+    pub fn fenced_apply_prepared_write_batch(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        expected_previous: SequenceNumber,
+        record: &TenantEventRecord,
+        schedule_ops: &[ResolvedScheduleOp],
+        scheduled_execution_id: Option<&str>,
+    ) -> CommitterLeaseResult<Option<CommitEntry>> {
+        if record.writes.is_empty() {
+            return Err(Error::Internal(
+                "prepared write batch must contain at least one document write".to_string(),
+            )
+            .into());
+        }
+        let owner_id = owner_id.to_string();
+        let fenced_owner_id = owner_id.clone();
+        let record = record.clone();
+        let schedule_ops = schedule_ops.to_vec();
+        let scheduled_execution_id = scheduled_execution_id.map(str::to_string);
+        let result = self.execute_write(move |transaction| {
+            if !transaction.begin_scheduled_execution(scheduled_execution_id.as_deref())? {
+                return Ok(false);
+            }
+            if transaction.advance_fenced_committer_lease(
+                &owner_id,
+                epoch,
+                expected_previous,
+                record.sequence,
+            )? != 1
+            {
+                return Err(Error::PreconditionFailed(
+                    FENCED_COMMITTER_LEASE_MARKER.to_string(),
+                ));
+            }
+            transaction.apply_durable_record(&record)?;
+            apply_schedule_ops_in_transaction(transaction, &schedule_ops)?;
+            transaction.set_prepared_record(record);
+            Ok(true)
+        });
+        match result {
+            Ok(committed) => Ok(committed.value.then_some(committed.commit).flatten()),
+            Err(Error::PreconditionFailed(message)) if message == FENCED_COMMITTER_LEASE_MARKER => {
+                Err(CommitterLeaseError::Fenced {
+                    owner_id: fenced_owner_id,
+                    epoch,
+                })
+            }
+            Err(error) => Err(error.into()),
+        }
     }
 
     pub fn retention_gc_watermarks(
@@ -106,6 +159,44 @@ impl PostgresTenantStore {
         Ok(progress)
     }
 
+    pub fn fenced_import_point_in_time_restore_archive(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        expected_previous: SequenceNumber,
+        archive: &PointInTimeRestoreArchive,
+    ) -> CommitterLeaseResult<JournalProgress> {
+        crate::store::validate_point_in_time_archive_for_journal_replay_import(archive)?;
+        let current = self.export_materialized_journal_snapshot()?;
+        crate::store::validate_materialized_journal_replay_base_is_empty(&current)?;
+        if archive.journal_tail.is_empty() {
+            return self
+                .import_point_in_time_restore_archive(archive)
+                .map_err(Into::into);
+        }
+        self.fenced_append_and_apply_durable_records_batch(
+            owner_id,
+            epoch,
+            expected_previous,
+            &archive.journal_tail,
+        )?;
+        let progress = self.journal_progress()?;
+        let restored_fingerprint = self
+            .export_materialized_journal_snapshot()?
+            .canonical_fingerprint()?;
+        if restored_fingerprint != archive.target_fingerprint {
+            return Err(Error::storage(
+                nimbus_core::StorageErrorKind::Corruption,
+                format!(
+                    "point-in-time restore fingerprint mismatch: restored {} expected {}",
+                    restored_fingerprint, archive.target_fingerprint
+                ),
+            )
+            .into());
+        }
+        Ok(progress)
+    }
+
     pub fn execute_write<T, F>(&self, task: F) -> Result<TenantWriteCommit<T>>
     where
         T: Send + 'static,
@@ -171,10 +262,66 @@ impl PostgresTenantStore {
         Ok(())
     }
 
+    pub fn fenced_replace_table_schema(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        expected_previous: SequenceNumber,
+        table_schema: &TableSchema,
+    ) -> CommitterLeaseResult<()> {
+        let owner_id = owner_id.to_string();
+        let fenced_owner_id = owner_id.clone();
+        let table_schema = table_schema.clone();
+        let durable_sequence = SequenceNumber(expected_previous.0.saturating_add(1));
+        let result = self.execute_write(move |transaction| {
+            if transaction.advance_fenced_committer_lease(
+                &owner_id,
+                epoch,
+                expected_previous,
+                durable_sequence,
+            )? != 1
+            {
+                return Err(Error::PreconditionFailed(
+                    FENCED_COMMITTER_LEASE_MARKER.to_string(),
+                ));
+            }
+            transaction.replace_table_schema(&table_schema)
+        });
+        map_fenced_write_result(result.map(|_| ()), fenced_owner_id, epoch)
+    }
+
     pub fn delete_table_schema(&self, table: &TableName) -> Result<()> {
         let table = table.clone();
         self.execute_write(move |transaction| transaction.delete_table_schema(&table))?;
         Ok(())
+    }
+
+    pub fn fenced_delete_table_schema(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        expected_previous: SequenceNumber,
+        table: &TableName,
+    ) -> CommitterLeaseResult<()> {
+        let owner_id = owner_id.to_string();
+        let fenced_owner_id = owner_id.clone();
+        let table = table.clone();
+        let durable_sequence = SequenceNumber(expected_previous.0.saturating_add(1));
+        let result = self.execute_write(move |transaction| {
+            if transaction.advance_fenced_committer_lease(
+                &owner_id,
+                epoch,
+                expected_previous,
+                durable_sequence,
+            )? != 1
+            {
+                return Err(Error::PreconditionFailed(
+                    FENCED_COMMITTER_LEASE_MARKER.to_string(),
+                ));
+            }
+            transaction.delete_table_schema(&table)
+        });
+        map_fenced_write_result(result.map(|_| ()), fenced_owner_id, epoch)
     }
 
     pub fn append_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
@@ -611,8 +758,22 @@ impl PostgresTenantStore {
     }
 }
 
+pub(super) fn map_fenced_write_result<T>(
+    result: Result<T>,
+    owner_id: String,
+    epoch: u64,
+) -> CommitterLeaseResult<T> {
+    match result {
+        Ok(value) => Ok(value),
+        Err(Error::PreconditionFailed(message)) if message == FENCED_COMMITTER_LEASE_MARKER => {
+            Err(CommitterLeaseError::Fenced { owner_id, epoch })
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
 impl PostgresWriteTransaction {
-    fn advance_fenced_committer_lease(
+    pub(super) fn advance_fenced_committer_lease(
         &mut self,
         owner_id: &str,
         epoch: u64,

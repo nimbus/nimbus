@@ -39,6 +39,9 @@ mod trigger_candidates;
 mod trigger_execution;
 mod write_rate;
 
+#[cfg(test)]
+pub(crate) use self::trigger_candidates::materialize_trigger_invocations_and_sync;
+
 use self::committer_lease::CommitterLeaseLifecycle;
 #[cfg(test)]
 pub(crate) use self::document_cache::DocumentCacheStats;

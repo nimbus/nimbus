@@ -405,7 +405,13 @@ pub(crate) fn persist_assigned_batch_once(
 
     let durable_append_started = Instant::now();
     let write_log_guard = runtime.arm_write_log_append();
-    if let Err(error) = runtime.store.append_durable_records_batch(records) {
+    let provider_applied = match runtime.persist_fenced_provider_batch(expected_previous, records) {
+        Ok(provider_applied) => provider_applied,
+        Err(error) => {
+            return Err(PublishAttemptError::Definitive(error));
+        }
+    };
+    if !provider_applied && let Err(error) = runtime.store.append_durable_records_batch(records) {
         let progress = runtime.store.journal_progress();
         return match progress {
             Ok(progress) if progress.durable_head == expected_previous => {
@@ -429,28 +435,34 @@ pub(crate) fn persist_assigned_batch_once(
     let durable_append = durable_append_started.elapsed();
 
     let apply_started = Instant::now();
-    runtime
-        .store
-        .check_fault(nimbus_storage::FaultPoint::JournalDurableAppendBeforeApply)
-        .map_err(PublishAttemptError::Ambiguous)?;
-    commit_faults
-        .wait(labels::DURABLE_BEFORE_PUBLISH)
-        .into_result()
-        .map_err(PublishAttemptError::Ambiguous)?;
-    let applied_head = match runtime.store.apply_durable_records_batch(records) {
-        Ok(()) => runtime
+    if !provider_applied {
+        runtime
             .store
-            .applied_head_after_durable_apply(records)
-            .map_err(PublishAttemptError::Ambiguous)?,
-        Err(apply_error) => runtime
-            .store
-            .recover_durable_journal()
-            .map(|progress| progress.applied_head)
-            .map_err(|recovery_error| {
-                PublishAttemptError::Ambiguous(Error::Internal(format!(
-                    "durable batch apply failed ({apply_error}) and recovery failed ({recovery_error})"
-                )))
-            })?,
+            .check_fault(nimbus_storage::FaultPoint::JournalDurableAppendBeforeApply)
+            .map_err(PublishAttemptError::Ambiguous)?;
+        commit_faults
+            .wait(labels::DURABLE_BEFORE_PUBLISH)
+            .into_result()
+            .map_err(PublishAttemptError::Ambiguous)?;
+    }
+    let applied_head = if provider_applied {
+        last_sequence
+    } else {
+        match runtime.store.apply_durable_records_batch(records) {
+            Ok(()) => runtime
+                .store
+                .applied_head_after_durable_apply(records)
+                .map_err(PublishAttemptError::Ambiguous)?,
+            Err(apply_error) => runtime
+                .store
+                .recover_durable_journal()
+                .map(|progress| progress.applied_head)
+                .map_err(|recovery_error| {
+                    PublishAttemptError::Ambiguous(Error::Internal(format!(
+                        "durable batch apply failed ({apply_error}) and recovery failed ({recovery_error})"
+                    )))
+                })?,
+        }
     };
     let mut applied = records
         .iter()
@@ -478,6 +490,45 @@ pub(crate) fn persist_assigned_batch_once(
         apply,
         publish,
     })
+}
+
+#[cfg(test)]
+impl Engine {
+    pub(crate) fn persist_provider_publisher_barrier_for_testing(
+        &self,
+        tenant_id: &nimbus_core::TenantId,
+        label: &str,
+    ) -> nimbus_core::Result<()> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let runtime_for_commit = runtime.clone();
+        let commit_faults = self.commit_faults.clone();
+        let label = label.to_string();
+        runtime.submit_internal_committer(move || {
+            runtime_for_commit.ensure_committer_lease_for_assignment()?;
+            let previous = runtime_for_commit.durable_head();
+            let sequence = crate::tenant::assign_and_validate(previous, 1)?[0];
+            let record = TenantEventRecord::barrier(
+                sequence,
+                runtime_for_commit.assign_commit_timestamp(),
+                label,
+            )?;
+            runtime_for_commit.stage_zero_write_record_in_write_log(&record);
+            let result = persist_assigned_batch_once(
+                &runtime_for_commit,
+                std::slice::from_ref(&record),
+                previous,
+                &commit_faults,
+            );
+            if result.is_err() {
+                runtime_for_commit.discard_unpersisted_write_log_suffix(sequence);
+            }
+            result.map(|_| ()).map_err(|error| match error {
+                PublishAttemptError::Definitive(error) | PublishAttemptError::Ambiguous(error) => {
+                    error
+                }
+            })
+        })
+    }
 }
 
 fn complete_published_batch(

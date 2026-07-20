@@ -71,6 +71,150 @@ impl TenantRuntime {
             .map_or_else(CommitterLeaseStats::default, |lifecycle| lifecycle.stats())
     }
 
+    /// Returns the provider lease token held by this runtime.
+    ///
+    /// Embedded runtimes deliberately return `None`: they retain process-local
+    /// sequence authority and never pay for or interact with a durable lease.
+    pub(crate) fn held_committer_lease(&self) -> Result<Option<(String, u64)>> {
+        self.committer_lease
+            .as_ref()
+            .map(|lifecycle| lifecycle.held_identity().map(Some))
+            .unwrap_or(Ok(None))
+    }
+
+    pub(crate) fn record_committer_fenced(&self, owner_id: String, epoch: u64) {
+        if let Some(lifecycle) = &self.committer_lease {
+            lifecycle.record_fenced(owner_id, epoch);
+        }
+    }
+
+    /// Atomically persists a provider durable batch under the held lease.
+    /// Returns `false` for embedded stores so their existing append/apply path
+    /// remains byte-for-byte unchanged and never consults lease storage.
+    pub(crate) fn persist_fenced_provider_batch(
+        &self,
+        expected_previous: nimbus_core::SequenceNumber,
+        records: &[nimbus_core::TenantEventRecord],
+    ) -> Result<bool> {
+        let Some((owner_id, epoch)) = self.held_committer_lease()? else {
+            return Ok(false);
+        };
+        self.map_fenced_write_result(self.store.fenced_append_and_apply_durable_records_batch(
+            &owner_id,
+            epoch,
+            expected_previous,
+            records,
+        ))?;
+        Ok(true)
+    }
+
+    pub(crate) fn persist_prepared_write_batch(
+        &self,
+        expected_previous: nimbus_core::SequenceNumber,
+        record: &nimbus_core::TenantEventRecord,
+        schedule_ops: &[nimbus_storage::ResolvedScheduleOp],
+        scheduled_execution_id: Option<&str>,
+    ) -> Result<Option<nimbus_core::CommitEntry>> {
+        let Some((owner_id, epoch)) = self.held_committer_lease()? else {
+            return self.store.apply_prepared_write_batch(
+                record,
+                schedule_ops,
+                scheduled_execution_id,
+            );
+        };
+        self.map_fenced_write_result(self.store.fenced_apply_prepared_write_batch(
+            &owner_id,
+            epoch,
+            expected_previous,
+            record,
+            schedule_ops,
+            scheduled_execution_id,
+        ))
+    }
+
+    pub(crate) fn persist_table_schema(
+        &self,
+        expected_previous: nimbus_core::SequenceNumber,
+        table_schema: &nimbus_core::TableSchema,
+    ) -> Result<()> {
+        let Some((owner_id, epoch)) = self.held_committer_lease()? else {
+            return self.store.replace_table_schema(table_schema);
+        };
+        self.map_fenced_write_result(self.store.fenced_replace_table_schema(
+            &owner_id,
+            epoch,
+            expected_previous,
+            table_schema,
+        ))
+    }
+
+    pub(crate) fn persist_table_schema_deletion(
+        &self,
+        expected_previous: nimbus_core::SequenceNumber,
+        table: &nimbus_core::TableName,
+    ) -> Result<()> {
+        let Some((owner_id, epoch)) = self.held_committer_lease()? else {
+            return self.store.delete_table_schema(table);
+        };
+        self.map_fenced_write_result(self.store.fenced_delete_table_schema(
+            &owner_id,
+            epoch,
+            expected_previous,
+            table,
+        ))
+    }
+
+    pub(crate) fn persist_trigger_invocations(
+        &self,
+        expected_previous: nimbus_core::SequenceNumber,
+        records: &[nimbus_core::TriggerInvocationRecord],
+        cursor: nimbus_core::TriggerDeliveryCursor,
+    ) -> Result<()> {
+        let Some((owner_id, epoch)) = self.held_committer_lease()? else {
+            return self.store.materialize_trigger_invocations(records, cursor);
+        };
+        self.map_fenced_write_result(self.store.fenced_materialize_trigger_invocations(
+            &owner_id,
+            epoch,
+            expected_previous,
+            records,
+            cursor,
+        ))
+    }
+
+    pub(crate) fn persist_point_in_time_restore_archive(
+        &self,
+        expected_previous: nimbus_core::SequenceNumber,
+        archive: &nimbus_storage::PointInTimeRestoreArchive,
+    ) -> Result<nimbus_storage::JournalProgress> {
+        let Some((owner_id, epoch)) = self.held_committer_lease()? else {
+            return self.store.import_point_in_time_restore_archive(archive);
+        };
+        self.map_fenced_write_result(self.store.fenced_import_point_in_time_restore_archive(
+            &owner_id,
+            epoch,
+            expected_previous,
+            archive,
+        ))
+    }
+
+    fn map_fenced_write_result<T>(
+        &self,
+        result: nimbus_storage::CommitterLeaseResult<T>,
+    ) -> Result<T> {
+        match result {
+            Ok(value) => Ok(value),
+            Err(CommitterLeaseError::Fenced { owner_id, epoch }) => {
+                self.record_committer_fenced(owner_id.clone(), epoch);
+                Err(Error::CommitterFenced { owner_id, epoch })
+            }
+            Err(CommitterLeaseError::Storage(error)) => Err(error),
+            Err(CommitterLeaseError::Held | CommitterLeaseError::Unsupported) => Err(
+                Error::Internal("provider durable write requires fenced-apply support".to_string()),
+            ),
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn wake_committer_lease_renewal_for_testing(&self) {
         if let Some(lifecycle) = &self.committer_lease {
@@ -176,6 +320,28 @@ impl CommitterLeaseLifecycle {
                 let _stopped = WorkerStopped(worker_active);
                 run_renewal_worker(lifecycle, runtime, shutdown);
             });
+    }
+
+    fn held_identity(&self) -> Result<(String, u64)> {
+        let state = self
+            .state
+            .lock()
+            .expect("committer lease state lock should not be poisoned");
+        match &state.status {
+            CommitterLeaseStatus::Held(lease) => Ok((lease.owner_id.clone(), lease.epoch)),
+            CommitterLeaseStatus::Fenced { owner_id, epoch } => Err(fenced_error(owner_id, *epoch)),
+            CommitterLeaseStatus::Unacquired => Err(Error::Internal(
+                "provider durable write attempted without an acquired committer lease".to_string(),
+            )),
+        }
+    }
+
+    fn record_fenced(&self, owner_id: String, epoch: u64) {
+        let mut state = self
+            .state
+            .lock()
+            .expect("committer lease state lock should not be poisoned");
+        state.status = CommitterLeaseStatus::Fenced { owner_id, epoch };
     }
 
     fn shutdown(&self) {
@@ -352,10 +518,10 @@ fn add_duration(timestamp: Timestamp, duration: Duration) -> Timestamp {
 }
 
 fn fenced_error(owner_id: &str, epoch: u64) -> Error {
-    Error::storage(
-        StorageErrorKind::Unavailable,
-        format!("committer lease owner {owner_id} at epoch {epoch} has been fenced"),
-    )
+    Error::CommitterFenced {
+        owner_id: owner_id.to_string(),
+        epoch,
+    }
 }
 
 fn map_lease_error(error: CommitterLeaseError) -> Error {

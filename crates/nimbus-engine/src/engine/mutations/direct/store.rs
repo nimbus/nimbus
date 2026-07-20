@@ -102,13 +102,18 @@ impl Engine {
                 );
                 let durable_append_started = Instant::now();
                 let write_log_guard = runtime.arm_write_log_append();
-                let commit = match runtime.store.apply_prepared_write_batch(
+                let commit = match runtime.persist_prepared_write_batch(
+                    previous_sequence,
                     record,
                     schedule_ops,
                     scheduled_execution_id,
                 ) {
                     Ok(commit) => commit,
                     Err(error) => {
+                        if matches!(error, Error::CommitterFenced { .. }) {
+                            runtime.discard_unpersisted_write_log_suffix(sequence);
+                            return Err(error);
+                        }
                         let progress = if take_direct_recovery_read_failure_for_testing(
                             runtime.tenant_id(),
                         ) {

@@ -306,6 +306,24 @@ impl Engine {
             Ok(Err(mut failure)) => {
                 runtime.record_mutation_worker_failure();
                 warn!(error = %failure.error, "mutation journal batch failed");
+                if matches!(failure.error, Error::CommitterFenced { .. }) {
+                    discard_failed_assignment_suffix(runtime.as_ref(), assignment_baseline);
+                    if let Ok(progress) = runtime
+                        .read_storage
+                        .execute(|store| store.recover_durable_journal())
+                        .await
+                    {
+                        runtime.publish_mutation_journal_progress_in_actor(progress);
+                    }
+                    for response in failure.deferred.drain(..) {
+                        response.complete_after_recovery(
+                            SequenceNumber(assignment_baseline.0.saturating_add(1)),
+                            &failure.error,
+                        );
+                    }
+                    fail_mutation_responses(&assignment_responses, &failure.error);
+                    return false;
+                }
                 let recovery = recover_failed_serial_batch(
                     runtime.clone(),
                     assignment_baseline,
@@ -929,7 +947,14 @@ fn process_serial_queued_mutation_batch(
         return Err(FailedSerialQueuedMutationBatch { error, deferred });
     }
     let write_log_guard = runtime.arm_write_log_append();
-    if let Err(error) = runtime.store.append_durable_records_batch(&records) {
+    let provider_applied = match runtime.persist_fenced_provider_batch(append_baseline, &records) {
+        Ok(provider_applied) => provider_applied,
+        Err(error) => {
+            drop(active);
+            return Err(FailedSerialQueuedMutationBatch { error, deferred });
+        }
+    };
+    if !provider_applied && let Err(error) = runtime.store.append_durable_records_batch(&records) {
         let mapped_error = map_durable_journal_append_error(&error);
         drop(active);
         return Err(FailedSerialQueuedMutationBatch {
@@ -959,26 +984,35 @@ fn process_serial_queued_mutation_batch(
     }
 
     let apply_started = Instant::now();
-    runtime
-        .store
-        .check_fault(nimbus_storage::FaultPoint::JournalDurableAppendBeforeApply)
-        .map_err(FailedSerialQueuedMutationBatch::without_deferred)?;
-    commit_faults
-        .wait(labels::DURABLE_BEFORE_PUBLISH)
-        .into_result()
-        .map_err(FailedSerialQueuedMutationBatch::without_deferred)?;
-
-    let applied_head = match runtime.store.apply_durable_records_batch(&records) {
-        Ok(()) => runtime
+    if !provider_applied {
+        runtime
             .store
-            .applied_head_after_durable_apply(&records)
-            .map_err(FailedSerialQueuedMutationBatch::without_deferred)?,
-        Err(_) => {
-            let progress = runtime
+            .check_fault(nimbus_storage::FaultPoint::JournalDurableAppendBeforeApply)
+            .map_err(FailedSerialQueuedMutationBatch::without_deferred)?;
+        commit_faults
+            .wait(labels::DURABLE_BEFORE_PUBLISH)
+            .into_result()
+            .map_err(FailedSerialQueuedMutationBatch::without_deferred)?;
+    }
+
+    let applied_head = if provider_applied {
+        records
+            .last()
+            .expect("non-empty assigned provider batch")
+            .sequence
+    } else {
+        match runtime.store.apply_durable_records_batch(&records) {
+            Ok(()) => runtime
                 .store
-                .recover_durable_journal()
-                .map_err(FailedSerialQueuedMutationBatch::without_deferred)?;
-            progress.applied_head
+                .applied_head_after_durable_apply(&records)
+                .map_err(FailedSerialQueuedMutationBatch::without_deferred)?,
+            Err(_) => {
+                let progress = runtime
+                    .store
+                    .recover_durable_journal()
+                    .map_err(FailedSerialQueuedMutationBatch::without_deferred)?;
+                progress.applied_head
+            }
         }
     };
     retain_commits_through_applied_head(&mut applied, applied_head);

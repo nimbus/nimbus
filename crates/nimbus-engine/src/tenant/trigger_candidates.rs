@@ -380,7 +380,7 @@ fn run_trigger_candidate_worker(
     }
 }
 
-fn materialize_trigger_invocations_and_sync(
+pub(crate) fn materialize_trigger_invocations_and_sync(
     runtime: &Arc<TenantRuntime>,
     records: &[nimbus_core::TriggerInvocationRecord],
     cursor: nimbus_core::TriggerDeliveryCursor,
@@ -397,16 +397,16 @@ fn materialize_trigger_invocations_and_sync(
 }
 
 fn materialize_trigger_invocations_and_sync_in_actor(
-    runtime: &TenantRuntime,
+    runtime: &Arc<TenantRuntime>,
     records: &[nimbus_core::TriggerInvocationRecord],
     cursor: nimbus_core::TriggerDeliveryCursor,
 ) -> nimbus_core::Result<()> {
+    runtime.ensure_committer_lease_for_assignment()?;
+    let previous_durable_head = runtime.durable_head();
     runtime
         .store
         .check_fault(nimbus_storage::FaultPoint::TriggerInvocationMaterializeBeforeCommit)?;
-    runtime
-        .store
-        .materialize_trigger_invocations(records, cursor)?;
+    runtime.persist_trigger_invocations(previous_durable_head, records, cursor)?;
     let progress = runtime.store.journal_progress()?;
     // The cursor-advance commit `materialize_trigger_invocations` just
     // appended is zero-write by construction, so it can never change what a

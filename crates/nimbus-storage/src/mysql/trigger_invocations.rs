@@ -5,6 +5,7 @@ use nimbus_core::{
 };
 
 use super::*;
+use crate::CommitterLeaseResult;
 
 // Trigger-invocation persistence stays provider-owned because row encoding,
 // upsert semantics, and session usage are backend-specific. The shared seam is
@@ -20,6 +21,35 @@ impl MySqlTenantStore {
             transaction.materialize_trigger_invocations(records.as_slice(), cursor)
         })?;
         Ok(())
+    }
+
+    pub fn fenced_materialize_trigger_invocations(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        expected_previous: SequenceNumber,
+        records: &[TriggerInvocationRecord],
+        cursor: TriggerDeliveryCursor,
+    ) -> CommitterLeaseResult<()> {
+        let owner_id = owner_id.to_string();
+        let fenced_owner_id = owner_id.clone();
+        let records = records.to_vec();
+        let durable_sequence = SequenceNumber(expected_previous.0.saturating_add(1));
+        let result = self.execute_write(move |transaction| {
+            if transaction.advance_fenced_committer_lease(
+                &owner_id,
+                epoch,
+                expected_previous,
+                durable_sequence,
+            )? != 1
+            {
+                return Err(Error::PreconditionFailed(
+                    super::write::FENCED_COMMITTER_LEASE_MARKER.to_string(),
+                ));
+            }
+            transaction.materialize_trigger_invocations(records.as_slice(), cursor)
+        });
+        super::write::map_fenced_write_result(result.map(|_| ()), fenced_owner_id, epoch)
     }
 
     pub fn list_trigger_invocations(&self) -> Result<Vec<TriggerInvocationRecord>> {

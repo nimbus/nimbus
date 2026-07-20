@@ -152,12 +152,28 @@ impl MutationExecutionUnit {
                     // engine cache/bookkeeping work. Direct commits have the same
                     // intentional collapse.
                     let write_log_guard = runtime.arm_write_log_append();
-                    let commit = match runtime
-                        .store
-                        .apply_prepared_execution_unit_batch(record, schedule_ops)
-                    {
+                    let commit_result = match record {
+                        Some(record) => runtime.persist_prepared_write_batch(
+                            previous_sequence,
+                            record,
+                            schedule_ops,
+                            None,
+                        ),
+                        // Schedule-only units append no durable record under the
+                        // established contract, so no sequence fence is needed.
+                        None => runtime
+                            .store
+                            .apply_prepared_execution_unit_batch(None, schedule_ops),
+                    };
+                    let commit = match commit_result {
                         Ok(commit) => commit,
                         Err(error) => {
+                            if matches!(error, Error::CommitterFenced { .. }) {
+                                if record.is_some() {
+                                    runtime.discard_unpersisted_write_log_suffix(expected_sequence);
+                                }
+                                return Err(error);
+                            }
                             if record.is_some() {
                                 match runtime.store.journal_progress() {
                                     Ok(progress) if progress.durable_head == previous_sequence => {
