@@ -74,6 +74,60 @@ impl_committer_lease_store!(
     LibsqlReplicaTenantStore
 );
 
+trait FencedDurableApply {
+    fn fenced_append_and_apply_durable_records_batch(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        expected_previous: SequenceNumber,
+        records: &[TenantEventRecord],
+    ) -> CommitterLeaseResult<()>;
+}
+
+impl FencedDurableApply for PostgresTenantStore {
+    fn fenced_append_and_apply_durable_records_batch(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        expected_previous: SequenceNumber,
+        records: &[TenantEventRecord],
+    ) -> CommitterLeaseResult<()> {
+        PostgresTenantStore::fenced_append_and_apply_durable_records_batch(
+            self,
+            owner_id,
+            epoch,
+            expected_previous,
+            records,
+        )
+    }
+}
+
+macro_rules! impl_unsupported_fenced_durable_apply {
+    ($($ty:ty),+ $(,)?) => {
+        $(
+            impl FencedDurableApply for $ty {
+                fn fenced_append_and_apply_durable_records_batch(
+                    &self,
+                    _owner_id: &str,
+                    _epoch: u64,
+                    _expected_previous: SequenceNumber,
+                    _records: &[TenantEventRecord],
+                ) -> CommitterLeaseResult<()> {
+                    Err(super::CommitterLeaseError::Unsupported)
+                }
+            }
+        )+
+    };
+}
+
+impl_unsupported_fenced_durable_apply!(
+    TenantStore,
+    SqliteTenantStore,
+    MySqlTenantStore,
+    LibsqlReplicaTenantStore,
+    MemoryTenantStore,
+);
+
 impl TenantLifecycle for EmbeddedRedbProvider {
     type OpenedTenant = OpenedEmbeddedRedbTenant;
 
@@ -415,6 +469,22 @@ macro_rules! impl_durable_journal {
 
                   fn apply_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
                       <$ty>::apply_durable_records_batch(self, records)
+                  }
+
+                  fn fenced_append_and_apply_durable_records_batch(
+                      &self,
+                      owner_id: &str,
+                      epoch: u64,
+                      expected_previous: SequenceNumber,
+                      records: &[TenantEventRecord],
+                  ) -> CommitterLeaseResult<()> {
+                      FencedDurableApply::fenced_append_and_apply_durable_records_batch(
+                          self,
+                          owner_id,
+                          epoch,
+                          expected_previous,
+                          records,
+                      )
                   }
 
                   fn export_point_in_time_restore_archive(
