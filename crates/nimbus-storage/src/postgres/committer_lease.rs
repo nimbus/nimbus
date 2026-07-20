@@ -40,7 +40,8 @@ impl PostgresTenantStore {
             let query = format!(
                 "INSERT INTO {lease_table} AS lease \
                     (singleton, owner_id, epoch, expires_at, durable_sequence) \
-                 SELECT TRUE, $1, 1, CURRENT_TIMESTAMP + ($2 * INTERVAL '1 millisecond'), \
+                 SELECT TRUE, $1::TEXT, 1, \
+                        CURRENT_TIMESTAMP + ($2::BIGINT * INTERVAL '1 millisecond'), \
                         COALESCE(MAX(sequence), 0) \
                  FROM {log_table} \
                  ON CONFLICT (singleton) DO UPDATE SET \
@@ -98,8 +99,9 @@ impl PostgresTenantStore {
             let query = format!(
                 "UPDATE {table} \
                  SET expires_at = GREATEST(\
-                     expires_at, CURRENT_TIMESTAMP + ($3 * INTERVAL '1 millisecond')) \
-                 WHERE singleton = TRUE AND owner_id = $1 AND epoch = $2 \
+                     expires_at, \
+                     CURRENT_TIMESTAMP + ($3::BIGINT * INTERVAL '1 millisecond')) \
+                 WHERE singleton = TRUE AND owner_id = $1::TEXT AND epoch = $2::BIGINT \
                        AND expires_at > CURRENT_TIMESTAMP \
                  RETURNING owner_id, epoch, \
                            FLOOR(EXTRACT(EPOCH FROM expires_at) * 1000)::BIGINT, \

@@ -32,7 +32,7 @@ impl LibsqlReplicaTenantStore {
                      SELECT 1, ?1, 1,
                             CAST(unixepoch('subsec') * 1000 AS INTEGER) + ?2,
                             COALESCE(MAX(sequence), 0)
-                     FROM commit_log
+                     FROM commit_log WHERE TRUE
                      ON CONFLICT(singleton) DO UPDATE SET
                         owner_id = CASE
                             WHEN committer_lease.expires_at <=
