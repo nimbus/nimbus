@@ -17,6 +17,7 @@ pub struct CommitterLease {
 pub enum CommitterLeaseError {
     Held,
     Fenced { owner_id: String, epoch: u64 },
+    Unsupported,
     Storage(Error),
 }
 
@@ -28,6 +29,9 @@ impl std::fmt::Display for CommitterLeaseError {
                 formatter,
                 "committer lease owner {owner_id} at epoch {epoch} has been fenced"
             ),
+            Self::Unsupported => {
+                formatter.write_str("fenced durable apply requires a provider committer lease")
+            }
             Self::Storage(error) => error.fmt(formatter),
         }
     }
