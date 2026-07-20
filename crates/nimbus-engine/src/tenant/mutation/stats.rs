@@ -65,6 +65,7 @@ pub struct MutationJournalStats {
     pub committer_lease_acquire_count: u64,
     pub committer_lease_renewal_count: u64,
     pub committer_lease_renewal_failure_count: u64,
+    pub committer_lease_renewal_worker_running: bool,
     pub publisher_queue_depth: usize,
     pub publisher_queue_capacity: usize,
     pub publisher_send_timeout_count: u64,

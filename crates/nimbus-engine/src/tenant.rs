@@ -497,6 +497,7 @@ impl TenantRuntime {
 
     pub(crate) fn mark_deleting_for_eviction(&self) {
         self.lifecycle.begin_eviction();
+        self.shutdown_committer_lease_renewal();
         self.mutation_journal.fail_applied_waiters(Error::storage(
             nimbus_core::StorageErrorKind::Unavailable,
             format!(

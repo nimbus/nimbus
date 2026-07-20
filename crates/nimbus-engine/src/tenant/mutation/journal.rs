@@ -308,6 +308,7 @@ impl MutationJournalState {
             committer_lease_acquire_count: 0,
             committer_lease_renewal_count: 0,
             committer_lease_renewal_failure_count: 0,
+            committer_lease_renewal_worker_running: false,
             publisher_queue_depth: 0,
             publisher_queue_capacity: 0,
             publisher_send_timeout_count: 0,

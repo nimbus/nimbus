@@ -367,6 +367,16 @@ impl Engine {
     }
 
     pub async fn quiesce(&self) {
+        let runtimes = self
+            .tenants
+            .read()
+            .expect("tenant registry lock should not be poisoned")
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        for runtime in runtimes {
+            runtime.shutdown_committer_lease_renewal();
+        }
         self.engine_executor.quiesce().await;
         self.storage_executor.quiesce().await;
     }

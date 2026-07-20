@@ -94,6 +94,7 @@ async fn assert_engine_reload_recovers_durable_journal_before_serving_async_read
             committer_lease_acquire_count: 0,
             committer_lease_renewal_count: 0,
             committer_lease_renewal_failure_count: 0,
+            committer_lease_renewal_worker_running: false,
             publisher_queue_depth: 0,
             publisher_queue_capacity: 32,
             publisher_send_timeout_count: 0,

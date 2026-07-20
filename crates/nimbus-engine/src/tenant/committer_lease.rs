@@ -22,6 +22,7 @@ pub(crate) struct CommitterLeaseStats {
     pub(crate) acquire_count: u64,
     pub(crate) renewal_count: u64,
     pub(crate) renewal_failure_count: u64,
+    pub(crate) renewal_worker_running: bool,
 }
 
 enum CommitterLeaseStatus {
@@ -49,6 +50,7 @@ pub(crate) struct CommitterLeaseLifecycle {
     state: Mutex<CommitterLeaseState>,
     wake: Arc<RenewalWake>,
     worker: BackgroundWorker,
+    worker_active: Arc<AtomicBool>,
 }
 
 impl TenantRuntime {
@@ -74,6 +76,12 @@ impl TenantRuntime {
             lifecycle.wake_for_testing();
         }
     }
+
+    pub(crate) fn shutdown_committer_lease_renewal(&self) {
+        if let Some(lifecycle) = &self.committer_lease {
+            lifecycle.shutdown();
+        }
+    }
 }
 
 impl CommitterLeaseLifecycle {
@@ -93,6 +101,7 @@ impl CommitterLeaseLifecycle {
                 ready: Condvar::new(),
             }),
             worker: BackgroundWorker::new(),
+            worker_active: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -139,10 +148,25 @@ impl CommitterLeaseLifecycle {
     fn start_worker(self: &Arc<Self>, runtime: &Arc<TenantRuntime>) {
         let lifecycle = Arc::downgrade(self);
         let runtime = Arc::downgrade(runtime);
+        let worker_active = self.worker_active.clone();
         self.worker
             .start("nimbus-committer-lease-renewal", move |shutdown| {
+                worker_active.store(true, Ordering::Release);
+                struct WorkerStopped(Arc<AtomicBool>);
+                impl Drop for WorkerStopped {
+                    fn drop(&mut self) {
+                        self.0.store(false, Ordering::Release);
+                    }
+                }
+                let _stopped = WorkerStopped(worker_active);
                 run_renewal_worker(lifecycle, runtime, shutdown);
             });
+    }
+
+    fn shutdown(&self) {
+        let wake = self.wake.clone();
+        self.worker
+            .shutdown(move |shutdown| wake.signal_shutdown(shutdown));
     }
 
     fn wait_until_renewal_due(&self, shutdown: &AtomicBool) -> bool {
@@ -225,6 +249,7 @@ impl CommitterLeaseLifecycle {
             acquire_count: state.acquire_count,
             renewal_count: state.renewal_count,
             renewal_failure_count: state.renewal_failure_count,
+            renewal_worker_running: self.worker_active.load(Ordering::Acquire),
             ..CommitterLeaseStats::default()
         };
         match &state.status {
@@ -272,9 +297,7 @@ impl RenewalWake {
 
 impl Drop for CommitterLeaseLifecycle {
     fn drop(&mut self) {
-        let wake = self.wake.clone();
-        self.worker
-            .shutdown(move |shutdown| wake.signal_shutdown(shutdown));
+        self.shutdown();
     }
 }
 

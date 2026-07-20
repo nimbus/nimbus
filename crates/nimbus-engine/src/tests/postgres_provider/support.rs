@@ -257,6 +257,37 @@ pub(super) async fn postgres_schema_exists(
     .await
 }
 
+pub(super) async fn expire_postgres_committer_lease(
+    config: &PostgresProviderConfig,
+    tenant_id: &TenantId,
+) -> nimbus_core::Result<()> {
+    let provider = PostgresProvider::connect(config.clone()).await?;
+    let schema_name = provider.tenant_schema_name(tenant_id)?;
+    let (client, connection) = tokio_postgres::connect(&config.connection_string, NoTls)
+        .await
+        .map_err(|error| nimbus_core::Error::Internal(error.to_string()))?;
+    let connection_task = tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    let query = format!(
+        "UPDATE \"{schema_name}\".\"committer_lease\" \
+         SET expires_at = CURRENT_TIMESTAMP - INTERVAL '1 second' \
+         WHERE singleton = TRUE"
+    );
+    let updated = client
+        .execute(query.as_str(), &[])
+        .await
+        .map_err(|error| nimbus_core::Error::Internal(error.to_string()));
+    connection_task.abort();
+    let updated = updated?;
+    if updated != 1 {
+        return Err(nimbus_core::Error::Internal(format!(
+            "expected one committer lease row to expire, updated {updated}"
+        )));
+    }
+    Ok(())
+}
+
 async fn with_postgres_activity_client<F, Fut, T>(
     config: &PostgresProviderConfig,
     application_name_selector: fn(&PostgresProvider) -> &str,
