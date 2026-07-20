@@ -112,32 +112,36 @@ Using gpt-5.6-sol inside workflows and subagents:
   Disable temporarily by creating
   `~/.claude/hooks-state/stop-triage/disabled`.
 
-Codex delegation: never rely on idle-wake; isolate context, not judgment
-(verified 2026-07-15 — forensics + upstream #39632/#21048/#32085, all
-closed not-planned):
+Codex delegation: use the plugin's native path, not a hand-rolled wrapper
+(owner directive 2026-07-20, after a campaign spent building monitoring
+machinery to replace a feedback channel that already existed):
 
-- An idle subagent is not reliably woken by its own background-task
-  completion; notifications queue until the next inbound message. The
-  documented-reliable wake is an inbound `SendMessage`. Therefore a
-  delegating agent holds its Codex job **in the foreground of one turn**
-  (repeated short status calls for long jobs) — never fire-and-idle on a
-  notification, even though the harness prompt discourages polling.
-- Sequential delegation: the orchestrator launches via
-  `codex-companion.mjs` and reviews the result itself, but only holds
-  short jobs (<~15 min) directly. For longer jobs, hand the hold to a
-  liaison — every main-loop poll notification replays the full session
-  context, and in a long session that cost compounds fast (owner
-  directive 2026-07-17).
-- Liaison subagents (sonnet-tier; the implementer is Codex) have an
-  explicit non-role: launch or hold, heartbeat with an effort-scaled
-  timeout, return structured results verbatim — no implementing, no
-  reviewing, no committing. Stall = ~1h of tree quiet → report, never
-  kill. The liaison's value is context and cost isolation, not
-  reliability. Use them for parallel lanes AND long sequential holds.
+- **Delegate through `codex:codex-rescue` (Agent tool) or the plugin's
+  slash commands.** This is the same rule as "avoid writing custom Bash
+  scripts" above, and it is the whole of the mechanism — the native path
+  runs the job and returns its result, so there is nothing to poll.
+- **Do not drive `codex-companion.mjs` directly** unless the native path
+  genuinely cannot express the task. It is a fallback, not the default.
+  If you must use it: it runs in the **foreground and blocks** by default
+  (`--background` is opt-in), so **never pipe its output** — a `| head`
+  closes the pipe, the process takes SIGPIPE, and the job silently
+  detaches. That severed channel is what forces timer-based guessing.
+- **Never infer a job's state from a timeout.** Timers cannot separate
+  "thinking", "building", and "wedged". If you are reduced to inferring,
+  the feedback channel is broken — fix that instead of tuning the timer.
+  When you must observe a detached job, `stat` file mtimes in the
+  worktree; the job log is not a progress signal (it records shell
+  commands only and can sit many minutes stale while work lands).
+- Liaison subagents were tried for this and are **not** recommended: two
+  of four either raised a false alarm or stayed silent through a full
+  wedge. They isolate context cost, which is real, but they cannot ask a
+  running Codex job anything the orchestrator cannot — there is no
+  mid-turn inbox.
 - Judgment lives at the orchestrator's gate: independent verification
-  before push/PR; progress judged by job-log/tree timestamps, never
-  message-arrival cadence; takeover after ~1h of tree quiet measured
-  from job start.
+  before push/PR, and the orchestrator commits salvaged work itself.
+  Delegated jobs comply poorly with "commit early" no matter how the
+  brief is worded, so treat uncommitted work as the orchestrator's to
+  rescue, verify, and commit.
 - Review flow (no nesting): a Codex job never runs the structured
   `autoreview` helper — nested reviewer invocation is prohibited by the
   skill's contract and blocked by its session guard. The job closes with
@@ -262,6 +266,28 @@ improved later."
   "can be improved later" to justify incomplete work.
 
 ## Common Repo Gotchas
+
+### Commands that report success without running
+
+Three ways a verification command lies about what it measured. All three
+have shipped broken work in this repo.
+
+- **A pipe replaces the exit code.** `cargo nextest run … | tail -3 &&
+  git commit` gates the commit on `tail`, not the tests, so a compile
+  failure still commits. Use `set -o pipefail`, or split the command and
+  check the real status. The same trap applies to `make X | tail`.
+- **`find -newermt "-N minutes"` does not work here.** This machine's
+  `find` is `bfs`, which rejects relative timestamps: it errors and
+  prints nothing, which reads identically to "no files changed". Any
+  activity check built on it is a permanent false zero. Use
+  `-newer <reference-file>` or `stat -f %m`.
+- **A skipped provider test is not a passing one.** Lanes without a live
+  server (MySQL locally) skip silently and report green. Say which lanes
+  actually ran; CI's service containers are the evidence for the rest.
+
+Related: when a fail-before check reverts a fix, restore from a **saved
+copy**, never `git checkout -- <file>`. Checkout restores from HEAD and
+silently destroys any other uncommitted work in that file.
 
 ### Test hangs: bound blocking waits, bound verification commands
 
