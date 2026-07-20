@@ -4,6 +4,298 @@ use crate::tests::{
     exercise_durable_update_guard_is_corruption, exercise_pending_prefix_blocks_generic_zero_write,
 };
 
+fn durable_insert_record(
+    sequence: u64,
+    timestamp: u64,
+    table_id: TableId,
+    document: Document,
+) -> TenantEventRecord {
+    TenantEventRecord::new(
+        SequenceNumber(sequence),
+        Timestamp(timestamp),
+        vec![WriteOp {
+            table: document.table.clone(),
+            table_id,
+            op_type: WriteOpType::Insert,
+            doc_id: document.id.clone(),
+            resource_path_binding: None,
+            trigger_write_origin: None,
+            previous: None,
+            current: Some(document),
+        }],
+        None,
+    )
+    .expect("durable insert record should build")
+}
+
+fn assert_post_visibility_fault(error: &Error, visit: u64) {
+    assert!(
+        matches!(error, Error::Internal(message) if message.contains("storage_commit_after_visibility_before_return") && message.contains(&format!("visit {visit}"))),
+        "the provider must return the injected post-visibility fault from visit {visit}: {error}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn libsql_post_visibility_fault_preserves_one_committed_record_and_replays() {
+    let faults = Arc::new(ScriptedFaultInjector::new([FaultOccurrence {
+        point: FaultPoint::StorageCommitAfterVisibilityBeforeReturn,
+        visit: 1,
+    }]));
+    with_test_provider_with_faults(faults, |provider, _config| async move {
+        let tenant = TenantId::new("post-visibility-append").expect("tenant id should build");
+        let opened = provider
+            .create_opened_tenant(&tenant)
+            .await
+            .expect("tenant should create and open");
+        let document = crate::tests::sample_document("tasks", "landed");
+        let record = durable_insert_record(1, 100, TableId::new(), document.clone());
+
+        let error = opened
+            .store
+            .append_durable_records_batch(std::slice::from_ref(&record))
+            .expect_err("the acknowledgement-loss seam must return an error");
+        assert_post_visibility_fault(&error, 1);
+        assert_eq!(
+            opened
+                .store
+                .read_durable_journal_from(SequenceNumber(1))
+                .expect("durable journal should remain readable"),
+            vec![record],
+            "the failed acknowledgement must preserve exactly one durable record"
+        );
+
+        let progress = opened
+            .store
+            .recover_durable_journal()
+            .expect("recovery should apply the one durable record exactly once");
+        assert_eq!(progress.durable_head, SequenceNumber(1));
+        assert_eq!(progress.applied_head, SequenceNumber(1));
+        assert_eq!(
+            opened
+                .store
+                .get(&document.table, &document.id)
+                .expect("replayed document should load")
+                .as_ref(),
+            Some(&document)
+        );
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn libsql_identical_replay_is_idempotent_after_lost_ack() {
+    let faults = Arc::new(ScriptedFaultInjector::new([FaultOccurrence {
+        point: FaultPoint::StorageCommitAfterVisibilityBeforeReturn,
+        visit: 2,
+    }]));
+    with_test_provider_with_faults(faults, |provider, _config| async move {
+        let tenant =
+            TenantId::new("identical-replay-after-ack-loss").expect("tenant id should build");
+        let opened = provider
+            .create_opened_tenant(&tenant)
+            .await
+            .expect("tenant should create and open");
+        let document = crate::tests::sample_document("tasks", "original");
+        let record = durable_insert_record(1, 100, TableId::new(), document.clone());
+
+        opened
+            .store
+            .append_durable_records_batch(std::slice::from_ref(&record))
+            .expect("durable append should succeed before apply acknowledgement loss");
+        let error = opened
+            .store
+            .apply_durable_records_batch(std::slice::from_ref(&record))
+            .expect_err("first apply should lose its acknowledgement");
+        assert_post_visibility_fault(&error, 2);
+        opened
+            .store
+            .apply_durable_records_batch(std::slice::from_ref(&record))
+            .expect("an identical replay must be idempotent");
+        let progress = opened
+            .store
+            .recover_durable_journal()
+            .expect("recovery should refresh the local replica");
+        assert_eq!(progress.durable_head, SequenceNumber(1));
+        assert_eq!(progress.applied_head, SequenceNumber(1));
+        assert_eq!(
+            opened
+                .store
+                .read_durable_journal_from(SequenceNumber(1))
+                .expect("journal should read"),
+            vec![record],
+            "idempotent replay must not duplicate the durable record"
+        );
+        assert_eq!(
+            opened
+                .store
+                .get(&document.table, &document.id)
+                .expect("document should load")
+                .as_ref(),
+            Some(&document)
+        );
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn libsql_different_content_replay_is_rejected_after_lost_ack() {
+    let faults = Arc::new(ScriptedFaultInjector::new([FaultOccurrence {
+        point: FaultPoint::StorageCommitAfterVisibilityBeforeReturn,
+        visit: 2,
+    }]));
+    with_test_provider_with_faults(faults, |provider, _config| async move {
+        let tenant =
+            TenantId::new("divergent-replay-after-ack-loss").expect("tenant id should build");
+        let opened = provider
+            .create_opened_tenant(&tenant)
+            .await
+            .expect("tenant should create and open");
+        let table_id = TableId::new();
+        let original = crate::tests::sample_document("tasks", "original");
+        let divergent = crate::tests::sample_document("tasks", "divergent");
+        let record = durable_insert_record(1, 100, table_id.clone(), original.clone());
+        let divergent_record = durable_insert_record(1, 200, table_id, divergent.clone());
+
+        opened
+            .store
+            .append_durable_records_batch(std::slice::from_ref(&record))
+            .expect("durable append should succeed before apply acknowledgement loss");
+        let error = opened
+            .store
+            .apply_durable_records_batch(std::slice::from_ref(&record))
+            .expect_err("first apply should lose its acknowledgement");
+        assert_post_visibility_fault(&error, 2);
+        let replay_error = opened
+            .store
+            .apply_durable_records_batch(std::slice::from_ref(&divergent_record))
+            .expect_err("different content must not reuse an applied sequence");
+        assert!(
+            matches!(
+                replay_error,
+                Error::Storage {
+                    kind: StorageErrorKind::Corruption,
+                    ..
+                }
+            ),
+            "different-content replay must be typed corruption: {replay_error}"
+        );
+        assert_eq!(
+            replay_error.retryability(),
+            nimbus_core::Retryability::Terminal
+        );
+        assert_eq!(
+            opened
+                .store
+                .read_durable_journal_from(SequenceNumber(1))
+                .expect("durable journal should retain its original record"),
+            vec![record],
+            "the divergent retry must not replace or duplicate durable content"
+        );
+
+        opened
+            .store
+            .recover_durable_journal()
+            .expect("recovery should accept the original durable record");
+        assert_eq!(
+            opened
+                .store
+                .get(&original.table, &original.id)
+                .expect("original document should load")
+                .as_ref(),
+            Some(&original)
+        );
+        assert!(
+            opened
+                .store
+                .get(&divergent.table, &divergent.id)
+                .expect("divergent document lookup should succeed")
+                .is_none(),
+            "the rejected divergent replay must leave no materialized side effect"
+        );
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn libsql_post_visibility_cancellation_does_not_report_safe_retry() {
+    let faults = BlockingFaultInjector::new(FaultPoint::StorageCommitAfterVisibilityBeforeReturn);
+    with_test_provider_with_faults(faults.clone(), |provider, _config| async move {
+        let tenant = TenantId::new("post-visibility-cancellation").expect("tenant id should build");
+        let opened = provider
+            .create_opened_tenant(&tenant)
+            .await
+            .expect("tenant should create and open");
+        let document = crate::tests::sample_document("tasks", "committed");
+        let expected_id = document.id.clone();
+        let cancel = Arc::new(tokio::sync::Notify::new());
+        let cancel_for_wait = cancel.clone();
+        let storage = opened.read_storage.clone();
+        let handle = tokio::spawn(async move {
+            storage
+                .execute_write_cancellable(
+                    async move { cancel_for_wait.notified().await },
+                    || Ok(()),
+                    move |transaction| {
+                        transaction.insert_document(&document)?;
+                        Ok(document.id)
+                    },
+                )
+                .await
+        });
+
+        timeout(Duration::from_secs(5), faults.wait_until_entered())
+            .await
+            .expect("libSQL write should reach the post-visibility seam");
+        cancel.notify_one();
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        faults.release();
+
+        let outcome = timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("post-visibility cancellation should resolve")
+            .expect("write task should join")
+            .expect("write executor should return a committed outcome");
+        let committed = match outcome {
+            TenantWriteOutcome::Committed(committed) => committed,
+            TenantWriteOutcome::CancelledBeforeCommit => {
+                panic!("post-visibility cancellation must not advertise a safe retry")
+            }
+        };
+        assert_eq!(committed.value, expected_id);
+        assert_eq!(
+            committed
+                .commit
+                .expect("document write should emit a commit entry")
+                .sequence,
+            SequenceNumber(1)
+        );
+        assert_eq!(
+            opened
+                .store
+                .read_durable_journal_from(SequenceNumber(1))
+                .expect("durable journal should read")
+                .len(),
+            1,
+            "the committed cancellation race must land exactly one record"
+        );
+        assert!(
+            opened
+                .store
+                .get(
+                    &TableName::new("tasks").expect("table should build"),
+                    &expected_id
+                )
+                .expect("committed document should load")
+                .is_some()
+        );
+    })
+    .await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn libsql_applied_sequence_recovery_replay_is_idempotent_for_all_write_shapes() {

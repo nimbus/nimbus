@@ -30,6 +30,7 @@ use std::future::Future;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::sync::RwLock;
 use std::sync::Weak;
 use std::sync::atomic::AtomicBool;
@@ -92,6 +93,10 @@ pub struct Engine {
     control_plane_provider: ControlPlaneProvider,
     clock: Arc<dyn Clock>,
     id_source: Arc<dyn IdSource>,
+    // One provider-lease identity per Engine lets an evicted tenant runtime
+    // resume its own still-live lease without weakening cross-engine fencing.
+    // It stays lazy so embedded engines do not consume deterministic IDs.
+    committer_owner_id: OnceLock<String>,
     commit_faults: execution_units::CommitFaultClient,
     storage_fault_injector: Arc<dyn FaultInjector>,
     scheduler_wakeup: Notify,
@@ -308,6 +313,7 @@ impl Engine {
             control_plane_provider: parts.control_plane_provider,
             clock: parts.clock,
             id_source: parts.id_source,
+            committer_owner_id: OnceLock::new(),
             commit_faults: execution_units::CommitFaultClient::default(),
             storage_fault_injector: parts.storage_fault_injector,
             scheduler_wakeup: Notify::new(),
@@ -453,9 +459,11 @@ impl Engine {
     }
 
     fn committer_owner_id_for_store(&self, store: &TenantPersistence) -> Option<String> {
-        store
-            .requires_committer_lease()
-            .then(|| format!("nimbus-{}", self.id_source.next_document_id()))
+        store.requires_committer_lease().then(|| {
+            self.committer_owner_id
+                .get_or_init(|| format!("nimbus-{}", self.id_source.next_document_id()))
+                .clone()
+        })
     }
 
     pub(in crate::engine) fn wait_for_commit_fault(

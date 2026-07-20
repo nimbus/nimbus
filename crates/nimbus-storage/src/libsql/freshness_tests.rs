@@ -102,7 +102,8 @@ async fn test_replica(refresh_override: TestRefreshOverride) -> TestReplica {
         encryption_provider: None,
         runtime_handle: TokioRuntimeHandle::current(),
         clock: Arc::new(SystemClock),
-        fault_injector: Arc::new(NoopFaultInjector),
+        remote_fault_injector: Arc::new(NoopFaultInjector),
+        replica_fault_injector: Arc::new(NoopFaultInjector),
         tenant_read_parallelism: 1,
         metadata_database,
     };

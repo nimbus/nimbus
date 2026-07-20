@@ -3,7 +3,7 @@ use std::future::Future;
 use std::io::Read;
 use std::net::TcpListener;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use libsql::{Builder, Database};
@@ -16,7 +16,10 @@ use nimbus_core::{
 };
 use nimbus_crypto::{KeyManifest, LocalKeySubject, ManifestCipher};
 use nimbus_storage::libsql::libsql_transport_connector;
-use nimbus_storage::{LibsqlReplicaProvider, LibsqlReplicaProviderConfig, NoopFaultInjector};
+use nimbus_storage::{
+    FaultInjector, FaultPoint, LibsqlReplicaProvider, LibsqlReplicaProviderConfig,
+    NoopFaultInjector,
+};
 use testcontainers_modules::testcontainers::core::{IntoContainerPort, WaitFor};
 use testcontainers_modules::testcontainers::{
     ContainerAsync, GenericImage, ImageExt, runners::AsyncRunner,
@@ -34,6 +37,171 @@ const LIBSQL_AUTH_TOKEN_ENV: &str = "NIMBUS_LIBSQL_AUTH_TOKEN";
 const LIBSQL_ADMIN_URL_ENV: &str = "NIMBUS_LIBSQL_ADMIN_URL";
 const LIBSQL_ADMIN_AUTH_HEADER_ENV: &str = "NIMBUS_LIBSQL_ADMIN_AUTH_HEADER";
 static TEST_SUFFIX_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Default)]
+struct ArmedLibsqlCommitAcknowledgementLoss {
+    armed: AtomicBool,
+    fired: AtomicBool,
+}
+
+impl ArmedLibsqlCommitAcknowledgementLoss {
+    fn arm(&self) {
+        self.armed.store(true, Ordering::Release);
+    }
+}
+
+impl FaultInjector for ArmedLibsqlCommitAcknowledgementLoss {
+    fn check(&self, point: FaultPoint) -> nimbus_core::Result<()> {
+        if point == FaultPoint::StorageCommitAfterVisibilityBeforeReturn
+            && self.armed.load(Ordering::Acquire)
+            && !self.fired.swap(true, Ordering::AcqRel)
+        {
+            return Err(nimbus_core::Error::storage(
+                nimbus_core::StorageErrorKind::Transient,
+                "injected libSQL commit acknowledgement loss",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial(libsql_replica_provider)]
+async fn libsql_replica_post_visibility_ack_loss_forces_crash_and_replay() {
+    with_libsql_replica_engine_config(|engine_config, provider_config| async move {
+        let clock = Arc::new(ManualClock::new(Timestamp(8_500)));
+        let faults = Arc::new(ArmedLibsqlCommitAcknowledgementLoss::default());
+        let engine = Arc::new(
+            Engine::new_with_simulation_and_persistence_config(
+                engine_config,
+                clock,
+                faults.clone(),
+            )
+            .await
+            .expect("replica-backed engine should create"),
+        );
+        let tenant_id = TenantId::new("libsql-replica-ack-loss").expect("tenant id should build");
+        engine
+            .create_tenant_async(tenant_id.clone())
+            .await
+            .expect("tenant should create");
+        engine
+            .shutdown_trigger_candidates_for_testing(&tenant_id)
+            .expect("trigger cursor should not add unrelated records");
+        let failed_runtime = engine
+            .tenant_runtime_for_testing(&tenant_id)
+            .expect("loaded runtime should be inspectable");
+        let failed_runtime_identity = engine
+            .tenant_runtime_identity_for_testing(&tenant_id)
+            .expect("loaded runtime identity should read");
+
+        faults.arm();
+        let error = engine
+            .insert_document_async(
+                tenant_id.clone(),
+                tasks_table(),
+                serde_json::Map::from_iter([(
+                    "title".to_string(),
+                    serde_json::json!("landed-without-ack"),
+                )]),
+            )
+            .await
+            .expect_err("lost libSQL acknowledgement must be terminally ambiguous");
+        assert_eq!(error.retryability(), nimbus_core::Retryability::Terminal);
+        assert!(
+            error.to_string().contains("crash-and-replay"),
+            "a post-visibility libSQL error must force durable recovery: {error}"
+        );
+        let documents = engine
+            .query_documents_async(tenant_id.clone(), query_for("tasks"))
+            .await
+            .expect("query should wait for eviction and reload durable state");
+        assert_eq!(documents.len(), 1);
+        assert_eq!(
+            documents[0]
+                .fields
+                .get("title")
+                .and_then(serde_json::Value::as_str),
+            Some("landed-without-ack")
+        );
+        assert_ne!(
+            engine
+                .tenant_runtime_identity_for_testing(&tenant_id)
+                .expect("replacement runtime identity should read"),
+            failed_runtime_identity,
+            "ambiguous libSQL outcome must replace the failed runtime"
+        );
+        assert!(
+            !engine.runtime_is_registered_for_testing(&tenant_id, &failed_runtime),
+            "the failed runtime must be deregistered after durable recovery"
+        );
+        assert_eq!(
+            failed_runtime
+                .mutation_journal_stats()
+                .committer_lease_epoch,
+            1,
+            "the failed runtime should have acquired the tenant's first lease epoch"
+        );
+
+        engine
+            .shutdown_trigger_candidates_for_testing(&tenant_id)
+            .expect("replacement trigger cursor should stay quiet");
+        engine
+            .insert_document_async(
+                tenant_id.clone(),
+                tasks_table(),
+                serde_json::Map::from_iter([(
+                    "title".to_string(),
+                    serde_json::json!("next-independent-write"),
+                )]),
+            )
+            .await
+            .expect("the replacement runtime should continue at the next sequence");
+        assert_eq!(
+            engine
+                .mutation_journal_stats_for_testing(&tenant_id)
+                .expect("replacement lease stats should read")
+                .committer_lease_epoch,
+            1,
+            "same-engine recovery must resume its lease identity without waiting for expiry or advancing the epoch"
+        );
+
+        let provider = LibsqlReplicaProvider::connect(provider_config)
+            .await
+            .expect("inspection provider should connect");
+        let opened = provider
+            .open_existing_opened_tenant(&tenant_id)
+            .await
+            .expect("tenant lookup should succeed")
+            .expect("tenant should exist");
+        let records = opened
+            .store
+            .read_durable_journal_from(nimbus_core::SequenceNumber(1))
+            .expect("provider journal should read");
+        assert_eq!(
+            records
+                .iter()
+                .map(|record| record.sequence)
+                .collect::<Vec<_>>(),
+            vec![
+                nimbus_core::SequenceNumber(1),
+                nimbus_core::SequenceNumber(2),
+            ],
+            "recovery must neither duplicate nor reuse the ambiguous sequence"
+        );
+        assert_eq!(
+            records
+                .iter()
+                .flat_map(|record| record.writes.iter())
+                .filter_map(|write| write.current.as_ref())
+                .filter_map(|document| document.fields.get("title"))
+                .filter_map(serde_json::Value::as_str)
+                .collect::<Vec<_>>(),
+            vec!["landed-without-ack", "next-independent-write"]
+        );
+    })
+    .await;
+}
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(libsql_replica_provider)]

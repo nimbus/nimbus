@@ -1429,6 +1429,8 @@ impl LibsqlReplicaWriteTransaction {
             tx.commit().await.map_err(map_libsql_error)?;
             Ok(())
         })?;
+        self.store
+            .check_fault(crate::FaultPoint::StorageCommitAfterVisibilityBeforeReturn)?;
         if let Some(commit) = &commit {
             if self.refresh_cache_after_commit {
                 self.store.refresh_needed.store(true, Ordering::Release);

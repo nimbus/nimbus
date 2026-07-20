@@ -201,7 +201,8 @@ pub struct LibsqlReplicaProvider {
     encryption_provider: Option<Arc<dyn LocalKeyProvider>>,
     runtime_handle: TokioRuntimeHandle,
     clock: Arc<dyn Clock>,
-    fault_injector: Arc<dyn FaultInjector>,
+    remote_fault_injector: Arc<dyn FaultInjector>,
+    replica_fault_injector: Arc<dyn FaultInjector>,
     tenant_read_parallelism: usize,
     metadata_database: Arc<Database>,
 }
@@ -325,7 +326,7 @@ impl LibsqlReplicaTenantStore {
     }
 
     pub fn check_fault(&self, point: crate::FaultPoint) -> Result<()> {
-        self.provider.fault_injector.check(point)
+        self.provider.remote_fault_injector.check(point)
     }
 
     pub fn now(&self) -> Timestamp {
@@ -507,7 +508,7 @@ impl LibsqlReplicaTenantStore {
         let path_for_materialize = replica_path.clone();
         let path_for_open = replica_path.clone();
         let clock = self.provider.clock.clone();
-        let fault_injector = self.provider.fault_injector.clone();
+        let fault_injector = self.provider.replica_fault_injector.clone();
         let read_parallelism = self.provider.tenant_read_parallelism;
         let provider = self.provider.encryption_provider.clone();
         let tenant_id = self.tenant_id.clone();
@@ -882,6 +883,7 @@ impl LibsqlReplicaTenantStore {
         }
         put_remote_metadata_u64(&tx, NEXT_SEQUENCE_KEY, next).await?;
         tx.commit().await.map_err(map_libsql_error)?;
+        self.check_fault(crate::FaultPoint::StorageCommitAfterVisibilityBeforeReturn)?;
         Ok(())
     }
 
@@ -931,6 +933,7 @@ impl LibsqlReplicaTenantStore {
             put_remote_metadata_u64(&tx, APPLIED_SEQUENCE_KEY, applied_head.0).await?;
         }
         tx.commit().await.map_err(map_libsql_error)?;
+        self.check_fault(crate::FaultPoint::StorageCommitAfterVisibilityBeforeReturn)?;
         Ok(applied_head)
     }
 
@@ -1030,6 +1033,7 @@ impl LibsqlReplicaTenantStore {
         match result {
             Ok(applied) => {
                 tx.commit().await.map_err(map_libsql_error)?;
+                self.check_fault(crate::FaultPoint::StorageCommitAfterVisibilityBeforeReturn)?;
                 Ok(applied)
             }
             Err(error) => {

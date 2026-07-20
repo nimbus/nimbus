@@ -18,6 +18,23 @@ impl LibsqlReplicaProvider {
         clock: Arc<dyn Clock>,
         fault_injector: Arc<dyn FaultInjector>,
     ) -> Result<Self> {
+        Self::connect_with_simulation_faults(
+            config,
+            runtime_handle,
+            clock,
+            fault_injector.clone(),
+            fault_injector,
+        )
+        .await
+    }
+
+    pub(crate) async fn connect_with_simulation_faults(
+        config: LibsqlReplicaProviderConfig,
+        runtime_handle: TokioRuntimeHandle,
+        clock: Arc<dyn Clock>,
+        remote_fault_injector: Arc<dyn FaultInjector>,
+        replica_fault_injector: Arc<dyn FaultInjector>,
+    ) -> Result<Self> {
         validate_namespace_input(&config.metadata_namespace, "metadata namespace")?;
         validate_namespace_input(&config.tenant_namespace_prefix, "tenant namespace prefix")?;
         if config.admin_api_url.trim().is_empty() {
@@ -52,7 +69,8 @@ impl LibsqlReplicaProvider {
             encryption_provider: config.encryption_provider,
             runtime_handle,
             clock,
-            fault_injector,
+            remote_fault_injector,
+            replica_fault_injector,
             tenant_read_parallelism: LIBSQL_TENANT_READ_PARALLELISM,
             metadata_database,
         };
@@ -322,7 +340,7 @@ impl LibsqlReplicaProvider {
             .await?,
         );
         let clock = self.clock.clone();
-        let fault_injector = self.fault_injector.clone();
+        let fault_injector = self.replica_fault_injector.clone();
         let path_for_open = replica_path.clone();
         let read_parallelism = self.tenant_read_parallelism;
         let provider = self.encryption_provider.clone();
