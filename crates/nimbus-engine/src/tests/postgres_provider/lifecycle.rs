@@ -83,7 +83,7 @@ async fn typed_postgres_config_supports_async_tenant_lifecycle_and_empty_read_pa
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(postgres_provider)]
 async fn typed_postgres_config_reopens_multiple_tenants_for_concurrent_mixed_ops() {
-    with_postgres_engine_config(|engine_config, _provider_config| async move {
+    with_postgres_engine_config(|engine_config, provider_config| async move {
         let engine = Arc::new(
             Engine::new_with_persistence_config(engine_config.clone())
                 .await
@@ -117,6 +117,14 @@ async fn typed_postgres_config_reopens_multiple_tenants_for_concurrent_mixed_ops
         }
 
         engine.quiesce().await;
+        // Quiesce cancels renewal but deliberately does not shorten the durable
+        // provider-time lease. Model the expiry boundary explicitly so this
+        // restart test does not wait on wall-clock time.
+        for (tenant_id, _) in &seeded {
+            expire_postgres_committer_lease(&provider_config, tenant_id)
+                .await
+                .expect("quiesced tenant lease should expire for reopen");
+        }
         drop(engine);
 
         let reopened = Arc::new(
