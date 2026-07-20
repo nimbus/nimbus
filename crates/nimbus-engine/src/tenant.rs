@@ -501,8 +501,10 @@ impl TenantRuntime {
         TenantDeletionGuard
     }
 
-    pub(crate) fn mark_deleting_for_eviction(&self) {
-        self.lifecycle.begin_eviction();
+    pub(crate) fn mark_deleting_for_eviction(&self) -> bool {
+        if !self.lifecycle.begin_eviction() {
+            return false;
+        }
         self.shutdown_committer_lease_renewal();
         self.mutation_journal.fail_applied_waiters(Error::storage(
             nimbus_core::StorageErrorKind::Unavailable,
@@ -511,6 +513,7 @@ impl TenantRuntime {
                 self.tenant_id
             ),
         ));
+        true
     }
 
     pub(crate) async fn wait_for_operation_drain_for_eviction(&self) {

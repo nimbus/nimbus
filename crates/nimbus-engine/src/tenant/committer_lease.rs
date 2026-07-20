@@ -85,7 +85,17 @@ impl TenantRuntime {
     pub(crate) fn record_committer_fenced(&self, owner_id: String, epoch: u64) {
         if let Some(lifecycle) = &self.committer_lease {
             lifecycle.record_fenced(owner_id, epoch);
+            // Wake the committer actor, which owns the existing tenant-runtime
+            // eviction sequence. Until it drains, held_identity remains fenced,
+            // so no later assignment can degrade to an unfenced store call.
+            self.shutdown_committer();
         }
+    }
+
+    pub(crate) fn committer_fenced_error(&self) -> Option<Error> {
+        self.committer_lease
+            .as_ref()
+            .and_then(|lifecycle| lifecycle.fenced_error())
     }
 
     /// Atomically persists a provider durable batch under the held lease.
@@ -344,6 +354,19 @@ impl CommitterLeaseLifecycle {
         state.status = CommitterLeaseStatus::Fenced { owner_id, epoch };
     }
 
+    fn fenced_error(&self) -> Option<Error> {
+        let state = self
+            .state
+            .lock()
+            .expect("committer lease state lock should not be poisoned");
+        match &state.status {
+            CommitterLeaseStatus::Fenced { owner_id, epoch } => {
+                Some(fenced_error(owner_id, *epoch))
+            }
+            CommitterLeaseStatus::Unacquired | CommitterLeaseStatus::Held(_) => None,
+        }
+    }
+
     fn shutdown(&self) {
         let state = self
             .state
@@ -412,6 +435,11 @@ impl CommitterLeaseLifecycle {
             Err(CommitterLeaseError::Fenced { owner_id, epoch }) => {
                 state.renewal_failure_count = state.renewal_failure_count.saturating_add(1);
                 state.status = CommitterLeaseStatus::Fenced { owner_id, epoch };
+                drop(state);
+                // Do not run eviction from this renewal thread: eviction joins
+                // the renewal worker. Waking the committer hands ownership to
+                // the established close/drain/deregister machinery instead.
+                runtime.shutdown_committer();
                 false
             }
             Err(error) => {

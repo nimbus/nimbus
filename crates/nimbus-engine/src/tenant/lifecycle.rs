@@ -82,9 +82,12 @@ impl TenantLifecycle {
         self.deleted.store(true, Ordering::Release);
     }
 
-    pub(super) fn begin_eviction(&self) {
-        self.eviction_started.store(true, Ordering::Release);
+    pub(super) fn begin_eviction(&self) -> bool {
+        if self.eviction_started.swap(true, Ordering::AcqRel) {
+            return false;
+        }
         self.mark_deleted();
+        true
     }
 
     pub(super) fn eviction_started(&self) -> bool {

@@ -12,7 +12,10 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::Engine;
-use crate::engine::finish_durable_recovery_eviction_locked;
+use crate::engine::{
+    TenantEvictionRegistry, begin_definitive_fence_eviction,
+    finish_durable_recovery_eviction_locked,
+};
 
 use super::super::TenantRuntime;
 
@@ -548,6 +551,7 @@ pub(crate) async fn run_committer_actor(
     engine_shutdown: CancellationToken,
     tenant_shutdown: CancellationToken,
     closes_observer_dispatch: bool,
+    eviction_registry: TenantEvictionRegistry,
 ) {
     let tenant_id = runtime
         .upgrade()
@@ -560,11 +564,33 @@ pub(crate) async fn run_committer_actor(
             run_committer_actor_loop(runtime.clone(), receiver, engine_shutdown, tenant_shutdown),
         )
         .await;
+    let fenced = runtime.upgrade().and_then(|runtime| {
+        runtime
+            .committer_fenced_error()
+            .map(|error| (runtime, error))
+    });
+    if let Some((runtime, error)) = &fenced {
+        // A fence is definitive: the provider CAS rejected and rolled back the
+        // transaction. Eviction only surrenders sequence authority; unlike an
+        // ambiguous outcome, this path does not probe or claim crash replay.
+        begin_definitive_fence_eviction(runtime, error);
+        runtime.fail_and_drain_mutation_queues(error);
+    }
     if closes_observer_dispatch && let Some(runtime) = runtime.upgrade() {
         runtime.close_committed_mutation_observers();
         runtime
             .wait_for_committed_mutation_observers_drained()
             .await;
+    }
+    if let Some((runtime, _)) = fenced {
+        if !closes_observer_dispatch {
+            runtime.close_committed_mutation_observers();
+            runtime
+                .wait_for_committed_mutation_observers_drained()
+                .await;
+        }
+        runtime.wait_for_operation_drain_for_eviction().await;
+        eviction_registry.finish(&runtime);
     }
 }
 
@@ -595,6 +621,11 @@ async fn run_committer_actor_loop(
         let Some(runtime) = runtime.upgrade() else {
             break;
         };
+        if let Some(error) = runtime.committer_fenced_error() {
+            begin_definitive_fence_eviction(&runtime, &error);
+            fail_committer_message_during_fence_eviction(runtime.as_ref(), message, &error);
+            continue;
+        }
         if let CommitterMessage::QueuedBatch {
             engine,
             owns_pending_wake,
@@ -672,6 +703,28 @@ async fn run_committer_actor_loop(
             .is_err();
         let _ = completed.send(());
         if failed {
+            runtime.record_mutation_worker_failure();
+        }
+    }
+}
+
+fn fail_committer_message_during_fence_eviction(
+    runtime: &TenantRuntime,
+    message: CommitterMessage,
+    error: &Error,
+) {
+    match message {
+        CommitterMessage::QueuedBatch {
+            owns_pending_wake, ..
+        } => {
+            runtime.accept_queued_committer_batch(owns_pending_wake);
+            runtime.fail_and_drain_mutation_queues(error);
+        }
+        CommitterMessage::DirectCommit(job)
+        | CommitterMessage::ExecutionUnitCommit(job)
+        | CommitterMessage::JournalProgressSync(job)
+        | CommitterMessage::InternalSerial(job) => {
+            job.fail(error.clone());
             runtime.record_mutation_worker_failure();
         }
     }

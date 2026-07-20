@@ -47,6 +47,12 @@ pub(crate) enum PublishAttemptError {
     Ambiguous(Error),
 }
 
+#[derive(Clone, Copy)]
+enum RestartCause {
+    AmbiguousCrashReplay,
+    DefinitiveFence,
+}
+
 pub(crate) struct PublishedBatch {
     pub(crate) applied: Vec<CommitEntry>,
     pub(crate) durable_append: Duration,
@@ -176,17 +182,41 @@ pub(crate) async fn run_ordered_publisher(
                 complete_published_batch(runtime, batch, published);
             }
             Err(PublishAttemptError::Definitive(error)) => {
-                fail_definitive_batch_and_recover(
+                if matches!(error, Error::CommitterFenced { .. }) {
+                    // The same close/drain/deregister machinery serves both
+                    // cases, but a fence is a proven rollback and therefore
+                    // carries no crash-replay or ambiguity accounting.
+                    fail_and_restart(
+                        runtime,
+                        batch,
+                        error,
+                        RestartCause::DefinitiveFence,
+                        &mut receiver,
+                        &mut pending_message,
+                    )
+                    .await;
+                    break;
+                } else {
+                    fail_definitive_batch_and_recover(
+                        runtime,
+                        batch,
+                        error,
+                        &mut receiver,
+                        &mut pending_message,
+                    )
+                    .await;
+                }
+            }
+            Err(PublishAttemptError::Ambiguous(error)) => {
+                fail_and_restart(
                     runtime,
                     batch,
                     error,
+                    RestartCause::AmbiguousCrashReplay,
                     &mut receiver,
                     &mut pending_message,
                 )
                 .await;
-            }
-            Err(PublishAttemptError::Ambiguous(error)) => {
-                fail_and_restart(runtime, batch, error, &mut receiver, &mut pending_message).await;
                 break;
             }
         }
@@ -377,7 +407,9 @@ async fn publish_with_retry(
                 tokio::time::sleep(delay).await;
             }
             Err(PublishAttemptError::Definitive(error)) => {
-                runtime.publisher_record_fatal_error();
+                if !matches!(error, Error::CommitterFenced { .. }) {
+                    runtime.publisher_record_fatal_error();
+                }
                 return Err(PublishAttemptError::Definitive(error));
             }
         }
@@ -677,6 +709,7 @@ async fn fail_and_restart(
     runtime: Arc<TenantRuntime>,
     batch: AssignedPublisherBatch,
     error: Error,
+    cause: RestartCause,
     receiver: &mut mpsc::Receiver<PublisherMessage>,
     pending_message: &mut Option<PublisherMessage>,
 ) {
@@ -694,7 +727,10 @@ async fn fail_and_restart(
         queued_messages.push(queued);
     }
     runtime.record_mutation_worker_failure();
-    begin_durable_recovery_eviction(&runtime, &error);
+    match cause {
+        RestartCause::AmbiguousCrashReplay => begin_durable_recovery_eviction(&runtime, &error),
+        RestartCause::DefinitiveFence => begin_definitive_fence_eviction(&runtime, &error),
+    }
 
     // Converting queued work to deferred completions drops every publisher
     // operation guard immediately. Run the sender-only completions before any
@@ -723,17 +759,32 @@ async fn fail_and_restart(
 }
 
 pub(super) fn begin_durable_recovery_eviction(runtime: &TenantRuntime, error: &Error) {
+    begin_tenant_runtime_eviction(runtime, error, true);
+}
+
+pub(crate) fn begin_definitive_fence_eviction(runtime: &TenantRuntime, error: &Error) {
+    begin_tenant_runtime_eviction(runtime, error, false);
+}
+
+fn begin_tenant_runtime_eviction(runtime: &TenantRuntime, error: &Error, ambiguous: bool) {
     // Close admission before stopping the actor so any producer that already
     // entered the tenant is either rejected at the queue lock or included in
     // the explicit queue drain below.
-    runtime.mark_deleting_for_eviction();
+    if !runtime.mark_deleting_for_eviction() {
+        return;
+    }
     runtime.shutdown_committer();
     runtime.shutdown_trigger_candidates();
     runtime.shutdown_trigger_execution();
     runtime.shutdown_subscription_delivery();
-    runtime.subscriptions.shutdown_all(format!(
-        "tenant committer stopped for durable recovery: {error}"
-    ));
+    let reason = if ambiguous {
+        format!("tenant committer stopped for durable recovery: {error}")
+    } else {
+        format!(
+            "tenant committer surrendered sequence authority after a definitive lease fence; the rejected transaction was rolled back: {error}"
+        )
+    };
+    runtime.subscriptions.shutdown_all(reason);
 }
 
 pub(super) async fn finish_durable_recovery_eviction(
@@ -763,30 +814,11 @@ pub(crate) fn finish_durable_recovery_eviction_locked(
     engine: &Engine,
     runtime: &Arc<TenantRuntime>,
 ) {
-    let tenant_id = runtime.tenant_id().clone();
-    engine
-        .publisher_failure_diagnostics
-        .write()
-        .expect("publisher failure diagnostics lock should not be poisoned")
-        .insert(tenant_id.clone(), runtime.publisher_error_counts());
-    let removed = {
-        let mut tenants = engine
-            .tenants
-            .write()
-            .expect("tenant registry lock should not be poisoned");
-        if tenants
-            .get(&tenant_id)
-            .is_some_and(|loaded| Arc::ptr_eq(loaded, runtime))
-        {
-            tenants.remove(&tenant_id)
-        } else {
-            None
-        }
-    };
-    drop(removed);
-    // Wake accessors only after the failed runtime is absent from the
-    // registry. They will then serialize a fresh open behind the load gate.
-    runtime.finish_eviction();
+    crate::engine::TenantEvictionRegistry {
+        tenants: Arc::downgrade(&engine.tenants),
+        publisher_failure_diagnostics: Arc::downgrade(&engine.publisher_failure_diagnostics),
+    }
+    .finish(runtime);
 }
 
 #[cfg(test)]
@@ -992,7 +1024,15 @@ mod tests {
             async move {
                 let mut receiver = receiver;
                 let mut pending = None;
-                fail_and_restart(runtime, failed_batch, typed, &mut receiver, &mut pending).await;
+                fail_and_restart(
+                    runtime,
+                    failed_batch,
+                    typed,
+                    RestartCause::AmbiguousCrashReplay,
+                    &mut receiver,
+                    &mut pending,
+                )
+                .await;
             }
         });
         sender.closed().await;
