@@ -96,7 +96,7 @@ async fn postgres_notifications_load_unloaded_tenants_with_scheduled_work() {
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(postgres_provider)]
 async fn postgres_restart_recovers_due_scheduler_work_after_reopen() {
-    with_postgres_engine_config(|engine_config, _provider_config| async move {
+    with_postgres_engine_config(|engine_config, provider_config| async move {
         let tenant_id = TenantId::new("pg-restart-scheduler").expect("tenant id should build");
         let engine = Arc::new(
             Engine::new_with_persistence_config(engine_config.clone())
@@ -141,6 +141,12 @@ async fn postgres_restart_recovers_due_scheduler_work_after_reopen() {
         tokio::time::timeout(Duration::from_secs(2), engine.quiesce())
             .await
             .expect("engine should quiesce before restart");
+        // Quiesce stops renewal but intentionally leaves the provider-time
+        // lease intact. Cross the handoff boundary explicitly so the reopened
+        // scheduler acquires a fresh epoch without a wall-clock sleep.
+        expire_postgres_committer_lease(&provider_config, &tenant_id)
+            .await
+            .expect("quiesced scheduler tenant lease should expire for reopen");
         drop(engine);
 
         let reopened = Arc::new(
