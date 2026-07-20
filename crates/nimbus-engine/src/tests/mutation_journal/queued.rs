@@ -61,6 +61,77 @@ async fn async_schema_write_advances_runtime_journal_before_next_queued_document
     assert_eq!(after_insert.worker_failure_count, 0);
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn embedded_record_writers_never_interact_with_committer_lease() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("embedded-unfenced-routes", Engine::create_tenant);
+
+    engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("queued"))]),
+        )
+        .await
+        .expect("embedded queued write should retain its existing path");
+    engine
+        .insert_document(
+            &tenant_id,
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("direct"))]),
+        )
+        .expect("embedded direct write should retain its existing path");
+
+    let unit = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("embedded execution unit should begin");
+    unit.insert_document(
+        tasks_table(),
+        serde_json::Map::from_iter([("title".to_string(), json!("execution-unit"))]),
+    )
+    .expect("embedded execution write should stage");
+    unit.commit()
+        .expect("embedded execution unit should retain its existing path");
+
+    engine
+        .set_table_schema_async(
+            tenant_id.clone(),
+            TableSchema {
+                table: tasks_table(),
+                fields: vec![FieldSchema {
+                    name: "title".to_string(),
+                    field_type: FieldType::String,
+                    required: true,
+                }],
+                indexes: Vec::new(),
+                access_policy: None,
+            },
+        )
+        .await
+        .expect("embedded schema write should retain its existing path");
+    engine
+        .materialize_trigger_cursor_for_testing(
+            &tenant_id,
+            nimbus_core::TriggerDeliveryCursor::new(SequenceNumber(3)),
+        )
+        .expect("embedded internal cursor write should retain its existing path");
+    engine
+        .persist_provider_publisher_barrier_for_testing(&tenant_id, "embedded-publisher")
+        .expect("embedded publisher persistence should retain append/apply behavior");
+
+    let stats = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("embedded journal stats should read");
+    assert!(!stats.committer_lease_acquired);
+    assert!(!stats.committer_lease_fenced);
+    assert_eq!(stats.committer_lease_epoch, 0);
+    assert_eq!(stats.committer_lease_acquire_count, 0);
+    assert_eq!(stats.committer_lease_renewal_count, 0);
+    assert_eq!(stats.committer_lease_renewal_failure_count, 0);
+    assert!(!stats.committer_lease_renewal_worker_running);
+}
+
 /// Liveness smoke for the real `insert_document_async` path under concurrency:
 /// several tasks issue rapid mutations in true parallelism and every one must
 /// drain within a bound. This exercises the mutation journal end-to-end and
