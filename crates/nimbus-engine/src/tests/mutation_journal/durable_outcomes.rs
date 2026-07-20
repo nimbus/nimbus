@@ -596,3 +596,221 @@ async fn trigger_cursor_advanced_head_evicts_replays_and_does_not_reuse_sequence
 async fn trigger_cursor_unreadable_progress_evicts_and_replays() {
     exercise_trigger_cursor_outcome(OutcomeCase::Unreadable, "trigger-cursor-unreadable").await;
 }
+
+async fn exercise_point_in_time_restore_outcome(case: OutcomeCase, tenant: &str) {
+    let source_dir = tempdir().expect("restore source tempdir should build");
+    let source_engine =
+        Arc::new(Engine::new(source_dir.path()).expect("restore source engine should create"));
+    let source_tenant =
+        TenantId::new(format!("{tenant}-source")).expect("restore source tenant id should build");
+    source_engine
+        .create_tenant_async(source_tenant.clone())
+        .await
+        .expect("restore source tenant should create");
+    let table = TableName::new(format!("{tenant}_documents")).expect("restore table should build");
+    source_engine
+        .insert_document_async(
+            source_tenant.clone(),
+            table.clone(),
+            serde_json::Map::from_iter([("value".to_string(), json!("restored"))]),
+        )
+        .await
+        .expect("restore source document should commit");
+    source_engine
+        .shutdown_trigger_candidates_for_testing(&source_tenant)
+        .expect("restore source trigger worker should shut down");
+    let archive = source_engine
+        .export_latest_point_in_time_restore_archive(&source_tenant)
+        .expect("point-in-time restore archive should export");
+
+    let point = match case {
+        OutcomeCase::Advanced => FaultPoint::StorageCommitAfterVisibilityBeforeReturn,
+        OutcomeCase::Unchanged | OutcomeCase::Unreadable => {
+            FaultPoint::StorageCommitBeforeVisibility
+        }
+    };
+    // Restore first commits its empty sequence-zero base snapshot, then appends
+    // the archive tail. The advanced-head case must fail the second boundary so
+    // the durable journal record, rather than only the empty base, is visible.
+    let faults = if matches!(case, OutcomeCase::Advanced) {
+        ArmedOneShotDirectFaultInjector::new_on_visit(point, 2)
+    } else {
+        ArmedOneShotDirectFaultInjector::new(point)
+    };
+    let destination_dir = tempdir().expect("restore destination tempdir should build");
+    let engine = Arc::new(
+        Engine::new_with_simulation_and_memory_persistence(
+            destination_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(47_300))),
+            faults.clone(),
+            Arc::new(nimbus_core::SeededIdSource::new(47_301)),
+        )
+        .expect("restore destination engine should create"),
+    );
+    let tenant_id = TenantId::new(tenant).expect("restore destination tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("restore destination tenant should create");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("restore destination trigger worker should shut down");
+    let runtime_before = engine
+        .tenant_runtime_for_testing(&tenant_id)
+        .expect("restore runtime should stay retained for identity proof");
+    let runtime_identity_before = engine
+        .tenant_runtime_identity_for_testing(&tenant_id)
+        .expect("restore runtime identity should load");
+    if matches!(case, OutcomeCase::Unreadable) {
+        engine.fail_durable_outcome_progress_for_testing(
+            tenant_id.clone(),
+            DurableWriteRoute::PointInTimeRestore,
+        );
+    }
+    faults.arm();
+
+    let error = engine
+        .import_point_in_time_restore_archive(&tenant_id, &archive)
+        .expect_err("faulted point-in-time restore should return an error");
+    match case {
+        OutcomeCase::Unchanged => {
+            assert!(
+                !error.to_string().contains("crash-and-replay"),
+                "unchanged durable head should preserve the typed restore error: {error}"
+            );
+            assert_eq!(
+                engine
+                    .tenant_runtime_identity_for_testing(&tenant_id)
+                    .expect("definitive restore runtime should stay loaded"),
+                runtime_identity_before,
+                "definitive restore failure must keep the tenant runtime live"
+            );
+            assert!(
+                engine.runtime_is_registered_for_testing(&tenant_id, &runtime_before),
+                "definitive restore failure must retain the original runtime"
+            );
+            assert!(
+                engine
+                    .query_documents_async(
+                        tenant_id.clone(),
+                        Query {
+                            table: table.clone(),
+                            filters: Vec::new(),
+                            order: None,
+                            limit: None,
+                        },
+                    )
+                    .await
+                    .expect("definitive restore destination should remain queryable")
+                    .is_empty(),
+                "definitive restore rollback must leave the destination empty"
+            );
+            engine
+                .import_point_in_time_restore_archive(&tenant_id, &archive)
+                .expect("definitive restore failure should be retryable on the live runtime");
+            assert_eq!(
+                engine
+                    .tenant_runtime_identity_for_testing(&tenant_id)
+                    .expect("retried restore runtime should stay loaded"),
+                runtime_identity_before,
+                "definitive restore retry must not replace the tenant runtime"
+            );
+            let restored = engine
+                .query_documents_async(
+                    tenant_id.clone(),
+                    Query {
+                        table,
+                        filters: Vec::new(),
+                        order: None,
+                        limit: None,
+                    },
+                )
+                .await
+                .expect("retried restore should be queryable");
+            assert_eq!(restored.len(), 1);
+            assert_eq!(restored[0].fields.get("value"), Some(&json!("restored")));
+            return;
+        }
+        OutcomeCase::Advanced | OutcomeCase::Unreadable => {
+            assert!(
+                error.to_string().contains("crash-and-replay"),
+                "ambiguous restore outcome should demand crash-and-replay: {error}"
+            );
+        }
+    }
+
+    let restored = engine
+        .query_documents_async(
+            tenant_id.clone(),
+            Query {
+                table: table.clone(),
+                filters: Vec::new(),
+                order: None,
+                limit: None,
+            },
+        )
+        .await
+        .expect("restore outcome should remain queryable after classification");
+    assert_eq!(
+        restored.len(),
+        usize::from(matches!(case, OutcomeCase::Advanced)),
+        "crash replay must expose the restore archive only when its durable tail landed"
+    );
+    assert_ne!(
+        engine
+            .tenant_runtime_identity_for_testing(&tenant_id)
+            .expect("replacement restore runtime identity should load"),
+        runtime_identity_before,
+        "ambiguous restore outcome must replace the tenant runtime"
+    );
+    assert!(
+        !engine.runtime_is_registered_for_testing(&tenant_id, &runtime_before),
+        "ambiguous restore outcome must deregister the failed runtime"
+    );
+
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("replacement restore trigger worker should shut down");
+    if matches!(case, OutcomeCase::Advanced) {
+        assert_eq!(restored[0].fields.get("value"), Some(&json!("restored")));
+        let head_before_follow_up = engine
+            .latest_sequence(&tenant_id)
+            .expect("restore durable head should load");
+        let follow_up_table = TableName::new(format!("{tenant}_follow_up"))
+            .expect("restore follow-up table should build");
+        engine
+            .set_table_schema_async(
+                tenant_id.clone(),
+                TableSchema {
+                    table: follow_up_table,
+                    fields: Vec::new(),
+                    indexes: Vec::new(),
+                    access_policy: None,
+                },
+            )
+            .await
+            .expect("replacement runtime should commit after restore replay");
+        assert_eq!(
+            engine
+                .latest_sequence(&tenant_id)
+                .expect("follow-up restore durable head should load"),
+            SequenceNumber(head_before_follow_up.0 + 1),
+            "replacement runtime must continue after the durable head without reusing a sequence"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn point_in_time_restore_unchanged_head_is_definitive_can_retry_and_stays_live() {
+    exercise_point_in_time_restore_outcome(OutcomeCase::Unchanged, "restore-definitive").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn point_in_time_restore_advanced_head_evicts_replays_and_does_not_reuse_sequence() {
+    exercise_point_in_time_restore_outcome(OutcomeCase::Advanced, "restore-advanced").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn point_in_time_restore_unreadable_progress_evicts_and_replays() {
+    exercise_point_in_time_restore_outcome(OutcomeCase::Unreadable, "restore-unreadable").await;
+}
