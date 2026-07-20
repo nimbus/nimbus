@@ -16,6 +16,7 @@ pub(crate) enum DurableWriteOutcome {
 pub(crate) enum DurableWriteRoute {
     Direct,
     ExecutionUnit,
+    Publisher,
     SchemaSet,
     SchemaDelete,
     TriggerCursor,
@@ -27,6 +28,7 @@ impl DurableWriteRoute {
         match self {
             Self::Direct => "direct mutation",
             Self::ExecutionUnit => "mutation execution unit",
+            Self::Publisher => "ordered publisher batch",
             Self::SchemaSet => "schema set",
             Self::SchemaDelete => "schema delete",
             Self::TriggerCursor => "trigger cursor",

@@ -10,6 +10,168 @@ use super::support::{
 use super::*;
 use nimbus_storage::NoopFaultInjector;
 
+#[derive(Default)]
+struct PublisherRecoveryObserver {
+    sequences: Mutex<Vec<SequenceNumber>>,
+}
+
+impl crate::CommittedMutationObserver for PublisherRecoveryObserver {
+    fn committed_mutation_applied(&self, event: crate::CommittedMutationEvent) {
+        self.sequences
+            .lock()
+            .expect("publisher recovery observer should lock")
+            .push(event.commit.sequence);
+    }
+}
+
+async fn assert_publisher_ambiguous_outcome_recovers_without_retry(
+    tenant: &str,
+    unreadable_progress: bool,
+) {
+    let data_dir = tempdir().expect("ambiguous publisher tempdir should build");
+    let faults = Arc::new(nimbus_storage::ScriptedFaultInjector::new([
+        nimbus_storage::FaultOccurrence {
+            point: FaultPoint::JournalFlushBeforeVisibility,
+            visit: 1,
+        },
+    ]));
+    let engine = Arc::new(
+        Engine::new_with_simulation(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(45_900))),
+            faults,
+        )
+        .expect("ambiguous publisher engine should create"),
+    );
+    let tenant_id = TenantId::new(tenant).expect("ambiguous publisher tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("ambiguous publisher tenant should create");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+    let runtime_before = engine
+        .tenant_runtime_identity_for_testing(&tenant_id)
+        .expect("ambiguous publisher runtime identity should load");
+    let observer = Arc::new(PublisherRecoveryObserver::default());
+    engine
+        .install_committed_mutation_observer("publisher-recovery-classification", observer.clone());
+    if unreadable_progress {
+        engine.fail_durable_outcome_progress_for_testing(
+            tenant_id.clone(),
+            crate::engine::DurableWriteRoute::Publisher,
+        );
+    }
+
+    let error = engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("index".to_string(), json!(1))]),
+        )
+        .await
+        .expect_err("ambiguous publisher result must not be retried as definitive");
+    assert_eq!(error.retryability(), nimbus_core::Retryability::Terminal);
+    assert!(
+        error.to_string().contains("crash-and-replay"),
+        "ambiguous publisher result must tell the caller to recover: {error}"
+    );
+    assert_eq!(
+        engine.durable_outcome_probe_count_for_testing(
+            &tenant_id,
+            crate::engine::DurableWriteRoute::Publisher,
+        ),
+        1,
+        "the failed attempt must be classified exactly once before any retry"
+    );
+
+    let recovered = engine
+        .query_documents_async(tenant_id.clone(), query_for("tasks"))
+        .await
+        .expect("ambiguous publisher tenant should reopen through durable recovery");
+    assert_eq!(recovered.len(), 1, "the landed attempt must apply once");
+    assert_ne!(
+        engine
+            .tenant_runtime_identity_for_testing(&tenant_id)
+            .expect("replacement runtime identity should load"),
+        runtime_before,
+        "ambiguous publisher state must evict the original runtime"
+    );
+    assert_eq!(
+        engine
+            .read_durable_journal(&tenant_id, SequenceNumber(0))
+            .expect("recovered journal should read")
+            .iter()
+            .map(|record| record.sequence)
+            .collect::<Vec<_>>(),
+        vec![SequenceNumber(1)],
+        "the ambiguous attempt must produce at most one durable record"
+    );
+
+    engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("index".to_string(), json!(2))]),
+        )
+        .await
+        .expect("the replacement publisher should continue at the next sequence");
+    engine
+        .flush_committed_mutation_observers_for_testing(&tenant_id)
+        .await
+        .expect("publisher observer work should drain");
+    assert_eq!(
+        engine
+            .read_durable_journal(&tenant_id, SequenceNumber(0))
+            .expect("continued journal should read")
+            .iter()
+            .map(|record| record.sequence)
+            .collect::<Vec<_>>(),
+        vec![SequenceNumber(1), SequenceNumber(2)],
+        "recovery must not reuse the ambiguous sequence"
+    );
+    let observed = observer
+        .sequences
+        .lock()
+        .expect("publisher recovery observer should lock")
+        .clone();
+    assert_eq!(
+        observed
+            .iter()
+            .filter(|sequence| **sequence == SequenceNumber(1))
+            .count(),
+        0,
+        "the failed pre-fanout attempt must not emit a live observer event during historical replay"
+    );
+    assert_eq!(
+        observed
+            .iter()
+            .filter(|sequence| **sequence == SequenceNumber(2))
+            .count(),
+        1,
+        "the replacement publisher must fan out its live commit exactly once"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn publisher_error_with_advanced_head_is_ambiguous_without_retry() {
+    assert_publisher_ambiguous_outcome_recovers_without_retry(
+        "publisher-advanced-head-recovery",
+        false,
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn publisher_error_with_unreadable_progress_is_ambiguous_without_retry() {
+    assert_publisher_ambiguous_outcome_recovers_without_retry(
+        "publisher-unreadable-progress-recovery",
+        true,
+    )
+    .await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn publisher_preserves_sequence_order_across_transient_retry() {
     let data_dir = tempdir().expect("transient publisher tempdir should build");
@@ -121,6 +283,14 @@ async fn publisher_preserves_sequence_order_across_transient_retry() {
     assert_eq!(stats.publisher_transient_error_count, 1);
     assert_eq!(stats.publisher_fatal_error_count, 0);
     assert_eq!(stats.publisher_ambiguous_error_count, 0);
+    assert_eq!(
+        engine.durable_outcome_probe_count_for_testing(
+            &tenant_id,
+            crate::engine::DurableWriteRoute::Publisher,
+        ),
+        1,
+        "the production publisher path must classify the failed attempt through the shared durable-outcome policy before retrying"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
