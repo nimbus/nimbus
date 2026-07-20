@@ -58,14 +58,19 @@ async fn postgres_lease_is_lazy_idempotent_renewed_and_cancelled_with_the_runtim
             "tenant construction must not acquire sequence authority"
         );
 
-        engine
-            .insert_document_async(
-                tenant_id.clone(),
-                tasks_table(),
-                serde_json::Map::from_iter([("title".to_string(), json!("first"))]),
-            )
-            .await
-            .expect("first assignment should acquire and commit");
+        let first_writer = engine.insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("first"))]),
+        );
+        let concurrent_first_writer = engine.insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("title".to_string(), json!("concurrent"))]),
+        );
+        let (first_result, concurrent_result) = tokio::join!(first_writer, concurrent_first_writer);
+        first_result.expect("first assignment should acquire and commit");
+        concurrent_result.expect("concurrent first writer should reuse the acquired lease");
         let first = engine
             .mutation_journal_stats_for_testing(&tenant_id)
             .expect("first-assignment stats should read");
@@ -79,10 +84,10 @@ async fn postgres_lease_is_lazy_idempotent_renewed_and_cancelled_with_the_runtim
             .insert_document_async(
                 tenant_id.clone(),
                 tasks_table(),
-                serde_json::Map::from_iter([("title".to_string(), json!("second"))]),
+                serde_json::Map::from_iter([("title".to_string(), json!("later"))]),
             )
             .await
-            .expect("second assignment should reuse the lease");
+            .expect("later assignment should reuse the lease");
         assert_eq!(
             engine
                 .mutation_journal_stats_for_testing(&tenant_id)

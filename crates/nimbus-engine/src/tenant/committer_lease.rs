@@ -51,6 +51,7 @@ pub(crate) struct CommitterLeaseLifecycle {
     wake: Arc<RenewalWake>,
     worker: BackgroundWorker,
     worker_active: Arc<AtomicBool>,
+    closed: AtomicBool,
 }
 
 impl TenantRuntime {
@@ -102,6 +103,7 @@ impl CommitterLeaseLifecycle {
             }),
             worker: BackgroundWorker::new(),
             worker_active: Arc::new(AtomicBool::new(false)),
+            closed: AtomicBool::new(false),
         }
     }
 
@@ -110,6 +112,12 @@ impl CommitterLeaseLifecycle {
             .state
             .lock()
             .expect("committer lease state lock should not be poisoned");
+        if self.closed.load(Ordering::Acquire) {
+            return Err(Error::storage(
+                StorageErrorKind::Unavailable,
+                "committer lease lifecycle is shutting down",
+            ));
+        }
         match &state.status {
             CommitterLeaseStatus::Held(_) => return Ok(()),
             CommitterLeaseStatus::Fenced { owner_id, epoch } => {
@@ -146,12 +154,19 @@ impl CommitterLeaseLifecycle {
     }
 
     fn start_worker(self: &Arc<Self>, runtime: &Arc<TenantRuntime>) {
+        let _state = self
+            .state
+            .lock()
+            .expect("committer lease state lock should not be poisoned");
+        if self.closed.load(Ordering::Acquire) {
+            return;
+        }
         let lifecycle = Arc::downgrade(self);
         let runtime = Arc::downgrade(runtime);
         let worker_active = self.worker_active.clone();
+        worker_active.store(true, Ordering::Release);
         self.worker
             .start("nimbus-committer-lease-renewal", move |shutdown| {
-                worker_active.store(true, Ordering::Release);
                 struct WorkerStopped(Arc<AtomicBool>);
                 impl Drop for WorkerStopped {
                     fn drop(&mut self) {
@@ -164,6 +179,12 @@ impl CommitterLeaseLifecycle {
     }
 
     fn shutdown(&self) {
+        let state = self
+            .state
+            .lock()
+            .expect("committer lease state lock should not be poisoned");
+        self.closed.store(true, Ordering::Release);
+        drop(state);
         let wake = self.wake.clone();
         self.worker
             .shutdown(move |shutdown| wake.signal_shutdown(shutdown));
