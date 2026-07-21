@@ -283,6 +283,8 @@ proof-helpers:
 	bash -n scripts/test-external-providers.sh
 	bash -n scripts/verify-external-provider-fixture-helper.sh
 	bash scripts/verify-external-provider-fixture-helper.sh
+	bash -n scripts/verify-mutation-committer-arm.sh
+	bash scripts/verify-mutation-committer-arm.sh
 	bash -n scripts/collect-sqlcipher-proof-bundles.sh
 	bash -n scripts/collect-nimbus-machine-guest-proof.sh
 	bash -n scripts/collect-nimbus-machine-service-proof.sh

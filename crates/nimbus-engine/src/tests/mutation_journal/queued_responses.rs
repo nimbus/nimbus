@@ -750,6 +750,10 @@ async fn assignment_failure_keeps_the_cancelled_requests_own_outcome() {
         .expect("assignment deferred engine should create"),
     );
     let tenant_id = TenantId::new("assignment-deferred-outcome").expect("tenant id should build");
+    crate::tenant::configure_committer_arm_for_testing(
+        tenant_id.clone(),
+        crate::tenant::CommitterArm::Serial,
+    );
     engine
         .create_tenant_async(tenant_id.clone())
         .await
@@ -757,10 +761,6 @@ async fn assignment_failure_keeps_the_cancelled_requests_own_outcome() {
     engine
         .shutdown_trigger_candidates_for_testing(&tenant_id)
         .expect("trigger cursor should not add unrelated records");
-    engine
-        .set_committer_pipeline_requested_for_testing(&tenant_id, false)
-        .expect("test should request the serial kill-switch arm");
-
     let pause = engine
         .mutation_journal_pause_handle_for_testing(&tenant_id)
         .expect("journal pause handle should load");

@@ -206,7 +206,7 @@ impl Engine {
                 result: Ok(crate::tenant::QueuedMutationResult::Scheduled(false)),
             }])
             .await
-            .map_err(|error| error.1)?;
+            .map_err(|error| error.into_parts().1)?;
         Ok(completion)
     }
 
@@ -229,19 +229,8 @@ impl Engine {
                 )),
             }])
             .await
-            .map_err(|error| error.1)?;
+            .map_err(|error| error.into_parts().1)?;
         Ok(completion)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn set_committer_pipeline_requested_for_testing(
-        &self,
-        tenant_id: &TenantId,
-        enabled: bool,
-    ) -> Result<()> {
-        self.with_runtime_for_testing(tenant_id, |runtime| {
-            runtime.set_committer_pipeline_requested_for_testing(enabled);
-        })
     }
 
     #[cfg(test)]

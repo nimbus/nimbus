@@ -117,6 +117,9 @@ fn title(value: &str) -> serde_json::Map<String, serde_json::Value> {
     serde_json::Map::from_iter([("title".to_string(), json!(value))])
 }
 
+#[path = "lease_lifecycle/ordered_arm.rs"]
+mod ordered_arm;
+
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(postgres_provider)]
 async fn postgres_provider_publisher_ack_loss_is_classified_before_retry_fence() {

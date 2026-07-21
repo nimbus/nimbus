@@ -1,9 +1,9 @@
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use nimbus_core::{Error, Result, SequenceNumber, TenantEventRecord, TenantId};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{Notify, mpsc, oneshot};
 
 use crate::Engine;
 use crate::engine::CommitPhaseDurations;
@@ -14,7 +14,7 @@ use crate::engine::committed_mutations::{
 use super::super::{
     CommitterJob, MutationResponseSender, QueuedMutationResult, TenantOperationGuard,
 };
-use super::CommitterPipelineMode;
+use super::CommitterArm;
 
 const DEFAULT_PUBLISHER_QUEUE_CAPACITY: usize = 32;
 const DEFAULT_PUBLISHER_SEND_TIMEOUT_MS: u64 = 500;
@@ -80,6 +80,35 @@ fn clamp_observer_limits(
 static PUBLISHER_LIMITS_FOR_TESTING: std::sync::OnceLock<
     Mutex<std::collections::HashMap<TenantId, (usize, Duration)>>,
 > = std::sync::OnceLock::new();
+
+#[cfg(test)]
+static COMMITTER_ARMS_FOR_TESTING: std::sync::OnceLock<
+    Mutex<std::collections::HashMap<TenantId, CommitterArm>>,
+> = std::sync::OnceLock::new();
+
+/// Selects a tenant's committer arm before its runtime is constructed.
+///
+/// The selection is consumed exactly once by [`PublisherHandoff::new`]. Tests
+/// use this seam to exercise both static adapters without mutating a live
+/// runtime; production derives the same immutable choice from persistence
+/// topology.
+#[cfg(test)]
+pub(crate) fn configure_committer_arm_for_testing(tenant_id: TenantId, arm: CommitterArm) {
+    COMMITTER_ARMS_FOR_TESTING
+        .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+        .lock()
+        .expect("committer-arm test-selection lock should not be poisoned")
+        .insert(tenant_id, arm);
+}
+
+#[cfg(test)]
+fn take_committer_arm_for_testing(tenant_id: &TenantId) -> Option<CommitterArm> {
+    COMMITTER_ARMS_FOR_TESTING
+        .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+        .lock()
+        .expect("committer-arm test-selection lock should not be poisoned")
+        .remove(tenant_id)
+}
 
 #[cfg(test)]
 pub(crate) fn configure_publisher_limits_for_testing(
@@ -875,6 +904,18 @@ impl DeferredPublisherResponse {
 
 pub(crate) type PublisherQueueError = Box<(AssignedPublisherBatch, Error)>;
 
+pub(crate) struct PublisherResponseFenceError {
+    responses: Vec<DeferredPublisherResponse>,
+    error: Error,
+    queue_closed: bool,
+}
+
+impl PublisherResponseFenceError {
+    pub(crate) fn into_parts(self: Box<Self>) -> (Vec<DeferredPublisherResponse>, Error, bool) {
+        (self.responses, self.error, self.queue_closed)
+    }
+}
+
 #[derive(Clone, Copy, Default)]
 pub(crate) struct PublisherErrorCounts {
     pub(crate) transient: u64,
@@ -884,7 +925,6 @@ pub(crate) struct PublisherErrorCounts {
 
 pub(crate) enum PublisherMessage {
     Batch(AssignedPublisherBatch),
-    Barrier(oneshot::Sender<()>),
     ResponseFence(Vec<DeferredPublisherResponse>),
     SerialJob {
         job: CommitterJob,
@@ -902,27 +942,29 @@ pub(crate) struct PublisherHandoff {
     transient_error_count: AtomicU64,
     fatal_error_count: AtomicU64,
     ambiguous_error_count: AtomicU64,
-    pipeline_capable: bool,
-    mode: AtomicU8,
-    mode_transition_count: AtomicU64,
-    mode_transition_failure_count: AtomicU64,
-    requested_mode_override: AtomicU8,
+    arm: CommitterArm,
     assignment_recovery_gate: tokio::sync::Mutex<()>,
+    finished: AtomicBool,
+    finished_notify: Notify,
 }
 
 impl PublisherHandoff {
-    pub(crate) fn new(pipeline_capable: bool, _tenant_id: &TenantId) -> Self {
+    pub(crate) fn new(uses_ordered_publisher: bool, _tenant_id: &TenantId) -> Self {
         #[cfg(test)]
         let (capacity, send_timeout) =
             take_publisher_limits_for_testing(_tenant_id).unwrap_or_else(publisher_limits_from_env);
         #[cfg(not(test))]
         let (capacity, send_timeout) = publisher_limits_from_env();
         let (sender, receiver) = mpsc::channel(capacity);
-        let initial_mode = if pipeline_capable {
-            CommitterPipelineMode::Pipeline
+        let default_arm = if uses_ordered_publisher {
+            CommitterArm::OrderedPublisher
         } else {
-            CommitterPipelineMode::Serial
+            CommitterArm::Serial
         };
+        #[cfg(test)]
+        let arm = take_committer_arm_for_testing(_tenant_id).unwrap_or(default_arm);
+        #[cfg(not(test))]
+        let arm = default_arm;
         Self {
             sender,
             receiver: Mutex::new(Some(receiver)),
@@ -933,103 +975,23 @@ impl PublisherHandoff {
             transient_error_count: AtomicU64::new(0),
             fatal_error_count: AtomicU64::new(0),
             ambiguous_error_count: AtomicU64::new(0),
-            pipeline_capable,
-            mode: AtomicU8::new(mode_to_u8(initial_mode)),
-            mode_transition_count: AtomicU64::new(0),
-            mode_transition_failure_count: AtomicU64::new(0),
-            requested_mode_override: AtomicU8::new(0),
+            arm,
             assignment_recovery_gate: tokio::sync::Mutex::new(()),
+            finished: AtomicBool::new(false),
+            finished_notify: Notify::new(),
         }
     }
 
-    /// Reconciles the requested per-tenant mode at the actor boundary.
-    ///
-    /// Pipeline -> serial first publishes everything already handed off, then
-    /// exposes `Serial`; serial -> pipeline installs an empty-queue barrier
-    /// before exposing `Pipeline`. The actor awaits this state machine before
-    /// assigning the next batch, so no batch can straddle the two persistence
-    /// owners.
-    pub(crate) async fn reconcile_mode(&self) -> Result<bool> {
-        let desired_pipeline = self.pipeline_capable && self.pipeline_requested();
-        let current = self.mode();
-        match (current, desired_pipeline) {
-            (CommitterPipelineMode::Pipeline, false) => {
-                self.mode.store(
-                    mode_to_u8(CommitterPipelineMode::DrainingToSerial),
-                    Ordering::Release,
-                );
-                if let Err(error) = self.barrier().await {
-                    self.mode_transition_failure_count
-                        .fetch_add(1, Ordering::Relaxed);
-                    self.mode.store(
-                        mode_to_u8(CommitterPipelineMode::Pipeline),
-                        Ordering::Release,
-                    );
-                    return Err(error);
-                }
-                self.mode
-                    .store(mode_to_u8(CommitterPipelineMode::Serial), Ordering::Release);
-                self.mode_transition_count.fetch_add(1, Ordering::Relaxed);
-                Ok(false)
-            }
-            (CommitterPipelineMode::Serial, true) => {
-                self.mode.store(
-                    mode_to_u8(CommitterPipelineMode::DrainingToPipeline),
-                    Ordering::Release,
-                );
-                if let Err(error) = self.barrier().await {
-                    self.mode_transition_failure_count
-                        .fetch_add(1, Ordering::Relaxed);
-                    self.mode
-                        .store(mode_to_u8(CommitterPipelineMode::Serial), Ordering::Release);
-                    return Err(error);
-                }
-                self.mode.store(
-                    mode_to_u8(CommitterPipelineMode::Pipeline),
-                    Ordering::Release,
-                );
-                self.mode_transition_count.fetch_add(1, Ordering::Relaxed);
-                Ok(true)
-            }
-            (CommitterPipelineMode::Pipeline, true) => Ok(true),
-            (CommitterPipelineMode::Serial, false) => Ok(false),
-            (CommitterPipelineMode::DrainingToSerial, _)
-            | (CommitterPipelineMode::DrainingToPipeline, _) => Err(Error::Internal(
-                "committer pipeline transition re-entered before its drain completed".to_string(),
-            )),
-        }
+    pub(crate) fn uses_ordered_publisher(&self) -> bool {
+        matches!(self.arm, CommitterArm::OrderedPublisher)
     }
 
-    pub(crate) fn mode(&self) -> CommitterPipelineMode {
-        mode_from_u8(self.mode.load(Ordering::Acquire))
-    }
-
-    pub(crate) fn pipeline_capable(&self) -> bool {
-        self.pipeline_capable
+    pub(crate) fn arm(&self) -> CommitterArm {
+        self.arm
     }
 
     pub(crate) async fn lock_assignment_recovery(&self) -> tokio::sync::MutexGuard<'_, ()> {
         self.assignment_recovery_gate.lock().await
-    }
-
-    pub(crate) fn mode_transition_count(&self) -> u64 {
-        self.mode_transition_count.load(Ordering::Relaxed)
-    }
-
-    pub(crate) fn mode_transition_failure_count(&self) -> u64 {
-        self.mode_transition_failure_count.load(Ordering::Relaxed)
-    }
-
-    /// A pipeline-capable store always requests the pipelined publisher; the
-    /// only way to request the serial arm is the `#[cfg(test)]` override.
-    fn pipeline_requested(&self) -> bool {
-        !matches!(self.requested_mode_override.load(Ordering::Acquire), 2)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn set_pipeline_requested_for_testing(&self, enabled: bool) {
-        self.requested_mode_override
-            .store(if enabled { 1 } else { 2 }, Ordering::Release);
     }
 
     pub(crate) fn take_receiver(&self) -> mpsc::Receiver<PublisherMessage> {
@@ -1057,19 +1019,10 @@ impl PublisherHandoff {
         }
     }
 
-    pub(crate) async fn barrier(&self) -> Result<()> {
-        let (sender, receiver) = oneshot::channel();
-        let permit = self.reserve("serial barrier").await?;
-        permit.send(PublisherMessage::Barrier(sender));
-        receiver.await.map_err(|_| {
-            Error::Internal("tenant publisher stopped before completing serial barrier".to_string())
-        })
-    }
-
     pub(crate) async fn send_response_fence(
         &self,
         responses: Vec<DeferredPublisherResponse>,
-    ) -> std::result::Result<(), Box<(Vec<DeferredPublisherResponse>, Error)>> {
+    ) -> std::result::Result<(), Box<PublisherResponseFenceError>> {
         if responses.is_empty() {
             return Ok(());
         }
@@ -1078,7 +1031,26 @@ impl PublisherHandoff {
                 permit.send(PublisherMessage::ResponseFence(responses));
                 Ok(())
             }
-            Err(error) => Err(Box::new((responses, error))),
+            Err(error) => Err(Box::new(PublisherResponseFenceError {
+                responses,
+                error,
+                queue_closed: self.sender.is_closed(),
+            })),
+        }
+    }
+
+    pub(crate) fn mark_finished(&self) {
+        self.finished.store(true, Ordering::Release);
+        self.finished_notify.notify_waiters();
+    }
+
+    pub(crate) async fn wait_finished(&self) {
+        loop {
+            let notified = self.finished_notify.notified();
+            if self.finished.load(Ordering::Acquire) {
+                return;
+            }
+            notified.await;
         }
     }
 
@@ -1157,24 +1129,5 @@ impl PublisherHandoff {
             .store(counts.fatal, Ordering::Relaxed);
         self.ambiguous_error_count
             .store(counts.ambiguous, Ordering::Relaxed);
-    }
-}
-
-const fn mode_to_u8(mode: CommitterPipelineMode) -> u8 {
-    match mode {
-        CommitterPipelineMode::Pipeline => 0,
-        CommitterPipelineMode::DrainingToSerial => 1,
-        CommitterPipelineMode::Serial => 2,
-        CommitterPipelineMode::DrainingToPipeline => 3,
-    }
-}
-
-fn mode_from_u8(mode: u8) -> CommitterPipelineMode {
-    match mode {
-        0 => CommitterPipelineMode::Pipeline,
-        1 => CommitterPipelineMode::DrainingToSerial,
-        2 => CommitterPipelineMode::Serial,
-        3 => CommitterPipelineMode::DrainingToPipeline,
-        _ => unreachable!("publisher mode atomic contains an invalid state"),
     }
 }

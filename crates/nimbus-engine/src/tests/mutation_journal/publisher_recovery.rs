@@ -436,6 +436,10 @@ async fn serial_assignment_failure_discards_staged_suffix_and_keeps_tenant_live(
         .expect("serial assignment failure engine should create"),
     );
     let tenant_id = TenantId::new("serial-assignment-failure").expect("tenant id should build");
+    crate::tenant::configure_committer_arm_for_testing(
+        tenant_id.clone(),
+        crate::tenant::CommitterArm::Serial,
+    );
     engine
         .create_tenant_async(tenant_id.clone())
         .await
@@ -446,9 +450,6 @@ async fn serial_assignment_failure_discards_staged_suffix_and_keeps_tenant_live(
     let runtime_before = engine
         .tenant_runtime_identity_for_testing(&tenant_id)
         .expect("runtime identity should load");
-    engine
-        .set_committer_pipeline_requested_for_testing(&tenant_id, false)
-        .expect("test should request the serial kill-switch arm");
     engine
         .commit_fault_handle_for_testing()
         .inject_error_on_nth_hit(
@@ -502,10 +503,7 @@ async fn serial_assignment_failure_discards_staged_suffix_and_keeps_tenant_live(
     let stats = engine
         .mutation_journal_stats_for_testing(&tenant_id)
         .expect("serial journal diagnostics should load");
-    assert_eq!(
-        stats.publisher_mode,
-        crate::tenant::CommitterPipelineMode::Serial
-    );
+    assert_eq!(stats.committer_arm, crate::tenant::CommitterArm::Serial);
     assert_eq!(stats.durable_head, SequenceNumber(1));
     assert_eq!(stats.applied_head, SequenceNumber(1));
     let journal = engine
@@ -529,6 +527,10 @@ async fn serial_lost_ack_evicts_and_replays_without_retryable_error() {
         .expect("serial recovery fallback engine should create"),
     );
     let tenant_id = TenantId::new("serial-recovery-fallback").expect("tenant id should build");
+    crate::tenant::configure_committer_arm_for_testing(
+        tenant_id.clone(),
+        crate::tenant::CommitterArm::Serial,
+    );
     engine
         .create_tenant_async(tenant_id.clone())
         .await
@@ -536,9 +538,6 @@ async fn serial_lost_ack_evicts_and_replays_without_retryable_error() {
     engine
         .shutdown_trigger_candidates_for_testing(&tenant_id)
         .expect("trigger cursor should not add unrelated records");
-    engine
-        .set_committer_pipeline_requested_for_testing(&tenant_id, false)
-        .expect("test should request the serial arm");
     let runtime_before = engine
         .tenant_runtime_identity_for_testing(&tenant_id)
         .expect("serial runtime identity should load");
@@ -616,6 +615,10 @@ async fn quiesce_racing_serial_crash_replay_completes_without_panic() {
         .expect("serial quiesce race engine should create"),
     );
     let tenant_id = TenantId::new("serial-quiesce-race").expect("tenant id should build");
+    crate::tenant::configure_committer_arm_for_testing(
+        tenant_id.clone(),
+        crate::tenant::CommitterArm::Serial,
+    );
     engine
         .create_tenant_async(tenant_id.clone())
         .await
@@ -623,10 +626,6 @@ async fn quiesce_racing_serial_crash_replay_completes_without_panic() {
     engine
         .shutdown_trigger_candidates_for_testing(&tenant_id)
         .expect("trigger cursor should not add unrelated records");
-    engine
-        .set_committer_pipeline_requested_for_testing(&tenant_id, false)
-        .expect("test should request the serial arm");
-
     let writer = tokio::spawn({
         let engine = engine.clone();
         let tenant_id = tenant_id.clone();
@@ -737,6 +736,10 @@ async fn shutdown_serial_recovery_deregisters_and_preserves_diagnostics() {
         .expect("serial shutdown eviction engine should create"),
     );
     let tenant_id = TenantId::new("serial-shutdown-eviction").expect("tenant id should build");
+    crate::tenant::configure_committer_arm_for_testing(
+        tenant_id.clone(),
+        crate::tenant::CommitterArm::Serial,
+    );
     engine
         .create_tenant_async(tenant_id.clone())
         .await
@@ -744,9 +747,6 @@ async fn shutdown_serial_recovery_deregisters_and_preserves_diagnostics() {
     engine
         .shutdown_trigger_candidates_for_testing(&tenant_id)
         .expect("trigger cursor should not add unrelated records");
-    engine
-        .set_committer_pipeline_requested_for_testing(&tenant_id, false)
-        .expect("test should request the serial arm");
     let evicted_runtime = engine
         .registered_runtime_for_testing(&tenant_id)
         .expect("runtime identity should load before the fault");
@@ -929,6 +929,10 @@ async fn serial_crash_replay_rejects_residual_direct_commit_without_running_it()
         .expect("serial residual direct engine should create"),
     );
     let tenant_id = TenantId::new("serial-residual-direct").expect("tenant id should build");
+    crate::tenant::configure_committer_arm_for_testing(
+        tenant_id.clone(),
+        crate::tenant::CommitterArm::Serial,
+    );
     engine
         .create_tenant_async(tenant_id.clone())
         .await
@@ -936,10 +940,6 @@ async fn serial_crash_replay_rejects_residual_direct_commit_without_running_it()
     engine
         .shutdown_trigger_candidates_for_testing(&tenant_id)
         .expect("trigger cursor should not add unrelated records");
-    engine
-        .set_committer_pipeline_requested_for_testing(&tenant_id, false)
-        .expect("test should request the serial arm");
-
     let crashing = tokio::spawn({
         let engine = engine.clone();
         let tenant_id = tenant_id.clone();
@@ -1201,6 +1201,10 @@ async fn serial_err_err_recovery_evicts_when_append_did_not_land() {
         .expect("serial unlanded ambiguity engine should create"),
     );
     let tenant_id = TenantId::new("serial-unlanded-ambiguity").expect("tenant id should build");
+    crate::tenant::configure_committer_arm_for_testing(
+        tenant_id.clone(),
+        crate::tenant::CommitterArm::Serial,
+    );
     engine
         .create_tenant_async(tenant_id.clone())
         .await
@@ -1208,9 +1212,6 @@ async fn serial_err_err_recovery_evicts_when_append_did_not_land() {
     engine
         .shutdown_trigger_candidates_for_testing(&tenant_id)
         .expect("trigger cursor should not add unrelated records");
-    engine
-        .set_committer_pipeline_requested_for_testing(&tenant_id, false)
-        .expect("test should request the serial arm");
     let runtime_before = engine
         .tenant_runtime_identity_for_testing(&tenant_id)
         .expect("serial runtime identity should load");
@@ -1349,6 +1350,10 @@ async fn serial_assignment_worker_panic_discards_staged_suffix_and_keeps_tenant_
         .expect("serial assignment panic engine should create"),
     );
     let tenant_id = TenantId::new("serial-assignment-panic").expect("tenant id should build");
+    crate::tenant::configure_committer_arm_for_testing(
+        tenant_id.clone(),
+        crate::tenant::CommitterArm::Serial,
+    );
     engine
         .create_tenant_async(tenant_id.clone())
         .await
@@ -1359,9 +1364,6 @@ async fn serial_assignment_worker_panic_discards_staged_suffix_and_keeps_tenant_
     let runtime_before = engine
         .tenant_runtime_identity_for_testing(&tenant_id)
         .expect("runtime identity should load");
-    engine
-        .set_committer_pipeline_requested_for_testing(&tenant_id, false)
-        .expect("test should request the serial kill-switch arm");
     engine
         .commit_fault_handle_for_testing()
         .inject_panic_on_nth_hit(
@@ -1720,6 +1722,10 @@ async fn serial_discard_rewrites_same_batch_conflict_before_retry() {
         .expect("serial deferred conflict engine should create"),
     );
     let tenant_id = TenantId::new("serial-deferred-conflict").expect("tenant id should build");
+    crate::tenant::configure_committer_arm_for_testing(
+        tenant_id.clone(),
+        crate::tenant::CommitterArm::Serial,
+    );
     engine
         .create_tenant_async(tenant_id.clone())
         .await
@@ -1727,9 +1733,6 @@ async fn serial_discard_rewrites_same_batch_conflict_before_retry() {
     engine
         .shutdown_trigger_candidates_for_testing(&tenant_id)
         .expect("trigger cursor should not add unrelated records");
-    engine
-        .set_committer_pipeline_requested_for_testing(&tenant_id, false)
-        .expect("test should request the serial arm");
     let document_id = engine
         .insert_document_async(
             tenant_id.clone(),
@@ -1843,6 +1846,10 @@ async fn publisher_discard_rewrites_same_batch_conflict_before_retry() {
         .expect("publisher deferred conflict engine should create"),
     );
     let tenant_id = TenantId::new("publisher-deferred-conflict").expect("tenant id should build");
+    crate::tenant::configure_committer_arm_for_testing(
+        tenant_id.clone(),
+        crate::tenant::CommitterArm::OrderedPublisher,
+    );
     engine
         .create_tenant_async(tenant_id.clone())
         .await
@@ -1850,9 +1857,6 @@ async fn publisher_discard_rewrites_same_batch_conflict_before_retry() {
     engine
         .shutdown_trigger_candidates_for_testing(&tenant_id)
         .expect("trigger cursor should not add unrelated records");
-    engine
-        .set_committer_pipeline_requested_for_testing(&tenant_id, true)
-        .expect("test should request the publisher arm");
     let document_id = engine
         .insert_document_async(
             tenant_id.clone(),

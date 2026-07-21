@@ -83,8 +83,8 @@ pub(crate) use self::mutation::{
     run_job, validate_append_sequences,
 };
 pub use self::mutation::{
-    CommitterPipelineMode, MutationAdmissionPhase, MutationAdmissionStats,
-    MutationIsolateAdmissionStats, MutationJournalStats,
+    CommitterArm, MutationAdmissionPhase, MutationAdmissionStats, MutationIsolateAdmissionStats,
+    MutationJournalStats,
 };
 use self::mutation::{
     MutationAdmissionDecision, MutationAdmissionGate, MutationIsolateAdmission,
@@ -92,8 +92,8 @@ use self::mutation::{
 };
 #[cfg(test)]
 pub(crate) use self::mutation::{
-    configure_observer_drain_blocking_timeout_for_testing, configure_observer_limits_for_testing,
-    configure_publisher_limits_for_testing,
+    configure_committer_arm_for_testing, configure_observer_drain_blocking_timeout_for_testing,
+    configure_observer_limits_for_testing, configure_publisher_limits_for_testing,
 };
 use self::query_planning::QueryPlanningMetrics;
 pub use self::query_planning::QueryPlanningStats;
@@ -224,12 +224,13 @@ impl TenantRuntime {
             progress,
             last_commit_timestamp,
         } = initial_state;
-        let publisher_pipeline_capable = store.has_process_local_sequence_authority();
+        // U5 deliberately preserves the production mapping. U7 changes only
+        // this construction policy after provider pipelining and lifecycle
+        // proof are complete; write-log/window trust remains a separate
+        // dynamic question owned by `has_process_local_sequence_authority`.
+        let uses_ordered_publisher = store.has_process_local_sequence_authority();
         let committer = Arc::new(CommitterActor::new(tenant_id.clone()));
-        let publisher = Arc::new(PublisherHandoff::new(
-            publisher_pipeline_capable,
-            &tenant_id,
-        ));
+        let publisher = Arc::new(PublisherHandoff::new(uses_ordered_publisher, &tenant_id));
         let observer_dispatch = Arc::new(ObserverHandoff::new(&tenant_id));
         Self {
             tenant_id,

@@ -685,7 +685,7 @@ async fn run_committer_actor_loop(
             runtime.record_mutation_worker_failure();
             continue;
         }
-        if runtime.store.has_process_local_sequence_authority() {
+        if runtime.uses_ordered_publisher() {
             match runtime.send_publisher_serial_job(job).await {
                 Ok(drained) => {
                     if drained.await.is_err() {
