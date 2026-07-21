@@ -126,6 +126,36 @@ the protocol adapters — see
 [adapter crates](/concepts/architecture/adapters/) and
 [runtime and isolates](/concepts/architecture/runtime-isolates/).
 
+## When commit visibility outruns acknowledgement
+
+A storage provider can make a transaction durable and then lose the response
+before Nimbus receives it. Nimbus therefore does not equate a returned storage
+error with rollback. Each of the three engine-owned commit routes — queued
+journal publication, direct `apply_mutation_with_mode*`, and
+`MutationExecutionUnit` — classifies the error against durable journal
+progress before deciding whether a caller may retry. An unchanged head keeps
+the original definitive error. An advanced head, or progress that cannot be
+read, is ambiguous: the tenant runtime is evicted and rebuilt by replay before
+later work can continue. A lease-fence rejection is the exception because its
+compare-and-swap proves that transaction did not commit.
+
+Provider lease ownership belongs to the engine process, not to a loaded tenant
+runtime. Rebuilding a tenant after an ambiguous result therefore reuses that
+engine's owner identity and can resume the same still-live lease epoch
+immediately. A different engine has a different identity and remains fenced;
+lease expiry and takeover still advance the provider's durable epoch.
+
+The storage contract exposes a deterministic fault boundary immediately after
+commit visibility and before success returns. The redb, SQLite, libSQL,
+PostgreSQL, and MySQL adapters all exercise that same boundary, so tests can
+prove that acknowledgement loss preserves one durable record, accepts only an
+identical replay, rejects different-content sequence reuse, and never reports
+post-commit cancellation as safe to retry. The fault boundary is test control,
+not a second production commit path. libSQL's simulation constructor can
+separate faults in the remote primary from faults in its nested SQLite replica
+cache, preventing a cache refresh from masquerading as a remote
+acknowledgement-loss checkpoint.
+
 ## Committed mutations fan out
 
 After any commit — direct, journaled, or execution-unit — the engine runs

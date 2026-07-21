@@ -2,16 +2,17 @@ pub(super) use std::env;
 pub(super) use std::future::Future;
 pub(super) use std::net::TcpListener;
 pub(super) use std::ops::Bound;
+pub(super) use std::sync::Arc;
 pub(super) use std::sync::atomic::{AtomicU64, Ordering};
 pub(super) use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(super) use libsql::{Builder, Database};
 pub(super) use nimbus_core::{
     CollectionName, CronJob, CronSchedule, Document, DocumentId, DocumentLocator, DocumentPath,
-    FieldSchema, FieldType, IndexDefinition, Mutation, ResourcePathBinding, ScheduledJob,
-    ScheduledJobOutcome, ScheduledJobResult, SchemaChangeEvent, SequenceNumber, TableId, TableName,
-    TableSchema, TableState, TenantEventKind, TenantEventRecord, TenantId, Timestamp,
-    TriggerDeliveryCursor, WriteOp, WriteOpType,
+    Error, FieldSchema, FieldType, IndexDefinition, Mutation, ResourcePathBinding, ScheduledJob,
+    ScheduledJobOutcome, ScheduledJobResult, SchemaChangeEvent, SequenceNumber, StorageErrorKind,
+    TableId, TableName, TableSchema, TableState, TenantEventKind, TenantEventRecord, TenantId,
+    Timestamp, TriggerDeliveryCursor, WriteOp, WriteOpType,
 };
 pub(super) use serial_test::serial;
 pub(super) use testcontainers_modules::testcontainers::core::{IntoContainerPort, WaitFor};
@@ -25,10 +26,13 @@ pub(super) use super::super::{
     tempdir, timeout,
 };
 pub(super) use crate::async_storage::TenantReadStorage;
+pub(super) use crate::async_storage::TenantWriteStorage;
 pub(super) use crate::libsql::libsql_transport_connector;
+pub(super) use crate::tests::BlockingFaultInjector;
 pub(super) use crate::{
-    LibsqlReplicaBarrierPath, LibsqlReplicaRefreshCause, LibsqlReplicaRefreshPath,
-    ResolvedScheduleOp, ResolvedWrite,
+    FaultInjector, FaultOccurrence, FaultPoint, LibsqlReplicaBarrierPath,
+    LibsqlReplicaRefreshCause, LibsqlReplicaRefreshPath, NoopFaultInjector, ResolvedScheduleOp,
+    ResolvedWrite, ScriptedFaultInjector, SystemClock, TenantWriteOutcome,
 };
 
 pub(super) const LIBSQL_URL_ENV: &str = "NIMBUS_LIBSQL_URL";
@@ -38,6 +42,14 @@ pub(super) const LIBSQL_ADMIN_AUTH_HEADER_ENV: &str = "NIMBUS_LIBSQL_ADMIN_AUTH_
 pub(super) static TEST_SUFFIX_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub(super) async fn with_test_provider<F, Fut>(test: F)
+where
+    F: FnOnce(LibsqlReplicaProvider, LibsqlReplicaProviderConfig) -> Fut,
+    Fut: Future<Output = ()>,
+{
+    with_test_provider_with_faults(Arc::new(NoopFaultInjector), test).await;
+}
+
+pub(super) async fn with_test_provider_with_faults<F, Fut>(faults: Arc<dyn FaultInjector>, test: F)
 where
     F: FnOnce(LibsqlReplicaProvider, LibsqlReplicaProviderConfig) -> Fut,
     Fut: Future<Output = ()>,
@@ -60,9 +72,15 @@ where
     config.metadata_namespace = metadata_namespace;
     config.tenant_namespace_prefix = tenant_namespace_prefix;
 
-    let provider = LibsqlReplicaProvider::connect(config.clone())
-        .await
-        .expect("provider should connect");
+    let provider = LibsqlReplicaProvider::connect_with_simulation_faults(
+        config.clone(),
+        tokio::runtime::Handle::current(),
+        Arc::new(SystemClock),
+        faults,
+        Arc::new(NoopFaultInjector),
+    )
+    .await
+    .expect("provider should connect");
     test(provider.clone(), config).await;
     provider
         .drop_provider_namespaces_for_test()
