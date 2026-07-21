@@ -48,6 +48,15 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
   UI hygiene, doc/spec truth-ups, and the `nimbus-compute` extraction plus
   workload-identity decision records. Review-driven refactor and cleanup work
   should route through this plan's band ledgers while it is active.
+- `nimbus-runtime-tenant-isolation-plan.md` - `proposed; launch-safety owner
+  decision required`. Sole implementation owner for canonical runtime-owner
+  identity, routing-versus-reuse-authority separation, owner-partitioned
+  V8/Wasmtime retained state, tenant and deployment retirement, and a
+  compute-owned Nimbus runtime manager consumed by Convex, Cloud Functions,
+  and future adapters. It consumes Engine/storage's durable tenant incarnation
+  and lifecycle authority rather than minting a parallel one. `IsolateGroup`
+  remains a separate deferred density/VM-shape question, not the tenant
+  boundary.
 - `archive/nimbus-proxy-pingora-plan.md` - `complete, archived` (K11P0-K11P13 merged, PR #94; verifier 113/0). Owned the production proxy substrate
   inside `nimbus-proxy`: Pingora phases, async forwarding, peer/pool identity,
   lifecycle, observability, selective HTTPS interception, credential injection,
