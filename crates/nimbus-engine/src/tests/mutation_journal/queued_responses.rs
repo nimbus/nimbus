@@ -870,3 +870,130 @@ async fn assignment_failure_keeps_the_cancelled_requests_own_outcome() {
         "neither request should leave a durable record"
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ordered_assignment_panic_keeps_preassigned_outcomes_and_fails_active_request() {
+    let data_dir = tempdir().expect("assignment panic tempdir should build");
+    let engine = Arc::new(
+        Engine::new_with_simulation_and_memory_persistence(
+            data_dir.path(),
+            Arc::new(ManualClock::new(Timestamp(46_660))),
+            Arc::new(nimbus_storage::NoopFaultInjector),
+            Arc::new(nimbus_core::SeededIdSource::new(46_660)),
+        )
+        .expect("assignment panic engine should create"),
+    );
+    let tenant_id = TenantId::new("assignment-panic-outcome").expect("tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("tenant should create");
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+    let pause = engine
+        .mutation_journal_pause_handle_for_testing(&tenant_id)
+        .expect("journal pause handle should load");
+    pause.arm();
+
+    let cancel = Arc::new(Notify::new());
+    let cancel_for_wait = cancel.clone();
+    let mut cancelled_write = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            engine
+                .insert_document_async_with(
+                    tenant_id,
+                    tasks_table(),
+                    None,
+                    serde_json::Map::from_iter([("title".to_string(), json!("cancelled"))]),
+                    crate::AsyncMutationContext::anonymous(
+                        async move {
+                            cancel_for_wait.notified().await;
+                        },
+                        || Ok(()),
+                    ),
+                )
+                .await
+        }
+    });
+    expect_blocking_wait_reaches_state(
+        "journal worker should pause before draining the cancelled request",
+        {
+            let pause = pause.clone();
+            move |timeout| pause.wait_until_entered(timeout)
+        },
+    )
+    .await;
+    cancel.notify_one();
+    assert_future_stays_pending(
+        &mut cancelled_write,
+        "the cancelled request should stay queued behind the paused committer",
+    )
+    .await;
+
+    engine
+        .commit_fault_handle_for_testing()
+        .inject_panic_on_nth_hit(
+            crate::engine::commit_fault_labels::JOURNAL_ASSIGN_AFTER_STAGE,
+            1,
+        );
+    let active_write = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            engine
+                .insert_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("title".to_string(), json!("panics-assignment"))]),
+                )
+                .await
+        }
+    });
+    wait_for_mutation_admission_stats(
+        &engine,
+        &tenant_id,
+        "the active request should collect behind the pause",
+        |stats| stats.queue_depth >= 1,
+    )
+    .await;
+    pause.release();
+
+    let cancelled_error = expect_catch_up_future_within(
+        cancelled_write,
+        "the cancelled caller should resolve after panic recovery",
+    )
+    .await
+    .expect("cancelled task should join successfully")
+    .expect_err("a cancelled request must not report success");
+    assert!(
+        matches!(cancelled_error, Error::Cancelled),
+        "pre-assignment cancellation must survive an assignment-task panic: {cancelled_error}"
+    );
+
+    let active_error = expect_catch_up_future_within(
+        active_write,
+        "the active caller should receive the typed assignment-task failure",
+    )
+    .await
+    .expect("active task should join successfully")
+    .expect_err("the assignment panic must fail the active request");
+    assert!(
+        matches!(active_error, Error::Internal(ref message) if message.contains("committer assignment batch panicked")),
+        "active work must receive the typed join failure rather than a dropped response: {active_error}"
+    );
+    assert!(
+        engine
+            .read_durable_journal(&tenant_id, SequenceNumber(0))
+            .expect("journal should remain readable")
+            .is_empty(),
+        "panic recovery must discard the staged suffix"
+    );
+    let (assigned_head, pending) = engine
+        .write_log_assignment_for_testing(&tenant_id)
+        .expect("recovered assignment should read");
+    assert_eq!(assigned_head, SequenceNumber(0));
+    assert!(pending.is_empty());
+}

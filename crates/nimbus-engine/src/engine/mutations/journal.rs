@@ -167,7 +167,7 @@ impl Engine {
             let _assignment_guard = runtime.lock_publisher_assignment_recovery().await;
             let PreAssignmentRequests {
                 assignment_required: batch,
-                deferred,
+                mut deferred,
             } = resolve_requests_without_assignment(batch);
             if batch.is_empty() {
                 send_ordered_response_fence(&runtime, deferred).await;
@@ -224,17 +224,19 @@ impl Engine {
                     engine,
                     assignment_baseline,
                     &commit_faults,
-                    deferred,
                 )
             })
             .await;
             match assigned {
-                Ok(Ok(work)) => {
-                    let Some(assigned) = work.batch else {
-                        send_ordered_response_fence(&runtime, work.standalone_deferred).await;
+                Ok(Ok(mut work)) => {
+                    let Some(mut assigned) = work.batch else {
+                        deferred.append(&mut work.standalone_deferred);
+                        send_ordered_response_fence(&runtime, deferred).await;
                         return false;
                     };
                     debug_assert!(work.standalone_deferred.is_empty());
+                    deferred.append(&mut assigned.deferred);
+                    assigned.deferred = deferred;
                     if let Err(error) = runtime.send_assigned_publisher_batch(assigned).await {
                         let (assigned, error) = *error;
                         let first = assigned.first_sequence();
@@ -244,7 +246,7 @@ impl Engine {
                         warn!(error = %error, "publisher queue rejected assigned mutation batch");
                     }
                 }
-                Ok(Err(failure)) => {
+                Ok(Err(mut failure)) => {
                     runtime.record_mutation_worker_failure();
                     warn!(error = %failure.error, "mutation assignment batch failed");
                     recover_failed_assignment(
@@ -256,8 +258,9 @@ impl Engine {
                     // Requests that already resolved themselves keep their own
                     // outcome. They must be sent before the blanket failure
                     // below, because the response slot is take-once.
+                    deferred.append(&mut failure.deferred);
                     complete_deferred_after_assignment_recovery(
-                        failure.deferred,
+                        deferred,
                         assignment_baseline,
                         &failure.error,
                     );
@@ -275,6 +278,11 @@ impl Engine {
                         "committer assignment batch panicked",
                     )
                     .await;
+                    complete_deferred_after_assignment_recovery(
+                        deferred,
+                        assignment_baseline,
+                        &error,
+                    );
                     fail_mutation_responses(&assignment_responses, &error);
                 }
             }
@@ -618,11 +626,11 @@ fn assign_queued_mutation_batch(
     engine: Arc<Engine>,
     mut previous_sequence: SequenceNumber,
     commit_faults: &CommitFaultClient,
-    mut deferred: Vec<DeferredPublisherResponse>,
 ) -> std::result::Result<AssignedPublisherWork, FailedQueuedMutationAssignment> {
     let mut phases = CommitPhaseDurations::default();
     let mut scheduled_execution_overlay = HashSet::new();
     let mut active = Vec::new();
+    let mut deferred = Vec::new();
     let mut records = Vec::new();
     let mut sample_started_at = None::<Instant>;
     let mut batch_shadow_dependencies = Vec::new();
@@ -1019,7 +1027,6 @@ fn process_serial_queued_mutation_batch(
         engine,
         previous_sequence,
         commit_faults,
-        Vec::new(),
     ) {
         Ok(work) => work,
         Err(failure) => {
