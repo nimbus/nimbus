@@ -911,7 +911,7 @@ pub(crate) struct PublisherResponseFenceError {
 }
 
 impl PublisherResponseFenceError {
-    pub(crate) fn into_parts(self: Box<Self>) -> (Vec<DeferredPublisherResponse>, Error, bool) {
+    pub(crate) fn into_parts(self) -> (Vec<DeferredPublisherResponse>, Error, bool) {
         (self.responses, self.error, self.queue_closed)
     }
 }

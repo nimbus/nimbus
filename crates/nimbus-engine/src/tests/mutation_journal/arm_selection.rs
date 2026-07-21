@@ -148,3 +148,100 @@ async fn journal_progress_sync_cannot_overtake_publisher() {
         .expect("progress-sync task should join")
         .expect("progress sync should succeed");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn opaque_serial_job_cannot_overtake_ordered_publisher() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("static-arm-serial-order", Engine::create_tenant);
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add unrelated records");
+    let faults = engine.commit_fault_handle_for_testing();
+    let pause = crate::engine::commit_fault_labels::DURABLE_BEFORE_PUBLISH;
+    faults.arm(pause);
+
+    let write = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            engine
+                .insert_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("title".to_string(), json!("ordered"))]),
+                )
+                .await
+        }
+    });
+    expect_blocking_wait_reaches_state("ordered publisher should pause before apply", {
+        let faults = faults.clone();
+        move |timeout| faults.wait_until_entered(pause, timeout)
+    })
+    .await;
+
+    let mut schema_write = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            engine
+                .set_table_schema_async(
+                    tenant_id,
+                    TableSchema {
+                        table: tasks_table(),
+                        fields: Vec::new(),
+                        indexes: Vec::new(),
+                        access_policy: None,
+                    },
+                )
+                .await
+        }
+    });
+    wait_for_mutation_journal_stats(
+        &engine,
+        &tenant_id,
+        "schema serial job should queue behind the publisher-owned batch",
+        |stats| stats.publisher_queue_depth == 1,
+    )
+    .await;
+    assert_future_stays_pending(
+        &mut schema_write,
+        "opaque schema work must not answer ahead of the publisher-owned batch",
+    )
+    .await;
+
+    faults.release(pause);
+    expect_catch_up_future_within(write, "ordered write should finish after release")
+        .await
+        .expect("write task should join")
+        .expect("ordered write should succeed");
+    expect_catch_up_future_within(
+        schema_write,
+        "schema serial job should drain after publisher",
+    )
+    .await
+    .expect("schema task should join")
+    .expect("schema write should succeed");
+
+    let journal = engine
+        .read_durable_journal_async(tenant_id.clone(), SequenceNumber(0))
+        .await
+        .expect("ordered journal should read");
+    assert_eq!(journal.len(), 2);
+    assert!(matches!(
+        journal[0].events.as_slice(),
+        [nimbus_core::TenantEventKind::DocumentWrite { .. }]
+    ));
+    assert!(matches!(
+        journal[1].events.as_slice(),
+        [nimbus_core::TenantEventKind::SchemaChange { .. }]
+    ));
+    assert_eq!(
+        engine
+            .get_table_schema_async(tenant_id, tasks_table())
+            .await
+            .expect("schema lookup should succeed")
+            .table,
+        tasks_table()
+    );
+}
