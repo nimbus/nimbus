@@ -52,24 +52,22 @@ a machine port forwarder (`OciMachinePortForwarderConfig`, backed by
 `gvproxy`) so port bindings made inside a machine reach the host, and it
 enforces network policy through the `SandboxEgressProxy` described below.
 
-## The krun backend is fail-closed for execution
+## The krun backend runs microVMs with enforced egress
 
 The krun backend (`crates/nimbus-sandbox/src/backends/krun/`) targets libkrun
 microVMs on Linux KVM hosts. Its launch planning is real — image
 materialization, rootfs assembly, and guest configuration all work in
-`KrunStartMode::PlanOnly` — but execute mode is intentionally blocked. At the
-top of launch planning, before any image work, the backend checks whether it
-can enforce egress for a running guest and refuses:
+`KrunStartMode::PlanOnly` — and `KrunStartMode::Execute` launches the microVM.
+Before the VMM starts, execute-mode launch stands up a deny-by-default network
+namespace and pins the guest's egress to the sandbox's own host-side proxy
+(`create_persistent_network_namespace` and `pin_netns_egress_to_own_proxy` in
+`crates/nimbus-sandbox/src/backends/krun/vm/lifecycle.rs`), so a running guest
+reaches the network only through the same policy-enforcing path as a container.
+This is the default backend for services run through `nimbus compose`.
 
-> krun execute-mode is fail-closed until Nimbus has a packet-level egress
-> enforcement path for libkrun TSI; use the container backend for
-> process-capable launches or plan-only krun materialization
-
-libkrun's TSI networking hands the guest a socket-level path to the host, and
-Nimbus's egress proxy cannot interpose on it the way it interposes on
-container traffic. Rather than launch microVMs with weaker egress enforcement
-than containers, the backend fails closed. Execute paths also require a Linux
-host outright (`crates/nimbus-sandbox/src/backends/krun/vm/lifecycle.rs`).
+Execute mode requires a Linux host outright, and planning never launches a VMM:
+`PlanOnly` materializes and validates everything up to execution without
+starting a guest.
 
 ## What a sandbox spec says
 

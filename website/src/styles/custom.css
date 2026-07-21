@@ -135,6 +135,7 @@ starlight-tabs {
 .adapter-tabs [role='tablist'] li:nth-child(4) [role='tab'] { --tab-brand: url('/brands/mongodb.svg'); }
 .adapter-tabs [role='tablist'] li:nth-child(5) [role='tab'] { --tab-brand: url('/brands/database.svg'); }
 .adapter-tabs [role='tablist'] li:nth-child(6) [role='tab'] { --tab-brand: url('/brands/api.svg'); }
+.adapter-tabs [role='tablist'] li:nth-child(7) [role='tab'] { --tab-brand: url('/brands/sandbox.svg'); }
 
 /*
  * Top-nav lockup: the -transparent mark is ink-cropped (no baked padding),

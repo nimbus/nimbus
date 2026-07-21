@@ -55,7 +55,10 @@ The driver exits once every job it enqueued reaches `done`.
 database operation — the scheduler replays a stored plan, and that plan has no
 "schedule another call" variant. So a scheduled target can never itself call
 `ctx.scheduler.runAfter`: there is no self-rescheduling worker loop against this
-surface, by construction. There is also no public cron API to fall back on.
+surface, by construction. The public cron API
+([HTTP API](/reference/native/http-api/)) is bounded the same way — a cron job
+fires a single built-in mutation, not a user function — so it is no escape hatch
+for a self-rescheduling worker either.
 
 This worker fits that boundary honestly. `runWorker` — which is never itself a
 scheduled target — schedules every `processJob` hop up front in one unrestricted

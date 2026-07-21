@@ -75,8 +75,7 @@ server paired with a `convex:example:*` dev server — listed in its README.
 
 ## Run these in place, not copied out
 
-React, the browser client, Node, Tasks, and Runtimes depend on
-`"convex": "*"`. Inside
+Every app in this directory declares `"convex": "*"`. Inside
 this repository that resolves to Nimbus's Convex compatibility package, which
 deliberately takes the official `convex` package name and `convex` binary so
 your code runs unchanged. Copy one of those apps out of the repository and
@@ -90,12 +89,6 @@ That breakage is visible, not silent. The apps' scripts run
 Convex Cloud: the React client pins `http://localhost:8080/convex/demo` (with
 `skipConvexDeploymentUrlCheck` set), and the other apps keep their own
 local-server defaults.
-
-Showcase is different: it pins `"convex": "file:./.nimbus/packages/convex"`,
-a workspace-relative local-file dependency, not `"convex": "*"`. Copy it out
-and `npm install` fails at dependency resolution — a missing local path, not
-a silent swap to the Convex Cloud package — because that path only exists
-inside a built monorepo checkout.
 
 Until a scaffolder that rewrites the `convex` dependency to a published
 Nimbus package ships, run every app in this directory from a checkout of the

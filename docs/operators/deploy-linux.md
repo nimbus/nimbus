@@ -84,15 +84,15 @@ This tutorial stays on the SQLite default.
 
 ## 4. Set up the systemd unit
 
-The apt/rpm packages ship a hardened unit at
-`/usr/lib/systemd/system/nimbus.service` (a dedicated `nimbus` system
-user is created on install, the state directory lives at
-`/var/lib/nimbus`, and operator overrides go in `/etc/nimbus/nimbus.env`
-as `NIMBUS_*` variables). If you installed from a package, skip the
-authoring below and enable it directly in step 5.
+Debian/RPM packages are not published yet (see
+[Updates](/operators/updates/)). When they ship, they will install a hardened
+unit at `/usr/lib/systemd/system/nimbus.service` (a dedicated `nimbus` system
+user created on install, the state directory at `/var/lib/nimbus`, and operator
+overrides in `/etc/nimbus/nimbus.env` as `NIMBUS_*` variables), and you can
+skip the authoring below.
 
-If you installed with the install script (no package manager), write the
-unit yourself. Create `/etc/systemd/system/nimbus.service`:
+For today's install-script (no package manager) and from-source setups, write
+the unit yourself. Create `/etc/systemd/system/nimbus.service`:
 
 ```bash
 sudo tee /etc/systemd/system/nimbus.service > /dev/null <<'EOF'

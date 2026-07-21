@@ -52,10 +52,11 @@ await nimbus.sandboxes.stop({ id: sandbox.metadata.id });
 
 The spec answers two separate questions:
 
-- **What root material runs?** Either a prepared root filesystem or OCI
-  image material — and image material is obtained either by *reference* (a
-  registry image, as above) or by *build* (a Dockerfile and context). A
-  build is a way to obtain an image, not a different kind of sandbox.
+- **What root material runs?** An OCI image, named by *reference* (a
+  registry image, as above). The public create call accepts an image
+  reference only — prepared root filesystems and Dockerfile build contexts
+  are operator-only inputs and are rejected by the create call, so build
+  and push the image yourself, then reference the published tag.
 - **Who owns it?** `owner.kind: "standalone"` means you created it
   directly, with an optional display name. Sandboxes launched as a
   service's backend instead carry `{ kind: "service", serviceName }` owner

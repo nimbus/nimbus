@@ -72,10 +72,12 @@ curl -s -X POST http://localhost:8080/api/tenants/demo/query \
 `nimbus start` runs the same engine as `nimbus dev` without codegen. The
 native HTTP/WebSocket API is the front door here, and the protocol adapters
 are served alongside it by default — the Firestore-compatible routes on this
-same listener, the MongoDB endpoint on `127.0.0.1:27017`, and the DynamoDB
-endpoint on `127.0.0.1:8000` (`--no-firestore`, `--no-mongodb`, and
-`--no-dynamodb` switch them off). See the per-adapter guides under
-[Developers](/developers/).
+same listener, the MongoDB endpoint on `127.0.0.1:27017`, the DynamoDB
+endpoint on `127.0.0.1:8000`, and the S3-compatible endpoint on
+`127.0.0.1:9000` (`--no-firestore`, `--no-mongodb`, `--no-dynamodb`, and
+`--no-s3` switch them off). See the per-adapter guides under
+[Developers](/developers/) and the full list in
+[configuration](/reference/configuration/).
 
 ## Next steps
 

@@ -3,9 +3,9 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import starlightLlmsTxt from 'starlight-llms-txt';
 
-// Renderer only: content is authored in ../docs (the five public groups).
+// Renderer only: content is authored in ../docs (the six public groups).
 // DOC1 builds against a placeholder landing; DOC3 wires the content-layer
-// glob loaders at ../docs/{get-started,developers,operators,concepts,reference}.
+// glob loaders at ../docs/{get-started,developers,agents,operators,concepts,reference}.
 // Theme tokens map DESIGN.md's product palette onto Starlight — see
 // src/styles/custom.css and DESIGN.md §Documentation site.
 export default defineConfig({
