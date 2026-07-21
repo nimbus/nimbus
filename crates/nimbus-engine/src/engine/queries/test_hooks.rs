@@ -61,6 +61,19 @@ impl Engine {
     }
 
     #[cfg(test)]
+    pub(crate) async fn wait_for_queued_mutation_cancellation_observed_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<()> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let _operation = runtime.enter_operation(tenant_id)?;
+        runtime
+            .wait_for_queued_mutation_cancellation_observed_for_testing()
+            .await;
+        Ok(())
+    }
+
+    #[cfg(test)]
     pub(crate) fn wake_committer_lease_renewal_for_testing(
         &self,
         tenant_id: &TenantId,
