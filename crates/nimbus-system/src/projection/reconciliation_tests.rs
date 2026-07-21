@@ -375,6 +375,17 @@ async fn prepare_unprojected_provider_restart_scope(
     source_token
 }
 
+fn stop_old_engine_lease_renewal(engine: &Engine, tenant_id: &TenantId) {
+    engine
+        .pause_committer_lease_renewal_for_testing(tenant_id)
+        .expect("old source lease renewal should stop before forced takeover");
+    engine
+        .pause_committer_lease_renewal_for_testing(
+            &system_tenant_id().expect("system tenant id should build"),
+        )
+        .expect("old system-tenant lease renewal should stop before forced takeover");
+}
+
 async fn assert_provider_restart_reconciles_scope(
     engine: &Arc<Engine>,
     tenant_id: &TenantId,
@@ -988,6 +999,7 @@ async fn projection_provider_restart_reconciles_cancelled_scope() {
     let (first_document, old_token) =
         prepare_two_engine_projection_contract(&engine_a, &tenant_id, &table).await;
 
+    stop_old_engine_lease_renewal(&engine_a, &tenant_id);
     expire_postgres_lease(&provider_config, &tenant_id).await;
     expire_postgres_lease(&provider_config, &system_tenant_id().unwrap()).await;
     finish_two_engine_projection_contract(
@@ -1116,6 +1128,7 @@ async fn projection_libsql_two_engine_takeover_rejects_late_old_document_schema_
     let (first_document, old_token) =
         prepare_two_engine_projection_contract(&engine_a, &tenant_id, &table).await;
 
+    stop_old_engine_lease_renewal(&engine_a, &tenant_id);
     expire_libsql_lease(&provider_config, &tenant_id).await;
     expire_libsql_lease(&provider_config, &system_tenant_id().unwrap()).await;
     finish_two_engine_projection_contract(
@@ -1220,6 +1233,7 @@ async fn projection_mysql_two_engine_takeover_rejects_late_old_document_schema_a
     let (first_document, old_token) =
         prepare_two_engine_projection_contract(&engine_a, &tenant_id, &table).await;
 
+    stop_old_engine_lease_renewal(&engine_a, &tenant_id);
     expire_mysql_lease(&provider_config, &tenant_id).await;
     expire_mysql_lease(&provider_config, &system_tenant_id().unwrap()).await;
     finish_two_engine_projection_contract(

@@ -87,6 +87,19 @@ impl Engine {
         runtime.ensure_committer_lease_for_assignment()
     }
 
+    /// Pauses one loaded tenant's lease-renewal worker without closing the
+    /// lifecycle or unloading the runtime. Cross-process takeover tests use
+    /// this before expiring the durable lease so the old runtime can still be
+    /// fenced as a stale writer but cannot race the intended successor by
+    /// renewing.
+    #[cfg(any(test, feature = "test-hooks"))]
+    #[doc(hidden)]
+    pub fn pause_committer_lease_renewal_for_testing(&self, tenant_id: &TenantId) -> Result<()> {
+        self.with_runtime_for_testing(tenant_id, |runtime| {
+            runtime.pause_committer_lease_renewal_for_testing();
+        })
+    }
+
     #[cfg(test)]
     pub(crate) fn materialize_trigger_cursor_for_testing(
         &self,

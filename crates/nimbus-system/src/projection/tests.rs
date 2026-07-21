@@ -1518,19 +1518,23 @@ fn projection_aggregate_cap_drops_then_resumes_victim_after_drain() {
     let projection_work = Arc::new(ProjectionWork::new_with_aggregate(&engine, 4, 3, 2, 1));
     let tasks = TableName::new("tasks").expect("table name should build");
 
-    let register = |tenant_id: &TenantId| {
+    let register = |tenant_id: &TenantId, scopes: &[(TableName, ProjectionToken)]| {
         projection_work.register(
             tenant_id,
             engine
                 .committed_mutation_observer_runtime_identity(tenant_id)
                 .expect("tenant runtime identity should load"),
-            &[(tasks.clone(), ProjectionToken::default())],
+            scopes,
         )
     };
-    let guard_a = register(&tenant_a).expect("tenant A should fit below both caps");
-    let guard_b = register(&tenant_b).expect("tenant B should fill the aggregate cap");
+    let scopes = [(tasks.clone(), ProjectionToken::default())];
+    let guard_a = register(&tenant_a, &scopes).expect("tenant A should fit below both caps");
+    let guard_b = register(&tenant_b, &scopes).expect("tenant B should fill the aggregate cap");
+    // This low-level test owns the retry explicitly below. Empty scopes keep
+    // the production catch-up driver from racing that manual admission; the
+    // adjacent async contract covers dirty-scope catch-up end to end.
     assert!(
-        register(&tenant_c).is_none(),
+        register(&tenant_c, &[]).is_none(),
         "the aggregate cap must reject the offending third registration"
     );
     let rejected = projection_work.stats(&tenant_c);
@@ -1552,7 +1556,7 @@ fn projection_aggregate_cap_drops_then_resumes_victim_after_drain() {
 
     drop(guard_a);
     drop(guard_b);
-    let resumed = register(&tenant_c)
+    let resumed = register(&tenant_c, &scopes)
         .expect("the aggregate-cap victim must resume after the hog work drains");
     let resumed_stats = projection_work.stats(&tenant_c);
     assert_eq!(resumed_stats.depth, 1);
@@ -1561,8 +1565,8 @@ fn projection_aggregate_cap_drops_then_resumes_victim_after_drain() {
     assert!(!resumed_stats.poisoned);
     drop(resumed);
 
-    let quiet_guard =
-        register(&tenant_d).expect("a quiet process must admit a tenant below its per-tenant cap");
+    let quiet_guard = register(&tenant_d, &scopes)
+        .expect("a quiet process must admit a tenant below its per-tenant cap");
     assert_eq!(projection_work.stats(&tenant_d).depth, 1);
     assert!(!projection_work.stats(&tenant_d).poisoned);
     drop(quiet_guard);

@@ -326,6 +326,13 @@ impl TenantRuntime {
             lifecycle.shutdown();
         }
     }
+
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) fn pause_committer_lease_renewal_for_testing(&self) {
+        if let Some(lifecycle) = &self.committer_lease {
+            lifecycle.pause_renewal_for_testing();
+        }
+    }
 }
 
 impl CommitterLeaseLifecycle {
@@ -485,6 +492,13 @@ impl CommitterLeaseLifecycle {
             .expect("committer lease state lock should not be poisoned");
         self.closed.store(true, Ordering::Release);
         drop(state);
+        let wake = self.wake.clone();
+        self.worker
+            .shutdown(move |shutdown| wake.signal_shutdown(shutdown));
+    }
+
+    #[cfg(any(test, feature = "test-hooks"))]
+    fn pause_renewal_for_testing(&self) {
         let wake = self.wake.clone();
         self.worker
             .shutdown(move |shutdown| wake.signal_shutdown(shutdown));
