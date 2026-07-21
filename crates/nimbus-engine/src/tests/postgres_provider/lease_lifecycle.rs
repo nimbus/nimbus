@@ -616,10 +616,14 @@ async fn two_postgres_engines_load_without_leases_and_only_one_first_writer_acqu
             .await
             .expect("second engine should load the same tenant");
 
-        for engine in [&engine_a, &engine_b] {
-            let stats = engine
-                .mutation_journal_stats_for_testing(&tenant_id)
-                .expect("loaded stats should read");
+        let runtime_a = engine_a
+            .registered_runtime_for_testing(&tenant_id)
+            .expect("first loaded runtime should remain inspectable");
+        let runtime_b = engine_b
+            .registered_runtime_for_testing(&tenant_id)
+            .expect("second loaded runtime should remain inspectable");
+        for runtime in [&runtime_a, &runtime_b] {
+            let stats = runtime.mutation_journal_stats();
             assert!(!stats.committer_lease_acquired);
             assert_eq!(stats.committer_lease_acquire_count, 0);
         }
@@ -655,12 +659,11 @@ async fn two_postgres_engines_load_without_leases_and_only_one_first_writer_acqu
             1
         );
 
-        let stats_a = engine_a
-            .mutation_journal_stats_for_testing(&tenant_id)
-            .expect("first engine stats should read");
-        let stats_b = engine_b
-            .mutation_journal_stats_for_testing(&tenant_id)
-            .expect("second engine stats should read");
+        // Inspect the two exact contenders. The losing runtime may already be
+        // inside its bounded recovery-eviction window, where a registry lookup
+        // correctly reports `Unavailable` instead of lending out that runtime.
+        let stats_a = runtime_a.mutation_journal_stats();
+        let stats_b = runtime_b.mutation_journal_stats();
         assert_eq!(
             usize::from(stats_a.committer_lease_acquired)
                 + usize::from(stats_b.committer_lease_acquired),
@@ -1341,6 +1344,12 @@ async fn postgres_fence_eviction_reloads_without_unfenced_fallback_or_ping_pong(
                 .expect_err("stale holder must lose its definitive CAS"),
         );
 
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            stale_runtime.wait_for_eviction_complete(),
+        )
+        .await
+        .expect("fenced runtime eviction should complete before replacement inspection");
         let replacement_identity = engine_a
             .get_existing_tenant_async_for_testing(&tenant_id)
             .await
