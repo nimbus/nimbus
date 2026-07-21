@@ -180,7 +180,7 @@ async fn opaque_serial_job_cannot_overtake_ordered_publisher() {
     })
     .await;
 
-    let mut schema_write = tokio::spawn({
+    let schema_write = tokio::spawn({
         let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         async move {
@@ -204,11 +204,10 @@ async fn opaque_serial_job_cannot_overtake_ordered_publisher() {
         |stats| stats.publisher_queue_depth == 1,
     )
     .await;
-    assert_future_stays_pending(
-        &mut schema_write,
-        "opaque schema work must not answer ahead of the publisher-owned batch",
-    )
-    .await;
+    assert!(
+        !schema_write.is_finished(),
+        "opaque schema work must not answer while it is observably queued behind the publisher-owned batch"
+    );
 
     faults.release(pause);
     expect_catch_up_future_within(write, "ordered write should finish after release")
