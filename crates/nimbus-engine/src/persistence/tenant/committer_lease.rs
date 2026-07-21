@@ -17,6 +17,17 @@ impl TenantPersistence {
         )
     }
 
+    pub(crate) fn read_committer_lease(&self) -> Result<Option<CommitterLease>> {
+        match self {
+            Self::Postgres(store) => store.read_committer_lease(),
+            Self::LibsqlReplica(store) => store.read_committer_lease(),
+            Self::MySql(store) => store.read_committer_lease(),
+            Self::Redb(_) | Self::Sqlite(_) => Ok(None),
+            #[cfg(any(test, feature = "test-hooks"))]
+            Self::Memory(_) => Ok(None),
+        }
+    }
+
     pub(crate) fn acquire_committer_lease(
         &self,
         owner_id: &str,

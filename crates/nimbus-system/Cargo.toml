@@ -27,7 +27,11 @@ tracing.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
+libsql.workspace = true
+mysql_async.workspace = true
 nimbus-engine = { path = "../nimbus-engine", features = ["test-hooks"] }
 nimbus-runtime = { path = "../nimbus-runtime" }
+nimbus-storage = { path = "../nimbus-storage", features = ["test-hooks"] }
 nimbus-testing = { path = "../nimbus-testing" }
 tempfile.workspace = true
+tokio-postgres.workspace = true

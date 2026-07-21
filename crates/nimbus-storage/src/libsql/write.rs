@@ -1404,6 +1404,7 @@ impl LibsqlReplicaWriteTransaction {
 
     pub fn commit(mut self) -> Result<Option<CommitEntry>> {
         self.check_cancel()?;
+        let prepared_record_for_fault = self.prepared_record.clone();
         let writes = std::mem::take(&mut self.commit_writes);
         if !writes.is_empty() {
             self.tenant_events.insert(
@@ -1429,8 +1430,15 @@ impl LibsqlReplicaWriteTransaction {
             tx.commit().await.map_err(map_libsql_error)?;
             Ok(())
         })?;
-        self.store
-            .check_fault(crate::FaultPoint::StorageCommitAfterVisibilityBeforeReturn)?;
+        if let Some(record) = prepared_record_for_fault.as_ref() {
+            self.store.check_durable_records_fault(
+                crate::FaultPoint::StorageCommitAfterVisibilityBeforeReturn,
+                std::slice::from_ref(record),
+            )?;
+        } else {
+            self.store
+                .check_fault(crate::FaultPoint::StorageCommitAfterVisibilityBeforeReturn)?;
+        }
         if let Some(commit) = &commit {
             if self.refresh_cache_after_commit {
                 self.store.refresh_needed.store(true, Ordering::Release);

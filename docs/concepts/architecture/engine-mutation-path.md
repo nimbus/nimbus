@@ -174,10 +174,54 @@ commit processing
 computes affected document ids, hands subscription work to the tenant's
 delivery worker, collects trigger candidates, and notifies registered
 committed-mutation observers
-(`crates/nimbus-engine/src/engine/committed_mutations.rs`). Batches of
-applied journal records are processed as one coalesced event carrying the
-latest sequence. Because this hook hangs off the single mutation path,
-no write from any surface can skip fan-out.
+(`crates/nimbus-engine/src/engine/committed_mutations.rs`). Each observer event
+names its affected tables and carries a projection token: the applied journal
+frontier plus the durable committer-lease epoch that authorized provider
+writes. Embedded stores use epoch zero. Provider catch-up reconciles the
+journal before refreshing schema, and retains schema or lifecycle table scopes
+even when a durable record has no document writes. Because this hook hangs off
+the single mutation path, no write from any surface can skip fan-out.
+
+The built-in `_nimbus.tables` observer keeps callback admission non-blocking.
+Its scheduling policy lives behind the small installation seam in
+`crates/nimbus-system/src/projection.rs`; bounded work ownership, cancellation,
+retry, and overload recovery live in
+`crates/nimbus-system/src/projection/work.rs`. Overlapping work for one table
+coalesces into one dirty scope carrying the maximum projection token rather
+than an event backlog. A task owns that scope until publication succeeds, so
+an error, panic, or cancellation restores it before the in-flight slot is
+released. Retries use one delayed scheduler with capped exponential backoff;
+they do not block the mutation acknowledgement path or abandon a scope after a
+fixed number of attempts.
+
+Publication legality is owned by
+`crates/nimbus-system/src/projection/publication.rs`. A source token is ordered
+lexicographically as `(tenant incarnation, lease epoch, durable sequence)`.
+The incarnation is a monotonic lifecycle generation retained outside the
+deletable tenant database: external providers own it in shared provider
+metadata, while embedded engines own it in the durable control database. A
+same-id recreation therefore dominates every fence from the deleted tenant,
+and late work from that deleted incarnation remains stale. One
+active tenant without this creation-time authority is corrupt and fails closed;
+the pre-launch lifecycle does not synthesize a legacy default while opening.
+A `MutationExecutionUnit` compares that token with a private durable
+`_projection_fences` row and atomically stages the visible `_nimbus.tables`
+row (or deletion), its indexes, the surviving fence/tombstone, and the system
+journal entry. Equal or older work is an idempotent stale no-op. Only an OCC
+conflict retries inline from a fresh snapshot; acknowledgement loss and every
+other error return to the retained-work scheduler. The private fence is
+internal durability metadata: it is not a `SystemTable`, runtime-system-bundle
+surface, or operator UI record.
+
+Tenant-runtime load is also an observer seam. After an embedded restart or a
+provider takeover, reconciliation reads the current applied source token and
+coalesces active table identities with private fence rows for previously
+projected or deleted scopes. It feeds those scopes through the same bounded
+publication interface, so work lost with a process converges without waiting
+for another source mutation. The scan is O(current and previously projected
+table scopes), not O(journal length). Process-local observer generations only
+cancel obsolete local tasks; they never decide cross-process publication
+order.
 
 ## The scheduler
 

@@ -1,29 +1,13 @@
 pub(super) use std::env;
 pub(super) use std::future::Future;
-pub(super) use std::net::TcpListener;
 pub(super) use std::ops::Bound;
 pub(super) use std::sync::Arc;
 pub(super) use std::sync::atomic::{AtomicU64, Ordering};
 pub(super) use std::time::{SystemTime, UNIX_EPOCH};
 
-pub(super) use libsql::{Builder, Database};
-pub(super) use nimbus_core::{
-    CollectionName, CronJob, CronSchedule, Document, DocumentId, DocumentLocator, DocumentPath,
-    Error, FieldSchema, FieldType, IndexDefinition, Mutation, ResourcePathBinding, ScheduledJob,
-    ScheduledJobOutcome, ScheduledJobResult, SchemaChangeEvent, SequenceNumber, StorageErrorKind,
-    TableId, TableName, TableSchema, TableState, TenantEventKind, TenantEventRecord, TenantId,
-    Timestamp, TriggerDeliveryCursor, WriteOp, WriteOpType,
-};
-pub(super) use serial_test::serial;
-pub(super) use testcontainers_modules::testcontainers::core::{IntoContainerPort, WaitFor};
-pub(super) use testcontainers_modules::testcontainers::{
-    ContainerAsync, GenericImage, ImageExt, runners::AsyncRunner,
-};
-
 pub(super) use super::super::{
-    Duration, LibsqlReplicaProvider, LibsqlReplicaProviderConfig, SqliteTenantStore,
-    implicit_external_provider_fixtures_disabled, require_explicit_external_provider_fixture_envs,
-    tempdir, timeout,
+    Duration, ExternalProviderFixtureMode, LibsqlReplicaProvider, LibsqlReplicaProviderConfig,
+    SqliteTenantStore, external_provider_fixture_mode, tempdir, timeout,
 };
 pub(super) use crate::async_storage::TenantReadStorage;
 pub(super) use crate::async_storage::TenantWriteStorage;
@@ -34,6 +18,15 @@ pub(super) use crate::{
     LibsqlReplicaRefreshCause, LibsqlReplicaRefreshPath, NoopFaultInjector, ResolvedScheduleOp,
     ResolvedWrite, ScriptedFaultInjector, SystemClock, TenantWriteOutcome,
 };
+pub(super) use libsql::{Builder, Database};
+pub(super) use nimbus_core::{
+    CollectionName, CronJob, CronSchedule, Document, DocumentId, DocumentLocator, DocumentPath,
+    Error, FieldSchema, FieldType, IndexDefinition, Mutation, ResourcePathBinding, ScheduledJob,
+    ScheduledJobOutcome, ScheduledJobResult, SchemaChangeEvent, SequenceNumber, StorageErrorKind,
+    TableId, TableName, TableSchema, TableState, TenantEventKind, TenantEventRecord, TenantId,
+    Timestamp, TriggerDeliveryCursor, WriteOp, WriteOpType,
+};
+pub(super) use serial_test::serial;
 
 pub(super) const LIBSQL_URL_ENV: &str = "NIMBUS_LIBSQL_URL";
 pub(super) const LIBSQL_AUTH_TOKEN_ENV: &str = "NIMBUS_LIBSQL_AUTH_TOKEN";
@@ -89,142 +82,47 @@ where
     drop(connection);
 }
 
-pub(super) enum TestConnection {
-    External {
-        primary_url: String,
-        auth_token: Option<String>,
-        admin_api_url: String,
-        admin_auth_header: Option<String>,
-    },
-    Container {
-        primary_url: String,
-        auth_token: Option<String>,
-        admin_api_url: String,
-        admin_auth_header: Option<String>,
-        _container: Box<ContainerAsync<GenericImage>>,
-    },
+pub(super) struct TestConnection {
+    primary_url: String,
+    auth_token: Option<String>,
+    admin_api_url: String,
+    admin_auth_header: Option<String>,
 }
 
 impl TestConnection {
     fn primary_url(&self) -> &str {
-        match self {
-            Self::External { primary_url, .. } => primary_url,
-            Self::Container { primary_url, .. } => primary_url,
-        }
+        &self.primary_url
     }
 
     fn auth_token(&self) -> Option<&str> {
-        match self {
-            Self::External { auth_token, .. } => auth_token.as_deref(),
-            Self::Container { auth_token, .. } => auth_token.as_deref(),
-        }
+        self.auth_token.as_deref()
     }
 
     fn admin_api_url(&self) -> &str {
-        match self {
-            Self::External { admin_api_url, .. } => admin_api_url,
-            Self::Container { admin_api_url, .. } => admin_api_url,
-        }
+        &self.admin_api_url
     }
 
     fn admin_auth_header(&self) -> Option<&str> {
-        match self {
-            Self::External {
-                admin_auth_header, ..
-            } => admin_auth_header.as_deref(),
-            Self::Container {
-                admin_auth_header, ..
-            } => admin_auth_header.as_deref(),
-        }
+        self.admin_auth_header.as_deref()
     }
 }
 
 pub(super) async fn test_connection() -> Option<TestConnection> {
-    if let Ok(primary_url) = env::var(LIBSQL_URL_ENV) {
-        let admin_api_url = env::var(LIBSQL_ADMIN_URL_ENV).unwrap_or_else(|_| {
-            panic!(
-                "{LIBSQL_ADMIN_URL_ENV} is required when {LIBSQL_URL_ENV} is set for libsql provider tests"
-            )
-        });
-        return Some(TestConnection::External {
-            primary_url,
-            auth_token: env::var(LIBSQL_AUTH_TOKEN_ENV).ok(),
-            admin_api_url,
-            admin_auth_header: env::var(LIBSQL_ADMIN_AUTH_HEADER_ENV).ok(),
-        });
-    }
-
-    require_explicit_external_provider_fixture_envs(
-        "libsql provider",
+    match external_provider_fixture_mode(
+        "libsql",
+        "libSQL storage provider",
         &[LIBSQL_URL_ENV, LIBSQL_ADMIN_URL_ENV],
-    );
-    if implicit_external_provider_fixtures_disabled("libsql provider") {
-        return None;
+    ) {
+        ExternalProviderFixtureMode::UseExplicit => Some(TestConnection {
+            primary_url: env::var(LIBSQL_URL_ENV)
+                .expect("fixture policy should require the libSQL primary URL"),
+            auth_token: env::var(LIBSQL_AUTH_TOKEN_ENV).ok(),
+            admin_api_url: env::var(LIBSQL_ADMIN_URL_ENV)
+                .expect("fixture policy should require the libSQL admin URL"),
+            admin_auth_header: env::var(LIBSQL_ADMIN_AUTH_HEADER_ENV).ok(),
+        }),
+        ExternalProviderFixtureMode::Omit => None,
     }
-
-    let image = GenericImage::new("ghcr.io/tursodatabase/libsql-server", "latest")
-        // The image's wrapper/log stream is not a stable readiness seam for
-        // testcontainers. We do a short startup delay here, then use a live
-        // provider connect loop below as the authoritative readiness check.
-        .with_wait_for(WaitFor::seconds(1))
-        // The image entrypoint already injects --http-listen-addr from
-        // SQLD_HTTP_LISTEN_ADDR; passing that flag again makes current images
-        // exit with a duplicate-argument error before readiness probing starts.
-        .with_env_var("SQLD_ADMIN_LISTEN_ADDR", "0.0.0.0:8081")
-        .with_cmd(vec![
-            "/bin/sqld".to_string(),
-            "--enable-namespaces".to_string(),
-            "--no-welcome".to_string(),
-        ]);
-    let host_http_port = allocate_host_port();
-    let host_admin_port = allocate_host_port();
-    let image = image
-        .with_mapped_port(host_http_port, 8080.tcp())
-        .with_mapped_port(host_admin_port, 8081.tcp());
-    let container = match image.start().await {
-        Ok(container) => container,
-        Err(error) => {
-            eprintln!(
-                "skipping libsql provider test because no explicit libsql URL was provided and container startup failed: {error}"
-            );
-            return None;
-        }
-    };
-    let host = container
-        .get_host()
-        .await
-        .expect("container host should resolve");
-    let primary_url = format!("http://{host}:{host_http_port}");
-    let admin_api_url = format!("http://{host}:{host_admin_port}");
-
-    if timeout(Duration::from_secs(60), async {
-        loop {
-            let replica_cache_dir = tempdir().expect("temporary replica cache dir should create");
-            let config = LibsqlReplicaProviderConfig::new(
-                primary_url.clone(),
-                admin_api_url.clone(),
-                replica_cache_dir.keep(),
-            );
-            if LibsqlReplicaProvider::connect(config).await.is_ok() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(250)).await;
-        }
-    })
-    .await
-    .is_err()
-    {
-        eprintln!("skipping libsql provider test because the libsql container never became ready");
-        return None;
-    }
-
-    Some(TestConnection::Container {
-        primary_url,
-        auth_token: None,
-        admin_api_url,
-        admin_auth_header: None,
-        _container: Box::new(container),
-    })
 }
 
 pub(super) fn unique_suffix() -> String {
@@ -489,14 +387,6 @@ pub(super) fn scheduled_insert_job(run_at: Timestamp, title: &str) -> ScheduledJ
         },
         created_at: Timestamp(100),
     }
-}
-
-pub(super) fn allocate_host_port() -> u16 {
-    TcpListener::bind(("127.0.0.1", 0))
-        .expect("temporary port probe should bind")
-        .local_addr()
-        .expect("temporary port probe should resolve")
-        .port()
 }
 
 pub(super) async fn seed_remote_namespace(

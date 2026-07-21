@@ -22,6 +22,7 @@ async fn libsql_provider_manages_tenant_registry_and_namespaces() {
                 .tenant_namespace(&alpha)
                 .expect("tenant namespace should derive")
         );
+        assert_eq!(created_alpha.incarnation, 1);
         assert!(
             provider
                 .tenant_exists(&alpha)
@@ -50,6 +51,7 @@ async fn libsql_provider_manages_tenant_registry_and_namespaces() {
             .expect("tenant should open")
             .expect("tenant should exist");
         assert_eq!(reopened.namespace, created_alpha.namespace);
+        assert_eq!(reopened.incarnation, created_alpha.incarnation);
 
         provider
             .delete_tenant(&alpha)
@@ -83,6 +85,7 @@ async fn libsql_provider_manages_tenant_registry_and_namespaces() {
                 .tenant_namespace(&alpha)
                 .expect("tenant namespace should derive")
         );
+        assert!(recreated_alpha.incarnation > created_alpha.incarnation);
         assert_eq!(
             provider.list_tenants().await.expect("tenants should list"),
             vec![alpha, beta]
@@ -117,6 +120,41 @@ async fn libsql_provider_reloads_registry_after_reconnect() {
                 .namespace,
             created.namespace
         );
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn libsql_concurrent_create_loser_cannot_delete_winner_namespace() {
+    let pause = BlockingFaultInjector::new(FaultPoint::TenantCreateBeforeRegistration);
+    with_test_provider_with_faults(pause.clone(), |provider, config| async move {
+        let contender = LibsqlReplicaProvider::connect(config)
+            .await
+            .expect("contending provider should connect");
+        let tenant = TenantId::new("concurrent-create").expect("tenant id should build");
+        let paused_tenant = tenant.clone();
+        let paused_create =
+            tokio::spawn(async move { provider.create_tenant(&paused_tenant).await });
+        pause.wait_until_entered().await;
+
+        let winner = contender
+            .create_tenant(&tenant)
+            .await
+            .expect("contender should register the shared namespace");
+        pause.release();
+        assert!(matches!(
+            paused_create.await.expect("paused create should join"),
+            Err(Error::AlreadyExists(_))
+        ));
+
+        let reopened = contender
+            .open_existing_tenant(&tenant)
+            .await
+            .expect("winner namespace must survive loser cleanup")
+            .expect("winning tenant should remain registered");
+        assert_eq!(reopened.namespace, winner.namespace);
+        assert_eq!(reopened.incarnation, winner.incarnation);
     })
     .await;
 }

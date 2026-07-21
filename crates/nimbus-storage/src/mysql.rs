@@ -94,6 +94,7 @@ impl MySqlProviderConfig {
 pub struct MySqlTenantRegistration {
     pub tenant_id: TenantId,
     pub database_name: String,
+    pub incarnation: u64,
 }
 
 #[derive(Clone)]
@@ -110,6 +111,7 @@ pub struct MySqlProvider {
 pub struct OpenedMySqlTenant {
     pub store: Arc<MySqlTenantStore>,
     pub read_storage: Arc<MySqlTenantStorage>,
+    pub incarnation: u64,
 }
 
 #[derive(Clone)]
@@ -288,6 +290,7 @@ mod tests {
             MySqlTenantRegistration {
                 tenant_id: TenantId::new("demo").expect("tenant id should be valid"),
                 database_name: "tenant_demo".to_string(),
+                incarnation: 1,
             },
         );
 

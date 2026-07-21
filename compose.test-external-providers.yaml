@@ -1,0 +1,78 @@
+# Deterministic external-provider fixtures for local verification and hosted CI.
+# Keep this separate from compose.yaml: that file owns persistent developer
+# backing services, while these services are disposable, test-privileged, and
+# version-pinned to the external-provider CI contract.
+
+services:
+  postgres:
+    image: postgres:16
+    labels:
+      org.nimbus.fixture.owner: external-provider-tests
+      org.nimbus.fixture.provider: postgres
+    ports:
+      - "127.0.0.1:${NIMBUS_PROVIDER_FIXTURE_POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: fixture-postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 1s
+      timeout: 2s
+      retries: 60
+    tmpfs:
+      - /var/lib/postgresql/data
+
+  mysql:
+    image: mysql:8.4
+    labels:
+      org.nimbus.fixture.owner: external-provider-tests
+      org.nimbus.fixture.provider: mysql
+    ports:
+      - "127.0.0.1:${NIMBUS_PROVIDER_FIXTURE_MYSQL_PORT:-3306}:3306"
+    environment:
+      MYSQL_DATABASE: test
+      MYSQL_ROOT_HOST: "%"
+      MYSQL_ROOT_PASSWORD: fixture-mysql-root
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "mysqladmin",
+          "ping",
+          "-h",
+          "127.0.0.1",
+          "-uroot",
+          "-pfixture-mysql-root",
+          "--silent",
+        ]
+      interval: 1s
+      timeout: 2s
+      retries: 60
+    tmpfs:
+      - /var/lib/mysql
+
+  libsql:
+    image: ghcr.io/tursodatabase/libsql-server:v0.24.33
+    labels:
+      org.nimbus.fixture.owner: external-provider-tests
+      org.nimbus.fixture.provider: libsql
+    ports:
+      - "127.0.0.1:${NIMBUS_PROVIDER_FIXTURE_LIBSQL_PORT:-18080}:8080"
+      - "127.0.0.1:${NIMBUS_PROVIDER_FIXTURE_LIBSQL_ADMIN_PORT:-18081}:8081"
+    environment:
+      SQLD_ADMIN_LISTEN_ADDR: 0.0.0.0:8081
+    command: ["/bin/sqld", "--enable-namespaces", "--no-welcome"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/bin/bash",
+          "-c",
+          "exec 3<>/dev/tcp/127.0.0.1/8081 && exec 3<&- && exec 3>&-",
+        ]
+      interval: 1s
+      timeout: 2s
+      retries: 60
+    tmpfs:
+      - /var/lib/sqld

@@ -162,7 +162,6 @@ shell-words = "1"
 sha2 = "0.10"
 tar = "0.4"
 tempfile = "3"
-testcontainers-modules = "0.15"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tokio-native-tls = "0.3"

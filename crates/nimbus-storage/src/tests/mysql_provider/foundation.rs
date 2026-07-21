@@ -21,6 +21,7 @@ async fn mysql_provider_manages_tenant_registry_and_databases() {
                 .tenant_database_name(&alpha)
                 .expect("tenant database should derive")
         );
+        assert_eq!(created_alpha.incarnation, 1);
         assert!(
             provider
                 .tenant_exists(&alpha)
@@ -49,6 +50,7 @@ async fn mysql_provider_manages_tenant_registry_and_databases() {
             .expect("tenant should open")
             .expect("tenant should exist");
         assert_eq!(reopened.database_name, created_alpha.database_name);
+        assert_eq!(reopened.incarnation, created_alpha.incarnation);
 
         provider
             .delete_tenant(&alpha)
@@ -69,7 +71,17 @@ async fn mysql_provider_manages_tenant_registry_and_databases() {
         );
         assert_eq!(
             provider.list_tenants().await.expect("tenants should list"),
-            vec![beta]
+            vec![beta.clone()]
+        );
+
+        let recreated_alpha = provider
+            .create_tenant(&alpha)
+            .await
+            .expect("tenant should recreate after delete");
+        assert!(recreated_alpha.incarnation > created_alpha.incarnation);
+        assert_eq!(
+            provider.list_tenants().await.expect("tenants should list"),
+            vec![alpha, beta]
         );
     })
     .await;

@@ -9,7 +9,7 @@ use nimbus_core::Result;
 use nimbus_core::TenantId;
 #[cfg(test)]
 use nimbus_core::{
-    DocumentId, ResourcePathBinding, SequenceNumber, TableName, TenantEventRecord,
+    DocumentId, ResourcePathBinding, SequenceNumber, TableName, TableSchema, TenantEventRecord,
     TriggerDeliveryCursor, TriggerInvocationRecord, WriteOp, WriteOpType,
 };
 
@@ -85,6 +85,19 @@ impl Engine {
     pub(crate) fn acquire_committer_lease_for_testing(&self, tenant_id: &TenantId) -> Result<()> {
         let runtime = self.get_existing_tenant(tenant_id)?;
         runtime.ensure_committer_lease_for_assignment()
+    }
+
+    /// Pauses one loaded tenant's lease-renewal worker without closing the
+    /// lifecycle or unloading the runtime. Cross-process takeover tests use
+    /// this before expiring the durable lease so the old runtime can still be
+    /// fenced as a stale writer but cannot race the intended successor by
+    /// renewing.
+    #[cfg(any(test, feature = "test-hooks"))]
+    #[doc(hidden)]
+    pub fn pause_committer_lease_renewal_for_testing(&self, tenant_id: &TenantId) -> Result<()> {
+        self.with_runtime_for_testing(tenant_id, |runtime| {
+            runtime.pause_committer_lease_renewal_for_testing();
+        })
     }
 
     #[cfg(test)]
@@ -316,6 +329,27 @@ impl Engine {
                 .append_durable_records_batch(std::slice::from_ref(&record))?;
             runtime.mark_durable_head(sequence);
             Ok(record)
+        })
+    }
+
+    /// Persists one schema record without advancing the loaded runtime's
+    /// schema or journal frontiers. Provider catch-up tests use this to model a
+    /// notification arriving after another process committed the record.
+    #[cfg(test)]
+    pub(crate) fn persist_table_schema_without_publish_for_testing(
+        &self,
+        tenant_id: &TenantId,
+        table_schema: &TableSchema,
+    ) -> Result<SequenceNumber> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let _operation = runtime.enter_operation(tenant_id)?;
+        let runtime_for_commit = runtime.clone();
+        let table_schema = table_schema.clone();
+        runtime.submit_internal_committer(move || {
+            runtime_for_commit.ensure_committer_lease_for_assignment()?;
+            let expected_previous = runtime_for_commit.durable_head();
+            runtime_for_commit.persist_table_schema(expected_previous, &table_schema)?;
+            Ok(runtime_for_commit.store().journal_progress()?.durable_head)
         })
     }
 
@@ -581,12 +615,22 @@ impl Engine {
         })
     }
 
-    #[cfg(test)]
-    pub(crate) fn shutdown_trigger_candidates_for_testing(
-        &self,
-        tenant_id: &TenantId,
-    ) -> Result<()> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    #[doc(hidden)]
+    pub fn shutdown_trigger_candidates_for_testing(&self, tenant_id: &TenantId) -> Result<()> {
         self.with_runtime_for_testing(tenant_id, |runtime| runtime.shutdown_trigger_candidates())
+    }
+
+    /// Waits until committer work accepted before this call has completed.
+    ///
+    /// Tests use this after stopping durable background producers so a
+    /// process-wide storage fault is owned by the operation that follows.
+    #[cfg(any(test, feature = "test-hooks"))]
+    #[doc(hidden)]
+    pub async fn flush_tenant_committer_for_testing(&self, tenant_id: &TenantId) -> Result<()> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let _operation = runtime.enter_operation(tenant_id)?;
+        runtime.submit_internal_committer_async(|| Ok(())).await
     }
 
     #[cfg(any(test, feature = "test-hooks"))]
@@ -759,13 +803,12 @@ impl Engine {
     ) -> Result<()> {
         let runtime = self.get_existing_tenant(tenant_id)?;
         let _operation = runtime.enter_operation(tenant_id)?;
-        let applied = records
-            .iter()
-            .map(TenantEventRecord::as_commit_entry)
-            .collect::<Vec<_>>();
-        let Some(completion) =
-            self.enqueue_provider_catch_up_commit_observers(runtime.clone(), &applied)
-        else {
+        let projection_token = self.provider_projection_token(&runtime).await?;
+        let Some(completion) = self.enqueue_provider_catch_up_commit_observers(
+            runtime.clone(),
+            records,
+            projection_token,
+        ) else {
             runtime
                 .wait_for_committed_mutation_observer_catch_up_idle()
                 .await;
@@ -786,12 +829,23 @@ impl Engine {
     ) -> Result<bool> {
         let runtime = self.get_existing_tenant(tenant_id)?;
         let _operation = runtime.enter_operation(tenant_id)?;
-        let applied = records
-            .iter()
-            .map(TenantEventRecord::as_commit_entry)
-            .collect::<Vec<_>>();
+        let projection_token = runtime.projection_token()?;
         Ok(self
-            .enqueue_provider_catch_up_commit_observers(runtime, &applied)
+            .enqueue_provider_catch_up_commit_observers(runtime, records, projection_token)
+            .is_some())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn trigger_provider_catch_up_observers_with_token_for_testing(
+        &self,
+        tenant_id: &TenantId,
+        records: &[TenantEventRecord],
+        projection_token: crate::ProjectionToken,
+    ) -> Result<bool> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let _operation = runtime.enter_operation(tenant_id)?;
+        Ok(self
+            .enqueue_provider_catch_up_commit_observers(runtime, records, projection_token)
             .is_some())
     }
 

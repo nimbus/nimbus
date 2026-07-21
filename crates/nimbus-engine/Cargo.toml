@@ -48,11 +48,11 @@ hyper.workspace = true
 libsql.workspace = true
 loom = "0.7"
 mysql_async.workspace = true
+nimbus-storage = { path = "../nimbus-storage", features = ["test-hooks"] }
 nimbus-testing = { path = "../nimbus-testing" }
 proptest = "1"
 serial_test.workspace = true
 tempfile.workspace = true
-testcontainers-modules = { workspace = true, features = ["blocking", "mysql", "postgres"] }
 
 [[bench]]
 name = "embedded-provider-benchmarks"

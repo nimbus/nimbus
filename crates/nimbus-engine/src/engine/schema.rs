@@ -30,7 +30,8 @@ impl Engine {
                 &commit_faults,
             )
         })?;
-        self.notify_table_schema_change_observers(tenant_id, &table);
+        let projection_token = runtime.projection_token()?;
+        self.notify_table_schema_change_observers(tenant_id, &table, projection_token);
         Ok(())
     }
 
@@ -55,7 +56,8 @@ impl Engine {
                 )
             })
             .await?;
-        self.notify_table_schema_change_observers(&tenant_id, &table);
+        let projection_token = runtime.projection_token()?;
+        self.notify_table_schema_change_observers(&tenant_id, &table, projection_token);
         Ok(())
     }
 
@@ -114,7 +116,8 @@ impl Engine {
                 &commit_faults,
             )
         })?;
-        self.notify_table_schema_change_observers(tenant_id, table);
+        let projection_token = runtime.projection_token()?;
+        self.notify_table_schema_change_observers(tenant_id, table, projection_token);
         Ok(())
     }
 
@@ -139,25 +142,23 @@ impl Engine {
                 )
             })
             .await?;
-        self.notify_table_schema_change_observers(&tenant_id, &table);
+        let projection_token = runtime.projection_token()?;
+        self.notify_table_schema_change_observers(&tenant_id, &table, projection_token);
         Ok(())
     }
     pub(super) async fn refresh_loaded_schema_from_store_async(
         &self,
         runtime: &Arc<TenantRuntime>,
-    ) -> Result<()> {
+    ) -> Result<Vec<TableName>> {
         let next_schema = runtime
             .store()
             .load_schema_async(runtime.read_storage())
             .await?;
-        for table in apply_loaded_schema_snapshot(runtime, next_schema)? {
-            self.notify_table_schema_change_observers(runtime.tenant_id(), &table);
-        }
-        Ok(())
+        apply_loaded_schema_snapshot(runtime, next_schema)
     }
 }
 
-fn apply_loaded_schema_snapshot(
+pub(in crate::engine) fn apply_loaded_schema_snapshot(
     runtime: &Arc<TenantRuntime>,
     next_schema: Schema,
 ) -> Result<Vec<TableName>> {

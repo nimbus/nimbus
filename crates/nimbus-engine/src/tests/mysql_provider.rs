@@ -11,10 +11,6 @@ use nimbus_core::{
     WriteKey, WritePrecondition, WriteSetMode,
 };
 use nimbus_storage::{MySqlProvider, MySqlProviderConfig};
-use testcontainers_modules::{
-    mysql,
-    testcontainers::{ContainerAsync, runners::AsyncRunner},
-};
 
 use super::*;
 use crate::{
@@ -551,7 +547,7 @@ where
     let metadata_database = format!("nimbus_meta_{}", &suffix[..16.min(suffix.len())]);
     let tenant_database_prefix = format!("tenant_{}_", &suffix[..12.min(suffix.len())]);
     let provider_config = MySqlProviderConfig {
-        connection_string: connection.connection_string().to_string(),
+        connection_string: connection.clone(),
         metadata_database: metadata_database.clone(),
         tenant_database_prefix: tenant_database_prefix.clone(),
         min_connections: Some(1),
@@ -571,9 +567,7 @@ where
                 min_connections: Some(1),
                 max_connections: Some(4),
             },
-            credentials: ProviderCredentials::ConnectionString(
-                connection.connection_string().to_string(),
-            ),
+            credentials: ProviderCredentials::ConnectionString(connection),
         },
         control_plane: ControlPlaneConfig::embedded_redb(control_dir_a.path()),
         local_encryption: LocalEncryptionConfig::Disabled,
@@ -592,79 +586,15 @@ where
         .drop_provider_databases_for_test()
         .await
         .expect("provider databases should drop");
-    drop(connection);
 }
 
-enum TestConnection {
-    External(String),
-    Container {
-        connection_string: String,
-        _container: Box<ContainerAsync<mysql::Mysql>>,
-    },
-}
-
-impl TestConnection {
-    fn connection_string(&self) -> &str {
-        match self {
-            Self::External(connection_string) => connection_string,
-            Self::Container {
-                connection_string, ..
-            } => connection_string,
+async fn test_connection() -> Option<String> {
+    match external_provider_fixture_mode("mysql", "MySQL engine provider", &[MYSQL_URL_ENV]) {
+        ExternalProviderFixtureMode::UseExplicit => {
+            Some(env::var(MYSQL_URL_ENV).expect("fixture policy should require the MySQL URL"))
         }
+        ExternalProviderFixtureMode::Omit => None,
     }
-}
-
-async fn test_connection() -> Option<TestConnection> {
-    if let Ok(connection_string) = env::var(MYSQL_URL_ENV) {
-        return Some(TestConnection::External(connection_string));
-    }
-
-    require_explicit_external_provider_fixture_envs("MySQL engine", &[MYSQL_URL_ENV]);
-    if implicit_external_provider_fixtures_disabled("MySQL engine") {
-        return None;
-    }
-
-    let container = match mysql::Mysql::default().start().await {
-        Ok(container) => container,
-        Err(error) => {
-            eprintln!(
-                "skipping mysql engine test because no explicit MySQL URL was provided and container startup failed: {error}"
-            );
-            return None;
-        }
-    };
-    let host = container
-        .get_host()
-        .await
-        .expect("container host should resolve");
-    let port = container
-        .get_host_port_ipv4(3306)
-        .await
-        .expect("container port should resolve");
-    let url = format!("mysql://root@{host}:{port}/test");
-
-    if timeout(Duration::from_secs(20), async {
-        loop {
-            if MySqlProvider::connect(MySqlProviderConfig::new(url.clone()))
-                .await
-                .is_ok()
-            {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(250)).await;
-        }
-    })
-    .await
-    .is_err()
-    {
-        eprintln!("skipping mysql engine test because the MySQL container never became ready");
-        return None;
-    }
-
-    Some(TestConnection::Container {
-        connection_string: url,
-        _container: Box::new(container),
-    })
 }
 
 fn unique_suffix() -> String {

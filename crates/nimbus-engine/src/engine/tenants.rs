@@ -36,9 +36,14 @@ impl Engine {
             )));
         }
 
+        self.control_plane_provider
+            .advance_tenant_incarnation(&tenant_id)?;
+
         let runtime =
             self.build_loaded_tenant_runtime(&tenant_id, self.open_tenant_store(&path)?)?;
-        tenants.insert(tenant_id, runtime);
+        tenants.insert(tenant_id, runtime.clone());
+        drop(tenants);
+        self.notify_tenant_runtime_loaded(&runtime);
         Ok(())
     }
 
@@ -57,11 +62,31 @@ impl Engine {
             )));
         }
 
+        let control_incarnation = if self.persistence_provider.owns_tenant_incarnations() {
+            None
+        } else {
+            if self.persistence_provider.tenant_exists(&tenant_id).await? {
+                return Err(Error::AlreadyExists(format!(
+                    "tenant already exists: {tenant_id}"
+                )));
+            }
+            Some(
+                self.control_plane_provider
+                    .advance_tenant_incarnation_async(tenant_id.clone())
+                    .await?,
+            )
+        };
         let opened = self.persistence_provider.create_tenant(&tenant_id).await?;
+        let tenant_incarnation = opened.incarnation.or(control_incarnation).ok_or_else(|| {
+            Error::Internal(format!(
+                "tenant persistence did not provide an incarnation for {tenant_id}"
+            ))
+        })?;
         let committer_owner_id = self.committer_owner_id_for_store(&opened.persistence);
         let runtime = Arc::new(
             TenantRuntime::from_parts_async(
                 tenant_id.clone(),
+                tenant_incarnation,
                 opened.persistence,
                 opened.executor,
                 self.committer_lease_clock.clone(),
@@ -85,7 +110,8 @@ impl Engine {
         self.tenants
             .write()
             .expect("tenant registry lock should not be poisoned")
-            .insert(tenant_id, runtime);
+            .insert(tenant_id, runtime.clone());
+        self.notify_tenant_runtime_loaded(&runtime);
         Ok(())
     }
 
@@ -218,6 +244,8 @@ impl Engine {
         let runtime =
             self.build_loaded_tenant_runtime(tenant_id, self.open_tenant_store(&path)?)?;
         tenants.insert(tenant_id.clone(), runtime.clone());
+        drop(tenants);
+        self.notify_tenant_runtime_loaded(&runtime);
         Ok(runtime)
     }
 
@@ -334,11 +362,20 @@ impl Engine {
         };
         let open_elapsed = open_started.elapsed();
         let opened_executor = opened.executor.clone();
+        let tenant_incarnation = match opened.incarnation {
+            Some(incarnation) => incarnation,
+            None => {
+                self.control_plane_provider
+                    .tenant_incarnation_async(tenant_id.clone())
+                    .await?
+            }
+        };
         let runtime_init_started = Instant::now();
         let (initial_state, runtime_profile) =
             TenantRuntime::load_initial_state_async(&opened.persistence, &opened_executor).await?;
         let runtime = Arc::new(TenantRuntime::from_loaded_state(
             tenant_id.clone(),
+            tenant_incarnation,
             opened.persistence.clone(),
             opened_executor,
             initial_state,
@@ -382,6 +419,7 @@ impl Engine {
             .write()
             .expect("tenant registry lock should not be poisoned")
             .insert(tenant_id.clone(), runtime.clone());
+        self.notify_tenant_runtime_loaded(&runtime);
         maybe_emit_tenant_load_profile(TenantLoadProfileSample {
             tenant_id,
             cache_hit: false,

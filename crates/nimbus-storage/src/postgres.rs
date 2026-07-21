@@ -88,6 +88,7 @@ const POSTGRES_POOL_APPLICATION_NAME_PREFIX: &str = "nimbus_pool_";
 pub struct PostgresTenantRegistration {
     pub tenant_id: TenantId,
     pub schema_name: String,
+    pub incarnation: u64,
 }
 
 #[derive(Clone)]
@@ -107,6 +108,7 @@ pub struct PostgresProvider {
 pub struct OpenedPostgresTenant {
     pub store: Arc<PostgresTenantStore>,
     pub read_storage: Arc<PostgresTenantStorage>,
+    pub incarnation: u64,
 }
 
 #[derive(Clone)]

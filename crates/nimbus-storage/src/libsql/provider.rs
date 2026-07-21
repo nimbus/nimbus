@@ -28,7 +28,8 @@ impl LibsqlReplicaProvider {
         .await
     }
 
-    pub(crate) async fn connect_with_simulation_faults(
+    #[doc(hidden)]
+    pub async fn connect_with_simulation_faults(
         config: LibsqlReplicaProviderConfig,
         runtime_handle: TokioRuntimeHandle,
         clock: Arc<dyn Clock>,
@@ -152,7 +153,7 @@ impl LibsqlReplicaProvider {
         let conn = self.metadata_connection()?;
         let mut rows = conn
             .query(
-                "SELECT namespace FROM tenants WHERE tenant_id = ?",
+                "SELECT 1 FROM tenants WHERE tenant_id = ?",
                 libsql::params![tenant_id.as_str()],
             )
             .await
@@ -167,7 +168,9 @@ impl LibsqlReplicaProvider {
         let conn = self.metadata_connection()?;
         let mut rows = conn
             .query(
-                "SELECT namespace FROM tenants WHERE tenant_id = ?",
+                "SELECT tenants.namespace, tenant_incarnations.incarnation \
+                 FROM tenants LEFT JOIN tenant_incarnations USING (tenant_id) \
+                 WHERE tenants.tenant_id = ?",
                 libsql::params![tenant_id.as_str()],
             )
             .await
@@ -176,6 +179,10 @@ impl LibsqlReplicaProvider {
             return Ok(None);
         };
         let namespace = row.get::<String>(0).map_err(map_libsql_error)?;
+        let incarnation = incarnation_from_i64(
+            row.get::<Option<i64>>(1).map_err(map_libsql_error)?,
+            tenant_id,
+        )?;
         if !tenant_namespace_has_foundation(
             &self.primary_url,
             self.auth_token.as_deref(),
@@ -190,6 +197,7 @@ impl LibsqlReplicaProvider {
         Ok(Some(LibsqlReplicaTenantRegistration {
             tenant_id: tenant_id.clone(),
             namespace,
+            incarnation,
         }))
     }
 
@@ -212,16 +220,75 @@ impl LibsqlReplicaProvider {
         .await?;
         bootstrap_tenant_namespace(&self.primary_url, self.auth_token.as_deref(), &namespace)
             .await?;
+        self.remote_fault_injector
+            .check_for_tenant(crate::FaultPoint::TenantCreateBeforeRegistration, tenant_id)?;
         let conn = self.metadata_connection()?;
-        conn.execute(
-            "INSERT INTO tenants (tenant_id, namespace) VALUES (?, ?)",
-            libsql::params![tenant_id.as_str(), namespace.as_str()],
-        )
-        .await
-        .map_err(map_libsql_error)?;
+        let transaction = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .await
+            .map_err(map_libsql_error)?;
+        let registration = async {
+            transaction
+                .execute(
+                    "INSERT INTO tenant_incarnations (tenant_id, incarnation) VALUES (?, 1) \
+                     ON CONFLICT (tenant_id) DO UPDATE \
+                     SET incarnation = tenant_incarnations.incarnation + 1",
+                    libsql::params![tenant_id.as_str()],
+                )
+                .await
+                .map_err(map_libsql_error)?;
+            let mut rows = transaction
+                .query(
+                    "SELECT incarnation FROM tenant_incarnations WHERE tenant_id = ?",
+                    libsql::params![tenant_id.as_str()],
+                )
+                .await
+                .map_err(map_libsql_error)?;
+            let row = rows
+                .next()
+                .await
+                .map_err(map_libsql_error)?
+                .ok_or_else(|| {
+                    Error::Internal(format!(
+                        "tenant incarnation allocation disappeared for {tenant_id}"
+                    ))
+                })?;
+            let incarnation = incarnation_from_i64(
+                Some(row.get::<i64>(0).map_err(map_libsql_error)?),
+                tenant_id,
+            )?;
+            drop(rows);
+            let inserted = transaction
+                .execute(
+                    "INSERT INTO tenants (tenant_id, namespace) VALUES (?, ?) \
+                     ON CONFLICT (tenant_id) DO NOTHING",
+                    libsql::params![tenant_id.as_str(), namespace.as_str()],
+                )
+                .await
+                .map_err(map_libsql_error)?;
+            if inserted == 0 {
+                return Err(Error::AlreadyExists(format!(
+                    "tenant '{}' already exists",
+                    tenant_id.as_str()
+                )));
+            }
+            transaction.commit().await.map_err(map_libsql_error)?;
+            Ok::<_, Error>(incarnation)
+        }
+        .await;
+        let incarnation = match registration {
+            Ok(incarnation) => incarnation,
+            // The deterministic namespace may have been created or adopted by
+            // a concurrent creator. Registration is the ownership boundary:
+            // a loser must leave the namespace intact because deleting it can
+            // destroy the winner's live tenant. An unregistered bootstrap is
+            // safe to reuse on a later create attempt.
+            Err(error) => return Err(error),
+        };
         Ok(LibsqlReplicaTenantRegistration {
             tenant_id: tenant_id.clone(),
             namespace,
+            incarnation,
         })
     }
 
@@ -314,9 +381,11 @@ impl LibsqlReplicaProvider {
             self.delete_tenant(&tenant_id).await?;
         }
         let conn = self.metadata_connection()?;
-        conn.execute_batch("DROP TABLE IF EXISTS tenants")
-            .await
-            .map_err(map_libsql_error)?;
+        conn.execute_batch(
+            "DROP TABLE IF EXISTS tenants; DROP TABLE IF EXISTS tenant_incarnations",
+        )
+        .await
+        .map_err(map_libsql_error)?;
         let _ = drop_remote_namespace(
             &self.admin_api_url,
             self.admin_auth_header.as_deref(),
@@ -330,6 +399,7 @@ impl LibsqlReplicaProvider {
         &self,
         registration: LibsqlReplicaTenantRegistration,
     ) -> Result<OpenedLibsqlReplicaTenant> {
+        let incarnation = registration.incarnation;
         let replica_path = self.sync_registration_snapshot(&registration).await?;
         let remote_database = Arc::new(
             open_remote_database(
@@ -385,6 +455,7 @@ impl LibsqlReplicaProvider {
         Ok(OpenedLibsqlReplicaTenant {
             store,
             read_storage,
+            incarnation,
             tenant_id: registration.tenant_id,
             namespace: registration.namespace,
             replica_path,
@@ -398,6 +469,10 @@ impl LibsqlReplicaProvider {
             "CREATE TABLE IF NOT EXISTS tenants (
                 tenant_id TEXT NOT NULL PRIMARY KEY,
                 namespace TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS tenant_incarnations (
+                tenant_id TEXT NOT NULL PRIMARY KEY,
+                incarnation INTEGER NOT NULL CHECK (incarnation > 0)
             );",
         )
         .await
@@ -412,6 +487,13 @@ impl LibsqlReplicaProvider {
     pub(super) fn replica_dir_for_tenant(&self, tenant_id: &TenantId) -> PathBuf {
         self.replica_cache_dir.join(tenant_id.as_str())
     }
+}
+
+fn incarnation_from_i64(value: Option<i64>, tenant_id: &TenantId) -> Result<u64> {
+    crate::tenant_incarnation::require_tenant_incarnation(
+        value.and_then(|value| u64::try_from(value).ok()),
+        tenant_id,
+    )
 }
 
 impl OpenedLibsqlReplicaTenant {

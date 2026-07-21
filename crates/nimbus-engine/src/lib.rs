@@ -16,8 +16,10 @@ pub use engine::{
     AsyncMutationContext, CommitPhaseMetricsSnapshot, CommittedMutationEvent,
     CommittedMutationObserver, CommittedMutationObserverWorkStats, EncryptionStatus, Engine,
     InitializedKeyProvider, MutationActor, MutationExecutionUnit, MutationIsolatePermit,
-    SubscribeOptions, SubscriptionBootstrapCancellation, TableSchemaChangeEvent,
-    TableSchemaChangeObserver, TenantObjectMeta, TenantRuntimeObserverIdentity,
+    ProjectionReconciliationSnapshot, ProjectionToken, SubscribeOptions,
+    SubscriptionBootstrapCancellation, TableSchemaChangeEvent, TableSchemaChangeObserver,
+    TenantObjectMeta, TenantRuntimeLoadedEvent, TenantRuntimeObserver,
+    TenantRuntimeObserverIdentity,
 };
 #[cfg(any(test, feature = "test-hooks"))]
 pub use engine::{CommitFaultHandle, Fault, commit_fault_labels};

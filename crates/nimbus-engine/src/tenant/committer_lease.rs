@@ -5,6 +5,8 @@ use std::time::{Duration, Instant};
 use nimbus_core::{Error, Result, StorageErrorKind, Timestamp};
 use nimbus_storage::{CommitterLease, CommitterLeaseError};
 
+use crate::engine::ProjectionToken;
+
 use super::TenantRuntime;
 use super::background::BackgroundWorker;
 
@@ -137,6 +139,26 @@ impl TenantRuntime {
             .as_ref()
             .map(|lifecycle| lifecycle.held_identity().map(Some))
             .unwrap_or(Ok(None))
+    }
+
+    /// Returns the durable source order represented by this runtime's visible
+    /// state after a locally authorized commit.
+    ///
+    /// Provider runtimes must already hold their lease; an unacquired or
+    /// fenced runtime cannot manufacture publication provenance. Embedded
+    /// runtimes use epoch zero and retain their process-local ordering.
+    pub(crate) fn projection_token(&self) -> Result<ProjectionToken> {
+        let lease_epoch = self
+            .committer_lease
+            .as_ref()
+            .map(|lifecycle| lifecycle.source_epoch())
+            .transpose()?
+            .unwrap_or(0);
+        Ok(ProjectionToken {
+            tenant_incarnation: self.tenant_incarnation(),
+            lease_epoch,
+            durable_sequence: self.applied_head(),
+        })
     }
 
     pub(crate) fn record_committer_fenced(&self, owner_id: String, epoch: u64) {
@@ -304,6 +326,13 @@ impl TenantRuntime {
             lifecycle.shutdown();
         }
     }
+
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) fn pause_committer_lease_renewal_for_testing(&self) {
+        if let Some(lifecycle) = &self.committer_lease {
+            lifecycle.pause_renewal_for_testing();
+        }
+    }
 }
 
 impl CommitterLeaseLifecycle {
@@ -418,6 +447,23 @@ impl CommitterLeaseLifecycle {
         }
     }
 
+    fn source_epoch(&self) -> Result<u64> {
+        let state = self
+            .state
+            .lock()
+            .expect("committer lease state lock should not be poisoned");
+        match &state.status {
+            CommitterLeaseStatus::Held(lease) => Ok(lease.epoch),
+            // The rejected token still identifies work durably committed by
+            // this runtime before takeover. Keeping it available prevents a
+            // concurrent fence notification from erasing that provenance.
+            CommitterLeaseStatus::Fenced { epoch, .. } => Ok(*epoch),
+            CommitterLeaseStatus::Unacquired => Err(Error::Internal(
+                "provider projection attempted without an acquired committer lease".to_string(),
+            )),
+        }
+    }
+
     fn record_fenced(&self, owner_id: String, epoch: u64) {
         let mut state = self
             .state
@@ -446,6 +492,13 @@ impl CommitterLeaseLifecycle {
             .expect("committer lease state lock should not be poisoned");
         self.closed.store(true, Ordering::Release);
         drop(state);
+        let wake = self.wake.clone();
+        self.worker
+            .shutdown(move |shutdown| wake.signal_shutdown(shutdown));
+    }
+
+    #[cfg(any(test, feature = "test-hooks"))]
+    fn pause_renewal_for_testing(&self) {
         let wake = self.wake.clone();
         self.worker
             .shutdown(move |shutdown| wake.signal_shutdown(shutdown));

@@ -4,24 +4,18 @@ pub(super) use std::ops::Bound;
 pub(super) use std::sync::atomic::{AtomicU64, Ordering};
 pub(super) use std::time::{SystemTime, UNIX_EPOCH};
 
+pub(super) use super::super::{
+    Document, Duration, ExternalProviderFixtureMode, FieldSchema, FieldType, IndexDefinition,
+    PostgresProvider, PostgresProviderConfig, TableSchema, TenantEventRecord, WriteOp, WriteOpType,
+    external_provider_fixture_mode, timeout,
+};
+pub(super) use crate::{ResolvedScheduleOp, ResolvedWrite};
 pub(super) use nimbus_core::{
     CollectionName, CronJob, CronSchedule, DocumentLocator, DocumentPath, Mutation,
     ResourcePathBinding, ScheduledJob, ScheduledJobOutcome, ScheduledJobResult, Schema,
     SchemaChangeEvent, SequenceNumber, TableId, TableName, TableState, TenantEventKind, TenantId,
     Timestamp, TriggerDeliveryCursor,
 };
-pub(super) use testcontainers_modules::{
-    postgres,
-    testcontainers::{ContainerAsync, runners::AsyncRunner},
-};
-
-pub(super) use super::super::{
-    Document, Duration, FieldSchema, FieldType, IndexDefinition, PostgresProvider,
-    PostgresProviderConfig, TableSchema, TenantEventRecord, WriteOp, WriteOpType,
-    implicit_external_provider_fixtures_disabled, require_explicit_external_provider_fixture_envs,
-    timeout,
-};
-pub(super) use crate::{ResolvedScheduleOp, ResolvedWrite};
 
 pub(super) const TEST_POSTGRES_URL_ENV: &str = "NIMBUS_TEST_POSTGRES_URL";
 pub(super) static TEST_SUFFIX_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -39,7 +33,7 @@ where
     let metadata_schema = format!("nimbus_test_{}", &suffix[..24.min(suffix.len())]);
     let tenant_schema_prefix = format!("tenant_{}_", &suffix[..12.min(suffix.len())]);
     let config = PostgresProviderConfig {
-        connection_string: connection.connection_string().to_string(),
+        connection_string: connection,
         metadata_schema,
         tenant_schema_prefix,
         min_connections: Some(1),
@@ -53,61 +47,20 @@ where
         .drop_metadata_schema_for_test()
         .await
         .expect("test metadata schema should drop");
-    drop(connection);
 }
 
-pub(super) enum TestConnection {
-    External(String),
-    Container {
-        connection_string: String,
-        _container: Box<ContainerAsync<postgres::Postgres>>,
-    },
-}
-
-impl TestConnection {
-    fn connection_string(&self) -> &str {
-        match self {
-            Self::External(connection_string) => connection_string,
-            Self::Container {
-                connection_string, ..
-            } => connection_string,
-        }
-    }
-}
-
-pub(super) async fn test_connection() -> Option<TestConnection> {
-    if let Ok(connection_string) = env::var(TEST_POSTGRES_URL_ENV) {
-        return Some(TestConnection::External(connection_string));
-    }
-
-    require_explicit_external_provider_fixture_envs("Postgres provider", &[TEST_POSTGRES_URL_ENV]);
-    if implicit_external_provider_fixtures_disabled("Postgres provider") {
-        return None;
-    }
-
-    let container = match postgres::Postgres::default().start().await {
-        Ok(container) => container,
-        Err(error) => {
-            eprintln!(
-                "skipping postgres provider test because no explicit Postgres URL was provided and container startup failed: {error}"
-            );
-            return None;
-        }
-    };
-    let host = container
-        .get_host()
-        .await
-        .expect("container host should resolve");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("container port should resolve");
-    Some(TestConnection::Container {
-        connection_string: format!(
-            "host={host} port={port} user=postgres password=postgres dbname=postgres"
+pub(super) async fn test_connection() -> Option<String> {
+    match external_provider_fixture_mode(
+        "postgres",
+        "PostgreSQL storage provider",
+        &[TEST_POSTGRES_URL_ENV],
+    ) {
+        ExternalProviderFixtureMode::UseExplicit => Some(
+            env::var(TEST_POSTGRES_URL_ENV)
+                .expect("fixture policy should require the PostgreSQL URL"),
         ),
-        _container: Box::new(container),
-    })
+        ExternalProviderFixtureMode::Omit => None,
+    }
 }
 
 pub(super) fn unique_suffix() -> String {

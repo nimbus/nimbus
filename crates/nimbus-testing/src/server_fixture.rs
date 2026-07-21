@@ -7,7 +7,7 @@ use tokio::task::JoinHandle;
 pub struct ServerFixture {
     addr: SocketAddr,
     client: Client,
-    server: JoinHandle<()>,
+    server: Option<JoinHandle<()>>,
 }
 
 impl ServerFixture {
@@ -22,8 +22,20 @@ impl ServerFixture {
         Self {
             addr,
             client: Client::new(),
-            server,
+            server: Some(server),
         }
+    }
+
+    /// Aborts the in-process server and waits until its router state is
+    /// released. Restart tests need this stronger boundary before reopening
+    /// exclusive embedded database handles in the same process.
+    pub async fn shutdown(mut self) {
+        let server = self
+            .server
+            .take()
+            .expect("server fixture task should exist until shutdown");
+        server.abort();
+        let _ = server.await;
     }
 
     pub fn client(&self) -> &Client {
@@ -41,6 +53,8 @@ impl ServerFixture {
 
 impl Drop for ServerFixture {
     fn drop(&mut self) {
-        self.server.abort();
+        if let Some(server) = self.server.take() {
+            server.abort();
+        }
     }
 }

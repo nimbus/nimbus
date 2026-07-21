@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::num::NonZeroU64;
 use std::sync::Mutex;
 
-use nimbus_core::{Error, Result};
+use nimbus_core::{Error, Result, TenantEventRecord, TenantId};
 
 use super::seeding::splitmix64;
 
@@ -20,6 +20,7 @@ pub enum FaultPoint {
     ScheduledJobRecordResultBeforeWrite = 9,
     ScheduledJobCompleteBeforeWrite = 10,
     TriggerExecutionBeforeSave = 11,
+    TenantCreateBeforeRegistration = 12,
 }
 
 impl FaultPoint {
@@ -42,12 +43,33 @@ impl FaultPoint {
             Self::ScheduledJobRecordResultBeforeWrite => "scheduled_job_record_result_before_write",
             Self::ScheduledJobCompleteBeforeWrite => "scheduled_job_complete_before_write",
             Self::TriggerExecutionBeforeSave => "trigger_execution_before_save",
+            Self::TenantCreateBeforeRegistration => "tenant_create_before_registration",
         }
     }
 }
 
 pub trait FaultInjector: Send + Sync {
     fn check(&self, point: FaultPoint) -> Result<()>;
+
+    /// Checks a fault at a tenant-owned storage boundary. Implementations that
+    /// do not need tenant targeting retain the ordinary process-wide behavior.
+    fn check_for_tenant(&self, point: FaultPoint, tenant_id: &TenantId) -> Result<()> {
+        let _ = tenant_id;
+        self.check(point)
+    }
+
+    /// Checks a fault for one durable-record transaction. This lets a fault
+    /// adapter discriminate the operation it owns without relying on timing or
+    /// visit counts while unrelated tenant work is concurrent.
+    fn check_for_durable_records(
+        &self,
+        point: FaultPoint,
+        tenant_id: &TenantId,
+        records: &[TenantEventRecord],
+    ) -> Result<()> {
+        let _ = records;
+        self.check_for_tenant(point, tenant_id)
+    }
 }
 
 #[derive(Default)]

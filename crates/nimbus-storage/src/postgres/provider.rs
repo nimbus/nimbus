@@ -164,17 +164,25 @@ impl PostgresProvider {
     ) -> Result<Option<PostgresTenantRegistration>> {
         let client = self.client().await?;
         let query = format!(
-            "SELECT schema_name FROM {} WHERE tenant_id = $1",
-            qualified_table(&self.metadata_schema, "tenants")
+            "SELECT tenants.schema_name, incarnations.incarnation \
+             FROM {} AS tenants \
+             LEFT JOIN {} AS incarnations USING (tenant_id) \
+             WHERE tenants.tenant_id = $1",
+            qualified_table(&self.metadata_schema, "tenants"),
+            qualified_table(&self.metadata_schema, "tenant_incarnations")
         );
         let row = client
             .query_opt(query.as_str(), &[&tenant_id.as_str()])
             .await
             .map_err(map_postgres_error)?;
-        Ok(row.map(|row| PostgresTenantRegistration {
-            tenant_id: tenant_id.clone(),
-            schema_name: row.get(0),
-        }))
+        row.map(|row| {
+            Ok(PostgresTenantRegistration {
+                tenant_id: tenant_id.clone(),
+                schema_name: row.get(0),
+                incarnation: incarnation_from_i64(row.get(1), tenant_id)?,
+            })
+        })
+        .transpose()
     }
 
     pub async fn create_tenant(&self, tenant_id: &TenantId) -> Result<PostgresTenantRegistration> {
@@ -194,6 +202,19 @@ impl PostgresProvider {
                 "tenant already exists: {tenant_id}"
             )));
         }
+
+        let incarnation_query = format!(
+            "INSERT INTO {} AS incarnations (tenant_id, incarnation) VALUES ($1, 1) \
+             ON CONFLICT (tenant_id) DO UPDATE \
+             SET incarnation = incarnations.incarnation + 1 \
+             RETURNING incarnation",
+            qualified_table(&self.metadata_schema, "tenant_incarnations")
+        );
+        let incarnation_row = transaction
+            .query_one(incarnation_query.as_str(), &[&tenant_id.as_str()])
+            .await
+            .map_err(map_postgres_error)?;
+        let incarnation = incarnation_from_i64(Some(incarnation_row.get(0)), tenant_id)?;
 
         let schema_name = self.tenant_schema_name(tenant_id)?;
         let create_schema_sql = format!("CREATE SCHEMA {}", quote_identifier(&schema_name));
@@ -218,6 +239,7 @@ impl PostgresProvider {
         Ok(PostgresTenantRegistration {
             tenant_id: tenant_id.clone(),
             schema_name,
+            incarnation,
         })
     }
 
@@ -266,11 +288,13 @@ impl PostgresProvider {
         &self,
         registration: PostgresTenantRegistration,
     ) -> Result<OpenedPostgresTenant> {
+        let incarnation = registration.incarnation;
         let store = Arc::new(PostgresTenantStore::new(self.clone(), registration));
         let read_storage = self.read_storage_for_store(store.clone());
         Ok(OpenedPostgresTenant {
             store,
             read_storage,
+            incarnation,
         })
     }
 
@@ -283,6 +307,10 @@ impl PostgresProvider {
                  tenant_id TEXT PRIMARY KEY,\
                  schema_name TEXT NOT NULL UNIQUE,\
                  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\
+             ); \
+             CREATE TABLE IF NOT EXISTS {metadata_schema}.tenant_incarnations (\
+                 tenant_id TEXT PRIMARY KEY,\
+                 incarnation BIGINT NOT NULL CHECK (incarnation > 0)\
              )"
         );
         client
@@ -294,4 +322,11 @@ impl PostgresProvider {
     pub(super) async fn client(&self) -> Result<Client> {
         self.pool.get().await.map_err(map_pool_error)
     }
+}
+
+fn incarnation_from_i64(value: Option<i64>, tenant_id: &TenantId) -> Result<u64> {
+    crate::tenant_incarnation::require_tenant_incarnation(
+        value.and_then(|value| u64::try_from(value).ok()),
+        tenant_id,
+    )
 }

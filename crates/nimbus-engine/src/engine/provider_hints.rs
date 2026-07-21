@@ -187,12 +187,7 @@ impl Engine {
         emit_trigger_candidates: bool,
     ) -> Result<()> {
         let _operation = runtime.enter_operation(tenant_id)?;
-
-        if refresh_schema {
-            runtime.store.invalidate_schema_cache();
-            self.refresh_loaded_schema_from_store_async(&runtime)
-                .await?;
-        }
+        let mut observer_records = Vec::new();
 
         if refresh_journal {
             let next_sequence = SequenceNumber(runtime.applied_head().0.saturating_add(1));
@@ -222,7 +217,37 @@ impl Engine {
                     commit_identity,
                     emit_trigger_candidates,
                 );
-                let _ = self.enqueue_provider_catch_up_commit_observers(runtime, &commits);
+            }
+            observer_records = records;
+        }
+
+        // Schema refresh deliberately follows journal reconciliation. A
+        // provider notification may coalesce both hints, and publishing a new
+        // schema against stale serving state would create a projection that no
+        // durable source frontier actually represents.
+        let changed_schema_tables = if refresh_schema {
+            runtime.store.invalidate_schema_cache();
+            self.refresh_loaded_schema_from_store_async(&runtime)
+                .await?
+        } else {
+            Vec::new()
+        };
+
+        if !observer_records.is_empty() || !changed_schema_tables.is_empty() {
+            let projection_token = self.provider_projection_token(&runtime).await?;
+            if !observer_records.is_empty() {
+                let _ = self.enqueue_provider_catch_up_commit_observers(
+                    runtime.clone(),
+                    &observer_records,
+                    projection_token,
+                );
+            }
+            for table in changed_schema_tables {
+                self.notify_table_schema_change_observers(
+                    runtime.tenant_id(),
+                    &table,
+                    projection_token,
+                );
             }
         }
 

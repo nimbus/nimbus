@@ -9,10 +9,11 @@ use nimbus_crypto::{
 use parking_lot::Mutex;
 use tokio::runtime::Handle as TokioRuntimeHandle;
 
-use crate::{ObjectPlacementStore, UsageStore};
+use crate::{ObjectPlacementStore, TenantIncarnationStore, UsageStore};
 
 use super::engine::EmbeddedProviderKind;
 use super::read::RedbUsageStorage;
+use super::traits::UsageStorage;
 
 /// Explicit control-plane provider for the retained embedded redb usage store.
 ///
@@ -41,6 +42,7 @@ struct OpenedControlPlane {
     usage_store: Arc<UsageStore>,
     usage_storage: Arc<RedbUsageStorage>,
     object_placement_store: Arc<ObjectPlacementStore>,
+    tenant_incarnation_store: Arc<TenantIncarnationStore>,
 }
 
 impl EmbeddedRedbControlPlaneProvider {
@@ -89,6 +91,29 @@ impl EmbeddedRedbControlPlaneProvider {
         Ok(self.opened()?.object_placement_store)
     }
 
+    pub fn tenant_incarnation_store(&self) -> Result<Arc<TenantIncarnationStore>> {
+        Ok(self.opened()?.tenant_incarnation_store)
+    }
+
+    pub async fn advance_tenant_incarnation(
+        &self,
+        tenant_id: nimbus_core::TenantId,
+    ) -> Result<u64> {
+        self.usage_storage()?
+            .execute(move |usage_store| {
+                TenantIncarnationStore::new(usage_store).advance(&tenant_id)
+            })
+            .await
+    }
+
+    pub async fn tenant_incarnation(&self, tenant_id: nimbus_core::TenantId) -> Result<u64> {
+        self.usage_storage()?
+            .execute(move |usage_store| {
+                TenantIncarnationStore::new(usage_store).current(&tenant_id)
+            })
+            .await
+    }
+
     fn opened(&self) -> Result<OpenedControlPlane> {
         let mut opened = self.state.opened.lock();
         if let Some(opened) = opened.as_ref() {
@@ -119,6 +144,7 @@ impl EmbeddedRedbControlPlaneProvider {
             self.state.storage_handle.clone(),
         ));
         let object_placement_store = Arc::new(ObjectPlacementStore::new(usage_store.clone()));
+        let tenant_incarnation_store = Arc::new(TenantIncarnationStore::new(usage_store.clone()));
 
         maybe_emit_profile(
             &self.state.path,
@@ -130,6 +156,7 @@ impl EmbeddedRedbControlPlaneProvider {
             usage_store,
             usage_storage,
             object_placement_store,
+            tenant_incarnation_store,
         })
     }
 }

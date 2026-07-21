@@ -8,7 +8,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::Engine;
 use crate::engine::CommitPhaseDurations;
 use crate::engine::committed_mutations::{
-    CommittedMutationObserverDispatch, CommittedMutationObserverMessage,
+    CommittedMutationObserverDispatch, CommittedMutationObserverMessage, ProjectionToken,
 };
 
 use super::super::{
@@ -201,6 +201,7 @@ pub(crate) struct ObserverHandoff {
     catch_up_pending: AtomicBool,
     catch_up_next_sequence: AtomicU64,
     catch_up_requested_through: AtomicU64,
+    catch_up_projection_token: Mutex<ProjectionToken>,
     catch_up_state_changed: tokio::sync::Notify,
     #[cfg(test)]
     catch_up_task_count: AtomicUsize,
@@ -256,6 +257,7 @@ impl ObserverHandoff {
             catch_up_pending: AtomicBool::new(false),
             catch_up_next_sequence: AtomicU64::new(u64::MAX),
             catch_up_requested_through: AtomicU64::new(0),
+            catch_up_projection_token: Mutex::new(ProjectionToken::default()),
             catch_up_state_changed: tokio::sync::Notify::new(),
             #[cfg(test)]
             catch_up_task_count: AtomicUsize::new(0),
@@ -529,9 +531,18 @@ impl ObserverHandoff {
         &self,
         first_sequence: SequenceNumber,
         requested_through: SequenceNumber,
+        projection_token: ProjectionToken,
     ) -> bool {
-        // Publish the upper bound first so taking a newly visible start can
-        // never pair it with an older frontier.
+        // Publish provenance and then the upper bound before making a start
+        // visible. A taker can safely observe a newer token than its claimed
+        // range, but must never pair a newer range with older provenance.
+        {
+            let mut pending_token = self
+                .catch_up_projection_token
+                .lock()
+                .expect("observer catch-up projection-token lock should not be poisoned");
+            *pending_token = (*pending_token).max(projection_token);
+        }
         self.catch_up_requested_through
             .fetch_max(requested_through.0, Ordering::AcqRel);
         self.catch_up_next_sequence
@@ -541,12 +552,18 @@ impl ObserverHandoff {
             .is_ok()
     }
 
-    pub(crate) fn take_catch_up_request(&self) -> Option<(SequenceNumber, SequenceNumber)> {
+    pub(crate) fn take_catch_up_request(
+        &self,
+    ) -> Option<(SequenceNumber, SequenceNumber, ProjectionToken)> {
         let first_sequence = self.catch_up_next_sequence.swap(u64::MAX, Ordering::AcqRel);
         (first_sequence != u64::MAX).then(|| {
             (
                 SequenceNumber(first_sequence),
                 SequenceNumber(self.catch_up_requested_through.load(Ordering::Acquire)),
+                *self
+                    .catch_up_projection_token
+                    .lock()
+                    .expect("observer catch-up projection-token lock should not be poisoned"),
             )
         })
     }
@@ -569,8 +586,16 @@ impl ObserverHandoff {
         &self,
         first_sequence: SequenceNumber,
         requested_through: SequenceNumber,
+        projection_token: ProjectionToken,
     ) {
         // Match request_catch_up's publication order for a returned request.
+        {
+            let mut pending_token = self
+                .catch_up_projection_token
+                .lock()
+                .expect("observer catch-up projection-token lock should not be poisoned");
+            *pending_token = (*pending_token).max(projection_token);
+        }
         self.catch_up_requested_through
             .fetch_max(requested_through.0, Ordering::AcqRel);
         self.catch_up_next_sequence

@@ -91,5 +91,13 @@ pub struct MutationJournalStats {
     pub observer_spawned_work_high_water_warning_count: u64,
     pub observer_spawned_work_cap_breach_count: u64,
     pub observer_spawned_work_dropped_event_count: u64,
+    pub observer_spawned_work_dirty_scope_count: usize,
+    pub observer_spawned_work_token_lag_scope_count: usize,
+    pub observer_spawned_work_stale_no_op_count: u64,
+    pub observer_spawned_work_delayed_retry_count: u64,
+    pub observer_spawned_work_consecutive_failure_count: u32,
+    pub observer_spawned_work_current_retry_backoff_millis: u64,
+    pub observer_spawned_work_reconciliation_retry_count: u64,
+    pub observer_spawned_work_current_reconciliation_backoff_millis: u64,
     pub observer_spawned_work_poisoned: bool,
 }

@@ -121,7 +121,14 @@ async fn ensure_system_tenant_creates_reserved_tenant_and_schemas_idempotently()
         .get_schema_async(system_tenant_id().expect("system id should parse"))
         .await
         .expect("system tenant schema should load");
-    assert_eq!(schema.tables.len(), system_table_schemas().unwrap().len());
+    assert_eq!(
+        schema.tables.len(),
+        system_table_schemas().unwrap().len() + 1,
+        "the private projection-fence schema is durable but intentionally absent from SystemTable"
+    );
+    assert!(schema.tables.contains_key(
+        &TableName::new(crate::schema::PROJECTION_FENCE_TABLE).expect("fence table should parse")
+    ));
     assert!(
         schema
             .tables

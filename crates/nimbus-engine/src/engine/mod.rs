@@ -55,7 +55,8 @@ use transactions::TransactionSessionRegistry;
 
 pub use committed_mutations::{
     CommittedMutationEvent, CommittedMutationObserver, CommittedMutationObserverWorkStats,
-    TenantRuntimeObserverIdentity,
+    ProjectionReconciliationSnapshot, ProjectionToken, TenantRuntimeLoadedEvent,
+    TenantRuntimeObserver, TenantRuntimeObserverIdentity,
 };
 pub use committed_mutations::{TableSchemaChangeEvent, TableSchemaChangeObserver};
 pub use encryption::{EncryptionStatus, InitializedKeyProvider};
@@ -109,6 +110,7 @@ pub struct Engine {
     trigger_registrations: RwLock<Vec<TriggerRegistration>>,
     committed_mutation_observers: RwLock<committed_mutations::CommittedMutationObserverRegistry>,
     table_schema_change_observers: RwLock<committed_mutations::TableSchemaChangeObserverRegistry>,
+    tenant_runtime_observers: RwLock<committed_mutations::TenantRuntimeObserverRegistry>,
     engine_executor: BackgroundExecutor,
     storage_executor: BackgroundExecutor,
     encryption_status: Option<encryption::EncryptionStatus>,
@@ -304,6 +306,26 @@ impl Engine {
         .await
     }
 
+    /// Creates a test provider engine whose libSQL primary and replica-cache
+    /// fault adapters can be controlled independently.
+    #[cfg(any(test, feature = "test-hooks"))]
+    #[doc(hidden)]
+    pub async fn new_with_simulation_and_persistence_config_and_libsql_faults(
+        config: EnginePersistenceConfig,
+        clock: Arc<dyn Clock>,
+        remote_fault_injector: Arc<dyn FaultInjector>,
+        replica_fault_injector: Arc<dyn FaultInjector>,
+    ) -> Result<Self> {
+        bootstrap::build_from_persistence_config_with_libsql_replica_faults(
+            config,
+            clock,
+            remote_fault_injector,
+            Some(replica_fault_injector),
+            Arc::new(SystemIdSource),
+        )
+        .await
+    }
+
     /// Creates a provider engine with independent deterministic wall and
     /// monotonic clocks for lease-lifecycle tests.
     #[cfg(test)]
@@ -343,6 +365,7 @@ impl Engine {
             trigger_registrations: RwLock::new(Vec::new()),
             committed_mutation_observers: RwLock::new(HashMap::new()),
             table_schema_change_observers: RwLock::new(HashMap::new()),
+            tenant_runtime_observers: RwLock::new(HashMap::new()),
             engine_executor: parts.engine_executor,
             storage_executor: parts.storage_executor,
             encryption_status: parts.encryption_status,
@@ -519,11 +542,13 @@ impl Engine {
         tenant_id: &TenantId,
         store: TenantPersistence,
     ) -> Result<Arc<TenantRuntime>> {
+        let tenant_incarnation = self.control_plane_provider.tenant_incarnation(tenant_id)?;
         let read_storage = self
             .persistence_provider
             .read_storage_for_store(store.clone())?;
         let runtime = Arc::new(TenantRuntime::from_parts(
             tenant_id.clone(),
+            tenant_incarnation,
             store.clone(),
             read_storage,
             self.committer_lease_clock.clone(),

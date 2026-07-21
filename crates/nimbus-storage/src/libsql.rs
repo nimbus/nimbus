@@ -187,6 +187,7 @@ impl std::fmt::Debug for LibsqlReplicaProviderConfig {
 pub struct LibsqlReplicaTenantRegistration {
     pub tenant_id: TenantId,
     pub namespace: String,
+    pub incarnation: u64,
 }
 
 #[derive(Clone)]
@@ -210,6 +211,7 @@ pub struct LibsqlReplicaProvider {
 pub struct OpenedLibsqlReplicaTenant {
     pub store: Arc<LibsqlReplicaTenantStore>,
     pub read_storage: Arc<LibsqlReplicaTenantStorage>,
+    pub incarnation: u64,
     tenant_id: TenantId,
     namespace: String,
     replica_path: PathBuf,
@@ -326,7 +328,19 @@ impl LibsqlReplicaTenantStore {
     }
 
     pub fn check_fault(&self, point: crate::FaultPoint) -> Result<()> {
-        self.provider.remote_fault_injector.check(point)
+        self.provider
+            .remote_fault_injector
+            .check_for_tenant(point, &self.tenant_id)
+    }
+
+    fn check_durable_records_fault(
+        &self,
+        point: crate::FaultPoint,
+        records: &[TenantEventRecord],
+    ) -> Result<()> {
+        self.provider
+            .remote_fault_injector
+            .check_for_durable_records(point, &self.tenant_id, records)
     }
 
     pub fn now(&self) -> Timestamp {
@@ -1033,7 +1047,10 @@ impl LibsqlReplicaTenantStore {
         match result {
             Ok(applied) => {
                 tx.commit().await.map_err(map_libsql_error)?;
-                self.check_fault(crate::FaultPoint::StorageCommitAfterVisibilityBeforeReturn)?;
+                self.check_durable_records_fault(
+                    crate::FaultPoint::StorageCommitAfterVisibilityBeforeReturn,
+                    records,
+                )?;
                 Ok(applied)
             }
             Err(error) => {

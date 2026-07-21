@@ -38,7 +38,6 @@ mod memory_conformance;
 mod mysql_provider;
 mod object_meta;
 mod postgres_provider;
-mod provider_fixtures;
 mod recovery;
 mod sqlite_foundation;
 mod store_basics;
@@ -342,8 +341,8 @@ where
     );
 }
 
-pub(crate) use provider_fixtures::{
-    implicit_external_provider_fixtures_disabled, require_explicit_external_provider_fixture_envs,
+pub(crate) use crate::provider_test_fixtures::{
+    ExternalProviderFixtureMode, external_provider_fixture_mode,
 };
 
 pub(crate) fn sample_document(table: &str, title: &str) -> Document {
