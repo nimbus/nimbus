@@ -64,7 +64,7 @@ impl Engine {
                 tenant_id.clone(),
                 opened.persistence,
                 opened.executor,
-                self.clock.clone(),
+                self.committer_lease_clock.clone(),
                 committer_owner_id,
             )
             .await?,
@@ -342,7 +342,7 @@ impl Engine {
             opened.persistence.clone(),
             opened_executor,
             initial_state,
-            self.clock.clone(),
+            self.committer_lease_clock.clone(),
             self.committer_owner_id_for_store(&opened.persistence),
         ));
         self.restore_publisher_error_counts(&runtime);

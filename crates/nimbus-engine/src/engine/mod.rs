@@ -45,7 +45,9 @@ use tokio::task::JoinHandle;
 
 use crate::persistence::{ControlPlaneProvider, PersistenceProvider, TenantPersistence};
 use crate::persistence_config::EnginePersistenceConfig;
-use crate::tenant::{PublisherErrorCounts, TenantRuntime};
+use crate::tenant::{
+    LeaseRenewalClock, PublisherErrorCounts, SystemLeaseRenewalClock, TenantRuntime,
+};
 use crate::triggers::{TriggerRegistration, execution::SharedTriggerInvocationExecutor};
 use background_executor::BackgroundExecutor;
 use tenant_load_gate::{TenantLoadGate, TenantLoadGateGuard};
@@ -92,6 +94,7 @@ pub struct Engine {
     persistence_provider: PersistenceProvider,
     control_plane_provider: ControlPlaneProvider,
     clock: Arc<dyn Clock>,
+    committer_lease_clock: Arc<dyn LeaseRenewalClock>,
     id_source: Arc<dyn IdSource>,
     // One provider-lease identity per Engine lets an evicted tenant runtime
     // resume its own still-live lease without weakening cross-engine fencing.
@@ -301,6 +304,22 @@ impl Engine {
         .await
     }
 
+    /// Creates a provider engine with independent deterministic wall and
+    /// monotonic clocks for lease-lifecycle tests.
+    #[cfg(test)]
+    pub(crate) async fn new_with_simulation_and_persistence_config_and_lease_clock(
+        config: EnginePersistenceConfig,
+        clock: Arc<dyn Clock>,
+        storage_fault_injector: Arc<dyn FaultInjector>,
+        committer_lease_clock: Arc<dyn LeaseRenewalClock>,
+    ) -> Result<Self> {
+        let mut engine =
+            Self::new_with_simulation_and_persistence_config(config, clock, storage_fault_injector)
+                .await?;
+        engine.committer_lease_clock = committer_lease_clock;
+        Ok(engine)
+    }
+
     fn from_bootstrap_parts(parts: EngineBootstrapParts) -> Self {
         Self {
             data_dir: parts.data_dir,
@@ -312,6 +331,7 @@ impl Engine {
             persistence_provider: parts.persistence_provider,
             control_plane_provider: parts.control_plane_provider,
             clock: parts.clock,
+            committer_lease_clock: Arc::new(SystemLeaseRenewalClock),
             id_source: parts.id_source,
             committer_owner_id: OnceLock::new(),
             commit_faults: execution_units::CommitFaultClient::default(),
@@ -506,7 +526,7 @@ impl Engine {
             tenant_id.clone(),
             store.clone(),
             read_storage,
-            self.clock.clone(),
+            self.committer_lease_clock.clone(),
             self.committer_owner_id_for_store(&store),
         )?);
         self.restore_publisher_error_counts(&runtime);

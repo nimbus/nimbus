@@ -202,7 +202,7 @@ impl Engine {
                 tenant_id.clone(),
                 opened.persistence.clone(),
                 opened_executor,
-                self.clock.clone(),
+                self.committer_lease_clock.clone(),
                 self.committer_owner_id_for_store(&opened.persistence),
             )
             .await?,
