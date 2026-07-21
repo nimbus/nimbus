@@ -26,6 +26,7 @@ use testcontainers_modules::testcontainers::{
 };
 
 use super::*;
+use crate::tenant::ManualLeaseRenewalClock;
 use crate::{
     ControlPlaneConfig, LibsqlReplicaBarrierPath, LibsqlReplicaRefreshPath, LocalEncryptionConfig,
     LocalKeyProviderConfig, MasterKeyFileConfig, PersistenceDialect, PersistenceTopology,
@@ -208,11 +209,13 @@ async fn libsql_replica_post_visibility_ack_loss_forces_crash_and_replay() {
 async fn libsql_replica_lease_is_lazy_and_renews_from_manual_clock_wakeup() {
     with_libsql_replica_engine_config(|engine_config, provider_config| async move {
         let clock = Arc::new(ManualClock::new(Timestamp(9_000)));
+        let lease_clock = Arc::new(ManualLeaseRenewalClock::new());
         let engine = Arc::new(
-            Engine::new_with_simulation_and_persistence_config(
+            Engine::new_with_simulation_and_persistence_config_and_lease_clock(
                 engine_config,
                 clock.clone(),
                 Arc::new(NoopFaultInjector),
+                lease_clock.clone(),
             )
             .await
             .expect("replica-backed engine should create"),
@@ -260,7 +263,7 @@ async fn libsql_replica_lease_is_lazy_and_renews_from_manual_clock_wakeup() {
         assert_eq!(acquired.committer_lease_acquire_count, 1);
         let initial_expiry = acquired.committer_lease_expires_at;
 
-        clock.advance(Duration::from_secs(10));
+        lease_clock.advance(Duration::from_secs(10));
         engine
             .wake_committer_lease_renewal_for_testing(&tenant_id)
             .expect("renewal worker should wake");

@@ -71,6 +71,17 @@ impl Engine {
     }
 
     #[cfg(test)]
+    pub(crate) fn confirm_committer_lease_renewal_not_due_for_testing(
+        &self,
+        tenant_id: &TenantId,
+        timeout: std::time::Duration,
+    ) -> Result<bool> {
+        self.with_runtime_for_testing(tenant_id, |runtime| {
+            runtime.confirm_committer_lease_renewal_not_due_for_testing(timeout)
+        })
+    }
+
+    #[cfg(test)]
     pub(crate) fn acquire_committer_lease_for_testing(&self, tenant_id: &TenantId) -> Result<()> {
         let runtime = self.get_existing_tenant(tenant_id)?;
         runtime.ensure_committer_lease_for_assignment()

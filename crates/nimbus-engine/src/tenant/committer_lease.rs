@@ -1,9 +1,9 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use nimbus_core::{Error, Result, StorageErrorKind, Timestamp};
-use nimbus_storage::{Clock, CommitterLease, CommitterLeaseError};
+use nimbus_storage::{CommitterLease, CommitterLeaseError};
 
 use super::TenantRuntime;
 use super::background::BackgroundWorker;
@@ -36,17 +36,74 @@ struct CommitterLeaseState {
     acquire_count: u64,
     renewal_count: u64,
     renewal_failure_count: u64,
-    next_renewal_at: Timestamp,
+    next_renewal_at: Instant,
+}
+
+/// Monotonic time used only to schedule local lease-renewal attempts.
+///
+/// Durable lease validity remains provider-owned: storage adapters compare
+/// expiry against their database server's clock inside the lease CAS. Keeping
+/// this seam separate from [`nimbus_storage::Clock`] prevents local wall-clock
+/// adjustments from delaying or accelerating the renewal cadence.
+pub(crate) trait LeaseRenewalClock: Send + Sync {
+    fn now(&self) -> Instant;
+}
+
+#[derive(Default)]
+pub(crate) struct SystemLeaseRenewalClock;
+
+impl LeaseRenewalClock for SystemLeaseRenewalClock {
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
+}
+
+#[cfg(test)]
+pub(crate) struct ManualLeaseRenewalClock {
+    now: Mutex<Instant>,
+}
+
+#[cfg(test)]
+impl ManualLeaseRenewalClock {
+    pub(crate) fn new() -> Self {
+        Self {
+            now: Mutex::new(Instant::now()),
+        }
+    }
+
+    pub(crate) fn advance(&self, duration: Duration) {
+        let mut now = self
+            .now
+            .lock()
+            .expect("manual lease-renewal clock lock should not be poisoned");
+        *now = now
+            .checked_add(duration)
+            .expect("manual lease-renewal clock must remain representable");
+    }
+}
+
+#[cfg(test)]
+impl LeaseRenewalClock for ManualLeaseRenewalClock {
+    fn now(&self) -> Instant {
+        *self
+            .now
+            .lock()
+            .expect("manual lease-renewal clock lock should not be poisoned")
+    }
 }
 
 struct RenewalWake {
     generation: Mutex<u64>,
     ready: Condvar,
+    #[cfg(test)]
+    observed_decision: Mutex<(u64, bool)>,
+    #[cfg(test)]
+    decision_observed: Condvar,
 }
 
 pub(crate) struct CommitterLeaseLifecycle {
     owner_id: String,
-    clock: Arc<dyn Clock>,
+    renewal_clock: Arc<dyn LeaseRenewalClock>,
     state: Mutex<CommitterLeaseState>,
     wake: Arc<RenewalWake>,
     worker: BackgroundWorker,
@@ -232,6 +289,16 @@ impl TenantRuntime {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn confirm_committer_lease_renewal_not_due_for_testing(
+        &self,
+        timeout: Duration,
+    ) -> bool {
+        self.committer_lease
+            .as_ref()
+            .is_some_and(|lifecycle| lifecycle.confirm_not_due_for_testing(timeout))
+    }
+
     pub(crate) fn shutdown_committer_lease_renewal(&self) {
         if let Some(lifecycle) = &self.committer_lease {
             lifecycle.shutdown();
@@ -240,20 +307,25 @@ impl TenantRuntime {
 }
 
 impl CommitterLeaseLifecycle {
-    pub(crate) fn new(owner_id: String, clock: Arc<dyn Clock>) -> Self {
+    pub(crate) fn new(owner_id: String, renewal_clock: Arc<dyn LeaseRenewalClock>) -> Self {
+        let now = renewal_clock.now();
         Self {
             owner_id,
-            clock,
+            renewal_clock,
             state: Mutex::new(CommitterLeaseState {
                 status: CommitterLeaseStatus::Unacquired,
                 acquire_count: 0,
                 renewal_count: 0,
                 renewal_failure_count: 0,
-                next_renewal_at: Timestamp(0),
+                next_renewal_at: now,
             }),
             wake: Arc::new(RenewalWake {
                 generation: Mutex::new(0),
                 ready: Condvar::new(),
+                #[cfg(test)]
+                observed_decision: Mutex::new((0, false)),
+                #[cfg(test)]
+                decision_observed: Condvar::new(),
             }),
             worker: BackgroundWorker::new(),
             worker_active: Arc::new(AtomicBool::new(false)),
@@ -299,7 +371,7 @@ impl CommitterLeaseLifecycle {
         // No assignment can observe the pre-acquisition heads after this point.
         runtime.publish_mutation_journal_progress_in_actor(progress);
         state.acquire_count = state.acquire_count.saturating_add(1);
-        state.next_renewal_at = add_duration(self.clock.now(), RENEW_INTERVAL);
+        state.next_renewal_at = renewal_deadline(self.renewal_clock.as_ref());
         state.status = CommitterLeaseStatus::Held(lease);
         drop(state);
 
@@ -394,11 +466,16 @@ impl CommitterLeaseLifecycle {
                 .lock()
                 .expect("committer lease state lock should not be poisoned")
                 .next_renewal_at;
-            let now = self.clock.now();
+            let now = self.renewal_clock.now();
             if now >= next_renewal_at {
+                #[cfg(test)]
+                self.wake.record_decision(*generation, false);
                 return true;
             }
-            let wait = Duration::from_millis(next_renewal_at.0.saturating_sub(now.0))
+            #[cfg(test)]
+            self.wake.record_decision(*generation, true);
+            let wait = next_renewal_at
+                .saturating_duration_since(now)
                 .min(MAX_RENEW_WAIT_SLICE);
             let observed_generation = *generation;
             let (next_generation, _) = self
@@ -428,7 +505,7 @@ impl CommitterLeaseLifecycle {
         {
             Ok(lease) => {
                 state.renewal_count = state.renewal_count.saturating_add(1);
-                state.next_renewal_at = add_duration(self.clock.now(), RENEW_INTERVAL);
+                state.next_renewal_at = renewal_deadline(self.renewal_clock.as_ref());
                 state.status = CommitterLeaseStatus::Held(lease);
                 true
             }
@@ -444,7 +521,7 @@ impl CommitterLeaseLifecycle {
             }
             Err(error) => {
                 state.renewal_failure_count = state.renewal_failure_count.saturating_add(1);
-                state.next_renewal_at = add_duration(self.clock.now(), RENEW_INTERVAL);
+                state.next_renewal_at = renewal_deadline(self.renewal_clock.as_ref());
                 tracing::warn!(
                     tenant = %runtime.tenant_id(),
                     error = %error,
@@ -486,6 +563,11 @@ impl CommitterLeaseLifecycle {
     pub(crate) fn wake_for_testing(&self) {
         self.wake.notify();
     }
+
+    #[cfg(test)]
+    pub(crate) fn confirm_not_due_for_testing(&self, timeout: Duration) -> bool {
+        self.wake.notify_and_wait_until_not_due(timeout)
+    }
 }
 
 impl RenewalWake {
@@ -497,6 +579,43 @@ impl RenewalWake {
             .expect("committer lease renewal wake lock should not be poisoned");
         *generation = generation.wrapping_add(1);
         self.ready.notify_all();
+    }
+
+    #[cfg(test)]
+    fn notify_and_wait_until_not_due(&self, timeout: Duration) -> bool {
+        let expected_generation = {
+            let mut generation = self
+                .generation
+                .lock()
+                .expect("committer lease renewal wake lock should not be poisoned");
+            *generation = generation.saturating_add(1);
+            let expected = *generation;
+            self.ready.notify_all();
+            expected
+        };
+        let observed = self
+            .observed_decision
+            .lock()
+            .expect("committer lease decision observation lock should not be poisoned");
+        let (observed, _) = self
+            .decision_observed
+            .wait_timeout_while(observed, timeout, |observed| {
+                observed.0 < expected_generation
+            })
+            .expect("committer lease decision observation wait should not be poisoned");
+        observed.0 >= expected_generation && observed.1
+    }
+
+    #[cfg(test)]
+    fn record_decision(&self, generation: u64, not_due: bool) {
+        let mut observed = self
+            .observed_decision
+            .lock()
+            .expect("committer lease decision observation lock should not be poisoned");
+        if generation > observed.0 {
+            *observed = (generation, not_due);
+            self.decision_observed.notify_all();
+        }
     }
 
     fn signal_shutdown(&self, shutdown: &AtomicBool) {
@@ -537,12 +656,11 @@ fn run_renewal_worker(
     }
 }
 
-fn add_duration(timestamp: Timestamp, duration: Duration) -> Timestamp {
-    Timestamp(
-        timestamp
-            .0
-            .saturating_add(duration.as_millis().try_into().unwrap_or(u64::MAX)),
-    )
+fn renewal_deadline(clock: &dyn LeaseRenewalClock) -> Instant {
+    clock
+        .now()
+        .checked_add(RENEW_INTERVAL)
+        .expect("fixed lease-renewal interval must fit in the monotonic clock")
 }
 
 fn fenced_error(owner_id: &str, epoch: u64) -> Error {

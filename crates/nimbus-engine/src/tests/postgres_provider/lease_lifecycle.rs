@@ -6,6 +6,7 @@ use nimbus_storage::{FaultInjector, FaultPoint, ManualClock, NoopFaultInjector};
 use super::support::*;
 use crate::commit_fault_labels as labels;
 use crate::engine::DurableWriteRoute;
+use crate::tenant::ManualLeaseRenewalClock;
 
 async fn provider_engine(config: EnginePersistenceConfig, clock: Arc<ManualClock>) -> Arc<Engine> {
     provider_engine_with_faults(config, clock, Arc::new(NoopFaultInjector)).await
@@ -20,6 +21,23 @@ async fn provider_engine_with_faults(
         Engine::new_with_simulation_and_persistence_config(config, clock, faults)
             .await
             .expect("postgres-backed engine should create"),
+    )
+}
+
+async fn provider_engine_with_lease_clock(
+    config: EnginePersistenceConfig,
+    clock: Arc<ManualClock>,
+    lease_clock: Arc<ManualLeaseRenewalClock>,
+) -> Arc<Engine> {
+    Arc::new(
+        Engine::new_with_simulation_and_persistence_config_and_lease_clock(
+            config,
+            clock,
+            Arc::new(NoopFaultInjector),
+            lease_clock,
+        )
+        .await
+        .expect("postgres-backed engine with lease clock should create"),
     )
 }
 
@@ -187,7 +205,9 @@ async fn postgres_provider_publisher_ack_loss_is_classified_before_retry_fence()
 async fn postgres_lease_is_lazy_idempotent_renewed_and_cancelled_with_the_runtime() {
     with_postgres_engine_config(|engine_config, provider_config| async move {
         let clock = Arc::new(ManualClock::new(Timestamp(10_000)));
-        let engine = provider_engine(engine_config, clock.clone()).await;
+        let lease_clock = Arc::new(ManualLeaseRenewalClock::new());
+        let engine =
+            provider_engine_with_lease_clock(engine_config, clock, lease_clock.clone()).await;
         let tenant_id = TenantId::new("pg-lazy-lease").expect("tenant id should build");
         engine
             .create_tenant_async(tenant_id.clone())
@@ -256,7 +276,7 @@ async fn postgres_lease_is_lazy_idempotent_renewed_and_cancelled_with_the_runtim
             "one runtime must acquire at most once"
         );
 
-        clock.advance(Duration::from_secs(10));
+        lease_clock.advance(Duration::from_secs(10));
         engine
             .wake_committer_lease_renewal_for_testing(&tenant_id)
             .expect("renewal worker should wake");
@@ -278,6 +298,302 @@ async fn postgres_lease_is_lazy_idempotent_renewed_and_cancelled_with_the_runtim
                 .committer_lease_renewal_worker_running,
             "engine quiesce must join the tenant lease worker"
         );
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial(postgres_provider)]
+async fn lease_renewal_ignores_backward_wall_clock_step() {
+    with_postgres_engine_config(|engine_config, _provider_config| async move {
+        let wall_clock = Arc::new(ManualClock::new(Timestamp(100_000)));
+        let lease_clock = Arc::new(ManualLeaseRenewalClock::new());
+        let engine = provider_engine_with_lease_clock(
+            engine_config,
+            wall_clock.clone(),
+            lease_clock.clone(),
+        )
+        .await;
+        let tenant_id = TenantId::new("pg-lease-backward-clock").expect("tenant id should build");
+        engine
+            .create_tenant_async(tenant_id.clone())
+            .await
+            .expect("tenant should create");
+        engine
+            .insert_document_async(tenant_id.clone(), tasks_table(), title("acquire"))
+            .await
+            .expect("first write should acquire the lease");
+
+        wall_clock.set(Timestamp(1));
+        assert!(
+            engine
+                .confirm_committer_lease_renewal_not_due_for_testing(
+                    &tenant_id,
+                    Duration::from_secs(1),
+                )
+                .expect("renewal worker observation should remain available"),
+            "the worker must observe the wake and keep the monotonic deadline pending"
+        );
+        assert_eq!(
+            engine
+                .mutation_journal_stats_for_testing(&tenant_id)
+                .expect("lease stats should read")
+                .committer_lease_renewal_count,
+            0,
+            "wall-clock movement must not make monotonic renewal due"
+        );
+
+        lease_clock.advance(Duration::from_secs(10));
+        engine
+            .wake_committer_lease_renewal_for_testing(&tenant_id)
+            .expect("renewal worker should wake at the monotonic deadline");
+        wait_for_mutation_journal_stats(
+            &engine,
+            &tenant_id,
+            "backward wall-clock step must not delay monotonic renewal",
+            |stats| stats.committer_lease_renewal_count == 1,
+        )
+        .await;
+
+        engine.quiesce().await;
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial(postgres_provider)]
+async fn lease_renewal_ignores_forward_wall_clock_step() {
+    with_postgres_engine_config(|engine_config, _provider_config| async move {
+        let wall_clock = Arc::new(ManualClock::new(Timestamp(200_000)));
+        let lease_clock = Arc::new(ManualLeaseRenewalClock::new());
+        let engine = provider_engine_with_lease_clock(
+            engine_config,
+            wall_clock.clone(),
+            lease_clock.clone(),
+        )
+        .await;
+        let tenant_id = TenantId::new("pg-lease-forward-clock").expect("tenant id should build");
+        engine
+            .create_tenant_async(tenant_id.clone())
+            .await
+            .expect("tenant should create");
+        engine
+            .insert_document_async(tenant_id.clone(), tasks_table(), title("acquire"))
+            .await
+            .expect("first write should acquire the lease");
+
+        wall_clock.set(Timestamp(20_000_000));
+        assert!(
+            engine
+                .confirm_committer_lease_renewal_not_due_for_testing(
+                    &tenant_id,
+                    Duration::from_secs(1),
+                )
+                .expect("renewal worker observation should remain available"),
+            "the worker must observe the wake and keep the monotonic deadline pending"
+        );
+        assert_eq!(
+            engine
+                .mutation_journal_stats_for_testing(&tenant_id)
+                .expect("lease stats should read")
+                .committer_lease_renewal_count,
+            0,
+            "a forward wall-clock step must not trigger an early renewal"
+        );
+
+        lease_clock.advance(Duration::from_secs(10));
+        engine
+            .wake_committer_lease_renewal_for_testing(&tenant_id)
+            .expect("renewal worker should wake at the monotonic deadline");
+        wait_for_mutation_journal_stats(
+            &engine,
+            &tenant_id,
+            "forward wall-clock step must not replace the monotonic cadence",
+            |stats| stats.committer_lease_renewal_count == 1,
+        )
+        .await;
+
+        engine.quiesce().await;
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial(postgres_provider)]
+async fn lease_renewal_shutdown_interrupts_monotonic_wait() {
+    with_postgres_engine_config(|engine_config, _provider_config| async move {
+        let wall_clock = Arc::new(ManualClock::new(Timestamp(300_000)));
+        let lease_clock = Arc::new(ManualLeaseRenewalClock::new());
+        let engine = provider_engine_with_lease_clock(engine_config, wall_clock, lease_clock).await;
+        let tenant_id = TenantId::new("pg-lease-shutdown-wake").expect("tenant id should build");
+        engine
+            .create_tenant_async(tenant_id.clone())
+            .await
+            .expect("tenant should create");
+        engine
+            .insert_document_async(tenant_id.clone(), tasks_table(), title("acquire"))
+            .await
+            .expect("first write should acquire the lease");
+        let runtime = engine
+            .registered_runtime_for_testing(&tenant_id)
+            .expect("tenant runtime should remain registered");
+
+        let started = std::time::Instant::now();
+        runtime.shutdown_committer_lease_renewal();
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "shutdown must wake and join a worker parked before its monotonic deadline; elapsed={elapsed:?}"
+        );
+        assert!(
+            !runtime
+                .mutation_journal_stats()
+                .committer_lease_renewal_worker_running
+        );
+        assert_eq!(
+            runtime
+                .mutation_journal_stats()
+                .committer_lease_renewal_count,
+            0
+        );
+
+        engine.quiesce().await;
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial(postgres_provider)]
+async fn provider_expiry_remains_authoritative_after_local_clock_divergence() {
+    with_postgres_engine_config(|engine_config, provider_config| async move {
+        let wall_clock = Arc::new(ManualClock::new(Timestamp(400_000)));
+        let lease_clock = Arc::new(ManualLeaseRenewalClock::new());
+        let engine = provider_engine_with_lease_clock(
+            engine_config,
+            wall_clock.clone(),
+            lease_clock.clone(),
+        )
+        .await;
+        let tenant_id = TenantId::new("pg-provider-expiry-clock").expect("tenant id should build");
+        engine
+            .create_tenant_async(tenant_id.clone())
+            .await
+            .expect("tenant should create");
+        engine
+            .insert_document_async(tenant_id.clone(), tasks_table(), title("acquire"))
+            .await
+            .expect("first write should acquire the lease");
+        let runtime = engine
+            .registered_runtime_for_testing(&tenant_id)
+            .expect("tenant runtime should remain registered");
+
+        expire_postgres_committer_lease(&provider_config, &tenant_id)
+            .await
+            .expect("provider lease should expire deterministically");
+        wall_clock.set(Timestamp(40_000_000));
+        assert!(
+            engine
+                .confirm_committer_lease_renewal_not_due_for_testing(
+                    &tenant_id,
+                    Duration::from_secs(1),
+                )
+                .expect("renewal worker observation should remain available"),
+            "provider expiry and wall-clock movement must not bypass the monotonic deadline"
+        );
+        assert!(
+            !runtime.mutation_journal_stats().committer_lease_fenced,
+            "local wall-clock movement must not evaluate provider validity"
+        );
+
+        lease_clock.advance(Duration::from_secs(10));
+        engine
+            .wake_committer_lease_renewal_for_testing(&tenant_id)
+            .expect("monotonic deadline should wake provider validation");
+        wait_for_value(
+            "provider expiry should fence the holder at the monotonic renewal deadline",
+            Duration::from_secs(2),
+            Duration::ZERO,
+            || async { runtime.mutation_journal_stats() },
+            |stats| stats.committer_lease_fenced,
+        )
+        .await;
+        assert_eq!(
+            runtime
+                .mutation_journal_stats()
+                .committer_lease_renewal_failure_count,
+            1
+        );
+
+        engine.quiesce().await;
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial(postgres_provider)]
+async fn postgres_lease_renewal_survives_local_clock_divergence() {
+    with_postgres_engine_config(|engine_config, provider_config| async move {
+        let wall_clock = Arc::new(ManualClock::new(Timestamp(500_000)));
+        let lease_clock = Arc::new(ManualLeaseRenewalClock::new());
+        let engine = provider_engine_with_lease_clock(
+            engine_config,
+            wall_clock.clone(),
+            lease_clock.clone(),
+        )
+        .await;
+        let tenant_id = TenantId::new("pg-lease-clock-divergence").expect("tenant id should build");
+        engine
+            .create_tenant_async(tenant_id.clone())
+            .await
+            .expect("tenant should create");
+        engine
+            .insert_document_async(tenant_id.clone(), tasks_table(), title("acquire"))
+            .await
+            .expect("first write should acquire the lease");
+
+        wall_clock.set(Timestamp(5));
+        lease_clock.advance(Duration::from_secs(10));
+        engine
+            .wake_committer_lease_renewal_for_testing(&tenant_id)
+            .expect("backward-divergent renewal should wake");
+        wait_for_mutation_journal_stats(
+            &engine,
+            &tenant_id,
+            "backward-divergent provider renewal should complete",
+            |stats| stats.committer_lease_renewal_count == 1,
+        )
+        .await;
+
+        wall_clock.set(Timestamp(50_000_000));
+        lease_clock.advance(Duration::from_secs(10));
+        engine
+            .wake_committer_lease_renewal_for_testing(&tenant_id)
+            .expect("forward-divergent renewal should wake");
+        let renewed = wait_for_mutation_journal_stats(
+            &engine,
+            &tenant_id,
+            "forward-divergent provider renewal should complete",
+            |stats| stats.committer_lease_renewal_count == 2,
+        )
+        .await;
+        assert!(renewed.committer_lease_acquired);
+        assert!(!renewed.committer_lease_fenced);
+        assert_eq!(renewed.committer_lease_epoch, 1);
+        assert_eq!(renewed.committer_lease_renewal_failure_count, 0);
+
+        let durable_lease = inspection_store(&provider_config, &tenant_id)
+            .await
+            .read_committer_lease()
+            .expect("durable provider lease should read")
+            .expect("durable provider lease should exist");
+        assert_eq!(durable_lease.epoch, 1);
+        assert_eq!(durable_lease.expires_at, renewed.committer_lease_expires_at);
+        engine
+            .insert_document_async(tenant_id.clone(), tasks_table(), title("still-holder"))
+            .await
+            .expect("renewed holder should remain able to commit");
+
+        engine.quiesce().await;
     })
     .await;
 }
@@ -374,8 +690,10 @@ async fn postgres_acquisition_reconciles_predecessor_heads_and_records_fenced_re
     with_shared_postgres_engine_configs(|config_a, config_b, provider_config| async move {
         let clock_a = Arc::new(ManualClock::new(Timestamp(30_000)));
         let clock_b = Arc::new(ManualClock::new(Timestamp(30_000)));
+        let lease_clock_b = Arc::new(ManualLeaseRenewalClock::new());
         let engine_a = provider_engine(config_a, clock_a).await;
-        let engine_b = provider_engine(config_b, clock_b.clone()).await;
+        let engine_b =
+            provider_engine_with_lease_clock(config_b, clock_b, lease_clock_b.clone()).await;
         let tenant_id = TenantId::new("pg-reconcile-lease").expect("tenant id should build");
         engine_a
             .create_tenant_async(tenant_id.clone())
@@ -477,7 +795,7 @@ async fn postgres_acquisition_reconciles_predecessor_heads_and_records_fenced_re
             2
         );
 
-        clock_b.advance(Duration::from_secs(10));
+        lease_clock_b.advance(Duration::from_secs(10));
         let stale_runtime = engine_b
             .registered_runtime_for_testing(&tenant_id)
             .expect("old owner runtime should still be registered before renewal fencing");

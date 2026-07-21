@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwap;
 use nimbus_core::{Error, Result, Schema, TableId, TableName, TenantId, Timestamp};
-use nimbus_storage::LibsqlReplicaFreshnessStats;
+use nimbus_storage::{Clock, LibsqlReplicaFreshnessStats};
 use serde::Serialize;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
@@ -18,7 +18,6 @@ use crate::subscriptions::SubscriptionRegistry;
 use crate::triggers::TriggerRegistration;
 use crate::triggers::TriggerRegistry;
 use crate::triggers::execution::SharedTriggerInvocationExecutor;
-use nimbus_storage::Clock;
 
 mod background;
 mod committer_lease;
@@ -43,6 +42,9 @@ mod write_rate;
 pub(crate) use self::trigger_candidates::materialize_trigger_invocations_and_sync;
 
 use self::committer_lease::CommitterLeaseLifecycle;
+#[cfg(test)]
+pub(crate) use self::committer_lease::ManualLeaseRenewalClock;
+pub(crate) use self::committer_lease::{LeaseRenewalClock, SystemLeaseRenewalClock};
 #[cfg(test)]
 pub(crate) use self::document_cache::DocumentCacheStats;
 use self::document_cache::TenantDocumentCache;
@@ -212,7 +214,7 @@ impl TenantRuntime {
         store: TenantPersistence,
         read_storage: TenantPersistenceExecutor,
         initial_state: TenantRuntimeInitialState,
-        clock: Arc<dyn Clock>,
+        renewal_clock: Arc<dyn LeaseRenewalClock>,
         committer_owner_id: Option<String>,
     ) -> Self {
         let TenantRuntimeInitialState {
@@ -252,7 +254,7 @@ impl TenantRuntime {
             mutation_journal: Arc::new(MutationJournalState::new(progress)),
             committer,
             committer_lease: committer_owner_id
-                .map(|owner_id| Arc::new(CommitterLeaseLifecycle::new(owner_id, clock))),
+                .map(|owner_id| Arc::new(CommitterLeaseLifecycle::new(owner_id, renewal_clock))),
             publisher,
             observer_dispatch,
             observer_lifetime: Arc::new(()),
@@ -270,7 +272,7 @@ impl TenantRuntime {
         store: TenantPersistence,
         read_storage: TenantPersistenceExecutor,
         initial_state: TenantRuntimeInitialState,
-        clock: Arc<dyn Clock>,
+        renewal_clock: Arc<dyn LeaseRenewalClock>,
         committer_owner_id: Option<String>,
     ) -> Self {
         Self::from_initialized_parts(
@@ -278,7 +280,7 @@ impl TenantRuntime {
             store,
             read_storage,
             initial_state,
-            clock,
+            renewal_clock,
             committer_owner_id,
         )
     }
@@ -319,11 +321,11 @@ impl TenantRuntime {
     }
 
     /// Creates a tenant runtime from a store.
-    pub fn from_parts(
+    pub(crate) fn from_parts(
         tenant_id: TenantId,
         store: TenantPersistence,
         read_storage: TenantPersistenceExecutor,
-        clock: Arc<dyn Clock>,
+        renewal_clock: Arc<dyn LeaseRenewalClock>,
         committer_owner_id: Option<String>,
     ) -> Result<Self> {
         let schema = store.load_schema()?;
@@ -346,17 +348,17 @@ impl TenantRuntime {
                 progress,
                 last_commit_timestamp,
             },
-            clock,
+            renewal_clock,
             committer_owner_id,
         ))
     }
 
     /// Creates a tenant runtime asynchronously from a store.
-    pub async fn from_parts_async(
+    pub(crate) async fn from_parts_async(
         tenant_id: TenantId,
         store: TenantPersistence,
         read_storage: TenantPersistenceExecutor,
-        clock: Arc<dyn Clock>,
+        renewal_clock: Arc<dyn LeaseRenewalClock>,
         committer_owner_id: Option<String>,
     ) -> Result<Self> {
         let (initial_state, _) = Self::load_initial_state_async(&store, &read_storage).await?;
@@ -365,7 +367,7 @@ impl TenantRuntime {
             store,
             read_storage,
             initial_state,
-            clock,
+            renewal_clock,
             committer_owner_id,
         ))
     }

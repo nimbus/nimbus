@@ -19,8 +19,8 @@ crate-level tour of the machinery behind them.
 The coordinator is the `Engine` struct in
 `crates/nimbus-engine/src/engine/mod.rs`. It owns the cross-tenant state:
 a map of live tenants behind a read–write lock, the persistence provider
-that opens tenant storage, the control-plane provider, the clock, the
-scheduler wakeup signal, trigger and committed-mutation observer
+that opens tenant storage, the control-plane provider, wall and monotonic
+time sources, the scheduler wakeup signal, trigger and committed-mutation observer
 registries, and the executors that move storage work off async threads.
 Tenant creation is serialized through a load gate
 (`crates/nimbus-engine/src/engine/tenant_load_gate.rs`) so two requests
@@ -144,6 +144,16 @@ runtime. Rebuilding a tenant after an ambiguous result therefore reuses that
 engine's owner identity and can resume the same still-live lease epoch
 immediately. A different engine has a different identity and remains fenced;
 lease expiry and takeover still advance the provider's durable epoch.
+
+Lease renewal has two distinct time contracts. The engine schedules attempts
+every ten seconds using monotonic elapsed time, so local wall-clock steps can
+neither postpone a renewal nor trigger one early; shutdown explicitly wakes
+and joins a worker parked before its deadline. PostgreSQL, MySQL, and libSQL
+still decide whether the lease is valid using their database clocks inside the
+atomic `(owner_id, epoch)` renewal CAS. Tests inject a manual monotonic clock
+independently of Nimbus's wall clock, while production uses `Instant`. Existing
+bounded-cardinality diagnostics expose the epoch, provider expiry, renewal and
+failure counts, and worker state without recording owner ids.
 
 The storage contract exposes a deterministic fault boundary immediately after
 commit visibility and before success returns. The redb, SQLite, libSQL,
