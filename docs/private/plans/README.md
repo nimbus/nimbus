@@ -128,7 +128,8 @@ extension-registry seam before the second concern edits `extensions.rs`.
 - `horizontal-scaling-plan.md` - `deferred`. Leads all multi-node work. Owns node
   identity, discovery, membership, placement replication, gossip invalidation,
   isolate placement, microVM placement, content distribution, and the
-  cluster-mode integration layer.
+  cluster-mode integration layer, including HS5's per-Durable-Object placement,
+  shared lease authority, and epoch-fenced protected writes.
 - `nimbus-fips-iroh-ed25519-retrofit-plan.md` - `draft`. Owns a future
   aws-lc-rs/PQ TLS posture, NodeSigner seam, and CMVP-triggered identity-key
   retrofit. Promote only after the current FIPS and iroh identity facts are
@@ -150,6 +151,12 @@ extension-registry seam before the second concern edits `extensions.rs`.
   which share Convex's network-persistence shape. Testability seams
   (S0–S5) are binding scope. Governing research:
   `research/parallel-prepare-serial-commit-redesign.md`.
+- `clock-architecture-reliability-plan.md` - `proposed; reviewed against
+  current main`. Owns wall-clock naming, Engine absolute scheduling,
+  process-local monotonic policies, temporal-validation seams, and ambient-time
+  classification. CLK0 is satisfied by merged PR #222; promotion still waits
+  for the PPSC owner to hand off overlapping committer/provider-publisher
+  paths and for one PR-sized first implementation row to be selected.
 - `layered-admission-control-plan.md` - `deferred`. Owns future layered
   admission experiments and EO8-style promotion work. Consumes the
   retry-amplification admission signal from
