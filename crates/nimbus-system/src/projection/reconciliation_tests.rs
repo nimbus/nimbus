@@ -432,6 +432,9 @@ async fn finish_two_engine_projection_contract(
     first_document: DocumentId,
     old_token: ProjectionToken,
 ) {
+    ensure_system_tenant_async(engine_b)
+        .await
+        .expect("takeover engine should hold the system-tenant lease before source work resumes");
     engine_b
         .ensure_tenant_exists_async(tenant_id.clone())
         .await
@@ -453,9 +456,6 @@ async fn finish_two_engine_projection_contract(
         "takeover must advance the durable source lease epoch"
     );
 
-    ensure_system_tenant_async(engine_b)
-        .await
-        .expect("system tenant should be ready before the ambiguity seam is armed");
     engine_b
         .shutdown_trigger_candidates_for_testing(tenant_id)
         .expect("source trigger cursor should not consume the projection fault seam");
