@@ -31,6 +31,9 @@ pub(crate) enum PersistenceProvider {
 pub(crate) struct OpenedTenantPersistence {
     pub persistence: TenantPersistence,
     pub executor: TenantPersistenceExecutor,
+    /// Provider-global generation for external persistence. Embedded adapters
+    /// obtain the same invariant from the engine control plane.
+    pub incarnation: Option<u64>,
 }
 
 trait OpenedTenantProvider {
@@ -49,6 +52,13 @@ trait OpenedTenantProvider {
 // erased provider object layer that would just rewrap the same enum split.
 
 impl PersistenceProvider {
+    pub(crate) fn owns_tenant_incarnations(&self) -> bool {
+        matches!(
+            self,
+            Self::Postgres(_) | Self::LibsqlReplica(_) | Self::MySql(_)
+        )
+    }
+
     pub(crate) fn runtime_hooks(&self) -> Option<Box<dyn RuntimeHooks>> {
         match self {
             Self::Postgres(provider) => Some(Box::new(PostgresRuntimeHooks::new(provider.clone()))),
@@ -222,6 +232,7 @@ impl From<OpenedEmbeddedRedbTenant> for OpenedTenantPersistence {
         Self {
             persistence: TenantPersistence::Redb(opened.store),
             executor: TenantPersistenceExecutor::Redb(opened.read_storage),
+            incarnation: None,
         }
     }
 }
@@ -231,6 +242,7 @@ impl From<OpenedEmbeddedSqliteTenant> for OpenedTenantPersistence {
         Self {
             persistence: TenantPersistence::Sqlite(opened.store),
             executor: TenantPersistenceExecutor::Sqlite(opened.read_storage),
+            incarnation: None,
         }
     }
 }
@@ -240,6 +252,7 @@ impl From<OpenedLibsqlReplicaTenant> for OpenedTenantPersistence {
         Self {
             persistence: TenantPersistence::LibsqlReplica(opened.store),
             executor: TenantPersistenceExecutor::LibsqlReplica(opened.read_storage),
+            incarnation: Some(opened.incarnation),
         }
     }
 }
@@ -249,6 +262,7 @@ impl From<OpenedPostgresTenant> for OpenedTenantPersistence {
         Self {
             persistence: TenantPersistence::Postgres(opened.store),
             executor: TenantPersistenceExecutor::Postgres(opened.read_storage),
+            incarnation: Some(opened.incarnation),
         }
     }
 }
@@ -258,6 +272,7 @@ impl From<OpenedMySqlTenant> for OpenedTenantPersistence {
         Self {
             persistence: TenantPersistence::MySql(opened.store),
             executor: TenantPersistenceExecutor::MySql(opened.read_storage),
+            incarnation: Some(opened.incarnation),
         }
     }
 }
@@ -268,6 +283,7 @@ impl From<OpenedMemoryTenant> for OpenedTenantPersistence {
         Self {
             persistence: TenantPersistence::Memory(opened.store),
             executor: TenantPersistenceExecutor::Memory(opened.read_storage),
+            incarnation: None,
         }
     }
 }

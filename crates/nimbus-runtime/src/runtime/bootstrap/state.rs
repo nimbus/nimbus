@@ -45,6 +45,13 @@ impl RuntimeHostBridgeSlot {
             .bridge = Some(bridge);
     }
 
+    fn clear(&self) {
+        self.state
+            .lock()
+            .expect("runtime host bridge slot lock should not be poisoned")
+            .bridge = None;
+    }
+
     pub(crate) fn current(&self) -> Arc<dyn HostBridge> {
         self.state
             .lock()
@@ -553,6 +560,22 @@ pub(crate) fn bind_runtime_host_bridge(runtime: &mut JsRuntime, bridge: Arc<dyn 
         .borrow::<InstalledRuntimeHostBridge>()
         .slot
         .bind(bridge);
+}
+
+/// Releases every invocation-owned capability retained in a reusable runtime.
+///
+/// A warm runtime lives inside the executor that is owned by an adapter
+/// registry. Retaining the invocation's host bridge here can therefore create
+/// a cycle from registry -> executor -> warm runtime -> host bridge -> registry
+/// (and keep storage handles alive after server shutdown). The next invocation
+/// reinstalls the owner and egress binding and rebinds the stable host slot
+/// before guest code can run.
+pub(crate) fn release_runtime_invocation_bindings(runtime: &mut JsRuntime) {
+    let op_state = runtime.op_state();
+    let mut state = op_state.borrow_mut();
+    state.borrow::<InstalledRuntimeHostBridge>().slot.clear();
+    let _ = state.try_take::<InstalledRuntimeOwner>();
+    let _ = state.try_take::<InstalledRuntimeEgressGateway>();
 }
 
 pub(crate) fn reset_runtime_invocation_state(

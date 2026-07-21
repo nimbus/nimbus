@@ -335,6 +335,14 @@ impl MutationJournalState {
             observer_spawned_work_high_water_warning_count: 0,
             observer_spawned_work_cap_breach_count: 0,
             observer_spawned_work_dropped_event_count: 0,
+            observer_spawned_work_dirty_scope_count: 0,
+            observer_spawned_work_token_lag_scope_count: 0,
+            observer_spawned_work_stale_no_op_count: 0,
+            observer_spawned_work_delayed_retry_count: 0,
+            observer_spawned_work_consecutive_failure_count: 0,
+            observer_spawned_work_current_retry_backoff_millis: 0,
+            observer_spawned_work_reconciliation_retry_count: 0,
+            observer_spawned_work_current_reconciliation_backoff_millis: 0,
             observer_spawned_work_poisoned: false,
         }
     }

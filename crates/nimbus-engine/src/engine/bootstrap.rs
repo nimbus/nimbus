@@ -23,12 +23,30 @@ struct EngineSimulationSeams {
     clock: Arc<dyn Clock>,
     id_source: Arc<dyn IdSource>,
     storage_fault_injector: Arc<dyn FaultInjector>,
+    libsql_replica_fault_injector: Option<Arc<dyn FaultInjector>>,
 }
 
 pub(super) async fn build_from_persistence_config(
     config: EnginePersistenceConfig,
     clock: Arc<dyn Clock>,
     storage_fault_injector: Arc<dyn FaultInjector>,
+    id_source: Arc<dyn IdSource>,
+) -> Result<Engine> {
+    build_from_persistence_config_with_libsql_replica_faults(
+        config,
+        clock,
+        storage_fault_injector,
+        None,
+        id_source,
+    )
+    .await
+}
+
+pub(super) async fn build_from_persistence_config_with_libsql_replica_faults(
+    config: EnginePersistenceConfig,
+    clock: Arc<dyn Clock>,
+    storage_fault_injector: Arc<dyn FaultInjector>,
+    libsql_replica_fault_injector: Option<Arc<dyn FaultInjector>>,
     id_source: Arc<dyn IdSource>,
 ) -> Result<Engine> {
     let key_provider = encryption::initialize_encryption(&config)?;
@@ -42,6 +60,7 @@ pub(super) async fn build_from_persistence_config(
         clock,
         id_source,
         storage_fault_injector,
+        libsql_replica_fault_injector,
     };
 
     build_from_plan(
@@ -66,6 +85,7 @@ pub(super) fn build_embedded_engine(
         clock,
         id_source,
         storage_fault_injector,
+        libsql_replica_fault_injector: None,
     };
     build_embedded_from_plan(
         tenant_data_dir.clone(),
@@ -313,12 +333,17 @@ async fn build_libsql_replica_from_plan(
         replica_cache_dir: plan.replica_cache_dir,
         encryption_provider,
     };
+    let replica_fault_injector = simulation
+        .libsql_replica_fault_injector
+        .clone()
+        .unwrap_or_else(|| simulation.storage_fault_injector.clone());
     let libsql_replica_provider = Arc::new(
-        LibsqlReplicaProvider::connect_with_simulation(
+        LibsqlReplicaProvider::connect_with_simulation_faults(
             provider_config,
             storage_executor.handle(),
             simulation.clock.clone(),
             simulation.storage_fault_injector.clone(),
+            replica_fault_injector,
         )
         .await?,
     );

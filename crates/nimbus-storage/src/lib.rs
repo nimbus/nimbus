@@ -16,6 +16,9 @@ pub mod memory;
 pub mod mysql;
 pub mod object_placement;
 pub mod postgres;
+#[cfg(any(test, feature = "test-hooks"))]
+#[doc(hidden)]
+pub mod provider_test_fixtures;
 pub mod query_read;
 mod range_bound;
 pub mod retention;
@@ -27,6 +30,7 @@ pub(crate) mod sql;
 pub mod sqlite;
 pub mod store;
 mod table_identity;
+pub mod tenant_incarnation;
 pub mod traits;
 pub mod usage_store;
 
@@ -123,6 +127,7 @@ pub use table_identity::{
     TableLifecycleStateMachine, TableLifecycleTransition, TableSummaryStatus,
     apply_table_lifecycle_transition,
 };
+pub use tenant_incarnation::TenantIncarnationStore;
 pub use traits::{
     CommitterLease, CommitterLeaseError, CommitterLeaseResult, CommitterLeaseStore,
     ControlPlaneUsage, DurableJournal, KeyProviderSurface, KvBatchOp, KvBatchOutcome, KvEntry,

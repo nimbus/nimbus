@@ -194,6 +194,49 @@ and shed count), `mutation_journal` (durable journal progress),
 caches), `query_planning`, and `libsql_replica_freshness` (null unless the
 tenant runs on a libSQL replica). Unknown tenants return `404`.
 
+The `mutation_journal` group also reports bounded system-table projection
+work. Use these fields together:
+
+- `observer_spawned_work_depth` is currently executing or queued observer
+  work. Compare it with `observer_spawned_work_capacity` and
+  `observer_spawned_work_high_watermark` to identify a healthy backlog versus
+  saturation.
+- `observer_spawned_work_dirty_scope_count` counts coalesced table scopes that
+  still require publication. It is bounded by affected table scopes, not the
+  number of dropped events.
+- `observer_spawned_work_token_lag_scope_count` counts table scopes whose
+  highest observed `(tenant incarnation, lease epoch, durable sequence)` token
+  has not yet been published. It includes accepted in-flight work, so it can
+  be nonzero while the dirty-scope count remains zero. A same-id tenant
+  recreation advances the incarnation; stale-no-op activity from the prior
+  incarnation is expected briefly while late work drains.
+- `observer_spawned_work_stale_no_op_count` is cumulative. It increases when a
+  persisted fence already covers an observer attempt; occasional increases are
+  expected during replay or provider takeover, while a sustained high rate can
+  indicate a lagging observer process.
+- `observer_spawned_work_delayed_retry_count` is cumulative. An increase means
+  an error or cancellation retained work for a delayed retry.
+- `observer_spawned_work_consecutive_failure_count` and
+  `observer_spawned_work_current_retry_backoff_millis` describe the current
+  failure streak. Both return to zero after the retained scopes land.
+- `observer_spawned_work_reconciliation_retry_count` is cumulative, while
+  `observer_spawned_work_current_reconciliation_backoff_millis` reports a
+  runtime-load reconciliation that is currently retrying before table scopes
+  can be enumerated. This distinguishes restart/takeover recovery failure from
+  a known dirty projection scope.
+- `observer_spawned_work_cap_breach_count` and
+  `observer_spawned_work_dropped_event_count` identify overload admission. A
+  dropped observer event is retained as a dirty scope; it is not reported as a
+  successful projection.
+
+A nonzero token-lag or dirty-scope count with rising retry and backoff fields
+indicates stalled recovery, including persistent storage or `_nimbus` lease
+contention. A nonzero reconciliation backoff means recovery is stalled earlier,
+while discovering the active and previously projected scopes. Alert on a
+sustained value rather than one retry: cumulative counters remain as history
+after recovery, while lag, dirty, consecutive-failure, and current-backoff
+fields clear.
+
 ## Verify a tenant's consistency
 
 ```bash

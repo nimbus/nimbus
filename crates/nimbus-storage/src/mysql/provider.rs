@@ -96,7 +96,7 @@ impl MySqlProvider {
     pub async fn tenant_exists(&self, tenant_id: &TenantId) -> Result<bool> {
         let mut conn = self.conn().await?;
         let query = format!(
-            "SELECT database_name FROM {} WHERE tenant_id = ?",
+            "SELECT 1 FROM {} WHERE tenant_id = ?",
             qualified_table(&self.metadata_database, "tenants")
         );
         let row = conn
@@ -112,8 +112,12 @@ impl MySqlProvider {
     ) -> Result<Option<MySqlTenantRegistration>> {
         let mut conn = self.conn().await?;
         let query = format!(
-            "SELECT database_name FROM {} WHERE tenant_id = ?",
-            qualified_table(&self.metadata_database, "tenants")
+            "SELECT tenants.database_name, incarnations.incarnation \
+             FROM {} AS tenants \
+             LEFT JOIN {} AS incarnations USING (tenant_id) \
+             WHERE tenants.tenant_id = ?",
+            qualified_table(&self.metadata_database, "tenants"),
+            qualified_table(&self.metadata_database, "tenant_incarnations")
         );
         let row = conn
             .exec_first::<Row, _, _>(query, (tenant_id.as_str(),))
@@ -122,7 +126,9 @@ impl MySqlProvider {
         let Some(row) = row else {
             return Ok(None);
         };
-        let (database_name,): (String,) = mysql_async::from_row(row);
+        let (database_name, incarnation): (String, Option<u64>) = mysql_async::from_row(row);
+        let incarnation =
+            crate::tenant_incarnation::require_tenant_incarnation(incarnation, tenant_id)?;
         if !database_exists(&mut conn, &database_name).await? {
             return Err(Error::Internal(format!(
                 "tenant registry points at missing MySQL database '{database_name}'"
@@ -131,6 +137,7 @@ impl MySqlProvider {
         Ok(Some(MySqlTenantRegistration {
             tenant_id: tenant_id.clone(),
             database_name,
+            incarnation,
         }))
     }
 
@@ -170,30 +177,61 @@ impl MySqlProvider {
             return Err(error);
         }
 
-        let insert_query = format!(
-            "INSERT INTO {} (tenant_id, database_name) VALUES (?, ?)",
-            qualified_table(&self.metadata_database, "tenants")
-        );
-        if let Err(error) = conn
-            .exec_drop(insert_query, (tenant_id.as_str(), database_name.as_str()))
-            .await
-        {
-            let cleanup_sql = format!(
-                "DROP DATABASE IF EXISTS {}",
-                quote_identifier(&database_name)
+        let registration = async {
+            let mut transaction = conn
+                .start_transaction(mysql_async::TxOpts::default())
+                .await
+                .map_err(map_mysql_error)?;
+            let incarnation_query = format!(
+                "INSERT INTO {} (tenant_id, incarnation) VALUES (?, 1) \
+                 ON DUPLICATE KEY UPDATE incarnation = incarnation + 1",
+                qualified_table(&self.metadata_database, "tenant_incarnations")
             );
-            let _ = conn.query_drop(cleanup_sql).await;
-            if mysql_server_error_code(&error) == Some(1062) {
-                return Err(Error::AlreadyExists(format!(
-                    "tenant already exists: {tenant_id}"
-                )));
-            }
-            return Err(map_mysql_error(error));
+            transaction
+                .exec_drop(incarnation_query, (tenant_id.as_str(),))
+                .await
+                .map_err(map_mysql_error)?;
+            let read_incarnation_query = format!(
+                "SELECT incarnation FROM {} WHERE tenant_id = ? FOR UPDATE",
+                qualified_table(&self.metadata_database, "tenant_incarnations")
+            );
+            let incarnation = transaction
+                .exec_first::<u64, _, _>(read_incarnation_query, (tenant_id.as_str(),))
+                .await
+                .map_err(map_mysql_error)?
+                .ok_or_else(|| {
+                    Error::Internal(format!(
+                        "tenant incarnation allocation disappeared for {tenant_id}"
+                    ))
+                })?;
+            let insert_query = format!(
+                "INSERT INTO {} (tenant_id, database_name) VALUES (?, ?)",
+                qualified_table(&self.metadata_database, "tenants")
+            );
+            transaction
+                .exec_drop(insert_query, (tenant_id.as_str(), database_name.as_str()))
+                .await
+                .map_err(map_mysql_error)?;
+            transaction.commit().await.map_err(map_mysql_error)?;
+            Ok::<_, Error>(incarnation)
         }
+        .await;
+        let incarnation = match registration {
+            Ok(incarnation) => incarnation,
+            Err(error) => {
+                let cleanup_sql = format!(
+                    "DROP DATABASE IF EXISTS {}",
+                    quote_identifier(&database_name)
+                );
+                let _ = conn.query_drop(cleanup_sql).await;
+                return Err(error);
+            }
+        };
 
         Ok(MySqlTenantRegistration {
             tenant_id: tenant_id.clone(),
             database_name,
+            incarnation,
         })
     }
 
@@ -260,11 +298,13 @@ impl MySqlProvider {
     }
 
     fn open_registration(&self, registration: MySqlTenantRegistration) -> OpenedMySqlTenant {
+        let incarnation = registration.incarnation;
         let store = Arc::new(MySqlTenantStore::new(self.clone(), registration));
         let read_storage = self.read_storage_for_store(store.clone());
         OpenedMySqlTenant {
             store,
             read_storage,
+            incarnation,
         }
     }
 
@@ -277,7 +317,7 @@ impl MySqlProvider {
         conn.query_drop(create_database_sql)
             .await
             .map_err(map_mysql_error)?;
-        let bootstrap = format!(
+        let tenants_bootstrap = format!(
             "CREATE TABLE IF NOT EXISTS {} (\
                 tenant_id VARCHAR(191) PRIMARY KEY,\
                 database_name VARCHAR(191) NOT NULL UNIQUE,\
@@ -285,7 +325,19 @@ impl MySqlProvider {
             ) ENGINE=InnoDB",
             qualified_table(&self.metadata_database, "tenants")
         );
-        conn.query_drop(bootstrap).await.map_err(map_mysql_error)
+        conn.query_drop(tenants_bootstrap)
+            .await
+            .map_err(map_mysql_error)?;
+        let incarnations_bootstrap = format!(
+            "CREATE TABLE IF NOT EXISTS {} (\
+                tenant_id VARCHAR(191) PRIMARY KEY,\
+                incarnation BIGINT UNSIGNED NOT NULL\
+            ) ENGINE=InnoDB",
+            qualified_table(&self.metadata_database, "tenant_incarnations")
+        );
+        conn.query_drop(incarnations_bootstrap)
+            .await
+            .map_err(map_mysql_error)
     }
 
     pub(super) async fn conn(&self) -> Result<Conn> {

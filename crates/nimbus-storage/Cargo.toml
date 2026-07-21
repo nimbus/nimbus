@@ -11,6 +11,7 @@ workspace = true
 
 [features]
 aws-kms = ["nimbus-crypto/aws-kms"]
+test-hooks = []
 
 [dependencies]
 aes-gcm-siv.workspace = true
@@ -45,7 +46,6 @@ workspace-hack = { version = "0.1", path = "../workspace-hack" }
 base64.workspace = true
 serial_test.workspace = true
 tempfile.workspace = true
-testcontainers-modules = { workspace = true, features = ["blocking", "mysql", "postgres"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }

@@ -9,10 +9,6 @@ pub(super) use nimbus_core::{
     Document, DocumentId, Mutation, ScheduleRequest, ScheduledJobOutcome, Schema, Timestamp,
 };
 pub(super) use nimbus_storage::{PostgresProvider, PostgresProviderConfig};
-use testcontainers_modules::{
-    postgres,
-    testcontainers::{ContainerAsync, runners::AsyncRunner},
-};
 use tokio_postgres::NoTls;
 
 use crate::{
@@ -47,7 +43,7 @@ where
     let metadata_schema = format!("nimbus_test_{}", &suffix[..24.min(suffix.len())]);
     let tenant_schema_prefix = format!("tenant_{}_", &suffix[..12.min(suffix.len())]);
     let provider_config = PostgresProviderConfig {
-        connection_string: connection.connection_string().to_string(),
+        connection_string: connection,
         metadata_schema: metadata_schema.clone(),
         tenant_schema_prefix: tenant_schema_prefix.clone(),
         min_connections: Some(1),
@@ -88,63 +84,22 @@ where
         .drop_metadata_schema_for_test()
         .await
         .expect("test metadata schema should drop");
-    drop(connection);
     drop(control_dir_a);
     drop(control_dir_b);
 }
 
-enum TestConnection {
-    External(String),
-    Container {
-        connection_string: String,
-        _container: Box<ContainerAsync<postgres::Postgres>>,
-    },
-}
-
-impl TestConnection {
-    fn connection_string(&self) -> &str {
-        match self {
-            Self::External(connection_string) => connection_string,
-            Self::Container {
-                connection_string, ..
-            } => connection_string,
-        }
-    }
-}
-
-async fn test_connection() -> Option<TestConnection> {
-    if let Ok(connection_string) = env::var(TEST_POSTGRES_URL_ENV) {
-        return Some(TestConnection::External(connection_string));
-    }
-
-    require_explicit_external_provider_fixture_envs("Postgres engine", &[TEST_POSTGRES_URL_ENV]);
-    if implicit_external_provider_fixtures_disabled("Postgres engine") {
-        return None;
-    }
-
-    let container = match postgres::Postgres::default().start().await {
-        Ok(container) => container,
-        Err(error) => {
-            eprintln!(
-                "skipping postgres engine test because no explicit Postgres URL was provided and container startup failed: {error}"
-            );
-            return None;
-        }
-    };
-    let host = container
-        .get_host()
-        .await
-        .expect("container host should resolve");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("container port should resolve");
-    Some(TestConnection::Container {
-        connection_string: format!(
-            "host={host} port={port} user=postgres password=postgres dbname=postgres"
+async fn test_connection() -> Option<String> {
+    match external_provider_fixture_mode(
+        "postgres",
+        "PostgreSQL engine provider",
+        &[TEST_POSTGRES_URL_ENV],
+    ) {
+        ExternalProviderFixtureMode::UseExplicit => Some(
+            env::var(TEST_POSTGRES_URL_ENV)
+                .expect("fixture policy should require the PostgreSQL URL"),
         ),
-        _container: Box::new(container),
-    })
+        ExternalProviderFixtureMode::Omit => None,
+    }
 }
 
 pub(super) async fn terminate_postgres_hint_listeners(

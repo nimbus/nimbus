@@ -67,8 +67,12 @@ How to apply:
   default model + `model_reasoning_effort = "high"` are set in
   `~/.codex/config.toml` and require Codex CLI >= 0.143.0.)
 - Anything user-facing (UI, copy, API design) needs taste ≥ 7.
-- Reviews of plans/implementations: fable-5 or opus-4.8, optionally gpt-5.6-sol as
-  an extra independent perspective.
+- Structured `autoreview`: always use gpt-5.6-sol at high reasoning, or xhigh
+  for genuinely hard/high-risk changes. Never use fable-5 for autoreview: its
+  available credits are too constrained for autoreview's aggressive review
+  loop. Use opus-4.8 as the preferred independent cross-lab reviewer when a
+  second perspective is required; its credit envelope is more forgiving, and
+  it complements the Sol review rather than replacing it.
 - Never use Haiku.
 - Mechanics: gpt-5.6-sol is handled natively via the `openai/codex-plugin-cc`
   plugin inside Claude Code, automatically adopting your user-level

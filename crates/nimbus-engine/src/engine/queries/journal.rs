@@ -1,6 +1,7 @@
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use nimbus_core::{Result, SequenceNumber, TenantEventRecord, TenantId};
+use nimbus_core::{Result, SequenceNumber, TableName, TenantEventRecord, TenantId};
 use nimbus_storage::{
     ChangefeedBootstrap, ChangefeedCursor, ChangefeedPage, DurableJournal, DurableJournalBootstrap,
     DurableJournalPage, PointInTimeRestoreArchive, PointInTimeRestoreTarget, RetentionGcConfig,
@@ -237,7 +238,7 @@ impl Engine {
         let _operation = runtime.enter_operation(tenant_id)?;
         let runtime_for_commit = runtime.clone();
         let archive = archive.clone();
-        runtime.submit_internal_committer(move || {
+        let (projection_token, restored_tables) = runtime.submit_internal_committer(move || {
             runtime_for_commit.ensure_committer_lease_for_assignment()?;
             let expected_previous = runtime_for_commit.durable_head();
             let progress = match runtime_for_commit
@@ -266,8 +267,14 @@ impl Engine {
                 }
             };
             runtime_for_commit.publish_mutation_journal_progress_in_actor(progress);
-            Ok(())
+            let next_schema = runtime_for_commit.store().load_schema()?;
+            crate::engine::schema::apply_loaded_schema_snapshot(&runtime_for_commit, next_schema)?;
+            let projection_token = runtime_for_commit.projection_token()?;
+            Ok((projection_token, restored_projection_tables(&archive)))
         })?;
+        for table in restored_tables {
+            self.notify_table_schema_change_observers(tenant_id, &table, projection_token);
+        }
         Ok(())
     }
 
@@ -286,4 +293,26 @@ impl Engine {
         self.execute_journal_read_async(tenant_id, move |store| latest_sequence_for_store(&store))
             .await
     }
+}
+
+fn restored_projection_tables(archive: &PointInTimeRestoreArchive) -> Vec<TableName> {
+    let mut tables = archive
+        .base_snapshot
+        .schema
+        .tables
+        .keys()
+        .cloned()
+        .chain(
+            archive
+                .base_snapshot
+                .documents
+                .iter()
+                .map(|document| document.table.clone()),
+        )
+        .collect::<BTreeSet<_>>();
+    for record in &archive.journal_tail {
+        tables.extend(TenantEventRecord::as_commit_entry(record).affected_tables());
+        tables.extend(record.schema_epoch_tables());
+    }
+    tables.into_iter().collect()
 }

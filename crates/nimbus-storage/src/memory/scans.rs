@@ -188,6 +188,21 @@ macro_rules! impl_memory_scans {
                 Ok(self.$state.as_ref().table_id(table))
             }
 
+            pub fn table_identities(&self) -> Result<Vec<crate::TableIdentitySnapshotEntry>> {
+                Ok(self
+                    .$state
+                    .as_ref()
+                    .active_tables
+                    .iter()
+                    .map(|(table, table_id)| {
+                        crate::TableIdentitySnapshotEntry::default_namespace(
+                            table.clone(),
+                            table_id.clone(),
+                        )
+                    })
+                    .collect())
+            }
+
             pub fn applied_sequence(&self) -> Result<SequenceNumber> {
                 Ok(self.$state.as_ref().applied_head)
             }

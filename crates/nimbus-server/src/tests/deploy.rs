@@ -585,6 +585,14 @@ async fn deploy_persists_across_engine_restart_without_app_dir() {
         assert_eq!(bundles_a.len(), 1);
         assert_eq!(bundles_a[0]["status"], json!("active"));
         assert_eq!(bundles_a[0]["sourceRef"], json!("deploy:generation:1"));
+
+        // Process exit releases the router's engine clone and every embedded
+        // database lock atomically. Reproduce that boundary explicitly inside
+        // this process before constructing the replacement daemon.
+        drop(api_a);
+        server_a.shutdown().await;
+        engine_a.quiesce().await;
+        drop(engine_a);
     }
     // `server_a` and `engine_a` drop here. The data dir survives — it is
     // owned by `data_dir` for the rest of the test, mimicking `nimbus start`
@@ -608,7 +616,14 @@ async fn deploy_persists_across_engine_restart_without_app_dir() {
             json!({ "status": null, "limit": null }),
         )
         .await;
-    assert_eq!(bundles_b_before.status(), StatusCode::OK);
+    if bundles_b_before.status() != StatusCode::OK {
+        let status = bundles_b_before.status();
+        let body = bundles_b_before
+            .text()
+            .await
+            .expect("failed restart query response should have a body");
+        panic!("restarted daemon bundles query returned {status}: {body}");
+    }
     let bundles_b_before = bundles_b_before
         .json::<serde_json::Value>()
         .await

@@ -1,10 +1,10 @@
 use std::net::SocketAddr;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use nimbus_core::{
     Document, DocumentId, Error, Filter, FilterOp, Query, Result, TableName, TenantId,
 };
-use nimbus_engine::Engine;
+use nimbus_engine::{Engine, ProjectionToken};
 use nimbus_node::{
     HostLifecycleFuture, StatusEvidenceWrite, StatusEvidenceWriter, TenantWorkloadStatus,
     ensure_status_matches_projection,
@@ -16,10 +16,11 @@ use serde_json::{Map, Value, json};
 
 use crate::identity::system_tenant_id;
 use crate::inventory::{adapter_capability_inventory, route_inventory};
-use crate::keys::{
-    service_document_id, service_port_document_id, table_document_id, workload_status_document_id,
+use crate::keys::{service_document_id, service_port_document_id, workload_status_document_id};
+use crate::projection::publication::{
+    ProjectionPublication, ProjectionPublicationOutcome, publish_table_projection_async,
 };
-use crate::schema::{SystemTable, system_table_schemas};
+use crate::schema::{SystemTable, projection_fence_table_schema, system_table_schemas};
 
 mod deployment;
 mod machine;
@@ -63,6 +64,9 @@ pub async fn ensure_system_tenant_async(engine: &Arc<Engine>) -> Result<()> {
             .set_table_schema_async(tenant_id.clone(), schema)
             .await?;
     }
+    engine
+        .set_table_schema_async(tenant_id, projection_fence_table_schema()?)
+        .await?;
 
     Ok(())
 }
@@ -275,16 +279,27 @@ pub async fn record_table_state_async(
     table: &TableName,
 ) -> Result<()> {
     let projection_epoch = DocumentId::new().to_string();
-    record_table_state_for_generation_async(engine, tenant_id, table, &projection_epoch, 0).await
+    let projection_token = engine.projection_token_for_tenant_async(tenant_id).await?;
+    record_table_state_for_generation_async(
+        engine,
+        tenant_id,
+        table,
+        projection_token,
+        &projection_epoch,
+        0,
+    )
+    .await
+    .map(|_| ())
 }
 
 pub(crate) async fn record_table_state_for_generation_async(
     engine: &Arc<Engine>,
     tenant_id: &TenantId,
     table: &TableName,
+    projection_token: ProjectionToken,
     projection_epoch: &str,
     projection_generation: u64,
-) -> Result<()> {
+) -> Result<ProjectionPublicationOutcome> {
     ensure_system_tenant_async(engine).await?;
     let schema = match engine
         .get_table_schema_async(tenant_id.clone(), table.clone())
@@ -297,7 +312,6 @@ pub(crate) async fn record_table_state_for_generation_async(
     let row_count = engine
         .count_table_documents_async(tenant_id.clone(), table.clone())
         .await?;
-    let document_id = table_document_id(tenant_id, table);
     let delete = schema.is_none() && row_count == 0;
 
     let mut fields = object_fields(json!({
@@ -307,6 +321,9 @@ pub(crate) async fn record_table_state_for_generation_async(
         "lastWriteAt": unix_time_millis()?,
         "projectionEpoch": projection_epoch,
         "projectionGeneration": projection_generation,
+        "sourceTenantIncarnation": projection_token.tenant_incarnation,
+        "sourceLeaseEpoch": projection_token.lease_epoch,
+        "sourceDurableSequence": projection_token.durable_sequence.0,
     }));
     if let Some(schema) = schema {
         fields.insert(
@@ -315,116 +332,17 @@ pub(crate) async fn record_table_state_for_generation_async(
                 .map_err(|error| Error::Serialization(error.to_string()))?,
         );
     }
-    write_table_projection_if_current_async(
+    publish_table_projection_async(
         engine,
-        &document_id,
-        fields,
-        projection_epoch,
-        projection_generation,
-        delete,
+        ProjectionPublication {
+            tenant_id: tenant_id.clone(),
+            table: table.clone(),
+            token: projection_token,
+            visible_fields: fields,
+            delete_visible: delete,
+        },
     )
     .await
-}
-
-/// Fence left behind by a table projection whose row has been deleted.
-///
-/// A live projection carries its own fence in the stored row, so deleting the
-/// row would otherwise discard the only record of how far the projection had
-/// advanced. A writer that sampled the table before the delete would then find
-/// no row to lose against and recreate the table with its stale row count.
-///
-/// The fence is deliberately in-process rather than a stored tombstone. The
-/// guard rejects a writer only when it carries the *same* epoch, and an epoch
-/// identifies one projection runtime in one process: a restart mints a fresh
-/// epoch, which must win despite its lower generation. So no writer able to
-/// consult this fence can outlive the process that recorded it, and a durable
-/// tombstone would add no fencing power while becoming visible to every reader
-/// of the `tables` system table, none of which distinguishes a tombstone from a
-/// live table.
-struct DeletedTableProjectionFence {
-    epoch: String,
-    generation: u64,
-}
-
-async fn write_table_projection_if_current_async(
-    engine: &Arc<Engine>,
-    document_id: &str,
-    fields: Map<String, Value>,
-    projection_epoch: &str,
-    projection_generation: u64,
-    delete: bool,
-) -> Result<()> {
-    /// Serializes table projection writes and holds the fences retained for
-    /// projections whose row is currently deleted.
-    static TABLE_PROJECTION_WRITE_STATE: OnceLock<
-        tokio::sync::Mutex<std::collections::HashMap<String, DeletedTableProjectionFence>>,
-    > = OnceLock::new();
-
-    let document_id = DocumentId::from_key(document_id.to_owned())?;
-    let table = SystemTable::Tables.table_name()?;
-    let tenant_id = system_tenant_id()?;
-    let mut deleted_fences = TABLE_PROJECTION_WRITE_STATE
-        .get_or_init(|| tokio::sync::Mutex::new(std::collections::HashMap::new()))
-        .lock()
-        .await;
-    let current = match engine
-        .get_document_async(tenant_id.clone(), table.clone(), document_id.clone())
-        .await
-    {
-        Ok(document) => Some(document),
-        Err(Error::DocumentNotFound(_)) => None,
-        Err(error) => return Err(error),
-    };
-    let stale = {
-        let (current_epoch, current_generation) = match current.as_ref() {
-            Some(document) => (
-                document
-                    .fields
-                    .get("projectionEpoch")
-                    .and_then(Value::as_str),
-                document
-                    .fields
-                    .get("projectionGeneration")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0),
-            ),
-            // The row is gone, so the fence its delete retained stands in for it.
-            None => match deleted_fences.get(document_id.as_str()) {
-                Some(fence) => (Some(fence.epoch.as_str()), fence.generation),
-                None => (None, 0),
-            },
-        };
-        current_epoch == Some(projection_epoch) && current_generation > projection_generation
-    };
-    if stale {
-        return Ok(());
-    }
-
-    if delete {
-        // Retained before the delete, and even when there is no row to delete,
-        // so the fence is never absent while the row is.
-        deleted_fences.insert(
-            document_id.as_str().to_owned(),
-            DeletedTableProjectionFence {
-                epoch: projection_epoch.to_owned(),
-                generation: projection_generation,
-            },
-        );
-        if current.is_none() {
-            return Ok(());
-        }
-        engine
-            .delete_document_async(tenant_id, table, document_id)
-            .await
-    } else {
-        upsert_system_document_async(engine, SystemTable::Tables, document_id.as_str(), fields)
-            .await?;
-        // The stored row carries the fence again, so the retained one is
-        // redundant. Dropping it here bounds the map by the number of table
-        // projections currently deleted and not recreated.
-        deleted_fences.remove(document_id.as_str());
-        Ok(())
-    }
 }
 
 async fn delete_system_document_if_exists_async(
@@ -649,266 +567,7 @@ pub fn endpoint_protocol(protocol: PublishedEndpointProtocol) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use nimbus_testing::EngineFixture;
-
     use super::*;
-
-    /// Builds the payload a projection sampling `row_count` rows would write.
-    fn sampled_fields(
-        tenant_id: &TenantId,
-        table: &TableName,
-        row_count: u64,
-        projection_epoch: &str,
-        projection_generation: u64,
-    ) -> Map<String, Value> {
-        object_fields(json!({
-            "tenantId": tenant_id.as_str(),
-            "name": table.as_str(),
-            "rowCount": row_count,
-            "lastWriteAt": 1_700_000_000_000_u64,
-            "projectionEpoch": projection_epoch,
-            "projectionGeneration": projection_generation,
-        }))
-    }
-
-    /// Reads the projection the way every consumer does: an unfiltered listing
-    /// of the `tables` system table, matched by tenant and table name. This is
-    /// the shape of the `tables:list` Convex query the console reads through,
-    /// so a row visible here is a row the console renders as a live table.
-    async fn listed_projection_row(
-        engine: &Arc<Engine>,
-        tenant_id: &TenantId,
-        table: &TableName,
-    ) -> Option<Document> {
-        engine
-            .list_documents_async(
-                system_tenant_id().expect("system tenant id should build"),
-                SystemTable::Tables
-                    .table_name()
-                    .expect("system tables name should build"),
-            )
-            .await
-            .expect("projected table records should list")
-            .into_iter()
-            .find(|row| {
-                row.fields.get("tenantId") == Some(&json!(tenant_id.as_str()))
-                    && row.fields.get("name") == Some(&json!(table.as_str()))
-            })
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn same_epoch_stale_write_does_not_resurrect_a_deleted_table_projection() {
-        let fixture = EngineFixture::new(|path| Engine::new(path));
-        let engine = fixture.engine();
-        let tenant_id = fixture.create_tenant("projection-delete-fence", Engine::create_tenant);
-        let table = TableName::new("tasks").expect("table name should build");
-        let document_id = table_document_id(&tenant_id, &table);
-        let epoch = "projection-delete-fence-epoch";
-        ensure_system_tenant_async(&engine)
-            .await
-            .expect("system tenant should prepare");
-
-        // An observer samples two rows at generation 5 and projects them.
-        write_table_projection_if_current_async(
-            &engine,
-            &document_id,
-            sampled_fields(&tenant_id, &table, 2, epoch, 5),
-            epoch,
-            5,
-            false,
-        )
-        .await
-        .expect("the sampled projection should record two rows");
-        assert_eq!(
-            listed_projection_row(&engine, &tenant_id, &table)
-                .await
-                .and_then(|row| row.fields.get("rowCount").and_then(Value::as_u64)),
-            Some(2),
-        );
-
-        // The table empties, and generation 6 deletes the projection row.
-        write_table_projection_if_current_async(
-            &engine,
-            &document_id,
-            sampled_fields(&tenant_id, &table, 0, epoch, 6),
-            epoch,
-            6,
-            true,
-        )
-        .await
-        .expect("the emptied table should delete its projection row");
-        assert!(
-            listed_projection_row(&engine, &tenant_id, &table)
-                .await
-                .is_none(),
-            "deleting the projection must remove the table from every consumer's view"
-        );
-
-        // A writer from the same epoch that sampled before the delete now
-        // lands. Its generation is older, so it must lose even though the
-        // delete took away the row that used to carry the fence.
-        write_table_projection_if_current_async(
-            &engine,
-            &document_id,
-            sampled_fields(&tenant_id, &table, 2, epoch, 5),
-            epoch,
-            5,
-            false,
-        )
-        .await
-        .expect("the stale same-epoch write should be rejected without an error");
-
-        assert!(
-            listed_projection_row(&engine, &tenant_id, &table)
-                .await
-                .is_none(),
-            "a stale same-epoch write must not resurrect a deleted table projection"
-        );
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn fresh_epoch_writes_over_a_deleted_projection_despite_a_lower_generation() {
-        let fixture = EngineFixture::new(|path| Engine::new(path));
-        let engine = fixture.engine();
-        let tenant_id = fixture.create_tenant("projection-delete-restart", Engine::create_tenant);
-        let table = TableName::new("tasks").expect("table name should build");
-        let document_id = table_document_id(&tenant_id, &table);
-        let epoch = "projection-delete-restart-epoch";
-        let restarted_epoch = "projection-delete-restart-fresh-epoch";
-        ensure_system_tenant_async(&engine)
-            .await
-            .expect("system tenant should prepare");
-
-        write_table_projection_if_current_async(
-            &engine,
-            &document_id,
-            sampled_fields(&tenant_id, &table, 3, epoch, 9),
-            epoch,
-            9,
-            false,
-        )
-        .await
-        .expect("the sampled projection should record three rows");
-        write_table_projection_if_current_async(
-            &engine,
-            &document_id,
-            sampled_fields(&tenant_id, &table, 0, epoch, 10),
-            epoch,
-            10,
-            true,
-        )
-        .await
-        .expect("the emptied table should delete its projection row");
-
-        // A restarted process mints a fresh epoch and resets its generation
-        // counter, so it must win against the retained fence.
-        write_table_projection_if_current_async(
-            &engine,
-            &document_id,
-            sampled_fields(&tenant_id, &table, 4, restarted_epoch, 1),
-            restarted_epoch,
-            1,
-            false,
-        )
-        .await
-        .expect("a fresh process epoch should project despite its lower generation");
-        assert_eq!(
-            listed_projection_row(&engine, &tenant_id, &table)
-                .await
-                .and_then(|row| row.fields.get("rowCount").and_then(Value::as_u64)),
-            Some(4),
-            "the retained delete fence must not block a fresh epoch"
-        );
-
-        // The restored row carries the fence again, so a stale writer from the
-        // fresh epoch still loses to it.
-        write_table_projection_if_current_async(
-            &engine,
-            &document_id,
-            sampled_fields(&tenant_id, &table, 8, restarted_epoch, 0),
-            restarted_epoch,
-            0,
-            false,
-        )
-        .await
-        .expect("the stale same-epoch write should be rejected without an error");
-        assert_eq!(
-            listed_projection_row(&engine, &tenant_id, &table)
-                .await
-                .and_then(|row| row.fields.get("rowCount").and_then(Value::as_u64)),
-            Some(4),
-            "an older generation must not overwrite a newer live projection row"
-        );
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn a_deleted_table_projection_leaves_nothing_for_consumers_to_read() {
-        let fixture = EngineFixture::new(|path| Engine::new(path));
-        let engine = fixture.engine();
-        let tenant_id = fixture.create_tenant("projection-delete-consumers", Engine::create_tenant);
-        let table = TableName::new("tasks").expect("table name should build");
-        let document_id = table_document_id(&tenant_id, &table);
-        let epoch = "projection-delete-consumers-epoch";
-        ensure_system_tenant_async(&engine)
-            .await
-            .expect("system tenant should prepare");
-
-        write_table_projection_if_current_async(
-            &engine,
-            &document_id,
-            sampled_fields(&tenant_id, &table, 5, epoch, 2),
-            epoch,
-            2,
-            false,
-        )
-        .await
-        .expect("the sampled projection should record five rows");
-        write_table_projection_if_current_async(
-            &engine,
-            &document_id,
-            sampled_fields(&tenant_id, &table, 0, epoch, 3),
-            epoch,
-            3,
-            true,
-        )
-        .await
-        .expect("the emptied table should delete its projection row");
-        write_table_projection_if_current_async(
-            &engine,
-            &document_id,
-            sampled_fields(&tenant_id, &table, 5, epoch, 2),
-            epoch,
-            2,
-            false,
-        )
-        .await
-        .expect("the stale same-epoch write should be rejected without an error");
-
-        // Consumers list the `tables` system table and treat row existence as
-        // table liveness, so the fence must leave no row of any kind behind.
-        let rows = engine
-            .list_documents_async(
-                system_tenant_id().expect("system tenant id should build"),
-                SystemTable::Tables
-                    .table_name()
-                    .expect("system tables name should build"),
-            )
-            .await
-            .expect("projected table records should list");
-        assert!(
-            !rows.iter().any(|row| {
-                row.fields.get("tenantId") == Some(&json!(tenant_id.as_str()))
-                    && row.fields.get("name") == Some(&json!(table.as_str()))
-            }),
-            "a deleted table must not be listed, counted, or rendered as a live table"
-        );
-        assert!(
-            !rows
-                .iter()
-                .any(|row| row.id.as_str() == document_id.as_str()),
-            "the delete fence must not be stored where consumers can read it"
-        );
-    }
 
     #[test]
     fn started_at_or_else_uses_persisted_value_without_calling_fallback() {

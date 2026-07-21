@@ -3324,6 +3324,12 @@ impl HostBridge for TaggedAsyncDbGetHost {
     }
 }
 
+impl crate::EgressGateway for TaggedAsyncDbGetHost {
+    fn authorize(&self, _request: &crate::EgressRequest) -> crate::EgressAuthorization {
+        crate::EgressAuthorization::allow("tagged warm-pool test host")
+    }
+}
+
 #[tokio::test]
 #[ignore = "cage-isolated (pre-existing): run via its isol_ parent (own process)"]
 async fn warm_pooled_runtime_rebinds_host_bridge_per_invocation() {
@@ -3358,30 +3364,45 @@ export {};
         services: Default::default(),
     };
 
+    let first_host = Arc::new(TaggedAsyncDbGetHost { host_id: "first" });
+    let first_host_weak = Arc::downgrade(&first_host);
     let first = invoke_on_single_worker(
         &executor,
         NimbusRuntime::with_policy(
-            Arc::new(TaggedAsyncDbGetHost { host_id: "first" }),
+            first_host.clone(),
             policy.clone(),
-            crate::RuntimeEgressPosture::CoarsePermissions,
+            crate::RuntimeEgressPosture::Gateway(first_host.clone()),
         ),
         &bundle,
         request.clone(),
     )
     .await
     .expect("first warm pooled invocation should succeed");
+    drop(first_host);
+    assert!(
+        first_host_weak.upgrade().is_none(),
+        "a retained warm runtime must release the completed invocation's host and egress bindings"
+    );
+
+    let second_host = Arc::new(TaggedAsyncDbGetHost { host_id: "second" });
+    let second_host_weak = Arc::downgrade(&second_host);
     let second = invoke_on_single_worker(
         &executor,
         NimbusRuntime::with_policy(
-            Arc::new(TaggedAsyncDbGetHost { host_id: "second" }),
+            second_host.clone(),
             policy,
-            crate::RuntimeEgressPosture::CoarsePermissions,
+            crate::RuntimeEgressPosture::Gateway(second_host.clone()),
         ),
         &bundle,
         request,
     )
     .await
     .expect("second warm pooled invocation should succeed");
+    drop(second_host);
+    assert!(
+        second_host_weak.upgrade().is_none(),
+        "returning the rebound runtime must release the second invocation's bindings too"
+    );
 
     assert_eq!(first, serde_json::json!({ "host_id": "first" }));
     assert_eq!(second, serde_json::json!({ "host_id": "second" }));

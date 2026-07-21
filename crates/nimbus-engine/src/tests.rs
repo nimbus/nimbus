@@ -59,10 +59,10 @@ mod provider_fixtures;
 mod queries;
 mod subscriptions;
 
-pub(crate) use provider_fixtures::{
-    expect_external_provider_future_within, implicit_external_provider_fixtures_disabled,
-    require_explicit_external_provider_fixture_envs,
+pub(crate) use nimbus_storage::provider_test_fixtures::{
+    ExternalProviderFixtureMode, external_provider_fixture_mode,
 };
+pub(crate) use provider_fixtures::expect_external_provider_future_within;
 
 pub(crate) fn tasks_table() -> TableName {
     TableName::new("tasks").expect("table name should be valid")

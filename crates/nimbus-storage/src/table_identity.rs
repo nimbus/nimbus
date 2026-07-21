@@ -169,6 +169,12 @@ impl TableIdentitySnapshotEntry {
             state: TableState::Active,
         }
     }
+
+    /// Whether this identity is the currently visible incarnation of its
+    /// logical table rather than a hidden or deleting lifecycle slot.
+    pub fn is_active(&self) -> bool {
+        self.namespace == DEFAULT_TABLE_NAMESPACE && self.state == TableState::Active
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

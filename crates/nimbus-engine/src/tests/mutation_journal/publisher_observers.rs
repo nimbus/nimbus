@@ -7,9 +7,17 @@ use super::support::{
 use super::*;
 use nimbus_core::{ScheduleRequest, TenantEventRecord};
 
+type OrderedObserverState = (
+    Vec<SequenceNumber>,
+    usize,
+    usize,
+    bool,
+    Vec<crate::ProjectionToken>,
+);
+
 #[derive(Default)]
 struct OrderedBlockingObserver {
-    state: Mutex<(Vec<SequenceNumber>, usize, usize, bool)>,
+    state: Mutex<OrderedObserverState>,
     entered: Condvar,
     release: Condvar,
 }
@@ -37,6 +45,7 @@ impl crate::CommittedMutationObserver for OrderedBlockingObserver {
         state.1 += 1;
         state.2 = state.2.max(state.1);
         state.0.push(event.commit.sequence);
+        state.4.push(event.projection_token);
         self.entered.notify_all();
         if state.0.len() == 1 {
             state = wait_for_test_release(
@@ -48,6 +57,155 @@ impl crate::CommittedMutationObserver for OrderedBlockingObserver {
         }
         state.1 -= 1;
     }
+}
+
+#[derive(Default)]
+struct RecordingObserver {
+    events: Mutex<Vec<crate::CommittedMutationEvent>>,
+}
+
+impl crate::CommittedMutationObserver for RecordingObserver {
+    fn committed_mutation_applied(&self, event: crate::CommittedMutationEvent) {
+        self.events
+            .lock()
+            .expect("recording observer state should lock")
+            .push(event);
+    }
+}
+
+#[derive(Default)]
+struct RecordingSchemaObserver {
+    events: Mutex<Vec<crate::TableSchemaChangeEvent>>,
+}
+
+impl crate::TableSchemaChangeObserver for RecordingSchemaObserver {
+    fn table_schema_changed(&self, event: crate::TableSchemaChangeEvent) {
+        self.events
+            .lock()
+            .expect("recording schema observer state should lock")
+            .push(event);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn projection_zero_write_schema_catch_up_retains_source_token() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("projection-zero-write", Engine::create_tenant);
+    engine
+        .set_table_schema_async(
+            tenant_id.clone(),
+            TableSchema {
+                table: tasks_table(),
+                fields: Vec::new(),
+                indexes: Vec::new(),
+                access_policy: None,
+            },
+        )
+        .await
+        .expect("schema record should commit");
+    let records = engine
+        .read_durable_journal(&tenant_id, SequenceNumber(0))
+        .expect("schema journal should read")
+        .into_iter()
+        .filter(|record| record.schema_epoch_tables().contains(&tasks_table()))
+        .collect::<Vec<_>>();
+    assert_eq!(records.len(), 1);
+    assert!(
+        TenantEventRecord::as_commit_entry(&records[0])
+            .writes
+            .is_empty()
+    );
+
+    let observer = Arc::new(RecordingObserver::default());
+    engine.install_committed_mutation_observer("zero-write-provenance-test", observer.clone());
+    engine
+        .enqueue_provider_catch_up_observers_for_testing(&tenant_id, &records)
+        .await
+        .expect("zero-write catch-up should dispatch");
+    engine
+        .flush_committed_mutation_observers_for_testing(&tenant_id)
+        .await
+        .expect("zero-write catch-up should flush");
+
+    let events = observer
+        .events
+        .lock()
+        .expect("recording observer state should lock");
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].affected_tables, vec![tasks_table()]);
+    assert!(events[0].commit.writes.is_empty());
+    assert_eq!(events[0].projection_token.lease_epoch, 0);
+    assert_eq!(
+        events[0].projection_token.durable_sequence,
+        records[0].sequence
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn projection_provider_schema_refresh_waits_for_journal_frontier() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("projection-schema-frontier", Engine::create_tenant);
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should not add an unrelated journal record");
+    let schema = TableSchema {
+        table: tasks_table(),
+        fields: Vec::new(),
+        indexes: Vec::new(),
+        access_policy: None,
+    };
+    let persisted_sequence = engine
+        .persist_table_schema_without_publish_for_testing(&tenant_id, &schema)
+        .expect("provider-style schema record should persist without runtime publication");
+    let before = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("stale runtime journal stats should read");
+    assert!(before.applied_head < persisted_sequence);
+    assert!(
+        engine
+            .get_table_schema_async(tenant_id.clone(), tasks_table())
+            .await
+            .is_err(),
+        "the loaded runtime must remain stale before provider catch-up"
+    );
+
+    let observer = Arc::new(RecordingSchemaObserver::default());
+    engine.install_table_schema_change_observer("schema-frontier-test", observer.clone());
+    engine
+        .catch_up_provider_after_listener_attach_for_testing()
+        .await
+        .expect("provider catch-up should reconcile journal before schema notification");
+
+    {
+        let events = observer
+            .events
+            .lock()
+            .expect("recording schema observer state should lock");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].tenant_id, tenant_id);
+        assert_eq!(events[0].table, tasks_table());
+        assert_eq!(events[0].projection_token.lease_epoch, 0);
+        assert_eq!(
+            events[0].projection_token.durable_sequence, persisted_sequence,
+            "schema publication provenance must cover the durable schema record"
+        );
+    }
+    assert!(
+        engine
+            .get_table_schema_async(tenant_id.clone(), tasks_table())
+            .await
+            .is_ok(),
+        "the callback must observe the reconciled loaded schema"
+    );
+    let after = engine
+        .mutation_journal_stats_for_testing(&tenant_id)
+        .expect("reconciled runtime journal stats should read");
+    assert!(
+        after.applied_head >= persisted_sequence,
+        "the runtime applied frontier must cover the schema callback's source record"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -445,9 +603,21 @@ async fn rapid_provider_catch_up_triggers_coalesce_into_one_tail_reader() {
 
     let observer = Arc::new(OrderedBlockingObserver::default());
     engine.install_committed_mutation_observer("provider-coalescing-test", observer.clone());
+    let latest_token = engine
+        .projection_token_for_tenant_async(&tenant_id)
+        .await
+        .expect("latest provider projection token should resolve");
+    let initial_token = crate::ProjectionToken {
+        durable_sequence: records[1].sequence,
+        ..latest_token
+    };
     assert!(
         engine
-            .trigger_provider_catch_up_observers_for_testing(&tenant_id, &records[..2])
+            .trigger_provider_catch_up_observers_with_token_for_testing(
+                &tenant_id,
+                &records[..2],
+                initial_token,
+            )
             .expect("initial catch-up trigger should start"),
         "the first trigger must own the tenant's sole catch-up task"
     );
@@ -458,11 +628,16 @@ async fn rapid_provider_catch_up_triggers_coalesce_into_one_tail_reader() {
     .await;
 
     for record in &records[2..] {
+        let projection_token = crate::ProjectionToken {
+            durable_sequence: record.sequence,
+            ..initial_token
+        };
         assert!(
             !engine
-                .trigger_provider_catch_up_observers_for_testing(
+                .trigger_provider_catch_up_observers_with_token_for_testing(
                     &tenant_id,
                     std::slice::from_ref(record),
+                    projection_token,
                 )
                 .expect("later catch-up trigger should coalesce"),
             "a later frontier must not spawn another parked catch-up task"
@@ -500,6 +675,16 @@ async fn rapid_provider_catch_up_triggers_coalesce_into_one_tail_reader() {
     assert_eq!(
         state.2, 1,
         "coalesced observer callbacks must remain serial"
+    );
+    assert_eq!(
+        state.4[..2],
+        [initial_token; 2],
+        "the initially claimed range should retain its sampled provenance"
+    );
+    assert_eq!(
+        state.4[2..],
+        [latest_token; RECORDS - 2],
+        "the coalesced range must use the maximum token supplied by later provider notifications"
     );
 }
 

@@ -124,6 +124,7 @@ pub(crate) use crate::subscriptions::SubscriptionDeliveryPublishPauseHandle;
 ///   concept-owned facade modules under `tenant/`
 pub struct TenantRuntime {
     tenant_id: TenantId,
+    tenant_incarnation: u64,
     pub store: TenantPersistence,
     pub read_storage: TenantPersistenceExecutor,
     pub subscriptions: SubscriptionRegistry,
@@ -211,6 +212,7 @@ impl Drop for TenantOperationGuard {
 impl TenantRuntime {
     fn from_initialized_parts(
         tenant_id: TenantId,
+        tenant_incarnation: u64,
         store: TenantPersistence,
         read_storage: TenantPersistenceExecutor,
         initial_state: TenantRuntimeInitialState,
@@ -231,6 +233,7 @@ impl TenantRuntime {
         let observer_dispatch = Arc::new(ObserverHandoff::new(&tenant_id));
         Self {
             tenant_id,
+            tenant_incarnation,
             store,
             read_storage,
             subscriptions: SubscriptionRegistry::new(),
@@ -269,6 +272,7 @@ impl TenantRuntime {
 
     pub(crate) fn from_loaded_state(
         tenant_id: TenantId,
+        tenant_incarnation: u64,
         store: TenantPersistence,
         read_storage: TenantPersistenceExecutor,
         initial_state: TenantRuntimeInitialState,
@@ -277,6 +281,7 @@ impl TenantRuntime {
     ) -> Self {
         Self::from_initialized_parts(
             tenant_id,
+            tenant_incarnation,
             store,
             read_storage,
             initial_state,
@@ -323,6 +328,7 @@ impl TenantRuntime {
     /// Creates a tenant runtime from a store.
     pub(crate) fn from_parts(
         tenant_id: TenantId,
+        tenant_incarnation: u64,
         store: TenantPersistence,
         read_storage: TenantPersistenceExecutor,
         renewal_clock: Arc<dyn LeaseRenewalClock>,
@@ -341,6 +347,7 @@ impl TenantRuntime {
         };
         Ok(Self::from_initialized_parts(
             tenant_id,
+            tenant_incarnation,
             store,
             read_storage,
             TenantRuntimeInitialState {
@@ -356,6 +363,7 @@ impl TenantRuntime {
     /// Creates a tenant runtime asynchronously from a store.
     pub(crate) async fn from_parts_async(
         tenant_id: TenantId,
+        tenant_incarnation: u64,
         store: TenantPersistence,
         read_storage: TenantPersistenceExecutor,
         renewal_clock: Arc<dyn LeaseRenewalClock>,
@@ -364,6 +372,7 @@ impl TenantRuntime {
         let (initial_state, _) = Self::load_initial_state_async(&store, &read_storage).await?;
         Ok(Self::from_loaded_state(
             tenant_id,
+            tenant_incarnation,
             store,
             read_storage,
             initial_state,
@@ -459,6 +468,10 @@ impl TenantRuntime {
 
     pub(crate) fn tenant_id(&self) -> &TenantId {
         &self.tenant_id
+    }
+
+    pub(crate) fn tenant_incarnation(&self) -> u64 {
+        self.tenant_incarnation
     }
 
     pub(crate) fn commit_phase_metrics(&self) -> &CommitPhaseMetrics {

@@ -7,7 +7,7 @@ use nimbus_core::{
 #[cfg(any(test, feature = "test-hooks"))]
 use nimbus_storage::MemoryTenantSnapshot;
 use nimbus_storage::{
-    MySqlReadSnapshot, PostgresReadSnapshot, SqliteReadSnapshot,
+    MySqlReadSnapshot, PostgresReadSnapshot, SqliteReadSnapshot, TableIdentitySnapshotEntry,
     TenantReadSnapshot as RedbReadSnapshot,
 };
 
@@ -32,6 +32,20 @@ impl TenantPersistenceSnapshot {
 
     pub(crate) fn table_id(&self, table: &TableName) -> Result<Option<TableId>> {
         match_tenant_persistence_snapshot!(self, |snapshot| snapshot.table_id(table))
+    }
+
+    pub(crate) fn table_identities(&self) -> Result<Vec<TableIdentitySnapshotEntry>> {
+        match self {
+            Self::Redb(snapshot) => snapshot.table_identities(),
+            Self::Sqlite(snapshot) | Self::LibsqlReplica(snapshot) => snapshot
+                .lock()
+                .expect("sqlite read snapshot lock should not be poisoned")
+                .table_identities(),
+            Self::Postgres(snapshot) => snapshot.table_identities(),
+            Self::MySql(snapshot) => snapshot.table_identities(),
+            #[cfg(any(test, feature = "test-hooks"))]
+            Self::Memory(snapshot) => snapshot.table_identities(),
+        }
     }
 
     pub(crate) fn scan_resource_path_bindings(&self) -> Result<Vec<ResourcePathBinding>> {

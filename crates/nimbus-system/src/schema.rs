@@ -1,5 +1,7 @@
 use nimbus_core::{FieldSchema, FieldType, IndexDefinition, Result, TableName, TableSchema};
 
+pub(crate) const PROJECTION_FENCE_TABLE: &str = "_projection_fences";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum SystemTable {
     AdapterCapabilities,
@@ -181,6 +183,9 @@ pub(crate) fn system_table_schemas() -> Result<Vec<TableSchema>> {
                 number("lastWriteAt", false),
                 string("projectionEpoch", false),
                 number("projectionGeneration", false),
+                number("sourceTenantIncarnation", false),
+                number("sourceLeaseEpoch", false),
+                number("sourceDurableSequence", false),
             ],
             &[
                 index("by_tenantId", &["tenantId"]),
@@ -370,13 +375,43 @@ pub(crate) fn system_table_schemas() -> Result<Vec<TableSchema>> {
     ])
 }
 
+/// Schema for the private durable projection fence.
+///
+/// This table is intentionally not a [`SystemTable`]: it is storage-owned
+/// ordering state, not part of the operator or runtime system-table surface.
+pub(crate) fn projection_fence_table_schema() -> Result<TableSchema> {
+    table_named(
+        PROJECTION_FENCE_TABLE,
+        &[
+            string("tenantId", true),
+            string("name", true),
+            number("tenantIncarnation", true),
+            number("leaseEpoch", true),
+            number("durableSequence", true),
+            boolean("deleted", true),
+        ],
+        &[
+            index("by_tenantId", &["tenantId"]),
+            index("by_tenantId_and_name", &["tenantId", "name"]),
+        ],
+    )
+}
+
 fn table(
     table: SystemTable,
     fields: &[FieldSchema],
     indexes: &[IndexDefinition],
 ) -> Result<TableSchema> {
+    table_named(table.name(), fields, indexes)
+}
+
+fn table_named(
+    table: &str,
+    fields: &[FieldSchema],
+    indexes: &[IndexDefinition],
+) -> Result<TableSchema> {
     Ok(TableSchema {
-        table: table.table_name()?,
+        table: TableName::new(table)?,
         fields: fields.to_vec(),
         indexes: indexes.to_vec(),
         access_policy: None,

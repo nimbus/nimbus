@@ -186,6 +186,8 @@ pub(crate) fn prepare_warm_runtime_for_retention(
         );
     }
 
+    crate::runtime::bootstrap::release_runtime_invocation_bindings(&mut runtime.runtime);
+
     let carryover_limit_bytes = heap_carryover_limit_bytes(limits);
     let maintenance = run_boundary_memory_maintenance(&mut runtime.runtime, carryover_limit_bytes);
     let carryover_limit_bytes = maintenance.cleanliness.carryover_limit_bytes;

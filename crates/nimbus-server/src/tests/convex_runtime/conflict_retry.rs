@@ -221,6 +221,7 @@ async fn retry_exhaustion_test() {
         .mutation_journal
         .applied_head;
     let faults = engine.commit_fault_handle_for_testing();
+    let pre_assign_baseline = faults.hit_count(commit_fault_labels::PRE_ASSIGN);
     faults.inject_retryable_conflicts(commit_fault_labels::PRE_ASSIGN, 3, Some(applied_head));
 
     let response = invoke_mutation(&server, "counters:incrementA", document_id).await;
@@ -241,7 +242,11 @@ async fn retry_exhaustion_test() {
         body["error"]["detail"]["conflictingSequence"],
         json!(applied_head.0)
     );
-    assert_eq!(faults.hit_count(commit_fault_labels::PRE_ASSIGN), 3);
+    assert_eq!(
+        faults.hit_count(commit_fault_labels::PRE_ASSIGN),
+        pre_assign_baseline + 3,
+        "the mutation must consume exactly its three injected source-commit conflicts"
+    );
     let diagnostics = engine
         .tenant_engine_diagnostics(&tenant_id)
         .expect("tenant diagnostics should load");
@@ -342,6 +347,11 @@ async fn wait_before_retry_test() {
             response.status()
         );
     }
+    assert_eq!(
+        faults.hit_count(commit_fault_labels::PRE_ASSIGN),
+        pre_assign_baseline + 1,
+        "while the retry is fenced on the unpublished conflicting sequence, exactly the first source attempt must have reached PRE_ASSIGN"
+    );
 
     let blocked = engine
         .tenant_engine_diagnostics(&tenant_id)
@@ -371,10 +381,6 @@ async fn wait_before_retry_test() {
         .tenant_engine_diagnostics(&tenant_id)
         .expect("post-retry diagnostics should load");
     assert!(after.mutation_journal.applied_head >= conflicting_sequence);
-    assert_eq!(
-        faults.hit_count(commit_fault_labels::PRE_ASSIGN),
-        pre_assign_baseline + 2
-    );
     assert_eq!(
         after.commit_phases.mutation_conflict_retries_total,
         before.commit_phases.mutation_conflict_retries_total + 1

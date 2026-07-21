@@ -89,14 +89,19 @@ impl TenantRuntime {
         &self,
         first_sequence: SequenceNumber,
         requested_through: SequenceNumber,
+        projection_token: crate::engine::ProjectionToken,
     ) -> bool {
         self.observer_dispatch
-            .request_catch_up(first_sequence, requested_through)
+            .request_catch_up(first_sequence, requested_through, projection_token)
     }
 
     pub(crate) fn take_committed_mutation_observer_catch_up_request(
         &self,
-    ) -> Option<(SequenceNumber, SequenceNumber)> {
+    ) -> Option<(
+        SequenceNumber,
+        SequenceNumber,
+        crate::engine::ProjectionToken,
+    )> {
         self.observer_dispatch.take_catch_up_request()
     }
 
@@ -108,9 +113,13 @@ impl TenantRuntime {
         &self,
         first_sequence: SequenceNumber,
         requested_through: SequenceNumber,
+        projection_token: crate::engine::ProjectionToken,
     ) {
-        self.observer_dispatch
-            .abandon_catch_up(first_sequence, requested_through);
+        self.observer_dispatch.abandon_catch_up(
+            first_sequence,
+            requested_through,
+            projection_token,
+        );
     }
 
     #[cfg(test)]

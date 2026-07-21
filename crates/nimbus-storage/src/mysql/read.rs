@@ -545,6 +545,10 @@ impl MySqlReadSnapshot {
         Ok(self.progress)
     }
 
+    pub fn table_identities(&self) -> Result<Vec<crate::TableIdentitySnapshotEntry>> {
+        Ok(self.table_identities.clone())
+    }
+
     pub fn export_materialized_journal_snapshot(&self) -> Result<MaterializedJournalSnapshot> {
         Ok(MaterializedJournalSnapshot {
             version: MATERIALIZED_JOURNAL_SNAPSHOT_VERSION,

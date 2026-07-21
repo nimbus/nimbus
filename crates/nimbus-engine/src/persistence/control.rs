@@ -96,4 +96,37 @@ impl ControlPlaneProvider {
     pub(crate) fn list_object_placements(&self) -> Result<Vec<ObjectPlacement>> {
         self.object_placement_store()?.list()
     }
+
+    pub(crate) fn advance_tenant_incarnation(
+        &self,
+        tenant_id: &nimbus_core::TenantId,
+    ) -> Result<u64> {
+        match self {
+            Self::EmbeddedRedb(provider) => provider.tenant_incarnation_store()?.advance(tenant_id),
+        }
+    }
+
+    pub(crate) fn tenant_incarnation(&self, tenant_id: &nimbus_core::TenantId) -> Result<u64> {
+        match self {
+            Self::EmbeddedRedb(provider) => provider.tenant_incarnation_store()?.current(tenant_id),
+        }
+    }
+
+    pub(crate) async fn advance_tenant_incarnation_async(
+        &self,
+        tenant_id: nimbus_core::TenantId,
+    ) -> Result<u64> {
+        match self {
+            Self::EmbeddedRedb(provider) => provider.advance_tenant_incarnation(tenant_id).await,
+        }
+    }
+
+    pub(crate) async fn tenant_incarnation_async(
+        &self,
+        tenant_id: nimbus_core::TenantId,
+    ) -> Result<u64> {
+        match self {
+            Self::EmbeddedRedb(provider) => provider.tenant_incarnation(tenant_id).await,
+        }
+    }
 }

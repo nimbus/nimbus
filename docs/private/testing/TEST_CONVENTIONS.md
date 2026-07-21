@@ -38,6 +38,11 @@ Classify tests by purity and extent.
 - External-provider tests: real Postgres, MySQL, libSQL, Node canaries, KVM, or
   OCI runtime stacks. These require a nextest group or ledger row.
 
+PostgreSQL, MySQL, and libSQL storage/engine/system lanes use the owned fixture
+interface in [external-provider-fixtures.md](./external-provider-fixtures.md).
+Do not reproduce provider image, port, readiness, URL, or cleanup policy in a
+workflow or local shell command.
+
 Avoid wall-clock sleeps, hidden global state, and implicit network dependencies.
 If a case is hard to test cleanly, improve the seam before expanding coverage.
 

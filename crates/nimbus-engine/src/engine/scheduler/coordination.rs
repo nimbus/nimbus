@@ -197,9 +197,18 @@ impl Engine {
         }
 
         let opened_executor = opened.executor.clone();
+        let tenant_incarnation = match opened.incarnation {
+            Some(incarnation) => incarnation,
+            None => {
+                self.control_plane_provider
+                    .tenant_incarnation_async(tenant_id.clone())
+                    .await?
+            }
+        };
         let runtime = Arc::new(
             TenantRuntime::from_parts_async(
                 tenant_id.clone(),
+                tenant_incarnation,
                 opened.persistence.clone(),
                 opened_executor,
                 self.committer_lease_clock.clone(),

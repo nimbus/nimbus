@@ -4,6 +4,11 @@ pub(super) use std::ops::Bound;
 pub(super) use std::sync::atomic::{AtomicU64, Ordering};
 pub(super) use std::time::{SystemTime, UNIX_EPOCH};
 
+pub(super) use super::super::{
+    ExternalProviderFixtureMode, FieldSchema, FieldType, MySqlProvider, MySqlProviderConfig,
+    TenantEventRecord, TenantReadStorage, external_provider_fixture_mode,
+};
+pub(super) use crate::{ResolvedScheduleOp, ResolvedWrite};
 pub(super) use mysql_async::prelude::Queryable;
 pub(super) use mysql_async::{Opts, Pool};
 pub(super) use nimbus_core::{
@@ -12,17 +17,6 @@ pub(super) use nimbus_core::{
     ScheduledJobResult, Schema, SchemaChangeEvent, SequenceNumber, TableId, TableName, TableSchema,
     TableState, TenantEventKind, TenantId, Timestamp, TriggerDeliveryCursor, WriteOp, WriteOpType,
 };
-pub(super) use testcontainers_modules::{
-    mysql,
-    testcontainers::{ContainerAsync, runners::AsyncRunner},
-};
-
-pub(super) use super::super::{
-    Duration, FieldSchema, FieldType, MySqlProvider, MySqlProviderConfig, TenantEventRecord,
-    TenantReadStorage, implicit_external_provider_fixtures_disabled,
-    require_explicit_external_provider_fixture_envs, timeout,
-};
-pub(super) use crate::{ResolvedScheduleOp, ResolvedWrite};
 
 pub(super) const MYSQL_URL_ENV: &str = "NIMBUS_MYSQL_URL";
 pub(super) static TEST_SUFFIX_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -40,7 +34,7 @@ where
     let metadata_database = format!("nimbus_meta_{}", &suffix[..16.min(suffix.len())]);
     let tenant_database_prefix = format!("tenant_{}_", &suffix[..12.min(suffix.len())]);
     let config = MySqlProviderConfig {
-        connection_string: connection.connection_string().to_string(),
+        connection_string: connection,
         metadata_database,
         tenant_database_prefix,
         min_connections: Some(1),
@@ -54,79 +48,15 @@ where
         .drop_provider_databases_for_test()
         .await
         .expect("test provider databases should drop");
-    drop(connection);
 }
 
-pub(super) enum TestConnection {
-    External(String),
-    Container {
-        connection_string: String,
-        _container: Box<ContainerAsync<mysql::Mysql>>,
-    },
-}
-
-impl TestConnection {
-    fn connection_string(&self) -> &str {
-        match self {
-            Self::External(connection_string) => connection_string,
-            Self::Container {
-                connection_string, ..
-            } => connection_string,
+pub(super) async fn test_connection() -> Option<String> {
+    match external_provider_fixture_mode("mysql", "MySQL storage provider", &[MYSQL_URL_ENV]) {
+        ExternalProviderFixtureMode::UseExplicit => {
+            Some(env::var(MYSQL_URL_ENV).expect("fixture policy should require the MySQL URL"))
         }
+        ExternalProviderFixtureMode::Omit => None,
     }
-}
-
-pub(super) async fn test_connection() -> Option<TestConnection> {
-    if let Ok(connection_string) = env::var(MYSQL_URL_ENV) {
-        return Some(TestConnection::External(connection_string));
-    }
-
-    require_explicit_external_provider_fixture_envs("MySQL provider", &[MYSQL_URL_ENV]);
-    if implicit_external_provider_fixtures_disabled("MySQL provider") {
-        return None;
-    }
-
-    let container = match mysql::Mysql::default().start().await {
-        Ok(container) => container,
-        Err(error) => {
-            eprintln!(
-                "skipping mysql provider test because no explicit MySQL URL was provided and container startup failed: {error}"
-            );
-            return None;
-        }
-    };
-    let host = container
-        .get_host()
-        .await
-        .expect("container host should resolve");
-    let port = container
-        .get_host_port_ipv4(3306)
-        .await
-        .expect("container port should resolve");
-
-    let url = format!("mysql://root@{host}:{port}/test");
-    if timeout(Duration::from_secs(20), async {
-        loop {
-            if MySqlProvider::connect(MySqlProviderConfig::new(url.clone()))
-                .await
-                .is_ok()
-            {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(250)).await;
-        }
-    })
-    .await
-    .is_err()
-    {
-        eprintln!("skipping mysql provider test because the MySQL container never became ready");
-        return None;
-    }
-
-    Some(TestConnection::Container {
-        connection_string: url,
-        _container: Box::new(container),
-    })
 }
 
 pub(super) fn unique_suffix() -> String {
