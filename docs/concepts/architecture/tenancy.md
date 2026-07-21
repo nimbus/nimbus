@@ -102,11 +102,11 @@ Operator-facing state lives in its own tenant: `_nimbus`
 (`crates/nimbus-system/src/identity.rs`). The underscore prefix is reserved —
 user tenant ids beginning with `_` are rejected at validation, so no
 application tenant can collide with or impersonate system identity.
-`crates/nimbus-system` defines the system tenant's sixteen tables
+`crates/nimbus-system` defines the system tenant's eighteen tables
 (`crates/nimbus-system/src/schema.rs`): machines, services, bundles,
-functions, tables, events, runs, scheduled jobs, cron jobs, routes, listeners,
-subscriptions, ports, adapter capabilities, system status, and workload
-status. Operator observability is therefore ordinary tenant data — queried,
+functions, modules, source packages, tables, events, runs, scheduled jobs,
+cron jobs, routes, listeners, subscriptions, ports, adapter capabilities,
+system status, and workload status. Operator observability is therefore ordinary tenant data — queried,
 indexed, and subscribed to through the same engine paths as application data,
 just under an identity applications can never hold.
 

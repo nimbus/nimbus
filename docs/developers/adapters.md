@@ -50,9 +50,11 @@ credentials, and writes `.env.local`. A bare `aws-sdk` (v2) dependency is too
 broad to imply DynamoDB or S3, so it only produces a banner hint and never
 enables a surface.
 
-The Firestore, MongoDB, DynamoDB, and S3 surfaces can each be switched off
-(`--no-firestore`, `--no-mongodb`, `--no-dynamodb`, `--no-s3`); the
-Convex-compatible surface and the native API are always on. Flags, ports, and
+The Firestore, MongoDB, DynamoDB, and S3 surfaces can each be switched off with
+`nimbus start` flags (`--no-firestore`, `--no-mongodb`, `--no-dynamodb`,
+`--no-s3`); the Convex-compatible surface and the native API are always on.
+Under `nimbus dev` a wire surface is enabled by its runtime dependency (above)
+rather than a flag — remove the dependency to leave it off. Flags, ports, and
 credentials are in [configuration](/reference/configuration/).
 
 ## Which surface should you reach for?

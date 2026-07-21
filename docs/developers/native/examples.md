@@ -19,11 +19,12 @@ in the source repository. Run them in place from a checkout.
 
 ```bash
 nimbus dev
-nimbus deploy [TARGET]
 ```
 
-`TARGET` is a URL or a configured target name; omit it to target your local
-server. The `html` app also runs on a standalone Vite dev server with
+`nimbus dev` starts a local server for the apps to talk to. These apps drive
+Nimbus directly over the native SDK's HTTP and WebSocket transports — there is
+no Nimbus function bundle to deploy, so there is no `nimbus deploy` step. The
+`html` app also runs on a standalone Vite dev server with
 `npm run nimbus:example:html`.
 
 ## The apps

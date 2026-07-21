@@ -21,13 +21,15 @@ repository's workspace packages.
 
 ```bash
 nimbus dev
-nimbus deploy [TARGET]
 ```
 
-`TARGET` is a URL or a configured target name; omit it to target your local
-server. The Firestore project id is `demo`, which maps to the same-named Nimbus
-tenant. Each app also has standalone `firebase:server:*` and `firebase:example:*`
-npm scripts, listed in its README.
+`nimbus dev` starts a local server with the Firestore-compatible routes. The
+Firestore project id is `demo`, which maps to the same-named Nimbus tenant.
+These apps are Firestore *clients* (a browser UI plus a support server) with no
+Nimbus function bundle to deploy, so there is no `nimbus deploy` step. Each app
+also has standalone `firebase:server:*` (the support server) and
+`firebase:example:*` (the Vite dev server) npm scripts, listed in its README —
+run them in place from a checkout.
 
 ## The apps
 

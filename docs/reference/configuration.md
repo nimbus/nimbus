@@ -16,11 +16,11 @@ Settings resolve as CLI flag, then environment variable, then config file.
 The JSON config file is named by `--config <path>` or the `NIMBUS_CONFIG`
 environment variable (the flag wins when both are set).
 
-Only storage and encryption settings have config-file keys, and all of them
-live under the top-level `persistence` object. Network, runtime-limit, app,
-compose, and license settings are CLI and environment only. Unknown keys are
-rejected — both at the top level and inside `persistence` — so a typo fails
-startup instead of being silently ignored.
+Config-file keys live under two top-level objects: `persistence` (storage and
+encryption) and `functions` (function-scaling policy, below). Network,
+runtime-limit, app, compose, and license settings are CLI and environment only.
+Unknown keys are rejected — at the top level and inside each object — so a typo
+fails startup instead of being silently ignored.
 
 ```json
 {
@@ -60,7 +60,7 @@ does not block. See [Hardening](/operators/hardening/).
 
 Every adapter surface is served by default — the Convex-compatible
 surface and native API on the main listener, the Firestore routes
-alongside them, and the MongoDB and DynamoDB wire listeners on their
+alongside them, and the MongoDB, DynamoDB, and S3 wire listeners on their
 conventional ports:
 
 | Surface | Default | Switch off | Credential override |
@@ -68,16 +68,17 @@ conventional ports:
 | Firestore routes | on (main listener) | `--no-firestore` | Main-listener auth applies |
 | MongoDB listener | on (`127.0.0.1:27017`) | `--no-mongodb` | `--mongodb-username` (or `NIMBUS_MONGODB_USERNAME`) + `NIMBUS_MONGODB_PASSWORD` (env-only) |
 | DynamoDB listener | on (`127.0.0.1:8000`) | `--no-dynamodb` | `--dynamodb-access-key KEY_ID:SECRET:TENANT` (repeatable) or `NIMBUS_DYNAMODB_ACCESS_KEYS` (comma-separated) |
+| S3 listener | on (`127.0.0.1:9000`) | `--no-s3` | `--s3-access-key KEY_ID:SECRET:TENANT` (repeatable) |
 
 When a conventional port is busy, that listener is skipped with a
-warning. `--mongodb-port <port>` / `--dynamodb-port <port>` pin an
+warning. `--mongodb-port` / `--dynamodb-port` / `--s3-port` pin an
 explicit port instead — then a busy port is a hard startup error.
 
-Every request authenticates. Without credential overrides, both wire
-listeners use generated credentials persisted at `wire-credentials.json`
-(owner-only, `0600`) in the data directory; the generated DynamoDB key
-binds to the tenant `default`, and explicit access-key bindings replace
-it.
+Every request authenticates. Without credential overrides, the MongoDB and
+DynamoDB listeners use generated credentials persisted at
+`wire-credentials.json` (owner-only, `0600`) in the data directory; the
+generated DynamoDB key binds to the tenant `default`, and explicit access-key
+bindings replace it.
 
 The MongoDB listener is loopback-only — non-loopback hosts are refused
 even with `--allow-network`. The DynamoDB listener may bind a
@@ -205,6 +206,40 @@ values for your machine.
 | `--runtime-max-in-flight-per-tenant` | derived: 2 × active per tenant, capped at worker threads | Maximum active plus parked top-level runtime invocations per tenant. |
 | `--runtime-max-queued-per-tenant` | derived: equals the in-flight default | Maximum queued top-level runtime invocations per tenant. |
 | `--runtime-max-nested-calls` | `64` | Maximum nested runtime `ctx.run*` invocations per request tree. |
+
+## Function scaling
+
+Warm-pool scaling for runtime functions is the one config-file surface outside
+`persistence`. It lives under the top-level `functions` object and is read from
+the same `--config` file:
+
+```json
+{
+  "functions": {
+    "scaling": {
+      "default": { "preset": "warm", "min_warm": 1, "max_warm": "auto", "scale_down_delay": "10m" },
+      "classes": {
+        "hot": { "preset": "latency", "min_warm": 2 }
+      },
+      "overrides": {
+        "messages:send": { "class": "hot", "reason": "chat send path" }
+      }
+    }
+  }
+}
+```
+
+| Key (`functions.scaling.`) | Meaning |
+| --- | --- |
+| `default` | Baseline policy for every function without a more specific match. |
+| `classes` | Named reusable policies (`classes.<name>`) that overrides and functions can point at. |
+| `overrides` | Per-function policy by function name (`overrides.<function>`), optionally naming a `class` plus a free-text `reason`. |
+
+A policy object accepts `preset` (`economy`, `warm`, `latency`, or `fixed`),
+`min_warm` (an integer floor of warm isolates), `max_warm` (`auto` or an
+integer ceiling), and `scale_down_delay` (seconds, or a duration string like
+`10m`). `nimbus run --config` reads the same keys; run
+`nimbus explain functions <name>` to see the resolved policy for a function.
 
 ## App directory and codegen
 
