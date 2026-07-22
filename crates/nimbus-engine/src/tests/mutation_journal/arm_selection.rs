@@ -318,8 +318,8 @@ async fn ordered_publisher_serializes_queued_direct_and_execution_unit_paths() {
     wait_for_mutation_journal_stats(
         &engine,
         &tenant_id,
-        "direct path should queue behind the actor-owned queued batch",
-        |stats| stats.committer_inbox_depth == 1 && stats.publisher_queue_depth == 0,
+        "direct path should queue behind the paused publisher batch",
+        |stats| stats.committer_inbox_depth == 0 && stats.publisher_queue_depth == 1,
     )
     .await;
 
