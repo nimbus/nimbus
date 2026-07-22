@@ -554,11 +554,6 @@ async fn mysql_background_poll_loads_unloaded_tenants_with_scheduled_work() {
                 .await
                 .expect("tenant should create");
 
-            let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-            let scheduler_handle_a =
-                tokio::spawn(crate::run_scheduler(engine_a.clone(), shutdown_rx.clone()));
-            let scheduler_handle_b =
-                tokio::spawn(crate::run_scheduler(engine_b.clone(), shutdown_rx));
             engine_a
                 .schedule_mutation_async(
                     tenant_id.clone(),
@@ -577,6 +572,8 @@ async fn mysql_background_poll_loads_unloaded_tenants_with_scheduled_work() {
                 .await
                 .expect("scheduled mutation should persist");
 
+            // Keep the due row pending until the polling path has proved tenant
+            // discovery; scheduler execution is a separate assertion.
             wait_for_value(
                 "mysql poll should load the scheduled tenant into the second engine",
                 Duration::from_secs(3),
@@ -588,6 +585,12 @@ async fn mysql_background_poll_loads_unloaded_tenants_with_scheduled_work() {
                 |tenant_ids| tenant_ids.contains(&tenant_id),
             )
             .await;
+
+            let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+            let scheduler_handle_a =
+                tokio::spawn(crate::run_scheduler(engine_a.clone(), shutdown_rx.clone()));
+            let scheduler_handle_b =
+                tokio::spawn(crate::run_scheduler(engine_b.clone(), shutdown_rx));
             wait_for_value(
                 "mysql lease owner should execute externally visible scheduled work",
                 Duration::from_secs(3),

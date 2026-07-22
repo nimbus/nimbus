@@ -59,11 +59,6 @@ async fn postgres_notifications_load_unloaded_tenants_with_scheduled_work() {
                 .await
                 .expect("tenant should create");
 
-            let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-            let scheduler_handle_a =
-                tokio::spawn(crate::run_scheduler(engine_a.clone(), shutdown_rx.clone()));
-            let scheduler_handle_b =
-                tokio::spawn(crate::run_scheduler(engine_b.clone(), shutdown_rx));
             engine_a
                 .schedule_mutation_async(
                     tenant_id.clone(),
@@ -82,6 +77,25 @@ async fn postgres_notifications_load_unloaded_tenants_with_scheduled_work() {
                 .await
                 .expect("scheduled mutation should persist");
 
+            // Keep the due row pending until the notification path has proved
+            // tenant discovery; scheduler execution is a separate assertion.
+            wait_for_value(
+                "postgres notification should load the scheduled tenant into the second engine",
+                Duration::from_secs(2),
+                Duration::from_millis(25),
+                || {
+                    let engine = engine_b.clone();
+                    async move { engine.loaded_tenant_ids() }
+                },
+                |tenant_ids| tenant_ids.contains(&tenant_id),
+            )
+            .await;
+
+            let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+            let scheduler_handle_a =
+                tokio::spawn(crate::run_scheduler(engine_a.clone(), shutdown_rx.clone()));
+            let scheduler_handle_b =
+                tokio::spawn(crate::run_scheduler(engine_b.clone(), shutdown_rx));
             wait_for_value(
                 "postgres lease owner should execute externally visible scheduled work",
                 Duration::from_secs(2),
@@ -105,17 +119,6 @@ async fn postgres_notifications_load_unloaded_tenants_with_scheduled_work() {
                             == Some("Scheduled externally")
                     })
                 },
-            )
-            .await;
-            wait_for_value(
-                "postgres notification should load the scheduled tenant into the second engine",
-                Duration::from_secs(2),
-                Duration::from_millis(25),
-                || {
-                    let engine = engine_b.clone();
-                    async move { engine.loaded_tenant_ids() }
-                },
-                |tenant_ids| tenant_ids.contains(&tenant_id),
             )
             .await;
 
