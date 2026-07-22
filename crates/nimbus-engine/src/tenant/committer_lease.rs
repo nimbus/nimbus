@@ -1093,6 +1093,7 @@ mod tests {
                 Arc::new(SystemMonotonicClock),
                 clock.clone(),
                 Some("lease-owner".to_string()),
+                Arc::new(nimbus_core::SystemIdSource),
             )
             .expect("test runtime should construct"),
         );

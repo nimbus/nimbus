@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::sync::{Arc, RwLock};
 
-use nimbus_core::{Error, Result, TenantId, WallClock};
+use nimbus_core::{Error, IdSource, Result, SystemIdSource, TenantId, WallClock};
 use tokio::runtime::Handle as TokioRuntimeHandle;
 
 use crate::async_storage::{BlockingReadExecutor, BlockingWriteExecutor};
@@ -21,6 +21,7 @@ pub struct MemoryTenantProvider {
     tenants: Arc<RwLock<HashMap<TenantId, Arc<MemoryTenantStore>>>>,
     clock: Arc<dyn WallClock>,
     fault_injector: Arc<dyn FaultInjector>,
+    id_source: Arc<dyn IdSource>,
     storage_handle: TokioRuntimeHandle,
     tenant_read_parallelism: usize,
 }
@@ -31,12 +32,27 @@ impl MemoryTenantProvider {
         fault_injector: Arc<dyn FaultInjector>,
         storage_handle: TokioRuntimeHandle,
     ) -> Self {
+        Self::new_with_id_source(
+            clock,
+            fault_injector,
+            storage_handle,
+            Arc::new(SystemIdSource),
+        )
+    }
+
+    pub fn new_with_id_source(
+        clock: Arc<dyn WallClock>,
+        fault_injector: Arc<dyn FaultInjector>,
+        storage_handle: TokioRuntimeHandle,
+        id_source: Arc<dyn IdSource>,
+    ) -> Self {
         let tenant_read_parallelism =
             std::thread::available_parallelism().map_or(2, |parallelism| parallelism.get().max(2));
         Self {
             tenants: Arc::new(RwLock::new(HashMap::new())),
             clock,
             fault_injector,
+            id_source,
             storage_handle,
             tenant_read_parallelism,
         }
@@ -100,9 +116,10 @@ impl MemoryTenantProvider {
             self.fault_injector.clone(),
             tenant_id.clone(),
         );
-        let store = Arc::new(MemoryTenantStore::with_simulation(
+        let store = Arc::new(MemoryTenantStore::with_simulation_and_id_source(
             self.clock.clone(),
             tenant_faults,
+            self.id_source.clone(),
         ));
         tenants.insert(tenant_id.clone(), store.clone());
         drop(tenants);

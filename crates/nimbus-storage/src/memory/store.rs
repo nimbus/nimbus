@@ -1,6 +1,6 @@
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use nimbus_core::{Error, Result, SystemWallClock, Timestamp, WallClock};
+use nimbus_core::{Error, IdSource, Result, SystemIdSource, SystemWallClock, Timestamp, WallClock};
 
 use crate::TenantWriteCommit;
 use crate::async_storage::BlockingWriteStore;
@@ -30,8 +30,16 @@ impl MemoryTenantStore {
         clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
     ) -> Self {
+        Self::with_simulation_and_id_source(clock, fault_injector, Arc::new(SystemIdSource))
+    }
+
+    pub fn with_simulation_and_id_source(
+        clock: Arc<dyn WallClock>,
+        fault_injector: Arc<dyn FaultInjector>,
+        id_source: Arc<dyn IdSource>,
+    ) -> Self {
         Self {
-            state: Arc::new(RwLock::new(MemoryState::default())),
+            state: Arc::new(RwLock::new(MemoryState::with_id_source(id_source))),
             clock,
             fault_injector,
         }

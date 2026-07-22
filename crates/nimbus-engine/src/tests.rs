@@ -55,6 +55,7 @@ mod mutation_journal;
 mod mysql_provider;
 mod policy;
 mod postgres_provider;
+mod ppsc;
 mod provider_fixtures;
 mod provider_publisher_contract;
 mod queries;

@@ -82,7 +82,8 @@ pub(super) fn durable_record_index_keys_in_write_txn(
     write_txn: &redb::WriteTransaction,
     document: &Document,
     table_schema: &TableSchema,
+    id_source: &dyn nimbus_core::IdSource,
 ) -> Result<Vec<Vec<u8>>> {
-    let table_id = resolve_or_create_table_id_in_write_txn(write_txn, &document.table)?;
+    let table_id = resolve_or_create_table_id_in_write_txn(write_txn, &document.table, id_source)?;
     durable_record_index_keys_for_table_id(document, table_schema, &table_id)
 }

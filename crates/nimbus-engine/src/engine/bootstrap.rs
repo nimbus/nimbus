@@ -111,11 +111,13 @@ pub(super) fn build_memory_engine(
     let (engine_executor, storage_executor) = build_executors()?;
     let control_plane_provider =
         build_control_plane_provider(data_dir.clone(), None, &storage_executor)?;
-    let persistence_provider = PersistenceProvider::Memory(Arc::new(MemoryTenantProvider::new(
-        clock.clone(),
-        storage_fault_injector.clone(),
-        storage_executor.handle(),
-    )));
+    let persistence_provider =
+        PersistenceProvider::Memory(Arc::new(MemoryTenantProvider::new_with_id_source(
+            clock.clone(),
+            storage_fault_injector.clone(),
+            storage_executor.handle(),
+            id_source.clone(),
+        )));
 
     Ok(Engine::from_bootstrap_parts(EngineBootstrapParts {
         data_dir,
@@ -213,38 +215,42 @@ fn build_embedded_from_plan(
     let persistence_provider = match plan.provider_kind {
         EmbeddedProviderKind::Redb => {
             let provider = if let Some(provider) = encryption_provider {
-                EmbeddedRedbProvider::new_encrypted(
+                EmbeddedRedbProvider::new_encrypted_with_id_source(
                     plan.data_dir.clone(),
                     provider,
                     simulation.clock.clone(),
                     simulation.storage_fault_injector.clone(),
                     storage_executor.handle(),
+                    simulation.id_source.clone(),
                 )?
             } else {
-                EmbeddedRedbProvider::new(
+                EmbeddedRedbProvider::new_with_id_source(
                     plan.data_dir.clone(),
                     simulation.clock.clone(),
                     simulation.storage_fault_injector.clone(),
                     storage_executor.handle(),
+                    simulation.id_source.clone(),
                 )?
             };
             PersistenceProvider::Redb(Arc::new(provider))
         }
         EmbeddedProviderKind::Sqlite => {
             let provider = if let Some(provider) = encryption_provider {
-                EmbeddedSqliteProvider::new_encrypted(
+                EmbeddedSqliteProvider::new_encrypted_with_id_source(
                     plan.data_dir.clone(),
                     provider,
                     simulation.clock.clone(),
                     simulation.storage_fault_injector.clone(),
                     storage_executor.handle(),
+                    simulation.id_source.clone(),
                 )?
             } else {
-                EmbeddedSqliteProvider::new(
+                EmbeddedSqliteProvider::new_with_id_source(
                     plan.data_dir.clone(),
                     simulation.clock.clone(),
                     simulation.storage_fault_injector.clone(),
                     storage_executor.handle(),
+                    simulation.id_source.clone(),
                 )?
             };
             PersistenceProvider::Sqlite(Arc::new(provider))

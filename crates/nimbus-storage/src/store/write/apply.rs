@@ -10,9 +10,7 @@ use crate::keys::document_key;
 use crate::store::resource_paths::{
     remove_resource_path_binding_in_write_txn, upsert_resource_path_binding_in_write_txn,
 };
-use crate::store::table_catalog::{
-    resolve_or_create_table_id_in_write_txn, resolve_table_id_in_write_txn,
-};
+use crate::store::table_catalog::resolve_table_id_in_write_txn;
 
 use super::super::{DOCUMENTS, EMPTY_TABLE_VALUE, INDEXES, TenantWriteTransaction, map_redb_error};
 
@@ -72,7 +70,7 @@ impl TenantWriteTransaction {
         trigger_write_origin: Option<&TriggerWriteOrigin>,
     ) -> Result<()> {
         self.check_cancel()?;
-        let table_id = resolve_or_create_table_id_in_write_txn(self.write_txn()?, &document.table)?;
+        let table_id = self.resolve_or_create_table_id(&document.table)?;
         let key = document_key(&table_id, &document.id);
         {
             let mut documents = self

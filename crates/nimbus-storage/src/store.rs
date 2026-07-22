@@ -16,7 +16,7 @@ mod write;
 use std::sync::Arc;
 
 use nimbus_core::{
-    CommitEntry, Document, Error, IndexDefinition, JobId, ResourcePathBinding, Result,
+    CommitEntry, Document, Error, IdSource, IndexDefinition, JobId, ResourcePathBinding, Result,
     ScheduledJob, SequenceNumber, TenantEventKind, Timestamp, WallClock, WriteOp,
 };
 use redb::{Database, ReadTransaction, TableDefinition};
@@ -90,6 +90,7 @@ pub struct TenantStore {
     pub(crate) db: Database,
     pub(crate) clock: Arc<dyn WallClock>,
     pub(crate) fault_injector: Arc<dyn FaultInjector>,
+    pub(crate) id_source: Arc<dyn IdSource>,
     pub(crate) retention_floor: Arc<RetentionFloor>,
     scan_metrics: Arc<ScanMetrics>,
 }
@@ -166,6 +167,7 @@ pub struct TenantWriteTransaction {
     write_txn: Option<redb::WriteTransaction>,
     clock: Arc<dyn WallClock>,
     fault_injector: Arc<dyn FaultInjector>,
+    id_source: Arc<dyn IdSource>,
     commit_writes: Vec<WriteOp>,
     tenant_events: Vec<TenantEventKind>,
     prepared_record: Option<nimbus_core::TenantEventRecord>,

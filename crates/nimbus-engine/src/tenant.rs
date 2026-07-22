@@ -8,7 +8,8 @@ use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwap;
 use nimbus_core::{
-    Error, MonotonicClock, Result, Schema, TableId, TableName, TenantId, Timestamp, WallClock,
+    Error, IdSource, MonotonicClock, Result, Schema, TableId, TableName, TenantId, Timestamp,
+    WallClock,
 };
 use nimbus_storage::LibsqlReplicaFreshnessStats;
 use serde::Serialize;
@@ -165,6 +166,7 @@ pub struct TenantRuntime {
     observer_dispatch: Arc<ObserverHandoff>,
     observer_lifetime: Arc<()>,
     monotonic_clock: Arc<dyn MonotonicClock>,
+    id_source: Arc<dyn IdSource>,
     write_rate: TenantWriteRateLimiter,
     last_assigned_commit_timestamp: AtomicU64,
     prepared_table_ids: Mutex<HashMap<TableName, TableId>>,
@@ -301,6 +303,7 @@ impl TenantRuntime {
         initial_state: TenantRuntimeInitialState,
         timing: TenantRuntimeTiming,
         committer_owner_id: Option<String>,
+        id_source: Arc<dyn IdSource>,
     ) -> Self {
         let TenantRuntimeInitialState {
             schema,
@@ -348,6 +351,7 @@ impl TenantRuntime {
             observer_dispatch,
             observer_lifetime: Arc::new(()),
             monotonic_clock: timing.monotonic_clock,
+            id_source,
             write_rate: TenantWriteRateLimiter::new(),
             last_assigned_commit_timestamp: AtomicU64::new(last_commit_timestamp.0),
             prepared_table_ids: Mutex::new(HashMap::new()),
@@ -372,6 +376,7 @@ impl TenantRuntime {
         initial_state: TenantRuntimeInitialState,
         timing: TenantRuntimeTiming,
         committer_owner_id: Option<String>,
+        id_source: Arc<dyn IdSource>,
     ) -> Self {
         Self::from_initialized_parts(
             tenant_id,
@@ -381,6 +386,7 @@ impl TenantRuntime {
             initial_state,
             timing,
             committer_owner_id,
+            id_source,
         )
     }
 
@@ -428,6 +434,7 @@ impl TenantRuntime {
         monotonic_clock: Arc<dyn MonotonicClock>,
         renewal_clock: Arc<dyn LeaseRenewalClock>,
         committer_owner_id: Option<String>,
+        id_source: Arc<dyn IdSource>,
     ) -> Result<Self> {
         let schema = store.load_schema()?;
         let progress = store.journal_progress()?;
@@ -452,6 +459,7 @@ impl TenantRuntime {
             },
             TenantRuntimeTiming::new(monotonic_clock, renewal_clock),
             committer_owner_id,
+            id_source,
         ))
     }
 
@@ -464,6 +472,7 @@ impl TenantRuntime {
         monotonic_clock: Arc<dyn MonotonicClock>,
         renewal_clock: Arc<dyn LeaseRenewalClock>,
         committer_owner_id: Option<String>,
+        id_source: Arc<dyn IdSource>,
     ) -> Result<Self> {
         let (initial_state, _) = Self::load_initial_state_async(&store, &read_storage).await?;
         Ok(Self::from_loaded_state(
@@ -474,6 +483,7 @@ impl TenantRuntime {
             initial_state,
             TenantRuntimeTiming::new(monotonic_clock, renewal_clock),
             committer_owner_id,
+            id_source,
         ))
     }
 
@@ -504,11 +514,12 @@ impl TenantRuntime {
                 .insert(table.clone(), table_id.clone());
             return table_id;
         }
+        let id_source = self.id_source.clone();
         self.prepared_table_ids
             .lock()
             .expect("prepared table-id lock should not be poisoned")
             .entry(table.clone())
-            .or_default()
+            .or_insert_with(|| id_source.next_table_id())
             .clone()
     }
 

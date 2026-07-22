@@ -23,11 +23,26 @@ impl SqliteTenantStore {
         clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
     ) -> Result<Self> {
-        Self::open_with_simulation_and_max_read_connections(
+        Self::open_with_simulation_and_id_source(
+            path,
+            clock,
+            fault_injector,
+            Arc::new(SystemIdSource),
+        )
+    }
+
+    pub fn open_with_simulation_and_id_source(
+        path: impl AsRef<Path>,
+        clock: Arc<dyn WallClock>,
+        fault_injector: Arc<dyn FaultInjector>,
+        id_source: Arc<dyn IdSource>,
+    ) -> Result<Self> {
+        Self::open_with_simulation_and_max_read_connections_and_id_source(
             path,
             clock,
             fault_injector,
             default_sqlite_read_connection_limit(),
+            id_source,
         )
     }
 
@@ -37,7 +52,30 @@ impl SqliteTenantStore {
         fault_injector: Arc<dyn FaultInjector>,
         max_read_connections: usize,
     ) -> Result<Self> {
-        Self::open_internal(path, None, clock, fault_injector, max_read_connections)
+        Self::open_with_simulation_and_max_read_connections_and_id_source(
+            path,
+            clock,
+            fault_injector,
+            max_read_connections,
+            Arc::new(SystemIdSource),
+        )
+    }
+
+    pub(crate) fn open_with_simulation_and_max_read_connections_and_id_source(
+        path: impl AsRef<Path>,
+        clock: Arc<dyn WallClock>,
+        fault_injector: Arc<dyn FaultInjector>,
+        max_read_connections: usize,
+        id_source: Arc<dyn IdSource>,
+    ) -> Result<Self> {
+        Self::open_internal(
+            path,
+            None,
+            clock,
+            fault_injector,
+            max_read_connections,
+            id_source,
+        )
     }
 
     /// Opens or creates an encrypted SQLite tenant store.
@@ -73,12 +111,29 @@ impl SqliteTenantStore {
         clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
     ) -> Result<Self> {
-        Self::open_encrypted_with_simulation_and_max_read_connections(
+        Self::open_encrypted_with_simulation_and_id_source(
+            path,
+            dek,
+            clock,
+            fault_injector,
+            Arc::new(SystemIdSource),
+        )
+    }
+
+    pub fn open_encrypted_with_simulation_and_id_source(
+        path: impl AsRef<Path>,
+        dek: &[u8; 32],
+        clock: Arc<dyn WallClock>,
+        fault_injector: Arc<dyn FaultInjector>,
+        id_source: Arc<dyn IdSource>,
+    ) -> Result<Self> {
+        Self::open_encrypted_with_simulation_and_max_read_connections_and_id_source(
             path,
             dek,
             clock,
             fault_injector,
             default_sqlite_read_connection_limit(),
+            id_source,
         )
     }
 
@@ -89,12 +144,31 @@ impl SqliteTenantStore {
         fault_injector: Arc<dyn FaultInjector>,
         max_read_connections: usize,
     ) -> Result<Self> {
+        Self::open_encrypted_with_simulation_and_max_read_connections_and_id_source(
+            path,
+            dek,
+            clock,
+            fault_injector,
+            max_read_connections,
+            Arc::new(SystemIdSource),
+        )
+    }
+
+    pub(crate) fn open_encrypted_with_simulation_and_max_read_connections_and_id_source(
+        path: impl AsRef<Path>,
+        dek: &[u8; 32],
+        clock: Arc<dyn WallClock>,
+        fault_injector: Arc<dyn FaultInjector>,
+        max_read_connections: usize,
+        id_source: Arc<dyn IdSource>,
+    ) -> Result<Self> {
         Self::open_internal(
             path,
             Some(DataEncryptionKey::new(*dek)),
             clock,
             fault_injector,
             max_read_connections,
+            id_source,
         )
     }
 
@@ -104,6 +178,7 @@ impl SqliteTenantStore {
         clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
         max_read_connections: usize,
+        id_source: Arc<dyn IdSource>,
     ) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
         if let Some(parent) = path.parent() {
@@ -114,6 +189,7 @@ impl SqliteTenantStore {
             dek,
             clock,
             fault_injector,
+            id_source,
             max_read_connections: max_read_connections.max(1),
             open_read_connections: Arc::new(AtomicUsize::new(0)),
             read_connections: Arc::new(Mutex::new(Vec::new())),
@@ -181,6 +257,7 @@ impl SqliteTenantStore {
             conn: Some(conn),
             clock: self.clock.clone(),
             fault_injector: self.fault_injector.clone(),
+            id_source: self.id_source.clone(),
             commit_writes: Vec::new(),
             tenant_events: Vec::new(),
             prepared_record: None,

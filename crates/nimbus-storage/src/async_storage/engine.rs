@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use nimbus_core::{Error, Result, TenantId, WallClock};
+use nimbus_core::{Error, IdSource, Result, SystemIdSource, TenantId, WallClock};
 use tokio::runtime::Handle as TokioRuntimeHandle;
 
 use crate::{FaultInjector, TenantStore};
@@ -46,6 +46,7 @@ pub struct EmbeddedRedbProvider {
     data_dir: PathBuf,
     clock: Arc<dyn WallClock>,
     fault_injector: Arc<dyn FaultInjector>,
+    id_source: Arc<dyn IdSource>,
     storage_handle: TokioRuntimeHandle,
     tenant_read_parallelism: usize,
     encryption_provider: Option<Arc<dyn LocalKeyProvider>>,
@@ -58,11 +59,28 @@ impl EmbeddedRedbProvider {
         fault_injector: Arc<dyn FaultInjector>,
         storage_handle: TokioRuntimeHandle,
     ) -> Result<Self> {
+        Self::new_with_id_source(
+            data_dir,
+            clock,
+            fault_injector,
+            storage_handle,
+            Arc::new(SystemIdSource),
+        )
+    }
+
+    pub fn new_with_id_source(
+        data_dir: impl Into<PathBuf>,
+        clock: Arc<dyn WallClock>,
+        fault_injector: Arc<dyn FaultInjector>,
+        storage_handle: TokioRuntimeHandle,
+        id_source: Arc<dyn IdSource>,
+    ) -> Result<Self> {
         let data_dir = data_dir.into();
         Ok(Self {
             data_dir,
             clock,
             fault_injector,
+            id_source,
             storage_handle,
             tenant_read_parallelism: default_tenant_read_parallelism(),
             encryption_provider: None,
@@ -76,11 +94,30 @@ impl EmbeddedRedbProvider {
         fault_injector: Arc<dyn FaultInjector>,
         storage_handle: TokioRuntimeHandle,
     ) -> Result<Self> {
+        Self::new_encrypted_with_id_source(
+            data_dir,
+            provider,
+            clock,
+            fault_injector,
+            storage_handle,
+            Arc::new(SystemIdSource),
+        )
+    }
+
+    pub fn new_encrypted_with_id_source(
+        data_dir: impl Into<PathBuf>,
+        provider: Arc<dyn LocalKeyProvider>,
+        clock: Arc<dyn WallClock>,
+        fault_injector: Arc<dyn FaultInjector>,
+        storage_handle: TokioRuntimeHandle,
+        id_source: Arc<dyn IdSource>,
+    ) -> Result<Self> {
         let data_dir = data_dir.into();
         Ok(Self {
             data_dir,
             clock,
             fault_injector,
+            id_source,
             storage_handle,
             tenant_read_parallelism: default_tenant_read_parallelism(),
             encryption_provider: Some(provider),
@@ -191,6 +228,7 @@ impl EmbeddedRedbProvider {
             tenant_id.clone(),
         );
         let provider = self.encryption_provider.clone();
+        let id_source = self.id_source.clone();
         let store = self
             .storage_handle
             .spawn_blocking(move || {
@@ -206,9 +244,20 @@ impl EmbeddedRedbProvider {
                         &subject,
                         ManifestCipher::RedbAes256GcmSiv,
                     )?;
-                    TenantStore::open_encrypted_with_simulation(path, &dek, clock, fault_injector)
+                    TenantStore::open_encrypted_with_simulation_and_id_source(
+                        path,
+                        &dek,
+                        clock,
+                        fault_injector,
+                        id_source,
+                    )
                 } else {
-                    TenantStore::open_with_simulation(path, clock, fault_injector)
+                    TenantStore::open_with_simulation_and_id_source(
+                        path,
+                        clock,
+                        fault_injector,
+                        id_source,
+                    )
                 }
             })
             .await

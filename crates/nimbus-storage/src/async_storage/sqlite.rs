@@ -2,7 +2,7 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use nimbus_core::{Error, Result, TenantId, WallClock};
+use nimbus_core::{Error, IdSource, Result, SystemIdSource, TenantId, WallClock};
 use tokio::runtime::Handle as TokioRuntimeHandle;
 
 use crate::sqlite::{SqliteTenantStore, SqliteWriteTransaction};
@@ -28,6 +28,7 @@ pub struct EmbeddedSqliteProvider {
     encryption_provider: Option<Arc<dyn LocalKeyProvider>>,
     clock: Arc<dyn WallClock>,
     fault_injector: Arc<dyn FaultInjector>,
+    id_source: Arc<dyn IdSource>,
     storage_handle: TokioRuntimeHandle,
     tenant_read_parallelism: usize,
 }
@@ -45,7 +46,30 @@ impl EmbeddedSqliteProvider {
         fault_injector: Arc<dyn FaultInjector>,
         storage_handle: TokioRuntimeHandle,
     ) -> Result<Self> {
-        Self::new_internal(data_dir, None, clock, fault_injector, storage_handle)
+        Self::new_with_id_source(
+            data_dir,
+            clock,
+            fault_injector,
+            storage_handle,
+            Arc::new(SystemIdSource),
+        )
+    }
+
+    pub fn new_with_id_source(
+        data_dir: impl Into<PathBuf>,
+        clock: Arc<dyn WallClock>,
+        fault_injector: Arc<dyn FaultInjector>,
+        storage_handle: TokioRuntimeHandle,
+        id_source: Arc<dyn IdSource>,
+    ) -> Result<Self> {
+        Self::new_internal(
+            data_dir,
+            None,
+            clock,
+            fault_injector,
+            storage_handle,
+            id_source,
+        )
     }
 
     /// Creates a new embedded SQLite provider with encryption enabled.
@@ -59,12 +83,31 @@ impl EmbeddedSqliteProvider {
         fault_injector: Arc<dyn FaultInjector>,
         storage_handle: TokioRuntimeHandle,
     ) -> Result<Self> {
+        Self::new_encrypted_with_id_source(
+            data_dir,
+            provider,
+            clock,
+            fault_injector,
+            storage_handle,
+            Arc::new(SystemIdSource),
+        )
+    }
+
+    pub fn new_encrypted_with_id_source(
+        data_dir: impl Into<PathBuf>,
+        provider: Arc<dyn LocalKeyProvider>,
+        clock: Arc<dyn WallClock>,
+        fault_injector: Arc<dyn FaultInjector>,
+        storage_handle: TokioRuntimeHandle,
+        id_source: Arc<dyn IdSource>,
+    ) -> Result<Self> {
         Self::new_internal(
             data_dir,
             Some(provider),
             clock,
             fault_injector,
             storage_handle,
+            id_source,
         )
     }
 
@@ -74,6 +117,7 @@ impl EmbeddedSqliteProvider {
         clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
         storage_handle: TokioRuntimeHandle,
+        id_source: Arc<dyn IdSource>,
     ) -> Result<Self> {
         let data_dir = data_dir.into();
         std::fs::create_dir_all(&data_dir).map_err(|error| Error::Internal(error.to_string()))?;
@@ -82,6 +126,7 @@ impl EmbeddedSqliteProvider {
             encryption_provider,
             clock,
             fault_injector,
+            id_source,
             storage_handle,
             tenant_read_parallelism: default_tenant_read_parallelism(),
         })
@@ -201,6 +246,7 @@ impl EmbeddedSqliteProvider {
             .tenant_read_parallelism
             .max(crate::sqlite::MIN_SQLITE_READ_CONNECTIONS);
         let provider = self.encryption_provider.clone();
+        let id_source = self.id_source.clone();
         let store = self
             .storage_handle
             .spawn_blocking(move || {
@@ -216,19 +262,21 @@ impl EmbeddedSqliteProvider {
                         &subject,
                         ManifestCipher::SqlCipher,
                     )?;
-                    SqliteTenantStore::open_encrypted_with_simulation_and_max_read_connections(
+                    SqliteTenantStore::open_encrypted_with_simulation_and_max_read_connections_and_id_source(
                         path,
                         &dek,
                         clock,
                         fault_injector,
                         read_parallelism,
+                        id_source,
                     )
                 } else {
-                    SqliteTenantStore::open_with_simulation_and_max_read_connections(
+                    SqliteTenantStore::open_with_simulation_and_max_read_connections_and_id_source(
                         path,
                         clock,
                         fault_injector,
                         read_parallelism,
+                        id_source,
                     )
                 }
             })

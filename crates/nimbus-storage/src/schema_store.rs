@@ -6,9 +6,7 @@ use redb::{ReadableTable, TableError};
 
 use crate::index::{index_key_for_document, table_index_prefix};
 use crate::keys::{prefix_end, table_prefix};
-use crate::store::table_catalog::{
-    resolve_or_create_table_id_in_write_txn, resolve_table_id_in_write_txn,
-};
+use crate::store::table_catalog::resolve_table_id_in_write_txn;
 use crate::store::{
     DOCUMENTS, INDEXES, SCHEMAS, TenantStore, TenantWriteTransaction, map_redb_error,
 };
@@ -17,8 +15,7 @@ impl TenantWriteTransaction {
     pub fn save_table_schema(&mut self, table_schema: &TableSchema) -> Result<()> {
         self.check_cancel()?;
         let previous = load_table_schema_in_write_txn(self.write_txn()?, &table_schema.table)?;
-        let table_id =
-            resolve_or_create_table_id_in_write_txn(self.write_txn()?, &table_schema.table)?;
+        let table_id = self.resolve_or_create_table_id(&table_schema.table)?;
         let table_schema = reconcile_table_schema_in_write_txn(self.write_txn()?, table_schema)?;
         let payload = rmp_serde::to_vec(&table_schema)
             .map_err(|error| Error::Serialization(error.to_string()))?;
@@ -39,8 +36,7 @@ impl TenantWriteTransaction {
         self.check_cancel()?;
         let previous = load_table_schema_in_write_txn(self.write_txn()?, &table_schema.table)?;
         let table_schema = reconcile_table_schema_in_write_txn(self.write_txn()?, table_schema)?;
-        let table_id =
-            resolve_or_create_table_id_in_write_txn(self.write_txn()?, &table_schema.table)?;
+        let table_id = self.resolve_or_create_table_id(&table_schema.table)?;
         let payload = rmp_serde::to_vec(&table_schema)
             .map_err(|error| Error::Serialization(error.to_string()))?;
         let keys_to_remove =

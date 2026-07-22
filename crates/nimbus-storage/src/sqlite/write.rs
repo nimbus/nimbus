@@ -27,7 +27,8 @@ impl SqliteTenantStore {
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn insert_document_for_testing(&self, document: &Document) -> Result<()> {
         let conn = self.open_connection()?;
-        let table_id = resolve_or_create_table_id_in_conn(&conn, &document.table)?;
+        let table_id =
+            resolve_or_create_table_id_in_conn(&conn, &document.table, self.id_source.as_ref())?;
         conn.execute(
             "INSERT INTO documents (table_id, id, data_json, typed_fields_json, creation_time, update_time)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -430,8 +431,7 @@ impl SqliteWriteTransaction {
         let previous = load_table_schema_from_conn(self.connection_mut()?, &table_schema.table)?;
         let table_schema =
             crate::sqlite::schema::reconcile_table_schema(self.connection_mut()?, table_schema)?;
-        let table_id =
-            resolve_or_create_table_id_in_conn(self.connection_mut()?, &table_schema.table)?;
+        let table_id = self.resolve_or_create_table_id(&table_schema.table)?;
         self.connection_mut()?
             .execute(
                 "INSERT INTO schemas (table_name, schema_json) VALUES (?1, ?2)
@@ -522,7 +522,7 @@ impl SqliteWriteTransaction {
 
     pub fn insert_document(&mut self, document: &Document) -> Result<()> {
         self.check_cancel()?;
-        let table_id = resolve_or_create_table_id_in_conn(self.connection_mut()?, &document.table)?;
+        let table_id = self.resolve_or_create_table_id(&document.table)?;
         self.connection_mut()?
             .execute(
                 "INSERT INTO documents (table_id, id, data_json, typed_fields_json, creation_time, update_time)
@@ -964,6 +964,11 @@ impl SqliteWriteTransaction {
         self.conn
             .as_mut()
             .ok_or_else(|| Error::Internal("sqlite write transaction already closed".to_string()))
+    }
+
+    fn resolve_or_create_table_id(&mut self, table: &TableName) -> Result<TableId> {
+        let id_source = self.id_source.clone();
+        resolve_or_create_table_id_in_conn(self.connection_mut()?, table, id_source.as_ref())
     }
 
     fn set_trigger_write_origin(&mut self, trigger_write_origin: Option<TriggerWriteOrigin>) {

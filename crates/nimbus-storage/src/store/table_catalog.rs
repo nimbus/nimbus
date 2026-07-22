@@ -148,12 +148,13 @@ pub(crate) fn export_table_identities_in_read_txn(
 pub(crate) fn resolve_or_create_table_id_in_write_txn(
     write_txn: &redb::WriteTransaction,
     table: &TableName,
+    id_source: &dyn nimbus_core::IdSource,
 ) -> Result<TableId> {
     if let Some(table_id) = resolve_table_id_in_write_txn(write_txn, table)? {
         return Ok(table_id);
     }
 
-    let table_id = TableId::new();
+    let table_id = id_source.next_table_id();
     let key = default_catalog_key(table);
     let value = encode_catalog_value(&TableCatalogValue::active(table_id.clone()))?;
     let mut catalog = write_txn

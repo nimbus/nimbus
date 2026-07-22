@@ -324,9 +324,12 @@ impl TenantStore {
                 let Some(table_schema) = snapshot.schema.get_table(&document.table) else {
                     continue;
                 };
-                for key in
-                    durable_record_index_keys_in_write_txn(&write_txn, document, table_schema)?
-                {
+                for key in durable_record_index_keys_in_write_txn(
+                    &write_txn,
+                    document,
+                    table_schema,
+                    self.id_source.as_ref(),
+                )? {
                     index_table
                         .insert(key.as_slice(), EMPTY_TABLE_VALUE)
                         .map_err(map_redb_error)?;

@@ -6,11 +6,11 @@ use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuar
 use std::time::Duration;
 
 use nimbus_core::{
-    CommitEntry, CronJob, Document, DocumentId, Error, Filter, IndexLifecycleEvent, JobId, Result,
-    ScheduledJob, ScheduledJobResult, Schema, SchemaChangeEvent, SequenceNumber, StorageErrorKind,
-    SystemWallClock, TableId, TableLifecycleEvent, TableName, TableSchema, TableState,
-    TenantEventKind, TenantEventRecord, Timestamp, TriggerDeliveryCursor, TriggerWriteOrigin,
-    WallClock, WriteOp, WriteOpType,
+    CommitEntry, CronJob, Document, DocumentId, Error, Filter, IdSource, IndexLifecycleEvent,
+    JobId, Result, ScheduledJob, ScheduledJobResult, Schema, SchemaChangeEvent, SequenceNumber,
+    StorageErrorKind, SystemIdSource, SystemWallClock, TableId, TableLifecycleEvent, TableName,
+    TableSchema, TableState, TenantEventKind, TenantEventRecord, Timestamp, TriggerDeliveryCursor,
+    TriggerWriteOrigin, WallClock, WriteOp, WriteOpType,
 };
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -260,6 +260,7 @@ pub struct SqliteTenantStore {
     dek: Option<DataEncryptionKey>,
     clock: Arc<dyn WallClock>,
     fault_injector: Arc<dyn FaultInjector>,
+    id_source: Arc<dyn IdSource>,
     max_read_connections: usize,
     open_read_connections: Arc<AtomicUsize>,
     read_connections: Arc<Mutex<Vec<Connection>>>,
@@ -276,6 +277,7 @@ pub struct SqliteWriteTransaction {
     conn: Option<Connection>,
     clock: Arc<dyn WallClock>,
     fault_injector: Arc<dyn FaultInjector>,
+    id_source: Arc<dyn IdSource>,
     commit_writes: Vec<WriteOp>,
     tenant_events: Vec<TenantEventKind>,
     prepared_record: Option<TenantEventRecord>,

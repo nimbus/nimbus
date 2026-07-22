@@ -234,6 +234,7 @@ impl Engine {
                 self.monotonic_clock.clone(),
                 self.committer_lease_clock.clone(),
                 self.committer_owner_id_for_store(&opened.persistence),
+                self.id_source.clone(),
             )
             .await?,
         );

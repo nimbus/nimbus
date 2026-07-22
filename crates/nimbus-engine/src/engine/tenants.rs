@@ -256,6 +256,7 @@ impl Engine {
                 self.monotonic_clock.clone(),
                 self.committer_lease_clock.clone(),
                 committer_owner_id,
+                self.id_source.clone(),
             )
             .await?,
         );
@@ -629,6 +630,7 @@ impl Engine {
                 self.committer_lease_clock.clone(),
             ),
             self.committer_owner_id_for_store(&opened.persistence),
+            self.id_source.clone(),
         ));
         runtime.mark_scheduler_recovery_pending();
         self.restore_publisher_error_counts(&runtime);
