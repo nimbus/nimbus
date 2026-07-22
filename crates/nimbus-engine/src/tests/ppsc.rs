@@ -1,8 +1,7 @@
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use nimbus_core::{
-    DocumentId, FieldSchema, FieldType, ManualMonotonicClock, Mutation, ScheduleRequest,
+    DocumentId, FieldSchema, FieldType, IdSource, ManualMonotonicClock, Mutation, ScheduleRequest,
     SeededIdSource, TenantEventKind, TriggerDeliveryCursor, hex_encode,
 };
 use nimbus_storage::PointInTimeRestoreArchive;
@@ -15,87 +14,29 @@ use nimbus_testing::ppsc::{
 
 use super::*;
 
+mod harness;
+mod scenarios;
+
+use harness::*;
+use scenarios::*;
+
 const PPSC_OBSERVER: &str = "ppsc-scenario-recorder";
-
-#[derive(Default)]
-struct PpscPublicationRecorder {
-    current_step: AtomicUsize,
-    observer_publications: Mutex<Vec<(TenantId, SequenceNumber, usize)>>,
-    published_prefix: Mutex<BTreeMap<TenantId, BTreeMap<SequenceNumber, usize>>>,
-}
-
-impl PpscPublicationRecorder {
-    fn enter_step(&self, step: usize) {
-        self.current_step.store(step, Ordering::Release);
-    }
-
-    fn observe_published_prefix(
-        &self,
-        tenant_id: &TenantId,
-        published_head: SequenceNumber,
-        step: usize,
-    ) {
-        let mut prefixes = self
-            .published_prefix
-            .lock()
-            .expect("PPSC published-prefix recorder lock should not be poisoned");
-        let tenant_prefix = prefixes.entry(tenant_id.clone()).or_default();
-        for sequence in 1..=published_head.0 {
-            tenant_prefix
-                .entry(SequenceNumber(sequence))
-                .or_insert(step);
-        }
-    }
-
-    fn published_for_tenant(&self, tenant_id: &TenantId) -> Vec<(SequenceNumber, usize)> {
-        self.published_prefix
-            .lock()
-            .expect("PPSC published-prefix recorder lock should not be poisoned")
-            .get(tenant_id)
-            .map(|prefix| {
-                prefix
-                    .iter()
-                    .map(|(sequence, step)| (*sequence, *step))
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
-    fn observer_for_tenant(&self, tenant_id: &TenantId) -> Vec<(SequenceNumber, usize)> {
-        self.observer_publications
-            .lock()
-            .expect("PPSC observer recorder lock should not be poisoned")
-            .iter()
-            .filter_map(|(candidate, sequence, step)| {
-                (candidate == tenant_id).then_some((*sequence, *step))
-            })
-            .collect()
-    }
-}
-
-impl crate::CommittedMutationObserver for PpscPublicationRecorder {
-    fn committed_mutation_applied(&self, event: crate::CommittedMutationEvent) {
-        self.observer_publications
-            .lock()
-            .expect("PPSC publication recorder lock should not be poisoned")
-            .push((
-                event.tenant_id,
-                event.commit.sequence,
-                self.current_step.load(Ordering::Acquire),
-            ));
-    }
-}
 
 struct PpscEngineRunner {
     backend: PpscBackend,
     _data_dir: Option<TempDir>,
-    engine: Arc<Engine>,
+    engine: PpscEngineSlot,
+    engine_factory: PpscEngineFactory,
     wall_clock: Arc<ManualWallClock>,
     monotonic_clock: Arc<ManualMonotonicClock>,
     storage_faults: Arc<PpscStorageFaultInjector>,
+    id_source: Arc<dyn IdSource>,
     publications: Arc<PpscPublicationRecorder>,
     tenants: BTreeMap<String, TenantId>,
+    publisher_limited_tenants: BTreeSet<TenantId>,
     restore_archives: BTreeMap<u64, PointInTimeRestoreArchive>,
+    crashed_heads: Option<BTreeMap<String, u64>>,
+    crashed_runtime_identities: Option<BTreeMap<String, u64>>,
     scenario_seed: u64,
 }
 
@@ -116,42 +57,39 @@ impl PpscEngineRunner {
         let wall_clock = Arc::new(ManualWallClock::new(Timestamp(100_000)));
         let monotonic_clock = Arc::new(ManualMonotonicClock::new());
         let storage_faults = PpscStorageFaultInjector::new();
-        let id_source = Arc::new(SeededIdSource::new(scenario.seed));
-        let engine = Arc::new(
-            match backend {
-                PpscBackend::Memory => Engine::new_with_simulation_clocks_and_memory_persistence(
-                    data_dir.path(),
-                    wall_clock.clone(),
-                    monotonic_clock.clone(),
-                    storage_faults.clone(),
-                    id_source,
-                ),
-                PpscBackend::Redb | PpscBackend::Sqlite => {
-                    Engine::new_with_simulation_clocks_id_source_and_embedded_provider(
-                        data_dir.path(),
-                        wall_clock.clone(),
-                        monotonic_clock.clone(),
-                        storage_faults.clone(),
-                        id_source,
-                        match backend {
-                            PpscBackend::Redb => EmbeddedProviderKind::Redb,
-                            PpscBackend::Sqlite => EmbeddedProviderKind::Sqlite,
-                            _ => unreachable!("embedded backend match is exhaustive"),
-                        },
-                    )
-                }
-                _ => unreachable!("provider backends were rejected above"),
-            }
-            .expect("PPSC embedded engine should construct"),
-        );
+        let id_source: Arc<dyn IdSource> = Arc::new(SeededIdSource::new(scenario.seed));
+        let engine_factory = match backend {
+            PpscBackend::Memory => PpscEngineFactory::Memory(data_dir.path().to_path_buf()),
+            PpscBackend::Redb => PpscEngineFactory::Embedded(
+                data_dir.path().to_path_buf(),
+                EmbeddedProviderKind::Redb,
+            ),
+            PpscBackend::Sqlite => PpscEngineFactory::Embedded(
+                data_dir.path().to_path_buf(),
+                EmbeddedProviderKind::Sqlite,
+            ),
+            _ => unreachable!("provider backends were rejected above"),
+        };
+        let engine = engine_factory
+            .build(
+                wall_clock.clone(),
+                monotonic_clock.clone(),
+                storage_faults.clone(),
+                id_source.clone(),
+            )
+            .await;
         Self::finish_new(
             backend,
             scenario,
-            Some(data_dir),
-            engine,
-            wall_clock,
-            monotonic_clock,
-            storage_faults,
+            PpscEngineBootstrap {
+                data_dir: Some(data_dir),
+                engine,
+                engine_factory,
+                wall_clock,
+                monotonic_clock,
+                storage_faults,
+                id_source,
+            },
         )
         .await
     }
@@ -172,26 +110,28 @@ impl PpscEngineRunner {
         let wall_clock = Arc::new(ManualWallClock::new(Timestamp(100_000)));
         let monotonic_clock = Arc::new(ManualMonotonicClock::new());
         let storage_faults = PpscStorageFaultInjector::new();
-        let id_source = Arc::new(SeededIdSource::new(scenario.seed));
-        let engine = Arc::new(
-            Engine::new_with_simulation_clocks_id_source_and_persistence_config(
-                config,
+        let id_source: Arc<dyn IdSource> = Arc::new(SeededIdSource::new(scenario.seed));
+        let engine_factory = PpscEngineFactory::Configured(Box::new(config));
+        let engine = engine_factory
+            .build(
                 wall_clock.clone(),
                 monotonic_clock.clone(),
                 storage_faults.clone(),
-                id_source,
+                id_source.clone(),
             )
-            .await
-            .expect("PPSC provider engine should construct"),
-        );
+            .await;
         Self::finish_new(
             backend,
             scenario,
-            None,
-            engine,
-            wall_clock,
-            monotonic_clock,
-            storage_faults,
+            PpscEngineBootstrap {
+                data_dir: None,
+                engine,
+                engine_factory,
+                wall_clock,
+                monotonic_clock,
+                storage_faults,
+                id_source,
+            },
         )
         .await
     }
@@ -199,12 +139,17 @@ impl PpscEngineRunner {
     async fn finish_new(
         backend: PpscBackend,
         scenario: &PpscScenario,
-        data_dir: Option<TempDir>,
-        engine: Arc<Engine>,
-        wall_clock: Arc<ManualWallClock>,
-        monotonic_clock: Arc<ManualMonotonicClock>,
-        storage_faults: Arc<PpscStorageFaultInjector>,
+        bootstrap: PpscEngineBootstrap,
     ) -> Self {
+        let PpscEngineBootstrap {
+            data_dir,
+            engine,
+            engine_factory,
+            wall_clock,
+            monotonic_clock,
+            storage_faults,
+            id_source,
+        } = bootstrap;
         let publications = Arc::new(PpscPublicationRecorder::default());
         engine.install_committed_mutation_observer(PPSC_OBSERVER, publications.clone());
 
@@ -214,6 +159,7 @@ impl PpscEngineRunner {
             .filter_map(|step| step.operation.tenant())
             .collect::<BTreeSet<_>>();
         let mut tenants = BTreeMap::new();
+        let mut publisher_limited_tenants = BTreeSet::new();
         for tenant_name in tenant_names {
             let tenant_id = TenantId::new(tenant_name).expect("scenario tenant id should parse");
             if scenario.steps.iter().any(|step| {
@@ -222,6 +168,7 @@ impl PpscEngineRunner {
                     PpscOperation::ForceOverload { tenant } if tenant == tenant_name
                 )
             }) {
+                publisher_limited_tenants.insert(tenant_id.clone());
                 crate::tenant::configure_publisher_limits_for_testing(
                     tenant_id.clone(),
                     1,
@@ -300,13 +247,18 @@ impl PpscEngineRunner {
         Self {
             backend,
             _data_dir: data_dir,
-            engine,
+            engine: PpscEngineSlot::new(engine),
+            engine_factory,
             wall_clock,
             monotonic_clock,
             storage_faults,
+            id_source,
             publications,
             tenants,
+            publisher_limited_tenants,
             restore_archives,
+            crashed_heads: None,
+            crashed_runtime_identities: None,
             scenario_seed: scenario.seed,
         }
     }
@@ -316,7 +268,13 @@ impl PpscEngineRunner {
         let mut sequence_claims = Vec::new();
         for (index, step) in scenario.steps.iter().enumerate() {
             self.publications.enter_step(index);
-            let before = self.journal_heads();
+            let before = if self.engine.is_running() {
+                self.journal_heads()
+            } else {
+                self.crashed_heads
+                    .clone()
+                    .expect("PPSC crashed Engine must retain its durable heads")
+            };
             let outcome = self
                 .execute_step(index, &step.operation, step.expected)
                 .await;
@@ -331,8 +289,14 @@ impl PpscEngineRunner {
                     .await
                     .expect("scenario publication work should drain");
             }
-            self.observe_published_prefixes(index);
-            let effects = self.new_effects(&before);
+            if self.engine.is_running() {
+                self.observe_published_prefixes(index);
+            }
+            let effects = if self.engine.is_running() {
+                self.new_effects(&before)
+            } else {
+                Vec::new()
+            };
             for effect in &effects {
                 let Some(sequence) = effect.sequence else {
                     continue;
@@ -703,6 +667,29 @@ impl PpscEngineRunner {
                 self.monotonic_clock.advance(Duration::from_millis(*millis));
                 PpscExpectedOutcome::Observed
             }
+            PpscOperation::Crash => {
+                assert!(self.backend.capabilities().durable_reopen);
+                self.crashed_heads = Some(self.journal_heads());
+                self.crashed_runtime_identities = Some(
+                    self.tenants
+                        .iter()
+                        .map(|(name, tenant_id)| {
+                            (
+                                name.clone(),
+                                self.engine
+                                    .tenant_runtime_identity_for_testing(tenant_id)
+                                    .expect("PPSC pre-crash runtime identity should load"),
+                            )
+                        })
+                        .collect(),
+                );
+                self.engine.crash();
+                PpscExpectedOutcome::Observed
+            }
+            PpscOperation::Reopen => {
+                self.reopen_engine().await;
+                PpscExpectedOutcome::Observed
+            }
             PpscOperation::Quiesce => PpscExpectedOutcome::Shutdown,
             other => panic!("PPSC Engine runner does not yet implement operation {other:?}"),
         }
@@ -927,6 +914,66 @@ impl PpscEngineRunner {
                 .publisher_send_timeout_count,
             stats_before.publisher_send_timeout_count + 1
         );
+    }
+
+    async fn reopen_engine(&mut self) {
+        assert!(
+            !self.engine.is_running(),
+            "PPSC reopen requires a prior crash"
+        );
+        let expected_heads = self
+            .crashed_heads
+            .take()
+            .expect("PPSC reopen requires recorded durable crash heads");
+        let crashed_runtime_identities = self
+            .crashed_runtime_identities
+            .take()
+            .expect("PPSC reopen requires recorded runtime identities");
+        let engine = self
+            .engine_factory
+            .build(
+                self.wall_clock.clone(),
+                self.monotonic_clock.clone(),
+                self.storage_faults.clone(),
+                self.id_source.clone(),
+            )
+            .await;
+        engine.install_committed_mutation_observer(PPSC_OBSERVER, self.publications.clone());
+        for tenant_id in self.tenants.values() {
+            if self.publisher_limited_tenants.contains(tenant_id) {
+                crate::tenant::configure_publisher_limits_for_testing(
+                    tenant_id.clone(),
+                    1,
+                    Duration::from_millis(25),
+                );
+            }
+            engine
+                .ensure_tenant_ready_async(tenant_id.clone())
+                .await
+                .expect("PPSC existing tenant should reopen through async admission");
+            engine
+                .shutdown_trigger_candidates_for_testing(tenant_id)
+                .expect("PPSC reopened trigger worker should stop before continuation");
+            engine
+                .flush_tenant_committer_for_testing(tenant_id)
+                .await
+                .expect("PPSC reopened tenant should reconcile before continuation");
+        }
+        self.engine.reopen(engine);
+        assert_eq!(
+            self.journal_heads(),
+            expected_heads,
+            "PPSC reopen must retain the exact durable prefix"
+        );
+        for (name, tenant_id) in &self.tenants {
+            assert_ne!(
+                self.engine
+                    .tenant_runtime_identity_for_testing(tenant_id)
+                    .expect("PPSC reopened runtime identity should load"),
+                crashed_runtime_identities[name],
+                "PPSC reopen must construct a new runtime for tenant {name}"
+            );
+        }
     }
 
     fn journal_heads(&self) -> BTreeMap<String, u64> {
@@ -1182,261 +1229,6 @@ fn record_kind(events: &[TenantEventKind]) -> String {
         .join("+")
 }
 
-fn three_route_scenario() -> PpscScenario {
-    PpscScenario::new(
-        "three-production-routes",
-        401,
-        vec![
-            PpscStep::new(
-                PpscOperation::Mutation {
-                    tenant: "ppsc-hot".to_string(),
-                    route: PpscRoute::QueuedJournal,
-                    key: "queued".to_string(),
-                    value: 1,
-                },
-                PpscExpectedOutcome::Committed,
-            ),
-            PpscStep::new(
-                PpscOperation::Mutation {
-                    tenant: "ppsc-hot".to_string(),
-                    route: PpscRoute::Direct,
-                    key: "direct".to_string(),
-                    value: 2,
-                },
-                PpscExpectedOutcome::Committed,
-            ),
-            PpscStep::new(
-                PpscOperation::Mutation {
-                    tenant: "ppsc-hot".to_string(),
-                    route: PpscRoute::ExecutionUnit,
-                    key: "execution-unit".to_string(),
-                    value: 3,
-                },
-                PpscExpectedOutcome::Committed,
-            ),
-            PpscStep::new(
-                PpscOperation::Mutation {
-                    tenant: "ppsc-peer".to_string(),
-                    route: PpscRoute::QueuedJournal,
-                    key: "peer".to_string(),
-                    value: 4,
-                },
-                PpscExpectedOutcome::Committed,
-            ),
-            PpscStep::new(PpscOperation::Quiesce, PpscExpectedOutcome::Shutdown),
-        ],
-    )
-    .expect("three-route scenario should build")
-}
-
-fn internal_durable_jobs_scenario() -> PpscScenario {
-    let tenant = "ppsc-internal".to_string();
-    let restore_tenant = "ppsc-restore".to_string();
-    PpscScenario::new(
-        "internal-durable-jobs",
-        409,
-        vec![
-            PpscStep::new(
-                PpscOperation::SchemaSet {
-                    tenant: tenant.clone(),
-                    revision: 41,
-                },
-                PpscExpectedOutcome::Committed,
-            ),
-            PpscStep::new(
-                PpscOperation::Schedule {
-                    tenant: tenant.clone(),
-                    job: 42,
-                },
-                PpscExpectedOutcome::Committed,
-            ),
-            PpscStep::new(
-                PpscOperation::TriggerCursorAdvance {
-                    tenant: tenant.clone(),
-                    through: 1,
-                },
-                PpscExpectedOutcome::Committed,
-            ),
-            PpscStep::new(
-                PpscOperation::ProjectionUpdate {
-                    tenant: tenant.clone(),
-                    revision: 43,
-                },
-                PpscExpectedOutcome::Committed,
-            ),
-            PpscStep::new(
-                PpscOperation::SchemaDelete { tenant },
-                PpscExpectedOutcome::Committed,
-            ),
-            PpscStep::new(
-                PpscOperation::RestoreImport {
-                    tenant: restore_tenant,
-                    archive: 44,
-                },
-                PpscExpectedOutcome::Committed,
-            ),
-            PpscStep::new(PpscOperation::Quiesce, PpscExpectedOutcome::Shutdown),
-        ],
-    )
-    .expect("internal durable-jobs scenario should build")
-}
-
-fn mutation_edge_scenario(order: PpscCommitOrder) -> PpscScenario {
-    let tenant = "ppsc-mutation-edges".to_string();
-    PpscScenario::new(
-        format!("mutation-edges-{order:?}"),
-        419,
-        vec![
-            PpscStep::new(
-                PpscOperation::CommitPermutation {
-                    tenant: tenant.clone(),
-                    order,
-                    value_base: 100,
-                },
-                PpscExpectedOutcome::Committed,
-            ),
-            PpscStep::new(
-                PpscOperation::ZeroWriteExecutionUnit {
-                    tenant: tenant.clone(),
-                },
-                PpscExpectedOutcome::Observed,
-            ),
-            PpscStep::new(
-                PpscOperation::ConflictRetry {
-                    tenant,
-                    key: "shared".to_string(),
-                    first: 201,
-                    second: 202,
-                },
-                PpscExpectedOutcome::Committed,
-            ),
-            PpscStep::new(PpscOperation::Quiesce, PpscExpectedOutcome::Shutdown),
-        ],
-    )
-    .expect("mutation-edge scenario should build")
-}
-
-fn storage_fault_scenario() -> PpscScenario {
-    let hot = "ppsc-fault-hot".to_string();
-    let peer = "ppsc-fault-peer".to_string();
-    PpscScenario::new(
-        "storage-fault-recovery",
-        431,
-        vec![
-            PpscStep::new(
-                PpscOperation::ArmFault {
-                    tenant: hot.clone(),
-                    fault: PpscInjectedFault::AcknowledgementLoss,
-                },
-                PpscExpectedOutcome::Observed,
-            ),
-            PpscStep::new(
-                PpscOperation::Mutation {
-                    tenant: hot.clone(),
-                    route: PpscRoute::QueuedJournal,
-                    key: "acknowledgement-loss".to_string(),
-                    value: 301,
-                },
-                PpscExpectedOutcome::AmbiguousRecovered,
-            ),
-            PpscStep::new(
-                PpscOperation::ArmFault {
-                    tenant: hot.clone(),
-                    fault: PpscInjectedFault::ProviderTransient,
-                },
-                PpscExpectedOutcome::Observed,
-            ),
-            PpscStep::new(
-                PpscOperation::Mutation {
-                    tenant: hot.clone(),
-                    route: PpscRoute::QueuedJournal,
-                    key: "provider-transient".to_string(),
-                    value: 302,
-                },
-                PpscExpectedOutcome::ProviderError,
-            ),
-            PpscStep::new(
-                PpscOperation::ReleaseFault {
-                    tenant: hot.clone(),
-                    fault: PpscInjectedFault::ProviderTransient,
-                },
-                PpscExpectedOutcome::Observed,
-            ),
-            PpscStep::new(
-                PpscOperation::Mutation {
-                    tenant: hot,
-                    route: PpscRoute::QueuedJournal,
-                    key: "after-release".to_string(),
-                    value: 303,
-                },
-                PpscExpectedOutcome::Committed,
-            ),
-            PpscStep::new(
-                PpscOperation::Mutation {
-                    tenant: peer,
-                    route: PpscRoute::ExecutionUnit,
-                    key: "peer-progress".to_string(),
-                    value: 304,
-                },
-                PpscExpectedOutcome::Committed,
-            ),
-            PpscStep::new(PpscOperation::Quiesce, PpscExpectedOutcome::Shutdown),
-        ],
-    )
-    .expect("storage-fault scenario should build")
-}
-
-fn cancellation_overload_scenario() -> PpscScenario {
-    let hot = "ppsc-pressure-hot".to_string();
-    let peer = "ppsc-pressure-peer".to_string();
-    PpscScenario::new(
-        "cancellation-overload-isolation",
-        433,
-        vec![
-            PpscStep::new(
-                PpscOperation::CancelNext {
-                    tenant: hot.clone(),
-                    route: PpscRoute::ExecutionUnit,
-                },
-                PpscExpectedOutcome::Cancelled,
-            ),
-            PpscStep::new(
-                PpscOperation::CancelNext {
-                    tenant: hot.clone(),
-                    route: PpscRoute::QueuedJournal,
-                },
-                PpscExpectedOutcome::Cancelled,
-            ),
-            PpscStep::new(
-                PpscOperation::ForceOverload {
-                    tenant: hot.clone(),
-                },
-                PpscExpectedOutcome::Overloaded,
-            ),
-            PpscStep::new(
-                PpscOperation::Mutation {
-                    tenant: hot,
-                    route: PpscRoute::QueuedJournal,
-                    key: "after-pressure".to_string(),
-                    value: 311,
-                },
-                PpscExpectedOutcome::Committed,
-            ),
-            PpscStep::new(
-                PpscOperation::Mutation {
-                    tenant: peer,
-                    route: PpscRoute::ExecutionUnit,
-                    key: "peer-progress".to_string(),
-                    value: 312,
-                },
-                PpscExpectedOutcome::Committed,
-            ),
-            PpscStep::new(PpscOperation::Quiesce, PpscExpectedOutcome::Shutdown),
-        ],
-    )
-    .expect("cancellation/overload scenario should build")
-}
-
 fn logical_ppsc_documents(state: &PpscTenantState) -> BTreeMap<String, serde_json::Value> {
     state
         .documents
@@ -1654,6 +1446,33 @@ async fn ppsc_hot_tenant_failure_preserves_other_tenant_progress() {
     }
     assert_eq!(terminal_states[0], terminal_states[1]);
     assert_eq!(terminal_states[1], terminal_states[2]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ppsc_durable_crash_reopen_preserves_prefix_and_continues() {
+    let scenario = crash_reopen_scenario();
+    let mut terminal_states = Vec::new();
+    for backend in [PpscBackend::Redb, PpscBackend::Sqlite] {
+        let history = PpscEngineRunner::new_embedded(backend, &scenario)
+            .await
+            .run(scenario.clone())
+            .await;
+        audit_ppsc_history(&history).unwrap_or_else(|error| panic!("{error}"));
+        assert!(history.observed_steps[1].effects.is_empty());
+        assert!(history.observed_steps[2].effects.is_empty());
+        let state = &history.terminal.tenants["ppsc-reopen"];
+        assert_eq!(state.frontiers.assigned_high_water, 2);
+        assert_eq!(state.frontiers.active_assigned_head, 2);
+        assert_eq!(state.frontiers.durable_head, 2);
+        assert_eq!(state.frontiers.storage_applied_head, 2);
+        assert_eq!(state.frontiers.published_head, 2);
+        assert_eq!(state.frontiers.applied_head, 2);
+        assert_eq!(state.journal.len(), 2);
+        assert_eq!(state.publications.len(), 2);
+        assert_eq!(state.documents.len(), 2);
+        terminal_states.push(history.terminal);
+    }
+    assert_eq!(terminal_states[0], terminal_states[1]);
 }
 
 pub(crate) async fn exercise_ppsc_provider_three_route_differential(
