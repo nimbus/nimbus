@@ -103,8 +103,9 @@ pub struct MySqlProvider {
     pool: Pool,
     metadata_database: String,
     tenant_database_prefix: String,
-    /// Server packet ceiling sampled at provider startup. Operators must
-    /// restart the provider after changing MySQL's global packet limit.
+    /// Effective packet ceiling: the lower of the server value sampled at
+    /// startup and any client-side limit configured in the connection URL.
+    /// Operators must restart the provider after changing the server limit.
     max_allowed_packet: u64,
     runtime_handle: TokioRuntimeHandle,
     clock: Arc<dyn WallClock>,
@@ -225,9 +226,15 @@ impl MySqlTenantStore {
     }
 }
 
-fn build_pool(config: &MySqlProviderConfig) -> Result<Pool> {
+struct BuiltMySqlPool {
+    pool: Pool,
+    client_max_allowed_packet: Option<usize>,
+}
+
+fn build_pool(config: &MySqlProviderConfig) -> Result<BuiltMySqlPool> {
     let opts = Opts::from_url(&config.connection_string)
         .map_err(|error| Error::InvalidInput(error.to_string()))?;
+    let client_max_allowed_packet = opts.max_allowed_packet();
     let default_constraints = opts.pool_opts().constraints();
     let min_connections = config
         .min_connections
@@ -241,7 +248,21 @@ fn build_pool(config: &MySqlProviderConfig) -> Result<Pool> {
     let pool_opts = opts.pool_opts().clone().with_constraints(constraints);
     let mut builder = OptsBuilder::from_opts(opts);
     builder = builder.db_name(None::<String>).pool_opts(pool_opts);
-    Ok(Pool::new(builder))
+    Ok(BuiltMySqlPool {
+        pool: Pool::new(builder),
+        client_max_allowed_packet,
+    })
+}
+
+fn effective_mysql_max_allowed_packet(
+    server_max_allowed_packet: u64,
+    client_max_allowed_packet: Option<usize>,
+) -> u64 {
+    client_max_allowed_packet
+        .and_then(|limit| u64::try_from(limit).ok())
+        .map_or(server_max_allowed_packet, |limit| {
+            server_max_allowed_packet.min(limit)
+        })
 }
 
 fn default_mysql_read_parallelism() -> usize {
@@ -291,7 +312,8 @@ mod tests {
             pool: build_pool(&MySqlProviderConfig::new(
                 "mysql://root:password@127.0.0.1:1/nimbus",
             ))
-            .expect("mysql pool should build without opening a connection"),
+            .expect("mysql pool should build without opening a connection")
+            .pool,
             metadata_database: "nimbus_provider".to_string(),
             tenant_database_prefix: "tenant_".to_string(),
             max_allowed_packet: 64 * 1024 * 1024,
@@ -317,6 +339,19 @@ mod tests {
                 .to_string()
                 .contains(FaultPoint::StorageCommitBeforeVisibility.as_str()),
             "delegated fault error should identify the fault point: {error}"
+        );
+    }
+
+    #[test]
+    fn mysql_packet_planner_uses_the_stricter_server_or_client_ceiling() {
+        assert_eq!(effective_mysql_max_allowed_packet(64_000, None), 64_000);
+        assert_eq!(
+            effective_mysql_max_allowed_packet(64_000, Some(1_024)),
+            1_024
+        );
+        assert_eq!(
+            effective_mysql_max_allowed_packet(64_000, Some(128_000)),
+            64_000
         );
     }
 }

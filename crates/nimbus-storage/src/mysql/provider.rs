@@ -33,8 +33,11 @@ impl MySqlProvider {
         validate_identifier_input(&config.metadata_database, "metadata database")?;
         validate_identifier_input(&config.tenant_database_prefix, "tenant database prefix")?;
 
-        let pool = build_pool(&config)?;
-        let max_allowed_packet = {
+        let BuiltMySqlPool {
+            pool,
+            client_max_allowed_packet,
+        } = build_pool(&config)?;
+        let server_max_allowed_packet = {
             let mut conn = pool.get_conn().await.map_err(map_mysql_error)?;
             conn.query_first::<u64, _>("SELECT @@GLOBAL.max_allowed_packet")
                 .await
@@ -43,6 +46,10 @@ impl MySqlProvider {
                     Error::Internal("MySQL did not return @@GLOBAL.max_allowed_packet".to_string())
                 })?
         };
+        let max_allowed_packet = effective_mysql_max_allowed_packet(
+            server_max_allowed_packet,
+            client_max_allowed_packet,
+        );
         let provider = Self {
             pool,
             metadata_database: config.metadata_database,
@@ -59,13 +66,6 @@ impl MySqlProvider {
 
     pub fn metadata_database(&self) -> &str {
         &self.metadata_database
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_max_allowed_packet_for_test(mut self, max_allowed_packet: u64) -> Self {
-        assert!(max_allowed_packet > 0, "test packet limit must be positive");
-        self.max_allowed_packet = max_allowed_packet;
-        self
     }
 
     pub fn tenant_database_name(&self, tenant_id: &TenantId) -> Result<String> {

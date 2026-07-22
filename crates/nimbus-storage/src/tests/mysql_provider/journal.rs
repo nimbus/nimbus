@@ -67,8 +67,23 @@ async fn mysql_batch_journal_insert_uses_one_provider_statement() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn mysql_packet_bounded_journal_chunks_commit_atomically() {
-    with_test_provider(|provider, _config| async move {
-        let provider = provider.with_max_allowed_packet_for_test(1_024);
+    with_test_provider(|_cleanup_provider, mut config| async move {
+        assert!(
+            !config.connection_string.contains("max_allowed_packet="),
+            "fixture URL should not preconfigure a client packet ceiling"
+        );
+        let separator = if config.connection_string.contains('?') {
+            '&'
+        } else {
+            '?'
+        };
+        config.connection_string = format!(
+            "{}{separator}max_allowed_packet=1024",
+            config.connection_string
+        );
+        let provider = MySqlProvider::connect(config)
+            .await
+            .expect("provider should connect with a 1 KiB client packet ceiling");
         let tenant = TenantId::new("packet-bounded-journal").expect("tenant id should build");
         let opened = provider
             .create_opened_tenant(&tenant)
