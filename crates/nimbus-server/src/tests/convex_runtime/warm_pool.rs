@@ -160,7 +160,7 @@ async fn same_tenant_concurrent_mutations_use_warm_pool_without_isolate_lifecycl
     start.wait().await;
 
     let overlapping = wait_for_runtime_metrics(
-        &registry,
+        &server,
         "same-tenant warm-pool mutations to overlap",
         |metrics| {
             metrics.active_runtime_instances >= 2
@@ -187,7 +187,7 @@ async fn same_tenant_concurrent_mutations_use_warm_pool_without_isolate_lifecycl
         );
     }
 
-    let after_burst = registry.runtime_metrics_snapshot();
+    let (after_burst, _) = crate::tests::current_runtime_metrics(&server).await;
     assert!(
         after_burst.warm_pool_misses >= 2,
         "overlapping empty-pool checkouts must create multiple runtimes: {after_burst:?}"
@@ -205,7 +205,7 @@ async fn same_tenant_concurrent_mutations_use_warm_pool_without_isolate_lifecycl
         )
         .await;
     assert_eq!(reuse.status(), StatusCode::OK);
-    let final_metrics = registry.runtime_metrics_snapshot();
+    let (final_metrics, _) = crate::tests::current_runtime_metrics(&server).await;
     assert!(
         final_metrics.warm_pool_hits >= 1,
         "post-burst mutation should reuse a retained warm isolate: {final_metrics:?}"

@@ -59,6 +59,7 @@ struct DirectRuntimeInvocation {
     request: InvocationRequest,
     context: RuntimeInvocationContext,
     cancellation: Option<HostCallCancellation>,
+    _retirement_guard: Option<super::retirement::RuntimeRetirementGuard>,
     queue_started_at: Instant,
 }
 
@@ -96,6 +97,38 @@ where
 }
 
 impl RuntimeExecutor {
+    fn prepare_worker_retirement_registration(
+        &self,
+        context: &RuntimeInvocationContext,
+        cancellation: Option<HostCallCancellation>,
+    ) -> Result<(
+        Option<HostCallCancellation>,
+        Option<super::retirement::RuntimeRetirementGuard>,
+    )> {
+        let cancellation = if context.runtime_owner_lease().is_some()
+            || context.deployment_authority_lease().is_some()
+        {
+            Some(cancellation.unwrap_or_default())
+        } else {
+            cancellation
+        };
+        let retirement_guard = cancellation.as_ref().and_then(|cancellation| {
+            self.inner
+                .retirement
+                .register(context, cancellation.clone())
+        });
+        // Close the validate-before-register race: retirement either observes
+        // this guard and waits for it, or its revocation is visible here and
+        // admission fails before dispatch/guest entry.
+        if let Some(owner_lease) = context.runtime_owner_lease() {
+            owner_lease.ensure_active()?;
+        }
+        if let Some(deployment_lease) = context.deployment_authority_lease() {
+            deployment_lease.ensure_active()?;
+        }
+        Ok((cancellation, retirement_guard))
+    }
+
     async fn dispatch_admitted_job_async(&self, job: RuntimeWorkerJob) -> Result<()> {
         self.inner.router.dispatch_job(job).await
     }
@@ -145,6 +178,7 @@ impl RuntimeExecutor {
             request,
             context,
             cancellation,
+            _retirement_guard,
             queue_started_at,
         } = invocation;
         let permit = SharedInvocationPermit::new(
@@ -205,6 +239,9 @@ impl RuntimeExecutor {
         cancellation: Option<HostCallCancellation>,
     ) -> Result<Value> {
         let runtime_policy = runtime.policy();
+        crate::retained_state::validate_retained_state_admission(&runtime_policy, &context)?;
+        let (cancellation, retirement_guard) =
+            self.prepare_worker_retirement_registration(&context, cancellation)?;
         runtime_policy
             .metrics()
             .record_request_correlation(&context);
@@ -216,6 +253,7 @@ impl RuntimeExecutor {
             request,
             context,
             cancellation,
+            _retirement_guard: retirement_guard,
             queue_started_at: Instant::now(),
         })
         .await
@@ -230,6 +268,9 @@ impl RuntimeExecutor {
         cancellation: Option<HostCallCancellation>,
     ) -> Result<Value> {
         let runtime_policy = runtime.policy();
+        crate::retained_state::validate_retained_state_admission(&runtime_policy, &context)?;
+        let (cancellation, retirement_guard) =
+            self.prepare_worker_retirement_registration(&context, cancellation)?;
         runtime_policy
             .metrics()
             .record_request_correlation(&context);
@@ -261,6 +302,7 @@ impl RuntimeExecutor {
             response_ready_tx: None,
             result_tx: RuntimeWorkerResultSender::Async(result_tx),
             dispatch_handle: None,
+            _retirement_guard: retirement_guard,
         })?;
         let queued = matches!(&admission, RuntimeExecutorAdmissionDecision::Queued);
         if queued {
@@ -302,6 +344,9 @@ impl RuntimeExecutor {
         cancellation: Option<HostCallCancellation>,
     ) -> Result<RuntimeInvocationResponse> {
         let runtime_policy = runtime.policy();
+        crate::retained_state::validate_retained_state_admission(&runtime_policy, &context)?;
+        let (cancellation, retirement_guard) =
+            self.prepare_worker_retirement_registration(&context, cancellation)?;
         runtime_policy
             .metrics()
             .record_request_correlation(&context);
@@ -334,6 +379,7 @@ impl RuntimeExecutor {
             response_ready_tx: Some(response_ready_tx),
             result_tx: RuntimeWorkerResultSender::Async(result_tx),
             dispatch_handle: None,
+            _retirement_guard: retirement_guard,
         })?;
         let queued = matches!(&admission, RuntimeExecutorAdmissionDecision::Queued);
         if queued {
@@ -445,6 +491,9 @@ impl RuntimeExecutor {
         cancellation: Option<HostCallCancellation>,
     ) -> Result<Value> {
         let runtime_policy = runtime.policy();
+        crate::retained_state::validate_retained_state_admission(&runtime_policy, &context)?;
+        let (cancellation, retirement_guard) =
+            self.prepare_worker_retirement_registration(&context, cancellation)?;
         runtime_policy
             .metrics()
             .record_request_correlation(&context);
@@ -476,6 +525,7 @@ impl RuntimeExecutor {
             response_ready_tx: None,
             result_tx: RuntimeWorkerResultSender::Blocking(result_tx),
             dispatch_handle: None,
+            _retirement_guard: retirement_guard,
         })?;
         let queued = matches!(&admission, RuntimeExecutorAdmissionDecision::Queued);
         if queued {

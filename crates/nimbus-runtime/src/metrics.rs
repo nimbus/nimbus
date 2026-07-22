@@ -4,7 +4,7 @@ mod host_operations;
 mod profiles;
 mod tenants;
 
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -34,6 +34,7 @@ const DIAGNOSTIC_COUNTER_ORDERING: Ordering = Ordering::Relaxed;
 #[derive(Debug, Default)]
 pub struct RuntimeMetrics {
     global: RuntimeGlobalCounters,
+    retained_owners: RuntimeRetainedOwnerCounters,
     host_operations: RuntimeHostOperationRegistry,
     profiles: RuntimeProfileTelemetryRegistry,
     tenants: RuntimeTenantRegistry,
@@ -60,6 +61,7 @@ pub struct RuntimeMetricsSnapshot {
     pub retained_runtime_pool_entries: usize,
     pub retained_runtime_pool_evictions: u64,
     pub retained_runtime_pool_retirements: u64,
+    pub retained_owners: RuntimeRetainedOwnerMetricsSnapshot,
     pub bundle_loads: u64,
     pub bundle_load_nanos_total: u64,
     pub bundle_integrity_verifications: u64,
@@ -126,6 +128,51 @@ pub struct RuntimeMetricsSnapshot {
     pub host_operations: std::collections::BTreeMap<String, RuntimeHostOperationMetricsSnapshot>,
     pub tenants: std::collections::BTreeMap<String, RuntimeTenantMetricsSnapshot>,
     pub recent_request_correlations: Vec<RuntimeRequestCorrelationSnapshot>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct RuntimeRetainedOwnerMetricsSnapshot {
+    pub checkouts: u64,
+    pub exact_hits: u64,
+    pub exact_misses: u64,
+    pub revocations: u64,
+    pub owner_mismatch_denials: u64,
+    pub return_after_revoke_discards: u64,
+    pub retirement_purges: u64,
+    pub retirement_acknowledgement_failures: u64,
+}
+
+#[derive(Debug, Default)]
+struct RuntimeRetainedOwnerCounters {
+    checkouts: AtomicU64,
+    exact_hits: AtomicU64,
+    exact_misses: AtomicU64,
+    revocations: AtomicU64,
+    owner_mismatch_denials: AtomicU64,
+    return_after_revoke_discards: AtomicU64,
+    retirement_purges: AtomicU64,
+    retirement_acknowledgement_failures: AtomicU64,
+}
+
+impl RuntimeRetainedOwnerCounters {
+    fn snapshot(&self) -> RuntimeRetainedOwnerMetricsSnapshot {
+        RuntimeRetainedOwnerMetricsSnapshot {
+            checkouts: self.checkouts.load(DIAGNOSTIC_COUNTER_ORDERING),
+            exact_hits: self.exact_hits.load(DIAGNOSTIC_COUNTER_ORDERING),
+            exact_misses: self.exact_misses.load(DIAGNOSTIC_COUNTER_ORDERING),
+            revocations: self.revocations.load(DIAGNOSTIC_COUNTER_ORDERING),
+            owner_mismatch_denials: self
+                .owner_mismatch_denials
+                .load(DIAGNOSTIC_COUNTER_ORDERING),
+            return_after_revoke_discards: self
+                .return_after_revoke_discards
+                .load(DIAGNOSTIC_COUNTER_ORDERING),
+            retirement_purges: self.retirement_purges.load(DIAGNOSTIC_COUNTER_ORDERING),
+            retirement_acknowledgement_failures: self
+                .retirement_acknowledgement_failures
+                .load(DIAGNOSTIC_COUNTER_ORDERING),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -264,6 +311,48 @@ impl RuntimeMetrics {
 
     pub fn record_retained_runtime_pool_retirement(&self) {
         self.global.record_retained_runtime_pool_retirement();
+    }
+
+    pub(crate) fn record_retained_owner_checkout_result(&self, hit: bool) {
+        self.retained_owners
+            .checkouts
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+        let outcome = if hit {
+            &self.retained_owners.exact_hits
+        } else {
+            &self.retained_owners.exact_misses
+        };
+        outcome.fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+    }
+
+    pub(crate) fn record_retained_owner_revocation(&self) {
+        self.retained_owners
+            .revocations
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+    }
+
+    pub(crate) fn record_retained_owner_mismatch_denial(&self) {
+        self.retained_owners
+            .owner_mismatch_denials
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+    }
+
+    pub(crate) fn record_retained_owner_return_after_revoke_discard(&self) {
+        self.retained_owners
+            .return_after_revoke_discards
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
+    }
+
+    pub(crate) fn record_retained_owner_retirement_purges(&self, count: usize) {
+        self.retained_owners
+            .retirement_purges
+            .fetch_add(count as u64, DIAGNOSTIC_COUNTER_ORDERING);
+    }
+
+    pub(crate) fn record_retained_owner_retirement_acknowledgement_failure(&self) {
+        self.retained_owners
+            .retirement_acknowledgement_failures
+            .fetch_add(1, DIAGNOSTIC_COUNTER_ORDERING);
     }
 
     pub fn record_warm_pool_hit(&self) {
@@ -575,6 +664,7 @@ impl RuntimeMetrics {
             retained_runtime_pool_entries: global.retained_runtime_pool_entries,
             retained_runtime_pool_evictions: global.retained_runtime_pool_evictions,
             retained_runtime_pool_retirements: global.retained_runtime_pool_retirements,
+            retained_owners: self.retained_owners.snapshot(),
             bundle_loads: global.bundle_loads,
             bundle_load_nanos_total: global.bundle_load_nanos_total,
             bundle_integrity_verifications: global.bundle_integrity_verifications,
@@ -898,6 +988,8 @@ mod tests {
             is_top_level: true,
             bypasses_concurrency_limit: false,
             tenant_label: Some("demo".to_string()),
+            runtime_owner_lease: None,
+            deployment_authority_lease: None,
             server_request_id: Some("req-7".to_string()),
         });
         metrics.decrement_active_runtime_instances_for_tenant(Some("demo"));
@@ -1071,6 +1163,13 @@ mod tests {
         metrics.record_host_bridge_call(Duration::from_millis(21));
         metrics.record_nested_local_dispatch();
         metrics.record_fallback_cross_runtime_dispatch();
+        metrics.record_retained_owner_checkout_result(true);
+        metrics.record_retained_owner_checkout_result(false);
+        metrics.record_retained_owner_revocation();
+        metrics.record_retained_owner_mismatch_denial();
+        metrics.record_retained_owner_return_after_revoke_discard();
+        metrics.record_retained_owner_retirement_purges(2);
+        metrics.record_retained_owner_retirement_acknowledgement_failure();
         metrics.decrement_queued_invocations();
         metrics.decrement_active_runtime_instances();
         metrics.record_invocation_completed();
@@ -1097,6 +1196,16 @@ mod tests {
                 retained_runtime_pool_entries: 0,
                 retained_runtime_pool_evictions: 1,
                 retained_runtime_pool_retirements: 1,
+                retained_owners: RuntimeRetainedOwnerMetricsSnapshot {
+                    checkouts: 2,
+                    exact_hits: 1,
+                    exact_misses: 1,
+                    revocations: 1,
+                    owner_mismatch_denials: 1,
+                    return_after_revoke_discards: 1,
+                    retirement_purges: 2,
+                    retirement_acknowledgement_failures: 1,
+                },
                 bundle_loads: 1,
                 bundle_load_nanos_total: 5_000_000,
                 bundle_integrity_verifications: 1,

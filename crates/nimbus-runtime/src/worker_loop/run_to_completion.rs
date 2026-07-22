@@ -5,7 +5,9 @@ use crate::backends::{
 };
 use crate::error::NimbusRuntimeError;
 use crate::executor::{
-    RuntimeWorkerQueue, RuntimeWorkerShutdown, SharedInvocationPermit, run_invocation_lifecycle,
+    RuntimeWorkerControl, RuntimeWorkerControlCommand, RuntimeWorkerMessage, RuntimeWorkerQueue,
+    RuntimeWorkerRetirementAck, RuntimeWorkerShutdown, SharedInvocationPermit,
+    run_invocation_lifecycle,
 };
 use crate::host::HostCallCancellation;
 use crate::limits::{RuntimeBackendKind, RuntimePolicy};
@@ -62,6 +64,7 @@ impl WorkerLoopFactory for RunToCompletionWorkerLoopFactory {
 struct RunToCompletionWorkerLoop {
     worker_id: usize,
     watchdog: WatchdogTimer,
+    policy: Arc<RuntimePolicy>,
     backend_kind: RuntimeBackendKind,
     backend: Box<dyn RuntimeBackend>,
     worker_runtime: tokio::runtime::Runtime,
@@ -88,6 +91,7 @@ impl RunToCompletionWorkerLoop {
         Self {
             worker_id,
             watchdog,
+            policy: policy.clone(),
             backend_kind: policy.limits().backend_kind,
             backend,
             worker_runtime,
@@ -99,13 +103,45 @@ impl RunToCompletionWorkerLoop {
     ) -> Option<crate::host::HostCallCancellationCause> {
         cancellation.as_ref().and_then(HostCallCancellation::cause)
     }
+
+    fn process_control(&mut self, control: RuntimeWorkerControl) {
+        let retained_entries_purged = match &control.command {
+            RuntimeWorkerControlCommand::RetireOwner(owner_id) => {
+                self.backend.retire_owner(owner_id)
+            }
+            RuntimeWorkerControlCommand::RetireDeploymentAuthority(authority_id) => {
+                self.backend.retire_deployment_authority(authority_id)
+            }
+        };
+        if self.backend_kind == RuntimeBackendKind::V8 {
+            for _ in 0..retained_entries_purged {
+                self.policy
+                    .metrics()
+                    .decrement_retained_runtime_pool_entries();
+                self.policy
+                    .metrics()
+                    .record_retained_runtime_pool_retirement();
+            }
+        }
+        let _ = control.acknowledged.send(RuntimeWorkerRetirementAck {
+            worker_id: self.worker_id,
+            retained_entries_purged,
+        });
+    }
 }
 
 impl WorkerLoop for RunToCompletionWorkerLoop {
     fn run(&mut self, queue: Arc<dyn RuntimeWorkerQueue>, shutdown: RuntimeWorkerShutdown) {
         while !shutdown.is_cancelled() {
-            let Some(job) = queue.try_recv().or_else(|| queue.recv_blocking()) else {
+            let Some(message) = queue.try_recv().or_else(|| queue.recv_blocking()) else {
                 break;
+            };
+            let job = match message {
+                RuntimeWorkerMessage::Job(job) => *job,
+                RuntimeWorkerMessage::Control(control) => {
+                    self.process_control(control);
+                    continue;
+                }
             };
             let cancellation_for_metrics = job.cancellation.clone();
             let job_policy = job.policy.clone();
@@ -130,6 +166,14 @@ impl WorkerLoop for RunToCompletionWorkerLoop {
                     );
                 let ready_jobs = self.worker_runtime.block_on(permit.finish_invocation());
                 queue.complete_job(job, Err(NimbusRuntimeError::Cancelled), ready_jobs);
+                continue;
+            }
+
+            if let Err(error) =
+                crate::retained_state::validate_retained_state_admission(&job_policy, &job.context)
+            {
+                let ready_jobs = self.worker_runtime.block_on(permit.finish_invocation());
+                queue.complete_job(job, Err(error), ready_jobs);
                 continue;
             }
 

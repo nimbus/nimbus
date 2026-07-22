@@ -133,6 +133,7 @@ pub(super) async fn handle_convex_socket_for_tenant(
         state.engine.clone(),
         convex_registry.clone(),
         state.runtime_service_registry(),
+        state.runtime_manager(),
         tenant_context.clone(),
         subscription_statuses.clone(),
         runtime_cancellation.clone(),

@@ -291,7 +291,7 @@ async fn invoke_lane_routing_bundle(
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
-        .invoke_bundle_for_tenant(&RuntimeBundle::new(&bundle_path), request, "tenant-a")
+        .invoke_bundle_for_tenant_for_test(&RuntimeBundle::new(&bundle_path), request, "tenant-a")
         .await
         .expect("lane-routing bundle invocation should succeed");
     (result, host.operations())
@@ -718,7 +718,7 @@ async fn guest_generation_forgery_cannot_defeat_stale_ctx_reuse_guard() {
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,

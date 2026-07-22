@@ -299,7 +299,7 @@ async fn structural_gate_web_lane_trust_globals_are_hardened_or_classified() {
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&bundle_path),
             &default_lane_request(),
             "tenant-a",
@@ -342,7 +342,7 @@ async fn structural_gate_node22_lane_trust_globals_are_hardened_or_classified() 
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&bundle_path),
             &default_lane_request(),
             "tenant-a",
@@ -391,7 +391,7 @@ async fn structural_gate_node22_lane_survives_fresh_realm_recycle() {
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&bundle_path),
             &default_lane_request(),
             "tenant-a",
@@ -448,7 +448,7 @@ async fn invoke_cloudflare_gate(policy: Arc<RuntimePolicy>) -> BTreeMap<String, 
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&bundle_path),
             &cloudflare_worker_request(),
             "tenant-a",
@@ -541,7 +541,7 @@ async fn structural_gate_cloud_functions_lane_trust_globals_are_hardened_or_clas
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&bundle_path),
             &default_lane_request(),
             "tenant-a",
@@ -585,7 +585,7 @@ async fn structural_gate_convex_default_lane_trust_globals_are_hardened_or_class
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&bundle_path),
             &default_lane_request(),
             "tenant-a",

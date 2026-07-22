@@ -201,17 +201,30 @@ fn core_runtime_error(error: nimbus_core::Error) -> NimbusRuntimeError {
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroU64;
+
     use super::*;
 
     use nimbus_engine::EmbeddedProviderKind;
     use nimbus_runtime::{
         InvocationKind, InvocationRequest, NimbusRuntime, RuntimeBundle, RuntimeExecutionModel,
-        RuntimeLimits, RuntimePolicy, RuntimePoolKind,
+        RuntimeLimits, RuntimeOwnerId, RuntimeOwnerLease, RuntimeOwnerLeaseIssuer, RuntimePolicy,
+        RuntimePoolKind,
     };
     use nimbus_testing::EngineFixture;
     use serde_json::Value;
 
     use crate::adapters::cloudflare::{CloudflareBindingRegistry, KvNamespaceBinding};
+
+    fn runtime_owner(tenant: &TenantId) -> RuntimeOwnerLease {
+        let owner = RuntimeOwnerId::tenant(
+            tenant.as_str(),
+            NonZeroU64::new(1).expect("test tenant incarnation is nonzero"),
+            Some(tenant.as_str()),
+        )
+        .expect("test runtime owner should build");
+        RuntimeOwnerLeaseIssuer.issue(owner).0
+    }
 
     #[tokio::test]
     async fn cloudflare_worker_env_ns_e2e_round_trips_kv() {
@@ -298,7 +311,12 @@ export default {
             services: Default::default(),
         };
         let result = runtime
-            .invoke_bundle_for_tenant(&RuntimeBundle::new(&bundle_path), &request, tenant.as_str())
+            .invoke_bundle_for_tenant_with_owner(
+                &RuntimeBundle::new(&bundle_path),
+                &request,
+                tenant.as_str(),
+                runtime_owner(&tenant),
+            )
             .await
             .expect("Worker env.NS flow should execute");
 
@@ -392,7 +410,12 @@ export default {
             services: Default::default(),
         };
         let result = runtime
-            .invoke_bundle_for_tenant(&RuntimeBundle::new(&bundle_path), &request, tenant.as_str())
+            .invoke_bundle_for_tenant_with_owner(
+                &RuntimeBundle::new(&bundle_path),
+                &request,
+                tenant.as_str(),
+                runtime_owner(&tenant),
+            )
             .await
             .expect("Worker fetch handler should execute (the guest catches the denial)");
 

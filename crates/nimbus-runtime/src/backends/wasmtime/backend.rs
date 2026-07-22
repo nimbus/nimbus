@@ -117,6 +117,17 @@ impl RuntimeBackend for WasmtimeBackend {
     ) -> Pin<Box<dyn Future<Output = Result<Value>> + 'a>> {
         Box::pin(async move { self.invoke_component(invocation).await })
     }
+
+    fn retire_owner(&mut self, owner_id: &crate::RuntimeOwnerId) -> usize {
+        self.store_pool.retire_owner(owner_id)
+    }
+
+    fn retire_deployment_authority(
+        &mut self,
+        authority_id: &crate::RuntimeDeploymentAuthorityId,
+    ) -> usize {
+        self.store_pool.retire_deployment_authority(authority_id)
+    }
 }
 
 impl WasmtimeBackend {
@@ -178,7 +189,7 @@ impl WasmtimeBackend {
                 &policy,
                 &context,
                 cancellation.clone(),
-            );
+            )?;
             reusable_store.store_mut().data_mut().reset_for_invocation(
                 host.bridge(),
                 context,
@@ -232,21 +243,21 @@ impl WasmtimeBackend {
 
     fn take_or_create_reusable_store(
         &mut self,
-        authority: &WasmtimeStoreAuthorityKey,
+        authority: &crate::retained_state::RuntimeReuseAuthority<WasmtimeStoreAuthorityKey>,
         host: &crate::runtime::RuntimeHost,
         policy: &RuntimePolicy,
         context: &crate::RuntimeInvocationContext,
         cancellation: Option<crate::host::HostCallCancellation>,
-    ) -> ReusableStore {
+    ) -> Result<ReusableStore> {
         let before = self.store_pool.stats();
-        let retained_store = self.store_pool.take(authority);
+        let retained_store = self.store_pool.take(authority)?;
         record_wasmtime_store_pool_delta(policy, before, self.store_pool.stats());
-        retained_store.unwrap_or_else(|| {
+        Ok(retained_store.unwrap_or_else(|| {
             ReusableStore::new(
                 self.create_store(host, policy, context.clone(), cancellation),
                 authority.clone(),
             )
-        })
+        }))
     }
 
     fn return_reusable_store(&mut self, store: ReusableStore, policy: &RuntimePolicy) {
@@ -394,23 +405,34 @@ fn record_wasmtime_store_pool_delta(
     after: WasmtimeStorePoolStats,
 ) {
     let metrics = policy.metrics();
-    for _ in 0..after.hits.saturating_sub(before.hits) {
+    let hits = after.hits.saturating_sub(before.hits);
+    let misses = after.misses.saturating_sub(before.misses);
+    for _ in 0..hits {
         metrics.record_wasmtime_store_pool_hit();
+        metrics.record_retained_owner_checkout_result(true);
     }
-    for _ in 0..after.misses.saturating_sub(before.misses) {
+    for _ in 0..misses {
         metrics.record_wasmtime_store_pool_miss();
+        metrics.record_retained_owner_checkout_result(false);
     }
     for _ in 0..after
         .authority_mismatches
         .saturating_sub(before.authority_mismatches)
     {
         metrics.record_wasmtime_store_pool_authority_mismatch();
+        metrics.record_retained_owner_mismatch_denial();
     }
     for _ in 0..after.evictions.saturating_sub(before.evictions) {
         metrics.record_wasmtime_store_pool_eviction();
     }
     for _ in 0..after.retirements.saturating_sub(before.retirements) {
         metrics.record_wasmtime_store_pool_retirement();
+    }
+    for _ in 0..after
+        .revoked_discards
+        .saturating_sub(before.revoked_discards)
+    {
+        metrics.record_retained_owner_return_after_revoke_discard();
     }
 }
 
@@ -559,7 +581,7 @@ mod tests {
         );
 
         let response = runtime
-            .invoke_bundle_for_tenant(&bundle, &request(), "tenant-a")
+            .invoke_bundle_for_tenant_for_test(&bundle, &request(), "tenant-a")
             .await
             .expect("Wasmtime run-to-completion invocation should succeed");
 

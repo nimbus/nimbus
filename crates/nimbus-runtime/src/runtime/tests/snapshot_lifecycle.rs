@@ -34,12 +34,12 @@ fn node_major_startup_snapshots_share_node_full_cell_subprocess() {
         RuntimeCompatibilityTarget::Node24,
         RuntimeCompatibilityTarget::Node26,
     ] {
-        let runtime_owner = NimbusRuntime::with_policy(
+        let runtime_instance = NimbusRuntime::with_policy(
             Arc::new(AsyncEchoHost),
             Arc::new(RuntimePolicy::new(RuntimeLimits::application_node(target))),
             crate::RuntimeEgressPosture::CoarsePermissions,
         );
-        let snapshot = runtime_owner
+        let snapshot = runtime_instance
             .bootstrap_snapshot()
             .expect("NodeFull bootstrap snapshot should build");
         if let Some(first_snapshot) = first_snapshot {
@@ -99,7 +99,7 @@ export {};
         RuntimeCompatibilityTarget::Node24,
         RuntimeCompatibilityTarget::Node26,
     ] {
-        let runtime_owner = NimbusRuntime::with_policy(
+        let runtime_instance = NimbusRuntime::with_policy(
             Arc::new(AsyncEchoHost),
             Arc::new(RuntimePolicy::new(RuntimeLimits::application_node(target))),
             crate::RuntimeEgressPosture::CoarsePermissions,
@@ -113,8 +113,8 @@ export {};
             auth: None,
             services: Default::default(),
         };
-        let result = runtime_owner
-            .invoke_bundle_for_tenant(&bundle, &request, "tenant-a")
+        let result = runtime_instance
+            .invoke_bundle_for_tenant_for_test(&bundle, &request, "tenant-a")
             .await
             .unwrap_or_else(|error| panic!("{target:?} metadata invocation should pass: {error}"));
         assert_eq!(
@@ -173,20 +173,20 @@ export {};
         auth: None,
         services: Default::default(),
     };
-    let context = RuntimeInvocationContext::top_level_for_tenant_and_request(
+    let context = RuntimeInvocationContext::top_level_for_tenant_and_request_for_test(
         &request,
         "snapshot-control",
         "req-snapshot-driver-cycles",
     );
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(AsyncEchoHost),
         run_to_completion_snapshot_runtime_test_policy(),
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
-    let snapshot = runtime_owner
+    let snapshot = runtime_instance
         .bootstrap_snapshot()
         .expect("bootstrap snapshot should build");
-    let runtime = runtime_owner
+    let runtime = runtime_instance
         .create_runtime(&bundle, Some(snapshot), false)
         .expect("snapshot-born runtime should build");
     let expected = serde_json::json!({
@@ -204,7 +204,7 @@ export {};
 
     for cycle in 0..cycles {
         let mut permit = SharedInvocationPermit::new(
-            runtime_owner.policy(),
+            runtime_instance.policy(),
             context.tenant_label.clone(),
             None,
             false,
@@ -215,7 +215,7 @@ export {};
             .await
             .expect("permit should admit invocation");
 
-        let mut driver = runtime_owner
+        let mut driver = runtime_instance
             .prepare_runtime_invocation_driver(RuntimeInvocationDriverPrepare {
                 runtime: reusable_runtime,
                 watchdog: watchdog.clone(),
@@ -228,7 +228,7 @@ export {};
             })
             .expect("driver preparation should succeed for snapshot-seeded runtime");
 
-        runtime_owner
+        runtime_instance
             .load_bundle_with_trace(
                 &mut driver.runtime,
                 &bundle,
@@ -238,7 +238,7 @@ export {};
             )
             .await
             .expect("bundle should load during each direct driver cycle");
-        let value = runtime_owner
+        let value = runtime_instance
             .invoke_loaded_bundle_with_trace(
                 &mut driver.runtime,
                 &request,
@@ -305,7 +305,7 @@ export {};
         auth: None,
         services: Default::default(),
     };
-    let context = RuntimeInvocationContext::top_level_for_tenant_and_request(
+    let context = RuntimeInvocationContext::top_level_for_tenant_and_request_for_test(
         &request,
         "snapshot-control",
         "req-snapshot-driver-fresh-owner",
@@ -336,13 +336,13 @@ export {};
         ReusableV8Runtime::fresh(runtime, V8RuntimeConstructionMode::StartupSnapshot);
 
     for cycle in 0..cycles {
-        let runtime_owner = NimbusRuntime::with_policy(
+        let runtime_instance = NimbusRuntime::with_policy(
             host.clone(),
             run_to_completion_snapshot_runtime_test_policy(),
             crate::RuntimeEgressPosture::CoarsePermissions,
         );
         let mut permit = SharedInvocationPermit::new(
-            runtime_owner.policy(),
+            runtime_instance.policy(),
             context.tenant_label.clone(),
             None,
             false,
@@ -353,7 +353,7 @@ export {};
             .await
             .expect("permit should admit invocation");
 
-        let mut driver = runtime_owner
+        let mut driver = runtime_instance
             .prepare_runtime_invocation_driver(RuntimeInvocationDriverPrepare {
                 runtime: reusable_runtime,
                 watchdog: watchdog.clone(),
@@ -366,7 +366,7 @@ export {};
             })
             .expect("driver preparation should succeed for snapshot-seeded runtime");
 
-        runtime_owner
+        runtime_instance
             .load_bundle_with_trace(
                 &mut driver.runtime,
                 &bundle,
@@ -376,7 +376,7 @@ export {};
             )
             .await
             .expect("bundle should load during each fresh-owner driver cycle");
-        let value = runtime_owner
+        let value = runtime_instance
             .invoke_loaded_bundle_with_trace(
                 &mut driver.runtime,
                 &request,
@@ -450,19 +450,19 @@ export {};
                 auth: None,
                 services: Default::default(),
             };
-            let context = RuntimeInvocationContext::top_level_for_tenant_and_request(
+            let context = RuntimeInvocationContext::top_level_for_tenant_and_request_for_test(
                 &request,
                 "snapshot-control",
                 "req-snapshot-driver-current-thread-delayed",
             );
-            let runtime_owner = NimbusRuntime::with_policy(
+            let runtime_instance = NimbusRuntime::with_policy(
                 Arc::new(DelayedAsyncEchoHost::new(std::time::Duration::from_millis(1))),
                 run_to_completion_snapshot_runtime_test_policy(),
             crate::RuntimeEgressPosture::CoarsePermissions);
-            let snapshot = runtime_owner
+            let snapshot = runtime_instance
                 .bootstrap_snapshot()
                 .expect("bootstrap snapshot should build");
-            let runtime = runtime_owner
+            let runtime = runtime_instance
                 .create_runtime(&bundle, Some(snapshot), false)
                 .expect("snapshot-born runtime should build");
             let expected = serde_json::json!({
@@ -480,7 +480,7 @@ export {};
 
             for cycle in 0..cycles {
                 let mut permit = SharedInvocationPermit::new(
-                    runtime_owner.policy(),
+                    runtime_instance.policy(),
                     context.tenant_label.clone(),
                     None,
                     false,
@@ -491,7 +491,7 @@ export {};
                     .await
                     .expect("permit should admit invocation");
 
-                let mut driver = runtime_owner
+                let mut driver = runtime_instance
                     .prepare_runtime_invocation_driver(RuntimeInvocationDriverPrepare {
                         runtime: reusable_runtime,
                         watchdog: watchdog.clone(),
@@ -506,7 +506,7 @@ export {};
                         "driver preparation should succeed for snapshot-seeded delayed runtime",
                     );
 
-                runtime_owner
+                runtime_instance
                     .load_bundle_with_trace(
                         &mut driver.runtime,
                         &bundle,
@@ -516,7 +516,7 @@ export {};
                     )
                     .await
                     .expect("bundle should load during each delayed current-thread driver cycle");
-                let value = runtime_owner
+                let value = runtime_instance
                     .invoke_loaded_bundle_with_trace(
                         &mut driver.runtime,
                         &request,
@@ -580,23 +580,23 @@ export {};
     .expect("bundle should write");
 
     let bundle = RuntimeBundle::new(&bundle_path);
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         run_to_completion_snapshot_runtime_test_policy(),
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
     let mut runtime = v8_runtime_pool
-        .take_runtime(&runtime_owner, &bundle)
+        .take_runtime(&runtime_instance, &bundle)
         .expect("runtime should build from snapshot")
         .runtime;
-    runtime_owner
+    runtime_instance
         .load_bundle(&mut runtime, &bundle)
         .await
         .expect("bundle should load");
 
     async fn invoke_with_current_reset_contract(
-        runtime_owner: &NimbusRuntime,
+        runtime_instance: &NimbusRuntime,
         runtime: &mut JsRuntime,
     ) -> Value {
         let request = InvocationRequest {
@@ -608,23 +608,23 @@ export {};
             auth: None,
             services: Default::default(),
         };
-        let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
+        let context = RuntimeInvocationContext::top_level_for_tenant_for_test(&request, "tenant-a");
         bootstrap::reset_runtime_invocation_state(
             runtime,
-            SharedInvocationPermit::new(runtime_owner.policy(), None, None, true, None),
+            SharedInvocationPermit::new(runtime_instance.policy(), None, None, true, None),
             Some(&context),
             None,
         );
         bootstrap::reset_bootstrap_invocation_state(runtime)
             .expect("bootstrap invocation reset should succeed");
-        runtime_owner
+        runtime_instance
             .invoke_loaded_bundle(runtime, &request)
             .await
             .expect("invocation should succeed")
     }
 
-    let first = invoke_with_current_reset_contract(&runtime_owner, &mut runtime).await;
-    let second = invoke_with_current_reset_contract(&runtime_owner, &mut runtime).await;
+    let first = invoke_with_current_reset_contract(&runtime_instance, &mut runtime).await;
+    let second = invoke_with_current_reset_contract(&runtime_instance, &mut runtime).await;
 
     assert_eq!(first, serde_json::json!({ "counter": 1 }));
     assert_eq!(

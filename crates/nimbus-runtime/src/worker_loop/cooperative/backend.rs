@@ -85,6 +85,21 @@ pub(crate) trait CooperativeBackendDriver: 'static {
     fn idle_maintenance(&mut self, worker_is_idle: bool);
 
     fn clear_retained(&mut self);
+
+    fn retire_owner(&mut self, _owner_id: &crate::RuntimeOwnerId) -> usize {
+        0
+    }
+
+    fn retire_deployment_authority(
+        &mut self,
+        _authority_id: &crate::RuntimeDeploymentAuthorityId,
+    ) -> usize {
+        0
+    }
+
+    fn tracks_retained_runtime_pool_entries(&self) -> bool {
+        false
+    }
 }
 
 pub(super) struct V8LockerDriver {
@@ -196,9 +211,9 @@ impl CooperativeBackendDriver for V8LockerDriver {
             RuntimePoolKind::WarmPool | RuntimePoolKind::WarmContextRecycle => {
                 reusable_runtime.warm_reuse_count =
                     reusable_runtime.warm_reuse_count.saturating_add(1);
-                let runtime_owner = host.runtime_with_policy(policy);
+                let runtime_instance = host.runtime_with_policy(policy);
                 self.v8_runtime_pool.return_runtime_for_invocation(
-                    &runtime_owner,
+                    &runtime_instance,
                     bundle,
                     Some(context),
                     reusable_runtime,
@@ -223,6 +238,22 @@ impl CooperativeBackendDriver for V8LockerDriver {
 
     fn clear_retained(&mut self) {
         self.deferred_v8_runtime_drops.clear();
+    }
+
+    fn retire_owner(&mut self, owner_id: &crate::RuntimeOwnerId) -> usize {
+        self.v8_runtime_pool.retire_owner(owner_id)
+    }
+
+    fn retire_deployment_authority(
+        &mut self,
+        authority_id: &crate::RuntimeDeploymentAuthorityId,
+    ) -> usize {
+        self.v8_runtime_pool
+            .retire_deployment_authority(authority_id)
+    }
+
+    fn tracks_retained_runtime_pool_entries(&self) -> bool {
+        true
     }
 }
 

@@ -642,6 +642,45 @@ async fn record_machine_state_projects_machine_listener_and_port_documents() {
 }
 
 #[tokio::test]
+async fn system_evidence_write_does_not_wait_on_another_tenant_delete_fence() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    ensure_system_tenant_async(&engine)
+        .await
+        .expect("system tenant should prepare");
+    let tenant_id = TenantId::new("deleting-service-owner").expect("tenant should parse");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("application tenant should create");
+    let deletion = engine
+        .begin_tenant_delete_async(tenant_id.clone())
+        .await
+        .expect("application tenant delete fence should begin");
+    let stopped = nimbus_sandbox::SandboxHandle::new(
+        tenant_id,
+        nimbus_sandbox::SandboxId::new("sandbox-stopped"),
+        "db",
+        nimbus_sandbox::SandboxBackendKind::Container,
+        nimbus_sandbox::SandboxStatus::Stopped,
+        Vec::new(),
+    );
+
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        record_service_handle_async(&engine, &stopped.tenant_id, &stopped),
+    )
+    .await
+    .expect("system evidence must not wait on an unrelated tenant load fence")
+    .expect("stopped service evidence should project");
+
+    engine
+        .finish_tenant_delete_async(deletion)
+        .await
+        .expect("application tenant delete should finish");
+}
+
+#[tokio::test]
 async fn record_service_handle_removes_only_stale_ports_for_that_service() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();

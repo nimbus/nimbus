@@ -17,6 +17,7 @@ use crate::execution::invocations::{
 use nimbus_auth::normalize_principal_context;
 use nimbus_bridge::admission::RuntimeExecutionAdmission;
 use nimbus_bridge::mutation_retry::{MutationOccConflictDecision, MutationOccRetryPolicy};
+use nimbus_compute::runtime_manager::RuntimeManager;
 use nimbus_services::RuntimeServiceRegistry;
 use nimbus_tenant::{
     RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode,
@@ -29,6 +30,7 @@ pub(in crate::adapters::convex) struct RuntimeInvocationContext<'a> {
     engine: &'a Arc<nimbus_engine::Engine>,
     registry: &'a Arc<ConvexRegistry>,
     runtime_service_registry: &'a Arc<dyn RuntimeServiceRegistry>,
+    runtime_manager: &'a Arc<RuntimeManager>,
     isolation: TenantIsolationContext,
     tenant_isolation_mode: TenantIsolationMode,
 }
@@ -38,6 +40,7 @@ impl<'a> RuntimeInvocationContext<'a> {
         engine: &'a Arc<nimbus_engine::Engine>,
         registry: &'a Arc<ConvexRegistry>,
         runtime_service_registry: &'a Arc<dyn RuntimeServiceRegistry>,
+        runtime_manager: &'a Arc<RuntimeManager>,
         isolation: TenantIsolationContext,
         tenant_isolation_mode: TenantIsolationMode,
     ) -> Self {
@@ -45,6 +48,7 @@ impl<'a> RuntimeInvocationContext<'a> {
             engine,
             registry,
             runtime_service_registry,
+            runtime_manager,
             isolation,
             tenant_isolation_mode,
         }
@@ -182,9 +186,19 @@ impl<'a> RuntimeInvocationContext<'a> {
         )?;
         let bundle = self.required_runtime_bundle_for_function(&request.function_name)?;
         let invocation_kind = request.kind.clone();
-        let (runtime_executor, runtime_policy) = self
+        let runtime_limits = self
             .registry
-            .runtime_lane_for_function(&request.function_name)?;
+            .required_runtime_limits_for_function(&request.function_name)?;
+        let runtime_lane = self.runtime_manager.lane_for_limits(runtime_limits);
+        let runtime_policy = runtime_lane.policy();
+        let invocation_lease = self
+            .runtime_manager
+            .acquire_invocation_lease(
+                self.isolation.tenant_id().clone(),
+                self.isolation.deployment_generation().unwrap_or(0),
+            )
+            .await?;
+        let runtime_authority = invocation_lease.authority();
         let decision = admit_runtime_invocation_decision(
             &self.isolation,
             &request.function_name,
@@ -214,6 +228,9 @@ impl<'a> RuntimeInvocationContext<'a> {
                 self.registry.clone(),
                 decision.clone(),
                 self.runtime_service_registry.clone(),
+                self.runtime_manager.clone(),
+                runtime_authority.clone(),
+                runtime_policy.limits().clone(),
             ),
             ConvexHostBridgeInvocation::new(
                 auth.clone(),
@@ -243,7 +260,7 @@ impl<'a> RuntimeInvocationContext<'a> {
             None
         };
         let invocation = invoke_runtime_bundle_on_worker_with_host_state(
-            &runtime_executor,
+            runtime_lane.executor().as_ref(),
             runtime_policy,
             bridge.clone(),
             bundle,
@@ -253,6 +270,7 @@ impl<'a> RuntimeInvocationContext<'a> {
                 server_request_id.as_deref(),
                 Some(cancellation),
             )
+            .with_runtime_authority(&runtime_authority)
             .with_optional_runtime_bundle_provenance_gate(
                 self.registry.runtime_bundle_provenance(),
             ),

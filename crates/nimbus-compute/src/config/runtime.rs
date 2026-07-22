@@ -1,15 +1,14 @@
 use std::sync::Arc;
 
-use nimbus_cloud_functions::CloudFunctionsRegistry;
-use nimbus_convex::ConvexRegistry;
 use nimbus_runtime::{
     EffectiveRuntimeScalingPlan, NominalRuntimeHostPressureSource,
     RuntimeAdaptiveControllerSettings, RuntimeHostPressureSource, RuntimeHostResourceBudget,
-    RuntimeScalingPlanSet,
+    RuntimeLimits, RuntimePolicy, RuntimeScalingPlanSet,
 };
 
 #[derive(Clone)]
 pub struct RuntimeGovernorConfig {
+    base_runtime_limits: RuntimeLimits,
     runtime_host_resource_budget: RuntimeHostResourceBudget,
     runtime_host_pressure_source: Arc<dyn RuntimeHostPressureSource>,
     runtime_adaptive_controller_settings: RuntimeAdaptiveControllerSettings,
@@ -19,6 +18,7 @@ pub struct RuntimeGovernorConfig {
 impl Default for RuntimeGovernorConfig {
     fn default() -> Self {
         Self {
+            base_runtime_limits: RuntimeLimits::default(),
             runtime_host_resource_budget: default_runtime_host_resource_budget(),
             runtime_host_pressure_source: default_runtime_host_pressure_source(),
             runtime_adaptive_controller_settings: RuntimeAdaptiveControllerSettings::default(),
@@ -28,6 +28,15 @@ impl Default for RuntimeGovernorConfig {
 }
 
 impl RuntimeGovernorConfig {
+    pub fn with_base_runtime_limits(mut self, limits: RuntimeLimits) -> Self {
+        self.base_runtime_limits = limits;
+        self
+    }
+
+    pub fn base_runtime_limits(&self) -> &RuntimeLimits {
+        &self.base_runtime_limits
+    }
+
     pub fn with_runtime_host_resource_budget(mut self, budget: RuntimeHostResourceBudget) -> Self {
         self.runtime_host_resource_budget = budget;
         self
@@ -74,27 +83,16 @@ impl RuntimeGovernorConfig {
         &self.effective_runtime_scaling_plans
     }
 
-    pub fn configure_convex_registry(&self, registry: ConvexRegistry) -> ConvexRegistry {
-        registry
-            .with_runtime_host_governor(
+    pub(crate) fn policy_for_limits(&self, limits: RuntimeLimits) -> Arc<RuntimePolicy> {
+        Arc::new(
+            RuntimePolicy::with_host_resource_governor(
+                limits,
                 self.runtime_host_resource_budget,
                 self.runtime_host_pressure_source.clone(),
-                self.runtime_adaptive_controller_settings,
             )
-            .with_effective_runtime_scaling_plans(self.effective_runtime_scaling_plans.clone())
-    }
-
-    pub fn configure_cloud_functions_registry(
-        &self,
-        registry: CloudFunctionsRegistry,
-    ) -> CloudFunctionsRegistry {
-        registry
-            .with_runtime_host_governor(
-                self.runtime_host_resource_budget,
-                self.runtime_host_pressure_source.clone(),
-                self.runtime_adaptive_controller_settings,
-            )
-            .with_effective_runtime_scaling_plans(self.effective_runtime_scaling_plans.clone())
+            .with_adaptive_controller_settings(self.runtime_adaptive_controller_settings)
+            .with_effective_scaling_plans(self.effective_runtime_scaling_plans.clone()),
+        )
     }
 }
 

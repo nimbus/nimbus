@@ -14,6 +14,7 @@ use crate::adapters::cloud_functions::CloudFunctionsRegistry;
 use crate::execution::invocations::next_runtime_server_request_id;
 use crate::state::AppError;
 use nimbus_compute::deploy::ComputeCloudFunctionsRuntimeInvoker;
+use nimbus_compute::runtime_manager::RuntimeManager;
 use nimbus_services::RuntimeServiceRegistry;
 use nimbus_tenant::TenantIsolationMode;
 
@@ -21,6 +22,7 @@ pub(super) struct ServerCloudFunctionsHttpInvocation {
     pub engine: Arc<Engine>,
     pub runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
     pub tenant_isolation_mode: TenantIsolationMode,
+    pub runtime_manager: Arc<RuntimeManager>,
     pub registry: Arc<CloudFunctionsRegistry>,
     pub deployment_generation: u64,
     pub tenant_id: TenantId,
@@ -36,6 +38,7 @@ pub(super) fn execute_http_target(
         engine,
         runtime_service_registry,
         tenant_isolation_mode,
+        runtime_manager,
         registry,
         deployment_generation,
         tenant_id,
@@ -48,7 +51,7 @@ pub(super) fn execute_http_target(
         engine,
         runtime_service_registry,
         tenant_isolation_mode,
-        Arc::new(ComputeCloudFunctionsRuntimeInvoker),
+        Arc::new(ComputeCloudFunctionsRuntimeInvoker::new(runtime_manager)),
     );
     let response = execute_adapter_http_target(
         runtime_context,

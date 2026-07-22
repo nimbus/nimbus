@@ -55,7 +55,7 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -159,7 +159,7 @@ export {};
     };
 
     let first = runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&first_bundle_path),
             &request("snapshot:first"),
             "tenant-a",
@@ -177,7 +177,7 @@ export {};
     );
 
     let second = runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&second_bundle_path),
             &request("snapshot:second"),
             "tenant-b",
@@ -226,7 +226,7 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -267,7 +267,7 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -387,7 +387,7 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let written = writer_runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -429,7 +429,7 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let worker_shared = worker_runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -465,7 +465,7 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let read = reader_runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -501,7 +501,7 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let denied = read_only_runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -556,7 +556,7 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -636,7 +636,7 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -694,7 +694,7 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -748,7 +748,7 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -837,7 +837,7 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -932,7 +932,7 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,

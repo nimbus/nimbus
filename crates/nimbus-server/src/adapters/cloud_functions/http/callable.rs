@@ -86,6 +86,7 @@ pub(super) async fn handle_callable_target(
         engine: state.engine.clone(),
         runtime_service_registry: state.runtime_service_registry(),
         tenant_isolation_mode: state.tenant_isolation_mode(),
+        runtime_manager: state.runtime_manager(),
         registry,
         deployment_generation: deployment.generation,
         tenant_id,

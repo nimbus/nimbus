@@ -26,6 +26,7 @@ pub(crate) struct RuntimeInvocationDriver {
     pub(crate) construction_mode: V8RuntimeConstructionMode,
     pub(crate) lifecycle: crate::backends::v8::RuntimeReuseLifecycle,
     pub(crate) realm_lease_controller: crate::runtime::realm_lease::RuntimeRealmLeaseController,
+    pub(crate) owner_lease: Option<crate::RuntimeOwnerLease>,
     policy: Arc<RuntimePolicy>,
     permit: SharedInvocationPermit,
     watchdog: WatchdogTimer,
@@ -225,6 +226,7 @@ impl RuntimeInvocationDriver {
                 construction_mode: self.construction_mode,
                 lifecycle: self.lifecycle,
                 realm_lease_controller: self.realm_lease_controller,
+                owner_lease: self.owner_lease,
             })
         } else {
             self.lifecycle.mark_condemned();
@@ -257,6 +259,7 @@ impl NimbusRuntime {
             response_ready_tx,
             permit,
         } = invocation;
+        crate::retained_state::validate_retained_state_admission(&self.policy, &context)?;
         let mut response_ready_tx = response_ready_tx;
         let integrity_started_at = Instant::now();
         let integrity_result = bundle.verify_integrity();
@@ -484,6 +487,7 @@ impl NimbusRuntime {
             construction_mode,
             lifecycle,
             realm_lease_controller,
+            owner_lease,
         } = runtime;
         let timeout = self.policy.limits().execution_timeout;
         let system_timeout = self.policy.limits().system_timeout;
@@ -491,7 +495,7 @@ impl NimbusRuntime {
         let system_timeout_triggered = Arc::new(AtomicBool::new(false));
         let heap_limit_triggered = Arc::new(AtomicBool::new(false));
         let external_cancellation_triggered = Arc::new(AtomicBool::new(false));
-        super::super::bootstrap::install_runtime_owner(&mut runtime, self.clone());
+        super::super::bootstrap::install_runtime_instance(&mut runtime, self.clone());
         super::super::bootstrap::install_runtime_egress_gateway(
             &mut runtime,
             self.egress_gateway_binding(),
@@ -621,6 +625,7 @@ impl NimbusRuntime {
             heap_limit_triggered,
             external_cancellation_triggered,
             record_replacement_on_error,
+            owner_lease,
         })
     }
 }

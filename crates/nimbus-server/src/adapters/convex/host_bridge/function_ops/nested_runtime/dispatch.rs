@@ -152,7 +152,8 @@ impl ConvexHostBridge {
     ) -> Result<Value, Error> {
         let NestedRuntimeInvocationPlan { bundle, request } =
             self.prepare_nested_runtime_invocation(kind, name, args, visibility, auth)?;
-        let (runtime_executor, runtime_policy) = self.registry().runtime_lane_for_function(name)?;
+        let runtime_limits = self.registry().required_runtime_limits_for_function(name)?;
+        let runtime_lane = self.runtime_manager().lane_for_limits(runtime_limits);
         let _host_call_session = self
             .host_state()
             .enter_host_call_session(format!(
@@ -162,8 +163,8 @@ impl ConvexHostBridge {
             ))
             .map_err(runtime_error_to_core)?;
         let response = invoke_runtime_bundle_on_worker_with_egress_gateway(
-            &runtime_executor,
-            runtime_policy,
+            runtime_lane.executor().as_ref(),
+            runtime_lane.policy(),
             Arc::new(self.retargeted_for_nested_invocation(request.kind.clone(), name)),
             bundle,
             request,
@@ -172,6 +173,7 @@ impl ConvexHostBridge {
                 self.server_request_id(),
                 Some(cancellation.clone()),
             )
+            .with_runtime_authority(self.runtime_authority())
             .with_optional_runtime_bundle_provenance_gate(
                 self.registry().runtime_bundle_provenance(),
             ),
@@ -194,7 +196,8 @@ impl ConvexHostBridge {
     ) -> Result<Value, Error> {
         let NestedRuntimeInvocationPlan { bundle, request } =
             self.prepare_nested_runtime_invocation(kind, name, args, visibility, auth)?;
-        let (runtime_executor, runtime_policy) = self.registry().runtime_lane_for_function(name)?;
+        let runtime_limits = self.registry().required_runtime_limits_for_function(name)?;
+        let runtime_lane = self.runtime_manager().lane_for_limits(runtime_limits);
         let _host_call_session = self
             .host_state()
             .enter_host_call_session(format!(
@@ -204,8 +207,8 @@ impl ConvexHostBridge {
             ))
             .map_err(runtime_error_to_core)?;
         let response = invoke_runtime_bundle_blocking_with_egress_gateway(
-            &runtime_executor,
-            runtime_policy,
+            runtime_lane.executor().as_ref(),
+            runtime_lane.policy(),
             Arc::new(self.retargeted_for_nested_invocation(request.kind.clone(), name)),
             bundle,
             request,
@@ -214,6 +217,7 @@ impl ConvexHostBridge {
                 self.server_request_id(),
                 Some(cancellation.clone()),
             )
+            .with_runtime_authority(self.runtime_authority())
             .with_optional_runtime_bundle_provenance_gate(
                 self.registry().runtime_bundle_provenance(),
             ),
@@ -233,8 +237,9 @@ impl ConvexHostBridge {
         auth: Option<InvocationAuth>,
     ) -> Result<NestedRuntimeInvocationPlan, Error> {
         self.consume_nested_runtime_invocation_budget()?;
-        self.registry()
-            .runtime_policy()
+        self.runtime_manager()
+            .lane_for_limits(self.registry().runtime_limits_for_function(name))
+            .policy()
             .metrics()
             .record_fallback_cross_runtime_dispatch();
         tracing::debug!(

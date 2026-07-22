@@ -9,6 +9,8 @@ use nimbus_runtime::{
     RuntimeEgressPosture, RuntimeInvocationContext, RuntimePolicy,
 };
 
+use crate::runtime_manager::RuntimeInvocationAuthority;
+
 mod blocking;
 mod fs_grants;
 mod provenance;
@@ -32,6 +34,7 @@ pub struct RuntimeBundleInvocationOptions<'a> {
     pub(crate) cancellation: Option<HostCallCancellation>,
     pub(crate) concurrency_mode: RuntimeConcurrencyMode,
     pub(crate) scope: RuntimeInvocationScope,
+    pub(crate) authority: Option<&'a RuntimeInvocationAuthority>,
     provenance_gate: RuntimeBundleProvenanceGate<'a>,
 }
 
@@ -53,6 +56,7 @@ impl<'a> RuntimeBundleInvocationOptions<'a> {
             cancellation,
             concurrency_mode: RuntimeConcurrencyMode::EnforcePolicyLimit,
             scope: RuntimeInvocationScope::TopLevel,
+            authority: None,
             provenance_gate: RuntimeBundleProvenanceGate::Disabled,
         }
     }
@@ -68,8 +72,14 @@ impl<'a> RuntimeBundleInvocationOptions<'a> {
             cancellation,
             concurrency_mode: RuntimeConcurrencyMode::BudgetedNestedInvocationBypass,
             scope: RuntimeInvocationScope::Nested,
+            authority: None,
             provenance_gate: RuntimeBundleProvenanceGate::Disabled,
         }
+    }
+
+    pub fn with_runtime_authority(mut self, authority: &'a RuntimeInvocationAuthority) -> Self {
+        self.authority = Some(authority);
+        self
     }
 }
 
@@ -87,7 +97,19 @@ pub(crate) fn runtime_invocation_context(
     server_request_id: Option<&str>,
     concurrency_mode: RuntimeConcurrencyMode,
     scope: RuntimeInvocationScope,
+    authority: Option<&RuntimeInvocationAuthority>,
 ) -> RuntimeInvocationContext {
+    if let Some(authority) = authority {
+        return authority.invocation_context(
+            request,
+            server_request_id,
+            matches!(scope, RuntimeInvocationScope::Nested),
+            matches!(
+                concurrency_mode,
+                RuntimeConcurrencyMode::BudgetedNestedInvocationBypass
+            ),
+        );
+    }
     let tenant_label = tenant_id.to_string();
     let context = match (scope, server_request_id) {
         (RuntimeInvocationScope::TopLevel, Some(server_request_id)) => {

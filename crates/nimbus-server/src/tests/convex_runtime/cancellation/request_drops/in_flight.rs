@@ -54,7 +54,7 @@ async fn dropped_runtime_http_request_cancels_runtime_invocation() {
     )
     .await;
     wait_for_runtime_metrics_case(
-        &registry,
+        &server,
         IN_FLIGHT_REQUEST_DROP_CASE,
         "runtime invocation to start",
         |metrics| {
@@ -66,7 +66,7 @@ async fn dropped_runtime_http_request_cancels_runtime_invocation() {
     drop(request);
 
     let metrics = wait_for_runtime_metrics_case(
-        &registry,
+        &server,
         IN_FLIGHT_REQUEST_DROP_CASE,
         "dropped runtime request cancellation",
         |metrics| metrics.active_runtime_instances == 0 && metrics.canceled_invocations >= 1,
@@ -103,7 +103,7 @@ async fn dropped_runtime_http_request_cancels_runtime_invocation() {
     assert_eq!(recovery_body, json!("after-cancel"));
 
     let recovery_metrics = wait_for_runtime_metrics_case(
-        &registry,
+        &server,
         IN_FLIGHT_REQUEST_DROP_CASE,
         "recovery runtime invocation after cancellation",
         |metrics| {

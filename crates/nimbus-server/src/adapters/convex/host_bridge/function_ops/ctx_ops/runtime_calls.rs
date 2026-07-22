@@ -111,8 +111,7 @@ impl ConvexHostBridge {
     ) -> std::result::Result<Value, NimbusRuntimeError> {
         let payload: RuntimeSyncNestedCallPayload = serde_json::from_value(payload)?;
         self.validate_host_call_session(payload.host_call_session_id.as_deref())?;
-        self.registry()
-            .runtime_policy()
+        self.runtime_policy()
             .metrics()
             .record_nested_local_dispatch();
         tracing::debug!(

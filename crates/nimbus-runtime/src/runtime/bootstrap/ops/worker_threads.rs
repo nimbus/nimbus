@@ -21,7 +21,7 @@ use tempfile::TempDir;
 use crate::backends::v8::V8RuntimeConstructionMode;
 use crate::backends::v8::embedder::{Extension, JsErrorBox, OpState, op2};
 use crate::runtime::bootstrap::state::{
-    InstalledRuntimeCapabilityPolicy, InstalledRuntimeContract, InstalledRuntimeOwner,
+    InstalledRuntimeCapabilityPolicy, InstalledRuntimeContract, InstalledRuntimeInstance,
     InstalledRuntimeWorkerBootstrapState, RuntimeSharedWorkerEnv, RuntimeWorkerBootstrapDescriptor,
     install_missing_deno_extension_state,
 };
@@ -191,7 +191,7 @@ pub(super) fn op_create_worker(
     }
 
     let worker_id = WORKER_ID_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let runtime_owner = state.borrow::<InstalledRuntimeOwner>().runtime.clone();
+    let runtime_instance = state.borrow::<InstalledRuntimeInstance>().runtime.clone();
     let worker_cwd = state
         .borrow::<InstalledRuntimeCapabilityPolicy>()
         .paths
@@ -213,7 +213,7 @@ pub(super) fn op_create_worker(
     let cpu_thread_handle = Arc::new(AtomicU64::new(0));
     spawn_worker_thread(WorkerThreadSpawnRequest {
         worker_id,
-        runtime_owner,
+        runtime_instance,
         bundle,
         tempdir,
         worker_bootstrap_descriptor,
@@ -582,7 +582,7 @@ fn infer_worker_module_root(script_path: &Path) -> PathBuf {
 
 struct WorkerThreadSpawnRequest {
     worker_id: u32,
-    runtime_owner: NimbusRuntime,
+    runtime_instance: NimbusRuntime,
     bundle: RuntimeBundle,
     tempdir: TempDir,
     worker_bootstrap_descriptor: RuntimeWorkerBootstrapDescriptor,
@@ -596,7 +596,7 @@ struct WorkerThreadSpawnRequest {
 fn spawn_worker_thread(request: WorkerThreadSpawnRequest) -> Result<(), JsErrorBox> {
     let WorkerThreadSpawnRequest {
         worker_id,
-        runtime_owner,
+        runtime_instance,
         bundle,
         tempdir,
         worker_bootstrap_descriptor,
@@ -626,13 +626,13 @@ fn spawn_worker_thread(request: WorkerThreadSpawnRequest) -> Result<(), JsErrorB
                         parent_port: Some(child_port),
                         shared_env,
                     };
-                    let mut js_runtime = runtime_owner
+                    let mut js_runtime = runtime_instance
                         .create_unsnapshotted_runtime_with_worker_bootstrap(
                             &bundle,
                             bootstrap_state,
                         )
                         .map_err(|error| error.to_string())?;
-                    runtime_owner
+                    runtime_instance
                         .load_bundle_with_trace(
                             &mut js_runtime,
                             &bundle,

@@ -74,7 +74,7 @@ pub(super) struct InstalledRuntimeEgressGateway {
 }
 
 #[derive(Clone)]
-pub(crate) struct InstalledRuntimeOwner {
+pub(crate) struct InstalledRuntimeInstance {
     pub(crate) runtime: NimbusRuntime,
 }
 
@@ -89,6 +89,10 @@ pub(super) struct RuntimeInvocationHostCallBinding {
     invocation_id: Option<u64>,
     invocation_kind: Option<&'static str>,
     tenant_label: Option<String>,
+    #[cfg(test)]
+    runtime_owner_lease: Option<crate::RuntimeOwnerLease>,
+    #[cfg(test)]
+    deployment_authority_lease: Option<crate::RuntimeDeploymentAuthorityLease>,
 }
 
 impl RuntimeInvocationHostCallBinding {
@@ -98,6 +102,10 @@ impl RuntimeInvocationHostCallBinding {
             invocation_id: None,
             invocation_kind: None,
             tenant_label: None,
+            #[cfg(test)]
+            runtime_owner_lease: None,
+            #[cfg(test)]
+            deployment_authority_lease: None,
         }
     }
 
@@ -107,6 +115,10 @@ impl RuntimeInvocationHostCallBinding {
             invocation_id: Some(context.invocation_id),
             invocation_kind: Some(context.kind),
             tenant_label: context.tenant_label.clone(),
+            #[cfg(test)]
+            runtime_owner_lease: context.runtime_owner_lease().cloned(),
+            #[cfg(test)]
+            deployment_authority_lease: context.deployment_authority_lease().cloned(),
         }
     }
 
@@ -124,6 +136,18 @@ impl RuntimeInvocationHostCallBinding {
 
     pub(super) fn tenant_label(&self) -> Option<&str> {
         self.tenant_label.as_deref()
+    }
+
+    #[cfg(test)]
+    pub(super) fn runtime_owner_lease(&self) -> Option<crate::RuntimeOwnerLease> {
+        self.runtime_owner_lease.clone()
+    }
+
+    #[cfg(test)]
+    pub(super) fn deployment_authority_lease(
+        &self,
+    ) -> Option<crate::RuntimeDeploymentAuthorityLease> {
+        self.deployment_authority_lease.clone()
     }
 }
 
@@ -444,14 +468,14 @@ impl RuntimeInvocationTimeoutController {
 
 pub(crate) fn initialize_runtime_state(
     runtime: &mut JsRuntime,
-    runtime_owner: &NimbusRuntime,
+    runtime_instance: &NimbusRuntime,
     bundle: &RuntimeBundle,
 ) -> Result<()> {
-    install_runtime_owner(runtime, runtime_owner.clone());
-    install_runtime_host_bridge_slot(runtime, runtime_owner.host.clone());
-    install_runtime_egress_gateway(runtime, runtime_owner.egress_gateway_binding());
-    reset_runtime_contract(runtime, runtime_owner, bundle)?;
-    if runtime_owner
+    install_runtime_instance(runtime, runtime_instance.clone());
+    install_runtime_host_bridge_slot(runtime, runtime_instance.host.clone());
+    install_runtime_egress_gateway(runtime, runtime_instance.egress_gateway_binding());
+    reset_runtime_contract(runtime, runtime_instance, bundle)?;
+    if runtime_instance
         .policy()
         .limits()
         .compatibility_target
@@ -466,7 +490,7 @@ pub(crate) fn initialize_runtime_state(
     }
     reset_runtime_invocation_state(
         runtime,
-        SharedInvocationPermit::new(runtime_owner.policy.clone(), None, None, true, None),
+        SharedInvocationPermit::new(runtime_instance.policy.clone(), None, None, true, None),
         None,
         None,
     );
@@ -475,10 +499,10 @@ pub(crate) fn initialize_runtime_state(
 
 pub(crate) fn reset_runtime_contract(
     runtime: &mut JsRuntime,
-    runtime_owner: &NimbusRuntime,
+    runtime_instance: &NimbusRuntime,
     bundle: &RuntimeBundle,
 ) -> Result<()> {
-    let limits = runtime_owner.policy().limits().clone();
+    let limits = runtime_instance.policy().limits().clone();
     let paths = RuntimePathPolicy::for_bundle(bundle, &limits)?;
     let env = RuntimeEnvPolicy::for_grants(&limits.grants);
     {
@@ -502,11 +526,11 @@ pub(crate) fn reset_runtime_contract(
     Ok(())
 }
 
-pub(crate) fn install_runtime_owner(runtime: &mut JsRuntime, runtime_owner: NimbusRuntime) {
+pub(crate) fn install_runtime_instance(runtime: &mut JsRuntime, runtime_instance: NimbusRuntime) {
     let op_state = runtime.op_state();
     let mut state = op_state.borrow_mut();
-    state.put(InstalledRuntimeOwner {
-        runtime: runtime_owner,
+    state.put(InstalledRuntimeInstance {
+        runtime: runtime_instance,
     });
 }
 
@@ -574,7 +598,7 @@ pub(crate) fn release_runtime_invocation_bindings(runtime: &mut JsRuntime) {
     let op_state = runtime.op_state();
     let mut state = op_state.borrow_mut();
     state.borrow::<InstalledRuntimeHostBridge>().slot.clear();
-    let _ = state.try_take::<InstalledRuntimeOwner>();
+    let _ = state.try_take::<InstalledRuntimeInstance>();
     let _ = state.try_take::<InstalledRuntimeEgressGateway>();
 }
 

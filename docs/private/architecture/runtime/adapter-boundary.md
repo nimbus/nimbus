@@ -33,6 +33,24 @@ The intended model is:
 
 ## Ownership Rules
 
+### Compute Owns Runtime Lanes And Reuse Authority
+
+`nimbus-compute::RuntimeManager` is the composition root for Nimbus runtime
+configuration, lane executors, runtime-owner admission, deployment-authority
+generation, retirement, and diagnostics. A runtime lane is keyed by the full
+backend/profile/guest-semantics/construction requirements. Convex and Cloud
+Functions select those requirements and provide adapter-specific bundles and
+host semantics; their registries do not own `RuntimeExecutor`, base runtime
+limits, pool policy, or reuse authority.
+
+Tenant owners come only from an Engine-issued tenant runtime lease. The
+authority-bearing identity is owner class plus stable tenant subject plus the
+Engine/storage incarnation; the human-readable tenant label remains audit and
+fairness metadata. Routing affinity may improve worker locality, but it cannot
+create, replace, or weaken that owner identity. Deletion and deployment
+replacement are acknowledged by every lane worker before their retained state
+is considered retired.
+
 ### Adapters Own Provider-Specific Runtime Shims
 
 Provider-specific runtime APIs belong under adapter ownership, even when they
@@ -188,8 +206,8 @@ The steady-state layout should look like:
 - provider-specific runtime compatibility shims under `adapters/*`
   - Cloud Functions-owned `firebase-admin/firestore` shim
   - Convex-owned `ctx.db.*` shim
-- adapter composition roots that adapt shared capabilities instead of acting as
-  the accidental shared runtime owner
+- adapter composition roots that adapt shared capabilities while the
+  compute-owned `RuntimeManager` owns runtime lanes and reuse authority
 
 In short:
 

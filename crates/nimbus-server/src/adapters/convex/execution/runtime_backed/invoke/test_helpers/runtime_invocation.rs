@@ -13,6 +13,8 @@ use crate::execution::invocations::{
     RuntimeBundleInvocationOptions, invoke_runtime_bundle_blocking_with_host_state,
 };
 use nimbus_auth::normalize_principal_context;
+use nimbus_compute::config::runtime::RuntimeGovernorConfig;
+use nimbus_compute::runtime_manager::RuntimeManager;
 use nimbus_services::{RuntimeServiceRegistry, ServiceInstanceBindingRegistry};
 use nimbus_tenant::{
     RuntimeIsolationTier, TenantIsolationContext, TenantIsolationMode,
@@ -68,11 +70,15 @@ fn invoke_named_convex_function_with_trace_cancellable(
         normalize_principal_context(auth.as_ref()),
         "convex_test_runtime",
     );
+    let runtime_manager = RuntimeManager::new(service.clone(), RuntimeGovernorConfig::default());
+    let runtime_lane = runtime_manager.lane_for_limits(registry.runtime_limits());
+    let invocation_lease = runtime_manager.acquire_invocation_lease_blocking(tenant_id, 0)?;
+    let runtime_authority = invocation_lease.authority();
     let decision = admit_runtime_invocation_decision(
         &isolation,
         &request.function_name,
         None,
-        &registry.runtime_policy(),
+        &runtime_lane.policy(),
         RuntimeIsolationTier::InProcessUntrusted,
         TenantIsolationMode::LocalDevelopment,
         request.services.keys().cloned(),
@@ -83,6 +89,9 @@ fn invoke_named_convex_function_with_trace_cancellable(
             registry.clone(),
             decision,
             runtime_service_registry,
+            runtime_manager.clone(),
+            runtime_authority.clone(),
+            runtime_lane.policy().limits().clone(),
         ),
         ConvexHostBridgeInvocation::new(
             auth.clone(),
@@ -94,12 +103,13 @@ fn invoke_named_convex_function_with_trace_cancellable(
         ),
     )?);
     let (response, read_set) = invoke_runtime_bundle_blocking_with_host_state(
-        &registry.runtime_executor(),
-        registry.runtime_policy(),
+        runtime_lane.executor().as_ref(),
+        runtime_lane.policy(),
         bridge.clone(),
         bundle,
         request,
-        RuntimeBundleInvocationOptions::enforcing_policy_limit(tenant_id, None, Some(cancellation)),
+        RuntimeBundleInvocationOptions::enforcing_policy_limit(tenant_id, None, Some(cancellation))
+            .with_runtime_authority(&runtime_authority),
         |bridge| bridge.snapshot_read_set(),
     )
     .map_err(runtime_error_to_core)?;
@@ -123,10 +133,12 @@ async fn invoke_named_convex_function_with_trace_async(
         ServiceInstanceBindingRegistry::new(Arc::new(nimbus_services::EmptyServiceInstanceCatalog)),
     );
     let auth = runtime_request_auth(&request)?;
+    let runtime_manager = RuntimeManager::new(service.clone(), RuntimeGovernorConfig::default());
     let context = RuntimeInvocationContext::new(
         service,
         registry,
         &runtime_service_registry,
+        &runtime_manager,
         TenantIsolationContext::application(
             tenant_id.clone(),
             normalize_principal_context(auth.as_ref()),

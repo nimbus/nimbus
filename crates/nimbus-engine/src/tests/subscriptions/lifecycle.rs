@@ -46,7 +46,7 @@ async fn engine_delete_tenant_tears_down_active_subscriptions() {
 }
 
 #[tokio::test]
-async fn delete_tenant_async_waits_for_in_flight_operations_and_rejects_new_work() {
+async fn delete_tenant_async_fences_new_work_before_draining_in_flight_operations() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();
     let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
@@ -92,17 +92,14 @@ async fn delete_tenant_async_waits_for_in_flight_operations_and_rejects_new_work
         "tenant deletion should wait for the in-flight operation"
     );
 
-    let mut ensure_task = tokio::spawn({
-        let engine = engine.clone();
-        let tenant_id = tenant_id.clone();
-        async move { engine.ensure_tenant_exists_async(tenant_id).await }
-    });
-    assert!(
-        timeout(Duration::from_millis(100), &mut ensure_task)
-            .await
-            .is_err(),
-        "new work should remain blocked behind tenant deletion"
-    );
+    let error = timeout(
+        Duration::from_millis(100),
+        engine.ensure_tenant_exists_async(tenant_id.clone()),
+    )
+    .await
+    .expect("new work should reject as soon as tenant deletion is fenced")
+    .expect_err("new work should fail after deletion begins");
+    assert!(matches!(error, Error::TenantNotFound(_)));
 
     probe.release();
 
@@ -122,15 +119,6 @@ async fn delete_tenant_async_waits_for_in_flight_operations_and_rejects_new_work
     })
     .await
     .expect("delete task should finish after the in-flight read completes");
-    let error = timeout(Duration::from_secs(1), async {
-        ensure_task
-            .await
-            .expect("ensure task should join")
-            .expect_err("new work should fail after deletion begins")
-    })
-    .await
-    .expect("ensure task should resolve after deletion completes");
-    assert!(matches!(error, Error::TenantNotFound(_)));
 }
 
 #[tokio::test]

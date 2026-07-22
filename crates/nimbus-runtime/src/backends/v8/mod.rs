@@ -119,6 +119,18 @@ impl RuntimeBackend for V8RuntimeBackend {
                 .await
         })
     }
+
+    fn retire_owner(&mut self, owner_id: &crate::RuntimeOwnerId) -> usize {
+        self.v8_runtime_pool.retire_owner(owner_id)
+    }
+
+    fn retire_deployment_authority(
+        &mut self,
+        authority_id: &crate::RuntimeDeploymentAuthorityId,
+    ) -> usize {
+        self.v8_runtime_pool
+            .retire_deployment_authority(authority_id)
+    }
 }
 
 #[derive(Default)]

@@ -11,7 +11,7 @@ use nimbus_compute::config::runtime::RuntimeGovernorConfig;
 use nimbus_engine::Engine;
 use nimbus_runtime::{
     EffectiveRuntimeScalingPlan, RuntimeAdaptiveControllerSettings, RuntimeHostPressureSource,
-    RuntimeHostResourceBudget, RuntimeScalingPlanSet,
+    RuntimeHostResourceBudget, RuntimeLimits, RuntimeScalingPlanSet,
 };
 use tower::ServiceBuilder;
 use tower_http::services::ServeDir;
@@ -168,6 +168,13 @@ impl RouterOptions {
         self
     }
 
+    /// Sets the canonical base limits from which the compute runtime manager
+    /// derives every adapter lane.
+    pub fn with_runtime_limits(mut self, limits: RuntimeLimits) -> Self {
+        self.runtime = self.runtime.with_base_runtime_limits(limits);
+        self
+    }
+
     pub fn with_runtime_host_pressure_source(
         mut self,
         pressure_source: Arc<dyn RuntimeHostPressureSource>,
@@ -247,6 +254,12 @@ impl RouterBuildConfig {
     }
 
     #[cfg(test)]
+    pub(crate) fn with_runtime_limits(mut self, limits: RuntimeLimits) -> Self {
+        self.runtime = self.runtime.with_base_runtime_limits(limits);
+        self
+    }
+
+    #[cfg(test)]
     pub(crate) fn with_runtime_host_resource_budget(
         mut self,
         budget: RuntimeHostResourceBudget,
@@ -268,6 +281,9 @@ impl RouterBuildConfig {
 
     #[cfg(test)]
     pub(crate) fn with_convex(mut self, convex_registry: ConvexRegistry) -> Self {
+        self.runtime = self
+            .runtime
+            .with_base_runtime_limits(convex_registry.runtime_limits());
         self.deployment = self.deployment.with_convex(convex_registry);
         self
     }
@@ -299,6 +315,9 @@ impl RouterBuildConfig {
         mut self,
         cloud_functions_registry: CloudFunctionsRegistry,
     ) -> Self {
+        self.runtime = self
+            .runtime
+            .with_base_runtime_limits(cloud_functions_registry.runtime_limits());
         self.deployment = self
             .deployment
             .with_cloud_functions(cloud_functions_registry);
@@ -463,12 +482,6 @@ impl RouterBuildConfig {
             firebase_config,
             convex_tenancy,
         } = deployment;
-        let convex_registry =
-            convex_registry.map(|registry| runtime.configure_convex_registry(registry));
-        let system_convex_registry =
-            system_convex_registry.map(|registry| runtime.configure_convex_registry(registry));
-        let cloud_functions_registry = cloud_functions_registry
-            .map(|registry| runtime.configure_cloud_functions_registry(registry));
         let cors_allowed_origins = transport.cors_allowed_origins().to_owned();
         let state = Arc::new(AppState::from_config(AppStateConfig {
             engine,

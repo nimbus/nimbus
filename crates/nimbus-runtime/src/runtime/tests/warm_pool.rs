@@ -14,6 +14,14 @@ pub(super) const CROSS_TENANT_WARM_POOL_CASE: IsolatedRuntimeTestCase =
         "runtime::tests::warm_pool::warm_pool_cross_tenant_isolation_subprocess",
     );
 
+pub(super) const OWNER_INCARNATION_WARM_POOL_CASE: IsolatedRuntimeTestCase =
+    IsolatedRuntimeTestCase::new(
+        "runtime-warm-pool-owner-incarnation-isolation",
+        "cooperative-warm-pool",
+        "None and unscoped Script routing cannot expose module globals across owners or tenant incarnations",
+        "runtime::tests::warm_pool::warm_pool_owner_incarnation_isolation_subprocess",
+    );
+
 pub(super) const SERVICE_GRANT_WARM_POOL_CASE: IsolatedRuntimeTestCase =
     IsolatedRuntimeTestCase::new(
         "runtime-warm-pool-service-grant-partition",
@@ -80,7 +88,18 @@ fn warm_pool_context(tenant_label: &str) -> RuntimeInvocationContext {
         auth: None,
         services: Default::default(),
     };
-    RuntimeInvocationContext::top_level_for_tenant(&request, tenant_label)
+    warm_pool_context_for_request(&request, tenant_label)
+}
+
+fn warm_pool_context_for_request(
+    request: &InvocationRequest,
+    tenant_label: &str,
+) -> RuntimeInvocationContext {
+    RuntimeInvocationContext::top_level_for_tenant_with_owner(
+        request,
+        tenant_label,
+        crate::test_support::runtime_owner_lease_for_test(tenant_label),
+    )
 }
 
 #[test]
@@ -151,6 +170,11 @@ fn bundle_identity_includes_tenant_label() {
 #[test]
 fn warm_pool_cross_tenant_isolation() {
     run_v8_sensitive_runtime_test_in_subprocess(CROSS_TENANT_WARM_POOL_CASE);
+}
+
+#[test]
+fn warm_pool_owner_incarnation_isolation() {
+    run_v8_sensitive_runtime_test_in_subprocess(OWNER_INCARNATION_WARM_POOL_CASE);
 }
 
 #[test]
@@ -226,6 +250,16 @@ fn warm_pool_cross_tenant_isolation_subprocess() {
         .build()
         .expect("tokio runtime should build")
         .block_on(warm_pool_cross_tenant_isolation_inner());
+}
+
+#[test]
+#[ignore = "runs in a subprocess to isolate warm-pool locker V8 state"]
+fn warm_pool_owner_incarnation_isolation_subprocess() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime should build")
+        .block_on(warm_pool_owner_incarnation_isolation_inner());
 }
 
 #[test]
@@ -329,7 +363,7 @@ export {};
     limits.max_concurrent_runtime_instances = 1;
     limits.worker_threads = 1;
     let policy = Arc::new(RuntimePolicy::new(limits));
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(AsyncEchoHost),
         policy,
         crate::RuntimeEgressPosture::CoarsePermissions,
@@ -341,19 +375,19 @@ export {};
     // Step 1: Take a runtime for tenant-A (cold miss — pool is empty).
     let reusable_a = v8_runtime_pool
         .take_runtime_with_options_for_invocation(
-            &runtime_owner,
+            &runtime_instance,
             &bundle_tenant_a,
             Some(&tenant_a_context),
             true,
         )
         .expect("tenant-a cold take should succeed");
-    let metrics_after_cold = runtime_owner.policy.metrics_snapshot();
+    let metrics_after_cold = runtime_instance.policy.metrics_snapshot();
     assert_eq!(metrics_after_cold.warm_pool_misses, 1);
     assert_eq!(metrics_after_cold.warm_pool_hits, 0);
 
     // Return the runtime to the pool under tenant-A's identity.
     v8_runtime_pool.return_runtime_for_invocation(
-        &runtime_owner,
+        &runtime_instance,
         &bundle_tenant_a,
         Some(&tenant_a_context),
         reusable_a,
@@ -364,13 +398,13 @@ export {};
     // pooled entry belongs to tenant-A.
     let reusable_b = v8_runtime_pool
         .take_runtime_with_options_for_invocation(
-            &runtime_owner,
+            &runtime_instance,
             &bundle_tenant_b,
             Some(&tenant_b_context),
             true,
         )
         .expect("tenant-b cold take should succeed");
-    let metrics_after_cross = runtime_owner.policy.metrics_snapshot();
+    let metrics_after_cross = runtime_instance.policy.metrics_snapshot();
     assert_eq!(
         metrics_after_cross.warm_pool_misses, 2,
         "cross-tenant take must be a cold miss"
@@ -385,7 +419,7 @@ export {};
 
     // Return tenant-B's runtime.
     v8_runtime_pool.return_runtime_for_invocation(
-        &runtime_owner,
+        &runtime_instance,
         &bundle_tenant_b,
         Some(&tenant_b_context),
         reusable_b,
@@ -395,13 +429,13 @@ export {};
     // Step 3: Take for tenant-A again → must be a warm hit.
     let _reusable_a2 = v8_runtime_pool
         .take_runtime_with_options_for_invocation(
-            &runtime_owner,
+            &runtime_instance,
             &bundle_tenant_a,
             Some(&tenant_a_context),
             true,
         )
         .expect("tenant-a warm take should succeed");
-    let metrics_after_warm = runtime_owner.policy.metrics_snapshot();
+    let metrics_after_warm = runtime_instance.policy.metrics_snapshot();
     assert_eq!(
         metrics_after_warm.warm_pool_hits, 1,
         "same-tenant take must be a warm hit"
@@ -417,6 +451,128 @@ export {};
 
     // Pool should now have 1 entry (tenant-B's).
     assert_eq!(v8_runtime_pool.warm_pool_count_for_test(), 1);
+}
+
+async fn warm_pool_owner_incarnation_isolation_inner() {
+    for routing_affinity in [
+        crate::RuntimeRoutingAffinity::None,
+        crate::RuntimeRoutingAffinity::Script,
+    ] {
+        let tempdir = tempdir().expect("tempdir should build");
+        let bundle_path = tempdir.path().join("owner-isolation.mjs");
+        std::fs::write(
+            &bundle_path,
+            r#"
+globalThis.__runtimeOwnerSentinel ??= null;
+
+globalThis.__nimbusInvoke = function (request) {
+  const observedBeforeWrite = globalThis.__runtimeOwnerSentinel;
+  if (request.args.write !== null) {
+    globalThis.__runtimeOwnerSentinel = request.args.write;
+  }
+  return { observedBeforeWrite };
+};
+
+export {};
+"#,
+        )
+        .expect("bundle should write");
+        let expected_sha256 =
+            RuntimeBundle::compute_sha256_for_path(&bundle_path).expect("bundle hash should load");
+        let bundle = RuntimeBundle::with_expected_sha256(&bundle_path, &expected_sha256)
+            .expect("unscoped bundle should build");
+        let mut limits = cooperative_warm_pool_runtime_test_limits();
+        limits.routing_affinity = routing_affinity;
+        limits.max_concurrent_runtime_instances = 1;
+        limits.worker_threads = 1;
+        let policy = Arc::new(RuntimePolicy::new(limits));
+        let runtime = NimbusRuntime::with_policy(
+            Arc::new(AsyncEchoHost),
+            policy.clone(),
+            crate::RuntimeEgressPosture::CoarsePermissions,
+        );
+        let request = |write: Option<&str>| InvocationRequest {
+            kind: InvocationKind::Query,
+            function_name: "owner:isolation".to_string(),
+            args: serde_json::json!({ "write": write }),
+            page_size: None,
+            cursor: None,
+            auth: None,
+            services: Default::default(),
+        };
+        let owner = |subject: &str, incarnation: u64| {
+            crate::RuntimeOwnerId::tenant(
+                subject,
+                std::num::NonZeroU64::new(incarnation).expect("fixture incarnation is positive"),
+                Some("shared-audit-label"),
+            )
+            .expect("fixture owner should build")
+        };
+        let issuer = crate::RuntimeOwnerLeaseIssuer;
+        let (tenant_a_v1, _) = issuer.issue(owner("tenant-a", 1));
+        let (tenant_b_v1, _) = issuer.issue(owner("tenant-b", 1));
+        let (tenant_a_v2, _) = issuer.issue(owner("tenant-a", 2));
+
+        let first = runtime
+            .invoke_bundle_for_tenant_with_owner(
+                &bundle,
+                &request(Some("tenant-a-v1-secret")),
+                "shared-audit-label",
+                tenant_a_v1.clone(),
+            )
+            .await
+            .expect("tenant-a first invocation should succeed");
+        assert_eq!(first, serde_json::json!({ "observedBeforeWrite": null }));
+
+        let other_subject = runtime
+            .invoke_bundle_for_tenant_with_owner(
+                &bundle,
+                &request(None),
+                "shared-audit-label",
+                tenant_b_v1,
+            )
+            .await
+            .expect("different subject invocation should succeed");
+        assert_eq!(
+            other_subject,
+            serde_json::json!({ "observedBeforeWrite": null }),
+            "{routing_affinity:?} must not expose tenant-a module globals to another subject with the same numeric incarnation and audit label",
+        );
+
+        let same_owner = runtime
+            .invoke_bundle_for_tenant_with_owner(
+                &bundle,
+                &request(None),
+                "shared-audit-label",
+                tenant_a_v1,
+            )
+            .await
+            .expect("same owner invocation should succeed");
+        assert_eq!(
+            same_owner,
+            serde_json::json!({ "observedBeforeWrite": "tenant-a-v1-secret" }),
+            "{routing_affinity:?} should preserve intended same-owner warm state",
+        );
+
+        let recreated = runtime
+            .invoke_bundle_for_tenant_with_owner(
+                &bundle,
+                &request(None),
+                "shared-audit-label",
+                tenant_a_v2,
+            )
+            .await
+            .expect("recreated owner invocation should succeed");
+        assert_eq!(
+            recreated,
+            serde_json::json!({ "observedBeforeWrite": null }),
+            "{routing_affinity:?} must not expose prior-incarnation module globals",
+        );
+
+        let metrics = policy.metrics_snapshot();
+        assert_eq!(metrics.warm_pool_hits, 1);
+        assert_eq!(metrics.warm_pool_misses, 3);
+    }
 }
 
 async fn warm_pool_partitions_by_exact_service_grants_inner() {
@@ -535,7 +691,7 @@ export {};
     limits.max_concurrent_runtime_instances = 1;
     limits.worker_threads = 1;
     let policy = Arc::new(RuntimePolicy::new(limits));
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(AsyncEchoHost),
         policy,
         crate::RuntimeEgressPosture::CoarsePermissions,
@@ -551,7 +707,7 @@ export {};
         auth: None,
         services: Default::default(),
     };
-    let query_context = RuntimeInvocationContext::top_level_for_tenant(&query_request, "tenant-a");
+    let query_context = warm_pool_context_for_request(&query_request, "tenant-a");
     let action_request = InvocationRequest {
         kind: InvocationKind::Action,
         function_name: "messages:warm".to_string(),
@@ -561,23 +717,22 @@ export {};
         auth: None,
         services: Default::default(),
     };
-    let action_context =
-        RuntimeInvocationContext::top_level_for_tenant(&action_request, "tenant-a");
+    let action_context = warm_pool_context_for_request(&action_request, "tenant-a");
 
     let query = v8_runtime_pool
         .take_runtime_with_options_for_invocation(
-            &runtime_owner,
+            &runtime_instance,
             &bundle,
             Some(&query_context),
             true,
         )
         .expect("query-profile runtime cold take should succeed");
-    let metrics_after_query_cold = runtime_owner.policy.metrics_snapshot();
+    let metrics_after_query_cold = runtime_instance.policy.metrics_snapshot();
     assert_eq!(metrics_after_query_cold.warm_pool_misses, 1);
     assert_eq!(metrics_after_query_cold.warm_pool_hits, 0);
 
     v8_runtime_pool.return_runtime_for_invocation(
-        &runtime_owner,
+        &runtime_instance,
         &bundle,
         Some(&query_context),
         query,
@@ -586,13 +741,13 @@ export {};
 
     let action = v8_runtime_pool
         .take_runtime_with_options_for_invocation(
-            &runtime_owner,
+            &runtime_instance,
             &bundle,
             Some(&action_context),
             true,
         )
         .expect("action take should succeed");
-    let metrics_after_action_take = runtime_owner.policy.metrics_snapshot();
+    let metrics_after_action_take = runtime_instance.policy.metrics_snapshot();
     assert_eq!(
         metrics_after_action_take.warm_pool_hits, 1,
         "an action invocation reuses the query-warmed runtime: the configured grants are \
@@ -610,7 +765,7 @@ export {};
     );
 
     v8_runtime_pool.return_runtime_for_invocation(
-        &runtime_owner,
+        &runtime_instance,
         &bundle,
         Some(&action_context),
         action,
@@ -619,13 +774,13 @@ export {};
 
     let _query_again = v8_runtime_pool
         .take_runtime_with_options_for_invocation(
-            &runtime_owner,
+            &runtime_instance,
             &bundle,
             Some(&query_context),
             true,
         )
         .expect("query take should reuse the returned runtime");
-    let metrics_after_query_reuse = runtime_owner.policy.metrics_snapshot();
+    let metrics_after_query_reuse = runtime_instance.policy.metrics_snapshot();
     assert_eq!(
         metrics_after_query_reuse.warm_pool_hits, 2,
         "the same runtime keeps cycling across invocation kinds"
@@ -653,7 +808,7 @@ export {};
     limits.compatibility_target = RuntimeCompatibilityTarget::Node22;
     limits.max_concurrent_runtime_instances = 1;
     limits.worker_threads = 1;
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(AsyncEchoHost),
         Arc::new(RuntimePolicy::new(limits)),
         crate::RuntimeEgressPosture::CoarsePermissions,
@@ -663,7 +818,7 @@ export {};
 
     let snapshot_builds_before = v8_bootstrap_snapshot_build_count_for_test();
     let reusable = v8_runtime_pool
-        .take_runtime_with_options_for_invocation(&runtime_owner, &bundle, Some(&context), true)
+        .take_runtime_with_options_for_invocation(&runtime_instance, &bundle, Some(&context), true)
         .expect("node-compatible warm-pool cold take should succeed");
     let snapshot_builds_after = v8_bootstrap_snapshot_build_count_for_test();
 
@@ -699,7 +854,7 @@ export {};
     limits.max_concurrent_runtime_instances = 1;
     limits.worker_threads = 1;
     limits.max_warm_reuses = 10;
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(AsyncEchoHost),
         Arc::new(RuntimePolicy::new(limits)),
         crate::RuntimeEgressPosture::CoarsePermissions,
@@ -708,11 +863,11 @@ export {};
     let context = warm_pool_context("tenant-a");
 
     let reusable = v8_runtime_pool
-        .take_runtime_with_options_for_invocation(&runtime_owner, &bundle, Some(&context), true)
+        .take_runtime_with_options_for_invocation(&runtime_instance, &bundle, Some(&context), true)
         .expect("runtime cold take should succeed");
 
     v8_runtime_pool.return_runtime_for_invocation(
-        &runtime_owner,
+        &runtime_instance,
         &bundle,
         Some(&context),
         reusable,
@@ -763,7 +918,7 @@ export {};
     );
     assert_eq!(
         maintenance.cleanliness.carryover_limit_bytes,
-        heap_carryover_limit_bytes_for_test(runtime_owner.policy.limits()),
+        heap_carryover_limit_bytes_for_test(runtime_instance.policy.limits()),
         "warm-pool carryover threshold should come from RuntimeLimits, not V8 defaults"
     );
     assert_eq!(
@@ -787,7 +942,7 @@ export {};
         "retained runtime accounting should include V8-reported external memory"
     );
     assert_eq!(
-        runtime_owner
+        runtime_instance
             .policy
             .metrics_snapshot()
             .retained_runtime_pool_entries,
@@ -815,7 +970,7 @@ export {};
     limits.max_concurrent_runtime_instances = 1;
     limits.worker_threads = 1;
     limits.max_warm_reuses = 1;
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(AsyncEchoHost),
         Arc::new(RuntimePolicy::new(limits)),
         crate::RuntimeEgressPosture::CoarsePermissions,
@@ -823,12 +978,12 @@ export {};
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
     let context = warm_pool_context("tenant-a");
     let mut reusable = v8_runtime_pool
-        .take_runtime_with_options_for_invocation(&runtime_owner, &bundle, Some(&context), true)
+        .take_runtime_with_options_for_invocation(&runtime_instance, &bundle, Some(&context), true)
         .expect("runtime cold take should succeed");
     reusable.warm_reuse_count = 1;
 
     v8_runtime_pool.return_runtime_for_invocation(
-        &runtime_owner,
+        &runtime_instance,
         &bundle,
         Some(&context),
         reusable,
@@ -839,7 +994,7 @@ export {};
         0,
         "runtime at max_warm_reuses must be condemned instead of retained"
     );
-    let metrics = runtime_owner.policy.metrics_snapshot();
+    let metrics = runtime_instance.policy.metrics_snapshot();
     assert_eq!(metrics.warm_pool_retirements, 1);
     assert_eq!(metrics.retained_runtime_pool_retirements, 1);
     assert_eq!(metrics.retained_runtime_pool_entries, 0);
@@ -866,7 +1021,7 @@ export {};
     limits.max_concurrent_runtime_instances = 1;
     limits.worker_threads = 1;
     limits.max_warm_pool_entries_per_worker = 8;
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(AsyncEchoHost),
         Arc::new(RuntimePolicy::new(limits)),
         crate::RuntimeEgressPosture::CoarsePermissions,
@@ -878,10 +1033,15 @@ export {};
             .expect("tenant bundle should build");
         let context = warm_pool_context(tenant);
         let reusable = v8_runtime_pool
-            .take_runtime_with_options_for_invocation(&runtime_owner, &bundle, Some(&context), true)
+            .take_runtime_with_options_for_invocation(
+                &runtime_instance,
+                &bundle,
+                Some(&context),
+                true,
+            )
             .expect("tenant runtime cold take should succeed");
         v8_runtime_pool.return_runtime_for_invocation(
-            &runtime_owner,
+            &runtime_instance,
             &bundle,
             Some(&context),
             reusable,
@@ -890,7 +1050,7 @@ export {};
 
     assert_eq!(v8_runtime_pool.warm_pool_count_for_test(), 3);
     assert_eq!(
-        runtime_owner
+        runtime_instance
             .policy
             .metrics_snapshot()
             .retained_runtime_pool_entries,
@@ -898,22 +1058,22 @@ export {};
     );
 
     let high =
-        v8_runtime_pool.apply_memory_pressure(&runtime_owner, RuntimeMemoryPressureLevel::High);
+        v8_runtime_pool.apply_memory_pressure(&runtime_instance, RuntimeMemoryPressureLevel::High);
     assert_eq!(high.pressure, RuntimeMemoryPressureLevel::High);
     assert_eq!(high.evicted_entries, 2);
     assert_eq!(high.retained_entries, 1);
     assert_eq!(v8_runtime_pool.warm_pool_count_for_test(), 1);
-    let metrics_after_high = runtime_owner.policy.metrics_snapshot();
+    let metrics_after_high = runtime_instance.policy.metrics_snapshot();
     assert_eq!(metrics_after_high.retained_runtime_pool_evictions, 2);
     assert_eq!(metrics_after_high.retained_runtime_pool_entries, 1);
 
-    let critical =
-        v8_runtime_pool.apply_memory_pressure(&runtime_owner, RuntimeMemoryPressureLevel::Critical);
+    let critical = v8_runtime_pool
+        .apply_memory_pressure(&runtime_instance, RuntimeMemoryPressureLevel::Critical);
     assert_eq!(critical.pressure, RuntimeMemoryPressureLevel::Critical);
     assert_eq!(critical.evicted_entries, 1);
     assert_eq!(critical.retained_entries, 0);
     assert_eq!(v8_runtime_pool.warm_pool_count_for_test(), 0);
-    let metrics_after_critical = runtime_owner.policy.metrics_snapshot();
+    let metrics_after_critical = runtime_instance.policy.metrics_snapshot();
     assert_eq!(metrics_after_critical.retained_runtime_pool_evictions, 3);
     assert_eq!(metrics_after_critical.retained_runtime_pool_entries, 0);
 }
@@ -952,21 +1112,22 @@ export {};
     limits.execution_timeout = std::time::Duration::from_secs(5);
     limits.max_concurrent_runtime_instances = 1;
     limits.worker_threads = 1;
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(AsyncEchoHost),
         Arc::new(RuntimePolicy::new(limits)),
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
     let watchdog = WatchdogTimer::new();
-    let mut permit = SharedInvocationPermit::new(runtime_owner.policy(), None, None, false, None);
+    let mut permit =
+        SharedInvocationPermit::new(runtime_instance.policy(), None, None, false, None);
     permit
         .acquire_initial(std::time::Instant::now())
         .await
         .expect("permit should admit invocation");
-    let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
+    let context = warm_pool_context_for_request(&request, "tenant-a");
 
-    let error = runtime_owner
+    let error = runtime_instance
         .invoke_bundle_unmanaged(
             Some(&mut v8_runtime_pool),
             RuntimeInvocationExecution {
@@ -975,7 +1136,7 @@ export {};
                 request: request.clone(),
                 context: context.clone(),
                 execution_plan: crate::execution_plan::RuntimeExecutionPlan::for_invocation(
-                    runtime_owner.policy().as_ref(),
+                    runtime_instance.policy().as_ref(),
                     &request,
                     &context,
                 ),
@@ -1001,7 +1162,7 @@ export {};
         0,
         "near-heap-limit runtime must not be retained after finalization"
     );
-    let metrics = runtime_owner.policy.metrics_snapshot();
+    let metrics = runtime_instance.policy.metrics_snapshot();
     assert_eq!(metrics.warm_pool_misses, 1);
     assert_eq!(metrics.runtime_pool_replacements, 1);
     assert_eq!(

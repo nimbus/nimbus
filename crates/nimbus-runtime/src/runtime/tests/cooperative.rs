@@ -438,7 +438,7 @@ export {};
         services: Default::default(),
     };
     let host = Arc::new(DeferredAsyncHost::default());
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         host.clone(),
         cooperative_warm_pool_runtime_test_policy(),
         crate::RuntimeEgressPosture::CoarsePermissions,
@@ -446,14 +446,15 @@ export {};
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
     let watchdog = WatchdogTimer::new();
     let activity_signal = Arc::new(crate::executor::WorkerActivitySignal::new());
-    let mut permit = SharedInvocationPermit::new(runtime_owner.policy(), None, None, false, None);
+    let mut permit =
+        SharedInvocationPermit::new(runtime_instance.policy(), None, None, false, None);
     permit
         .acquire_initial(std::time::Instant::now())
         .await
         .expect("permit should admit invocation");
-    let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
+    let context = RuntimeInvocationContext::top_level_for_tenant_for_test(&request, "tenant-a");
 
-    let mut slot = runtime_owner
+    let mut slot = runtime_instance
         .start_cooperative_locker_runtime_slot(
             &mut v8_runtime_pool,
             CooperativeRuntimeSlotStart {
@@ -463,7 +464,7 @@ export {};
                     request: request.clone(),
                     context: context.clone(),
                     execution_plan: crate::execution_plan::RuntimeExecutionPlan::for_invocation(
-                        runtime_owner.policy().as_ref(),
+                        runtime_instance.policy().as_ref(),
                         &request,
                         &context,
                     ),
@@ -485,7 +486,7 @@ export {};
     )
     .await;
     wait_until_active_runtime_instances(
-        runtime_owner.policy(),
+        runtime_instance.policy(),
         0,
         PARK_AND_RESUME_CASE,
         "deferred async host work should suspend active isolate accounting while parked",
@@ -535,7 +536,7 @@ export {};
     let ready_jobs = permit.finish_invocation().await;
     assert!(ready_jobs.is_empty());
     assert_eq!(
-        runtime_owner
+        runtime_instance
             .policy
             .metrics_snapshot()
             .active_runtime_instances,
@@ -590,7 +591,7 @@ export {};
         auth: None,
         services: Default::default(),
     };
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(AsyncEchoHost),
         cooperative_warm_pool_runtime_test_policy(),
         crate::RuntimeEgressPosture::CoarsePermissions,
@@ -598,14 +599,15 @@ export {};
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
     let watchdog = WatchdogTimer::new();
     let activity_signal = Arc::new(crate::executor::WorkerActivitySignal::new());
-    let mut permit = SharedInvocationPermit::new(runtime_owner.policy(), None, None, false, None);
+    let mut permit =
+        SharedInvocationPermit::new(runtime_instance.policy(), None, None, false, None);
     permit
         .acquire_initial(std::time::Instant::now())
         .await
         .expect("permit should admit invocation");
-    let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
+    let context = RuntimeInvocationContext::top_level_for_tenant_for_test(&request, "tenant-a");
 
-    let mut slot = runtime_owner
+    let mut slot = runtime_instance
         .start_cooperative_locker_runtime_slot(
             &mut v8_runtime_pool,
             CooperativeRuntimeSlotStart {
@@ -615,7 +617,7 @@ export {};
                     request: request.clone(),
                     context: context.clone(),
                     execution_plan: crate::execution_plan::RuntimeExecutionPlan::for_invocation(
-                        runtime_owner.policy().as_ref(),
+                        runtime_instance.policy().as_ref(),
                         &request,
                         &context,
                     ),
@@ -701,7 +703,7 @@ export {};
     limits.max_concurrent_runtime_instances = 1;
     limits.worker_threads = 1;
     let policy = Arc::new(RuntimePolicy::new(limits));
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(AsyncEchoHost),
         policy,
         crate::RuntimeEgressPosture::CoarsePermissions,
@@ -721,14 +723,14 @@ export {};
     for cycle in 0..2 {
         let activity_signal = Arc::new(crate::executor::WorkerActivitySignal::new());
         let mut permit =
-            SharedInvocationPermit::new(runtime_owner.policy(), None, None, false, None);
+            SharedInvocationPermit::new(runtime_instance.policy(), None, None, false, None);
         permit
             .acquire_initial(std::time::Instant::now())
             .await
             .expect("permit should admit invocation");
-        let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
+        let context = RuntimeInvocationContext::top_level_for_tenant_for_test(&request, "tenant-a");
 
-        let mut slot = runtime_owner
+        let mut slot = runtime_instance
             .start_cooperative_locker_runtime_slot(
                 &mut v8_runtime_pool,
                 CooperativeRuntimeSlotStart {
@@ -738,7 +740,7 @@ export {};
                         request: request.clone(),
                         context: context.clone(),
                         execution_plan: crate::execution_plan::RuntimeExecutionPlan::for_invocation(
-                            runtime_owner.policy().as_ref(),
+                            runtime_instance.policy().as_ref(),
                             &request,
                             &context,
                         ),
@@ -772,9 +774,9 @@ export {};
                 .unwrap_or_else(|e| panic!("cycle {cycle}: reset should succeed: {e}"));
             rt.warm_reuse_count = rt.warm_reuse_count.saturating_add(1);
             v8_runtime_pool.return_runtime_for_invocation(
-                &runtime_owner,
+                &runtime_instance,
                 &bundle,
-                Some(&RuntimeInvocationContext::top_level_for_tenant(
+                Some(&RuntimeInvocationContext::top_level_for_tenant_for_test(
                     &request, "tenant-a",
                 )),
                 rt,
@@ -830,7 +832,7 @@ export {};
     let bundle = RuntimeBundle::new(&bundle_path);
     let request = cooperative_query_request("messages:forged");
     let host = Arc::new(ImmediateRecordingAsyncHost::default());
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         host.clone(),
         cooperative_warm_pool_runtime_test_policy(),
         crate::RuntimeEgressPosture::CoarsePermissions,
@@ -839,7 +841,7 @@ export {};
     let watchdog = WatchdogTimer::new();
     let activity_signal = Arc::new(crate::executor::WorkerActivitySignal::new());
     let mut permit = SharedInvocationPermit::new(
-        runtime_owner.policy(),
+        runtime_instance.policy(),
         Some("tenant-a".to_string()),
         None,
         false,
@@ -849,9 +851,9 @@ export {};
         .acquire_initial(std::time::Instant::now())
         .await
         .expect("permit should admit invocation");
-    let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
+    let context = RuntimeInvocationContext::top_level_for_tenant_for_test(&request, "tenant-a");
 
-    let mut slot = runtime_owner
+    let mut slot = runtime_instance
         .start_cooperative_locker_runtime_slot(
             &mut v8_runtime_pool,
             CooperativeRuntimeSlotStart {
@@ -861,7 +863,7 @@ export {};
                     request: request.clone(),
                     context: context.clone(),
                     execution_plan: crate::execution_plan::RuntimeExecutionPlan::for_invocation(
-                        runtime_owner.policy().as_ref(),
+                        runtime_instance.policy().as_ref(),
                         &request,
                         &context,
                     ),
@@ -978,7 +980,7 @@ export {};
     let bundle = RuntimeBundle::new(&bundle_path);
     let request = cooperative_query_request("messages:ledger5");
     let host = Arc::new(ImmediateRecordingAsyncHost::default());
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         host.clone(),
         cooperative_warm_pool_runtime_test_policy(),
         crate::RuntimeEgressPosture::CoarsePermissions,
@@ -987,7 +989,7 @@ export {};
     let watchdog = WatchdogTimer::new();
     let activity_signal = Arc::new(crate::executor::WorkerActivitySignal::new());
     let mut permit = SharedInvocationPermit::new(
-        runtime_owner.policy(),
+        runtime_instance.policy(),
         Some("tenant-a".to_string()),
         None,
         false,
@@ -997,9 +999,9 @@ export {};
         .acquire_initial(std::time::Instant::now())
         .await
         .expect("permit should admit invocation");
-    let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
+    let context = RuntimeInvocationContext::top_level_for_tenant_for_test(&request, "tenant-a");
 
-    let mut slot = runtime_owner
+    let mut slot = runtime_instance
         .start_cooperative_locker_runtime_slot(
             &mut v8_runtime_pool,
             CooperativeRuntimeSlotStart {
@@ -1009,7 +1011,7 @@ export {};
                     request: request.clone(),
                     context: context.clone(),
                     execution_plan: crate::execution_plan::RuntimeExecutionPlan::for_invocation(
-                        runtime_owner.policy().as_ref(),
+                        runtime_instance.policy().as_ref(),
                         &request,
                         &context,
                     ),
@@ -1110,7 +1112,7 @@ export {};
     let bundle = RuntimeBundle::new(&bundle_path);
     let request = cooperative_query_request("messages:query-write");
     let host = Arc::new(ImmediateRecordingAsyncHost::default());
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         host.clone(),
         cooperative_warm_pool_runtime_test_policy(),
         crate::RuntimeEgressPosture::CoarsePermissions,
@@ -1119,7 +1121,7 @@ export {};
     let watchdog = WatchdogTimer::new();
     let activity_signal = Arc::new(crate::executor::WorkerActivitySignal::new());
     let mut permit = SharedInvocationPermit::new(
-        runtime_owner.policy(),
+        runtime_instance.policy(),
         Some("tenant-a".to_string()),
         None,
         false,
@@ -1129,9 +1131,9 @@ export {};
         .acquire_initial(std::time::Instant::now())
         .await
         .expect("permit should admit invocation");
-    let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
+    let context = RuntimeInvocationContext::top_level_for_tenant_for_test(&request, "tenant-a");
 
-    let mut slot = runtime_owner
+    let mut slot = runtime_instance
         .start_cooperative_locker_runtime_slot(
             &mut v8_runtime_pool,
             CooperativeRuntimeSlotStart {
@@ -1141,7 +1143,7 @@ export {};
                     request: request.clone(),
                     context: context.clone(),
                     execution_plan: crate::execution_plan::RuntimeExecutionPlan::for_invocation(
-                        runtime_owner.policy().as_ref(),
+                        runtime_instance.policy().as_ref(),
                         &request,
                         &context,
                     ),
@@ -1222,7 +1224,7 @@ export {};
 
     let bundle = RuntimeBundle::new(&bundle_path);
     let host = Arc::new(DeferredRecordingAsyncHost::default());
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         host.clone(),
         cooperative_warm_pool_runtime_test_policy(),
         crate::RuntimeEgressPosture::CoarsePermissions,
@@ -1233,7 +1235,7 @@ export {};
     let first_request = cooperative_query_request("messages:first");
     let first_activity = Arc::new(crate::executor::WorkerActivitySignal::new());
     let mut first_permit = SharedInvocationPermit::new(
-        runtime_owner.policy(),
+        runtime_instance.policy(),
         Some("tenant-a".to_string()),
         None,
         false,
@@ -1243,8 +1245,9 @@ export {};
         .acquire_initial(std::time::Instant::now())
         .await
         .expect("first permit should admit invocation");
-    let first_context = RuntimeInvocationContext::top_level_for_tenant(&first_request, "tenant-a");
-    let mut first_slot = runtime_owner
+    let first_context =
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&first_request, "tenant-a");
+    let mut first_slot = runtime_instance
         .start_cooperative_locker_runtime_slot(
             &mut v8_runtime_pool,
             CooperativeRuntimeSlotStart {
@@ -1254,7 +1257,7 @@ export {};
                     request: first_request.clone(),
                     context: first_context.clone(),
                     execution_plan: crate::execution_plan::RuntimeExecutionPlan::for_invocation(
-                        runtime_owner.policy().as_ref(),
+                        runtime_instance.policy().as_ref(),
                         &first_request,
                         &first_context,
                     ),
@@ -1285,7 +1288,7 @@ export {};
     let second_request = cooperative_query_request("messages:second");
     let second_activity = Arc::new(crate::executor::WorkerActivitySignal::new());
     let mut second_permit = SharedInvocationPermit::new(
-        runtime_owner.policy(),
+        runtime_instance.policy(),
         Some("tenant-b".to_string()),
         None,
         false,
@@ -1296,8 +1299,8 @@ export {};
         .await
         .expect("second permit should admit after first parked and released capacity");
     let second_context =
-        RuntimeInvocationContext::top_level_for_tenant(&second_request, "tenant-b");
-    let mut second_slot = runtime_owner
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&second_request, "tenant-b");
+    let mut second_slot = runtime_instance
         .start_cooperative_locker_runtime_slot(
             &mut v8_runtime_pool,
             CooperativeRuntimeSlotStart {
@@ -1307,7 +1310,7 @@ export {};
                     request: second_request.clone(),
                     context: second_context.clone(),
                     execution_plan: crate::execution_plan::RuntimeExecutionPlan::for_invocation(
-                        runtime_owner.policy().as_ref(),
+                        runtime_instance.policy().as_ref(),
                         &second_request,
                         &second_context,
                     ),
@@ -1416,7 +1419,7 @@ export {};
     limits.max_concurrent_runtime_instances = 1;
     limits.worker_threads = 1;
     let policy = Arc::new(RuntimePolicy::new(limits));
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         host.clone(),
         policy.clone(),
         crate::RuntimeEgressPosture::CoarsePermissions,
@@ -1427,15 +1430,18 @@ export {};
 
     let mutation_handle = {
         let executor = executor.clone();
-        let runtime_owner = runtime_owner.clone();
+        let runtime_instance = runtime_instance.clone();
         let bundle = bundle.clone();
         let mutation_request = mutation_request.clone();
         std::thread::spawn(move || {
             executor.invoke_blocking(
-                runtime_owner,
+                runtime_instance,
                 bundle,
                 mutation_request.clone(),
-                RuntimeInvocationContext::top_level_for_tenant(&mutation_request, "tenant-a"),
+                RuntimeInvocationContext::top_level_for_tenant_for_test(
+                    &mutation_request,
+                    "tenant-a",
+                ),
             )
         })
     };
@@ -1450,15 +1456,15 @@ export {};
 
     let query_handle = {
         let executor = executor.clone();
-        let runtime_owner = runtime_owner.clone();
+        let runtime_instance = runtime_instance.clone();
         let bundle = bundle.clone();
         let query_request = query_request.clone();
         std::thread::spawn(move || {
             executor.invoke_blocking(
-                runtime_owner,
+                runtime_instance,
                 bundle,
                 query_request.clone(),
-                RuntimeInvocationContext::top_level_for_tenant(&query_request, "tenant-b"),
+                RuntimeInvocationContext::top_level_for_tenant_for_test(&query_request, "tenant-b"),
             )
         })
     };
@@ -1560,7 +1566,7 @@ export {};
     limits.max_concurrent_runtime_instances = 1;
     limits.worker_threads = 1;
     let policy = Arc::new(RuntimePolicy::new(limits));
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(AsyncEchoHost),
         policy,
         crate::RuntimeEgressPosture::CoarsePermissions,
@@ -1568,14 +1574,15 @@ export {};
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
     let watchdog = WatchdogTimer::new();
     let activity_signal = Arc::new(crate::executor::WorkerActivitySignal::new());
-    let mut permit = SharedInvocationPermit::new(runtime_owner.policy(), None, None, false, None);
+    let mut permit =
+        SharedInvocationPermit::new(runtime_instance.policy(), None, None, false, None);
     permit
         .acquire_initial(std::time::Instant::now())
         .await
         .expect("permit should admit invocation");
-    let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
+    let context = RuntimeInvocationContext::top_level_for_tenant_for_test(&request, "tenant-a");
 
-    let slot = runtime_owner
+    let slot = runtime_instance
         .start_cooperative_locker_runtime_slot(
             &mut v8_runtime_pool,
             CooperativeRuntimeSlotStart {
@@ -1585,7 +1592,7 @@ export {};
                     request: request.clone(),
                     context: context.clone(),
                     execution_plan: crate::execution_plan::RuntimeExecutionPlan::for_invocation(
-                        runtime_owner.policy().as_ref(),
+                        runtime_instance.policy().as_ref(),
                         &request,
                         &context,
                     ),
@@ -1716,7 +1723,7 @@ export {};
                         runtime,
                         bundle,
                         request.clone(),
-                        RuntimeInvocationContext::top_level_for_tenant(&request, &tenant),
+                        RuntimeInvocationContext::top_level_for_tenant_for_test(&request, &tenant),
                     )
                 })
             })

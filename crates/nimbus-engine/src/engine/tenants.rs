@@ -1,12 +1,36 @@
+use std::num::NonZeroU64;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use nimbus_core::{Error, Result, TenantId};
 
-use crate::tenant::{TenantRuntime, TenantRuntimeTiming};
+use crate::tenant::{TenantRuntime, TenantRuntimeLease, TenantRuntimeTiming};
 
 use super::{Engine, TenantLoadGateGuard};
+
+/// Engine-owned deletion fence for one canonical tenant incarnation.
+///
+/// Creating this lease marks the tenant runtime deleted before compute retires
+/// its runtime owner. The tenant load gate remains held until final storage
+/// deletion or a fail-closed retry, so the incarnation cannot be reloaded or
+/// recreated between those phases.
+pub struct TenantDeletionLease<'a> {
+    tenant_id: TenantId,
+    tenant_incarnation: NonZeroU64,
+    runtime: Arc<TenantRuntime>,
+    _tenant_load_guard: TenantLoadGateGuard<'a>,
+}
+
+impl TenantDeletionLease<'_> {
+    pub fn tenant_id(&self) -> &TenantId {
+        &self.tenant_id
+    }
+
+    pub const fn tenant_incarnation(&self) -> NonZeroU64 {
+        self.tenant_incarnation
+    }
+}
 
 /// Result of idempotent tenant admission through the async provider lifecycle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,6 +119,24 @@ where
 }
 
 impl Engine {
+    /// Acquires the canonical tenant runtime identity and holds the Engine's
+    /// operation/delete fence until the returned lease is dropped.
+    pub fn enter_tenant_runtime(&self, tenant_id: &TenantId) -> Result<TenantRuntimeLease> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let operation = runtime.enter_operation(tenant_id)?;
+        TenantRuntimeLease::new(tenant_id.clone(), runtime.tenant_incarnation(), operation)
+    }
+
+    /// Async variant of [`Engine::enter_tenant_runtime`].
+    pub async fn enter_tenant_runtime_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+    ) -> Result<TenantRuntimeLease> {
+        let runtime = self.get_existing_tenant_async(&tenant_id).await?;
+        let operation = runtime.enter_operation(&tenant_id)?;
+        TenantRuntimeLease::new(tenant_id, runtime.tenant_incarnation(), operation)
+    }
+
     /// Creates a tenant through the blocking embedded-only lifecycle.
     ///
     /// This interface is valid only for engines constructed with redb or
@@ -238,22 +280,30 @@ impl Engine {
         Ok(())
     }
 
-    /// Creates or loads a tenant through the canonical async lifecycle.
+    /// Ensures a tenant is loaded through the canonical async lifecycle.
     ///
-    /// `AlreadyExists` is not accepted by itself: the existing durable tenant
-    /// is opened and its runtime must be registered before this method returns.
-    /// That makes retries safe after cancellation or process failure between
-    /// provider creation and runtime publication. Every other provider or
-    /// bootstrap error remains visible to the caller.
+    /// An already-loaded runtime is the lock-free fast path, so unrelated
+    /// tenant creation or deletion cannot stall callers that only need to
+    /// confirm a ready runtime. When the runtime is absent, existing durable
+    /// state is opened before creation is attempted. `AlreadyExists` is not
+    /// accepted by itself: a concurrent or replayed creation must still leave
+    /// a complete runtime registered before this method returns. Every other
+    /// provider or bootstrap error remains visible to the caller.
     pub async fn ensure_tenant_ready_async(
         self: &Arc<Self>,
         tenant_id: TenantId,
     ) -> Result<TenantAdmissionOutcome> {
-        match self.create_tenant_async(tenant_id.clone()).await {
-            Ok(()) => Ok(TenantAdmissionOutcome::Created),
-            Err(Error::AlreadyExists(_)) => {
-                self.ensure_tenant_exists_async(tenant_id).await?;
-                Ok(TenantAdmissionOutcome::Existing)
+        match self.ensure_tenant_exists_async(tenant_id.clone()).await {
+            Ok(()) => Ok(TenantAdmissionOutcome::Existing),
+            Err(Error::TenantNotFound(_)) => {
+                match self.create_tenant_async(tenant_id.clone()).await {
+                    Ok(()) => Ok(TenantAdmissionOutcome::Created),
+                    Err(Error::AlreadyExists(_)) => {
+                        self.ensure_tenant_exists_async(tenant_id).await?;
+                        Ok(TenantAdmissionOutcome::Existing)
+                    }
+                    Err(error) => Err(error),
+                }
             }
             Err(error) => Err(error),
         }
@@ -318,31 +368,77 @@ impl Engine {
 
     /// Deletes a tenant database and evicts it from memory asynchronously.
     pub async fn delete_tenant_async(self: &Arc<Self>, tenant_id: TenantId) -> Result<()> {
+        let deletion = self.begin_tenant_delete_async(tenant_id).await?;
+        self.finish_tenant_delete_async(deletion).await
+    }
+
+    /// Fences one tenant incarnation without yet removing its persistence.
+    ///
+    /// Compute uses the canonical subject/incarnation on the returned lease to
+    /// revoke runtime work before [`Engine::finish_tenant_delete_async`] waits
+    /// for all Engine operation guards and removes durable state.
+    pub async fn begin_tenant_delete_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+    ) -> Result<TenantDeletionLease<'_>> {
         self.ensure_provider_background_tasks_started();
-        let _tenant_load_guard = self.tenant_load_gate.lock().await;
-        let runtime = {
-            self.tenants
-                .write()
-                .expect("tenant registry lock should not be poisoned")
-                .remove(&tenant_id)
-        };
-        if runtime.is_none() && !self.persistence_provider.tenant_exists(&tenant_id).await? {
-            return Err(Error::TenantNotFound(tenant_id));
+        loop {
+            let runtime = self.get_existing_tenant_async(&tenant_id).await?;
+            let tenant_load_guard = self.tenant_load_gate.lock().await;
+            if !self.runtime_remains_registered(&tenant_id, &runtime) {
+                drop(tenant_load_guard);
+                continue;
+            }
+            let tenant_incarnation =
+                NonZeroU64::new(runtime.tenant_incarnation()).ok_or_else(|| {
+                    Error::Internal(format!(
+                        "tenant {tenant_id} has invalid zero runtime incarnation"
+                    ))
+                })?;
+            runtime.mark_delete_fenced();
+            return Ok(TenantDeletionLease {
+                tenant_id,
+                tenant_incarnation,
+                runtime,
+                _tenant_load_guard: tenant_load_guard,
+            });
         }
-        if let Some(runtime) = runtime {
-            let _deletion = runtime.begin_delete_async().await;
-            runtime.shutdown_trigger_candidates();
-            runtime.shutdown_trigger_execution();
-            runtime.shutdown_subscription_delivery();
-            runtime
-                .subscriptions
-                .shutdown_all(format!("tenant deleted: {tenant_id}"));
-        }
+    }
+
+    /// Completes a previously fenced tenant deletion.
+    pub async fn finish_tenant_delete_async(
+        self: &Arc<Self>,
+        deletion: TenantDeletionLease<'_>,
+    ) -> Result<()> {
+        deletion.runtime.wait_for_delete_operation_drain().await;
+        deletion.runtime.shutdown_trigger_candidates();
+        deletion.runtime.shutdown_trigger_execution();
+        deletion.runtime.shutdown_subscription_delivery();
+        deletion
+            .runtime
+            .subscriptions
+            .shutdown_all(format!("tenant deleted: {}", deletion.tenant_id));
         self.publisher_failure_diagnostics
             .write()
             .expect("publisher failure diagnostics lock should not be poisoned")
-            .remove(&tenant_id);
-        self.persistence_provider.delete_tenant(&tenant_id).await?;
+            .remove(&deletion.tenant_id);
+        self.persistence_provider
+            .delete_tenant(&deletion.tenant_id)
+            .await?;
+        let removed = self
+            .tenants
+            .write()
+            .expect("tenant registry lock should not be poisoned")
+            .remove(&deletion.tenant_id);
+        if removed
+            .as_ref()
+            .is_some_and(|runtime| !Arc::ptr_eq(runtime, &deletion.runtime))
+        {
+            return Err(Error::Internal(format!(
+                "tenant {} runtime changed while its deletion fence was held",
+                deletion.tenant_id
+            )));
+        }
         Ok(())
     }
 

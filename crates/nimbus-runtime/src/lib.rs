@@ -11,6 +11,7 @@ mod limits;
 mod metrics;
 mod module_loader;
 mod node_compat;
+mod retained_state;
 mod runtime;
 mod runtime_capabilities;
 #[cfg(test)]
@@ -48,7 +49,7 @@ pub use egress::{
     EgressRequestError, EgressSubstrate, RuntimeEgressPosture, WasmHttpClientEgressGatewayBinding,
 };
 pub use error::{NimbusRuntimeError, Result};
-pub use executor::{RuntimeExecutor, RuntimeInvocationResponse};
+pub use executor::{RuntimeExecutor, RuntimeInvocationResponse, RuntimeRetirementReport};
 pub use fs::{NimbusFsBackend, RuntimeFileSystem};
 pub use host::{
     HOST_CALL_ABI_VERSION, HostBridge, HostBridgeFuture, HostCallCancellation,
@@ -100,7 +101,13 @@ pub use metrics::{
     RuntimeAdaptiveControllerMetricsSnapshot, RuntimeDurationDistributionSnapshot,
     RuntimeHostOperationMetricsSnapshot, RuntimeHostPressureMetricsSnapshot, RuntimeMetrics,
     RuntimeMetricsSnapshot, RuntimeProfileCountersSnapshot, RuntimeProfileTelemetrySnapshot,
-    RuntimeRequestCorrelationSnapshot, RuntimeTenantMetricsSnapshot,
+    RuntimeRequestCorrelationSnapshot, RuntimeRetainedOwnerMetricsSnapshot,
+    RuntimeTenantMetricsSnapshot,
+};
+pub use retained_state::{
+    RuntimeDeploymentAuthorityId, RuntimeDeploymentAuthorityLease,
+    RuntimeDeploymentAuthorityLeaseIssuer, RuntimeDeploymentAuthorityRevocation, RuntimeOwnerClass,
+    RuntimeOwnerId, RuntimeOwnerLease, RuntimeOwnerLeaseIssuer, RuntimeOwnerRevocation,
 };
 pub use runtime::{
     InvocationKind, InvocationRequest, InvocationServiceBinding, InvocationServiceEndpoint,

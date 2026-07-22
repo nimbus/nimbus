@@ -52,6 +52,12 @@ pub enum NimbusRuntimeError {
 
     #[error("runtime host call canceled")]
     Cancelled,
+
+    #[error("runtime {scope} retirement did not drain within {timeout:?}")]
+    RetirementTimeout {
+        scope: &'static str,
+        timeout: Duration,
+    },
 }
 
 pub type Result<T> = std::result::Result<T, NimbusRuntimeError>;

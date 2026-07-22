@@ -36,6 +36,9 @@ the runtime to define execution in its own vocabulary:
   admission caps (`crates/nimbus-runtime/src/limits/`).
 - `InvocationRequest` / `InvocationAuth` — what to run and on whose behalf,
   carried as plain data.
+- `RuntimeOwnerLease` — revocable proof of the exact owner incarnation allowed
+  to execute and reuse guest-mutated state. Its identity is owner class, stable
+  subject, and incarnation; a display tenant label is not authority.
 - `HostBridge` — the single trait through which running code can reach
   anything outside the isolate (`crates/nimbus-runtime/src/host.rs`).
 
@@ -178,7 +181,9 @@ adversarial code.
 
 ## Executor admission: per-tenant fairness
 
-Above individual isolates sits `RuntimeExecutor`
+Above individual isolates sits the compute-owned `RuntimeManager`, which owns
+canonical runtime limits, runtime lanes, deployment generations, and
+owner-retirement orchestration. Each lane contains a `RuntimeExecutor`
 (`crates/nimbus-runtime/src/executor/`): a fixed set of worker threads
 fed by an admission layer that is tenant-aware. Each tenant gets
 independent caps from the policy — maximum active invocations, maximum
@@ -190,14 +195,20 @@ full has new work rejected rather than absorbed
 cannot starve another tenant's latency, and cannot grow server memory
 without bound.
 
-The executor also owns pooling strategy. The default pool kind reuses a
-per-worker V8 startup snapshot but builds a fresh isolate runtime per
-invocation — the freshest execution boundary. An opt-in warm-pool mode
-retains evaluated runtimes across invocations for latency, with surgical
-per-request state reset and routing affinity keys (per tenant, function, or
-script) controlling who may reuse what. Module-level state persistence in
-warm mode is an explicit, typed contract in the policy, never an ambient
-side effect.
+The runtime lane also owns pooling strategy. Immutable, platform-built startup
+snapshots and compiled artifacts may be shared. Any V8 isolate or Wasmtime Store
+that has entered guest code is instead placed in an explicit owner partition.
+Warm checkout requires the exact owner lease plus deployment, bundle
+provenance, runtime shape, permission/capability, service, and construction
+authority. Routing affinity (tenant, function, script, or none) only improves
+worker locality; it never grants reuse. Per-owner and per-worker caps keep a
+single owner from consuming the retained pool.
+
+Tenant deletion revokes that owner incarnation, cancels queued and active work,
+purges routing state, and obtains an acknowledgement from every lane worker as
+it destroys matching retained state on the owning thread. Recreating the same
+tenant ID receives a new Engine/storage incarnation and therefore cannot see
+the prior module globals or retained Store.
 
 ## Where this sits in the architecture
 

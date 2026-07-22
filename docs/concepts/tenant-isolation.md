@@ -61,10 +61,11 @@ address such tenants, and reaching system data requires operator
 authority. The same boundary that separates two customers also separates
 every customer from the server's own bookkeeping.
 
-Deleting a tenant removes the whole namespace — runtime first, then
-services, then the file, schema, database, or namespace itself — so
-deletion cannot leave another tenant holding a dangling reference into
-the removed data.
+Deleting a tenant first closes Engine operation admission for the current
+incarnation, revokes and retires that runtime owner across every worker, tears
+down services, and then removes the file, schema, database, or namespace.
+Recreating the same tenant ID receives a new durable incarnation and cannot
+reuse the old tenant's mutable runtime state.
 
 ## Runtime isolation
 
@@ -95,6 +96,14 @@ contain it, or rejects it. Broad grants are never silently honored
 in-process. Alongside the capability gate, per-tenant runtime budgets
 (active, in-flight, and queued invocations, heap, and wall-clock time)
 keep one tenant's load from starving another's.
+
+Mutable runtime state has a separate structural fence. Every retained V8
+runtime and Wasmtime Store belongs to one runtime-owner incarnation identified
+by owner class, stable tenant subject, and Engine/storage incarnation. Checkout
+also requires exact deployment, bundle, runtime-shape, permission, capability,
+service, and construction authority. A routing preference is never proof of
+ownership. Deletion revokes the owner and makes every lane worker acknowledge
+retirement; a checked-out runtime returned after revocation is destroyed.
 
 ## Sandbox and service isolation
 

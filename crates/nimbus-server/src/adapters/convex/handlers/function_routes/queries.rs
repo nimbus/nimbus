@@ -33,10 +33,12 @@ pub(crate) async fn query(
             let runtime_timer = budgeted_segment(LatencySegment::Runtime);
             let request_cancellation = RequestCancellationGuard::new();
             let runtime_service_registry = state.runtime_service_registry();
+            let runtime_manager = state.runtime_manager();
             let context = RuntimeInvocationContext::new(
                 &service,
                 &registry,
                 &runtime_service_registry,
+                &runtime_manager,
                 tenant_context.clone(),
                 state.tenant_isolation_mode(),
             );
@@ -126,10 +128,12 @@ pub(crate) async fn paginated_query(
         {
             let request_cancellation = RequestCancellationGuard::new();
             let runtime_service_registry = state.runtime_service_registry();
+            let runtime_manager = state.runtime_manager();
             let context = RuntimeInvocationContext::new(
                 &service,
                 &registry,
                 &runtime_service_registry,
+                &runtime_manager,
                 tenant_context.clone(),
                 state.tenant_isolation_mode(),
             );

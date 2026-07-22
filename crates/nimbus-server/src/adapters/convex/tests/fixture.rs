@@ -10,6 +10,14 @@ pub(in crate::adapters::convex::tests) fn host_bridge_fixture()
         .create_tenant(tenant_id.clone())
         .expect("tenant should be created");
     let registry = Arc::new(ConvexRegistry::empty());
+    let runtime_manager = nimbus_compute::runtime_manager::RuntimeManager::new(
+        engine.clone(),
+        nimbus_compute::config::runtime::RuntimeGovernorConfig::default(),
+    );
+    let runtime_lane = runtime_manager.lane_for_limits(registry.runtime_limits());
+    let invocation_lease = runtime_manager
+        .acquire_invocation_lease_blocking(&tenant_id, 0)
+        .expect("fixture runtime authority should build");
     let isolation = nimbus_tenant::TenantIsolationContext::application(
         tenant_id.clone(),
         nimbus_core::PrincipalContext::anonymous(),
@@ -19,7 +27,7 @@ pub(in crate::adapters::convex::tests) fn host_bridge_fixture()
         &isolation,
         "convex_fixture",
         None,
-        &registry.runtime_policy(),
+        &runtime_lane.policy(),
         nimbus_tenant::RuntimeIsolationTier::InProcessUntrusted,
         nimbus_tenant::TenantIsolationMode::LocalDevelopment,
         std::iter::empty::<String>(),
@@ -33,6 +41,9 @@ pub(in crate::adapters::convex::tests) fn host_bridge_fixture()
             Arc::new(ServiceInstanceBindingRegistry::new(Arc::new(
                 nimbus_services::EmptyServiceInstanceCatalog,
             ))),
+            runtime_manager,
+            invocation_lease.authority(),
+            runtime_lane.policy().limits().clone(),
         ),
         ConvexHostBridgeInvocation::new(
             None,

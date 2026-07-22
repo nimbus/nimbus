@@ -2,7 +2,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::OpenOptions;
 use std::hint::black_box;
 use std::io::Write;
+use std::num::NonZeroU64;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -11,7 +13,8 @@ use nimbus_runtime::{
     HostBridge, HostBridgeFuture, HostCallCancellation, HostCallRequest, InvocationKind,
     InvocationRequest, NimbusRuntime, NimbusRuntimeError, Result, RuntimeExecutionModel,
     RuntimeExecutor, RuntimeInvocationContext, RuntimeLimits, RuntimeMetricsSnapshot,
-    RuntimeNodeFullRealmReusePolicy, RuntimePolicy, RuntimePoolKind, RuntimeRoutingAffinity,
+    RuntimeNodeFullRealmReusePolicy, RuntimeOwnerId, RuntimeOwnerLease, RuntimeOwnerLeaseIssuer,
+    RuntimePolicy, RuntimePoolKind, RuntimeRoutingAffinity,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -27,6 +30,37 @@ const NFR6_TRACE_SCHEMA: &str = "nimbus.node_full_substrate_realm.nfr6.benchmark
 const WASMTIME_V8_COMPARISON_TRACE_SCHEMA: &str = "nimbus.wasmtime_backend.w7.v8_comparison.v1";
 const PIR5_RETAINED_DENSITY_COUNT: usize = 4;
 const NFR6_TENANT_LABEL: &str = "tenant-a";
+
+fn benchmark_owner_lease(tenant_label: &str) -> RuntimeOwnerLease {
+    static LEASES: OnceLock<Mutex<HashMap<String, RuntimeOwnerLease>>> = OnceLock::new();
+    let leases = LEASES.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut leases = leases
+        .lock()
+        .expect("benchmark owner lease cache lock should not be poisoned");
+    leases
+        .entry(tenant_label.to_string())
+        .or_insert_with(|| {
+            let owner_id = RuntimeOwnerId::tenant(
+                format!("benchmark:{tenant_label}"),
+                NonZeroU64::MIN,
+                Some(tenant_label),
+            )
+            .expect("benchmark owner ID should be valid");
+            RuntimeOwnerLeaseIssuer.issue(owner_id).0
+        })
+        .clone()
+}
+
+fn benchmark_invocation_context(
+    request: &InvocationRequest,
+    tenant_label: &str,
+) -> RuntimeInvocationContext {
+    RuntimeInvocationContext::top_level_for_tenant_with_owner(
+        request,
+        tenant_label,
+        benchmark_owner_lease(tenant_label),
+    )
+}
 
 #[derive(Clone, Copy)]
 enum BenchmarkProfile {
@@ -985,7 +1019,7 @@ impl SequentialScenario {
             self.runtime.clone(),
             self.bundle.clone(),
             self.request.clone(),
-            RuntimeInvocationContext::top_level_for_tenant(&self.request, tenant_label),
+            benchmark_invocation_context(&self.request, tenant_label),
         );
         let result = result.expect("benchmark invocation should succeed");
         black_box(result);
@@ -1000,12 +1034,10 @@ impl SequentialScenario {
         let total_invocations = self.tenant_labels.len() as u64 + measured_iterations;
         match self.pool_mode {
             PoolMode::WarmPool => {
-                // Warm pool: cold miss only on first bundle load (all tenants
-                // share the same bundle identity). All subsequent invocations
-                // are warm hits that skip module loading entirely.
-                assert_eq!(snapshot.bundle_loads, 1);
-                assert_eq!(snapshot.warm_pool_misses, 1);
-                assert_eq!(snapshot.warm_pool_hits, total_invocations - 1);
+                let owner_count = self.tenant_labels.len() as u64;
+                assert_eq!(snapshot.bundle_loads, owner_count);
+                assert_eq!(snapshot.warm_pool_misses, owner_count);
+                assert_eq!(snapshot.warm_pool_hits, total_invocations - owner_count);
                 assert_eq!(snapshot.warm_pool_discard_unquiesced, 0);
             }
             PoolMode::StartupSnapshotCache | PoolMode::WarmContextRecycle => {
@@ -1026,13 +1058,17 @@ impl SequentialScenario {
                 assert_eq!(snapshot.retained_runtime_pool_retirements, 0);
             }
             PoolMode::WarmContextRecycle => {
-                assert_eq!(snapshot.runtime_pool_misses, 1);
+                let owner_count = self.tenant_labels.len() as u64;
+                assert_eq!(snapshot.runtime_pool_misses, owner_count);
                 assert_eq!(
                     snapshot.runtime_pool_hits,
-                    total_invocations.saturating_sub(1)
+                    total_invocations.saturating_sub(owner_count)
                 );
-                assert_eq!(snapshot.warm_pool_misses, 1);
-                assert_eq!(snapshot.warm_pool_hits, total_invocations.saturating_sub(1));
+                assert_eq!(snapshot.warm_pool_misses, owner_count);
+                assert_eq!(
+                    snapshot.warm_pool_hits,
+                    total_invocations.saturating_sub(owner_count)
+                );
                 assert_eq!(snapshot.warm_pool_discard_unquiesced, 0);
                 assert_eq!(snapshot.retained_runtime_pool_entries, 1);
                 assert_eq!(snapshot.retained_runtime_pool_evictions, 0);
@@ -1180,7 +1216,7 @@ impl RetainedDensityScenario {
                 self.runtime.clone(),
                 bundle.clone(),
                 self.request.clone(),
-                RuntimeInvocationContext::top_level_for_tenant(&self.request, &tenant_label),
+                benchmark_invocation_context(&self.request, &tenant_label),
             );
             black_box(result.expect("retained-density warm-pool invocation should succeed"));
         }
@@ -1303,7 +1339,7 @@ impl Nfr6NodeFullScenario {
             self.runtime.clone(),
             self.bundle.clone(),
             self.request.clone(),
-            RuntimeInvocationContext::top_level_for_tenant(&self.request, NFR6_TENANT_LABEL),
+            benchmark_invocation_context(&self.request, NFR6_TENANT_LABEL),
         );
         black_box(result.expect("NFR6 NodeFull benchmark invocation should succeed"));
     }
@@ -1507,7 +1543,7 @@ impl CodeCacheImpactScenario {
             self.runtime.clone(),
             bundle,
             self.request.clone(),
-            RuntimeInvocationContext::top_level_for_tenant(&self.request, "tenant-a"),
+            benchmark_invocation_context(&self.request, "tenant-a"),
         );
         black_box(result.expect("code-cache benchmark invocation should succeed"));
     }
@@ -1527,7 +1563,7 @@ fn prime_profile_bootstrap(profile: BenchmarkProfile) {
         runtime,
         bundle,
         request.clone(),
-        RuntimeInvocationContext::top_level_for_tenant(&request, "bootstrap-prime"),
+        benchmark_invocation_context(&request, "bootstrap-prime"),
     );
     black_box(result.expect("profile bootstrap prime should succeed"));
 }
@@ -1631,7 +1667,7 @@ export {};
                     runtime,
                     bundle,
                     request.clone(),
-                    RuntimeInvocationContext::top_level_for_tenant(&request, tenant_label),
+                    benchmark_invocation_context(&request, tenant_label),
                 )
             })
         });
@@ -2193,6 +2229,113 @@ fn async_host_batch_benchmark(c: &mut Criterion) {
     group.finish();
 }
 
+fn runtime_owner_partition_benchmark(c: &mut Criterion) {
+    const TENANT_COUNT: usize = 256;
+    const FUNCTIONS_PER_TENANT: usize = 32;
+    const LOOKUPS_PER_ITERATION: usize = 4_096;
+
+    let owners = (0..TENANT_COUNT)
+        .map(|tenant_index| {
+            RuntimeOwnerId::tenant(
+                format!("benchmark-tenant-{tenant_index}"),
+                NonZeroU64::MIN,
+                None::<String>,
+            )
+            .expect("owner-partition benchmark owner should be valid")
+        })
+        .collect::<Vec<_>>();
+    let partitions = owners
+        .iter()
+        .cloned()
+        .map(|owner| {
+            (
+                owner,
+                (0..FUNCTIONS_PER_TENANT)
+                    .map(|function_index| function_index as u64)
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    // Model an 80/20 tenant distribution plus a hot-function skew while still
+    // touching every owner and function partition deterministically.
+    let hot_tenant_count = TENANT_COUNT / 5;
+    let lookups = (0..LOOKUPS_PER_ITERATION)
+        .map(|index| {
+            let owner_index = if index % 10 < 8 {
+                (index * 17) % hot_tenant_count
+            } else {
+                hot_tenant_count + ((index * 17) % (TENANT_COUNT.saturating_sub(hot_tenant_count)))
+            };
+            let function_index = if index % 10 < 7 {
+                index % 4
+            } else {
+                (index * 13) % FUNCTIONS_PER_TENANT
+            };
+            (owner_index, function_index)
+        })
+        .collect::<Vec<_>>();
+
+    let mut lookup_group = c.benchmark_group("runtime_owner_partition_lookup");
+    lookup_group.throughput(Throughput::Elements(LOOKUPS_PER_ITERATION as u64));
+    lookup_group.bench_function("tenant_256_function_32_skew_80_20", |b| {
+        b.iter(|| {
+            for &(owner_index, function_index) in &lookups {
+                let entry = partitions
+                    .get(black_box(&owners[owner_index]))
+                    .and_then(|partition| partition.get(function_index))
+                    .copied()
+                    .expect("benchmark partition should exist");
+                black_box(entry);
+            }
+        });
+    });
+    lookup_group.finish();
+
+    let mut retirement_group = c.benchmark_group("runtime_owner_retirement_fanout");
+    retirement_group.throughput(Throughput::Elements(1));
+    for worker_threads in [1_usize, 4, 16] {
+        let mut limits = RuntimeLimits::application_web_standard();
+        limits.worker_threads = worker_threads;
+        limits.max_concurrent_runtime_instances = worker_threads;
+        limits.runtime_pool_kind = RuntimePoolKind::StartupSnapshotCache;
+        let executor = RuntimeExecutor::new(Arc::new(RuntimePolicy::new(limits)));
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("retirement benchmark runtime should build");
+        let next_incarnation = AtomicU64::new(1);
+        retirement_group.bench_with_input(
+            BenchmarkId::from_parameter(format!("workers_{worker_threads}")),
+            &worker_threads,
+            |b, &expected_workers| {
+                b.iter(|| {
+                    let incarnation =
+                        NonZeroU64::new(next_incarnation.fetch_add(1, Ordering::Relaxed))
+                            .expect("retirement benchmark incarnation should stay positive");
+                    let owner = RuntimeOwnerId::tenant(
+                        "retirement-benchmark-tenant",
+                        incarnation,
+                        None::<String>,
+                    )
+                    .expect("retirement benchmark owner should be valid");
+                    let (_, revocation) = RuntimeOwnerLeaseIssuer.issue(owner);
+                    let report = runtime
+                        .block_on(executor.retire_owner(&revocation, Duration::from_secs(10)))
+                        .expect("retirement benchmark should receive every worker acknowledgement");
+                    let acknowledged_all_workers = report.workers_acknowledged == expected_workers;
+                    assert!(
+                        acknowledged_all_workers,
+                        "retirement benchmark acknowledged {} of {expected_workers} workers",
+                        report.workers_acknowledged
+                    );
+                    black_box(report);
+                });
+            },
+        );
+    }
+    retirement_group.finish();
+}
+
 criterion_group!(
     benches,
     pure_js_pool_modes_benchmark,
@@ -2203,6 +2346,7 @@ criterion_group!(
     pir6_code_cache_impact_benchmark,
     pir5_retained_density_benchmark,
     nfr6_node_full_realm_benchmark,
+    runtime_owner_partition_benchmark,
     runtime_pool_modes_post_pir::post_pir_optimization_benchmark
 );
 criterion_main!(benches);

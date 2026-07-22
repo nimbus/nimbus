@@ -364,20 +364,21 @@ async fn direct_path_webstandard_unsnapshotted_no_crash_after_fix() {
         auth: None,
         services: Default::default(),
     };
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         std::sync::Arc::new(RecordingHost::default()),
         std::sync::Arc::new(RuntimePolicy::new(crate::RuntimeLimits::default())),
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let watchdog = WatchdogTimer::new();
-    let mut permit = SharedInvocationPermit::new(runtime_owner.policy(), None, None, false, None);
+    let mut permit =
+        SharedInvocationPermit::new(runtime_instance.policy(), None, None, false, None);
     permit
         .acquire_initial(std::time::Instant::now())
         .await
         .expect("permit should admit invocation");
-    let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
+    let context = RuntimeInvocationContext::top_level_for_tenant_for_test(&request, "tenant-a");
 
-    let result = runtime_owner
+    let result = runtime_instance
         .invoke_bundle_unmanaged(
             None,
             RuntimeInvocationExecution {
@@ -386,7 +387,7 @@ async fn direct_path_webstandard_unsnapshotted_no_crash_after_fix() {
                 request: request.clone(),
                 context: context.clone(),
                 execution_plan: crate::execution_plan::RuntimeExecutionPlan::for_invocation(
-                    runtime_owner.policy().as_ref(),
+                    runtime_instance.policy().as_ref(),
                     &request,
                     &context,
                 ),
@@ -469,7 +470,7 @@ fn concurrent_snapshot_isolate_creation_does_not_abort() {
                     .build()
                     .expect("worker runtime should build");
                 worker_rt.block_on(async move {
-                    let runtime_owner = NimbusRuntime::with_policy(
+                    let runtime_instance = NimbusRuntime::with_policy(
                         std::sync::Arc::new(RecordingHost::default()),
                         std::sync::Arc::new(RuntimePolicy::new(
                             crate::RuntimeLimits::application_node22(),
@@ -479,10 +480,10 @@ fn concurrent_snapshot_isolate_creation_does_not_abort() {
                     let bundle = RuntimeBundle::new(&*bundle_path);
                     barrier.wait();
                     for _ in 0..3 {
-                        let snapshot = runtime_owner
+                        let snapshot = runtime_instance
                             .bootstrap_snapshot()
                             .expect("cached startup snapshot");
-                        let mut runtime = runtime_owner
+                        let mut runtime = runtime_instance
                             .create_runtime_from_snapshot(&bundle, snapshot)
                             .expect("isolate should build from snapshot under concurrency");
                         runtime
@@ -556,7 +557,7 @@ fn reuse_main_context_execution_under_concurrent_creation_does_not_abort() {
                     .build()
                     .expect("worker runtime should build");
                 worker_rt.block_on(async move {
-                    let runtime_owner = NimbusRuntime::with_policy(
+                    let runtime_instance = NimbusRuntime::with_policy(
                         std::sync::Arc::new(RecordingHost::default()),
                         std::sync::Arc::new(RuntimePolicy::new(
                             crate::RuntimeLimits::application_node22(),
@@ -566,10 +567,10 @@ fn reuse_main_context_execution_under_concurrent_creation_does_not_abort() {
                     let bundle = RuntimeBundle::new(&*bundle_path);
                     barrier.wait();
                     for _ in 0..3 {
-                        let snapshot = runtime_owner
+                        let snapshot = runtime_instance
                             .bootstrap_snapshot()
                             .expect("cached startup snapshot");
-                        let mut runtime = runtime_owner
+                        let mut runtime = runtime_instance
                             .create_runtime_from_snapshot(&bundle, snapshot)
                             .expect("isolate should build from snapshot under concurrency");
                         // REUSE-CONTEXT reader: heavy interning in the MAIN context,
@@ -648,7 +649,7 @@ fn create_realm_per_invocation_under_concurrent_creation_probe() {
                     .build()
                     .expect("worker runtime should build");
                 worker_rt.block_on(async move {
-                    let runtime_owner = NimbusRuntime::with_policy(
+                    let runtime_instance = NimbusRuntime::with_policy(
                         std::sync::Arc::new(RecordingHost::default()),
                         std::sync::Arc::new(RuntimePolicy::new(
                             crate::RuntimeLimits::application_node22(),
@@ -658,10 +659,10 @@ fn create_realm_per_invocation_under_concurrent_creation_probe() {
                     let bundle = RuntimeBundle::new(&*bundle_path);
                     barrier.wait();
                     for _ in 0..3 {
-                        let snapshot = runtime_owner
+                        let snapshot = runtime_instance
                             .bootstrap_snapshot()
                             .expect("cached startup snapshot");
-                        let mut runtime = runtime_owner
+                        let mut runtime = runtime_instance
                             .create_runtime_from_snapshot(&bundle, snapshot)
                             .expect("isolate should build from snapshot under concurrency");
                         // FRESH-REALM reader: create_realm runs primordial interning.
@@ -755,7 +756,7 @@ fn concurrent_both_profile_snapshot_creation_does_not_abort() {
                     } else {
                         crate::RuntimeLimits::default()
                     };
-                    let runtime_owner = NimbusRuntime::with_policy(
+                    let runtime_instance = NimbusRuntime::with_policy(
                         std::sync::Arc::new(RecordingHost::default()),
                         std::sync::Arc::new(RuntimePolicy::new(limits)),
                         crate::RuntimeEgressPosture::CoarsePermissions,
@@ -763,12 +764,12 @@ fn concurrent_both_profile_snapshot_creation_does_not_abort() {
                     let bundle = RuntimeBundle::new(&*bundle_path);
                     barrier.wait();
                     for _ in 0..3 {
-                        let snapshot = runtime_owner
+                        let snapshot = runtime_instance
                             .bootstrap_snapshot()
                             .expect("cached startup snapshot");
                         // CRASH CONTROL: this concurrent cross-profile build aborts before JS
                         // would run — deliberately NO smoke JS (per the controls-vs-fix rule).
-                        let _runtime = runtime_owner
+                        let _runtime = runtime_instance
                             .create_runtime_from_snapshot(&bundle, snapshot)
                             .expect("isolate should build from snapshot under concurrency");
                     }
@@ -845,7 +846,7 @@ fn concurrent_asymmetric_nodefull_snapshot_weblean_unsnapshotted_does_not_abort(
                     } else {
                         crate::RuntimeLimits::default()
                     };
-                    let runtime_owner = NimbusRuntime::with_policy(
+                    let runtime_instance = NimbusRuntime::with_policy(
                         std::sync::Arc::new(RecordingHost::default()),
                         std::sync::Arc::new(RuntimePolicy::new(limits)),
                         crate::RuntimeEgressPosture::CoarsePermissions,
@@ -854,14 +855,14 @@ fn concurrent_asymmetric_nodefull_snapshot_weblean_unsnapshotted_does_not_abort(
                     barrier.wait();
                     for _ in 0..3 {
                         if is_node {
-                            let snapshot = runtime_owner
+                            let snapshot = runtime_instance
                                 .bootstrap_snapshot()
                                 .expect("cached nodefull startup snapshot");
-                            let _runtime = runtime_owner
+                            let _runtime = runtime_instance
                                 .create_runtime_from_snapshot(&bundle, snapshot)
                                 .expect("nodefull isolate should build from snapshot");
                         } else {
-                            let _runtime = runtime_owner
+                            let _runtime = runtime_instance
                                 .create_runtime(&bundle, None, false)
                                 .expect("weblean isolate should build unsnapshotted");
                         }
@@ -907,23 +908,23 @@ fn serial_cross_profile_creation_does_not_abort() {
             } else {
                 crate::RuntimeLimits::default()
             };
-            let runtime_owner = NimbusRuntime::with_policy(
+            let runtime_instance = NimbusRuntime::with_policy(
                 std::sync::Arc::new(RecordingHost::default()),
                 std::sync::Arc::new(RuntimePolicy::new(limits)),
                 crate::RuntimeEgressPosture::CoarsePermissions,
             );
             if is_node {
-                let snapshot = runtime_owner
+                let snapshot = runtime_instance
                     .bootstrap_snapshot()
                     .expect("cached nodefull startup snapshot");
-                let mut runtime = runtime_owner
+                let mut runtime = runtime_instance
                     .create_runtime_from_snapshot(&bundle, snapshot)
                     .expect("nodefull isolate should build from snapshot");
                 runtime
                     .execute_script("ck", BUILTIN_SMOKE_JS)
                     .expect("built nodefull isolate must EXECUTE JS, not merely construct");
             } else {
-                let mut runtime = runtime_owner
+                let mut runtime = runtime_instance
                     .create_runtime(&bundle, None, false)
                     .expect("weblean isolate should build unsnapshotted");
                 runtime
@@ -3478,7 +3479,7 @@ globalThis.__nimbusInvoke = async function (request) {
             runtime.clone(),
             bundle.clone(),
             first_request.clone(),
-            RuntimeInvocationContext::top_level_for_tenant(&first_request, "tenant-a"),
+            RuntimeInvocationContext::top_level_for_tenant_for_test(&first_request, "tenant-a"),
             None,
         )
         .await
@@ -3489,7 +3490,7 @@ globalThis.__nimbusInvoke = async function (request) {
             runtime,
             bundle.clone(),
             second_request.clone(),
-            RuntimeInvocationContext::top_level_for_tenant(&second_request, "tenant-a"),
+            RuntimeInvocationContext::top_level_for_tenant_for_test(&second_request, "tenant-a"),
             None,
         )
         .await
@@ -3584,7 +3585,7 @@ export {};
             runtime.clone(),
             bundle.clone(),
             success_request.clone(),
-            RuntimeInvocationContext::top_level_for_tenant(&success_request, "tenant-a"),
+            RuntimeInvocationContext::top_level_for_tenant_for_test(&success_request, "tenant-a"),
             None,
         )
         .await
@@ -3608,7 +3609,7 @@ export {};
             runtime,
             bundle,
             failing_request.clone(),
-            RuntimeInvocationContext::top_level_for_tenant(&failing_request, "tenant-a"),
+            RuntimeInvocationContext::top_level_for_tenant_for_test(&failing_request, "tenant-a"),
             None,
         )
         .await
@@ -3648,7 +3649,7 @@ export {};
     )
     .expect("bundle should write");
 
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(
             crate::RuntimeLimits::application_node22(),
@@ -3656,10 +3657,10 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
-    let snapshot = runtime_owner
+    let snapshot = runtime_instance
         .bootstrap_snapshot()
         .expect("NodeFull bootstrap snapshot should build");
-    let mut runtime = runtime_owner
+    let mut runtime = runtime_instance
         .create_runtime_from_snapshot(&bundle, snapshot)
         .expect("NodeFull runtime should build from snapshot");
     let request = InvocationRequest {
@@ -3671,9 +3672,9 @@ export {};
         auth: None,
         services: Default::default(),
     };
-    let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
+    let context = RuntimeInvocationContext::top_level_for_tenant_for_test(&request, "tenant-a");
 
-    let (value, realm) = runtime_owner
+    let (value, realm) = runtime_instance
         .start_fresh_realm_bundle_invocation_with_trace(
             &mut runtime,
             fresh_realm_trace(
@@ -3685,7 +3686,7 @@ export {};
         )
         .await
         .expect("NodeFull fresh realm invocation should start");
-    let result = runtime_owner
+    let result = runtime_instance
         .resolve_fresh_realm_invocation_response_with_trace(
             &mut runtime,
             FreshRealmInvocationResponse {
@@ -3737,7 +3738,7 @@ export {};
     )
     .expect("bundle should write");
 
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(
             crate::RuntimeLimits::application_node22(),
@@ -3745,10 +3746,10 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
-    let snapshot = runtime_owner
+    let snapshot = runtime_instance
         .bootstrap_snapshot()
         .expect("NodeFull bootstrap snapshot should build");
-    let mut runtime = runtime_owner
+    let mut runtime = runtime_instance
         .create_runtime_from_snapshot(&bundle, snapshot)
         .expect("NodeFull runtime should build from snapshot");
     runtime
@@ -3772,9 +3773,10 @@ globalThis.__nimbusInvoke = () => ({ mainRealmFallback: true });
     };
 
     let first_request = request("messages:first");
-    let first_context = RuntimeInvocationContext::top_level_for_tenant(&first_request, "tenant-a");
+    let first_context =
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&first_request, "tenant-a");
     let first = invoke_node_full_fresh_realm_with_lease(
-        &runtime_owner,
+        &runtime_instance,
         &controller,
         &mut runtime,
         &bundle,
@@ -3794,9 +3796,9 @@ globalThis.__nimbusInvoke = () => ({ mainRealmFallback: true });
 
     let second_request = request("messages:second");
     let second_context =
-        RuntimeInvocationContext::top_level_for_tenant(&second_request, "tenant-a");
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&second_request, "tenant-a");
     let second = invoke_node_full_fresh_realm_with_lease(
-        &runtime_owner,
+        &runtime_instance,
         &controller,
         &mut runtime,
         &bundle,
@@ -3816,8 +3818,8 @@ globalThis.__nimbusInvoke = () => ({ mainRealmFallback: true });
 
     let tenant_b_request = request("messages:tenant-b");
     let tenant_b_context =
-        RuntimeInvocationContext::top_level_for_tenant(&tenant_b_request, "tenant-b");
-    let tenant_b_error = match runtime_owner
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&tenant_b_request, "tenant-b");
+    let tenant_b_error = match runtime_instance
         .start_fresh_realm_bundle_invocation_with_lease_and_trace(
             &controller,
             &mut runtime,
@@ -3839,9 +3841,10 @@ globalThis.__nimbusInvoke = () => ({ mainRealmFallback: true });
     );
 
     let third_request = request("messages:third");
-    let third_context = RuntimeInvocationContext::top_level_for_tenant(&third_request, "tenant-a");
+    let third_context =
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&third_request, "tenant-a");
     let third = invoke_node_full_fresh_realm_with_lease(
-        &runtime_owner,
+        &runtime_instance,
         &controller,
         &mut runtime,
         &bundle,
@@ -3860,7 +3863,7 @@ globalThis.__nimbusInvoke = () => ({ mainRealmFallback: true });
     );
 
     let missing_context_controller = RuntimeRealmLeaseController::new(Default::default());
-    let missing_context_error = match runtime_owner
+    let missing_context_error = match runtime_instance
         .start_fresh_realm_bundle_invocation_with_lease_and_trace(
             &missing_context_controller,
             &mut runtime,
@@ -3941,7 +3944,7 @@ export {};
             auth: None,
             services: Default::default(),
         };
-        let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
+        let context = RuntimeInvocationContext::top_level_for_tenant_for_test(&request, "tenant-a");
 
         let result = invoke_node_full_fresh_realm_with_lease(
             &target_owner,
@@ -3998,7 +4001,7 @@ export {};
         services: Default::default(),
     };
     let node22_context =
-        RuntimeInvocationContext::top_level_for_tenant(&node22_request, "tenant-a");
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&node22_request, "tenant-a");
     let node22 = invoke_node_full_fresh_realm_with_lease(
         &node22_owner,
         &controller,
@@ -4025,7 +4028,7 @@ export {};
         services: Default::default(),
     };
     let node24_context =
-        RuntimeInvocationContext::top_level_for_tenant(&node24_request, "tenant-a");
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&node24_request, "tenant-a");
     let target_error = match node24_owner
         .start_fresh_realm_bundle_invocation_with_lease_and_trace(
             &controller,
@@ -4072,7 +4075,7 @@ export {{}};
     std::fs::write(&bundle_a_path, bundle_source("a")).expect("bundle A should write");
     std::fs::write(&bundle_b_path, bundle_source("b")).expect("bundle B should write");
 
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(
             crate::RuntimeLimits::application_node22(),
@@ -4081,10 +4084,10 @@ export {{}};
     );
     let bundle_a = RuntimeBundle::new(&bundle_a_path);
     let bundle_b = RuntimeBundle::new(&bundle_b_path);
-    let snapshot = runtime_owner
+    let snapshot = runtime_instance
         .bootstrap_snapshot()
         .expect("NodeFull bootstrap snapshot should build");
-    let mut runtime = runtime_owner
+    let mut runtime = runtime_instance
         .create_runtime_from_snapshot(&bundle_a, snapshot)
         .expect("NodeFull runtime should build from snapshot");
     let controller = RuntimeRealmLeaseController::new(Default::default());
@@ -4099,9 +4102,10 @@ export {{}};
     };
 
     let first_request = request("messages:bundle-a");
-    let first_context = RuntimeInvocationContext::top_level_for_tenant(&first_request, "tenant-a");
+    let first_context =
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&first_request, "tenant-a");
     let first = invoke_node_full_fresh_realm_with_lease(
-        &runtime_owner,
+        &runtime_instance,
         &controller,
         &mut runtime,
         &bundle_a,
@@ -4120,8 +4124,8 @@ export {{}};
 
     let bundle_b_request = request("messages:bundle-b");
     let bundle_b_context =
-        RuntimeInvocationContext::top_level_for_tenant(&bundle_b_request, "tenant-a");
-    let bundle_error = match runtime_owner
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&bundle_b_request, "tenant-a");
+    let bundle_error = match runtime_instance
         .start_fresh_realm_bundle_invocation_with_lease_and_trace(
             &controller,
             &mut runtime,
@@ -4144,9 +4148,9 @@ export {{}};
 
     let second_request = request("messages:bundle-a-again");
     let second_context =
-        RuntimeInvocationContext::top_level_for_tenant(&second_request, "tenant-a");
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&second_request, "tenant-a");
     let second = invoke_node_full_fresh_realm_with_lease(
-        &runtime_owner,
+        &runtime_instance,
         &controller,
         &mut runtime,
         &bundle_a,
@@ -4236,7 +4240,7 @@ module.exports.namedValue = 42;
             auth: None,
             services: Default::default(),
         };
-        let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
+        let context = RuntimeInvocationContext::top_level_for_tenant_for_test(&request, "tenant-a");
 
         let result = invoke_node_full_fresh_realm_with_lease(
             &target_owner,
@@ -4381,7 +4385,8 @@ export {};
     };
 
     let db_request = request("services:get-db", "db");
-    let db_context = RuntimeInvocationContext::top_level_for_tenant(&db_request, "tenant-a");
+    let db_context =
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&db_request, "tenant-a");
     let db_result = invoke_node_full_fresh_realm_with_lease(
         &db_owner,
         &controller,
@@ -4410,7 +4415,7 @@ export {};
 
     let cache_policy_request = request("services:get-cache", "cache");
     let cache_policy_context =
-        RuntimeInvocationContext::top_level_for_tenant(&cache_policy_request, "tenant-a");
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&cache_policy_request, "tenant-a");
     let authority_error = match cache_owner
         .start_fresh_realm_bundle_invocation_with_lease_and_trace(
             &controller,
@@ -4441,7 +4446,7 @@ export {};
 
     let second_db_request = request("services:get-db-again", "db");
     let second_db_context =
-        RuntimeInvocationContext::top_level_for_tenant(&second_db_request, "tenant-a");
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&second_db_request, "tenant-a");
     let second_db_result = invoke_node_full_fresh_realm_with_lease(
         &db_owner,
         &controller,
@@ -4470,7 +4475,7 @@ export {};
 
     let denied_request = request("services:denied-cache", "cache");
     let denied_context =
-        RuntimeInvocationContext::top_level_for_tenant(&denied_request, "tenant-a");
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&denied_request, "tenant-a");
     let denied_error = invoke_node_full_fresh_realm_with_lease(
         &db_owner,
         &controller,
@@ -4561,17 +4566,17 @@ export {};
         RuntimeCompatibilityTarget::Node24,
         RuntimeCompatibilityTarget::Node26,
     ] {
-        let runtime_owner = NimbusRuntime::with_policy(
+        let runtime_instance = NimbusRuntime::with_policy(
             Arc::new(RecordingHost::default()),
             Arc::new(RuntimePolicy::new(crate::RuntimeLimits::application_node(
                 target,
             ))),
             crate::RuntimeEgressPosture::CoarsePermissions,
         );
-        let snapshot = runtime_owner
+        let snapshot = runtime_instance
             .bootstrap_snapshot()
             .expect("NodeFull bootstrap snapshot should build");
-        let mut runtime = runtime_owner
+        let mut runtime = runtime_instance
             .create_runtime_from_snapshot(&bundle, snapshot)
             .expect("NodeFull runtime should build from snapshot");
         let controller = RuntimeRealmLeaseController::new(Default::default());
@@ -4589,10 +4594,10 @@ export {};
             auth: None,
             services: Default::default(),
         };
-        let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
+        let context = RuntimeInvocationContext::top_level_for_tenant_for_test(&request, "tenant-a");
 
         let result = invoke_node_full_fresh_realm_with_lease(
-            &runtime_owner,
+            &runtime_instance,
             &controller,
             &mut runtime,
             &bundle,
@@ -4666,7 +4671,7 @@ export {};
     )
     .expect("bundle should write");
 
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(
             crate::RuntimeLimits::application_node22(),
@@ -4674,10 +4679,10 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
-    let snapshot = runtime_owner
+    let snapshot = runtime_instance
         .bootstrap_snapshot()
         .expect("NodeFull bootstrap snapshot should build");
-    let mut runtime = runtime_owner
+    let mut runtime = runtime_instance
         .create_runtime_from_snapshot(&bundle, snapshot)
         .expect("NodeFull runtime should build from snapshot");
     let controller = RuntimeRealmLeaseController::new(Default::default());
@@ -4690,10 +4695,10 @@ export {};
         auth: None,
         services: Default::default(),
     };
-    let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
+    let context = RuntimeInvocationContext::top_level_for_tenant_for_test(&request, "tenant-a");
 
     let result = invoke_node_full_fresh_realm_with_lease(
-        &runtime_owner,
+        &runtime_instance,
         &controller,
         &mut runtime,
         &bundle,
@@ -4765,7 +4770,7 @@ module.exports = { marker: "commonjs-default" };
         RuntimeCompatibilityTarget::Node22,
         RuntimeCompatibilityTarget::Node24,
     ] {
-        let runtime_owner = NimbusRuntime::with_policy(
+        let runtime_instance = NimbusRuntime::with_policy(
             Arc::new(RecordingHost::default()),
             Arc::new(RuntimePolicy::new(crate::RuntimeLimits::application_node(
                 target,
@@ -4787,23 +4792,23 @@ module.exports = { marker: "commonjs-default" };
             services: Default::default(),
         };
 
-        let startup_snapshot_result = runtime_owner
-            .invoke_bundle_for_tenant(&bundle, &request, "tenant-a")
+        let startup_snapshot_result = runtime_instance
+            .invoke_bundle_for_tenant_for_test(&bundle, &request, "tenant-a")
             .await
             .unwrap_or_else(|error| {
                 panic!("{target:?}: startup-snapshot invocation should succeed: {error}")
             });
 
-        let snapshot = runtime_owner
+        let snapshot = runtime_instance
             .bootstrap_snapshot()
             .expect("NodeFull bootstrap snapshot should build");
-        let mut runtime = runtime_owner
+        let mut runtime = runtime_instance
             .create_runtime_from_snapshot(&bundle, snapshot)
             .expect("NodeFull runtime should build from snapshot");
         let controller = RuntimeRealmLeaseController::new(Default::default());
-        let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
+        let context = RuntimeInvocationContext::top_level_for_tenant_for_test(&request, "tenant-a");
         let lease_result = invoke_node_full_fresh_realm_with_lease(
-            &runtime_owner,
+            &runtime_instance,
             &controller,
             &mut runtime,
             &bundle,
@@ -4855,7 +4860,7 @@ export {};
     .expect("bundle should write");
 
     let host = Arc::new(RecordingHost::default());
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         host.clone(),
         Arc::new(RuntimePolicy::new(
             crate::RuntimeLimits::application_node22(),
@@ -4863,10 +4868,10 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
-    let snapshot = runtime_owner
+    let snapshot = runtime_instance
         .bootstrap_snapshot()
         .expect("NodeFull bootstrap snapshot should build");
-    let mut runtime = runtime_owner
+    let mut runtime = runtime_instance
         .create_runtime_from_snapshot(&bundle, snapshot)
         .expect("NodeFull runtime should build from snapshot");
     let controller = RuntimeRealmLeaseController::new(Default::default());
@@ -4879,10 +4884,10 @@ export {};
         auth: None,
         services: Default::default(),
     };
-    let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
+    let context = RuntimeInvocationContext::top_level_for_tenant_for_test(&request, "tenant-a");
 
     let result = invoke_node_full_fresh_realm_with_lease(
-        &runtime_owner,
+        &runtime_instance,
         &controller,
         &mut runtime,
         &bundle,
@@ -4937,7 +4942,7 @@ export {};
     )
     .expect("bundle should write");
 
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(AsyncEchoHost),
         Arc::new(RuntimePolicy::new(
             crate::RuntimeLimits::application_node22(),
@@ -4945,10 +4950,10 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
-    let snapshot = runtime_owner
+    let snapshot = runtime_instance
         .bootstrap_snapshot()
         .expect("NodeFull bootstrap snapshot should build");
-    let mut runtime = runtime_owner
+    let mut runtime = runtime_instance
         .create_runtime_from_snapshot(&bundle, snapshot)
         .expect("NodeFull runtime should build from snapshot");
     let controller = RuntimeRealmLeaseController::new(Default::default());
@@ -4963,9 +4968,10 @@ export {};
     };
 
     let first_request = request("auth:first", "token-1");
-    let first_context = RuntimeInvocationContext::top_level_for_tenant(&first_request, "tenant-a");
+    let first_context =
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&first_request, "tenant-a");
     let first = invoke_node_full_fresh_realm_with_lease(
-        &runtime_owner,
+        &runtime_instance,
         &controller,
         &mut runtime,
         &bundle,
@@ -4985,9 +4991,9 @@ export {};
 
     let second_request = request("auth:second", "token-2");
     let second_context =
-        RuntimeInvocationContext::top_level_for_tenant(&second_request, "tenant-a");
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&second_request, "tenant-a");
     let second = invoke_node_full_fresh_realm_with_lease(
-        &runtime_owner,
+        &runtime_instance,
         &controller,
         &mut runtime,
         &bundle,
@@ -5028,7 +5034,7 @@ export {};
     )
     .expect("bundle should write");
 
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(
             crate::RuntimeLimits::application_node22(),
@@ -5036,10 +5042,10 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
-    let snapshot = runtime_owner
+    let snapshot = runtime_instance
         .bootstrap_snapshot()
         .expect("NodeFull bootstrap snapshot should build");
-    let mut runtime = runtime_owner
+    let mut runtime = runtime_instance
         .create_runtime_from_snapshot(&bundle, snapshot)
         .expect("NodeFull runtime should build from snapshot");
     let controller = RuntimeRealmLeaseController::new(Default::default());
@@ -5054,9 +5060,10 @@ export {};
     };
 
     let clean_request = request("dirty:clean", "clean");
-    let clean_context = RuntimeInvocationContext::top_level_for_tenant(&clean_request, "tenant-a");
+    let clean_context =
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&clean_request, "tenant-a");
     let clean = invoke_node_full_fresh_realm_with_lease(
-        &runtime_owner,
+        &runtime_instance,
         &controller,
         &mut runtime,
         &bundle,
@@ -5068,9 +5075,10 @@ export {};
     assert_eq!(clean, serde_json::json!({ "mode": "clean" }));
 
     let dirty_request = request("dirty:throw", "throw");
-    let dirty_context = RuntimeInvocationContext::top_level_for_tenant(&dirty_request, "tenant-a");
+    let dirty_context =
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&dirty_request, "tenant-a");
     let dirty_error = invoke_node_full_fresh_realm_with_lease(
-        &runtime_owner,
+        &runtime_instance,
         &controller,
         &mut runtime,
         &bundle,
@@ -5085,9 +5093,10 @@ export {};
     );
 
     let reuse_request = request("dirty:reuse", "reuse");
-    let reuse_context = RuntimeInvocationContext::top_level_for_tenant(&reuse_request, "tenant-a");
+    let reuse_context =
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&reuse_request, "tenant-a");
     let reuse_error = invoke_node_full_fresh_realm_with_lease(
-        &runtime_owner,
+        &runtime_instance,
         &controller,
         &mut runtime,
         &bundle,
@@ -5127,7 +5136,7 @@ export {};
     )
     .expect("bundle should write");
 
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(
             crate::RuntimeLimits::application_node22(),
@@ -5135,10 +5144,10 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
-    let snapshot = runtime_owner
+    let snapshot = runtime_instance
         .bootstrap_snapshot()
         .expect("NodeFull bootstrap snapshot should build");
-    let mut runtime = runtime_owner
+    let mut runtime = runtime_instance
         .create_runtime_from_snapshot(&bundle, snapshot)
         .expect("NodeFull runtime should build from snapshot");
     let controller = RuntimeRealmLeaseController::new(Default::default());
@@ -5154,9 +5163,9 @@ export {};
 
     let resolved_request = request("wait-until:resolved", "resolve-background");
     let resolved_context =
-        RuntimeInvocationContext::top_level_for_tenant(&resolved_request, "tenant-a");
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&resolved_request, "tenant-a");
     let resolved = invoke_node_full_fresh_realm_with_lease(
-        &runtime_owner,
+        &runtime_instance,
         &controller,
         &mut runtime,
         &bundle,
@@ -5172,9 +5181,9 @@ export {};
 
     let rejected_request = request("wait-until:rejected", "reject-background");
     let rejected_context =
-        RuntimeInvocationContext::top_level_for_tenant(&rejected_request, "tenant-a");
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&rejected_request, "tenant-a");
     let rejected_error = invoke_node_full_fresh_realm_with_lease(
-        &runtime_owner,
+        &runtime_instance,
         &controller,
         &mut runtime,
         &bundle,
@@ -5191,9 +5200,10 @@ export {};
     );
 
     let reuse_request = request("wait-until:reuse", "resolve-background");
-    let reuse_context = RuntimeInvocationContext::top_level_for_tenant(&reuse_request, "tenant-a");
+    let reuse_context =
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&reuse_request, "tenant-a");
     let reuse_error = invoke_node_full_fresh_realm_with_lease(
-        &runtime_owner,
+        &runtime_instance,
         &controller,
         &mut runtime,
         &bundle,
@@ -5240,7 +5250,7 @@ export {};
     let mut limits = crate::RuntimeLimits::application_node22();
     limits.execution_timeout = std::time::Duration::from_secs(5);
     limits.system_timeout = system_timeout;
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(limits)),
         crate::RuntimeEgressPosture::CoarsePermissions,
@@ -5255,11 +5265,11 @@ export {};
         auth: None,
         services: Default::default(),
     };
-    let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
-    let snapshot = runtime_owner
+    let context = RuntimeInvocationContext::top_level_for_tenant_for_test(&request, "tenant-a");
+    let snapshot = runtime_instance
         .bootstrap_snapshot()
         .expect("NodeFull bootstrap snapshot should build");
-    let runtime = runtime_owner
+    let runtime = runtime_instance
         .create_runtime_from_snapshot(&bundle, snapshot)
         .expect("NodeFull runtime should build from snapshot");
     let reusable_runtime =
@@ -5267,7 +5277,7 @@ export {};
     let controller = reusable_runtime.realm_lease_controller.clone();
 
     let (result, reusable_runtime) = invoke_node_full_fresh_realm_with_driver(
-        &runtime_owner,
+        &runtime_instance,
         reusable_runtime,
         &bundle,
         &request,
@@ -5295,7 +5305,7 @@ export {};
         "stalled waitUntil background work must not return a reusable NodeFull substrate"
     );
 
-    let reuse_error = runtime_owner
+    let reuse_error = runtime_instance
         .checkout_fresh_realm_lease(
             &controller,
             &bundle,
@@ -5330,7 +5340,7 @@ export {};
     )
     .expect("bundle should write");
 
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(
             crate::RuntimeLimits::application_node22(),
@@ -5347,15 +5357,15 @@ export {};
         auth: None,
         services: Default::default(),
     };
-    let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
-    let snapshot = runtime_owner
+    let context = RuntimeInvocationContext::top_level_for_tenant_for_test(&request, "tenant-a");
+    let snapshot = runtime_instance
         .bootstrap_snapshot()
         .expect("NodeFull bootstrap snapshot should build");
-    let mut runtime = runtime_owner
+    let mut runtime = runtime_instance
         .create_runtime_from_snapshot(&bundle, snapshot)
         .expect("NodeFull runtime should build from snapshot");
     let controller = RuntimeRealmLeaseController::new(Default::default());
-    let policy = runtime_owner.policy();
+    let policy = runtime_instance.policy();
     let mut permit = SharedInvocationPermit::new(policy.clone(), None, None, true, None);
     permit
         .acquire_initial(std::time::Instant::now())
@@ -5376,7 +5386,7 @@ export {};
             V8RuntimeConstructionMode::StartupSnapshot,
             Some(&context),
         );
-        let (value, realm, mut lease) = runtime_owner
+        let (value, realm, mut lease) = runtime_instance
             .start_fresh_realm_bundle_invocation_with_lease_and_trace(
                 &controller,
                 &mut runtime,
@@ -5384,7 +5394,7 @@ export {};
             )
             .await
             .expect("fresh-realm invocation should start");
-        let response = runtime_owner
+        let response = runtime_instance
             .resolve_fresh_realm_invocation_response_with_lease_and_trace(
                 &mut runtime,
                 FreshRealmInvocationResponse {
@@ -5405,7 +5415,7 @@ export {};
         permit.finish_invocation().await.is_empty(),
         "abandoned NodeFull fresh-realm lease probe should not leave ready jobs"
     );
-    let reuse_error = runtime_owner
+    let reuse_error = runtime_instance
         .checkout_fresh_realm_lease(
             &controller,
             &bundle,
@@ -5447,7 +5457,7 @@ export {};
     let mut limits = crate::RuntimeLimits::application_node22();
     limits.execution_timeout = execution_timeout;
     limits.system_timeout = std::time::Duration::from_secs(5);
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(limits)),
         crate::RuntimeEgressPosture::CoarsePermissions,
@@ -5462,11 +5472,11 @@ export {};
         auth: None,
         services: Default::default(),
     };
-    let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
-    let snapshot = runtime_owner
+    let context = RuntimeInvocationContext::top_level_for_tenant_for_test(&request, "tenant-a");
+    let snapshot = runtime_instance
         .bootstrap_snapshot()
         .expect("NodeFull bootstrap snapshot should build");
-    let runtime = runtime_owner
+    let runtime = runtime_instance
         .create_runtime_from_snapshot(&bundle, snapshot)
         .expect("NodeFull runtime should build from snapshot");
     let reusable_runtime =
@@ -5474,7 +5484,7 @@ export {};
     let controller = reusable_runtime.realm_lease_controller.clone();
 
     let (result, reusable_runtime) = invoke_node_full_fresh_realm_with_driver(
-        &runtime_owner,
+        &runtime_instance,
         reusable_runtime,
         &bundle,
         &request,
@@ -5494,7 +5504,7 @@ export {};
         "timed-out NodeFull lease substrate must not be returned to the runtime pool"
     );
 
-    let reuse_error = runtime_owner
+    let reuse_error = runtime_instance
         .checkout_fresh_realm_lease(
             &controller,
             &bundle,
@@ -5536,7 +5546,7 @@ export {};
     let mut limits = crate::RuntimeLimits::application_node22();
     limits.execution_timeout = std::time::Duration::from_secs(5);
     limits.system_timeout = std::time::Duration::from_secs(5);
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(limits)),
         crate::RuntimeEgressPosture::CoarsePermissions,
@@ -5551,11 +5561,11 @@ export {};
         auth: None,
         services: Default::default(),
     };
-    let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
-    let snapshot = runtime_owner
+    let context = RuntimeInvocationContext::top_level_for_tenant_for_test(&request, "tenant-a");
+    let snapshot = runtime_instance
         .bootstrap_snapshot()
         .expect("NodeFull bootstrap snapshot should build");
-    let runtime = runtime_owner
+    let runtime = runtime_instance
         .create_runtime_from_snapshot(&bundle, snapshot)
         .expect("NodeFull runtime should build from snapshot");
     let reusable_runtime =
@@ -5569,7 +5579,7 @@ export {};
     });
 
     let (result, reusable_runtime) = invoke_node_full_fresh_realm_with_driver(
-        &runtime_owner,
+        &runtime_instance,
         reusable_runtime,
         &bundle,
         &request,
@@ -5586,7 +5596,7 @@ export {};
         "externally canceled NodeFull lease substrate must not be returned to the runtime pool"
     );
 
-    let reuse_error = runtime_owner
+    let reuse_error = runtime_instance
         .checkout_fresh_realm_lease(
             &controller,
             &bundle,
@@ -5630,7 +5640,7 @@ export {};
     limits.max_heap_mb = 64;
     limits.execution_timeout = std::time::Duration::from_secs(5);
     limits.system_timeout = std::time::Duration::from_secs(5);
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(limits)),
         crate::RuntimeEgressPosture::CoarsePermissions,
@@ -5645,11 +5655,11 @@ export {};
         auth: None,
         services: Default::default(),
     };
-    let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
-    let snapshot = runtime_owner
+    let context = RuntimeInvocationContext::top_level_for_tenant_for_test(&request, "tenant-a");
+    let snapshot = runtime_instance
         .bootstrap_snapshot()
         .expect("NodeFull bootstrap snapshot should build");
-    let runtime = runtime_owner
+    let runtime = runtime_instance
         .create_runtime_from_snapshot(&bundle, snapshot)
         .expect("NodeFull runtime should build from snapshot");
     let reusable_runtime =
@@ -5657,7 +5667,7 @@ export {};
     let controller = reusable_runtime.realm_lease_controller.clone();
 
     let (result, reusable_runtime) = invoke_node_full_fresh_realm_with_driver(
-        &runtime_owner,
+        &runtime_instance,
         reusable_runtime,
         &bundle,
         &request,
@@ -5675,7 +5685,7 @@ export {};
         "heap-limited NodeFull lease substrate must not be returned to the runtime pool"
     );
 
-    let reuse_error = runtime_owner
+    let reuse_error = runtime_instance
         .checkout_fresh_realm_lease(
             &controller,
             &bundle,
@@ -5719,7 +5729,7 @@ export {};
     .expect("bundle should write");
 
     let host = Arc::new(RecordingHost::default());
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         host.clone(),
         Arc::new(RuntimePolicy::new(
             crate::RuntimeLimits::application_node22(),
@@ -5727,10 +5737,10 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
-    let snapshot = runtime_owner
+    let snapshot = runtime_instance
         .bootstrap_snapshot()
         .expect("NodeFull bootstrap snapshot should build");
-    let mut runtime = runtime_owner
+    let mut runtime = runtime_instance
         .create_runtime_from_snapshot(&bundle, snapshot)
         .expect("NodeFull runtime should build from snapshot");
     let controller = RuntimeRealmLeaseController::new(Default::default());
@@ -5745,9 +5755,10 @@ export {};
     };
 
     let first_request = request("timer:schedule", "schedule-timer");
-    let first_context = RuntimeInvocationContext::top_level_for_tenant(&first_request, "tenant-a");
+    let first_context =
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&first_request, "tenant-a");
     let first = invoke_node_full_fresh_realm_with_lease(
-        &runtime_owner,
+        &runtime_instance,
         &controller,
         &mut runtime,
         &bundle,
@@ -5767,9 +5778,9 @@ export {};
 
     let second_request = request("timer:pump", "pump-next-realm");
     let second_context =
-        RuntimeInvocationContext::top_level_for_tenant(&second_request, "tenant-a");
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&second_request, "tenant-a");
     let second = invoke_node_full_fresh_realm_with_lease(
-        &runtime_owner,
+        &runtime_instance,
         &controller,
         &mut runtime,
         &bundle,
@@ -5869,7 +5880,7 @@ export {};
     )
     .expect("bundle should write");
 
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(
             crate::RuntimeLimits::application_node22(),
@@ -5877,10 +5888,10 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
-    let snapshot = runtime_owner
+    let snapshot = runtime_instance
         .bootstrap_snapshot()
         .expect("NodeFull bootstrap snapshot should build");
-    let mut runtime = runtime_owner
+    let mut runtime = runtime_instance
         .create_runtime_from_snapshot(&bundle, snapshot)
         .expect("NodeFull runtime should build from snapshot");
     let controller = RuntimeRealmLeaseController::new(Default::default());
@@ -5896,9 +5907,9 @@ export {};
 
     for function_name in ["resources:first", "resources:second"] {
         let request = request(function_name);
-        let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
+        let context = RuntimeInvocationContext::top_level_for_tenant_for_test(&request, "tenant-a");
         let result = invoke_node_full_fresh_realm_with_lease(
-            &runtime_owner,
+            &runtime_instance,
             &controller,
             &mut runtime,
             &bundle,
@@ -6011,7 +6022,7 @@ export {};
     )
     .expect("bundle should write");
 
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(AsyncEchoHost),
         Arc::new(RuntimePolicy::new(
             crate::RuntimeLimits::application_node22(),
@@ -6019,10 +6030,10 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
-    let snapshot = runtime_owner
+    let snapshot = runtime_instance
         .bootstrap_snapshot()
         .expect("NodeFull bootstrap snapshot should build");
-    let mut runtime = runtime_owner
+    let mut runtime = runtime_instance
         .create_runtime_from_snapshot(&bundle, snapshot)
         .expect("NodeFull runtime should build from snapshot");
     let controller = RuntimeRealmLeaseController::new(Default::default());
@@ -6038,9 +6049,9 @@ export {};
 
     for function_name in ["direct-core:first", "direct-core:second"] {
         let request = request(function_name);
-        let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
+        let context = RuntimeInvocationContext::top_level_for_tenant_for_test(&request, "tenant-a");
         let result = invoke_node_full_fresh_realm_with_lease(
-            &runtime_owner,
+            &runtime_instance,
             &controller,
             &mut runtime,
             &bundle,
@@ -6100,7 +6111,7 @@ export {};
     )
     .expect("bundle should write");
 
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(
             crate::RuntimeLimits::application_node22(),
@@ -6108,10 +6119,10 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
-    let snapshot = runtime_owner
+    let snapshot = runtime_instance
         .bootstrap_snapshot()
         .expect("NodeFull bootstrap snapshot should build");
-    let mut runtime = runtime_owner
+    let mut runtime = runtime_instance
         .create_runtime_from_snapshot(&bundle, snapshot)
         .expect("NodeFull runtime should build from snapshot");
     let controller = RuntimeRealmLeaseController::new(Default::default());
@@ -6126,9 +6137,10 @@ export {};
     };
 
     let first_request = request("resource-table:first", true);
-    let first_context = RuntimeInvocationContext::top_level_for_tenant(&first_request, "tenant-a");
+    let first_context =
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&first_request, "tenant-a");
     let first_error = invoke_node_full_fresh_realm_with_lease(
-        &runtime_owner,
+        &runtime_instance,
         &controller,
         &mut runtime,
         &bundle,
@@ -6146,9 +6158,9 @@ export {};
 
     let second_request = request("resource-table:second", false);
     let second_context =
-        RuntimeInvocationContext::top_level_for_tenant(&second_request, "tenant-a");
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&second_request, "tenant-a");
     let second_error = invoke_node_full_fresh_realm_with_lease(
-        &runtime_owner,
+        &runtime_instance,
         &controller,
         &mut runtime,
         &bundle,
@@ -6228,16 +6240,16 @@ export {};
         .grants
         .env_write
         .push("NFR5_DOTENV_VALUE".to_string());
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         runtime_test_policy_with_real_fs(limits),
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
-    let snapshot = runtime_owner
+    let snapshot = runtime_instance
         .bootstrap_snapshot()
         .expect("NodeFull bootstrap snapshot should build");
-    let mut runtime = runtime_owner
+    let mut runtime = runtime_instance
         .create_runtime_from_snapshot(&bundle, snapshot)
         .expect("NodeFull runtime should build from snapshot");
     let controller = RuntimeRealmLeaseController::new(Default::default());
@@ -6257,9 +6269,10 @@ export {};
         };
 
     let first_request = request("env-path:first", "first", "first-env", true);
-    let first_context = RuntimeInvocationContext::top_level_for_tenant(&first_request, "tenant-a");
+    let first_context =
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&first_request, "tenant-a");
     let first = invoke_node_full_fresh_realm_with_lease(
-        &runtime_owner,
+        &runtime_instance,
         &controller,
         &mut runtime,
         &bundle,
@@ -6278,9 +6291,9 @@ export {};
 
     let second_request = request("env-path:second", "second", "second-env", false);
     let second_context =
-        RuntimeInvocationContext::top_level_for_tenant(&second_request, "tenant-a");
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&second_request, "tenant-a");
     let second = invoke_node_full_fresh_realm_with_lease(
-        &runtime_owner,
+        &runtime_instance,
         &controller,
         &mut runtime,
         &bundle,
@@ -6369,7 +6382,7 @@ export {};
     )
     .expect("bundle should write");
 
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(
             crate::RuntimeLimits::application_node22(),
@@ -6377,10 +6390,10 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
-    let snapshot = runtime_owner
+    let snapshot = runtime_instance
         .bootstrap_snapshot()
         .expect("NodeFull bootstrap snapshot should build");
-    let mut runtime = runtime_owner
+    let mut runtime = runtime_instance
         .create_runtime_from_snapshot(&bundle, snapshot)
         .expect("NodeFull runtime should build from snapshot");
     let controller = RuntimeRealmLeaseController::new(Default::default());
@@ -6398,9 +6411,10 @@ export {};
     };
 
     let first_request = request("clone:first", "first", 17);
-    let first_context = RuntimeInvocationContext::top_level_for_tenant(&first_request, "tenant-a");
+    let first_context =
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&first_request, "tenant-a");
     let first = invoke_node_full_fresh_realm_with_lease(
-        &runtime_owner,
+        &runtime_instance,
         &controller,
         &mut runtime,
         &bundle,
@@ -6425,9 +6439,9 @@ export {};
 
     let second_request = request("clone:second", "second", 29);
     let second_context =
-        RuntimeInvocationContext::top_level_for_tenant(&second_request, "tenant-a");
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&second_request, "tenant-a");
     let second = invoke_node_full_fresh_realm_with_lease(
-        &runtime_owner,
+        &runtime_instance,
         &controller,
         &mut runtime,
         &bundle,
@@ -6492,16 +6506,16 @@ export {};
         .grants
         .env_write
         .push("NFR5_SHARED_WORKER_ENV".to_string());
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(limits)),
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
-    let snapshot = runtime_owner
+    let snapshot = runtime_instance
         .bootstrap_snapshot()
         .expect("NodeFull bootstrap snapshot should build");
-    let mut runtime = runtime_owner
+    let mut runtime = runtime_instance
         .create_runtime_from_snapshot(&bundle, snapshot)
         .expect("NodeFull runtime should build from snapshot");
     let controller = RuntimeRealmLeaseController::new(Default::default());
@@ -6519,9 +6533,10 @@ export {};
     };
 
     let first_request = request("shared-worker-env:first", "first", "first-shared");
-    let first_context = RuntimeInvocationContext::top_level_for_tenant(&first_request, "tenant-a");
+    let first_context =
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&first_request, "tenant-a");
     let first = invoke_node_full_fresh_realm_with_lease(
-        &runtime_owner,
+        &runtime_instance,
         &controller,
         &mut runtime,
         &bundle,
@@ -6543,9 +6558,9 @@ export {};
 
     let second_request = request("shared-worker-env:second", "second", "second-shared");
     let second_context =
-        RuntimeInvocationContext::top_level_for_tenant(&second_request, "tenant-a");
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&second_request, "tenant-a");
     let second = invoke_node_full_fresh_realm_with_lease(
-        &runtime_owner,
+        &runtime_instance,
         &controller,
         &mut runtime,
         &bundle,
@@ -6613,7 +6628,7 @@ export {};
     )
     .expect("bundle should write");
 
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(
             crate::RuntimeLimits::application_node22(),
@@ -6621,10 +6636,10 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
-    let snapshot = runtime_owner
+    let snapshot = runtime_instance
         .bootstrap_snapshot()
         .expect("NodeFull bootstrap snapshot should build");
-    let mut runtime = runtime_owner
+    let mut runtime = runtime_instance
         .create_runtime_from_snapshot(&bundle, snapshot)
         .expect("NodeFull runtime should build from snapshot");
     let controller = RuntimeRealmLeaseController::new(Default::default());
@@ -6642,9 +6657,10 @@ export {};
     };
 
     let first_request = request("module-map:first", "first", true);
-    let first_context = RuntimeInvocationContext::top_level_for_tenant(&first_request, "tenant-a");
+    let first_context =
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&first_request, "tenant-a");
     let first = invoke_node_full_fresh_realm_with_lease(
-        &runtime_owner,
+        &runtime_instance,
         &controller,
         &mut runtime,
         &bundle,
@@ -6666,9 +6682,9 @@ export {};
 
     let second_request = request("module-map:second", "second", false);
     let second_context =
-        RuntimeInvocationContext::top_level_for_tenant(&second_request, "tenant-a");
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&second_request, "tenant-a");
     let second = invoke_node_full_fresh_realm_with_lease(
-        &runtime_owner,
+        &runtime_instance,
         &controller,
         &mut runtime,
         &bundle,
@@ -6720,7 +6736,7 @@ export {};
     )
     .expect("bundle should write");
 
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         Arc::new(RuntimePolicy::new(
             crate::RuntimeLimits::application_node22(),
@@ -6728,10 +6744,10 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let bundle = RuntimeBundle::new(&bundle_path);
-    let snapshot = runtime_owner
+    let snapshot = runtime_instance
         .bootstrap_snapshot()
         .expect("NodeFull bootstrap snapshot should build");
-    let mut runtime = runtime_owner
+    let mut runtime = runtime_instance
         .create_runtime_from_snapshot(&bundle, snapshot)
         .expect("NodeFull runtime should build from snapshot");
     let controller = RuntimeRealmLeaseController::new(Default::default());
@@ -6744,10 +6760,10 @@ export {};
         auth: None,
         services: Default::default(),
     };
-    let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
+    let context = RuntimeInvocationContext::top_level_for_tenant_for_test(&request, "tenant-a");
 
     let first = invoke_node_full_fresh_realm_with_lease(
-        &runtime_owner,
+        &runtime_instance,
         &controller,
         &mut runtime,
         &bundle,
@@ -6776,7 +6792,7 @@ export function value() {
     .expect("dependency update should write");
 
     let second = invoke_node_full_fresh_realm_with_lease(
-        &runtime_owner,
+        &runtime_instance,
         &controller,
         &mut runtime,
         &bundle,
@@ -6807,14 +6823,14 @@ export function value() {
 }
 
 async fn invoke_node_full_fresh_realm_with_lease(
-    runtime_owner: &NimbusRuntime,
+    runtime_instance: &NimbusRuntime,
     controller: &RuntimeRealmLeaseController,
     runtime: &mut JsRuntime,
     bundle: &RuntimeBundle,
     request: &InvocationRequest,
     context: &RuntimeInvocationContext,
 ) -> Result<Value> {
-    let policy = runtime_owner.policy();
+    let policy = runtime_instance.policy();
     let mut permit = SharedInvocationPermit::new(policy.clone(), None, None, true, None);
     permit.acquire_initial(std::time::Instant::now()).await?;
     let execution_plan = RuntimeExecutionPlan::for_invocation(policy.as_ref(), request, context);
@@ -6831,10 +6847,10 @@ async fn invoke_node_full_fresh_realm_with_lease(
         V8RuntimeConstructionMode::StartupSnapshot,
         Some(context),
     );
-    let (value, realm, mut lease) = runtime_owner
+    let (value, realm, mut lease) = runtime_instance
         .start_fresh_realm_bundle_invocation_with_lease_and_trace(controller, runtime, trace)
         .await?;
-    let response = runtime_owner
+    let response = runtime_instance
         .resolve_fresh_realm_invocation_response_with_lease_and_trace(
             runtime,
             FreshRealmInvocationResponse {
@@ -6848,7 +6864,7 @@ async fn invoke_node_full_fresh_realm_with_lease(
     let response = match response {
         Ok(response) => {
             if bootstrap::take_runtime_wait_until_pending(runtime) {
-                match runtime_owner
+                match runtime_instance
                     .drain_wait_until_with_trace(
                         runtime,
                         Some(&realm),
@@ -6871,7 +6887,7 @@ async fn invoke_node_full_fresh_realm_with_lease(
     super::super::realm_lifecycle::destroy_fresh_realm(runtime, realm);
     match response {
         Ok(response) => {
-            runtime_owner.return_clean_fresh_realm_lease(runtime, &mut lease)?;
+            runtime_instance.return_clean_fresh_realm_lease(runtime, &mut lease)?;
             assert!(
                 permit.finish_invocation().await.is_empty(),
                 "NodeFull fresh-realm lease helper should not leave ready jobs"
@@ -6879,7 +6895,7 @@ async fn invoke_node_full_fresh_realm_with_lease(
             Ok(response)
         }
         Err(error) => {
-            runtime_owner.condemn_dirty_fresh_realm_lease(&mut lease);
+            runtime_instance.condemn_dirty_fresh_realm_lease(&mut lease);
             assert!(
                 permit.finish_invocation().await.is_empty(),
                 "failed NodeFull fresh-realm lease helper should not leave ready jobs"
@@ -6890,7 +6906,7 @@ async fn invoke_node_full_fresh_realm_with_lease(
 }
 
 async fn invoke_node_full_fresh_realm_with_driver(
-    runtime_owner: &NimbusRuntime,
+    runtime_instance: &NimbusRuntime,
     reusable_runtime: ReusableV8Runtime,
     bundle: &RuntimeBundle,
     request: &InvocationRequest,
@@ -6898,7 +6914,7 @@ async fn invoke_node_full_fresh_realm_with_driver(
     cancellation: Option<HostCallCancellation>,
 ) -> (Result<Value>, Option<ReusableV8Runtime>) {
     let watchdog = WatchdogTimer::new();
-    let policy = runtime_owner.policy();
+    let policy = runtime_instance.policy();
     let mut permit = SharedInvocationPermit::new(
         policy.clone(),
         context.tenant_label.clone(),
@@ -6911,7 +6927,7 @@ async fn invoke_node_full_fresh_realm_with_driver(
         .await
         .expect("permit should admit NodeFull fresh-realm invocation");
     let execution_plan = RuntimeExecutionPlan::for_invocation(policy.as_ref(), request, context);
-    let mut driver = runtime_owner
+    let mut driver = runtime_instance
         .prepare_runtime_invocation_driver(RuntimeInvocationDriverPrepare {
             runtime: reusable_runtime,
             watchdog: watchdog.clone(),
@@ -6927,7 +6943,7 @@ async fn invoke_node_full_fresh_realm_with_driver(
     let result = async {
         let lease_failure_reason = driver.realm_lease_condemnation_reason_classifier();
         let trace = fresh_realm_trace(bundle, request, driver.construction_mode, Some(context));
-        let (value, realm, mut lease) = runtime_owner
+        let (value, realm, mut lease) = runtime_instance
             .start_fresh_realm_bundle_invocation_with_lease_and_reason_trace(
                 &driver.realm_lease_controller,
                 &mut driver.runtime,
@@ -6935,7 +6951,7 @@ async fn invoke_node_full_fresh_realm_with_driver(
                 lease_failure_reason,
             )
             .await?;
-        let response = runtime_owner
+        let response = runtime_instance
             .resolve_fresh_realm_invocation_response_with_lease_and_trace(
                 &mut driver.runtime,
                 FreshRealmInvocationResponse {
@@ -6953,7 +6969,7 @@ async fn invoke_node_full_fresh_realm_with_driver(
                         .begin_wait_until_phase()
                         .await
                         .expect("waitUntil phase should arm cleanly");
-                    let drain = runtime_owner
+                    let drain = runtime_instance
                         .drain_wait_until_with_trace(
                             &mut driver.runtime,
                             Some(&realm),
@@ -6977,11 +6993,11 @@ async fn invoke_node_full_fresh_realm_with_driver(
         driver.record_fresh_realm_destroy(destroy_started_at.elapsed());
         match response {
             Ok(response) => {
-                runtime_owner.return_clean_fresh_realm_lease(&mut driver.runtime, &mut lease)?;
+                runtime_instance.return_clean_fresh_realm_lease(&mut driver.runtime, &mut lease)?;
                 Ok(response)
             }
             Err(error) => {
-                runtime_owner.condemn_fresh_realm_lease_with_reason(
+                runtime_instance.condemn_fresh_realm_lease_with_reason(
                     &mut lease,
                     driver.realm_lease_condemnation_reason(),
                 );
@@ -7029,7 +7045,7 @@ export {};
     limits.worker_threads = 1;
     limits.max_warm_pool_entries_per_worker = 4;
     let policy = Arc::new(RuntimePolicy::new(limits));
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         policy.clone(),
         crate::RuntimeEgressPosture::CoarsePermissions,
@@ -7048,17 +7064,17 @@ export {};
 
     let tenant_a_request = request("messages:tenant-a");
     let tenant_a_context =
-        RuntimeInvocationContext::top_level_for_tenant(&tenant_a_request, "tenant-a");
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&tenant_a_request, "tenant-a");
     let tenant_a_runtime = pool
         .take_runtime_with_options_for_invocation(
-            &runtime_owner,
+            &runtime_instance,
             &bundle,
             Some(&tenant_a_context),
             true,
         )
         .expect("tenant-a should cold-miss into a fresh retained substrate");
     let (tenant_a_result, tenant_a_runtime) = invoke_node_full_fresh_realm_with_driver(
-        &runtime_owner,
+        &runtime_instance,
         tenant_a_runtime,
         &bundle,
         &tenant_a_request,
@@ -7074,7 +7090,7 @@ export {};
         })
     );
     pool.return_runtime_for_invocation(
-        &runtime_owner,
+        &runtime_instance,
         &bundle,
         Some(&tenant_a_context),
         tenant_a_runtime.expect("tenant-a clean lease should return a reusable runtime"),
@@ -7082,17 +7098,17 @@ export {};
 
     let tenant_b_request = request("messages:tenant-b");
     let tenant_b_context =
-        RuntimeInvocationContext::top_level_for_tenant(&tenant_b_request, "tenant-b");
+        RuntimeInvocationContext::top_level_for_tenant_for_test(&tenant_b_request, "tenant-b");
     let tenant_b_runtime = pool
         .take_runtime_with_options_for_invocation(
-            &runtime_owner,
+            &runtime_instance,
             &bundle,
             Some(&tenant_b_context),
             true,
         )
         .expect("tenant-b should cold-miss into a separate retained substrate");
     let (tenant_b_result, tenant_b_runtime) = invoke_node_full_fresh_realm_with_driver(
-        &runtime_owner,
+        &runtime_instance,
         tenant_b_runtime,
         &bundle,
         &tenant_b_request,
@@ -7108,7 +7124,7 @@ export {};
         })
     );
     pool.return_runtime_for_invocation(
-        &runtime_owner,
+        &runtime_instance,
         &bundle,
         Some(&tenant_b_context),
         tenant_b_runtime.expect("tenant-b clean lease should return a reusable runtime"),
@@ -7130,7 +7146,7 @@ export {};
     assert_eq!(before_pressure.warm_pool_hits, 0);
     assert_eq!(before_pressure.retained_runtime_pool_entries, 2);
 
-    let eviction = pool.apply_memory_pressure(&runtime_owner, RuntimeMemoryPressureLevel::High);
+    let eviction = pool.apply_memory_pressure(&runtime_instance, RuntimeMemoryPressureLevel::High);
     assert_eq!(eviction.pressure, RuntimeMemoryPressureLevel::High);
     assert_eq!(eviction.evicted_entries, 1);
     assert_eq!(eviction.retained_entries, 1);
@@ -7140,7 +7156,7 @@ export {};
 
     let tenant_a_after_pressure = pool
         .take_runtime_with_options_for_invocation(
-            &runtime_owner,
+            &runtime_instance,
             &bundle,
             Some(&tenant_a_context),
             true,
@@ -7158,7 +7174,7 @@ export {};
     );
     let (tenant_a_after_pressure_result, tenant_a_after_pressure) =
         invoke_node_full_fresh_realm_with_driver(
-            &runtime_owner,
+            &runtime_instance,
             tenant_a_after_pressure,
             &bundle,
             &tenant_a_request,
@@ -7174,7 +7190,7 @@ export {};
         })
     );
     pool.return_runtime_for_invocation(
-        &runtime_owner,
+        &runtime_instance,
         &bundle,
         Some(&tenant_a_context),
         tenant_a_after_pressure
@@ -7183,7 +7199,7 @@ export {};
 
     let tenant_b_after_pressure = pool
         .take_runtime_with_options_for_invocation(
-            &runtime_owner,
+            &runtime_instance,
             &bundle,
             Some(&tenant_b_context),
             true,
@@ -7197,7 +7213,7 @@ export {};
     assert_eq!(after_tenant_b_checkout.warm_pool_misses, 3);
     let (tenant_b_after_pressure_result, tenant_b_after_pressure) =
         invoke_node_full_fresh_realm_with_driver(
-            &runtime_owner,
+            &runtime_instance,
             tenant_b_after_pressure,
             &bundle,
             &tenant_b_request,
@@ -7213,7 +7229,7 @@ export {};
         })
     );
     pool.return_runtime_for_invocation(
-        &runtime_owner,
+        &runtime_instance,
         &bundle,
         Some(&tenant_b_context),
         tenant_b_after_pressure
@@ -7271,7 +7287,7 @@ export {};
                 runtime.clone(),
                 bundle.clone(),
                 request.clone(),
-                RuntimeInvocationContext::top_level_for_tenant(&request, tenant),
+                RuntimeInvocationContext::top_level_for_tenant_for_test(&request, tenant),
                 None,
             )
             .await
@@ -7349,7 +7365,7 @@ export {};
                 runtime.clone(),
                 bundle.clone(),
                 request.clone(),
-                RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a"),
+                RuntimeInvocationContext::top_level_for_tenant_for_test(&request, "tenant-a"),
                 None,
             )
             .await
@@ -7452,7 +7468,7 @@ export {};
                 runtime.clone(),
                 bundle.clone(),
                 request.clone(),
-                RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a"),
+                RuntimeInvocationContext::top_level_for_tenant_for_test(&request, "tenant-a"),
                 None,
             )
             .await
@@ -7512,18 +7528,18 @@ export {};
         auth: None,
         services: Default::default(),
     };
-    let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
-    let runtime_owner = NimbusRuntime::with_policy(
+    let context = RuntimeInvocationContext::top_level_for_tenant_for_test(&request, "tenant-a");
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(AsyncEchoHost),
         run_to_completion_snapshot_runtime_test_policy(),
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
     let mut runtime = v8_runtime_pool
-        .take_runtime(&runtime_owner, &bundle)
+        .take_runtime(&runtime_instance, &bundle)
         .expect("runtime should build from snapshot")
         .runtime;
-    runtime_owner
+    runtime_instance
         .load_bundle(&mut runtime, &bundle)
         .await
         .expect("bundle should load");
@@ -7541,13 +7557,14 @@ export {};
     };
 
     let watchdog = WatchdogTimer::new();
-    let mut permit = SharedInvocationPermit::new(runtime_owner.policy(), None, None, false, None);
+    let mut permit =
+        SharedInvocationPermit::new(runtime_instance.policy(), None, None, false, None);
     permit
         .acquire_initial(std::time::Instant::now())
         .await
         .expect("permit should admit invocation");
 
-    let mut driver = runtime_owner
+    let mut driver = runtime_instance
         .prepare_runtime_invocation_driver(RuntimeInvocationDriverPrepare {
             runtime: ReusableV8Runtime::fresh(runtime, V8RuntimeConstructionMode::StartupSnapshot),
             watchdog: watchdog.clone(),
@@ -7574,7 +7591,7 @@ export {};
         );
     }
 
-    let result = runtime_owner
+    let result = runtime_instance
         .invoke_loaded_bundle(&mut driver.runtime, &request)
         .await
         .expect("fresh invocation state should allow async host work to complete");
@@ -7616,18 +7633,18 @@ async fn reused_runtime_uses_bound_host_call_session_before_next_invoke() {
         auth: None,
         services: Default::default(),
     };
-    let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
-    let runtime_owner = NimbusRuntime::with_policy(
+    let context = RuntimeInvocationContext::top_level_for_tenant_for_test(&request, "tenant-a");
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(AsyncEchoHost),
         run_to_completion_snapshot_runtime_test_policy(),
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
     let mut runtime = v8_runtime_pool
-        .take_runtime(&runtime_owner, &bundle)
+        .take_runtime(&runtime_instance, &bundle)
         .expect("runtime should build from snapshot")
         .runtime;
-    let mut permit = SharedInvocationPermit::new(runtime_owner.policy(), None, None, true, None);
+    let mut permit = SharedInvocationPermit::new(runtime_instance.policy(), None, None, true, None);
     permit
         .acquire_initial(std::time::Instant::now())
         .await
@@ -7712,16 +7729,16 @@ async fn fresh_realm_installs_bootstrap_and_uses_bound_host_bridge() {
         auth: None,
         services: Default::default(),
     };
-    let context = RuntimeInvocationContext::top_level_for_tenant(&request, "tenant-a");
-    let runtime_owner = NimbusRuntime::with_policy(
+    let context = RuntimeInvocationContext::top_level_for_tenant_for_test(&request, "tenant-a");
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(AsyncEchoHost),
         run_to_completion_snapshot_runtime_test_policy(),
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
-    let snapshot = runtime_owner
+    let snapshot = runtime_instance
         .bootstrap_snapshot()
         .expect("bootstrap snapshot should build");
-    let mut runtime = runtime_owner
+    let mut runtime = runtime_instance
         .create_runtime_from_snapshot(&bundle, snapshot)
         .expect("runtime should build from snapshot");
     let realm = runtime
@@ -7746,7 +7763,7 @@ async fn fresh_realm_installs_bootstrap_and_uses_bound_host_bridge() {
         .expect("Nimbus bootstrap should install into fresh realm");
     bootstrap::finalize_bootstrap_in_realm(&mut runtime, &realm)
         .expect("fresh realm bootstrap should finalize");
-    let mut permit = SharedInvocationPermit::new(runtime_owner.policy(), None, None, true, None);
+    let mut permit = SharedInvocationPermit::new(runtime_instance.policy(), None, None, true, None);
     permit
         .acquire_initial(std::time::Instant::now())
         .await

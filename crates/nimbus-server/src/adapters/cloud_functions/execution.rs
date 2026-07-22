@@ -6,7 +6,9 @@ use nimbus_core::Result;
 #[cfg(test)]
 mod tests {
     use crate::adapters::firebase::locator_for_document_path;
+    use nimbus_compute::config::runtime::RuntimeGovernorConfig;
     use nimbus_compute::deploy::ComputeCloudFunctionsRuntimeInvoker;
+    use nimbus_compute::runtime_manager::RuntimeManager;
 
     use std::collections::BTreeMap;
     use std::fs;
@@ -140,7 +142,9 @@ export {};
             1,
             runtime_service_registry,
             TenantIsolationMode::LocalDevelopment,
-            Arc::new(ComputeCloudFunctionsRuntimeInvoker),
+            Arc::new(ComputeCloudFunctionsRuntimeInvoker::new(
+                RuntimeManager::new(engine.clone(), RuntimeGovernorConfig::default()),
+            )),
         );
         let applied_head = engine
             .tenant_engine_diagnostics(&tenant_id)
@@ -241,7 +245,9 @@ export {};
             1,
             runtime_service_registry,
             TenantIsolationMode::LocalDevelopment,
-            Arc::new(ComputeCloudFunctionsRuntimeInvoker),
+            Arc::new(ComputeCloudFunctionsRuntimeInvoker::new(
+                RuntimeManager::new(engine.clone(), RuntimeGovernorConfig::default()),
+            )),
         );
 
         assert_eq!(
@@ -334,7 +340,9 @@ export {};
             1,
             runtime_service_registry,
             TenantIsolationMode::LocalDevelopment,
-            Arc::new(ComputeCloudFunctionsRuntimeInvoker),
+            Arc::new(ComputeCloudFunctionsRuntimeInvoker::new(
+                RuntimeManager::new(engine.clone(), RuntimeGovernorConfig::default()),
+            )),
         );
 
         let users = TableName::new("users").expect("users table should parse");
@@ -831,12 +839,14 @@ export {};
             ServiceInstanceBindingRegistry::new(Arc::new(EmptyServiceInstanceCatalog)),
         );
         let executor = CloudFunctionsTriggerExecutor::new(
-            engine,
+            engine.clone(),
             registry,
             1,
             runtime_service_registry,
             TenantIsolationMode::LocalDevelopment,
-            Arc::new(ComputeCloudFunctionsRuntimeInvoker),
+            Arc::new(ComputeCloudFunctionsRuntimeInvoker::new(
+                RuntimeManager::new(engine.clone(), RuntimeGovernorConfig::default()),
+            )),
         );
 
         let outcome = executor.execute_invocation(
@@ -910,7 +920,9 @@ export {};
             1,
             runtime_service_registry,
             TenantIsolationMode::LocalDevelopment,
-            Arc::new(ComputeCloudFunctionsRuntimeInvoker),
+            Arc::new(ComputeCloudFunctionsRuntimeInvoker::new(
+                RuntimeManager::new(engine.clone(), RuntimeGovernorConfig::default()),
+            )),
         );
 
         let outcome = executor.execute_invocation(

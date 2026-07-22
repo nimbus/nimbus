@@ -24,6 +24,7 @@ use nimbus_convex::{
     ConvexRegistryDeploySummary,
 };
 use nimbus_core::Error;
+use nimbus_runtime::{RuntimeLimits, RuntimePolicy};
 use nimbus_system::{
     DiskSourcePackageStore, SourcePackageStore, SystemDeploymentFunctionRecordInput,
     SystemDeploymentHttpRouteRecordInput, SystemDeploymentRecordInput, SystemModuleRecordInput,
@@ -37,6 +38,7 @@ use crate::execution::errors::runtime_error_to_core;
 use crate::execution::invocations::{
     RuntimeBundleInvocationOptions, invoke_runtime_bundle_blocking_with_egress_gateway,
 };
+use crate::runtime_manager::RuntimeManager;
 use crate::state::{ComputeError, ComputeState, DeploymentState};
 
 /// Orchestrates a `deploy_app` request: stage artifacts, diff against the
@@ -57,16 +59,7 @@ pub async fn deploy_app(
     let previous_deployment = compute.current_deployment();
     let previous_generation = previous_deployment.generation;
     let previous_registry = previous_deployment.convex_registry();
-    let previous_cloud_functions_registry = previous_deployment.cloud_functions_registry();
-    let runtime_limits = previous_registry
-        .as_ref()
-        .map(|registry| registry.runtime_limits())
-        .or_else(|| {
-            previous_cloud_functions_registry
-                .as_ref()
-                .map(|registry| registry.runtime_limits())
-        })
-        .unwrap_or_default();
+    let runtime_limits = compute.runtime_manager().base_runtime_limits().clone();
     let previous_summary = previous_registry
         .as_deref()
         .map(ConvexRegistry::deploy_summary);
@@ -100,6 +93,9 @@ pub async fn deploy_app(
     let generation = if dry_run {
         previous_generation
     } else {
+        let next_generation = previous_generation.checked_add(1).ok_or_else(|| {
+            Error::ResourceExhausted("application deployment generation exhausted".to_owned())
+        })?;
         let next_convex_registry = next_registry
             .map(Arc::new)
             .or_else(|| previous_deployment.convex_registry());
@@ -111,7 +107,7 @@ pub async fn deploy_app(
             .map(Arc::new)
             .or_else(|| previous_deployment.cloud_functions_registry());
         let next_deployment = DeploymentState {
-            generation: previous_generation.saturating_add(1),
+            generation: next_generation,
             convex_registry: next_convex_registry,
             application_auth_verifier: next_application_auth_verifier,
             cloud_functions_registry: next_cloud_functions_registry.clone(),
@@ -119,7 +115,14 @@ pub async fn deploy_app(
             firebase_config: previous_deployment.firebase_config(),
             convex_tenancy: previous_deployment.convex_tenancy(),
         };
+        compute
+            .runtime_manager()
+            .rotate_deployment_authority(previous_generation, next_deployment.generation)?;
         compute.active_deployment.activate(next_deployment);
+        compute
+            .runtime_manager()
+            .retire_deployment_generation(previous_generation)
+            .await?;
         if let Some(registry) = next_cloud_functions_registry {
             compute.install_cloud_functions_runtime_hooks(registry)?;
         }
@@ -153,21 +156,43 @@ pub async fn deploy_app(
 /// name (`ServerCloudFunctionsRuntimeInvoker`) so its integration test module
 /// keeps compiling unchanged.
 #[derive(Debug, Clone)]
-pub struct ComputeCloudFunctionsRuntimeInvoker;
+pub struct ComputeCloudFunctionsRuntimeInvoker {
+    runtime_manager: Arc<RuntimeManager>,
+}
+
+impl ComputeCloudFunctionsRuntimeInvoker {
+    pub fn new(runtime_manager: Arc<RuntimeManager>) -> Self {
+        Self { runtime_manager }
+    }
+}
 
 impl CloudFunctionsRuntimeInvoker for ComputeCloudFunctionsRuntimeInvoker {
+    fn runtime_policy(&self, limits: &RuntimeLimits) -> Arc<RuntimePolicy> {
+        self.runtime_manager
+            .lane_for_limits(limits.clone())
+            .policy()
+    }
+
     fn invoke_runtime_bundle(
         &self,
         invocation: CloudFunctionsRuntimeInvocation,
     ) -> nimbus_core::Result<serde_json::Value> {
+        let lane = self
+            .runtime_manager
+            .lane_for_limits(invocation.runtime_policy.limits().clone());
+        let invocation_lease = self.runtime_manager.acquire_invocation_lease_blocking(
+            &invocation.tenant_id,
+            invocation.deployment_generation,
+        )?;
+        let authority = invocation_lease.authority();
         // Route Cloud Functions through the egress-gateway entrypoint (not the
         // coarse no-gateway `_with_host` path) so the handler's `fetch` is bound
         // to the tenant's nimbus-egress PDP. CloudFunctionsHostBridge implements
         // EgressGateway, so the isolate fetch hook inherits the L7 fail-closed
         // for free. (audit M13 — Cloud Functions egress parity.)
         invoke_runtime_bundle_blocking_with_egress_gateway(
-            &invocation.runtime_executor,
-            invocation.runtime_policy,
+            lane.executor().as_ref(),
+            lane.policy(),
             invocation.host_bridge,
             invocation.bundle,
             invocation.request,
@@ -176,6 +201,7 @@ impl CloudFunctionsRuntimeInvoker for ComputeCloudFunctionsRuntimeInvoker {
                 invocation.server_request_id.as_deref(),
                 None,
             )
+            .with_runtime_authority(&authority)
             .with_optional_runtime_bundle_provenance_gate(invocation.provenance_gate.as_ref()),
         )
         .map_err(runtime_error_to_core)
@@ -199,7 +225,9 @@ impl ComputeState {
                 deployment_generation,
                 self.runtime_service_registry(),
                 self.tenant_isolation_mode(),
-                Arc::new(ComputeCloudFunctionsRuntimeInvoker),
+                Arc::new(ComputeCloudFunctionsRuntimeInvoker::new(
+                    self.runtime_manager(),
+                )),
             ),
         ))?;
         Ok(())

@@ -28,6 +28,7 @@ pub(crate) fn invoke_runtime_bundle_blocking_with_cancellation(
             options.server_request_id,
             options.concurrency_mode,
             options.scope,
+            options.authority,
         ),
         options.cancellation,
     )

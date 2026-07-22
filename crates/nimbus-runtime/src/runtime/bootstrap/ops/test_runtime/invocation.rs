@@ -6,7 +6,9 @@ use std::sync::Arc;
 use crate::backends::v8::embedder::{JsErrorBox, OpState};
 use crate::runtime::NimbusRuntime;
 use crate::runtime::bootstrap::payloads::RuntimeHostCallEnvelope;
-use crate::runtime::bootstrap::state::{InstalledRuntimeContract, InstalledRuntimeHostBridge};
+use crate::runtime::bootstrap::state::{
+    InstalledRuntimeContract, InstalledRuntimeHostBridge, RuntimeInvocationHostCallBinding,
+};
 use crate::{InvocationKind, InvocationRequest, RuntimePolicy};
 
 use super::bundle::write_runtime_test_spawn_bundle;
@@ -44,11 +46,18 @@ pub(super) fn prepare_runtime_test_spawn_invocation(
     }
 
     let plan = runtime_test_spawn_mode(payload)?;
-    let (host, contract) = {
+    let (host, contract, runtime_owner_lease, deployment_authority_lease) = {
         let state = state.borrow();
+        let binding = state.borrow::<RuntimeInvocationHostCallBinding>();
         (
             state.borrow::<InstalledRuntimeHostBridge>().slot.current(),
             state.borrow::<InstalledRuntimeContract>().clone(),
+            binding.runtime_owner_lease().ok_or_else(|| {
+                JsErrorBox::generic(
+                    "node_compat subprocess helper requires the parent runtime owner lease",
+                )
+            })?,
+            binding.deployment_authority_lease(),
         )
     };
     let (tempdir, bundle_path, file_output_syncs) = write_runtime_test_spawn_bundle(&plan)?;
@@ -92,6 +101,8 @@ pub(super) fn prepare_runtime_test_spawn_invocation(
         file_output_syncs,
         output_path_rewrites,
         request,
+        runtime_owner_lease,
+        deployment_authority_lease,
         process_state_snapshot,
     })
 }

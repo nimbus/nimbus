@@ -57,7 +57,7 @@ async fn invoke_convex_semantics_bundle_with_host(
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     runtime
-        .invoke_bundle_for_tenant(&RuntimeBundle::new(&bundle_path), request, "tenant-a")
+        .invoke_bundle_for_tenant_for_test(&RuntimeBundle::new(&bundle_path), request, "tenant-a")
         .await
         .expect("convex-semantics bundle invocation should succeed")
 }
@@ -96,7 +96,11 @@ async fn convex_semantics_math_random_seeded_and_import_values_stable_across_run
             crate::RuntimeEgressPosture::CoarsePermissions,
         );
         let result = runtime
-            .invoke_bundle_for_tenant(&RuntimeBundle::new(&bundle_path), &request, "tenant-a")
+            .invoke_bundle_for_tenant_for_test(
+                &RuntimeBundle::new(&bundle_path),
+                &request,
+                "tenant-a",
+            )
             .await
             .expect("import-stability invocation should succeed");
         runs.push(result);
@@ -319,7 +323,7 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&bundle_path),
             &query_request("messages:list"),
             "tenant-a",
@@ -408,7 +412,7 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let error = runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&bundle_path),
             &query_request("messages:list"),
             "tenant-a",
@@ -435,7 +439,7 @@ async fn convex_semantics_identical_content_redeploy_reseeds_import_stream() {
             crate::RuntimeEgressPosture::CoarsePermissions,
         );
         runtime
-            .invoke_bundle_for_tenant(
+            .invoke_bundle_for_tenant_for_test(
                 &RuntimeBundle::new(&bundle_path),
                 &query_request("messages:list"),
                 "tenant-a",
@@ -489,7 +493,7 @@ async fn convex_semantics_identical_mtime_redeploy_reseeds_via_deploy_nonce() {
             crate::RuntimeEgressPosture::CoarsePermissions,
         );
         runtime
-            .invoke_bundle_for_tenant(
+            .invoke_bundle_for_tenant_for_test(
                 &RuntimeBundle::new(&bundle_path).with_deploy_nonce(nonce),
                 &query_request("messages:list"),
                 "tenant-a",
@@ -610,7 +614,7 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&bundle_path),
             &query_request("messages:list"),
             "tenant-a",

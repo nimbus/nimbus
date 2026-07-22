@@ -129,6 +129,14 @@ impl<D: CooperativeBackendDriver> CooperativeWorkerLoop<D> {
             return None;
         }
 
+        if let Err(error) =
+            crate::retained_state::validate_retained_state_admission(&job_policy, &job.context)
+        {
+            let ready_jobs = self.worker_runtime.block_on(permit.finish_invocation());
+            queue.complete_job(job, Err(error), ready_jobs);
+            return None;
+        }
+
         let worker_runtime = &self.worker_runtime;
         let watchdog = self.watchdog.clone();
         let activity_signal = self.activity_signal.clone();

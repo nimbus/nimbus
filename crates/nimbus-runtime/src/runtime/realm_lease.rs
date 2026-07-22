@@ -1,11 +1,3 @@
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "NFR3 defines the realm lease state machine before NFR4 wires it into NodeFull realm execution"
-    )
-)]
-
 use std::cell::RefCell;
 use std::error::Error;
 use std::fmt;
@@ -14,6 +6,7 @@ use std::time::Duration;
 
 use crate::execution_plan::{RuntimePoolAuthorityKey, RuntimePoolAuthorityMissingReason};
 use crate::limits::RuntimeProfile;
+use crate::retained_state::{RuntimeOwnerClass, RuntimeOwnerId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct RuntimeRealmLeaseGeneration(u64);
@@ -38,38 +31,7 @@ pub(crate) enum RuntimeRealmLeaseState {
     Condemned,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RuntimeRealmLeaseOwnerClass {
-    Tenant,
-    Operator,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RuntimeRealmLeaseOwner {
-    class: RuntimeRealmLeaseOwnerClass,
-    stable_key: String,
-}
-
-impl RuntimeRealmLeaseOwner {
-    pub(crate) fn tenant(stable_key: impl Into<String>) -> Self {
-        Self {
-            class: RuntimeRealmLeaseOwnerClass::Tenant,
-            stable_key: stable_key.into(),
-        }
-    }
-
-    #[cfg(test)]
-    fn operator(stable_key: impl Into<String>) -> Self {
-        Self {
-            class: RuntimeRealmLeaseOwnerClass::Operator,
-            stable_key: stable_key.into(),
-        }
-    }
-
-    pub(crate) const fn class(&self) -> RuntimeRealmLeaseOwnerClass {
-        self.class
-    }
-}
+type RuntimeRealmLeaseOwner = RuntimeOwnerId;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RuntimeRealmLeaseContract {
@@ -99,7 +61,6 @@ impl RuntimeRealmLeaseContract {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RuntimeRealmLeaseCondemnationReason {
     Dirty,
-    Panicked,
     TimedOut,
     ExternalPressure,
     Abandoned,
@@ -117,22 +78,19 @@ pub(crate) enum RuntimeRealmLeaseEvictionReason {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RuntimeRealmLeaseMetricDecision {
-    CheckoutRejected,
     ReturnedClean,
     Condemned,
-    Evicted,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RuntimeRealmLeaseMetricReason {
     Condemned(RuntimeRealmLeaseCondemnationReason),
-    Evicted(RuntimeRealmLeaseEvictionReason),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct RuntimeRealmLeaseMetricLabels {
     profile: Option<RuntimeProfile>,
-    owner_class: RuntimeRealmLeaseOwnerClass,
+    owner_class: RuntimeOwnerClass,
     reason: Option<RuntimeRealmLeaseMetricReason>,
     decision: RuntimeRealmLeaseMetricDecision,
 }
@@ -151,38 +109,13 @@ impl RuntimeRealmLeaseMetricLabels {
         }
     }
 
-    pub(crate) fn for_checkout_rejection(
-        profile: Option<RuntimeProfile>,
-        owner_class: RuntimeRealmLeaseOwnerClass,
-    ) -> Self {
-        Self {
-            profile,
-            owner_class,
-            reason: None,
-            decision: RuntimeRealmLeaseMetricDecision::CheckoutRejected,
-        }
-    }
-
-    pub(crate) fn for_eviction(
-        profile: Option<RuntimeProfile>,
-        owner_class: RuntimeRealmLeaseOwnerClass,
-        reason: RuntimeRealmLeaseEvictionReason,
-    ) -> Self {
-        Self {
-            profile,
-            owner_class,
-            reason: Some(RuntimeRealmLeaseMetricReason::Evicted(reason)),
-            decision: RuntimeRealmLeaseMetricDecision::Evicted,
-        }
-    }
-
     #[cfg(test)]
     const fn profile(&self) -> Option<RuntimeProfile> {
         self.profile
     }
 
     #[cfg(test)]
-    const fn owner_class(&self) -> RuntimeRealmLeaseOwnerClass {
+    const fn owner_class(&self) -> RuntimeOwnerClass {
         self.owner_class
     }
 
@@ -254,7 +187,7 @@ pub(crate) enum RuntimeRealmLeaseError {
         to: RuntimeRealmLeaseState,
     },
     OwnerCapExceeded {
-        owner_class: RuntimeRealmLeaseOwnerClass,
+        owner_class: RuntimeOwnerClass,
         active_leases_for_owner: usize,
         retained_substrates_for_owner: usize,
         max_active_leases_per_owner: usize,
@@ -711,7 +644,7 @@ impl RuntimeRealmLeaseInner {
 impl RuntimeRealmLeaseRetentionPolicy {
     fn evaluate(
         &self,
-        owner_class: RuntimeRealmLeaseOwnerClass,
+        owner_class: RuntimeOwnerClass,
         load: RuntimeRealmLeasePoolLoad,
     ) -> Result<(), RuntimeRealmLeaseError> {
         if load.active_leases_for_owner >= self.max_active_leases_per_owner {
@@ -774,6 +707,8 @@ fn contract_error_condemns(
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroU64;
+
     use crate::execution_plan::RuntimePoolAuthorityFacts;
     use crate::limits::RuntimeProfile;
 
@@ -784,11 +719,21 @@ mod tests {
     }
 
     fn owner_a() -> RuntimeRealmLeaseOwner {
-        RuntimeRealmLeaseOwner::tenant("tenant-a")
+        RuntimeOwnerId::tenant(
+            "tenant-a-subject",
+            NonZeroU64::new(1).expect("nonzero incarnation"),
+            Some("tenant-a"),
+        )
+        .expect("valid tenant owner")
     }
 
     fn owner_b() -> RuntimeRealmLeaseOwner {
-        RuntimeRealmLeaseOwner::tenant("tenant-b")
+        RuntimeOwnerId::tenant(
+            "tenant-b-subject",
+            NonZeroU64::new(1).expect("nonzero incarnation"),
+            Some("tenant-b"),
+        )
+        .expect("valid tenant owner")
     }
 
     fn node_authority(grants: &[&str]) -> RuntimePoolAuthorityKey {
@@ -832,7 +777,7 @@ mod tests {
         assert_eq!(controller.active_contract(), None);
         assert_eq!(controller.generation(), RuntimeRealmLeaseGeneration(1));
         assert_eq!(labels.profile(), Some(RuntimeProfile::NodeFull));
-        assert_eq!(labels.owner_class(), RuntimeRealmLeaseOwnerClass::Tenant);
+        assert_eq!(labels.owner_class(), RuntimeOwnerClass::Tenant);
         assert_eq!(labels.reason(), None);
         assert_eq!(
             labels.decision(),
@@ -1007,10 +952,9 @@ mod tests {
     }
 
     #[test]
-    fn dirty_timeout_panic_and_pressure_returns_are_non_reusable() {
+    fn dirty_timeout_and_pressure_returns_are_non_reusable() {
         for reason in [
             RuntimeRealmLeaseCondemnationReason::Dirty,
-            RuntimeRealmLeaseCondemnationReason::Panicked,
             RuntimeRealmLeaseCondemnationReason::TimedOut,
             RuntimeRealmLeaseCondemnationReason::ExternalPressure,
         ] {
@@ -1107,7 +1051,7 @@ mod tests {
         assert_eq!(
             error,
             RuntimeRealmLeaseError::OwnerCapExceeded {
-                owner_class: RuntimeRealmLeaseOwnerClass::Tenant,
+                owner_class: RuntimeOwnerClass::Tenant,
                 active_leases_for_owner: 1,
                 retained_substrates_for_owner: 0,
                 max_active_leases_per_owner: 1,
@@ -1200,11 +1144,17 @@ mod tests {
     }
 
     #[test]
-    fn metric_labels_are_bounded_to_profile_owner_class_reason_and_decision() {
+    fn return_metric_labels_are_bounded_to_profile_owner_class_reason_and_decision() {
         let controller = controller();
         let mut lease = controller
             .checkout(
-                RuntimeRealmLeaseOwner::operator("operator-a"),
+                RuntimeOwnerId::trusted_session(
+                    RuntimeOwnerClass::Operator,
+                    "operator-a-subject",
+                    NonZeroU64::new(1).expect("nonzero generation"),
+                    Some("operator-a"),
+                )
+                .expect("valid operator owner"),
                 node_authority(&["db"]),
             )
             .expect("lease should checkout");
@@ -1215,7 +1165,7 @@ mod tests {
             .expect("dirty lease should produce bounded labels");
 
         assert_eq!(labels.profile(), Some(RuntimeProfile::NodeFull));
-        assert_eq!(labels.owner_class(), RuntimeRealmLeaseOwnerClass::Operator);
+        assert_eq!(labels.owner_class(), RuntimeOwnerClass::Operator);
         assert_eq!(
             labels.reason(),
             Some(RuntimeRealmLeaseMetricReason::Condemned(
@@ -1225,36 +1175,6 @@ mod tests {
         assert_eq!(
             labels.decision(),
             RuntimeRealmLeaseMetricDecision::Condemned
-        );
-
-        let rejection = RuntimeRealmLeaseMetricLabels::for_checkout_rejection(
-            Some(RuntimeProfile::NodeFull),
-            RuntimeRealmLeaseOwnerClass::Tenant,
-        );
-        assert_eq!(rejection.profile(), Some(RuntimeProfile::NodeFull));
-        assert_eq!(rejection.owner_class(), RuntimeRealmLeaseOwnerClass::Tenant);
-        assert_eq!(rejection.reason(), None);
-        assert_eq!(
-            rejection.decision(),
-            RuntimeRealmLeaseMetricDecision::CheckoutRejected
-        );
-
-        let eviction = RuntimeRealmLeaseMetricLabels::for_eviction(
-            Some(RuntimeProfile::NodeFull),
-            RuntimeRealmLeaseOwnerClass::Tenant,
-            RuntimeRealmLeaseEvictionReason::IdleTtlExpired,
-        );
-        assert_eq!(eviction.profile(), Some(RuntimeProfile::NodeFull));
-        assert_eq!(eviction.owner_class(), RuntimeRealmLeaseOwnerClass::Tenant);
-        assert_eq!(
-            eviction.reason(),
-            Some(RuntimeRealmLeaseMetricReason::Evicted(
-                RuntimeRealmLeaseEvictionReason::IdleTtlExpired
-            ))
-        );
-        assert_eq!(
-            eviction.decision(),
-            RuntimeRealmLeaseMetricDecision::Evicted
         );
     }
 }

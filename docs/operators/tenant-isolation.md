@@ -92,10 +92,19 @@ curl -s -X DELETE http://localhost:8080/api/tenants/acme \
   -H "Authorization: Bearer $NIMBUS_TOKEN"
 ```
 
-A successful delete returns `204` with no body. Deletion first tears down
-the tenant's runtime and services, then removes the tenant's storage
-namespace — the embedded database file, or the per-tenant schema, database,
-or namespace on an external provider.
+A successful delete returns `204` with no body. Deletion first fences new
+Engine operations, revokes the tenant's exact runtime owner incarnation,
+cancels queued/active runtime work, and waits for every runtime-lane worker to
+acknowledge retained-state retirement. It then tears down services, waits for
+any remaining Engine operations to drain, and removes the tenant's storage
+namespace — the embedded database file, or the per-tenant schema, database, or
+namespace on an external provider.
+
+If runtime retirement cannot be acknowledged, deletion fails closed and is
+safe to retry. Do not manually remove the storage namespace or recreate the
+tenant while that error remains. A successful later recreation receives a new
+incarnation and cannot reuse the deleted tenant's module globals or retained
+Wasmtime Store.
 
 Deletion is irreversible. There is no soft-delete or trash; take a backup
 first if you might need the data again.

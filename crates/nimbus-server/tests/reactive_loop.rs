@@ -162,8 +162,10 @@ fn router_for_engine(engine: Arc<Engine>) -> axum::Router {
 }
 
 fn router_for_convex(engine: Arc<Engine>, convex_registry: ConvexRegistry) -> axum::Router {
+    let runtime_limits = convex_registry.runtime_limits();
     build_router(
         RouterOptions::new(engine)
+            .with_runtime_limits(runtime_limits)
             .with_convex_registry(convex_registry)
             .with_convex_tenancy(convex_team_tenancy()),
     )

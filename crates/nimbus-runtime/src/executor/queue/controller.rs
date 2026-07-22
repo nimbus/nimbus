@@ -5,16 +5,16 @@ use tokio::sync::mpsc;
 
 use crate::error::Result;
 
-use super::job::RuntimeWorkerJob;
+use super::job::{RuntimeWorkerJob, RuntimeWorkerMessage};
 use super::router::RuntimeWorkerRouter;
 use super::signal::WorkerActivitySignal;
 
 pub(crate) trait RuntimeWorkerQueue: Send + Sync + 'static {
     fn activity_signal(&self) -> Arc<WorkerActivitySignal>;
 
-    fn try_recv(&self) -> Option<RuntimeWorkerJob>;
+    fn try_recv(&self) -> Option<RuntimeWorkerMessage>;
 
-    fn recv_blocking(&self) -> Option<RuntimeWorkerJob>;
+    fn recv_blocking(&self) -> Option<RuntimeWorkerMessage>;
 
     fn complete_job(
         &self,
@@ -27,7 +27,7 @@ pub(crate) trait RuntimeWorkerQueue: Send + Sync + 'static {
 pub(crate) struct RuntimeWorkerQueueController {
     worker_id: usize,
     activity_signal: Arc<WorkerActivitySignal>,
-    receiver: Arc<Mutex<mpsc::Receiver<RuntimeWorkerJob>>>,
+    receiver: Arc<Mutex<mpsc::Receiver<RuntimeWorkerMessage>>>,
     router: Arc<RuntimeWorkerRouter>,
 }
 
@@ -40,7 +40,7 @@ impl RuntimeWorkerQueueController {
 
     pub(super) fn new(
         worker_id: usize,
-        receiver: Arc<Mutex<mpsc::Receiver<RuntimeWorkerJob>>>,
+        receiver: Arc<Mutex<mpsc::Receiver<RuntimeWorkerMessage>>>,
         activity_signal: Arc<WorkerActivitySignal>,
         router: Arc<RuntimeWorkerRouter>,
     ) -> Self {
@@ -58,7 +58,7 @@ impl RuntimeWorkerQueue for RuntimeWorkerQueueController {
         self.activity_signal.clone()
     }
 
-    fn try_recv(&self) -> Option<RuntimeWorkerJob> {
+    fn try_recv(&self) -> Option<RuntimeWorkerMessage> {
         let mut receiver = self
             .receiver
             .lock()
@@ -66,7 +66,7 @@ impl RuntimeWorkerQueue for RuntimeWorkerQueueController {
         receiver.try_recv().ok()
     }
 
-    fn recv_blocking(&self) -> Option<RuntimeWorkerJob> {
+    fn recv_blocking(&self) -> Option<RuntimeWorkerMessage> {
         let mut receiver = self
             .receiver
             .lock()

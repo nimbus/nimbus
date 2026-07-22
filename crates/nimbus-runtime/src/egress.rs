@@ -673,7 +673,7 @@ export {{}};
         };
 
         let result = runtime
-            .invoke_bundle_for_tenant(
+            .invoke_bundle_for_tenant_for_test(
                 &crate::RuntimeBundle::new(&bundle_path),
                 &request,
                 "tenant-a",
@@ -798,7 +798,7 @@ export {{}};
         };
 
         let result = runtime
-            .invoke_bundle_for_tenant(
+            .invoke_bundle_for_tenant_for_test(
                 &crate::RuntimeBundle::new(&bundle_path),
                 &request,
                 "tenant-a",
@@ -874,7 +874,7 @@ export {};
         };
 
         let result = runtime
-            .invoke_bundle_for_tenant(
+            .invoke_bundle_for_tenant_for_test(
                 &crate::RuntimeBundle::new(&bundle_path),
                 &request,
                 "tenant-a",

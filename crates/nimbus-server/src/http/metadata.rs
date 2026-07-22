@@ -25,37 +25,41 @@ pub(crate) async fn license_status(
 ///
 /// Always returns 200 with a stable shape so the operator settings UI never
 /// sees a 4xx on the default `nimbus start` (no app generation yet). The
-/// limits/metrics/reset_capabilities fields are null until a deployment is
-/// active.
+/// Canonical manager defaults are available before a deployment is active;
+/// adapter-specific lane details appear as deployments register them.
 pub(crate) async fn runtime_diagnostics(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<RuntimeDiagnosticsResponse>, AppError> {
+    let runtime_manager = state.runtime_manager();
+    let base_limits = runtime_manager.base_runtime_limits().clone();
     let deployment = state.current_deployment();
     let Some(registry) = deployment.convex_registry() else {
         return Ok(Json(RuntimeDiagnosticsResponse {
-            limits: None,
-            reset_capabilities: None,
-            metrics: None,
+            manager: runtime_manager.diagnostics(),
+            limits: Some(runtime_limits_response(&base_limits)),
+            reset_capabilities: Some(base_limits.reset_capabilities()),
+            metrics: Some(runtime_manager.metrics_snapshot_for_limits(&base_limits)),
             lanes: Vec::new(),
         }));
     };
     let limits = registry.runtime_limits();
     Ok(Json(RuntimeDiagnosticsResponse {
+        manager: runtime_manager.diagnostics(),
         limits: Some(runtime_limits_response(&limits)),
         reset_capabilities: Some(limits.reset_capabilities()),
-        metrics: Some(registry.runtime_metrics_snapshot()),
+        metrics: Some(runtime_manager.metrics_snapshot_for_limits(&limits)),
         lanes: registry
             .runtime_lane_diagnostics()
             .into_iter()
             .map(|lane| RuntimeLaneDiagnosticsResponse {
                 lane_name: lane.lane_name.to_string(),
                 default_lane: lane.default_lane,
-                executor_started: lane.executor_started,
+                executor_started: runtime_manager.executor_started_for_limits(&lane.limits),
                 execution_adapter_state: lane.execution_adapter_state,
                 execution_adapter_artifact: lane.execution_adapter_artifact,
                 limits: runtime_limits_response(&lane.limits),
                 reset_capabilities: lane.reset_capabilities,
-                metrics: lane.metrics,
+                metrics: runtime_manager.metrics_snapshot_for_limits(&lane.limits),
             })
             .collect(),
     }))

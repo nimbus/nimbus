@@ -14,6 +14,7 @@ pub mod execution;
 pub mod machine_lifecycle;
 pub mod machines;
 pub mod pagination;
+pub mod runtime_manager;
 pub mod sandbox_spec;
 pub mod sandboxes;
 pub mod scheduling;

@@ -18,8 +18,8 @@ pub use engine::{
     InitializedKeyProvider, MutationActor, MutationExecutionUnit, MutationIsolatePermit,
     ProjectionReconciliationSnapshot, ProjectionToken, SubscribeOptions,
     SubscriptionBootstrapCancellation, TableSchemaChangeEvent, TableSchemaChangeObserver,
-    TenantAdmissionOutcome, TenantObjectMeta, TenantRuntimeLoadedEvent, TenantRuntimeObserver,
-    TenantRuntimeObserverIdentity,
+    TenantAdmissionOutcome, TenantDeletionLease, TenantObjectMeta, TenantRuntimeLoadedEvent,
+    TenantRuntimeObserver, TenantRuntimeObserverIdentity,
 };
 #[cfg(any(test, feature = "test-hooks"))]
 pub use engine::{CommitFaultHandle, Fault, commit_fault_labels};
@@ -59,7 +59,7 @@ pub use tenant::{
     CommitterArm, MaterializedReadSurfaceStats, MutationAdmissionPhase, MutationAdmissionStats,
     MutationIsolateAdmissionStats, MutationJournalStats, PinnedServingReadSnapshot,
     QueryPlanningStats, ServingSnapshotManagerStats, SubscriptionDeliveryStats,
-    TenantEngineDiagnosticsSnapshot, TenantOperationGuard,
+    TenantEngineDiagnosticsSnapshot, TenantOperationGuard, TenantRuntimeLease,
 };
 pub use triggers::{
     TriggerInvocationExecution, TriggerInvocationExecutor, TriggerLookupMatch, TriggerRegistration,

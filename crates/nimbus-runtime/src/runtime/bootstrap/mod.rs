@@ -18,7 +18,7 @@ pub(crate) use self::state::{
     InstalledRuntimeWorkerBootstrapState, RuntimeCancellationState,
     RuntimeInvocationTimeoutController, RuntimeResourceTableSnapshot, bind_runtime_host_bridge,
     clear_runtime_wait_until_pending, initialize_runtime_state,
-    install_missing_deno_extension_state, install_runtime_egress_gateway, install_runtime_owner,
+    install_missing_deno_extension_state, install_runtime_egress_gateway, install_runtime_instance,
     main_thread_worker_bootstrap_state, release_runtime_invocation_bindings,
     reset_runtime_contract, reset_runtime_invocation_state, runtime_resource_table_delta,
     take_runtime_wait_until_pending,

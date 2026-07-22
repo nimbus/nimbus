@@ -821,7 +821,41 @@ pub(super) fn test_context_for_tenant(
     tenant_label: &str,
     request_id: &str,
 ) -> RuntimeInvocationContext {
-    RuntimeInvocationContext::top_level_for_tenant_and_request(request, tenant_label, request_id)
+    type TestAuthority = (
+        crate::RuntimeOwnerLease,
+        crate::RuntimeDeploymentAuthorityLease,
+    );
+    static AUTHORITIES: OnceLock<StdMutex<std::collections::HashMap<String, TestAuthority>>> =
+        OnceLock::new();
+    let authorities = AUTHORITIES.get_or_init(|| StdMutex::new(std::collections::HashMap::new()));
+    let (owner, deployment) = authorities
+        .lock()
+        .expect("executor test authority registry should not be poisoned")
+        .entry(tenant_label.to_string())
+        .or_insert_with(|| {
+            let owner_id = crate::RuntimeOwnerId::tenant(
+                format!("executor-test:{tenant_label}"),
+                std::num::NonZeroU64::new(1).expect("test incarnation is nonzero"),
+                Some(tenant_label),
+            )
+            .expect("executor test owner should be valid");
+            let (owner, _) = crate::RuntimeOwnerLeaseIssuer.issue(owner_id);
+            let deployment_id = crate::RuntimeDeploymentAuthorityId::new(
+                "executor-test-deployment",
+                std::num::NonZeroU64::new(1).expect("test deployment generation is nonzero"),
+            )
+            .expect("executor test deployment authority should be valid");
+            let (deployment, _) = crate::RuntimeDeploymentAuthorityLeaseIssuer.issue(deployment_id);
+            (owner, deployment)
+        })
+        .clone();
+    RuntimeInvocationContext::top_level_for_tenant_and_request_with_owner(
+        request,
+        tenant_label,
+        owner,
+        request_id,
+    )
+    .with_deployment_authority(deployment)
 }
 
 pub(super) fn test_context(
@@ -829,6 +863,21 @@ pub(super) fn test_context(
     request_id: &str,
 ) -> RuntimeInvocationContext {
     test_context_for_tenant(request, "demo", request_id)
+}
+
+pub(super) fn test_context_without_tenant(request: &InvocationRequest) -> RuntimeInvocationContext {
+    static OWNER: OnceLock<crate::RuntimeOwnerLease> = OnceLock::new();
+    let owner = OWNER.get_or_init(|| {
+        let owner_id = crate::RuntimeOwnerId::trusted_session(
+            crate::RuntimeOwnerClass::Tooling,
+            "executor-test:unscoped-routing",
+            std::num::NonZeroU64::new(1).expect("test incarnation is nonzero"),
+            Some("unscoped-routing"),
+        )
+        .expect("executor test tooling owner should be valid");
+        crate::RuntimeOwnerLeaseIssuer.issue(owner_id).0
+    });
+    RuntimeInvocationContext::top_level_with_owner(request, owner.clone())
 }
 
 pub(super) fn worker_runtime_id(result: &Value) -> usize {

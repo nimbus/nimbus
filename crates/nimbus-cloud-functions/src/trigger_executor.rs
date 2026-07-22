@@ -87,7 +87,9 @@ impl CloudFunctionsTriggerExecutor {
         let services = self
             .runtime_service_registry
             .snapshot_for_tenant(isolation.tenant_id());
-        let runtime_policy = self.registry.runtime_policy();
+        let runtime_policy = self
+            .runtime_invoker
+            .runtime_policy(&self.registry.runtime_limits());
         let decision = admit_runtime_invocation_decision(
             &isolation,
             &target.entrypoint,
@@ -114,7 +116,7 @@ impl CloudFunctionsTriggerExecutor {
             let bridge = Arc::new(CloudFunctionsHostBridge::build(
                 RuntimeHostScope::new(
                     self.engine.clone(),
-                    self.registry.runtime_policy(),
+                    runtime_policy.clone(),
                     decision.clone(),
                 ),
                 RuntimeHostInvocation::new(
@@ -131,12 +133,12 @@ impl CloudFunctionsTriggerExecutor {
 
             self.runtime_invoker
                 .invoke_runtime_bundle(CloudFunctionsRuntimeInvocation {
-                    runtime_executor: self.registry.runtime_executor(),
-                    runtime_policy: self.registry.runtime_policy(),
+                    runtime_policy: runtime_policy.clone(),
                     host_bridge: bridge.clone(),
                     bundle: bundle.clone(),
                     request: request.clone(),
                     tenant_id: decision.tenant_id().clone(),
+                    deployment_generation: self.deployment_generation,
                     server_request_id: Some(server_request_id.clone()),
                     provenance_gate: self.registry.runtime_bundle_provenance().cloned(),
                 })?;

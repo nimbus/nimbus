@@ -1,11 +1,13 @@
 #![cfg(all(feature = "bun-jsc-linked-adapter", nimbus_bun_jsc_shared_adapter))]
 
 use std::collections::BTreeMap;
+use std::num::NonZeroU64;
 use std::sync::{Arc, Mutex};
 
 use nimbus_runtime::{
     HostBridge, HostCallCancellation, HostCallOperation, HostCallRequest, InvocationKind,
-    InvocationRequest, NimbusRuntime, RuntimeBundle, RuntimeLimits, RuntimePolicy,
+    InvocationRequest, NimbusRuntime, RuntimeBundle, RuntimeLimits, RuntimeOwnerId,
+    RuntimeOwnerLeaseIssuer, RuntimePolicy,
 };
 use serde_json::{Value, json};
 
@@ -157,10 +159,23 @@ globalThis.__nimbusInvoke = async function(request) {
         auth: None,
         services: BTreeMap::new(),
     };
+    let v8_owner_id = RuntimeOwnerId::trusted_session(
+        nimbus_runtime::RuntimeOwnerClass::Tooling,
+        "bun-linked-adapter-v8-proof",
+        NonZeroU64::new(1).expect("test owner incarnation is nonzero"),
+        Some("bun-linked-adapter-v8-proof"),
+    )
+    .expect("test runtime owner should build");
+    let (v8_owner, _) = RuntimeOwnerLeaseIssuer.issue(v8_owner_id);
 
     assert_eq!(
         v8_runtime
-            .invoke_bundle_blocking(&RuntimeBundle::new(&v8_bundle_path), &v8_request("before"))
+            .invoke_bundle_blocking_for_tenant_with_owner(
+                &RuntimeBundle::new(&v8_bundle_path),
+                &v8_request("before"),
+                "bun-linked-adapter-v8-proof",
+                v8_owner.clone(),
+            )
             .expect("V8 invocation before Bun/JSC should run"),
         json!({
             "engine": "v8",
@@ -199,7 +214,12 @@ globalThis.__nimbusInvoke = async function(request) {
 
     assert_eq!(
         v8_runtime
-            .invoke_bundle_blocking(&RuntimeBundle::new(&v8_bundle_path), &v8_request("after"))
+            .invoke_bundle_blocking_for_tenant_with_owner(
+                &RuntimeBundle::new(&v8_bundle_path),
+                &v8_request("after"),
+                "bun-linked-adapter-v8-proof",
+                v8_owner,
+            )
             .expect("V8 invocation after Bun/JSC should still run"),
         json!({
             "engine": "v8",

@@ -83,7 +83,9 @@ pub fn execute_http_target(
     let services = runtime_context
         .runtime_service_registry
         .snapshot_for_tenant(isolation.tenant_id());
-    let runtime_policy = registry.runtime_policy();
+    let runtime_policy = runtime_context
+        .runtime_invoker
+        .runtime_policy(&registry.runtime_limits());
     let decision = admit_runtime_invocation_decision(
         &isolation,
         &function_name,
@@ -109,7 +111,7 @@ pub fn execute_http_target(
         let bridge = Arc::new(CloudFunctionsHostBridge::build(
             RuntimeHostScope::new(
                 runtime_context.engine.clone(),
-                registry.runtime_policy(),
+                runtime_policy.clone(),
                 decision.clone(),
             ),
             RuntimeHostInvocation::new(
@@ -121,12 +123,12 @@ pub fn execute_http_target(
         )?);
         let runtime_response = runtime_context.runtime_invoker.invoke_runtime_bundle(
             CloudFunctionsRuntimeInvocation {
-                runtime_executor: registry.runtime_executor(),
-                runtime_policy: registry.runtime_policy(),
+                runtime_policy: runtime_policy.clone(),
                 host_bridge: bridge.clone(),
                 bundle: bundle.clone(),
                 request: request.clone(),
                 tenant_id: decision.tenant_id().clone(),
+                deployment_generation,
                 server_request_id: Some(server_request_id.clone()),
                 provenance_gate: registry.runtime_bundle_provenance().cloned(),
             },

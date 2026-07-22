@@ -10,7 +10,9 @@ use serde_json::Value;
 
 use crate::backends::v8::embedder::{JsErrorBox, OpState, op2};
 use crate::runtime::bootstrap::payloads::RuntimeHostCallEnvelope;
-use crate::runtime::bootstrap::state::{InstalledRuntimeCapabilityPolicy, InstalledRuntimeOwner};
+use crate::runtime::bootstrap::state::{
+    InstalledRuntimeCapabilityPolicy, InstalledRuntimeInstance,
+};
 
 use super::support::{capability_denied_error, describe_fs_stat, runtime_fs_error_value};
 use super::types::{
@@ -24,7 +26,7 @@ use super::types::{
 
 fn runtime_file_system(state: &OpState) -> deno_fs::FileSystemRc {
     state
-        .borrow::<InstalledRuntimeOwner>()
+        .borrow::<InstalledRuntimeInstance>()
         .runtime
         .policy()
         .file_system()
