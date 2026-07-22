@@ -172,7 +172,7 @@ mod tests {
     }
 
     #[test]
-    fn provider_publisher_frontiers_are_monotonic_and_contiguous() {
+    fn causal_frontier_phase_progression_is_monotonic_and_contiguous() {
         let samples = [
             (
                 WriteLogFrontierSample {
