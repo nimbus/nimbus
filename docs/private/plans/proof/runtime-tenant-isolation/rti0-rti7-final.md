@@ -9,10 +9,50 @@ Plan baseline: `93124d87e` (`origin/main` when the plan was promoted)
 Final implementation baseline: `42b5073ee` (`origin/main` after rebasing the
 completed implementation, including PRs #225, #226, #229, and #232)
 
+Current-main integration baseline: `9b4f709ee` (including the provider-safe
+tenant lifecycle merged before final PR closeout)
+
+Corrected integration code head: `998d82eda`
+
 Pull request: #227
 
 This proof closes RTI0-RTI7. It supplements the fail-before predicates in
 `rti0-fail-before.md`; deliberately red tests were not committed.
+
+## Current-Main Integration Correction
+
+- Hosted CI run `29923347546` on integrated head `dbdcec14e` provided valid
+  behavioral fail-before evidence: `system_evidence_write_does_not_wait_on_another_tenant_delete_fence`
+  failed after `5.249s` because idempotent async admission entered the global
+  tenant-load gate even though the `_nimbus` runtime was already loaded. This
+  was not classified as a flake or setup failure.
+- `Engine::ensure_tenant_ready_async` now checks the existing runtime through
+  its operation/delete fence before entering missing-tenant creation. Cached
+  admission no longer waits behind unrelated tenant lifecycle work; missing
+  durable state, cancellation replay, `AlreadyExists` convergence, and
+  provider errors retain their prior typed behavior.
+- The exact system-evidence regression passed `1/1`, then `20/20` consecutive
+  repetitions. The focused Engine admission band passed `3/3`:
+  `tenant_admission_replays_after_create_cancellation`,
+  `tenant_admission_preserves_provider_error_and_retries_cleanly`, and
+  `concurrent_tenant_admission_converges_on_one_runtime`.
+- The pinned fixture interface executed the cached-admission contract against
+  PostgreSQL 16, MySQL 8.4, and libSQL v0.24.33: `1/1` passed on each provider.
+  A first default-port attempt correctly refused a retained mismatched PPSC
+  fixture and is not counted as provider evidence; the successful run used an
+  isolated Nimbus-owned compose project and alternate localhost ports, then
+  removed only those temporary containers.
+- `make verify-tenant-lifecycle-callers` passed with all `12` synchronous or
+  internal call sites classified. `cargo fmt --all --check` and full
+  `make clippy` passed; the only emitted warnings were the existing vendored
+  Brotli warnings.
+- One bounded closeout panel reviewed the stable one-file correction with
+  `gpt-5.6-sol` high and `claude-opus-4-8` high; Fable was not invoked. Opus
+  reported zero findings. Sol's single P1 requested a readiness guarantee past
+  method return; it was rejected because the existing two-phase operation
+  guard already linearizes this point-in-time readiness check against deletion,
+  while callers requiring a retained lifetime use
+  `Engine::enter_tenant_runtime_async` and its returned lease.
 
 ## Shipped Ownership Model
 
