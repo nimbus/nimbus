@@ -1051,6 +1051,7 @@ mod tests {
 
     use super::*;
     use crate::Engine;
+    use crate::tenant::TenantRuntimeEnvironment;
 
     fn lease(expires_at: Timestamp) -> CommitterLease {
         CommitterLease {
@@ -1090,10 +1091,12 @@ mod tests {
                 1,
                 base_runtime.store.clone(),
                 base_runtime.read_storage.clone(),
-                Arc::new(SystemMonotonicClock),
-                clock.clone(),
-                Some("lease-owner".to_string()),
-                Arc::new(nimbus_core::SystemIdSource),
+                TenantRuntimeEnvironment::new(
+                    Arc::new(SystemMonotonicClock),
+                    clock.clone(),
+                    Some("lease-owner".to_string()),
+                    Arc::new(nimbus_core::SystemIdSource),
+                ),
             )
             .expect("test runtime should construct"),
         );

@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use nimbus_core::{Error, Result, TenantId};
 
-use crate::tenant::{TenantRuntime, TenantRuntimeLease, TenantRuntimeTiming};
+use crate::tenant::{TenantRuntime, TenantRuntimeEnvironment, TenantRuntimeLease};
 
 use super::{Engine, TenantLoadGateGuard};
 
@@ -253,10 +253,12 @@ impl Engine {
                 tenant_incarnation,
                 opened.persistence,
                 opened.executor,
-                self.monotonic_clock.clone(),
-                self.committer_lease_clock.clone(),
-                committer_owner_id,
-                self.id_source.clone(),
+                TenantRuntimeEnvironment::new(
+                    self.monotonic_clock.clone(),
+                    self.committer_lease_clock.clone(),
+                    committer_owner_id,
+                    self.id_source.clone(),
+                ),
             )
             .await?,
         );
@@ -625,12 +627,12 @@ impl Engine {
             opened.persistence.clone(),
             opened_executor,
             initial_state,
-            TenantRuntimeTiming::new(
+            TenantRuntimeEnvironment::new(
                 self.monotonic_clock.clone(),
                 self.committer_lease_clock.clone(),
+                self.committer_owner_id_for_store(&opened.persistence),
+                self.id_source.clone(),
             ),
-            self.committer_owner_id_for_store(&opened.persistence),
-            self.id_source.clone(),
         ));
         runtime.mark_scheduler_recovery_pending();
         self.restore_publisher_error_counts(&runtime);

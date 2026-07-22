@@ -240,19 +240,30 @@ pub(crate) struct TenantRuntimeInitialStateProfile {
     pub total: Duration,
 }
 
-pub(crate) struct TenantRuntimeTiming {
+/// Process-local services installed into every runtime owned by one engine.
+///
+/// Keeping clocks, provider writer identity, and deterministic identity
+/// generation together makes the runtime construction contract explicit and
+/// prevents individual load paths from silently omitting one of these seams.
+pub(crate) struct TenantRuntimeEnvironment {
     monotonic_clock: Arc<dyn MonotonicClock>,
     renewal_clock: Arc<dyn LeaseRenewalClock>,
+    committer_owner_id: Option<String>,
+    id_source: Arc<dyn IdSource>,
 }
 
-impl TenantRuntimeTiming {
+impl TenantRuntimeEnvironment {
     pub(crate) fn new(
         monotonic_clock: Arc<dyn MonotonicClock>,
         renewal_clock: Arc<dyn LeaseRenewalClock>,
+        committer_owner_id: Option<String>,
+        id_source: Arc<dyn IdSource>,
     ) -> Self {
         Self {
             monotonic_clock,
             renewal_clock,
+            committer_owner_id,
+            id_source,
         }
     }
 }
@@ -301,9 +312,7 @@ impl TenantRuntime {
         store: TenantPersistence,
         read_storage: TenantPersistenceExecutor,
         initial_state: TenantRuntimeInitialState,
-        timing: TenantRuntimeTiming,
-        committer_owner_id: Option<String>,
-        id_source: Arc<dyn IdSource>,
+        environment: TenantRuntimeEnvironment,
     ) -> Self {
         let TenantRuntimeInitialState {
             schema,
@@ -343,15 +352,18 @@ impl TenantRuntime {
             mutation_isolate_admission: Arc::new(MutationIsolateAdmission::from_env()),
             mutation_journal: Arc::new(MutationJournalState::new(progress)),
             committer,
-            committer_lease: committer_owner_id.map(|owner_id| {
-                Arc::new(CommitterLeaseLifecycle::new(owner_id, timing.renewal_clock))
+            committer_lease: environment.committer_owner_id.map(|owner_id| {
+                Arc::new(CommitterLeaseLifecycle::new(
+                    owner_id,
+                    environment.renewal_clock,
+                ))
             }),
             scheduler_recovery: SchedulerRecoveryIntent::default(),
             publisher,
             observer_dispatch,
             observer_lifetime: Arc::new(()),
-            monotonic_clock: timing.monotonic_clock,
-            id_source,
+            monotonic_clock: environment.monotonic_clock,
+            id_source: environment.id_source,
             write_rate: TenantWriteRateLimiter::new(),
             last_assigned_commit_timestamp: AtomicU64::new(last_commit_timestamp.0),
             prepared_table_ids: Mutex::new(HashMap::new()),
@@ -374,9 +386,7 @@ impl TenantRuntime {
         store: TenantPersistence,
         read_storage: TenantPersistenceExecutor,
         initial_state: TenantRuntimeInitialState,
-        timing: TenantRuntimeTiming,
-        committer_owner_id: Option<String>,
-        id_source: Arc<dyn IdSource>,
+        environment: TenantRuntimeEnvironment,
     ) -> Self {
         Self::from_initialized_parts(
             tenant_id,
@@ -384,9 +394,7 @@ impl TenantRuntime {
             store,
             read_storage,
             initial_state,
-            timing,
-            committer_owner_id,
-            id_source,
+            environment,
         )
     }
 
@@ -431,10 +439,7 @@ impl TenantRuntime {
         tenant_incarnation: u64,
         store: TenantPersistence,
         read_storage: TenantPersistenceExecutor,
-        monotonic_clock: Arc<dyn MonotonicClock>,
-        renewal_clock: Arc<dyn LeaseRenewalClock>,
-        committer_owner_id: Option<String>,
-        id_source: Arc<dyn IdSource>,
+        environment: TenantRuntimeEnvironment,
     ) -> Result<Self> {
         let schema = store.load_schema()?;
         let progress = store.journal_progress()?;
@@ -457,9 +462,7 @@ impl TenantRuntime {
                 progress,
                 last_commit_timestamp,
             },
-            TenantRuntimeTiming::new(monotonic_clock, renewal_clock),
-            committer_owner_id,
-            id_source,
+            environment,
         ))
     }
 
@@ -469,10 +472,7 @@ impl TenantRuntime {
         tenant_incarnation: u64,
         store: TenantPersistence,
         read_storage: TenantPersistenceExecutor,
-        monotonic_clock: Arc<dyn MonotonicClock>,
-        renewal_clock: Arc<dyn LeaseRenewalClock>,
-        committer_owner_id: Option<String>,
-        id_source: Arc<dyn IdSource>,
+        environment: TenantRuntimeEnvironment,
     ) -> Result<Self> {
         let (initial_state, _) = Self::load_initial_state_async(&store, &read_storage).await?;
         Ok(Self::from_loaded_state(
@@ -481,9 +481,7 @@ impl TenantRuntime {
             store,
             read_storage,
             initial_state,
-            TenantRuntimeTiming::new(monotonic_clock, renewal_clock),
-            committer_owner_id,
-            id_source,
+            environment,
         ))
     }
 

@@ -50,6 +50,7 @@ use crate::persistence::{ControlPlaneProvider, PersistenceProvider, TenantPersis
 use crate::persistence_config::EnginePersistenceConfig;
 use crate::tenant::{
     LeaseRenewalClock, PublisherErrorCounts, SystemLeaseRenewalClock, TenantRuntime,
+    TenantRuntimeEnvironment,
 };
 use crate::triggers::{TriggerRegistration, execution::SharedTriggerInvocationExecutor};
 use background_executor::BackgroundExecutor;
@@ -654,10 +655,12 @@ impl Engine {
             tenant_incarnation,
             store.clone(),
             read_storage,
-            self.monotonic_clock.clone(),
-            self.committer_lease_clock.clone(),
-            self.committer_owner_id_for_store(&store),
-            self.id_source.clone(),
+            TenantRuntimeEnvironment::new(
+                self.monotonic_clock.clone(),
+                self.committer_lease_clock.clone(),
+                self.committer_owner_id_for_store(&store),
+                self.id_source.clone(),
+            ),
         )?);
         self.restore_publisher_error_counts(&runtime);
         self.start_committer_actor(runtime.clone());

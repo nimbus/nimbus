@@ -4,7 +4,7 @@ use std::sync::Arc;
 use nimbus_core::{Error, Result, TenantId, Timestamp};
 use nimbus_storage::SchedulerWrite;
 
-use crate::tenant::TenantRuntime;
+use crate::tenant::{TenantRuntime, TenantRuntimeEnvironment};
 
 use super::super::Engine;
 use super::access::{
@@ -231,10 +231,12 @@ impl Engine {
                 tenant_incarnation,
                 opened.persistence.clone(),
                 opened_executor,
-                self.monotonic_clock.clone(),
-                self.committer_lease_clock.clone(),
-                self.committer_owner_id_for_store(&opened.persistence),
-                self.id_source.clone(),
+                TenantRuntimeEnvironment::new(
+                    self.monotonic_clock.clone(),
+                    self.committer_lease_clock.clone(),
+                    self.committer_owner_id_for_store(&opened.persistence),
+                    self.id_source.clone(),
+                ),
             )
             .await?,
         );
