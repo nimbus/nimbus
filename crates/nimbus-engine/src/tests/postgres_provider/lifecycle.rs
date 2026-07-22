@@ -2,7 +2,7 @@ use super::support::*;
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(postgres_provider)]
-async fn typed_postgres_config_supports_async_tenant_lifecycle_and_empty_read_paths() {
+async fn postgres_tenant_creation_async_contract() {
     with_postgres_engine_config(|engine_config, _provider_config| async move {
         let tenant_id = TenantId::new("pg-tenant").expect("tenant id should build");
         let engine = Arc::new(
@@ -15,6 +15,17 @@ async fn typed_postgres_config_supports_async_tenant_lifecycle_and_empty_read_pa
             .create_tenant_async(tenant_id.clone())
             .await
             .expect("tenant should create");
+        assert!(matches!(
+            engine.create_tenant_async(tenant_id.clone()).await,
+            Err(Error::AlreadyExists(_))
+        ));
+        assert_eq!(
+            engine
+                .ensure_tenant_ready_async(tenant_id.clone())
+                .await
+                .expect("idempotent admission should load the existing tenant"),
+            crate::TenantAdmissionOutcome::Existing
+        );
         assert_eq!(
             engine
                 .list_tenants_async()
