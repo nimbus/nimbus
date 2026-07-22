@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::num::NonZeroU64;
 use std::sync::atomic::AtomicU64;
+#[cfg(test)]
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -21,6 +23,11 @@ use crate::subscriptions::SubscriptionRegistry;
 use crate::triggers::TriggerRegistration;
 use crate::triggers::TriggerRegistry;
 use crate::triggers::execution::SharedTriggerInvocationExecutor;
+
+#[cfg(test)]
+// Heap addresses can be reused immediately after eviction, so pointer values
+// are not stable evidence that a replacement runtime was constructed.
+static NEXT_TENANT_RUNTIME_TEST_IDENTITY: AtomicU64 = AtomicU64::new(1);
 
 mod background;
 mod committer_lease;
@@ -162,6 +169,8 @@ pub struct TenantRuntime {
     last_assigned_commit_timestamp: AtomicU64,
     prepared_table_ids: Mutex<HashMap<TableName, TableId>>,
     prepare_permits: Arc<Semaphore>,
+    #[cfg(test)]
+    test_identity: u64,
     #[cfg(any(test, feature = "test-hooks"))]
     subscription_bootstrap_pause: Arc<MutationJournalPauseState>,
 }
@@ -343,9 +352,16 @@ impl TenantRuntime {
             last_assigned_commit_timestamp: AtomicU64::new(last_commit_timestamp.0),
             prepared_table_ids: Mutex::new(HashMap::new()),
             prepare_permits: Arc::new(Semaphore::new(prepare_concurrency())),
+            #[cfg(test)]
+            test_identity: NEXT_TENANT_RUNTIME_TEST_IDENTITY.fetch_add(1, Ordering::Relaxed),
             #[cfg(any(test, feature = "test-hooks"))]
             subscription_bootstrap_pause: Arc::new(MutationJournalPauseState::default()),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn test_identity(&self) -> u64 {
+        self.test_identity
     }
 
     pub(crate) fn from_loaded_state(

@@ -144,12 +144,9 @@ impl Engine {
     }
 
     #[cfg(test)]
-    pub(crate) fn tenant_runtime_identity_for_testing(
-        &self,
-        tenant_id: &TenantId,
-    ) -> Result<usize> {
+    pub(crate) fn tenant_runtime_identity_for_testing(&self, tenant_id: &TenantId) -> Result<u64> {
         let runtime = self.get_existing_tenant(tenant_id)?;
-        Ok(Arc::as_ptr(&runtime) as usize)
+        Ok(runtime.test_identity())
     }
 
     #[cfg(test)]
