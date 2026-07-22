@@ -145,8 +145,9 @@ sources exist.
 | `reference/native/http-api.md` | Loopback origin rule; system fields; query/schema/scheduling shapes; service-control routes | `crates/nimbus-operator/src/access_policy.rs`, `crates/nimbus-core/src/document.rs`, `crates/nimbus-core/src/query.rs`, `crates/nimbus-core/src/schema.rs`, `crates/nimbus-core/src/scheduled.rs`, `crates/nimbus-server/src/router.rs` |
 | `reference/native/http-api.md` | Journal routes `GET …/journal` (`after`/`limit`, default 100; `records`/`next_cursor`/`latest_sequence`/`cursor_floor`/`has_more`) and `…/journal/bootstrap` (snapshot + resume/cut/floor sequences); SDK `readJournal`/`bootstrapJournal` | `crates/nimbus-server/src/router.rs`, `crates/nimbus-server/src/protocol.rs`, `crates/nimbus-server/src/http/queries.rs`, `crates/nimbus-storage/src/store/journal_stream.rs`, `packages/nimbus/src/rest.ts` |
 | `reference/native/websocket-protocol.md` | `nimbus.v2` negotiation, handshake, frame catalog, close codes | `crates/nimbus-server/src/ws/`, `crates/nimbus-server/src/protocol.rs`, `crates/nimbus-server/src/error_envelope.rs` |
-| `reference/native/errors.md` | Error envelope, code catalog, status mapping | `crates/nimbus-server/src/error_envelope.rs`, `crates/nimbus-core/src/error.rs` |
+| `reference/native/errors.md` | Error envelope, code catalog, status mapping | `crates/nimbus-server/src/error_envelope.rs`, `crates/nimbus-core/src/error.rs`, `crates/nimbus-compute/src/execution/errors.rs`, `crates/nimbus-runtime/src/error.rs` |
 | `reference/native/errors.md` | Commit-path taxonomy, retryability detail, and client remediation | `crates/nimbus-server/src/error_envelope.rs`, `crates/nimbus-core/src/error.rs` |
+| `reference/native/errors.md` | Typed runtime timeout/stall diagnostics and correlated redaction at tenant-visible runtime-host boundaries | `crates/nimbus-runtime/src/runtime/classify.rs`, `crates/nimbus-bridge/src/responses.rs`, `crates/nimbus-convex/src/host_bridge/responses.rs`, `crates/nimbus-server/src/error_envelope.rs` |
 
 ## Developers + Concepts + Reference — Node.js runtime
 

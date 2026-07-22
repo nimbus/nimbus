@@ -75,6 +75,11 @@ pub(crate) fn classify_runtime_error(
         NimbusRuntimeError::JavaScript(message) if is_host_call_canceled_error(&message) => {
             NimbusRuntimeError::Cancelled
         }
+        NimbusRuntimeError::JavaScript(message)
+            if is_pending_promise_with_resolved_event_loop(&message) =>
+        {
+            NimbusRuntimeError::PromiseStalled
+        }
         other => other,
     }
 }
@@ -152,7 +157,31 @@ mod tests {
     use crate::error::NimbusRuntimeError;
     use crate::limits::RuntimeLimits;
 
-    use super::classify_wait_until_drain_error;
+    use super::{classify_runtime_error, classify_wait_until_drain_error};
+
+    #[test]
+    fn invocation_pending_promise_maps_to_typed_stall() {
+        let timeout_triggered = AtomicBool::new(false);
+        let system_timeout_triggered = AtomicBool::new(false);
+        let heap_limit_triggered = AtomicBool::new(false);
+        let external_cancellation_triggered = AtomicBool::new(false);
+
+        let error = classify_runtime_error(
+            NimbusRuntimeError::JavaScript(
+                "Promise resolution is still pending but the event loop has already resolved"
+                    .to_string(),
+            ),
+            &timeout_triggered,
+            &system_timeout_triggered,
+            &heap_limit_triggered,
+            &external_cancellation_triggered,
+            &RuntimeLimits::default(),
+        );
+
+        assert!(matches!(error, NimbusRuntimeError::PromiseStalled));
+        assert!(!timeout_triggered.load(Ordering::SeqCst));
+        assert!(!system_timeout_triggered.load(Ordering::SeqCst));
+    }
 
     #[test]
     fn wait_until_pending_promise_race_maps_to_system_timeout() {

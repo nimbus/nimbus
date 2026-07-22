@@ -2293,11 +2293,11 @@ jobs:
       - name: Build
         run: npm run build --workspaces --if-present
 
-      - name: Typecheck
-        run: npm run typecheck --workspaces --if-present
-
       - name: Stage embedded packages
         run: node scripts/stage-embedded-packages.mjs
+
+      - name: Typecheck
+        run: npm run typecheck --workspaces --if-present
 
       - name: Capability boundary lint
         run: npm run lint:capability-boundary

@@ -983,34 +983,40 @@ mod tests {
 
     #[test]
     fn registry_authentication_checks_username_and_password() {
+        let shared_password = generate_dev_password();
+        let wrong_password = generate_dev_password();
         let registry = CredentialRegistry::new()
             .bind(
                 "tenant-a",
-                "same-password",
+                shared_password.clone(),
                 TenantId::new("tenant-a").unwrap(),
             )
             .bind(
                 "tenant-b",
-                "same-password",
+                shared_password.clone(),
                 TenantId::new("tenant-b").unwrap(),
             );
 
         assert_eq!(
             registry
-                .authenticate(Some("tenant-a"), "same-password")
+                .authenticate(Some("tenant-a"), &shared_password)
                 .expect("both credential parts match")
                 .tenant
                 .as_str(),
             "tenant-a"
         );
-        assert!(registry.authenticate(Some("tenant-a"), "wrong").is_none());
         assert!(
             registry
-                .authenticate(Some("unknown"), "same-password")
+                .authenticate(Some("tenant-a"), &wrong_password)
                 .is_none()
         );
         assert!(
-            registry.authenticate(None, "same-password").is_none(),
+            registry
+                .authenticate(Some("unknown"), &shared_password)
+                .is_none()
+        );
+        assert!(
+            registry.authenticate(None, &shared_password).is_none(),
             "password-only authentication must reject ambiguous bindings"
         );
     }
