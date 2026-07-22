@@ -26,7 +26,11 @@ pub struct PpscStorageFaultSnapshot {
 /// Only faults at the persistence commit boundary belong here. Publisher and
 /// commit-orchestration faults use Engine-owned seams instead. Acknowledgement
 /// loss fires once after durable visibility; provider transient failures keep
-/// firing before visibility until the scenario explicitly releases them.
+/// firing at the journal transaction's pre-visibility boundary until the
+/// scenario explicitly releases them. The journal-specific boundary is
+/// intentional: an embedded publisher appends the journal and materializes it
+/// in separate transactions, while a provider publisher performs both in one
+/// fenced transaction.
 #[derive(Default)]
 pub struct PpscStorageFaultInjector {
     state: Mutex<BTreeMap<(TenantId, PpscInjectedFault), ArmedFaultState>>,
@@ -157,7 +161,7 @@ const fn storage_fault_point_unchecked(fault: PpscInjectedFault) -> Option<Fault
         PpscInjectedFault::AcknowledgementLoss => {
             Some(FaultPoint::StorageCommitAfterVisibilityBeforeReturn)
         }
-        PpscInjectedFault::ProviderTransient => Some(FaultPoint::StorageCommitBeforeVisibility),
+        PpscInjectedFault::ProviderTransient => Some(FaultPoint::JournalAppendBeforeDurableFlush),
         PpscInjectedFault::DurableBeforePublish
         | PpscInjectedFault::PublicationPredecessorHeld
         | PpscInjectedFault::PanicAfterDurable => None,

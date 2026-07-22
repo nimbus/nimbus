@@ -495,16 +495,20 @@ fn ppsc_storage_acknowledgement_loss_is_tenant_scoped_and_one_shot() {
 }
 
 #[test]
-fn ppsc_storage_provider_transient_persists_until_explicit_release() {
+fn ppsc_storage_provider_transient_targets_journal_previsibility_until_release() {
     let injector = PpscStorageFaultInjector::new();
     let tenant = TenantId::new("ppsc-provider-transient").expect("tenant should build");
     injector
         .arm(tenant.clone(), PpscInjectedFault::ProviderTransient)
         .expect("provider transient should arm");
 
+    injector
+        .check_for_tenant(FaultPoint::StorageCommitBeforeVisibility, &tenant)
+        .expect("a materialized-apply boundary must not consume the provider fault");
+
     for expected_fire in 1..=3 {
         let error = injector
-            .check_for_tenant(FaultPoint::StorageCommitBeforeVisibility, &tenant)
+            .check_for_tenant(FaultPoint::JournalAppendBeforeDurableFlush, &tenant)
             .unwrap_err();
         assert_eq!(error.storage_kind(), Some(StorageErrorKind::Transient));
         assert!(error.to_string().contains(&format!("fire {expected_fire}")));
@@ -524,7 +528,7 @@ fn ppsc_storage_provider_transient_persists_until_explicit_release() {
         .release(&tenant, PpscInjectedFault::ProviderTransient)
         .expect("provider transient should release");
     injector
-        .check_for_tenant(FaultPoint::StorageCommitBeforeVisibility, &tenant)
+        .check_for_tenant(FaultPoint::JournalAppendBeforeDurableFlush, &tenant)
         .expect("released provider transient must stop failing");
     assert!(
         !injector
