@@ -20,7 +20,7 @@ use tracing::{info, warn};
 /// `tokio::spawn` background task on a real `tokio::time::interval`); the
 /// clock-dependent unit that *is* tested is `sweep_all_tenants`, which
 /// already takes `now: i64` as an explicit parameter. No struct here would
-/// benefit from holding an injected `Arc<dyn Clock>`.
+/// benefit from holding an injected `Arc<dyn WallClock>`.
 fn now_epoch_seconds() -> i64 {
     nimbus_core::clock::system_now_secs() as i64
 }

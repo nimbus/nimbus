@@ -4,12 +4,10 @@ use std::sync::{Arc, Mutex};
 use crate::{Engine, TriggerInvocationExecution, TriggerInvocationExecutor, TriggerRegistration};
 use nimbus_core::{
     DocumentId, DocumentLocator, DocumentPath, DocumentTriggerPattern, FirestoreCloudEventType,
-    ResourcePathBinding, TenantId, Timestamp, TriggerDeliveryCursor, TriggerInvocationRecord,
-    TriggerInvocationState,
+    ManualWallClock, ResourcePathBinding, TenantId, Timestamp, TriggerDeliveryCursor,
+    TriggerInvocationRecord, TriggerInvocationState,
 };
-use nimbus_storage::{
-    FaultOccurrence, FaultPoint, ManualClock, NoopFaultInjector, ScriptedFaultInjector,
-};
+use nimbus_storage::{FaultOccurrence, FaultPoint, NoopFaultInjector, ScriptedFaultInjector};
 use tempfile::{TempDir, tempdir};
 
 use super::support::{
@@ -159,9 +157,9 @@ impl TriggerInvocationExecutor for RecordingTriggerExecutor {
 
 fn new_trigger_engine_with_manual_clock(
     timestamp_ms: u64,
-) -> (TempDir, Arc<Engine>, TenantId, Arc<ManualClock>) {
+) -> (TempDir, Arc<Engine>, TenantId, Arc<ManualWallClock>) {
     let data_dir = tempdir().expect("engine tempdir should build");
-    let clock = Arc::new(ManualClock::new(Timestamp(timestamp_ms)));
+    let clock = Arc::new(ManualWallClock::new(Timestamp(timestamp_ms)));
     let engine = Arc::new(
         Engine::new_with_simulation(data_dir.path(), clock.clone(), Arc::new(NoopFaultInjector))
             .expect("engine should create"),
@@ -547,7 +545,7 @@ async fn trigger_candidate_worker_retries_transient_materialization_failure() {
     let engine = Arc::new(
         Engine::new_with_simulation(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(50_000))),
+            Arc::new(ManualWallClock::new(Timestamp(50_000))),
             Arc::new(ScriptedFaultInjector::new([FaultOccurrence {
                 point: FaultPoint::TriggerInvocationMaterializeBeforeCommit,
                 visit: 1,
@@ -1085,7 +1083,7 @@ async fn installing_executor_bootstraps_due_retry_invocations_after_restart() {
     let data_dir = tempdir().expect("engine tempdir should build");
     let tenant_id = TenantId::new("demo").expect("tenant id should build");
     let document_id = DocumentId::from_key("retry-restart").expect("document id should build");
-    let initial_clock = Arc::new(ManualClock::new(Timestamp(80_000)));
+    let initial_clock = Arc::new(ManualWallClock::new(Timestamp(80_000)));
 
     {
         let engine = Arc::new(
@@ -1148,7 +1146,7 @@ async fn installing_executor_bootstraps_due_retry_invocations_after_restart() {
         engine.quiesce().await;
     }
 
-    let restart_clock = Arc::new(ManualClock::new(Timestamp(81_000)));
+    let restart_clock = Arc::new(ManualWallClock::new(Timestamp(81_000)));
     let engine = Arc::new(
         Engine::new_with_simulation(data_dir.path(), restart_clock, Arc::new(NoopFaultInjector))
             .expect("engine should recreate"),
@@ -1216,7 +1214,7 @@ async fn installing_executor_replays_running_invocations_after_restart() {
             ["tasks", "running-restart-two"],
         ),
     ];
-    let initial_clock = Arc::new(ManualClock::new(Timestamp(90_000)));
+    let initial_clock = Arc::new(ManualWallClock::new(Timestamp(90_000)));
 
     {
         let engine = Arc::new(
@@ -1303,7 +1301,7 @@ async fn installing_executor_replays_running_invocations_after_restart() {
         engine.quiesce().await;
     }
 
-    let restart_clock = Arc::new(ManualClock::new(Timestamp(91_000)));
+    let restart_clock = Arc::new(ManualWallClock::new(Timestamp(91_000)));
     let engine = Arc::new(
         Engine::new_with_simulation(data_dir.path(), restart_clock, Arc::new(NoopFaultInjector))
             .expect("engine should recreate"),

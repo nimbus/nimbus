@@ -244,8 +244,8 @@ fn env_positive_u64(key: &str) -> Option<u64> {
 mod tests {
     use std::sync::Arc;
 
-    use nimbus_core::{MutationCap, PrincipalContext, TenantId, Timestamp};
-    use nimbus_storage::{ManualClock, NoopFaultInjector};
+    use nimbus_core::{ManualWallClock, MutationCap, PrincipalContext, TenantId, Timestamp};
+    use nimbus_storage::NoopFaultInjector;
     use tempfile::TempDir;
 
     use super::*;
@@ -254,7 +254,7 @@ mod tests {
     fn runtime() -> (TempDir, Arc<Engine>, TenantId) {
         let data_dir = tempfile::tempdir().expect("tempdir should build");
         let tenant_id = TenantId::new("cap-tests").expect("tenant should parse");
-        let clock = Arc::new(ManualClock::new(Timestamp(1)));
+        let clock = Arc::new(ManualWallClock::new(Timestamp(1)));
         let engine = Arc::new(
             Engine::new_with_simulation(data_dir.path(), clock, Arc::new(NoopFaultInjector))
                 .expect("engine should build"),

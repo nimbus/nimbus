@@ -16,15 +16,15 @@ pub(super) use crate::tests::BlockingFaultInjector;
 pub(super) use crate::{
     FaultInjector, FaultOccurrence, FaultPoint, LibsqlReplicaBarrierPath,
     LibsqlReplicaRefreshCause, LibsqlReplicaRefreshPath, NoopFaultInjector, ResolvedScheduleOp,
-    ResolvedWrite, ScriptedFaultInjector, SystemClock, TenantWriteOutcome,
+    ResolvedWrite, ScriptedFaultInjector, TenantWriteOutcome,
 };
 pub(super) use libsql::{Builder, Database};
 pub(super) use nimbus_core::{
     CollectionName, CronJob, CronSchedule, Document, DocumentId, DocumentLocator, DocumentPath,
     Error, FieldSchema, FieldType, IndexDefinition, Mutation, ResourcePathBinding, ScheduledJob,
     ScheduledJobOutcome, ScheduledJobResult, SchemaChangeEvent, SequenceNumber, StorageErrorKind,
-    TableId, TableName, TableSchema, TableState, TenantEventKind, TenantEventRecord, TenantId,
-    Timestamp, TriggerDeliveryCursor, WriteOp, WriteOpType,
+    SystemWallClock, TableId, TableName, TableSchema, TableState, TenantEventKind,
+    TenantEventRecord, TenantId, Timestamp, TriggerDeliveryCursor, WriteOp, WriteOpType,
 };
 pub(super) use serial_test::serial;
 
@@ -68,7 +68,7 @@ where
     let provider = LibsqlReplicaProvider::connect_with_simulation_faults(
         config.clone(),
         tokio::runtime::Handle::current(),
-        Arc::new(SystemClock),
+        Arc::new(SystemWallClock),
         faults,
         Arc::new(NoopFaultInjector),
     )

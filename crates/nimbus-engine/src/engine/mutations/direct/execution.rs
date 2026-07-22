@@ -123,10 +123,7 @@ impl Engine {
                 drop(prepare_permit);
                 check_mutation_caps(&runtime, prepared_commit.usage())?;
                 if !rate_accounted {
-                    runtime.check_tenant_write_rate(
-                        self.now(),
-                        prepared_commit.usage().total_write_bytes(),
-                    )?;
+                    runtime.check_tenant_write_rate(prepared_commit.usage().total_write_bytes())?;
                     rate_accounted = true;
                 }
                 let prepared_bytes = prepared_commit.accounted_bytes();

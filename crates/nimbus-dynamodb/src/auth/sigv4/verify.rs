@@ -14,6 +14,7 @@
 
 use extenddb_core::error::DynamoDbError;
 use http::HeaderMap;
+use nimbus_core::{SystemWallClock, WallClock};
 
 use super::canonical;
 use super::parse::ParsedAuthorization;
@@ -131,10 +132,14 @@ pub fn verify_signature(
 /// Returns `UnrecognizedClientException` if the timestamp is missing or out of range.
 /// Returns `InternalServerError` if the system clock is misconfigured.
 pub fn validate_timestamp(headers: &HeaderMap) -> Result<(), DynamoDbError> {
+    validate_timestamp_at(headers, SystemWallClock.now_secs())
+}
+
+fn validate_timestamp_at(headers: &HeaderMap, now_epoch_secs: u64) -> Result<(), DynamoDbError> {
     let timestamp = extract_timestamp(headers)?;
 
     // Parse X-Amz-Date: YYYYMMDDTHHMMSSZ
-    let now = i64::try_from(nimbus_core::clock::system_now_secs())
+    let now = i64::try_from(now_epoch_secs)
         .ok()
         .ok_or_else(|| DynamoDbError::InternalServerError("server clock error".to_owned()))?;
 
@@ -263,6 +268,67 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("x-amz-date", "20260415T120000Z".parse().unwrap());
         assert_eq!(extract_timestamp(&headers).unwrap(), "20260415T120000Z");
+    }
+
+    #[test]
+    fn sigv4_accepts_exact_clock_skew_edge() {
+        let headers = make_headers("20260415T120000Z");
+        let request_epoch = parse_iso8601_basic("20260415T120000Z").unwrap();
+
+        validate_timestamp_at(
+            &headers,
+            u64::try_from(request_epoch + MAX_CLOCK_SKEW_SECS).unwrap(),
+        )
+        .expect("exact positive skew edge should be accepted");
+        validate_timestamp_at(
+            &headers,
+            u64::try_from(request_epoch - MAX_CLOCK_SKEW_SECS).unwrap(),
+        )
+        .expect("exact negative skew edge should be accepted");
+    }
+
+    #[test]
+    fn sigv4_rejects_one_second_past_clock_skew_edge() {
+        let headers = make_headers("20260415T120000Z");
+        let request_epoch = parse_iso8601_basic("20260415T120000Z").unwrap();
+        let error = validate_timestamp_at(
+            &headers,
+            u64::try_from(request_epoch + MAX_CLOCK_SKEW_SECS + 1).unwrap(),
+        )
+        .expect_err("one second past the skew edge should be rejected");
+
+        assert!(matches!(
+            error,
+            DynamoDbError::UnrecognizedClientException(_)
+        ));
+    }
+
+    #[test]
+    fn sigv4_rejects_future_and_past_symmetrically() {
+        let headers = make_headers("20260415T120000Z");
+        let request_epoch = parse_iso8601_basic("20260415T120000Z").unwrap();
+        let offset = MAX_CLOCK_SKEW_SECS + 1;
+
+        for now in [request_epoch - offset, request_epoch + offset] {
+            assert!(matches!(
+                validate_timestamp_at(&headers, u64::try_from(now).unwrap()),
+                Err(DynamoDbError::UnrecognizedClientException(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn sigv4_timestamp_error_classifications_remain_stable() {
+        let malformed = make_headers("20269999T999999Z");
+        assert!(matches!(
+            validate_timestamp_at(&malformed, 0),
+            Err(DynamoDbError::IncompleteSignature(_))
+        ));
+        let valid = make_headers("20260415T120000Z");
+        assert!(matches!(
+            validate_timestamp_at(&valid, u64::MAX),
+            Err(DynamoDbError::InternalServerError(_))
+        ));
     }
 
     fn make_parsed(service: &str, date: &str, signed_headers: &str) -> ParsedAuthorization {

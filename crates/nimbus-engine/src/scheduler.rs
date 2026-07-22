@@ -7,6 +7,10 @@ use tokio::sync::watch;
 
 use crate::Engine;
 
+mod durable_deadline;
+
+use durable_deadline::DurableDeadlineWake;
+
 /// Runs the global scheduler loop until shutdown is requested.
 pub async fn run_scheduler(engine: Arc<Engine>, shutdown: watch::Receiver<bool>) {
     run_scheduler_with_interval(engine, shutdown, Duration::from_secs(1)).await;
@@ -15,7 +19,7 @@ pub async fn run_scheduler(engine: Arc<Engine>, shutdown: watch::Receiver<bool>)
 pub(crate) async fn run_scheduler_with_interval(
     engine: Arc<Engine>,
     mut shutdown: watch::Receiver<bool>,
-    _interval: Duration,
+    resample_interval: Duration,
 ) {
     loop {
         if let Err(error) = tick_async(&engine).await {
@@ -30,35 +34,27 @@ pub(crate) async fn run_scheduler_with_interval(
             }
         };
 
-        let wake = engine.scheduler_notifier().notified();
-        tokio::pin!(wake);
-
         match next_due {
-            Some(next_due) if next_due <= engine.now() => continue,
             Some(next_due) => {
-                let delay_ms = next_due.0.saturating_sub(engine.now().0);
-                let sleep = tokio::time::sleep(Duration::from_millis(delay_ms));
-                tokio::pin!(sleep);
-                tokio::select! {
-                    _ = &mut sleep => {}
-                    _ = &mut wake => {}
-                    changed = shutdown.changed() => {
-                        if changed.is_err() || *shutdown.borrow() {
-                            tracing::info!("scheduler shutting down");
-                            break;
-                        }
-                    }
+                if durable_deadline::wait(&engine, next_due, resample_interval, &mut shutdown).await
+                    == DurableDeadlineWake::Shutdown
+                {
+                    tracing::info!("scheduler shutting down");
+                    break;
                 }
             }
             None => {
+                let wake = engine.scheduler_notifier().notified();
+                tokio::pin!(wake);
                 tokio::select! {
-                    _ = &mut wake => {}
+                    biased;
                     changed = shutdown.changed() => {
                         if changed.is_err() || *shutdown.borrow() {
                             tracing::info!("scheduler shutting down");
                             break;
                         }
                     }
+                    _ = &mut wake => {}
                 }
             }
         }

@@ -85,7 +85,7 @@ fn sqlite_materialized_snapshot_plus_journal_tail_rebuild_matches_live_state() {
 #[test]
 fn sqlite_point_in_time_archive_restores_sequence_and_timestamp_targets() {
     let live_dir = tempdir().expect("temporary directory should create");
-    let clock = Arc::new(ManualClock::new(Timestamp(1_000)));
+    let clock = Arc::new(ManualWallClock::new(Timestamp(1_000)));
     let live = SqliteTenantStore::open_with_simulation(
         live_dir.path().join("live.sqlite3"),
         clock.clone(),

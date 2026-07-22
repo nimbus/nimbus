@@ -19,7 +19,7 @@ use axum::Router;
 
 use crate::state::AppState;
 
-pub mod durable_objects;
+pub(crate) mod durable_objects;
 pub mod host_bridge;
 pub mod kv;
 

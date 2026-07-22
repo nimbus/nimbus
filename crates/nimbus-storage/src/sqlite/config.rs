@@ -12,7 +12,7 @@ impl SqliteTenantStore {
     ) -> Result<Self> {
         Self::open_with_simulation_and_max_read_connections(
             path,
-            Arc::new(SystemClock),
+            Arc::new(SystemWallClock),
             Arc::new(NoopFaultInjector),
             max_read_connections,
         )
@@ -20,7 +20,7 @@ impl SqliteTenantStore {
 
     pub fn open_with_simulation(
         path: impl AsRef<Path>,
-        clock: Arc<dyn Clock>,
+        clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
     ) -> Result<Self> {
         Self::open_with_simulation_and_max_read_connections(
@@ -33,7 +33,7 @@ impl SqliteTenantStore {
 
     pub(crate) fn open_with_simulation_and_max_read_connections(
         path: impl AsRef<Path>,
-        clock: Arc<dyn Clock>,
+        clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
         max_read_connections: usize,
     ) -> Result<Self> {
@@ -60,7 +60,7 @@ impl SqliteTenantStore {
         Self::open_encrypted_with_simulation_and_max_read_connections(
             path,
             dek,
-            Arc::new(SystemClock),
+            Arc::new(SystemWallClock),
             Arc::new(NoopFaultInjector),
             max_read_connections,
         )
@@ -70,7 +70,7 @@ impl SqliteTenantStore {
     pub fn open_encrypted_with_simulation(
         path: impl AsRef<Path>,
         dek: &[u8; 32],
-        clock: Arc<dyn Clock>,
+        clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
     ) -> Result<Self> {
         Self::open_encrypted_with_simulation_and_max_read_connections(
@@ -85,7 +85,7 @@ impl SqliteTenantStore {
     pub(crate) fn open_encrypted_with_simulation_and_max_read_connections(
         path: impl AsRef<Path>,
         dek: &[u8; 32],
-        clock: Arc<dyn Clock>,
+        clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
         max_read_connections: usize,
     ) -> Result<Self> {
@@ -101,7 +101,7 @@ impl SqliteTenantStore {
     fn open_internal(
         path: impl AsRef<Path>,
         dek: Option<DataEncryptionKey>,
-        clock: Arc<dyn Clock>,
+        clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
         max_read_connections: usize,
     ) -> Result<Self> {

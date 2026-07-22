@@ -9,7 +9,7 @@ async fn embedded_stores_never_enter_the_committer_lease_lifecycle() {
         let engine = Arc::new(
             Engine::new_with_simulation_and_embedded_provider(
                 data_dir.path(),
-                Arc::new(ManualClock::new(Timestamp(10_000))),
+                Arc::new(ManualWallClock::new(Timestamp(10_000))),
                 Arc::new(NoopFaultInjector),
                 backend,
             )

@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use nimbus_core::{Error, Result, TenantId};
+use nimbus_core::{Error, Result, TenantId, WallClock};
 use tokio::runtime::Handle as TokioRuntimeHandle;
 
-use crate::{Clock, FaultInjector, TenantStore};
+use crate::{FaultInjector, TenantStore};
 use nimbus_crypto::{
     KeyManifest, LocalKeyProvider, LocalKeySubject, ManifestCipher, resolve_subject_encryption_key,
 };
@@ -44,7 +44,7 @@ pub struct OpenedEmbeddedRedbTenant {
 #[derive(Clone)]
 pub struct EmbeddedRedbProvider {
     data_dir: PathBuf,
-    clock: Arc<dyn Clock>,
+    clock: Arc<dyn WallClock>,
     fault_injector: Arc<dyn FaultInjector>,
     storage_handle: TokioRuntimeHandle,
     tenant_read_parallelism: usize,
@@ -54,7 +54,7 @@ pub struct EmbeddedRedbProvider {
 impl EmbeddedRedbProvider {
     pub fn new(
         data_dir: impl Into<PathBuf>,
-        clock: Arc<dyn Clock>,
+        clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
         storage_handle: TokioRuntimeHandle,
     ) -> Result<Self> {
@@ -72,7 +72,7 @@ impl EmbeddedRedbProvider {
     pub fn new_encrypted(
         data_dir: impl Into<PathBuf>,
         provider: Arc<dyn LocalKeyProvider>,
-        clock: Arc<dyn Clock>,
+        clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
         storage_handle: TokioRuntimeHandle,
     ) -> Result<Self> {

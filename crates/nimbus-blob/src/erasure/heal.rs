@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use bytes::Bytes;
-use nimbus_core::{Clock, Error, Result, StorageErrorKind, SystemClock};
+use nimbus_core::{Error, Result, StorageErrorKind, SystemWallClock, WallClock};
 
 use crate::BlobHash;
 use crate::store::BlobStore;
@@ -87,7 +87,7 @@ pub struct HealSummary {
 pub struct ErasureHealer {
     store: ErasureBlobStore,
     pacing: HealPacing,
-    clock: Arc<dyn Clock>,
+    clock: Arc<dyn WallClock>,
 }
 
 impl ErasureHealer {
@@ -95,7 +95,7 @@ impl ErasureHealer {
         Self {
             store,
             pacing: HealPacing::default(),
-            clock: Arc::new(SystemClock),
+            clock: Arc::new(SystemWallClock),
         }
     }
 
@@ -104,7 +104,7 @@ impl ErasureHealer {
         self
     }
 
-    pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
+    pub fn with_clock(mut self, clock: Arc<dyn WallClock>) -> Self {
         self.clock = clock;
         self
     }

@@ -139,7 +139,7 @@ async fn sqlite_async_write_after_commit_still_reports_committed() {
     let store = Arc::new(
         SqliteTenantStore::open_with_simulation(
             dir.path().join("tenant.sqlite3"),
-            Arc::new(ManualClock::new(Timestamp(10_000))),
+            Arc::new(ManualWallClock::new(Timestamp(10_000))),
             faults.clone(),
         )
         .expect("sqlite tenant store should open with simulation seams"),

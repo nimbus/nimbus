@@ -1,7 +1,7 @@
 pub(crate) use nimbus_core::{
     AccessValue, DocumentId, Error, FieldSchema, FieldType, Filter, FilterOp, IndexDefinition,
-    OrderBy, OrderDirection, Page, PaginatedQuery, PrincipalContext, Query, SequenceNumber,
-    TableAccessPolicy, TableName, TableSchema, TenantId, Timestamp,
+    ManualWallClock, OrderBy, OrderDirection, Page, PaginatedQuery, PrincipalContext, Query,
+    SequenceNumber, TableAccessPolicy, TableName, TableSchema, TenantId, Timestamp,
 };
 pub(crate) use nimbus_testing::{
     BlockingFaultInjector, BoundedTestBarrier as Barrier, CountedFaultInjector, EngineFixture,
@@ -38,11 +38,11 @@ pub(crate) use crate::{
     EmbeddedReplica, Engine, EnginePersistenceConfig, ShadowMaterializerConfig, SubscriptionUpdate,
 };
 pub(crate) use nimbus_storage::{
-    DurableJournalBootstrap, EmbeddedProviderKind, FaultPoint, ManualClock, SqliteTenantStore,
-    TenantStore,
+    DurableJournalBootstrap, EmbeddedProviderKind, FaultPoint, SqliteTenantStore, TenantStore,
 };
 
 mod ambient_sources;
+mod clocks;
 mod committer_lease;
 #[path = "../benches/support/concurrent_write_phase_split.rs"]
 mod concurrent_write_phase_split;
@@ -825,7 +825,7 @@ pub(crate) async fn create_engine_with_durable_unapplied_task(
     let engine = Arc::new(
         Engine::new_with_simulation(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(timestamp_ms))),
+            Arc::new(ManualWallClock::new(Timestamp(timestamp_ms))),
             faults.clone(),
         )
         .expect("engine should create"),

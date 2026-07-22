@@ -455,15 +455,83 @@ impl Display for SequenceNumber {
 pub struct Timestamp(pub u64);
 
 impl Timestamp {
-    /// Returns the current wall-clock timestamp in milliseconds since epoch.
-    pub fn now() -> Self {
-        Self::from_system_time(std::time::SystemTime::now())
+    /// Construct a timestamp from Unix-epoch milliseconds.
+    pub const fn from_unix_millis(millis: u64) -> Self {
+        Self(millis)
     }
 
-    fn from_system_time(time: std::time::SystemTime) -> Self {
+    /// Return this timestamp as Unix-epoch milliseconds.
+    pub const fn as_unix_millis(self) -> u64 {
+        self.0
+    }
+
+    /// Return whole Unix-epoch seconds, flooring any fractional second.
+    pub const fn as_unix_secs_floor(self) -> u64 {
+        self.0 / 1_000
+    }
+
+    /// Add an elapsed duration when the result and millisecond conversion fit.
+    pub fn checked_add_duration(self, duration: std::time::Duration) -> Option<Self> {
+        let millis = u64::try_from(duration.as_millis()).ok()?;
+        self.0.checked_add(millis).map(Self)
+    }
+
+    /// Add an elapsed duration, saturating at the largest representable epoch.
+    pub fn saturating_add_duration(self, duration: std::time::Duration) -> Self {
+        let millis = u64::try_from(duration.as_millis()).unwrap_or(u64::MAX);
+        Self(self.0.saturating_add(millis))
+    }
+
+    /// Subtract an elapsed duration when it does not cross the Unix epoch.
+    pub fn checked_sub_duration(self, duration: std::time::Duration) -> Option<Self> {
+        let millis = u64::try_from(duration.as_millis()).ok()?;
+        self.0.checked_sub(millis).map(Self)
+    }
+
+    /// Subtract an elapsed duration, saturating at the Unix epoch.
+    pub fn saturating_sub_duration(self, duration: std::time::Duration) -> Self {
+        let millis = u64::try_from(duration.as_millis()).unwrap_or(u64::MAX);
+        Self(self.0.saturating_sub(millis))
+    }
+
+    /// Elapsed duration since `earlier`, or `None` when ordering is reversed.
+    pub fn checked_duration_since(self, earlier: Self) -> Option<std::time::Duration> {
+        self.0
+            .checked_sub(earlier.0)
+            .map(std::time::Duration::from_millis)
+    }
+
+    /// Elapsed duration since `earlier`, saturating at zero when reversed.
+    pub fn saturating_duration_since(self, earlier: Self) -> std::time::Duration {
+        std::time::Duration::from_millis(self.0.saturating_sub(earlier.0))
+    }
+
+    /// Returns the current wall-clock timestamp in milliseconds since epoch.
+    pub(crate) fn now() -> Self {
+        Self::saturating_from_system_time(std::time::SystemTime::now())
+    }
+
+    /// Convert a system time, returning `None` for pre-epoch observations or
+    /// values whose millisecond representation exceeds `u64`.
+    pub fn checked_from_system_time(time: std::time::SystemTime) -> Option<Self> {
         time.duration_since(std::time::UNIX_EPOCH)
-            .map(|duration| Self(duration.as_millis() as u64))
-            .unwrap_or_default()
+            .ok()
+            .and_then(|duration| u64::try_from(duration.as_millis()).ok())
+            .map(Self)
+    }
+
+    /// Convert a system time, saturating pre-epoch observations at zero and
+    /// excessively distant observations at the largest representable epoch.
+    pub fn saturating_from_system_time(time: std::time::SystemTime) -> Self {
+        match time.duration_since(std::time::UNIX_EPOCH) {
+            Ok(duration) => Self(u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)),
+            Err(_) => Self(0),
+        }
+    }
+
+    /// Convert to the standard-library system-time representation when it fits.
+    pub fn checked_system_time(self) -> Option<std::time::SystemTime> {
+        std::time::UNIX_EPOCH.checked_add(std::time::Duration::from_millis(self.0))
     }
 }
 
@@ -526,9 +594,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn timestamp_from_system_time_saturates_pre_epoch_to_zero() {
+    fn timestamp_system_time_conversion_handles_pre_epoch_explicitly() {
         assert_eq!(
-            Timestamp::from_system_time(UNIX_EPOCH - Duration::from_millis(1)),
+            Timestamp::checked_from_system_time(UNIX_EPOCH - Duration::from_millis(1)),
+            None
+        );
+        assert_eq!(
+            Timestamp::saturating_from_system_time(UNIX_EPOCH - Duration::from_millis(1)),
             Timestamp(0)
         );
     }
@@ -536,7 +608,60 @@ mod tests {
     #[test]
     fn timestamp_from_system_time_preserves_epoch_millis() {
         assert_eq!(
-            Timestamp::from_system_time(UNIX_EPOCH + Duration::from_millis(1_234)),
+            Timestamp::checked_from_system_time(UNIX_EPOCH + Duration::from_millis(1_234)),
+            Some(Timestamp(1_234))
+        );
+        assert_eq!(
+            Timestamp(1_234).checked_system_time(),
+            Some(UNIX_EPOCH + Duration::from_millis(1_234))
+        );
+    }
+
+    #[test]
+    fn timestamp_duration_arithmetic_covers_exact_edge_and_overflow() {
+        assert_eq!(
+            Timestamp(10).checked_add_duration(Duration::from_millis(5)),
+            Some(Timestamp(15))
+        );
+        assert_eq!(
+            Timestamp(u64::MAX).checked_add_duration(Duration::from_millis(1)),
+            None
+        );
+        assert_eq!(
+            Timestamp(u64::MAX).saturating_add_duration(Duration::from_millis(1)),
+            Timestamp(u64::MAX)
+        );
+        assert_eq!(
+            Timestamp(5).checked_sub_duration(Duration::from_millis(5)),
+            Some(Timestamp(0))
+        );
+        assert_eq!(
+            Timestamp(4).checked_sub_duration(Duration::from_millis(5)),
+            None
+        );
+        assert_eq!(
+            Timestamp(4).saturating_sub_duration(Duration::from_millis(5)),
+            Timestamp(0)
+        );
+        assert_eq!(
+            Timestamp(5).checked_duration_since(Timestamp(5)),
+            Some(Duration::ZERO)
+        );
+        assert_eq!(
+            Timestamp(4).saturating_duration_since(Timestamp(5)),
+            Duration::ZERO
+        );
+    }
+
+    #[test]
+    fn timestamp_epoch_seconds_floor_and_serialization_remain_stable() {
+        assert_eq!(Timestamp::from_unix_millis(1_999).as_unix_secs_floor(), 1);
+        assert_eq!(
+            serde_json::to_string(&Timestamp(1_234)).expect("timestamp should serialize"),
+            "1234"
+        );
+        assert_eq!(
+            serde_json::from_str::<Timestamp>("1234").expect("timestamp should deserialize"),
             Timestamp(1_234)
         );
     }

@@ -43,7 +43,7 @@ async fn observer_sync_nested_write_that_would_evict_is_rejected_without_deadloc
     let engine = Arc::new(
         Engine::new_with_simulation_and_memory_persistence(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(46_580))),
+            Arc::new(ManualWallClock::new(Timestamp(46_580))),
             faults.clone(),
             Arc::new(nimbus_core::SeededIdSource::new(46_581)),
         )
@@ -103,7 +103,7 @@ async fn observer_nested_sync_write_rejected_during_direct_eviction_does_not_sel
     let engine = Arc::new(
         Engine::new_with_simulation_and_memory_persistence(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(46_582))),
+            Arc::new(ManualWallClock::new(Timestamp(46_582))),
             faults.clone(),
             Arc::new(nimbus_core::SeededIdSource::new(46_583)),
         )
@@ -209,7 +209,7 @@ async fn direct_eviction_completes_when_the_observer_drain_times_out() {
     let engine = Arc::new(
         Engine::new_with_simulation_and_memory_persistence(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(46_584))),
+            Arc::new(ManualWallClock::new(Timestamp(46_584))),
             faults.clone(),
             Arc::new(nimbus_core::SeededIdSource::new(46_585)),
         )
@@ -328,7 +328,7 @@ async fn ambiguous_publisher_eviction_drains_then_reopens_a_distinct_runtime() {
     let engine = Arc::new(
         Engine::new_with_simulation(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(46_900))),
+            Arc::new(ManualWallClock::new(Timestamp(46_900))),
             faults,
         )
         .expect("guarded eviction engine should create"),
@@ -437,7 +437,7 @@ async fn applied_sequence_waiter_returns_retryable_error_when_runtime_is_evicted
     let engine = Arc::new(
         Engine::new_with_simulation_and_memory_persistence(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(46_925))),
+            Arc::new(ManualWallClock::new(Timestamp(46_925))),
             faults.clone(),
             Arc::new(nimbus_core::SeededIdSource::new(46_925)),
         )
@@ -516,7 +516,7 @@ async fn ambiguous_eviction_and_explicit_delete_complete_without_lock_inversion(
     let engine = Arc::new(
         Engine::new_with_simulation_and_memory_persistence(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(46_925))),
+            Arc::new(ManualWallClock::new(Timestamp(46_925))),
             faults.clone(),
             Arc::new(nimbus_core::SeededIdSource::new(46_925)),
         )
@@ -594,7 +594,7 @@ async fn ambiguous_eviction_fails_and_drains_stranded_mutation_queues_before_rel
     let engine = Arc::new(
         Engine::new_with_simulation_and_memory_persistence(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(46_950))),
+            Arc::new(ManualWallClock::new(Timestamp(46_950))),
             faults.clone(),
             Arc::new(nimbus_core::SeededIdSource::new(46_950)),
         )
@@ -697,7 +697,7 @@ async fn publisher_torn_tail_recovery_replays_exactly_one_contiguous_prefix() {
     let engine = Arc::new(
         Engine::new_with_simulation_and_memory_persistence(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(45_000))),
+            Arc::new(ManualWallClock::new(Timestamp(45_000))),
             faults,
             Arc::new(nimbus_core::SeededIdSource::new(45_000)),
         )

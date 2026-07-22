@@ -4,9 +4,9 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use nimbus_core::{
-    Timestamp, TriggerInvocationKey, TriggerInvocationRecord, TriggerInvocationState,
+    Timestamp, TriggerInvocationKey, TriggerInvocationRecord, TriggerInvocationState, WallClock,
 };
-use nimbus_storage::{Clock, FaultPoint};
+use nimbus_storage::FaultPoint;
 use tracing::warn;
 
 use crate::triggers::execution::{SharedTriggerInvocationExecutor, TriggerInvocationExecution};
@@ -87,7 +87,7 @@ impl TriggerExecutionQueueState {
     fn pop_next_ready(
         &self,
         shutdown: &AtomicBool,
-        clock: &dyn Clock,
+        clock: &dyn WallClock,
     ) -> Option<TriggerInvocationKey> {
         let mut queue = self
             .queue
@@ -146,7 +146,7 @@ impl TriggerExecutionWorker {
         &self,
         runtime: &Arc<TenantRuntime>,
         queue: Arc<TriggerExecutionQueueState>,
-        clock: Arc<dyn Clock>,
+        clock: Arc<dyn WallClock>,
         executor: SharedTriggerInvocationExecutor,
     ) {
         let runtime = Arc::downgrade(runtime);
@@ -174,7 +174,7 @@ impl TriggerExecutionQueue {
     pub(super) fn start_worker(
         &self,
         runtime: &Arc<TenantRuntime>,
-        clock: Arc<dyn Clock>,
+        clock: Arc<dyn WallClock>,
         executor: SharedTriggerInvocationExecutor,
     ) {
         self.worker
@@ -203,7 +203,7 @@ fn run_trigger_execution_worker(
     runtime: std::sync::Weak<TenantRuntime>,
     queue: Arc<TriggerExecutionQueueState>,
     shutdown: Arc<AtomicBool>,
-    clock: Arc<dyn Clock>,
+    clock: Arc<dyn WallClock>,
     executor: SharedTriggerInvocationExecutor,
 ) {
     loop {
@@ -295,7 +295,7 @@ fn run_trigger_execution_worker(
 fn requeue_for_store_retry(
     queue: &TriggerExecutionQueueState,
     key: &TriggerInvocationKey,
-    clock: &dyn Clock,
+    clock: &dyn WallClock,
     error: &nimbus_core::Error,
 ) {
     let retry_at = store_retry_ready_at(clock.now());
@@ -354,23 +354,11 @@ fn persist_execution_outcome(runtime: &TenantRuntime, record: &TriggerInvocation
 }
 
 fn store_retry_ready_at(now: Timestamp) -> Timestamp {
-    Timestamp(
-        now.0.saturating_add(
-            TRIGGER_EXECUTION_STORE_RETRY_BACKOFF
-                .as_millis()
-                .try_into()
-                .unwrap_or(u64::MAX),
-        ),
-    )
+    now.saturating_add_duration(TRIGGER_EXECUTION_STORE_RETRY_BACKOFF)
 }
 
 fn next_retry_attempt_at(attempt: u32, now: Timestamp) -> Option<Timestamp> {
-    retry_delay_for_attempt(attempt).map(|delay| {
-        Timestamp(
-            now.0
-                .saturating_add(delay.as_millis().try_into().unwrap_or(u64::MAX)),
-        )
-    })
+    retry_delay_for_attempt(attempt).map(|delay| now.saturating_add_duration(delay))
 }
 
 fn retry_delay_for_attempt(attempt: u32) -> Option<Duration> {

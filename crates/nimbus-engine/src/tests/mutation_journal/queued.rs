@@ -333,7 +333,7 @@ async fn concurrent_disjoint_execution_unit_commits_all_succeed_without_retry() 
     let engine = Arc::new(
         Engine::new_with_simulation_and_memory_persistence(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(56_000))),
+            Arc::new(ManualWallClock::new(Timestamp(56_000))),
             Arc::new(NoopFaultInjector),
             Arc::new(nimbus_core::SeededIdSource::new(56_000)),
         )
@@ -1088,7 +1088,7 @@ async fn assign_time_stamping_is_monotonic_under_concurrent_prepares() {
     let engine = Arc::new(
         Engine::new_with_simulation_and_memory_persistence(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(55_000))),
+            Arc::new(ManualWallClock::new(Timestamp(55_000))),
             Arc::new(NoopFaultInjector),
             Arc::new(nimbus_core::SeededIdSource::new(55_000)),
         )
@@ -1622,7 +1622,7 @@ async fn adaptive_batch_never_splits_the_durable_round_trip() {
     let engine = Arc::new(
         Engine::new_with_simulation_and_memory_persistence(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(43_500))),
+            Arc::new(ManualWallClock::new(Timestamp(43_500))),
             faults.clone(),
             Arc::new(nimbus_core::SeededIdSource::new(43_500)),
         )

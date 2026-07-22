@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 
-use nimbus_core::{Error, Result, TenantId, Timestamp};
+use nimbus_core::{Error, Result, SystemWallClock, TenantId, WallClock};
 use nimbus_engine::Engine;
 use nimbus_services::{
     DurableObjectActivationLease, DurableObjectId, DurableObjectInstanceKey, DurableObjectNamespace,
@@ -25,6 +25,12 @@ const LEASE_KEY: &str = "__system/lease";
 const ALARM_KEY: &str = "__system/alarm";
 const WS_PREFIX: &str = "__system/ws/";
 
+/// Compatibility-test substrate only.
+///
+/// Its lane mutex and local-wall activation record do not provide distributed
+/// exclusivity. No production front door may construct or invoke this type
+/// until horizontal-scaling HS5 supplies per-object placement plus a storage-
+/// atomic epoch fence.
 #[derive(Clone)]
 pub struct DurableObjectSubstrate {
     engine: Arc<Engine>,
@@ -88,7 +94,7 @@ struct SystemDurableObjectClock;
 
 impl DurableObjectClock for SystemDurableObjectClock {
     fn now_millis(&self) -> u64 {
-        Timestamp::now().0
+        SystemWallClock.now_millis()
     }
 }
 
@@ -1019,5 +1025,81 @@ mod tests {
         assert_eq!(sockets.len(), 1);
         assert_eq!(sockets[0].socket_id, "socket-a");
         assert_eq!(sockets[0].auto_response.as_deref(), Some("pong"));
+    }
+
+    #[test]
+    fn durable_objects_have_no_production_front_door_before_hs5() {
+        use std::path::{Path, PathBuf};
+
+        fn collect_production_rust(path: &Path, files: &mut Vec<PathBuf>) {
+            let mut entries = std::fs::read_dir(path)
+                .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()))
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .unwrap_or_else(|error| panic!("failed to enumerate {}: {error}", path.display()));
+            entries.sort_by_key(std::fs::DirEntry::path);
+            for entry in entries {
+                let path = entry.path();
+                let file_type = entry.file_type().unwrap_or_else(|error| {
+                    panic!("failed to inspect {}: {error}", path.display())
+                });
+                if file_type.is_dir() {
+                    if !matches!(
+                        path.file_name().and_then(|name| name.to_str()),
+                        Some("tests" | "benches" | "target")
+                    ) {
+                        collect_production_rust(&path, files);
+                    }
+                } else if file_type.is_file()
+                    && path.extension().is_some_and(|extension| extension == "rs")
+                    && path.file_name().and_then(|name| name.to_str()) != Some("tests.rs")
+                    && !path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name.ends_with("_tests.rs"))
+                {
+                    files.push(path);
+                }
+            }
+        }
+
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let repo_root = manifest_dir
+            .parent()
+            .and_then(Path::parent)
+            .expect("server crate should live under repo/crates");
+        let concept_module = manifest_dir.join("src/adapters/cloudflare/durable_objects/mod.rs");
+        let mut files = Vec::new();
+        collect_production_rust(&repo_root.join("crates"), &mut files);
+
+        let mut violations = Vec::new();
+        for path in files {
+            if path == concept_module {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+            for (index, line) in source.lines().enumerate() {
+                if line.contains("DurableObjectSubstrate") || line.contains("DurableObjectStub") {
+                    violations.push(format!(
+                        "{}:{} constructs or invokes the unserved Durable Object substrate",
+                        path.strip_prefix(repo_root).unwrap_or(&path).display(),
+                        index + 1
+                    ));
+                }
+            }
+        }
+
+        let fixture = repo_root.join("scripts/fixtures/durable-objects/forbidden_front_door.rs");
+        let fixture_source = std::fs::read_to_string(&fixture)
+            .unwrap_or_else(|error| panic!("failed to read {}: {error}", fixture.display()));
+        assert!(
+            fixture_source.contains("DurableObjectSubstrate::new"),
+            "guard fixture must demonstrate the forbidden production construction"
+        );
+        assert!(
+            violations.is_empty(),
+            "Durable Objects have no production front door before horizontal-scaling HS5 supplies per-object placement and storage-atomic epoch fencing:\n{}",
+            violations.join("\n")
+        );
     }
 }

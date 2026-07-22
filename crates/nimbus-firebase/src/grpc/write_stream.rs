@@ -3,12 +3,13 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 use futures::stream;
 use nimbus_core::{
     AtomicWrite, AtomicWriteBatch, AtomicWriteBatchOutcome, Error, FieldTransform,
-    FieldTransformOperation, NumericValue, PrincipalContext, StoredValue, Timestamp,
-    TypedScalarValue, WritePrecondition, WriteSetMode,
+    FieldTransformOperation, MonotonicClock, NumericValue, PrincipalContext, StoredValue,
+    SystemMonotonicClock, Timestamp, TypedScalarValue, WritePrecondition, WriteSetMode,
 };
 use nimbus_engine::Engine;
 use nimbus_tenant::TenantIsolationContext;
@@ -47,13 +48,19 @@ const WRITE_STREAM_ID_PREFIX: &str = "firestore_write_";
 pub struct WriteStreamRegistry {
     streams: Mutex<HashMap<String, Arc<AsyncMutex<StoredWriteStream>>>>,
     next_stream_id: AtomicU64,
+    clock: Arc<dyn MonotonicClock>,
 }
 
 impl WriteStreamRegistry {
     pub fn new() -> Self {
+        Self::new_with_clock(Arc::new(SystemMonotonicClock))
+    }
+
+    fn new_with_clock(clock: Arc<dyn MonotonicClock>) -> Self {
         Self {
             streams: Mutex::new(HashMap::new()),
             next_stream_id: AtomicU64::new(1),
+            clock,
         }
     }
 
@@ -62,8 +69,9 @@ impl WriteStreamRegistry {
         database: FirestoreDatabaseName,
         isolation: TenantIsolationContext,
     ) -> Result<(String, Arc<AsyncMutex<StoredWriteStream>>, WriteResponse), Status> {
+        let observed_at = self.clock.now();
         let mut streams = self.streams();
-        prune_expired_streams(&mut streams);
+        prune_expired_streams(&mut streams, observed_at);
         if streams.len() >= MAX_ACTIVE_WRITE_STREAMS {
             return Err(Status::resource_exhausted(format!(
                 "too many active Firestore write streams; limit is {MAX_ACTIVE_WRITE_STREAMS}"
@@ -74,16 +82,17 @@ impl WriteStreamRegistry {
             "{WRITE_STREAM_ID_PREFIX}{}",
             self.next_stream_id.fetch_add(1, Ordering::Relaxed)
         );
-        let mut stream = StoredWriteStream::new(database, isolation);
-        let response = stream.new_stream_handshake(&stream_id);
+        let mut stream = StoredWriteStream::new(database, isolation, observed_at);
+        let response = stream.new_stream_handshake(&stream_id, observed_at);
         let stream = Arc::new(AsyncMutex::new(stream));
         streams.insert(stream_id.clone(), stream.clone());
         Ok((stream_id, stream, response))
     }
 
     fn get_stream(&self, stream_id: &str) -> Result<Arc<AsyncMutex<StoredWriteStream>>, Status> {
+        let observed_at = self.clock.now();
         let mut streams = self.streams();
-        prune_expired_streams(&mut streams);
+        prune_expired_streams(&mut streams, observed_at);
         streams.get(stream_id).cloned().ok_or_else(|| {
             Status::invalid_argument("write stream is not active; create a new stream")
         })
@@ -93,6 +102,10 @@ impl WriteStreamRegistry {
         self.streams
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn now(&self) -> Instant {
+        self.clock.now()
     }
 }
 
@@ -114,18 +127,22 @@ struct StoredWriteStream {
     latest_token: u64,
     acknowledged_token: u64,
     replayable_responses: VecDeque<StoredReplayResponse>,
-    expires_at: Timestamp,
+    expires_at: Instant,
 }
 
 impl StoredWriteStream {
-    fn new(database: FirestoreDatabaseName, isolation: TenantIsolationContext) -> Self {
+    fn new(
+        database: FirestoreDatabaseName,
+        isolation: TenantIsolationContext,
+        observed_at: Instant,
+    ) -> Self {
         Self {
             database,
             isolation,
             latest_token: 0,
             acknowledged_token: 0,
             replayable_responses: VecDeque::new(),
-            expires_at: expiry_timestamp(),
+            expires_at: write_stream_deadline(observed_at),
         }
     }
 
@@ -141,8 +158,8 @@ impl StoredWriteStream {
         self.latest_token
     }
 
-    fn new_stream_handshake(&mut self, stream_id: &str) -> WriteResponse {
-        self.touch();
+    fn new_stream_handshake(&mut self, stream_id: &str, observed_at: Instant) -> WriteResponse {
+        self.touch(observed_at);
         let token = encode_stream_token(self.next_token());
         self.push_response(WriteResponse {
             stream_id: stream_id.to_string(),
@@ -152,8 +169,12 @@ impl StoredWriteStream {
         })
     }
 
-    fn resume_from(&mut self, token: u64) -> Result<Vec<WriteResponse>, Status> {
-        self.touch();
+    fn resume_from(
+        &mut self,
+        token: u64,
+        observed_at: Instant,
+    ) -> Result<Vec<WriteResponse>, Status> {
+        self.touch(observed_at);
         self.acknowledge(token)?;
 
         let mut responses = self
@@ -166,16 +187,17 @@ impl StoredWriteStream {
         Ok(responses)
     }
 
-    fn acknowledge_only(&mut self, token: u64) -> Result<(), Status> {
-        self.touch();
+    fn acknowledge_only(&mut self, token: u64, observed_at: Instant) -> Result<(), Status> {
+        self.touch(observed_at);
         self.acknowledge(token)
     }
 
     fn push_commit_outcome(
         &mut self,
         outcome: AtomicWriteBatchOutcome,
+        observed_at: Instant,
     ) -> Result<WriteResponse, Status> {
-        self.touch();
+        self.touch(observed_at);
         let write_results = outcome
             .write_results
             .iter()
@@ -232,8 +254,8 @@ impl StoredWriteStream {
         Ok(())
     }
 
-    fn touch(&mut self) {
-        self.expires_at = expiry_timestamp();
+    fn touch(&mut self, observed_at: Instant) {
+        self.expires_at = write_stream_deadline(observed_at);
     }
 
     fn next_token(&mut self) -> u64 {
@@ -242,16 +264,20 @@ impl StoredWriteStream {
     }
 }
 
-fn prune_expired_streams(streams: &mut HashMap<String, Arc<AsyncMutex<StoredWriteStream>>>) {
-    let now = Timestamp::now();
+fn prune_expired_streams(
+    streams: &mut HashMap<String, Arc<AsyncMutex<StoredWriteStream>>>,
+    observed_at: Instant,
+) {
     streams.retain(|_, stream| match stream.try_lock() {
-        Ok(stream) => stream.expires_at > now,
+        Ok(stream) => stream.expires_at > observed_at,
         Err(_) => true,
     });
 }
 
-fn expiry_timestamp() -> Timestamp {
-    Timestamp(Timestamp::now().0.saturating_add(WRITE_STREAM_TTL_MS))
+fn write_stream_deadline(observed_at: Instant) -> Instant {
+    observed_at
+        .checked_add(Duration::from_millis(WRITE_STREAM_TTL_MS))
+        .expect("write stream monotonic deadline must be representable")
 }
 
 #[derive(Clone)]
@@ -380,7 +406,7 @@ impl ActiveWriteRequestStream {
             ));
         }
         let tenant_context = stream.tenant_context().clone();
-        let responses = stream.resume_from(token)?;
+        let responses = stream.resume_from(token, self.registry.now())?;
         drop(stream);
 
         self.active_stream = Some(ActiveWriteStream {
@@ -428,11 +454,11 @@ impl ActiveWriteRequestStream {
         }
 
         if request.writes.is_empty() {
-            stream.acknowledge_only(token)?;
+            stream.acknowledge_only(token, self.registry.now())?;
             return Ok(Vec::new());
         }
 
-        stream.acknowledge_only(token)?;
+        stream.acknowledge_only(token, self.registry.now())?;
         let batch = lower_write_batch(&request.writes, &active_stream.database)?;
         let outcome = execute_write_batch(
             &self.engine,
@@ -440,7 +466,7 @@ impl ActiveWriteRequestStream {
             &self.principal,
             batch,
         )?;
-        let response = stream.push_commit_outcome(outcome)?;
+        let response = stream.push_commit_outcome(outcome, self.registry.now())?;
         Ok(vec![response])
     }
 }
@@ -982,7 +1008,23 @@ pub(super) fn firebase_grpc_status(error: Error) -> Status {
 
 #[cfg(test)]
 mod tests {
+    use nimbus_core::{ManualMonotonicClock, ManualWallClock, TenantId, WallClock};
+
     use super::*;
+
+    fn test_database() -> FirestoreDatabaseName {
+        FirestoreDatabaseName {
+            project_id: "clock-tests".to_string(),
+        }
+    }
+
+    fn test_isolation() -> TenantIsolationContext {
+        TenantIsolationContext::application(
+            TenantId::new("firebase-clock-tests").expect("tenant id should parse"),
+            PrincipalContext::anonymous(),
+            "firebase.clock.tests",
+        )
+    }
     use nimbus_core::{Document, SpecialDouble, TableName, TypedScalarValue};
 
     #[test]
@@ -1057,5 +1099,62 @@ mod tests {
 
         assert_eq!(error.code(), tonic::Code::InvalidArgument);
         assert!(error.message().contains("write stream is not active"));
+    }
+
+    #[test]
+    fn write_stream_retention_uses_elapsed_time_across_wall_steps() {
+        let monotonic = Arc::new(ManualMonotonicClock::new());
+        let wall = ManualWallClock::new(Timestamp(10_000));
+        let registry = WriteStreamRegistry::new_with_clock(monotonic.clone());
+        let (stream_id, _, _) = registry
+            .create_stream(test_database(), test_isolation())
+            .expect("stream should create");
+
+        wall.set(Timestamp(1));
+        assert!(registry.get_stream(&stream_id).is_ok());
+        wall.set(Timestamp(u64::MAX));
+        assert!(registry.get_stream(&stream_id).is_ok());
+
+        monotonic.advance(Duration::from_millis(WRITE_STREAM_TTL_MS));
+        assert!(registry.get_stream(&stream_id).is_err());
+        assert_eq!(wall.now(), Timestamp(u64::MAX));
+    }
+
+    #[tokio::test]
+    async fn write_stream_touch_extends_from_current_monotonic_observation() {
+        let monotonic = Arc::new(ManualMonotonicClock::new());
+        let registry = WriteStreamRegistry::new_with_clock(monotonic.clone());
+        let (stream_id, stored, _) = registry
+            .create_stream(test_database(), test_isolation())
+            .expect("stream should create");
+
+        monotonic.advance(Duration::from_secs(30));
+        stored
+            .lock()
+            .await
+            .acknowledge_only(1, monotonic.now())
+            .expect("acknowledgement should touch the stream");
+        monotonic.advance(Duration::from_secs(59));
+        assert!(registry.get_stream(&stream_id).is_ok());
+        monotonic.advance(Duration::from_secs(1));
+        assert!(registry.get_stream(&stream_id).is_err());
+    }
+
+    #[tokio::test]
+    async fn busy_write_stream_is_not_pruned() {
+        let monotonic = Arc::new(ManualMonotonicClock::new());
+        let registry = WriteStreamRegistry::new_with_clock(monotonic.clone());
+        let (stream_id, stored, _) = registry
+            .create_stream(test_database(), test_isolation())
+            .expect("stream should create");
+        let guard = stored.lock().await;
+
+        monotonic.advance(Duration::from_millis(WRITE_STREAM_TTL_MS));
+        assert!(
+            registry.get_stream(&stream_id).is_ok(),
+            "a locked stream must remain conservatively retained"
+        );
+        drop(guard);
+        assert!(registry.get_stream(&stream_id).is_err());
     }
 }

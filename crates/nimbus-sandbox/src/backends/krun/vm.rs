@@ -13,10 +13,10 @@ use super::bundle::{KrunBundleLayout, KrunBundleMount, KrunBundleOptions, write_
 use crate::backend::{SandboxBackend, SandboxBackendKind, SandboxFuture};
 use crate::backends::conmon::lifecycle::{
     RuntimeStatusProbe, configured_stop_signal, configured_stop_timeout,
-    detect_runtime_status as detect_conmon_runtime_status, ensure_linux_host, now_millis,
-    read_exit_code, read_pid, remove_if_exists, restart_backoff_delay,
-    restart_policy_allows_restart, run_status_best_effort, run_status_checked, signal_process,
-    spawn_background, wait_for_path, wait_for_runtime_state,
+    detect_runtime_status as detect_conmon_runtime_status, ensure_linux_host, read_exit_code,
+    read_pid, remove_if_exists, restart_backoff_delay, restart_policy_allows_restart,
+    run_status_best_effort, run_status_checked, signal_process, spawn_background, wait_for_path,
+    wait_for_runtime_state,
 };
 use crate::backends::conmon::spec_resolve::{
     merge_env_overrides, resolve_process_spec, resolve_root_spec, slugify,

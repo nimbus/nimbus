@@ -1,7 +1,8 @@
-use std::{future, sync::Arc};
+use std::{future, sync::Arc, time::Duration};
 
 use nimbus_core::{
-    Error, JobId, Result, ScheduleRequest, ScheduledJob, ScheduledJobResult, TenantId, Timestamp,
+    Error, JobId, Mutation, Result, ScheduleRequest, ScheduledJob, ScheduledJobResult, TenantId,
+    Timestamp,
 };
 use nimbus_storage::{FaultPoint, TenantWriteOutcome};
 
@@ -21,6 +22,21 @@ impl Engine {
         request: ScheduleRequest,
     ) -> Result<JobId> {
         let job = scheduled_job_from_request(self.now(), request);
+        self.persist_scheduled_job(tenant_id, job)
+    }
+
+    /// Schedules a mutation at an exact wall-clock timestamp.
+    pub fn schedule_mutation_at(
+        &self,
+        tenant_id: &TenantId,
+        run_at: Timestamp,
+        mutation: Mutation,
+    ) -> Result<JobId> {
+        let job = scheduled_job_at(self.now(), run_at, mutation);
+        self.persist_scheduled_job(tenant_id, job)
+    }
+
+    fn persist_scheduled_job(&self, tenant_id: &TenantId, job: ScheduledJob) -> Result<JobId> {
         let job_id = job.id.clone();
         let job_id_for_insert = job_id.clone();
         with_scheduler_runtime(self, tenant_id, move |runtime| {
@@ -41,6 +57,23 @@ impl Engine {
             .await
     }
 
+    /// Schedules a mutation at an exact wall-clock timestamp asynchronously.
+    pub async fn schedule_mutation_at_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        run_at: Timestamp,
+        mutation: Mutation,
+    ) -> Result<JobId> {
+        self.schedule_mutation_at_async_cancellable(
+            tenant_id,
+            run_at,
+            mutation,
+            future::pending(),
+            || Ok(()),
+        )
+        .await
+    }
+
     /// Schedules a mutation to execute in the future asynchronously with cooperative cancellation.
     pub async fn schedule_mutation_async_cancellable<Fut, Check>(
         self: &Arc<Self>,
@@ -54,6 +87,40 @@ impl Engine {
         Check: Fn() -> Result<()> + Send + 'static,
     {
         let job = scheduled_job_from_request(self.now(), request);
+        self.persist_scheduled_job_async_cancellable(tenant_id, job, cancel_wait, check_cancel)
+            .await
+    }
+
+    /// Schedules a mutation at an exact wall-clock timestamp asynchronously
+    /// with cooperative cancellation.
+    pub async fn schedule_mutation_at_async_cancellable<Fut, Check>(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        run_at: Timestamp,
+        mutation: Mutation,
+        cancel_wait: Fut,
+        check_cancel: Check,
+    ) -> Result<JobId>
+    where
+        Fut: future::Future<Output = ()> + Send,
+        Check: Fn() -> Result<()> + Send + 'static,
+    {
+        let job = scheduled_job_at(self.now(), run_at, mutation);
+        self.persist_scheduled_job_async_cancellable(tenant_id, job, cancel_wait, check_cancel)
+            .await
+    }
+
+    async fn persist_scheduled_job_async_cancellable<Fut, Check>(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+        job: ScheduledJob,
+        cancel_wait: Fut,
+        check_cancel: Check,
+    ) -> Result<JobId>
+    where
+        Fut: future::Future<Output = ()> + Send,
+        Check: Fn() -> Result<()> + Send + 'static,
+    {
         let job_id = job.id.clone();
         let outcome = write_scheduler_transaction_cancellable(
             self,
@@ -235,11 +302,19 @@ impl Engine {
 }
 
 fn scheduled_job_from_request(now: Timestamp, request: ScheduleRequest) -> ScheduledJob {
+    scheduled_job_at(
+        now,
+        now.saturating_add_duration(Duration::from_millis(request.run_after_ms)),
+        request.mutation,
+    )
+}
+
+fn scheduled_job_at(created_at: Timestamp, run_at: Timestamp, mutation: Mutation) -> ScheduledJob {
     ScheduledJob {
         id: JobId::new(),
-        run_at: Timestamp(now.0.saturating_add(request.run_after_ms)),
-        mutation: request.mutation,
-        created_at: now,
+        run_at,
+        mutation,
+        created_at,
     }
 }
 

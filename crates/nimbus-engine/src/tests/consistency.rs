@@ -94,6 +94,8 @@ async fn assert_engine_reload_recovers_durable_journal_before_serving_async_read
             committer_lease_acquire_count: 0,
             committer_lease_renewal_count: 0,
             committer_lease_renewal_failure_count: 0,
+            committer_lease_renewal_failure_streak: 0,
+            committer_lease_last_success_age_millis: None,
             committer_lease_renewal_worker_running: false,
             publisher_queue_depth: 0,
             publisher_queue_capacity: 32,
@@ -382,7 +384,7 @@ async fn durable_journal_bootstrap_metadata_reconstructs_same_state_as_live_read
     let engine = Arc::new(
         Engine::new_with_simulation(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(80_000))),
+            Arc::new(ManualWallClock::new(Timestamp(80_000))),
             faults.clone(),
         )
         .expect("engine should create"),

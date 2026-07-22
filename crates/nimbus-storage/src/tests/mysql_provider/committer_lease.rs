@@ -27,6 +27,21 @@ async fn mysql_committer_lease_concurrent_acquire_has_exactly_one_winner() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn mysql_lease_takeover_after_expiry_fences_stale_epoch_under_concurrency() {
+    with_test_provider(|provider, _config| async move {
+        let tenant = TenantId::new("lease-expiry-concurrency").expect("tenant id should build");
+        let opened = provider
+            .create_opened_tenant(&tenant)
+            .await
+            .expect("tenant should create and open");
+        super::super::exercise_committer_lease_takeover_after_expiry_under_concurrency(
+            opened.store.as_ref().clone(),
+        );
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn mysql_fenced_durable_apply_contract_is_atomic() {
     with_test_provider(|provider, _config| async move {
         for (tenant_name, exercise) in [

@@ -158,7 +158,7 @@ async fn sync_query_waits_for_applied_journal_visibility_and_records_wait_metric
     let engine = Arc::new(
         Engine::new_with_simulation(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(35_000))),
+            Arc::new(ManualWallClock::new(Timestamp(35_000))),
             faults.clone(),
         )
         .expect("engine should create"),
@@ -244,7 +244,7 @@ async fn query_waits_for_applied_journal_visibility_and_records_wait_metrics() {
     let engine = Arc::new(
         Engine::new_with_simulation(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(40_000))),
+            Arc::new(ManualWallClock::new(Timestamp(40_000))),
             faults.clone(),
         )
         .expect("engine should create"),
@@ -525,7 +525,7 @@ async fn sync_get_document_waits_for_applied_journal_visibility() {
     let engine = Arc::new(
         Engine::new_with_simulation(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(45_000))),
+            Arc::new(ManualWallClock::new(Timestamp(45_000))),
             faults.clone(),
         )
         .expect("engine should create"),

@@ -25,10 +25,10 @@ are separate protocols backed by separate wire formats.
 
 The Cloudflare surface is default-on but early and partial. Workers KV over
 REST is the only Cloudflare data plane served today. Durable Objects, D1,
-and R2 are not served: Durable Objects has a storage substrate that no HTTP
-front door mounts, and D1 and R2 exist only as parsed wrangler bindings in
-the configuration registry. The [Not served](#not-served-today) section
-lists each unserved family.
+and R2 are not served: Durable Objects has a compatibility-test substrate
+that no production front door can construct, and D1 and R2 exist only as
+parsed wrangler bindings in the configuration registry. The
+[Not served](#not-served-today) section lists each unserved family.
 
 ## Served: Workers KV REST
 
@@ -116,7 +116,7 @@ held in the registry but back no HTTP surface.
 
 | Cloudflare family | State |
 | --- | --- |
-| Durable Objects | A storage substrate exists (per-instance activation leases, transactional storage, alarms, hibernated-WebSocket records) but no HTTP front door mounts it. There is no served Durable Object data plane. |
+| Durable Objects | A compatibility-test substrate covers per-instance activation records, transactional storage, alarms, and hibernated-WebSocket records. Its local process lane and local-wall deadline are not distributed authority. Nimbus exposes no production construction path or served Durable Object data plane; enablement requires distributed per-object placement and storage-atomic epoch fencing. |
 | D1 | Parsed as wrangler `d1_databases` bindings into the configuration registry only. No D1 HTTP data plane. |
 | R2 | Parsed as wrangler `r2_buckets` bindings into the configuration registry only. No R2 HTTP data plane. |
 | Workers script execution | Not served. Nimbus does not run Worker scripts against these bindings. |

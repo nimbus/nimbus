@@ -503,7 +503,7 @@ mod tests {
     use std::time::Duration;
 
     use nimbus_blob::{BlobGc, LocalPackStore, MemoryBlobStore, StaticBlobRoots};
-    use nimbus_core::{ManualClock, Timestamp};
+    use nimbus_core::{ManualWallClock, Timestamp};
 
     use super::*;
 
@@ -633,7 +633,7 @@ mod tests {
     async fn snapshot_pin_survives_sweep_so_fork_succeeds_then_release_allows_sweep() {
         let root = tempfile::tempdir().expect("tempdir");
         let store_root = tempfile::tempdir().expect("tempdir");
-        let clock = Arc::new(ManualClock::new(Timestamp(0)));
+        let clock = Arc::new(ManualWallClock::new(Timestamp(0)));
         let pack_store = LocalPackStore::open(store_root.path())
             .expect("pack store opens")
             .with_clock(clock.clone());

@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::ops::Bound::{Excluded, Included};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use imbl::OrdMap;
 use nimbus_core::ResourcePathBinding;
@@ -801,12 +802,12 @@ impl WriteLog {
             if sequence > state.published_through {
                 break;
             }
-            let age_ms = now.0.saturating_sub(entry.observed_at.0);
-            if age_ms < self.config.min_retention_ms {
+            let age = now.saturating_duration_since(entry.observed_at);
+            if age < Duration::from_millis(self.config.min_retention_ms) {
                 break;
             }
             let reader_has_advanced = sequence <= reader_frontier;
-            let exceeded_max_retention = age_ms >= self.config.max_retention_ms;
+            let exceeded_max_retention = age >= Duration::from_millis(self.config.max_retention_ms);
             let exceeded_byte_budget = state.accounted_bytes > self.config.soft_max_bytes;
             if !(reader_has_advanced || exceeded_max_retention || exceeded_byte_budget) {
                 break;
@@ -934,10 +935,10 @@ mod tests {
     use std::sync::Arc;
 
     use nimbus_core::{
-        Filter, FilterOp, IndexId, IndexRangeDependency, PaginatedWindowDependency,
-        PredicateDependency, TableId, WriteOp, WriteOpType,
+        Filter, FilterOp, IndexId, IndexRangeDependency, ManualWallClock,
+        PaginatedWindowDependency, PredicateDependency, TableId, WriteOp, WriteOpType,
     };
-    use nimbus_storage::{ManualClock, MemoryTenantStore, NoopFaultInjector};
+    use nimbus_storage::{MemoryTenantStore, NoopFaultInjector};
     use rand::rngs::StdRng;
     use rand::{Rng, SeedableRng};
     use serde_json::json;
@@ -1268,7 +1269,7 @@ mod tests {
     #[test]
     fn bootstrap_fallback_uses_storage_scan() {
         let store = MemoryTenantStore::with_simulation(
-            Arc::new(ManualClock::new(Timestamp(1_000))),
+            Arc::new(ManualWallClock::new(Timestamp(1_000))),
             Arc::new(NoopFaultInjector),
         );
         let document = document(1, "active", 1);
@@ -1311,7 +1312,7 @@ mod tests {
         let mut checked = 0;
         for history_index in 0..HISTORIES {
             let store = MemoryTenantStore::with_simulation(
-                Arc::new(ManualClock::new(Timestamp(
+                Arc::new(ManualWallClock::new(Timestamp(
                     10_000 + u64::try_from(history_index).expect("history index fits u64"),
                 ))),
                 Arc::new(NoopFaultInjector),

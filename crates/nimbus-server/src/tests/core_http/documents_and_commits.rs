@@ -1,8 +1,9 @@
 pub(super) use super::*;
+pub(super) use nimbus_core::ManualWallClock;
 pub(super) use nimbus_engine::EmbeddedReplica;
 pub(super) use std::sync::Arc;
 
-pub(super) use nimbus_storage::{FaultPoint, ManualClock};
+pub(super) use nimbus_storage::FaultPoint;
 pub(super) use tokio::time::{Duration, timeout};
 
 #[path = "documents_and_commits/generated_history.rs"]

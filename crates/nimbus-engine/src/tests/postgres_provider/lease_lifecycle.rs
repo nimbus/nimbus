@@ -1,20 +1,24 @@
 use nimbus_core::{
-    PrincipalContext, SequenceNumber, TenantEventKind, TenantEventRecord, TriggerDeliveryCursor,
+    ManualWallClock, PrincipalContext, SequenceNumber, TenantEventKind, TenantEventRecord,
+    TriggerDeliveryCursor,
 };
-use nimbus_storage::{FaultInjector, FaultPoint, ManualClock, NoopFaultInjector};
+use nimbus_storage::{FaultInjector, FaultPoint, NoopFaultInjector};
 
 use super::support::*;
 use crate::commit_fault_labels as labels;
 use crate::engine::DurableWriteRoute;
 use crate::tenant::ManualLeaseRenewalClock;
 
-async fn provider_engine(config: EnginePersistenceConfig, clock: Arc<ManualClock>) -> Arc<Engine> {
+async fn provider_engine(
+    config: EnginePersistenceConfig,
+    clock: Arc<ManualWallClock>,
+) -> Arc<Engine> {
     provider_engine_with_faults(config, clock, Arc::new(NoopFaultInjector)).await
 }
 
 async fn provider_engine_with_faults(
     config: EnginePersistenceConfig,
-    clock: Arc<ManualClock>,
+    clock: Arc<ManualWallClock>,
     faults: Arc<dyn FaultInjector>,
 ) -> Arc<Engine> {
     Arc::new(
@@ -26,7 +30,7 @@ async fn provider_engine_with_faults(
 
 async fn provider_engine_with_lease_clock(
     config: EnginePersistenceConfig,
-    clock: Arc<ManualClock>,
+    clock: Arc<ManualWallClock>,
     lease_clock: Arc<ManualLeaseRenewalClock>,
 ) -> Arc<Engine> {
     Arc::new(
@@ -124,7 +128,7 @@ mod ordered_arm;
 #[serial_test::serial(postgres_provider)]
 async fn postgres_provider_publisher_ack_loss_is_classified_before_retry_fence() {
     with_postgres_engine_config(|engine_config, provider_config| async move {
-        let clock = Arc::new(ManualClock::new(Timestamp(9_500)));
+        let clock = Arc::new(ManualWallClock::new(Timestamp(9_500)));
         let faults = Arc::new(ArmedProviderCommitAcknowledgementLoss::default());
         let engine = provider_engine_with_faults(engine_config, clock, faults.clone()).await;
         let tenant_id =
@@ -207,7 +211,7 @@ async fn postgres_provider_publisher_ack_loss_is_classified_before_retry_fence()
 #[serial_test::serial(postgres_provider)]
 async fn postgres_lease_is_lazy_idempotent_renewed_and_cancelled_with_the_runtime() {
     with_postgres_engine_config(|engine_config, provider_config| async move {
-        let clock = Arc::new(ManualClock::new(Timestamp(10_000)));
+        let clock = Arc::new(ManualWallClock::new(Timestamp(10_000)));
         let lease_clock = Arc::new(ManualLeaseRenewalClock::new());
         let engine =
             provider_engine_with_lease_clock(engine_config, clock, lease_clock.clone()).await;
@@ -309,7 +313,7 @@ async fn postgres_lease_is_lazy_idempotent_renewed_and_cancelled_with_the_runtim
 #[serial_test::serial(postgres_provider)]
 async fn lease_renewal_ignores_backward_wall_clock_step() {
     with_postgres_engine_config(|engine_config, _provider_config| async move {
-        let wall_clock = Arc::new(ManualClock::new(Timestamp(100_000)));
+        let wall_clock = Arc::new(ManualWallClock::new(Timestamp(100_000)));
         let lease_clock = Arc::new(ManualLeaseRenewalClock::new());
         let engine = provider_engine_with_lease_clock(
             engine_config,
@@ -367,7 +371,7 @@ async fn lease_renewal_ignores_backward_wall_clock_step() {
 #[serial_test::serial(postgres_provider)]
 async fn lease_renewal_ignores_forward_wall_clock_step() {
     with_postgres_engine_config(|engine_config, _provider_config| async move {
-        let wall_clock = Arc::new(ManualClock::new(Timestamp(200_000)));
+        let wall_clock = Arc::new(ManualWallClock::new(Timestamp(200_000)));
         let lease_clock = Arc::new(ManualLeaseRenewalClock::new());
         let engine = provider_engine_with_lease_clock(
             engine_config,
@@ -425,7 +429,7 @@ async fn lease_renewal_ignores_forward_wall_clock_step() {
 #[serial_test::serial(postgres_provider)]
 async fn lease_renewal_shutdown_interrupts_monotonic_wait() {
     with_postgres_engine_config(|engine_config, _provider_config| async move {
-        let wall_clock = Arc::new(ManualClock::new(Timestamp(300_000)));
+        let wall_clock = Arc::new(ManualWallClock::new(Timestamp(300_000)));
         let lease_clock = Arc::new(ManualLeaseRenewalClock::new());
         let engine = provider_engine_with_lease_clock(engine_config, wall_clock, lease_clock).await;
         let tenant_id = TenantId::new("pg-lease-shutdown-wake").expect("tenant id should build");
@@ -469,7 +473,7 @@ async fn lease_renewal_shutdown_interrupts_monotonic_wait() {
 #[serial_test::serial(postgres_provider)]
 async fn provider_expiry_remains_authoritative_after_local_clock_divergence() {
     with_postgres_engine_config(|engine_config, provider_config| async move {
-        let wall_clock = Arc::new(ManualClock::new(Timestamp(400_000)));
+        let wall_clock = Arc::new(ManualWallClock::new(Timestamp(400_000)));
         let lease_clock = Arc::new(ManualLeaseRenewalClock::new());
         let engine = provider_engine_with_lease_clock(
             engine_config,
@@ -536,7 +540,7 @@ async fn provider_expiry_remains_authoritative_after_local_clock_divergence() {
 #[serial_test::serial(postgres_provider)]
 async fn postgres_lease_renewal_survives_local_clock_divergence() {
     with_postgres_engine_config(|engine_config, provider_config| async move {
-        let wall_clock = Arc::new(ManualClock::new(Timestamp(500_000)));
+        let wall_clock = Arc::new(ManualWallClock::new(Timestamp(500_000)));
         let lease_clock = Arc::new(ManualLeaseRenewalClock::new());
         let engine = provider_engine_with_lease_clock(
             engine_config,
@@ -606,9 +610,9 @@ async fn postgres_lease_renewal_survives_local_clock_divergence() {
 async fn two_postgres_engines_load_without_leases_and_only_one_first_writer_acquires_epoch() {
     with_shared_postgres_engine_configs(|config_a, config_b, provider_config| async move {
         let engine_a =
-            provider_engine(config_a, Arc::new(ManualClock::new(Timestamp(20_000)))).await;
+            provider_engine(config_a, Arc::new(ManualWallClock::new(Timestamp(20_000)))).await;
         let engine_b =
-            provider_engine(config_b, Arc::new(ManualClock::new(Timestamp(20_000)))).await;
+            provider_engine(config_b, Arc::new(ManualWallClock::new(Timestamp(20_000)))).await;
         let tenant_id = TenantId::new("pg-two-engine-lease").expect("tenant id should build");
         engine_a
             .create_tenant_async(tenant_id.clone())
@@ -694,8 +698,8 @@ async fn two_postgres_engines_load_without_leases_and_only_one_first_writer_acqu
 #[serial_test::serial(postgres_provider)]
 async fn postgres_acquisition_reconciles_predecessor_heads_and_records_fenced_renewal() {
     with_shared_postgres_engine_configs(|config_a, config_b, provider_config| async move {
-        let clock_a = Arc::new(ManualClock::new(Timestamp(30_000)));
-        let clock_b = Arc::new(ManualClock::new(Timestamp(30_000)));
+        let clock_a = Arc::new(ManualWallClock::new(Timestamp(30_000)));
+        let clock_b = Arc::new(ManualWallClock::new(Timestamp(30_000)));
         let lease_clock_b = Arc::new(ManualLeaseRenewalClock::new());
         let engine_a = provider_engine(config_a, clock_a).await;
         let engine_b =
@@ -854,9 +858,9 @@ async fn postgres_acquisition_reconciles_predecessor_heads_and_records_fenced_re
 async fn postgres_fences_every_provider_record_writer_without_partial_persistence() {
     with_shared_postgres_engine_configs(|config_a, config_b, provider_config| async move {
         let engine_a =
-            provider_engine(config_a, Arc::new(ManualClock::new(Timestamp(40_000)))).await;
+            provider_engine(config_a, Arc::new(ManualWallClock::new(Timestamp(40_000)))).await;
         let engine_b =
-            provider_engine(config_b, Arc::new(ManualClock::new(Timestamp(40_000)))).await;
+            provider_engine(config_b, Arc::new(ManualWallClock::new(Timestamp(40_000)))).await;
 
         // Queued async batch path.
         let tenant_id = create_shared_tenant(&engine_a, &engine_b, "pg-fence-queued").await;
@@ -1306,9 +1310,9 @@ async fn postgres_fences_every_provider_record_writer_without_partial_persistenc
 async fn postgres_fence_eviction_reloads_without_unfenced_fallback_or_ping_pong() {
     with_shared_postgres_engine_configs(|config_a, config_b, provider_config| async move {
         let engine_a =
-            provider_engine(config_a, Arc::new(ManualClock::new(Timestamp(50_000)))).await;
+            provider_engine(config_a, Arc::new(ManualWallClock::new(Timestamp(50_000)))).await;
         let engine_b =
-            provider_engine(config_b, Arc::new(ManualClock::new(Timestamp(50_000)))).await;
+            provider_engine(config_b, Arc::new(ManualWallClock::new(Timestamp(50_000)))).await;
         let tenant_id = create_shared_tenant(&engine_a, &engine_b, "pg-fence-evict").await;
 
         engine_a

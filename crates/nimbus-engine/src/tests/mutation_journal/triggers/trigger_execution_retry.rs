@@ -7,7 +7,7 @@ use super::*;
 #[tokio::test]
 async fn trigger_execution_retries_after_a_transient_store_failure_before_save() {
     let data_dir = tempdir().expect("engine tempdir should build");
-    let clock = Arc::new(ManualClock::new(Timestamp(80_000)));
+    let clock = Arc::new(ManualWallClock::new(Timestamp(80_000)));
     let faults = CountedFaultInjector::fail_nth_call(FaultPoint::TriggerExecutionBeforeSave, 1);
     let engine = Arc::new(
         Engine::new_with_simulation(data_dir.path(), clock.clone(), faults.clone())
@@ -100,7 +100,7 @@ async fn trigger_execution_retries_after_a_transient_store_failure_before_save()
 #[tokio::test]
 async fn trigger_execution_retries_after_a_transient_store_failure_before_terminal_save() {
     let data_dir = tempdir().expect("engine tempdir should build");
-    let clock = Arc::new(ManualClock::new(Timestamp(82_000)));
+    let clock = Arc::new(ManualWallClock::new(Timestamp(82_000)));
     let faults = CountedFaultInjector::fail_nth_call(FaultPoint::TriggerExecutionBeforeSave, 1);
     let engine = Arc::new(
         Engine::new_with_simulation(data_dir.path(), clock.clone(), faults.clone())

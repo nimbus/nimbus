@@ -295,7 +295,7 @@ async fn convex_http_demo_faulted_overlap_still_completes_http_post_and_follow_u
     );
     let harness = DeterministicHarness::with_fault_injector(
         ScenarioMetadata::new("convex-http-demo-faulted-overlap", 61),
-        Arc::new(nimbus_storage::ManualClock::new(nimbus_core::Timestamp(
+        Arc::new(nimbus_core::ManualWallClock::new(nimbus_core::Timestamp(
             61_000,
         ))),
         faults.clone(),

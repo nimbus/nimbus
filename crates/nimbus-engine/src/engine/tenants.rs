@@ -89,6 +89,7 @@ impl Engine {
                 tenant_incarnation,
                 opened.persistence,
                 opened.executor,
+                self.monotonic_clock.clone(),
                 self.committer_lease_clock.clone(),
                 committer_owner_id,
             )
@@ -379,6 +380,7 @@ impl Engine {
             opened.persistence.clone(),
             opened_executor,
             initial_state,
+            self.monotonic_clock.clone(),
             self.committer_lease_clock.clone(),
             self.committer_owner_id_for_store(&opened.persistence),
         ));

@@ -287,7 +287,7 @@ async fn canceled_async_write_before_commit_leaves_no_durable_state() {
 
 #[tokio::test]
 async fn canceled_async_write_after_commit_still_reports_committed() {
-    let clock = Arc::new(ManualClock::new(Timestamp(10_000)));
+    let clock = Arc::new(ManualWallClock::new(Timestamp(10_000)));
     let faults = BlockingFaultInjector::new(FaultPoint::StorageCommitAfterVisibilityBeforeReturn);
     let store = Arc::new(
         TenantStore::create_in_memory_with_simulation(clock, faults.clone())

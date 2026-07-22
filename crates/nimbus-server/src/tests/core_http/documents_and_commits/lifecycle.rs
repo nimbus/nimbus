@@ -83,7 +83,7 @@ async fn dropped_http_insert_after_commit_still_persists_the_document() {
     let fixture = EngineFixture::new(move |path| {
         Engine::new_with_simulation(
             path,
-            Arc::new(ManualClock::new(nimbus_core::Timestamp(30_000))),
+            Arc::new(ManualWallClock::new(nimbus_core::Timestamp(30_000))),
             faults_for_builder,
         )
     });

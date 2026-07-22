@@ -1,8 +1,26 @@
 use std::num::NonZeroU64;
+use std::sync::Arc;
 
-use nimbus_core::{IdSource, Timestamp};
+use nimbus_core::{IdSource, ManualMonotonicClock, ManualWallClock, Timestamp};
 
 use super::*;
+
+#[test]
+fn clock_types_are_imported_from_nimbus_core() {
+    fn accepts_core_wall(_: Arc<ManualWallClock>) {}
+    fn accepts_core_monotonic(_: Arc<ManualMonotonicClock>) {}
+
+    let harness = DeterministicHarness::scenario("core-clocks", 7, Timestamp(1_000));
+    accepts_core_wall(harness.clock());
+    accepts_core_monotonic(harness.monotonic_clock());
+
+    let removed_reexport =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/simulation/clocks.rs");
+    assert!(
+        !removed_reexport.exists(),
+        "storage must not restore a shallow clock re-export module"
+    );
+}
 
 #[tokio::test]
 async fn scenario_signal_wait_returns_after_trigger_even_if_triggered_first() {

@@ -5,7 +5,7 @@ impl MySqlProvider {
         Self::connect_with_simulation(
             config,
             TokioRuntimeHandle::current(),
-            Arc::new(SystemClock),
+            Arc::new(SystemWallClock),
             Arc::new(NoopFaultInjector),
         )
         .await
@@ -18,7 +18,7 @@ impl MySqlProvider {
         Self::connect_with_simulation(
             config,
             runtime_handle,
-            Arc::new(SystemClock),
+            Arc::new(SystemWallClock),
             Arc::new(NoopFaultInjector),
         )
         .await
@@ -27,7 +27,7 @@ impl MySqlProvider {
     pub async fn connect_with_simulation(
         config: MySqlProviderConfig,
         runtime_handle: TokioRuntimeHandle,
-        clock: Arc<dyn Clock>,
+        clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
     ) -> Result<Self> {
         validate_identifier_input(&config.metadata_database, "metadata database")?;

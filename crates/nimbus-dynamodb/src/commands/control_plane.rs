@@ -723,7 +723,7 @@ fn build_table_description(input: &CreateTableInput) -> TableDescription {
 }
 
 fn now_epoch_seconds() -> f64 {
-    // Millis precision (not whole-seconds `Clock::now_secs`) to preserve the
+    // Millis precision (not whole-seconds `WallClock::now_secs`) to preserve the
     // sub-second fraction DynamoDB's float timestamps carry.
     nimbus_core::clock::system_now_millis() as f64 / 1000.0
 }

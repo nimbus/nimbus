@@ -679,6 +679,8 @@ impl TenantRuntime {
         stats.committer_lease_acquire_count = lease.acquire_count;
         stats.committer_lease_renewal_count = lease.renewal_count;
         stats.committer_lease_renewal_failure_count = lease.renewal_failure_count;
+        stats.committer_lease_renewal_failure_streak = lease.renewal_failure_streak;
+        stats.committer_lease_last_success_age_millis = lease.last_success_age_millis;
         stats.committer_lease_renewal_worker_running = lease.renewal_worker_running;
         stats.publisher_queue_depth = self.publisher.depth();
         stats.publisher_queue_capacity = self.publisher.capacity();

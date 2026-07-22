@@ -1,5 +1,6 @@
 use super::*;
-use nimbus_storage::{FaultPoint, ManualClock};
+use nimbus_core::ManualWallClock;
+use nimbus_storage::FaultPoint;
 use reqwest::StatusCode;
 use std::sync::Arc;
 use tokio::time::timeout;
@@ -257,7 +258,7 @@ async fn websocket_reconnect_and_resubscribe_catches_up_after_apply_lag_and_keep
     let faults = BlockingFaultInjector::new(FaultPoint::JournalDurableAppendBeforeApply);
     let harness = DeterministicHarness::with_fault_injector(
         ScenarioMetadata::new("websocket-reconnect-resubscribe", 74),
-        Arc::new(ManualClock::new(nimbus_core::Timestamp(74_000))),
+        Arc::new(ManualWallClock::new(nimbus_core::Timestamp(74_000))),
         faults.clone(),
     );
     let fixture = EngineFixture::new_with_harness(harness.clone(), |path, harness| {

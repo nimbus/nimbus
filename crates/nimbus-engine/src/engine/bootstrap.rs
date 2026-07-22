@@ -1,12 +1,12 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use nimbus_core::{Error, IdSource, Result};
+use nimbus_core::{Error, IdSource, Result, WallClock};
 use nimbus_crypto::LocalKeyProvider;
 #[cfg(any(test, feature = "test-hooks"))]
 use nimbus_storage::MemoryTenantProvider;
 use nimbus_storage::{
-    Clock, EmbeddedProviderKind, EmbeddedRedbControlPlaneProvider, EmbeddedRedbProvider,
+    EmbeddedProviderKind, EmbeddedRedbControlPlaneProvider, EmbeddedRedbProvider,
     EmbeddedSqliteProvider, FaultInjector, LibsqlReplicaProvider, LibsqlReplicaProviderConfig,
     MySqlProvider, MySqlProviderConfig, PostgresProvider, PostgresProviderConfig,
 };
@@ -20,7 +20,7 @@ use crate::persistence_config::{
 };
 
 struct EngineSimulationSeams {
-    clock: Arc<dyn Clock>,
+    clock: Arc<dyn WallClock>,
     id_source: Arc<dyn IdSource>,
     storage_fault_injector: Arc<dyn FaultInjector>,
     libsql_replica_fault_injector: Option<Arc<dyn FaultInjector>>,
@@ -28,7 +28,7 @@ struct EngineSimulationSeams {
 
 pub(super) async fn build_from_persistence_config(
     config: EnginePersistenceConfig,
-    clock: Arc<dyn Clock>,
+    clock: Arc<dyn WallClock>,
     storage_fault_injector: Arc<dyn FaultInjector>,
     id_source: Arc<dyn IdSource>,
 ) -> Result<Engine> {
@@ -44,7 +44,7 @@ pub(super) async fn build_from_persistence_config(
 
 pub(super) async fn build_from_persistence_config_with_libsql_replica_faults(
     config: EnginePersistenceConfig,
-    clock: Arc<dyn Clock>,
+    clock: Arc<dyn WallClock>,
     storage_fault_injector: Arc<dyn FaultInjector>,
     libsql_replica_fault_injector: Option<Arc<dyn FaultInjector>>,
     id_source: Arc<dyn IdSource>,
@@ -76,7 +76,7 @@ pub(super) fn build_embedded_engine(
     tenant_data_dir: PathBuf,
     control_data_dir: PathBuf,
     encryption_provider: Option<Arc<dyn LocalKeyProvider>>,
-    clock: Arc<dyn Clock>,
+    clock: Arc<dyn WallClock>,
     storage_fault_injector: Arc<dyn FaultInjector>,
     id_source: Arc<dyn IdSource>,
     embedded_provider_kind: EmbeddedProviderKind,
@@ -103,7 +103,7 @@ pub(super) fn build_embedded_engine(
 #[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn build_memory_engine(
     data_dir: PathBuf,
-    clock: Arc<dyn Clock>,
+    clock: Arc<dyn WallClock>,
     storage_fault_injector: Arc<dyn FaultInjector>,
     id_source: Arc<dyn IdSource>,
 ) -> Result<Engine> {

@@ -3,8 +3,8 @@ use std::sync::Arc;
 use nimbus_core::{
     AtomicWrite, AtomicWriteBatch, AtomicWriteBatchOutcome, Document, DocumentPath, Error,
     PrincipalContext, ResourcePathBinding, Result, StructuredAggregationQuery, StructuredQuery,
-    TenantId, Timestamp, TransactionSession, TransactionSessionMode, TransactionSessionToken,
-    WriteKey,
+    SystemWallClock, TenantId, TransactionSession, TransactionSessionMode, TransactionSessionToken,
+    WallClock, WriteKey,
 };
 use nimbus_core::{locator_for_document_path, storage_table_for_collection_path};
 use nimbus_engine::Engine;
@@ -184,7 +184,7 @@ pub fn batch_get_documents_for_database(
         database,
         "Firestore batch-get database",
     )?;
-    let read_time = Timestamp::now();
+    let read_time = SystemWallClock.now();
     let transaction_token = request
         .transaction
         .as_deref()
@@ -430,7 +430,7 @@ pub fn run_query_documents_for_database(
     };
     Ok(RunQueryOutcome {
         documents,
-        read_time: Timestamp::now(),
+        read_time: SystemWallClock.now(),
         skipped_results,
     })
 }
@@ -483,7 +483,7 @@ pub fn run_aggregation_query_for_database(
 
     Ok(RunAggregationQueryOutcome {
         result,
-        read_time: Timestamp::now(),
+        read_time: SystemWallClock.now(),
     })
 }
 

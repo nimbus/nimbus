@@ -5,7 +5,7 @@ impl PostgresProvider {
         Self::connect_with_simulation(
             config,
             TokioRuntimeHandle::current(),
-            Arc::new(SystemClock),
+            Arc::new(SystemWallClock),
             Arc::new(NoopFaultInjector),
         )
         .await
@@ -14,7 +14,7 @@ impl PostgresProvider {
     pub async fn connect_with_simulation(
         config: PostgresProviderConfig,
         runtime_handle: TokioRuntimeHandle,
-        clock: Arc<dyn Clock>,
+        clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
     ) -> Result<Self> {
         validate_identifier_input(&config.metadata_schema, "metadata schema")?;

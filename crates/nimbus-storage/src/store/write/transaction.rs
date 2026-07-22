@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use nimbus_core::{CommitEntry, Error, Result, TenantEventKind, Timestamp, WriteOp};
+use nimbus_core::{CommitEntry, Error, Result, TenantEventKind, Timestamp, WallClock, WriteOp};
 
-use crate::simulation::{Clock, FaultInjector};
+use crate::simulation::FaultInjector;
 
 use super::super::TenantWriteTransaction;
 use super::super::journal::{append_commit, append_prepared_commit, commit_write_txn_cancellable};
@@ -10,7 +10,7 @@ use super::super::journal::{append_commit, append_prepared_commit, commit_write_
 impl TenantWriteTransaction {
     pub(super) fn new<Check>(
         write_txn: redb::WriteTransaction,
-        clock: Arc<dyn Clock>,
+        clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
         check_cancel: Check,
     ) -> Self

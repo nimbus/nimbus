@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use serde::{Deserialize, Serialize};
 
 use crate::{DocumentId, Mutation, Timestamp};
@@ -57,7 +59,7 @@ impl CronSchedule {
     pub fn next_after(&self, after: Timestamp) -> Timestamp {
         match self {
             Self::Interval { seconds } => {
-                Timestamp(after.0.saturating_add(seconds.saturating_mul(1000)))
+                after.saturating_add_duration(Duration::from_secs(*seconds))
             }
         }
     }

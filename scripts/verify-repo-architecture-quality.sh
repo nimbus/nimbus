@@ -117,7 +117,7 @@ check_large_files() {
   local lines
   local threshold_label
 
-  printf '[1/4] owned-source size ledger\n'
+  printf '[1/6] owned-source size ledger\n'
 
   while IFS= read -r file; do
     rel="${file#${REPO_ROOT}/}"
@@ -153,7 +153,7 @@ check_naming_exceptions() {
   local rel
   local base
 
-  printf '\n[2/4] helper/common naming ledger\n'
+  printf '\n[2/6] helper/common naming ledger\n'
 
   while IFS= read -r file; do
     rel="${file#${REPO_ROOT}/}"
@@ -180,7 +180,7 @@ check_naming_exceptions() {
 }
 
 check_core_no_io() {
-  printf '\n[3/4] nimbus-core zero-I/O invariant\n'
+  printf '\n[3/6] nimbus-core zero-I/O invariant\n'
 
   # Scan IMPORTS and DEPENDENCY declarations only. A bare word-boundary scan
   # false-positives on string literals (e.g. a provider-name label like
@@ -200,13 +200,48 @@ check_core_no_io() {
 }
 
 check_runtime_no_workspace_deps() {
-  printf '\n[4/4] nimbus-runtime zero-workspace-dependency invariant\n'
+  printf '\n[4/6] nimbus-runtime zero-workspace-dependency invariant\n'
 
   local cargo_toml="${REPO_ROOT}/crates/nimbus-runtime/Cargo.toml"
   if rg -n 'path\s*=\s*"\.\./|^nimbus-[A-Za-z0-9_-]+\s*=' "${cargo_toml}"; then
     record_issue "nimbus-runtime declares a workspace/local Nimbus dependency"
   else
     printf 'nimbus-runtime workspace dependency scan: pass\n'
+  fi
+}
+
+check_clock_sources() {
+  printf '\n[5/6] ambient wall-clock source ownership\n'
+  if ! python3 "${REPO_ROOT}/scripts/verify-clock-sources.py"; then
+    record_issue "ambient wall-clock source ownership check failed"
+  fi
+}
+
+check_durable_object_boundary() {
+  printf '\n[6/6] Durable Object production-construction boundary\n'
+  local violations
+  violations="$(
+    rg -n 'DurableObject(Substrate|Stub)' "${REPO_ROOT}/crates" \
+      --glob '*.rs' \
+      --glob '!**/tests/**' \
+      --glob '!**/benches/**' \
+      --glob '!**/tests.rs' \
+      --glob '!**/*_tests.rs' \
+      --glob '!**/adapters/cloudflare/durable_objects/mod.rs' \
+      || true
+  )"
+  if [[ -n "${violations}" ]]; then
+    printf '%s\n' "${violations}" >&2
+    record_issue "Durable Objects have no production front door before HS5 per-object placement and storage-atomic epoch fencing"
+  else
+    printf 'durable_objects_have_no_production_front_door_before_hs5: PASS\n'
+  fi
+
+  local fixture="${REPO_ROOT}/scripts/fixtures/durable-objects/forbidden_front_door.rs"
+  if ! rg -n 'DurableObjectSubstrate::new' "${fixture}" >/dev/null; then
+    record_issue "Durable Object boundary fixture no longer demonstrates a forbidden construction"
+  else
+    printf 'Durable Object forbidden-construction fixture: PASS\n'
   fi
 }
 
@@ -222,6 +257,8 @@ else
   check_naming_exceptions
   check_core_no_io
   check_runtime_no_workspace_deps
+  check_clock_sources
+  check_durable_object_boundary
 fi
 
 if [[ "${issue_count}" -ne 0 ]]; then

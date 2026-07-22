@@ -38,7 +38,7 @@ async fn assert_publisher_ambiguous_outcome_recovers_without_retry(
     let engine = Arc::new(
         Engine::new_with_simulation(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(45_900))),
+            Arc::new(ManualWallClock::new(Timestamp(45_900))),
             faults,
         )
         .expect("ambiguous publisher engine should create"),
@@ -179,7 +179,7 @@ async fn publisher_preserves_sequence_order_across_transient_retry() {
     let engine = Arc::new(
         Engine::new_with_simulation(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(46_000))),
+            Arc::new(ManualWallClock::new(Timestamp(46_000))),
             faults.clone(),
         )
         .expect("transient publisher engine should create"),
@@ -299,7 +299,7 @@ async fn assignment_failure_mid_batch_discards_staged_suffix_and_keeps_tenant_li
     let engine = Arc::new(
         Engine::new_with_simulation_and_memory_persistence(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(46_500))),
+            Arc::new(ManualWallClock::new(Timestamp(46_500))),
             Arc::new(NoopFaultInjector),
             Arc::new(nimbus_core::SeededIdSource::new(46_500)),
         )
@@ -429,7 +429,7 @@ async fn serial_assignment_failure_discards_staged_suffix_and_keeps_tenant_live(
     let engine = Arc::new(
         Engine::new_with_simulation_and_memory_persistence(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(46_575))),
+            Arc::new(ManualWallClock::new(Timestamp(46_575))),
             Arc::new(NoopFaultInjector),
             Arc::new(nimbus_core::SeededIdSource::new(46_575)),
         )
@@ -520,7 +520,7 @@ async fn serial_lost_ack_evicts_and_replays_without_retryable_error() {
     let engine = Arc::new(
         Engine::new_with_simulation_and_memory_persistence(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(46_580))),
+            Arc::new(ManualWallClock::new(Timestamp(46_580))),
             faults.clone(),
             Arc::new(nimbus_core::SeededIdSource::new(46_580)),
         )
@@ -608,7 +608,7 @@ async fn quiesce_racing_serial_crash_replay_completes_without_panic() {
     let engine = Arc::new(
         Engine::new_with_simulation_and_id_source(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(46_581))),
+            Arc::new(ManualWallClock::new(Timestamp(46_581))),
             faults.clone(),
             Arc::new(nimbus_core::SeededIdSource::new(46_581)),
         )
@@ -729,7 +729,7 @@ async fn shutdown_serial_recovery_deregisters_and_preserves_diagnostics() {
     let engine = Arc::new(
         Engine::new_with_simulation_and_id_source(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(46_584))),
+            Arc::new(ManualWallClock::new(Timestamp(46_584))),
             faults.clone(),
             Arc::new(nimbus_core::SeededIdSource::new(46_584)),
         )
@@ -922,7 +922,7 @@ async fn serial_crash_replay_rejects_residual_direct_commit_without_running_it()
     let engine = Arc::new(
         Engine::new_with_simulation_and_memory_persistence(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(46_581))),
+            Arc::new(ManualWallClock::new(Timestamp(46_581))),
             faults.clone(),
             Arc::new(nimbus_core::SeededIdSource::new(46_582)),
         )
@@ -1019,7 +1019,7 @@ async fn direct_lost_ack_with_unreadable_progress_evicts_and_replays_once() {
     let engine = Arc::new(
         Engine::new_with_simulation_and_memory_persistence(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(46_582))),
+            Arc::new(ManualWallClock::new(Timestamp(46_582))),
             faults.clone(),
             Arc::new(nimbus_core::SeededIdSource::new(46_582)),
         )
@@ -1107,7 +1107,7 @@ async fn direct_unchanged_head_failure_remains_retryable_and_batch_scoped() {
     let engine = Arc::new(
         Engine::new_with_simulation_and_memory_persistence(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(46_583))),
+            Arc::new(ManualWallClock::new(Timestamp(46_583))),
             faults.clone(),
             Arc::new(nimbus_core::SeededIdSource::new(46_583)),
         )
@@ -1194,7 +1194,7 @@ async fn serial_err_err_recovery_evicts_when_append_did_not_land() {
     let engine = Arc::new(
         Engine::new_with_simulation_and_memory_persistence(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(46_585))),
+            Arc::new(ManualWallClock::new(Timestamp(46_585))),
             faults,
             Arc::new(nimbus_core::SeededIdSource::new(46_585)),
         )
@@ -1271,7 +1271,7 @@ async fn assignment_worker_panic_discards_staged_suffix_and_keeps_tenant_live() 
     let engine = Arc::new(
         Engine::new_with_simulation_and_memory_persistence(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(46_625))),
+            Arc::new(ManualWallClock::new(Timestamp(46_625))),
             Arc::new(NoopFaultInjector),
             Arc::new(nimbus_core::SeededIdSource::new(46_625)),
         )
@@ -1343,7 +1343,7 @@ async fn serial_assignment_worker_panic_discards_staged_suffix_and_keeps_tenant_
     let engine = Arc::new(
         Engine::new_with_simulation_and_memory_persistence(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(46_650))),
+            Arc::new(ManualWallClock::new(Timestamp(46_650))),
             Arc::new(NoopFaultInjector),
             Arc::new(nimbus_core::SeededIdSource::new(46_650)),
         )
@@ -1432,7 +1432,7 @@ async fn definitive_publisher_append_error_is_batch_scoped_and_tenant_stays_load
     let engine = Arc::new(
         Engine::new_with_simulation_and_memory_persistence(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(46_750))),
+            Arc::new(ManualWallClock::new(Timestamp(46_750))),
             faults,
             Arc::new(nimbus_core::SeededIdSource::new(46_750)),
         )
@@ -1492,7 +1492,7 @@ async fn definitive_recovery_drains_batches_behind_response_fences() {
     let engine = Arc::new(
         Engine::new_with_simulation_and_memory_persistence(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(46_775))),
+            Arc::new(ManualWallClock::new(Timestamp(46_775))),
             faults.clone(),
             Arc::new(nimbus_core::SeededIdSource::new(46_775)),
         )
@@ -1608,7 +1608,7 @@ async fn definitive_recovery_retries_fence_conflict_whose_sequence_was_discarded
     let engine = Arc::new(
         Engine::new_with_simulation_and_memory_persistence(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(46_787))),
+            Arc::new(ManualWallClock::new(Timestamp(46_787))),
             faults.clone(),
             Arc::new(nimbus_core::SeededIdSource::new(46_787)),
         )
@@ -1715,7 +1715,7 @@ async fn serial_discard_rewrites_same_batch_conflict_before_retry() {
     let engine = Arc::new(
         Engine::new_with_simulation_and_memory_persistence(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(46_790))),
+            Arc::new(ManualWallClock::new(Timestamp(46_790))),
             faults.clone(),
             Arc::new(nimbus_core::SeededIdSource::new(46_790)),
         )
@@ -1839,7 +1839,7 @@ async fn publisher_discard_rewrites_same_batch_conflict_before_retry() {
     let engine = Arc::new(
         Engine::new_with_simulation_and_memory_persistence(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(46_795))),
+            Arc::new(ManualWallClock::new(Timestamp(46_795))),
             faults.clone(),
             Arc::new(nimbus_core::SeededIdSource::new(46_795)),
         )
@@ -1963,7 +1963,7 @@ async fn publisher_retry_exhaustion_without_durable_advance_is_batch_scoped() {
     let engine = Arc::new(
         Engine::new_with_simulation_and_memory_persistence(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(46_800))),
+            Arc::new(ManualWallClock::new(Timestamp(46_800))),
             faults,
             Arc::new(nimbus_core::SeededIdSource::new(46_800)),
         )

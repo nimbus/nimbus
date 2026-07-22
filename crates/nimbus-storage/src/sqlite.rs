@@ -8,8 +8,9 @@ use std::time::Duration;
 use nimbus_core::{
     CommitEntry, CronJob, Document, DocumentId, Error, Filter, IndexLifecycleEvent, JobId, Result,
     ScheduledJob, ScheduledJobResult, Schema, SchemaChangeEvent, SequenceNumber, StorageErrorKind,
-    TableId, TableLifecycleEvent, TableName, TableSchema, TableState, TenantEventKind,
-    TenantEventRecord, Timestamp, TriggerDeliveryCursor, TriggerWriteOrigin, WriteOp, WriteOpType,
+    SystemWallClock, TableId, TableLifecycleEvent, TableName, TableSchema, TableState,
+    TenantEventKind, TenantEventRecord, Timestamp, TriggerDeliveryCursor, TriggerWriteOrigin,
+    WallClock, WriteOp, WriteOpType,
 };
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -17,7 +18,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::commit_log::{deserialize_tenant_event_record, serialize_tenant_event_record};
-use crate::simulation::{Clock, FaultInjector, FaultPoint, NoopFaultInjector, SystemClock};
+use crate::simulation::{FaultInjector, FaultPoint, NoopFaultInjector};
 use crate::store::{
     APPLIED_SEQUENCE_KEY, DurableJournalBootstrap, DurableJournalPage, JournalProgress,
     MAX_DURABLE_JOURNAL_STREAM_LIMIT, MaterializedJournalSnapshot, NEXT_SEQUENCE_KEY,
@@ -256,7 +257,7 @@ impl SqliteTenantStore {
 pub struct SqliteTenantStore {
     path: PathBuf,
     dek: Option<DataEncryptionKey>,
-    clock: Arc<dyn Clock>,
+    clock: Arc<dyn WallClock>,
     fault_injector: Arc<dyn FaultInjector>,
     max_read_connections: usize,
     open_read_connections: Arc<AtomicUsize>,
@@ -272,7 +273,7 @@ pub struct SqliteReadSnapshot {
 
 pub struct SqliteWriteTransaction {
     conn: Option<Connection>,
-    clock: Arc<dyn Clock>,
+    clock: Arc<dyn WallClock>,
     fault_injector: Arc<dyn FaultInjector>,
     commit_writes: Vec<WriteOp>,
     tenant_events: Vec<TenantEventKind>,

@@ -65,7 +65,7 @@ impl FaultInjector for ArmedLibsqlCommitAcknowledgementLoss {
 #[serial_test::serial(libsql_replica_provider)]
 async fn libsql_replica_post_visibility_ack_loss_forces_crash_and_replay() {
     with_libsql_replica_engine_config(|engine_config, provider_config| async move {
-        let clock = Arc::new(ManualClock::new(Timestamp(8_500)));
+        let clock = Arc::new(ManualWallClock::new(Timestamp(8_500)));
         let faults = Arc::new(ArmedLibsqlCommitAcknowledgementLoss::default());
         let engine = Arc::new(
             Engine::new_with_simulation_and_persistence_config(
@@ -203,7 +203,7 @@ async fn libsql_replica_post_visibility_ack_loss_forces_crash_and_replay() {
 #[serial_test::serial(libsql_replica_provider)]
 async fn libsql_replica_lease_is_lazy_and_renews_from_manual_clock_wakeup() {
     with_libsql_replica_engine_config(|engine_config, provider_config| async move {
-        let clock = Arc::new(ManualClock::new(Timestamp(9_000)));
+        let clock = Arc::new(ManualWallClock::new(Timestamp(9_000)));
         let lease_clock = Arc::new(ManualLeaseRenewalClock::new());
         let engine = Arc::new(
             Engine::new_with_simulation_and_persistence_config_and_lease_clock(

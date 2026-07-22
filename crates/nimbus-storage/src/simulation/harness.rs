@@ -1,9 +1,8 @@
 use std::num::NonZeroU64;
 use std::sync::Arc;
 
-use nimbus_core::{Result, SeededIdSource, Timestamp};
+use nimbus_core::{ManualMonotonicClock, ManualWallClock, Result, SeededIdSource, Timestamp};
 
-use super::clocks::ManualClock;
 use super::coordination::{ScenarioMetadata, ScenarioSignal, ScenarioSignalKind, SignalRegistry};
 use super::faults::{
     FaultInjector, FaultOccurrence, FaultPoint, ScriptedFaultInjector, SeededFaultInjector,
@@ -11,7 +10,8 @@ use super::faults::{
 
 pub struct DeterministicHarness {
     metadata: ScenarioMetadata,
-    clock: Arc<ManualClock>,
+    clock: Arc<ManualWallClock>,
+    monotonic_clock: Arc<ManualMonotonicClock>,
     id_source: Arc<SeededIdSource>,
     fault_injector: Arc<dyn FaultInjector>,
     cancellations: Arc<SignalRegistry>,
@@ -24,6 +24,7 @@ impl Clone for DeterministicHarness {
         Self {
             metadata: self.metadata.clone(),
             clock: Arc::clone(&self.clock),
+            monotonic_clock: Arc::clone(&self.monotonic_clock),
             id_source: Arc::clone(&self.id_source),
             fault_injector: Arc::clone(&self.fault_injector),
             cancellations: Arc::clone(&self.cancellations),
@@ -53,7 +54,7 @@ impl DeterministicHarness {
     ) -> Self {
         Self::with_fault_injector(
             ScenarioMetadata::new(name, seed),
-            Arc::new(ManualClock::new(start)),
+            Arc::new(ManualWallClock::new(start)),
             Arc::new(ScriptedFaultInjector::new(scheduled_faults)),
         )
     }
@@ -66,20 +67,21 @@ impl DeterministicHarness {
     ) -> Self {
         Self::with_fault_injector(
             ScenarioMetadata::new(name, seed),
-            Arc::new(ManualClock::new(start)),
+            Arc::new(ManualWallClock::new(start)),
             Arc::new(SeededFaultInjector::new(seed, one_in)),
         )
     }
 
     pub fn with_fault_injector(
         metadata: ScenarioMetadata,
-        clock: Arc<ManualClock>,
+        clock: Arc<ManualWallClock>,
         fault_injector: Arc<dyn FaultInjector>,
     ) -> Self {
         let id_source = Arc::new(SeededIdSource::new(metadata.seed()));
         Self {
             metadata,
             clock,
+            monotonic_clock: Arc::new(ManualMonotonicClock::new()),
             id_source,
             fault_injector,
             cancellations: Arc::new(SignalRegistry::new(ScenarioSignalKind::Cancellation)),
@@ -104,8 +106,12 @@ impl DeterministicHarness {
         self.metadata.describe()
     }
 
-    pub fn clock(&self) -> Arc<ManualClock> {
+    pub fn clock(&self) -> Arc<ManualWallClock> {
         Arc::clone(&self.clock)
+    }
+
+    pub fn monotonic_clock(&self) -> Arc<ManualMonotonicClock> {
+        Arc::clone(&self.monotonic_clock)
     }
 
     pub fn id_source(&self) -> Arc<SeededIdSource> {

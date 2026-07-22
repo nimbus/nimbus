@@ -12,7 +12,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use nimbus_core::{Clock, Error, Result, StorageErrorKind, SystemClock};
+use nimbus_core::{Error, Result, StorageErrorKind, SystemWallClock, WallClock};
 
 use crate::disk;
 use crate::hash::BlobHash;
@@ -56,7 +56,7 @@ pub(super) fn rebuild_corrupt_index_under_guard(
         &canonical,
         &packs_dir,
         &options,
-        SystemClock.now_millis(),
+        SystemWallClock.now_millis(),
         &observer,
     )?;
 
@@ -65,7 +65,7 @@ pub(super) fn rebuild_corrupt_index_under_guard(
     let mut rebuilt = HashMap::new();
     let mut header_corrupt_packs = BTreeSet::new();
     let mut corrupt_record_index: HashMap<BlobHash, ScannedRecord> = HashMap::new();
-    let written_at_millis = SystemClock.now_millis();
+    let written_at_millis = SystemWallClock.now_millis();
     for pack_id in local::pack_ids_on_disk(&packs_dir)? {
         let pack_scan = scan_pack(&packs_dir, pack_id, None, &mut pacing)?;
         report.packs_scanned += 1;

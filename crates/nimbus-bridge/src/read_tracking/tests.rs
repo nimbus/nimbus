@@ -1,5 +1,8 @@
 use super::*;
-use nimbus_core::{Filter, FilterOp, Query, TableName, commit_intersects_dependency_set};
+use nimbus_core::{
+    Filter, FilterOp, Query, SystemWallClock, TableName, WallClock,
+    commit_intersects_dependency_set,
+};
 use nimbus_engine::encode_cursor;
 use serde_json::{Value, json};
 
@@ -121,14 +124,14 @@ fn runtime_read_set_converts_to_shared_dependency_set_without_losing_skip_behavi
     let matching_document = nimbus_core::Document {
         id: document_id.clone(),
         table: table.clone(),
-        creation_time: nimbus_core::Timestamp::now(),
-        update_time: nimbus_core::Timestamp::now(),
+        creation_time: SystemWallClock.now(),
+        update_time: SystemWallClock.now(),
         fields: serde_json::Map::from_iter([("author".to_string(), json!("Ada"))]),
         typed_fields: Default::default(),
     };
     let commit = nimbus_core::CommitEntry {
         sequence: nimbus_core::SequenceNumber(1),
-        timestamp: nimbus_core::Timestamp::now(),
+        timestamp: SystemWallClock.now(),
         writes: vec![nimbus_core::WriteOp {
             table: table.clone(),
             table_id: table_id.clone(),
@@ -168,8 +171,8 @@ fn shared_dependency_matching_uses_previous_document_snapshots_for_updates() {
     let previous = nimbus_core::Document {
         id: document_id.clone(),
         table: table.clone(),
-        creation_time: nimbus_core::Timestamp::now(),
-        update_time: nimbus_core::Timestamp::now(),
+        creation_time: SystemWallClock.now(),
+        update_time: SystemWallClock.now(),
         fields: serde_json::Map::from_iter([("author".to_string(), json!("Ada"))]),
         typed_fields: Default::default(),
     };
@@ -177,14 +180,14 @@ fn shared_dependency_matching_uses_previous_document_snapshots_for_updates() {
         id: document_id.clone(),
         table: table.clone(),
         creation_time: previous.creation_time,
-        update_time: nimbus_core::Timestamp::now(),
+        update_time: SystemWallClock.now(),
         fields: serde_json::Map::from_iter([("author".to_string(), json!("Grace"))]),
         typed_fields: Default::default(),
     };
 
     let commit = nimbus_core::CommitEntry {
         sequence: nimbus_core::SequenceNumber(2),
-        timestamp: nimbus_core::Timestamp::now(),
+        timestamp: SystemWallClock.now(),
         writes: vec![nimbus_core::WriteOp {
             table,
             table_id,

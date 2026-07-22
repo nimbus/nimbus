@@ -121,7 +121,7 @@ impl KrunSandboxBackend {
         }
 
         manifest.last_exit_code = Some(exit_code);
-        let now_millis = now_millis()?;
+        let now_millis = nimbus_core::clock::system_now_millis();
         let next_restart_at_millis = manifest.next_restart_at_millis.get_or_insert_with(|| {
             now_millis.saturating_add(restart_backoff_delay(manifest.restart_count).as_millis() as u64)
         });

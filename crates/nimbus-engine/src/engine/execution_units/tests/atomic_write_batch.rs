@@ -12,7 +12,7 @@ impl AdvancingClock {
     }
 }
 
-impl Clock for AdvancingClock {
+impl WallClock for AdvancingClock {
     fn now(&self) -> Timestamp {
         Timestamp(self.next_ms.fetch_add(1, Ordering::SeqCst))
     }
@@ -319,7 +319,7 @@ fn atomic_write_batch_rolls_back_on_precondition_failure() {
 #[test]
 fn atomic_write_batch_enforces_update_time_preconditions() {
     let data_dir = tempdir().expect("engine tempdir should build");
-    let clock = Arc::new(ManualClock::new(Timestamp(10_000)));
+    let clock = Arc::new(ManualWallClock::new(Timestamp(10_000)));
     let engine = Arc::new(
         Engine::new_with_simulation(data_dir.path(), clock.clone(), Arc::new(NoopFaultInjector))
             .expect("engine should create"),

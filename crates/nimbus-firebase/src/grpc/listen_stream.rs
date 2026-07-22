@@ -2,15 +2,16 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures::{Stream, StreamExt, stream};
 use nimbus_core::storage_table_for_collection_path;
 use nimbus_core::{
-    CollectionPath, Document, DocumentPath, Filter, FilterOp, OrderBy, OrderDirection,
-    PrincipalContext, Query, SequenceNumber, SubscriptionResultSnapshot, Timestamp,
-    diff_subscription_snapshots,
+    CollectionPath, Document, DocumentPath, Filter, FilterOp, MonotonicClock, OrderBy,
+    OrderDirection, PrincipalContext, Query, SequenceNumber, SubscriptionResultSnapshot,
+    SystemMonotonicClock, SystemWallClock, Timestamp, WallClock, diff_subscription_snapshots,
 };
 use nimbus_engine::{
     DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY, Engine, SubscribeOptions, SubscriptionCleanupHandle,
@@ -54,17 +55,26 @@ struct RetainedListenTargetKey {
 struct RetainedListenTargetState {
     snapshot: SubscriptionResultSnapshot,
     read_time: Timestamp,
-    expires_at: Timestamp,
+    expires_at: Instant,
+    insertion_sequence: u64,
 }
 
 pub struct RetainedListenRegistry {
     targets: Mutex<HashMap<RetainedListenTargetKey, RetainedListenTargetState>>,
+    next_insertion_sequence: AtomicU64,
+    clock: Arc<dyn MonotonicClock>,
 }
 
 impl RetainedListenRegistry {
     pub fn new() -> Self {
+        Self::new_with_clock(Arc::new(SystemMonotonicClock))
+    }
+
+    fn new_with_clock(clock: Arc<dyn MonotonicClock>) -> Self {
         Self {
             targets: Mutex::new(HashMap::new()),
+            next_insertion_sequence: AtomicU64::new(1),
+            clock,
         }
     }
 
@@ -74,8 +84,9 @@ impl RetainedListenRegistry {
         snapshot: &SubscriptionResultSnapshot,
         read_time: Timestamp,
     ) {
+        let observed_at = self.clock.now();
         let mut targets = self.targets();
-        prune_expired_retained_targets(&mut targets);
+        prune_expired_retained_targets(&mut targets, observed_at);
         if !targets.contains_key(&key) && targets.len() >= MAX_RETAINED_LISTEN_TARGETS {
             evict_oldest_retained_target(&mut targets);
         }
@@ -84,7 +95,8 @@ impl RetainedListenRegistry {
             RetainedListenTargetState {
                 snapshot: snapshot.clone(),
                 read_time,
-                expires_at: retained_target_expiry(),
+                expires_at: retained_target_deadline(observed_at),
+                insertion_sequence: self.next_insertion_sequence.fetch_add(1, Ordering::Relaxed),
             },
         );
     }
@@ -98,8 +110,9 @@ impl RetainedListenRegistry {
         key: &RetainedListenTargetKey,
         selector: &ResumeSelector,
     ) -> ResumeDecision {
+        let observed_at = self.clock.now();
         let mut targets = self.targets();
-        prune_expired_retained_targets(&mut targets);
+        prune_expired_retained_targets(&mut targets, observed_at);
         let Some(retained) = targets.get(key).cloned() else {
             return match selector {
                 ResumeSelector::None => ResumeDecision::ColdStart,
@@ -136,9 +149,9 @@ impl Default for RetainedListenRegistry {
 
 fn prune_expired_retained_targets(
     targets: &mut HashMap<RetainedListenTargetKey, RetainedListenTargetState>,
+    observed_at: Instant,
 ) {
-    let now = Timestamp::now();
-    targets.retain(|_, retained| retained.expires_at > now);
+    targets.retain(|_, retained| retained.expires_at > observed_at);
 }
 
 fn evict_oldest_retained_target(
@@ -146,7 +159,7 @@ fn evict_oldest_retained_target(
 ) {
     let Some(oldest_key) = targets
         .iter()
-        .min_by_key(|(_, retained)| retained.expires_at)
+        .min_by_key(|(_, retained)| (retained.expires_at, retained.insertion_sequence))
         .map(|(key, _)| key.clone())
     else {
         return;
@@ -154,12 +167,10 @@ fn evict_oldest_retained_target(
     targets.remove(&oldest_key);
 }
 
-fn retained_target_expiry() -> Timestamp {
-    Timestamp(
-        Timestamp::now().0.saturating_add(
-            u64::try_from(RETAINED_LISTEN_TARGET_TTL.as_millis()).unwrap_or(u64::MAX),
-        ),
-    )
+fn retained_target_deadline(observed_at: Instant) -> Instant {
+    observed_at
+        .checked_add(RETAINED_LISTEN_TARGET_TTL)
+        .expect("retained listen target monotonic deadline must be representable")
 }
 
 #[derive(Debug, Clone)]
@@ -1148,7 +1159,7 @@ fn observed_read_time_core(snapshot: &SubscriptionResultSnapshot) -> Timestamp {
     snapshot
         .commit
         .map(|commit| commit.timestamp)
-        .unwrap_or_else(Timestamp::now)
+        .unwrap_or_else(|| SystemWallClock.now())
 }
 
 fn same_document_identity(left: &Document, right: &Document) -> bool {
@@ -1169,13 +1180,13 @@ fn encode_resume_token(sequence: SequenceNumber) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nimbus_core::{CollectionName, TableName};
+    use nimbus_core::{
+        CollectionName, ManualMonotonicClock, ManualWallClock, TableName, WallClock,
+    };
 
-    #[test]
-    fn retained_listen_registry_recovers_after_poisoned_lock() {
-        let registry = RetainedListenRegistry::new();
-        let key = RetainedListenTargetKey {
-            project_id: "demo".to_string(),
+    fn retained_key(project_id: impl Into<String>) -> RetainedListenTargetKey {
+        RetainedListenTargetKey {
+            project_id: project_id.into(),
             collection_path: CollectionPath::root(
                 CollectionName::new("cities").expect("collection name should parse"),
             ),
@@ -1185,7 +1196,13 @@ mod tests {
                 order: None,
                 limit: None,
             },
-        };
+        }
+    }
+
+    #[test]
+    fn retained_listen_registry_recovers_after_poisoned_lock() {
+        let registry = RetainedListenRegistry::new();
+        let key = retained_key("demo");
 
         let poison = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _guard = registry.targets.lock().expect("lock should start clean");
@@ -1196,5 +1213,63 @@ mod tests {
         let resume = registry.resolve_resume(&key, &ResumeSelector::None);
 
         assert!(matches!(resume, ResumeDecision::ColdStart));
+    }
+
+    #[test]
+    fn listen_target_retention_uses_elapsed_time_across_wall_steps() {
+        let monotonic = Arc::new(ManualMonotonicClock::new());
+        let wall = ManualWallClock::new(Timestamp(10_000));
+        let registry = RetainedListenRegistry::new_with_clock(monotonic.clone());
+        let key = retained_key("elapsed-retention");
+        let snapshot = SubscriptionResultSnapshot::bootstrap(SequenceNumber(7), Vec::new());
+        let selector = ResumeSelector::Token(SequenceNumber(7));
+        registry.retain(key.clone(), &snapshot, Timestamp(10_000));
+
+        wall.set(Timestamp(1));
+        assert!(matches!(
+            registry.resolve_resume(&key, &selector),
+            ResumeDecision::Resume(_)
+        ));
+        wall.set(Timestamp(u64::MAX));
+        assert!(matches!(
+            registry.resolve_resume(&key, &selector),
+            ResumeDecision::Resume(_)
+        ));
+
+        monotonic.advance(RETAINED_LISTEN_TARGET_TTL);
+        assert!(matches!(
+            registry.resolve_resume(&key, &selector),
+            ResumeDecision::Reset
+        ));
+        assert_eq!(wall.now(), Timestamp(u64::MAX));
+    }
+
+    #[test]
+    fn listen_target_eviction_is_deterministic_at_equal_deadlines() {
+        let monotonic = Arc::new(ManualMonotonicClock::new());
+        let registry = RetainedListenRegistry::new_with_clock(monotonic);
+        let snapshot = SubscriptionResultSnapshot::bootstrap(SequenceNumber(7), Vec::new());
+        let selector = ResumeSelector::Token(SequenceNumber(7));
+
+        for index in 0..=MAX_RETAINED_LISTEN_TARGETS {
+            registry.retain(
+                retained_key(format!("equal-deadline-{index:03}")),
+                &snapshot,
+                Timestamp(10_000),
+            );
+        }
+
+        assert!(matches!(
+            registry.resolve_resume(&retained_key("equal-deadline-000"), &selector),
+            ResumeDecision::Reset
+        ));
+        assert!(matches!(
+            registry.resolve_resume(&retained_key("equal-deadline-001"), &selector),
+            ResumeDecision::Resume(_)
+        ));
+        assert!(matches!(
+            registry.resolve_resume(&retained_key("equal-deadline-256"), &selector),
+            ResumeDecision::Resume(_)
+        ));
     }
 }

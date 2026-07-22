@@ -174,15 +174,17 @@ engine's owner identity and can resume the same still-live lease epoch
 immediately. A different engine has a different identity and remains fenced;
 lease expiry and takeover still advance the provider's durable epoch.
 
-Lease renewal has two distinct time contracts. The engine schedules attempts
-every ten seconds using monotonic elapsed time, so local wall-clock steps can
-neither postpone a renewal nor trigger one early; shutdown explicitly wakes
-and joins a worker parked before its deadline. PostgreSQL, MySQL, and libSQL
-still decide whether the lease is valid using their database clocks inside the
-atomic `(owner_id, epoch)` renewal CAS. Tests inject a manual monotonic clock
-independently of Nimbus's wall clock, while production uses `Instant`. Existing
-bounded-cardinality diagnostics expose the epoch, provider expiry, renewal and
-failure counts, and worker state without recording owner ids.
+Lease renewal has two distinct time contracts. The engine schedules normal
+attempts every ten seconds using monotonic elapsed time, so local wall-clock
+steps can neither postpone a renewal nor trigger one early; shutdown explicitly
+wakes and joins a worker parked before its deadline. Transient failures retry
+with bounded deterministic jitter and a local safety deadline derived from the
+requested provider duration. Exhausting that budget drains the committer rather
+than asserting that its lease remains valid. PostgreSQL, MySQL, and libSQL still
+decide validity using their database clocks inside the atomic `(owner_id,
+epoch)` renewal CAS. Bounded-cardinality diagnostics label absolute expiry as
+provider time and separately expose renewal/failure counts, consecutive failure
+streak, monotonic age since the last success, and worker state without owner ids.
 
 The storage contract exposes a deterministic fault boundary immediately after
 commit visibility and before success returns. The redb, SQLite, libSQL,

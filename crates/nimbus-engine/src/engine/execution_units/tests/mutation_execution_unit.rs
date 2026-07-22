@@ -129,7 +129,7 @@ fn mutation_execution_unit_commits_id_from_injected_source() {
     let engine = Arc::new(
         Engine::new_with_simulation_and_id_source(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(10_000))),
+            Arc::new(ManualWallClock::new(Timestamp(10_000))),
             Arc::new(NoopFaultInjector),
             Arc::new(SeededIdSource::new(0)),
         )
@@ -178,7 +178,7 @@ fn mutation_execution_unit_commits_id_from_injected_source() {
 #[test]
 fn mutation_execution_unit_commit_timestamp_follows_manual_clock() {
     let data_dir = tempdir().expect("engine tempdir should build");
-    let clock = Arc::new(ManualClock::new(Timestamp(10_000)));
+    let clock = Arc::new(ManualWallClock::new(Timestamp(10_000)));
     let engine = Arc::new(
         Engine::new_with_simulation(data_dir.path(), clock.clone(), Arc::new(NoopFaultInjector))
             .expect("engine should create"),
@@ -313,7 +313,7 @@ async fn mutation_execution_unit_pre_assign_label_forces_commit_interleaving() {
 #[tokio::test]
 async fn commit_timestamps_are_monotonic_with_sequence_across_paths() {
     let data_dir = tempdir().expect("engine tempdir should build");
-    let clock = Arc::new(ManualClock::new(Timestamp(30_000)));
+    let clock = Arc::new(ManualWallClock::new(Timestamp(30_000)));
     let engine = Arc::new(
         Engine::new_with_simulation(data_dir.path(), clock.clone(), Arc::new(NoopFaultInjector))
             .expect("engine should create"),
@@ -1193,7 +1193,7 @@ async fn mutation_execution_unit_conflicts_with_durable_unapplied_write() {
     let engine = Arc::new(
         Engine::new_with_simulation(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(92_000))),
+            Arc::new(ManualWallClock::new(Timestamp(92_000))),
             faults.clone(),
         )
         .expect("engine should create"),

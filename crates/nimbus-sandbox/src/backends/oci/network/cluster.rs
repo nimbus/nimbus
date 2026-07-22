@@ -5,16 +5,21 @@
 //! cross-node analogue of audit M1). The single-node allocator installs a fixed
 //! node-0 slice; the cluster allocator instead consumes a raft-committed,
 //! epoch-fenced, TTL-bounded lease and carves the SAME single-node way beneath
-//! it, so the leader (sole allocator of node super-nets) guarantees disjointness.
+//! it. This remains a future-only seam: its wall-expiry safety model is not yet
+//! proven, so cluster admission is deliberately blocked below.
 //!
 //! WHERE the lease comes from is a SEAM ([`ClusterLeaseProvider`]): the concrete
 //! provider reads the openraft-committed lease (the horizontal-scaling lane). This
 //! module owns the allocator plus ALL the fencing/admission LOGIC and is tested
 //! here against an in-memory provider — a legitimate test double, not a stub: the
 //! allocator's behaviour is fully exercised. Fail-closed by construction: no
-//! committed lease → no allocation (no config-default fallback); expired lease →
-//! the node self-fences; stale epoch → drain and re-carve (via the inner
-//! allocator's `ensure_supernet_matches`).
+//! committed lease → no allocation (no config-default fallback); locally
+//! observed expiry → the node self-fences; stale epoch → drain and re-carve (via
+//! the inner allocator's `ensure_supernet_matches`). Those local checks are not
+//! sufficient distributed authority: before promotion, HS5 must either prove a
+//! maximum leader/node skew plus observation-delay model whose reassignment
+//! grace prevents overlap, or replace wall expiry with a clock-free authority.
+//! The resulting epoch must be validated atomically with every protected write.
 //!
 //! Every item here is wired by the horizontal-scaling cluster lane (which supplies
 //! the concrete `ClusterLeaseProvider` and calls [`assert_cluster_admission`] at
@@ -32,6 +37,14 @@ use crate::instance::SandboxId;
 
 use super::segment::{InstalledSuperNet, SingleNodeSegmentAllocator};
 use super::{NetworkSegmentAllocator, ReleaseOutcome};
+
+/// Promotion gate owned by horizontal-scaling HS5.
+///
+/// This must not become `true` until deterministic tests cover forward/backward
+/// node time, delayed committed observation, partition, restart, stale epoch,
+/// and concurrent reassignment, and the selected authority rejects stale epochs
+/// atomically with protected writes.
+const CLUSTER_LEASE_CLOCK_MODEL_PROVEN: bool = false;
 
 /// A raft-committed, epoch-fenced, TTL-bounded grant of a node super-net.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -150,13 +163,24 @@ pub(crate) fn assert_cluster_admission(
     mesh_joined: bool,
     allocator: &dyn NetworkSegmentAllocator,
 ) -> Result<()> {
-    if mesh_joined && !allocator.requires_cluster_lease() {
-        return Err(SandboxError::OperationFailed {
-            message: "node has joined the cluster mesh but is still using the single-node segment \
-                      allocator (config-default super-net); refusing to start — a mesh-joined \
-                      node must use the lease-gated ClusterSegmentAllocator"
-                .to_owned(),
-        });
+    if mesh_joined {
+        if !allocator.requires_cluster_lease() {
+            return Err(SandboxError::OperationFailed {
+                message: "node has joined the cluster mesh but is still using the single-node \
+                          segment allocator (config-default super-net); refusing to start — a \
+                          mesh-joined node must use the lease-gated ClusterSegmentAllocator"
+                    .to_owned(),
+            });
+        }
+        if !CLUSTER_LEASE_CLOCK_MODEL_PROVEN {
+            return Err(SandboxError::OperationFailed {
+                message: "cluster network-segment admission remains blocked until \
+                          horizontal-scaling HS5 proves the leader/node clock-skew and \
+                          observation-delay contract (or adopts clock-free authority) and \
+                          atomically fences stale epochs on protected writes"
+                    .to_owned(),
+            });
+        }
     }
     Ok(())
 }
@@ -273,10 +297,10 @@ mod tests {
         );
     }
 
-    /// The startup admission assertion: a mesh-joined node on the single-node
-    /// allocator is refused; the cluster allocator (or a non-mesh node) is fine.
+    /// The startup admission assertion refuses both a single-node allocator and
+    /// the future cluster allocator while its clock-skew proof gate is open.
     #[test]
-    fn mesh_joined_node_on_single_node_allocator_is_refused() {
+    fn cluster_mode_remains_blocked_until_clock_skew_contract_is_proven() {
         let dir = tempdir().expect("temp dir");
         let single = SingleNodeSegmentAllocator::single_node_default(dir.path());
         assert!(
@@ -288,9 +312,10 @@ mod tests {
             "a non-mesh node may use the single-node allocator"
         );
         let cluster = node(dir.path(), None, 0);
-        assert!(
-            assert_cluster_admission(true, &cluster).is_ok(),
-            "a mesh-joined node on the cluster allocator is admitted"
-        );
+        let error = assert_cluster_admission(true, &cluster)
+            .expect_err("the future cluster allocator remains blocked before HS5 proof");
+        let message = error.to_string();
+        assert!(message.contains("clock-skew"), "got: {message}");
+        assert!(message.contains("stale epochs"), "got: {message}");
     }
 }

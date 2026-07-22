@@ -24,7 +24,9 @@ async fn scrub_rebuilds_index_from_packs() {
     );
 
     let report = LocalPackScrubber::new(reopened.clone())
-        .with_clock(Arc::new(nimbus_core::ManualClock::new(Timestamp(10_000))))
+        .with_clock(Arc::new(nimbus_core::ManualWallClock::new(Timestamp(
+            10_000,
+        ))))
         .rebuild_index_from_packs()
         .await
         .unwrap();

@@ -1,12 +1,11 @@
 use std::sync::Arc;
 
 use nimbus_core::{
-    CreateCronRequest, FieldSchema, FieldType, Mutation, Query, ScheduleRequest,
-    ScheduledJobOutcome, ScheduledJobResult, TableName, TableSchema, TenantId, Timestamp,
+    CreateCronRequest, FieldSchema, FieldType, ManualWallClock, Mutation, Query, ScheduleRequest,
+    ScheduledJobOutcome, ScheduledJobResult, SystemWallClock, TableName, TableSchema, TenantId,
+    Timestamp, WallClock,
 };
-use nimbus_storage::{
-    FaultOccurrence, FaultPoint, ManualClock, NoopFaultInjector, ScriptedFaultInjector,
-};
+use nimbus_storage::{FaultOccurrence, FaultPoint, NoopFaultInjector, ScriptedFaultInjector};
 use nimbus_testing::{
     DeterministicHarness, EngineFixture, RestartBoundary, RestartPoint, ScenarioMetadata,
     ScriptedRestartSchedule, wait_for_value,
@@ -121,7 +120,7 @@ async fn scheduler_async_write_path_round_trips_pending_running_and_history_stat
     let result = ScheduledJobResult {
         id: job_id.clone(),
         run_at: claimed[0].run_at,
-        finished_at: Timestamp::now(),
+        finished_at: SystemWallClock.now(),
         mutation: claimed[0].mutation.clone(),
         outcome: ScheduledJobOutcome::Completed,
         error: None,
@@ -142,11 +141,50 @@ async fn scheduler_async_write_path_round_trips_pending_running_and_history_stat
     assert_eq!(loaded.outcome, ScheduledJobOutcome::Completed);
 }
 
+#[test]
+fn engine_absolute_schedule_persists_requested_past_target() {
+    let data_dir = tempdir().expect("absolute scheduler tempdir should build");
+    let tenant_id = TenantId::new("absolute-scheduler").expect("tenant id should parse");
+    let clock = Arc::new(ManualWallClock::new(Timestamp(10_000)));
+
+    {
+        let engine = Engine::new_with_simulation(
+            data_dir.path(),
+            clock.clone(),
+            Arc::new(NoopFaultInjector),
+        )
+        .expect("engine should create");
+        engine
+            .create_tenant(tenant_id.clone())
+            .expect("tenant should create");
+        engine
+            .schedule_mutation_at(
+                &tenant_id,
+                Timestamp(1_000),
+                insert_task_mutation("past absolute target"),
+            )
+            .expect("past target should schedule as immediately due");
+        let jobs = engine
+            .list_scheduled_jobs(&tenant_id)
+            .expect("scheduled jobs should list");
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].run_at, Timestamp(1_000));
+    }
+
+    let reloaded = Engine::new_with_simulation(data_dir.path(), clock, Arc::new(NoopFaultInjector))
+        .expect("engine should reopen");
+    let jobs = reloaded
+        .list_scheduled_jobs(&tenant_id)
+        .expect("persisted scheduled jobs should list after restart");
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0].run_at, Timestamp(1_000));
+}
+
 #[tokio::test]
 async fn scheduler_continues_claimed_batch_after_result_bookkeeping_failure() {
     let data_dir = tempdir().expect("tempdir should create");
     let tenant_id = TenantId::new("demo").expect("tenant id should be valid");
-    let clock = Arc::new(ManualClock::new(Timestamp(1_000)));
+    let clock = Arc::new(ManualWallClock::new(Timestamp(1_000)));
     let engine = Arc::new(
         Engine::new_with_simulation(
             data_dir.path(),
@@ -418,7 +456,7 @@ async fn scheduled_mutation_validates_against_schema() {
         )
         .expect("schedule should succeed");
 
-    crate::scheduler::tick_at_async(&engine, Timestamp::now())
+    crate::scheduler::tick_at_async(&engine, SystemWallClock.now())
         .await
         .expect("tick should succeed");
 
@@ -554,7 +592,7 @@ async fn load_tenants_with_scheduled_work_recovers_running_jobs() {
             )
             .expect("schedule should succeed");
         let claimed = engine
-            .claim_due_jobs(&tenant_id, Timestamp::now())
+            .claim_due_jobs(&tenant_id, SystemWallClock.now())
             .expect("claim should succeed");
         assert_eq!(claimed.len(), 1);
     }
@@ -573,7 +611,7 @@ async fn load_tenants_with_scheduled_work_recovers_running_jobs() {
         1
     );
 
-    crate::scheduler::tick_at_async(&reloaded, Timestamp::now())
+    crate::scheduler::tick_at_async(&reloaded, SystemWallClock.now())
         .await
         .expect("tick should succeed");
     let documents = reloaded
@@ -606,7 +644,7 @@ async fn recovered_scheduled_job_does_not_double_apply_after_replay() {
             )
             .expect("schedule should succeed");
         let claimed = engine
-            .claim_due_jobs(&tenant_id, Timestamp::now())
+            .claim_due_jobs(&tenant_id, SystemWallClock.now())
             .expect("claim should succeed");
         assert_eq!(claimed.len(), 1);
         let execution_id = format!("scheduled:{job_id}");
@@ -623,7 +661,7 @@ async fn recovered_scheduled_job_does_not_double_apply_after_replay() {
         .load_tenants_with_scheduled_work()
         .expect("scheduled tenants should load");
 
-    crate::scheduler::tick_at_async(&reloaded, Timestamp::now())
+    crate::scheduler::tick_at_async(&reloaded, SystemWallClock.now())
         .await
         .expect("tick should succeed");
     let documents = reloaded
@@ -651,7 +689,7 @@ async fn scheduler_recovery_campaign_survives_claim_and_completion_restart_bound
     );
     let data_dir = tempdir().expect("tempdir should create");
     let tenant_id = TenantId::new("demo").expect("tenant id should be valid");
-    let clock = Arc::new(ManualClock::new(Timestamp(1_000)));
+    let clock = Arc::new(ManualWallClock::new(Timestamp(1_000)));
     let open_engine =
         || Engine::new_with_simulation(data_dir.path(), clock.clone(), Arc::new(NoopFaultInjector));
 
@@ -898,7 +936,7 @@ async fn scheduler_recovery_campaign_survives_claim_and_completion_restart_bound
 }
 
 #[tokio::test]
-async fn scheduler_wakes_promptly_when_earlier_work_arrives() {
+async fn scheduler_earlier_work_interrupts_far_future_wait() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();
     let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
@@ -959,6 +997,125 @@ async fn scheduler_wakes_promptly_when_earlier_work_arrives() {
 }
 
 #[tokio::test]
+async fn scheduler_forward_wall_jump_executes_within_resample_bound() {
+    let data_dir = tempdir().expect("forward-jump scheduler tempdir should build");
+    let wall = Arc::new(ManualWallClock::new(Timestamp(1_000)));
+    let engine = Arc::new(
+        Engine::new_with_simulation(data_dir.path(), wall.clone(), Arc::new(NoopFaultInjector))
+            .expect("engine should create"),
+    );
+    let tenant_id = TenantId::new("scheduler-forward-jump").expect("tenant id should parse");
+    engine
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+    engine
+        .schedule_mutation_at(
+            &tenant_id,
+            Timestamp(61_000),
+            insert_task_mutation("forward jump"),
+        )
+        .expect("far-future job should schedule");
+    let resample_bound = Duration::from_millis(25);
+    let (shutdown_tx, scheduler_handle) = spawn_scheduler(engine.clone(), resample_bound).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    wall.set(Timestamp(61_000));
+    let documents = wait_for_value(
+        "scheduler should observe a forward correction within its resample bound",
+        Duration::from_millis(250),
+        Duration::ZERO,
+        || async {
+            engine
+                .list_documents(&tenant_id, &tasks_table())
+                .expect("documents should list")
+        },
+        |documents| !documents.is_empty(),
+    )
+    .await;
+
+    assert_eq!(documents.len(), 1);
+    let _ = shutdown_tx.send(true);
+    scheduler_handle.await.expect("scheduler should shut down");
+}
+
+#[tokio::test]
+async fn scheduler_backward_wall_jump_does_not_execute_early() {
+    let data_dir = tempdir().expect("backward-jump scheduler tempdir should build");
+    let wall = Arc::new(ManualWallClock::new(Timestamp(1_000)));
+    let engine = Arc::new(
+        Engine::new_with_simulation(data_dir.path(), wall.clone(), Arc::new(NoopFaultInjector))
+            .expect("engine should create"),
+    );
+    let tenant_id = TenantId::new("scheduler-backward-jump").expect("tenant id should parse");
+    engine
+        .create_tenant(tenant_id.clone())
+        .expect("tenant should create");
+    engine
+        .schedule_mutation_at(
+            &tenant_id,
+            Timestamp(1_100),
+            insert_task_mutation("backward jump"),
+        )
+        .expect("job should schedule");
+    let (shutdown_tx, scheduler_handle) =
+        spawn_scheduler(engine.clone(), Duration::from_millis(10)).await;
+    tokio::time::sleep(Duration::from_millis(20)).await;
+
+    wall.set(Timestamp(500));
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert!(
+        engine
+            .list_documents(&tenant_id, &tasks_table())
+            .expect("documents should list")
+            .is_empty(),
+        "monotonic timer progress must not make a wall deadline due"
+    );
+
+    wall.set(Timestamp(1_100));
+    wait_for_value(
+        "scheduler should execute once wall time reaches the durable target",
+        Duration::from_millis(250),
+        Duration::ZERO,
+        || async {
+            engine
+                .list_documents(&tenant_id, &tasks_table())
+                .expect("documents should list")
+        },
+        |documents| !documents.is_empty(),
+    )
+    .await;
+    let _ = shutdown_tx.send(true);
+    scheduler_handle.await.expect("scheduler should shut down");
+}
+
+#[tokio::test]
+async fn scheduler_shutdown_interrupts_far_future_wait() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("scheduler-shutdown", Engine::create_tenant);
+    engine
+        .schedule_mutation(
+            &tenant_id,
+            ScheduleRequest {
+                run_after_ms: 60 * 60 * 1_000,
+                mutation: insert_task_mutation("far future"),
+            },
+        )
+        .expect("far-future job should schedule");
+    let (shutdown_tx, scheduler_handle) =
+        spawn_scheduler(engine, Duration::from_secs(60 * 60)).await;
+    tokio::time::sleep(Duration::from_millis(25)).await;
+
+    shutdown_tx
+        .send(true)
+        .expect("shutdown receiver should remain");
+    timeout(Duration::from_millis(250), scheduler_handle)
+        .await
+        .expect("shutdown must interrupt the far-future wait")
+        .expect("scheduler task should join");
+}
+
+#[tokio::test]
 async fn scheduler_tick_processes_other_tenants_while_one_tenant_is_paused() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();
@@ -991,7 +1148,7 @@ async fn scheduler_tick_processes_other_tenants_while_one_tenant_is_paused() {
 
     let tick_task = tokio::spawn({
         let engine = engine.clone();
-        async move { crate::scheduler::tick_at_async(&engine, Timestamp::now()).await }
+        async move { crate::scheduler::tick_at_async(&engine, SystemWallClock.now()).await }
     });
 
     let pause_wait = tenant_a_pause.clone();

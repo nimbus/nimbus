@@ -35,10 +35,12 @@ use std::sync::RwLock;
 use std::sync::Weak;
 use std::sync::atomic::AtomicBool;
 
-use nimbus_core::{DocumentId, Error, IdSource, Result, SystemIdSource, TenantId, Timestamp};
+use nimbus_core::{
+    DocumentId, Error, IdSource, MonotonicClock, Result, SystemIdSource, SystemMonotonicClock,
+    SystemWallClock, TenantId, Timestamp, WallClock,
+};
 use nimbus_storage::{
-    Clock, EmbeddedProviderKind, FaultInjector, NoopFaultInjector, SqliteTenantStore, SystemClock,
-    TenantStore,
+    EmbeddedProviderKind, FaultInjector, NoopFaultInjector, SqliteTenantStore, TenantStore,
 };
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
@@ -94,7 +96,8 @@ pub struct Engine {
     embedded_provider_kind: Option<EmbeddedProviderKind>,
     persistence_provider: PersistenceProvider,
     control_plane_provider: ControlPlaneProvider,
-    clock: Arc<dyn Clock>,
+    clock: Arc<dyn WallClock>,
+    monotonic_clock: Arc<dyn MonotonicClock>,
     committer_lease_clock: Arc<dyn LeaseRenewalClock>,
     id_source: Arc<dyn IdSource>,
     // One provider-lease identity per Engine lets an evicted tenant runtime
@@ -162,7 +165,7 @@ pub(super) struct EngineBootstrapParts {
     embedded_provider_kind: Option<EmbeddedProviderKind>,
     persistence_provider: PersistenceProvider,
     control_plane_provider: ControlPlaneProvider,
-    clock: Arc<dyn Clock>,
+    clock: Arc<dyn WallClock>,
     id_source: Arc<dyn IdSource>,
     storage_fault_injector: Arc<dyn FaultInjector>,
     engine_executor: BackgroundExecutor,
@@ -194,7 +197,7 @@ impl Engine {
     ) -> Result<Self> {
         Self::new_with_simulation_and_embedded_provider(
             data_dir,
-            Arc::new(SystemClock),
+            Arc::new(SystemWallClock),
             Arc::new(NoopFaultInjector),
             embedded_provider_kind,
         )
@@ -204,7 +207,7 @@ impl Engine {
     pub async fn new_with_persistence_config(config: EnginePersistenceConfig) -> Result<Self> {
         Self::new_with_simulation_and_persistence_config(
             config,
-            Arc::new(SystemClock),
+            Arc::new(SystemWallClock),
             Arc::new(NoopFaultInjector),
         )
         .await
@@ -213,7 +216,7 @@ impl Engine {
     /// Creates a new engine with deterministic simulation seams for time and storage faults.
     pub fn new_with_simulation(
         data_dir: impl Into<PathBuf>,
-        clock: Arc<dyn Clock>,
+        clock: Arc<dyn WallClock>,
         storage_fault_injector: Arc<dyn FaultInjector>,
     ) -> Result<Self> {
         Self::new_with_simulation_and_embedded_provider(
@@ -224,11 +227,23 @@ impl Engine {
         )
     }
 
+    /// Creates an engine with independently controlled wall and monotonic clocks.
+    pub fn new_with_simulation_clocks(
+        data_dir: impl Into<PathBuf>,
+        clock: Arc<dyn WallClock>,
+        monotonic_clock: Arc<dyn MonotonicClock>,
+        storage_fault_injector: Arc<dyn FaultInjector>,
+    ) -> Result<Self> {
+        let mut engine = Self::new_with_simulation(data_dir, clock, storage_fault_injector)?;
+        engine.monotonic_clock = monotonic_clock;
+        Ok(engine)
+    }
+
     /// Creates a new engine with deterministic simulation seams and an
     /// injected source for generated document and job identifiers.
     pub fn new_with_simulation_and_id_source(
         data_dir: impl Into<PathBuf>,
-        clock: Arc<dyn Clock>,
+        clock: Arc<dyn WallClock>,
         storage_fault_injector: Arc<dyn FaultInjector>,
         id_source: Arc<dyn IdSource>,
     ) -> Result<Self> {
@@ -249,7 +264,7 @@ impl Engine {
     pub fn new_with_memory_persistence(data_dir: impl Into<PathBuf>) -> Result<Self> {
         Self::new_with_simulation_and_memory_persistence(
             data_dir,
-            Arc::new(SystemClock),
+            Arc::new(SystemWallClock),
             Arc::new(NoopFaultInjector),
             Arc::new(SystemIdSource),
         )
@@ -259,11 +274,30 @@ impl Engine {
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn new_with_simulation_and_memory_persistence(
         data_dir: impl Into<PathBuf>,
-        clock: Arc<dyn Clock>,
+        clock: Arc<dyn WallClock>,
         storage_fault_injector: Arc<dyn FaultInjector>,
         id_source: Arc<dyn IdSource>,
     ) -> Result<Self> {
         bootstrap::build_memory_engine(data_dir.into(), clock, storage_fault_injector, id_source)
+    }
+
+    /// Creates a memory-persistence engine with independent deterministic clocks.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn new_with_simulation_clocks_and_memory_persistence(
+        data_dir: impl Into<PathBuf>,
+        clock: Arc<dyn WallClock>,
+        monotonic_clock: Arc<dyn MonotonicClock>,
+        storage_fault_injector: Arc<dyn FaultInjector>,
+        id_source: Arc<dyn IdSource>,
+    ) -> Result<Self> {
+        let mut engine = Self::new_with_simulation_and_memory_persistence(
+            data_dir,
+            clock,
+            storage_fault_injector,
+            id_source,
+        )?;
+        engine.monotonic_clock = monotonic_clock;
+        Ok(engine)
     }
 
     /// Creates a new engine with deterministic simulation seams and an
@@ -274,7 +308,7 @@ impl Engine {
     /// to enable encrypted embedded providers.
     pub fn new_with_simulation_and_embedded_provider(
         data_dir: impl Into<PathBuf>,
-        clock: Arc<dyn Clock>,
+        clock: Arc<dyn WallClock>,
         storage_fault_injector: Arc<dyn FaultInjector>,
         embedded_provider_kind: EmbeddedProviderKind,
     ) -> Result<Self> {
@@ -294,7 +328,7 @@ impl Engine {
     /// persistence configuration.
     pub async fn new_with_simulation_and_persistence_config(
         config: EnginePersistenceConfig,
-        clock: Arc<dyn Clock>,
+        clock: Arc<dyn WallClock>,
         storage_fault_injector: Arc<dyn FaultInjector>,
     ) -> Result<Self> {
         bootstrap::build_from_persistence_config(
@@ -306,13 +340,27 @@ impl Engine {
         .await
     }
 
+    /// Creates a configured engine with independently controlled wall and monotonic clocks.
+    pub async fn new_with_simulation_clocks_and_persistence_config(
+        config: EnginePersistenceConfig,
+        clock: Arc<dyn WallClock>,
+        monotonic_clock: Arc<dyn MonotonicClock>,
+        storage_fault_injector: Arc<dyn FaultInjector>,
+    ) -> Result<Self> {
+        let mut engine =
+            Self::new_with_simulation_and_persistence_config(config, clock, storage_fault_injector)
+                .await?;
+        engine.monotonic_clock = monotonic_clock;
+        Ok(engine)
+    }
+
     /// Creates a test provider engine whose libSQL primary and replica-cache
     /// fault adapters can be controlled independently.
     #[cfg(any(test, feature = "test-hooks"))]
     #[doc(hidden)]
     pub async fn new_with_simulation_and_persistence_config_and_libsql_faults(
         config: EnginePersistenceConfig,
-        clock: Arc<dyn Clock>,
+        clock: Arc<dyn WallClock>,
         remote_fault_injector: Arc<dyn FaultInjector>,
         replica_fault_injector: Arc<dyn FaultInjector>,
     ) -> Result<Self> {
@@ -331,7 +379,7 @@ impl Engine {
     #[cfg(test)]
     pub(crate) async fn new_with_simulation_and_persistence_config_and_lease_clock(
         config: EnginePersistenceConfig,
-        clock: Arc<dyn Clock>,
+        clock: Arc<dyn WallClock>,
         storage_fault_injector: Arc<dyn FaultInjector>,
         committer_lease_clock: Arc<dyn LeaseRenewalClock>,
     ) -> Result<Self> {
@@ -353,6 +401,7 @@ impl Engine {
             persistence_provider: parts.persistence_provider,
             control_plane_provider: parts.control_plane_provider,
             clock: parts.clock,
+            monotonic_clock: Arc::new(SystemMonotonicClock),
             committer_lease_clock: Arc::new(SystemLeaseRenewalClock),
             id_source: parts.id_source,
             committer_owner_id: OnceLock::new(),
@@ -497,6 +546,10 @@ impl Engine {
         self.clock.now()
     }
 
+    pub(crate) fn monotonic_now(&self) -> std::time::Instant {
+        self.monotonic_clock.now()
+    }
+
     pub(crate) fn next_document_id(&self) -> DocumentId {
         self.id_source.next_document_id()
     }
@@ -551,6 +604,7 @@ impl Engine {
             tenant_incarnation,
             store.clone(),
             read_storage,
+            self.monotonic_clock.clone(),
             self.committer_lease_clock.clone(),
             self.committer_owner_id_for_store(&store),
         )?);
