@@ -5,6 +5,7 @@ use nimbus_core::{
     DocumentId, FieldSchema, FieldType, ManualMonotonicClock, Mutation, ScheduleRequest,
     SeededIdSource, TenantEventKind, TriggerDeliveryCursor, hex_encode,
 };
+use nimbus_storage::PointInTimeRestoreArchive;
 use nimbus_testing::ppsc::{
     PpscBackend, PpscEffect, PpscExpectedOutcome, PpscFrontiers, PpscHistory, PpscJournalEntry,
     PpscObservedStep, PpscOperation, PpscPublication, PpscRoute, PpscScenario, PpscSequenceClaim,
@@ -94,6 +95,7 @@ struct PpscEngineRunner {
     _storage_faults: Arc<PpscStorageFaultInjector>,
     publications: Arc<PpscPublicationRecorder>,
     tenants: BTreeMap<String, TenantId>,
+    restore_archives: BTreeMap<u64, PointInTimeRestoreArchive>,
     scenario_seed: u64,
 }
 
@@ -228,6 +230,61 @@ impl PpscEngineRunner {
             tenants.insert(tenant_name.to_string(), tenant_id);
         }
 
+        let archive_ids = scenario
+            .steps
+            .iter()
+            .filter_map(|step| match &step.operation {
+                PpscOperation::RestoreImport { archive, .. } => Some(*archive),
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>();
+        let mut restore_archives = BTreeMap::new();
+        for archive_id in archive_ids {
+            let source_id = TenantId::new(format!("r-{:016x}-{archive_id:016x}", scenario.seed))
+                .expect("PPSC restore source tenant id should parse");
+            engine
+                .create_tenant_async(source_id.clone())
+                .await
+                .expect("PPSC restore source tenant should create");
+            engine
+                .shutdown_trigger_candidates_for_testing(&source_id)
+                .expect("PPSC restore source trigger worker should stop");
+            let document_id = DocumentId::from_key(format!(
+                "ppsc-{:016x}-archive-{archive_id:016x}",
+                scenario.seed
+            ))
+            .expect("PPSC restore source document id should parse");
+            engine
+                .insert_document_async_with_id(
+                    source_id.clone(),
+                    tasks_table(),
+                    document_id,
+                    serde_json::Map::from_iter([
+                        ("key".to_string(), json!(format!("archive-{archive_id}"))),
+                        ("archive".to_string(), json!(archive_id)),
+                    ]),
+                )
+                .await
+                .expect("PPSC restore source document should commit");
+            engine
+                .flush_tenant_committer_for_testing(&source_id)
+                .await
+                .expect("PPSC restore source committer should drain");
+            engine
+                .flush_committed_mutation_observers_for_testing(&source_id)
+                .await
+                .expect("PPSC restore source publication should drain");
+            let archive = engine
+                .export_latest_point_in_time_restore_archive(&source_id)
+                .expect("PPSC point-in-time archive should export");
+            assert_eq!(
+                archive.target_sequence,
+                SequenceNumber(1),
+                "PPSC restore fixture should contain exactly one source mutation"
+            );
+            restore_archives.insert(archive_id, archive);
+        }
+
         Self {
             backend,
             _data_dir: data_dir,
@@ -237,6 +294,7 @@ impl PpscEngineRunner {
             _storage_faults: storage_faults,
             publications,
             tenants,
+            restore_archives,
             scenario_seed: scenario.seed,
         }
     }
@@ -415,6 +473,17 @@ impl PpscEngineRunner {
                     )
                     .await
                     .expect("PPSC projection source update should commit");
+                PpscExpectedOutcome::Committed
+            }
+            PpscOperation::RestoreImport { tenant, archive } => {
+                let restore_archive = self
+                    .restore_archives
+                    .get(archive)
+                    .unwrap_or_else(|| panic!("PPSC restore archive {archive} should exist"))
+                    .clone();
+                self.engine
+                    .import_point_in_time_restore_archive(self.tenant(tenant), &restore_archive)
+                    .expect("PPSC point-in-time archive should import");
                 PpscExpectedOutcome::Committed
             }
             PpscOperation::AdvanceWallClock { millis } => {
@@ -691,6 +760,7 @@ fn three_route_scenario() -> PpscScenario {
 
 fn internal_durable_jobs_scenario() -> PpscScenario {
     let tenant = "ppsc-internal".to_string();
+    let restore_tenant = "ppsc-restore".to_string();
     PpscScenario::new(
         "internal-durable-jobs",
         409,
@@ -725,6 +795,13 @@ fn internal_durable_jobs_scenario() -> PpscScenario {
             ),
             PpscStep::new(
                 PpscOperation::SchemaDelete { tenant },
+                PpscExpectedOutcome::Committed,
+            ),
+            PpscStep::new(
+                PpscOperation::RestoreImport {
+                    tenant: restore_tenant,
+                    archive: 44,
+                },
                 PpscExpectedOutcome::Committed,
             ),
             PpscStep::new(PpscOperation::Quiesce, PpscExpectedOutcome::Shutdown),
@@ -800,6 +877,29 @@ async fn ppsc_engine_runner_internal_durable_jobs_match_embedded_backends() {
             )])
             .expect("expected PPSC terminal schema should serialize")
         );
+        let restored = &history.terminal.tenants["ppsc-restore"];
+        assert_eq!(restored.frontiers.assigned_high_water, 1);
+        assert_eq!(restored.frontiers.active_assigned_head, 1);
+        assert_eq!(restored.frontiers.durable_head, 1);
+        assert_eq!(restored.frontiers.storage_applied_head, 1);
+        assert_eq!(restored.frontiers.published_head, 1);
+        assert_eq!(restored.frontiers.applied_head, 1);
+        assert_eq!(restored.journal.len(), 1);
+        assert_eq!(restored.publications.len(), 1);
+        assert_eq!(restored.documents.len(), 1);
+        assert_eq!(restored.schema, b"[]");
+        assert!(restored.scheduled_jobs.is_empty());
+        assert_eq!(restored.trigger_cursor, 0);
+        assert_eq!(restored.projection_durable_sequence, 1);
+        let restored_document = serde_json::from_slice::<serde_json::Value>(
+            restored
+                .documents
+                .values()
+                .next()
+                .expect("PPSC restored document should exist"),
+        )
+        .expect("PPSC restored document should deserialize");
+        assert_eq!(restored_document["fields"]["archive"], json!(44));
         terminal_states.push(history.terminal);
     }
     assert_eq!(terminal_states[0], terminal_states[1]);
