@@ -81,7 +81,9 @@ impl MySqlProvider {
     }
 
     pub async fn create_opened_tenant(&self, tenant_id: &TenantId) -> Result<OpenedMySqlTenant> {
-        let registration = self.create_tenant(tenant_id).await?;
+        let registration = self
+            .create_tenant(tenant_id) // tenant-lifecycle: provider-adapter-internal
+            .await?;
         Ok(self.open_registration(registration))
     }
 

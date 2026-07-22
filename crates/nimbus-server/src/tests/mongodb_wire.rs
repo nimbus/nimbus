@@ -153,7 +153,7 @@ fn sha256_hash(data: &[u8]) -> Vec<u8> {
 }
 
 pub(crate) async fn mongodb_wire_crud_roundtrip_inner() {
-    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let fixture = EngineFixture::new(|path| Engine::new_with_memory_persistence(path));
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("local addr");
     let service = fixture.engine();
@@ -337,7 +337,7 @@ async fn mongodb_wire_bound_credential_cross_tenant_refused_through_served_path(
 }
 
 #[tokio::test]
-async fn mongodb_wire_crud_roundtrip() {
+async fn mongodb_tenant_admission_uses_provider_lifecycle() {
     mongodb_wire_crud_roundtrip_inner().await;
 }
 

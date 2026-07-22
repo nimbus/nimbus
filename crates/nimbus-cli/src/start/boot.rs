@@ -7,7 +7,8 @@ use std::sync::Arc;
 use std::{env, process};
 
 use nimbus::{
-    Engine, Error, LicenseState, RuntimeHostResourceBudget, RuntimeLimits, TenantId, run_scheduler,
+    Engine, Error, LicenseState, RuntimeHostResourceBudget, RuntimeLimits, TenantAdmissionOutcome,
+    TenantId, run_scheduler,
 };
 use nimbus_convex::ConvexRegistry;
 use nimbus_operator::{
@@ -190,7 +191,7 @@ pub(crate) async fn run_start_command(
     let shutdown_engine = engine.clone();
     engine.recover_scheduled_work_on_startup_async().await?;
     if let Some(tenant_name) = &command.auto_tenant {
-        ensure_auto_tenant(&engine, tenant_name)?;
+        ensure_auto_tenant(&engine, tenant_name).await?;
     }
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let scheduler_engine = engine.clone();
@@ -732,17 +733,16 @@ fn package_declares_functions_framework(package_json_path: &Path) -> bool {
     })
 }
 
-fn ensure_auto_tenant(
-    engine: &Engine,
+pub(super) async fn ensure_auto_tenant(
+    engine: &Arc<Engine>,
     tenant_name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let tenant_id = TenantId::new(tenant_name)?;
-    match engine.create_tenant(tenant_id) {
-        Ok(()) => {
+    match engine.ensure_tenant_ready_async(tenant_id).await? {
+        TenantAdmissionOutcome::Created => {
             emit_start_info(format!("auto-created tenant \"{tenant_name}\""));
         }
-        Err(Error::AlreadyExists(_)) => {}
-        Err(error) => return Err(error.into()),
+        TenantAdmissionOutcome::Existing => {}
     }
     Ok(())
 }

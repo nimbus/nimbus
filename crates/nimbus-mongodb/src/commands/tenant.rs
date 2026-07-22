@@ -139,11 +139,21 @@ pub fn ensure_tenant(
     engine: &Arc<Engine>,
     context: &TenantIsolationContext,
 ) -> Result<(), MongoError> {
-    match engine.create_tenant(context.tenant_id().clone()) {
-        Ok(()) => Ok(()),
-        Err(nimbus_core::Error::AlreadyExists(_)) => Ok(()),
-        Err(e) => Err(MongoError::from(e)),
-    }
+    engine
+        .ensure_tenant_ready_blocking(context.tenant_id().clone())
+        .map(|_| ())
+        .map_err(MongoError::from)
+}
+
+pub async fn ensure_tenant_async(
+    engine: &Arc<Engine>,
+    context: &TenantIsolationContext,
+) -> Result<(), MongoError> {
+    engine
+        .ensure_tenant_ready_async(context.tenant_id().clone())
+        .await
+        .map(|_| ())
+        .map_err(MongoError::from)
 }
 
 #[cfg(test)]

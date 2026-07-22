@@ -8,10 +8,7 @@ use crate::tenant::{TenantOperationGuard, TenantRuntime};
 
 impl Engine {
     pub async fn ensure_object_tenant_async(self: &Arc<Self>, tenant_id: TenantId) -> Result<()> {
-        match self.create_tenant_async(tenant_id).await {
-            Ok(()) | Err(nimbus_core::Error::AlreadyExists(_)) => Ok(()),
-            Err(error) => Err(error),
-        }
+        self.ensure_tenant_ready_async(tenant_id).await.map(|_| ())
     }
 
     /// Resolves `tenant_id` to its object-metadata handle once, so callers

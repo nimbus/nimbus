@@ -99,7 +99,7 @@ async fn handle(State(state): State<DynamoDbState>, headers: HeaderMap, body: By
         engine: &state.engine,
         access_keys: &state.access_keys,
     };
-    let (status, json) = nimbus_dynamodb::dispatch(&ctx, &headers, &body);
+    let (status, json) = nimbus_dynamodb::dispatch_async(&ctx, &headers, &body).await;
     let status = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     let payload = serde_json::to_vec(&json).unwrap_or_default();
     (

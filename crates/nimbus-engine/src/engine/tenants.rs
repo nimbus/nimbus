@@ -8,6 +8,80 @@ use crate::tenant::{TenantRuntime, TenantRuntimeTiming};
 
 use super::{Engine, TenantLoadGateGuard};
 
+/// Result of idempotent tenant admission through the async provider lifecycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TenantAdmissionOutcome {
+    /// This admission created the durable tenant and registered its runtime.
+    Created,
+    /// The durable tenant already existed and its runtime is now registered.
+    Existing,
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct TenantCreatePause {
+    entered: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+
+#[cfg(test)]
+static TENANT_CREATE_PAUSES: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<TenantId, Arc<TenantCreatePause>>>,
+> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+async fn pause_tenant_create_after_provider_for_testing(tenant_id: &TenantId) {
+    let pause = TENANT_CREATE_PAUSES
+        .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+        .lock()
+        .expect("tenant-create pause registry should not be poisoned")
+        .get(tenant_id)
+        .cloned();
+    if let Some(pause) = pause {
+        pause.entered.notify_one();
+        pause.release.notified().await;
+    }
+}
+
+#[cfg(test)]
+pub(crate) struct TenantCreatePauseHandle {
+    tenant_id: TenantId,
+    pause: Arc<TenantCreatePause>,
+}
+
+#[cfg(test)]
+impl TenantCreatePauseHandle {
+    pub(crate) async fn wait_until_entered(&self) {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            self.pause.entered.notified(),
+        )
+        .await
+        .expect("tenant creation should reach the post-provider pause");
+    }
+
+    pub(crate) fn release(self) {
+        drop(self);
+    }
+}
+
+#[cfg(test)]
+impl Drop for TenantCreatePauseHandle {
+    fn drop(&mut self) {
+        let mut pauses = TENANT_CREATE_PAUSES
+            .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+            .lock()
+            .expect("tenant-create pause registry should not be poisoned");
+        if pauses
+            .get(&self.tenant_id)
+            .is_some_and(|armed| Arc::ptr_eq(armed, &self.pause))
+        {
+            pauses.remove(&self.tenant_id);
+        }
+        self.pause.release.notify_one();
+    }
+}
+
 pub(in crate::engine) fn with_tenant_runtime_operation<T, F>(
     runtime: Arc<TenantRuntime>,
     tenant_id: &TenantId,
@@ -21,7 +95,12 @@ where
 }
 
 impl Engine {
-    /// Creates a tenant explicitly.
+    /// Creates a tenant through the blocking embedded-only lifecycle.
+    ///
+    /// This interface is valid only for engines constructed with redb or
+    /// SQLite embedded persistence. Provider-capable compositions must retain
+    /// an `Arc<Engine>` and call [`Engine::create_tenant_async`]. The provider
+    /// restriction is checked before the tenant-load gate is acquired.
     pub fn create_tenant(&self, tenant_id: TenantId) -> Result<()> {
         self.require_embedded_provider_kind()?;
         let _tenant_load_guard = self.lock_tenant_load_gate_blocking();
@@ -47,7 +126,45 @@ impl Engine {
         Ok(())
     }
 
-    /// Creates a tenant explicitly asynchronously.
+    /// Ensures a tenant runtime is ready through the blocking lifecycle.
+    ///
+    /// An already-loaded runtime is accepted for every persistence topology so
+    /// synchronous command cores can verify the async admission performed by
+    /// their transport. When the runtime is absent, only redb and SQLite may
+    /// create or reopen it; external-provider compositions fail with the
+    /// embedded-only lifecycle error and must use
+    /// [`Engine::ensure_tenant_ready_async`]. The registry lookup is the fast
+    /// path. Embedded first use may open storage and initialize a runtime.
+    pub fn ensure_tenant_ready_blocking(
+        &self,
+        tenant_id: TenantId,
+    ) -> Result<TenantAdmissionOutcome> {
+        match self.ensure_tenant_exists(&tenant_id) {
+            Ok(()) => Ok(TenantAdmissionOutcome::Existing),
+            Err(Error::TenantNotFound(_)) => {
+                match self.create_tenant(tenant_id.clone()) {
+                    // tenant-lifecycle: embedded-only
+                    Ok(()) => Ok(TenantAdmissionOutcome::Created),
+                    Err(Error::AlreadyExists(_)) => {
+                        self.ensure_tenant_exists(&tenant_id)?;
+                        Ok(TenantAdmissionOutcome::Existing)
+                    }
+                    Err(error) => Err(error),
+                }
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Creates a tenant through the canonical persistence-provider lifecycle.
+    ///
+    /// Background work starts before admission. Tenant creation is serialized;
+    /// the persistence provider creates storage before runtime construction,
+    /// catch-up, trigger bootstrap, registry publication, and observer
+    /// notification. A failure before registry publication leaves no registered
+    /// partial runtime, but provider creation may already be durable. Callers
+    /// that treat `AlreadyExists` as idempotent must replay through
+    /// [`Engine::ensure_tenant_ready_async`]; no other error is downgraded.
     pub async fn create_tenant_async(self: &Arc<Self>, tenant_id: TenantId) -> Result<()> {
         self.ensure_provider_background_tasks_started();
         let _tenant_load_guard = self.tenant_load_gate.lock().await;
@@ -76,7 +193,12 @@ impl Engine {
                     .await?,
             )
         };
-        let opened = self.persistence_provider.create_tenant(&tenant_id).await?;
+        let opened = self
+            .persistence_provider
+            .create_tenant(&tenant_id) // tenant-lifecycle: provider-adapter-internal
+            .await?;
+        #[cfg(test)]
+        pause_tenant_create_after_provider_for_testing(&tenant_id).await;
         let tenant_incarnation = opened.incarnation.or(control_incarnation).ok_or_else(|| {
             Error::Internal(format!(
                 "tenant persistence did not provide an incarnation for {tenant_id}"
@@ -114,6 +236,27 @@ impl Engine {
             .insert(tenant_id, runtime.clone());
         self.notify_tenant_runtime_loaded(&runtime);
         Ok(())
+    }
+
+    /// Creates or loads a tenant through the canonical async lifecycle.
+    ///
+    /// `AlreadyExists` is not accepted by itself: the existing durable tenant
+    /// is opened and its runtime must be registered before this method returns.
+    /// That makes retries safe after cancellation or process failure between
+    /// provider creation and runtime publication. Every other provider or
+    /// bootstrap error remains visible to the caller.
+    pub async fn ensure_tenant_ready_async(
+        self: &Arc<Self>,
+        tenant_id: TenantId,
+    ) -> Result<TenantAdmissionOutcome> {
+        match self.create_tenant_async(tenant_id.clone()).await {
+            Ok(()) => Ok(TenantAdmissionOutcome::Created),
+            Err(Error::AlreadyExists(_)) => {
+                self.ensure_tenant_exists_async(tenant_id).await?;
+                Ok(TenantAdmissionOutcome::Existing)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     /// Lists all tenant ids on disk.
@@ -227,6 +370,11 @@ impl Engine {
         {
             return Ok(runtime);
         }
+
+        // A provider-backed runtime must be admitted through the async
+        // lifecycle. Fail at the interface boundary instead of reaching
+        // `tenant_path`, which is intentionally embedded-only.
+        self.require_embedded_provider_kind()?;
 
         let _tenant_load_guard = self.lock_tenant_load_gate_blocking();
         let mut tenants = self
@@ -453,6 +601,20 @@ impl Engine {
 
 #[cfg(test)]
 impl Engine {
+    pub(crate) fn pause_tenant_creation_after_provider_for_testing(
+        &self,
+        tenant_id: TenantId,
+    ) -> TenantCreatePauseHandle {
+        let pause = Arc::new(TenantCreatePause::default());
+        let previous = TENANT_CREATE_PAUSES
+            .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+            .lock()
+            .expect("tenant-create pause registry should not be poisoned")
+            .insert(tenant_id.clone(), pause.clone());
+        assert!(previous.is_none(), "tenant-create pause already armed");
+        TenantCreatePauseHandle { tenant_id, pause }
+    }
+
     pub(crate) async fn get_existing_tenant_async_for_testing(
         self: &Arc<Self>,
         tenant_id: &TenantId,

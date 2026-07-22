@@ -1,5 +1,24 @@
 use super::*;
 
+#[tokio::test]
+async fn server_auto_tenant_uses_provider_lifecycle() {
+    let data_dir = tempfile::tempdir().expect("temporary data dir");
+    let engine = std::sync::Arc::new(
+        nimbus::Engine::new_with_memory_persistence(data_dir.path())
+            .expect("memory provider engine should create"),
+    );
+
+    super::super::boot::ensure_auto_tenant(&engine, "provider-auto")
+        .await
+        .expect("auto tenant should use async admission");
+    engine
+        .ensure_tenant_exists_async(
+            nimbus::TenantId::new("provider-auto").expect("tenant id should build"),
+        )
+        .await
+        .expect("async auto-tenant lifecycle must register the runtime");
+}
+
 #[test]
 fn cli_builds_postgres_typed_config_with_overrides() {
     let cli = parse_start([
