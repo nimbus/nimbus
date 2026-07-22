@@ -314,6 +314,19 @@ impl PpscScenario {
                 steps.len()
             )));
         }
+        for (index, step) in steps.iter().enumerate() {
+            if matches!(
+                step.operation,
+                PpscOperation::CancelNext {
+                    route: PpscRoute::Direct,
+                    ..
+                }
+            ) {
+                return Err(PpscScenarioError::new(format!(
+                    "PPSC scenario step {index} requests cancellation on the synchronous direct route; use queued-journal or execution-unit"
+                )));
+            }
+        }
         Ok(Self {
             name: name.into(),
             seed,

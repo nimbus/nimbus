@@ -216,6 +216,18 @@ impl PpscEngineRunner {
         let mut tenants = BTreeMap::new();
         for tenant_name in tenant_names {
             let tenant_id = TenantId::new(tenant_name).expect("scenario tenant id should parse");
+            if scenario.steps.iter().any(|step| {
+                matches!(
+                    &step.operation,
+                    PpscOperation::ForceOverload { tenant } if tenant == tenant_name
+                )
+            }) {
+                crate::tenant::configure_publisher_limits_for_testing(
+                    tenant_id.clone(),
+                    1,
+                    Duration::from_millis(25),
+                );
+            }
             engine
                 .create_tenant_async(tenant_id.clone())
                 .await
@@ -669,6 +681,20 @@ impl PpscEngineRunner {
                 assert!(snapshot.fires >= 1);
                 PpscExpectedOutcome::Observed
             }
+            PpscOperation::CancelNext { tenant, route } => {
+                match route {
+                    PpscRoute::QueuedJournal => self.cancel_queued_insert(index, tenant).await,
+                    PpscRoute::ExecutionUnit => self.cancel_execution_unit_admission(tenant).await,
+                    PpscRoute::Direct => {
+                        unreachable!("scenario validation rejects synchronous direct cancellation")
+                    }
+                }
+                PpscExpectedOutcome::Cancelled
+            }
+            PpscOperation::ForceOverload { tenant } => {
+                self.force_publisher_overload(tenant).await;
+                PpscExpectedOutcome::Overloaded
+            }
             PpscOperation::AdvanceWallClock { millis } => {
                 self.wall_clock.advance_ms(*millis);
                 PpscExpectedOutcome::Observed
@@ -723,6 +749,184 @@ impl PpscEngineRunner {
             }
         }
         Ok(())
+    }
+
+    async fn cancel_queued_insert(&self, step: usize, tenant: &str) {
+        let result = self
+            .engine
+            .insert_document_async_with(
+                self.tenant(tenant).clone(),
+                tasks_table(),
+                Some(ppsc_document_id(
+                    self.scenario_seed,
+                    step,
+                    "cancelled-queued",
+                )),
+                ppsc_fields("cancelled-queued", -1),
+                crate::AsyncMutationContext::anonymous(std::future::pending(), || {
+                    Err(Error::Cancelled)
+                }),
+            )
+            .await;
+        assert!(
+            matches!(result, Err(Error::Cancelled)),
+            "PPSC queued cancellation must remain typed and pre-durable"
+        );
+    }
+
+    async fn cancel_execution_unit_admission(&self, tenant: &str) {
+        let tenant_id = self.tenant(tenant).clone();
+        let before = self
+            .engine
+            .tenant_engine_diagnostics(&tenant_id)
+            .expect("PPSC cancellation diagnostics should load")
+            .mutation_isolate_admission;
+        let mut held = Vec::with_capacity(before.ceiling);
+        for _ in 0..before.ceiling {
+            held.push(
+                self.engine
+                    .acquire_mutation_isolate_permit_cancellable(&tenant_id, std::future::pending())
+                    .await
+                    .expect("PPSC cancellation setup should saturate isolate admission"),
+            );
+        }
+        let saturated = self
+            .engine
+            .tenant_engine_diagnostics(&tenant_id)
+            .expect("PPSC saturated cancellation diagnostics should load")
+            .mutation_isolate_admission;
+        assert_eq!(saturated.concurrent_count, saturated.ceiling);
+
+        let result = timeout(
+            Duration::from_secs(1),
+            self.engine
+                .acquire_mutation_isolate_permit_cancellable(&tenant_id, std::future::ready(())),
+        )
+        .await
+        .expect("PPSC cancellation should resolve within its semantic timeout");
+        let error = match result {
+            Ok(_) => panic!("PPSC cancelled execution-unit admission must not receive a permit"),
+            Err(error) => error,
+        };
+        assert!(matches!(error, Error::Cancelled));
+        drop(held);
+
+        let released = self
+            .engine
+            .tenant_engine_diagnostics(&tenant_id)
+            .expect("PPSC released cancellation diagnostics should load")
+            .mutation_isolate_admission;
+        assert_eq!(released.concurrent_count, 0);
+        assert_eq!(released.waiting_count, 0);
+        assert_eq!(released.shed_count, before.shed_count);
+    }
+
+    async fn force_publisher_overload(&self, tenant: &str) {
+        let tenant_id = self.tenant(tenant).clone();
+        let assignment_before = self
+            .engine
+            .write_log_assignment_for_testing(&tenant_id)
+            .expect("PPSC overload assignment should read before saturation");
+        let journal_before = self
+            .engine
+            .read_durable_journal(&tenant_id, SequenceNumber(0))
+            .expect("PPSC overload journal should read before saturation");
+        let stats_before = self
+            .engine
+            .mutation_journal_stats_for_testing(&tenant_id)
+            .expect("PPSC overload diagnostics should read before saturation");
+        assert_eq!(stats_before.publisher_queue_capacity, 1);
+
+        let pause = self
+            .engine
+            .ordered_publisher_pause_handle_for_testing(&tenant_id)
+            .expect("PPSC overload publisher pause should load");
+        pause.arm();
+        let first = self
+            .engine
+            .enqueue_publisher_response_fence_for_testing(&tenant_id)
+            .await
+            .expect("PPSC first response fence should enter the publisher");
+        let entered = tokio::task::spawn_blocking({
+            let pause = pause.clone();
+            move || pause.wait_until_entered(Duration::from_secs(1))
+        })
+        .await;
+        let entered = match entered {
+            Ok(entered) => entered,
+            Err(error) => {
+                pause.release();
+                panic!("PPSC publisher pause waiter should join: {error}");
+            }
+        };
+        if !entered {
+            pause.release();
+            panic!("PPSC publisher did not reach its overload pause within one second");
+        }
+        let second = self
+            .engine
+            .enqueue_publisher_response_fence_for_testing(&tenant_id)
+            .await;
+        let second = match second {
+            Ok(second) => second,
+            Err(error) => {
+                pause.release();
+                panic!("PPSC second response fence should fill the publisher queue: {error}");
+            }
+        };
+        let saturated = self.engine.mutation_journal_stats_for_testing(&tenant_id);
+        let rejected = self
+            .engine
+            .enqueue_publisher_response_fence_for_testing(&tenant_id)
+            .await;
+        pause.release();
+        let saturated = saturated.expect("PPSC saturated publisher diagnostics should load");
+
+        let error = match rejected {
+            Ok(_) => panic!("PPSC full publisher queue must reject the fence"),
+            Err(error) => error,
+        };
+        assert!(
+            matches!(error, Error::CommitterFull { capacity: 1, .. }),
+            "PPSC overload must retain the publisher capacity: {error}"
+        );
+        assert_eq!(
+            error.retryability(),
+            nimbus_core::Retryability::RetryableAfterBackoff
+        );
+        assert_eq!(saturated.publisher_queue_depth, 1);
+        timeout(Duration::from_secs(1), first)
+            .await
+            .expect("PPSC first response fence should drain after release")
+            .expect("PPSC first response channel should remain open")
+            .expect("PPSC first response fence should succeed");
+        timeout(Duration::from_secs(1), second)
+            .await
+            .expect("PPSC second response fence should drain after release")
+            .expect("PPSC second response channel should remain open")
+            .expect("PPSC second response fence should succeed");
+
+        assert_eq!(
+            self.engine
+                .write_log_assignment_for_testing(&tenant_id)
+                .expect("PPSC overload assignment should read after rejection"),
+            assignment_before,
+            "response-only overload must not stage a sequence"
+        );
+        assert_eq!(
+            self.engine
+                .read_durable_journal(&tenant_id, SequenceNumber(0))
+                .expect("PPSC overload journal should read after rejection"),
+            journal_before,
+            "response-only overload must not append a durable record"
+        );
+        assert_eq!(
+            self.engine
+                .mutation_journal_stats_for_testing(&tenant_id)
+                .expect("PPSC overload diagnostics should read after rejection")
+                .publisher_send_timeout_count,
+            stats_before.publisher_send_timeout_count + 1
+        );
     }
 
     fn journal_heads(&self) -> BTreeMap<String, u64> {
@@ -1182,6 +1386,57 @@ fn storage_fault_scenario() -> PpscScenario {
     .expect("storage-fault scenario should build")
 }
 
+fn cancellation_overload_scenario() -> PpscScenario {
+    let hot = "ppsc-pressure-hot".to_string();
+    let peer = "ppsc-pressure-peer".to_string();
+    PpscScenario::new(
+        "cancellation-overload-isolation",
+        433,
+        vec![
+            PpscStep::new(
+                PpscOperation::CancelNext {
+                    tenant: hot.clone(),
+                    route: PpscRoute::ExecutionUnit,
+                },
+                PpscExpectedOutcome::Cancelled,
+            ),
+            PpscStep::new(
+                PpscOperation::CancelNext {
+                    tenant: hot.clone(),
+                    route: PpscRoute::QueuedJournal,
+                },
+                PpscExpectedOutcome::Cancelled,
+            ),
+            PpscStep::new(
+                PpscOperation::ForceOverload {
+                    tenant: hot.clone(),
+                },
+                PpscExpectedOutcome::Overloaded,
+            ),
+            PpscStep::new(
+                PpscOperation::Mutation {
+                    tenant: hot,
+                    route: PpscRoute::QueuedJournal,
+                    key: "after-pressure".to_string(),
+                    value: 311,
+                },
+                PpscExpectedOutcome::Committed,
+            ),
+            PpscStep::new(
+                PpscOperation::Mutation {
+                    tenant: peer,
+                    route: PpscRoute::ExecutionUnit,
+                    key: "peer-progress".to_string(),
+                    value: 312,
+                },
+                PpscExpectedOutcome::Committed,
+            ),
+            PpscStep::new(PpscOperation::Quiesce, PpscExpectedOutcome::Shutdown),
+        ],
+    )
+    .expect("cancellation/overload scenario should build")
+}
+
 fn logical_ppsc_documents(state: &PpscTenantState) -> BTreeMap<String, serde_json::Value> {
     state
         .documents
@@ -1364,6 +1619,37 @@ async fn ppsc_storage_faults_recover_without_cross_tenant_effects() {
         assert_eq!(peer.journal.len(), 1);
         assert_eq!(peer.publications.len(), 1);
         assert_eq!(peer.documents.len(), 1);
+        terminal_states.push(history.terminal);
+    }
+    assert_eq!(terminal_states[0], terminal_states[1]);
+    assert_eq!(terminal_states[1], terminal_states[2]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ppsc_hot_tenant_failure_preserves_other_tenant_progress() {
+    let scenario = cancellation_overload_scenario();
+    let mut terminal_states = Vec::new();
+    for backend in [PpscBackend::Memory, PpscBackend::Redb, PpscBackend::Sqlite] {
+        let history = PpscEngineRunner::new_embedded(backend, &scenario)
+            .await
+            .run(scenario.clone())
+            .await;
+        audit_ppsc_history(&history).unwrap_or_else(|error| panic!("{error}"));
+        assert!(history.observed_steps[0].effects.is_empty());
+        assert!(history.observed_steps[1].effects.is_empty());
+        assert!(history.observed_steps[2].effects.is_empty());
+        for tenant in ["ppsc-pressure-hot", "ppsc-pressure-peer"] {
+            let state = &history.terminal.tenants[tenant];
+            assert_eq!(state.frontiers.assigned_high_water, 1);
+            assert_eq!(state.frontiers.active_assigned_head, 1);
+            assert_eq!(state.frontiers.durable_head, 1);
+            assert_eq!(state.frontiers.storage_applied_head, 1);
+            assert_eq!(state.frontiers.published_head, 1);
+            assert_eq!(state.frontiers.applied_head, 1);
+            assert_eq!(state.journal.len(), 1);
+            assert_eq!(state.publications.len(), 1);
+            assert_eq!(state.documents.len(), 1);
+        }
         terminal_states.push(history.terminal);
     }
     assert_eq!(terminal_states[0], terminal_states[1]);

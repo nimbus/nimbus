@@ -76,6 +76,43 @@ fn ppsc_scenario_replay_is_byte_deterministic() {
 }
 
 #[test]
+fn ppsc_scenario_rejects_cancellation_without_cancellable_admission() {
+    let error = PpscScenario::new(
+        "invalid-cancellation-route",
+        91,
+        vec![PpscStep::new(
+            PpscOperation::CancelNext {
+                tenant: "tenant-a".to_string(),
+                route: PpscRoute::Direct,
+            },
+            PpscExpectedOutcome::Cancelled,
+        )],
+    )
+    .expect_err("synchronous direct cancellation must fail before execution");
+    assert!(error.to_string().contains("synchronous direct route"));
+    assert!(
+        error
+            .to_string()
+            .contains("queued-journal or execution-unit")
+    );
+
+    for route in [PpscRoute::QueuedJournal, PpscRoute::ExecutionUnit] {
+        PpscScenario::new(
+            "valid-cancellation-route",
+            92,
+            vec![PpscStep::new(
+                PpscOperation::CancelNext {
+                    tenant: "tenant-a".to_string(),
+                    route,
+                },
+                PpscExpectedOutcome::Cancelled,
+            )],
+        )
+        .expect("asynchronous cancellation route should remain valid");
+    }
+}
+
+#[test]
 fn ppsc_backend_capability_table_rejects_unsupported_steps() {
     let crash = one_step_scenario(PpscOperation::Crash, PpscExpectedOutcome::Observed);
     assert!(crash.validate_for_backend(PpscBackend::Redb).is_ok());
