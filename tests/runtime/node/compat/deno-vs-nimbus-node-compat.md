@@ -14,18 +14,18 @@ Use generated evidence for current Nimbus support claims:
 - `docs/runtimes/nodejs/evidence/latest.md`
 - `docs/runtimes/nodejs/evidence/node22.md`
 - `docs/runtimes/nodejs/evidence/node24.md`
-- `docs/architecture/runtime/node-compat-evidence/latest/status-summary.md`
-- `docs/architecture/runtime/node-compat-evidence/latest/dashboard-summary.md`
+- `docs/private/architecture/runtime/node-compat-evidence/latest/status-summary.md`
+- `docs/private/architecture/runtime/node-compat-evidence/latest/dashboard-summary.md`
 
 Use the lane registry for release and support posture:
 
-- `docs/architecture/runtime/node-lts-compat/node-lts-lanes.json`
-- `docs/architecture/runtime/node-lts-compat/node-lts-lanes.md`
+- `docs/private/architecture/runtime/node-lts-compat/node-lts-lanes.json`
+- `docs/private/architecture/runtime/node-lts-compat/node-lts-lanes.md`
 
 Use the Deno-family fork operating contract for runtime-fork bump proof:
 
 - `docs/operating/deno-fork-workflow.md`
-- `docs/architecture/runtime/deno-fork-bump-ledger.md`
+- `docs/private/architecture/runtime/deno-fork-bump-ledger.md`
 
 Product default is a routing default, not an evidence priority. Node24 is the
 current default, Node22 and Node24 are the supported LTS lanes, and Node20

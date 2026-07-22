@@ -56,8 +56,10 @@ pub(crate) fn parse_proxy_request(
     }
     if method.eq_ignore_ascii_case("CONNECT") {
         let (host, port) = parse_connect_authority(target)?;
-        let egress_request =
-            EgressRequest::new(EgressProtocol::Https, host.clone(), port).with_http("CONNECT", "");
+        // CONNECT establishes an authority tunnel; it is not the decrypted
+        // application request. Method/path policy is evaluated only after TLS
+        // interception reveals the inner request.
+        let egress_request = EgressRequest::new(EgressProtocol::Https, host.clone(), port);
         return Ok(ParsedProxyRequest {
             egress_request,
             upstream_host: host,

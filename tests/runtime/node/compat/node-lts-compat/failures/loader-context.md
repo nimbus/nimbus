@@ -250,4 +250,4 @@ work is in progress.
 - `runtime::tests::node_compat::node20_legacy_lane_executes_official_loader_context_subset`
 - `runtime::tests::node_compat::node24_default_lane_executes_manifested_loader_context_subset`
 - `runtime::tests::node_compat::node20_async_local_storage_exit_does_not_leak_watchpoint`
-- `docs/architecture/runtime/node-lts-compat/manifests/loader-context.md`
+- `docs/private/architecture/runtime/node-lts-compat/manifests/loader-context.md`

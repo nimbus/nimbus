@@ -65,7 +65,7 @@ The refresh command performs these steps:
 | `inventory` | Recomputes the selected lane's vendored fixture inventory. |
 | `dashboard` | Aggregates status, inventory, slice, canary, and oracle evidence. |
 | `trends` | Compares current evidence against the checked-in latest baseline. |
-| `publish` | Publishes engineering evidence under `docs/architecture/runtime/node-compat-evidence/latest/`. |
+| `publish` | Publishes engineering evidence under `docs/private/architecture/runtime/node-compat-evidence/latest/`. |
 | `publish_docs` | Publishes developer-facing pages under `docs/runtimes/nodejs/evidence/`. |
 | `claims` | Validates public claim mappings against the canary registry. |
 
@@ -77,9 +77,9 @@ and `.json`.
 Before committing a refresh, review:
 
 - `target/node-compat/refresh/<lane>-refresh.md`
-- `docs/architecture/runtime/node-compat-evidence/latest/status-summary.md`
-- `docs/architecture/runtime/node-compat-evidence/latest/dashboard-summary.md`
-- `docs/architecture/runtime/node-compat-evidence/latest/trend-summary.md`
+- `docs/private/architecture/runtime/node-compat-evidence/latest/status-summary.md`
+- `docs/private/architecture/runtime/node-compat-evidence/latest/dashboard-summary.md`
+- `docs/private/architecture/runtime/node-compat-evidence/latest/trend-summary.md`
 - `docs/runtimes/nodejs/evidence/latest.md`
 - the lane-specific page under `docs/runtimes/nodejs/evidence/<lane>.md`
 

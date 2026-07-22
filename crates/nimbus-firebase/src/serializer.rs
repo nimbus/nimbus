@@ -47,6 +47,15 @@ pub fn decode_proto_json_value(value: &Value) -> Result<Value, FirestoreProtoJso
     FirestoreValue::from_proto_json(value)?.into_nimbus_value()
 }
 
+/// Decode a Firestore wire value into the shared lossless storage model. Plain
+/// JSON values remain sidecar-free; Firestore-only scalars and containers that
+/// contain them retain typed metadata recursively.
+pub fn decode_proto_json_stored_value(
+    value: &Value,
+) -> Result<StoredValue, FirestoreProtoJsonError> {
+    FirestoreValue::from_proto_json(value)?.into_stored_value()
+}
+
 pub fn decode_proto_json_numeric_value(
     value: &Value,
 ) -> Result<NumericValue, FirestoreProtoJsonError> {
@@ -72,16 +81,7 @@ pub fn encode_proto_json_value(value: &Value) -> Result<Value, FirestoreProtoJso
 pub fn encode_proto_json_stored_value(
     value: &StoredValue,
 ) -> Result<Value, FirestoreProtoJsonError> {
-    match value {
-        StoredValue::Json { value } => encode_proto_json_value(value),
-        StoredValue::TypedScalar { value } => encode_proto_json_typed_scalar(value),
-        // DynamoDB-shaped nested typed trees; not representable on the Firestore
-        // surface (reached only when cross-adapter reading DynamoDB-written data).
-        StoredValue::Map { .. } => Err(FirestoreProtoJsonError::UnsupportedType("storedValue:Map")),
-        StoredValue::List { .. } => {
-            Err(FirestoreProtoJsonError::UnsupportedType("storedValue:List"))
-        }
-    }
+    firestore_value_from_stored_value(value).map(|value| value.to_proto_json())
 }
 
 pub fn encode_proto_json_document_value(
@@ -89,8 +89,8 @@ pub fn encode_proto_json_document_value(
     field_name: &str,
     value: &Value,
 ) -> Result<Value, FirestoreProtoJsonError> {
-    match document.typed_field(field_name) {
-        Some(value) => encode_proto_json_typed_scalar(value),
+    match document.typed_value(field_name) {
+        Some(value) => encode_proto_json_stored_value(value),
         None => encode_proto_json_value(value),
     }
 }
@@ -208,6 +208,54 @@ impl FirestoreValue {
         }
     }
 
+    pub fn into_stored_value(self) -> Result<StoredValue, FirestoreProtoJsonError> {
+        let stored = match self {
+            Self::Null => StoredValue::from(Value::Null),
+            Self::Boolean(value) => StoredValue::from(Value::Bool(value)),
+            Self::Integer(value) => StoredValue::from(Value::Number(Number::from(value))),
+            Self::Double(FirestoreDouble::Number(value)) => {
+                StoredValue::from(Number::from_f64(value).map(Value::Number).ok_or_else(|| {
+                    invalid_field("doubleValue", "invalid finite double".to_string())
+                })?)
+            }
+            Self::Double(value) => StoredValue::from(TypedScalarValue::SpecialDouble {
+                value: special_double_from_firestore(value),
+            }),
+            Self::Timestamp(value) => StoredValue::from(TypedScalarValue::FirestoreTimestamp {
+                rfc3339: normalize_firestore_timestamp(&value)?,
+            }),
+            Self::String(value) => StoredValue::from(Value::String(value)),
+            Self::Bytes(data) => StoredValue::from(TypedScalarValue::Bytes { data }),
+            Self::Reference(resource_name) => {
+                StoredValue::from(TypedScalarValue::Reference { resource_name })
+            }
+            Self::GeoPoint {
+                latitude,
+                longitude,
+            } => StoredValue::from(TypedScalarValue::GeoPoint {
+                latitude,
+                longitude,
+            }),
+            Self::Array(values) => StoredValue::List {
+                items: values
+                    .into_iter()
+                    .map(Self::into_stored_value)
+                    .collect::<Result<Vec<_>, _>>()?,
+            },
+            Self::Map(fields) => StoredValue::Map {
+                entries: fields
+                    .into_iter()
+                    .map(|(key, value)| value.into_stored_value().map(|value| (key, value)))
+                    .collect::<Result<BTreeMap<_, _>, _>>()?,
+            },
+        };
+        if stored.contains_typed_metadata() {
+            Ok(stored)
+        } else {
+            Ok(StoredValue::from(stored.projected_json()))
+        }
+    }
+
     pub fn try_from_nimbus_value(value: &Value) -> Result<Self, FirestoreProtoJsonError> {
         match value {
             Value::Null => Ok(Self::Null),
@@ -284,12 +332,6 @@ impl FirestoreDouble {
     }
 }
 
-fn encode_proto_json_typed_scalar(
-    value: &TypedScalarValue,
-) -> Result<Value, FirestoreProtoJsonError> {
-    firestore_value_from_typed_scalar(value).map(|value| value.to_proto_json())
-}
-
 pub fn firestore_value_from_typed_scalar(
     value: &TypedScalarValue,
 ) -> Result<FirestoreValue, FirestoreProtoJsonError> {
@@ -297,6 +339,20 @@ pub fn firestore_value_from_typed_scalar(
         TypedScalarValue::Timestamp { value } => Ok(FirestoreValue::Timestamp(
             format_firestore_timestamp(*value)?,
         )),
+        TypedScalarValue::FirestoreTimestamp { rfc3339 } => {
+            Ok(FirestoreValue::Timestamp(rfc3339.clone()))
+        }
+        TypedScalarValue::Bytes { data } => Ok(FirestoreValue::Bytes(data.clone())),
+        TypedScalarValue::Reference { resource_name } => {
+            Ok(FirestoreValue::Reference(resource_name.clone()))
+        }
+        TypedScalarValue::GeoPoint {
+            latitude,
+            longitude,
+        } => Ok(FirestoreValue::GeoPoint {
+            latitude: *latitude,
+            longitude: *longitude,
+        }),
         TypedScalarValue::SpecialDouble { value } => Ok(FirestoreValue::Double(
             firestore_double_from_special_double(*value),
         )),
@@ -339,6 +395,38 @@ pub fn firestore_value_from_typed_scalar(
     }
 }
 
+pub(crate) fn firestore_value_from_stored_value(
+    value: &StoredValue,
+) -> Result<FirestoreValue, FirestoreProtoJsonError> {
+    match value {
+        StoredValue::Json { value } => FirestoreValue::try_from_nimbus_value(value),
+        StoredValue::TypedScalar { value } => firestore_value_from_typed_scalar(value),
+        StoredValue::Map { entries } => entries
+            .iter()
+            .map(|(key, value)| {
+                firestore_value_from_stored_value(value).map(|value| (key.clone(), value))
+            })
+            .collect::<Result<BTreeMap<_, _>, _>>()
+            .map(FirestoreValue::Map),
+        StoredValue::List { items } => {
+            let values = items
+                .iter()
+                .map(firestore_value_from_stored_value)
+                .collect::<Result<Vec<_>, _>>()?;
+            if values
+                .iter()
+                .any(|value| matches!(value, FirestoreValue::Array(_)))
+            {
+                return Err(invalid_field(
+                    "arrayValue",
+                    "Firestore arrays cannot directly contain arrays".to_string(),
+                ));
+            }
+            Ok(FirestoreValue::Array(values))
+        }
+    }
+}
+
 pub(crate) fn special_double_from_firestore(value: FirestoreDouble) -> SpecialDouble {
     match value {
         FirestoreDouble::NegativeZero => SpecialDouble::NegativeZero,
@@ -362,6 +450,18 @@ fn firestore_double_from_special_double(value: SpecialDouble) -> FirestoreDouble
 
 fn format_firestore_timestamp(timestamp: Timestamp) -> Result<String, FirestoreProtoJsonError> {
     OffsetDateTime::from_unix_timestamp_nanos(i128::from(timestamp.0) * 1_000_000)
+        .map_err(|error| invalid_field("timestampValue", format!("invalid timestamp: {error}")))?
+        .format(&Rfc3339)
+        .map_err(|error| {
+            invalid_field(
+                "timestampValue",
+                format!("failed to format timestamp: {error}"),
+            )
+        })
+}
+
+fn normalize_firestore_timestamp(value: &str) -> Result<String, FirestoreProtoJsonError> {
+    OffsetDateTime::parse(value, &Rfc3339)
         .map_err(|error| invalid_field("timestampValue", format!("invalid timestamp: {error}")))?
         .format(&Rfc3339)
         .map_err(|error| {
@@ -436,6 +536,18 @@ fn parse_geo_point_value(value: &Value) -> Result<FirestoreValue, FirestoreProto
         .get("longitude")
         .and_then(Value::as_f64)
         .ok_or_else(|| invalid_field("geoPointValue", "missing longitude".to_string()))?;
+    if !latitude.is_finite() || !(-90.0..=90.0).contains(&latitude) {
+        return Err(invalid_field(
+            "geoPointValue",
+            "latitude must be finite and between -90 and 90".to_string(),
+        ));
+    }
+    if !longitude.is_finite() || !(-180.0..=180.0).contains(&longitude) {
+        return Err(invalid_field(
+            "geoPointValue",
+            "longitude must be finite and between -180 and 180".to_string(),
+        ));
+    }
     Ok(FirestoreValue::GeoPoint {
         latitude,
         longitude,
@@ -553,7 +665,7 @@ mod tests {
     }
 
     #[test]
-    fn firestore_value_rejects_firestore_only_types_for_nimbus_conversion() {
+    fn firestore_value_preserves_firestore_only_types_in_stored_values() {
         for value in [
             FirestoreValue::Timestamp("2024-01-02T03:04:05Z".to_string()),
             FirestoreValue::Bytes(vec![1, 2, 3]),
@@ -569,10 +681,40 @@ mod tests {
             FirestoreValue::Double(FirestoreDouble::NegativeInfinity),
         ] {
             assert!(
-                value.into_nimbus_value().is_err(),
-                "Firestore-only values should not silently coerce into Nimbus JSON"
+                value
+                    .into_stored_value()
+                    .expect("Firestore value should lower losslessly")
+                    .contains_typed_metadata(),
+                "Firestore-only values should retain typed metadata"
             );
         }
+    }
+
+    #[test]
+    fn firestore_stored_values_roundtrip_nested_typed_fields() {
+        let wire = json!({
+            "mapValue": {
+                "fields": {
+                    "createdAt": { "timestampValue": "2024-01-02T03:04:05.123456789Z" },
+                    "payload": { "bytesValue": "AQID" },
+                    "owner": {
+                        "referenceValue": "projects/demo/databases/(default)/documents/users/ada"
+                    },
+                    "location": {
+                        "geoPointValue": { "latitude": 37.7749, "longitude": -122.4194 }
+                    },
+                    "score": { "doubleValue": "NaN" },
+                    "plain": { "stringValue": "kept" }
+                }
+            }
+        });
+
+        let stored = decode_proto_json_stored_value(&wire).expect("wire value should lower");
+        assert!(stored.contains_typed_metadata());
+        assert_eq!(
+            encode_proto_json_stored_value(&stored).expect("stored value should encode"),
+            wire
+        );
     }
 
     #[test]

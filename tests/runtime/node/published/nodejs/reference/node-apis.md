@@ -33,7 +33,7 @@ Node26 is Current/non-LTS compatibility evidence and is not enterprise LTS suppo
 
 ## Default-Support Posture
 
-Source: `docs/architecture/runtime/node-default-support-posture.json`
+Source: `docs/private/architecture/runtime/node-default-support-posture.json`
 
 The default-support posture separates the full official fixture corpus from the V8-isolate-required surface, optional isolate gaps, diagnostic non-isolate behavior, test-harness-only fixtures, and upstream/platform boundaries.
 
@@ -49,7 +49,7 @@ Node26 is Current/non-LTS observation evidence and is shown separately from supp
 
 ## Capability Classes
 
-Source: `docs/architecture/runtime/node-isolate-shim-inventory.json`
+Source: `docs/private/architecture/runtime/node-isolate-shim-inventory.json`
 
 | Class | Public label | Meaning | Entries |
 | --- | --- | --- | ---: |

@@ -15,6 +15,7 @@ nimbus-core = { path = "../nimbus-core" }
 nimbus-storage = { path = "../nimbus-storage" }
 rand.workspace = true
 redis-protocol.workspace = true
+subtle.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true

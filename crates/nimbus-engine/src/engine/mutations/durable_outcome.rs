@@ -43,7 +43,9 @@ impl DurableWriteRoute {
 /// A committer fence is the sole exception: the lease CAS is part of the same
 /// transaction and proves rollback, so probing would add ambiguity rather than
 /// resolve it. Every other error is definitive only when the durable head can
-/// be read and is exactly the pre-write head.
+/// be read from the provider's authoritative recovery path and is exactly the
+/// pre-write head. A cached/local progress projection is not evidence that a
+/// failed write did not land remotely.
 pub(crate) fn classify_durable_write_error(
     runtime: &TenantRuntime,
     route: DurableWriteRoute,
@@ -91,7 +93,7 @@ fn journal_progress_for_classification(
     }
     #[cfg(not(test))]
     let _ = route;
-    runtime.store().journal_progress()
+    runtime.store().recover_durable_journal()
 }
 
 #[cfg(test)]

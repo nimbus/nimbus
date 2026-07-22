@@ -32,12 +32,11 @@ pub(super) fn resolve_dynamodb(
         Some(port) => port,
         None => {
             if !port_is_free(DYNAMODB_CONVENTIONAL_PORT) {
-                tracing::warn!(
+                return Err(Error::InvalidInput(format!(
                     "DynamoDB conventional port {DYNAMODB_CONVENTIONAL_PORT} is busy; \
-                     skipping the default DynamoDB listener — pass --dynamodb-port to \
-                     serve on another port"
-                );
-                return Ok(None);
+                     pass --dynamodb-port to serve on another port or --no-dynamodb \
+                     to disable the listener"
+                )));
             }
             DYNAMODB_CONVENTIONAL_PORT
         }

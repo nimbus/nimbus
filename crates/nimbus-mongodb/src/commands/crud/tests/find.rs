@@ -101,6 +101,97 @@ fn find_with_ne_filter() {
 }
 
 #[test]
+fn find_uses_mongodb_null_and_missing_field_semantics() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let body = bson::doc! {
+        "insert": "items",
+        "$db": "testdb",
+        "documents": [
+            { "_id": "missing", "label": "missing" },
+            { "_id": "null", "label": "null", "marker": bson::Bson::Null },
+            { "_id": "alpha", "label": "alpha", "marker": "alpha" },
+            { "_id": "beta", "label": "beta", "marker": "beta" },
+        ],
+    };
+    insert(&body, &mut test_conn(), &fixture.engine()).unwrap();
+
+    let labels = |filter: bson::Document, limit: Option<i32>| {
+        let mut body = bson::doc! {
+            "find": "items",
+            "$db": "testdb",
+            "filter": filter,
+            "sort": { "label": 1 },
+        };
+        if let Some(limit) = limit {
+            body.insert("limit", limit);
+        }
+        let result = find(&body, &mut test_conn(), &fixture.engine()).unwrap();
+        result
+            .get_document("cursor")
+            .unwrap()
+            .get_array("firstBatch")
+            .unwrap()
+            .iter()
+            .map(|value| {
+                value
+                    .as_document()
+                    .unwrap()
+                    .get_str("label")
+                    .unwrap()
+                    .to_owned()
+            })
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(
+        labels(bson::doc! { "marker": bson::Bson::Null }, None),
+        vec!["missing", "null"]
+    );
+    assert_eq!(
+        labels(bson::doc! { "marker": { "$ne": "alpha" } }, None),
+        vec!["beta", "missing", "null"]
+    );
+    assert_eq!(
+        labels(bson::doc! { "marker": { "$ne": bson::Bson::Null } }, None),
+        vec!["alpha", "beta"]
+    );
+    assert_eq!(
+        labels(bson::doc! { "marker": { "$ne": "alpha" } }, Some(2)),
+        vec!["beta", "missing"]
+    );
+}
+
+#[test]
+fn find_id_fast_path_uses_the_same_missing_field_semantics() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    seed_users(&fixture);
+
+    assert_eq!(
+        find_doc(
+            &fixture,
+            bson::doc! { "_id": "u1", "marker": bson::Bson::Null }
+        )
+        .len(),
+        1
+    );
+    assert_eq!(
+        find_doc(
+            &fixture,
+            bson::doc! { "_id": "u1", "marker": { "$ne": "value" } }
+        )
+        .len(),
+        1
+    );
+    assert!(
+        find_doc(
+            &fixture,
+            bson::doc! { "_id": "u1", "marker": { "$ne": bson::Bson::Null } }
+        )
+        .is_empty()
+    );
+}
+
+#[test]
 fn find_with_combined_range() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     seed_users(&fixture);

@@ -99,8 +99,9 @@ required_proofs=(
 )
 
 run_public_generated_gate() {
-  local public_posture_json="docs/architecture/runtime/node-default-support-posture.json"
-  local public_posture_md="docs/architecture/runtime/node-default-support-posture.md"
+  local public_compatibility_md="tests/runtime/node/published/nodejs/compatibility.md"
+  local public_node_api_md="tests/runtime/node/published/nodejs/reference/node-apis.md"
+  local public_shim_inventory_md="tests/runtime/node/published/nodejs/reference/shims-and-boundaries.md"
 
   printf 'Mode: public generated-evidence gate (private NDS proof plan not present)\n'
 
@@ -108,22 +109,33 @@ run_public_generated_gate() {
   skip "Private proof audit not run" \
     "docs/private is ignored in clean CI checkouts; set NIMBUS_NDS_STRICT_PRIVATE_PROOFS=1 with the private plan present to run proof-row closeout checks"
 
-  step 2 "Default-support posture artifacts"
-  if [ -f "${public_posture_json}" ] && [ -f "${public_posture_md}" ]; then
-    pass "Default-support posture artifacts exist"
+  step 2 "Published Node compatibility artifacts"
+  if [ -f "${public_compatibility_md}" ] &&
+     [ -f "${public_node_api_md}" ] &&
+     [ -f "${public_shim_inventory_md}" ]; then
+    pass "Published Node compatibility artifacts exist"
   else
-    fail "Default-support posture artifacts missing" "Expected ${public_posture_json} and ${public_posture_md}"
+    fail "Published Node compatibility artifacts missing" \
+      "Expected ${public_compatibility_md}, ${public_node_api_md}, and ${public_shim_inventory_md}"
   fi
 
   step 3 "Node22/Node24/Node26 V8-isolate-required green"
-  if [ -f "${public_posture_json}" ] && python3 - "${public_posture_json}" <<'PY'
-import json
+  if [ -f "${public_compatibility_md}" ] && python3 - "${public_compatibility_md}" <<'PY'
+from pathlib import Path
 import sys
 
-data = json.load(open(sys.argv[1], encoding="utf-8"))
-for lane_name in ("node22", "node24", "node26"):
-    required = data["lanes"][lane_name]["v8_isolate_required"]
-    if required.get("gaps") != 0 or required.get("pass_rate_percent") != 100:
+rows = {}
+for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
+    if line.startswith("| Node"):
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        if len(cells) == 10:
+            rows[cells[0]] = cells
+for lane_name in ("Node22", "Node24", "Node26"):
+    cells = rows.get(lane_name)
+    if cells is None:
+        raise SystemExit(1)
+    passed, total = (int(value.strip()) for value in cells[4].split("/"))
+    if passed != total or int(cells[5]) != 0:
         raise SystemExit(1)
 raise SystemExit(0)
 PY
@@ -134,13 +146,15 @@ PY
   fi
 
   step 4 "Node24 unpromoted surface eliminated"
-  if [ -f "${public_posture_json}" ] && python3 - "${public_posture_json}" <<'PY'
-import json
+  if [ -f "${public_compatibility_md}" ] && python3 - "${public_compatibility_md}" <<'PY'
+from pathlib import Path
 import sys
 
-data = json.load(open(sys.argv[1], encoding="utf-8"))
-if data["lanes"]["node24"].get("remaining_requires_unpromoted_node_surface_count") == 0:
-    raise SystemExit(0)
+for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
+    if line.startswith("| Node24"):
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        if len(cells) == 10 and int(cells[5]) == 0:
+            raise SystemExit(0)
 raise SystemExit(1)
 PY
   then
@@ -149,29 +163,32 @@ PY
     fail "Node24 still has Requires Unpromoted Node Surface" "Expected generated posture metrics"
   fi
 
-  step 5 "Required surface blocker inventory"
-  local blockers_tmp
-  blockers_tmp="$(mktemp -d)"
-  if python3 scripts/runtime/node/required_surface_blockers.py \
-       --posture "${public_posture_json}" \
-       --json "${blockers_tmp}/required-surface-blockers.json" \
-       --markdown "${blockers_tmp}/required-surface-blockers.md" >/dev/null &&
-     python3 - "${blockers_tmp}/required-surface-blockers.json" <<'PY'
-import json
+  step 5 "Published posture agrees across compatibility references"
+  if [ -f "${public_compatibility_md}" ] &&
+     [ -f "${public_node_api_md}" ] &&
+     python3 - "${public_compatibility_md}" "${public_node_api_md}" <<'PY'
+from pathlib import Path
 import sys
 
-data = json.load(open(sys.argv[1], encoding="utf-8"))
-for lane in ("node22", "node24"):
-    if data["totals"][lane]["required_gap_count"] != 0:
-        raise SystemExit(1)
-raise SystemExit(0)
+def posture_rows(path):
+    return {
+        cells[0]: cells
+        for line in Path(path).read_text(encoding="utf-8").splitlines()
+        if line.startswith("| Node")
+        for cells in ([cell.strip() for cell in line.strip("|").split("|")],)
+        if len(cells) == 10
+    }
+
+expected = posture_rows(sys.argv[1])
+actual = posture_rows(sys.argv[2])
+raise SystemExit(0 if expected and actual == expected else 1)
 PY
   then
-    pass "Required-surface blocker inventory is fresh and empty for required gaps"
+    pass "Published compatibility and API references report the same posture"
   else
-    fail "Required-surface blocker inventory is stale or non-empty" "Expected required_surface_blockers.py to find 0 required gaps from ${public_posture_json}"
+    fail "Published posture references disagree" \
+      "Expected ${public_compatibility_md} and ${public_node_api_md} to carry identical generated posture rows"
   fi
-  rm -rf "${blockers_tmp}"
 
   step 6 "Package registry category schema and breadth"
   if [ -f "${CANARY_REGISTRY}" ] &&
@@ -207,7 +224,6 @@ PY
   if [ -f tests/runtime/node/published/nodejs/reference/packages.md ] &&
      [ -f tests/runtime/node/published/nodejs/reference/node-apis.md ] &&
      [ -f tests/runtime/node/published/nodejs/reference/shims-and-boundaries.md ] &&
-     [ -f docs/architecture/runtime/node-isolate-shim-inventory.json ] &&
      grep -q 'Node22' tests/runtime/node/published/nodejs/reference/packages.md &&
      grep -q 'Node24' tests/runtime/node/published/nodejs/reference/packages.md &&
      grep -q 'Node26' tests/runtime/node/published/nodejs/reference/packages.md &&

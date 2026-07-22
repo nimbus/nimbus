@@ -315,4 +315,4 @@ boundaries or documented application-preset limitations:
 - `runtime::tests::node_compat::node24_fs_symlink_watchpoint`
 - `runtime::tests::node_compat::node24_fs_opendir_watchpoint`
 - `runtime::tests::node_compat::node24_default_lane_executes_manifested_streams_and_local_io_subset`
-- `docs/architecture/runtime/node-lts-compat/manifests/streams-and-local-io.md`
+- `docs/private/architecture/runtime/node-lts-compat/manifests/streams-and-local-io.md`

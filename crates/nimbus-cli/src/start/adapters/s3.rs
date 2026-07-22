@@ -60,12 +60,11 @@ pub(super) fn resolve_s3(
         Some(port) => port,
         None => {
             if !port_is_free(S3_CONVENTIONAL_PORT) {
-                tracing::warn!(
+                return Err(Error::InvalidInput(format!(
                     "S3 conventional port {S3_CONVENTIONAL_PORT} is busy; \
-                     skipping the default S3 listener — pass --s3-port to \
-                     serve on another port"
-                );
-                return Ok(None);
+                     pass --s3-port to serve on another port or --no-s3 \
+                     to disable the listener"
+                )));
             }
             S3_CONVENTIONAL_PORT
         }

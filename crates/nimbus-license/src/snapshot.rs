@@ -83,6 +83,15 @@ impl LicenseState {
             }
         });
 
+        let entitlements = if matches!(
+            status,
+            LicenseStatus::TrialExpired | LicenseStatus::EnterpriseExpired
+        ) {
+            LicenseEntitlements::default()
+        } else {
+            self.document.entitlements.clone()
+        };
+
         LicenseSnapshot {
             source: self.source.clone(),
             kind: self.document.kind,
@@ -94,7 +103,7 @@ impl LicenseState {
             trial_expires_at_unix_ms: self.document.trial_expires_at_unix_ms,
             revenue_limit_usd: self.document.revenue_limit_usd,
             monthly_active_user_limit: self.document.monthly_active_user_limit,
-            entitlements: self.document.entitlements.clone(),
+            entitlements,
             usage,
             warnings,
         }

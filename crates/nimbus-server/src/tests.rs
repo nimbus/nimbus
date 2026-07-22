@@ -100,7 +100,8 @@ use crate::adapters::firebase::grpc::generated::google::firestore::v1::{
     DeleteDocumentRequest as GrpcDeleteDocumentRequest, Document as GrpcDocument,
     DocumentChange as GrpcDocumentChange, DocumentMask as GrpcDocumentMask,
     DocumentTransform as GrpcDocumentTransform, ListenRequest as GrpcListenRequest,
-    ListenResponse as GrpcListenResponse, Precondition as GrpcPrecondition,
+    ListenResponse as GrpcListenResponse, MapValue as GrpcMapValue,
+    Precondition as GrpcPrecondition,
     RollbackRequest as GrpcRollbackRequest,
     RunAggregationQueryRequest as GrpcRunAggregationQueryRequest,
     RunQueryRequest as GrpcRunQueryRequest, StructuredAggregationQuery as GrpcStructuredAggregationQuery,
@@ -110,6 +111,7 @@ use crate::adapters::firebase::grpc::generated::google::firestore::v1::{
     Value as GrpcValue, Write as GrpcWrite, WriteRequest as GrpcWriteRequest,
     GetDocumentRequest as GrpcGetDocumentRequest, UpdateDocumentRequest as GrpcUpdateDocumentRequest,
 };
+use crate::adapters::firebase::grpc::generated::google::r#type::LatLng as GrpcLatLng;
 
 fn router_for_engine(engine: Arc<Engine>) -> Router {
     build_router(RouterOptions::new(engine))
@@ -575,6 +577,41 @@ fn grpc_integer_value(value: i64) -> GrpcValue {
 fn grpc_double_value(value: f64) -> GrpcValue {
     GrpcValue {
         value_type: Some(GrpcValueType::DoubleValue(value)),
+    }
+}
+
+fn grpc_timestamp_value(seconds: i64, nanos: i32) -> GrpcValue {
+    GrpcValue {
+        value_type: Some(GrpcValueType::TimestampValue(ProstTimestamp {
+            seconds,
+            nanos,
+        })),
+    }
+}
+
+fn grpc_bytes_value(value: impl Into<Vec<u8>>) -> GrpcValue {
+    GrpcValue {
+        value_type: Some(GrpcValueType::BytesValue(value.into())),
+    }
+}
+
+fn grpc_geo_point_value(latitude: f64, longitude: f64) -> GrpcValue {
+    GrpcValue {
+        value_type: Some(GrpcValueType::GeoPointValue(GrpcLatLng {
+            latitude,
+            longitude,
+        })),
+    }
+}
+
+fn grpc_map_value(fields: impl IntoIterator<Item = (&'static str, GrpcValue)>) -> GrpcValue {
+    GrpcValue {
+        value_type: Some(GrpcValueType::MapValue(GrpcMapValue {
+            fields: fields
+                .into_iter()
+                .map(|(field, value)| (field.to_string(), value))
+                .collect(),
+        })),
     }
 }
 
@@ -1440,6 +1477,7 @@ fn seed_firebase_document_with_principal(
                 .into_iter()
                 .map(|(field, value)| (field.to_string(), value)),
         ),
+        typed_fields: Default::default(),
         mode: WriteSetMode::Overwrite,
         precondition: WritePrecondition::default(),
         transforms: Vec::new(),

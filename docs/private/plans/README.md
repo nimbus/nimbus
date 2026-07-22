@@ -48,27 +48,12 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
   UI hygiene, doc/spec truth-ups, and the `nimbus-compute` extraction plus
   workload-identity decision records. Review-driven refactor and cleanup work
   should route through this plan's band ledgers while it is active.
-- `archive/nimbus-proxy-pingora-plan.md` - `complete, archived` (K11P0-K11P13 merged, PR #94; verifier 113/0). Owned the production proxy substrate
-  inside `nimbus-proxy`: Pingora phases, async forwarding, peer/pool identity,
-  lifecycle, observability, selective HTTPS interception, credential injection,
-  DLP parity, and QUIC/UDP bypass denial. This must land before Nimbus claims
-  HTTPS credential injection for agents.
 - `distribution-plan.md` - `in_progress`. Owns binary release, Homebrew/cask,
   Linux package mirror, release-owned OCI images, and channel cutover. It should
   consume launch safety decisions rather than define them.
-- `test-infra-rearchitecture/PLAN.md` - `complete` (2026-07-05; post-campaign backlog tracked in the plan's completion summary). Owns the full
-  test-infrastructure rearchitecture: declarative nextest taxonomy, build-once
-  archive CI with non-linking shards, the CI disk budget, once-per-pin prebuilt
-  V8/Chromium/snapshot caching, and the existing-test quality uplift to the
-  binding standard in `test-infra-rearchitecture/TEST_STANDARD.md` (contract:
-  `test-infra-rearchitecture/BRIEF.md`). CI lane and test-organization changes
-  should route through this plan while it is in progress.
 
 ### Phase 2 - Runtime, Filesystem, And WASM Substrates
 
-- `archive/wasmtime-backend-plan.md` - `complete, archived` (W0-W7 reconciled 2026-07-04; verifier 10/0). Owned the Wasmtime backend alongside the
-  V8 backend: runtime-engine seam hardening, component model support, WIT
-  interfaces, cooperative scheduling, module cache, and bundle-format extension.
 - `wasi-agent-capabilities-plan.md` - `deferred`. Starts only after the Wasmtime
   component linker, NimbusFS binder, and HTTP-client binder exist. Owns the
   process primitive and WIT projection layer; it must not re-own filesystem or
@@ -105,10 +90,6 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 4 - Connection Residency, Secrets, And Service Identity
 
-- `archive/connection-broker-plan.md` - `complete, archived, local-only` (CB0-CB10 merged 2026-07-04; verifier 14/14; CB8 real cluster handoff deferred to HS5). Owned host-held
-  long-lived sockets, hibernatable versus pinned session classes, per-frame
-  isolate invocation, and the shared connection-residency seam used by inbound
-  WebSockets and outbound proxy sessions.
 - `secret-management-plan.md` - `deferred`. Owns tenant-scoped secret references,
   providers, storage, cache invalidation, host bridge, and audit model. Promote
   when a named consumer needs stronger-than-env-var credentials.

@@ -1,8 +1,8 @@
 use nimbus_core::{
     AccessAction, ArrayPopSide, AtomicWrite, AtomicWriteBatch, AtomicWriteBatchOutcome,
     AtomicWriteResult, BitwiseOperation, Document, Error, FieldTransform, FieldTransformOperation,
-    NumericValue, Result, SpecialDouble, StoredValue, Timestamp, TypedScalarValue, WriteKey,
-    WritePrecondition, WriteSetMode,
+    NumericValue, Result, SpecialDouble, StoredValue, Timestamp, TypedFieldMap, TypedScalarValue,
+    WriteKey, WritePrecondition, WriteSetMode,
 };
 
 use super::super::mutations::enforce_mutation_authorization;
@@ -16,6 +16,24 @@ struct PendingAtomicWriteResult {
 
 struct PreparedAtomicWriteBatch {
     results: Vec<PendingAtomicWriteResult>,
+}
+
+struct SetWriteInput {
+    key: WriteKey,
+    document: serde_json::Map<String, serde_json::Value>,
+    typed_fields: TypedFieldMap,
+    mode: WriteSetMode,
+    precondition: WritePrecondition,
+    transforms: Vec<FieldTransform>,
+}
+
+struct PatchWriteInput {
+    key: WriteKey,
+    field_patch: serde_json::Map<String, serde_json::Value>,
+    typed_fields: TypedFieldMap,
+    mask: Vec<String>,
+    precondition: WritePrecondition,
+    transforms: Vec<FieldTransform>,
 }
 
 impl MutationExecutionUnit {
@@ -50,19 +68,39 @@ impl MutationExecutionUnit {
             AtomicWrite::Set {
                 key,
                 document,
+                typed_fields,
                 mode,
                 precondition,
                 transforms,
-            } => self.apply_set_write(key, document, mode, precondition, transforms, write_time),
+            } => self.apply_set_write(
+                SetWriteInput {
+                    key,
+                    document,
+                    typed_fields,
+                    mode,
+                    precondition,
+                    transforms,
+                },
+                write_time,
+            ),
             AtomicWrite::Patch {
                 key,
                 field_patch,
+                typed_fields,
                 mask,
                 precondition,
                 transforms,
-            } => {
-                self.apply_patch_write(key, field_patch, mask, precondition, transforms, write_time)
-            }
+            } => self.apply_patch_write(
+                PatchWriteInput {
+                    key,
+                    field_patch,
+                    typed_fields,
+                    mask,
+                    precondition,
+                    transforms,
+                },
+                write_time,
+            ),
             AtomicWrite::Delete {
                 key,
                 precondition,
@@ -127,13 +165,17 @@ impl MutationExecutionUnit {
 
     fn apply_set_write(
         &self,
-        key: WriteKey,
-        document: serde_json::Map<String, serde_json::Value>,
-        mode: WriteSetMode,
-        precondition: WritePrecondition,
-        transforms: Vec<FieldTransform>,
+        input: SetWriteInput,
         write_time: Timestamp,
     ) -> Result<PendingAtomicWriteResult> {
+        let SetWriteInput {
+            key,
+            document,
+            typed_fields,
+            mode,
+            precondition,
+            transforms,
+        } = input;
         precondition.validate()?;
 
         let (replace_document, overwritten_fields) = match &mode {
@@ -161,13 +203,17 @@ impl MutationExecutionUnit {
                         locator.id
                     )));
                 }
-                Document::with_id(locator.id.clone(), table.clone(), document)
+                let mut created =
+                    Document::with_id(locator.id.clone(), table.clone(), serde_json::Map::new());
+                apply_patch_mask(&mut created, &document, &typed_fields, &[]);
+                created
             }
             WriteSetMode::Overwrite => overwrite_document(
                 &locator,
                 table.clone(),
                 existing.as_ref(),
                 document,
+                typed_fields,
                 write_time,
             ),
             WriteSetMode::MergeAll => merge_document(
@@ -175,6 +221,7 @@ impl MutationExecutionUnit {
                 table.clone(),
                 existing.as_ref(),
                 document,
+                typed_fields,
                 None,
                 write_time,
             ),
@@ -183,6 +230,7 @@ impl MutationExecutionUnit {
                 table.clone(),
                 existing.as_ref(),
                 document,
+                typed_fields,
                 Some(mask),
                 write_time,
             ),
@@ -229,13 +277,17 @@ impl MutationExecutionUnit {
 
     fn apply_patch_write(
         &self,
-        key: WriteKey,
-        field_patch: serde_json::Map<String, serde_json::Value>,
-        mask: Vec<String>,
-        precondition: WritePrecondition,
-        transforms: Vec<FieldTransform>,
+        input: PatchWriteInput,
         write_time: Timestamp,
     ) -> Result<PendingAtomicWriteResult> {
+        let PatchWriteInput {
+            key,
+            field_patch,
+            typed_fields,
+            mask,
+            precondition,
+            transforms,
+        } = input;
         precondition.validate()?;
 
         let overwritten_fields = if mask.is_empty() {
@@ -258,7 +310,7 @@ impl MutationExecutionUnit {
         let mut current = existing.clone().unwrap_or_else(|| {
             Document::with_id(locator.id.clone(), table.clone(), serde_json::Map::new())
         });
-        apply_patch_mask(&mut current, &field_patch, &mask);
+        apply_patch_mask(&mut current, &field_patch, &typed_fields, &mask);
         let transform_results = apply_field_transforms_at(&mut current, &transforms, write_time)?;
         if let Some(table_schema) = table_schema.as_ref() {
             table_schema.validate(&current.fields)?;
@@ -534,10 +586,11 @@ fn overwrite_document(
     table: nimbus_core::TableName,
     existing: Option<&Document>,
     fields: serde_json::Map<String, serde_json::Value>,
+    typed_fields: TypedFieldMap,
     update_time: Timestamp,
 ) -> Document {
     let mut document = Document::with_id(locator.id.clone(), table, serde_json::Map::new());
-    apply_patch_mask(&mut document, &fields, &[]);
+    apply_patch_mask(&mut document, &fields, &typed_fields, &[]);
     preserve_document_lifecycle_times(existing, &mut document, update_time);
     document
 }
@@ -547,13 +600,19 @@ fn merge_document(
     table: nimbus_core::TableName,
     existing: Option<&Document>,
     patch: serde_json::Map<String, serde_json::Value>,
+    typed_fields: TypedFieldMap,
     mask: Option<Vec<String>>,
     update_time: Timestamp,
 ) -> Document {
     let mut document = existing
         .cloned()
         .unwrap_or_else(|| Document::with_id(locator.id.clone(), table, serde_json::Map::new()));
-    apply_patch_mask(&mut document, &patch, mask.as_deref().unwrap_or(&[]));
+    apply_patch_mask(
+        &mut document,
+        &patch,
+        &typed_fields,
+        mask.as_deref().unwrap_or(&[]),
+    );
     preserve_document_lifecycle_times(existing, &mut document, update_time);
     document
 }
@@ -561,11 +620,17 @@ fn merge_document(
 fn apply_patch_mask(
     document: &mut Document,
     patch: &serde_json::Map<String, serde_json::Value>,
+    typed_patch: &TypedFieldMap,
     mask: &[String],
 ) {
     if mask.is_empty() {
         for (field, value) in patch {
             document.set_field(field.clone(), value.clone());
+            let stored_value = typed_patch
+                .get(field)
+                .cloned()
+                .unwrap_or_else(|| StoredValue::from_json_tree(value.clone()));
+            set_document_typed_field_path(document, &[field.as_str()], stored_value);
         }
         return;
     }
@@ -575,12 +640,31 @@ fn apply_patch_mask(
         match patch_value_at_path(patch, &segments) {
             Some(value) => {
                 set_document_field_path(document, &segments, value.clone());
+                let stored_value = typed_patch_value_at_path(typed_patch, &segments)
+                    .cloned()
+                    .unwrap_or_else(|| StoredValue::from_json_tree(value.clone()));
+                set_document_typed_field_path(document, &segments, stored_value);
             }
             None => {
                 remove_document_field_path(document, &segments);
             }
         }
     }
+}
+
+fn typed_patch_value_at_path<'a>(
+    typed_patch: &'a TypedFieldMap,
+    segments: &[&str],
+) -> Option<&'a StoredValue> {
+    let (first, rest) = segments.split_first()?;
+    let mut current = typed_patch.get(*first)?;
+    for segment in rest {
+        let StoredValue::Map { entries } = current else {
+            return None;
+        };
+        current = entries.get(*segment)?;
+    }
+    Some(current)
 }
 
 fn split_field_path_segments(field_path: &str) -> Vec<&str> {
@@ -618,6 +702,63 @@ fn set_document_field_path(document: &mut Document, segments: &[&str], value: se
     set_value_at_path(&mut document.fields, segments, value);
 }
 
+fn set_document_typed_field_path(document: &mut Document, segments: &[&str], value: StoredValue) {
+    let [root, rest @ ..] = segments else {
+        return;
+    };
+    if rest.is_empty() {
+        if value.contains_typed_metadata() {
+            document.typed_fields.insert((*root).to_string(), value);
+        } else {
+            document.typed_fields.remove(*root);
+        }
+        return;
+    }
+
+    let projected_root = document
+        .fields
+        .get(*root)
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let mut stored_root = document
+        .typed_fields
+        .remove(*root)
+        .unwrap_or_else(|| StoredValue::from_json_tree(projected_root.clone()));
+    if !matches!(stored_root, StoredValue::Map { .. }) {
+        stored_root = StoredValue::from_json_tree(projected_root);
+    }
+    set_stored_value_at_path(&mut stored_root, rest, value);
+    if stored_root.contains_typed_metadata() {
+        document
+            .typed_fields
+            .insert((*root).to_string(), stored_root);
+    }
+}
+
+fn set_stored_value_at_path(current: &mut StoredValue, segments: &[&str], value: StoredValue) {
+    let (first, rest) = segments
+        .split_first()
+        .expect("typed field paths should include at least one segment");
+    if !matches!(current, StoredValue::Map { .. }) {
+        *current = StoredValue::Map {
+            entries: std::collections::BTreeMap::new(),
+        };
+    }
+    let StoredValue::Map { entries } = current else {
+        unreachable!("stored value was normalized to a map")
+    };
+    if rest.is_empty() {
+        entries.insert((*first).to_string(), value);
+        return;
+    }
+    let child = entries
+        .entry((*first).to_string())
+        .or_insert_with(|| StoredValue::Map {
+            entries: std::collections::BTreeMap::new(),
+        });
+    set_stored_value_at_path(child, rest, value);
+}
+
 fn set_value_at_path(
     fields: &mut serde_json::Map<String, serde_json::Value>,
     segments: &[&str],
@@ -649,9 +790,43 @@ fn remove_document_field_path(document: &mut Document, segments: &[&str]) {
         return;
     }
 
-    let joined = segments.join(".");
-    document.typed_fields.remove(&joined);
     remove_value_at_path(&mut document.fields, segments);
+    remove_document_typed_field_path(document, segments);
+}
+
+fn remove_document_typed_field_path(document: &mut Document, segments: &[&str]) {
+    let [root, rest @ ..] = segments else {
+        return;
+    };
+    if rest.is_empty() {
+        document.typed_fields.remove(*root);
+        return;
+    }
+    let Some(mut stored_root) = document.typed_fields.remove(*root) else {
+        return;
+    };
+    remove_stored_value_at_path(&mut stored_root, rest);
+    if stored_root.contains_typed_metadata() {
+        document
+            .typed_fields
+            .insert((*root).to_string(), stored_root);
+    }
+}
+
+fn remove_stored_value_at_path(current: &mut StoredValue, segments: &[&str]) {
+    let Some((first, rest)) = segments.split_first() else {
+        return;
+    };
+    let StoredValue::Map { entries } = current else {
+        return;
+    };
+    if rest.is_empty() {
+        entries.remove(*first);
+        return;
+    }
+    if let Some(child) = entries.get_mut(*first) {
+        remove_stored_value_at_path(child, rest);
+    }
 }
 
 fn remove_value_at_path(

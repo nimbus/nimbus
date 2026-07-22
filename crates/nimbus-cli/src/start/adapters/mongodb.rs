@@ -45,9 +45,7 @@ pub(super) fn resolve_mongodb(
     // least one binding the listener runs bound; otherwise it falls through to
     // today's unbound, loopback-only path unchanged.
     if let Some(registry) = resolve_bound_mongodb_registry(command, env_lookup)? {
-        let Some(port) = resolve_mongodb_port(command, port_is_free) else {
-            return Ok(None);
-        };
+        let port = resolve_mongodb_port(command, port_is_free)?;
         // A bound listener may go non-loopback, gated by the same
         // `--allow-network` opt-in as the main and DynamoDB listeners.
         ensure_host_opt_in(&command.mongodb_host, command.allow_network)
@@ -69,9 +67,7 @@ pub(super) fn resolve_mongodb(
             host = command.mongodb_host
         )));
     }
-    let Some(port) = resolve_mongodb_port(command, port_is_free) else {
-        return Ok(None);
-    };
+    let port = resolve_mongodb_port(command, port_is_free)?;
     let (username, password) = if command.mongodb_credentials_from_store {
         // `nimbus dev` advertises the store credentials in the app's
         // `.env.local`; ambient operator env must not desync the listener
@@ -122,24 +118,23 @@ pub(super) fn resolve_mongodb(
 /// Resolve the MongoDB listener port, shared by bound and unbound modes.
 ///
 /// An explicit `--mongodb-port` is always honored. Without one the conventional
-/// port (27017) is used when free; when busy the listener is skipped (returns
-/// `None`) with a warning — the same default-port behavior as DynamoDB.
+/// port (27017) is used when free; when busy startup fails rather than silently
+/// omitting a listener that is enabled by default.
 fn resolve_mongodb_port(
     command: &StartCommand,
     port_is_free: &impl Fn(u16) -> bool,
-) -> Option<u16> {
+) -> Result<u16, Error> {
     match command.mongodb_port {
-        Some(port) => Some(port),
+        Some(port) => Ok(port),
         None => {
             if port_is_free(MONGODB_CONVENTIONAL_PORT) {
-                Some(MONGODB_CONVENTIONAL_PORT)
+                Ok(MONGODB_CONVENTIONAL_PORT)
             } else {
-                tracing::warn!(
+                Err(Error::InvalidInput(format!(
                     "MongoDB conventional port {MONGODB_CONVENTIONAL_PORT} is busy; \
-                     skipping the default MongoDB listener — pass --mongodb-port to \
-                     serve on another port"
-                );
-                None
+                     pass --mongodb-port to serve on another port or --no-mongodb \
+                     to disable the listener"
+                )))
             }
         }
     }

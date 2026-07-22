@@ -457,6 +457,7 @@ fn firebase_admin_set_batch(
     AtomicWriteBatch::new(vec![AtomicWrite::Set {
         key: firebase_admin_bound_key(database_id, document_path)?,
         document,
+        typed_fields: Default::default(),
         mode: WriteSetMode::Overwrite,
         precondition: WritePrecondition::default(),
         transforms: Vec::new(),
@@ -478,6 +479,7 @@ fn firebase_admin_update_batch(
     AtomicWriteBatch::new(vec![AtomicWrite::Patch {
         key: firebase_admin_bound_key(database_id, document_path)?,
         field_patch,
+        typed_fields: Default::default(),
         mask,
         precondition: WritePrecondition::exists(true),
         transforms: Vec::new(),

@@ -144,7 +144,7 @@ to `streams-and-local-io` family.
 - `runtime::tests::node_compat::node22_supported_lane_executes_manifested_process_and_timing_subset`
 - `runtime::tests::node_compat::node20_legacy_lane_executes_official_process_and_timing_subset`
 - `runtime::tests::node_compat::node20_process_features_watchpoint`
-- `docs/architecture/runtime/node-lts-compat/manifests/process-and-timing.md`
+- `docs/private/architecture/runtime/node-lts-compat/manifests/process-and-timing.md`
 
 ## Verification Environment Note
 

@@ -492,6 +492,7 @@ fn execute_upsert(
     let write = AtomicWrite::Set {
         key: write_key,
         document: fields,
+        typed_fields: Default::default(),
         mode: WriteSetMode::Create,
         precondition: Default::default(),
         transforms: vec![],
@@ -882,6 +883,7 @@ fn find_and_upsert(
     let write = AtomicWrite::Set {
         key: write_key,
         document: doc_fields,
+        typed_fields: Default::default(),
         mode: WriteSetMode::Create,
         precondition: Default::default(),
         transforms: vec![],
@@ -1144,6 +1146,7 @@ fn insert_single_doc(
     let write = AtomicWrite::Set {
         key: write_key,
         document: fields,
+        typed_fields: Default::default(),
         mode: WriteSetMode::Create,
         precondition: Default::default(),
         transforms: vec![],

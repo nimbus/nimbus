@@ -206,6 +206,7 @@ fn overwrite(table: TableName, id: DocumentId, document: Map<String, Value>) -> 
     AtomicWrite::Set {
         key: write_key(table, id),
         document,
+        typed_fields: Default::default(),
         mode: WriteSetMode::Overwrite,
         precondition: WritePrecondition::default(),
         transforms: Vec::new(),
