@@ -25,6 +25,21 @@ variable ↔ config-key table, see the
 | libSQL / Turso | `libsql-replica` | Yes | You want local replica reads against a remote libSQL primary (typically Turso) |
 | redb | `redb` | No | You specifically need the retained embedded key-value backend; prefer SQLite otherwise |
 
+## Provision tenants
+
+Nimbus provisions tenants through the selected backend before serving the
+request that needs them. Automatic tenant creation and protocol adapters await
+the complete provider lifecycle, including opening an already-existing durable
+tenant into the current process. A retry after an interrupted create therefore
+does not report success until the tenant runtime is ready.
+
+The Rust `Engine::create_tenant` blocking API is embedded-only and accepts
+SQLite or redb compositions. Embedders using PostgreSQL, MySQL, or libSQL must
+retain an `Arc<Engine>` and use `create_tenant_async` for explicit creation or
+`ensure_tenant_ready_async` for idempotent request admission. Calling the
+blocking API on an external-provider composition fails immediately with an
+actionable error instead of surfacing later during traffic.
+
 ## Run on SQLite (default)
 
 No flags needed — `nimbus start` uses embedded SQLite with one database file
