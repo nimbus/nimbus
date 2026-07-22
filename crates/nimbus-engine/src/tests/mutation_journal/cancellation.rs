@@ -1,4 +1,4 @@
-use super::support::new_faulted_engine;
+use super::support::{expect_future_within, new_faulted_engine};
 use super::*;
 
 #[tokio::test]
@@ -64,7 +64,7 @@ async fn paginate_documents_async_cancellable_returns_cancelled_while_blocking_w
 async fn mutation_async_cancellable_before_commit_rolls_back_document_index_and_durable_journal() {
     let (_data_dir, engine, tenant_id, faults) = new_faulted_engine(10_000);
 
-    let mut blocker = tokio::spawn({
+    let blocker = tokio::spawn({
         let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         async move {
@@ -81,12 +81,6 @@ async fn mutation_async_cancellable_before_commit_rolls_back_document_index_and_
     timeout(Duration::from_secs(1), faults.wait_until_entered())
         .await
         .expect("first write should block after durable append and before apply");
-    assert!(
-        timeout(Duration::from_millis(100), &mut blocker)
-            .await
-            .is_err(),
-        "first mutation should remain pending while apply is blocked"
-    );
     let blocker_id = durable_journal_commits(engine.as_ref(), &tenant_id, SequenceNumber(0))
         .first()
         .and_then(|commit| commit.writes.first())
@@ -95,7 +89,7 @@ async fn mutation_async_cancellable_before_commit_rolls_back_document_index_and_
 
     let cancel = Arc::new(Notify::new());
     let cancel_for_wait = cancel.clone();
-    let mut handle = tokio::spawn({
+    let handle = tokio::spawn({
         let engine = engine.clone();
         let tenant_id = tenant_id.clone();
         async move {
@@ -117,12 +111,12 @@ async fn mutation_async_cancellable_before_commit_rolls_back_document_index_and_
     });
 
     cancel.notify_one();
-    assert!(
-        timeout(Duration::from_millis(100), &mut handle)
-            .await
-            .is_err(),
-        "queued canceled mutation should remain blocked behind the earlier durable append until apply resumes"
-    );
+    expect_future_within(
+        engine.wait_for_queued_mutation_cancellation_observed_for_testing(&tenant_id),
+        "queued mutation should record cancellation before the committer resumes",
+    )
+    .await
+    .expect("cancellation observation wait should succeed");
     faults.release();
 
     timeout(Duration::from_secs(1), blocker)

@@ -32,6 +32,8 @@ pub(in crate::tenant) struct MutationJournalState {
     read_wait_count: AtomicU64,
     total_read_wait_nanos: AtomicU64,
     applied_notify: Notify,
+    #[cfg(test)]
+    queued_cancellation_observed: Notify,
     #[cfg(any(test, feature = "test-hooks"))]
     pause_before_drain: Arc<MutationJournalPauseState>,
 }
@@ -57,6 +59,8 @@ impl MutationJournalState {
             read_wait_count: AtomicU64::new(0),
             total_read_wait_nanos: AtomicU64::new(0),
             applied_notify: Notify::new(),
+            #[cfg(test)]
+            queued_cancellation_observed: Notify::new(),
             #[cfg(any(test, feature = "test-hooks"))]
             pause_before_drain: Arc::new(MutationJournalPauseState::default()),
         }
@@ -117,6 +121,16 @@ impl MutationJournalState {
     #[cfg(any(test, feature = "test-hooks"))]
     pub(in crate::tenant) async fn wait_before_drain(&self) {
         self.pause_before_drain.wait_if_armed().await;
+    }
+
+    #[cfg(test)]
+    pub(in crate::tenant) async fn wait_for_queued_cancellation_observed(&self) {
+        self.queued_cancellation_observed.notified().await;
+    }
+
+    #[cfg(test)]
+    pub(in crate::tenant) fn record_queued_cancellation_observed(&self) {
+        self.queued_cancellation_observed.notify_one();
     }
 
     pub(in crate::tenant) fn record_worker_start(&self) {

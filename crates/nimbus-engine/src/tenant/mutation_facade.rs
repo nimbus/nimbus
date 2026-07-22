@@ -341,6 +341,18 @@ impl TenantRuntime {
         self.mutation_journal.wait_before_drain().await;
     }
 
+    #[cfg(test)]
+    pub(crate) async fn wait_for_queued_mutation_cancellation_observed_for_testing(&self) {
+        self.mutation_journal
+            .wait_for_queued_cancellation_observed()
+            .await;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn record_queued_mutation_cancellation_observed_for_testing(&self) {
+        self.mutation_journal.record_queued_cancellation_observed();
+    }
+
     /// Samples and advances the tenant commit clock on the committer actor.
     pub(crate) fn assign_commit_timestamp(&self) -> Timestamp {
         let previous = self.last_assigned_commit_timestamp.load(Ordering::Relaxed);

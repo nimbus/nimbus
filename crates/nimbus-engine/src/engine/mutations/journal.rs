@@ -562,6 +562,8 @@ impl Engine {
                 result = &mut response_rx => result,
                 _ = &mut cancel_wait => {
                     cancelled.store(true, std::sync::atomic::Ordering::Release);
+                    #[cfg(test)]
+                    runtime.record_queued_mutation_cancellation_observed_for_testing();
                     (&mut response_rx).await
                 }
             }
