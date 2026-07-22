@@ -174,6 +174,9 @@ async function typecheckConvexSurface() {
   const nimbusBrowserEntry = normalize(
     path.join(packageRoot, "..", "nimbus", "src", "browser.ts"),
   );
+  const nimbusReactEntry = normalize(
+    path.join(packageRoot, "..", "nimbus", "src", "react.ts"),
+  );
 
   await fs.writeFile(
     path.join(fixtureDir, "tsconfig.json"),
@@ -194,6 +197,7 @@ async function typecheckConvexSurface() {
             "convex/server": [serverEntry],
             "convex/values": [valuesEntry],
             "@nimbus/nimbus/browser": [nimbusBrowserEntry],
+            "@nimbus/nimbus/react": [nimbusReactEntry],
           },
         },
         files: ["fixture.ts"],

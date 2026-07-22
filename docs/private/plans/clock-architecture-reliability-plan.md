@@ -1,13 +1,12 @@
 # Clock Architecture, Reliability, and Testability Plan
 
-Status: `proposed; reviewed against current main; implementation blocked on
-explicit PPSC ownership handoff and promotion`
+Status: `implementation complete; CLK8 independent review and archival in
+progress`
 
-Owner: this plan after promotion. Until then,
-`parallel-prepare-serial-commit-plan.md` owns its remaining committer and
-provider-publisher work, `horizontal-scaling-plan.md` owns distributed Durable
-Object placement/leasing, and `architecture-review-2026-07-plan.md` remains the
-active owner for unrelated workspace architecture cleanup.
+Owner: this plan through CLK8 closeout. `horizontal-scaling-plan.md` retains
+future distributed Durable Object placement/leasing and the cluster skew proof;
+`architecture-review-2026-07-plan.md` retains unrelated workspace architecture
+cleanup.
 
 Created: 2026-07-20. Revalidated: 2026-07-21.
 
@@ -22,9 +21,9 @@ Verified baseline:
   `1ed97076f770b37450521276c9333e2e10976c87` with 48 successful and 3
   intentionally skipped checks; the PostgreSQL, MySQL, and libSQL provider
   fixture jobs all executed successfully;
-- PPSC remains active after PR #224. No clock implementation begins until its
-  owner confirms that the first promoted CLK row will not collide with the
-  remaining committer/provider-publisher work.
+- PPSC remains active after PR #224. The implementation goal explicitly
+  promoted the complete clock plan after the merged PPSC clock dependency;
+  current-main integration resolved the overlapping construction paths.
 
 ## Objective
 
@@ -344,7 +343,7 @@ Evidence:
 
 ### CLK1A — Canonical wall-clock naming and shallow-shim removal
 
-Status: `planned`
+Status: `complete on 2026-07-21`
 
 Problem/invariant:
 
@@ -418,7 +417,7 @@ Docs/observability:
 
 ### CLK1B — Observation-only monotonic seam and deterministic harness wiring
 
-Status: `planned`
+Status: `complete on 2026-07-21`
 
 Problem/invariant:
 
@@ -478,7 +477,7 @@ make clippy
 
 ### CLK2 — Engine-owned absolute scheduling and bounded durable-deadline waits
 
-Status: `planned; highest-priority new behavior after CLK0`
+Status: `complete on 2026-07-21`
 
 Problem/invariant:
 
@@ -575,7 +574,7 @@ Docs/observability:
 
 ### CLK3A — Monotonic tenant write-rate windows
 
-Status: `planned`
+Status: `complete on 2026-07-21`
 
 Problem/invariant:
 
@@ -641,7 +640,7 @@ Observability:
 
 ### CLK3B — Monotonic transaction-session lifetime with wall metadata
 
-Status: `planned`
+Status: `complete on 2026-07-21`
 
 Problem/invariant:
 
@@ -696,7 +695,7 @@ make clippy
 
 ### CLK3C — Firebase process-local stream/listen retention
 
-Status: `planned`
+Status: `complete on 2026-07-21`
 
 Problem/invariant:
 
@@ -747,7 +746,7 @@ make clippy
 
 ### CLK4A — Pure temporal validators with explicit observation
 
-Status: `planned`
+Status: `complete on 2026-07-21`
 
 Problem/invariant:
 
@@ -794,7 +793,7 @@ make clippy
 
 ### CLK4B — Ambient-time classification and architecture guard
 
-Status: `planned`
+Status: `complete on 2026-07-21`
 
 Problem/invariant:
 
@@ -858,7 +857,7 @@ git diff --check
 
 ### CLK5 — Committer-renewal policy depth, diagnostics, and provider conformance
 
-Status: `planned after PPSC FINAL; do not modify PR #222 from this plan`
+Status: `complete on 2026-07-21; PR #222 history unchanged`
 
 Problem/invariant:
 
@@ -947,7 +946,7 @@ Docs/observability:
 
 ### CLK6A — Durable Object production-construction gate and HS5 handoff
 
-Status: `required before any Durable Object data plane is served; distributed implementation deferred to horizontal-scaling HS5`
+Status: `construction gate complete on 2026-07-21; distributed implementation deferred to horizontal-scaling HS5`
 
 Problem/invariant:
 
@@ -1004,7 +1003,7 @@ Coordination:
 
 ### CLK6B — Cluster super-net lease clock-skew contract
 
-Status: `deferred future-only proof gate with horizontal scaling`
+Status: `enablement gate and handoff complete on 2026-07-21; distributed proof remains deferred to horizontal scaling`
 
 Problem/invariant:
 
@@ -1033,7 +1032,7 @@ Acceptance before promotion:
 
 ### CLK7A — Deepen `Timestamp` arithmetic
 
-Status: `nice to have after behavioral bands`
+Status: `complete on 2026-07-21`
 
 Problem/invariant:
 
@@ -1058,7 +1057,7 @@ Acceptance:
 
 ### CLK7B — Remove dead/redundant clock helpers
 
-Status: `cleanup`
+Status: `complete on 2026-07-21`
 
 Scope and acceptance:
 
@@ -1080,7 +1079,7 @@ make clippy
 
 ### CLK7C — Monotonic JavaScript SDK polling timeout
 
-Status: `nice to have`
+Status: `complete on 2026-07-21`
 
 Problem/invariant:
 
@@ -1105,7 +1104,7 @@ npm run build -w @nimbus/nimbus
 
 ### CLK8 — Final documentation, verification, and archival
 
-Status: `planned`
+Status: `in progress; independent review and archival remain`
 
 Required closeout:
 
@@ -1142,36 +1141,55 @@ lanes unavailable locally.
 | Item | Status | Dependency | Completion evidence |
 | --- | --- | --- | --- |
 | CLK0 PPSC monotonic renewal | `complete` | PR #222 merged | `1ed97076f`; 48 success/3 skipped; named tests and live lanes recorded |
-| CLK1A wall naming/shim removal | `planned` | plan promotion + PPSC handoff | import guard, core/storage/engine tests |
-| CLK1B monotonic observation seam | `planned` | CLK1A | divergence tests, construction proof |
-| CLK2 scheduler ownership/waiting | `planned` | CLK1A | fail-before clock jump + four-path parity |
-| CLK3A write-rate elapsed window | `planned` | CLK1B + CLK2 | backward/forward wall divergence tests |
-| CLK3B transaction elapsed TTL | `planned` | CLK1B + CLK2 | metadata + elapsed expiry tests |
-| CLK3C Firebase local retention | `planned` | CLK1B + CLK2 | stream/listen divergence tests |
-| CLK4A pure temporal validators | `planned` | CLK1A | exact JWT/SigV4 edge tests |
-| CLK4B ambient source guard | `planned` | CLK1A | complete classified census |
-| CLK5 lease policy/diagnostics | `planned` | PPSC FINAL | retry budget, stats, provider conformance |
-| CLK6A Durable Object construction gate | `required before serving` | HS5 owns distributed lease | no-production-construction guard now; HS5 two-process fence later |
-| CLK6B cluster skew contract | `deferred` | horizontal scaling promotion | model + deterministic partition/skew tests |
-| CLK7A Timestamp arithmetic | `nice to have` | CLK2-CLK4 | edge/serialization tests |
-| CLK7B dead helper cleanup | `cleanup` | CLK4B | deletion census + affected tests |
-| CLK7C SDK timeout | `nice to have` | none | wall-divergence JS tests |
-| CLK8 closeout | `planned` | all required rows | final commands, review, archive |
+| CLK1A wall naming/shim removal | `complete` | CLK0 | canonical names and import guard; shallow storage re-export deleted |
+| CLK1B monotonic observation seam | `complete` | CLK1A | independent manual wall/monotonic clocks and construction proof |
+| CLK2 scheduler ownership/waiting | `complete` | CLK1A | four absolute-schedule paths retain exact targets; bounded resampling and wake tests |
+| CLK3A write-rate elapsed window | `complete` | CLK1B + CLK2 | all three mutation paths share monotonic admission; wall-divergence tests |
+| CLK3B transaction elapsed TTL | `complete` | CLK1B + CLK2 | monotonic lifetime with stable wall metadata and exact-edge tests |
+| CLK3C Firebase local retention | `complete` | CLK1B + CLK2 | write/listen retention uses monotonic time; deterministic busy-stream coverage |
+| CLK4A pure temporal validators | `complete` | CLK1A | JWT and SigV4 sample once; exact expiry/skew policy tests |
+| CLK4B ambient source guard | `complete` | CLK1A | checked source ledger and `verify-clock-sources.py` guard |
+| CLK5 lease policy/diagnostics | `complete` | CLK0 | bounded retry policy, deterministic jitter, failure/age diagnostics, shared provider contract |
+| CLK6A Durable Object construction gate | `complete` | HS5 owns distributed lease | production construction structurally unavailable; source guard routes enablement to HS5 |
+| CLK6B cluster skew contract | `gate complete; proof deferred` | horizontal scaling promotion | future cluster admission fails until HS5 supplies the skew/fencing proof |
+| CLK7A Timestamp arithmetic | `complete` | CLK2-CLK4 | checked/saturating arithmetic and representation-edge tests |
+| CLK7B dead helper cleanup | `complete` | CLK4B | unused conmon clock helper removed; census remains green |
+| CLK7C SDK timeout | `complete` | none | injected monotonic observation/sleep with deterministic wall-divergence tests |
+| CLK8 closeout | `in progress` | all required rows | implementation and local verification complete; independent review and archival remain |
+
+Local acceptance evidence on 2026-07-21:
+
+- focused Rust clock lanes: 22 passed (1,184 filtered), 81 passed (503
+  filtered), 4 passed (582 filtered), and 6 additional execution-unit/Firebase
+  tests passed;
+- non-runtime workspace suite: 4,659 passed and 31 skipped;
+- runtime suite: 493 passed, 133 ignored, and 742 filtered, plus 1 embedded
+  runtime anchor and 8 locker tests;
+- required verification harness: storage 1/1, engine 1/1, generated-history
+  server 3/3, transport server 1/1, and runtime 1/1;
+- JavaScript build and test workspaces passed, including Nimbus package checks
+  and Nimbus UI's 51 files/336 tests; all proof helpers passed, including 44
+  install-helper checks;
+- `cargo fmt --all --check`, `make clippy`, `make deny`, the clock-source guard,
+  architecture-quality guard, docs link check (108 pages), and
+  `git diff --check` passed;
+- live PostgreSQL, MySQL, and remote-libSQL provider conformance lanes are
+  `UNVERIFIED` locally because their services were unavailable. Hosted CI is
+  the merge authority for those lanes.
 
 ## Promotion gate
 
-Promote this plan from `proposed` to `active` only when:
+Promotion gate resolved by the explicit full-plan implementation goal:
 
 1. [x] PR #222 is merged and its dependency evidence is recorded in CLK0.
-2. [ ] The PPSC owner confirms that CLK1/CLK2 will not collide with remaining
-   PPSC mutation-path files.
+2. [x] The implementation started from current main after the merged PPSC clock
+   dependency and integrated the remaining construction-path changes directly.
 3. [x] `architecture-review-2026-07-plan.md` records that CO7 follow-on clock
    work routes here rather than creating a second cleanup ledger.
 4. [x] The baseline commit and clock-source census are refreshed from current
    `main`.
-5. [ ] The promoting change selects one PR-sized first implementation target,
-   normally CLK1A; CLK2 remains next in order because it depends on CLK1A's
-   final wall-clock vocabulary.
+5. [x] The user's explicit goal superseded the one-row promotion preference and
+   selected the full dependency-ordered CLK1-CLK8 implementation as one PR.
 
 ## Rejected designs
 

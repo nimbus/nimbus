@@ -151,12 +151,11 @@ extension-registry seam before the second concern edits `extensions.rs`.
   which share Convex's network-persistence shape. Testability seams
   (S0–S5) are binding scope. Governing research:
   `research/parallel-prepare-serial-commit-redesign.md`.
-- `clock-architecture-reliability-plan.md` - `proposed; reviewed against
-  current main`. Owns wall-clock naming, Engine absolute scheduling,
-  process-local monotonic policies, temporal-validation seams, and ambient-time
-  classification. CLK0 is satisfied by merged PR #222; promotion still waits
-  for the PPSC owner to hand off overlapping committer/provider-publisher
-  paths and for one PR-sized first implementation row to be selected.
+- `clock-architecture-reliability-plan.md` - `implementation complete; closeout
+  review in progress`. Owns wall-clock naming, Engine absolute scheduling,
+  process-local monotonic policies, temporal-validation seams, ambient-time
+  classification, and the structural gates that keep future distributed clock
+  authority disabled until the horizontal-scaling plan supplies its proof.
 - `layered-admission-control-plan.md` - `deferred`. Owns future layered
   admission experiments and EO8-style promotion work. Consumes the
   retry-amplification admission signal from
