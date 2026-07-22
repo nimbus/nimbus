@@ -292,6 +292,34 @@ pub fn sweep_all_tenants(
     (swept, errors)
 }
 
+/// Run one TTL sweep pass through the provider-capable tenant lifecycle.
+///
+/// Each configured tenant is admitted or loaded before the synchronous sweep
+/// core runs. Admission and sweep failures remain tenant-local: one failure is
+/// reported with that tenant and does not prevent later tenants from running.
+/// The pass is sequential so a periodic maintenance tick cannot create an
+/// unbounded burst of tenant loads or storage work.
+pub async fn sweep_all_tenants_async(
+    engine: &Arc<Engine>,
+    access_keys: &crate::AccessKeyRegistry,
+    now: i64,
+) -> (usize, Vec<(nimbus_core::TenantId, DynamoDbError)>) {
+    let mut swept = 0;
+    let mut errors = Vec::new();
+    for tenant in access_keys.tenants() {
+        let context = crate::tenant::tenant_context(tenant.clone(), "ttl-sweeper");
+        let result = match crate::tenant::ensure_tenant_async(engine, &context).await {
+            Ok(()) => sweep_tenant(engine, &context, now),
+            Err(error) => Err(error),
+        };
+        match result {
+            Ok(count) => swept += count,
+            Err(error) => errors.push((tenant, error)),
+        }
+    }
+    (swept, errors)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -590,6 +618,27 @@ mod tests {
         assert!(errors.is_empty(), "no per-tenant errors: {errors:?}");
         assert!(!exists(&engine, &acme, "Sessions", "old"));
         assert!(!exists(&engine, &globex, "Sessions", "old"));
+    }
+
+    #[tokio::test]
+    async fn provider_sweep_admits_tenant_before_sync_core() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let engine = Arc::new(
+            Engine::new_with_memory_persistence(temp.path()).expect("memory provider engine"),
+        );
+        let tenant = TenantId::new("acme").expect("tenant");
+        let registry = crate::AccessKeyRegistry::new().bind("AKIAACME", tenant);
+
+        let (swept, errors) = sweep_all_tenants_async(&engine, &registry, 1_700_000_000).await;
+
+        assert_eq!(swept, 0);
+        assert!(
+            errors.is_empty(),
+            "provider-capable sweeps must admit each configured tenant before entering the synchronous command core: {errors:?}"
+        );
+        engine
+            .ensure_tenant_exists(&TenantId::new("acme").expect("tenant"))
+            .expect("the async sweep must leave the provider tenant registered");
     }
 
     #[test]

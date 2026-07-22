@@ -39,7 +39,8 @@ pub async fn run_ttl_sweeper(
     loop {
         ticker.tick().await;
         let now = now_epoch_seconds();
-        let (swept, errors) = nimbus_dynamodb::sweep_all_tenants(&engine, &access_keys, now);
+        let (swept, errors) =
+            nimbus_dynamodb::sweep_all_tenants_async(&engine, &access_keys, now).await;
         if swept > 0 {
             info!("DynamoDB TTL sweep reclaimed {swept} expired item(s)");
         }

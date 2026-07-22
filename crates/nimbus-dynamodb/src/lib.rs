@@ -31,7 +31,7 @@ pub use tenant::{
 };
 
 pub use attribute_value::{fields_to_item, item_to_fields, validate_item};
-pub use commands::ttl::sweep_all_tenants;
+pub use commands::ttl::{sweep_all_tenants, sweep_all_tenants_async};
 pub use config::DynamoDbConfig;
 pub use dispatch::{
     DispatchContext, KNOWN_OPERATIONS, dispatch, dispatch_async, is_known_operation,
