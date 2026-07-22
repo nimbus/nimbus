@@ -231,6 +231,21 @@ pub(super) async fn quiesce_engine(engine: &Arc<Engine>, context: &str) -> Bench
     }
 }
 
+/// Strict quiesce for restart samples. Cleanup may be best-effort, but a
+/// successor engine must never start while the prior owner could still write.
+pub(super) async fn quiesce_engine_for_reopen(
+    engine: &Arc<Engine>,
+    context: &str,
+) -> BenchResult<()> {
+    tokio::time::timeout(
+        Duration::from_secs(BENCHMARK_QUIESCE_TIMEOUT_SECS),
+        engine.quiesce(),
+    )
+    .await
+    .map_err(|_| format!("engine quiesce timed out before provider reopen during {context}"))?;
+    Ok(())
+}
+
 pub(super) fn record_contrast_measurements(
     report: &mut BenchmarkReport,
     workload: WorkloadKind,
@@ -293,6 +308,47 @@ pub(super) async fn cleanup_mysql_provider(config: &MySqlProviderConfig) -> Benc
     })
     .await?;
     Ok(())
+}
+
+/// Advances benchmark seed state across the provider-owned lease expiry
+/// boundary without adding the production 30–60 second TTL to every sample.
+/// The caller must have strictly quiesced and dropped the prior engine first.
+pub(super) async fn expire_benchmark_mysql_committer_leases(
+    config: &MySqlProviderConfig,
+    tenant_ids: &[TenantId],
+) -> BenchResult<()> {
+    let provider = MySqlProvider::connect(config.clone()).await?;
+    let pool = Pool::new(Opts::from_url(config.connection_string.as_str())?);
+    let mut conn = pool.get_conn().await?;
+    for tenant_id in tenant_ids {
+        let database_name = provider.tenant_database_name(tenant_id)?.replace('`', "``");
+        let query = format!(
+            "UPDATE `{database_name}`.`committer_lease` \
+             SET expires_at = TIMESTAMPADD(SECOND, -1, CURRENT_TIMESTAMP(6)) \
+             WHERE singleton = TRUE"
+        );
+        conn.query_drop(query).await?;
+        let updated = conn.affected_rows();
+        if updated != 1 {
+            return Err(format!(
+                "expected one MySQL committer lease for tenant {tenant_id}, updated {updated}"
+            )
+            .into());
+        }
+    }
+    conn.disconnect().await?;
+    pool.disconnect().await?;
+    Ok(())
+}
+
+pub(super) async fn expire_all_benchmark_mysql_committer_leases(
+    config: &MySqlProviderConfig,
+) -> BenchResult<()> {
+    let tenant_ids = MySqlProvider::connect(config.clone())
+        .await?
+        .list_tenants()
+        .await?;
+    expire_benchmark_mysql_committer_leases(config, &tenant_ids).await
 }
 
 pub(super) async fn terminate_benchmark_mysql_connections(

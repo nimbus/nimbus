@@ -33,11 +33,28 @@ impl MySqlProvider {
         validate_identifier_input(&config.metadata_database, "metadata database")?;
         validate_identifier_input(&config.tenant_database_prefix, "tenant database prefix")?;
 
-        let pool = build_pool(&config)?;
+        let BuiltMySqlPool {
+            pool,
+            client_max_allowed_packet,
+        } = build_pool(&config)?;
+        let server_max_allowed_packet = {
+            let mut conn = pool.get_conn().await.map_err(map_mysql_error)?;
+            conn.query_first::<u64, _>("SELECT @@GLOBAL.max_allowed_packet")
+                .await
+                .map_err(map_mysql_error)?
+                .ok_or_else(|| {
+                    Error::Internal("MySQL did not return @@GLOBAL.max_allowed_packet".to_string())
+                })?
+        };
+        let max_allowed_packet = effective_mysql_max_allowed_packet(
+            server_max_allowed_packet,
+            client_max_allowed_packet,
+        );
         let provider = Self {
             pool,
             metadata_database: config.metadata_database,
             tenant_database_prefix: config.tenant_database_prefix,
+            max_allowed_packet,
             runtime_handle,
             clock,
             fault_injector,

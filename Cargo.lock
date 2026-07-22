@@ -7267,6 +7267,7 @@ dependencies = [
  "base64 0.22.1",
  "deadpool-postgres",
  "fjall",
+ "futures",
  "hex",
  "hyper 0.14.32",
  "libsql",

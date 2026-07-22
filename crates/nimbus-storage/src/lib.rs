@@ -46,9 +46,9 @@ pub use diagnostics::{
     AdapterSupportDiagnostic, BackendParityDiagnostic, BackendParityState,
     DocumentVersionStorageDiagnostic, HistoricalQueryAdmissionDiagnostic,
     HistoricalQueryAdmissionRequest, HistoricalQueryAdmissionState, IndexVersionStorageDiagnostic,
-    MvccOperatorDiagnostic, MvccVersionCountsDiagnostic, StorageCapabilities, StorageFeature,
-    StorageFeatureSupport, StorageFeatureSupportState, StorageHealthDiagnostic,
-    StorageOperatorState, StoragePressureDiagnostic, StoragePressureState,
+    MvccOperatorDiagnostic, MvccVersionCountsDiagnostic, ProviderWritePipelineDiagnostic,
+    StorageCapabilities, StorageFeature, StorageFeatureSupport, StorageFeatureSupportState,
+    StorageHealthDiagnostic, StorageOperatorState, StoragePressureDiagnostic, StoragePressureState,
 };
 pub use encrypted_redb::{
     ENCRYPTED_FORMAT_VERSION, EncryptedFileBackend, EncryptedMemoryBackend, LOGICAL_PAGE_SIZE,

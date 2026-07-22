@@ -61,31 +61,41 @@ impl TenantPersistence {
         }
     }
 
-    pub(crate) fn fenced_append_and_apply_durable_records_batch(
+    pub(crate) fn fenced_append_and_apply_durable_records_batch_cancellable<Check>(
         &self,
         owner_id: &str,
         epoch: u64,
         expected_previous: nimbus_core::SequenceNumber,
         records: &[nimbus_core::TenantEventRecord],
-    ) -> CommitterLeaseResult<()> {
+        check_cancel: Check,
+    ) -> CommitterLeaseResult<()>
+    where
+        Check: Fn() -> Result<()> + Send + 'static,
+    {
         match self {
-            Self::Postgres(store) => store.fenced_append_and_apply_durable_records_batch(
+            Self::Postgres(store) => store
+                .fenced_append_and_apply_durable_records_batch_cancellable(
+                    owner_id,
+                    epoch,
+                    expected_previous,
+                    records,
+                    check_cancel,
+                ),
+            Self::LibsqlReplica(store) => {
+                check_cancel().map_err(CommitterLeaseError::from)?;
+                store.fenced_append_and_apply_durable_records_batch(
+                    owner_id,
+                    epoch,
+                    expected_previous,
+                    records,
+                )
+            }
+            Self::MySql(store) => store.fenced_append_and_apply_durable_records_batch_cancellable(
                 owner_id,
                 epoch,
                 expected_previous,
                 records,
-            ),
-            Self::LibsqlReplica(store) => store.fenced_append_and_apply_durable_records_batch(
-                owner_id,
-                epoch,
-                expected_previous,
-                records,
-            ),
-            Self::MySql(store) => store.fenced_append_and_apply_durable_records_batch(
-                owner_id,
-                epoch,
-                expected_previous,
-                records,
+                check_cancel,
             ),
             Self::Redb(_) | Self::Sqlite(_) => Err(CommitterLeaseError::Unsupported),
             #[cfg(any(test, feature = "test-hooks"))]

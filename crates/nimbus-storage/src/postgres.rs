@@ -56,6 +56,7 @@ mod table_lifecycle;
 mod trigger_delivery;
 mod trigger_invocations;
 mod write;
+mod write_pipeline;
 mod write_schema_events;
 
 use self::backend::*;
@@ -117,6 +118,7 @@ pub struct PostgresTenantStore {
     tenant_id: TenantId,
     schema_name: String,
     schema_cache: Arc<RwLock<Option<Schema>>>,
+    pipeline_metrics: Arc<crate::sql::write_pipeline::SqlWritePipelineMetrics>,
     pub(crate) retention_floor: Arc<RetentionFloor>,
 }
 
@@ -143,6 +145,7 @@ pub struct PostgresWriteTransaction {
     tenant_id: TenantId,
     schema_name: String,
     schema_cache: Arc<RwLock<Option<Schema>>>,
+    pipeline_metrics: Arc<crate::sql::write_pipeline::SqlWritePipelineMetrics>,
     client: Option<Client>,
     commit_writes: Vec<WriteOp>,
     tenant_events: Vec<TenantEventKind>,
@@ -168,6 +171,10 @@ impl PostgresTenantStore {
             tenant_id: registration.tenant_id,
             schema_name: registration.schema_name,
             schema_cache: Arc::new(RwLock::new(None)),
+            pipeline_metrics: Arc::new(crate::sql::write_pipeline::SqlWritePipelineMetrics::new(
+                "postgres",
+                crate::sql::write_pipeline::POSTGRES_MAX_IN_FLIGHT_OPERATIONS,
+            )),
             retention_floor: RetentionFloor::new(),
         }
     }
@@ -190,6 +197,10 @@ impl PostgresTenantStore {
 
     pub fn check_fault(&self, point: FaultPoint) -> Result<()> {
         self.provider.fault_injector.check(point)
+    }
+
+    pub fn write_pipeline_diagnostic(&self) -> crate::ProviderWritePipelineDiagnostic {
+        self.pipeline_metrics.snapshot()
     }
 
     fn block_on<T, Fut>(&self, future: Fut) -> Result<T>

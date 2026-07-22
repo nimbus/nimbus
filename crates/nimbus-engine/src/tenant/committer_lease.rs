@@ -222,12 +222,23 @@ impl TenantRuntime {
         let Some((owner_id, epoch)) = self.held_committer_lease()? else {
             return Ok(false);
         };
-        self.map_fenced_write_result(self.store.fenced_append_and_apply_durable_records_batch(
-            &owner_id,
-            epoch,
-            expected_previous,
-            records,
-        ))?;
+        let shutdown = self.committer_shutdown_token();
+        self.map_fenced_write_result(
+            self.store
+                .fenced_append_and_apply_durable_records_batch_cancellable(
+                    &owner_id,
+                    epoch,
+                    expected_previous,
+                    records,
+                    move || {
+                        if shutdown.is_cancelled() {
+                            Err(Error::Cancelled)
+                        } else {
+                            Ok(())
+                        }
+                    },
+                ),
+        )?;
         Ok(true)
     }
 

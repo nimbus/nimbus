@@ -120,6 +120,21 @@ async fn typed_postgres_config_supports_async_schema_mutation_journal_and_schedu
         assert_eq!(bootstrap.bootstrap_cut, latest_sequence);
         assert_eq!(bootstrap.resume_after, latest_sequence);
 
+        let pipeline = engine
+            .tenant_engine_diagnostics(&tenant_id)
+            .expect("provider pipeline diagnostics should load")
+            .provider_write_pipeline
+            .expect("PostgreSQL tenants should expose provider pipeline diagnostics");
+        assert_eq!(pipeline.adapter, "postgres");
+        assert_eq!(pipeline.configured_max_in_flight, 2);
+        assert!(pipeline.batch_attempt_count >= 1);
+        assert_eq!(
+            pipeline.journal_statement_count, pipeline.batch_attempt_count,
+            "every PostgreSQL journal batch should use one journal statement"
+        );
+        assert!(pipeline.journal_record_count >= pipeline.journal_statement_count);
+        assert_eq!(pipeline.max_observed_in_flight, 2);
+
         engine.quiesce().await;
     })
     .await;

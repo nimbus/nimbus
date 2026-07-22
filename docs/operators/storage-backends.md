@@ -77,6 +77,13 @@ nimbus start \
 - `--mysql-min-connections` / `--mysql-max-connections` — pool sizing;
   the pool's built-in sizing applies when unset.
 
+Nimbus samples MySQL's global `max_allowed_packet` when the provider starts.
+If `--mysql-url` also sets the driver's client-side `max_allowed_packet` query
+parameter, Nimbus uses the lower of the client and server limits. Durable
+journal batches are split into ordered statements before either ceiling is
+crossed. Restart Nimbus after changing the global packet limit so new provider
+connections and the journal planner use the same value.
+
 ## Run on libSQL / Turso
 
 Replica-connected SQLite: Nimbus keeps a local replica cache and connects to

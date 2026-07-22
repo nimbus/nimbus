@@ -326,6 +326,26 @@ impl MySqlTenantStore {
         expected_previous: SequenceNumber,
         records: &[TenantEventRecord],
     ) -> CommitterLeaseResult<()> {
+        self.fenced_append_and_apply_durable_records_batch_cancellable(
+            owner_id,
+            epoch,
+            expected_previous,
+            records,
+            || Ok(()),
+        )
+    }
+
+    pub fn fenced_append_and_apply_durable_records_batch_cancellable<Check>(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        expected_previous: SequenceNumber,
+        records: &[TenantEventRecord],
+        check_cancel: Check,
+    ) -> CommitterLeaseResult<()>
+    where
+        Check: Fn() -> Result<()> + Send + 'static,
+    {
         if records.is_empty() {
             return Err(Error::InvalidInput(
                 "fenced durable apply requires at least one record".to_string(),
@@ -335,7 +355,9 @@ impl MySqlTenantStore {
         let owner_id = owner_id.to_string();
         let fenced_owner_id = owner_id.clone();
         let records = records.to_vec();
-        let result = self.execute_write(move |transaction| {
+        let pipeline_batch_admitted = Arc::new(AtomicBool::new(false));
+        let pipeline_batch_admitted_in_transaction = pipeline_batch_admitted.clone();
+        let result = self.execute_write_cancellable(check_cancel, move |transaction| {
             let durable_sequence = records
                 .last()
                 .expect("non-empty fenced durable apply batch")
@@ -355,9 +377,16 @@ impl MySqlTenantStore {
                 transaction.applied_sequence()?,
                 records[0].sequence,
             )?;
-            transaction.append_durable_records_batch(&records)?;
+            transaction.append_durable_records_batch_with_admission(&records, || {
+                pipeline_batch_admitted_in_transaction.store(true, AtomicOrdering::Release);
+            })?;
             transaction.apply_durable_records_batch(&records)
         });
+        if let Err(error @ Error::Cancelled) = &result
+            && pipeline_batch_admitted.load(AtomicOrdering::Acquire)
+        {
+            self.pipeline_metrics.record_error(error);
+        }
         match result {
             Ok(_) => Ok(()),
             Err(Error::PreconditionFailed(message)) if message == FENCED_COMMITTER_LEASE_MARKER => {
@@ -859,6 +888,7 @@ impl MySqlWriteTransaction {
             provider,
             database_name,
             schema_cache: store.schema_cache.clone(),
+            pipeline_metrics: store.pipeline_metrics.clone(),
             conn: Some(conn),
             commit_writes: Vec::new(),
             tenant_events: Vec::new(),
@@ -1298,46 +1328,6 @@ impl MySqlWriteTransaction {
         Ok(())
     }
 
-    pub fn append_durable_records_batch(&mut self, records: &[TenantEventRecord]) -> Result<()> {
-        self.check_cancel()?;
-        if records.is_empty() {
-            return Ok(());
-        }
-
-        let mut next = self.latest_sequence()?.0.saturating_add(1);
-        let query = format!(
-            "INSERT INTO {} (sequence, record_blob) VALUES (?, ?)",
-            qualified_table(&self.database_name, "commit_log")
-        );
-        for record in records {
-            self.check_cancel()?;
-            if record.sequence.0 != next {
-                return Err(Error::Internal(format!(
-                    "durable journal append expected sequence {}, got {}",
-                    next, record.sequence.0
-                )));
-            }
-            let payload = serialize_tenant_event_record(record)?;
-            let sequence = record.sequence.0;
-            let query = query.clone();
-            let runtime_handle = self.provider.runtime_handle.clone();
-            let conn = self.session()?;
-            Self::block_on(&runtime_handle, async move {
-                conn.exec_drop(query.clone(), (sequence, payload))
-                    .await
-                    .map_err(map_mysql_error)
-            })?;
-            next = next.saturating_add(1);
-        }
-        self.provider
-            .fault_injector
-            .check(FaultPoint::JournalAppendBeforeDurableFlush)?;
-        self.provider
-            .fault_injector
-            .check(FaultPoint::JournalFlushBeforeVisibility)?;
-        Ok(())
-    }
-
     pub fn apply_durable_records_batch(&mut self, records: &[TenantEventRecord]) -> Result<()> {
         crate::sql::write_core::sql_apply_durable_records_batch(self, records)
     }
@@ -1452,7 +1442,7 @@ impl MySqlWriteTransaction {
         })
     }
 
-    fn latest_sequence(&mut self) -> Result<SequenceNumber> {
+    pub(super) fn latest_sequence(&mut self) -> Result<SequenceNumber> {
         let runtime_handle = self.provider.runtime_handle.clone();
         let database_name = self.database_name.clone();
         let conn = self.session()?;
