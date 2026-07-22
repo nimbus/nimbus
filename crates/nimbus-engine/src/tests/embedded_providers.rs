@@ -158,10 +158,10 @@ async fn tenant_admission_replays_after_create_cancellation() {
             .expect("replay should open the durable tenant"),
         crate::TenantAdmissionOutcome::Existing
     );
-    engine
-        .ensure_tenant_exists_async(tenant_id)
-        .await
-        .expect("replay must register a complete runtime");
+    assert!(
+        engine.loaded_tenant_ids().contains(&tenant_id),
+        "admission must register the complete runtime before returning"
+    );
 }
 
 #[tokio::test]
