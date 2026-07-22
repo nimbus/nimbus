@@ -3,7 +3,13 @@ use crate::{ControlPlaneConfig, LocalEncryptionConfig, TenantProviderConfig};
 
 #[test]
 fn tenant_lifecycle_caller_inventory_is_complete() {
-    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let manifest_dir = std::env::var_os("CARGO_MANIFEST_DIR")
+        .map(std::path::PathBuf::from)
+        .expect("CARGO_MANIFEST_DIR should be set by Cargo/nextest for nimbus-engine tests");
+    let workspace = manifest_dir
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("nimbus-engine should live under the workspace crates directory");
     let output = std::process::Command::new("bash")
         .arg(workspace.join("scripts/verify-tenant-lifecycle-callers.sh"))
         .current_dir(&workspace)
