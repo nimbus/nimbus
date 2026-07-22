@@ -162,8 +162,6 @@ const fn storage_fault_point_unchecked(fault: PpscInjectedFault) -> Option<Fault
             Some(FaultPoint::StorageCommitAfterVisibilityBeforeReturn)
         }
         PpscInjectedFault::ProviderTransient => Some(FaultPoint::JournalAppendBeforeDurableFlush),
-        PpscInjectedFault::DurableBeforePublish
-        | PpscInjectedFault::PublicationPredecessorHeld
-        | PpscInjectedFault::PanicAfterDurable => None,
+        PpscInjectedFault::DurableBeforePublish | PpscInjectedFault::PanicAfterDurable => None,
     }
 }

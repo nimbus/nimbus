@@ -12,10 +12,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::Engine;
-use crate::engine::{
-    TenantEvictionRegistry, begin_definitive_fence_eviction,
-    finish_durable_recovery_eviction_locked,
-};
+use crate::engine::{TenantEvictionRegistry, begin_definitive_fence_eviction};
 
 use super::super::TenantRuntime;
 
@@ -586,19 +583,24 @@ pub(crate) async fn run_committer_actor(
     });
     if closes_observer_dispatch && let Some(runtime) = runtime.upgrade() {
         runtime.close_committed_mutation_observers();
-        runtime
-            .wait_for_committed_mutation_observers_drained()
-            .await;
-    }
-    if let Some(runtime) = eviction {
-        if !closes_observer_dispatch {
-            runtime.close_committed_mutation_observers();
+        if runtime.eviction_started() {
+            let _ = runtime
+                .wait_for_committed_mutation_observers_drained_for_eviction()
+                .await;
+        } else {
             runtime
                 .wait_for_committed_mutation_observers_drained()
                 .await;
         }
+    }
+    if let Some(runtime) = eviction {
+        if !closes_observer_dispatch {
+            // The ordered publisher owns observer close/drain. Waiting for its
+            // terminal signal also proves it released its TenantRuntime Arc.
+            runtime.wait_for_publisher_finished().await;
+        }
         runtime.wait_for_operation_drain_for_eviction().await;
-        eviction_registry.finish(&runtime);
+        eviction_registry.finish(runtime);
     }
 }
 
@@ -659,16 +661,11 @@ async fn run_committer_actor_loop(
                 .await;
             if finish_shutdown_eviction {
                 // Fail every residual actor job to wake blocked submitters,
-                // then finish the eviction without acquiring tenant_load_gate:
-                // a synchronous deleter may hold that gate while waiting for
-                // one of these jobs' operation guards. The shared finisher
-                // takes only the registry RwLock, removes this exact Arc, and
-                // preserves its publisher failure diagnostics.
+                // then leave through the actor's single eviction finalizer.
                 receiver.close();
                 while let Some(message) = receiver.recv().await {
                     fail_committer_message_during_shutdown_eviction(runtime.as_ref(), message);
                 }
-                finish_durable_recovery_eviction_locked(engine.as_ref(), &runtime);
                 break;
             }
             continue;

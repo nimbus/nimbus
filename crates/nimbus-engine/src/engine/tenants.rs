@@ -513,10 +513,7 @@ impl Engine {
             };
             if let Some(runtime) = cached_runtime {
                 if runtime.eviction_started() {
-                    runtime.wait_for_eviction_complete().await;
-                    if self.runtime_remains_registered(tenant_id, &runtime) {
-                        return Err(runtime.durable_recovery_eviction_error());
-                    }
+                    self.wait_for_runtime_eviction(tenant_id, runtime).await?;
                     continue;
                 }
                 maybe_emit_tenant_load_profile(TenantLoadProfileSample {
@@ -550,10 +547,7 @@ impl Engine {
             if let Some(runtime) = cached_runtime {
                 if runtime.eviction_started() {
                     drop(tenant_load_guard);
-                    runtime.wait_for_eviction_complete().await;
-                    if self.runtime_remains_registered(tenant_id, &runtime) {
-                        return Err(runtime.durable_recovery_eviction_error());
-                    }
+                    self.wait_for_runtime_eviction(tenant_id, runtime).await?;
                     continue;
                 }
                 maybe_emit_tenant_load_profile(TenantLoadProfileSample {
@@ -580,6 +574,31 @@ impl Engine {
                 .load_existing_tenant_async_locked(tenant_id, total_started, tenant_load_guard)
                 .await;
         }
+    }
+
+    async fn wait_for_runtime_eviction(
+        &self,
+        tenant_id: &TenantId,
+        runtime: Arc<TenantRuntime>,
+    ) -> Result<()> {
+        let evicted_incarnation = runtime.tenant_incarnation();
+        let error = runtime.durable_recovery_eviction_error();
+        let completion = runtime.eviction_completion();
+        // The completion token owns lifecycle state only. Dropping the stale
+        // runtime before awaiting prevents this accessor from retaining an
+        // embedded provider handle across the reopen boundary.
+        drop(runtime);
+        completion.wait().await;
+        if self
+            .tenants
+            .read()
+            .expect("tenant registry lock should not be poisoned")
+            .get(tenant_id)
+            .is_some_and(|registered| registered.tenant_incarnation() == evicted_incarnation)
+        {
+            return Err(error);
+        }
+        Ok(())
     }
 
     fn runtime_remains_registered(

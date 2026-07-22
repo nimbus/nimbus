@@ -72,10 +72,7 @@ pub(crate) use mutations::phase_metrics::{
     CommitPhaseDurations, CommitPhaseMetrics, CommitTraceSample, maybe_emit_commit_trace,
 };
 pub use mutations::{AsyncMutationContext, MutationActor, MutationIsolatePermit};
-pub(crate) use mutations::{
-    begin_definitive_fence_eviction, begin_durable_recovery_eviction,
-    finish_durable_recovery_eviction_locked,
-};
+pub(crate) use mutations::{begin_definitive_fence_eviction, begin_durable_recovery_eviction};
 pub use objects::TenantObjectMeta;
 pub(crate) use provider_hints::ProviderPollWorker;
 pub(crate) use queries::{
@@ -129,8 +126,9 @@ pub(crate) struct TenantEvictionRegistry {
 }
 
 impl TenantEvictionRegistry {
-    pub(crate) fn finish(&self, runtime: &Arc<TenantRuntime>) {
+    pub(crate) fn finish(&self, runtime: Arc<TenantRuntime>) {
         let tenant_id = runtime.tenant_id().clone();
+        let completion = runtime.eviction_completion();
         if let Some(diagnostics) = self.publisher_failure_diagnostics.upgrade() {
             diagnostics
                 .write()
@@ -138,28 +136,32 @@ impl TenantEvictionRegistry {
                 .insert(tenant_id.clone(), runtime.publisher_error_counts());
         }
         if let Some(tenants) = self.tenants.upgrade() {
-            let removed = {
-                let mut tenants = tenants
-                    .write()
-                    .expect("tenant registry lock should not be poisoned");
-                if tenants
-                    .get(&tenant_id)
-                    .is_some_and(|loaded| Arc::ptr_eq(loaded, runtime))
-                {
-                    tenants.remove(&tenant_id)
-                } else {
-                    None
-                }
+            let mut tenants = tenants
+                .write()
+                .expect("tenant registry lock should not be poisoned");
+            let removed = if tenants
+                .get(&tenant_id)
+                .is_some_and(|loaded| Arc::ptr_eq(loaded, &runtime))
+            {
+                tenants.remove(&tenant_id)
+            } else {
+                None
             };
+            // Keep the registry write-locked until both Engine ownership and
+            // the actor's final runtime owner are gone. A loader cannot observe
+            // an empty slot and reopen redb while the failed handle is live.
             drop(removed);
+            drop(runtime);
+            drop(tenants);
         } else {
             // The Engine already dropped its registry. There is nothing left
             // to deregister, but wake any accessor still holding this runtime.
             tracing::debug!(tenant = %tenant_id, "engine registry dropped before eviction finished");
+            drop(runtime);
         }
-        // Wake accessors only after the failed runtime is absent from the
-        // registry. They will then serialize a fresh open behind the load gate.
-        runtime.finish_eviction();
+        // This token owns lifecycle state only, never persistence. Waking it
+        // therefore proves the actor and registry no longer own the old store.
+        completion.finish();
     }
 }
 

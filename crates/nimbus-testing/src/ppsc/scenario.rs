@@ -95,7 +95,6 @@ pub enum PpscInjectedFault {
     AcknowledgementLoss,
     ProviderTransient,
     DurableBeforePublish,
-    PublicationPredecessorHeld,
     PanicAfterDurable,
 }
 
@@ -105,7 +104,6 @@ impl PpscInjectedFault {
             Self::AcknowledgementLoss => "acknowledgement-loss",
             Self::ProviderTransient => "provider-transient",
             Self::DurableBeforePublish => "durable-before-publish",
-            Self::PublicationPredecessorHeld => "publication-predecessor-held",
             Self::PanicAfterDurable => "panic-after-durable",
         }
     }
@@ -171,6 +169,16 @@ pub enum PpscOperation {
         tenant: String,
         revision: u64,
     },
+    CommitPhaseFault {
+        tenant: String,
+        route: PpscRoute,
+        fault: PpscInjectedFault,
+    },
+    PublicationPredecessorRace {
+        tenant: String,
+        predecessor_route: PpscRoute,
+        successor_route: PpscRoute,
+    },
     ArmFault {
         tenant: String,
         fault: PpscInjectedFault,
@@ -219,6 +227,8 @@ impl PpscOperation {
             | Self::TriggerCursorAdvance { tenant, .. }
             | Self::Schedule { tenant, .. }
             | Self::ProjectionUpdate { tenant, .. }
+            | Self::CommitPhaseFault { tenant, .. }
+            | Self::PublicationPredecessorRace { tenant, .. }
             | Self::ArmFault { tenant, .. }
             | Self::ReleaseFault { tenant, .. }
             | Self::CancelNext { tenant, .. }
@@ -318,6 +328,29 @@ impl PpscScenario {
             ) {
                 return Err(PpscScenarioError::new(format!(
                     "PPSC scenario step {index} requests cancellation on the synchronous direct route; use queued-journal or execution-unit"
+                )));
+            }
+            if let PpscOperation::CommitPhaseFault { fault, .. } = step.operation
+                && !matches!(
+                    fault,
+                    PpscInjectedFault::DurableBeforePublish | PpscInjectedFault::PanicAfterDurable
+                )
+            {
+                return Err(PpscScenarioError::new(format!(
+                    "PPSC scenario step {index} routes non-commit-phase fault '{}' through CommitPhaseFault",
+                    fault.as_str()
+                )));
+            }
+            if let PpscOperation::ArmFault { fault, .. } | PpscOperation::ReleaseFault { fault, .. } =
+                step.operation
+                && !matches!(
+                    fault,
+                    PpscInjectedFault::AcknowledgementLoss | PpscInjectedFault::ProviderTransient
+                )
+            {
+                return Err(PpscScenarioError::new(format!(
+                    "PPSC scenario step {index} routes non-storage fault '{}' through storage arm/release",
+                    fault.as_str()
                 )));
             }
         }
@@ -615,26 +648,28 @@ fn universal_step(seed: u64, index: usize, step_count: usize, draw: u64) -> Ppsc
             PpscExpectedOutcome::Committed,
         ),
         19 => PpscStep::new(
-            PpscOperation::ArmFault {
+            PpscOperation::PublicationPredecessorRace {
                 tenant: hot,
-                fault: PpscInjectedFault::PublicationPredecessorHeld,
+                predecessor_route: PpscRoute::QueuedJournal,
+                successor_route: PpscRoute::Direct,
             },
-            PpscExpectedOutcome::Observed,
+            PpscExpectedOutcome::Committed,
         ),
-        20 => mutation(
-            seed,
-            index,
-            draw,
-            PpscRoute::Direct,
-            true,
+        20 => PpscStep::new(
+            PpscOperation::CommitPhaseFault {
+                tenant: hot.clone(),
+                route: PpscRoute::ExecutionUnit,
+                fault: PpscInjectedFault::DurableBeforePublish,
+            },
             PpscExpectedOutcome::Committed,
         ),
         21 => PpscStep::new(
-            PpscOperation::ReleaseFault {
+            PpscOperation::CommitPhaseFault {
                 tenant: hot,
-                fault: PpscInjectedFault::PublicationPredecessorHeld,
+                route: PpscRoute::QueuedJournal,
+                fault: PpscInjectedFault::PanicAfterDurable,
             },
-            PpscExpectedOutcome::Observed,
+            PpscExpectedOutcome::AmbiguousRecovered,
         ),
         22 => PpscStep::new(PpscOperation::Crash, PpscExpectedOutcome::Observed),
         23 => PpscStep::new(PpscOperation::Reopen, PpscExpectedOutcome::Observed),

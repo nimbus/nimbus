@@ -683,34 +683,26 @@ impl ObserverHandoff {
         }
     }
 
-    pub(crate) fn wait_drained_blocking(&self) -> Result<()> {
-        let deadline = Instant::now() + self.drain_blocking_timeout;
-        loop {
-            if self.drained.load(Ordering::Acquire) {
-                return Ok(());
-            }
-            let now = Instant::now();
-            if now >= deadline {
-                let stats = self.stats();
-                tracing::error!(
-                    tenant = %self.tenant_id,
-                    timeout = ?self.drain_blocking_timeout,
-                    observer_queue_depth = stats.depth,
-                    observer_queue_capacity = stats.capacity,
-                    observer_dispatcher_poisoned = stats.poisoned,
-                    "timed out waiting for committed-mutation observer dispatcher to drain during durable-recovery eviction"
-                );
-                return Err(Error::Internal(format!(
-                    "committed-mutation observer dispatcher for tenant {} did not drain within {:?}",
-                    self.tenant_id, self.drain_blocking_timeout
-                )));
-            }
-            std::thread::park_timeout(
-                deadline
-                    .saturating_duration_since(now)
-                    .min(Duration::from_millis(1)),
-            );
+    pub(crate) async fn wait_drained_for_eviction(&self) -> Result<()> {
+        if tokio::time::timeout(self.drain_blocking_timeout, self.wait_drained())
+            .await
+            .is_ok()
+        {
+            return Ok(());
         }
+        let stats = self.stats();
+        tracing::error!(
+            tenant = %self.tenant_id,
+            timeout = ?self.drain_blocking_timeout,
+            observer_queue_depth = stats.depth,
+            observer_queue_capacity = stats.capacity,
+            observer_dispatcher_poisoned = stats.poisoned,
+            "timed out waiting for committed-mutation observer dispatcher to drain during durable-recovery eviction"
+        );
+        Err(Error::Internal(format!(
+            "committed-mutation observer dispatcher for tenant {} did not drain within {:?}",
+            self.tenant_id, self.drain_blocking_timeout
+        )))
     }
 
     pub(crate) fn take_receiver(

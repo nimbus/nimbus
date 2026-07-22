@@ -25,11 +25,7 @@ pub(crate) use authorization::enforce_mutation_authorization;
 pub(in crate::engine) use commit_processing::document_bearing_commit_identity;
 pub use direct::{AsyncMutationContext, MutationActor};
 pub(crate) use publisher::{
-    begin_definitive_fence_eviction, begin_durable_recovery_eviction,
-    finish_durable_recovery_eviction_locked, run_ordered_publisher,
-};
-pub(in crate::engine) use publisher::{
-    finish_durable_recovery_eviction, finish_durable_recovery_eviction_blocking,
+    begin_definitive_fence_eviction, begin_durable_recovery_eviction, run_ordered_publisher,
 };
 
 use super::Engine;

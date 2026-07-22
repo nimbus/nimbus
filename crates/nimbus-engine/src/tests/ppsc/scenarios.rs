@@ -286,3 +286,58 @@ pub(super) fn crash_reopen_scenario() -> PpscScenario {
     )
     .expect("crash/reopen scenario should build")
 }
+
+pub(super) fn commit_phase_fault_scenario() -> PpscScenario {
+    let hot = "ppsc-commit-phase-hot".to_string();
+    let peer = "ppsc-commit-phase-peer".to_string();
+    PpscScenario::new(
+        "commit-phase-faults",
+        443,
+        vec![
+            PpscStep::new(
+                PpscOperation::PublicationPredecessorRace {
+                    tenant: hot.clone(),
+                    predecessor_route: PpscRoute::QueuedJournal,
+                    successor_route: PpscRoute::Direct,
+                },
+                PpscExpectedOutcome::Committed,
+            ),
+            PpscStep::new(
+                PpscOperation::CommitPhaseFault {
+                    tenant: hot.clone(),
+                    route: PpscRoute::ExecutionUnit,
+                    fault: PpscInjectedFault::DurableBeforePublish,
+                },
+                PpscExpectedOutcome::Committed,
+            ),
+            PpscStep::new(
+                PpscOperation::CommitPhaseFault {
+                    tenant: hot.clone(),
+                    route: PpscRoute::QueuedJournal,
+                    fault: PpscInjectedFault::PanicAfterDurable,
+                },
+                PpscExpectedOutcome::AmbiguousRecovered,
+            ),
+            PpscStep::new(
+                PpscOperation::Mutation {
+                    tenant: hot,
+                    route: PpscRoute::Direct,
+                    key: "after-recovery".to_string(),
+                    value: 431,
+                },
+                PpscExpectedOutcome::Committed,
+            ),
+            PpscStep::new(
+                PpscOperation::Mutation {
+                    tenant: peer,
+                    route: PpscRoute::ExecutionUnit,
+                    key: "peer-progress".to_string(),
+                    value: 432,
+                },
+                PpscExpectedOutcome::Committed,
+            ),
+            PpscStep::new(PpscOperation::Quiesce, PpscExpectedOutcome::Shutdown),
+        ],
+    )
+    .expect("commit-phase fault scenario should build")
+}

@@ -181,6 +181,29 @@ pub struct TenantOperationGuard {
     lifecycle: Arc<TenantLifecycle>,
 }
 
+/// Store-independent completion token for one failed runtime's eviction.
+///
+/// Accessors clone this token and drop their [`TenantRuntime`] before waiting,
+/// so a redb handle cannot be kept alive by the waiter that will reopen it.
+#[derive(Clone)]
+pub(crate) struct TenantEvictionCompletion {
+    lifecycle: Arc<TenantLifecycle>,
+}
+
+impl TenantEvictionCompletion {
+    pub(crate) async fn wait(&self) {
+        self.lifecycle.wait_for_eviction_complete().await;
+    }
+
+    pub(crate) fn wait_blocking(&self) {
+        self.lifecycle.wait_for_eviction_complete_blocking();
+    }
+
+    pub(crate) fn finish(&self) {
+        self.lifecycle.finish_eviction();
+    }
+}
+
 /// Engine-issued proof that a canonical tenant incarnation remains live for
 /// the full lifetime of one runtime invocation (including background drain).
 #[derive(Clone)]
@@ -646,10 +669,6 @@ impl TenantRuntime {
         self.lifecycle.wait_for_operations_async().await;
     }
 
-    pub(crate) fn wait_for_operation_drain_for_eviction_blocking(&self) {
-        self.lifecycle.wait_for_operations_blocking();
-    }
-
     pub(crate) fn eviction_started(&self) -> bool {
         self.lifecycle.eviction_started()
     }
@@ -664,10 +683,18 @@ impl TenantRuntime {
         )
     }
 
+    #[cfg(test)]
     pub(crate) async fn wait_for_eviction_complete(&self) {
         self.lifecycle.wait_for_eviction_complete().await;
     }
 
+    pub(crate) fn eviction_completion(&self) -> TenantEvictionCompletion {
+        TenantEvictionCompletion {
+            lifecycle: self.lifecycle.clone(),
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn finish_eviction(&self) {
         self.lifecycle.finish_eviction();
     }

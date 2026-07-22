@@ -5,9 +5,6 @@ use nimbus_core::{Error, Result, ScheduledJob, TenantId};
 use nimbus_storage::{SchedulerWrite, SchedulerWriteResult};
 
 use crate::engine::execution_units::labels;
-use crate::engine::mutations::{
-    finish_durable_recovery_eviction, finish_durable_recovery_eviction_blocking,
-};
 use crate::engine::tenants::with_tenant_runtime_operation;
 use crate::persistence::TenantPersistence;
 use crate::{Engine, tenant::TenantRuntime};
@@ -84,10 +81,12 @@ pub(super) fn write_scheduler_state_blocking(
         )
     });
     drop(operation_guard);
-    if initiated_eviction.load(Ordering::Acquire) {
-        let _ = runtime.wait_for_committed_mutation_observers_drained_blocking();
-        runtime.wait_for_operation_drain_for_eviction_blocking();
-        finish_durable_recovery_eviction_blocking(engine, runtime);
+    let eviction_completion = initiated_eviction
+        .load(Ordering::Acquire)
+        .then(|| runtime.eviction_completion());
+    drop(runtime);
+    if let Some(completion) = eviction_completion {
+        completion.wait_blocking();
     }
     result
 }
@@ -120,7 +119,7 @@ pub(super) async fn write_scheduler_state(
         })
         .await;
     drop(operation_guard);
-    finish_scheduler_eviction_if_started(engine, runtime, &initiated_eviction).await;
+    await_scheduler_eviction_if_started(runtime, &initiated_eviction).await;
     result
 }
 
@@ -201,23 +200,21 @@ where
         }
     };
     drop(operation_guard);
-    finish_scheduler_eviction_if_started(engine, runtime, &initiated_eviction).await;
+    await_scheduler_eviction_if_started(runtime, &initiated_eviction).await;
     result
 }
 
-async fn finish_scheduler_eviction_if_started(
-    engine: &Arc<Engine>,
+async fn await_scheduler_eviction_if_started(
     runtime: Arc<TenantRuntime>,
     initiated_eviction: &AtomicBool,
 ) {
-    if !initiated_eviction.load(Ordering::Acquire) {
-        return;
+    let completion = initiated_eviction
+        .load(Ordering::Acquire)
+        .then(|| runtime.eviction_completion());
+    drop(runtime);
+    if let Some(completion) = completion {
+        completion.wait().await;
     }
-    runtime
-        .wait_for_committed_mutation_observers_drained()
-        .await;
-    runtime.wait_for_operation_drain_for_eviction().await;
-    finish_durable_recovery_eviction(engine.clone(), runtime).await;
 }
 
 pub(super) fn expect_scheduler_unit(result: SchedulerWriteResult) -> Result<()> {

@@ -78,6 +78,13 @@ impl PpscEngineSlot {
         self.0.is_some()
     }
 
+    pub(super) fn current(&self) -> Arc<Engine> {
+        self.0
+            .as_ref()
+            .expect("PPSC operation requires a running Engine")
+            .clone()
+    }
+
     pub(super) fn crash(&mut self) {
         let engine = self.0.take().expect("PPSC crash requires a running Engine");
         drop(engine);

@@ -17,6 +17,8 @@ pub(super) struct TenantLifecycle {
     zero_active_lock: Mutex<()>,
     zero_active: Condvar,
     zero_active_notify: Notify,
+    eviction_complete_lock: Mutex<()>,
+    eviction_complete_condvar: Condvar,
     eviction_complete_notify: Notify,
 }
 
@@ -30,6 +32,8 @@ impl TenantLifecycle {
             zero_active_lock: Mutex::new(()),
             zero_active: Condvar::new(),
             zero_active_notify: Notify::new(),
+            eviction_complete_lock: Mutex::new(()),
+            eviction_complete_condvar: Condvar::new(),
             eviction_complete_notify: Notify::new(),
         }
     }
@@ -95,8 +99,26 @@ impl TenantLifecycle {
     }
 
     pub(super) fn finish_eviction(&self) {
+        let _guard = self
+            .eviction_complete_lock
+            .lock()
+            .expect("tenant eviction completion lock should not be poisoned");
         self.eviction_complete.store(true, Ordering::Release);
+        self.eviction_complete_condvar.notify_all();
         self.eviction_complete_notify.notify_waiters();
+    }
+
+    pub(super) fn wait_for_eviction_complete_blocking(&self) {
+        let mut guard = self
+            .eviction_complete_lock
+            .lock()
+            .expect("tenant eviction completion lock should not be poisoned");
+        while !self.eviction_complete.load(Ordering::Acquire) {
+            guard = self
+                .eviction_complete_condvar
+                .wait(guard)
+                .expect("tenant eviction completion wait should not be poisoned");
+        }
     }
 
     pub(super) async fn wait_for_eviction_complete(&self) {

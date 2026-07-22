@@ -25,7 +25,7 @@ use super::enforce_mutation_authorization;
 use super::inline_reprepare::{InlineReprepareOutcome, reprepare_single_document_from_window};
 use super::phase_metrics::CommitPhaseDurations;
 use super::prepared::PreparedCommit;
-use super::publisher::{begin_durable_recovery_eviction, finish_durable_recovery_eviction};
+use super::publisher::begin_durable_recovery_eviction;
 use super::shadow_conflicts::{observe_shadow_conflicts, prepared_document_dependencies};
 use super::window_prepare::{WindowPreparedWrite, prepare_single_document_write_from_window};
 
@@ -383,27 +383,7 @@ impl Engine {
                         fail_mutation_responses(&assignment_responses, &error);
                         runtime.fail_and_drain_mutation_queues(&error);
                         runtime.close_committed_mutation_observers();
-                        let engine = self.clone();
-                        let runtime_for_eviction = runtime.clone();
-                        let eviction = async move {
-                            runtime_for_eviction
-                                .wait_for_committed_mutation_observers_drained()
-                                .await;
-                            runtime_for_eviction
-                                .wait_for_operation_drain_for_eviction()
-                                .await;
-                            finish_durable_recovery_eviction(engine, runtime_for_eviction).await;
-                        };
-                        if let Err((spawn_error, eviction)) =
-                            self.try_spawn_background("serial_durable_recovery_eviction", eviction)
-                        {
-                            drop(eviction);
-                            warn!(
-                                error = %spawn_error,
-                                "engine quiesce rejected reference-arm recovery task; deferring shutdown eviction completion until the committer inbox is drained"
-                            );
-                            finish_shutdown_eviction = true;
-                        }
+                        finish_shutdown_eviction = true;
                     }
                 }
             }
@@ -429,27 +409,7 @@ impl Engine {
                         fail_mutation_responses(&assignment_responses, &recovery_error);
                         runtime.fail_and_drain_mutation_queues(&recovery_error);
                         runtime.close_committed_mutation_observers();
-                        let engine = self.clone();
-                        let runtime_for_eviction = runtime.clone();
-                        let eviction = async move {
-                            runtime_for_eviction
-                                .wait_for_committed_mutation_observers_drained()
-                                .await;
-                            runtime_for_eviction
-                                .wait_for_operation_drain_for_eviction()
-                                .await;
-                            finish_durable_recovery_eviction(engine, runtime_for_eviction).await;
-                        };
-                        if let Err((spawn_error, eviction)) =
-                            self.try_spawn_background("serial_durable_recovery_eviction", eviction)
-                        {
-                            drop(eviction);
-                            warn!(
-                                error = %spawn_error,
-                                "engine quiesce rejected serial recovery task; deferring shutdown eviction completion until the committer inbox is drained"
-                            );
-                            finish_shutdown_eviction = true;
-                        }
+                        finish_shutdown_eviction = true;
                     }
                 }
             }

@@ -110,6 +110,35 @@ fn ppsc_scenario_rejects_cancellation_without_cancellable_admission() {
         )
         .expect("asynchronous cancellation route should remain valid");
     }
+
+    let wrong_commit_phase = PpscScenario::new(
+        "invalid-commit-phase-owner",
+        93,
+        vec![PpscStep::new(
+            PpscOperation::CommitPhaseFault {
+                tenant: "tenant-a".to_string(),
+                route: PpscRoute::QueuedJournal,
+                fault: PpscInjectedFault::AcknowledgementLoss,
+            },
+            PpscExpectedOutcome::AmbiguousRecovered,
+        )],
+    )
+    .expect_err("storage fault must not route through the commit-phase operation");
+    assert!(wrong_commit_phase.to_string().contains("non-commit-phase"));
+
+    let wrong_storage_arm = PpscScenario::new(
+        "invalid-storage-fault-owner",
+        94,
+        vec![PpscStep::new(
+            PpscOperation::ArmFault {
+                tenant: "tenant-a".to_string(),
+                fault: PpscInjectedFault::PanicAfterDurable,
+            },
+            PpscExpectedOutcome::Observed,
+        )],
+    )
+    .expect_err("commit-phase fault must not route through storage arm/release");
+    assert!(wrong_storage_arm.to_string().contains("non-storage"));
 }
 
 #[test]
@@ -378,6 +407,26 @@ fn ppsc_retained_seed_covers_cancellation_overload_and_shutdown() {
             step.expected == PpscExpectedOutcome::ProviderError
                 && matches!(step.operation, PpscOperation::Mutation { .. })
         }));
+        assert!(scenario.steps.iter().any(|step| {
+            matches!(
+                step.operation,
+                PpscOperation::PublicationPredecessorRace { .. }
+            )
+        }));
+        for fault in [
+            PpscInjectedFault::DurableBeforePublish,
+            PpscInjectedFault::PanicAfterDurable,
+        ] {
+            assert!(scenario.steps.iter().any(|step| {
+                matches!(
+                    step.operation,
+                    PpscOperation::CommitPhaseFault {
+                        fault: candidate,
+                        ..
+                    } if candidate == fault
+                )
+            }));
+        }
     }
 }
 
@@ -449,35 +498,24 @@ fn ppsc_hot_tenant_failure_preserves_other_tenant_progress() {
 fn ppsc_shrinker_retains_minimal_ordered_failure() {
     let scenario = PpscScenario::seeded(37, 48).expect("seed should generate");
     let shrunk = shrink_failing_ppsc_scenario(&scenario, |candidate| {
-        let saw_hold = candidate.steps.iter().any(|step| {
+        let saw_race = candidate.steps.iter().any(|step| {
             matches!(
                 step.operation,
-                PpscOperation::ArmFault {
-                    fault: PpscInjectedFault::PublicationPredecessorHeld,
-                    ..
-                }
+                PpscOperation::PublicationPredecessorRace { .. }
             )
         });
-        let saw_release = candidate.steps.iter().any(|step| {
-            matches!(
-                step.operation,
-                PpscOperation::ReleaseFault {
-                    fault: PpscInjectedFault::PublicationPredecessorHeld,
-                    ..
-                }
-            )
-        });
-        saw_hold && saw_release
+        let saw_crash = candidate
+            .steps
+            .iter()
+            .any(|step| matches!(step.operation, PpscOperation::Crash));
+        saw_race && saw_crash
     });
     assert_eq!(shrunk.steps.len(), 2);
     assert!(matches!(
         shrunk.steps[0].operation,
-        PpscOperation::ArmFault { .. }
+        PpscOperation::PublicationPredecessorRace { .. }
     ));
-    assert!(matches!(
-        shrunk.steps[1].operation,
-        PpscOperation::ReleaseFault { .. }
-    ));
+    assert!(matches!(shrunk.steps[1].operation, PpscOperation::Crash));
 }
 
 #[test]
@@ -581,10 +619,7 @@ fn ppsc_storage_fault_interface_rejects_wrong_owner_and_invalid_transitions() {
     let tenant = TenantId::new("ppsc-storage-fault-contract").expect("tenant should build");
 
     let wrong_owner = injector
-        .arm(
-            tenant.clone(),
-            PpscInjectedFault::PublicationPredecessorHeld,
-        )
+        .arm(tenant.clone(), PpscInjectedFault::PanicAfterDurable)
         .expect_err("publisher fault must not arm through storage");
     assert!(matches!(wrong_owner, Error::InvalidInput(_)));
     let never_armed = injector
