@@ -223,7 +223,8 @@ mod tests {
         let prepared = prepared_batch(8, 32);
         let ranges = mysql_journal_statement_ranges(&prepared, 96, 64 * 1024 * 1024)
             .expect("ordinary batch should fit the fixture packet limit");
-        assert_eq!(ranges, [0..8]);
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(ranges[0], 0..8);
     }
 
     #[test]
