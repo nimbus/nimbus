@@ -1,4 +1,5 @@
 use std::num::NonZeroU64;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use nimbus_core::{IdSource, ManualMonotonicClock, ManualWallClock, Timestamp};
@@ -14,8 +15,10 @@ fn clock_types_are_imported_from_nimbus_core() {
     accepts_core_wall(harness.clock());
     accepts_core_monotonic(harness.monotonic_clock());
 
-    let removed_reexport =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/simulation/clocks.rs");
+    let manifest_dir = std::env::var_os("CARGO_MANIFEST_DIR")
+        .map(PathBuf::from)
+        .expect("Cargo/nextest should expose the nimbus-storage manifest directory at runtime");
+    let removed_reexport = manifest_dir.join("src/simulation/clocks.rs");
     assert!(
         !removed_reexport.exists(),
         "storage must not restore a shallow clock re-export module"

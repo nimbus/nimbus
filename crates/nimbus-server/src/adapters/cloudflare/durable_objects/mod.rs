@@ -1062,7 +1062,9 @@ mod tests {
             }
         }
 
-        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let manifest_dir = std::env::var_os("CARGO_MANIFEST_DIR")
+            .map(PathBuf::from)
+            .expect("Cargo/nextest should expose the nimbus-server manifest directory at runtime");
         let repo_root = manifest_dir
             .parent()
             .and_then(Path::parent)
