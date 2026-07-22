@@ -3,6 +3,8 @@ use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+pub(super) const PPSC_OBSERVER: &str = "ppsc-scenario-recorder";
+
 #[derive(Clone)]
 pub(super) enum PpscEngineFactory {
     Memory(PathBuf),

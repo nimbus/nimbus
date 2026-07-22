@@ -20,8 +20,6 @@ mod scenarios;
 use harness::*;
 use scenarios::*;
 
-const PPSC_OBSERVER: &str = "ppsc-scenario-recorder";
-
 struct PpscEngineRunner {
     backend: PpscBackend,
     _data_dir: Option<TempDir>,
