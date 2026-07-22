@@ -2322,7 +2322,12 @@ fn runtime_owner_partition_benchmark(c: &mut Criterion) {
                     let report = runtime
                         .block_on(executor.retire_owner(&revocation, Duration::from_secs(10)))
                         .expect("retirement benchmark should receive every worker acknowledgement");
-                    assert_eq!(report.workers_acknowledged, expected_workers);
+                    let acknowledged_all_workers = report.workers_acknowledged == expected_workers;
+                    assert!(
+                        acknowledged_all_workers,
+                        "retirement benchmark acknowledged {} of {expected_workers} workers",
+                        report.workers_acknowledged
+                    );
                     black_box(report);
                 });
             },
