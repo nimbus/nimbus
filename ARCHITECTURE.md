@@ -88,7 +88,10 @@ discussion, not a workaround.
    three matters: an audit boundary that lists only the first will not notice
    a defect living in the other two.
    - The **queued journal path**, where client mutations are batched and
-     committed in sequence order by the per-tenant committer.
+     committed in sequence order by the per-tenant committer. Its ordered
+     publisher or serial actor arm is selected once when the tenant runtime is
+     constructed; every queued, direct, execution-unit, progress-sync, and
+     internal job consults that same immutable selection.
    - The **direct path**, `apply_mutation_with_mode*` behind the public
      `insert_document*`, `update_document*`, and `delete_document*` methods on
      `Engine` (`crates/nimbus-engine/src/engine/mutations/`).

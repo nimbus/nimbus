@@ -197,6 +197,18 @@ tenant runs on a libSQL replica). Unknown tenants return `404`.
 The `mutation_journal` group also reports bounded system-table projection
 work. Use these fields together:
 
+- `committer_arm` is the immutable construction-time mutation owner:
+  `ordered-publisher` for Memory/redb/SQLite and `serial` for
+  libSQL/PostgreSQL/MySQL in the current production mapping. It never changes
+  for a live runtime; there are intentionally no transition counters.
+- `committer_lease_acquired`, `committer_lease_epoch`,
+  `committer_lease_expires_at`, and `committer_lease_fenced` distinguish a
+  provider runtime that has not written yet, a healthy holder, and a holder
+  that lost authority. Acquisition/renewal counters and
+  `committer_lease_renewal_worker_running` separate ordinary backlog from
+  lease loss or stalled lifecycle work. Embedded tenants keep these lease
+  fields at their neutral values.
+
 - `observer_spawned_work_depth` is currently executing or queued observer
   work. Compare it with `observer_spawned_work_capacity` and
   `observer_spawned_work_high_watermark` to identify a healthy backlog versus

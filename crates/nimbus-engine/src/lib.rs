@@ -56,10 +56,10 @@ pub use subscriptions::{
 #[cfg(any(test, feature = "test-hooks"))]
 pub use tenant::MutationJournalPauseHandle;
 pub use tenant::{
-    CommitterPipelineMode, MaterializedReadSurfaceStats, MutationAdmissionPhase,
-    MutationAdmissionStats, MutationIsolateAdmissionStats, MutationJournalStats,
-    PinnedServingReadSnapshot, QueryPlanningStats, ServingSnapshotManagerStats,
-    SubscriptionDeliveryStats, TenantEngineDiagnosticsSnapshot, TenantOperationGuard,
+    CommitterArm, MaterializedReadSurfaceStats, MutationAdmissionPhase, MutationAdmissionStats,
+    MutationIsolateAdmissionStats, MutationJournalStats, PinnedServingReadSnapshot,
+    QueryPlanningStats, ServingSnapshotManagerStats, SubscriptionDeliveryStats,
+    TenantEngineDiagnosticsSnapshot, TenantOperationGuard,
 };
 pub use triggers::{
     TriggerInvocationExecution, TriggerInvocationExecutor, TriggerLookupMatch, TriggerRegistration,

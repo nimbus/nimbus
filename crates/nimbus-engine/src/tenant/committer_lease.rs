@@ -114,6 +114,31 @@ pub(crate) struct CommitterLeaseLifecycle {
 }
 
 impl TenantRuntime {
+    /// Ensures provider sequence authority before the ordered publisher can
+    /// assign ahead of durability.
+    ///
+    /// Embedded runtimes return without a task hop. Provider acquisition is a
+    /// blocking storage interface (PostgreSQL bridges through `block_on`), so
+    /// the async committer must never execute it on a Tokio worker. Successful
+    /// acquisition also republishes recovered progress; callers must await
+    /// this method while holding the assignment/recovery gate and before
+    /// capturing an assignment baseline.
+    pub(crate) async fn ensure_committer_lease_for_ordered_assignment(
+        self: &Arc<Self>,
+    ) -> Result<()> {
+        if self.committer_lease.is_none() {
+            return Ok(());
+        }
+        let runtime = Arc::clone(self);
+        tokio::task::spawn_blocking(move || runtime.ensure_committer_lease_for_assignment())
+            .await
+            .map_err(|error| {
+                Error::Internal(format!(
+                    "committer lease acquisition task panicked before ordered assignment: {error}"
+                ))
+            })?
+    }
+
     /// Acquires provider sequence authority at the last responsible moment.
     /// Embedded runtimes have no lifecycle object, so this is a single option
     /// check and performs no store work for them.

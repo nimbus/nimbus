@@ -38,6 +38,14 @@ async fn typed_mysql_config_supports_async_tenant_lifecycle_and_empty_read_paths
             .expect("tenant should create");
         assert_eq!(
             engine
+                .mutation_journal_stats_for_testing(&tenant_id)
+                .expect("MySQL committer-arm diagnostics should load")
+                .committer_arm,
+            crate::tenant::CommitterArm::Serial,
+            "U5 must leave the MySQL production arm serial"
+        );
+        assert_eq!(
+            engine
                 .list_tenants_async()
                 .await
                 .expect("tenant list should load"),

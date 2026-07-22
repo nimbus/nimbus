@@ -421,7 +421,7 @@ impl Engine {
 
     pub(crate) fn start_committer_actor(&self, runtime: Arc<TenantRuntime>) {
         let receiver = runtime.take_committer_receiver();
-        if runtime.publisher_pipeline_capable() {
+        if runtime.uses_ordered_publisher() {
             let publisher_receiver = runtime.take_publisher_receiver();
             let engine_shutdown = self.engine_executor.shutdown_token();
             let tenant_shutdown = runtime.committer_shutdown_token();
@@ -449,7 +449,7 @@ impl Engine {
 
         let engine_shutdown = self.engine_executor.shutdown_token();
         let tenant_shutdown = runtime.committer_shutdown_token();
-        let closes_observer_dispatch = !runtime.publisher_pipeline_capable();
+        let closes_observer_dispatch = !runtime.uses_ordered_publisher();
         let eviction_registry = TenantEvictionRegistry {
             tenants: Arc::downgrade(&self.tenants),
             publisher_failure_diagnostics: Arc::downgrade(&self.publisher_failure_diagnostics),

@@ -87,6 +87,11 @@ struct AssignedPublisherWork {
     standalone_deferred: Vec<DeferredPublisherResponse>,
 }
 
+struct PreAssignmentRequests {
+    assignment_required: Vec<QueuedMutationRequest>,
+    deferred: Vec<DeferredPublisherResponse>,
+}
+
 #[cfg(test)]
 static STRIP_NEXT_INLINE_REPREPARE_FOR_TESTING: std::sync::OnceLock<
     std::sync::Mutex<HashSet<TenantId>>,
@@ -158,31 +163,57 @@ impl Engine {
             return false;
         }
 
-        let use_pipeline = if runtime.store.has_process_local_sequence_authority() {
-            match runtime.reconcile_committer_pipeline_mode().await {
-                Ok(enabled) => enabled,
-                Err(error) => {
-                    let current = runtime.committer_pipeline_mode();
-                    warn!(
-                        tenant = %runtime.tenant_id(),
-                        error = %error,
-                        ?current,
-                        "committer pipeline mode transition failed; processing client batch in the current mode"
-                    );
-                    matches!(current, crate::tenant::CommitterPipelineMode::Pipeline)
-                }
-            }
-        } else {
-            false
-        };
-
-        if use_pipeline {
+        if runtime.uses_ordered_publisher() {
             let _assignment_guard = runtime.lock_publisher_assignment_recovery().await;
-            let assignment_baseline = runtime.assigned_head();
+            let PreAssignmentRequests {
+                assignment_required: batch,
+                mut deferred,
+            } = resolve_requests_without_assignment(batch);
+            if batch.is_empty() {
+                send_ordered_response_fence(&runtime, deferred).await;
+                return false;
+            }
+            if runtime.committer_shutdown_token().is_cancelled() {
+                send_ordered_response_fence(
+                    &runtime,
+                    defer_requests_before_assignment(batch, deferred, &Error::Cancelled),
+                )
+                .await;
+                return false;
+            }
+            if let Err(error) = runtime
+                .ensure_committer_lease_for_ordered_assignment()
+                .await
+            {
+                runtime.record_mutation_worker_failure();
+                send_ordered_response_fence(
+                    &runtime,
+                    defer_requests_before_assignment(batch, deferred, &error),
+                )
+                .await;
+                warn!(
+                    tenant = %runtime.tenant_id(),
+                    error = %error,
+                    "ordered publisher lease admission failed before assignment"
+                );
+                return false;
+            }
+            if runtime.committer_shutdown_token().is_cancelled() {
+                send_ordered_response_fence(
+                    &runtime,
+                    defer_requests_before_assignment(batch, deferred, &Error::Cancelled),
+                )
+                .await;
+                return false;
+            }
             let assignment_responses = batch
                 .iter()
                 .map(|request| request.response.clone())
                 .collect::<Vec<_>>();
+            // Provider acquisition republishes recovered storage progress.
+            // Capturing this before lease admission would reuse a stale
+            // sequence; assignment therefore begins only after the await.
+            let assignment_baseline = runtime.assigned_head();
             let runtime_for_task = runtime.clone();
             let engine = self.clone();
             let commit_faults = self.commit_faults.clone();
@@ -197,22 +228,15 @@ impl Engine {
             })
             .await;
             match assigned {
-                Ok(Ok(work)) => {
-                    let Some(assigned) = work.batch else {
-                        if let Err(error) = runtime
-                            .send_publisher_response_fence(work.standalone_deferred)
-                            .await
-                        {
-                            let (responses, error) = *error;
-                            for response in responses {
-                                response.fail(&error);
-                            }
-                            runtime.record_mutation_worker_failure();
-                            warn!(error = %error, "publisher queue rejected standalone response fence");
-                        }
+                Ok(Ok(mut work)) => {
+                    let Some(mut assigned) = work.batch else {
+                        deferred.append(&mut work.standalone_deferred);
+                        send_ordered_response_fence(&runtime, deferred).await;
                         return false;
                     };
                     debug_assert!(work.standalone_deferred.is_empty());
+                    deferred.append(&mut assigned.deferred);
+                    assigned.deferred = deferred;
                     if let Err(error) = runtime.send_assigned_publisher_batch(assigned).await {
                         let (assigned, error) = *error;
                         let first = assigned.first_sequence();
@@ -222,7 +246,7 @@ impl Engine {
                         warn!(error = %error, "publisher queue rejected assigned mutation batch");
                     }
                 }
-                Ok(Err(failure)) => {
+                Ok(Err(mut failure)) => {
                     runtime.record_mutation_worker_failure();
                     warn!(error = %failure.error, "mutation assignment batch failed");
                     recover_failed_assignment(
@@ -234,8 +258,9 @@ impl Engine {
                     // Requests that already resolved themselves keep their own
                     // outcome. They must be sent before the blanket failure
                     // below, because the response slot is take-once.
+                    deferred.append(&mut failure.deferred);
                     complete_deferred_after_assignment_recovery(
-                        failure.deferred,
+                        deferred,
                         assignment_baseline,
                         &failure.error,
                     );
@@ -253,6 +278,11 @@ impl Engine {
                         "committer assignment batch panicked",
                     )
                     .await;
+                    complete_deferred_after_assignment_recovery(
+                        deferred,
+                        assignment_baseline,
+                        &error,
+                    );
                     fail_mutation_responses(&assignment_responses, &error);
                 }
             }
@@ -745,6 +775,102 @@ fn assign_queued_mutation_batch(
 fn fail_mutation_responses(responses: &[MutationResponseSender], error: &Error) {
     for response in responses {
         let _ = response.send(Err(error.clone()));
+    }
+}
+
+/// Completes requests that need no sequence authority before provider lease
+/// admission. Their outcomes still travel through the publisher response
+/// fence, preserving response order behind previously assigned work.
+fn resolve_requests_without_assignment(batch: Vec<QueuedMutationRequest>) -> PreAssignmentRequests {
+    let mut assignment_required = Vec::with_capacity(batch.len());
+    let mut deferred = Vec::new();
+    for request in batch {
+        if request.cancelled.load(std::sync::atomic::Ordering::Acquire) {
+            let QueuedMutationRequest {
+                _operation,
+                response,
+                ..
+            } = request;
+            deferred.push(DeferredPublisherResponse {
+                _operation,
+                response,
+                result: Err(Error::Cancelled),
+            });
+        } else if request.prepared_commit.is_empty_journal() {
+            let QueuedMutationRequest {
+                _operation,
+                response,
+                result,
+                ..
+            } = request;
+            deferred.push(DeferredPublisherResponse {
+                _operation,
+                response,
+                result: Ok(result),
+            });
+        } else {
+            assignment_required.push(request);
+        }
+    }
+    PreAssignmentRequests {
+        assignment_required,
+        deferred,
+    }
+}
+
+fn defer_requests_before_assignment(
+    batch: Vec<QueuedMutationRequest>,
+    mut deferred: Vec<DeferredPublisherResponse>,
+    error: &Error,
+) -> Vec<DeferredPublisherResponse> {
+    deferred.reserve(batch.len());
+    for request in batch {
+        let QueuedMutationRequest {
+            cancelled,
+            _operation,
+            response,
+            ..
+        } = request;
+        let result = if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+            Err(Error::Cancelled)
+        } else {
+            Err(error.clone())
+        };
+        deferred.push(DeferredPublisherResponse {
+            _operation,
+            response,
+            result,
+        });
+    }
+    deferred
+}
+
+async fn send_ordered_response_fence(
+    runtime: &Arc<TenantRuntime>,
+    responses: Vec<DeferredPublisherResponse>,
+) {
+    if responses.is_empty() {
+        return;
+    }
+    if let Err(error) = runtime.send_publisher_response_fence(responses).await {
+        let (responses, error, queue_closed) = error.into_parts();
+        if queue_closed {
+            // Receiver closure prevents this fence from joining the ordered
+            // queue. The task-finished signal is raised only after every
+            // previously accepted message has drained (and by an unwind
+            // guard on panic), so completing the original outcomes afterward
+            // preserves response order during shutdown.
+            runtime.wait_for_publisher_finished().await;
+            for response in responses {
+                response.complete();
+            }
+        } else {
+            for response in responses {
+                response.fail(&error);
+            }
+            runtime.record_mutation_worker_failure();
+            warn!(error = %error, "publisher queue rejected standalone response fence");
+        }
     }
 }
 

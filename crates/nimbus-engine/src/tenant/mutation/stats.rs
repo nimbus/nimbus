@@ -31,11 +31,9 @@ pub struct MutationIsolateAdmissionStats {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum CommitterPipelineMode {
-    Pipeline,
-    DrainingToSerial,
+pub enum CommitterArm {
+    OrderedPublisher,
     Serial,
-    DrainingToPipeline,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -72,9 +70,7 @@ pub struct MutationJournalStats {
     pub publisher_transient_error_count: u64,
     pub publisher_fatal_error_count: u64,
     pub publisher_ambiguous_error_count: u64,
-    pub publisher_mode: CommitterPipelineMode,
-    pub publisher_mode_transition_count: u64,
-    pub publisher_mode_transition_failure_count: u64,
+    pub committer_arm: CommitterArm,
     pub observer_queue_depth: usize,
     /// Largest observer queue depth reserved by this tenant runtime.
     pub observer_queue_peak_depth: usize,

@@ -175,8 +175,8 @@ impl TenantRuntime {
         self.observer_dispatch.fence().await
     }
 
-    pub(crate) fn publisher_pipeline_capable(&self) -> bool {
-        self.publisher.pipeline_capable()
+    pub(crate) fn uses_ordered_publisher(&self) -> bool {
+        self.publisher.uses_ordered_publisher()
     }
 
     pub(crate) async fn lock_publisher_assignment_recovery(
@@ -215,8 +215,16 @@ impl TenantRuntime {
     pub(crate) async fn send_publisher_response_fence(
         &self,
         responses: Vec<DeferredPublisherResponse>,
-    ) -> std::result::Result<(), Box<(Vec<DeferredPublisherResponse>, nimbus_core::Error)>> {
+    ) -> std::result::Result<(), Box<super::mutation::PublisherResponseFenceError>> {
         self.publisher.send_response_fence(responses).await
+    }
+
+    pub(crate) fn mark_publisher_finished(&self) {
+        self.publisher.mark_finished();
+    }
+
+    pub(crate) async fn wait_for_publisher_finished(&self) {
+        self.publisher.wait_finished().await;
     }
 
     pub(crate) async fn send_publisher_serial_job(
@@ -667,10 +675,7 @@ impl TenantRuntime {
         stats.publisher_transient_error_count = errors.transient;
         stats.publisher_fatal_error_count = errors.fatal;
         stats.publisher_ambiguous_error_count = errors.ambiguous;
-        stats.publisher_mode = self.publisher.mode();
-        stats.publisher_mode_transition_count = self.publisher.mode_transition_count();
-        stats.publisher_mode_transition_failure_count =
-            self.publisher.mode_transition_failure_count();
+        stats.committer_arm = self.publisher.arm();
         let observer = self.observer_dispatch.stats();
         stats.observer_queue_depth = observer.depth;
         stats.observer_queue_peak_depth = observer.peak_depth;
@@ -689,19 +694,6 @@ impl TenantRuntime {
 
     pub(crate) fn restore_publisher_error_counts(&self, counts: super::PublisherErrorCounts) {
         self.publisher.restore_error_counts(counts);
-    }
-
-    pub(crate) async fn reconcile_committer_pipeline_mode(&self) -> Result<bool> {
-        self.publisher.reconcile_mode().await
-    }
-
-    pub(crate) fn committer_pipeline_mode(&self) -> super::CommitterPipelineMode {
-        self.publisher.mode()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn set_committer_pipeline_requested_for_testing(&self, enabled: bool) {
-        self.publisher.set_pipeline_requested_for_testing(enabled);
     }
 
     #[cfg(test)]

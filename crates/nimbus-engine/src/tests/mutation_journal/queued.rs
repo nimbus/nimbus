@@ -1372,37 +1372,37 @@ async fn rejected_serial_job_returns_typed_retryable_publisher_error() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn pipeline_mode_reconcile_timeout_processes_client_batch_in_current_mode() {
+async fn rejected_response_fence_is_bounded_and_stages_no_suffix() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();
-    let tenant_id = TenantId::new("mode-reconcile-timeout").expect("tenant id should build");
+    let tenant_id = TenantId::new("response-fence-rejection").expect("tenant id should build");
     crate::tenant::configure_publisher_limits_for_testing(
         tenant_id.clone(),
         1,
-        Duration::from_millis(100),
+        Duration::from_millis(50),
     );
     engine
         .create_tenant(tenant_id.clone())
-        .expect("mode-reconcile-timeout tenant should create");
+        .expect("response-fence-rejection tenant should create");
     engine
         .shutdown_trigger_candidates_for_testing(&tenant_id)
         .expect("trigger cursor should not add unrelated records");
     let faults = engine.commit_fault_handle_for_testing();
     faults.arm(crate::engine::commit_fault_labels::DURABLE_BEFORE_PUBLISH);
-    let spawn_insert = |index: usize| {
+
+    let first = tokio::spawn({
         let engine = engine.clone();
         let tenant_id = tenant_id.clone();
-        tokio::spawn(async move {
+        async move {
             engine
                 .insert_document_async(
                     tenant_id,
                     tasks_table(),
-                    serde_json::Map::from_iter([("index".to_string(), json!(index))]),
+                    serde_json::Map::from_iter([("index".to_string(), json!(1))]),
                 )
                 .await
-        })
-    };
-    let first = spawn_insert(1);
+        }
+    });
     expect_blocking_wait_reaches_state("first publisher batch should pause", {
         let faults = faults.clone();
         move |timeout| {
@@ -1413,7 +1413,19 @@ async fn pipeline_mode_reconcile_timeout_processes_client_batch_in_current_mode(
         }
     })
     .await;
-    let second = spawn_insert(2);
+    let second = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        async move {
+            engine
+                .insert_document_async(
+                    tenant_id,
+                    tasks_table(),
+                    serde_json::Map::from_iter([("index".to_string(), json!(2))]),
+                )
+                .await
+        }
+    });
     wait_for_mutation_journal_stats(
         &engine,
         &tenant_id,
@@ -1421,30 +1433,49 @@ async fn pipeline_mode_reconcile_timeout_processes_client_batch_in_current_mode(
         |stats| stats.publisher_queue_depth == 1,
     )
     .await;
-    engine
-        .set_committer_pipeline_requested_for_testing(&tenant_id, false)
-        .expect("test should request serial mode");
-    let third = spawn_insert(3);
-    wait_for_mutation_journal_stats(
-        &engine,
-        &tenant_id,
-        "mode barrier should time out without failing the client batch",
-        |stats| stats.publisher_mode_transition_failure_count == 1,
-    )
-    .await;
-    faults.release(crate::engine::commit_fault_labels::DURABLE_BEFORE_PUBLISH);
+    let assignment_before = engine
+        .write_log_assignment_for_testing(&tenant_id)
+        .expect("assignment should read before the rejected fence");
 
-    for write in [first, second, third] {
-        expect_catch_up_future_within(write, "client batch should finish in current mode")
-            .await
-            .expect("insert task should join")
-            .expect("mode reconciliation failure must not fail client writes");
-    }
-    let stats = engine
-        .mutation_journal_stats_for_testing(&tenant_id)
-        .expect("mode diagnostics should load");
-    assert_eq!(stats.publisher_mode_transition_failure_count, 1);
-    assert_eq!(stats.durable_head, stats.applied_head);
+    let error = match engine
+        .enqueue_publisher_response_fence_for_testing(&tenant_id)
+        .await
+    {
+        Ok(_) => panic!("a full publisher queue should reject the response fence at its deadline"),
+        Err(error) => error,
+    };
+    assert!(
+        matches!(error, Error::CommitterFull { capacity, .. } if capacity == 1),
+        "response-fence overload must retain the typed queue capacity: {error}"
+    );
+    assert_eq!(
+        error.retryability(),
+        nimbus_core::Retryability::RetryableAfterBackoff
+    );
+    assert_eq!(
+        engine
+            .write_log_assignment_for_testing(&tenant_id)
+            .expect("assignment should read after the rejected fence"),
+        assignment_before,
+        "a rejected response-only fence must not stage a sequence or write-log suffix"
+    );
+    assert_eq!(
+        engine
+            .mutation_journal_stats_for_testing(&tenant_id)
+            .expect("publisher timeout diagnostics should load")
+            .publisher_send_timeout_count,
+        1
+    );
+
+    faults.release(crate::engine::commit_fault_labels::DURABLE_BEFORE_PUBLISH);
+    expect_catch_up_future_within(first, "first batch should finish after release")
+        .await
+        .expect("first task should join")
+        .expect("first batch should succeed");
+    expect_catch_up_future_within(second, "second batch should finish after release")
+        .await
+        .expect("second task should join")
+        .expect("second batch should succeed");
 }
 
 pub(super) async fn run_paused_insert_burst(

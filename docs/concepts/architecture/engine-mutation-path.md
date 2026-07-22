@@ -69,7 +69,8 @@ Asynchronous mutations take a second hop before that apply step: the
 per-tenant durable journal. The pipeline is:
 
 ```text
-admission gate → durable append (ack) → ordered apply → applied watermark
+admission gate → construction-selected committer arm → durable append (ack)
+               → ordered apply → applied watermark
 ```
 
 **Admission.** Each tenant has a bounded admission queue
@@ -79,7 +80,35 @@ rejects new work with a resource-exhausted error, and a CoDel controller
 overload — before any durable effect, so an admitted mutation keeps its
 commit guarantee.
 
-**Durable append.** A journal worker
+**Construction-time committer arm.** A tenant runtime selects exactly one
+immutable `CommitterArm`. Memory, redb, and SQLite use the ordered publisher;
+libSQL, PostgreSQL, and MySQL currently use the serial actor. This is a static
+orchestration choice, separate from the dynamic question of whether a
+process-local write-log window is authoritative. Direct commits, execution
+units, journal-progress synchronization, opaque internal jobs, publisher-task
+ownership, and observer shutdown all consult the same selection. There is no
+runtime arm switch or drain transition.
+
+The provider ordered-publisher adapter is exercised before it is enabled in
+the production mapping. It must acquire the provider-backed committer lease
+while holding the assignment/recovery gate, publish recovered durable progress,
+and only then capture its assignment baseline. Acquisition failure,
+cancellation, or shutdown therefore occurs before any sequence or write-log
+suffix is staged. The later provider-enable change can alter the construction
+policy without changing callers or granting provider snapshots process-local
+window authority.
+
+Cancellation and no-op outcomes discovered before assignment still attempt a
+bounded publisher response fence. Once the fence is accepted, they cannot
+answer ahead of an older accepted batch. If the queue remains full through its
+send deadline, the request instead fails with the typed publisher-overload
+error and has no durable effect; ordering is not claimed for rejected work. If
+shutdown has already closed the publisher queue, the actor waits for the
+publisher's explicit finished signal before completing the original outcomes;
+the task drops all accepted messages before raising that signal, including
+during unwind.
+
+**Durable append.** The selected committer arm
 (`crates/nimbus-engine/src/engine/mutations/journal.rs`) drains admitted
 mutations in batches of up to 32, plans them against an in-memory overlay
 of the batch so earlier writes are visible to later ones, and appends the
@@ -87,7 +116,7 @@ batch of durable mutation records to the tenant's commit log in one
 storage write. This advances the **durable head** — the acknowledgement
 point.
 
-**Ordered apply.** The same worker then materializes document and index
+**Ordered apply.** The same arm then materializes document and index
 effects in journal order and advances the **applied head**. If the
 process crashes between the two steps, startup recovery replays
 durable-but-unapplied records, so the acknowledgement made at append time

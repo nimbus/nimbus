@@ -62,10 +62,35 @@ pub(crate) struct PublishedBatch {
 
 pub(crate) async fn run_ordered_publisher(
     runtime: Weak<TenantRuntime>,
-    mut receiver: mpsc::Receiver<PublisherMessage>,
+    receiver: mpsc::Receiver<PublisherMessage>,
     engine_shutdown: CancellationToken,
     tenant_shutdown: CancellationToken,
 ) {
+    struct PublisherTaskState {
+        receiver: Option<mpsc::Receiver<PublisherMessage>>,
+        runtime: Weak<TenantRuntime>,
+    }
+
+    impl Drop for PublisherTaskState {
+        fn drop(&mut self) {
+            // Close and drop every accepted message before waking a response
+            // fence that could not enter this queue. This ordering also holds
+            // when the publisher future unwinds.
+            drop(self.receiver.take());
+            if let Some(runtime) = self.runtime.upgrade() {
+                runtime.mark_publisher_finished();
+            }
+        }
+    }
+
+    let mut task = PublisherTaskState {
+        receiver: Some(receiver),
+        runtime: runtime.clone(),
+    };
+    let receiver = task
+        .receiver
+        .as_mut()
+        .expect("publisher receiver should exist for the task lifetime");
     // Publisher accumulation is independently tunable from actor admission:
     // NIMBUS_COMMITTER_PUBLISHER_BATCH_MAX defaults to 256 records and
     // NIMBUS_COMMITTER_PUBLISHER_COALESCE_MICROS defaults to 750 microseconds.
@@ -92,10 +117,6 @@ pub(crate) async fn run_ordered_publisher(
         };
         let batch = match message {
             PublisherMessage::Batch(batch) => batch,
-            PublisherMessage::Barrier(completed) => {
-                let _ = completed.send(());
-                continue;
-            }
             PublisherMessage::ResponseFence(responses) => {
                 for response in responses {
                     response.complete();
@@ -144,7 +165,7 @@ pub(crate) async fn run_ordered_publisher(
         let batch = accumulate_assigned_batches(
             batch,
             runtime.as_ref(),
-            &mut receiver,
+            receiver,
             &mut pending_message,
             &engine_shutdown,
             &tenant_shutdown,
@@ -167,7 +188,7 @@ pub(crate) async fn run_ordered_publisher(
                 runtime,
                 batch,
                 invariant,
-                &mut receiver,
+                receiver,
                 &mut pending_message,
             )
             .await;
@@ -191,7 +212,7 @@ pub(crate) async fn run_ordered_publisher(
                         batch,
                         error,
                         RestartCause::DefinitiveFence,
-                        &mut receiver,
+                        receiver,
                         &mut pending_message,
                     )
                     .await;
@@ -201,7 +222,7 @@ pub(crate) async fn run_ordered_publisher(
                         runtime,
                         batch,
                         error,
-                        &mut receiver,
+                        receiver,
                         &mut pending_message,
                     )
                     .await;
@@ -213,7 +234,7 @@ pub(crate) async fn run_ordered_publisher(
                     batch,
                     error,
                     RestartCause::AmbiguousCrashReplay,
-                    &mut receiver,
+                    receiver,
                     &mut pending_message,
                 )
                 .await;
@@ -654,9 +675,7 @@ async fn fail_definitive_batch_and_recover(
         .iter()
         .filter_map(|message| match message {
             PublisherMessage::Batch(batch) => Some(batch.first_sequence()),
-            PublisherMessage::Barrier(_)
-            | PublisherMessage::ResponseFence(_)
-            | PublisherMessage::SerialJob { .. } => None,
+            PublisherMessage::ResponseFence(_) | PublisherMessage::SerialJob { .. } => None,
         })
         .fold(batch.first_sequence(), std::cmp::min);
     runtime.discard_unpersisted_write_log_suffix(first_sequence);
@@ -678,9 +697,6 @@ async fn fail_definitive_batch_and_recover(
     for message in drained_messages {
         match message {
             PublisherMessage::Batch(batch) => batch.fail_after_recovery(first_sequence, &error),
-            PublisherMessage::Barrier(completed) => {
-                let _ = completed.send(());
-            }
             PublisherMessage::ResponseFence(responses) => {
                 for response in responses {
                     response.complete_after_recovery(first_sequence, &error);
@@ -702,10 +718,6 @@ fn defer_publisher_message_failure(
     match message {
         PublisherMessage::Batch(batch) => {
             batch.defer_failure_after_recovery(discarded_first_sequence, error)
-        }
-        PublisherMessage::Barrier(completed) => {
-            drop(completed);
-            Vec::new()
         }
         PublisherMessage::ResponseFence(responses) => responses
             .into_iter()

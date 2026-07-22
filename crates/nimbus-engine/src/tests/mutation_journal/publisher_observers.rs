@@ -360,11 +360,12 @@ async fn observer_queue_capacity_clamps_above_serial_journal_dispatch_max() {
     let engine = fixture.engine();
     let tenant_id = TenantId::new("observer-cap-clamp").expect("tenant id should build");
     crate::tenant::configure_observer_limits_for_testing(tenant_id.clone(), 1, 1, 1, 4);
+    crate::tenant::configure_committer_arm_for_testing(
+        tenant_id.clone(),
+        crate::tenant::CommitterArm::Serial,
+    );
     let created = fixture.create_tenant("observer-cap-clamp", Engine::create_tenant);
     assert_eq!(created, tenant_id);
-    engine
-        .set_committer_pipeline_requested_for_testing(&tenant_id, false)
-        .expect("test should request the serial journal arm");
     engine
         .shutdown_trigger_candidates_for_testing(&tenant_id)
         .expect("trigger cursor should not add unrelated records");

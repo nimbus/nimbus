@@ -26,11 +26,12 @@ pub(in crate::tenant) use self::pause::MutationJournalPauseState;
 pub(crate) use self::publisher::{
     AssignedPublisherBatch, DeferredPublisherResponse, ObserverHandoff, PendingPublisherResponse,
     PublisherErrorCounts, PublisherHandoff, PublisherMessage, PublisherQueueError,
+    PublisherResponseFenceError,
 };
 #[cfg(test)]
 pub(crate) use self::publisher::{
-    configure_observer_drain_blocking_timeout_for_testing, configure_observer_limits_for_testing,
-    configure_publisher_limits_for_testing,
+    configure_committer_arm_for_testing, configure_observer_drain_blocking_timeout_for_testing,
+    configure_observer_limits_for_testing, configure_publisher_limits_for_testing,
 };
 #[cfg(test)]
 pub(crate) use self::requests::{
@@ -40,6 +41,6 @@ pub(crate) use self::requests::{
     MutationResponseSender, PreparedPayloadAccounting, QueuedMutationRequest, QueuedMutationResult,
 };
 pub use self::stats::{
-    CommitterPipelineMode, MutationAdmissionPhase, MutationAdmissionStats,
-    MutationIsolateAdmissionStats, MutationJournalStats,
+    CommitterArm, MutationAdmissionPhase, MutationAdmissionStats, MutationIsolateAdmissionStats,
+    MutationJournalStats,
 };
