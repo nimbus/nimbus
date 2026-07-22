@@ -3,7 +3,7 @@
 #
 # Tests cover: pre-existence pass, missing LICENSE-MIT-muvm, missing
 # THIRD_PARTY.md, listed-file-missing, missing provenance header,
-# success path with valid headers.
+# success path with valid headers, and vendored-patch NOTICE enforcement.
 #
 # See docs/private/plans/nimbus-sandbox-plan.md "Fork-Health Guardrails" §G4.
 
@@ -170,6 +170,40 @@ assert_fail "nimbus-libkrun-snapshot missing LICENSE-APACHE-firecracker fails" "
 case8="$(new_fixture case8-libkrun-glob)"
 mkdir -p "${case8}/crates/nimbus-libkrun-misc/src"
 assert_fail "nimbus-libkrun-misc fails on missing manifest" "${case8}" "missing THIRD_PARTY.md"
+
+# --- Case 9: vendored patch missing from root NOTICE -----------------------
+
+case9="$(new_fixture case9-vendored-patch-missing-notice)"
+mkdir -p "${case9}/third_party/object_store-0.14.0"
+printf 'Apache-2.0\n' > "${case9}/third_party/object_store-0.14.0/LICENSE.txt"
+cat > "${case9}/Cargo.toml" <<'EOF'
+[patch.crates-io]
+object_store = { path = "third_party/object_store-0.14.0" }
+EOF
+printf 'Nimbus\n' > "${case9}/NOTICE"
+assert_fail "vendored patch missing from root NOTICE fails" "${case9}" "root NOTICE does not name vendored patch"
+
+# --- Case 10: vendored patches with retained legal text pass ---------------
+
+case10="$(new_fixture case10-vendored-patch-happy-path)"
+mkdir -p "${case10}/third_party/object_store-0.14.0" \
+  "${case10}/third_party/brotli-3.5.0"
+printf 'Apache-2.0\n' > "${case10}/third_party/object_store-0.14.0/LICENSE.txt"
+printf 'BSD-3-Clause\n' > "${case10}/third_party/brotli-3.5.0/LICENSE"
+cat > "${case10}/Cargo.toml" <<'EOF'
+[patch.crates-io]
+object_store = { path = "third_party/object_store-0.14.0" }
+brotli = { path = "third_party/brotli-3.5.0" }
+EOF
+cat > "${case10}/NOTICE" <<'EOF'
+object_store
+Apache Arrow Object Store
+The Apache Software Foundation (http://www.apache.org/).
+brotli
+Copyright (c) 2016 Dropbox, Inc.
+Neither the name of the copyright holder nor the names of its contributors
+EOF
+assert_pass "vendored patches with retained legal text pass" "${case10}"
 
 # --- Syntax check -----------------------------------------------------------
 

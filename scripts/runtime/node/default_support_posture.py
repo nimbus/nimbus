@@ -1393,7 +1393,7 @@ def build_posture(repo: Path) -> dict[str, Any]:
         "generated_from": [
             "tests/runtime/node/compat/node-compat-evidence/latest/status-summary.json",
             "tests/runtime/node/classifications/*.json",
-            "docs/plans/node-default-runtime-support-hardening-plan.md",
+            "docs/private/plans/node-default-runtime-support-hardening-plan.md",
         ],
         "denominator_vocabulary": DENOMINATORS,
         "shim_classification_vocabulary": SHIM_CLASSES,
@@ -1539,10 +1539,6 @@ def main() -> int:
         (
             repo / "docs/private/architecture/runtime/node-default-support-posture.json",
             repo / "docs/private/architecture/runtime/node-default-support-posture.md",
-        ),
-        (
-            repo / "docs/architecture/runtime/node-default-support-posture.json",
-            repo / "docs/architecture/runtime/node-default-support-posture.md",
         ),
     )
     posture = build_posture(repo)

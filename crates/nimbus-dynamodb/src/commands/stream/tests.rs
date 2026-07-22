@@ -327,6 +327,7 @@ fn seed_raw_stream_event(
             id,
         )),
         document,
+        typed_fields: Default::default(),
         mode: WriteSetMode::Overwrite,
         precondition: WritePrecondition::default(),
         transforms: Vec::new(),
@@ -344,6 +345,10 @@ fn assert_stream_collision(error: DynamoDbError) {
         DynamoDbError::InternalServerError(message) => assert!(
             message.contains("stream sequence allocation exhausted retries"),
             "unexpected internal error: {message}"
+        ),
+        DynamoDbError::TransactionConflictException(message) => assert!(
+            message.contains("single-item transaction exhausted"),
+            "unexpected transaction conflict: {message}"
         ),
         other => panic!("expected stream sequence collision exhaustion, got {other:?}"),
     }

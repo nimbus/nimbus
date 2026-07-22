@@ -20,7 +20,7 @@ later-family/internal buckets called out below.
   - effective official pass rate: `120 / 128` (`93.8%`)
 - Green executed upstream files:
   - canonical list lives in
-    `docs/architecture/runtime/node-lts-compat/manifests/core-semantics.md`
+    `docs/private/architecture/runtime/node-lts-compat/manifests/core-semantics.md`
   - latest widened additions include the remaining public Buffer constructor
     tail plus `safe-unsafe`, `sharedarraybuffer`, and `swap`
 - Ignored watchpoints in the currently executed subset:
@@ -196,7 +196,7 @@ later-family/internal buckets called out below.
 - `runtime::tests::node_compat::node20_legacy_lane_executes_official_core_semantics_subset`
 - `runtime::tests::node_compat::node22_supported_lane_executes_manifested_core_semantics_subset`
 - `runtime::tests::node_compat::node24_default_lane_executes_manifested_core_semantics_subset` *(ignored by default; explicit default-lane watchpoint, not a support claim; currently aborts early through a `rusty_v8` weak-handle panic near `test-buffer-alloc.js`)*
-- `docs/architecture/runtime/node-lts-compat/manifests/core-semantics.md` (canonical family/count summary for the 120-file Node22 green batch, the paired 116-file official Node20 legacy subset, the 122-file staged Node24 default subset, and the watchpoint-backed remainder)
+- `docs/private/architecture/runtime/node-lts-compat/manifests/core-semantics.md` (canonical family/count summary for the 120-file Node22 green batch, the paired 116-file official Node20 legacy subset, the 122-file staged Node24 default subset, and the watchpoint-backed remainder)
 - `runtime::tests::node_compat::node20_assert_deep_watchpoint`
 - `runtime::tests::node_compat::node22_assert_deep_watchpoint`
 - `runtime::tests::node_compat::node22_assert_partial_deep_equal_watchpoint`

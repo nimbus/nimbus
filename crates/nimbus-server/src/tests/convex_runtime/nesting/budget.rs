@@ -86,11 +86,14 @@ export {};
         .json::<serde_json::Value>()
         .await
         .expect("nested runtime budget error should parse");
+    assert_eq!(body["error"]["code"], json!("service.internal"), "{body}");
+    assert_eq!(
+        body["error"]["message"],
+        json!("An internal server error occurred."),
+        "nested runtime details must not cross the public boundary: {body}"
+    );
     assert!(
-        body["error"]["message"]
-            .as_str()
-            .expect("error message should be a string")
-            .contains("nested invocation limit exceeded"),
-        "unexpected nested runtime budget error body: {body}"
+        body["error"]["requestId"].as_str().is_some(),
+        "redacted failures need an operator correlation id: {body}"
     );
 }

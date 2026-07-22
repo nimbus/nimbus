@@ -4,7 +4,7 @@ use axum::extract::ws::WebSocket;
 use futures::StreamExt;
 use nimbus_engine::{DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY, SubscriptionUpdate};
 use nimbus_runtime::HostCallCancellation;
-use tokio::sync::mpsc;
+use tokio::sync::{Semaphore, mpsc};
 
 use crate::owned_tasks::OwnedTaskSet;
 use crate::protocol::ServerMessage;
@@ -35,6 +35,9 @@ pub(crate) async fn handle_socket_for_tenant(
     let disconnect_cancellation = HostCallCancellation::default();
     let pending_bootstrap_cancellations =
         Arc::new(pending::PendingBootstrapCancellationRegistry::default());
+    let subscription_registration_slots = Arc::new(Semaphore::new(
+        session::MAX_PENDING_SUBSCRIPTION_REGISTRATIONS,
+    ));
 
     let mut tasks = OwnedTaskSet::new();
     transport::spawn_socket_reader(&mut tasks, socket_rx, inbound_tx);
@@ -56,6 +59,7 @@ pub(crate) async fn handle_socket_for_tenant(
         pending_subscription_tx,
         disconnect_cancellation,
         pending_bootstrap_cancellations,
+        subscription_registration_slots,
     }
     .run(&mut tasks)
     .await;

@@ -7,8 +7,8 @@ pub(crate) use nimbus_core::{
     ManualWallClock, NumericValue, OrderBy, OrderDirection, PaginatedQuery, PrincipalContext,
     Query, QueryDirection, ResourcePathBinding, SeededIdSource, SequenceNumber, SpecialDouble,
     StorageErrorKind, StoredValue, StructuredOrder, StructuredQuery, TableId, TenantId, Timestamp,
-    TriggerInvocationKey, TriggerWriteOrigin, TypedScalarValue, WallClock, WriteKey,
-    WritePrecondition, WriteSetMode,
+    TriggerInvocationKey, TriggerWriteOrigin, TypedFieldMap, TypedScalarValue, WriteKey,
+    WallClock, WritePrecondition, WriteSetMode,
 };
 pub(crate) use nimbus_testing::{BlockingFaultInjector, EngineFixture};
 pub(crate) use serde_json::json;

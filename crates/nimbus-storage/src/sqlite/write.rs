@@ -24,6 +24,7 @@ impl SqliteTenantStore {
         Ok(committed.value.then_some(committed.commit).flatten())
     }
 
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn insert_document_for_testing(&self, document: &Document) -> Result<()> {
         let conn = self.open_connection()?;
         let table_id = resolve_or_create_table_id_in_conn(&conn, &document.table)?;

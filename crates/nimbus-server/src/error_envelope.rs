@@ -531,17 +531,7 @@ impl PublicError {
                 Value::Null,
                 None,
             ),
-            Error::Internal(_) => Self::new(
-                "service.internal",
-                error.to_string(),
-                ErrorSeverity::Fatal,
-                false,
-                Value::Null,
-                Some(ErrorRemediation::new(
-                    "contact_operator",
-                    "Internal server failures require operator investigation.",
-                )),
-            ),
+            Error::Internal(_) => Self::internal(error),
             Error::NotFound(_) => Self::new(
                 "op.not_found",
                 error.to_string(),
@@ -561,18 +551,28 @@ impl PublicError {
                     "Retry once the transport or connection issue clears.",
                 )),
             ),
-            _ => Self::new(
-                "service.internal",
-                error.to_string(),
-                ErrorSeverity::Fatal,
-                false,
-                Value::Null,
-                Some(ErrorRemediation::new(
-                    "contact_operator",
-                    "Internal server failures require operator investigation.",
-                )),
-            ),
+            _ => Self::internal(error),
         }
+    }
+
+    fn internal(error: &Error) -> Self {
+        let public = Self::new(
+            "service.internal",
+            "An internal server error occurred.",
+            ErrorSeverity::Fatal,
+            false,
+            Value::Null,
+            Some(ErrorRemediation::new(
+                "contact_operator",
+                "Internal server failures require operator investigation.",
+            )),
+        );
+        tracing::error!(
+            request_id = %public.request_id,
+            error = %error,
+            "internal error mapped to public envelope"
+        );
+        public
     }
 
     pub(crate) fn websocket_error(
@@ -881,5 +881,20 @@ mod tests {
             response.envelope.error.detail["fields"],
             serde_json::json!(["state", "rank"])
         );
+    }
+
+    #[test]
+    fn internal_errors_are_redacted_and_correlated() {
+        let public = PublicError::from_core_error(&Error::Internal(
+            "database password=operator-secret".to_string(),
+        ));
+
+        assert_eq!(public.code, "service.internal");
+        assert_eq!(public.message, "An internal server error occurred.");
+        assert!(!public.message.contains("operator-secret"));
+        assert!(!public.request_id.is_empty());
+        let serialized = serde_json::to_value(&public).expect("public error should serialize");
+        assert_eq!(serialized["requestId"], public.request_id);
+        assert!(!serialized.to_string().contains("operator-secret"));
     }
 }

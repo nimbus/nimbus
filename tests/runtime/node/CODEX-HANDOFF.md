@@ -41,7 +41,7 @@ Tracked blocker note:
 
 Cycle proof:
 
-- `docs/plans/proof/node-default-runtime-support-hardening/nds3-cycle98-vm-module-import-meta-result.md`
+- `docs/private/plans/proof/node-default-runtime-support-hardening/nds3-cycle98-vm-module-import-meta-result.md`
 
 ## Latest Verification
 

@@ -25,7 +25,7 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 
 mod execution;
-mod handlers;
+pub(in crate::adapters::convex) mod handlers;
 mod host_bridge;
 mod http_actions;
 mod subscriptions;

@@ -147,6 +147,99 @@ async fn firebase_commit_executes_atomic_batch_and_returns_firestore_commit_resp
 }
 
 #[tokio::test]
+async fn firebase_rest_commit_roundtrips_lossless_firestore_field_types() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    let bearer = firebase_verified_bearer("user-123", "demo");
+    let document_name = "projects/demo/databases/(default)/documents/events/typed";
+    let fields = json!({
+        "createdAt": { "timestampValue": "2024-01-02T03:04:05.123456789Z" },
+        "payload": { "bytesValue": "AQIDBA==" },
+        "owner": {
+            "referenceValue": "projects/demo/databases/(default)/documents/users/ada"
+        },
+        "location": {
+            "geoPointValue": { "latitude": 37.7749, "longitude": -122.4194 }
+        },
+        "score": { "doubleValue": "NaN" },
+        "nested": {
+            "mapValue": {
+                "fields": {
+                    "attachment": { "bytesValue": "/wA=" },
+                    "label": { "stringValue": "kept" }
+                }
+            }
+        }
+    });
+
+    let commit = server
+        .client()
+        .post(server.http_url("/v1/projects/demo/databases/(default)/documents:commit"))
+        .header(header::AUTHORIZATION, &bearer)
+        .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
+        .body(
+            json!({
+                "database": "projects/demo/databases/(default)",
+                "writes": [{
+                    "update": {
+                        "name": document_name,
+                        "fields": fields,
+                    }
+                }]
+            })
+            .to_string(),
+        )
+        .send()
+        .await
+        .expect("typed Firestore commit should send");
+    assert_eq!(commit.status(), StatusCode::OK);
+
+    let read = server
+        .client()
+        .post(server.http_url("/v1/projects/demo/databases/(default)/documents:batchGet"))
+        .header(header::AUTHORIZATION, &bearer)
+        .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
+        .body(json!({ "documents": [document_name] }).to_string())
+        .send()
+        .await
+        .expect("typed Firestore batch get should send");
+    assert_eq!(read.status(), StatusCode::OK);
+    let body = response_json_lines(read)
+        .await
+        .into_iter()
+        .next()
+        .expect("typed document should be returned");
+    assert_eq!(body["found"]["fields"], fields);
+
+    let locator = crate::adapters::firebase::locator_for_document_path(
+        &DocumentPath::from_segments(["events", "typed"]).expect("document path should parse"),
+    )
+    .expect("firebase locator should derive");
+    let stored = service
+        .get_document(&tenant_id, &locator.table, locator.id)
+        .expect("typed document should persist");
+    for field in [
+        "createdAt",
+        "payload",
+        "owner",
+        "location",
+        "score",
+        "nested",
+    ] {
+        assert!(
+            stored.typed_value(field).is_some(),
+            "{field} should retain lossless typed metadata"
+        );
+    }
+}
+
+#[tokio::test]
 async fn firebase_commit_applies_update_transforms_and_returns_transform_results() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);

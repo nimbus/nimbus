@@ -38,6 +38,7 @@ fn atomic_write_batch_overwrite_creates_missing_document() {
                     ("owner".to_string(), json!("user-123")),
                     ("body".to_string(), json!("San Francisco")),
                 ]),
+                typed_fields: Default::default(),
                 mode: WriteSetMode::Overwrite,
                 precondition: WritePrecondition::default(),
                 transforms: Vec::new(),
@@ -84,6 +85,7 @@ fn staged_atomic_write_batch_keeps_execution_unit_reusable_until_commit() {
                     ("owner".to_string(), json!("user-123")),
                     ("body".to_string(), json!("Before commit")),
                 ]),
+                typed_fields: Default::default(),
                 mode: WriteSetMode::Overwrite,
                 precondition: WritePrecondition::default(),
                 transforms: Vec::new(),
@@ -209,6 +211,7 @@ fn atomic_write_batch_orders_mixed_results_and_applies_atomically() {
                         "body".to_string(),
                         json!("After patch"),
                     )]),
+                    typed_fields: Default::default(),
                     mask: vec!["body".to_string()],
                     precondition: WritePrecondition::exists(true),
                     transforms: Vec::new(),
@@ -219,6 +222,7 @@ fn atomic_write_batch_orders_mixed_results_and_applies_atomically() {
                         ("owner".to_string(), json!("user-123")),
                         ("body".to_string(), json!("Created")),
                     ]),
+                    typed_fields: Default::default(),
                     mode: WriteSetMode::Overwrite,
                     precondition: WritePrecondition::default(),
                     transforms: Vec::new(),
@@ -296,6 +300,7 @@ fn atomic_write_batch_rolls_back_on_precondition_failure() {
                         ("owner".to_string(), json!("user-123")),
                         ("body".to_string(), json!("Transient")),
                     ]),
+                    typed_fields: Default::default(),
                     mode: WriteSetMode::Overwrite,
                     precondition: WritePrecondition::default(),
                     transforms: Vec::new(),
@@ -353,6 +358,7 @@ fn atomic_write_batch_enforces_update_time_preconditions() {
             AtomicWriteBatch::new(vec![AtomicWrite::Patch {
                 key: locator_key(table.clone(), document_id.clone()),
                 field_patch: serde_json::Map::from_iter([("body".to_string(), json!("Patched"))]),
+                typed_fields: Default::default(),
                 mask: vec!["body".to_string()],
                 precondition: WritePrecondition::update_time(inserted.update_time),
                 transforms: Vec::new(),
@@ -387,6 +393,7 @@ fn atomic_write_batch_enforces_update_time_preconditions() {
                         ("owner".to_string(), json!("user-123")),
                         ("body".to_string(), json!("Transient")),
                     ]),
+                    typed_fields: Default::default(),
                     mode: WriteSetMode::Overwrite,
                     precondition: WritePrecondition::default(),
                     transforms: Vec::new(),
@@ -631,6 +638,7 @@ fn atomic_write_batch_patch_applies_transforms_after_patch_fields() {
             AtomicWriteBatch::new(vec![AtomicWrite::Patch {
                 key: locator_key(table.clone(), document_id.clone()),
                 field_patch: serde_json::Map::from_iter([("count".to_string(), json!(1))]),
+                typed_fields: Default::default(),
                 mask: vec!["count".to_string()],
                 precondition: WritePrecondition::exists(true),
                 transforms: vec![FieldTransform {
@@ -694,6 +702,7 @@ fn atomic_write_batch_patch_updates_nested_field_paths() {
                         "active": false
                     }),
                 )]),
+                typed_fields: Default::default(),
                 mask: vec!["profile.active".to_string()],
                 precondition: WritePrecondition::exists(true),
                 transforms: Vec::new(),
@@ -711,6 +720,162 @@ fn atomic_write_batch_patch_updates_nested_field_paths() {
             "active": false,
             "name": "Tokyo"
         }))
+    );
+}
+
+#[test]
+fn atomic_write_batch_nested_patch_preserves_and_clears_typed_metadata_by_path() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let table = messages_table("messages_atomic_nested_typed_patch");
+    let document_id = DocumentId::from_key("typed-profile").expect("id should parse");
+    let execution_unit = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("execution unit should start");
+    execution_unit
+        .execute_atomic_write_batch(
+            AtomicWriteBatch::new(vec![AtomicWrite::Set {
+                key: locator_key(table.clone(), document_id.clone()),
+                document: serde_json::Map::from_iter([
+                    ("owner".to_string(), json!("user-123")),
+                    (
+                        "profile".to_string(),
+                        json!({ "active": true, "attachment": "AQID" }),
+                    ),
+                ]),
+                typed_fields: TypedFieldMap::from([(
+                    "profile".to_string(),
+                    StoredValue::Map {
+                        entries: std::collections::BTreeMap::from([
+                            ("active".to_string(), StoredValue::from(json!(true))),
+                            (
+                                "attachment".to_string(),
+                                StoredValue::from(TypedScalarValue::Bytes {
+                                    data: vec![1, 2, 3],
+                                }),
+                            ),
+                        ]),
+                    },
+                )]),
+                mode: WriteSetMode::Overwrite,
+                precondition: WritePrecondition::default(),
+                transforms: Vec::new(),
+            }])
+            .expect("typed seed batch should build"),
+        )
+        .expect("typed seed should commit");
+
+    let patch = |field_patch, mask| {
+        AtomicWriteBatch::new(vec![AtomicWrite::Patch {
+            key: locator_key(table.clone(), document_id.clone()),
+            field_patch,
+            typed_fields: Default::default(),
+            mask,
+            precondition: WritePrecondition::exists(true),
+            transforms: Vec::new(),
+        }])
+        .expect("patch batch should build")
+    };
+    engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("patch execution unit should start")
+        .execute_atomic_write_batch(patch(
+            serde_json::Map::from_iter([("profile".to_string(), json!({ "active": false }))]),
+            vec!["profile.active".to_string()],
+        ))
+        .expect("plain sibling patch should commit");
+
+    let preserved = engine
+        .get_document(&tenant_id, &table, document_id.clone())
+        .expect("patched document should exist");
+    assert_eq!(
+        preserved.get_field("profile"),
+        Some(&json!({ "active": false, "attachment": "AQID" }))
+    );
+    assert!(
+        preserved
+            .typed_value("profile")
+            .is_some_and(StoredValue::contains_typed_metadata),
+        "patching one nested plain field must preserve a typed sibling"
+    );
+
+    engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("replacement execution unit should start")
+        .execute_atomic_write_batch(patch(
+            serde_json::Map::from_iter([("profile".to_string(), json!({ "attachment": "plain" }))]),
+            vec!["profile.attachment".to_string()],
+        ))
+        .expect("plain typed-field replacement should commit");
+    let cleared = engine
+        .get_document(&tenant_id, &table, document_id)
+        .expect("replaced document should exist");
+    assert_eq!(
+        cleared.get_field("profile"),
+        Some(&json!({ "active": false, "attachment": "plain" }))
+    );
+    assert!(
+        cleared.typed_value("profile").is_none(),
+        "replacing the last typed leaf with plain JSON must clear its sidecar"
+    );
+}
+
+#[test]
+fn atomic_write_batch_merge_all_clears_replaced_typed_metadata() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let table = messages_table("messages_atomic_merge_all_typed_replacement");
+    let document_id = DocumentId::from_key("typed-attachment").expect("id should parse");
+
+    let write = |document, typed_fields, mode| {
+        AtomicWriteBatch::new(vec![AtomicWrite::Set {
+            key: locator_key(table.clone(), document_id.clone()),
+            document,
+            typed_fields,
+            mode,
+            precondition: WritePrecondition::default(),
+            transforms: Vec::new(),
+        }])
+        .expect("set batch should build")
+    };
+
+    engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("seed execution unit should start")
+        .execute_atomic_write_batch(write(
+            serde_json::Map::from_iter([
+                ("owner".to_string(), json!("user-123")),
+                ("attachment".to_string(), json!("AQID")),
+            ]),
+            TypedFieldMap::from([(
+                "attachment".to_string(),
+                StoredValue::from(TypedScalarValue::Bytes {
+                    data: vec![1, 2, 3],
+                }),
+            )]),
+            WriteSetMode::Overwrite,
+        ))
+        .expect("typed seed should commit");
+
+    engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("merge execution unit should start")
+        .execute_atomic_write_batch(write(
+            serde_json::Map::from_iter([("attachment".to_string(), json!("plain"))]),
+            TypedFieldMap::new(),
+            WriteSetMode::MergeAll,
+        ))
+        .expect("plain merge should commit");
+
+    let merged = engine
+        .get_document(&tenant_id, &table, document_id)
+        .expect("merged document should exist");
+    assert_eq!(merged.get_field("attachment"), Some(&json!("plain")));
+    assert!(
+        merged.typed_value("attachment").is_none(),
+        "merge-all replacement with plain JSON must clear stale typed metadata"
     );
 }
 

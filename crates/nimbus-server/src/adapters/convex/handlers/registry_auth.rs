@@ -22,7 +22,7 @@ pub(super) async fn registry_and_auth_for_path(
     registry_and_auth(state, route_family, &tenant_id, headers, expectation).await
 }
 
-pub(super) async fn registry_and_auth(
+pub(in crate::adapters::convex) async fn registry_and_auth(
     state: &Arc<AppState>,
     route_family: crate::local_server::LocalServerRouteFamily,
     tenant_id: &TenantId,

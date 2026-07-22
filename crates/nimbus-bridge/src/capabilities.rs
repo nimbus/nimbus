@@ -523,6 +523,7 @@ mod tests {
                     "body".to_string(),
                     json!("must not commit"),
                 )]),
+                typed_fields: Default::default(),
                 mode: WriteSetMode::Overwrite,
                 precondition: WritePrecondition::default(),
                 transforms: Vec::new(),

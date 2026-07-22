@@ -90,13 +90,18 @@ The response reports where the license came from and what it allows:
   (`trial_active`/`trial_expired`), or `enterprise`
   (`enterprise_active`/`enterprise_expired`).
 - `entitlements` — boolean flags: `hosted_service`, `oem_embedding`,
-  `premium_support`, `custom_terms`, `sso`, `audit_logs`, `backup_api`,
-  `multi_node`.
+  `premium_support`, `custom_terms`, `sso`, `audit_logs`, and `multi_node`.
+  Expired trial and enterprise licenses report all flags as `false`.
 - `usage` — live monthly-active-user accounting: `month`,
   `month_start_unix_ms`, `monthly_active_users`, and — when the license
   sets a limit — `limit` and `limit_exceeded`.
 - `warnings` — present when the license is expired, expiring soon, or
   usage is at or over a configured limit. Watch this array in monitoring.
+
+The license file is unsigned, operator-supplied status metadata. Nimbus does
+not cryptographically verify it or gate feature execution from it; the binding
+terms remain the repository's `LICENSE`. See the repository's `LICENSING.md`
+for the complete operational explanation.
 
 ## Check encryption status
 

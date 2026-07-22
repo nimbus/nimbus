@@ -8,7 +8,7 @@ evidence backs each support claim.
 
 | Runtime family | Status | Docs |
 | --- | --- | --- |
-| Web-standard JavaScript isolate | Supported baseline | See adapter-specific docs and `docs/architecture/runtime/adapter-boundary.md` |
+| Web-standard JavaScript isolate | Supported baseline | See adapter-specific docs and `docs/private/architecture/runtime/adapter-boundary.md` |
 | Node.js-compatible JavaScript | Node24 default, Node22 supported LTS, Node20 legacy-grace, and Node26 Current/non-LTS lanes with measured evidence | [Node.js runtime](nodejs/) |
 | Bun/JSC JavaScript | Optional in-process backend candidate. Default builds stay fail-closed as `not_linked`; linked builds verify adapter metadata for diagnostics and load the shared adapter lazily on invocation. | Native runtime diagnostics and distribution docs are internal while this backend remains an optional candidate. |
 
@@ -46,7 +46,7 @@ Nimbus does not use runtime names as blanket compatibility claims. A runtime
 surface is documented as supported only when it has fixture, canary, oracle, or
 classification evidence.
 
-Internal engineering references live under `docs/architecture/runtime/`.
+Internal engineering references live under `docs/private/architecture/runtime/`.
 Developer-facing runtime guidance lives here.
 
 ## Bun/JSC Operator States

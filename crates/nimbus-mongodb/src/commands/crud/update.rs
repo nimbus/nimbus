@@ -21,6 +21,7 @@ pub(super) fn build_replacement_write(
     Ok(AtomicWrite::Set {
         key: write_key,
         document: fields,
+        typed_fields: Default::default(),
         mode: WriteSetMode::Overwrite,
         precondition: Default::default(),
         transforms: vec![],
@@ -239,6 +240,7 @@ pub(super) fn build_operator_write(
         Ok(AtomicWrite::Patch {
             key: write_key,
             field_patch,
+            typed_fields: Default::default(),
             mask,
             precondition: Default::default(),
             transforms: vec![],
@@ -247,6 +249,7 @@ pub(super) fn build_operator_write(
         Ok(AtomicWrite::Patch {
             key: write_key,
             field_patch,
+            typed_fields: Default::default(),
             mask,
             precondition: Default::default(),
             transforms,

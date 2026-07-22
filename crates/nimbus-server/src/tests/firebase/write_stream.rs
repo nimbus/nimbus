@@ -114,6 +114,130 @@ async fn firebase_write_stream_handshakes_and_applies_ordered_writes() {
         "write stream should end cleanly after the request sender closes"
     );
 }
+
+#[tokio::test]
+async fn firebase_write_stream_roundtrips_lossless_firestore_field_types() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    fixture.create_tenant("demo", Engine::create_tenant);
+    let server = ServerFixture::start(router_for_firebase(
+        fixture.engine(),
+        firebase_verified_config(),
+    ))
+    .await;
+    let mut client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
+    let (sender, receiver) = mpsc::unbounded();
+    let mut responses = client
+        .write(receiver)
+        .await
+        .expect("Firestore write stream should open")
+        .into_inner();
+
+    sender
+        .unbounded_send(GrpcWriteRequest {
+            database: "projects/demo/databases/(default)".to_string(),
+            ..Default::default()
+        })
+        .expect("handshake request should send");
+    let handshake = responses
+        .message()
+        .await
+        .expect("handshake should stream")
+        .expect("handshake should be present");
+    let document_name = "projects/demo/databases/(default)/documents/events/typed-grpc";
+    sender
+        .unbounded_send(GrpcWriteRequest {
+            stream_token: handshake.stream_token,
+            writes: vec![grpc_update_write(
+                document_name,
+                [
+                    (
+                        "createdAt",
+                        grpc_timestamp_value(1_704_164_645, 123_456_789),
+                    ),
+                    ("payload", grpc_bytes_value([1, 2, 3, 4])),
+                    (
+                        "owner",
+                        grpc_reference_value(
+                            "projects/demo/databases/(default)/documents/users/ada",
+                        ),
+                    ),
+                    ("location", grpc_geo_point_value(37.7749, -122.4194)),
+                    ("score", grpc_double_value(f64::NEG_INFINITY)),
+                    (
+                        "nested",
+                        grpc_map_value([
+                            ("attachment", grpc_bytes_value([0xFF, 0x00])),
+                            ("label", grpc_string_value("kept")),
+                        ]),
+                    ),
+                ],
+            )],
+            ..Default::default()
+        })
+        .expect("typed write request should send");
+    responses
+        .message()
+        .await
+        .expect("typed write response should stream")
+        .expect("typed write response should be present");
+    drop(sender);
+    drop(responses);
+
+    let mut reads = client
+        .batch_get_documents(grpc_batch_get_request([document_name]))
+        .await
+        .expect("typed batch get should succeed")
+        .into_inner();
+    let response = reads
+        .message()
+        .await
+        .expect("typed read should stream")
+        .expect("typed read should be present");
+    let GrpcBatchGetResult::Found(document) = response
+        .result
+        .expect("typed batch get result should exist")
+    else {
+        panic!("typed document should be found")
+    };
+
+    assert!(matches!(
+        document.fields["createdAt"].value_type,
+        Some(GrpcValueType::TimestampValue(ProstTimestamp {
+            seconds: 1_704_164_645,
+            nanos: 123_456_789,
+        }))
+    ));
+    assert!(matches!(
+        &document.fields["payload"].value_type,
+        Some(GrpcValueType::BytesValue(value)) if value == &[1, 2, 3, 4]
+    ));
+    assert!(matches!(
+        &document.fields["owner"].value_type,
+        Some(GrpcValueType::ReferenceValue(value))
+            if value == "projects/demo/databases/(default)/documents/users/ada"
+    ));
+    assert!(matches!(
+        document.fields["location"].value_type,
+        Some(GrpcValueType::GeoPointValue(GrpcLatLng { latitude, longitude }))
+            if latitude == 37.7749 && longitude == -122.4194
+    ));
+    assert!(matches!(
+        document.fields["score"].value_type,
+        Some(GrpcValueType::DoubleValue(value))
+            if value.is_infinite() && value.is_sign_negative()
+    ));
+    let Some(GrpcValueType::MapValue(nested)) = &document.fields["nested"].value_type else {
+        panic!("nested typed map should roundtrip")
+    };
+    assert!(matches!(
+        &nested.fields["attachment"].value_type,
+        Some(GrpcValueType::BytesValue(value)) if value == &[0xFF, 0x00]
+    ));
+    assert!(matches!(
+        &nested.fields["label"].value_type,
+        Some(GrpcValueType::StringValue(value)) if value == "kept"
+    ));
+}
 #[tokio::test]
 async fn firebase_write_stream_rejects_missing_post_handshake_token() {
     let fixture = EngineFixture::new(|path| Engine::new(path));

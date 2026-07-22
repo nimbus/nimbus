@@ -650,6 +650,7 @@ fn seed_bound_collection_group_document(
                 .into_iter()
                 .map(|(field, value)| (field.to_string(), value)),
         ),
+        typed_fields: Default::default(),
         mode: WriteSetMode::Overwrite,
         precondition: WritePrecondition::default(),
         transforms: Vec::new(),

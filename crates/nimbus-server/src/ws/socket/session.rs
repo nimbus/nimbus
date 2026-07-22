@@ -7,7 +7,7 @@ use nimbus_engine::{
     SubscriptionRegistration, SubscriptionUpdate,
 };
 use nimbus_runtime::HostCallCancellation;
-use tokio::sync::mpsc;
+use tokio::sync::{Semaphore, mpsc};
 
 use crate::owned_tasks::OwnedTaskSet;
 use crate::protocol::{ClientMessage, ServerMessage};
@@ -15,6 +15,8 @@ use crate::state::AppState;
 
 use super::pending::PendingBootstrapCancellationRegistry;
 use super::transport::InboundSocketEvent;
+
+pub(super) const MAX_PENDING_SUBSCRIPTION_REGISTRATIONS: usize = 32;
 
 pub(super) enum PendingSubscriptionEvent {
     Registered(SubscriptionRegistration),
@@ -31,6 +33,7 @@ pub(super) struct GenericSocketSession {
     pub(super) pending_subscription_tx: mpsc::Sender<PendingSubscriptionEvent>,
     pub(super) disconnect_cancellation: HostCallCancellation,
     pub(super) pending_bootstrap_cancellations: Arc<PendingBootstrapCancellationRegistry>,
+    pub(super) subscription_registration_slots: Arc<Semaphore>,
 }
 
 impl GenericSocketSession {
@@ -102,7 +105,8 @@ impl GenericSocketSession {
                     .await;
             }
             InboundSocketEvent::Message(ClientMessage::Subscribe { request_id, query }) => {
-                self.spawn_subscription_registration(tasks, request_id, query);
+                self.spawn_subscription_registration(tasks, request_id, query)
+                    .await;
             }
             InboundSocketEvent::Message(ClientMessage::Unsubscribe { subscription_id }) => {
                 self.handle_unsubscribe(
@@ -124,12 +128,32 @@ impl GenericSocketSession {
         }
     }
 
-    fn spawn_subscription_registration(
+    async fn spawn_subscription_registration(
         &self,
         tasks: &mut OwnedTaskSet,
         request_id: String,
         query: Query,
     ) {
+        let registration_slot = match self
+            .subscription_registration_slots
+            .clone()
+            .try_acquire_owned()
+        {
+            Ok(slot) => slot,
+            Err(_) => {
+                let _ = self
+                    .outbound_tx
+                    .send(ServerMessage::retryable_request_error(
+                        request_id,
+                        "rate.subscription_registration_limit",
+                        format!(
+                            "at most {MAX_PENDING_SUBSCRIPTION_REGISTRATIONS} subscription registrations may be pending on one websocket"
+                        ),
+                    ))
+                    .await;
+                return;
+            }
+        };
         let request_id_for_worker = request_id.clone();
         let service = self.state.engine.clone();
         let tenant_id = self.tenant_id.clone();
@@ -141,6 +165,7 @@ impl GenericSocketSession {
             .track_request(request_id, subscription_cancellation.clone());
         let pending_bootstrap_cancellations = self.pending_bootstrap_cancellations.clone();
         tasks.spawn(async move {
+            let _registration_slot = registration_slot;
             let disconnect_wait = disconnect_cancellation.clone();
             let disconnect_check = disconnect_cancellation.clone();
             let subscription_wait = subscription_cancellation.clone();

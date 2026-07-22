@@ -9,7 +9,8 @@ use futures::stream;
 use nimbus_core::{
     AtomicWrite, AtomicWriteBatch, AtomicWriteBatchOutcome, Error, FieldTransform,
     FieldTransformOperation, MonotonicClock, NumericValue, PrincipalContext, StoredValue,
-    SystemMonotonicClock, Timestamp, TypedScalarValue, WritePrecondition, WriteSetMode,
+    SystemMonotonicClock, Timestamp, TypedFieldMap, TypedScalarValue, WritePrecondition,
+    WriteSetMode,
 };
 use nimbus_engine::Engine;
 use nimbus_tenant::TenantIsolationContext;
@@ -32,7 +33,7 @@ use super::generated::google::r#type::LatLng;
 use crate::ProjectTenantRegistry;
 use crate::resource_names::{self, FirestoreDatabaseName};
 use crate::serializer::{
-    FirestoreDouble, FirestoreProtoJsonError, FirestoreValue, firestore_value_from_typed_scalar,
+    FirestoreDouble, FirestoreProtoJsonError, FirestoreValue, firestore_value_from_stored_value,
     special_double_from_firestore,
 };
 use crate::{
@@ -609,13 +610,14 @@ fn lower_update_write(
 
     let key = resolve_write_key(&parsed_document.document_path)
         .map_err(|error| Status::invalid_argument(error.to_string()))?;
-    let document = lower_document_fields(document.fields)?;
+    let (document, typed_fields) = lower_document_fields(document.fields)?;
     let precondition = lower_precondition(current_document)?;
     let transforms = lower_document_transforms(update_transforms)?;
     match update_mask {
         Some(mask) => Ok(AtomicWrite::Patch {
             key,
             field_patch: document,
+            typed_fields,
             mask: mask.field_paths,
             precondition,
             transforms,
@@ -623,6 +625,7 @@ fn lower_update_write(
         None => Ok(AtomicWrite::Set {
             key,
             document,
+            typed_fields,
             mode: WriteSetMode::Overwrite,
             precondition,
             transforms,
@@ -663,11 +666,19 @@ fn database_mismatch_status(context: &str) -> Status {
 
 fn lower_document_fields(
     fields: HashMap<String, Value>,
-) -> Result<JsonMap<String, JsonValue>, Status> {
-    fields
-        .into_iter()
-        .map(|(field, value)| decode_nimbus_value_from_grpc(&value).map(|value| (field, value)))
-        .collect()
+) -> Result<(JsonMap<String, JsonValue>, TypedFieldMap), Status> {
+    let mut projected_fields = JsonMap::with_capacity(fields.len());
+    let mut typed_fields = TypedFieldMap::new();
+    for (field, value) in fields {
+        let stored = firestore_value_from_grpc(&value)?
+            .into_stored_value()
+            .map_err(firestore_value_status)?;
+        projected_fields.insert(field.clone(), stored.projected_json());
+        if stored.contains_typed_metadata() {
+            typed_fields.insert(field, stored);
+        }
+    }
+    Ok((projected_fields, typed_fields))
 }
 
 fn lower_precondition(precondition: Option<Precondition>) -> Result<WritePrecondition, Status> {
@@ -807,8 +818,8 @@ pub(super) fn encode_document_field_to_grpc(
     field_name: &str,
     value: &JsonValue,
 ) -> Result<Value, Status> {
-    match document.typed_field(field_name) {
-        Some(value) => encode_typed_scalar_to_grpc(value).map_err(|status| {
+    match document.typed_value(field_name) {
+        Some(value) => encode_stored_value_to_grpc(value).map_err(|status| {
             Status::internal(format!(
                 "failed to encode Firestore document field `{field_name}`: {}",
                 status.message()
@@ -819,15 +830,10 @@ pub(super) fn encode_document_field_to_grpc(
 }
 
 pub(super) fn encode_stored_value_to_grpc(value: &StoredValue) -> Result<Value, Status> {
-    match value {
-        StoredValue::Json { value } => encode_nimbus_value_to_grpc(value),
-        StoredValue::TypedScalar { value } => encode_typed_scalar_to_grpc(value),
-        // DynamoDB-shaped nested typed trees are not representable on the
-        // Firestore gRPC surface (reached only via cross-adapter reads).
-        StoredValue::Map { .. } | StoredValue::List { .. } => Err(Status::internal(
-            "DynamoDB nested typed values are not supported on the Firestore gRPC surface",
-        )),
-    }
+    let firestore_value = firestore_value_from_stored_value(value)
+        .map_err(|error| Status::internal(error.to_string()))?;
+    firestore_value_to_grpc(firestore_value)
+        .map_err(|status| Status::internal(status.message().to_string()))
 }
 
 fn firestore_value_from_grpc(value: &Value) -> Result<FirestoreValue, Status> {
@@ -931,13 +937,6 @@ fn firestore_double(value: f64) -> FirestoreDouble {
     } else {
         FirestoreDouble::Number(value)
     }
-}
-
-fn encode_typed_scalar_to_grpc(value: &TypedScalarValue) -> Result<Value, Status> {
-    let firestore_value = firestore_value_from_typed_scalar(value)
-        .map_err(|error| Status::internal(error.to_string()))?;
-    firestore_value_to_grpc(firestore_value)
-        .map_err(|status| Status::internal(status.message().to_string()))
 }
 
 pub(super) fn core_timestamp_from_prost(timestamp: &ProstTimestamp) -> Result<Timestamp, Status> {
