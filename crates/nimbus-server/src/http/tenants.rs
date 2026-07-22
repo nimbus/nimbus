@@ -7,7 +7,7 @@ pub(crate) async fn create_tenant(
 ) -> Result<(StatusCode, Json<TenantResponse>), AppError> {
     let tenant = parse_operator_tenant_context(request.id, "native_http.tenants.create")?;
     let tenant_id = tenant.tenant_id().clone();
-    state.create_tenant(tenant_id.clone()).await?;
+    state.create_tenant_async(tenant_id.clone()).await?;
     let id = tenant_id.to_string();
     Ok((StatusCode::CREATED, Json(TenantResponse { id })))
 }

@@ -7,7 +7,7 @@ pub(crate) use nimbus_core::{
     ManualWallClock, NumericValue, OrderBy, OrderDirection, PaginatedQuery, PrincipalContext,
     Query, QueryDirection, ResourcePathBinding, SeededIdSource, SequenceNumber, SpecialDouble,
     StorageErrorKind, StoredValue, StructuredOrder, StructuredQuery, TableId, TenantId, Timestamp,
-    TriggerInvocationKey, TriggerWriteOrigin, TypedScalarValue, WallClock, WriteKey,
+    TriggerInvocationKey, TriggerWriteOrigin, TypedFieldMap, TypedScalarValue, WallClock, WriteKey,
     WritePrecondition, WriteSetMode,
 };
 pub(crate) use nimbus_testing::{BlockingFaultInjector, EngineFixture};

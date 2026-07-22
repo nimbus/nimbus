@@ -94,6 +94,8 @@ impl MemoryTenantProvider {
                 "tenant already exists: {tenant_id}"
             )));
         }
+        self.fault_injector
+            .check_for_tenant(crate::FaultPoint::TenantCreateBeforeRegistration, tenant_id)?;
         let store = Arc::new(MemoryTenantStore::with_simulation(
             self.clock.clone(),
             self.fault_injector.clone(),

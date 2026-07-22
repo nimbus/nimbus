@@ -279,6 +279,74 @@ moves; one evidence line per completed item (test name/count or commit).
 | DS5 | BPD verifier drift: `scripts/verify-binary-embedded-package-distribution.sh` fails conditions 10/15 on unmodified main — its file pins (`crates/nimbus-bin/src/{node,codegen}.rs`) went stale in an earlier crate-seam refactor (paths repaired to nimbus-cli in the small-sweeps PR) and its content checks (caret-range fixtures, diagnostic-only classification strings) no longer match shipped code. Re-derive the archived BPD plan's proof conditions against current code or retire the script with a note. (Surfaced by the small-sweeps review, 2026-07-07.) | `scripts/verify-binary-embedded-package-distribution.sh` | small | done (direct-to-main 7d60ca6c7, 2026-07-07; 16 stale path pins + macOS grep symlink quirk fixed, 17-fail->1; condition 22 is by-design BPD_FULL forward-gap) |
 | DS4 | Feature-flag notes: `nimbus-fs fuse` (confirm CI exercises it or gate), `nimbus-blob cluster` (mark deferred so it isn't mistaken for dead), `nimbus-engine test-hooks` (verify it can't leak into release builds). | three Cargo.tomls + docs | small | done (direct-to-main 7d60ca6c7, 2026-07-07; fuse dormant, test-hooks dev-only, cluster noted) |
 
+### Band RR — 2026-07-21 full-review remediation
+
+This band owns the remediation of the private full-codebase review performed
+against `main` at `9a40b60a4`. The report's 28 lane findings normalize to 25
+unique items because three findings were independently reported by two lanes.
+Every unique item remains visible here, including already-fixed and refuted
+claims, so completion cannot hide work by omission. The implementation branch
+was rebased onto updated `origin/main` at `c789db2fd`. RR26 records one additional
+private-fence regression discovered by the required docs-site completion gate.
+
+| ID | Item | Where | Severity / verdict | Status |
+| --- | --- | --- | --- | --- |
+| RR1 | Make DynamoDB single-item put/update/delete condition evaluation and read-modify-write atomic. | `nimbus-dynamodb/src/commands/{item,transact}.rs` | high / confirmed | done (`concurrent_add_updates_retry_from_a_fresh_snapshot_without_lost_writes` plus single-item stream rollback; workspace 4,674/4,674) |
+| RR2 | Preserve Firestore Timestamp, GeoPoint, Bytes, Reference, and special-double values through write/read round trips. | `nimbus-firebase/src/serializer.rs` + REST/gRPC lowering | high / confirmed | done (Firebase 66/66 plus REST, gRPC, nested patch, persistence, and Mongo projection round trips) |
+| RR3 | Authorize the outer HTTPS CONNECT at L4 and enforce method/path rules on the decrypted request without permitting splice bypass. | `nimbus-proxy/src/request.rs` + CONNECT classification/tests | high / confirmed | done (focused decrypted method/path interception and splice-denial tests; workspace 4,674/4,674) |
+| RR4 | Alt-Svc/HTTP-3 forward-proxy bypass claim. | `nimbus-proxy/src/pingora_app.rs`, sandbox egress pin | info / refuted | no-action (sandbox netns default-drops UDP; QUIC cannot bypass the PEP) |
+| RR5 | Mongo `_id` fast-path `$ne`/null divergence claim; separately correct shared Mongo missing-field compatibility semantics if confirmed. | `nimbus-mongodb/src/commands/crud/filter.rs`, engine matcher | info / fast-path claim refuted | done (fast-path claim refuted; confirmed missing/null gap fixed with end-to-end `$eq`/`$ne`/`$exists` coverage and `_id` fast-path regression test) |
+| RR6 | Restore the complete workspace inventory by documenting `nimbus-compute`. | `ARCHITECTURE.md` | medium / confirmed | done (workspace inventory and compute-plane ownership corrected; both docs gates green) |
+| RR7 | Keep internal diagnostic strings out of external error envelopes and retain server-side correlation. | HTTP and runtime-host error envelopes | low / confirmed | done (HTTP and tenant-visible runtime-host internal errors are redacted with correlation IDs; hosted Node canaries then exposed and now cover typed timeout and pending-promise-stall envelopes end to end without reopening generic diagnostics) |
+| RR8 | Consolidate the duplicated Convex tenant/team-binding authorization preamble. | Convex registry/auth + httpAction dispatch | low / plausible | done (duplication confirmed; canonical registry authorization helper covers handler and httpAction dispatch paths; server suite green) |
+| RR9 | Fail startup loudly when a default-on MongoDB, DynamoDB, or S3 listener cannot bind its conventional port. | `nimbus-cli/src/start/adapters/{mongodb,dynamodb,s3}.rs` | low / high confidence | done (`busy_default_listener_port_fails_boot` covers all three adapters; workspace 4,674/4,674) |
+| RR10 | Make the SQLite invariant-bypassing insert helper unavailable to production code. | `nimbus-storage/src/sqlite/write.rs` | low / high confidence | done (helper restricted to tests; storage and workspace suites green) |
+| RR11 | Cover every compiled vendored dependency in top-level attribution and its verification gate. | `NOTICE`, `third_party/`, attribution scripts | low / high confidence | done (attribution helper 11/11 and full attribution gate green) |
+| RR12 | Make TypeScript typechecking a required local and hosted CI gate. | `Makefile`, `.github/workflows/ci.yml` | low / high confidence | done (required workspace typecheck wired into local/hosted CI; all workspace typechecks green) |
+| RR13 | Compare KV credentials in constant time. | `nimbus-kv/src/server.rs` | low / high confidence | done (username/password comparisons scan all bindings in constant time; KV auth tests and workspace suite green) |
+| RR14 | Bound in-flight native `/ws` subscription registration per connection. | `nimbus-server/src/ws/socket/session.rs` | low / high confidence | done (`websocket_bounds_pending_subscription_registration_tasks` proves the 32-task cap and retryable rejection) |
+| RR15 | Remove Convex-prefixed wire IDs and error wording from the canonical Nimbus JS SDK. | `packages/nimbus/src/browser.ts` | low / high confidence | done (Nimbus-native connection/request IDs and wording; Nimbus/Convex selftests and workspace JS build/typecheck/test green) |
+| RR16 | Supply the landing-page Sandboxes tab glyph. | `website/src/styles/custom.css` | low / high confidence | no-action (already fixed on current main by PR #223) |
+| RR17 | Make the unsigned, honor-system license posture and expired-entitlement behavior internally consistent and explicit. | `nimbus-license`, `LICENSING.md` | low / high confidence | done (`expired_license_snapshots_do_not_report_active_entitlements`; honor-system enforcement and legal posture documented) |
+| RR18 | Pin the cargo-deny version used by hosted CI. | `.github/workflows/ci.yml` | low / high confidence | done (hosted install pinned to 0.19.0; `cargo deny check` green) |
+| RR19 | Remove archived plan entries and reconcile status vocabulary/current wording. | `docs/private/plans/README.md` | low / confirmed | done (archived entries removed and vocabulary/current-owner wording reconciled; docs gates green) |
+| RR20 | Repoint stale `nimbus-bin` ownership paths to `nimbus-cli`. | `ARCHITECTURE.md`; private architecture index if present | low / confirmed in root doc | done (live architecture/plan references corrected; docs gates green) |
+| RR21 | Replace the stale Mongo M9 module description with the implemented bound/unbound tenant modes. | `nimbus-mongodb/src/commands/tenant.rs` | low / high confidence | done (module contract now documents implemented bound/unbound modes; docs and workspace gates green) |
+| RR22 | Correct the website comment from five to six published doc groups. | `website/astro.config.mjs` | low / high confidence | no-action (already fixed on current main by PR #223) |
+| RR23 | Document and test the fresh durable-journal probe required by ambiguous-outcome classification. | engine durable outcome + storage trait/provider tests | low / confirmed | done (classifier uses authoritative `recover_durable_journal`; engine recovery/provider suites green) |
+| RR24 | Make the crossbeam-epoch deny express the entire unsafe range promised by its comment. | `deny.toml` | info / confirmed | done (deny range covers the promised versions; `cargo deny check` green) |
+| RR25 | Delete the pre-launch consumer-compat-only `EgressEnforcementMode::LaunchMetadata` path. | `nimbus-egress`, CLI label/tests | info / confirmed | done (`sandbox_egress_enforcement_plan_rejects_removed_launch_metadata_mode` and CLI boundary regression green) |
+| RR26 | Restore the docs private fence after runtime evidence, review history, and Node proof artifacts were reintroduced at legacy public paths. | `docs/private/{architecture,code-review,plans}`, live Node tooling/references | low / confirmed by docs-site gate | done (legacy public trees removed, live references and generators repointed; the public Node support fallback now consumes only published projections; 108-page docs check, 17/17 site verifier, both generator checks, and the 9-pass/1-private-skip/0-fail public fallback gate are green) |
+
+Completion gate: every RR row is `done` or `no-action (reason)` with focused
+evidence, `cargo fmt --all --check`, `make clippy`, `make ci`, both docs gates,
+and the structured closeout review are green before the branch is pushed.
+
+Closeout evidence (2026-07-21): the initial remediation state passed `make ci`.
+After rebasing through the current `origin/main` at `c789db2fd`, the required
+component set passed again, with the workspace lane bounded to two test threads
+because other worktrees were concurrently loading the shared host: 493 runtime
+tests, 4,674/4,674 runnable workspace tests (31 ignored; 4,705 inventoried),
+381/381 storage tests (2 external-provider skips), the required verification
+harness, all workspace JS build/typecheck/test lanes (51 UI files / 336 tests),
+and proof helpers. The exact storage PITR performance regression also passed
+independently; the final clock-integration conflict surfaces passed 71/71
+Firebase and 16/16 atomic-write-batch focused tests.
+`scripts/check-docs.sh` passed all 108 public pages and
+`scripts/verify-nimbus-docs-site.sh` passed 17/17 conditions. The first Opus
+4.8 code review found stale Firestore typed-value sidecars in unmasked
+`MergeAll` writes; the shared typed field setter now clears replaced sidecars,
+the focused regression passed, and the rerun was clean. The first Opus docs/CI
+review found that the public Node support fallback still depended on private
+artifacts, that the posture generator wrote the same private target twice, and
+that the publication generator still read legacy public source paths; all three
+were confirmed and fixed. Its follow-up found one alphabetical workspace-table
+ordering defect, which is also fixed. The final Opus 4.8 docs/CI rerun was clean
+with no accepted or actionable findings. Its two explicitly non-actionable
+observations were also checked: `backup_api` no longer exists in the license
+surface, and the narrower public Node projection intentionally makes its
+Node24-specific zero-gap check overlap the preceding all-version assertion.
+
 ### Band CP — `nimbus-compute` extraction (AD1, staged)
 
 | ID | Item | Where | Size | Status |

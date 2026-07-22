@@ -19,6 +19,7 @@ const typecheckOnly = process.argv.includes("--typecheck-only");
 
 async function main() {
   await assertCapabilitySurfaceContract();
+  await assertNativeSocketBranding();
   if (typecheckOnly) {
     await typecheckNimbusAuthExtension();
     return;
@@ -41,6 +42,16 @@ async function main() {
   await assertSessionRoutes(indexBundle);
   await assertCommitErrorEnvelopeDecoding(indexBundle);
   await typecheckNimbusAuthExtension();
+}
+
+async function assertNativeSocketBranding() {
+  const browserSource = await fs.readFile(
+    fileURLToPath(new URL("./browser.ts", import.meta.url)),
+    "utf8",
+  );
+  assert.doesNotMatch(browserSource, /convex websocket/i);
+  assert.doesNotMatch(browserSource, /`convex-\$\{/);
+  assert.match(browserSource, /`nimbus-\$\{\+\+this\.requestCounter\}`/);
 }
 
 async function assertCommitErrorEnvelopeDecoding(indexBundle) {

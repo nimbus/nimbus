@@ -1,6 +1,6 @@
 use nimbus_core::{
-    AtomicWrite, AtomicWriteBatch, FieldTransform, FieldTransformOperation, Timestamp, WriteKey,
-    WritePrecondition, WriteSetMode,
+    AtomicWrite, AtomicWriteBatch, FieldTransform, FieldTransformOperation, Timestamp,
+    TypedFieldMap, WriteKey, WritePrecondition, WriteSetMode,
 };
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -151,7 +151,7 @@ fn lower_commit_write(
         reject_document_metadata(&update)?;
 
         let key = resolve_write_key(&parsed_document.document_path)?;
-        let document = lower_document_fields(update.fields)?;
+        let (document, typed_fields) = lower_document_fields(update.fields)?;
         let precondition = lower_precondition(write.current_document)?;
         let transforms = lower_field_transforms(write.update_transforms)?;
 
@@ -159,6 +159,7 @@ fn lower_commit_write(
             Some(mask) => AtomicWrite::Patch {
                 key,
                 field_patch: document,
+                typed_fields,
                 mask: mask.field_paths,
                 precondition,
                 transforms,
@@ -166,6 +167,7 @@ fn lower_commit_write(
             None => AtomicWrite::Set {
                 key,
                 document,
+                typed_fields,
                 mode: WriteSetMode::Overwrite,
                 precondition,
                 transforms,
@@ -237,14 +239,18 @@ fn lower_commit_write(
 
 fn lower_document_fields(
     fields: Map<String, Value>,
-) -> Result<Map<String, Value>, FirestoreRequestError> {
-    fields
-        .into_iter()
-        .map(|(field, value)| {
-            serializer::decode_proto_json_value(&value).map(|value| (field, value))
-        })
-        .collect::<Result<Map<_, _>, _>>()
-        .map_err(|error| FirestoreRequestError::invalid_value(FirestoreRpc::Commit, error))
+) -> Result<(Map<String, Value>, TypedFieldMap), FirestoreRequestError> {
+    let mut projected_fields = Map::with_capacity(fields.len());
+    let mut typed_fields = TypedFieldMap::new();
+    for (field, value) in fields {
+        let stored = serializer::decode_proto_json_stored_value(&value)
+            .map_err(|error| FirestoreRequestError::invalid_value(FirestoreRpc::Commit, error))?;
+        projected_fields.insert(field.clone(), stored.projected_json());
+        if stored.contains_typed_metadata() {
+            typed_fields.insert(field, stored);
+        }
+    }
+    Ok((projected_fields, typed_fields))
 }
 
 fn lower_precondition(

@@ -39,12 +39,15 @@ async fn convex_named_query_reports_runtime_bundle_contract_errors() {
         .json::<serde_json::Value>()
         .await
         .expect("runtime contract error response should parse");
+    assert_eq!(body["error"]["code"], json!("service.internal"), "{body}");
+    assert_eq!(
+        body["error"]["message"],
+        json!("An internal server error occurred."),
+        "runtime bundle internals must not cross the public boundary: {body}"
+    );
     assert!(
-        body["error"]["message"]
-            .as_str()
-            .expect("error message should be a string")
-            .contains("__nimbusInvoke"),
-        "unexpected runtime error body: {body}"
+        body["error"]["requestId"].as_str().is_some(),
+        "redacted failures need an operator correlation id: {body}"
     );
 }
 

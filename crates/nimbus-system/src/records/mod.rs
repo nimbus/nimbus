@@ -54,16 +54,7 @@ pub use subscription::{
 
 pub async fn ensure_system_tenant_async(engine: &Arc<Engine>) -> Result<()> {
     let tenant_id = system_tenant_id()?;
-    match engine.ensure_tenant_exists_async(tenant_id.clone()).await {
-        Ok(()) => {}
-        Err(Error::TenantNotFound(_)) => {
-            match engine.create_tenant_async(tenant_id.clone()).await {
-                Ok(()) | Err(Error::AlreadyExists(_)) => {}
-                Err(error) => return Err(error),
-            }
-        }
-        Err(error) => return Err(error),
-    }
+    engine.ensure_tenant_ready_async(tenant_id.clone()).await?;
 
     for schema in system_table_schemas()? {
         engine

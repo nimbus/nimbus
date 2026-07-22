@@ -2,8 +2,9 @@
 //! adapter serves by default: Firestore routes mount on the main HTTP
 //! listener, MongoDB serves on its conventional port (27017), and DynamoDB
 //! serves on its conventional port (8000), each with a `--no-*` opt-out.
-//! A busy conventional port skips that listener with a warning unless the
-//! operator asked for an explicit port — explicit ports fail loud instead.
+//! A busy conventional port fails startup with guidance to choose another port
+//! or disable the listener. Explicit ports fail at bind time in the same
+//! fail-loud posture.
 //! Operator flags/env provide credentials when present; otherwise the
 //! listeners use the generated wire-credential store under the control
 //! data dir (D5), shared with `nimbus dev`. The same non-loopback opt-in
@@ -564,15 +565,36 @@ mod tests {
     }
 
     #[test]
-    fn busy_conventional_ports_skip_default_listeners() {
+    fn busy_conventional_ports_fail_startup() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let resolved =
-            resolve_adapter_enablement_with_env(&base_command(), temp.path(), |_| None, |_| false)
-                .expect("busy conventional ports must not fail boot");
-        assert!(resolved.firebase.is_some(), "firestore routes are portless");
-        assert!(resolved.mongodb.is_none(), "busy 27017 skips the listener");
-        assert!(resolved.dynamodb.is_none(), "busy 8000 skips the listener");
-        assert!(resolved.s3.is_none(), "busy 9000 skips the listener");
+        for (command, expected) in [
+            (base_command(), "MongoDB conventional port 27017 is busy"),
+            (
+                {
+                    let mut command = base_command();
+                    command.mongodb = false;
+                    command
+                },
+                "DynamoDB conventional port 8000 is busy",
+            ),
+            (
+                {
+                    let mut command = base_command();
+                    command.mongodb = false;
+                    command.dynamodb = false;
+                    command
+                },
+                "S3 conventional port 9000 is busy",
+            ),
+        ] {
+            let error =
+                resolve_adapter_enablement_with_env(&command, temp.path(), |_| None, |_| false)
+                    .expect_err("a busy default listener port must fail boot");
+            assert!(
+                error.to_string().contains(expected),
+                "unexpected error: {error}"
+            );
+        }
 
         // An explicit port never probes: the operator asked for it, so a
         // conflict surfaces as a loud bind failure at serve time instead.

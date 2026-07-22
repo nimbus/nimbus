@@ -4,6 +4,7 @@ use serde_json::Value;
 use crate::mutation::CommitEntry;
 use crate::{
     DocumentLocator, Error, NumericValue, ResourcePathBinding, Result, StoredValue, Timestamp,
+    TypedFieldMap,
 };
 
 /// Write target identity for protocol-neutral batch operations.
@@ -158,6 +159,8 @@ pub enum AtomicWrite {
     Set {
         key: WriteKey,
         document: serde_json::Map<String, Value>,
+        #[serde(default, skip_serializing_if = "TypedFieldMap::is_empty")]
+        typed_fields: TypedFieldMap,
         mode: WriteSetMode,
         #[serde(default)]
         precondition: WritePrecondition,
@@ -167,6 +170,8 @@ pub enum AtomicWrite {
     Patch {
         key: WriteKey,
         field_patch: serde_json::Map<String, Value>,
+        #[serde(default, skip_serializing_if = "TypedFieldMap::is_empty")]
+        typed_fields: TypedFieldMap,
         #[serde(default)]
         mask: Vec<String>,
         #[serde(default)]
@@ -298,6 +303,7 @@ mod tests {
         let write = AtomicWrite::Set {
             key: key.clone(),
             document: serde_json::Map::from_iter([("body".to_string(), json!("hi"))]),
+            typed_fields: Default::default(),
             mode: WriteSetMode::MergeFields(vec!["body".to_string()]),
             precondition: WritePrecondition::exists(true),
             transforms: vec![FieldTransform {

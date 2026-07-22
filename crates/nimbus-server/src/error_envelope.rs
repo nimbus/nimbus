@@ -1,7 +1,9 @@
 use axum::extract::ws::{CloseFrame, Message, WebSocket, close_code};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use nimbus_core::{CommitErrorClass, Error, HistoricalReadErrorKind, StorageErrorKind};
+use nimbus_core::{
+    CommitErrorClass, Error, HistoricalReadErrorKind, RuntimeTimeoutKind, StorageErrorKind,
+};
 use serde::Serialize;
 use serde_json::{Value, json};
 use time::OffsetDateTime;
@@ -340,6 +342,40 @@ impl PublicError {
                 Value::Null,
                 Some(ErrorRemediation::new("retry", "Retry the operation.")),
             ),
+            Error::RuntimeTimeout { kind, timeout } => {
+                let (code, remediation) = match kind {
+                    RuntimeTimeoutKind::Execution => (
+                        "runtime.execution_timeout",
+                        "Reduce function work or increase the configured execution timeout.",
+                    ),
+                    RuntimeTimeoutKind::System => (
+                        "runtime.system_timeout",
+                        "Ensure returned promises settle and background work completes within the configured system timeout.",
+                    ),
+                };
+                Self::new(
+                    code,
+                    error.to_string(),
+                    ErrorSeverity::Error,
+                    false,
+                    json!({
+                        "timeoutKind": kind.as_str(),
+                        "timeoutMs": u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
+                    }),
+                    Some(ErrorRemediation::new("fix_request", remediation)),
+                )
+            }
+            Error::RuntimePromiseStalled => Self::new(
+                "runtime.promise_stalled",
+                error.to_string(),
+                ErrorSeverity::Error,
+                false,
+                Value::Null,
+                Some(ErrorRemediation::new(
+                    "fix_function",
+                    "Ensure every returned promise has a reachable resolution or rejection path.",
+                )),
+            ),
             Error::TenantNotFound(tenant_id) => Self::new(
                 "session.tenant_not_found",
                 error.to_string(),
@@ -531,17 +567,7 @@ impl PublicError {
                 Value::Null,
                 None,
             ),
-            Error::Internal(_) => Self::new(
-                "service.internal",
-                error.to_string(),
-                ErrorSeverity::Fatal,
-                false,
-                Value::Null,
-                Some(ErrorRemediation::new(
-                    "contact_operator",
-                    "Internal server failures require operator investigation.",
-                )),
-            ),
+            Error::Internal(_) => Self::internal(error),
             Error::NotFound(_) => Self::new(
                 "op.not_found",
                 error.to_string(),
@@ -561,18 +587,28 @@ impl PublicError {
                     "Retry once the transport or connection issue clears.",
                 )),
             ),
-            _ => Self::new(
-                "service.internal",
-                error.to_string(),
-                ErrorSeverity::Fatal,
-                false,
-                Value::Null,
-                Some(ErrorRemediation::new(
-                    "contact_operator",
-                    "Internal server failures require operator investigation.",
-                )),
-            ),
+            _ => Self::internal(error),
         }
+    }
+
+    fn internal(error: &Error) -> Self {
+        let public = Self::new(
+            "service.internal",
+            "An internal server error occurred.",
+            ErrorSeverity::Fatal,
+            false,
+            Value::Null,
+            Some(ErrorRemediation::new(
+                "contact_operator",
+                "Internal server failures require operator investigation.",
+            )),
+        );
+        tracing::error!(
+            request_id = %public.request_id,
+            error = %error,
+            "internal error mapped to public envelope"
+        );
+        public
     }
 
     pub(crate) fn websocket_error(
@@ -675,7 +711,10 @@ impl StructuredHttpError {
                     }
                 } else {
                     match &error {
-                        Error::Cancelled => StatusCode::REQUEST_TIMEOUT,
+                        Error::Cancelled | Error::RuntimeTimeout { .. } => {
+                            StatusCode::REQUEST_TIMEOUT
+                        }
+                        Error::RuntimePromiseStalled => StatusCode::UNPROCESSABLE_ENTITY,
                         Error::TenantNotFound(_)
                         | Error::DocumentNotFound(_)
                         | Error::ScheduledJobNotFound(_)
@@ -799,8 +838,10 @@ pub(crate) const FATAL_PROTOCOL_CLOSE_CODE: u16 = close_code::POLICY;
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
-    use nimbus_core::{CommitErrorClass, Retryability};
+    use nimbus_core::{CommitErrorClass, Retryability, RuntimeTimeoutKind};
     use nimbus_testing::commit_taxonomy::assert_commit_taxonomy_mapping;
 
     #[test]
@@ -880,6 +921,99 @@ mod tests {
         assert_eq!(
             response.envelope.error.detail["fields"],
             serde_json::json!(["state", "rank"])
+        );
+    }
+
+    #[test]
+    fn internal_errors_are_redacted_and_correlated() {
+        let public = PublicError::from_core_error(&Error::Internal(
+            "sensitive-internal-diagnostic-marker".to_string(),
+        ));
+
+        assert_eq!(public.code, "service.internal");
+        assert_eq!(public.message, "An internal server error occurred.");
+        assert!(
+            !public
+                .message
+                .contains("sensitive-internal-diagnostic-marker")
+        );
+        assert!(!public.request_id.is_empty());
+        let serialized = serde_json::to_value(&public).expect("public error should serialize");
+        assert_eq!(serialized["requestId"], public.request_id);
+        assert!(
+            !serialized
+                .to_string()
+                .contains("sensitive-internal-diagnostic-marker")
+        );
+    }
+
+    #[test]
+    fn runtime_timeouts_are_safe_actionable_request_timeouts() {
+        let cases = [
+            (
+                RuntimeTimeoutKind::Execution,
+                Duration::from_millis(125),
+                "runtime.execution_timeout",
+                "runtime execution timed out after 125ms",
+            ),
+            (
+                RuntimeTimeoutKind::System,
+                Duration::from_millis(250),
+                "runtime.system_timeout",
+                "runtime system wall time timed out after 250ms",
+            ),
+        ];
+
+        for (kind, timeout, expected_code, expected_message) in cases {
+            let response = StructuredHttpError::from_app_error(crate::state::AppError::from(
+                Error::runtime_timeout(kind, timeout),
+            ));
+
+            assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
+            assert_eq!(response.envelope.error.code, expected_code);
+            assert_eq!(response.envelope.error.message, expected_message);
+            assert!(!response.envelope.error.retryable);
+            assert_eq!(
+                response.envelope.error.detail,
+                json!({
+                    "timeoutKind": kind.as_str(),
+                    "timeoutMs": u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
+                })
+            );
+            assert_eq!(
+                response
+                    .envelope
+                    .error
+                    .remediation
+                    .as_ref()
+                    .map(|remediation| remediation.action),
+                Some("fix_request")
+            );
+        }
+    }
+
+    #[test]
+    fn stalled_runtime_promise_is_safe_actionable_user_error() {
+        let response = StructuredHttpError::from_app_error(crate::state::AppError::from(
+            Error::RuntimePromiseStalled,
+        ));
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(response.envelope.error.code, "runtime.promise_stalled");
+        assert_eq!(
+            response.envelope.error.message,
+            "runtime promise cannot settle because the event loop is idle"
+        );
+        assert!(!response.envelope.error.retryable);
+        assert_eq!(response.envelope.error.detail, Value::Null);
+        assert_eq!(
+            response
+                .envelope
+                .error
+                .remediation
+                .as_ref()
+                .map(|remediation| remediation.action),
+            Some("fix_function")
         );
     }
 }

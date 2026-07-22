@@ -87,6 +87,29 @@ impl LayeredEgressPolicy {
         self.sandbox.authorize(request)
     }
 
+    /// Authorize an outer HTTPS CONNECT without pretending it is the inner
+    /// HTTP request. Both layers enforce authority and SSRF constraints; the
+    /// sandbox authorization remains the returned metadata source.
+    pub fn authorize_connect(&self, request: &EgressRequest) -> EgressAuthorization {
+        if let Some(global) = &self.global {
+            let ceiling = global.authorize_connect(request);
+            if !ceiling.is_allowed() {
+                return EgressAuthorization::deny(format!(
+                    "node egress allow-ceiling denied the request: {}",
+                    ceiling.reason()
+                ));
+            }
+        }
+        self.sandbox.authorize_connect(request)
+    }
+
+    pub fn connect_requires_interception(&self, request: &EgressRequest) -> bool {
+        self.global
+            .as_ref()
+            .is_some_and(|global| global.connect_requires_interception(request))
+            || self.sandbox.connect_requires_interception(request)
+    }
+
     /// Pre-resolution variant: same composition applied to the hostname-only
     /// decision point (the PEP authorizes before DNS and again on the
     /// resolved IP; the ceiling gates both).
@@ -104,6 +127,23 @@ impl LayeredEgressPolicy {
             }
         }
         self.sandbox.authorize_hostname_without_resolved_ip(request)
+    }
+
+    pub fn authorize_connect_hostname_without_resolved_ip(
+        &self,
+        request: &EgressRequest,
+    ) -> EgressAuthorization {
+        if let Some(global) = &self.global {
+            let ceiling = global.authorize_connect_hostname_without_resolved_ip(request);
+            if !ceiling.is_allowed() {
+                return EgressAuthorization::deny(format!(
+                    "node egress allow-ceiling denied the request: {}",
+                    ceiling.reason()
+                ));
+            }
+        }
+        self.sandbox
+            .authorize_connect_hostname_without_resolved_ip(request)
     }
 }
 

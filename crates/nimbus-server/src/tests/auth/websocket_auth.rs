@@ -1,5 +1,12 @@
 use super::*;
 
+// This wait targets the exact status-projection mutation-drain pause. Runtime
+// startup can queue behind shared V8 work in the full server aggregate even
+// though the focused case completes quickly, so 30 seconds is a bounded safety
+// budget rather than a timing contract. Failure still names the missing pause,
+// and nextest reports the test as slow after 45 seconds.
+const STATUS_PROJECTION_PAUSE_TIMEOUT: Duration = Duration::from_secs(30);
+
 pub(crate) const WEBSOCKET_DISCONNECT_CLEANUP_CASE: DeterministicTestCase =
     DeterministicTestCase::new(
         "websocket-disconnect-cleanup",
@@ -250,7 +257,7 @@ async fn runtime_subscription_status_projection_precedes_initial_result() {
     let wait_pause = pause.clone();
     assert!(
         tokio::task::spawn_blocking(move || {
-            wait_pause.wait_until_entered(Duration::from_secs(10))
+            wait_pause.wait_until_entered(STATUS_PROJECTION_PAUSE_TIMEOUT)
         })
         .await
         .expect("status projection pause waiter should join"),

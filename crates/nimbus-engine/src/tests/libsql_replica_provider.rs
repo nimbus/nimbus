@@ -284,6 +284,41 @@ async fn libsql_replica_lease_is_lazy_and_renews_from_manual_clock_wakeup() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(libsql_replica_provider)]
+async fn libsql_tenant_creation_async_contract() {
+    with_libsql_replica_engine_config(|engine_config, _provider_config| async move {
+        let tenant_id = TenantId::new("libsql-replica-lifecycle").expect("tenant id should build");
+        let engine = Arc::new(
+            Engine::new_with_persistence_config(engine_config)
+                .await
+                .expect("replica-backed engine should create"),
+        );
+
+        engine
+            .create_tenant_async(tenant_id.clone())
+            .await
+            .expect("tenant should create");
+        assert!(matches!(
+            engine.create_tenant_async(tenant_id.clone()).await,
+            Err(Error::AlreadyExists(_))
+        ));
+        assert_eq!(
+            engine
+                .ensure_tenant_ready_async(tenant_id.clone())
+                .await
+                .expect("idempotent admission should load the existing tenant"),
+            crate::TenantAdmissionOutcome::Existing
+        );
+        engine
+            .ensure_tenant_exists_async(tenant_id)
+            .await
+            .expect("admitted tenant runtime should remain registered");
+        engine.quiesce().await;
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial(libsql_replica_provider)]
 async fn typed_libsql_replica_config_reads_seeded_remote_state_and_reopens() {
     with_shared_libsql_replica_engine_configs(
         |engine_config_a, engine_config_b, provider_config| async move {
@@ -1181,6 +1216,7 @@ fn seed_bound_collection_group_document(
                 .into_iter()
                 .map(|(field, value)| (field.to_string(), value)),
         ),
+        typed_fields: Default::default(),
         mode: WriteSetMode::Overwrite,
         precondition: WritePrecondition::default(),
         transforms: Vec::new(),

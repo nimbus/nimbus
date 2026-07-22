@@ -126,6 +126,9 @@ pub trait TenantRangeScan {
 
 /// Durable journal access used for recovery, subscriptions, and replication.
 pub trait DurableJournal {
+    /// Returns the store's current progress projection. Providers with a local
+    /// replica or cache may satisfy this from that projection; callers must not
+    /// use it to classify the outcome of a failed durable write.
     fn journal_progress(&self) -> Result<JournalProgress>;
     fn read_durable_journal_from(&self, sequence: SequenceNumber)
     -> Result<Vec<TenantEventRecord>>;
@@ -147,6 +150,12 @@ pub trait DurableJournal {
     fn read_commit_log_from(&self, sequence: SequenceNumber) -> Result<Vec<CommitEntry>>;
     /// Replays any durable records not yet applied, bringing
     /// `applied_sequence` back up to `latest_sequence`.
+    ///
+    /// This is also the authoritative freshness boundary for ambiguous-write
+    /// classification: every provider implementation must obtain its durable
+    /// head from the system of record during this call, not from a previously
+    /// cached progress snapshot. The engine uses that fresh head to decide
+    /// whether rollback is safe or crash-and-replay is mandatory.
     fn recover_durable_journal(&self) -> Result<JournalProgress>;
     /// Appends records to the durable journal without applying them.
     fn append_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()>;

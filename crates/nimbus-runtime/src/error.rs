@@ -28,6 +28,9 @@ pub enum NimbusRuntimeError {
     #[error("runtime system wall time timed out after {0:?}")]
     SystemTimeout(Duration),
 
+    #[error("runtime promise cannot settle because the event loop is idle")]
+    PromiseStalled,
+
     #[error("runtime heap memory limit exceeded ({0} MB)")]
     HeapLimitExceeded(usize),
 

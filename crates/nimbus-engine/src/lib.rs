@@ -18,8 +18,8 @@ pub use engine::{
     InitializedKeyProvider, MutationActor, MutationExecutionUnit, MutationIsolatePermit,
     ProjectionReconciliationSnapshot, ProjectionToken, SubscribeOptions,
     SubscriptionBootstrapCancellation, TableSchemaChangeEvent, TableSchemaChangeObserver,
-    TenantDeletionLease, TenantObjectMeta, TenantRuntimeLoadedEvent, TenantRuntimeObserver,
-    TenantRuntimeObserverIdentity,
+    TenantAdmissionOutcome, TenantDeletionLease, TenantObjectMeta, TenantRuntimeLoadedEvent,
+    TenantRuntimeObserver, TenantRuntimeObserverIdentity,
 };
 #[cfg(any(test, feature = "test-hooks"))]
 pub use engine::{CommitFaultHandle, Fault, commit_fault_labels};

@@ -6618,6 +6618,7 @@ dependencies = [
  "nimbus-convex",
  "nimbus-core",
  "nimbus-crypto",
+ "nimbus-engine",
  "nimbus-fs",
  "nimbus-kv",
  "nimbus-machine",
@@ -6742,6 +6743,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tracing",
  "workspace-hack",
 ]
 
@@ -6806,6 +6808,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
+ "tokio",
  "uuid",
  "workspace-hack",
 ]
@@ -6816,6 +6819,7 @@ version = "0.1.45"
 dependencies = [
  "nimbus-core",
  "serde",
+ "serde_json",
  "workspace-hack",
 ]
 
@@ -6912,6 +6916,7 @@ dependencies = [
  "rand 0.8.5",
  "redis",
  "redis-protocol",
+ "subtle",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",

@@ -16,7 +16,7 @@ use extenddb_core::types::{
 };
 use nimbus_core::{
     AtomicWrite, AtomicWriteBatch, DocumentId, DocumentLocator, PrincipalContext, TableName,
-    WriteKey, WritePrecondition, WriteSetMode,
+    TransactionSessionMode, TransactionSessionToken, WriteKey, WritePrecondition, WriteSetMode,
 };
 use nimbus_engine::Engine;
 use nimbus_tenant::TenantIsolationContext;
@@ -25,15 +25,105 @@ use crate::attribute_value::{fields_to_item, item_to_fields, validate_item};
 use crate::commands::{control_plane, stream};
 use crate::error::map_core_error;
 use crate::expression::{
-    CONDITION_FAILED_MESSAGE, apply_update, build_maps, check_condition, default_limits,
-    parse_update_expression, project_item, reject_key_updates, updated_attributes,
+    apply_update, build_maps, check_condition, default_limits, parse_update_expression,
+    project_item, reject_key_updates, updated_attributes,
 };
 use crate::key::encode_key;
 
-/// Whether a `ConditionExpression` is present and non-empty (an empty string is
-/// not a condition). Drives whether a write attaches an existence precondition.
-fn has_condition(condition: Option<&str>) -> bool {
-    condition.is_some_and(|expression| !expression.is_empty())
+/// Bound retries for a single-item optimistic transaction. A fresh transaction
+/// re-reads the item and re-evaluates its condition/update after every conflict.
+const MAX_SINGLE_ITEM_TRANSACTION_ATTEMPTS: usize = 32;
+
+struct SingleItemTransactionPlan<T> {
+    output: T,
+    writes: Vec<AtomicWrite>,
+    changes: Vec<stream::StreamChange>,
+}
+
+/// Execute one DynamoDB single-item operation in an engine transaction. The
+/// item snapshot, condition evaluation, update expression, returned image,
+/// data write, and stream effects share one conflict boundary.
+fn execute_single_item_transaction<T, F>(
+    engine: &Arc<Engine>,
+    context: &TenantIsolationContext,
+    mut plan: F,
+) -> Result<T, DynamoDbError>
+where
+    F: FnMut(
+        &TransactionSessionToken,
+        &PrincipalContext,
+    ) -> Result<SingleItemTransactionPlan<T>, DynamoDbError>,
+{
+    let principal = PrincipalContext::system();
+    for attempt in 1..=MAX_SINGLE_ITEM_TRANSACTION_ATTEMPTS {
+        let session = engine
+            .begin_transaction_session(
+                context.tenant_id().clone(),
+                principal.clone(),
+                TransactionSessionMode::ReadWrite,
+            )
+            .map_err(map_core_error)?;
+        let token = session.token;
+
+        let SingleItemTransactionPlan {
+            output,
+            mut writes,
+            changes,
+        } = match plan(&token, &principal) {
+            Ok(plan) => plan,
+            Err(error) => {
+                let _ =
+                    engine.rollback_transaction_session(context.tenant_id(), &token, &principal);
+                return Err(error);
+            }
+        };
+
+        if let Err(error) = stream::append_stream_writes(engine, context, &mut writes, &changes) {
+            let _ = engine.rollback_transaction_session(context.tenant_id(), &token, &principal);
+            return Err(error);
+        }
+        let batch = if writes.is_empty() {
+            None
+        } else {
+            match AtomicWriteBatch::new(writes) {
+                Ok(batch) => Some(batch),
+                Err(error) => {
+                    let _ = engine.rollback_transaction_session(
+                        context.tenant_id(),
+                        &token,
+                        &principal,
+                    );
+                    return Err(map_core_error(error));
+                }
+            }
+        };
+
+        match engine.commit_transaction_session(context.tenant_id(), &token, &principal, batch) {
+            Ok(_) => return Ok(output),
+            Err(error) if single_item_transaction_should_retry(&error) => {
+                if attempt == MAX_SINGLE_ITEM_TRANSACTION_ATTEMPTS {
+                    return Err(DynamoDbError::TransactionConflictException(format!(
+                        "single-item transaction exhausted {MAX_SINGLE_ITEM_TRANSACTION_ATTEMPTS} attempts: {error}"
+                    )));
+                }
+                std::thread::yield_now();
+            }
+            Err(error) => return Err(map_core_error(error)),
+        }
+    }
+
+    unreachable!("positive transaction-attempt bound must return from the retry loop")
+}
+
+fn single_item_transaction_should_retry(error: &nimbus_core::Error) -> bool {
+    matches!(
+        error,
+        nimbus_core::Error::Conflict {
+            retryable: true,
+            ..
+        } | nimbus_core::Error::OutOfRetention { .. }
+            | nimbus_core::Error::AlreadyExists(_)
+    )
 }
 
 /// Atomically create-or-replace `fields` under `id` in a **single** storage
@@ -72,6 +162,7 @@ pub(crate) fn overwrite_atomic_write(
     AtomicWrite::Set {
         key: WriteKey::from(DocumentLocator::new(table, id)),
         document: fields,
+        typed_fields: Default::default(),
         mode: WriteSetMode::Overwrite,
         precondition,
         transforms: Vec::new(),
@@ -95,28 +186,16 @@ pub(crate) fn delete_atomic_write(
 /// the condition check and the commit — surfaces from the Overwrite/Delete
 /// precondition as `AlreadyExists`/`DocumentNotFound`; for a conditional write
 /// that is a `ConditionalCheckFailedException`. All other errors map normally.
+#[cfg(test)]
 fn map_conditional_write_error(error: nimbus_core::Error) -> DynamoDbError {
     match error {
         nimbus_core::Error::AlreadyExists(_) | nimbus_core::Error::DocumentNotFound(_) => {
             DynamoDbError::ConditionalCheckFailedException(
-                CONDITION_FAILED_MESSAGE.to_owned(),
+                crate::expression::CONDITION_FAILED_MESSAGE.to_owned(),
                 None,
             )
         }
         other => map_core_error(other),
-    }
-}
-
-/// Choose the existence precondition for a write: unconditional writes use no
-/// precondition (DynamoDB last-writer-wins), while a conditional write pins the
-/// snapshot's existence state so the commit is rejected if it changed (F9). The
-/// engine models only existence-level preconditions, so this is existence-level
-/// OCC — the same bound the transactional path enforces.
-fn write_precondition(conditional: bool, existed: bool) -> WritePrecondition {
-    if conditional {
-        WritePrecondition::exists(existed)
-    } else {
-        WritePrecondition::default()
     }
 }
 
@@ -137,63 +216,51 @@ pub fn put_item(
     let id = primary_key_id(&input.item, &key_schema)?;
     let table = TableName::new(&input.table_name).map_err(map_core_error)?;
 
-    // The existing item backs both the condition gate and ReturnValues=ALL_OLD.
-    let existing = read_item(engine, context, &table, id.clone())?;
-
     let limits = default_limits();
-    let gate_item = existing.clone().unwrap_or_default();
-    check_condition(
-        input.condition_expression.as_deref(),
-        input.expression_attribute_names.as_ref(),
-        input.expression_attribute_values.as_ref(),
-        &gate_item,
-        &limits,
-    )?;
-
-    // PutItem fully *replaces* the item via a single atomic Overwrite write
-    // (create-or-replace in one storage transaction). A conditional put pins the
-    // snapshot's existence state so a concurrent race fails the precondition.
     let fields = item_to_fields(&input.item)?;
-    let conditional = has_condition(input.condition_expression.as_deref());
-    let precondition = write_precondition(conditional, existing.is_some());
-
-    // Capture a stream event (no-op unless the table has a stream enabled).
-    let event_name = if existing.is_some() {
-        StreamEventName::Modify
-    } else {
-        StreamEventName::Insert
-    };
     let keys = extract_key(&input.item, &key_schema);
-    let change = stream::StreamChange::new(
-        input.table_name.clone(),
-        event_name,
-        keys,
-        existing.clone(),
-        Some(input.item.clone()),
-        None,
-    );
-    stream::execute_atomic_write_batch_with_streams(
-        engine,
-        context,
-        vec![overwrite_atomic_write(table, id, fields, precondition)],
-        &[change],
-        |error| {
-            if conditional {
-                map_conditional_write_error(error)
-            } else {
-                map_core_error(error)
-            }
-        },
-    )?;
+    execute_single_item_transaction(engine, context, |token, principal| {
+        let existing =
+            read_item_in_transaction(engine, context, token, principal, &table, id.clone())?;
+        check_condition(
+            input.condition_expression.as_deref(),
+            input.expression_attribute_names.as_ref(),
+            input.expression_attribute_values.as_ref(),
+            &existing.clone().unwrap_or_default(),
+            &limits,
+        )?;
 
-    let attributes = match input.return_values {
-        ReturnValues::AllOld => existing,
-        _ => None,
-    };
-    Ok(PutItemOutput {
-        attributes,
-        consumed_capacity: None,
-        item_collection_metrics: None,
+        let event_name = if existing.is_some() {
+            StreamEventName::Modify
+        } else {
+            StreamEventName::Insert
+        };
+        let change = stream::StreamChange::new(
+            input.table_name.clone(),
+            event_name,
+            keys.clone(),
+            existing.clone(),
+            Some(input.item.clone()),
+            None,
+        );
+        let attributes = match input.return_values {
+            ReturnValues::AllOld => existing,
+            _ => None,
+        };
+        Ok(SingleItemTransactionPlan {
+            output: PutItemOutput {
+                attributes,
+                consumed_capacity: None,
+                item_collection_metrics: None,
+            },
+            writes: vec![overwrite_atomic_write(
+                table.clone(),
+                id.clone(),
+                fields.clone(),
+                WritePrecondition::exists(change.old_image.is_some()),
+            )],
+            changes: vec![change],
+        })
     })
 }
 
@@ -264,57 +331,50 @@ pub fn delete_item(
     let id = primary_key_id(&input.key, &key_schema)?;
     let table = TableName::new(&input.table_name).map_err(map_core_error)?;
 
-    let existing = read_item(engine, context, &table, id.clone())?;
-
     let limits = default_limits();
-    let gate_item = existing.clone().unwrap_or_default();
-    check_condition(
-        input.condition_expression.as_deref(),
-        input.expression_attribute_names.as_ref(),
-        input.expression_attribute_values.as_ref(),
-        &gate_item,
-        &limits,
-    )?;
-
-    if existing.is_some() {
-        // Atomic delete with an existence precondition for conditional deletes,
-        // closing the check-then-delete TOCTOU (F9). Unconditional deletes use
-        // no precondition (last-writer-wins).
-        let conditional = has_condition(input.condition_expression.as_deref());
-        let precondition = write_precondition(conditional, true);
-        // Capture a REMOVE stream event (no-op unless a stream is enabled).
-        let keys = extract_key(&input.key, &key_schema);
-        let change = stream::StreamChange::new(
-            input.table_name.clone(),
-            StreamEventName::Remove,
-            keys,
-            existing.clone(),
-            None,
-            None,
-        );
-        stream::execute_atomic_write_batch_with_streams(
-            engine,
-            context,
-            vec![delete_atomic_write(table, id, precondition)],
-            &[change],
-            |error| {
-                if conditional {
-                    map_conditional_write_error(error)
-                } else {
-                    map_core_error(error)
-                }
-            },
+    let keys = extract_key(&input.key, &key_schema);
+    execute_single_item_transaction(engine, context, |token, principal| {
+        let existing =
+            read_item_in_transaction(engine, context, token, principal, &table, id.clone())?;
+        check_condition(
+            input.condition_expression.as_deref(),
+            input.expression_attribute_names.as_ref(),
+            input.expression_attribute_values.as_ref(),
+            &existing.clone().unwrap_or_default(),
+            &limits,
         )?;
-    }
 
-    let attributes = match input.return_values {
-        ReturnValues::AllOld => existing,
-        _ => None,
-    };
-    Ok(DeleteItemOutput {
-        attributes,
-        consumed_capacity: None,
-        item_collection_metrics: None,
+        let (writes, changes) = match &existing {
+            Some(_) => (
+                vec![delete_atomic_write(
+                    table.clone(),
+                    id.clone(),
+                    WritePrecondition::exists(true),
+                )],
+                vec![stream::StreamChange::new(
+                    input.table_name.clone(),
+                    StreamEventName::Remove,
+                    keys.clone(),
+                    existing.clone(),
+                    None,
+                    None,
+                )],
+            ),
+            None => (Vec::new(), Vec::new()),
+        };
+        let attributes = match input.return_values {
+            ReturnValues::AllOld => existing,
+            _ => None,
+        };
+        Ok(SingleItemTransactionPlan {
+            output: DeleteItemOutput {
+                attributes,
+                consumed_capacity: None,
+                item_collection_metrics: None,
+            },
+            writes,
+            changes,
+        })
     })
 }
 
@@ -351,73 +411,74 @@ pub fn update_item(
     );
     reject_key_updates(&actions, &key_schema, &maps)?;
 
-    let old_item = read_item(engine, context, &table, id.clone())?;
+    execute_single_item_transaction(engine, context, |token, principal| {
+        let old_item =
+            read_item_in_transaction(engine, context, token, principal, &table, id.clone())?;
+        check_condition(
+            input.condition_expression.as_deref(),
+            input.expression_attribute_names.as_ref(),
+            input.expression_attribute_values.as_ref(),
+            &old_item.clone().unwrap_or_default(),
+            &limits,
+        )?;
 
-    let gate_item = old_item.clone().unwrap_or_default();
-    check_condition(
-        input.condition_expression.as_deref(),
-        input.expression_attribute_names.as_ref(),
-        input.expression_attribute_values.as_ref(),
-        &gate_item,
-        &limits,
-    )?;
-
-    // Upsert: base on the existing item, else the Key item (so a created item
-    // carries its key attributes), then apply the actions.
-    let mut new_item = old_item.clone().unwrap_or_else(|| input.key.clone());
-    apply_update(&actions, &mut new_item, &maps)?;
-
-    // Store the result via a single atomic Overwrite (create-or-replace in one
-    // storage transaction). A conditional update pins the snapshot's existence.
-    let fields = item_to_fields(&new_item)?;
-    let conditional = has_condition(input.condition_expression.as_deref());
-    let precondition = write_precondition(conditional, old_item.is_some());
-
-    // Capture a stream event (no-op unless the table has a stream enabled).
-    let event_name = if old_item.is_some() {
-        StreamEventName::Modify
-    } else {
-        StreamEventName::Insert
-    };
-    let keys = extract_key(&new_item, &key_schema);
-    let change = stream::StreamChange::new(
-        input.table_name.clone(),
-        event_name,
-        keys,
-        old_item.clone(),
-        Some(new_item.clone()),
-        None,
-    );
-    stream::execute_atomic_write_batch_with_streams(
-        engine,
-        context,
-        vec![overwrite_atomic_write(table, id, fields, precondition)],
-        &[change],
-        |error| {
-            if conditional {
-                map_conditional_write_error(error)
-            } else {
-                map_core_error(error)
+        let mut new_item = old_item.clone().unwrap_or_else(|| input.key.clone());
+        apply_update(&actions, &mut new_item, &maps)?;
+        let fields = item_to_fields(&new_item)?;
+        let event_name = if old_item.is_some() {
+            StreamEventName::Modify
+        } else {
+            StreamEventName::Insert
+        };
+        let change = stream::StreamChange::new(
+            input.table_name.clone(),
+            event_name,
+            extract_key(&new_item, &key_schema),
+            old_item.clone(),
+            Some(new_item.clone()),
+            None,
+        );
+        let attributes = match input.return_values {
+            ReturnValues::None => None,
+            ReturnValues::AllOld => old_item,
+            ReturnValues::AllNew => Some(new_item.clone()),
+            ReturnValues::UpdatedOld => old_item
+                .map(|item| updated_attributes(&item, &actions, &maps))
+                .filter(|item| !item.is_empty()),
+            ReturnValues::UpdatedNew => {
+                Some(updated_attributes(&new_item, &actions, &maps)).filter(|item| !item.is_empty())
             }
-        },
-    )?;
-
-    let attributes = match input.return_values {
-        ReturnValues::None => None,
-        ReturnValues::AllOld => old_item,
-        ReturnValues::AllNew => Some(new_item),
-        ReturnValues::UpdatedOld => old_item
-            .map(|item| updated_attributes(&item, &actions, &maps))
-            .filter(|item| !item.is_empty()),
-        ReturnValues::UpdatedNew => {
-            Some(updated_attributes(&new_item, &actions, &maps)).filter(|item| !item.is_empty())
-        }
-    };
-    Ok(UpdateItemOutput {
-        attributes,
-        consumed_capacity: None,
-        item_collection_metrics: None,
+        };
+        Ok(SingleItemTransactionPlan {
+            output: UpdateItemOutput {
+                attributes,
+                consumed_capacity: None,
+                item_collection_metrics: None,
+            },
+            writes: vec![overwrite_atomic_write(
+                table.clone(),
+                id.clone(),
+                fields,
+                WritePrecondition::exists(change.old_image.is_some()),
+            )],
+            changes: vec![change],
+        })
     })
+}
+
+fn read_item_in_transaction(
+    engine: &Arc<Engine>,
+    context: &TenantIsolationContext,
+    token: &TransactionSessionToken,
+    principal: &PrincipalContext,
+    table: &TableName,
+    id: DocumentId,
+) -> Result<Option<Item>, DynamoDbError> {
+    engine
+        .get_document_in_transaction(context.tenant_id(), token, principal, table, id)
+        .map_err(map_core_error)?
+        .map(|document| fields_to_item(&document.fields))
+        .transpose()
 }
 
 /// Read a stored item by id, mapping a missing document to `None`.
@@ -480,7 +541,9 @@ mod tests {
     use super::*;
     use extenddb_core::types::{AttributeValue, CreateTableInput};
     use nimbus_core::TenantId;
+    use nimbus_engine::commit_fault_labels;
     use serde_json::json;
+    use std::time::Duration;
 
     fn fixture() -> (Arc<Engine>, TenantIsolationContext, tempfile::TempDir) {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -1153,6 +1216,68 @@ mod tests {
         assert_eq!(
             stored(&engine, &ctx, "o1").unwrap().get("v"),
             Some(&AttributeValue::N("1".into()))
+        );
+    }
+
+    #[test]
+    fn concurrent_add_updates_retry_from_a_fresh_snapshot_without_lost_writes() {
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
+        put(
+            &engine,
+            &ctx,
+            json!({
+                "TableName": "Orders",
+                "Item": { "pk": {"S": "counter"}, "value": {"N": "0"} },
+            }),
+        )
+        .expect("seed counter");
+
+        let input = || -> UpdateItemInput {
+            serde_json::from_value(json!({
+                "TableName": "Orders",
+                "Key": { "pk": {"S": "counter"} },
+                "UpdateExpression": "ADD #value :one",
+                "ExpressionAttributeNames": { "#value": "value" },
+                "ExpressionAttributeValues": { ":one": {"N": "1"} },
+            }))
+            .unwrap()
+        };
+
+        let faults = engine.commit_fault_handle_for_testing();
+        faults.arm(commit_fault_labels::PREPARE_COMPLETE);
+        let first = std::thread::spawn({
+            let engine = engine.clone();
+            let ctx = ctx.clone();
+            let input = input();
+            move || update_item(&engine, &ctx, input)
+        });
+
+        let entered = faults.wait_until_entered(
+            commit_fault_labels::PREPARE_COMPLETE,
+            Duration::from_secs(5),
+        );
+        if entered {
+            update_item(&engine, &ctx, input()).expect("concurrent update should commit");
+        }
+        faults.release(commit_fault_labels::PREPARE_COMPLETE);
+        assert!(
+            entered,
+            "first update should reach the deterministic commit pause"
+        );
+        first
+            .join()
+            .expect("first update thread should join")
+            .expect("first update should retry and commit");
+
+        assert!(
+            faults.hit_count(commit_fault_labels::PREPARE_COMPLETE) >= 3,
+            "first attempt, concurrent commit, and retried attempt should all reach commit"
+        );
+        assert_eq!(
+            stored(&engine, &ctx, "counter").unwrap().get("value"),
+            Some(&AttributeValue::N("2".into())),
+            "both ADD operations must be preserved"
         );
     }
 }

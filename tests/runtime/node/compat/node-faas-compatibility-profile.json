@@ -7,7 +7,7 @@
   "engine": {
     "id": "v8_deno_core",
     "implementation_claim": "Node lanes are compatibility targets on the current in-process Deno/V8 runtime substrate, not embedded official Node or libnode runtimes.",
-    "new_engine_proof_harness": "docs/architecture/runtime/new-engine-proof-harness.md"
+    "new_engine_proof_harness": "docs/private/architecture/runtime/new-engine-proof-harness.md"
   },
   "support_statuses": [
     {
@@ -144,19 +144,19 @@
     {
       "id": "node-lts-lane-registry",
       "source_kind": "lane_registry",
-      "path": "docs/architecture/runtime/node-lts-compat/node-lts-lanes.json",
+      "path": "docs/private/architecture/runtime/node-lts-compat/node-lts-lanes.json",
       "description": "Canonical Node lane lifecycle, metadata, and default-role registry."
     },
     {
       "id": "node-compat-dashboard",
       "source_kind": "generated_dashboard",
-      "path": "docs/architecture/runtime/node-compat-evidence/latest/dashboard-summary.json",
+      "path": "docs/private/architecture/runtime/node-compat-evidence/latest/dashboard-summary.json",
       "description": "Generated Node fixture, canary, oracle, and inventory dashboard."
     },
     {
       "id": "node-compat-status",
       "source_kind": "generated_status",
-      "path": "docs/architecture/runtime/node-compat-evidence/latest/status-summary.json",
+      "path": "docs/private/architecture/runtime/node-compat-evidence/latest/status-summary.json",
       "description": "Generated suite-wide fixture status and classification denominator."
     },
     {
@@ -168,7 +168,7 @@
     {
       "id": "permission-model",
       "source_kind": "architecture_doc",
-      "path": "docs/architecture/runtime/permission-model.md",
+      "path": "docs/private/architecture/runtime/permission-model.md",
       "description": "Runtime permission profile split and production in-process authority boundary."
     },
     {
@@ -503,7 +503,7 @@
   ],
   "doc_generation": {
     "generator_planned_by": "NFRC10",
-    "source_manifest": "docs/architecture/runtime/node-faas-compatibility-profile.json",
+    "source_manifest": "docs/private/architecture/runtime/node-faas-compatibility-profile.json",
     "generated_targets": [
       {
         "path": "docs/runtimes/nodejs/reference/node-apis.md",

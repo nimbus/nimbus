@@ -262,6 +262,24 @@ impl ServerMessage {
         }
     }
 
+    pub(crate) fn retryable_request_error(
+        request_id: impl Into<String>,
+        code: &'static str,
+        message: impl Into<String>,
+    ) -> Self {
+        let request_id = request_id.into();
+        Self::Error {
+            request_id: Some(request_id.clone()),
+            error: PublicError::websocket_error(
+                code,
+                message,
+                ErrorSeverity::Error,
+                true,
+                Some(request_id),
+            ),
+        }
+    }
+
     pub(crate) fn session_error(code: &'static str, message: impl Into<String>) -> Self {
         Self::Error {
             request_id: None,

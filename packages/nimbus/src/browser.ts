@@ -373,7 +373,7 @@ export class NimbusClient {
         this.clearScheduledAuthRefresh();
         if (this.socketAuthentication?.socket === socket) {
           this.socketAuthentication.reject(
-            new Error("convex websocket closed during authentication"),
+            new Error("nimbus websocket closed during authentication"),
           );
           this.socketAuthentication = null;
         }
@@ -396,7 +396,7 @@ export class NimbusClient {
         };
         this.emitConnectionState();
         this.socketPromise = null;
-        reject(new Error("convex websocket connection failed"));
+        reject(new Error("nimbus websocket connection failed"));
       });
     });
 
@@ -524,7 +524,7 @@ export class NimbusClient {
   }
 
   private queueSubscription(entry: SubscriptionEntry<unknown>) {
-    const requestId = `convex-${++this.requestCounter}`;
+    const requestId = `nimbus-${++this.requestCounter}`;
     entry.pendingRequestId = requestId;
     entry.pendingSent = false;
     entry.subscriptionId = undefined;
@@ -661,7 +661,7 @@ export class NimbusClient {
         if (this.socketAuthentication?.socket === socket) {
           this.socketAuthentication = null;
         }
-        reject(new Error("convex websocket authentication timed out"));
+        reject(new Error("nimbus websocket authentication timed out"));
       }, 2000);
       this.socketAuthentication = { socket, token, resolve, reject };
       socket.send(

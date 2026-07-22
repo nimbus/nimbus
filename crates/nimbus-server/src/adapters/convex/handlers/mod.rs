@@ -31,7 +31,7 @@ use nimbus_compute::scheduling::ScheduleResponse;
 
 mod function_routes;
 mod http;
-mod registry_auth;
+pub(in crate::adapters::convex) mod registry_auth;
 mod scheduling;
 mod socket;
 

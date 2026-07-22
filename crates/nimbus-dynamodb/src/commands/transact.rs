@@ -328,6 +328,7 @@ fn plan_one(
                 write: AtomicWrite::Set {
                     key,
                     document: item_to_fields(&put.item)?,
+                    typed_fields: Default::default(),
                     mode: WriteSetMode::Overwrite,
                     precondition: precond,
                     transforms: Vec::new(),
@@ -439,6 +440,7 @@ fn plan_one(
                 write: AtomicWrite::Set {
                     key,
                     document,
+                    typed_fields: Default::default(),
                     mode: WriteSetMode::Overwrite,
                     precondition: precond,
                     transforms: Vec::new(),

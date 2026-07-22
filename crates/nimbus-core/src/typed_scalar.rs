@@ -12,10 +12,14 @@ use crate::encoding::base64_encode_standard;
 /// This stays protocol-neutral and lives in `nimbus-core` so adapters can
 /// translate transport-specific scalar encodings without inventing their own
 /// storage-visible shims.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TypedScalarValue {
     Timestamp { value: Timestamp },
+    FirestoreTimestamp { rfc3339: String },
+    Bytes { data: Vec<u8> },
+    Reference { resource_name: String },
+    GeoPoint { latitude: f64, longitude: f64 },
     SpecialDouble { value: SpecialDouble },
     ObjectId { hex: String },
     Binary { subtype: u8, data: Vec<u8> },
@@ -38,6 +42,16 @@ impl TypedScalarValue {
     pub fn projected_json(&self) -> Value {
         match self {
             Self::Timestamp { value } => Value::Number(Number::from(value.0)),
+            Self::FirestoreTimestamp { rfc3339 } => Value::String(rfc3339.clone()),
+            Self::Bytes { data } => Value::String(base64_encode_standard(data)),
+            Self::Reference { resource_name } => Value::String(resource_name.clone()),
+            Self::GeoPoint {
+                latitude,
+                longitude,
+            } => serde_json::json!({
+                "latitude": latitude,
+                "longitude": longitude,
+            }),
             Self::SpecialDouble { value } => value.projected_json(),
             Self::ObjectId { hex } => Value::String(hex.clone()),
             Self::Binary { data, .. } => {
@@ -142,6 +156,34 @@ impl StoredValue {
             Self::List { items } => {
                 Value::Array(items.iter().map(StoredValue::projected_json).collect())
             }
+        }
+    }
+
+    /// Whether this value tree carries semantics that its plain JSON
+    /// projection cannot represent losslessly.
+    pub fn contains_typed_metadata(&self) -> bool {
+        match self {
+            Self::Json { .. } => false,
+            Self::TypedScalar { .. } => true,
+            Self::Map { entries } => entries.values().any(Self::contains_typed_metadata),
+            Self::List { items } => items.iter().any(Self::contains_typed_metadata),
+        }
+    }
+
+    /// Build a navigable plain value tree. Adapters use this as the base when
+    /// updating one nested path while retaining typed metadata on siblings.
+    pub fn from_json_tree(value: Value) -> Self {
+        match value {
+            Value::Object(entries) => Self::Map {
+                entries: entries
+                    .into_iter()
+                    .map(|(key, value)| (key, Self::from_json_tree(value)))
+                    .collect(),
+            },
+            Value::Array(items) => Self::List {
+                items: items.into_iter().map(Self::from_json_tree).collect(),
+            },
+            value => Self::Json { value },
         }
     }
 }
@@ -283,6 +325,19 @@ mod tests {
     #[test]
     fn typed_scalar_serde_roundtrip() {
         let values = vec![
+            TypedScalarValue::FirestoreTimestamp {
+                rfc3339: "2024-01-02T03:04:05.123456789Z".into(),
+            },
+            TypedScalarValue::Bytes {
+                data: vec![1, 2, 3],
+            },
+            TypedScalarValue::Reference {
+                resource_name: "projects/demo/databases/(default)/documents/cities/SF".into(),
+            },
+            TypedScalarValue::GeoPoint {
+                latitude: 37.7749,
+                longitude: -122.4194,
+            },
             TypedScalarValue::ObjectId {
                 hex: "507f1f77bcf86cd799439011".into(),
             },
@@ -310,6 +365,24 @@ mod tests {
             let back: TypedScalarValue = serde_json::from_str(&json).expect("should deserialize");
             assert_eq!(value, back);
         }
+    }
+
+    #[test]
+    fn nested_typed_metadata_is_detected_recursively() {
+        let plain = StoredValue::from_json_tree(json!({ "nested": [1, 2, 3] }));
+        assert!(!plain.contains_typed_metadata());
+
+        let typed = StoredValue::Map {
+            entries: BTreeMap::from([(
+                "nested".to_owned(),
+                StoredValue::List {
+                    items: vec![StoredValue::TypedScalar {
+                        value: TypedScalarValue::Bytes { data: vec![1, 2] },
+                    }],
+                },
+            )]),
+        };
+        assert!(typed.contains_typed_metadata());
     }
 
     #[test]

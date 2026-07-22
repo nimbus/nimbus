@@ -62,7 +62,7 @@ import nodeFs from "node:fs";
 
 Product default is a routing default, not an evidence priority. Current lane
 support phase, release metadata, and evidence policy come from
-`docs/architecture/runtime/node-lts-compat/node-lts-lanes.json`.
+`docs/private/architecture/runtime/node-lts-compat/node-lts-lanes.json`.
 
 ## Configure The Node Target
 
@@ -98,5 +98,5 @@ Maintainers refresh lane evidence with the workflow in
 [refreshing Node.js runtime evidence](evidence/refreshing.md).
 
 Deep engineering evidence remains available in
-`docs/architecture/runtime/node-compat-evidence/latest/` and
-`docs/architecture/runtime/node-compat-surface-matrix.md`.
+`docs/private/architecture/runtime/node-compat-evidence/latest/` and
+`docs/private/architecture/runtime/node-compat-surface-matrix.md`.

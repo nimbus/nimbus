@@ -79,7 +79,7 @@ async fn get_value(
     Path(params): Path<KvValuePath>,
 ) -> Result<Response, KvRestError> {
     let tenant_id = authenticate(&headers, &config)?;
-    ensure_tenant(&state, &tenant_id)?;
+    ensure_tenant(&state, &tenant_id).await?;
     let namespace = resolve_namespace(&config, &params.account_id, &params.namespace_id)?;
     let storage_key = storage_key(&namespace, &params.key)?;
     let entry = state
@@ -102,7 +102,7 @@ async fn get_metadata(
     Path(params): Path<KvValuePath>,
 ) -> Result<Response, KvRestError> {
     let tenant_id = authenticate(&headers, &config)?;
-    ensure_tenant(&state, &tenant_id)?;
+    ensure_tenant(&state, &tenant_id).await?;
     let namespace = resolve_namespace(&config, &params.account_id, &params.namespace_id)?;
     let storage_key = storage_key(&namespace, &params.key)?;
     let entry = state
@@ -122,7 +122,7 @@ async fn put_value(
     body: Bytes,
 ) -> Result<Response, KvRestError> {
     let tenant_id = authenticate(&headers, &config)?;
-    ensure_tenant(&state, &tenant_id)?;
+    ensure_tenant(&state, &tenant_id).await?;
     let namespace = resolve_namespace(&config, &params.account_id, &params.namespace_id)?;
     if body.len() > MAX_VALUE_BYTES {
         return Err(KvRestError::bad_request(format!(
@@ -149,7 +149,7 @@ async fn delete_value(
     Path(params): Path<KvValuePath>,
 ) -> Result<Response, KvRestError> {
     let tenant_id = authenticate(&headers, &config)?;
-    ensure_tenant(&state, &tenant_id)?;
+    ensure_tenant(&state, &tenant_id).await?;
     let namespace = resolve_namespace(&config, &params.account_id, &params.namespace_id)?;
     let storage_key = storage_key(&namespace, &params.key)?;
     let _ = state
@@ -167,7 +167,7 @@ async fn list_keys(
     Query(query): Query<ListQuery>,
 ) -> Result<Response, KvRestError> {
     let tenant_id = authenticate(&headers, &config)?;
-    ensure_tenant(&state, &tenant_id)?;
+    ensure_tenant(&state, &tenant_id).await?;
     let namespace = resolve_namespace(&config, &params.account_id, &params.namespace_id)?;
     let limit = query.limit.unwrap_or(DEFAULT_LIST_LIMIT);
     if limit > MAX_LIST_LIMIT {
@@ -231,11 +231,13 @@ fn authenticate(headers: &HeaderMap, config: &CloudflareConfig) -> Result<Tenant
     Ok(binding.tenant.clone())
 }
 
-fn ensure_tenant(state: &Arc<AppState>, tenant_id: &TenantId) -> Result<(), KvRestError> {
-    match state.engine.create_tenant(tenant_id.clone()) {
-        Ok(()) | Err(Error::AlreadyExists(_)) => Ok(()),
-        Err(error) => Err(KvRestError::from_core(error)),
-    }
+async fn ensure_tenant(state: &Arc<AppState>, tenant_id: &TenantId) -> Result<(), KvRestError> {
+    state
+        .engine
+        .ensure_tenant_ready_async(tenant_id.clone())
+        .await
+        .map(|_| ())
+        .map_err(KvRestError::from_core)
 }
 
 fn resolve_namespace(
@@ -536,6 +538,16 @@ mod tests {
             let fixture = EngineFixture::new(|path| {
                 Engine::new_with_embedded_provider(path, EmbeddedProviderKind::Redb)
             });
+            Self::from_fixture(fixture)
+        }
+
+        fn with_memory_provider() -> Self {
+            Self::from_fixture(EngineFixture::new(|path| {
+                Engine::new_with_memory_persistence(path)
+            }))
+        }
+
+        fn from_fixture(fixture: EngineFixture<Engine>) -> Self {
             let tenant = TenantId::new("tenant-a").expect("tenant id should build");
             let config = CloudflareConfig::new(CloudflareBindingRegistry::new(
                 vec![KvNamespaceBinding {
@@ -555,6 +567,37 @@ mod tests {
                 router,
             }
         }
+    }
+
+    #[tokio::test]
+    async fn cloudflare_kv_tenant_admission_uses_provider_lifecycle() {
+        let app = KvTestApp::with_memory_provider();
+        let base = "/client/v4/accounts/acct/storage/kv/namespaces/namespace-prod";
+        let overlong_key = "k".repeat(MAX_KEY_BYTES + 1);
+        let (status, _, body) = request(
+            test_router(&app),
+            axum::http::Method::PUT,
+            &format!("{base}/values/{overlong_key}"),
+            Some(AUTH),
+            "value".to_string(),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "validation body: {}",
+            json_body(&body)
+        );
+        assert_eq!(
+            json_body(&body)["errors"][0]["message"],
+            format!("Workers KV keys must be at most {MAX_KEY_BYTES} bytes"),
+            "the request must pass tenant admission before stopping at the provider-independent key boundary"
+        );
+        app._fixture
+            .engine()
+            .ensure_tenant_exists_async(TenantId::new("tenant-a").expect("tenant"))
+            .await
+            .expect("async admission must register the provider tenant");
     }
 
     fn test_app() -> KvTestApp {

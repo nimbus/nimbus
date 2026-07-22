@@ -59,6 +59,9 @@ nimbus backup restore --in backups/nimbus-backup.json --data-dir ./restored
 
 - `--provider` selects the embedded backend (`sqlite`, the default, or
   `redb`).
+- The command intentionally has no PostgreSQL, MySQL, or libSQL provider
+  value. It constructs an embedded engine and cannot be pointed at an
+  external-provider deployment; use the backend-native procedures below.
 - Each tenant is captured as a point-in-time restore archive at its
   latest committed sequence; the file records one archive per tenant.
 - `create` refuses to overwrite an existing output file.

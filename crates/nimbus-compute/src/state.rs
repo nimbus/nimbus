@@ -174,7 +174,7 @@ impl ComputeState {
 
     /// Creates a tenant and applies the active adapter schema through the
     /// compute-owned lifecycle entrypoint.
-    pub async fn create_tenant(
+    pub async fn create_tenant_async(
         &self,
         tenant_id: nimbus_core::TenantId,
     ) -> Result<(), ComputeError> {
@@ -491,7 +491,7 @@ mod tests {
         let tenant_id =
             nimbus_core::TenantId::new("retry-delete").expect("tenant id should be valid");
         state
-            .create_tenant(tenant_id.clone())
+            .create_tenant_async(tenant_id.clone())
             .await
             .expect("tenant should create");
         let original = state
@@ -528,7 +528,7 @@ mod tests {
             .expect("retry should finish the fenced deletion");
         assert_eq!(teardown.attempts.load(Ordering::Acquire), 2);
         state
-            .create_tenant(tenant_id.clone())
+            .create_tenant_async(tenant_id.clone())
             .await
             .expect("tenant should recreate after completed deletion");
         let recreated = state

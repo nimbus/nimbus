@@ -59,3 +59,57 @@ embedded JavaScript file retains its original Apache-2.0 SPDX/copyright header.
 See docs/private/plans/archive/binary-embedded-package-distribution-plan.md (BPD1) and
 scripts/stage-embedded-packages.mjs.
 ================================================================================
+object_store — https://github.com/apache/arrow-rs-object-store
+Licensed under MIT or the Apache License, Version 2.0.
+
+Apache Arrow Object Store
+Copyright 2020-2024 The Apache Software Foundation
+
+This product includes software developed at
+The Apache Software Foundation (http://www.apache.org/).
+
+Nimbus uses a locally patched copy at third_party/object_store-0.14.0 while
+upstream dependency updates are pending. The complete upstream license and
+notice are retained in that directory.
+================================================================================
+s3s — https://github.com/Nugine/s3s
+Licensed under the Apache License, Version 2.0; a copy is retained at
+third_party/s3s-0.14.0/LICENSE.
+
+Nimbus uses a locally patched copy at third_party/s3s-0.14.0 while upstream
+dependency updates are pending.
+================================================================================
+brotli — https://github.com/dropbox/rust-brotli
+brotli-decompressor — https://github.com/dropbox/rust-brotli-decompressor
+Licensed under the 3-Clause BSD License or the MIT License. Nimbus uses locally
+patched copies at third_party/brotli-3.5.0 and
+third_party/brotli-decompressor-2.5.1 to prevent duplicate exported C symbols.
+
+Copyright (c) 2016 Dropbox, Inc.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice,
+   this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its contributors
+   may be used to endorse or promote products derived from this software
+   without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+================================================================================

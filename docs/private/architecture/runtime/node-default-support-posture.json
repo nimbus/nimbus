@@ -9,7 +9,7 @@
   "generated_from": [
     "tests/runtime/node/compat/node-compat-evidence/latest/status-summary.json",
     "tests/runtime/node/classifications/*.json",
-    "docs/plans/node-default-runtime-support-hardening-plan.md"
+    "docs/private/plans/archive/node-default-runtime-support-hardening-plan.md"
   ],
   "lanes": {
     "node20": {

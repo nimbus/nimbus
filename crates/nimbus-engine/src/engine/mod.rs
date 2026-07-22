@@ -86,6 +86,7 @@ pub(crate) use queries::{
     paginate_documents_for_docs_with_principal, query_documents_for_docs_with_principal,
 };
 pub use subscriptions::{SubscribeOptions, SubscriptionBootstrapCancellation};
+pub use tenants::TenantAdmissionOutcome;
 
 /// Top-level Nimbus engine coordinator.
 pub struct Engine {

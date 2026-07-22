@@ -1337,6 +1337,7 @@ functions.cloudEvent("syncUser", async (event) => {
             AtomicWriteBatch::new(vec![AtomicWrite::Set {
                 key: WriteKey::from(ResourcePathBinding::new(locator, document_path)),
                 document: fields,
+                typed_fields: Default::default(),
                 mode: WriteSetMode::Overwrite,
                 precondition: WritePrecondition::default(),
                 transforms: Vec::new(),

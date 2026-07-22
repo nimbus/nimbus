@@ -16,6 +16,7 @@ use redis_protocol::resp3::{
     encode::complete as resp3_encode,
     types::{FrameMap, OwnedFrame as Resp3Frame, Resp3Frame as Resp3FrameTrait, RespVersion},
 };
+use subtle::ConstantTimeEq;
 use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -121,16 +122,17 @@ impl CredentialRegistry {
         password: &str,
     ) -> Option<CredentialBinding> {
         match username {
-            Some(username) => self
-                .bindings
-                .get(username)
-                .filter(|binding| binding.password == password)
-                .cloned(),
+            Some(username) => self.bindings.values().find_map(|binding| {
+                let username_matches =
+                    constant_time_eq(binding.username.as_bytes(), username.as_bytes());
+                let password_matches =
+                    constant_time_eq(binding.password.as_bytes(), password.as_bytes());
+                (username_matches & password_matches).then(|| binding.clone())
+            }),
             None => {
-                let mut matches = self
-                    .bindings
-                    .values()
-                    .filter(|binding| binding.password == password);
+                let mut matches = self.bindings.values().filter(|binding| {
+                    constant_time_eq(binding.password.as_bytes(), password.as_bytes())
+                });
                 let binding = matches.next()?;
                 if matches.next().is_some() {
                     None
@@ -140,6 +142,13 @@ impl CredentialRegistry {
             }
         }
     }
+}
+
+fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    bool::from(left.ct_eq(right))
 }
 
 #[derive(Debug, Clone)]
@@ -966,4 +975,49 @@ fn generate_dev_password() -> String {
     let mut bytes = [0_u8; 24];
     OsRng.fill_bytes(&mut bytes);
     hex::encode(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn registry_authentication_checks_username_and_password() {
+        let shared_password = generate_dev_password();
+        let wrong_password = generate_dev_password();
+        let registry = CredentialRegistry::new()
+            .bind(
+                "tenant-a",
+                shared_password.clone(),
+                TenantId::new("tenant-a").unwrap(),
+            )
+            .bind(
+                "tenant-b",
+                shared_password.clone(),
+                TenantId::new("tenant-b").unwrap(),
+            );
+
+        assert_eq!(
+            registry
+                .authenticate(Some("tenant-a"), &shared_password)
+                .expect("both credential parts match")
+                .tenant
+                .as_str(),
+            "tenant-a"
+        );
+        assert!(
+            registry
+                .authenticate(Some("tenant-a"), &wrong_password)
+                .is_none()
+        );
+        assert!(
+            registry
+                .authenticate(Some("unknown"), &shared_password)
+                .is_none()
+        );
+        assert!(
+            registry.authenticate(None, &shared_password).is_none(),
+            "password-only authentication must reject ambiguous bindings"
+        );
+    }
 }

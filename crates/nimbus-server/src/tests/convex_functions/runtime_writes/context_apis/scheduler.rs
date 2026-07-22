@@ -319,16 +319,15 @@ export {};
         .await
         .expect("query scheduler rejection should parse");
     assert_ne!(status, StatusCode::OK, "{body}");
-    // Two rejection layers exist: the JS context contract refuses to expose
-    // ctx.scheduler to query handlers, and the Rust invocation-kind guard
-    // rejects the host op if a bundle bypasses the context object. Accept
-    // either message so the test pins the behavior, not the layer.
+    assert_eq!(body["error"]["code"], json!("service.internal"), "{body}");
+    assert_eq!(
+        body["error"]["message"],
+        json!("An internal server error occurred."),
+        "runtime authorization details must not cross the public boundary: {body}"
+    );
     assert!(
-        body["error"]["message"].as_str().is_some_and(|message| {
-            message.contains("cannot schedule")
-                || message.contains("not available for query handlers")
-        }),
-        "rejection should name the scheduling guard: {body}"
+        body["error"]["requestId"].as_str().is_some(),
+        "redacted failures need an operator correlation id: {body}"
     );
 
     let documents = api.list_documents("demo", "messages").await;

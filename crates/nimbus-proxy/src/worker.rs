@@ -693,7 +693,10 @@ async fn handle_client(
         .clone()
         .with_resolved_ip(upstream_addr.ip());
     phase_recorder.record(EgressProxyRequestPhase::AuthorizeResolvedIp);
-    let authorization = active_policy.policy.authorize(&egress_request);
+    let authorization = match &parsed.mode {
+        ProxyRequestMode::ConnectTunnel => active_policy.policy.authorize_connect(&egress_request),
+        ProxyRequestMode::ForwardHttp { .. } => active_policy.policy.authorize(&egress_request),
+    };
     if !authorization.is_allowed() {
         return deny_terminal(
             &mut client,
@@ -744,7 +747,12 @@ async fn handle_client(
             )
             .await
         }
-        ProxyRequestMode::ConnectTunnel => match classify_connect(matched_rule_ref) {
+        ProxyRequestMode::ConnectTunnel => match classify_connect(
+            matched_rule_ref,
+            active_policy
+                .policy
+                .connect_requires_interception(&egress_request),
+        ) {
             ConnectInterceptAction::Splice => {
                 let allowed_decision_log = EgressDecisionLog::allowed(
                     &request_id,
@@ -846,7 +854,7 @@ async fn handle_client(
                     }
                 }
             }
-            ConnectInterceptAction::Intercept(_) => {
+            ConnectInterceptAction::Intercept => {
                 let Some(tls_authority) = context.tls_authority.as_ref() else {
                     return deny_terminal(
                         &mut client,
@@ -1290,7 +1298,14 @@ fn authorize_hostname_before_dns(
     policy: &LayeredEgressPolicy,
     parsed: &ParsedProxyRequest,
 ) -> nimbus_egress::EgressAuthorization {
-    policy.authorize_hostname_without_resolved_ip(&parsed.egress_request)
+    match &parsed.mode {
+        ProxyRequestMode::ConnectTunnel => {
+            policy.authorize_connect_hostname_without_resolved_ip(&parsed.egress_request)
+        }
+        ProxyRequestMode::ForwardHttp { .. } => {
+            policy.authorize_hostname_without_resolved_ip(&parsed.egress_request)
+        }
+    }
 }
 
 fn find_matched_rule<'a>(

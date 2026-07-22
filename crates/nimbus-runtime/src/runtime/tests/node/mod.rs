@@ -2564,8 +2564,8 @@ fn node_compat_posture_paths_for_selector(
     selector: impl Fn(&serde_json::Value) -> bool,
 ) -> Vec<String> {
     let lane_name = node_compat_lane_name(lane);
-    let posture_path =
-        node_compat_repo_root().join("docs/architecture/runtime/node-default-support-posture.json");
+    let posture_path = node_compat_repo_root()
+        .join("docs/private/architecture/runtime/node-default-support-posture.json");
     let posture: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&posture_path).unwrap_or_else(|error| {
             panic!(

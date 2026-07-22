@@ -1540,10 +1540,6 @@ def main() -> int:
             repo / "docs/private/architecture/runtime/node-default-support-posture.json",
             repo / "docs/private/architecture/runtime/node-default-support-posture.md",
         ),
-        (
-            repo / "docs/architecture/runtime/node-default-support-posture.json",
-            repo / "docs/architecture/runtime/node-default-support-posture.md",
-        ),
     )
     posture = build_posture(repo)
     errors = validate(posture)
