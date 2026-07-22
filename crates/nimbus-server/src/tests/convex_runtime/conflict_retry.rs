@@ -10,7 +10,12 @@ use crate::tests::{
     convex_registry_with_routes_and_bundle, convex_team_bearer, router_for_convex_team,
 };
 
-const WAIT_TIMEOUT: Duration = Duration::from_secs(10);
+// These waits synchronize with a real V8 mutation running on the shared CI
+// host. Under the full server suite, startup can exceed ten seconds before the
+// mutation reaches the armed phase. Keep the wait bounded below nextest's
+// 45-second slow-test termination while leaving the behavioral assertions
+// unchanged.
+const WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn conflict_retry_registry() -> crate::ConvexRegistry {
     convex_registry_with_routes_and_bundle(
