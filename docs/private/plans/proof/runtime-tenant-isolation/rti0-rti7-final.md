@@ -6,8 +6,8 @@ Implementation branch: `codex/review-runtime-tenant-isolation-plan`
 
 Plan baseline: `93124d87e` (`origin/main` when the plan was promoted)
 
-Final implementation baseline: `c789db2fd` (`origin/main` after rebasing the
-completed implementation, including PRs #225, #226, and #229)
+Final implementation baseline: `42b5073ee` (`origin/main` after rebasing the
+completed implementation, including PRs #225, #226, #229, and #232)
 
 Pull request: #227
 

@@ -16,7 +16,7 @@ and pointer compression; this plan owns reconciliation where the implementation
 does not structurally enforce PIR's stated same-owner reuse invariant.
 
 Final implementation verification was rebased onto `origin/main` at
-`c789db2fd`, including PRs #225, #226, and #229.
+`42b5073ee`, including PRs #225, #226, #229, and #232.
 
 Priority: completed before Nimbus makes a multi-tenant launch claim. The
 distinct-tenant default path is currently partitioned, but non-default routing
