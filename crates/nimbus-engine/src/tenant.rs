@@ -221,6 +221,7 @@ pub struct TenantEngineDiagnosticsSnapshot {
     pub commit_phases: CommitPhaseMetricsSnapshot,
     pub tenant_write_rate: TenantWriteRateStats,
     pub libsql_replica_freshness: Option<LibsqlReplicaFreshnessStats>,
+    pub provider_write_pipeline: Option<nimbus_storage::ProviderWritePipelineDiagnostic>,
 }
 
 impl Drop for TenantOperationGuard {
@@ -644,6 +645,7 @@ impl TenantRuntime {
             commit_phases,
             tenant_write_rate: self.write_rate.stats(),
             libsql_replica_freshness: self.store.libsql_replica_freshness_stats(),
+            provider_write_pipeline: self.store.provider_write_pipeline_diagnostic(),
         }
     }
 }

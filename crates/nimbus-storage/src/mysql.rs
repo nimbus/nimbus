@@ -49,6 +49,7 @@ mod table_lifecycle;
 mod trigger_delivery;
 mod trigger_invocations;
 mod write;
+mod write_pipeline;
 mod write_schema_events;
 
 use self::backend::*;
@@ -120,6 +121,7 @@ pub struct MySqlTenantStore {
     tenant_id: TenantId,
     database_name: String,
     schema_cache: Arc<RwLock<Option<Schema>>>,
+    pipeline_metrics: Arc<crate::sql::write_pipeline::SqlWritePipelineMetrics>,
     pub(crate) retention_floor: Arc<RetentionFloor>,
 }
 
@@ -146,6 +148,7 @@ pub struct MySqlWriteTransaction {
     provider: MySqlProvider,
     database_name: String,
     schema_cache: Arc<RwLock<Option<Schema>>>,
+    pipeline_metrics: Arc<crate::sql::write_pipeline::SqlWritePipelineMetrics>,
     conn: Option<Conn>,
     commit_writes: Vec<WriteOp>,
     tenant_events: Vec<TenantEventKind>,
@@ -170,6 +173,10 @@ impl MySqlTenantStore {
             tenant_id: registration.tenant_id,
             database_name: registration.database_name,
             schema_cache: Arc::new(RwLock::new(None)),
+            pipeline_metrics: Arc::new(crate::sql::write_pipeline::SqlWritePipelineMetrics::new(
+                "mysql",
+                crate::sql::write_pipeline::MYSQL_MAX_IN_FLIGHT_OPERATIONS,
+            )),
             retention_floor: RetentionFloor::new(),
         }
     }
@@ -196,6 +203,10 @@ impl MySqlTenantStore {
 
     pub fn check_fault(&self, point: FaultPoint) -> Result<()> {
         self.provider.fault_injector.check(point)
+    }
+
+    pub fn write_pipeline_diagnostic(&self) -> crate::ProviderWritePipelineDiagnostic {
+        self.pipeline_metrics.snapshot()
     }
 
     pub fn block_on<F, T>(&self, future: F) -> Result<T>

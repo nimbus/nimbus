@@ -61,6 +61,29 @@ pub struct IndexVersionStorageDiagnostic {
     pub max_sequence: Option<SequenceNumber>,
 }
 
+/// Bounded-cardinality counters for the provider write pipeline of one loaded
+/// tenant. SQL text, tenant identifiers, and statement error strings are
+/// deliberately excluded.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderWritePipelineDiagnostic {
+    pub adapter: String,
+    pub configured_max_in_flight: u64,
+    pub batch_attempt_count: u64,
+    pub journal_record_count: u64,
+    pub journal_statement_count: u64,
+    /// Operations admitted through the bounded provider pipeline. This is not
+    /// a count of SQL statements issued internally while applying a record.
+    pub provider_operation_count: u64,
+    pub max_observed_in_flight: u64,
+    /// Cancellations observed at pipeline admission or by an admitted
+    /// operation. Cancellations are also included in `error_count`.
+    pub cancellation_count: u64,
+    /// Errors returned by admitted pipeline operations. Transaction setup,
+    /// validation, and commit errors are reported by their owning diagnostics.
+    pub error_count: u64,
+    pub elapsed_nanos: u64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StorageFeature {

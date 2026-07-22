@@ -343,6 +343,26 @@ impl PostgresTenantStore {
         expected_previous: SequenceNumber,
         records: &[TenantEventRecord],
     ) -> CommitterLeaseResult<()> {
+        self.fenced_append_and_apply_durable_records_batch_cancellable(
+            owner_id,
+            epoch,
+            expected_previous,
+            records,
+            || Ok(()),
+        )
+    }
+
+    pub fn fenced_append_and_apply_durable_records_batch_cancellable<Check>(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        expected_previous: SequenceNumber,
+        records: &[TenantEventRecord],
+        check_cancel: Check,
+    ) -> CommitterLeaseResult<()>
+    where
+        Check: Fn() -> Result<()> + Send + 'static,
+    {
         if records.is_empty() {
             return Err(Error::InvalidInput(
                 "fenced durable apply requires at least one record".to_string(),
@@ -352,7 +372,7 @@ impl PostgresTenantStore {
         let owner_id = owner_id.to_string();
         let fenced_owner_id = owner_id.clone();
         let records = records.to_vec();
-        let result = self.execute_write(move |transaction| {
+        let result = self.execute_write_cancellable(check_cancel, move |transaction| {
             let durable_sequence = records
                 .last()
                 .expect("non-empty fenced durable apply batch")
@@ -372,8 +392,7 @@ impl PostgresTenantStore {
                 transaction.applied_sequence()?,
                 records[0].sequence,
             )?;
-            transaction.append_durable_records_batch(&records)?;
-            transaction.apply_durable_records_batch(&records)
+            transaction.append_and_apply_durable_records_batch(&records)
         });
         match result {
             Ok(_) => Ok(()),
@@ -821,6 +840,7 @@ impl PostgresWriteTransaction {
             tenant_id,
             schema_name,
             schema_cache: store.schema_cache.clone(),
+            pipeline_metrics: store.pipeline_metrics.clone(),
             client: Some(client),
             commit_writes: Vec::new(),
             tenant_events: Vec::new(),
@@ -1313,48 +1333,6 @@ impl PostgresWriteTransaction {
         Ok(())
     }
 
-    pub fn append_durable_records_batch(&mut self, records: &[TenantEventRecord]) -> Result<()> {
-        self.check_cancel()?;
-        if records.is_empty() {
-            return Ok(());
-        }
-
-        let mut next = self.latest_sequence()?.0.saturating_add(1);
-        let query = format!(
-            "INSERT INTO {} (sequence, record_blob) VALUES ($1, $2)",
-            qualified_table(&self.schema_name, "commit_log")
-        );
-        for record in records {
-            self.check_cancel()?;
-            if record.sequence.0 != next {
-                return Err(Error::Internal(format!(
-                    "durable journal append expected sequence {}, got {}",
-                    next, record.sequence.0
-                )));
-            }
-            let sequence = i64_from_sequence(record.sequence)?;
-            let payload = serialize_tenant_event_record(record)?;
-            let query = query.clone();
-            let client = self.session()?;
-            self.block_on(async move {
-                client
-                    .execute(query.as_str(), &[&sequence, &payload])
-                    .await
-                    .map_err(map_postgres_error)?;
-                Ok(())
-            })?;
-            next = next.saturating_add(1);
-        }
-        self.provider
-            .fault_injector
-            .check(FaultPoint::JournalAppendBeforeDurableFlush)?;
-        self.provider
-            .fault_injector
-            .check(FaultPoint::JournalFlushBeforeVisibility)?;
-        self.notification.journal_changed = true;
-        Ok(())
-    }
-
     pub fn apply_durable_records_batch(&mut self, records: &[TenantEventRecord]) -> Result<()> {
         crate::sql::write_core::sql_apply_durable_records_batch(self, records)
     }
@@ -1460,7 +1438,7 @@ impl PostgresWriteTransaction {
         })
     }
 
-    fn latest_sequence(&mut self) -> Result<SequenceNumber> {
+    pub(super) fn latest_sequence(&mut self) -> Result<SequenceNumber> {
         let schema_name = self.schema_name.clone();
         let client = self.session()?;
         self.block_on(async move { load_latest_sequence_from_session(client, &schema_name).await })

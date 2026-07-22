@@ -10,3 +10,4 @@
 
 pub(crate) mod row;
 pub(crate) mod write_core;
+pub(crate) mod write_pipeline;

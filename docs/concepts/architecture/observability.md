@@ -90,6 +90,19 @@ stages a write or read passes through:
   full scan, single-field index, or composite index, for both plain and
   paginated queries. A rising full-scan count is the signal to add an
   index.
+- **Provider write pipeline** — present for PostgreSQL and MySQL tenants:
+  the configured and maximum observed in-flight provider-operation depth,
+  journal records versus journal statements, batch attempts, admitted
+  operation-level cancellation and error totals, and cumulative pipeline
+  time. The operation count does not include SQL statements issued internally
+  while applying an individual durable record. Transaction setup, validation,
+  and commit failures remain in their owning diagnostics. PostgreSQL may report a
+  depth of two because it overlaps ordered work on one transaction
+  connection; MySQL deliberately remains at one. A record-to-statement ratio
+  near one under nontrivial batches means writes are no longer collapsing as
+  expected, while growing pipeline errors or cancellations distinguish failed
+  admitted work from an ordinary healthy backlog. The counters are tenant-local and do
+  not include SQL text, error strings, or identifiers.
 - **libSQL replica freshness** — present only when the tenant is served
   from an embedded libSQL replica: the sequence the replica must reach,
   what it has applied, and which barrier path recent reads took

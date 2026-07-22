@@ -17,6 +17,7 @@ test-hooks = []
 aes-gcm-siv.workspace = true
 deadpool-postgres.workspace = true
 fjall.workspace = true
+futures.workspace = true
 hex.workspace = true
 hyper = { workspace = true, features = ["client", "server", "http1", "runtime"] }
 libsql.workspace = true

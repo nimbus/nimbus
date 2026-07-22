@@ -12,8 +12,9 @@ use nimbus_storage::{
     ChangefeedBootstrap, ChangefeedCursor, ChangefeedPage, DurableJournalBootstrap,
     DurableJournalPage, FaultPoint, JournalProgress, LibsqlReplicaFreshnessStats,
     LibsqlReplicaTenantStore, MySqlTenantStore, PointInTimeRestoreArchive,
-    PointInTimeRestoreTarget, PostgresTenantStore, ResolvedScheduleOp, ResolvedWrite,
-    RetentionGcConfig, SqliteTenantStore, TenantStore as RedbTenantStore,
+    PointInTimeRestoreTarget, PostgresTenantStore, ProviderWritePipelineDiagnostic,
+    ResolvedScheduleOp, ResolvedWrite, RetentionGcConfig, SqliteTenantStore,
+    TenantStore as RedbTenantStore,
 };
 
 use super::{PersistenceProvider, TenantPersistenceExecutor, TenantPersistenceSnapshot};
@@ -39,6 +40,18 @@ macro_rules! delegate_store_method {
 }
 
 impl TenantPersistence {
+    pub(crate) fn provider_write_pipeline_diagnostic(
+        &self,
+    ) -> Option<ProviderWritePipelineDiagnostic> {
+        match self {
+            Self::Postgres(store) => Some(store.write_pipeline_diagnostic()),
+            Self::MySql(store) => Some(store.write_pipeline_diagnostic()),
+            Self::Redb(_) | Self::Sqlite(_) | Self::LibsqlReplica(_) => None,
+            #[cfg(any(test, feature = "test-hooks"))]
+            Self::Memory(_) => None,
+        }
+    }
+
     pub(crate) fn read_storage_for_provider(
         self,
         provider: &PersistenceProvider,

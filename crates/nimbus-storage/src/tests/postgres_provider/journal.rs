@@ -3,6 +3,206 @@ use crate::tests::{
     exercise_applied_sequence_corruption_rejection, exercise_applied_sequence_recovery_replay,
     exercise_durable_update_guard_is_corruption, exercise_pending_prefix_blocks_generic_zero_write,
 };
+use nimbus_core::Error;
+
+fn postgres_pipeline_barriers(count: u64) -> Vec<TenantEventRecord> {
+    (1..=count)
+        .map(|sequence| {
+            TenantEventRecord::barrier(
+                SequenceNumber(sequence),
+                Timestamp(sequence.saturating_mul(100)),
+                format!("postgres-pipeline-{sequence}"),
+            )
+            .expect("barrier record should build")
+        })
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn postgres_batch_journal_insert_uses_one_provider_statement() {
+    with_test_provider(|provider, _config| async move {
+        let tenant = TenantId::new("batch-journal-statement").expect("tenant id should build");
+        let opened = provider
+            .create_opened_tenant(&tenant)
+            .await
+            .expect("tenant should create and open");
+        let records = postgres_pipeline_barriers(8);
+
+        opened
+            .store
+            .append_durable_records_batch(&records)
+            .expect("batch append should succeed");
+
+        let diagnostic = opened.store.write_pipeline_diagnostic();
+        assert_eq!(diagnostic.batch_attempt_count, 1);
+        assert_eq!(diagnostic.journal_record_count, 8);
+        assert_eq!(diagnostic.journal_statement_count, 1);
+        assert_eq!(diagnostic.provider_operation_count, 1);
+        assert_eq!(diagnostic.max_observed_in_flight, 1);
+        assert_eq!(
+            opened
+                .store
+                .journal_progress()
+                .expect("progress should read"),
+            crate::store::JournalProgress {
+                durable_head: SequenceNumber(8),
+                applied_head: SequenceNumber(0),
+            }
+        );
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn postgres_pipeline_overlaps_real_provider_io() {
+    with_test_provider(|provider, _config| async move {
+        let tenant = TenantId::new("pipeline-overlap").expect("tenant id should build");
+        let opened = provider
+            .create_opened_tenant(&tenant)
+            .await
+            .expect("tenant should create and open");
+        let lease = opened
+            .store
+            .acquire_committer_lease("pipeline-owner", std::time::Duration::from_secs(30))
+            .expect("lease should be acquired");
+        let records = postgres_pipeline_barriers(4);
+
+        opened
+            .store
+            .fenced_append_and_apply_durable_records_batch(
+                &lease.owner_id,
+                lease.epoch,
+                SequenceNumber(0),
+                &records,
+            )
+            .expect("fenced pipeline should commit");
+
+        let diagnostic = opened.store.write_pipeline_diagnostic();
+        assert_eq!(diagnostic.batch_attempt_count, 1);
+        assert_eq!(diagnostic.journal_record_count, 4);
+        assert_eq!(diagnostic.journal_statement_count, 1);
+        assert_eq!(diagnostic.provider_operation_count, 2);
+        assert_eq!(diagnostic.configured_max_in_flight, 2);
+        assert_eq!(diagnostic.max_observed_in_flight, 2);
+        assert_eq!(
+            opened
+                .store
+                .journal_progress()
+                .expect("progress should read"),
+            crate::store::JournalProgress {
+                durable_head: SequenceNumber(4),
+                applied_head: SequenceNumber(4),
+            }
+        );
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sql_pipeline_lease_cas_precedes_all_statements() {
+    with_test_provider(|provider, _config| async move {
+        let tenant = TenantId::new("pipeline-lease-first").expect("tenant id should build");
+        let opened = provider
+            .create_opened_tenant(&tenant)
+            .await
+            .expect("tenant should create and open");
+        let lease = opened
+            .store
+            .acquire_committer_lease("lease-owner", std::time::Duration::from_secs(30))
+            .expect("lease should be acquired");
+        let records = postgres_pipeline_barriers(2);
+
+        let error = opened
+            .store
+            .fenced_append_and_apply_durable_records_batch(
+                &lease.owner_id,
+                lease.epoch.saturating_add(1),
+                SequenceNumber(0),
+                &records,
+            )
+            .expect_err("wrong epoch must fence before pipeline work");
+        assert!(matches!(error, crate::CommitterLeaseError::Fenced { .. }));
+        let diagnostic = opened.store.write_pipeline_diagnostic();
+        assert_eq!(diagnostic.batch_attempt_count, 0);
+        assert_eq!(diagnostic.journal_statement_count, 0);
+        assert_eq!(diagnostic.provider_operation_count, 0);
+        assert_eq!(
+            opened
+                .store
+                .journal_progress()
+                .expect("progress should read"),
+            crate::store::JournalProgress {
+                durable_head: SequenceNumber(0),
+                applied_head: SequenceNumber(0),
+            }
+        );
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn postgres_sql_pipeline_cancellation_rolls_back() {
+    with_test_provider(|provider, _config| async move {
+        let tenant = TenantId::new("pipeline-cancel").expect("tenant id should build");
+        let opened = provider
+            .create_opened_tenant(&tenant)
+            .await
+            .expect("tenant should create and open");
+        let lease = opened
+            .store
+            .acquire_committer_lease("cancel-owner", std::time::Duration::from_secs(30))
+            .expect("lease should be acquired");
+        let records = postgres_pipeline_barriers(3);
+        let checks = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let checks_for_cancel = checks.clone();
+
+        let error = opened
+            .store
+            .fenced_append_and_apply_durable_records_batch_cancellable(
+                &lease.owner_id,
+                lease.epoch,
+                SequenceNumber(0),
+                &records,
+                move || {
+                    if checks_for_cancel.fetch_add(1, Ordering::SeqCst) >= 3 {
+                        Err(Error::Cancelled)
+                    } else {
+                        Ok(())
+                    }
+                },
+            )
+            .expect_err("cancellation should abort the provider transaction");
+        assert!(matches!(
+            error,
+            crate::CommitterLeaseError::Storage(Error::Cancelled)
+        ));
+        assert!(checks.load(Ordering::SeqCst) >= 4);
+        let diagnostic = opened.store.write_pipeline_diagnostic();
+        assert_eq!(diagnostic.journal_statement_count, 1);
+        assert_eq!(diagnostic.cancellation_count, 1);
+        assert_eq!(diagnostic.error_count, 1);
+        assert_eq!(
+            opened
+                .store
+                .journal_progress()
+                .expect("progress should read"),
+            crate::store::JournalProgress {
+                durable_head: SequenceNumber(0),
+                applied_head: SequenceNumber(0),
+            }
+        );
+        assert_eq!(
+            opened
+                .store
+                .read_committer_lease()
+                .expect("lease should read")
+                .expect("lease should exist")
+                .durable_sequence,
+            SequenceNumber(0)
+        );
+    })
+    .await;
+}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn postgres_applied_sequence_recovery_replay_is_idempotent_for_all_write_shapes() {
