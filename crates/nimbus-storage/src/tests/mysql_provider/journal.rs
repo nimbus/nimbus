@@ -66,6 +66,54 @@ async fn mysql_batch_journal_insert_uses_one_provider_statement() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn mysql_packet_bounded_journal_chunks_commit_atomically() {
+    with_test_provider(|provider, _config| async move {
+        let provider = provider.with_max_allowed_packet_for_test(1_024);
+        let tenant = TenantId::new("packet-bounded-journal").expect("tenant id should build");
+        let opened = provider
+            .create_opened_tenant(&tenant)
+            .await
+            .expect("tenant should create and open");
+        let records = (1..=4)
+            .map(|sequence| {
+                TenantEventRecord::barrier(
+                    SequenceNumber(sequence),
+                    Timestamp(sequence.saturating_mul(100)),
+                    "x".repeat(400),
+                )
+                .expect("barrier record should build")
+            })
+            .collect::<Vec<_>>();
+
+        opened
+            .store
+            .append_durable_records_batch(&records)
+            .expect("packet-bounded batch append should succeed");
+
+        let diagnostic = opened.store.write_pipeline_diagnostic();
+        assert_eq!(diagnostic.batch_attempt_count, 1);
+        assert_eq!(diagnostic.journal_record_count, 4);
+        assert!(diagnostic.journal_statement_count > 1);
+        assert_eq!(
+            diagnostic.provider_operation_count,
+            diagnostic.journal_statement_count
+        );
+        assert_eq!(diagnostic.max_observed_in_flight, 1);
+        assert_eq!(
+            opened
+                .store
+                .journal_progress()
+                .expect("progress should read"),
+            crate::store::JournalProgress {
+                durable_head: SequenceNumber(4),
+                applied_head: SequenceNumber(0),
+            }
+        );
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn mysql_pipeline_lease_cas_precedes_all_statements() {
     with_test_provider(|provider, _config| async move {
         let tenant = TenantId::new("pipeline-lease-first").expect("tenant id should build");

@@ -103,6 +103,9 @@ pub struct MySqlProvider {
     pool: Pool,
     metadata_database: String,
     tenant_database_prefix: String,
+    /// Server packet ceiling sampled at provider startup. Operators must
+    /// restart the provider after changing MySQL's global packet limit.
+    max_allowed_packet: u64,
     runtime_handle: TokioRuntimeHandle,
     clock: Arc<dyn WallClock>,
     fault_injector: Arc<dyn FaultInjector>,
@@ -291,6 +294,7 @@ mod tests {
             .expect("mysql pool should build without opening a connection"),
             metadata_database: "nimbus_provider".to_string(),
             tenant_database_prefix: "tenant_".to_string(),
+            max_allowed_packet: 64 * 1024 * 1024,
             runtime_handle: runtime.handle().clone(),
             clock: Arc::new(SystemWallClock),
             fault_injector: Arc::new(FailingFaultInjector),
