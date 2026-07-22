@@ -207,13 +207,11 @@ impl WebSocketFixture {
 }
 
 fn default_message_timeout() -> Duration {
-    // Runtime-backed subscription bootstraps can queue behind other in-process
-    // runtime work; coverage instrumentation adds another layer of overhead.
-    if std::env::var_os("CARGO_LLVM_COV").is_some() {
-        Duration::from_secs(30)
-    } else {
-        Duration::from_secs(15)
-    }
+    // Runtime-backed subscription bootstraps can queue behind other V8 work in
+    // a loaded aggregate run. Keep the fixture wait bounded below nextest's
+    // 45-second slow-test termination; behavioral tests still assert the exact
+    // frame they receive rather than treating the wait itself as success.
+    Duration::from_secs(30)
 }
 
 fn message_from_websocket_next(next: Option<Result<Message, WebSocketError>>) -> Message {
