@@ -1350,7 +1350,14 @@ pub(super) async fn create_mysql_indexes_for_table_schema<C>(
 where
     C: Queryable,
 {
-    resolve_or_create_table_id_from_session(session, database_name, &table_schema.table).await?;
+    load_table_id_from_session(session, database_name, &table_schema.table)
+        .await?
+        .ok_or_else(|| {
+            Error::Internal(format!(
+                "cannot create indexes for logical table {} before its table identity exists",
+                table_schema.table
+            ))
+        })?;
     for field in unique_index_fields(table_schema) {
         let column_name = mysql_generated_column_name(&table_schema.table, field);
         if !mysql_document_column_exists(session, database_name, &column_name).await? {

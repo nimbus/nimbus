@@ -49,9 +49,9 @@ impl crate::CommittedMutationObserver for PpscPublicationRecorder {
     }
 }
 
-struct PpscEmbeddedRunner {
+struct PpscEngineRunner {
     backend: PpscBackend,
-    _data_dir: TempDir,
+    _data_dir: Option<TempDir>,
     engine: Arc<Engine>,
     wall_clock: Arc<ManualWallClock>,
     monotonic_clock: Arc<ManualMonotonicClock>,
@@ -61,8 +61,8 @@ struct PpscEmbeddedRunner {
     scenario_seed: u64,
 }
 
-impl PpscEmbeddedRunner {
-    async fn new(backend: PpscBackend, scenario: &PpscScenario) -> Self {
+impl PpscEngineRunner {
+    async fn new_embedded(backend: PpscBackend, scenario: &PpscScenario) -> Self {
         assert!(
             matches!(
                 backend,
@@ -106,6 +106,67 @@ impl PpscEmbeddedRunner {
             }
             .expect("PPSC embedded engine should construct"),
         );
+        Self::finish_new(
+            backend,
+            scenario,
+            Some(data_dir),
+            engine,
+            wall_clock,
+            monotonic_clock,
+            storage_faults,
+        )
+        .await
+    }
+
+    async fn new_configured_provider(
+        backend: PpscBackend,
+        scenario: &PpscScenario,
+        config: EnginePersistenceConfig,
+    ) -> Self {
+        assert!(
+            backend.capabilities().provider_authority,
+            "configured provider runner requires a provider backend, got {}",
+            backend.as_str()
+        );
+        scenario
+            .validate_for_backend(backend)
+            .expect("scenario should be supported by its selected backend");
+        let wall_clock = Arc::new(ManualWallClock::new(Timestamp(100_000)));
+        let monotonic_clock = Arc::new(ManualMonotonicClock::new());
+        let storage_faults = PpscStorageFaultInjector::new();
+        let id_source = Arc::new(SeededIdSource::new(scenario.seed));
+        let engine = Arc::new(
+            Engine::new_with_simulation_clocks_id_source_and_persistence_config(
+                config,
+                wall_clock.clone(),
+                monotonic_clock.clone(),
+                storage_faults.clone(),
+                id_source,
+            )
+            .await
+            .expect("PPSC provider engine should construct"),
+        );
+        Self::finish_new(
+            backend,
+            scenario,
+            None,
+            engine,
+            wall_clock,
+            monotonic_clock,
+            storage_faults,
+        )
+        .await
+    }
+
+    async fn finish_new(
+        backend: PpscBackend,
+        scenario: &PpscScenario,
+        data_dir: Option<TempDir>,
+        engine: Arc<Engine>,
+        wall_clock: Arc<ManualWallClock>,
+        monotonic_clock: Arc<ManualMonotonicClock>,
+        storage_faults: Arc<PpscStorageFaultInjector>,
+    ) -> Self {
         let publications = Arc::new(PpscPublicationRecorder::default());
         engine.install_committed_mutation_observer(PPSC_OBSERVER, publications.clone());
 
@@ -457,7 +518,7 @@ async fn ppsc_engine_runner_exercises_three_production_commit_paths() {
     let scenario = three_route_scenario();
     let mut terminal_states = Vec::new();
     for backend in [PpscBackend::Memory, PpscBackend::Redb, PpscBackend::Sqlite] {
-        let history = PpscEmbeddedRunner::new(backend, &scenario)
+        let history = PpscEngineRunner::new_embedded(backend, &scenario)
             .await
             .run(scenario.clone())
             .await;
@@ -473,13 +534,38 @@ async fn ppsc_engine_runner_exercises_three_production_commit_paths() {
 #[tokio::test(flavor = "multi_thread")]
 async fn ppsc_engine_runner_replay_is_byte_deterministic() {
     let scenario = three_route_scenario();
-    let first = PpscEmbeddedRunner::new(PpscBackend::Redb, &scenario)
+    let first = PpscEngineRunner::new_embedded(PpscBackend::Redb, &scenario)
         .await
         .run(scenario.clone())
         .await;
-    let replay = PpscEmbeddedRunner::new(PpscBackend::Redb, &scenario)
+    let replay = PpscEngineRunner::new_embedded(PpscBackend::Redb, &scenario)
         .await
         .run(scenario)
         .await;
     assert_eq!(first.canonical_bytes(), replay.canonical_bytes());
+}
+
+pub(crate) async fn exercise_ppsc_provider_three_route_differential(
+    backend: PpscBackend,
+    config: EnginePersistenceConfig,
+) {
+    let scenario = three_route_scenario();
+    let oracle = PpscEngineRunner::new_embedded(PpscBackend::Redb, &scenario)
+        .await
+        .run(scenario.clone())
+        .await;
+    let provider = PpscEngineRunner::new_configured_provider(backend, &scenario, config)
+        .await
+        .run(scenario)
+        .await;
+
+    audit_ppsc_history(&oracle).unwrap_or_else(|error| panic!("redb oracle: {error}"));
+    audit_ppsc_history(&provider)
+        .unwrap_or_else(|error| panic!("{} provider: {error}", backend.as_str()));
+    assert_eq!(
+        provider.terminal,
+        oracle.terminal,
+        "{} should match the redb terminal state and canonical journal bytes",
+        backend.as_str()
+    );
 }

@@ -24,6 +24,15 @@ static TEST_SUFFIX_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(mysql_provider)]
+async fn mysql_ppsc_seeded_three_route_differential() {
+    with_mysql_engine_config(|engine_config, _provider_config| async move {
+        exercise_ppsc_provider_three_route_differential(PpscBackend::Mysql, engine_config).await;
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial(mysql_provider)]
 async fn mysql_provider_publisher_contract() {
     with_mysql_engine_config(|engine_config, _provider_config| async move {
         let engine = Arc::new(

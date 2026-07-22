@@ -36,6 +36,26 @@ impl LibsqlReplicaProvider {
         remote_fault_injector: Arc<dyn FaultInjector>,
         replica_fault_injector: Arc<dyn FaultInjector>,
     ) -> Result<Self> {
+        Self::connect_with_simulation_faults_and_id_source(
+            config,
+            runtime_handle,
+            clock,
+            remote_fault_injector,
+            replica_fault_injector,
+            Arc::new(SystemIdSource),
+        )
+        .await
+    }
+
+    #[doc(hidden)]
+    pub async fn connect_with_simulation_faults_and_id_source(
+        config: LibsqlReplicaProviderConfig,
+        runtime_handle: TokioRuntimeHandle,
+        clock: Arc<dyn WallClock>,
+        remote_fault_injector: Arc<dyn FaultInjector>,
+        replica_fault_injector: Arc<dyn FaultInjector>,
+        id_source: Arc<dyn IdSource>,
+    ) -> Result<Self> {
         validate_namespace_input(&config.metadata_namespace, "metadata namespace")?;
         validate_namespace_input(&config.tenant_namespace_prefix, "tenant namespace prefix")?;
         if config.admin_api_url.trim().is_empty() {
@@ -70,6 +90,7 @@ impl LibsqlReplicaProvider {
             encryption_provider: config.encryption_provider,
             runtime_handle,
             clock,
+            id_source,
             remote_fault_injector,
             replica_fault_injector,
             tenant_read_parallelism: LIBSQL_TENANT_READ_PARALLELISM,
@@ -416,6 +437,7 @@ impl LibsqlReplicaProvider {
             self.replica_fault_injector.clone(),
             registration.tenant_id.clone(),
         );
+        let id_source = self.id_source.clone();
         let path_for_open = replica_path.clone();
         let read_parallelism = self.tenant_read_parallelism;
         let provider = self.encryption_provider.clone();
@@ -430,19 +452,21 @@ impl LibsqlReplicaProvider {
                         &subject,
                         ManifestCipher::SqlCipher,
                     )?;
-                    SqliteTenantStore::open_encrypted_with_simulation_and_max_read_connections(
+                    SqliteTenantStore::open_encrypted_with_simulation_and_max_read_connections_and_id_source(
                         path_for_open,
                         &key,
                         clock,
                         fault_injector,
                         read_parallelism,
+                        id_source,
                     )
                 } else {
-                    SqliteTenantStore::open_with_simulation_and_max_read_connections(
+                    SqliteTenantStore::open_with_simulation_and_max_read_connections_and_id_source(
                         path_for_open,
                         clock,
                         fault_injector,
                         read_parallelism,
+                        id_source,
                     )
                 }
             })

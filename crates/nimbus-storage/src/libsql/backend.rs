@@ -127,11 +127,12 @@ pub(super) async fn load_remote_table_id_from_session(
 pub(super) async fn resolve_or_create_remote_table_id(
     conn: &Connection,
     table: &TableName,
+    id_source: &dyn IdSource,
 ) -> Result<TableId> {
     if let Some(table_id) = load_remote_table_id_from_session(conn, table).await? {
         return Ok(table_id);
     }
-    let table_id = TableId::new();
+    let table_id = id_source.next_table_id();
     conn.execute(
         "INSERT OR IGNORE INTO table_catalog (namespace, table_name, table_id, state)
          VALUES (?1, ?2, ?3, ?4)",

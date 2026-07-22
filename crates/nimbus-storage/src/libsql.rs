@@ -14,10 +14,11 @@ use libsql::{Builder, Connection, Database, Transaction, TransactionBehavior};
 use native_tls::TlsConnector as NativeTlsConnector;
 use nimbus_core::{
     CommitEntry, CronJob, Document, DocumentId, Error, HistoricalIndexCursor, HistoricalReadShape,
-    IndexLifecycleEvent, Result, ScheduledJob, ScheduledJobResult, Schema, SchemaChangeEvent,
-    SequenceNumber, StorageErrorKind, SystemWallClock, TableId, TableLifecycleEvent, TableName,
-    TableSchema, TableState, TenantEventKind, TenantEventRecord, TenantId, Timestamp,
-    TriggerDeliveryCursor, TriggerWriteOrigin, WallClock, WriteOp, WriteOpType,
+    IdSource, IndexLifecycleEvent, Result, ScheduledJob, ScheduledJobResult, Schema,
+    SchemaChangeEvent, SequenceNumber, StorageErrorKind, SystemIdSource, SystemWallClock, TableId,
+    TableLifecycleEvent, TableName, TableSchema, TableState, TenantEventKind, TenantEventRecord,
+    TenantId, Timestamp, TriggerDeliveryCursor, TriggerWriteOrigin, WallClock, WriteOp,
+    WriteOpType,
 };
 use nimbus_crypto::{
     LocalKeyProvider, LocalKeySubject, ManifestCipher, resolve_subject_encryption_key,
@@ -202,6 +203,7 @@ pub struct LibsqlReplicaProvider {
     encryption_provider: Option<Arc<dyn LocalKeyProvider>>,
     runtime_handle: TokioRuntimeHandle,
     clock: Arc<dyn WallClock>,
+    id_source: Arc<dyn IdSource>,
     remote_fault_injector: Arc<dyn FaultInjector>,
     replica_fault_injector: Arc<dyn FaultInjector>,
     tenant_read_parallelism: usize,

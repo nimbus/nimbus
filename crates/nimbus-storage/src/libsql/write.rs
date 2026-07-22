@@ -847,13 +847,18 @@ impl LibsqlReplicaWriteTransaction {
         self.check_cancel()?;
         let mut table_schema = table_schema.clone();
         let mut recorded_event: Option<(TableId, Option<TableSchema>, TableSchema)> = None;
+        let id_source = self.store.provider.id_source.clone();
         self.store.block_on(async {
             let previous =
                 load_remote_table_schema_from_session(self.session()?, &table_schema.table).await?;
             table_schema.reconcile_index_metadata(previous.as_ref());
             let schema_json = serialize_json(&table_schema)?;
-            let table_id =
-                resolve_or_create_remote_table_id(self.session()?, &table_schema.table).await?;
+            let table_id = resolve_or_create_remote_table_id(
+                self.session()?,
+                &table_schema.table,
+                id_source.as_ref(),
+            )
+            .await?;
             self.session()?
                 .execute(
                     "INSERT INTO schemas (table_name, schema_json) VALUES (?1, ?2)
@@ -927,8 +932,10 @@ impl LibsqlReplicaWriteTransaction {
         self.check_cancel()?;
         let data_json = serialize_document_fields(document)?;
         let typed_fields_json = serialize_document_typed_fields(document)?;
+        let id_source = self.store.provider.id_source.clone();
         let table_id = self.store.block_on(async {
-            resolve_or_create_remote_table_id(self.session()?, &document.table).await
+            resolve_or_create_remote_table_id(self.session()?, &document.table, id_source.as_ref())
+                .await
         })?;
         let write_table_id = table_id.clone();
         self.store.block_on(async {

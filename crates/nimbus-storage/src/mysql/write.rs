@@ -1607,9 +1607,16 @@ impl MySqlWriteTransaction {
         let runtime_handle = self.provider.runtime_handle.clone();
         let database_name = self.database_name.clone();
         let table = table.clone();
+        let id_source = self.provider.id_source.clone();
         let conn = self.session()?;
         Self::block_on(&runtime_handle, async move {
-            resolve_or_create_table_id_from_session(conn, &database_name, &table).await
+            resolve_or_create_table_id_from_session(
+                conn,
+                &database_name,
+                &table,
+                id_source.as_ref(),
+            )
+            .await
         })
     }
 

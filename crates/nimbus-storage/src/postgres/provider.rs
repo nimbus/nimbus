@@ -17,6 +17,24 @@ impl PostgresProvider {
         clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
     ) -> Result<Self> {
+        Self::connect_with_simulation_and_id_source(
+            config,
+            runtime_handle,
+            clock,
+            fault_injector,
+            Arc::new(SystemIdSource),
+        )
+        .await
+    }
+
+    #[doc(hidden)]
+    pub async fn connect_with_simulation_and_id_source(
+        config: PostgresProviderConfig,
+        runtime_handle: TokioRuntimeHandle,
+        clock: Arc<dyn WallClock>,
+        fault_injector: Arc<dyn FaultInjector>,
+        id_source: Arc<dyn IdSource>,
+    ) -> Result<Self> {
         validate_identifier_input(&config.metadata_schema, "metadata schema")?;
         validate_identifier_input(&config.tenant_schema_prefix, "tenant schema prefix")?;
 
@@ -32,6 +50,7 @@ impl PostgresProvider {
             notification_channel,
             runtime_handle,
             clock,
+            id_source,
             fault_injector,
             tenant_read_parallelism: default_postgres_read_parallelism(),
         };

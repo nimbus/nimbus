@@ -10,11 +10,12 @@ use mysql_async::{
 };
 use nimbus_core::{
     CommitEntry, CronJob, Document, DocumentId, Error, FieldType, Filter, HistoricalIndexCursor,
-    HistoricalIndexTuple, HistoricalReadShape, IndexDefinition, IndexLifecycleEvent,
+    HistoricalIndexTuple, HistoricalReadShape, IdSource, IndexDefinition, IndexLifecycleEvent,
     ResourcePathBinding, Result, ScheduledJob, ScheduledJobResult, Schema, SchemaChangeEvent,
-    SequenceNumber, StorageErrorKind, SystemWallClock, TableId, TableLifecycleEvent, TableName,
-    TableSchema, TableState, TenantEventKind, TenantEventRecord, TenantId, Timestamp,
-    TriggerDeliveryCursor, TriggerWriteOrigin, WallClock, WriteOp, WriteOpType,
+    SequenceNumber, StorageErrorKind, SystemIdSource, SystemWallClock, TableId,
+    TableLifecycleEvent, TableName, TableSchema, TableState, TenantEventKind, TenantEventRecord,
+    TenantId, Timestamp, TriggerDeliveryCursor, TriggerWriteOrigin, WallClock, WriteOp,
+    WriteOpType,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -109,6 +110,7 @@ pub struct MySqlProvider {
     max_allowed_packet: u64,
     runtime_handle: TokioRuntimeHandle,
     clock: Arc<dyn WallClock>,
+    id_source: Arc<dyn IdSource>,
     fault_injector: Arc<dyn FaultInjector>,
     tenant_read_parallelism: usize,
 }
@@ -320,6 +322,7 @@ mod tests {
             max_allowed_packet: 64 * 1024 * 1024,
             runtime_handle: runtime.handle().clone(),
             clock: Arc::new(SystemWallClock),
+            id_source: Arc::new(SystemIdSource),
             fault_injector: Arc::new(FailingFaultInjector),
             tenant_read_parallelism: MIN_MYSQL_READ_PARALLELISM,
         };

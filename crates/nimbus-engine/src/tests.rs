@@ -3,6 +3,7 @@ pub(crate) use nimbus_core::{
     ManualWallClock, OrderBy, OrderDirection, Page, PaginatedQuery, PrincipalContext, Query,
     SequenceNumber, TableAccessPolicy, TableName, TableSchema, TenantId, Timestamp,
 };
+pub(crate) use nimbus_testing::ppsc::PpscBackend;
 pub(crate) use nimbus_testing::{
     BlockingFaultInjector, BoundedTestBarrier as Barrier, CountedFaultInjector, EngineFixture,
     GeneratedTaskHistory, GeneratedTaskHistorySeedCase, GeneratedTaskPageExpectation,
@@ -64,6 +65,7 @@ mod subscriptions;
 pub(crate) use nimbus_storage::provider_test_fixtures::{
     ExternalProviderFixtureMode, external_provider_fixture_mode,
 };
+pub(crate) use ppsc::exercise_ppsc_provider_three_route_differential;
 pub(crate) use provider_fixtures::expect_external_provider_future_within;
 pub(crate) use provider_publisher_contract::{
     ProviderPipelineExpectation, exercise_provider_publisher_contract,

@@ -37,6 +37,15 @@ static TEST_SUFFIX_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(libsql_replica_provider)]
+async fn libsql_ppsc_seeded_three_route_differential() {
+    with_libsql_replica_engine_config(|engine_config, _provider_config| async move {
+        exercise_ppsc_provider_three_route_differential(PpscBackend::Libsql, engine_config).await;
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial(libsql_replica_provider)]
 async fn libsql_provider_publisher_contract() {
     with_libsql_replica_engine_config(|engine_config, _provider_config| async move {
         let engine = Arc::new(

@@ -291,11 +291,12 @@ async fn build_postgres_from_plan(
         max_connections: plan.pool.max_connections,
     };
     let postgres_provider = Arc::new(
-        PostgresProvider::connect_with_simulation(
+        PostgresProvider::connect_with_simulation_and_id_source(
             provider_config,
             storage_executor.handle(),
             simulation.clock.clone(),
             simulation.storage_fault_injector.clone(),
+            simulation.id_source.clone(),
         )
         .await?,
     );
@@ -344,12 +345,13 @@ async fn build_libsql_replica_from_plan(
         .clone()
         .unwrap_or_else(|| simulation.storage_fault_injector.clone());
     let libsql_replica_provider = Arc::new(
-        LibsqlReplicaProvider::connect_with_simulation_faults(
+        LibsqlReplicaProvider::connect_with_simulation_faults_and_id_source(
             provider_config,
             storage_executor.handle(),
             simulation.clock.clone(),
             simulation.storage_fault_injector.clone(),
             replica_fault_injector,
+            simulation.id_source.clone(),
         )
         .await?,
     );
@@ -388,11 +390,12 @@ async fn build_mysql_from_plan(
         max_connections: plan.pool.max_connections,
     };
     let mysql_provider = Arc::new(
-        MySqlProvider::connect_with_simulation(
+        MySqlProvider::connect_with_simulation_and_id_source(
             provider_config,
             storage_executor.handle(),
             simulation.clock.clone(),
             simulation.storage_fault_injector.clone(),
+            simulation.id_source.clone(),
         )
         .await?,
     );
