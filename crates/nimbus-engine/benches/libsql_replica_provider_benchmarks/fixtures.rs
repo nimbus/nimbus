@@ -777,7 +777,9 @@ async fn create_seeded_libsql_replica_tenant_engine(
         benchmark_libsql_provider_config(label, environment, replica_cache_dir.path());
     let provider = LibsqlReplicaProvider::connect(provider_config.clone()).await?;
     let tenant_id = benchmark_tenant_id(tenant_label)?;
-    let registration = provider.create_tenant(&tenant_id).await?;
+    let registration = provider
+        .create_tenant(&tenant_id) // tenant-lifecycle: provider-adapter-internal
+        .await?;
     seed_remote_namespace_documents(
         &provider_config,
         &registration.namespace,

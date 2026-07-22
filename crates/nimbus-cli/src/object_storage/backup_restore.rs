@@ -184,6 +184,7 @@ pub(super) async fn run_restore_object_store(
     let report = ObjectBackup::restore_bundle(target.as_ref(), &bundle, Some(&key_escrow)).await?;
     let engine = open_engine(&command.data_dir, command.provider).await?;
     match engine.create_tenant(tenant.clone()) {
+        // tenant-lifecycle: embedded-only
         Ok(()) | Err(NimbusError::AlreadyExists(_)) => {}
         Err(error) => return Err(error.into()),
     }

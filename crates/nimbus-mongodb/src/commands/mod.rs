@@ -73,6 +73,10 @@ pub async fn dispatch_authed(
         return Err(unauthorized(command_name));
     }
     if let Some(principal) = principal.as_ref() {
+        let db_name = body.get_str("$db").unwrap_or(tenant::DEFAULT_TENANT);
+        let tenant_context =
+            tenant::resolve_tenant_context(db_name, "mongodb command admission", principal)?;
+        tenant::ensure_tenant_async(engine, &tenant_context).await?;
         session::handle_start_transaction(body, conn, engine, principal)?;
     }
 

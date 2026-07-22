@@ -26,17 +26,21 @@ pub mod tenant;
 pub mod wire;
 
 pub use error::map_core_error;
-pub use tenant::{AccessKeyRegistry, AuthMode, KeyBinding, ensure_tenant, tenant_context};
+pub use tenant::{
+    AccessKeyRegistry, AuthMode, KeyBinding, ensure_tenant, ensure_tenant_async, tenant_context,
+};
 
 pub use attribute_value::{fields_to_item, item_to_fields, validate_item};
 pub use commands::ttl::sweep_all_tenants;
 pub use config::DynamoDbConfig;
-pub use dispatch::{DispatchContext, KNOWN_OPERATIONS, dispatch, is_known_operation};
+pub use dispatch::{
+    DispatchContext, KNOWN_OPERATIONS, dispatch, dispatch_async, is_known_operation,
+};
 pub use key::{
     decode_key, encode_key, is_reserved_attribute_name, sortable_key, validate_attribute_names,
 };
 pub use key_management::{
     RedactedAccessKey, StoredAccessKey, delete_access_key, list_access_keys, put_access_key,
-    rotate_secret,
+    put_access_key_async, rotate_secret,
 };
 pub use wire::{WireResponse, render_error, render_success};

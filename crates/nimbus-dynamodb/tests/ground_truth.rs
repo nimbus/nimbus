@@ -52,8 +52,12 @@ struct Golden {
 fn fixture() -> (Arc<Engine>, AccessKeyRegistry, tempfile::TempDir) {
     let temp = tempfile::tempdir().expect("tempdir");
     let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
+    let tenant = TenantId::new("acme").expect("tenant");
+    engine
+        .create_tenant(tenant.clone())
+        .expect("embedded fixture should pre-admit the tenant");
     let registry = AccessKeyRegistry::new()
-        .bind(KEY, TenantId::new("acme").expect("tenant"))
+        .bind(KEY, tenant)
         .with_mode(AuthMode::LookupOnly);
     (engine, registry, temp)
 }

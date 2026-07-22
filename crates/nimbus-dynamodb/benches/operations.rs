@@ -51,10 +51,14 @@ fn percentiles(mut samples: Vec<u128>) -> (u128, u128, u128) {
 fn main() {
     let temp = tempfile::tempdir().expect("tempdir");
     let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
+    let tenant = TenantId::new("acme").expect("tenant");
+    engine
+        .create_tenant(tenant.clone()) // tenant-lifecycle: embedded-only
+        .expect("embedded benchmark should pre-admit the tenant");
     // Synthetic headers (no real SigV4 signature), so the bench drives the
     // lookup escape hatch rather than strict verification.
     let registry = AccessKeyRegistry::new()
-        .bind(KEY, TenantId::new("acme").expect("tenant"))
+        .bind(KEY, tenant)
         .with_mode(AuthMode::LookupOnly);
     let ctx = DispatchContext {
         engine: &engine,

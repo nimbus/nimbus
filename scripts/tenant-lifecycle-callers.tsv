@@ -1,0 +1,15 @@
+path	classification	needle	expected_count	enforcement	representative_test
+crates/nimbus-cli/src/start/boot.rs	provider_async	.ensure_tenant_ready_async	1	CLI start retains Arc<Engine> and awaits complete admission before scheduler/listeners	server_auto_tenant_uses_provider_lifecycle
+crates/nimbus-mongodb/src/commands/tenant.rs	provider_async	.ensure_tenant_ready_async	1	async authenticated dispatch admits or loads before synchronous command core	mongodb_tenant_admission_uses_provider_lifecycle
+crates/nimbus-dynamodb/src/tenant.rs	provider_async	.ensure_tenant_ready_async	1	async transport dispatch admits or loads before synchronous command core	dynamodb_tenant_admission_uses_provider_lifecycle
+crates/nimbus-server/src/adapters/cloudflare/kv/mod.rs	provider_async	.ensure_tenant_ready_async	1	async Axum handlers admit or load before provider-independent validation and KV engine calls	cloudflare_kv_tenant_admission_uses_provider_lifecycle
+crates/nimbus-cli/src/backup.rs	embedded_sync	tenant-lifecycle: embedded-only	1	closed BackupProvider enum constructs EnginePersistenceConfig::embedded	embedded_blocking_tenant_creation_supports_redb_and_sqlite
+crates/nimbus-cli/src/object_storage/backup_restore.rs	embedded_sync	tenant-lifecycle: embedded-only	1	closed ObjectStorageProvider enum constructs EnginePersistenceConfig::embedded	embedded_blocking_tenant_creation_supports_redb_and_sqlite
+crates/nimbus-engine/benches/materialized-surface-evaluation.rs	embedded_sync	tenant-lifecycle: embedded-only	1	Engine::new is the embedded SQLite composition	provider_composition_has_no_blocking_tenant_lifecycle
+crates/nimbus-dynamodb/benches/operations.rs	embedded_sync	tenant-lifecycle: embedded-only	1	Engine::new constructs an embedded SQLite benchmark engine	provider_composition_has_no_blocking_tenant_lifecycle
+crates/nimbus-engine/src/engine/tenants.rs	provider_internal	tenant-lifecycle: provider-adapter-internal	1	canonical async lifecycle delegates to PersistenceProvider	tenant_creation_async_contract_matches_memory_redb_and_sqlite
+crates/nimbus-engine/src/persistence/provider.rs	provider_internal	tenant-lifecycle: provider-adapter-internal	2	provider enum delegates to production adapters	tenant_creation_async_contract_matches_memory_redb_and_sqlite
+crates/nimbus-storage/src/libsql/provider.rs	provider_internal	tenant-lifecycle: provider-adapter-internal	1	libSQL open-or-create adapter reuse	libsql_tenant_creation_async_contract
+crates/nimbus-storage/src/mysql/provider.rs	provider_internal	tenant-lifecycle: provider-adapter-internal	1	MySQL open-or-create adapter reuse	mysql_tenant_creation_async_contract
+crates/nimbus-storage/src/postgres/provider.rs	provider_internal	tenant-lifecycle: provider-adapter-internal	1	PostgreSQL open-or-create adapter reuse	postgres_tenant_creation_async_contract
+crates/nimbus-engine/benches/libsql_replica_provider_benchmarks/fixtures.rs	provider_internal	tenant-lifecycle: provider-adapter-internal	1	benchmark provisions directly through the libSQL provider adapter	libsql_tenant_creation_async_contract

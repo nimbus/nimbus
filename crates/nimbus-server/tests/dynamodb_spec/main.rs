@@ -102,7 +102,8 @@ impl Fixture {
 /// rather than the signature-skipping lookup escape hatch.
 async fn fixture_with_keys(bindings: &[(&str, &str)]) -> Fixture {
     let temp = tempfile::tempdir().expect("tempdir");
-    let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
+    let engine =
+        Arc::new(Engine::new_with_memory_persistence(temp.path()).expect("memory provider engine"));
     let port = reserve_loopback_port().await;
     let mut config = DynamoDbConfig::new(port).with_ttl_sweep_interval(None);
     for (key, tenant) in bindings {
@@ -140,7 +141,8 @@ const CLIENT_SECRET: &str = "test-secret";
 /// signing with a different secret is rejected.
 async fn fixture_strict(secret: &str) -> Fixture {
     let temp = tempfile::tempdir().expect("tempdir");
-    let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
+    let engine =
+        Arc::new(Engine::new_with_memory_persistence(temp.path()).expect("memory provider engine"));
     let port = reserve_loopback_port().await;
     let config = DynamoDbConfig::new(port)
         .with_signed_access_key(ACCESS_KEY, TenantId::new(TENANT).expect("tenant"), secret)
@@ -165,7 +167,8 @@ async fn fixture_strict(secret: &str) -> Fixture {
 /// keys via `fx.engine` before signing requests.
 async fn fixture_strict_store_only() -> Fixture {
     let temp = tempfile::tempdir().expect("tempdir");
-    let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
+    let engine =
+        Arc::new(Engine::new_with_memory_persistence(temp.path()).expect("memory provider engine"));
     let port = reserve_loopback_port().await;
     let config = DynamoDbConfig::new(port).with_ttl_sweep_interval(None);
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
@@ -240,7 +243,7 @@ async fn create_orders(client: &Client) -> CreateTableOutput {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn control_plane_roundtrip_through_official_sdk() {
+async fn dynamodb_tenant_admission_uses_provider_lifecycle() {
     let fx = fixture().await;
     let client = fx.client(ACCESS_KEY);
 
@@ -1837,13 +1840,14 @@ async fn persisted_signed_key_authenticates_and_rotates_in_strict_mode() {
     // authenticates under strict SigV4, and rotating its secret immediately
     // invalidates signatures made with the old secret — no restart.
     let fx = fixture_strict_store_only().await;
-    nimbus_dynamodb::put_access_key(
+    nimbus_dynamodb::put_access_key_async(
         &fx.engine,
         ACCESS_KEY,
         &TenantId::new(TENANT).expect("tenant"),
         Some(CLIENT_SECRET.to_owned()),
         Some("us-east-1".to_owned()),
     )
+    .await
     .expect("configure persisted key");
 
     // The client signs with CLIENT_SECRET, matching the stored secret → verifies.

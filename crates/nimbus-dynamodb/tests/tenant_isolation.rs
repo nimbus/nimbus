@@ -18,11 +18,19 @@ const GLOBEX_KEY: &str = "AKIAGLOBEX";
 fn fixture() -> (Arc<Engine>, AccessKeyRegistry, tempfile::TempDir) {
     let temp = tempfile::tempdir().expect("tempdir");
     let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
+    let acme = TenantId::new("acme").expect("tenant");
+    let globex = TenantId::new("globex").expect("tenant");
+    engine
+        .create_tenant(acme.clone())
+        .expect("embedded fixture should pre-admit acme");
+    engine
+        .create_tenant(globex.clone())
+        .expect("embedded fixture should pre-admit globex");
     // Synthetic-signature requests exercise tenant scoping through the lookup
     // escape hatch; cross-tenant isolation holds independently of auth mode.
     let registry = AccessKeyRegistry::new()
-        .bind(ACME_KEY, TenantId::new("acme").expect("tenant"))
-        .bind(GLOBEX_KEY, TenantId::new("globex").expect("tenant"))
+        .bind(ACME_KEY, acme)
+        .bind(GLOBEX_KEY, globex)
         .with_mode(AuthMode::LookupOnly);
     (engine, registry, temp)
 }

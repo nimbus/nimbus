@@ -71,6 +71,7 @@ workspace-hack = { version = "0.1", path = "../workspace-hack" }
 serde_json.workspace = true
 
 [dev-dependencies]
+nimbus-engine = { path = "../nimbus-engine", features = ["test-hooks"] }
 nimbus-testing = { path = "../nimbus-testing" }
 serial_test.workspace = true
 tempfile.workspace = true

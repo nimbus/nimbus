@@ -33,7 +33,9 @@ use crate::auth::sigv4::verify;
 use crate::commands::{batch, control_plane, discovery, item, query, stream, tag, transact, ttl};
 use crate::error::map_core_error;
 use crate::key_management;
-use crate::tenant::{AccessKeyRegistry, AuthMode, ensure_tenant, tenant_context};
+use crate::tenant::{
+    AccessKeyRegistry, AuthMode, ensure_tenant, ensure_tenant_async, tenant_context,
+};
 use crate::wire::{self, WireResponse};
 
 /// Surface label recorded on every DynamoDB-originated tenant context.
@@ -94,30 +96,74 @@ pub fn is_known_operation(operation: &str) -> bool {
     KNOWN_OPERATIONS.contains(&operation)
 }
 
-/// Dispatch a DynamoDB request to its operation handler.
+/// Dispatch a DynamoDB request after synchronous tenant admission.
 ///
-/// Returns a [`WireResponse`] `(status, body)`; `nimbus-server` turns it into an
-/// HTTP response. See the module docs for the ordered flow (unknown-op and
-/// malformed-body rejection precede auth; auth precedes routing).
+/// This entrypoint is retained for embedded callers that already own the
+/// blocking lifecycle. Provider-capable transports must call
+/// [`dispatch_async`], which admits the authenticated tenant through the
+/// persistence-provider lifecycle before entering the synchronous command core.
 #[must_use]
 pub fn dispatch(ctx: &DispatchContext<'_>, headers: &HeaderMap, body: &[u8]) -> WireResponse {
+    let prepared = match prepare_dispatch(ctx, headers, body) {
+        Ok(prepared) => prepared,
+        Err(response) => return response,
+    };
+    if let Err(error) = ensure_tenant(ctx.engine, &prepared.context) {
+        return wire::render_error(&error);
+    }
+    route_prepared(ctx, headers, prepared)
+}
+
+/// Dispatch a DynamoDB request through canonical async tenant admission.
+///
+/// Unknown-operation and malformed-body rejection still precede auth; auth
+/// precedes tenant creation; only `AlreadyExists` is an idempotent admission
+/// success.
+pub async fn dispatch_async(
+    ctx: &DispatchContext<'_>,
+    headers: &HeaderMap,
+    body: &[u8],
+) -> WireResponse {
+    let prepared = match prepare_dispatch(ctx, headers, body) {
+        Ok(prepared) => prepared,
+        Err(response) => return response,
+    };
+    if let Err(error) = ensure_tenant_async(ctx.engine, &prepared.context).await {
+        return wire::render_error(&error);
+    }
+    route_prepared(ctx, headers, prepared)
+}
+
+struct PreparedDispatch {
+    operation: String,
+    request: Value,
+    context: TenantIsolationContext,
+}
+
+fn prepare_dispatch(
+    ctx: &DispatchContext<'_>,
+    headers: &HeaderMap,
+    body: &[u8],
+) -> Result<PreparedDispatch, WireResponse> {
     // 1. Parse X-Amz-Target.
     let operation = match wire::extract_operation(headers) {
         Ok(op) => op,
-        Err(error) => return wire::render_error(&error),
+        Err(error) => return Err(wire::render_error(&error)),
     };
 
     // 2. Reject unknown operations before auth (real DynamoDB order).
     if !is_known_operation(&operation) {
-        return wire::render_error(&DynamoDbError::UnknownOperationException(String::new()));
+        return Err(wire::render_error(
+            &DynamoDbError::UnknownOperationException(String::new()),
+        ));
     }
 
     // 3. Reject malformed JSON bodies before auth.
     let request: Value = match serde_json::from_slice(body) {
         Ok(value) => value,
         Err(error) => {
-            return wire::render_error(&DynamoDbError::SerializationException(format!(
-                "Start of structure or map found where not expected: {error}"
+            return Err(wire::render_error(&DynamoDbError::SerializationException(
+                format!("Start of structure or map found where not expected: {error}"),
             )));
         }
     };
@@ -126,21 +172,34 @@ pub fn dispatch(ctx: &DispatchContext<'_>, headers: &HeaderMap, body: &[u8]) -> 
     //    SigV4 signature against the per-key secret + timestamp window).
     let context = match authenticate(ctx, headers, body) {
         Ok(context) => context,
-        Err(error) => return wire::render_error(&error),
+        Err(error) => return Err(wire::render_error(&error)),
     };
 
-    // 5. Ensure the resolved tenant exists (idempotent).
-    if let Err(error) = ensure_tenant(ctx.engine, &context) {
-        return wire::render_error(&error);
-    }
+    Ok(PreparedDispatch {
+        operation,
+        request,
+        context,
+    })
+}
 
-    // 6. Route to the per-operation handler. The `Host` lets DescribeEndpoints
+fn route_prepared(
+    ctx: &DispatchContext<'_>,
+    headers: &HeaderMap,
+    prepared: PreparedDispatch,
+) -> WireResponse {
+    // Route to the per-operation handler. The `Host` lets DescribeEndpoints
     //    echo the address the client used.
     let host = headers
         .get("host")
         .and_then(|value| value.to_str().ok())
         .unwrap_or("localhost");
-    route(ctx, &context, &operation, request, host)
+    route(
+        ctx,
+        &prepared.context,
+        &prepared.operation,
+        prepared.request,
+        host,
+    )
 }
 
 /// Resolve the request's tenant from the SigV4 `Authorization` header, and —

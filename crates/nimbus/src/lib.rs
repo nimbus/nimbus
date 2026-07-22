@@ -17,8 +17,9 @@ pub use nimbus_engine::{
     EncryptionValidationError, Engine, EnginePersistenceConfig, InitializedKeyProvider,
     KeyDirectoryConfig, KeyProviderDescriptor, LocalEncryptionConfig, LocalKeyProviderConfig,
     LocalPersistenceFamily, MasterKeyFileConfig, MonthlyActiveUsersSnapshot, PersistenceDialect,
-    PersistenceTopology, PoolConfig, ProviderCredentials, SubscriptionUpdate, TenantProviderConfig,
-    TenantRoutingConfig, evaluate_paginated, evaluate_query, run_scheduler,
+    PersistenceTopology, PoolConfig, ProviderCredentials, SubscriptionUpdate,
+    TenantAdmissionOutcome, TenantProviderConfig, TenantRoutingConfig, evaluate_paginated,
+    evaluate_query, run_scheduler,
 };
 // Runtime execution contract and limits.
 pub use nimbus_runtime::{

@@ -6618,6 +6618,7 @@ dependencies = [
  "nimbus-convex",
  "nimbus-core",
  "nimbus-crypto",
+ "nimbus-engine",
  "nimbus-fs",
  "nimbus-kv",
  "nimbus-machine",

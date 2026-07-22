@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::map_core_error;
-use crate::tenant::{ensure_tenant, tenant_context};
+use crate::tenant::{ensure_tenant, ensure_tenant_async, tenant_context};
 
 /// Reserved system tenant that owns the global access-key store.
 const KEY_STORE_TENANT: &str = "_nimbus_ddb_system";
@@ -121,9 +121,9 @@ fn write_record(
     Ok(())
 }
 
-/// Configure (create or replace) an access key: bind `access_key_id` to
-/// `tenant`, with an optional `secret` (required for strict verification) and
-/// optional `region`. Persisted in Nimbus storage.
+/// Configure an access key after synchronous system-tenant admission.
+///
+/// Provider-capable callers must use [`put_access_key_async`].
 ///
 /// # Errors
 /// A mapped engine error if the system tenant or the record cannot be written.
@@ -145,6 +145,33 @@ pub fn put_access_key(
     }
     let context = store_context()?;
     ensure_tenant(engine, &context)?;
+    let record = StoredAccessKey {
+        tenant: tenant.as_str().to_owned(),
+        secret,
+        region,
+    };
+    write_record(engine, &context, access_key_id, &record)
+}
+
+/// Configure an access key through canonical async system-tenant admission.
+///
+/// This is the provider-capable management entrypoint. Only `AlreadyExists`
+/// is treated as idempotent by the shared async lifecycle.
+pub async fn put_access_key_async(
+    engine: &Arc<Engine>,
+    access_key_id: &str,
+    tenant: &TenantId,
+    secret: Option<String>,
+    region: Option<String>,
+) -> Result<(), DynamoDbError> {
+    if crate::tenant::is_reserved_tenant(tenant) {
+        return Err(DynamoDbError::ValidationException(format!(
+            "Access keys cannot be bound to the reserved Nimbus-internal tenant '{}'",
+            tenant.as_str()
+        )));
+    }
+    let context = store_context()?;
+    ensure_tenant_async(engine, &context).await?;
     let record = StoredAccessKey {
         tenant: tenant.as_str().to_owned(),
         secret,
