@@ -1,5 +1,10 @@
 use super::*;
 
+// Runtime-backed subscription startup is CPU-bound under the full server
+// aggregate. Keep the causal pause wait bounded, but leave enough headroom for
+// aggregate contention while remaining below nextest's 45-second slow marker.
+const STATUS_PROJECTION_PAUSE_TIMEOUT: Duration = Duration::from_secs(30);
+
 pub(crate) const WEBSOCKET_DISCONNECT_CLEANUP_CASE: DeterministicTestCase =
     DeterministicTestCase::new(
         "websocket-disconnect-cleanup",
@@ -250,7 +255,7 @@ async fn runtime_subscription_status_projection_precedes_initial_result() {
     let wait_pause = pause.clone();
     assert!(
         tokio::task::spawn_blocking(move || {
-            wait_pause.wait_until_entered(Duration::from_secs(10))
+            wait_pause.wait_until_entered(STATUS_PROJECTION_PAUSE_TIMEOUT)
         })
         .await
         .expect("status projection pause waiter should join"),
