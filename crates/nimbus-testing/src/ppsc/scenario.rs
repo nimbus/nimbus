@@ -171,11 +171,6 @@ pub enum PpscOperation {
         tenant: String,
         revision: u64,
     },
-    Replay {
-        tenant: String,
-        sequence: u64,
-        identity: String,
-    },
     ArmFault {
         tenant: String,
         fault: PpscInjectedFault,
@@ -224,7 +219,6 @@ impl PpscOperation {
             | Self::TriggerCursorAdvance { tenant, .. }
             | Self::Schedule { tenant, .. }
             | Self::ProjectionUpdate { tenant, .. }
-            | Self::Replay { tenant, .. }
             | Self::ArmFault { tenant, .. }
             | Self::ReleaseFault { tenant, .. }
             | Self::CancelNext { tenant, .. }
@@ -593,21 +587,21 @@ fn universal_step(seed: u64, index: usize, step_count: usize, draw: u64) -> Ppsc
             },
             PpscExpectedOutcome::Observed,
         ),
-        15 => PpscStep::new(
-            PpscOperation::Replay {
-                tenant: hot,
-                sequence: 2,
-                identity: "same-content".to_string(),
-            },
+        15 => mutation(
+            seed,
+            index,
+            draw,
+            PpscRoute::Direct,
+            true,
             PpscExpectedOutcome::Committed,
         ),
-        16 => PpscStep::new(
-            PpscOperation::Replay {
-                tenant: hot,
-                sequence: 2,
-                identity: "different-content".to_string(),
-            },
-            PpscExpectedOutcome::DefinitiveRollback,
+        16 => mutation(
+            seed,
+            index,
+            draw,
+            PpscRoute::ExecutionUnit,
+            true,
+            PpscExpectedOutcome::Committed,
         ),
         17 => PpscStep::new(
             PpscOperation::RestoreImport {

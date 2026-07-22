@@ -463,7 +463,7 @@ fn duplicate_write_replay_records(
     (inserted, updated, records)
 }
 
-pub(crate) fn exercise_applied_sequence_recovery_replay<S>(store: &S, table_name: &str)
+pub(crate) fn exercise_ppsc_identical_applied_sequence_replay<S>(store: &S, table_name: &str)
 where
     S: crate::DurableJournal + crate::TenantPointRead,
 {
@@ -500,8 +500,10 @@ where
     }
 }
 
-pub(crate) fn exercise_applied_sequence_corruption_rejection<S>(store: &S, table_name: &str)
-where
+pub(crate) fn exercise_ppsc_different_content_applied_sequence_reuse_rejection<S>(
+    store: &S,
+    table_name: &str,
+) where
     S: crate::DurableJournal + crate::TenantPointRead,
 {
     let (inserted, updated, records) = duplicate_write_replay_records(table_name);

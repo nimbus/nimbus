@@ -194,12 +194,8 @@ fn ppsc_legal_state_auditor_accepts_every_declared_terminal_state() {
 #[test]
 fn ppsc_legal_state_auditor_accepts_definitive_rollback_sequence_reuse() {
     let scenario = one_step_scenario(
-        PpscOperation::Replay {
-            tenant: "tenant-a".to_string(),
-            sequence: 1,
-            identity: "second".to_string(),
-        },
-        PpscExpectedOutcome::Committed,
+        PpscOperation::AdvanceMonotonicClock { millis: 1 },
+        PpscExpectedOutcome::Observed,
     );
     let claims = vec![
         PpscSequenceClaim {
@@ -299,17 +295,21 @@ fn ppsc_legal_state_auditor_rejects_publication_leapfrog() {
 }
 
 #[test]
-fn ppsc_retained_seed_covers_ambiguous_replay_and_takeover() {
+fn ppsc_retained_seed_covers_ambiguous_recovery_and_takeover() {
     let retained = retained_ppsc_scenarios();
     assert_eq!(retained.len(), 16);
     assert!(retained.iter().all(|scenario| {
         scenario.steps.iter().any(|step| {
             step.expected == PpscExpectedOutcome::AmbiguousRecovered
                 && matches!(step.operation, PpscOperation::Mutation { .. })
-        }) && scenario.steps.iter().any(|step| {
-            step.expected == PpscExpectedOutcome::DefinitiveRollback
-                && matches!(step.operation, PpscOperation::Replay { .. })
-        })
+        }) && scenario
+            .steps
+            .iter()
+            .any(|step| matches!(step.operation, PpscOperation::Crash))
+            && scenario
+                .steps
+                .iter()
+                .any(|step| matches!(step.operation, PpscOperation::Reopen))
     }));
 
     let provider = retained_provider_authority_scenarios();
