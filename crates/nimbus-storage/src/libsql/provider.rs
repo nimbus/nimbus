@@ -121,7 +121,9 @@ impl LibsqlReplicaProvider {
         &self,
         tenant_id: &TenantId,
     ) -> Result<OpenedLibsqlReplicaTenant> {
-        let registration = self.create_tenant(tenant_id).await?;
+        let registration = self
+            .create_tenant(tenant_id) // tenant-lifecycle: provider-adapter-internal
+            .await?;
         self.open_registration(registration).await
     }
 

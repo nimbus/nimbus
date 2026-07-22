@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::map_core_error;
-use crate::tenant::{ensure_tenant, tenant_context};
+use crate::tenant::{ensure_tenant, ensure_tenant_async, tenant_context};
 
 /// Reserved system tenant that owns the global access-key store.
 const KEY_STORE_TENANT: &str = "_nimbus_ddb_system";
@@ -121,9 +121,9 @@ fn write_record(
     Ok(())
 }
 
-/// Configure (create or replace) an access key: bind `access_key_id` to
-/// `tenant`, with an optional `secret` (required for strict verification) and
-/// optional `region`. Persisted in Nimbus storage.
+/// Configure an access key after synchronous system-tenant admission.
+///
+/// Provider-capable callers must use [`put_access_key_async`].
 ///
 /// # Errors
 /// A mapped engine error if the system tenant or the record cannot be written.
@@ -145,6 +145,33 @@ pub fn put_access_key(
     }
     let context = store_context()?;
     ensure_tenant(engine, &context)?;
+    let record = StoredAccessKey {
+        tenant: tenant.as_str().to_owned(),
+        secret,
+        region,
+    };
+    write_record(engine, &context, access_key_id, &record)
+}
+
+/// Configure an access key through canonical async system-tenant admission.
+///
+/// This is the provider-capable management entrypoint. Only `AlreadyExists`
+/// is treated as idempotent by the shared async lifecycle.
+pub async fn put_access_key_async(
+    engine: &Arc<Engine>,
+    access_key_id: &str,
+    tenant: &TenantId,
+    secret: Option<String>,
+    region: Option<String>,
+) -> Result<(), DynamoDbError> {
+    if crate::tenant::is_reserved_tenant(tenant) {
+        return Err(DynamoDbError::ValidationException(format!(
+            "Access keys cannot be bound to the reserved Nimbus-internal tenant '{}'",
+            tenant.as_str()
+        )));
+    }
+    let context = store_context()?;
+    ensure_tenant_async(engine, &context).await?;
     let record = StoredAccessKey {
         tenant: tenant.as_str().to_owned(),
         secret,
@@ -220,6 +247,43 @@ pub fn lookup(
     }
 }
 
+/// Look up a persisted access key through the provider-capable async engine
+/// lifecycle.
+///
+/// This is the authentication-path counterpart to [`lookup`]. Provider-backed
+/// transports must use it because the key-store tenant may need to be opened
+/// asynchronously before Nimbus can determine that a key is absent.
+///
+/// # Errors
+/// A mapped engine error for a storage failure other than "not found".
+pub async fn lookup_async(
+    engine: &Arc<Engine>,
+    access_key_id: &str,
+) -> Result<Option<StoredAccessKey>, DynamoDbError> {
+    let context = store_context()?;
+    match engine
+        .get_document_async(
+            context.tenant_id().clone(),
+            store_table()?,
+            key_id(access_key_id)?,
+        )
+        .await
+    {
+        Ok(document) => {
+            let record = serde_json::from_value(Value::Object(document.fields.clone())).map_err(
+                |error| DynamoDbError::InternalServerError(format!("corrupt access key: {error}")),
+            )?;
+            Ok(Some(record))
+        }
+        Err(
+            nimbus_core::Error::NotFound(_)
+            | nimbus_core::Error::DocumentNotFound(_)
+            | nimbus_core::Error::TenantNotFound(_),
+        ) => Ok(None),
+        Err(error) => Err(map_core_error(error)),
+    }
+}
+
 /// List every configured access key as `(access_key_id, redacted_record)` pairs,
 /// sorted by id. The returned [`RedactedAccessKey`] omits the secret — it is
 /// never exposed over the listing surface (F6b).
@@ -283,6 +347,64 @@ mod tests {
         let (engine, _t) = engine();
         assert_eq!(lookup(&engine, "AKIANOPE").unwrap(), None);
         assert!(list_access_keys(&engine).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn async_lookup_uses_memory_provider_lifecycle_for_absent_and_present_keys() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let engine = Arc::new(
+            Engine::new_with_memory_persistence(temp.path()).expect("memory provider engine"),
+        );
+
+        assert_eq!(lookup_async(&engine, "AKIANOPE").await.unwrap(), None);
+
+        put_access_key_async(
+            &engine,
+            "AKIAACME",
+            &tenant("acme"),
+            Some("secret-1".to_owned()),
+            Some("us-east-1".to_owned()),
+        )
+        .await
+        .expect("async put");
+        let stored = lookup_async(&engine, "AKIAACME")
+            .await
+            .expect("async lookup")
+            .expect("present");
+        assert_eq!(stored.tenant, "acme");
+        assert_eq!(stored.secret.as_deref(), Some("secret-1"));
+        assert_eq!(stored.region.as_deref(), Some("us-east-1"));
+    }
+
+    #[tokio::test]
+    async fn async_lookup_reopens_durable_key_store_after_engine_restart() {
+        let data_dir = tempfile::tempdir().expect("temporary data dir should create");
+        let tenant_id = tenant("acme");
+        let engine = Arc::new(Engine::new(data_dir.path()).expect("embedded engine should create"));
+
+        put_access_key_async(
+            &engine,
+            "AKIARESTART",
+            &tenant_id,
+            Some("fixture-dynamodb".to_owned()),
+            Some("us-east-1".to_owned()),
+        )
+        .await
+        .expect("async put should create the durable key-store tenant");
+        engine.quiesce().await;
+        drop(engine);
+
+        let reopened = Arc::new(
+            Engine::new(data_dir.path()).expect("engine should reopen without a loaded runtime"),
+        );
+        let stored = lookup_async(&reopened, "AKIARESTART")
+            .await
+            .expect("async lookup should open the durable key-store tenant")
+            .expect("persisted key should survive the engine restart");
+        assert_eq!(stored.tenant, tenant_id.as_str());
+        assert_eq!(stored.secret.as_deref(), Some("fixture-dynamodb"));
+        assert_eq!(stored.region.as_deref(), Some("us-east-1"));
+        reopened.quiesce().await;
     }
 
     #[test]

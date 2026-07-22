@@ -23,7 +23,7 @@ fn main() -> Result<()> {
 
     let engine = Engine::new(&data_dir)?;
     let tenant_id = TenantId::new("demo".to_string())?;
-    engine.create_tenant(tenant_id.clone())?;
+    engine.create_tenant(tenant_id.clone())?; // tenant-lifecycle: embedded-only
     let payload = "x".repeat(PAYLOAD_BYTES);
     let tables = (0..TABLE_COUNT)
         .map(|index| TableName::new(format!("tasks_{index}")))

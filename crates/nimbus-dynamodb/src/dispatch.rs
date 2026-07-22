@@ -28,12 +28,14 @@ use nimbus_engine::Engine;
 use nimbus_tenant::TenantIsolationContext;
 use serde_json::Value;
 
-use crate::auth::sigv4::parse::parse_authorization;
+use crate::auth::sigv4::parse::{ParsedAuthorization, parse_authorization};
 use crate::auth::sigv4::verify;
 use crate::commands::{batch, control_plane, discovery, item, query, stream, tag, transact, ttl};
 use crate::error::map_core_error;
 use crate::key_management;
-use crate::tenant::{AccessKeyRegistry, AuthMode, ensure_tenant, tenant_context};
+use crate::tenant::{
+    AccessKeyRegistry, AuthMode, ensure_tenant, ensure_tenant_async, tenant_context,
+};
 use crate::wire::{self, WireResponse};
 
 /// Surface label recorded on every DynamoDB-originated tenant context.
@@ -94,53 +96,134 @@ pub fn is_known_operation(operation: &str) -> bool {
     KNOWN_OPERATIONS.contains(&operation)
 }
 
-/// Dispatch a DynamoDB request to its operation handler.
+/// Dispatch a DynamoDB request after synchronous tenant admission.
 ///
-/// Returns a [`WireResponse`] `(status, body)`; `nimbus-server` turns it into an
-/// HTTP response. See the module docs for the ordered flow (unknown-op and
-/// malformed-body rejection precede auth; auth precedes routing).
+/// This entrypoint is retained for embedded callers that already own the
+/// blocking lifecycle. Provider-capable transports must call
+/// [`dispatch_async`], which admits the authenticated tenant through the
+/// persistence-provider lifecycle before entering the synchronous command core.
 #[must_use]
 pub fn dispatch(ctx: &DispatchContext<'_>, headers: &HeaderMap, body: &[u8]) -> WireResponse {
+    let prepared = match prepare_dispatch(ctx, headers, body) {
+        Ok(prepared) => prepared,
+        Err(response) => return response,
+    };
+    if let Err(error) = ensure_tenant(ctx.engine, &prepared.context) {
+        return wire::render_error(&error);
+    }
+    route_prepared(ctx, headers, prepared)
+}
+
+/// Dispatch a DynamoDB request through canonical async tenant admission.
+///
+/// Unknown-operation and malformed-body rejection still precede auth; auth
+/// precedes tenant creation; only `AlreadyExists` is an idempotent admission
+/// success.
+pub async fn dispatch_async(
+    ctx: &DispatchContext<'_>,
+    headers: &HeaderMap,
+    body: &[u8],
+) -> WireResponse {
+    let prepared = match prepare_dispatch_async(ctx, headers, body).await {
+        Ok(prepared) => prepared,
+        Err(response) => return response,
+    };
+    if let Err(error) = ensure_tenant_async(ctx.engine, &prepared.context).await {
+        return wire::render_error(&error);
+    }
+    route_prepared(ctx, headers, prepared)
+}
+
+struct PreparedDispatch {
+    operation: String,
+    request: Value,
+    context: TenantIsolationContext,
+}
+
+fn prepare_dispatch(
+    ctx: &DispatchContext<'_>,
+    headers: &HeaderMap,
+    body: &[u8],
+) -> Result<PreparedDispatch, WireResponse> {
+    let (operation, request) = parse_dispatch(headers, body)?;
+
+    // Authenticate: access key → tenant (and, in strict mode, verify the
+    // SigV4 signature against the per-key secret + timestamp window).
+    let context = match authenticate(ctx, headers, body) {
+        Ok(context) => context,
+        Err(error) => return Err(wire::render_error(&error)),
+    };
+
+    Ok(PreparedDispatch {
+        operation,
+        request,
+        context,
+    })
+}
+
+async fn prepare_dispatch_async(
+    ctx: &DispatchContext<'_>,
+    headers: &HeaderMap,
+    body: &[u8],
+) -> Result<PreparedDispatch, WireResponse> {
+    let (operation, request) = parse_dispatch(headers, body)?;
+    let context = match authenticate_async(ctx, headers, body).await {
+        Ok(context) => context,
+        Err(error) => return Err(wire::render_error(&error)),
+    };
+
+    Ok(PreparedDispatch {
+        operation,
+        request,
+        context,
+    })
+}
+
+fn parse_dispatch(headers: &HeaderMap, body: &[u8]) -> Result<(String, Value), WireResponse> {
     // 1. Parse X-Amz-Target.
     let operation = match wire::extract_operation(headers) {
         Ok(op) => op,
-        Err(error) => return wire::render_error(&error),
+        Err(error) => return Err(wire::render_error(&error)),
     };
 
     // 2. Reject unknown operations before auth (real DynamoDB order).
     if !is_known_operation(&operation) {
-        return wire::render_error(&DynamoDbError::UnknownOperationException(String::new()));
+        return Err(wire::render_error(
+            &DynamoDbError::UnknownOperationException(String::new()),
+        ));
     }
 
     // 3. Reject malformed JSON bodies before auth.
     let request: Value = match serde_json::from_slice(body) {
         Ok(value) => value,
         Err(error) => {
-            return wire::render_error(&DynamoDbError::SerializationException(format!(
-                "Start of structure or map found where not expected: {error}"
+            return Err(wire::render_error(&DynamoDbError::SerializationException(
+                format!("Start of structure or map found where not expected: {error}"),
             )));
         }
     };
 
-    // 4. Authenticate: access key → tenant (and, in strict mode, verify the
-    //    SigV4 signature against the per-key secret + timestamp window).
-    let context = match authenticate(ctx, headers, body) {
-        Ok(context) => context,
-        Err(error) => return wire::render_error(&error),
-    };
+    Ok((operation, request))
+}
 
-    // 5. Ensure the resolved tenant exists (idempotent).
-    if let Err(error) = ensure_tenant(ctx.engine, &context) {
-        return wire::render_error(&error);
-    }
-
-    // 6. Route to the per-operation handler. The `Host` lets DescribeEndpoints
+fn route_prepared(
+    ctx: &DispatchContext<'_>,
+    headers: &HeaderMap,
+    prepared: PreparedDispatch,
+) -> WireResponse {
+    // Route to the per-operation handler. The `Host` lets DescribeEndpoints
     //    echo the address the client used.
     let host = headers
         .get("host")
         .and_then(|value| value.to_str().ok())
         .unwrap_or("localhost");
-    route(ctx, &context, &operation, request, host)
+    route(
+        ctx,
+        &prepared.context,
+        &prepared.operation,
+        prepared.request,
+        host,
+    )
 }
 
 /// Resolve the request's tenant from the SigV4 `Authorization` header, and —
@@ -161,24 +244,44 @@ fn authenticate(
     headers: &HeaderMap,
     body: &[u8],
 ) -> Result<TenantIsolationContext, DynamoDbError> {
+    let parsed = parse_request_authorization(headers)?;
+    let (tenant, secret) = resolve_binding(ctx, &parsed.access_key_id)?;
+    finish_authentication(ctx, headers, body, &parsed, tenant, secret)
+}
+
+async fn authenticate_async(
+    ctx: &DispatchContext<'_>,
+    headers: &HeaderMap,
+    body: &[u8],
+) -> Result<TenantIsolationContext, DynamoDbError> {
+    let parsed = parse_request_authorization(headers)?;
+    let (tenant, secret) = resolve_binding_async(ctx, &parsed.access_key_id).await?;
+    finish_authentication(ctx, headers, body, &parsed, tenant, secret)
+}
+
+fn parse_request_authorization(headers: &HeaderMap) -> Result<ParsedAuthorization, DynamoDbError> {
     let header = headers
         .get("authorization")
         .and_then(|value| value.to_str().ok())
         .ok_or_else(|| {
             DynamoDbError::MissingAuthenticationToken("Missing Authentication Token".to_owned())
         })?;
-    let parsed = parse_authorization(header)?;
-    let (tenant, secret) = resolve_binding(ctx, &parsed.access_key_id)?;
+    parse_authorization(header)
+}
 
+fn finish_authentication(
+    ctx: &DispatchContext<'_>,
+    headers: &HeaderMap,
+    body: &[u8],
+    parsed: &ParsedAuthorization,
+    tenant: TenantId,
+    secret: Option<String>,
+) -> Result<TenantIsolationContext, DynamoDbError> {
     if ctx.access_keys.mode() == AuthMode::Strict {
-        let secret = secret.ok_or_else(|| {
-            DynamoDbError::UnrecognizedClientException(
-                "The security token included in the request is invalid.".to_owned(),
-            )
-        })?;
+        let secret = secret.ok_or_else(unrecognized_client_token)?;
         verify::validate_timestamp(headers)?;
         // DynamoDB is always `POST /` with no query string.
-        verify::verify_signature(&parsed, &secret, "POST", "/", "", headers, body)?;
+        verify::verify_signature(parsed, &secret, "POST", "/", "", headers, body)?;
     }
 
     Ok(tenant_context(tenant, DISPATCH_SURFACE))
@@ -203,18 +306,35 @@ fn resolve_binding(
         return Ok((binding.tenant.clone(), binding.secret.clone()));
     }
     match key_management::lookup(ctx.engine, access_key_id)? {
-        Some(stored) => {
-            let tenant = TenantId::new(stored.tenant).map_err(map_core_error)?;
-            // Defense in depth: a stored key whose tenant is reserved (e.g. a
-            // pre-existing or corrupt record) must never resolve, or a request
-            // could read internal stores like the access-key catalog (F6a).
-            if crate::tenant::is_reserved_tenant(&tenant) {
-                return Err(unrecognized_client_token());
-            }
-            Ok((tenant, stored.secret))
-        }
+        Some(stored) => resolve_stored_binding(stored),
         None => Err(unrecognized_client_token()),
     }
+}
+
+async fn resolve_binding_async(
+    ctx: &DispatchContext<'_>,
+    access_key_id: &str,
+) -> Result<(TenantId, Option<String>), DynamoDbError> {
+    if let Ok(binding) = ctx.access_keys.binding(access_key_id) {
+        return Ok((binding.tenant.clone(), binding.secret.clone()));
+    }
+    match key_management::lookup_async(ctx.engine, access_key_id).await? {
+        Some(stored) => resolve_stored_binding(stored),
+        None => Err(unrecognized_client_token()),
+    }
+}
+
+fn resolve_stored_binding(
+    stored: key_management::StoredAccessKey,
+) -> Result<(TenantId, Option<String>), DynamoDbError> {
+    let tenant = TenantId::new(stored.tenant).map_err(map_core_error)?;
+    // Defense in depth: a stored key whose tenant is reserved (e.g. a
+    // pre-existing or corrupt record) must never resolve, or a request could
+    // read internal stores like the access-key catalog (F6a).
+    if crate::tenant::is_reserved_tenant(&tenant) {
+        return Err(unrecognized_client_token());
+    }
+    Ok((tenant, stored.secret))
 }
 
 /// Route an authenticated request to its handler. Operations without a handler

@@ -139,15 +139,31 @@ pub fn list_collections(
     })
 }
 
+#[cfg(test)]
 pub fn list_databases(
     _body: &bson::Document,
     engine: &Arc<Engine>,
     _principal: &PrincipalContext,
 ) -> Result<bson::Document, MongoError> {
     let tenants = engine.list_tenants().map_err(MongoError::from)?;
+    Ok(render_databases(&tenants))
+}
 
+pub async fn list_databases_async(
+    _body: &bson::Document,
+    engine: &Arc<Engine>,
+    _principal: &PrincipalContext,
+) -> Result<bson::Document, MongoError> {
+    let tenants = engine
+        .list_tenants_async()
+        .await
+        .map_err(MongoError::from)?;
+    Ok(render_databases(&tenants))
+}
+
+fn render_databases(tenants: &[nimbus_core::TenantId]) -> bson::Document {
     let mut databases: Vec<bson::Bson> = Vec::new();
-    for tenant_id in &tenants {
+    for tenant_id in tenants {
         let name = tenant_id.as_str();
         databases.push(bson::Bson::Document(bson::doc! {
             "name": name,
@@ -157,11 +173,11 @@ pub fn list_databases(
     }
 
     let total_size = 0_i64;
-    Ok(bson::doc! {
+    bson::doc! {
         "databases": databases,
         "totalSize": total_size,
         "ok": 1.0,
-    })
+    }
 }
 
 #[cfg(test)]
@@ -312,6 +328,28 @@ mod tests {
         assert_eq!(result.get_f64("ok").unwrap(), 1.0);
         let databases = result.get_array("databases").unwrap();
         assert!(!databases.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_databases_uses_provider_lifecycle() {
+        let fixture = EngineFixture::new(|path| Engine::new_with_memory_persistence(path));
+        fixture
+            .engine()
+            .ensure_tenant_ready_async(TenantId::new("testdb").unwrap())
+            .await
+            .expect("provider tenant admission");
+
+        let body = bson::doc! { "listDatabases": 1 };
+        let result = list_databases_async(&body, &fixture.engine(), &test_principal())
+            .await
+            .expect("provider-capable database listing");
+        let databases = result.get_array("databases").unwrap();
+        assert!(databases.iter().any(|database| {
+            database
+                .as_document()
+                .and_then(|database| database.get_str("name").ok())
+                == Some("testdb")
+        }));
     }
 
     #[test]

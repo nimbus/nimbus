@@ -178,6 +178,13 @@ captures the tenant database; `object-storage backup-object-store` captures
 one tenant's objects into a single ciphertext bundle. Capture both to have a
 complete tenant backup.
 
+These maintenance verbs currently support embedded SQLite or redb tenant
+metadata only (`--provider sqlite|redb`). They construct an embedded engine so
+the metadata archive and byte-plane bundle share one local deployment
+boundary. They cannot back up or restore tenant metadata in PostgreSQL, MySQL,
+or libSQL; use the external backend's native backup procedure and manage its
+object-byte recovery separately.
+
 Both verbs are offline maintenance — they take exclusive ownership of the
 byte-plane leg and fail closed with a "stop the server first" message while a
 server is running.

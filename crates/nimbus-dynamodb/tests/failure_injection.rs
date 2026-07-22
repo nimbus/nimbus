@@ -20,7 +20,11 @@ const KEY: &str = "AKIATEST";
 
 fn engine() -> (Arc<Engine>, tempfile::TempDir) {
     let temp = tempfile::tempdir().expect("tempdir");
-    (Arc::new(Engine::new(temp.path()).expect("engine")), temp)
+    let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
+    engine
+        .create_tenant(TenantId::new("acme").expect("tenant"))
+        .expect("embedded fixture should pre-admit the tenant");
+    (engine, temp)
 }
 
 fn registry() -> AccessKeyRegistry {

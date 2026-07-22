@@ -72,6 +72,14 @@ pub async fn dispatch_authed(
     if body.get_bool("startTransaction").unwrap_or(false) && principal.is_none() {
         return Err(unauthorized(command_name));
     }
+    if let Some(principal) = principal.as_ref()
+        && requires_tenant_admission(command_name)
+    {
+        let db_name = body.get_str("$db").unwrap_or(tenant::DEFAULT_TENANT);
+        let tenant_context =
+            tenant::resolve_tenant_context(db_name, "mongodb command admission", principal)?;
+        tenant::ensure_tenant_async(engine, &tenant_context).await?;
+    }
     if let Some(principal) = principal.as_ref() {
         session::handle_start_transaction(body, conn, engine, principal)?;
     }
@@ -110,7 +118,8 @@ pub async fn dispatch_authed(
             collection::list_collections(body, engine, required_principal(principal.as_ref())?)
         }
         "listDatabases" => {
-            collection::list_databases(body, engine, required_principal(principal.as_ref())?)
+            collection::list_databases_async(body, engine, required_principal(principal.as_ref())?)
+                .await
         }
         "createIndexes" | "createindexes" => {
             index::create_indexes(body, engine, required_principal(principal.as_ref())?)
@@ -156,6 +165,38 @@ fn requires_authentication(command_name: &str) -> bool {
             | "getLog"
             | "saslStart"
             | "saslContinue"
+    )
+}
+
+/// Commands that select a tenant-backed namespace and therefore must complete
+/// asynchronous tenant admission before entering the synchronous command core.
+///
+/// Cursor and session-control commands operate on connection state established
+/// by an earlier admitted namespace command. Global metadata commands such as
+/// `listDatabases` do not select or create a tenant. Keeping that distinction
+/// explicit prevents an administrative `$db` (or an omitted `$db`) from being
+/// mistaken for a cross-tenant data-plane selection in bound-auth mode.
+fn requires_tenant_admission(command_name: &str) -> bool {
+    matches!(
+        command_name,
+        "insert"
+            | "find"
+            | "update"
+            | "delete"
+            | "findAndModify"
+            | "findandmodify"
+            | "count"
+            | "distinct"
+            | "aggregate"
+            | "create"
+            | "drop"
+            | "listCollections"
+            | "createIndexes"
+            | "createindexes"
+            | "dropIndexes"
+            | "dropindexes"
+            | "listIndexes"
+            | "listindexes"
     )
 }
 
@@ -212,6 +253,48 @@ mod tests {
     fn extract_command_name_empty_doc() {
         let doc = bson::Document::new();
         assert_eq!(extract_command_name(&doc), None);
+    }
+
+    #[test]
+    fn tenant_admission_policy_distinguishes_namespace_and_connection_commands() {
+        for command in [
+            "insert",
+            "find",
+            "update",
+            "delete",
+            "findAndModify",
+            "count",
+            "distinct",
+            "aggregate",
+            "create",
+            "drop",
+            "listCollections",
+            "createIndexes",
+            "dropIndexes",
+            "listIndexes",
+        ] {
+            assert!(
+                requires_tenant_admission(command),
+                "{command} must admit its selected tenant before synchronous dispatch"
+            );
+        }
+
+        for command in [
+            "startSession",
+            "endSessions",
+            "refreshSessions",
+            "commitTransaction",
+            "abortTransaction",
+            "getMore",
+            "killCursors",
+            "listDatabases",
+            "ping",
+        ] {
+            assert!(
+                !requires_tenant_admission(command),
+                "{command} must not create a tenant from control-plane $db metadata"
+            );
+        }
     }
 
     #[tokio::test]

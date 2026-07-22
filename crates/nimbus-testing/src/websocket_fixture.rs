@@ -207,13 +207,12 @@ impl WebSocketFixture {
 }
 
 fn default_message_timeout() -> Duration {
-    // Runtime-backed subscription bootstraps can queue behind other in-process
-    // runtime work; coverage instrumentation adds another layer of overhead.
-    if std::env::var_os("CARGO_LLVM_COV").is_some() {
-        Duration::from_secs(30)
-    } else {
-        Duration::from_secs(15)
-    }
+    // Runtime-backed subscription bootstraps can queue behind shared V8 work in
+    // a loaded aggregate run even though focused cases complete quickly. The
+    // 30-second bound is a harness safety budget rather than a timing contract;
+    // callers still validate the exact next frame, and a timeout identifies the
+    // missing frame instead of counting the wait itself as success.
+    Duration::from_secs(30)
 }
 
 fn message_from_websocket_next(next: Option<Result<Message, WebSocketError>>) -> Message {

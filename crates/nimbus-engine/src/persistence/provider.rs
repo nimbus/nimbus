@@ -140,7 +140,8 @@ impl OpenedTenantProvider for EmbeddedRedbProvider {
     type OpenedTenant = OpenedEmbeddedRedbTenant;
 
     async fn create_opened_tenant(&self, tenant_id: &TenantId) -> Result<Self::OpenedTenant> {
-        self.create_tenant(tenant_id).await
+        self.create_tenant(tenant_id) // tenant-lifecycle: provider-adapter-internal
+            .await
     }
 
     async fn open_existing_opened_tenant(
@@ -155,7 +156,8 @@ impl OpenedTenantProvider for EmbeddedSqliteProvider {
     type OpenedTenant = OpenedEmbeddedSqliteTenant;
 
     async fn create_opened_tenant(&self, tenant_id: &TenantId) -> Result<Self::OpenedTenant> {
-        self.create_tenant(tenant_id).await
+        self.create_tenant(tenant_id) // tenant-lifecycle: provider-adapter-internal
+            .await
     }
 
     async fn open_existing_opened_tenant(

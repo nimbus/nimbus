@@ -165,7 +165,7 @@ async fn run_backup_restore(command: BackupRestoreCommand) -> Result<(), Box<dyn
     let engine = open_engine(&command.data_dir, command.provider).await?;
     for (tenant_name, archive) in &backup.tenants {
         let tenant_id = TenantId::new(tenant_name)?;
-        engine.create_tenant(tenant_id.clone())?;
+        engine.create_tenant(tenant_id.clone())?; // tenant-lifecycle: embedded-only
         engine.import_point_in_time_restore_archive(&tenant_id, archive)?;
     }
     engine.quiesce().await;

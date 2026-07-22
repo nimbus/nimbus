@@ -35,6 +35,25 @@ mutation journal. One tenant's queues, caches, and watermarks are
 invisible to every other tenant, which is what makes the tenant the
 isolation and scaling unit described in [scaling](/concepts/scaling/).
 
+## Tenant lifecycle interfaces
+
+Tenant admission is an engine-owned async lifecycle. Explicit administrative
+creation uses `Arc<Engine>::create_tenant_async` and reports `AlreadyExists`
+when the durable tenant is already present. Request-facing adapters use
+`ensure_tenant_ready_async`: an existing durable tenant is not considered
+ready until Nimbus has opened it and registered a complete `TenantRuntime`.
+That distinction makes retry safe if cancellation or process failure happens
+after provider storage is created but before runtime publication.
+
+The blocking `Engine::create_tenant` interface is deliberately restricted to
+embedded redb and SQLite compositions. It fails before touching tenant state
+when called on PostgreSQL, MySQL, libSQL, or another provider composition.
+Provider-reachable callers must retain an `Arc<Engine>` and await the async
+lifecycle; MongoDB, DynamoDB, Cloudflare KV, automatic CLI tenant creation,
+object admission, the system tenant, and DynamoDB's scheduled TTL maintenance
+all follow that rule. This keeps provider namespace creation, runtime catch-up,
+observer bootstrap, and publication behind one ordering and error contract.
+
 ## One mutation path
 
 The engine's public write surface is a family of document methods —

@@ -23,7 +23,7 @@ static TEST_SUFFIX_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(mysql_provider)]
-async fn typed_mysql_config_supports_async_tenant_lifecycle_and_empty_read_paths() {
+async fn mysql_tenant_creation_async_contract() {
     with_mysql_engine_config(|engine_config, _provider_config| async move {
         let tenant_id = TenantId::new("mysql-tenant").expect("tenant id should build");
         let engine = Arc::new(
@@ -36,6 +36,17 @@ async fn typed_mysql_config_supports_async_tenant_lifecycle_and_empty_read_paths
             .create_tenant_async(tenant_id.clone())
             .await
             .expect("tenant should create");
+        assert!(matches!(
+            engine.create_tenant_async(tenant_id.clone()).await,
+            Err(Error::AlreadyExists(_))
+        ));
+        assert_eq!(
+            engine
+                .ensure_tenant_ready_async(tenant_id.clone())
+                .await
+                .expect("idempotent admission should load the existing tenant"),
+            crate::TenantAdmissionOutcome::Existing
+        );
         assert_eq!(
             engine
                 .mutation_journal_stats_for_testing(&tenant_id)

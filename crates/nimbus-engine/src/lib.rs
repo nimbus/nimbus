@@ -18,7 +18,7 @@ pub use engine::{
     InitializedKeyProvider, MutationActor, MutationExecutionUnit, MutationIsolatePermit,
     ProjectionReconciliationSnapshot, ProjectionToken, SubscribeOptions,
     SubscriptionBootstrapCancellation, TableSchemaChangeEvent, TableSchemaChangeObserver,
-    TenantObjectMeta, TenantRuntimeLoadedEvent, TenantRuntimeObserver,
+    TenantAdmissionOutcome, TenantObjectMeta, TenantRuntimeLoadedEvent, TenantRuntimeObserver,
     TenantRuntimeObserverIdentity,
 };
 #[cfg(any(test, feature = "test-hooks"))]

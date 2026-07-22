@@ -37,8 +37,10 @@ sha2.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
+nimbus-engine = { path = "../nimbus-engine", features = ["test-hooks"] }
 nimbus-testing = { path = "../nimbus-testing" }
 tempfile.workspace = true
+tokio.workspace = true
 
 # Operation-family latency baseline (p50/p95/p99). Custom harness — a plain
 # `fn main` driven by `cargo bench`; see docs/private/plans/proof/dynamodb-adapter/
