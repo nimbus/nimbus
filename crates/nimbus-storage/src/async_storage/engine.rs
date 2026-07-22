@@ -186,7 +186,10 @@ impl EmbeddedRedbProvider {
         path: PathBuf,
     ) -> Result<OpenedEmbeddedRedbTenant> {
         let clock = self.clock.clone();
-        let fault_injector = self.fault_injector.clone();
+        let fault_injector = crate::simulation::tenant_scoped_fault_injector(
+            self.fault_injector.clone(),
+            tenant_id.clone(),
+        );
         let provider = self.encryption_provider.clone();
         let store = self
             .storage_handle

@@ -917,6 +917,7 @@ impl MySqlWriteTransaction {
 
         let mut transaction = Self {
             provider,
+            tenant_id: store.tenant_id.clone(),
             database_name,
             schema_cache: store.schema_cache.clone(),
             pipeline_metrics: store.pipeline_metrics.clone(),
@@ -1721,7 +1722,9 @@ impl crate::sql::write_core::SqlWriteBackend for MySqlWriteTransaction {
     }
 
     fn check_fault(&self, point: FaultPoint) -> Result<()> {
-        self.provider.fault_injector.check(point)
+        self.provider
+            .fault_injector
+            .check_for_tenant(point, &self.tenant_id)
     }
 
     fn batch_execute(&mut self, sql: &str) -> Result<()> {

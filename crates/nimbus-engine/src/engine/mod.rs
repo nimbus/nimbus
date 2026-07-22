@@ -326,6 +326,32 @@ impl Engine {
         )
     }
 
+    /// Creates a test engine for an embedded adapter with every ambient source
+    /// used by the PPSC scenario contract supplied explicitly.
+    #[cfg(any(test, feature = "test-hooks"))]
+    #[doc(hidden)]
+    pub fn new_with_simulation_clocks_id_source_and_embedded_provider(
+        data_dir: impl Into<PathBuf>,
+        clock: Arc<dyn WallClock>,
+        monotonic_clock: Arc<dyn MonotonicClock>,
+        storage_fault_injector: Arc<dyn FaultInjector>,
+        id_source: Arc<dyn IdSource>,
+        embedded_provider_kind: EmbeddedProviderKind,
+    ) -> Result<Self> {
+        let data_dir = data_dir.into();
+        let mut engine = bootstrap::build_embedded_engine(
+            data_dir.clone(),
+            data_dir,
+            None,
+            clock,
+            storage_fault_injector,
+            id_source,
+            embedded_provider_kind,
+        )?;
+        engine.monotonic_clock = monotonic_clock;
+        Ok(engine)
+    }
+
     /// Creates a new engine with deterministic simulation seams and typed
     /// persistence configuration.
     pub async fn new_with_simulation_and_persistence_config(
@@ -352,6 +378,28 @@ impl Engine {
         let mut engine =
             Self::new_with_simulation_and_persistence_config(config, clock, storage_fault_injector)
                 .await?;
+        engine.monotonic_clock = monotonic_clock;
+        Ok(engine)
+    }
+
+    /// Creates a test engine for a configured persistence adapter with every
+    /// ambient source used by the PPSC scenario contract supplied explicitly.
+    #[cfg(any(test, feature = "test-hooks"))]
+    #[doc(hidden)]
+    pub async fn new_with_simulation_clocks_id_source_and_persistence_config(
+        config: EnginePersistenceConfig,
+        clock: Arc<dyn WallClock>,
+        monotonic_clock: Arc<dyn MonotonicClock>,
+        storage_fault_injector: Arc<dyn FaultInjector>,
+        id_source: Arc<dyn IdSource>,
+    ) -> Result<Self> {
+        let mut engine = bootstrap::build_from_persistence_config(
+            config,
+            clock,
+            storage_fault_injector,
+            id_source,
+        )
+        .await?;
         engine.monotonic_clock = monotonic_clock;
         Ok(engine)
     }

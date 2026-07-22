@@ -1,10 +1,88 @@
 use std::num::NonZeroU64;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use nimbus_core::{IdSource, ManualMonotonicClock, ManualWallClock, Timestamp};
+use nimbus_core::{
+    IdSource, ManualMonotonicClock, ManualWallClock, TenantEventRecord, TenantId, Timestamp,
+};
 
 use super::*;
+
+#[derive(Default)]
+struct RecordingTenantFaultInjector {
+    tenant_checks: Mutex<Vec<TenantId>>,
+    durable_checks: Mutex<Vec<TenantId>>,
+}
+
+impl FaultInjector for RecordingTenantFaultInjector {
+    fn check(&self, point: FaultPoint) -> nimbus_core::Result<()> {
+        panic!(
+            "tenant-scoped adapter must not fall back to the process-wide {} check",
+            point.as_str()
+        );
+    }
+
+    fn check_for_tenant(
+        &self,
+        _point: FaultPoint,
+        tenant_id: &TenantId,
+    ) -> nimbus_core::Result<()> {
+        self.tenant_checks
+            .lock()
+            .expect("tenant-check recorder should lock")
+            .push(tenant_id.clone());
+        Ok(())
+    }
+
+    fn check_for_durable_records(
+        &self,
+        _point: FaultPoint,
+        tenant_id: &TenantId,
+        _records: &[TenantEventRecord],
+    ) -> nimbus_core::Result<()> {
+        self.durable_checks
+            .lock()
+            .expect("durable-check recorder should lock")
+            .push(tenant_id.clone());
+        Ok(())
+    }
+}
+
+#[test]
+fn tenant_scoped_fault_injector_binds_every_check_to_the_store_owner() {
+    let owner = TenantId::new("fault-owner").expect("owner tenant should build");
+    let unrelated = TenantId::new("unrelated").expect("unrelated tenant should build");
+    let recorder = Arc::new(RecordingTenantFaultInjector::default());
+    let scoped = tenant_scoped_fault_injector(recorder.clone(), owner.clone());
+
+    scoped
+        .check(FaultPoint::StorageCommitBeforeVisibility)
+        .expect("point-only checks should be tenant scoped");
+    scoped
+        .check_for_tenant(
+            FaultPoint::StorageCommitAfterVisibilityBeforeReturn,
+            &unrelated,
+        )
+        .expect("caller tenant arguments must not override store ownership");
+    scoped
+        .check_for_durable_records(FaultPoint::JournalAppendBeforeDurableFlush, &unrelated, &[])
+        .expect("durable-record checks should be tenant scoped");
+
+    assert_eq!(
+        *recorder
+            .tenant_checks
+            .lock()
+            .expect("tenant-check recorder should lock"),
+        [owner.clone(), owner.clone()]
+    );
+    assert_eq!(
+        *recorder
+            .durable_checks
+            .lock()
+            .expect("durable-check recorder should lock"),
+        [owner]
+    );
+}
 
 #[test]
 fn clock_types_are_imported_from_nimbus_core() {

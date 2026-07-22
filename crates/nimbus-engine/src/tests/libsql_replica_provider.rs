@@ -15,6 +15,7 @@ use nimbus_core::{
 };
 use nimbus_crypto::{KeyManifest, LocalKeySubject, ManifestCipher};
 use nimbus_storage::libsql::libsql_transport_connector;
+use nimbus_storage::provider_test_fixtures::{LibsqlLeaseTimeControl, ProviderLeaseTimeControl};
 use nimbus_storage::{
     FaultInjector, FaultPoint, LibsqlReplicaProvider, LibsqlReplicaProviderConfig,
     NoopFaultInjector,
@@ -1363,26 +1364,8 @@ async fn open_remote_namespace_database(
 }
 
 async fn expire_libsql_committer_lease(config: &LibsqlReplicaProviderConfig, tenant_id: &TenantId) {
-    let provider = LibsqlReplicaProvider::connect(config.clone())
-        .await
-        .expect("libsql expiry provider should connect");
-    let namespace = provider
-        .tenant_namespace(tenant_id)
-        .expect("libsql tenant namespace should derive");
-    let database = open_remote_namespace_database(config, &namespace)
-        .await
-        .expect("libsql expiry namespace should open");
-    let connection = database
-        .connect()
-        .expect("libsql expiry connection should open");
-    let updated = connection
-        .execute(
-            "UPDATE committer_lease \
-             SET expires_at = CAST(unixepoch('subsec') * 1000 AS INTEGER) - 1000 \
-             WHERE singleton = 1",
-            (),
-        )
+    LibsqlLeaseTimeControl::new(config.clone())
+        .expire_lease(tenant_id)
         .await
         .expect("libsql scheduler holder lease should expire");
-    assert_eq!(updated, 1, "exactly one libsql lease row should expire");
 }

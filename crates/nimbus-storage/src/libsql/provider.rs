@@ -412,7 +412,10 @@ impl LibsqlReplicaProvider {
             .await?,
         );
         let clock = self.clock.clone();
-        let fault_injector = self.replica_fault_injector.clone();
+        let fault_injector = crate::simulation::tenant_scoped_fault_injector(
+            self.replica_fault_injector.clone(),
+            registration.tenant_id.clone(),
+        );
         let path_for_open = replica_path.clone();
         let read_parallelism = self.tenant_read_parallelism;
         let provider = self.encryption_provider.clone();

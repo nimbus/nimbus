@@ -12,6 +12,7 @@ pub use self::coordination::{
     RestartBoundary, RestartPoint, ScenarioMetadata, ScenarioSignal, ScenarioSignalKind,
     ScriptedRestartSchedule,
 };
+pub(crate) use self::faults::tenant_scoped_fault_injector;
 pub use self::faults::{
     FaultInjector, FaultOccurrence, FaultPoint, NoopFaultInjector, ScriptedFaultInjector,
     SeededFaultInjector,

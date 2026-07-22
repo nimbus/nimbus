@@ -96,9 +96,13 @@ impl MemoryTenantProvider {
         }
         self.fault_injector
             .check_for_tenant(crate::FaultPoint::TenantCreateBeforeRegistration, tenant_id)?;
+        let tenant_faults = crate::simulation::tenant_scoped_fault_injector(
+            self.fault_injector.clone(),
+            tenant_id.clone(),
+        );
         let store = Arc::new(MemoryTenantStore::with_simulation(
             self.clock.clone(),
-            self.fault_injector.clone(),
+            tenant_faults,
         ));
         tenants.insert(tenant_id.clone(), store.clone());
         drop(tenants);

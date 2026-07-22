@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::num::NonZeroU64;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use nimbus_core::{Error, Result, TenantEventRecord, TenantId};
 
@@ -70,6 +70,44 @@ pub trait FaultInjector: Send + Sync {
         let _ = records;
         self.check_for_tenant(point, tenant_id)
     }
+}
+
+struct TenantScopedFaultInjector {
+    inner: Arc<dyn FaultInjector>,
+    tenant_id: TenantId,
+}
+
+impl FaultInjector for TenantScopedFaultInjector {
+    fn check(&self, point: FaultPoint) -> Result<()> {
+        self.inner.check_for_tenant(point, &self.tenant_id)
+    }
+
+    fn check_for_tenant(&self, point: FaultPoint, _tenant_id: &TenantId) -> Result<()> {
+        self.inner.check_for_tenant(point, &self.tenant_id)
+    }
+
+    fn check_for_durable_records(
+        &self,
+        point: FaultPoint,
+        _tenant_id: &TenantId,
+        records: &[TenantEventRecord],
+    ) -> Result<()> {
+        self.inner
+            .check_for_durable_records(point, &self.tenant_id, records)
+    }
+}
+
+/// Binds legacy point-only storage checks to the tenant that owns the store.
+///
+/// Production no-op and process-wide injectors retain their existing behavior
+/// through `FaultInjector`'s defaults. Tenant-aware deterministic injectors can
+/// now target redb, SQLite, Memory, and replica-cache work without racing an
+/// unrelated tenant that happens to reach the same fault point first.
+pub(crate) fn tenant_scoped_fault_injector(
+    inner: Arc<dyn FaultInjector>,
+    tenant_id: TenantId,
+) -> Arc<dyn FaultInjector> {
+    Arc::new(TenantScopedFaultInjector { inner, tenant_id })
 }
 
 #[derive(Default)]

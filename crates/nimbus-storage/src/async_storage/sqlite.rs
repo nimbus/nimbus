@@ -188,7 +188,10 @@ impl EmbeddedSqliteProvider {
         path: PathBuf,
     ) -> Result<OpenedEmbeddedSqliteTenant> {
         let clock = self.clock.clone();
-        let fault_injector = self.fault_injector.clone();
+        let fault_injector = crate::simulation::tenant_scoped_fault_injector(
+            self.fault_injector.clone(),
+            tenant_id.clone(),
+        );
         // The executor's read parallelism tracks core count, but the sqlite
         // CONNECTION pool must never drop below the engine's documented
         // floor: one mutation legitimately holds up to 5 read snapshots, so

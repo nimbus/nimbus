@@ -4,14 +4,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use mysql_async::prelude::Queryable;
-use mysql_async::{Opts, Pool};
 use nimbus_core::{
     AtomicWrite, AtomicWriteBatch, CollectionName, DocumentId, DocumentLocator, DocumentPath,
     FieldReference, Mutation, PrincipalContext, QueryDirection, ResourcePathBinding,
     ScheduleRequest, ScheduledJobOutcome, StructuredCursor, StructuredOrder, StructuredQuery,
     WriteKey, WritePrecondition, WriteSetMode,
 };
+use nimbus_storage::provider_test_fixtures::{MySqlLeaseTimeControl, ProviderLeaseTimeControl};
 use nimbus_storage::{MySqlProvider, MySqlProviderConfig};
 
 use super::*;
@@ -706,41 +705,10 @@ async fn test_connection() -> Option<String> {
 }
 
 async fn expire_mysql_committer_lease(config: &MySqlProviderConfig, tenant_id: &TenantId) {
-    let provider = MySqlProvider::connect(config.clone())
-        .await
-        .expect("mysql expiry provider should connect");
-    let database_name = provider
-        .tenant_database_name(tenant_id)
-        .expect("mysql tenant database name should derive");
-    let options = Opts::from_url(&config.connection_string)
-        .expect("mysql expiry connection string should parse");
-    let pool = Pool::new(options);
-    let mut connection = pool
-        .get_conn()
-        .await
-        .expect("mysql expiry connection should open");
-    let statement = format!(
-        "UPDATE `{database_name}`.`committer_lease` \
-         SET expires_at = TIMESTAMPADD(SECOND, -1, CURRENT_TIMESTAMP(6)) \
-         WHERE singleton = TRUE"
-    );
-    connection
-        .query_drop(statement)
+    MySqlLeaseTimeControl::new(config.clone())
+        .expire_lease(tenant_id)
         .await
         .expect("mysql scheduler holder lease should expire");
-    let updated = connection
-        .query_first::<u64, _>("SELECT ROW_COUNT()")
-        .await
-        .expect("mysql expiry row count should query")
-        .expect("mysql expiry row count should exist");
-    assert_eq!(updated, 1, "exactly one mysql lease row should expire");
-    connection
-        .disconnect()
-        .await
-        .expect("mysql expiry connection should close");
-    pool.disconnect()
-        .await
-        .expect("mysql expiry pool should close");
 }
 
 fn unique_suffix() -> String {

@@ -150,6 +150,7 @@ pub struct MySqlTenantStorage {
 
 pub struct MySqlWriteTransaction {
     provider: MySqlProvider,
+    tenant_id: TenantId,
     database_name: String,
     schema_cache: Arc<RwLock<Option<Schema>>>,
     pipeline_metrics: Arc<crate::sql::write_pipeline::SqlWritePipelineMetrics>,

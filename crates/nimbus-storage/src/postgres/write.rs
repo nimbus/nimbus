@@ -1739,7 +1739,9 @@ impl crate::sql::write_core::SqlWriteBackend for PostgresWriteTransaction {
     }
 
     fn check_fault(&self, point: FaultPoint) -> Result<()> {
-        self.provider.fault_injector.check(point)
+        self.provider
+            .fault_injector
+            .check_for_tenant(point, &self.tenant_id)
     }
 
     fn batch_execute(&mut self, sql: &str) -> Result<()> {
