@@ -115,6 +115,19 @@ fn mysql_journal_statement_ranges(
 
 impl MySqlWriteTransaction {
     pub fn append_durable_records_batch(&mut self, records: &[TenantEventRecord]) -> Result<()> {
+        self.append_durable_records_batch_with_admission(records, || {})
+    }
+
+    /// Invokes `on_admitted` exactly once after the batch-attempt diagnostic is
+    /// recorded and before the first provider operation is admitted.
+    pub(super) fn append_durable_records_batch_with_admission<Admitted>(
+        &mut self,
+        records: &[TenantEventRecord],
+        on_admitted: Admitted,
+    ) -> Result<()>
+    where
+        Admitted: FnOnce(),
+    {
         self.check_cancel()?;
         if records.is_empty() {
             return Ok(());
@@ -134,6 +147,7 @@ impl MySqlWriteTransaction {
             self.provider.max_allowed_packet,
         )?;
         self.pipeline_metrics.record_batch_attempt(prepared.len());
+        on_admitted();
         let runtime_handle = self.provider.runtime_handle.clone();
         let metrics = self.pipeline_metrics.clone();
         for range in statement_ranges {
@@ -156,7 +170,12 @@ impl MySqlWriteTransaction {
             });
             drop(in_flight);
             metrics.record_elapsed(started);
-            if let Err(error) = &result {
+            // The admission-aware fenced wrapper owns cancellation accounting
+            // so cancellations before this operation cannot be misclassified
+            // and cancellations after it cannot be counted twice.
+            if let Err(error) = &result
+                && !matches!(error, Error::Cancelled)
+            {
                 metrics.record_error(error);
             }
             result?;

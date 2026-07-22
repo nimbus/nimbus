@@ -156,6 +156,67 @@ async fn mysql_pipeline_lease_cas_precedes_all_statements() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn mysql_pre_admission_cancellation_is_not_a_pipeline_failure() {
+    with_test_provider(|provider, _config| async move {
+        let tenant =
+            TenantId::new("pipeline-pre-admission-cancel").expect("tenant id should build");
+        let opened = provider
+            .create_opened_tenant(&tenant)
+            .await
+            .expect("tenant should create and open");
+        let lease = opened
+            .store
+            .acquire_committer_lease(
+                "pre-admission-cancel-owner",
+                std::time::Duration::from_secs(30),
+            )
+            .expect("lease should be acquired");
+        let records = mysql_pipeline_barriers(1);
+
+        let error = opened
+            .store
+            .fenced_append_and_apply_durable_records_batch_cancellable(
+                &lease.owner_id,
+                lease.epoch,
+                SequenceNumber(0),
+                &records,
+                || Err(Error::Cancelled),
+            )
+            .expect_err("pre-admission cancellation should abort the write");
+        assert!(matches!(
+            error,
+            crate::CommitterLeaseError::Storage(Error::Cancelled)
+        ));
+        let diagnostic = opened.store.write_pipeline_diagnostic();
+        assert_eq!(diagnostic.batch_attempt_count, 0);
+        assert_eq!(diagnostic.journal_statement_count, 0);
+        assert_eq!(diagnostic.provider_operation_count, 0);
+        assert_eq!(diagnostic.cancellation_count, 0);
+        assert_eq!(diagnostic.error_count, 0);
+        assert_eq!(
+            opened
+                .store
+                .journal_progress()
+                .expect("progress should read"),
+            crate::store::JournalProgress {
+                durable_head: SequenceNumber(0),
+                applied_head: SequenceNumber(0),
+            }
+        );
+        assert_eq!(
+            opened
+                .store
+                .read_committer_lease()
+                .expect("lease should read")
+                .expect("lease should exist")
+                .durable_sequence,
+            SequenceNumber(0)
+        );
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn mysql_sql_pipeline_cancellation_rolls_back() {
     with_test_provider(|provider, _config| async move {
         let tenant = TenantId::new("pipeline-cancel").expect("tenant id should build");

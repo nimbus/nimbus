@@ -355,6 +355,8 @@ impl MySqlTenantStore {
         let owner_id = owner_id.to_string();
         let fenced_owner_id = owner_id.clone();
         let records = records.to_vec();
+        let pipeline_batch_admitted = Arc::new(AtomicBool::new(false));
+        let pipeline_batch_admitted_in_transaction = pipeline_batch_admitted.clone();
         let result = self.execute_write_cancellable(check_cancel, move |transaction| {
             let durable_sequence = records
                 .last()
@@ -375,10 +377,14 @@ impl MySqlTenantStore {
                 transaction.applied_sequence()?,
                 records[0].sequence,
             )?;
-            transaction.append_durable_records_batch(&records)?;
+            transaction.append_durable_records_batch_with_admission(&records, || {
+                pipeline_batch_admitted_in_transaction.store(true, AtomicOrdering::Release);
+            })?;
             transaction.apply_durable_records_batch(&records)
         });
-        if let Err(error @ Error::Cancelled) = &result {
+        if let Err(error @ Error::Cancelled) = &result
+            && pipeline_batch_admitted.load(AtomicOrdering::Acquire)
+        {
             self.pipeline_metrics.record_error(error);
         }
         match result {

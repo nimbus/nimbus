@@ -111,6 +111,68 @@ async fn postgres_pipeline_overlaps_real_provider_io() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn postgres_pipeline_schema_apply_publishes_schema_and_journal_hints() {
+    with_test_provider(|provider, _config| async move {
+        let tenant = TenantId::new("pipeline-schema-hint").expect("tenant id should build");
+        let mut listener = provider
+            .connect_notification_listener()
+            .await
+            .expect("notification listener should connect");
+        let opened = provider
+            .create_opened_tenant(&tenant)
+            .await
+            .expect("tenant should create and open");
+        let lease = opened
+            .store
+            .acquire_committer_lease("pipeline-schema-owner", std::time::Duration::from_secs(30))
+            .expect("lease should be acquired");
+        let table = TableName::new("tasks").expect("table name should build");
+        let table_id = TableId::new();
+        let record = TenantEventRecord::schema_change(
+            SequenceNumber(1),
+            Timestamp(100),
+            SchemaChangeEvent::SetTable {
+                table: table.clone(),
+                table_id,
+                previous: None,
+                current: TableSchema {
+                    table,
+                    fields: vec![FieldSchema {
+                        name: "title".to_string(),
+                        field_type: FieldType::String,
+                        required: true,
+                    }],
+                    indexes: Vec::new(),
+                    access_policy: None,
+                },
+            },
+        )
+        .expect("schema record should build");
+
+        opened
+            .store
+            .fenced_append_and_apply_durable_records_batch(
+                &lease.owner_id,
+                lease.epoch,
+                SequenceNumber(0),
+                &[record],
+            )
+            .expect("fenced schema pipeline should commit");
+
+        let hint = timeout(Duration::from_secs(2), listener.recv())
+            .await
+            .expect("pipeline hint should arrive")
+            .expect("listener should stay open")
+            .expect("pipeline hint should decode");
+        assert_eq!(hint.tenant_id, tenant);
+        assert!(hint.schema_changed);
+        assert!(hint.journal_changed);
+        assert!(!hint.scheduler_changed);
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn sql_pipeline_lease_cas_precedes_all_statements() {
     with_test_provider(|provider, _config| async move {
         let tenant = TenantId::new("pipeline-lease-first").expect("tenant id should build");

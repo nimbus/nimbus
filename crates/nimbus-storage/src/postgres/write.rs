@@ -1668,11 +1668,17 @@ impl PostgresWriteTransaction {
         let result = self.block_on(async move {
             apply_durable_record_in_session(client, &schema_name, &record).await
         });
-        if result.is_ok() && changes_schema_cache {
+        if result.is_ok() {
+            self.record_durable_schema_change_effects(changes_schema_cache);
+        }
+        result
+    }
+
+    pub(super) fn record_durable_schema_change_effects(&mut self, changed: bool) {
+        if changed {
             self.notification.schema_changed = true;
             self.schema_cache_changed = true;
         }
-        result
     }
 
     fn set_trigger_write_origin(&mut self, trigger_write_origin: Option<TriggerWriteOrigin>) {

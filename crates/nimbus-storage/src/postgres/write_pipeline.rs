@@ -133,9 +133,7 @@ impl PostgresWriteTransaction {
             .fault_injector
             .check(FaultPoint::JournalFlushBeforeVisibility)?;
         self.notification.journal_changed = true;
-        if changes_schema_cache {
-            self.schema_cache_changed = true;
-        }
+        self.record_durable_schema_change_effects(changes_schema_cache);
         Ok(())
     }
 }
