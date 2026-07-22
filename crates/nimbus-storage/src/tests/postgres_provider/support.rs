@@ -13,8 +13,8 @@ pub(super) use crate::{FaultInjector, FaultPoint, ResolvedScheduleOp, ResolvedWr
 pub(super) use nimbus_core::{
     CollectionName, CronJob, CronSchedule, DocumentLocator, DocumentPath, Mutation,
     ResourcePathBinding, ScheduledJob, ScheduledJobOutcome, ScheduledJobResult, Schema,
-    SchemaChangeEvent, SequenceNumber, TableId, TableName, TableState, TenantEventKind, TenantId,
-    Timestamp, TriggerDeliveryCursor,
+    SchemaChangeEvent, SequenceNumber, SystemWallClock, TableId, TableName, TableState,
+    TenantEventKind, TenantId, Timestamp, TriggerDeliveryCursor,
 };
 
 pub(super) const TEST_POSTGRES_URL_ENV: &str = "NIMBUS_TEST_POSTGRES_URL";
@@ -53,7 +53,7 @@ pub(super) async fn with_test_provider_and_fault_injector<F, Fut>(
     let provider = PostgresProvider::connect_with_simulation(
         config.clone(),
         tokio::runtime::Handle::current(),
-        std::sync::Arc::new(crate::SystemClock),
+        std::sync::Arc::new(SystemWallClock),
         fault_injector,
     )
     .await

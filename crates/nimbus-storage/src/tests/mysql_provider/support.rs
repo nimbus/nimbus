@@ -14,8 +14,9 @@ pub(super) use mysql_async::{Opts, Pool};
 pub(super) use nimbus_core::{
     CollectionName, CronJob, CronSchedule, Document, DocumentLocator, DocumentPath,
     IndexDefinition, Mutation, ResourcePathBinding, ScheduledJob, ScheduledJobOutcome,
-    ScheduledJobResult, Schema, SchemaChangeEvent, SequenceNumber, TableId, TableName, TableSchema,
-    TableState, TenantEventKind, TenantId, Timestamp, TriggerDeliveryCursor, WriteOp, WriteOpType,
+    ScheduledJobResult, Schema, SchemaChangeEvent, SequenceNumber, SystemWallClock, TableId,
+    TableName, TableSchema, TableState, TenantEventKind, TenantId, Timestamp,
+    TriggerDeliveryCursor, WriteOp, WriteOpType,
 };
 
 pub(super) const MYSQL_URL_ENV: &str = "NIMBUS_MYSQL_URL";
@@ -54,7 +55,7 @@ pub(super) async fn with_test_provider_and_fault_injector<F, Fut>(
     let provider = MySqlProvider::connect_with_simulation(
         config.clone(),
         tokio::runtime::Handle::current(),
-        std::sync::Arc::new(crate::SystemClock),
+        std::sync::Arc::new(SystemWallClock),
         fault_injector,
     )
     .await
