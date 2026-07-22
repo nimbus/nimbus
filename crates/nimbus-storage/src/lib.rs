@@ -94,6 +94,7 @@ pub use retention::{
     RetentionGcWatermark, RetentionGcWatermarks, RetentionParticipant, RetentionPin,
     RetentionPinGuard,
 };
+pub use scheduler::{SchedulerWrite, SchedulerWriteResult, SchedulerWriteStore};
 pub use simulation::{
     DeterministicHarness, FaultInjector, FaultOccurrence, FaultPoint, GeneratedTaskHistory,
     GeneratedTaskHistoryModel, GeneratedTaskHistorySeedCase, GeneratedTaskHistoryStep,

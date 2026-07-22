@@ -1,11 +1,15 @@
 use std::sync::Arc;
 
 use nimbus_core::{Error, Result, TenantId, Timestamp};
+use nimbus_storage::SchedulerWrite;
 
 use crate::tenant::TenantRuntime;
 
 use super::super::Engine;
-use super::access::{read_loaded_tenant_store, with_scheduler_runtime};
+use super::access::{
+    expect_scheduler_unit, read_loaded_tenant_store, with_scheduler_runtime,
+    write_loaded_scheduler_state, write_loaded_scheduler_state_async,
+};
 
 impl Engine {
     /// Returns the IDs for all tenants currently loaded in memory.
@@ -81,7 +85,10 @@ impl Engine {
             }
 
             with_scheduler_runtime(self, &tenant_id, move |runtime| {
-                runtime.store.recover_running_jobs(now)
+                expect_scheduler_unit(write_loaded_scheduler_state(
+                    runtime,
+                    SchedulerWrite::RecoverRunning { now },
+                )?)
             })?;
         }
 
@@ -240,10 +247,14 @@ impl Engine {
         // Running-job recovery belongs to startup/unloaded-tenant activation.
         // Once a tenant is already loaded, the live scheduler owns claim
         // state and provider wake paths must not requeue in-flight jobs.
-        runtime
-            .read_storage
-            .execute(move |store| store.recover_running_jobs(now))
-            .await?;
+        expect_scheduler_unit(
+            write_loaded_scheduler_state_async(
+                runtime.clone(),
+                tenant_id.clone(),
+                SchedulerWrite::RecoverRunning { now },
+            )
+            .await?,
+        )?;
         self.tenants
             .write()
             .expect("tenant registry lock should not be poisoned")

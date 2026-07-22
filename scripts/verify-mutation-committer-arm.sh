@@ -45,6 +45,33 @@ fi
 if rg -n 'SerialJob|send_publisher_serial_job|send_serial_job' "${engine_root}"; then
   fail "publisher handoff still exposes obsolete serial-job vocabulary"
 fi
+
+scheduler_persistence="${engine_root}/persistence/tenant/scheduler.rs"
+for obsolete_method in \
+  insert_scheduled_job \
+  claim_due_jobs \
+  complete_scheduled_job \
+  cancel_scheduled_job \
+  record_scheduled_job_result \
+  save_cron_job \
+  delete_cron_job \
+  recover_running_jobs; do
+  if rg -n "pub\(crate\) fn ${obsolete_method}\(" "${scheduler_persistence}"; then
+    fail "engine persistence exposes an unfenced scheduler-write bypass: ${obsolete_method}"
+  fi
+done
+rg -q 'submit_internal_committer' "${engine_root}/engine/scheduler/access.rs" \
+  || fail "scheduler writes do not enter the tenant committer"
+rg -q 'persist_scheduler_write' "${engine_root}/engine/scheduler/access.rs" \
+  || fail "scheduler writes do not use the shared lease-aware persistence interface"
+rg -q 'fenced_scheduler_write_cancellable' "${engine_root}/tenant/committer_lease.rs" \
+  || fail "provider scheduler writes do not validate the held committer lease"
+scheduler_write_interface="${repo_root}/crates/nimbus-storage/src/scheduler/write.rs"
+for adapter in TenantStore SqliteTenantStore MemoryTenantStore \
+  PostgresTenantStore MySqlTenantStore LibsqlReplicaTenantStore; do
+  rg -q "impl_.*scheduler_write_store!\(${adapter}\)" "${scheduler_write_interface}" \
+    || fail "scheduler-write interface does not name ${adapter}"
+done
 rg -Fq '#[cfg(any(test, feature = "test-hooks"))]' "${arm_file}" \
   || fail "serial reference is not fenced behind test/test-hooks"
 rg -q 'SerialReference' "${arm_file}" \

@@ -363,6 +363,89 @@ async fn production_provider_queued_mutation_reaches_ordered_publisher() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial_test::serial(postgres_provider)]
+async fn hot_tenant_provider_stall_does_not_block_other_tenant() {
+    with_postgres_engine_config(|engine_config, _provider_config| async move {
+        let engine = Arc::new(
+            Engine::new_with_persistence_config(engine_config)
+                .await
+                .expect("postgres-backed engine should create"),
+        );
+        let stalled_tenant = TenantId::new("pg-stalled-tenant").expect("tenant id should build");
+        let healthy_tenant = TenantId::new("pg-healthy-tenant").expect("tenant id should build");
+        for tenant_id in [&stalled_tenant, &healthy_tenant] {
+            engine
+                .create_tenant_async(tenant_id.clone())
+                .await
+                .expect("tenant should create through async provider admission");
+            engine
+                .shutdown_trigger_candidates_for_testing(tenant_id)
+                .expect("trigger cursor should not add unrelated provider work");
+        }
+
+        let pause = engine
+            .ordered_publisher_pause_handle_for_testing(&stalled_tenant)
+            .expect("tenant-local publisher pause should load");
+        pause.arm();
+        let stalled_write = tokio::spawn({
+            let engine = engine.clone();
+            let tenant_id = stalled_tenant.clone();
+            async move {
+                engine
+                    .insert_document_async(
+                        tenant_id,
+                        tasks_table(),
+                        serde_json::Map::from_iter([("tenant".to_string(), json!("stalled"))]),
+                    )
+                    .await
+            }
+        });
+        let wait_pause = pause.clone();
+        assert!(
+            tokio::task::spawn_blocking(move || {
+                wait_pause.wait_until_entered(Duration::from_secs(5))
+            })
+            .await
+            .expect("publisher pause waiter should join"),
+            "stalled tenant should enter its provider-backed publisher"
+        );
+
+        timeout(
+            Duration::from_secs(5),
+            engine.insert_document_async(
+                healthy_tenant.clone(),
+                tasks_table(),
+                serde_json::Map::from_iter([("tenant".to_string(), json!("healthy"))]),
+            ),
+        )
+        .await
+        .expect("healthy tenant should commit while its neighbor is stalled")
+        .expect("healthy tenant provider write should succeed");
+        assert!(
+            !stalled_write.is_finished(),
+            "tenant-local pause must keep only the selected publisher pending"
+        );
+        assert_eq!(
+            engine
+                .query_documents_async(healthy_tenant.clone(), query_for("tasks"))
+                .await
+                .expect("healthy tenant should query")
+                .len(),
+            1
+        );
+
+        pause.release();
+        timeout(Duration::from_secs(5), stalled_write)
+            .await
+            .expect("stalled tenant should finish after release")
+            .expect("stalled tenant task should join")
+            .expect("stalled tenant provider write should commit");
+        engine.quiesce().await;
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial_test::serial(postgres_provider)]
 async fn two_provider_engines_never_assign_under_one_tenant_lease() {
     with_shared_postgres_engine_configs(|config_a, config_b, provider_config| async move {
         let engine_a =
@@ -497,7 +580,7 @@ async fn provider_pipeline_cancellation_before_lease_admission_stages_no_suffix(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial_test::serial(postgres_provider)]
-async fn provider_pipeline_shutdown_before_lease_admission_stages_no_suffix() {
+async fn provider_publisher_shutdown_matrix_before_lease_admission_stages_no_suffix() {
     with_postgres_engine_config(|engine_config, provider_config| async move {
         let engine = provider_engine(
             engine_config,

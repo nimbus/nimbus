@@ -165,7 +165,7 @@ pub(crate) enum CommitterMessage {
     DirectCommit(CommitterJob),
     ExecutionUnitCommit(CommitterJob),
     JournalProgressSync(CommitterJob),
-    InternalSerial(CommitterJob),
+    InternalCommit(CommitterJob),
 }
 
 impl CommitterMessage {
@@ -175,7 +175,7 @@ impl CommitterMessage {
             Self::DirectCommit(_) => "direct",
             Self::ExecutionUnitCommit(_) => "execution-unit",
             Self::JournalProgressSync(_) => "journal-progress",
-            Self::InternalSerial(_) => "internal",
+            Self::InternalCommit(_) => "internal",
         }
     }
 }
@@ -677,7 +677,7 @@ async fn run_committer_actor_loop(
             CommitterMessage::DirectCommit(job)
             | CommitterMessage::ExecutionUnitCommit(job)
             | CommitterMessage::JournalProgressSync(job)
-            | CommitterMessage::InternalSerial(job) => job,
+            | CommitterMessage::InternalCommit(job) => job,
             CommitterMessage::QueuedBatch { .. } => unreachable!(),
         };
         if runtime.eviction_started() {
@@ -731,7 +731,7 @@ fn fail_committer_message_during_fence_eviction(
         CommitterMessage::DirectCommit(job)
         | CommitterMessage::ExecutionUnitCommit(job)
         | CommitterMessage::JournalProgressSync(job)
-        | CommitterMessage::InternalSerial(job) => {
+        | CommitterMessage::InternalCommit(job) => {
             job.fail(error.clone());
             runtime.record_mutation_worker_failure();
         }
@@ -753,7 +753,7 @@ fn fail_committer_message_during_shutdown_eviction(
         CommitterMessage::DirectCommit(job)
         | CommitterMessage::ExecutionUnitCommit(job)
         | CommitterMessage::JournalProgressSync(job)
-        | CommitterMessage::InternalSerial(job) => {
+        | CommitterMessage::InternalCommit(job) => {
             job.fail(runtime.durable_recovery_eviction_error());
             runtime.record_mutation_worker_failure();
         }

@@ -537,3 +537,406 @@ async fn projection_publication_contract_matches_memory_redb_and_sqlite() {
         );
     }
 }
+
+struct ArmedOrderedPublisherPause {
+    handle: nimbus_engine::OrderedPublisherPauseHandle,
+    released: bool,
+}
+
+impl ArmedOrderedPublisherPause {
+    fn new(handle: nimbus_engine::OrderedPublisherPauseHandle) -> Self {
+        handle.arm();
+        Self {
+            handle,
+            released: false,
+        }
+    }
+
+    async fn wait_until_entered(&self, context: &'static str) {
+        let handle = self.handle.clone();
+        assert!(
+            tokio::task::spawn_blocking(move || {
+                handle.wait_until_entered(std::time::Duration::from_secs(5))
+            })
+            .await
+            .expect("ordered publisher pause waiter should join"),
+            "{context}"
+        );
+    }
+
+    fn release(mut self) {
+        self.handle.release();
+        self.released = true;
+    }
+}
+
+impl Drop for ArmedOrderedPublisherPause {
+    fn drop(&mut self) {
+        if !self.released {
+            self.handle.release();
+        }
+    }
+}
+
+async fn wait_for_committer_inbox_depth(
+    engine: &Engine,
+    tenant_id: &TenantId,
+    minimum_depth: usize,
+    context: &'static str,
+) {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if engine
+                .mutation_journal_stats_for_testing(tenant_id)
+                .expect("mutation journal stats should load")
+                .committer_inbox_depth
+                >= minimum_depth
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect(context);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ordered_publisher_serializes_schema_restore_cursor_scheduler_and_projection_jobs() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tasks = TableName::new("tasks").expect("tasks table should build");
+
+    // Schema set/delete are two distinct actor-owned opaque jobs. Holding the
+    // first after publisher dequeue must keep the later delete in the actor
+    // inbox; release then proves their durable journal order.
+    let schema_tenant = TenantId::new("ordered-internal-schema").expect("tenant id should build");
+    engine
+        .create_tenant_async(schema_tenant.clone())
+        .await
+        .expect("schema tenant should create through the async lifecycle");
+    engine
+        .shutdown_trigger_candidates_for_testing(&schema_tenant)
+        .expect("schema tenant trigger worker should stop");
+    let schema_pause = ArmedOrderedPublisherPause::new(
+        engine
+            .ordered_publisher_pause_handle_for_testing(&schema_tenant)
+            .expect("schema publisher pause should load"),
+    );
+    let schema_set = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = schema_tenant.clone();
+        let table = tasks.clone();
+        async move {
+            engine
+                .set_table_schema_async(
+                    tenant_id,
+                    nimbus_core::TableSchema {
+                        table,
+                        fields: vec![nimbus_core::FieldSchema {
+                            name: "title".to_string(),
+                            field_type: nimbus_core::FieldType::String,
+                            required: true,
+                        }],
+                        indexes: Vec::new(),
+                        access_policy: None,
+                    },
+                )
+                .await
+        }
+    });
+    schema_pause
+        .wait_until_entered("schema set should reach the ordered publisher")
+        .await;
+    let schema_delete = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = schema_tenant.clone();
+        let table = tasks.clone();
+        async move { engine.delete_table_schema_async(tenant_id, table).await }
+    });
+    wait_for_committer_inbox_depth(
+        &engine,
+        &schema_tenant,
+        1,
+        "schema delete should queue behind the held schema set",
+    )
+    .await;
+    assert!(!schema_set.is_finished() && !schema_delete.is_finished());
+    schema_pause.release();
+    schema_set
+        .await
+        .expect("schema-set task should join")
+        .expect("schema set should commit");
+    schema_delete
+        .await
+        .expect("schema-delete task should join")
+        .expect("schema delete should commit");
+    let schema_event_order = engine
+        .read_durable_journal_async(schema_tenant.clone(), SequenceNumber(0))
+        .await
+        .expect("schema journal should load")
+        .into_iter()
+        .flat_map(|record| record.events)
+        .filter_map(|event| match event {
+            nimbus_core::TenantEventKind::SchemaChange { change } => Some(match *change {
+                nimbus_core::SchemaChangeEvent::SetTable { .. } => "set",
+                nimbus_core::SchemaChangeEvent::DeleteTable { .. } => "delete",
+            }),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(schema_event_order, ["set", "delete"]);
+
+    // Restore/import owns the publisher first. Trigger-cursor and scheduled
+    // state writes admitted afterward must remain queued behind it.
+    let source = TenantId::new("ordered-internal-restore-source")
+        .expect("restore source tenant id should build");
+    engine
+        .create_tenant_async(source.clone())
+        .await
+        .expect("restore source should create through the async lifecycle");
+    engine
+        .shutdown_trigger_candidates_for_testing(&source)
+        .expect("restore source trigger worker should stop");
+    engine
+        .insert_document_async(
+            source.clone(),
+            tasks.clone(),
+            serde_json::Map::from_iter([("title".to_string(), json!("restored"))]),
+        )
+        .await
+        .expect("restore source document should commit");
+    let archive = engine
+        .export_latest_point_in_time_restore_archive(&source)
+        .expect("restore source archive should export");
+    let destination = TenantId::new("ordered-internal-restore-destination")
+        .expect("restore destination tenant id should build");
+    engine
+        .create_tenant_async(destination.clone())
+        .await
+        .expect("restore destination should create through the async lifecycle");
+    engine
+        .shutdown_trigger_candidates_for_testing(&destination)
+        .expect("restore destination trigger worker should stop");
+    let restore_pause = ArmedOrderedPublisherPause::new(
+        engine
+            .ordered_publisher_pause_handle_for_testing(&destination)
+            .expect("restore publisher pause should load"),
+    );
+    let restore = tokio::task::spawn_blocking({
+        let engine = engine.clone();
+        let tenant_id = destination.clone();
+        let archive = archive.clone();
+        move || engine.import_point_in_time_restore_archive(&tenant_id, &archive)
+    });
+    restore_pause
+        .wait_until_entered("restore import should reach the ordered publisher")
+        .await;
+    let cursor_sequence = archive.target_sequence;
+    let cursor = tokio::task::spawn_blocking({
+        let engine = engine.clone();
+        let tenant_id = destination.clone();
+        move || {
+            engine.set_trigger_delivery_cursor_for_testing(
+                &tenant_id,
+                nimbus_core::TriggerDeliveryCursor::new(cursor_sequence),
+            )
+        }
+    });
+    wait_for_committer_inbox_depth(
+        &engine,
+        &destination,
+        1,
+        "trigger cursor should queue behind restore",
+    )
+    .await;
+    let schedule = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = destination.clone();
+        let table = tasks.clone();
+        async move {
+            engine
+                .schedule_mutation_async(
+                    tenant_id,
+                    nimbus_core::ScheduleRequest {
+                        run_after_ms: 60_000,
+                        mutation: nimbus_core::Mutation::Insert {
+                            table,
+                            id: None,
+                            fields: serde_json::Map::from_iter([(
+                                "title".to_string(),
+                                json!("scheduled"),
+                            )]),
+                        },
+                    },
+                )
+                .await
+        }
+    });
+    wait_for_committer_inbox_depth(
+        &engine,
+        &destination,
+        2,
+        "scheduled state should queue behind restore and trigger cursor",
+    )
+    .await;
+    assert!(!restore.is_finished() && !cursor.is_finished() && !schedule.is_finished());
+    restore_pause.release();
+    restore
+        .await
+        .expect("restore task should join")
+        .expect("restore should commit");
+    cursor
+        .await
+        .expect("cursor task should join")
+        .expect("trigger cursor should commit");
+    schedule
+        .await
+        .expect("scheduler task should join")
+        .expect("scheduled state should commit");
+    assert_eq!(
+        engine
+            .trigger_delivery_cursor_for_testing(&destination)
+            .expect("trigger cursor should load")
+            .materialized_through,
+        cursor_sequence
+    );
+    assert_eq!(
+        engine
+            .list_scheduled_jobs_async(destination.clone())
+            .await
+            .expect("scheduled state should load")
+            .len(),
+        1
+    );
+    assert_eq!(
+        engine
+            .query_documents_async(
+                destination.clone(),
+                Query {
+                    table: tasks.clone(),
+                    filters: Vec::new(),
+                    order: None,
+                    limit: None,
+                },
+            )
+            .await
+            .expect("restored document should query")
+            .len(),
+        1
+    );
+
+    // Projection publication is the system tenant's execution-unit adapter.
+    // Hold it at the same publisher seam and prove a later opaque schema job
+    // cannot overtake its document/index/fence/journal transaction.
+    ensure_system_tenant_async(&engine)
+        .await
+        .expect("system tenant should prepare through the async lifecycle");
+    let system_tenant = system_tenant_id().expect("system tenant id should build");
+    engine
+        .shutdown_trigger_candidates_for_testing(&system_tenant)
+        .expect("system trigger worker should stop");
+    let projection_pause = ArmedOrderedPublisherPause::new(
+        engine
+            .ordered_publisher_pause_handle_for_testing(&system_tenant)
+            .expect("system publisher pause should load"),
+    );
+    let projected_table = TableName::new("projected_tasks").expect("table should build");
+    let projected_token = token(7, 11);
+    let projection = tokio::spawn({
+        let engine = engine.clone();
+        let source = destination.clone();
+        let table = projected_table.clone();
+        async move {
+            publish_table_projection_async(
+                &engine,
+                publication(&source, &table, 1, projected_token, false),
+            )
+            .await
+        }
+    });
+    projection_pause
+        .wait_until_entered("projection execution unit should reach the ordered publisher")
+        .await;
+    let system_schema_table =
+        TableName::new("ordered_projection_followup").expect("table should build");
+    let system_schema = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = system_tenant.clone();
+        let table = system_schema_table.clone();
+        async move {
+            engine
+                .set_table_schema_async(
+                    tenant_id,
+                    nimbus_core::TableSchema {
+                        table,
+                        fields: Vec::new(),
+                        indexes: Vec::new(),
+                        access_policy: None,
+                    },
+                )
+                .await
+        }
+    });
+    wait_for_committer_inbox_depth(
+        &engine,
+        &system_tenant,
+        1,
+        "system schema job should queue behind projection publication",
+    )
+    .await;
+    assert!(!projection.is_finished() && !system_schema.is_finished());
+    projection_pause.release();
+    assert_eq!(
+        projection
+            .await
+            .expect("projection task should join")
+            .expect("projection should publish"),
+        ProjectionPublicationOutcome::Applied
+    );
+    system_schema
+        .await
+        .expect("system schema task should join")
+        .expect("system schema should commit after projection");
+    assert_eq!(
+        projection_token_from_fence(
+            &fence_row(&engine, &destination, &projected_table)
+                .await
+                .expect("projection fence should exist"),
+        )
+        .expect("projection fence token should decode"),
+        projected_token
+    );
+    let system_journal = engine
+        .read_durable_journal_async(system_tenant, SequenceNumber(0))
+        .await
+        .expect("system journal should load");
+    let projection_sequence = system_journal
+        .iter()
+        .find(|record| !record.writes.is_empty())
+        .expect("projection should append a document-bearing system record")
+        .sequence;
+    let schema_sequence = system_journal
+        .iter()
+        .find(|record| {
+            record.events.iter().any(|event| {
+                matches!(
+                    event,
+                    nimbus_core::TenantEventKind::SchemaChange { change }
+                        if match change.as_ref() {
+                            nimbus_core::SchemaChangeEvent::SetTable { table, .. }
+                            | nimbus_core::SchemaChangeEvent::DeleteTable { table, .. } =>
+                                table == &system_schema_table,
+                        }
+                )
+            })
+        })
+        .expect("follow-up system schema should append a journal record")
+        .sequence;
+    assert!(
+        projection_sequence < schema_sequence,
+        "projection publication must retain FIFO ownership ahead of the later opaque job"
+    );
+
+    engine.quiesce().await;
+}

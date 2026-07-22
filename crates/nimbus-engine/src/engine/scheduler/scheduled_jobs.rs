@@ -4,12 +4,13 @@ use nimbus_core::{
     Error, JobId, Mutation, Result, ScheduleRequest, ScheduledJob, ScheduledJobResult, TenantId,
     Timestamp,
 };
-use nimbus_storage::{FaultPoint, TenantWriteOutcome};
+use nimbus_storage::{FaultPoint, SchedulerWrite};
 
 use super::super::Engine;
 use super::access::{
-    read_scheduler_store, with_scheduler_runtime, write_scheduler_transaction,
-    write_scheduler_transaction_cancellable,
+    expect_claimed, expect_removed, expect_scheduler_unit, read_scheduler_store,
+    with_scheduler_runtime, write_scheduler_state, write_scheduler_state_blocking,
+    write_scheduler_state_cancellable,
 };
 
 pub(crate) const SCHEDULED_JOB_CLAIM_BATCH_LIMIT: usize = 128;
@@ -38,11 +39,11 @@ impl Engine {
 
     fn persist_scheduled_job(&self, tenant_id: &TenantId, job: ScheduledJob) -> Result<JobId> {
         let job_id = job.id.clone();
-        let job_id_for_insert = job_id.clone();
-        with_scheduler_runtime(self, tenant_id, move |runtime| {
-            runtime.store.insert_scheduled_job(&job)?;
-            Ok(job_id_for_insert.clone())
-        })?;
+        expect_scheduler_unit(write_scheduler_state_blocking(
+            self,
+            tenant_id,
+            SchedulerWrite::Insert(job),
+        )?)?;
         self.wake_scheduler();
         Ok(job_id)
     }
@@ -122,18 +123,15 @@ impl Engine {
         Check: Fn() -> Result<()> + Send + 'static,
     {
         let job_id = job.id.clone();
-        let outcome = write_scheduler_transaction_cancellable(
+        let result = write_scheduler_state_cancellable(
             self,
             tenant_id,
+            SchedulerWrite::Insert(job),
             cancel_wait,
             check_cancel,
-            move |transaction| {
-                transaction.insert_scheduled_job(&job)?;
-                Ok(job_id.clone())
-            },
         )
         .await?;
-        let job_id = committed_or_cancelled(outcome)?;
+        expect_scheduler_unit(result)?;
         self.wake_scheduler();
         Ok(job_id)
     }
@@ -144,11 +142,14 @@ impl Engine {
         tenant_id: &TenantId,
         now: Timestamp,
     ) -> Result<Vec<ScheduledJob>> {
-        with_scheduler_runtime(self, tenant_id, move |runtime| {
-            runtime
-                .store
-                .claim_due_jobs(now, SCHEDULED_JOB_CLAIM_BATCH_LIMIT)
-        })
+        expect_claimed(write_scheduler_state_blocking(
+            self,
+            tenant_id,
+            SchedulerWrite::ClaimDue {
+                now,
+                max_jobs: SCHEDULED_JOB_CLAIM_BATCH_LIMIT,
+            },
+        )?)
     }
 
     /// Claims a bounded batch of due scheduled jobs for execution asynchronously.
@@ -157,19 +158,28 @@ impl Engine {
         tenant_id: TenantId,
         now: Timestamp,
     ) -> Result<Vec<ScheduledJob>> {
-        write_scheduler_transaction(self, tenant_id, move |transaction| {
-            transaction.claim_due_jobs(now, SCHEDULED_JOB_CLAIM_BATCH_LIMIT)
-        })
-        .await
+        expect_claimed(
+            write_scheduler_state(
+                self,
+                tenant_id,
+                SchedulerWrite::ClaimDue {
+                    now,
+                    max_jobs: SCHEDULED_JOB_CLAIM_BATCH_LIMIT,
+                },
+            )
+            .await?,
+        )
     }
 
     /// Marks a claimed scheduled job as complete.
     pub fn complete_scheduled_job(&self, tenant_id: &TenantId, job_id: &JobId) -> Result<()> {
         self.storage_fault_injector
             .check(FaultPoint::ScheduledJobCompleteBeforeWrite)?;
-        with_scheduler_runtime(self, tenant_id, move |runtime| {
-            runtime.store.complete_scheduled_job(job_id)
-        })
+        expect_scheduler_unit(write_scheduler_state_blocking(
+            self,
+            tenant_id,
+            SchedulerWrite::Complete(job_id.clone()),
+        )?)
     }
 
     /// Marks a claimed scheduled job as complete asynchronously.
@@ -180,17 +190,18 @@ impl Engine {
     ) -> Result<()> {
         self.storage_fault_injector
             .check(FaultPoint::ScheduledJobCompleteBeforeWrite)?;
-        write_scheduler_transaction(self, tenant_id, move |transaction| {
-            transaction.complete_scheduled_job(&job_id)
-        })
-        .await
+        expect_scheduler_unit(
+            write_scheduler_state(self, tenant_id, SchedulerWrite::Complete(job_id)).await?,
+        )
     }
 
     /// Cancels a pending scheduled job before it begins executing.
     pub fn cancel_scheduled_job(&self, tenant_id: &TenantId, job_id: &JobId) -> Result<()> {
-        let removed = with_scheduler_runtime(self, tenant_id, move |runtime| {
-            runtime.store.cancel_scheduled_job(job_id)
-        })?;
+        let removed = expect_removed(write_scheduler_state_blocking(
+            self,
+            tenant_id,
+            SchedulerWrite::Cancel(job_id.clone()),
+        )?)?;
         scheduled_job_removed_or_not_found(removed, job_id.clone())
     }
 
@@ -217,15 +228,15 @@ impl Engine {
         Check: Fn() -> Result<()> + Send + 'static,
     {
         let job_id_for_cancel = job_id.clone();
-        let outcome = write_scheduler_transaction_cancellable(
+        let result = write_scheduler_state_cancellable(
             self,
             tenant_id,
+            SchedulerWrite::Cancel(job_id_for_cancel),
             cancel_wait,
             check_cancel,
-            move |transaction| transaction.cancel_scheduled_job(&job_id_for_cancel),
         )
         .await?;
-        let removed = committed_or_cancelled(outcome)?;
+        let removed = expect_removed(result)?;
         scheduled_job_removed_or_not_found(removed, job_id)
     }
 
@@ -238,9 +249,11 @@ impl Engine {
     ) -> Result<()> {
         self.storage_fault_injector
             .check(FaultPoint::ScheduledJobRecordResultBeforeWrite)?;
-        with_scheduler_runtime(self, tenant_id, move |runtime| {
-            runtime.store.record_scheduled_job_result(result)
-        })
+        expect_scheduler_unit(write_scheduler_state_blocking(
+            self,
+            tenant_id,
+            SchedulerWrite::RecordResult(result.clone()),
+        )?)
     }
 
     /// Persists the final result for an executed scheduled job asynchronously.
@@ -251,10 +264,9 @@ impl Engine {
     ) -> Result<()> {
         self.storage_fault_injector
             .check(FaultPoint::ScheduledJobRecordResultBeforeWrite)?;
-        write_scheduler_transaction(self, tenant_id, move |transaction| {
-            transaction.record_scheduled_job_result(&result)
-        })
-        .await
+        expect_scheduler_unit(
+            write_scheduler_state(self, tenant_id, SchedulerWrite::RecordResult(result)).await?,
+        )
     }
 
     /// Loads the final result for an executed scheduled job.
@@ -315,13 +327,6 @@ fn scheduled_job_at(created_at: Timestamp, run_at: Timestamp, mutation: Mutation
         run_at,
         mutation,
         created_at,
-    }
-}
-
-fn committed_or_cancelled<T>(outcome: TenantWriteOutcome<T>) -> Result<T> {
-    match outcome {
-        TenantWriteOutcome::CancelledBeforeCommit => Err(Error::Cancelled),
-        TenantWriteOutcome::Committed(committed) => Ok(committed.value),
     }
 }
 

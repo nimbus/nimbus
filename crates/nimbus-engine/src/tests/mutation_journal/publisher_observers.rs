@@ -208,8 +208,7 @@ async fn projection_provider_schema_refresh_waits_for_journal_frontier() {
     );
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn publisher_observers_are_strictly_ordered_and_quiesce_drains_them() {
+pub(super) async fn assert_publisher_observers_are_strictly_ordered_and_quiesce_drains_them() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();
     let tenant_id = fixture.create_tenant("ordered-observers", Engine::create_tenant);
@@ -267,6 +266,11 @@ async fn publisher_observers_are_strictly_ordered_and_quiesce_drains_them() {
         "observer commits must stay ordered"
     );
     assert_eq!(state.2, 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn publisher_observers_are_strictly_ordered_and_quiesce_drains_them() {
+    assert_publisher_observers_are_strictly_ordered_and_quiesce_drains_them().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

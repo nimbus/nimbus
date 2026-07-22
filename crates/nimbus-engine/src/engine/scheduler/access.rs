@@ -1,10 +1,11 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{future::Future, sync::Arc};
 
-use nimbus_core::{Result, TenantId};
-use nimbus_storage::TenantWriteOutcome;
+use nimbus_core::{Error, Result, ScheduledJob, TenantId};
+use nimbus_storage::{SchedulerWrite, SchedulerWriteResult};
 
 use crate::engine::tenants::with_tenant_runtime_operation;
-use crate::persistence::{TenantPersistence, TenantPersistenceWriteOps};
+use crate::persistence::TenantPersistence;
 use crate::{Engine, tenant::TenantRuntime};
 
 pub(super) fn with_scheduler_runtime<T, F>(
@@ -53,80 +54,137 @@ where
         .await
 }
 
-pub(super) async fn write_scheduler_transaction<T, F>(
+pub(super) fn write_loaded_scheduler_state(
+    runtime: Arc<TenantRuntime>,
+    operation: SchedulerWrite,
+) -> Result<SchedulerWriteResult> {
+    let runtime_for_commit = runtime.clone();
+    runtime.submit_internal_committer(move || {
+        runtime_for_commit.persist_scheduler_write(operation, || Ok(()))
+    })
+}
+
+pub(super) fn write_scheduler_state_blocking(
+    engine: &Engine,
+    tenant_id: &TenantId,
+    operation: SchedulerWrite,
+) -> Result<SchedulerWriteResult> {
+    let runtime = engine.get_existing_tenant(tenant_id)?;
+    let _operation = runtime.enter_operation(tenant_id)?;
+    write_loaded_scheduler_state(runtime, operation)
+}
+
+pub(super) async fn write_scheduler_state(
     engine: &Arc<Engine>,
     tenant_id: TenantId,
-    task: F,
-) -> Result<T>
-where
-    T: Send + 'static,
-    F: FnOnce(&mut dyn TenantPersistenceWriteOps) -> Result<T> + Send + 'static,
-{
+    operation: SchedulerWrite,
+) -> Result<SchedulerWriteResult> {
     let runtime = engine.get_existing_tenant_async(&tenant_id).await?;
-    write_loaded_tenant_transaction(runtime, tenant_id, task).await
-}
-
-pub(super) async fn write_loaded_tenant_transaction<T, F>(
-    runtime: Arc<TenantRuntime>,
-    tenant_id: TenantId,
-    task: F,
-) -> Result<T>
-where
-    T: Send + 'static,
-    F: FnOnce(&mut dyn TenantPersistenceWriteOps) -> Result<T> + Send + 'static,
-{
-    let tenant_id_for_task = tenant_id.clone();
-    let runtime_for_task = runtime.clone();
+    let _operation = runtime.enter_operation(&tenant_id)?;
+    let runtime_for_commit = runtime.clone();
     runtime
-        .read_storage
-        .execute_write(move |transaction| {
-            with_tenant_runtime_operation(runtime_for_task, &tenant_id_for_task, |_runtime| {
-                task(transaction)
-            })
+        .submit_internal_committer_async(move || {
+            runtime_for_commit.persist_scheduler_write(operation, || Ok(()))
         })
         .await
-        .map(|commit| commit.value)
 }
 
-pub(super) async fn write_scheduler_transaction_cancellable<T, Fut, Check, F>(
+pub(super) async fn write_loaded_scheduler_state_async(
+    runtime: Arc<TenantRuntime>,
+    tenant_id: TenantId,
+    operation: SchedulerWrite,
+) -> Result<SchedulerWriteResult> {
+    let _operation = runtime.enter_operation(&tenant_id)?;
+    let runtime_for_commit = runtime.clone();
+    runtime
+        .submit_internal_committer_async(move || {
+            runtime_for_commit.persist_scheduler_write(operation, || Ok(()))
+        })
+        .await
+}
+
+pub(super) async fn write_scheduler_state_cancellable<Fut, Check>(
     engine: &Arc<Engine>,
     tenant_id: TenantId,
+    operation: SchedulerWrite,
     cancel_wait: Fut,
     check_cancel: Check,
-    task: F,
-) -> Result<TenantWriteOutcome<T>>
+) -> Result<SchedulerWriteResult>
 where
-    T: Send + 'static,
     Fut: Future<Output = ()> + Send,
     Check: Fn() -> Result<()> + Send + 'static,
-    F: FnOnce(&mut dyn TenantPersistenceWriteOps) -> Result<T> + Send + 'static,
 {
     let runtime = engine.get_existing_tenant_async(&tenant_id).await?;
-    write_loaded_tenant_transaction_cancellable(runtime, tenant_id, cancel_wait, check_cancel, task)
-        .await
+    write_loaded_scheduler_state_cancellable(
+        runtime,
+        tenant_id,
+        operation,
+        cancel_wait,
+        check_cancel,
+    )
+    .await
 }
 
-pub(super) async fn write_loaded_tenant_transaction_cancellable<T, Fut, Check, F>(
+pub(super) async fn write_loaded_scheduler_state_cancellable<Fut, Check>(
     runtime: Arc<TenantRuntime>,
     tenant_id: TenantId,
+    operation: SchedulerWrite,
     cancel_wait: Fut,
     check_cancel: Check,
-    task: F,
-) -> Result<TenantWriteOutcome<T>>
+) -> Result<SchedulerWriteResult>
 where
-    T: Send + 'static,
     Fut: Future<Output = ()> + Send,
     Check: Fn() -> Result<()> + Send + 'static,
-    F: FnOnce(&mut dyn TenantPersistenceWriteOps) -> Result<T> + Send + 'static,
 {
-    let tenant_id_for_task = tenant_id.clone();
-    let runtime_for_task = runtime.clone();
-    runtime
-        .read_storage
-        .execute_write_cancellable(cancel_wait, check_cancel, move |transaction| {
-            with_tenant_runtime_operation(runtime_for_task, &tenant_id_for_task, |_runtime| {
-                task(transaction)
-            })
+    let _operation = runtime.enter_operation(&tenant_id)?;
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let cancelled_for_commit = cancelled.clone();
+    let runtime_for_commit = runtime.clone();
+    let submit = runtime.submit_internal_committer_async(move || {
+        runtime_for_commit.persist_scheduler_write(operation, move || {
+            check_cancel()?;
+            if cancelled_for_commit.load(Ordering::Acquire) {
+                Err(Error::Cancelled)
+            } else {
+                Ok(())
+            }
         })
-        .await
+    });
+    tokio::pin!(submit);
+    tokio::pin!(cancel_wait);
+    tokio::select! {
+        biased;
+        result = &mut submit => result,
+        () = &mut cancel_wait => {
+            cancelled.store(true, Ordering::Release);
+            submit.await
+        }
+    }
+}
+
+pub(super) fn expect_scheduler_unit(result: SchedulerWriteResult) -> Result<()> {
+    match result {
+        SchedulerWriteResult::Unit => Ok(()),
+        other => Err(Error::Internal(format!(
+            "scheduler write returned unexpected result: {other:?}"
+        ))),
+    }
+}
+
+pub(super) fn expect_claimed(result: SchedulerWriteResult) -> Result<Vec<ScheduledJob>> {
+    match result {
+        SchedulerWriteResult::Claimed(jobs) => Ok(jobs),
+        other => Err(Error::Internal(format!(
+            "scheduler claim returned unexpected result: {other:?}"
+        ))),
+    }
+}
+
+pub(super) fn expect_removed(result: SchedulerWriteResult) -> Result<bool> {
+    match result {
+        SchedulerWriteResult::Removed(removed) => Ok(removed),
+        other => Err(Error::Internal(format!(
+            "scheduler cancellation returned unexpected result: {other:?}"
+        ))),
+    }
 }

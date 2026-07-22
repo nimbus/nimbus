@@ -53,14 +53,14 @@ pub use subscriptions::{
     DEFAULT_SUBSCRIPTION_CHANNEL_CAPACITY, SubscriptionCleanupHandle, SubscriptionRegistration,
     SubscriptionUpdate,
 };
-#[cfg(any(test, feature = "test-hooks"))]
-pub use tenant::MutationJournalPauseHandle;
 pub use tenant::{
     CommitterArm, MaterializedReadSurfaceStats, MutationAdmissionPhase, MutationAdmissionStats,
     MutationIsolateAdmissionStats, MutationJournalStats, PinnedServingReadSnapshot,
     QueryPlanningStats, ServingSnapshotManagerStats, SubscriptionDeliveryStats,
     TenantEngineDiagnosticsSnapshot, TenantOperationGuard, TenantRuntimeLease,
 };
+#[cfg(any(test, feature = "test-hooks"))]
+pub use tenant::{MutationJournalPauseHandle, OrderedPublisherPauseHandle};
 pub use triggers::{
     TriggerInvocationExecution, TriggerInvocationExecutor, TriggerLookupMatch, TriggerRegistration,
     TriggerRegistry,

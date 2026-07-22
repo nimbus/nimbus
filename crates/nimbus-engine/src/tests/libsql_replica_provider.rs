@@ -34,6 +34,57 @@ const LIBSQL_ADMIN_URL_ENV: &str = "NIMBUS_LIBSQL_ADMIN_URL";
 const LIBSQL_ADMIN_AUTH_HEADER_ENV: &str = "NIMBUS_LIBSQL_ADMIN_AUTH_HEADER";
 static TEST_SUFFIX_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+#[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial(libsql_replica_provider)]
+async fn libsql_provider_publisher_contract() {
+    with_libsql_replica_engine_config(|engine_config, _provider_config| async move {
+        let engine = Arc::new(
+            Engine::new_with_persistence_config(engine_config)
+                .await
+                .expect("libSQL-backed engine should create"),
+        );
+        exercise_provider_publisher_contract(
+            engine,
+            TenantId::new("libsql-publisher-contract").expect("tenant id should build"),
+            None,
+        )
+        .await;
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial(libsql_replica_provider)]
+async fn libsql_scheduler_writes_are_atomically_fenced() {
+    with_shared_libsql_replica_engine_configs(
+        |engine_config_a, engine_config_b, provider_config| async move {
+            let tenant_id =
+                TenantId::new("libsql-scheduler-fence").expect("tenant id should build");
+            let engine_a = Arc::new(
+                Engine::new_with_persistence_config(engine_config_a)
+                    .await
+                    .expect("first libsql-backed engine should create"),
+            );
+            let engine_b = Arc::new(
+                Engine::new_with_persistence_config(engine_config_b)
+                    .await
+                    .expect("second libsql-backed engine should create"),
+            );
+            let tenant_id_for_expiry = tenant_id.clone();
+            exercise_provider_scheduler_fence_contract(
+                engine_a,
+                engine_b,
+                tenant_id,
+                move || async move {
+                    expire_libsql_committer_lease(&provider_config, &tenant_id_for_expiry).await;
+                },
+            )
+            .await;
+        },
+    )
+    .await;
+}
+
 #[derive(Default)]
 struct ArmedLibsqlCommitAcknowledgementLoss {
     armed: AtomicBool,
@@ -1299,4 +1350,29 @@ async fn open_remote_namespace_database(
     builder.build().await.map_err(|error| {
         nimbus_core::Error::storage(nimbus_core::StorageErrorKind::Other, error.to_string())
     })
+}
+
+async fn expire_libsql_committer_lease(config: &LibsqlReplicaProviderConfig, tenant_id: &TenantId) {
+    let provider = LibsqlReplicaProvider::connect(config.clone())
+        .await
+        .expect("libsql expiry provider should connect");
+    let namespace = provider
+        .tenant_namespace(tenant_id)
+        .expect("libsql tenant namespace should derive");
+    let database = open_remote_namespace_database(config, &namespace)
+        .await
+        .expect("libsql expiry namespace should open");
+    let connection = database
+        .connect()
+        .expect("libsql expiry connection should open");
+    let updated = connection
+        .execute(
+            "UPDATE committer_lease \
+             SET expires_at = CAST(unixepoch('subsec') * 1000 AS INTEGER) - 1000 \
+             WHERE singleton = 1",
+            (),
+        )
+        .await
+        .expect("libsql scheduler holder lease should expire");
+    assert_eq!(updated, 1, "exactly one libsql lease row should expire");
 }

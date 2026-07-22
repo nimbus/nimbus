@@ -31,7 +31,7 @@ mod materialized_reads;
 mod materialized_reads_facade;
 mod mutation;
 mod mutation_facade;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(crate) mod pause_barrier;
 mod query_planning;
 mod query_planning_facade;
@@ -76,6 +76,8 @@ pub(crate) use self::mutation::MutationIsolateAdmissionPermit;
 pub use self::mutation::MutationJournalPauseHandle;
 #[cfg(any(test, feature = "test-hooks"))]
 use self::mutation::MutationJournalPauseState;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use self::mutation::OrderedPublisherPauseHandle;
 #[cfg(test)]
 pub(crate) use self::mutation::configure_committer_limits_for_testing;
 pub(crate) use self::mutation::{

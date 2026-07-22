@@ -4,6 +4,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use mysql_async::prelude::Queryable;
+use mysql_async::{Opts, Pool};
 use nimbus_core::{
     AtomicWrite, AtomicWriteBatch, CollectionName, DocumentId, DocumentLocator, DocumentPath,
     FieldReference, Mutation, PrincipalContext, QueryDirection, ResourcePathBinding,
@@ -20,6 +22,60 @@ use crate::{
 
 const MYSQL_URL_ENV: &str = "NIMBUS_MYSQL_URL";
 static TEST_SUFFIX_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial(mysql_provider)]
+async fn mysql_provider_publisher_contract() {
+    with_mysql_engine_config(|engine_config, _provider_config| async move {
+        let engine = Arc::new(
+            Engine::new_with_persistence_config(engine_config)
+                .await
+                .expect("mysql-backed engine should create"),
+        );
+        exercise_provider_publisher_contract(
+            engine,
+            TenantId::new("mysql-publisher-contract").expect("tenant id should build"),
+            Some(ProviderPipelineExpectation {
+                adapter: "mysql",
+                configured_max_in_flight: 1,
+                max_observed_in_flight: 1,
+            }),
+        )
+        .await;
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial(mysql_provider)]
+async fn mysql_scheduler_writes_are_atomically_fenced() {
+    with_shared_mysql_engine_configs(
+        |engine_config_a, engine_config_b, provider_config| async move {
+            let tenant_id = TenantId::new("mysql-scheduler-fence").expect("tenant id should build");
+            let engine_a = Arc::new(
+                Engine::new_with_persistence_config(engine_config_a)
+                    .await
+                    .expect("first mysql-backed engine should create"),
+            );
+            let engine_b = Arc::new(
+                Engine::new_with_persistence_config(engine_config_b)
+                    .await
+                    .expect("second mysql-backed engine should create"),
+            );
+            let tenant_id_for_expiry = tenant_id.clone();
+            exercise_provider_scheduler_fence_contract(
+                engine_a,
+                engine_b,
+                tenant_id,
+                move || async move {
+                    expire_mysql_committer_lease(&provider_config, &tenant_id_for_expiry).await;
+                },
+            )
+            .await;
+        },
+    )
+    .await;
+}
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(mysql_provider)]
@@ -637,6 +693,44 @@ async fn test_connection() -> Option<String> {
         }
         ExternalProviderFixtureMode::Omit => None,
     }
+}
+
+async fn expire_mysql_committer_lease(config: &MySqlProviderConfig, tenant_id: &TenantId) {
+    let provider = MySqlProvider::connect(config.clone())
+        .await
+        .expect("mysql expiry provider should connect");
+    let database_name = provider
+        .tenant_database_name(tenant_id)
+        .expect("mysql tenant database name should derive");
+    let options = Opts::from_url(&config.connection_string)
+        .expect("mysql expiry connection string should parse");
+    let pool = Pool::new(options);
+    let mut connection = pool
+        .get_conn()
+        .await
+        .expect("mysql expiry connection should open");
+    let statement = format!(
+        "UPDATE `{database_name}`.`committer_lease` \
+         SET expires_at = TIMESTAMPADD(SECOND, -1, CURRENT_TIMESTAMP(6)) \
+         WHERE singleton = TRUE"
+    );
+    connection
+        .query_drop(statement)
+        .await
+        .expect("mysql scheduler holder lease should expire");
+    let updated = connection
+        .query_first::<u64, _>("SELECT ROW_COUNT()")
+        .await
+        .expect("mysql expiry row count should query")
+        .expect("mysql expiry row count should exist");
+    assert_eq!(updated, 1, "exactly one mysql lease row should expire");
+    connection
+        .disconnect()
+        .await
+        .expect("mysql expiry connection should close");
+    pool.disconnect()
+        .await
+        .expect("mysql expiry pool should close");
 }
 
 fn unique_suffix() -> String {

@@ -28,6 +28,8 @@ pub(super) use self::journal::MutationJournalState;
 pub use self::pause::MutationJournalPauseHandle;
 #[cfg(any(test, feature = "test-hooks"))]
 pub(in crate::tenant) use self::pause::MutationJournalPauseState;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use self::publisher::OrderedPublisherPauseHandle;
 pub(crate) use self::publisher::{
     AssignedPublisherBatch, DeferredPublisherResponse, ObserverHandoff, PendingPublisherResponse,
     PublisherErrorCounts, PublisherHandoff, PublisherMessage, PublisherQueueError,

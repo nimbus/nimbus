@@ -115,6 +115,10 @@ pub(crate) async fn run_ordered_publisher(
         let Some(message) = message else {
             break;
         };
+        #[cfg(any(test, feature = "test-hooks"))]
+        if let Some(runtime) = runtime.upgrade() {
+            runtime.wait_for_ordered_publisher_pause_for_testing().await;
+        }
         let batch = match message {
             PublisherMessage::Batch(batch) => batch,
             PublisherMessage::ResponseFence(responses) => {
@@ -131,7 +135,7 @@ pub(crate) async fn run_ordered_publisher(
                     let _ = drained.send(());
                     break;
                 };
-                run_serial_publisher_job(runtime, job).await;
+                run_ordered_opaque_publisher_job(runtime, job).await;
                 let _ = drained.send(());
                 continue;
             }
@@ -249,7 +253,10 @@ pub(crate) async fn run_ordered_publisher(
     }
 }
 
-async fn run_serial_publisher_job(runtime: Arc<TenantRuntime>, job: crate::tenant::CommitterJob) {
+async fn run_ordered_opaque_publisher_job(
+    runtime: Arc<TenantRuntime>,
+    job: crate::tenant::CommitterJob,
+) {
     if runtime.eviction_started() {
         job.fail(runtime.durable_recovery_eviction_error());
         runtime.record_mutation_worker_failure();
@@ -702,7 +709,7 @@ async fn fail_definitive_batch_and_recover(
                 }
             }
             PublisherMessage::OrderedOpaqueJob { job, drained } => {
-                run_serial_publisher_job(runtime.clone(), job).await;
+                run_ordered_opaque_publisher_job(runtime.clone(), job).await;
                 let _ = drained.send(());
             }
         }
@@ -1123,7 +1130,7 @@ mod tests {
         let response_slot = Arc::new(std::sync::Mutex::new(None));
         let response_slot_for_rejection = response_slot.clone();
         let (job, mut completed) = crate::tenant::CommitterJob::new(
-            || panic!("a failed stashed serial job must not execute"),
+            || panic!("a failed stashed ordered opaque job must not execute"),
             move |error| {
                 *response_slot_for_rejection
                     .lock()

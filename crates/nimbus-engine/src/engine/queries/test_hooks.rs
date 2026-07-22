@@ -5,13 +5,13 @@ use std::sync::Arc;
 
 #[cfg(any(test, feature = "test-hooks"))]
 use nimbus_core::Result;
-#[cfg(any(test, feature = "test-hooks"))]
-use nimbus_core::TenantId;
 #[cfg(test)]
 use nimbus_core::{
     DocumentId, ResourcePathBinding, SequenceNumber, TableName, TableSchema, TenantEventRecord,
-    TriggerDeliveryCursor, TriggerInvocationRecord, WriteOp, WriteOpType,
+    TriggerInvocationRecord, WriteOp, WriteOpType,
 };
+#[cfg(any(test, feature = "test-hooks"))]
+use nimbus_core::{TenantId, TriggerDeliveryCursor};
 
 #[cfg(test)]
 use crate::TriggerRegistration;
@@ -49,8 +49,9 @@ impl Engine {
         })
     }
 
-    #[cfg(test)]
-    pub(crate) fn mutation_journal_stats_for_testing(
+    #[cfg(any(test, feature = "test-hooks"))]
+    #[doc(hidden)]
+    pub fn mutation_journal_stats_for_testing(
         &self,
         tenant_id: &TenantId,
     ) -> Result<crate::tenant::MutationJournalStats> {
@@ -646,6 +647,17 @@ impl Engine {
     }
 
     #[cfg(any(test, feature = "test-hooks"))]
+    #[doc(hidden)]
+    pub fn ordered_publisher_pause_handle_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<crate::tenant::OrderedPublisherPauseHandle> {
+        self.with_runtime_for_testing(tenant_id, |runtime| {
+            runtime.ordered_publisher_pause_handle_for_testing()
+        })
+    }
+
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn subscription_bootstrap_pause_handle_for_testing(
         &self,
         tenant_id: &TenantId,
@@ -707,8 +719,9 @@ impl Engine {
         Ok(())
     }
 
-    #[cfg(test)]
-    pub(crate) fn set_trigger_delivery_cursor_for_testing(
+    #[cfg(any(test, feature = "test-hooks"))]
+    #[doc(hidden)]
+    pub fn set_trigger_delivery_cursor_for_testing(
         &self,
         tenant_id: &TenantId,
         cursor: TriggerDeliveryCursor,
@@ -727,8 +740,9 @@ impl Engine {
         Ok(())
     }
 
-    #[cfg(test)]
-    pub(crate) fn trigger_delivery_cursor_for_testing(
+    #[cfg(any(test, feature = "test-hooks"))]
+    #[doc(hidden)]
+    pub fn trigger_delivery_cursor_for_testing(
         &self,
         tenant_id: &TenantId,
     ) -> Result<TriggerDeliveryCursor> {

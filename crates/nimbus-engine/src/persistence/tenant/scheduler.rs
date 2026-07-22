@@ -9,40 +9,38 @@ impl TenantPersistence {
     delegate_store_method!(fn has_scheduled_work(&self) -> Result<bool>);
     delegate_store_method!(fn now(&self) -> Timestamp);
 
-    pub(crate) fn insert_scheduled_job(&self, job: &ScheduledJob) -> Result<()> {
-        match_tenant_persistence!(self, |store| store.insert_scheduled_job(job))
-    }
-
-    pub(crate) fn claim_due_jobs(
+    pub(crate) fn scheduler_write_cancellable<Check>(
         &self,
-        now: Timestamp,
-        max_jobs: usize,
-    ) -> Result<Vec<ScheduledJob>> {
-        match_tenant_persistence!(self, |store| store.claim_due_jobs(now, max_jobs))
+        operation: SchedulerWrite,
+        check_cancel: Check,
+    ) -> Result<SchedulerWriteResult>
+    where
+        Check: Fn() -> Result<()> + Send + 'static,
+    {
+        match_tenant_persistence!(self, |store| {
+            store.scheduler_write_cancellable(operation, check_cancel)
+        })
     }
 
-    pub(crate) fn complete_scheduled_job(&self, job_id: &DocumentId) -> Result<()> {
-        match_tenant_persistence!(self, |store| store.complete_scheduled_job(job_id))
-    }
-
-    pub(crate) fn cancel_scheduled_job(&self, job_id: &DocumentId) -> Result<bool> {
-        match_tenant_persistence!(self, |store| store.cancel_scheduled_job(job_id))
-    }
-
-    #[cfg(test)]
-    pub(crate) fn record_scheduled_job_result(&self, result: &ScheduledJobResult) -> Result<()> {
-        match_tenant_persistence!(self, |store| store.record_scheduled_job_result(result))
-    }
-
-    pub(crate) fn save_cron_job(&self, cron: &CronJob) -> Result<()> {
-        match_tenant_persistence!(self, |store| store.save_cron_job(cron))
-    }
-
-    pub(crate) fn delete_cron_job(&self, name: &str) -> Result<()> {
-        match_tenant_persistence!(self, |store| store.delete_cron_job(name))
-    }
-
-    pub(crate) fn recover_running_jobs(&self, now: Timestamp) -> Result<()> {
-        match_tenant_persistence!(self, |store| store.recover_running_jobs(now))
+    pub(crate) fn fenced_scheduler_write_cancellable<Check>(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        expected_durable_sequence: SequenceNumber,
+        operation: SchedulerWrite,
+        check_cancel: Check,
+    ) -> nimbus_storage::CommitterLeaseResult<SchedulerWriteResult>
+    where
+        Check: Fn() -> Result<()> + Send + 'static,
+    {
+        match_tenant_persistence!(self, |store| {
+            store.fenced_scheduler_write_cancellable(
+                owner_id,
+                epoch,
+                expected_durable_sequence,
+                operation,
+                check_cancel,
+            )
+        })
     }
 }

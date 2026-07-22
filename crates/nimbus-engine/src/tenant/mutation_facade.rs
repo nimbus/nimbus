@@ -190,7 +190,21 @@ impl TenantRuntime {
     }
 
     pub(crate) fn shutdown_committer(&self) {
+        #[cfg(any(test, feature = "test-hooks"))]
+        self.publisher.release_test_pause_for_shutdown();
         self.committer.shutdown();
+    }
+
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) async fn wait_for_ordered_publisher_pause_for_testing(&self) {
+        self.publisher.wait_for_test_pause().await;
+    }
+
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) fn ordered_publisher_pause_handle_for_testing(
+        &self,
+    ) -> super::OrderedPublisherPauseHandle {
+        self.publisher.pause_handle()
     }
 
     pub(crate) fn publisher_record_transient_error(&self) {
@@ -296,7 +310,7 @@ impl TenantRuntime {
     {
         let result = self
             .committer
-            .submit_blocking(CommitterMessage::InternalSerial, task);
+            .submit_blocking(CommitterMessage::InternalCommit, task);
         if let Err(error) = &result {
             self.maybe_report_overload_error(error);
         }
@@ -310,7 +324,7 @@ impl TenantRuntime {
     {
         let result = self
             .committer
-            .submit_async(CommitterMessage::InternalSerial, task)
+            .submit_async(CommitterMessage::InternalCommit, task)
             .await;
         if let Err(error) = &result {
             self.maybe_report_overload_error(error);

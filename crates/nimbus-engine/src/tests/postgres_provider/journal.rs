@@ -2,6 +2,29 @@ use super::support::*;
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(postgres_provider)]
+async fn postgres_provider_publisher_contract() {
+    with_postgres_engine_config(|engine_config, _provider_config| async move {
+        let engine = Arc::new(
+            Engine::new_with_persistence_config(engine_config)
+                .await
+                .expect("postgres-backed engine should create"),
+        );
+        exercise_provider_publisher_contract(
+            engine,
+            TenantId::new("pg-publisher-contract").expect("tenant id should build"),
+            Some(ProviderPipelineExpectation {
+                adapter: "postgres",
+                configured_max_in_flight: 2,
+                max_observed_in_flight: 2,
+            }),
+        )
+        .await;
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial(postgres_provider)]
 async fn typed_postgres_config_supports_async_schema_mutation_journal_and_scheduler_paths() {
     with_postgres_engine_config(|engine_config, _provider_config| async move {
         let tenant_id = TenantId::new("pg-mutations").expect("tenant id should build");

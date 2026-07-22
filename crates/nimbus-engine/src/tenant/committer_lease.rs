@@ -316,6 +316,35 @@ impl TenantRuntime {
         ))
     }
 
+    /// Persists scheduler state behind the same per-tenant sequence owner as
+    /// journal, schema, restore, and trigger writes. Scheduler state does not
+    /// advance the durable journal, so provider transactions validate the
+    /// held lease at the current durable sequence and update scheduler rows in
+    /// that same transaction.
+    pub(crate) fn persist_scheduler_write<Check>(
+        self: &Arc<Self>,
+        operation: nimbus_storage::SchedulerWrite,
+        check_cancel: Check,
+    ) -> Result<nimbus_storage::SchedulerWriteResult>
+    where
+        Check: Fn() -> Result<()> + Send + 'static,
+    {
+        self.ensure_committer_lease_for_assignment()?;
+        let expected_durable_sequence = self.durable_head();
+        let Some((owner_id, epoch)) = self.held_committer_lease()? else {
+            return self
+                .store
+                .scheduler_write_cancellable(operation, check_cancel);
+        };
+        self.map_fenced_write_result(self.store.fenced_scheduler_write_cancellable(
+            &owner_id,
+            epoch,
+            expected_durable_sequence,
+            operation,
+            check_cancel,
+        ))
+    }
+
     pub(crate) fn persist_point_in_time_restore_archive(
         &self,
         expected_previous: nimbus_core::SequenceNumber,

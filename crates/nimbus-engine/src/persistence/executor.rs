@@ -6,11 +6,10 @@ use nimbus_core::Result;
 use nimbus_storage::MemoryTenantStorage;
 use nimbus_storage::{
     LibsqlReplicaTenantStorage, MySqlTenantStorage, PostgresTenantStorage, RedbTenantStorage,
-    SqliteTenantStorage, TenantReadStorage, TenantWriteCommit, TenantWriteOutcome,
-    TenantWriteStorage,
+    SqliteTenantStorage, TenantReadStorage,
 };
 
-use super::{TenantPersistence, TenantPersistenceWriteOps};
+use super::TenantPersistence;
 
 #[derive(Clone)]
 pub(crate) enum TenantPersistenceExecutor {
@@ -50,39 +49,6 @@ impl TenantPersistenceExecutor {
             storage
                 .execute_cancellable(cancel_wait, check_cancel, move |store, check_cancel| {
                     task(wrap(store), check_cancel)
-                })
-                .await
-        })
-    }
-
-    pub(crate) async fn execute_write<T, F>(&self, task: F) -> Result<TenantWriteCommit<T>>
-    where
-        T: Send + 'static,
-        F: FnOnce(&mut dyn TenantPersistenceWriteOps) -> Result<T> + Send + 'static,
-    {
-        match_tenant_persistence_executor!(self, |storage| {
-            storage
-                .execute_write(move |transaction| task(transaction))
-                .await
-        })
-    }
-
-    pub(crate) async fn execute_write_cancellable<T, Fut, Check, F>(
-        &self,
-        cancel_wait: Fut,
-        check_cancel: Check,
-        task: F,
-    ) -> Result<TenantWriteOutcome<T>>
-    where
-        T: Send + 'static,
-        Fut: Future<Output = ()> + Send,
-        Check: Fn() -> Result<()> + Send + 'static,
-        F: FnOnce(&mut dyn TenantPersistenceWriteOps) -> Result<T> + Send + 'static,
-    {
-        match_tenant_persistence_executor!(self, |storage| {
-            storage
-                .execute_write_cancellable(cancel_wait, check_cancel, move |transaction| {
-                    task(transaction)
                 })
                 .await
         })

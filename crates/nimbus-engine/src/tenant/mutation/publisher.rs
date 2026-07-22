@@ -15,6 +15,8 @@ use super::super::{
     CommitterJob, MutationResponseSender, QueuedMutationResult, TenantOperationGuard,
 };
 use super::CommitterArm;
+#[cfg(any(test, feature = "test-hooks"))]
+use crate::tenant::pause_barrier::{PauseBarrier, PauseBarrierHandle};
 
 const DEFAULT_PUBLISHER_QUEUE_CAPACITY: usize = 32;
 const DEFAULT_PUBLISHER_SEND_TIMEOUT_MS: u64 = 500;
@@ -946,6 +948,27 @@ pub(crate) struct PublisherHandoff {
     assignment_recovery_gate: tokio::sync::Mutex<()>,
     finished: AtomicBool,
     finished_notify: Notify,
+    #[cfg(any(test, feature = "test-hooks"))]
+    pause_before_message: Arc<PauseBarrier>,
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+#[derive(Debug, Clone)]
+pub struct OrderedPublisherPauseHandle(PauseBarrierHandle);
+
+#[cfg(any(test, feature = "test-hooks"))]
+impl OrderedPublisherPauseHandle {
+    pub fn arm(&self) {
+        self.0.arm();
+    }
+
+    pub fn wait_until_entered(&self, timeout: Duration) -> bool {
+        self.0.wait_until_entered(timeout).is_some()
+    }
+
+    pub fn release(&self) {
+        self.0.release();
+    }
 }
 
 impl PublisherHandoff {
@@ -972,7 +995,27 @@ impl PublisherHandoff {
             assignment_recovery_gate: tokio::sync::Mutex::new(()),
             finished: AtomicBool::new(false),
             finished_notify: Notify::new(),
+            #[cfg(any(test, feature = "test-hooks"))]
+            pause_before_message: Arc::new(PauseBarrier::default()),
         }
+    }
+
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) fn pause_handle(&self) -> OrderedPublisherPauseHandle {
+        OrderedPublisherPauseHandle(PauseBarrierHandle::new(self.pause_before_message.clone()))
+    }
+
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) async fn wait_for_test_pause(&self) {
+        let pause = self.pause_before_message.clone();
+        tokio::task::spawn_blocking(move || pause.wait_if_armed(()))
+            .await
+            .expect("ordered publisher pause task should not panic");
+    }
+
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) fn release_test_pause_for_shutdown(&self) {
+        self.pause_before_message.release_for_shutdown();
     }
 
     pub(crate) fn uses_ordered_publisher(&self) -> bool {

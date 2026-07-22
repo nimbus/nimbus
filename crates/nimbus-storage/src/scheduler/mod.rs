@@ -4,6 +4,9 @@ mod inspection;
 mod jobs;
 mod recovery;
 mod results;
+mod write;
+
+pub use write::{SchedulerWrite, SchedulerWriteResult, SchedulerWriteStore};
 
 #[cfg(test)]
 mod tests;

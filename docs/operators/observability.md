@@ -259,6 +259,12 @@ together:
   Provider tenants still use storage-backed validation for prepared windows;
   the ordered publisher arm does not make a process-local snapshot
   authoritative.
+  Scheduler-state transitions (insert, claim, completion, cancellation,
+  result/cron persistence, and startup recovery) do not advance the journal
+  heads, but they enter this same per-tenant publisher. On external providers,
+  the scheduler row change and current-lease validation share one transaction;
+  a stale scheduler writer therefore sets the same fenced/eviction signals
+  instead of producing an invisible second-owner write.
 
 - `observer_spawned_work_depth` is currently executing or queued observer
   work. Compare it with `observer_spawned_work_capacity` and

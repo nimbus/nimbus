@@ -148,6 +148,51 @@ async fn tenant_creation_async_contract_matches_memory_redb_and_sqlite() {
     }
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn provider_publisher_contract_matches_memory_redb_and_sqlite() {
+    let memory_dir = tempdir().expect("memory data dir");
+    let redb_dir = tempdir().expect("redb data dir");
+    let sqlite_dir = tempdir().expect("sqlite data dir");
+    let engines = [
+        (
+            "memory",
+            Arc::new(
+                Engine::new_with_memory_persistence(memory_dir.path())
+                    .expect("memory engine should create"),
+            ),
+        ),
+        (
+            "redb",
+            Arc::new(
+                Engine::new_with_embedded_provider(redb_dir.path(), EmbeddedProviderKind::Redb)
+                    .expect("redb engine should create"),
+            ),
+        ),
+        (
+            "sqlite",
+            Arc::new(
+                Engine::new_with_embedded_provider(sqlite_dir.path(), EmbeddedProviderKind::Sqlite)
+                    .expect("sqlite engine should create"),
+            ),
+        ),
+    ];
+
+    let mut snapshots = Vec::new();
+    for (provider, engine) in engines {
+        snapshots.push(
+            exercise_provider_publisher_contract(
+                engine,
+                TenantId::new(format!("publisher-contract-{provider}"))
+                    .expect("contract tenant id should build"),
+                None,
+            )
+            .await,
+        );
+    }
+    assert_eq!(snapshots[0], snapshots[1], "Memory and redb diverged");
+    assert_eq!(snapshots[0], snapshots[2], "Memory and SQLite diverged");
+}
+
 #[tokio::test]
 async fn tenant_admission_replays_after_create_cancellation() {
     let data_dir = tempdir().expect("memory data dir");

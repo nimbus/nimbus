@@ -291,8 +291,9 @@ impl Engine {
 
         let mut finish_shutdown_eviction = false;
 
-        // This is the provider arm. Provider persistence stays here until slice
-        // C adds ordered network pipelining and lease fencing.
+        // This is the test-only serial-reference arm. Every production
+        // persistence adapter uses the ordered publisher above; retaining this
+        // implementation provides deterministic differential evidence only.
         let assignment_baseline = runtime.durable_head();
         let assignment_responses = batch
             .iter()
@@ -399,7 +400,7 @@ impl Engine {
                             drop(eviction);
                             warn!(
                                 error = %spawn_error,
-                                "engine quiesce rejected serial recovery task; deferring shutdown eviction completion until the committer inbox is drained"
+                                "engine quiesce rejected reference-arm recovery task; deferring shutdown eviction completion until the committer inbox is drained"
                             );
                             finish_shutdown_eviction = true;
                         }

@@ -101,6 +101,19 @@ impl MemoryWriteTransaction {
         self.state.cron_jobs.remove(name);
         Ok(())
     }
+
+    pub fn recover_running_jobs(&mut self, now: Timestamp) -> Result<()> {
+        self.check_cancel()?;
+        let running = std::mem::take(&mut self.state.running_jobs);
+        for (_, mut job) in running {
+            self.check_cancel()?;
+            job.run_at = job.run_at.min(now);
+            self.state
+                .scheduled_jobs
+                .insert((job.run_at, job.id.clone()), job);
+        }
+        Ok(())
+    }
 }
 
 impl MemoryTenantStore {
@@ -196,15 +209,7 @@ impl MemoryTenantStore {
     }
 
     pub fn recover_running_jobs(&self, now: Timestamp) -> Result<()> {
-        self.transact(|state| {
-            let running = std::mem::take(&mut state.running_jobs);
-            for (_, mut job) in running {
-                job.run_at = job.run_at.min(now);
-                state
-                    .scheduled_jobs
-                    .insert((job.run_at, job.id.clone()), job);
-            }
-            Ok(())
-        })
+        self.execute_write(move |transaction| transaction.recover_running_jobs(now))?;
+        Ok(())
     }
 }
