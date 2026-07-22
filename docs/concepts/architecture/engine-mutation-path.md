@@ -100,22 +100,21 @@ overload — before any durable effect, so an admitted mutation keeps its
 commit guarantee.
 
 **Construction-time committer arm.** A tenant runtime selects exactly one
-immutable `CommitterArm`. Memory, redb, and SQLite use the ordered publisher;
-libSQL, PostgreSQL, and MySQL currently use the serial actor. This is a static
-orchestration choice, separate from the dynamic question of whether a
-process-local write-log window is authoritative. Direct commits, execution
-units, journal-progress synchronization, opaque internal jobs, publisher-task
-ownership, and observer shutdown all consult the same selection. There is no
-runtime arm switch or drain transition.
+immutable `CommitterArm`. Every production persistence topology—Memory, redb,
+SQLite, libSQL, PostgreSQL, and MySQL—uses the ordered publisher. This static
+orchestration choice is separate from whether a process-local write-log window
+is authoritative. Provider windows remain storage-validated. Direct commits,
+execution units, journal-progress synchronization, opaque internal jobs,
+publisher-task ownership, and observer shutdown all consult the same selection.
+There is no runtime arm switch or drain transition; `SerialReference` is a
+test-only differential adapter, not a production fallback. A rollback requires
+reverting the deployed code.
 
-The provider ordered-publisher adapter is exercised before it is enabled in
-the production mapping. It must acquire the provider-backed committer lease
-while holding the assignment/recovery gate, publish recovered durable progress,
-and only then capture its assignment baseline. Acquisition failure,
-cancellation, or shutdown therefore occurs before any sequence or write-log
-suffix is staged. The later provider-enable change can alter the construction
-policy without changing callers or granting provider snapshots process-local
-window authority.
+Before a provider publisher assigns a suffix, it acquires the provider-backed
+committer lease while holding the assignment/recovery gate, publishes recovered
+durable progress, and only then captures its assignment baseline. Acquisition
+failure, cancellation, or shutdown therefore occurs before any sequence or
+write-log suffix is staged.
 
 Cancellation and no-op outcomes discovered before assignment still attempt a
 bounded publisher response fence. Once the fence is accepted, they cannot

@@ -752,7 +752,7 @@ async fn assignment_failure_keeps_the_cancelled_requests_own_outcome() {
     let tenant_id = TenantId::new("assignment-deferred-outcome").expect("tenant id should build");
     crate::tenant::configure_committer_arm_for_testing(
         tenant_id.clone(),
-        crate::tenant::CommitterArm::Serial,
+        crate::tenant::CommitterArm::SerialReference,
     );
     engine
         .create_tenant_async(tenant_id.clone())

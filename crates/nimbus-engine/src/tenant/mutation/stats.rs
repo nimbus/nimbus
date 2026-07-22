@@ -32,13 +32,6 @@ pub struct MutationIsolateAdmissionStats {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum CommitterArm {
-    OrderedPublisher,
-    Serial,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct MutationJournalStats {
     #[serde(flatten)]
     pub frontiers: MutationFrontierStats,
@@ -73,7 +66,7 @@ pub struct MutationJournalStats {
     pub publisher_transient_error_count: u64,
     pub publisher_fatal_error_count: u64,
     pub publisher_ambiguous_error_count: u64,
-    pub committer_arm: CommitterArm,
+    pub committer_arm: super::CommitterArm,
     pub observer_queue_depth: usize,
     /// Largest observer queue depth reserved by this tenant runtime.
     pub observer_queue_peak_depth: usize,

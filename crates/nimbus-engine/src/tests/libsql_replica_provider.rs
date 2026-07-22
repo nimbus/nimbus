@@ -413,8 +413,8 @@ async fn typed_libsql_replica_config_supports_async_schema_mutation_journal_and_
                 .mutation_journal_stats_for_testing(&tenant_id)
                 .expect("libSQL committer-arm diagnostics should load")
                 .committer_arm,
-            crate::tenant::CommitterArm::Serial,
-            "U5 must leave the libSQL production arm serial"
+            crate::tenant::CommitterArm::OrderedPublisher,
+            "libSQL must install the production ordered publisher"
         );
         engine
             .set_table_schema_async(tenant_id.clone(), tasks_schema())

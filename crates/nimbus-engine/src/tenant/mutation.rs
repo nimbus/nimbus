@@ -1,5 +1,6 @@
 mod actor;
 mod admission;
+mod arm;
 mod codel;
 mod frontiers;
 mod isolate_admission;
@@ -17,6 +18,7 @@ pub(crate) use self::actor::{
     run_job, validate_append_sequences,
 };
 pub(super) use self::admission::{MutationAdmissionDecision, MutationAdmissionGate};
+pub use self::arm::CommitterArm;
 pub use self::frontiers::MutationFrontierStats;
 pub(crate) use self::frontiers::{JournalFrontierSample, WriteLogFrontierSample};
 pub(super) use self::isolate_admission::MutationIsolateAdmission;
@@ -44,6 +46,6 @@ pub(crate) use self::requests::{
     MutationResponseSender, PreparedPayloadAccounting, QueuedMutationRequest, QueuedMutationResult,
 };
 pub use self::stats::{
-    CommitterArm, MutationAdmissionPhase, MutationAdmissionStats, MutationIsolateAdmissionStats,
+    MutationAdmissionPhase, MutationAdmissionStats, MutationIsolateAdmissionStats,
     MutationJournalStats,
 };

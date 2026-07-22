@@ -68,15 +68,15 @@ async fn run_static_arm_workload(arm: crate::tenant::CommitterArm) -> (Vec<u8>, 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn construction_time_committer_arms_produce_identical_state() {
     let ordered = run_static_arm_workload(crate::tenant::CommitterArm::OrderedPublisher).await;
-    let serial = run_static_arm_workload(crate::tenant::CommitterArm::Serial).await;
+    let serial = run_static_arm_workload(crate::tenant::CommitterArm::SerialReference).await;
 
     assert_eq!(
         ordered.0, serial.0,
-        "ordered-publisher and serial documents differ"
+        "ordered-publisher and serial-reference documents differ"
     );
     assert_eq!(
         ordered.1, serial.1,
-        "ordered-publisher and serial durable journal prefixes differ byte-for-byte"
+        "ordered-publisher and serial-reference durable journal prefixes differ byte-for-byte"
     );
 }
 

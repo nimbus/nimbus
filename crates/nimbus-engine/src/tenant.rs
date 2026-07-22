@@ -293,13 +293,13 @@ impl TenantRuntime {
             progress,
             last_commit_timestamp,
         } = initial_state;
-        // U5 deliberately preserves the production mapping. U7 changes only
-        // this construction policy after provider pipelining and lifecycle
-        // proof are complete; write-log/window trust remains a separate
-        // dynamic question owned by `has_process_local_sequence_authority`.
-        let uses_ordered_publisher = store.has_process_local_sequence_authority();
+        // Publisher ownership is a topology-independent construction choice.
+        // Whether the process-local write-log window is authoritative remains
+        // a separate persistence policy owned by
+        // `has_process_local_sequence_authority`.
+        let committer_arm = CommitterArm::for_persistence(&store);
         let committer = Arc::new(CommitterActor::new(tenant_id.clone()));
-        let publisher = Arc::new(PublisherHandoff::new(uses_ordered_publisher, &tenant_id));
+        let publisher = Arc::new(PublisherHandoff::new(committer_arm, &tenant_id));
         let observer_dispatch = Arc::new(ObserverHandoff::new(&tenant_id));
         Self {
             tenant_id,

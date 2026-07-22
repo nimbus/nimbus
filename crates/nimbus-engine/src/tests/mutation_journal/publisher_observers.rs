@@ -362,7 +362,7 @@ async fn observer_queue_capacity_clamps_above_serial_journal_dispatch_max() {
     crate::tenant::configure_observer_limits_for_testing(tenant_id.clone(), 1, 1, 1, 4);
     crate::tenant::configure_committer_arm_for_testing(
         tenant_id.clone(),
-        crate::tenant::CommitterArm::Serial,
+        crate::tenant::CommitterArm::SerialReference,
     );
     let created = fixture.create_tenant("observer-cap-clamp", Engine::create_tenant);
     assert_eq!(created, tenant_id);

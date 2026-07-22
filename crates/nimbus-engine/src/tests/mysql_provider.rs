@@ -52,8 +52,8 @@ async fn mysql_tenant_creation_async_contract() {
                 .mutation_journal_stats_for_testing(&tenant_id)
                 .expect("MySQL committer-arm diagnostics should load")
                 .committer_arm,
-            crate::tenant::CommitterArm::Serial,
-            "U5 must leave the MySQL production arm serial"
+            crate::tenant::CommitterArm::OrderedPublisher,
+            "MySQL must install the production ordered publisher"
         );
         assert_eq!(
             engine
@@ -135,6 +135,14 @@ async fn typed_mysql_config_supports_async_schema_mutation_journal_and_scheduler
             .create_tenant_async(tenant_id.clone())
             .await
             .expect("tenant should create");
+        assert_eq!(
+            engine
+                .mutation_journal_stats_for_testing(&tenant_id)
+                .expect("MySQL committer-arm diagnostics should load")
+                .committer_arm,
+            crate::tenant::CommitterArm::OrderedPublisher,
+            "MySQL mutations must enter the production ordered publisher"
+        );
         engine
             .set_table_schema_async(tenant_id.clone(), tasks_schema())
             .await

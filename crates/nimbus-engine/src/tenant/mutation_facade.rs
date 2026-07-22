@@ -227,11 +227,11 @@ impl TenantRuntime {
         self.publisher.wait_finished().await;
     }
 
-    pub(crate) async fn send_publisher_serial_job(
+    pub(crate) async fn send_publisher_ordered_opaque_job(
         &self,
         job: super::CommitterJob,
     ) -> std::result::Result<tokio::sync::oneshot::Receiver<()>, (super::CommitterJob, Error)> {
-        self.publisher.send_serial_job(job).await
+        self.publisher.send_ordered_opaque_job(job).await
     }
 
     pub(crate) async fn send_queued_committer_batch(

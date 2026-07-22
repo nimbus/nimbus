@@ -338,7 +338,7 @@ impl MutationJournalState {
             publisher_transient_error_count: 0,
             publisher_fatal_error_count: 0,
             publisher_ambiguous_error_count: 0,
-            committer_arm: super::CommitterArm::Serial,
+            committer_arm: super::CommitterArm::OrderedPublisher,
             observer_queue_depth: 0,
             observer_queue_peak_depth: 0,
             observer_queue_capacity: 0,

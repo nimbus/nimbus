@@ -6,18 +6,10 @@ async fn create_shared_ordered_tenant(
     name: &str,
 ) -> TenantId {
     let tenant_id = TenantId::new(name).expect("tenant id should build");
-    crate::tenant::configure_committer_arm_for_testing(
-        tenant_id.clone(),
-        crate::tenant::CommitterArm::OrderedPublisher,
-    );
     engine_a
         .create_tenant_async(tenant_id.clone())
         .await
         .expect("first ordered engine should create tenant");
-    crate::tenant::configure_committer_arm_for_testing(
-        tenant_id.clone(),
-        crate::tenant::CommitterArm::OrderedPublisher,
-    );
     engine_b
         .ensure_tenant_exists_async(tenant_id.clone())
         .await
@@ -27,7 +19,7 @@ async fn create_shared_ordered_tenant(
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(postgres_provider)]
-async fn embedded_and_provider_arms_are_selected_at_construction() {
+async fn process_local_sequence_authority_does_not_select_committer_arm() {
     with_postgres_engine_config(|engine_config, _provider_config| async move {
         let embedded_dir = tempdir().expect("embedded arm tempdir should create");
         let embedded = Engine::new(embedded_dir.path()).expect("embedded engine should create");
@@ -60,8 +52,16 @@ async fn embedded_and_provider_arms_are_selected_at_construction() {
                 .mutation_journal_stats_for_testing(&provider_tenant)
                 .expect("provider arm diagnostics should load")
                 .committer_arm,
-            crate::tenant::CommitterArm::Serial,
-            "U5 must not enable the provider arm in production"
+            crate::tenant::CommitterArm::OrderedPublisher,
+            "provider topology must install the production publisher"
+        );
+        assert!(
+            !provider
+                .registered_runtime_for_testing(&provider_tenant)
+                .expect("provider runtime should remain registered")
+                .store
+                .has_process_local_sequence_authority(),
+            "provider window trust must remain storage-backed after the arm flip"
         );
 
         embedded.quiesce().await;
@@ -81,10 +81,6 @@ async fn provider_pipeline_acquires_lease_before_assignment() {
         .await;
         let tenant_id =
             TenantId::new("pg-ordered-first-assignment").expect("tenant id should build");
-        crate::tenant::configure_committer_arm_for_testing(
-            tenant_id.clone(),
-            crate::tenant::CommitterArm::OrderedPublisher,
-        );
         engine
             .create_tenant_async(tenant_id.clone())
             .await
@@ -288,7 +284,7 @@ async fn provider_pipeline_head_reconciles_before_baseline_capture() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial_test::serial(postgres_provider)]
-async fn provider_ordered_progress_sync_cannot_overtake_publisher() {
+async fn production_provider_queued_mutation_reaches_ordered_publisher() {
     with_postgres_engine_config(|engine_config, _provider_config| async move {
         let engine = provider_engine(
             engine_config,
@@ -296,10 +292,6 @@ async fn provider_ordered_progress_sync_cannot_overtake_publisher() {
         )
         .await;
         let tenant_id = TenantId::new("pg-ordered-progress-order").expect("tenant id should build");
-        crate::tenant::configure_committer_arm_for_testing(
-            tenant_id.clone(),
-            crate::tenant::CommitterArm::OrderedPublisher,
-        );
         engine
             .create_tenant_async(tenant_id.clone())
             .await
@@ -513,10 +505,6 @@ async fn provider_pipeline_shutdown_before_lease_admission_stages_no_suffix() {
         )
         .await;
         let tenant_id = TenantId::new("pg-ordered-shutdown").expect("tenant id should build");
-        crate::tenant::configure_committer_arm_for_testing(
-            tenant_id.clone(),
-            crate::tenant::CommitterArm::OrderedPublisher,
-        );
         engine
             .create_tenant_async(tenant_id.clone())
             .await

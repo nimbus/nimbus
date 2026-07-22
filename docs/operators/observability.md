@@ -244,9 +244,11 @@ The group also reports bounded system-table projection work. Use these fields
 together:
 
 - `committer_arm` is the immutable construction-time mutation owner:
-  `ordered-publisher` for Memory/redb/SQLite and `serial` for
-  libSQL/PostgreSQL/MySQL in the current production mapping. It never changes
-  for a live runtime; there are intentionally no transition counters.
+  `ordered-publisher` for every production persistence topology. It never
+  changes for a live runtime; there are intentionally no transition counters.
+  `serial-reference` can appear only in deterministic test-hook runs and is
+  not a provider fallback. Rolling back the publisher requires reverting the
+  deployed code, not switching a live tenant to an unfenced owner.
 - `committer_lease_acquired`, `committer_lease_epoch`,
   `committer_lease_expires_at`, and `committer_lease_fenced` distinguish a
   provider runtime that has not written yet, a healthy holder, and a holder
@@ -254,6 +256,9 @@ together:
   `committer_lease_renewal_worker_running` separate ordinary backlog from
   lease loss or stalled lifecycle work. Embedded tenants keep these lease
   fields at their neutral values.
+  Provider tenants still use storage-backed validation for prepared windows;
+  the ordered publisher arm does not make a process-local snapshot
+  authoritative.
 
 - `observer_spawned_work_depth` is currently executing or queued observer
   work. Compare it with `observer_spawned_work_capacity` and

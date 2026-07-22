@@ -926,7 +926,7 @@ pub(crate) struct PublisherErrorCounts {
 pub(crate) enum PublisherMessage {
     Batch(AssignedPublisherBatch),
     ResponseFence(Vec<DeferredPublisherResponse>),
-    SerialJob {
+    OrderedOpaqueJob {
         job: CommitterJob,
         drained: oneshot::Sender<()>,
     },
@@ -949,22 +949,15 @@ pub(crate) struct PublisherHandoff {
 }
 
 impl PublisherHandoff {
-    pub(crate) fn new(uses_ordered_publisher: bool, _tenant_id: &TenantId) -> Self {
+    pub(crate) fn new(committer_arm: CommitterArm, _tenant_id: &TenantId) -> Self {
         #[cfg(test)]
         let (capacity, send_timeout) =
             take_publisher_limits_for_testing(_tenant_id).unwrap_or_else(publisher_limits_from_env);
         #[cfg(not(test))]
         let (capacity, send_timeout) = publisher_limits_from_env();
         let (sender, receiver) = mpsc::channel(capacity);
-        let default_arm = if uses_ordered_publisher {
-            CommitterArm::OrderedPublisher
-        } else {
-            CommitterArm::Serial
-        };
         #[cfg(test)]
-        let arm = take_committer_arm_for_testing(_tenant_id).unwrap_or(default_arm);
-        #[cfg(not(test))]
-        let arm = default_arm;
+        let committer_arm = take_committer_arm_for_testing(_tenant_id).unwrap_or(committer_arm);
         Self {
             sender,
             receiver: Mutex::new(Some(receiver)),
@@ -975,7 +968,7 @@ impl PublisherHandoff {
             transient_error_count: AtomicU64::new(0),
             fatal_error_count: AtomicU64::new(0),
             ambiguous_error_count: AtomicU64::new(0),
-            arm,
+            arm: committer_arm,
             assignment_recovery_gate: tokio::sync::Mutex::new(()),
             finished: AtomicBool::new(false),
             finished_notify: Notify::new(),
@@ -983,7 +976,7 @@ impl PublisherHandoff {
     }
 
     pub(crate) fn uses_ordered_publisher(&self) -> bool {
-        matches!(self.arm, CommitterArm::OrderedPublisher)
+        self.arm.uses_ordered_publisher()
     }
 
     pub(crate) fn arm(&self) -> CommitterArm {
@@ -1054,14 +1047,14 @@ impl PublisherHandoff {
         }
     }
 
-    pub(crate) async fn send_serial_job(
+    pub(crate) async fn send_ordered_opaque_job(
         &self,
         job: CommitterJob,
     ) -> std::result::Result<oneshot::Receiver<()>, (CommitterJob, Error)> {
-        match self.reserve("serial job").await {
+        match self.reserve("ordered opaque job").await {
             Ok(permit) => {
                 let (drained, wait_for_drain) = oneshot::channel();
-                permit.send(PublisherMessage::SerialJob { job, drained });
+                permit.send(PublisherMessage::OrderedOpaqueJob { job, drained });
                 Ok(wait_for_drain)
             }
             Err(error) => Err((job, error)),
