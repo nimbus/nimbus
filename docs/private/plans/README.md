@@ -151,11 +151,12 @@ extension-registry seam before the second concern edits `extensions.rs`.
   which share Convex's network-persistence shape. Testability seams
   (S0–S5) are binding scope. Governing research:
   `research/parallel-prepare-serial-commit-redesign.md`.
-- `clock-architecture-reliability-plan.md` - `implementation complete; closeout
-  review in progress`. Owns wall-clock naming, Engine absolute scheduling,
-  process-local monotonic policies, temporal-validation seams, ambient-time
-  classification, and the structural gates that keep future distributed clock
-  authority disabled until the horizontal-scaling plan supplies its proof.
+- `archive/clock-architecture-reliability-plan.md` - `complete, archived`
+  (2026-07-21; independent Opus 4.8 review clean). Delivered canonical wall and
+  monotonic clock seams, Engine-owned absolute scheduling, monotonic local
+  duration policies, explicit temporal-validation observations, clock-source
+  guards, and structural gates that leave unproved distributed clock authority
+  disabled under the horizontal-scaling plan.
 - `layered-admission-control-plan.md` - `deferred`. Owns future layered
   admission experiments and EO8-style promotion work. Consumes the
   retry-amplification admission signal from

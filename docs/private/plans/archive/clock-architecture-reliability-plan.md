@@ -1,10 +1,9 @@
 # Clock Architecture, Reliability, and Testability Plan
 
-Status: `implementation complete; CLK8 independent review and archival in
-progress`
+Status: `complete, archived on 2026-07-21`
 
-Owner: this plan through CLK8 closeout. `horizontal-scaling-plan.md` retains
-future distributed Durable Object placement/leasing and the cluster skew proof;
+Owner: historical execution record. `horizontal-scaling-plan.md` retains future
+distributed Durable Object placement/leasing and the cluster skew proof;
 `architecture-review-2026-07-plan.md` retains unrelated workspace architecture
 cleanup.
 
@@ -1104,7 +1103,7 @@ npm run build -w @nimbus/nimbus
 
 ### CLK8 — Final documentation, verification, and archival
 
-Status: `in progress; independent review and archival remain`
+Status: `complete on 2026-07-21`
 
 Required closeout:
 
@@ -1155,7 +1154,7 @@ lanes unavailable locally.
 | CLK7A Timestamp arithmetic | `complete` | CLK2-CLK4 | checked/saturating arithmetic and representation-edge tests |
 | CLK7B dead helper cleanup | `complete` | CLK4B | unused conmon clock helper removed; census remains green |
 | CLK7C SDK timeout | `complete` | none | injected monotonic observation/sleep with deterministic wall-divergence tests |
-| CLK8 closeout | `in progress` | all required rows | implementation and local verification complete; independent review and archival remain |
+| CLK8 closeout | `complete` | all required rows | local gates passed; Opus 4.8 independent review clean; plan archived |
 
 Local acceptance evidence on 2026-07-21:
 
@@ -1173,6 +1172,8 @@ Local acceptance evidence on 2026-07-21:
 - `cargo fmt --all --check`, `make clippy`, `make deny`, the clock-source guard,
   architecture-quality guard, docs link check (108 pages), and
   `git diff --check` passed;
+- structured `autoreview` with `claude-opus-4-8` at max thinking returned clean
+  with no accepted or actionable findings;
 - live PostgreSQL, MySQL, and remote-libSQL provider conformance lanes are
   `UNVERIFIED` locally because their services were unavailable. Hosted CI is
   the merge authority for those lanes.
@@ -1249,7 +1250,7 @@ Primary external references:
 ## Paste-ready implementation goal
 
 ```text
-/goal Execute docs/private/plans/clock-architecture-reliability-plan.md one
+/goal Execute docs/private/plans/archive/clock-architecture-reliability-plan.md one
 PR-sized item at a time from current origin/main. Preserve the four-domain
 contract: wall timestamps for external facts, monotonic instants for local
 elapsed policy, shared lease authority plus epoch fencing for distributed
