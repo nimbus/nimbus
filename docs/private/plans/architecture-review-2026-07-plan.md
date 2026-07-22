@@ -327,7 +327,7 @@ After rebasing through the current `origin/main` at `c789db2fd`, the required
 component set passed again, with the workspace lane bounded to two test threads
 because other worktrees were concurrently loading the shared host: 493 runtime
 tests, 4,674/4,674 runnable workspace tests (31 ignored; 4,705 inventoried),
-377/377 storage tests (2 external-provider skips), the required verification
+381/381 storage tests (2 external-provider skips), the required verification
 harness, all workspace JS build/typecheck/test lanes (51 UI files / 336 tests),
 and proof helpers. The exact storage PITR performance regression also passed
 independently; the final clock-integration conflict surfaces passed 71/71
