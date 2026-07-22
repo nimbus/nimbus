@@ -286,7 +286,7 @@ against `main` at `9a40b60a4`. The report's 28 lane findings normalize to 25
 unique items because three findings were independently reported by two lanes.
 Every unique item remains visible here, including already-fixed and refuted
 claims, so completion cannot hide work by omission. The implementation branch
-was cut from updated `origin/main` at `93124d87e`. RR26 records one additional
+was rebased onto updated `origin/main` at `a035fc90f`. RR26 records one additional
 private-fence regression discovered by the required docs-site completion gate.
 
 | ID | Item | Where | Severity / verdict | Status |
