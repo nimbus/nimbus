@@ -12,7 +12,7 @@ fn tenant_lifecycle_caller_inventory_is_complete() {
         .expect("nimbus-engine should live under the workspace crates directory");
     let output = std::process::Command::new("bash")
         .arg(workspace.join("scripts/verify-tenant-lifecycle-callers.sh"))
-        .current_dir(&workspace)
+        .current_dir(workspace)
         .output()
         .expect("tenant lifecycle inventory verifier should execute");
     assert!(
