@@ -207,10 +207,11 @@ impl WebSocketFixture {
 }
 
 fn default_message_timeout() -> Duration {
-    // Runtime-backed subscription bootstraps can queue behind other V8 work in
-    // a loaded aggregate run. Keep the fixture wait bounded below nextest's
-    // 45-second slow-test termination; behavioral tests still assert the exact
-    // frame they receive rather than treating the wait itself as success.
+    // Runtime-backed subscription bootstraps can queue behind shared V8 work in
+    // a loaded aggregate run even though focused cases complete quickly. The
+    // 30-second bound is a harness safety budget rather than a timing contract;
+    // callers still validate the exact next frame, and a timeout identifies the
+    // missing frame instead of counting the wait itself as success.
     Duration::from_secs(30)
 }
 

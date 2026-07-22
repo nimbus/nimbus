@@ -1,8 +1,10 @@
 use super::*;
 
-// Runtime-backed subscription startup is CPU-bound under the full server
-// aggregate. Keep the causal pause wait bounded, but leave enough headroom for
-// aggregate contention while remaining below nextest's 45-second slow marker.
+// This wait targets the exact status-projection mutation-drain pause. Runtime
+// startup can queue behind shared V8 work in the full server aggregate even
+// though the focused case completes quickly, so 30 seconds is a bounded safety
+// budget rather than a timing contract. Failure still names the missing pause,
+// and nextest reports the test as slow after 45 seconds.
 const STATUS_PROJECTION_PAUSE_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub(crate) const WEBSOCKET_DISCONNECT_CLEANUP_CASE: DeterministicTestCase =
