@@ -199,8 +199,49 @@ and shed count), `mutation_journal` (durable journal progress),
 caches), `query_planning`, and `libsql_replica_freshness` (null unless the
 tenant runs on a libSQL replica). Unknown tenants return `404`.
 
-The `mutation_journal` group also reports bounded system-table projection
-work. Use these fields together:
+The `mutation_journal` group reports the causal progress of accepted work as
+six ordered heads:
+
+```text
+assigned_high_water >= active_assigned_head >= durable_head
+                    >= storage_applied_head >= published_head >= applied_head
+```
+
+`assigned_high_water` preserves assignment history, including a provisional
+suffix later proven not to have committed. `active_assigned_head` is that
+history with definitively uncommitted work removed. The remaining heads show
+what is durable, applied in storage, admitted through the contiguous
+publication barrier, and visible to readers. A snapshot reconciles concurrent
+observations into this causal order; collecting it never advances production
+state.
+
+Use the four adjacent-phase lags to locate a stall:
+
+- `assignment_lag` means accepted work is waiting to become durable.
+- `apply_lag` means durable records are waiting for storage application.
+- `publication_lag` means storage-applied records are waiting behind the
+  contiguous publication barrier.
+- `visibility_lag` means published records have not yet advanced the reader
+  watermark.
+
+Alert on a sustained nonzero value, not a single point-in-time sample. A head
+that stops moving while its preceding lag grows identifies the owning phase;
+`assigned_high_water` alone is historical and is not a backlog measure.
+
+| Observed pattern | Interpretation | Check next |
+| --- | --- | --- |
+| One small lag, moving heads, queues below capacity, and no rising error counters | Healthy transient backlog | Confirm the lag drains over the normal traffic interval. |
+| Rising `assignment_lag` with `publisher_queue_depth` approaching `publisher_queue_capacity` or rising `publisher_send_timeout_count` | Publisher admission or persistence is overloaded | Reduce offered write load; inspect provider latency and publisher errors. |
+| Rising `apply_lag` with a moving `durable_head` | Durable records are not completing storage application | Inspect provider health and `publisher_transient_error_count`/`publisher_fatal_error_count`. |
+| Rising `publication_lag` | Applied provider progress is held behind an earlier pending contiguous-prefix barrier | Inspect the lower assigned batch, publisher errors, and provider catch-up failures; do not treat the later applied suffix as visible. |
+| Rising `visibility_lag` | Publication completed but the applied waiter watermark has stalled | Inspect journal worker health and restart/failure counters. |
+| Admission `queue_rejection_count`, committer send timeouts, or publisher send timeouts rising | Bounded backpressure is rejecting work | Identify whether admission, committer inbox, or publisher capacity is saturated before raising a bound. |
+| `committer_lease_fenced: true`, renewal failures, or a stopped renewal worker on a loaded provider tenant | Lease authority was lost or cannot be maintained | Expect tenant-local fencing and runtime replacement; investigate provider clock/availability and a competing owner. |
+| Rising `publisher_ambiguous_error_count` with a crash-and-replay log | Commit acknowledgement was ambiguous | Expect tenant-local eviction and replay. Do not retry as a definitive non-commit until the rebuilt runtime reports healthy progress. |
+| Rising `provider_catch_up_failure_count`, observer catch-up failures, or reconciliation backoff with stalled heads | Restart or takeover recovery is stalled | Inspect provider reads and observer reconciliation; the tenant remains unavailable until the contiguous prefix is recovered. |
+
+The group also reports bounded system-table projection work. Use these fields
+together:
 
 - `committer_arm` is the immutable construction-time mutation owner:
   `ordered-publisher` for Memory/redb/SQLite and `serial` for

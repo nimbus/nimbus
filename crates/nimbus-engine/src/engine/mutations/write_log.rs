@@ -10,6 +10,8 @@ use nimbus_core::{
     TableName, TenantEventRecord, Timestamp, commit_intersects_dependency_set,
 };
 
+use crate::tenant::WriteLogFrontierSample;
+
 const DEFAULT_MIN_RETENTION_SECS: usize = 30;
 const DEFAULT_MAX_RETENTION_SECS: usize = 300;
 const DEFAULT_SOFT_MAX_BYTES: usize = 32 * 1024 * 1024;
@@ -137,6 +139,9 @@ struct WriteLogState {
     /// Highest assigned sequence observed by this runtime, including the
     /// durable-but-unapplied startup tail.
     assigned_through: SequenceNumber,
+    /// Monotonic history of assignment, including suffixes later proven not to
+    /// have committed and removed from `assigned_through`.
+    assigned_high_water: SequenceNumber,
     /// Highest sequence whose publish position has been crossed. This tracks
     /// zero-write/recovered positions too, while entry publication below is
     /// still asserted strictly monotonic.
@@ -203,6 +208,7 @@ impl WriteLog {
                 covered_through,
                 bootstrap_sequence: covered_through,
                 assigned_through,
+                assigned_high_water: assigned_through,
                 published_through: covered_through,
                 observed_applied_through: covered_through,
                 purged_sequence: SequenceNumber(0),
@@ -347,6 +353,7 @@ impl WriteLog {
                 state.covered_through = sequence;
             }
             state.assigned_through = sequence;
+            state.assigned_high_water = state.assigned_high_water.max(sequence);
         }
     }
 
@@ -402,6 +409,7 @@ impl WriteLog {
         state.bootstrap_sequence = applied_through;
         state.covered_through = applied_through;
         state.assigned_through = state.assigned_through.max(assigned_through);
+        state.assigned_high_water = state.assigned_high_water.max(state.assigned_through);
         state.published_through = state.published_through.max(applied_through);
         state.observed_applied_through = state.observed_applied_through.max(applied_through);
     }
@@ -422,6 +430,7 @@ impl WriteLog {
         // Progress may have been read before this caller waited for the
         // committer actor, so ignore a stale observation rather than regressing.
         state.assigned_through = state.assigned_through.max(sequence);
+        state.assigned_high_water = state.assigned_high_water.max(sequence);
     }
 
     pub(crate) fn mark_coverage_unknown(&self) {
@@ -454,6 +463,7 @@ impl WriteLog {
             state.covered_through = sequence;
         }
         state.assigned_through = sequence;
+        state.assigned_high_water = state.assigned_high_water.max(sequence);
     }
 
     /// Publishes entries that this caller has applied through `applied_head`.
@@ -583,6 +593,19 @@ impl WriteLog {
             .lock()
             .expect("write-log lock should not be poisoned")
             .published_through
+    }
+
+    pub(crate) fn frontier_sample(&self) -> WriteLogFrontierSample {
+        let state = self
+            .state
+            .lock()
+            .expect("write-log lock should not be poisoned");
+        WriteLogFrontierSample {
+            assigned_high_water: state.assigned_high_water,
+            active_assigned_head: state.assigned_through,
+            storage_applied_head: state.observed_applied_through,
+            published_head: state.published_through,
+        }
     }
 
     pub(crate) fn validation_source(
@@ -933,6 +956,7 @@ struct WriteLogInspection {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
     use nimbus_core::{
         Filter, FilterOp, IndexId, IndexRangeDependency, ManualWallClock,
@@ -944,6 +968,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::tenant::{JournalFrontierSample, MutationFrontierStats};
 
     fn commit(sequence: u64, body_bytes: usize) -> CommitEntry {
         commit_for_id(sequence, &format!("doc-{sequence}"), body_bytes)
@@ -981,6 +1006,18 @@ mod tests {
 
     fn test_log(config: WriteLogConfig) -> WriteLog {
         WriteLog::new(config, SequenceNumber(0), SequenceNumber(0))
+    }
+
+    fn frontier_stats(
+        log: &WriteLog,
+        durable_head: SequenceNumber,
+        applied_head: SequenceNumber,
+    ) -> MutationFrontierStats {
+        let journal = JournalFrontierSample {
+            durable_head,
+            applied_head,
+        };
+        MutationFrontierStats::reconcile(log.frontier_sample(), journal, journal)
     }
 
     #[test]
@@ -1025,6 +1062,91 @@ mod tests {
     }
 
     #[test]
+    fn definitive_assignment_rollback_preserves_high_water_and_clears_active_lag() {
+        let log = test_log(WriteLogConfig::for_tests(30, 300, usize::MAX));
+        log.stage_pending([commit(1, 8), commit(2, 8)], Timestamp(1_000));
+        let assigned = frontier_stats(&log, SequenceNumber(0), SequenceNumber(0));
+        assert_eq!(assigned.assigned_high_water, SequenceNumber(2));
+        assert_eq!(assigned.active_assigned_head, SequenceNumber(2));
+        assert_eq!(assigned.assignment_lag, 2);
+
+        log.discard_unpersisted_suffix(SequenceNumber(1));
+        let rolled_back = frontier_stats(&log, SequenceNumber(0), SequenceNumber(0));
+        assert_eq!(rolled_back.assigned_high_water, SequenceNumber(2));
+        assert_eq!(rolled_back.active_assigned_head, SequenceNumber(0));
+        assert_eq!(rolled_back.assignment_lag, 0);
+
+        log.stage_pending([commit(1, 8)], Timestamp(1_001));
+        let safely_reused = frontier_stats(&log, SequenceNumber(0), SequenceNumber(0));
+        assert_eq!(safely_reused.assigned_high_water, SequenceNumber(2));
+        assert_eq!(safely_reused.active_assigned_head, SequenceNumber(1));
+        assert_eq!(safely_reused.assignment_lag, 1);
+    }
+
+    #[test]
+    fn publisher_stall_diagnostics_distinguish_assignment_apply_and_publication_lag() {
+        let log = test_log(WriteLogConfig::for_tests(30, 300, usize::MAX));
+        log.stage_pending([commit(1, 8)], Timestamp(1_000));
+
+        let assignment_stall = frontier_stats(&log, SequenceNumber(0), SequenceNumber(0));
+        assert_eq!(
+            (
+                assignment_stall.assignment_lag,
+                assignment_stall.apply_lag,
+                assignment_stall.publication_lag,
+                assignment_stall.visibility_lag,
+            ),
+            (1, 0, 0, 0)
+        );
+
+        let apply_stall = frontier_stats(&log, SequenceNumber(1), SequenceNumber(0));
+        assert_eq!(
+            (
+                apply_stall.assignment_lag,
+                apply_stall.apply_lag,
+                apply_stall.publication_lag,
+                apply_stall.visibility_lag,
+            ),
+            (0, 1, 0, 0)
+        );
+
+        log.observe_applied_through(SequenceNumber(1), Timestamp(1_001), SequenceNumber(0));
+        let publication_stall = frontier_stats(&log, SequenceNumber(1), SequenceNumber(0));
+        assert_eq!(
+            (
+                publication_stall.assignment_lag,
+                publication_stall.apply_lag,
+                publication_stall.publication_lag,
+                publication_stall.visibility_lag,
+            ),
+            (0, 0, 1, 0)
+        );
+
+        log.publish_pending_through(SequenceNumber(1), Timestamp(1_002), SequenceNumber(0));
+        let visibility_stall = frontier_stats(&log, SequenceNumber(1), SequenceNumber(0));
+        assert_eq!(
+            (
+                visibility_stall.assignment_lag,
+                visibility_stall.apply_lag,
+                visibility_stall.publication_lag,
+                visibility_stall.visibility_lag,
+            ),
+            (0, 0, 0, 1)
+        );
+
+        let visible = frontier_stats(&log, SequenceNumber(1), SequenceNumber(1));
+        assert_eq!(
+            (
+                visible.assignment_lag,
+                visible.apply_lag,
+                visible.publication_lag,
+                visible.visibility_lag,
+            ),
+            (0, 0, 0, 0)
+        );
+    }
+
+    #[test]
     fn zero_write_sequence_advances_coverage_without_allocating_an_entry() {
         let log = test_log(WriteLogConfig::for_tests(30, 300, usize::MAX));
         log.advance_known_zero_write_through(SequenceNumber(1));
@@ -1058,7 +1180,7 @@ mod tests {
     }
 
     #[test]
-    fn observed_applied_head_stops_at_pending_barrier_until_owner_publishes() {
+    fn provider_catch_up_cannot_publish_assigned_suffix() {
         let log = test_log(WriteLogConfig::for_tests(30, 300, usize::MAX));
         log.stage_pending([commit(1, 8)], Timestamp(1_000));
         log.observe_assigned_through_without_coverage(SequenceNumber(2));
@@ -1067,6 +1189,10 @@ mod tests {
             log.observe_applied_through(SequenceNumber(2), Timestamp(1_001), SequenceNumber(0));
         assert_eq!(held_frontier, SequenceNumber(0));
         assert_eq!(log.published_through(), SequenceNumber(0));
+        let held_stats = frontier_stats(&log, SequenceNumber(2), SequenceNumber(0));
+        assert_eq!(held_stats.storage_applied_head, SequenceNumber(2));
+        assert_eq!(held_stats.published_head, SequenceNumber(0));
+        assert_eq!(held_stats.publication_lag, 2);
         let held = log.inspection();
         assert!(held.published.is_empty());
         assert_eq!(held.pending, vec![SequenceNumber(1)]);
@@ -1075,6 +1201,10 @@ mod tests {
             log.publish_pending_through(SequenceNumber(1), Timestamp(1_002), SequenceNumber(0));
         assert_eq!(released_frontier, SequenceNumber(2));
         assert_eq!(log.published_through(), SequenceNumber(2));
+        let released_stats = frontier_stats(&log, SequenceNumber(2), SequenceNumber(2));
+        assert_eq!(released_stats.storage_applied_head, SequenceNumber(2));
+        assert_eq!(released_stats.published_head, SequenceNumber(2));
+        assert_eq!(released_stats.publication_lag, 0);
         let released = log.inspection();
         assert_eq!(released.published, vec![SequenceNumber(1)]);
         assert!(released.pending.is_empty());
@@ -1082,6 +1212,68 @@ mod tests {
             log.validation_source(SequenceNumber(1), SequenceNumber(2)),
             Ok(ValidationSource::StorageFallback)
         ));
+    }
+
+    #[test]
+    fn frontier_diagnostics_remain_ordered_under_concurrent_sampling() {
+        const COMMITS: u64 = 256;
+        let log = Arc::new(test_log(WriteLogConfig::for_tests(30, 300, usize::MAX)));
+        let durable_head = Arc::new(AtomicU64::new(0));
+        let applied_head = Arc::new(AtomicU64::new(0));
+        let finished = Arc::new(AtomicBool::new(false));
+
+        let writer = {
+            let log = Arc::clone(&log);
+            let durable_head = Arc::clone(&durable_head);
+            let applied_head = Arc::clone(&applied_head);
+            let finished = Arc::clone(&finished);
+            std::thread::spawn(move || {
+                for sequence in 1..=COMMITS {
+                    let sequence = SequenceNumber(sequence);
+                    log.stage_pending([commit(sequence.0, 8)], Timestamp(sequence.0));
+                    durable_head.store(sequence.0, Ordering::Release);
+                    log.observe_applied_through(sequence, Timestamp(sequence.0), SequenceNumber(0));
+                    log.publish_pending_through(sequence, Timestamp(sequence.0), SequenceNumber(0));
+                    applied_head.store(sequence.0, Ordering::Release);
+                }
+                finished.store(true, Ordering::Release);
+            })
+        };
+
+        let mut previous: Option<MutationFrontierStats> = None;
+        while !finished.load(Ordering::Acquire) {
+            let before = JournalFrontierSample {
+                durable_head: SequenceNumber(durable_head.load(Ordering::Acquire)),
+                applied_head: SequenceNumber(applied_head.load(Ordering::Acquire)),
+            };
+            let write_log = log.frontier_sample();
+            let after = JournalFrontierSample {
+                durable_head: SequenceNumber(durable_head.load(Ordering::Acquire)),
+                applied_head: SequenceNumber(applied_head.load(Ordering::Acquire)),
+            };
+            let stats = MutationFrontierStats::reconcile(write_log, before, after);
+            assert!(stats.is_causally_ordered());
+            if let Some(previous) = previous {
+                assert!(stats.assigned_high_water >= previous.assigned_high_water);
+                assert!(stats.active_assigned_head >= previous.active_assigned_head);
+                assert!(stats.durable_head >= previous.durable_head);
+                assert!(stats.storage_applied_head >= previous.storage_applied_head);
+                assert!(stats.published_head >= previous.published_head);
+                assert!(stats.applied_head >= previous.applied_head);
+            }
+            previous = Some(stats);
+            std::thread::yield_now();
+        }
+        writer.join().expect("frontier writer should join");
+
+        let final_stats = frontier_stats(
+            &log,
+            SequenceNumber(durable_head.load(Ordering::Acquire)),
+            SequenceNumber(applied_head.load(Ordering::Acquire)),
+        );
+        assert_eq!(final_stats.assigned_high_water, SequenceNumber(COMMITS));
+        assert_eq!(final_stats.applied_head, SequenceNumber(COMMITS));
+        assert!(final_stats.is_causally_ordered());
     }
 
     #[test]

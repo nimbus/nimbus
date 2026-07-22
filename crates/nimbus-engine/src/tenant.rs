@@ -69,6 +69,8 @@ pub use self::materialized_reads::{
 pub(crate) use self::mutation::DEFAULT_MUTATION_ADMISSION_QUEUE_CAPACITY;
 #[cfg(test)]
 pub(crate) use self::mutation::DEFAULT_MUTATION_JOURNAL_QUEUE_CAPACITY;
+#[cfg(test)]
+pub(crate) use self::mutation::JournalFrontierSample;
 pub(crate) use self::mutation::MutationIsolateAdmissionPermit;
 #[cfg(any(test, feature = "test-hooks"))]
 pub use self::mutation::MutationJournalPauseHandle;
@@ -82,12 +84,12 @@ pub(crate) use self::mutation::{
     PublisherQueueError, QueuedMutationRequest, QueuedMutationResult,
 };
 pub(crate) use self::mutation::{
-    CommitterActor, CommitterJob, CommitterMessage, assign_and_validate, run_committer_actor,
-    run_job, validate_append_sequences,
+    CommitterActor, CommitterJob, CommitterMessage, WriteLogFrontierSample, assign_and_validate,
+    run_committer_actor, run_job, validate_append_sequences,
 };
 pub use self::mutation::{
-    CommitterArm, MutationAdmissionPhase, MutationAdmissionStats, MutationIsolateAdmissionStats,
-    MutationJournalStats,
+    CommitterArm, MutationAdmissionPhase, MutationAdmissionStats, MutationFrontierStats,
+    MutationIsolateAdmissionStats, MutationJournalStats,
 };
 use self::mutation::{
     MutationAdmissionDecision, MutationAdmissionGate, MutationIsolateAdmission,

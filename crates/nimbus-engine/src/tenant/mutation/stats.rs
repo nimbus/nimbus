@@ -1,5 +1,7 @@
-use nimbus_core::{SequenceNumber, Timestamp};
+use nimbus_core::Timestamp;
 use serde::Serialize;
+
+use super::frontiers::MutationFrontierStats;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum MutationAdmissionPhase {
@@ -38,9 +40,8 @@ pub enum CommitterArm {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct MutationJournalStats {
-    pub durable_head: SequenceNumber,
-    pub applied_head: SequenceNumber,
-    pub apply_lag: u64,
+    #[serde(flatten)]
+    pub frontiers: MutationFrontierStats,
     pub queue_depth: usize,
     pub queue_capacity: usize,
     pub oldest_queue_age_nanos: u64,
@@ -98,4 +99,12 @@ pub struct MutationJournalStats {
     pub observer_spawned_work_reconciliation_retry_count: u64,
     pub observer_spawned_work_current_reconciliation_backoff_millis: u64,
     pub observer_spawned_work_poisoned: bool,
+}
+
+impl std::ops::Deref for MutationJournalStats {
+    type Target = MutationFrontierStats;
+
+    fn deref(&self) -> &Self::Target {
+        &self.frontiers
+    }
 }

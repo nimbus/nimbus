@@ -56,9 +56,25 @@ async fn tenant_engine_metrics_route_surfaces_worker_and_serving_health_after_mi
     assert_eq!(body["tenant_id"], json!("demo"));
 
     let diagnostics = &body["diagnostics"];
+    assert_eq!(
+        diagnostics["mutation_journal"]["assigned_high_water"],
+        json!(1)
+    );
+    assert_eq!(
+        diagnostics["mutation_journal"]["active_assigned_head"],
+        json!(1)
+    );
     assert_eq!(diagnostics["mutation_journal"]["durable_head"], json!(1));
+    assert_eq!(
+        diagnostics["mutation_journal"]["storage_applied_head"],
+        json!(1)
+    );
+    assert_eq!(diagnostics["mutation_journal"]["published_head"], json!(1));
     assert_eq!(diagnostics["mutation_journal"]["applied_head"], json!(1));
+    assert_eq!(diagnostics["mutation_journal"]["assignment_lag"], json!(0));
     assert_eq!(diagnostics["mutation_journal"]["apply_lag"], json!(0));
+    assert_eq!(diagnostics["mutation_journal"]["publication_lag"], json!(0));
+    assert_eq!(diagnostics["mutation_journal"]["visibility_lag"], json!(0));
     assert_eq!(diagnostics["mutation_journal"]["queue_depth"], json!(0));
     assert_eq!(
         diagnostics["mutation_journal"]["worker_running"],

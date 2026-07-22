@@ -1,6 +1,7 @@
 mod actor;
 mod admission;
 mod codel;
+mod frontiers;
 mod isolate_admission;
 mod journal;
 #[cfg(any(test, feature = "test-hooks"))]
@@ -16,6 +17,8 @@ pub(crate) use self::actor::{
     run_job, validate_append_sequences,
 };
 pub(super) use self::admission::{MutationAdmissionDecision, MutationAdmissionGate};
+pub use self::frontiers::MutationFrontierStats;
+pub(crate) use self::frontiers::{JournalFrontierSample, WriteLogFrontierSample};
 pub(super) use self::isolate_admission::MutationIsolateAdmission;
 pub(crate) use self::isolate_admission::MutationIsolateAdmissionPermit;
 pub(super) use self::journal::MutationJournalState;

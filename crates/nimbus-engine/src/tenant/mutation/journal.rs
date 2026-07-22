@@ -12,6 +12,7 @@ use tokio::sync::Notify;
 use super::pause::{MutationJournalPauseHandle, MutationJournalPauseState};
 use super::requests::{DEFAULT_MUTATION_JOURNAL_QUEUE_CAPACITY, QueuedMutationRequest};
 use super::stats::MutationJournalStats;
+use super::{JournalFrontierSample, MutationFrontierStats};
 #[cfg(any(test, feature = "test-hooks"))]
 use std::sync::Arc;
 
@@ -173,6 +174,13 @@ impl MutationJournalState {
         SequenceNumber(self.applied_head.load(Ordering::Acquire))
     }
 
+    pub(in crate::tenant) fn frontier_sample(&self) -> JournalFrontierSample {
+        JournalFrontierSample {
+            durable_head: self.durable_head(),
+            applied_head: self.applied_head(),
+        }
+    }
+
     pub(in crate::tenant) fn mark_durable_head(&self, sequence: SequenceNumber) {
         self.durable_head.fetch_max(sequence.0, Ordering::AcqRel);
     }
@@ -283,9 +291,10 @@ impl MutationJournalState {
         );
     }
 
-    pub(in crate::tenant) fn stats(&self) -> MutationJournalStats {
-        let durable_head = self.durable_head();
-        let applied_head = self.applied_head();
+    pub(in crate::tenant) fn stats(
+        &self,
+        frontiers: MutationFrontierStats,
+    ) -> MutationJournalStats {
         let queue = self
             .queue
             .lock()
@@ -297,9 +306,7 @@ impl MutationJournalState {
             .min(u128::from(u64::MAX)) as u64;
         let worker_start_count = self.worker_start_count.load(Ordering::Relaxed);
         MutationJournalStats {
-            durable_head,
-            applied_head,
-            apply_lag: durable_head.0.saturating_sub(applied_head.0),
+            frontiers,
             queue_depth: queue.len(),
             queue_capacity: self.capacity.load(Ordering::Relaxed),
             oldest_queue_age_nanos,

@@ -665,7 +665,11 @@ impl TenantRuntime {
     }
 
     pub(crate) fn mutation_journal_stats(&self) -> MutationJournalStats {
-        let mut stats = self.mutation_journal.stats();
+        let journal_before = self.mutation_journal.frontier_sample();
+        let write_log = self.write_log.frontier_sample();
+        let journal_after = self.mutation_journal.frontier_sample();
+        let frontiers = MutationFrontierStats::reconcile(write_log, journal_before, journal_after);
+        let mut stats = self.mutation_journal.stats(frontiers);
         stats.committer_inbox_depth = self.committer.depth();
         stats.committer_inbox_capacity = self.committer.capacity();
         stats.committer_send_timeout_millis =

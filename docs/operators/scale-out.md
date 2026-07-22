@@ -34,10 +34,12 @@ for the full field list):
 - **`mutation_admission`** — the per-tenant write admission gate. Sustained
   backpressure or a persistently deep queue means that tenant is saturating
   its write path.
-- **`mutation_journal`** — durable journal progress. A widening `apply_lag`
-  (applied state trailing the durable head) means apply is falling behind; a
-  durable head that stalls while admission keeps accepting writes means the
-  journal worker is not draining.
+- **`mutation_journal`** — mutation pipeline progress. A widening
+  `assignment_lag`, `apply_lag`, `publication_lag`, or `visibility_lag`
+  localizes the backlog to durable append, storage application, contiguous
+  publication, or reader visibility respectively. A durable head that stalls
+  while admission keeps accepting writes means the journal worker is not
+  draining.
 - **`libsql_replica_freshness`** — replica staleness, when the tenant runs
   on a libSQL replica. Growing lag means reads are drifting from the primary.
 

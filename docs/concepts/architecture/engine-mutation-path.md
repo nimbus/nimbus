@@ -148,6 +148,19 @@ before serving, which is what gives clients read-your-writes without ever
 exposing a durable-but-unapplied record. The watermark bookkeeping lives
 in `crates/nimbus-engine/src/tenant/mutation/journal.rs`.
 
+**Causal diagnostics.** The mutation interface reports six ordered frontiers:
+`assigned_high_water >= active_assigned_head >= durable_head >=
+storage_applied_head >= published_head >= applied_head`. The first retains all
+assignment history; the active assigned head alone may retract when Nimbus
+proves that a provisional suffix did not commit. Each later phase is causal
+proof that every earlier phase reached at least the same sequence. The
+frontier module (`crates/nimbus-engine/src/tenant/mutation/frontiers.rs`)
+therefore reconciles the write-log and journal observations around one
+concurrent sample into a causally ordered snapshot without mutating either.
+The adjacent differences identify assignment, storage-apply, contiguous
+publication, and reader-visibility lag rather than collapsing distinct stalls
+into one number.
+
 ## Multi-step mutations: execution units
 
 A mutation function that performs several reads and writes cannot use the
