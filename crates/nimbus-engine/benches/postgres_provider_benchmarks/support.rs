@@ -233,6 +233,25 @@ pub(super) async fn quiesce_engine(engine: &Arc<Engine>, context: &str) -> Bench
     }
 }
 
+/// Quiesces an engine that will be reopened against the same provider state.
+///
+/// Cleanup may fall back to drop on timeout, but a restart sample cannot: the
+/// successor must not be admitted until the prior owner has stopped. Provider
+/// leases deliberately retain their server-time expiry on shutdown, so the
+/// benchmark crosses that boundary explicitly after this strict quiesce.
+pub(super) async fn quiesce_engine_for_reopen(
+    engine: &Arc<Engine>,
+    context: &str,
+) -> BenchResult<()> {
+    tokio::time::timeout(
+        Duration::from_secs(BENCHMARK_QUIESCE_TIMEOUT_SECS),
+        engine.quiesce(),
+    )
+    .await
+    .map_err(|_| format!("engine quiesce timed out before provider reopen during {context}"))?;
+    Ok(())
+}
+
 pub(super) fn record_contrast_measurements(
     report: &mut BenchmarkReport,
     workload: WorkloadKind,
@@ -287,6 +306,54 @@ pub(super) async fn cleanup_postgres_provider(config: &PostgresProviderConfig) -
         .drop_metadata_schema_for_test()
         .await?;
     Ok(())
+}
+
+/// Advances benchmark seed state across the provider-owned lease expiry
+/// boundary without adding the production 30–60 second TTL to every sample.
+/// The caller must have strictly quiesced and dropped the prior engine first.
+pub(super) async fn expire_benchmark_postgres_committer_leases(
+    config: &PostgresProviderConfig,
+    tenant_ids: &[TenantId],
+) -> BenchResult<()> {
+    let provider = PostgresProvider::connect(config.clone()).await?;
+    let (client, connection) =
+        tokio_postgres::connect(config.connection_string.as_str(), NoTls).await?;
+    let connection_task = tokio::spawn(async move {
+        let _ = connection.await;
+    });
+
+    let result = async {
+        for tenant_id in tenant_ids {
+            let schema_name = provider.tenant_schema_name(tenant_id)?;
+            let schema_name = schema_name.replace('"', "\"\"");
+            let query = format!(
+                "UPDATE \"{schema_name}\".\"committer_lease\" \
+                 SET expires_at = CURRENT_TIMESTAMP - INTERVAL '1 second' \
+                 WHERE singleton = TRUE"
+            );
+            let updated = client.execute(query.as_str(), &[]).await?;
+            if updated != 1 {
+                return Err(format!(
+                    "expected one Postgres committer lease for tenant {tenant_id}, updated {updated}"
+                )
+                .into());
+            }
+        }
+        Ok(())
+    }
+    .await;
+    connection_task.abort();
+    result
+}
+
+pub(super) async fn expire_all_benchmark_postgres_committer_leases(
+    config: &PostgresProviderConfig,
+) -> BenchResult<()> {
+    let tenant_ids = PostgresProvider::connect(config.clone())
+        .await?
+        .list_tenants()
+        .await?;
+    expire_benchmark_postgres_committer_leases(config, &tenant_ids).await
 }
 
 pub(super) async fn terminate_benchmark_postgres_connections(

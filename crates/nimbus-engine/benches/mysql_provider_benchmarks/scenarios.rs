@@ -401,12 +401,27 @@ pub(super) async fn freeze_point_read_seed(
     fixture: PointReadFixture,
     context: &str,
 ) -> BenchResult<PointReadSeed> {
-    let PointReadFixture { tenant, ids } = fixture;
-    quiesce_engine(&tenant.engine, context).await?;
-    drop(tenant.engine);
+    let PointReadFixture {
+        tenant:
+            TenantFixture {
+                resource,
+                engine,
+                tenant_id,
+            },
+        ids,
+    } = fixture;
+    quiesce_engine_for_reopen(&engine, context).await?;
+    drop(engine);
+    if let LiveResource::MySql {
+        provider_config, ..
+    } = &resource
+    {
+        expire_benchmark_mysql_committer_leases(provider_config, std::slice::from_ref(&tenant_id))
+            .await?;
+    }
     Ok(PointReadSeed {
-        resource: tenant.resource.into_seed_resource(),
-        tenant_id: tenant.tenant_id,
+        resource: resource.into_seed_resource(),
+        tenant_id,
         ids,
     })
 }
@@ -415,12 +430,27 @@ pub(super) async fn freeze_query_seed(
     fixture: QueryFixture,
     context: &str,
 ) -> BenchResult<QuerySeed> {
-    let QueryFixture { tenant, query } = fixture;
-    quiesce_engine(&tenant.engine, context).await?;
-    drop(tenant.engine);
+    let QueryFixture {
+        tenant:
+            TenantFixture {
+                resource,
+                engine,
+                tenant_id,
+            },
+        query,
+    } = fixture;
+    quiesce_engine_for_reopen(&engine, context).await?;
+    drop(engine);
+    if let LiveResource::MySql {
+        provider_config, ..
+    } = &resource
+    {
+        expire_benchmark_mysql_committer_leases(provider_config, std::slice::from_ref(&tenant_id))
+            .await?;
+    }
     Ok(QuerySeed {
-        resource: tenant.resource.into_seed_resource(),
-        tenant_id: tenant.tenant_id,
+        resource: resource.into_seed_resource(),
+        tenant_id,
         query,
     })
 }
@@ -429,12 +459,27 @@ pub(super) async fn freeze_journal_seed(
     fixture: QueryFixture,
     context: &str,
 ) -> BenchResult<JournalSeed> {
-    let QueryFixture { tenant, .. } = fixture;
-    quiesce_engine(&tenant.engine, context).await?;
-    drop(tenant.engine);
+    let QueryFixture {
+        tenant:
+            TenantFixture {
+                resource,
+                engine,
+                tenant_id,
+            },
+        ..
+    } = fixture;
+    quiesce_engine_for_reopen(&engine, context).await?;
+    drop(engine);
+    if let LiveResource::MySql {
+        provider_config, ..
+    } = &resource
+    {
+        expire_benchmark_mysql_committer_leases(provider_config, std::slice::from_ref(&tenant_id))
+            .await?;
+    }
     Ok(JournalSeed {
-        resource: tenant.resource.into_seed_resource(),
-        tenant_id: tenant.tenant_id,
+        resource: resource.into_seed_resource(),
+        tenant_id,
     })
 }
 
@@ -447,8 +492,18 @@ pub(super) async fn freeze_mixed_load_seed(
         engine,
         tenant_states,
     } = fixture;
-    quiesce_engine(&engine, context).await?;
+    quiesce_engine_for_reopen(&engine, context).await?;
     drop(engine);
+    if let LiveResource::MySql {
+        provider_config, ..
+    } = &resource
+    {
+        let tenant_ids = tenant_states
+            .iter()
+            .map(|state| state.tenant_id.clone())
+            .collect::<Vec<_>>();
+        expire_benchmark_mysql_committer_leases(provider_config, &tenant_ids).await?;
+    }
     Ok(MixedLoadSeed {
         resource: resource.into_seed_resource(),
         tenant_states,
@@ -574,7 +629,7 @@ impl SeedResource {
 
 impl ReopenedResource {
     pub(super) async fn cleanup(self, engine: Arc<Engine>, context: &str) -> BenchResult<()> {
-        quiesce_engine(&engine, context).await?;
+        quiesce_engine_for_reopen(&engine, context).await?;
         drop(engine);
         match self {
             Self::Sqlite { bench_dir } => {
@@ -584,6 +639,7 @@ impl ReopenedResource {
                 control_dir,
                 provider_config,
             } => {
+                expire_all_benchmark_mysql_committer_leases(&provider_config).await?;
                 benchmark_mysql_cleanup(
                     &format!("{context} MySQL connection termination"),
                     terminate_benchmark_mysql_connections(&provider_config),
