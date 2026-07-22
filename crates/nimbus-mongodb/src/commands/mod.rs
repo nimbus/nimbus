@@ -118,7 +118,8 @@ pub async fn dispatch_authed(
             collection::list_collections(body, engine, required_principal(principal.as_ref())?)
         }
         "listDatabases" => {
-            collection::list_databases(body, engine, required_principal(principal.as_ref())?)
+            collection::list_databases_async(body, engine, required_principal(principal.as_ref())?)
+                .await
         }
         "createIndexes" | "createindexes" => {
             index::create_indexes(body, engine, required_principal(principal.as_ref())?)
