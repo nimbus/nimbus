@@ -33,6 +33,11 @@ the complete provider lifecycle, including opening an already-existing durable
 tenant into the current process. A retry after an interrupted create therefore
 does not report success until the tenant runtime is ready.
 
+Provider-reachable background work follows the same boundary. For example,
+each DynamoDB TTL sweep admits or opens its configured tenants sequentially
+before entering the synchronous sweep core; one tenant's admission or sweep
+failure is reported without preventing later tenants in that pass.
+
 The Rust `Engine::create_tenant` blocking API is embedded-only and accepts
 SQLite or redb compositions. Embedders using PostgreSQL, MySQL, or libSQL must
 retain an `Arc<Engine>` and use `create_tenant_async` for explicit creation or

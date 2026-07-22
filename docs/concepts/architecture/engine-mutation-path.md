@@ -50,9 +50,9 @@ embedded redb and SQLite compositions. It fails before touching tenant state
 when called on PostgreSQL, MySQL, libSQL, or another provider composition.
 Provider-reachable callers must retain an `Arc<Engine>` and await the async
 lifecycle; MongoDB, DynamoDB, Cloudflare KV, automatic CLI tenant creation,
-object admission, and the system tenant all follow that rule. This keeps
-provider namespace creation, runtime catch-up, observer bootstrap, and
-publication behind one ordering and error contract.
+object admission, the system tenant, and DynamoDB's scheduled TTL maintenance
+all follow that rule. This keeps provider namespace creation, runtime catch-up,
+observer bootstrap, and publication behind one ordering and error contract.
 
 ## One mutation path
 
