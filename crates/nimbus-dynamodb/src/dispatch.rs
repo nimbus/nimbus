@@ -278,11 +278,7 @@ fn finish_authentication(
     secret: Option<String>,
 ) -> Result<TenantIsolationContext, DynamoDbError> {
     if ctx.access_keys.mode() == AuthMode::Strict {
-        let secret = secret.ok_or_else(|| {
-            DynamoDbError::UnrecognizedClientException(
-                "The security token included in the request is invalid.".to_owned(),
-            )
-        })?;
+        let secret = secret.ok_or_else(unrecognized_client_token)?;
         verify::validate_timestamp(headers)?;
         // DynamoDB is always `POST /` with no query string.
         verify::verify_signature(parsed, &secret, "POST", "/", "", headers, body)?;
