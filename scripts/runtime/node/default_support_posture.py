@@ -1393,7 +1393,7 @@ def build_posture(repo: Path) -> dict[str, Any]:
         "generated_from": [
             "tests/runtime/node/compat/node-compat-evidence/latest/status-summary.json",
             "tests/runtime/node/classifications/*.json",
-            "docs/plans/node-default-runtime-support-hardening-plan.md",
+            "docs/private/plans/archive/node-default-runtime-support-hardening-plan.md",
         ],
         "denominator_vocabulary": DENOMINATORS,
         "shim_classification_vocabulary": SHIM_CLASSES,

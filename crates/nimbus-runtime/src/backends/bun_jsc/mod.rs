@@ -87,6 +87,10 @@ impl RuntimeBackend for BunJscRuntimeBackend {
         &'a mut self,
         invocation: RuntimeBackendInvocation,
     ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value>> + 'a>> {
+        let retained_owner_admission = crate::retained_state::validate_retained_state_admission(
+            &invocation.policy,
+            &invocation.context,
+        );
         let pool_policy = BunJscPoolPolicy::from_limits(invocation.policy.limits());
         let adapter_state = self.execution_adapter_state();
         self.pool.record_admission();
@@ -94,6 +98,7 @@ impl RuntimeBackend for BunJscRuntimeBackend {
             self.pool.record_disabled_invocation();
         }
         Box::pin(async move {
+            retained_owner_admission?;
             let pool_policy = pool_policy?;
             verify_scaffold_contract_once()?;
             if invocation
@@ -216,7 +221,7 @@ mod tests {
             javascript_evaluation_format: RuntimeJavaScriptEvaluationFormat::ProgramWrapper,
             memory_enforcement: RuntimeMemoryEnforcement::OuterQuotaRequired,
             runtime_pool_kind,
-            ..RuntimeLimits::default()
+            ..RuntimeLimits::application_bun_jsc()
         }
     }
 
@@ -290,6 +295,31 @@ mod tests {
         assert!(!untrusted.retained_vm_reuse_allowed);
         assert!(untrusted.outer_quota_required);
         assert!(untrusted.product_selectable);
+    }
+
+    #[test]
+    fn bun_jsc_retained_backend_requires_common_runtime_owner_contract() {
+        let policy = Arc::new(
+            crate::limits::RuntimePolicy::new_unchecked_for_backend_contract_test(bun_limits_for(
+                RuntimeBackendTrustTier::InProcessTrustedOnly,
+                RuntimeBackendLockdownProfile::BunJscTrustedGeneratedWrapper,
+                RuntimeBackendLifecyclePolicy::BunJscTrustedRetainedPool,
+                RuntimePoolKind::BunJscTrustedRetained,
+            )),
+        );
+        let factory = BunJscNoLinkExecutionAdapterFactory;
+        let mut backend = BunJscRuntimeBackend::with_execution_adapter_factory(&factory);
+
+        let error = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime should build")
+            .block_on(backend.invoke(bun_invocation(policy)))
+            .expect_err("retained Bun/JSC execution must reject an ownerless invocation");
+        assert!(
+            matches!(error, NimbusRuntimeError::Contract(ref message) if message.contains("requires a runtime owner lease")),
+            "unexpected retained Bun/JSC owner error: {error}"
+        );
     }
 
     #[test]
@@ -481,7 +511,7 @@ mod tests {
             services: BTreeMap::new(),
         };
         let error = runtime
-            .invoke_bundle_blocking_for_tenant(
+            .invoke_bundle_blocking_for_tenant_for_test(
                 &RuntimeBundle::new("unused-bun-jsc-proof-bundle.mjs"),
                 &request,
                 "tenant-a",
@@ -914,7 +944,7 @@ globalThis.__nimbusInvoke = async function(request) {
         };
 
         let first_v8_result = v8_runtime
-            .invoke_bundle_blocking_for_tenant(
+            .invoke_bundle_blocking_for_tenant_for_test(
                 &RuntimeBundle::new(&v8_bundle_path),
                 &v8_request("before"),
                 "tenant-a",
@@ -973,7 +1003,7 @@ globalThis.__nimbusInvoke = async function(request) {
         );
 
         let second_v8_result = v8_runtime
-            .invoke_bundle_blocking_for_tenant(
+            .invoke_bundle_blocking_for_tenant_for_test(
                 &RuntimeBundle::new(&v8_bundle_path),
                 &v8_request("after"),
                 "tenant-a",

@@ -58,6 +58,7 @@ where
                 options.server_request_id,
                 options.concurrency_mode,
                 options.scope,
+                options.authority,
             ),
             options.cancellation,
         )

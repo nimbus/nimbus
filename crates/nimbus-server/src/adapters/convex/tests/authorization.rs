@@ -266,18 +266,21 @@ fn service_capable_bridge(
         nimbus_core::PrincipalContext::anonymous(),
         "convex_service_capability_test",
     );
+    let runtime_policy = Arc::new(nimbus_runtime::RuntimePolicy::new(
+        registry.runtime_limits(),
+    ));
     let decision = nimbus_tenant::admit_runtime_invocation_decision(
         &isolation,
         "convex_service_capability_test",
         None,
-        &registry.runtime_policy(),
+        &runtime_policy,
         nimbus_tenant::RuntimeIsolationTier::InProcessUntrusted,
         nimbus_tenant::TenantIsolationMode::LocalDevelopment,
         services,
     )
     .expect("service capability tenant isolation decision should build");
     ConvexHostBridge::build(
-        ConvexHostBridgeScope::new(engine, registry, decision, runtime_service_registry),
+        ConvexHostBridgeScope::new_for_test(engine, registry, decision, runtime_service_registry),
         ConvexHostBridgeInvocation::new(
             None,
             Default::default(),
@@ -301,18 +304,21 @@ fn mutation_bridge(
         principal.clone(),
         "convex_authorization_test",
     );
+    let runtime_policy = Arc::new(nimbus_runtime::RuntimePolicy::new(
+        registry.runtime_limits(),
+    ));
     let decision = nimbus_tenant::admit_runtime_invocation_decision(
         &isolation,
         "convex_authorization_test",
         None,
-        &registry.runtime_policy(),
+        &runtime_policy,
         nimbus_tenant::RuntimeIsolationTier::InProcessUntrusted,
         nimbus_tenant::TenantIsolationMode::LocalDevelopment,
         std::iter::empty::<String>(),
     )
     .expect("authorization test tenant isolation decision should build");
     ConvexHostBridge::build(
-        ConvexHostBridgeScope::new(
+        ConvexHostBridgeScope::new_for_test(
             engine,
             registry,
             decision,
@@ -562,18 +568,21 @@ fn runtime_host_bridge_query_and_insert_respect_engine_authorization() {
         normalize_principal_context(Some(&auth)),
         "convex_authorization_test",
     );
+    let runtime_policy = Arc::new(nimbus_runtime::RuntimePolicy::new(
+        registry.runtime_limits(),
+    ));
     let decision = nimbus_tenant::admit_runtime_invocation_decision(
         &isolation,
         "convex_authorization_test",
         None,
-        &registry.runtime_policy(),
+        &runtime_policy,
         nimbus_tenant::RuntimeIsolationTier::InProcessUntrusted,
         nimbus_tenant::TenantIsolationMode::LocalDevelopment,
         std::iter::empty::<String>(),
     )
     .expect("authorization query tenant isolation decision should build");
     let bridge = ConvexHostBridge::new(
-        ConvexHostBridgeScope::new(
+        ConvexHostBridgeScope::new_for_test(
             engine.clone(),
             registry,
             decision,

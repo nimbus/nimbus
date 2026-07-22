@@ -17,6 +17,7 @@ mod facade;
 mod invoke;
 mod lifecycle;
 mod queue;
+mod retirement;
 
 pub(crate) use self::admission::{SharedInvocationPermit, SharedInvocationPermitAcquire};
 pub use self::facade::RuntimeExecutor;
@@ -25,7 +26,11 @@ pub(crate) use self::facade::RuntimeExecutorTestState;
 pub use self::invoke::RuntimeInvocationResponse;
 pub(crate) use self::lifecycle::run_invocation_lifecycle;
 pub(crate) use self::queue::RuntimeWorkerJob;
-pub(crate) use self::queue::{RuntimeWorkerQueue, RuntimeWorkerShutdown, WorkerActivitySignal};
+pub(crate) use self::queue::{
+    RuntimeWorkerControl, RuntimeWorkerControlCommand, RuntimeWorkerMessage, RuntimeWorkerQueue,
+    RuntimeWorkerRetirementAck, RuntimeWorkerShutdown, WorkerActivitySignal,
+};
+pub use self::retirement::RuntimeRetirementReport;
 
 #[cfg(test)]
 pub(crate) mod tests {
@@ -46,6 +51,7 @@ pub(crate) mod tests {
     mod cooperative;
     mod lifecycle;
     pub(crate) mod queue_fairness;
+    mod retirement;
     mod router_affinity;
     mod support;
 }

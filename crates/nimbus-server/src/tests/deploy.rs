@@ -677,14 +677,17 @@ async fn deploy_persists_across_engine_restart_without_app_dir() {
     );
     assert_eq!(body["generation"], json!(1));
 
-    assert_eq!(
-        api_b
-            .convex_named_query("demo", "notes:list", json!({}))
+    let redeployed_query = api_b
+        .convex_named_query("demo", "notes:list", json!({}))
+        .await;
+    if redeployed_query.status() != StatusCode::OK {
+        let status = redeployed_query.status();
+        let body = redeployed_query
+            .text()
             .await
-            .status(),
-        StatusCode::OK,
-        "deployed function must be reachable post-redeploy on the restarted daemon"
-    );
+            .expect("failed post-redeploy query response should have a body");
+        panic!("deployed function query returned {status} post-redeploy: {body}");
+    }
 
     let bundles_b_after = api_b
         .convex_named_query(
@@ -693,7 +696,14 @@ async fn deploy_persists_across_engine_restart_without_app_dir() {
             json!({ "status": null, "limit": null }),
         )
         .await;
-    assert_eq!(bundles_b_after.status(), StatusCode::OK);
+    if bundles_b_after.status() != StatusCode::OK {
+        let status = bundles_b_after.status();
+        let body = bundles_b_after
+            .text()
+            .await
+            .expect("failed post-redeploy bundles response should have a body");
+        panic!("post-redeploy bundles query returned {status}: {body}");
+    }
     let bundles_b_after = bundles_b_after
         .json::<serde_json::Value>()
         .await

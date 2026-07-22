@@ -21,7 +21,6 @@ use super::super::classify::{
 };
 use super::super::realm_lease::{
     RuntimeRealmLease, RuntimeRealmLeaseCondemnationReason, RuntimeRealmLeaseController,
-    RuntimeRealmLeaseOwner,
 };
 use super::super::realm_lifecycle::destroy_fresh_realm;
 use super::super::{
@@ -60,9 +59,15 @@ impl NimbusRuntime {
                 "NodeFull realm lease requires an invocation context".to_string(),
             )
         })?;
-        let tenant = context.tenant_label.clone().ok_or_else(|| {
-            NimbusRuntimeError::Contract("NodeFull realm lease requires a tenant label".to_string())
-        })?;
+        let owner = context
+            .runtime_owner_lease()
+            .ok_or_else(|| {
+                NimbusRuntimeError::Contract(
+                    "NodeFull realm lease requires an active runtime owner lease".to_string(),
+                )
+            })?
+            .owner_id()
+            .clone();
         let execution_plan = RuntimeExecutionPlan::for_realm_lease_invocation(
             &self.policy,
             bundle,
@@ -71,10 +76,7 @@ impl NimbusRuntime {
             construction_mode,
         )?;
         controller
-            .checkout(
-                RuntimeRealmLeaseOwner::tenant(tenant),
-                execution_plan.pool_authority_key().clone(),
-            )
+            .checkout(owner, execution_plan.pool_authority_key().clone())
             .map_err(realm_lease_error)
     }
 

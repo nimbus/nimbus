@@ -93,6 +93,8 @@ pub(super) struct PreparedRuntimeTestSpawnInvocation {
     pub(super) file_output_syncs: Vec<(PathBuf, PathBuf)>,
     pub(super) output_path_rewrites: Vec<(PathBuf, PathBuf)>,
     pub(super) request: InvocationRequest,
+    pub(super) runtime_owner_lease: crate::RuntimeOwnerLease,
+    pub(super) deployment_authority_lease: Option<crate::RuntimeDeploymentAuthorityLease>,
     pub(super) process_state_snapshot: RuntimeTestProcessStateSnapshot,
 }
 

@@ -1,13 +1,41 @@
 use std::sync::Arc;
 
 use crate::error::NimbusRuntimeError;
-use crate::executor::{RuntimeWorkerJob, RuntimeWorkerQueue, RuntimeWorkerShutdown};
+use crate::executor::{
+    RuntimeWorkerControl, RuntimeWorkerControlCommand, RuntimeWorkerJob, RuntimeWorkerMessage,
+    RuntimeWorkerQueue, RuntimeWorkerRetirementAck, RuntimeWorkerShutdown,
+};
 use crate::runtime::CooperativeRuntimeSlotPoll;
 
 use super::backend::{CooperativeBackendDriver, CooperativeBackendSlot};
 use super::{CooperativeInvocation, CooperativeRunnableSlot, CooperativeWorkerLoop, WorkerLoop};
 
 impl<D: CooperativeBackendDriver> CooperativeWorkerLoop<D> {
+    fn process_control(&mut self, control: RuntimeWorkerControl) {
+        let retained_entries_purged = match &control.command {
+            RuntimeWorkerControlCommand::RetireOwner(owner_id) => {
+                self.driver.retire_owner(owner_id)
+            }
+            RuntimeWorkerControlCommand::RetireDeploymentAuthority(authority_id) => {
+                self.driver.retire_deployment_authority(authority_id)
+            }
+        };
+        if self.driver.tracks_retained_runtime_pool_entries() {
+            for _ in 0..retained_entries_purged {
+                self.policy
+                    .metrics()
+                    .decrement_retained_runtime_pool_entries();
+                self.policy
+                    .metrics()
+                    .record_retained_runtime_pool_retirement();
+            }
+        }
+        let _ = control.acknowledged.send(RuntimeWorkerRetirementAck {
+            worker_id: self.worker_id,
+            retained_entries_purged,
+        });
+    }
+
     fn finish_slot_with_result(
         &mut self,
         queue: &Arc<dyn RuntimeWorkerQueue>,
@@ -73,9 +101,15 @@ impl<D: CooperativeBackendDriver> CooperativeWorkerLoop<D> {
         &mut self,
         queue: &Arc<dyn RuntimeWorkerQueue>,
     ) -> Option<RuntimeWorkerJob> {
-        self.pending_admissions
-            .pop_front()
-            .or_else(|| queue.try_recv())
+        if let Some(job) = self.pending_admissions.pop_front() {
+            return Some(job);
+        }
+        loop {
+            match queue.try_recv()? {
+                RuntimeWorkerMessage::Job(job) => return Some(*job),
+                RuntimeWorkerMessage::Control(control) => self.process_control(control),
+            }
+        }
     }
 
     pub(super) fn next_slot(
@@ -132,8 +166,10 @@ impl<D: CooperativeBackendDriver> CooperativeWorkerLoop<D> {
             }
 
             self.drain_deferred_v8_runtime_drops_if_idle();
-            let job = queue.recv_blocking()?;
-            self.admit_job(queue, job);
+            match queue.recv_blocking()? {
+                RuntimeWorkerMessage::Job(job) => self.admit_job(queue, *job),
+                RuntimeWorkerMessage::Control(control) => self.process_control(control),
+            }
         }
     }
 }

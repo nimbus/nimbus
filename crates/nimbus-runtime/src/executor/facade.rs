@@ -14,6 +14,7 @@ use crate::worker_loop::{WorkerLoopFactory, create_worker_loop_factory};
 
 use super::admission::RuntimeExecutorAdmission;
 use super::queue::{RuntimeWorkerQueue, RuntimeWorkerRouter, RuntimeWorkerShutdown};
+use super::retirement::RuntimeRetirementRegistry;
 
 #[derive(Clone)]
 pub struct RuntimeExecutor {
@@ -24,6 +25,7 @@ pub(super) struct RuntimeExecutorInner {
     pub(super) policy: Arc<RuntimePolicy>,
     pub(super) router: Arc<RuntimeWorkerRouter>,
     pub(super) admission: Arc<RuntimeExecutorAdmission>,
+    pub(super) retirement: Arc<RuntimeRetirementRegistry>,
     pub(super) shutdown: RuntimeWorkerShutdown,
     pub(super) watchdog: WatchdogTimer,
     pub(super) worker_count: usize,
@@ -96,6 +98,7 @@ impl RuntimeExecutor {
             policy.limits().routing_affinity_max_entries,
         );
         let admission = Arc::new(RuntimeExecutorAdmission::new(policy.clone()));
+        let retirement = RuntimeRetirementRegistry::new();
         let shutdown = RuntimeWorkerShutdown::new();
         let watchdog = WatchdogTimer::new();
         #[cfg(test)]
@@ -129,6 +132,7 @@ impl RuntimeExecutor {
                 policy,
                 router,
                 admission,
+                retirement,
                 shutdown,
                 watchdog,
                 worker_count,

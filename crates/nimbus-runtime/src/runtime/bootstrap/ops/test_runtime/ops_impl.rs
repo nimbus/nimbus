@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::RuntimeBundle;
+use crate::RuntimeInvocationContext;
 use crate::backends::v8::embedder::{JsErrorBox, OpState, op2, v8};
 use crate::runtime::bootstrap::payloads::RuntimeHostCallEnvelope;
 
@@ -19,13 +20,24 @@ pub(in super::super) async fn op_nimbus_runtime_test_spawn(
     #[serde] payload: RuntimeTestSpawnPayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
     let prepared = prepare_runtime_test_spawn_invocation(state, payload)?;
+    let mut context = RuntimeInvocationContext::top_level_for_tenant_with_owner(
+        &prepared.request,
+        "tenant-a",
+        prepared.runtime_owner_lease,
+    );
+    if let Some(deployment) = prepared.deployment_authority_lease {
+        context = context.with_deployment_authority(deployment);
+    }
     let mut result = runtime_test_spawn_result_from_value(
         prepared
             .runtime
-            .invoke_bundle_for_tenant(
-                &RuntimeBundle::with_side_entrypoint(&prepared.bundle_path),
-                &prepared.request,
-                "tenant-a",
+            .executor()
+            .invoke_on_worker(
+                prepared.runtime.clone(),
+                RuntimeBundle::with_side_entrypoint(&prepared.bundle_path),
+                prepared.request.clone(),
+                context,
+                None,
             )
             .await,
     );
@@ -44,12 +56,26 @@ pub(in super::super) fn op_nimbus_runtime_test_spawn_sync(
     #[serde] payload: RuntimeTestSpawnPayload,
 ) -> std::result::Result<RuntimeHostCallEnvelope, JsErrorBox> {
     let prepared = prepare_runtime_test_spawn_invocation(state, payload)?;
-    let mut result =
-        runtime_test_spawn_result_from_value(prepared.runtime.invoke_bundle_blocking_for_tenant(
-            &RuntimeBundle::with_side_entrypoint(&prepared.bundle_path),
-            &prepared.request,
-            "tenant-a",
-        ));
+    let mut context = RuntimeInvocationContext::top_level_for_tenant_with_owner(
+        &prepared.request,
+        "tenant-a",
+        prepared.runtime_owner_lease,
+    );
+    if let Some(deployment) = prepared.deployment_authority_lease {
+        context = context.with_deployment_authority(deployment);
+    }
+    let mut result = runtime_test_spawn_result_from_value(
+        prepared
+            .runtime
+            .executor()
+            .invoke_blocking_with_cancellation(
+                prepared.runtime.clone(),
+                RuntimeBundle::with_side_entrypoint(&prepared.bundle_path),
+                prepared.request.clone(),
+                context,
+                None,
+            ),
+    );
     if let Ok(result) = result.as_mut() {
         normalize_runtime_test_spawn_result_paths(result, &prepared.output_path_rewrites);
     }

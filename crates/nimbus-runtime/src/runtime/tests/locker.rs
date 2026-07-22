@@ -43,14 +43,14 @@ fn runtime_builds_locker_jsruntime_from_snapshot_subprocess() {
     std::fs::write(&bundle_path, "export {};").expect("bundle should write");
 
     let bundle = RuntimeBundle::new(&bundle_path);
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         locker_test_policy(),
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
     let mut runtime = v8_runtime_pool
-        .take_runtime_with_options(&runtime_owner, &bundle, true)
+        .take_runtime_with_options(&runtime_instance, &bundle, true)
         .expect("locker runtime should build from snapshot")
         .runtime;
 
@@ -79,7 +79,7 @@ fn runtime_builds_locker_jsruntime_from_snapshot_subprocess() {
     );
     assert!(!runtime.is_v8_lock_held());
 
-    let metrics = runtime_owner.policy.metrics_snapshot();
+    let metrics = runtime_instance.policy.metrics_snapshot();
     assert_eq!(metrics.runtime_pool_misses, 1);
     assert_eq!(metrics.runtime_pool_hits, 0);
 }
@@ -105,7 +105,7 @@ fn runtime_snapshot_backed_locker_runtimes_interleave_on_same_thread_subprocess(
     std::fs::write(&bundle_path, "export {};").expect("bundle should write");
 
     let bundle = RuntimeBundle::new(&bundle_path);
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         locker_test_policy(),
         crate::RuntimeEgressPosture::CoarsePermissions,
@@ -113,13 +113,13 @@ fn runtime_snapshot_backed_locker_runtimes_interleave_on_same_thread_subprocess(
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
 
     let mut rt1 = v8_runtime_pool
-        .take_runtime_with_options(&runtime_owner, &bundle, true)
+        .take_runtime_with_options(&runtime_instance, &bundle, true)
         .expect("first locker runtime should build")
         .runtime;
     assert!(rt1.release_v8_lock());
 
     let mut rt2 = v8_runtime_pool
-        .take_runtime_with_options(&runtime_owner, &bundle, true)
+        .take_runtime_with_options(&runtime_instance, &bundle, true)
         .expect("second locker runtime should build")
         .runtime;
     assert!(rt2.release_v8_lock());
@@ -182,7 +182,7 @@ fn runtime_snapshot_backed_locker_runtimes_interleave_on_same_thread_subprocess(
     assert!(!rt1.is_v8_lock_held());
     assert!(!rt2.is_v8_lock_held());
 
-    let metrics = runtime_owner.policy.metrics_snapshot();
+    let metrics = runtime_instance.policy.metrics_snapshot();
     assert_eq!(metrics.runtime_pool_misses, 1);
     assert_eq!(metrics.runtime_pool_hits, 1);
 }

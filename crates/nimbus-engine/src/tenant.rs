@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::num::NonZeroU64;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -160,6 +161,51 @@ pub struct TenantRuntime {
 
 pub struct TenantOperationGuard {
     lifecycle: Arc<TenantLifecycle>,
+}
+
+/// Engine-issued proof that a canonical tenant incarnation remains live for
+/// the full lifetime of one runtime invocation (including background drain).
+#[derive(Clone)]
+pub struct TenantRuntimeLease {
+    tenant_id: TenantId,
+    tenant_incarnation: NonZeroU64,
+    _operation: Arc<TenantOperationGuard>,
+}
+
+impl TenantRuntimeLease {
+    pub(crate) fn new(
+        tenant_id: TenantId,
+        tenant_incarnation: u64,
+        operation: TenantOperationGuard,
+    ) -> Result<Self> {
+        let tenant_incarnation = NonZeroU64::new(tenant_incarnation).ok_or_else(|| {
+            Error::Internal(format!(
+                "tenant {tenant_id} has invalid zero runtime incarnation"
+            ))
+        })?;
+        Ok(Self {
+            tenant_id,
+            tenant_incarnation,
+            _operation: Arc::new(operation),
+        })
+    }
+
+    pub fn tenant_id(&self) -> &TenantId {
+        &self.tenant_id
+    }
+
+    pub const fn tenant_incarnation(&self) -> NonZeroU64 {
+        self.tenant_incarnation
+    }
+}
+
+impl std::fmt::Debug for TenantRuntimeLease {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TenantRuntimeLease")
+            .field("tenant_id", &self.tenant_id)
+            .field("tenant_incarnation", &self.tenant_incarnation)
+            .finish_non_exhaustive()
+    }
 }
 
 pub struct TenantDeletionGuard;
@@ -540,10 +586,12 @@ impl TenantRuntime {
         TenantDeletionGuard
     }
 
-    /// Begins tenant deletion asynchronously and waits until all in-flight operations complete.
-    pub async fn begin_delete_async(&self) -> TenantDeletionGuard {
-        self.lifecycle.begin_delete_async().await;
-        TenantDeletionGuard
+    pub(crate) fn mark_delete_fenced(&self) {
+        self.lifecycle.mark_deleted();
+    }
+
+    pub(crate) async fn wait_for_delete_operation_drain(&self) {
+        self.lifecycle.wait_for_operations_async().await;
     }
 
     pub(crate) fn mark_deleting_for_eviction(&self) -> bool {

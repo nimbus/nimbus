@@ -1144,13 +1144,13 @@ async fn engine_validates_update_against_full_document() {
 /// cannot depend on) must enter before opening any per-tenant blob-plane
 /// state. It must reject exactly like every other guarded tenant-scoped
 /// call — [`ensure_tenant_exists_async`](Engine::ensure_tenant_exists_async)
-/// among them — once a deletion has started: blocked while an operation is
-/// in flight, then `TenantNotFound` once the tenant is gone. This mirrors
-/// `delete_tenant_async_waits_for_in_flight_operations_and_rejects_new_work`
+/// among them — once a deletion has started: rejected as soon as deletion is
+/// fenced, even while an older operation is still draining. This mirrors
+/// `delete_tenant_async_fences_new_work_before_draining_in_flight_operations`
 /// in `tests/subscriptions/lifecycle.rs`, substituting the blob-operation
 /// guard for the "new work" being raced against deletion.
 #[tokio::test]
-async fn enter_object_blob_operation_waits_for_in_flight_operations_and_rejects_new_work() {
+async fn enter_object_blob_operation_rejects_while_in_flight_work_drains() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();
     let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
@@ -1196,17 +1196,15 @@ async fn enter_object_blob_operation_waits_for_in_flight_operations_and_rejects_
         "tenant deletion should wait for the in-flight operation"
     );
 
-    let mut blob_operation_task = tokio::spawn({
-        let engine = engine.clone();
-        let tenant_id = tenant_id.clone();
-        async move { engine.enter_object_blob_operation(&tenant_id).await }
-    });
-    assert!(
-        timeout(Duration::from_millis(100), &mut blob_operation_task)
-            .await
-            .is_err(),
-        "new blob-plane work should remain blocked behind tenant deletion"
-    );
+    let error = timeout(
+        Duration::from_millis(100),
+        engine.enter_object_blob_operation(&tenant_id),
+    )
+    .await
+    .expect("new blob-plane work should reject once deletion is fenced")
+    .err()
+    .expect("new blob-plane work should fail after deletion begins");
+    assert!(matches!(error, Error::TenantNotFound(_)));
 
     probe.release();
 
@@ -1226,21 +1224,52 @@ async fn enter_object_blob_operation_waits_for_in_flight_operations_and_rejects_
     })
     .await
     .expect("delete task should finish after the in-flight read completes");
-    let error = timeout(Duration::from_secs(1), async {
-        match blob_operation_task
+}
+
+#[tokio::test]
+async fn tenant_runtime_lease_projects_incarnation_and_holds_delete_fence() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let lease = engine
+        .enter_tenant_runtime_async(tenant_id.clone())
+        .await
+        .expect("runtime lease should enter the tenant operation fence");
+
+    assert_eq!(lease.tenant_id(), &tenant_id);
+    assert_eq!(lease.tenant_incarnation().get(), 1);
+
+    let mut delete_task = tokio::spawn({
+        let engine = engine.clone();
+        let tenant_id = tenant_id.clone();
+        async move { engine.delete_tenant_async(tenant_id).await }
+    });
+    assert!(
+        timeout(Duration::from_millis(100), &mut delete_task)
             .await
-            .expect("blob operation task should join")
-        {
-            // `TenantOperationGuard` intentionally does not implement `Debug`
-            // (it is a plain RAII drop guard), so match instead of
-            // `expect_err`.
-            Ok(_guard) => panic!("new blob-plane work should fail after deletion begins"),
-            Err(error) => error,
-        }
+            .is_err(),
+        "tenant deletion must wait while a runtime invocation lease is held"
+    );
+
+    drop(lease);
+    timeout(Duration::from_secs(1), async {
+        delete_task
+            .await
+            .expect("delete task should join")
+            .expect("tenant delete should succeed");
     })
     .await
-    .expect("blob operation task should resolve after deletion completes");
-    assert!(matches!(error, Error::TenantNotFound(_)));
+    .expect("delete should complete after the runtime lease drops");
+
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("same tenant ID should recreate with a new incarnation");
+    let recreated = engine
+        .enter_tenant_runtime_async(tenant_id)
+        .await
+        .expect("recreated tenant runtime lease should succeed");
+    assert_eq!(recreated.tenant_incarnation().get(), 2);
 }
 
 #[tokio::test]

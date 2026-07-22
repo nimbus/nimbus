@@ -24,7 +24,7 @@ async fn wasmtime_fuel_park_resume_invokes_component_through_worker_loop() {
     );
 
     let response = runtime
-        .invoke_bundle_for_tenant(&bundle, &request(), "tenant-a")
+        .invoke_bundle_for_tenant_for_test(&bundle, &request(), "tenant-a")
         .await
         .expect("WasmtimeFuelDriver should park, resume, and complete the component");
 
@@ -43,7 +43,7 @@ async fn wasmtime_fuel_exhaustion_maps_to_runtime_timeout() {
     );
 
     let error = runtime
-        .invoke_bundle_for_tenant(&bundle, &request(), "tenant-a")
+        .invoke_bundle_for_tenant_for_test(&bundle, &request(), "tenant-a")
         .await
         .expect_err("fuel exhaustion should fail closed as a runtime timeout");
 

@@ -1,6 +1,6 @@
 # Nimbus Runtime Tenant Isolation Plan
 
-Status: `proposed; launch-safety owner decision required before implementation`
+Status: `complete`
 
 Owner: this plan is the sole implementation owner for tenant ownership of
 retained Nimbus runtime state, runtime-owner retirement, and the move from
@@ -15,7 +15,10 @@ the source for profile selection, snapshots, code cache, scheduling, density,
 and pointer compression; this plan owns reconciliation where the implementation
 does not structurally enforce PIR's stated same-owner reuse invariant.
 
-Priority: complete before Nimbus makes a multi-tenant launch claim. The
+Final implementation verification was rebased onto `origin/main` at
+`c789db2fd`, including PRs #225, #226, and #229.
+
+Priority: completed before Nimbus makes a multi-tenant launch claim. The
 distinct-tenant default path is currently partitioned, but non-default routing
 policies and same-ID tenant recreation can defeat the intended ownership model.
 Cross-tenant mutable runtime state is not an acceptable residual risk.
@@ -805,14 +808,14 @@ uncovers a correctness dependency:
 
 | Band | Status | Evidence required before `done` |
 | --- | --- | --- |
-| RTI0 — reproduction and guard | `todo` | fail-before proof, named behavior tests, served mutable-retention rejection |
-| RTI1 — owner/authority interface | `todo` | key property matrix, zero-workspace-dependency proof |
-| RTI2 — owner-partitioned pools | `todo` | V8/Wasmtime behavior tests, Bun retained guard, benchmark delta |
-| RTI3 — executor retirement | `todo` | deterministic race matrix and worker acknowledgement proof |
-| RTI4 — runtime manager/config | `todo` | adapter-independent lane/config tests, redeploy overlap proof |
-| RTI5 — lifecycle/adapters | `todo` | served delete/recreate test and adapter conformance matrix |
-| RTI6 — fairness/diagnostics | `todo` | cap/fairness/metric-balance tests and skew benchmark |
-| RTI7 — cleanup/final proof | `todo` | docs/static verifier/focused suites/`make ci` evidence |
+| RTI0 — reproduction and guard | `done` | `rti0-fail-before.md`; named V8/Wasmtime exploit-shape tests; mandatory retained-state admission guard |
+| RTI1 — owner/authority interface | `done` | owner/authority property matrix; Engine lease held through background drain; `nimbus-runtime` dependency boundary preserved |
+| RTI2 — owner-partitioned pools | `done` | V8/Wasmtime owner partition tests; Bun retained guard; owner lookup benchmark |
+| RTI3 — executor retirement | `done` | `executor::tests::retirement` `7/7`; all-worker acknowledgements and direct-invoke race coverage |
+| RTI4 — runtime manager/config | `done` | compute `67/67`; canonical startup/deploy config, lane, overlap, and overflow tests |
+| RTI5 — lifecycle/adapters | `done` | partial-delete retry; served Convex/Cloud Functions conformance `2/2`; same-ID recreation proof |
+| RTI6 — fairness/diagnostics | `done` | live owner-cap/fairness/metric tests; owner lookup and 1/4/16-worker retirement benchmarks |
+| RTI7 — cleanup/final proof | `done` | `rti0-rti7-final.md`; static verifier `19/19`; runtime harness `1/1` with `6` named cases; docs `108` pages and site `17/17`; `make ci` green |
 
 ## Completion Gate
 

@@ -610,13 +610,13 @@ async fn execute_convex_use_node_real_app(
     let selected_limits = app
         .registry
         .runtime_limits_for_function("messages:useNodeCanary");
-    let (lane_executor, lane_policy) = app
+    let executable_limits = app
         .registry
-        .runtime_lane_for_function("messages:useNodeCanary")
+        .required_runtime_limits_for_function("messages:useNodeCanary")
         .expect("use-node canary should select an executable runtime lane");
     assert_eq!(
-        lane_executor.policy().limits().compatibility_target,
-        lane_policy.limits().compatibility_target
+        executable_limits.compatibility_target,
+        selected_limits.compatibility_target
     );
     assert_eq!(
         selected_limits

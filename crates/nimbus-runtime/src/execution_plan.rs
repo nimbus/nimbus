@@ -106,7 +106,7 @@ impl RuntimePoolAuthorityKey {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct RuntimePoolAuthorityFacts {
-    runtime_profile: RuntimeProfile,
+    runtime_profile: Option<RuntimeProfile>,
     exact_service_grants: Vec<String>,
     strict_reuse: Option<RuntimePoolStrictAuthorityFacts>,
 }
@@ -114,7 +114,7 @@ pub(crate) struct RuntimePoolAuthorityFacts {
 impl RuntimePoolAuthorityFacts {
     pub(crate) fn new(runtime_profile: RuntimeProfile, exact_service_grants: Vec<String>) -> Self {
         Self {
-            runtime_profile,
+            runtime_profile: Some(runtime_profile),
             exact_service_grants,
             strict_reuse: None,
         }
@@ -126,19 +126,45 @@ impl RuntimePoolAuthorityFacts {
         bundle: &RuntimeBundle,
         construction_mode: V8RuntimeConstructionMode,
     ) -> crate::Result<Self> {
+        Self::for_retained_state(runtime_profile, policy, bundle, construction_mode.as_str())
+    }
+
+    pub(crate) fn for_retained_state(
+        runtime_profile: RuntimeProfile,
+        policy: &RuntimePolicy,
+        bundle: &RuntimeBundle,
+        construction_shape: &'static str,
+    ) -> crate::Result<Self> {
         let limits = policy.limits();
         Ok(Self {
-            runtime_profile,
+            runtime_profile: Some(runtime_profile),
             exact_service_grants: limits.grants.sorted_service_grants(),
             strict_reuse: Some(RuntimePoolStrictAuthorityFacts::from_parts(
                 limits,
                 bundle,
-                construction_mode,
+                construction_shape,
             )?),
         })
     }
 
-    pub(crate) const fn runtime_profile(&self) -> RuntimeProfile {
+    pub(crate) fn for_profileless_retained_state(
+        policy: &RuntimePolicy,
+        bundle: &RuntimeBundle,
+        construction_shape: &'static str,
+    ) -> crate::Result<Self> {
+        let limits = policy.limits();
+        Ok(Self {
+            runtime_profile: None,
+            exact_service_grants: limits.grants.sorted_service_grants(),
+            strict_reuse: Some(RuntimePoolStrictAuthorityFacts::from_parts(
+                limits,
+                bundle,
+                construction_shape,
+            )?),
+        })
+    }
+
+    pub(crate) const fn runtime_profile(&self) -> Option<RuntimeProfile> {
         self.runtime_profile
     }
 }
@@ -177,7 +203,7 @@ impl RuntimePoolStrictAuthorityFacts {
     fn from_parts(
         limits: &crate::RuntimeLimits,
         bundle: &RuntimeBundle,
-        construction_mode: V8RuntimeConstructionMode,
+        construction_shape: &'static str,
     ) -> crate::Result<Self> {
         Ok(Self {
             bundle: RuntimePoolBundleAuthorityFacts::for_bundle(bundle)?,
@@ -204,7 +230,7 @@ impl RuntimePoolStrictAuthorityFacts {
             execution_timeout: limits.execution_timeout,
             system_timeout: limits.system_timeout,
             max_nested_runtime_invocations: limits.max_nested_runtime_invocations,
-            construction_mode: construction_mode.as_str(),
+            construction_mode: construction_shape,
             host_bridge_contract: RuntimeHostBridgeAuthorityContract::ReboundPerInvocation,
         })
     }
@@ -299,7 +325,7 @@ fn sorted_deduped(values: &[String]) -> Vec<String> {
 impl RuntimePoolAuthorityKey {
     pub(crate) const fn runtime_profile(&self) -> Option<RuntimeProfile> {
         match self {
-            Self::Exact(facts) => Some(facts.runtime_profile()),
+            Self::Exact(facts) => facts.runtime_profile(),
             Self::Missing(_) => None,
         }
     }

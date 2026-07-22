@@ -29,10 +29,12 @@ pub(crate) async fn action(
         {
             let request_cancellation = RequestCancellationGuard::new();
             let runtime_service_registry = state.runtime_service_registry();
+            let runtime_manager = state.runtime_manager();
             let context = RuntimeInvocationContext::new(
                 &service,
                 &registry,
                 &runtime_service_registry,
+                &runtime_manager,
                 tenant_context.clone(),
                 state.tenant_isolation_mode(),
             );

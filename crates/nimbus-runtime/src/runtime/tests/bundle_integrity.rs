@@ -50,7 +50,7 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let error = runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -102,7 +102,7 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let error = runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -164,7 +164,7 @@ export {};
     let bundle = RuntimeBundle::with_expected_sha256(&bundle_path, expected_sha256)
         .expect("bundle integrity metadata should build");
     let error = runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &bundle,
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -344,7 +344,7 @@ export {};
     assert_eq!(bundle.module_code_cache_partition_count(), 0);
 
     let first = runtime
-        .invoke_bundle_for_tenant(&bundle, &request, "tenant-a")
+        .invoke_bundle_for_tenant_for_test(&bundle, &request, "tenant-a")
         .await
         .expect("first invocation should succeed");
     assert_eq!(first, serde_json::json!({ "value": "cached" }));
@@ -362,7 +362,7 @@ export {};
     );
 
     let second = runtime
-        .invoke_bundle_for_tenant(&bundle, &request, "tenant-a")
+        .invoke_bundle_for_tenant_for_test(&bundle, &request, "tenant-a")
         .await
         .expect("second invocation should succeed");
     assert_eq!(second, serde_json::json!({ "value": "cached" }));
@@ -422,7 +422,7 @@ export {};
     };
 
     let first = runtime
-        .invoke_bundle_for_tenant(&bundle, &request, "tenant-a")
+        .invoke_bundle_for_tenant_for_test(&bundle, &request, "tenant-a")
         .await
         .expect("first invocation should succeed");
     assert_eq!(first, serde_json::json!({ "value": "before" }));
@@ -445,7 +445,7 @@ export function value() {
     .expect("dependency update should write");
 
     let second = runtime
-        .invoke_bundle_for_tenant(&bundle, &request, "tenant-a")
+        .invoke_bundle_for_tenant_for_test(&bundle, &request, "tenant-a")
         .await
         .expect("second invocation should succeed after dependency update");
     assert_eq!(
@@ -669,7 +669,7 @@ export {};
     };
 
     let first_result = runtime
-        .invoke_bundle_for_tenant(&bundle, &request, "tenant-a")
+        .invoke_bundle_for_tenant_for_test(&bundle, &request, "tenant-a")
         .await
         .unwrap_or_else(|error| {
             panic!(
@@ -699,7 +699,7 @@ export {};
     .expect("tampered bundle should write");
 
     let error = runtime
-        .invoke_bundle_for_tenant(&bundle, &request, "tenant-a")
+        .invoke_bundle_for_tenant_for_test(&bundle, &request, "tenant-a")
         .await
         .expect_err("tampered bundle should fail integrity verification");
     assert!(
@@ -769,7 +769,7 @@ export {};
     };
 
     let first_result = runtime
-        .invoke_bundle_for_tenant(&bundle, &request, "tenant-a")
+        .invoke_bundle_for_tenant_for_test(&bundle, &request, "tenant-a")
         .await
         .unwrap_or_else(|error| {
             panic!(
@@ -791,7 +791,7 @@ export {};
     std::fs::write(&bundle_path, tampered_source).expect("tampered bundle should write");
 
     let error = runtime
-        .invoke_bundle_for_tenant(&bundle, &request, "tenant-a")
+        .invoke_bundle_for_tenant_for_test(&bundle, &request, "tenant-a")
         .await
         .expect_err("tampered bundle should fail integrity verification");
     assert!(
@@ -805,7 +805,7 @@ export {};
     std::fs::write(&bundle_path, original_source).expect("restored bundle should write");
 
     let recovered = runtime
-        .invoke_bundle_for_tenant(&bundle, &request, "tenant-a")
+        .invoke_bundle_for_tenant_for_test(&bundle, &request, "tenant-a")
         .await
         .unwrap_or_else(|error| {
             panic!(
@@ -872,11 +872,11 @@ export {};
     assert_eq!(canonical_bundle.identity(), dot_path_bundle.identity());
 
     let canonical_result = runtime
-        .invoke_bundle_for_tenant(&canonical_bundle, &request, "tenant-a")
+        .invoke_bundle_for_tenant_for_test(&canonical_bundle, &request, "tenant-a")
         .await
         .expect("canonical bundle invocation should succeed");
     let dot_path_result = runtime
-        .invoke_bundle_for_tenant(&dot_path_bundle, &request, "tenant-a")
+        .invoke_bundle_for_tenant_for_test(&dot_path_bundle, &request, "tenant-a")
         .await
         .expect("dot path bundle invocation should succeed");
 

@@ -1,6 +1,7 @@
 use super::invoke::invoke_named_convex_function_with_trace_async_cancellable;
 use super::*;
 use nimbus_auth::normalize_principal_context;
+use nimbus_compute::runtime_manager::RuntimeManager;
 use nimbus_services::RuntimeServiceRegistry;
 use nimbus_tenant::{TenantIsolationContext, TenantIsolationMode};
 
@@ -12,6 +13,7 @@ pub(in crate::adapters::convex) async fn bootstrap_runtime_named_subscription_as
     service: &Arc<nimbus_engine::Engine>,
     registry: &Arc<ConvexRegistry>,
     runtime_service_registry: &Arc<dyn RuntimeServiceRegistry>,
+    runtime_manager: &Arc<RuntimeManager>,
     tenant_context: &TenantIsolationContext,
     name: &str,
     args: &Value,
@@ -26,6 +28,7 @@ pub(in crate::adapters::convex) async fn bootstrap_runtime_named_subscription_as
         service,
         registry,
         runtime_service_registry,
+        runtime_manager,
         tenant_context.reauthorize_application(
             normalize_principal_context(auth.as_ref()),
             "convex_subscription_runtime",

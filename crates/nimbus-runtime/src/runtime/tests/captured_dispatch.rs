@@ -49,14 +49,14 @@ fn captured_invoke_survives_guest_reassignment_and_delete_subprocess() {
     std::fs::write(&bundle_path, "export {};").expect("bundle should write");
     let bundle = RuntimeBundle::new(&bundle_path);
 
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         cooperative_startup_snapshot_runtime_test_policy(),
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
     let mut runtime = v8_runtime_pool
-        .take_runtime_with_options(&runtime_owner, &bundle, true)
+        .take_runtime_with_options(&runtime_instance, &bundle, true)
         .expect("captured-dispatch runtime should build from snapshot")
         .runtime;
 
@@ -201,14 +201,14 @@ pub(super) fn with_captured_dispatch_test_runtime(
     std::fs::write(&bundle_path, "export {};").expect("bundle should write");
     let bundle = RuntimeBundle::new(&bundle_path);
 
-    let runtime_owner = NimbusRuntime::with_policy(
+    let runtime_instance = NimbusRuntime::with_policy(
         Arc::new(RecordingHost::default()),
         cooperative_startup_snapshot_runtime_test_policy(),
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let mut v8_runtime_pool = V8WorkerRuntimePool::new();
     let mut runtime = v8_runtime_pool
-        .take_runtime_with_options(&runtime_owner, &bundle, true)
+        .take_runtime_with_options(&runtime_instance, &bundle, true)
         .expect("captured-dispatch runtime should build from snapshot")
         .runtime;
 

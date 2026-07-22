@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use super::*;
 use crate::limits::{RuntimeLimits, RuntimePolicy};
+use crate::{RuntimeOwnerId, RuntimeOwnerLeaseIssuer};
 
 struct WasmtimeStorePoolHost;
 
@@ -20,13 +21,20 @@ async fn wasmtime_store_pool_invokes_component_with_retained_store_pool() {
         policy.clone(),
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
+    let owner = RuntimeOwnerId::tenant(
+        "tenant-a",
+        std::num::NonZeroU64::new(1).expect("fixture incarnation is positive"),
+        Some("tenant-a"),
+    )
+    .expect("owner should build");
+    let (owner_lease, _) = RuntimeOwnerLeaseIssuer.issue(owner);
 
     let first = runtime
-        .invoke_bundle_for_tenant(&bundle, &request(), "tenant-a")
+        .invoke_bundle_for_tenant_with_owner(&bundle, &request(), "tenant-a", owner_lease.clone())
         .await
         .expect("first retained Store pool invocation should succeed");
     let second = runtime
-        .invoke_bundle_for_tenant(&bundle, &request(), "tenant-a")
+        .invoke_bundle_for_tenant_with_owner(&bundle, &request(), "tenant-a", owner_lease)
         .await
         .expect("second retained Store pool invocation should reuse a reset Store");
 
@@ -57,9 +65,16 @@ async fn wasmtime_store_pool_resource_limiter_enforces_max_heap_mb() {
         Arc::new(RuntimePolicy::new(limits)),
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
+    let owner = RuntimeOwnerId::tenant(
+        "tenant-a",
+        std::num::NonZeroU64::new(1).expect("fixture incarnation is positive"),
+        Some("tenant-a"),
+    )
+    .expect("owner should build");
+    let (owner_lease, _) = RuntimeOwnerLeaseIssuer.issue(owner);
 
     let error = runtime
-        .invoke_bundle_for_tenant(&bundle, &request(), "tenant-a")
+        .invoke_bundle_for_tenant_with_owner(&bundle, &request(), "tenant-a", owner_lease)
         .await
         .expect_err("ResourceLimiter should reject memory above max_heap_mb");
 

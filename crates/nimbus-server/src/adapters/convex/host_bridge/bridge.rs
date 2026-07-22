@@ -5,6 +5,8 @@ use nimbus_bridge::{
     RuntimeHostBootstrapRequest, build_runtime_host_bootstrap,
     commit_runtime_mutation_execution_unit,
 };
+use nimbus_compute::runtime_manager::{RuntimeInvocationAuthority, RuntimeManager};
+use nimbus_runtime::RuntimeLimits;
 use nimbus_services::RuntimeServiceRegistry;
 use nimbus_tenant::{TenantIsolationDecision, TenantStorageAccessDecision};
 use nimbus_workloads::LocalEnforcementBinding;
@@ -17,6 +19,9 @@ pub(crate) struct ConvexHostBridgeScope {
     registry: Arc<ConvexRegistry>,
     decision: TenantIsolationDecision,
     runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
+    runtime_manager: Arc<RuntimeManager>,
+    runtime_authority: RuntimeInvocationAuthority,
+    runtime_limits: RuntimeLimits,
     egress_readiness: Option<EgressGatewayEnforcementReadiness>,
 }
 
@@ -26,14 +31,46 @@ impl ConvexHostBridgeScope {
         registry: Arc<ConvexRegistry>,
         decision: TenantIsolationDecision,
         runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
+        runtime_manager: Arc<RuntimeManager>,
+        runtime_authority: RuntimeInvocationAuthority,
+        runtime_limits: RuntimeLimits,
     ) -> Self {
         Self {
             engine,
             registry,
             decision,
             runtime_service_registry,
+            runtime_manager,
+            runtime_authority,
+            runtime_limits,
             egress_readiness: None,
         }
+    }
+
+    #[cfg(test)]
+    pub(in crate::adapters::convex) fn new_for_test(
+        engine: Arc<nimbus_engine::Engine>,
+        registry: Arc<ConvexRegistry>,
+        decision: TenantIsolationDecision,
+        runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
+    ) -> Self {
+        let runtime_manager = RuntimeManager::new(
+            engine.clone(),
+            nimbus_compute::config::runtime::RuntimeGovernorConfig::default(),
+        );
+        let runtime_limits = registry.runtime_limits();
+        let invocation_lease = runtime_manager
+            .acquire_invocation_lease_blocking(decision.tenant_id(), 0)
+            .expect("test runtime authority should build");
+        Self::new(
+            engine,
+            registry,
+            decision,
+            runtime_service_registry,
+            runtime_manager,
+            invocation_lease.authority(),
+            runtime_limits,
+        )
     }
 
     #[cfg(test)]
@@ -89,6 +126,8 @@ pub(crate) struct ConvexHostBridge {
     auth: Option<InvocationAuth>,
     services: nimbus_runtime::InvocationServices,
     runtime_service_registry: Arc<dyn RuntimeServiceRegistry>,
+    runtime_manager: Arc<RuntimeManager>,
+    runtime_authority: RuntimeInvocationAuthority,
     egress_readiness: EgressGatewayEnforcementReadiness,
     principal: nimbus_core::PrincipalContext,
     execution_unit: Option<Arc<nimbus_engine::MutationExecutionUnit>>,
@@ -124,11 +163,7 @@ impl ConvexHostBridge {
             invocation_kind: invocation.invocation_kind,
             function_name: &invocation.function_name,
             trigger_write_origin: invocation.trigger_write_origin,
-            max_nested_runtime_invocations: scope
-                .registry
-                .runtime_policy()
-                .limits()
-                .max_nested_runtime_invocations,
+            max_nested_runtime_invocations: scope.runtime_limits.max_nested_runtime_invocations,
         })?;
         Ok(Self {
             engine: scope.engine,
@@ -140,6 +175,8 @@ impl ConvexHostBridge {
             auth: invocation.auth,
             services: invocation.services,
             runtime_service_registry: scope.runtime_service_registry,
+            runtime_manager: scope.runtime_manager,
+            runtime_authority: scope.runtime_authority,
             egress_readiness,
             principal: bootstrap.principal,
             execution_unit: bootstrap.execution_unit,
@@ -240,6 +277,23 @@ impl ConvexHostBridge {
 
     pub(crate) fn runtime_service_registry(&self) -> &Arc<dyn RuntimeServiceRegistry> {
         &self.runtime_service_registry
+    }
+
+    pub(in crate::adapters::convex) fn runtime_manager(&self) -> &Arc<RuntimeManager> {
+        &self.runtime_manager
+    }
+
+    pub(in crate::adapters::convex) fn runtime_authority(&self) -> &RuntimeInvocationAuthority {
+        &self.runtime_authority
+    }
+
+    pub(in crate::adapters::convex) fn runtime_policy(&self) -> Arc<nimbus_runtime::RuntimePolicy> {
+        self.runtime_manager
+            .lane_for_limits(
+                self.registry
+                    .runtime_limits_for_function(&self.function_name),
+            )
+            .policy()
     }
 
     pub(in crate::adapters::convex) fn service_capabilities(

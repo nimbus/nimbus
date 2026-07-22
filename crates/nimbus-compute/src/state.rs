@@ -33,6 +33,7 @@ use crate::config::deployment::DeploymentConfig;
 use crate::config::node_services::NodeServicesConfig;
 use crate::config::runtime::RuntimeGovernorConfig;
 use crate::machine_lifecycle::MachineLifecycleManager;
+use crate::runtime_manager::RuntimeManager;
 
 pub struct ComputeStateConfig {
     pub engine: Arc<Engine>,
@@ -50,6 +51,7 @@ pub struct ComputeState {
     control_plane: ControlPlaneConfig,
     node_services: NodeServicesConfig,
     runtime: RuntimeGovernorConfig,
+    runtime_manager: Arc<RuntimeManager>,
 }
 
 impl ComputeState {
@@ -62,6 +64,7 @@ impl ComputeState {
             runtime,
         } = config;
         let node_services = node_services.resolve(engine.clone());
+        let runtime_manager = RuntimeManager::new(engine.clone(), runtime.clone());
         let DeploymentConfig {
             convex_registry,
             system_convex_registry,
@@ -71,15 +74,20 @@ impl ComputeState {
             firebase_config,
             convex_tenancy,
         } = deployment;
-        let convex_registry = convex_registry.map(Arc::new);
-        let system_convex_registry = system_convex_registry.map(Arc::new);
+        let base_runtime_limits = runtime.base_runtime_limits().clone();
+        let convex_registry = convex_registry
+            .map(|registry| Arc::new(registry.with_runtime_limits(base_runtime_limits.clone())));
+        let system_convex_registry = system_convex_registry
+            .map(|registry| Arc::new(registry.with_runtime_limits(base_runtime_limits.clone())));
         let initial_generation =
             u64::from(convex_registry.is_some() || cloud_functions_registry.is_some());
         let active_deployment = DeploymentState {
             generation: initial_generation,
             convex_registry,
             application_auth_verifier,
-            cloud_functions_registry: cloud_functions_registry.map(Arc::new),
+            cloud_functions_registry: cloud_functions_registry.map(|registry| {
+                Arc::new(registry.with_runtime_limits(base_runtime_limits.clone()))
+            }),
             cloudflare_config: cloudflare_config.map(Arc::new),
             firebase_config: firebase_config.map(Arc::new),
             convex_tenancy: convex_tenancy.map(Arc::new),
@@ -91,6 +99,7 @@ impl ComputeState {
             control_plane,
             node_services,
             runtime,
+            runtime_manager,
         }
     }
 
@@ -100,6 +109,10 @@ impl ComputeState {
 
     pub fn runtime_service_registry(&self) -> Arc<dyn RuntimeServiceRegistry> {
         self.node_services.runtime_service_registry()
+    }
+
+    pub fn runtime_manager(&self) -> Arc<RuntimeManager> {
+        self.runtime_manager.clone()
     }
 
     pub fn runtime_host_resource_budget(&self) -> RuntimeHostResourceBudget {
@@ -157,6 +170,43 @@ impl ComputeState {
                 "failed to append local server audit log"
             );
         }
+    }
+
+    /// Creates a tenant and applies the active adapter schema through the
+    /// compute-owned lifecycle entrypoint.
+    pub async fn create_tenant(
+        &self,
+        tenant_id: nimbus_core::TenantId,
+    ) -> Result<(), ComputeError> {
+        self.engine.create_tenant_async(tenant_id.clone()).await?;
+        if let Some(registry) = self.current_deployment().convex_registry() {
+            registry
+                .apply_schema_to_tenant_async(&self.engine, tenant_id)
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Retires all runtime authority before tearing down tenant resources and
+    /// allowing the engine/storage delete fence to complete.
+    pub async fn delete_tenant(
+        &self,
+        tenant_id: nimbus_core::TenantId,
+    ) -> Result<(), ComputeError> {
+        let deletion = self
+            .engine
+            .begin_tenant_delete_async(tenant_id.clone())
+            .await?;
+        let (owner_id, _) = self
+            .runtime_manager
+            .retire_tenant_deletion(&deletion)
+            .await?;
+        self.runtime_service_registry()
+            .teardown_tenant_async(&tenant_id)
+            .await?;
+        self.engine.finish_tenant_delete_async(deletion).await?;
+        self.runtime_manager.forget_retired_owner(&owner_id);
+        Ok(())
     }
 }
 
@@ -315,6 +365,9 @@ pub async fn record_authenticated_usage(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use nimbus_runtime::{InvocationServiceBinding, InvocationServices};
     use tempfile::tempdir;
 
     use super::*;
@@ -388,6 +441,104 @@ mod tests {
         ))
     }
 
+    struct FailFirstTenantTeardown {
+        attempts: AtomicUsize,
+    }
+
+    impl RuntimeServiceRegistry for FailFirstTenantTeardown {
+        fn snapshot_for_tenant(&self, _tenant_id: &nimbus_core::TenantId) -> InvocationServices {
+            InvocationServices::new()
+        }
+
+        fn resolve_service_binding(
+            &self,
+            _tenant_id: &nimbus_core::TenantId,
+            _service_name: &str,
+        ) -> Result<Option<InvocationServiceBinding>, nimbus_core::Error> {
+            Ok(None)
+        }
+
+        fn teardown_tenant_async<'a>(
+            &'a self,
+            _tenant_id: &'a nimbus_core::TenantId,
+        ) -> nimbus_services::RuntimeServiceTeardownFuture<'a> {
+            Box::pin(async move {
+                if self.attempts.fetch_add(1, Ordering::AcqRel) == 0 {
+                    Err(nimbus_core::Error::Internal(
+                        "injected tenant service teardown failure".to_owned(),
+                    ))
+                } else {
+                    Ok(())
+                }
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn partial_tenant_delete_stays_fenced_and_retries_to_completion() {
+        let temp = tempdir().expect("service tempdir should build");
+        let engine = Arc::new(Engine::new(temp.path()).expect("engine should build"));
+        let teardown = Arc::new(FailFirstTenantTeardown {
+            attempts: AtomicUsize::new(0),
+        });
+        let state = ComputeState::from_config(ComputeStateConfig {
+            engine,
+            deployment: DeploymentConfig::default(),
+            control_plane: ControlPlaneConfig::router_options_default(),
+            node_services: NodeServicesConfig::from_runtime_service_registry(teardown.clone()),
+            runtime: RuntimeGovernorConfig::default(),
+        });
+        let tenant_id =
+            nimbus_core::TenantId::new("retry-delete").expect("tenant id should be valid");
+        state
+            .create_tenant(tenant_id.clone())
+            .await
+            .expect("tenant should create");
+        let original = state
+            .runtime_manager()
+            .acquire_invocation_lease(tenant_id.clone(), 0)
+            .await
+            .expect("original invocation lease should build");
+        let original_owner = original.owner_lease().owner_id().clone();
+        drop(original);
+
+        let first_error = state
+            .delete_tenant(tenant_id.clone())
+            .await
+            .expect_err("first service teardown should fail");
+        assert!(
+            first_error
+                .to_string()
+                .contains("injected tenant service teardown failure")
+        );
+        assert_eq!(teardown.attempts.load(Ordering::Acquire), 1);
+        let rejected = state
+            .runtime_manager()
+            .acquire_invocation_lease(tenant_id.clone(), 0)
+            .await
+            .expect_err("partially deleted tenant must remain fail-closed");
+        assert!(matches!(
+            rejected,
+            nimbus_core::Error::TenantNotFound(ref rejected_id) if rejected_id == &tenant_id
+        ));
+
+        state
+            .delete_tenant(tenant_id.clone())
+            .await
+            .expect("retry should finish the fenced deletion");
+        assert_eq!(teardown.attempts.load(Ordering::Acquire), 2);
+        state
+            .create_tenant(tenant_id.clone())
+            .await
+            .expect("tenant should recreate after completed deletion");
+        let recreated = state
+            .runtime_manager()
+            .acquire_invocation_lease(tenant_id, 0)
+            .await
+            .expect("recreated invocation lease should build");
+        assert_ne!(recreated.owner_lease().owner_id(), &original_owner);
+    }
+
     #[test]
     fn compute_state_carries_runtime_host_resource_budget() {
         let temp = tempdir().expect("service tempdir should build");
@@ -427,5 +578,54 @@ mod tests {
             "messages:send"
         );
         assert_eq!(state.effective_runtime_scaling_plan().effective.max_warm, 6);
+    }
+
+    #[test]
+    fn compute_runtime_limits_override_adapter_registry_defaults_at_startup() {
+        let temp = tempdir().expect("service tempdir should build");
+        let engine = Arc::new(Engine::new(temp.path()).expect("engine should build"));
+        let adapter_limits = nimbus_runtime::RuntimeLimits {
+            max_concurrent_runtime_instances: 2,
+            ..nimbus_runtime::RuntimeLimits::default()
+        };
+        let canonical_limits = nimbus_runtime::RuntimeLimits {
+            max_concurrent_runtime_instances: 7,
+            ..nimbus_runtime::RuntimeLimits::default()
+        };
+        let state = ComputeState::from_config(ComputeStateConfig {
+            engine,
+            deployment: DeploymentConfig::default()
+                .with_convex(ConvexRegistry::empty().with_runtime_limits(adapter_limits.clone()))
+                .with_system_convex_registry(
+                    ConvexRegistry::empty().with_runtime_limits(adapter_limits),
+                ),
+            control_plane: ControlPlaneConfig::router_options_default(),
+            node_services: empty_node_services(),
+            runtime: RuntimeGovernorConfig::default()
+                .with_base_runtime_limits(canonical_limits.clone()),
+        });
+
+        assert_eq!(
+            state.runtime_manager().base_runtime_limits(),
+            &canonical_limits
+        );
+        let mut expected_convex_limits = canonical_limits;
+        expected_convex_limits.guest_semantics =
+            nimbus_runtime::RuntimeGuestSemantics::ConvexDefault;
+        assert_eq!(
+            state
+                .current_deployment()
+                .convex_registry()
+                .expect("application registry should exist")
+                .runtime_limits(),
+            expected_convex_limits
+        );
+        assert_eq!(
+            state
+                .system_convex_registry()
+                .expect("system registry should exist")
+                .runtime_limits(),
+            expected_convex_limits
+        );
     }
 }

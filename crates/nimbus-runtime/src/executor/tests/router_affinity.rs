@@ -260,7 +260,7 @@ async fn worker_router_rejects_missing_tenant_for_tenant_affinity() {
             ),
             RuntimeBundle::new(&bundle_path),
             request.clone(),
-            RuntimeInvocationContext::top_level(&request),
+            test_context_without_tenant(&request),
             None,
         )
         .await
@@ -297,7 +297,7 @@ async fn worker_router_rejects_missing_tenant_for_function_affinity() {
             ),
             RuntimeBundle::new(&bundle_path),
             request.clone(),
-            RuntimeInvocationContext::top_level(&request),
+            test_context_without_tenant(&request),
             None,
         )
         .await
@@ -408,7 +408,7 @@ async fn worker_router_script_affinity_allows_missing_invocation_tenant() {
             ),
             RuntimeBundle::new(&bundle_path),
             request.clone(),
-            RuntimeInvocationContext::top_level(&request),
+            test_context_without_tenant(&request),
             None,
         )
         .await

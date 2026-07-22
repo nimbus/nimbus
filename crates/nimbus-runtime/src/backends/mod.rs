@@ -36,6 +36,17 @@ pub(crate) trait RuntimeBackend: 'static {
         &'a mut self,
         invocation: RuntimeBackendInvocation,
     ) -> Pin<Box<dyn Future<Output = Result<Value>> + 'a>>;
+
+    fn retire_owner(&mut self, _owner_id: &crate::RuntimeOwnerId) -> usize {
+        0
+    }
+
+    fn retire_deployment_authority(
+        &mut self,
+        _authority_id: &crate::RuntimeDeploymentAuthorityId,
+    ) -> usize {
+        0
+    }
 }
 
 pub(crate) fn create_runtime_backend_for_policy(policy: &RuntimePolicy) -> Box<dyn RuntimeBackend> {

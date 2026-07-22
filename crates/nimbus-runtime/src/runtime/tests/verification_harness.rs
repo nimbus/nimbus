@@ -98,7 +98,7 @@ impl RuntimeVerificationHarnessCase {
     }
 }
 
-const REQUIRED_RUNTIME_VERIFICATION_CASES: [RuntimeVerificationHarnessCase; 5] = [
+const REQUIRED_RUNTIME_VERIFICATION_CASES: [RuntimeVerificationHarnessCase; 6] = [
     RuntimeVerificationHarnessCase::new(
         super::bundle_integrity::BUNDLE_INTEGRITY_RECHECK_CASE,
         run_bundle_integrity_recheck_after_prior_success_case,
@@ -119,9 +119,13 @@ const REQUIRED_RUNTIME_VERIFICATION_CASES: [RuntimeVerificationHarnessCase; 5] =
         crate::executor::tests::queue_fairness::TENANT_FAIRNESS_NO_STARVATION_CASE,
         run_tenant_fairness_no_starvation_case,
     ),
+    RuntimeVerificationHarnessCase::new(
+        super::warm_pool::OWNER_INCARNATION_WARM_POOL_CASE.metadata(),
+        run_warm_pool_owner_incarnation_isolation_case,
+    ),
 ];
 
-const NIGHTLY_RUNTIME_VERIFICATION_CASES: [RuntimeVerificationHarnessCase; 11] = [
+const NIGHTLY_RUNTIME_VERIFICATION_CASES: [RuntimeVerificationHarnessCase; 12] = [
     RuntimeVerificationHarnessCase::new(
         super::bundle_integrity::BUNDLE_INTEGRITY_RECHECK_CASE,
         run_bundle_integrity_recheck_after_prior_success_case,
@@ -165,6 +169,10 @@ const NIGHTLY_RUNTIME_VERIFICATION_CASES: [RuntimeVerificationHarnessCase; 11] =
     RuntimeVerificationHarnessCase::new(
         super::warm_pool::CROSS_TENANT_WARM_POOL_CASE.metadata(),
         run_warm_pool_cross_tenant_isolation_case,
+    ),
+    RuntimeVerificationHarnessCase::new(
+        super::warm_pool::OWNER_INCARNATION_WARM_POOL_CASE.metadata(),
+        run_warm_pool_owner_incarnation_isolation_case,
     ),
 ];
 
@@ -228,6 +236,10 @@ fn run_locker_interleave_case() {
 
 fn run_warm_pool_cross_tenant_isolation_case() {
     run_v8_sensitive_runtime_test_in_subprocess(super::warm_pool::CROSS_TENANT_WARM_POOL_CASE);
+}
+
+fn run_warm_pool_owner_incarnation_isolation_case() {
+    run_v8_sensitive_runtime_test_in_subprocess(super::warm_pool::OWNER_INCARNATION_WARM_POOL_CASE);
 }
 
 fn runtime_verification_corpus(

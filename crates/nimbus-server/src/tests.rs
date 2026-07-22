@@ -23,7 +23,7 @@ use nimbus_license::{
     LicenseDocument, LicenseEntitlements, LicenseKind, LicenseSourceInfo, LicenseSourceKind,
     LicenseState,
 };
-use nimbus_runtime::{RuntimeBundle, RuntimeMetricsSnapshot};
+use nimbus_runtime::RuntimeBundle;
 pub(crate) use nimbus_testing::{
     DeterministicHarness, DeterministicTestCase, EngineFixture, GeneratedTaskHistory,
     GeneratedTaskHistorySeedCase, GeneratedTaskPageExpectation, GeneratedTaskRecord,
@@ -118,8 +118,10 @@ fn router_for_engine(engine: Arc<Engine>) -> Router {
 fn router_for_convex(engine: Arc<Engine>, convex_registry: ConvexRegistry) -> Router {
     let test_host_parallelism =
         std::num::NonZeroUsize::new(64).expect("test host parallelism is nonzero");
+    let runtime_limits = convex_registry.runtime_limits();
     build_router(
         RouterOptions::new(engine)
+            .with_runtime_limits(runtime_limits)
             .with_convex_registry(convex_registry)
             .with_runtime_host_resource_budget(
                 nimbus_runtime::RuntimeHostResourceBudget::conservative_for_logical_cpus(
@@ -134,8 +136,10 @@ fn router_for_convex_with_tenancy(
     convex_registry: ConvexRegistry,
     tenancy: nimbus_convex::ConvexTenancyConfig,
 ) -> Router {
+    let runtime_limits = convex_registry.runtime_limits();
     build_router(
         RouterOptions::new(engine)
+            .with_runtime_limits(runtime_limits)
             .with_convex_registry(convex_registry)
             .with_convex_tenancy(tenancy),
     )
@@ -327,7 +331,9 @@ fn router_for_convex_team_for(
 ) -> Router {
     let test_host_parallelism =
         std::num::NonZeroUsize::new(64).expect("test host parallelism is nonzero");
+    let runtime_limits = convex_registry.runtime_limits();
     RouterBuildConfig::core(engine)
+        .with_runtime_limits(runtime_limits)
         .with_application_auth_verifier(Arc::new(StaticConvexTeamVerifier))
         .with_convex(convex_registry)
         .with_convex_tenancy(convex_team_tenancy_for(tenant))
@@ -1681,27 +1687,27 @@ async fn open_json_post_stream(
 }
 
 async fn wait_for_runtime_metrics(
-    registry: &ConvexRegistry,
+    server: &ServerFixture,
     description: &str,
-    predicate: impl Fn(&nimbus_runtime::RuntimeMetricsSnapshot) -> bool,
-) -> RuntimeMetricsSnapshot {
-    wait_for_runtime_metrics_case_impl(registry, description.to_string(), predicate).await
+    predicate: impl Fn(&TestRuntimeMetricsSnapshot) -> bool,
+) -> TestRuntimeMetricsSnapshot {
+    wait_for_runtime_metrics_case_impl(server, description.to_string(), predicate).await
 }
 
 async fn wait_for_runtime_metrics_case(
-    registry: &ConvexRegistry,
+    server: &ServerFixture,
     case: DeterministicTestCase,
     description: &str,
-    predicate: impl Fn(&nimbus_runtime::RuntimeMetricsSnapshot) -> bool,
-) -> RuntimeMetricsSnapshot {
-    wait_for_runtime_metrics_case_impl(registry, case.failure_context(description), predicate).await
+    predicate: impl Fn(&TestRuntimeMetricsSnapshot) -> bool,
+) -> TestRuntimeMetricsSnapshot {
+    wait_for_runtime_metrics_case_impl(server, case.failure_context(description), predicate).await
 }
 
 async fn wait_for_runtime_metrics_case_impl(
-    registry: &ConvexRegistry,
+    server: &ServerFixture,
     description: String,
-    predicate: impl Fn(&RuntimeMetricsSnapshot) -> bool,
-) -> RuntimeMetricsSnapshot {
+    predicate: impl Fn(&TestRuntimeMetricsSnapshot) -> bool,
+) -> TestRuntimeMetricsSnapshot {
     // Synchronization budget for a runtime-metrics condition, not a behavioral
     // assertion. The first dispatch can pay multi-shard CI cold-start costs
     // (worker-thread spawn, per-job tokio runtime build, and first V8 isolate
@@ -1713,34 +1719,12 @@ async fn wait_for_runtime_metrics_case_impl(
     let mut attempts = 0_u64;
     loop {
         attempts += 1;
-        let metrics = registry.runtime_metrics_snapshot();
+        let (metrics, lanes) = current_runtime_metrics(server).await;
         if predicate(&metrics) {
             return metrics;
         }
         let elapsed = started_at.elapsed();
         if elapsed >= timeout {
-            let lanes = registry
-                .runtime_lane_diagnostics()
-                .into_iter()
-                .map(|lane| {
-                    let metrics = lane.metrics;
-                    format!(
-                        "{}: default={}, linked={:?}, started={}, active={}, queued={}, dispatched={}, completed={}, canceled={}, rejected={}, correlations={}",
-                        lane.lane_name,
-                        lane.default_lane,
-                        lane.execution_adapter_state,
-                        lane.executor_started,
-                        metrics.active_runtime_instances,
-                        metrics.queued_invocations,
-                        metrics.worker_dispatched_invocations,
-                        metrics.completed_invocations,
-                        metrics.canceled_invocations,
-                        metrics.rejected_invocations,
-                        metrics.request_correlation_records
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("; ");
             panic!(
                 "timed out waiting for {description} after {elapsed:?} \
                  (budget {timeout:?}, poll interval {poll_interval:?}, attempts {attempts}, \
@@ -1752,7 +1736,75 @@ async fn wait_for_runtime_metrics_case_impl(
     }
 }
 
-fn runtime_metrics_test_summary(metrics: &RuntimeMetricsSnapshot) -> String {
+async fn current_runtime_metrics(
+    server: &ServerFixture,
+) -> (TestRuntimeMetricsSnapshot, serde_json::Value) {
+    let response = server
+        .client()
+        .get(server.http_url("/debug/runtime/metrics"))
+        .send()
+        .await
+        .expect("runtime diagnostics request should complete");
+    assert!(response.status().is_success());
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .expect("runtime diagnostics should be JSON");
+    let metrics = serde_json::from_value(
+        body.get("metrics")
+            .cloned()
+            .expect("runtime diagnostics should include metrics"),
+    )
+    .expect("runtime metrics should match the test projection");
+    let lanes = body.get("lanes").cloned().unwrap_or_default();
+    (metrics, lanes)
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+struct TestRuntimeTenantMetricsSnapshot {
+    active_runtime_instances: usize,
+    started_invocations: u64,
+    completed_invocations: u64,
+    rejected_invocations: u64,
+    queued_canceled_invocations: u64,
+    in_flight_canceled_invocations: u64,
+    disconnect_canceled_invocations: u64,
+    explicit_canceled_invocations: u64,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct TestRuntimeRequestCorrelationSnapshot {
+    server_request_id: String,
+    function_name: String,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+struct TestRuntimeMetricsSnapshot {
+    active_runtime_instances: usize,
+    queued_invocations: usize,
+    worker_dispatched_invocations: u64,
+    worker_router_dispatches: u64,
+    admission_decisions: u64,
+    started_invocations: u64,
+    completed_invocations: u64,
+    canceled_invocations: u64,
+    rejected_invocations: u64,
+    queued_canceled_invocations: u64,
+    in_flight_canceled_invocations: u64,
+    disconnect_canceled_invocations: u64,
+    explicit_canceled_invocations: u64,
+    runtime_pool_hits: u64,
+    runtime_pool_misses: u64,
+    runtime_pool_replacements: u64,
+    warm_pool_hits: u64,
+    warm_pool_misses: u64,
+    retained_runtime_pool_entries: usize,
+    request_correlation_records: u64,
+    tenants: HashMap<String, TestRuntimeTenantMetricsSnapshot>,
+    recent_request_correlations: Vec<TestRuntimeRequestCorrelationSnapshot>,
+}
+
+fn runtime_metrics_test_summary(metrics: &TestRuntimeMetricsSnapshot) -> String {
     format!(
         "active={}, queued={}, dispatched={}, router_dispatches={}, started={}, completed={}, canceled={}, rejected={}, pool_hits={}, pool_misses={}, pool_replacements={}, correlations={}, tenants={:?}",
         metrics.active_runtime_instances,
@@ -1822,6 +1874,8 @@ mod mongodb_wire;
 mod registry_and_license;
 #[path = "tests/rest_route_parity.rs"]
 mod rest_route_parity;
+#[path = "tests/runtime_owner_conformance.rs"]
+mod runtime_owner_conformance;
 #[path = "tests/scheduling.rs"]
 mod scheduling;
 #[path = "tests/service_manager.rs"]

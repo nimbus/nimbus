@@ -97,7 +97,7 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
     )
     .await;
     wait_for_runtime_metrics_case(
-        &registry,
+        &server,
         QUEUED_REQUEST_DROP_CASE,
         "blocking runtime query to start",
         |metrics| {
@@ -113,7 +113,7 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
     )
     .await;
     let queued_snapshot = wait_for_runtime_metrics_case(
-        &registry,
+        &server,
         QUEUED_REQUEST_DROP_CASE,
         "queued runtime mutation to be admitted at the executor queue",
         |metrics| {
@@ -140,7 +140,7 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
 
     drop(queued_mutation);
     let queued_canceled = wait_for_runtime_metrics_case(
-        &registry,
+        &server,
         QUEUED_REQUEST_DROP_CASE,
         "queued runtime mutation cancellation before worker dispatch",
         |metrics| {
@@ -157,7 +157,7 @@ async fn dropped_queued_runtime_request_never_starts_mutation() {
     drop(blocker);
 
     let metrics = wait_for_runtime_metrics_case(
-        &registry,
+        &server,
         QUEUED_REQUEST_DROP_CASE,
         "queued runtime mutation cancellation",
         |metrics| metrics.active_runtime_instances == 0 && metrics.canceled_invocations >= 2,
@@ -259,7 +259,7 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
     )
     .await;
     wait_for_runtime_metrics_case(
-        &registry,
+        &server,
         QUEUED_REQUEST_RECOVERY_CASE,
         "blocking runtime query to start",
         |metrics| {
@@ -275,7 +275,7 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
     )
     .await;
     let queued_snapshot = wait_for_runtime_metrics_case(
-        &registry,
+        &server,
         QUEUED_REQUEST_RECOVERY_CASE,
         "queued runtime mutation recovery request to be admitted at the executor queue",
         |metrics| {
@@ -302,7 +302,7 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
 
     drop(queued_mutation);
     let queued_canceled = wait_for_runtime_metrics_case(
-        &registry,
+        &server,
         QUEUED_REQUEST_RECOVERY_CASE,
         "queued runtime mutation recovery cancellation before worker dispatch",
         |metrics| {
@@ -319,7 +319,7 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
     drop(blocker);
 
     let canceled = wait_for_runtime_metrics_case(
-        &registry,
+        &server,
         QUEUED_REQUEST_RECOVERY_CASE,
         "queued runtime mutation cancellation",
         |metrics| metrics.active_runtime_instances == 0 && metrics.canceled_invocations >= 2,
@@ -339,7 +339,7 @@ async fn dropped_queued_runtime_request_recovers_and_serves_new_work_after_press
     assert_eq!(recovery_response.status(), StatusCode::OK);
 
     let recovered = wait_for_runtime_metrics_case(
-        &registry,
+        &server,
         QUEUED_REQUEST_RECOVERY_CASE,
         "runtime recovery after queued request drop",
         |metrics| {

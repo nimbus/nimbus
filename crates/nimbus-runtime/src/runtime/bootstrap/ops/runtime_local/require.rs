@@ -10,7 +10,9 @@ use crate::node_compat::{
     ResolvedNodeModuleKind, ResolvedNodeTarget, resolve_node_target_with_user_conditions,
 };
 use crate::runtime::bootstrap::payloads::RuntimeHostCallEnvelope;
-use crate::runtime::bootstrap::state::{InstalledRuntimeCapabilityPolicy, InstalledRuntimeOwner};
+use crate::runtime::bootstrap::state::{
+    InstalledRuntimeCapabilityPolicy, InstalledRuntimeInstance,
+};
 
 use super::support::capability_denied_error;
 use super::types::{
@@ -74,7 +76,7 @@ pub(in super::super) fn op_nimbus_runtime_require_read_file(
         .permissions
         .clone();
     let fs = state
-        .borrow::<InstalledRuntimeOwner>()
+        .borrow::<InstalledRuntimeInstance>()
         .runtime
         .policy()
         .file_system();

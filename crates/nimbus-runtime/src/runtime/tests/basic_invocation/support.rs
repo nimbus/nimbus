@@ -408,7 +408,7 @@ pub(super) async fn run_application_networking_canary_bundle(
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&app.bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -439,7 +439,7 @@ pub(super) async fn run_application_sdk_canary_bundle(
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&app.bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -468,7 +468,7 @@ pub(super) async fn run_application_host_heavy_canary_bundle(
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&app.bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -499,7 +499,7 @@ pub(super) async fn run_tooling_canary_bundle(
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&app.bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,

@@ -22,6 +22,7 @@ mod schema;
 mod subscriptions;
 mod tenant_load_gate;
 mod tenants;
+pub use tenants::TenantDeletionLease;
 mod transactions;
 mod usage;
 

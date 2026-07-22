@@ -47,7 +47,7 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -109,7 +109,7 @@ async fn runtime_requires_bundle_contract() {
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let error = runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Action,
@@ -166,7 +166,7 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -224,7 +224,7 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -280,7 +280,7 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,
@@ -346,11 +346,11 @@ export {};
     };
 
     let first = runtime
-        .invoke_bundle_for_tenant(&bundle, &request, "tenant-a")
+        .invoke_bundle_for_tenant_for_test(&bundle, &request, "tenant-a")
         .await
         .expect("first convenience invocation should succeed");
     let second = runtime
-        .invoke_bundle_for_tenant(&bundle, &request, "tenant-a")
+        .invoke_bundle_for_tenant_for_test(&bundle, &request, "tenant-a")
         .await
         .expect("second convenience invocation should succeed");
 
@@ -394,7 +394,7 @@ export {};
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&bundle_path),
             &InvocationRequest {
                 kind: InvocationKind::Query,

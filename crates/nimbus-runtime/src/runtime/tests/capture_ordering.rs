@@ -515,7 +515,7 @@ async fn cloudflare_lane_main_context_reassignment_fails() {
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&bundle_path),
             &cloudflare_worker_fetch_request(),
             "tenant-a",
@@ -566,7 +566,7 @@ async fn cloudflare_lane_fresh_realm_reassignment_fails() {
         crate::RuntimeEgressPosture::CoarsePermissions,
     );
     let result = runtime
-        .invoke_bundle_for_tenant(
+        .invoke_bundle_for_tenant_for_test(
             &RuntimeBundle::new(&bundle_path),
             &cloudflare_worker_fetch_request(),
             "tenant-a",

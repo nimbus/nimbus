@@ -136,6 +136,81 @@ impl RuntimeExecutorAdmission {
         queued_jobs
     }
 
+    #[cfg(test)]
+    pub(super) fn queued_job_count_for_test(&self) -> usize {
+        self.state
+            .lock()
+            .expect("runtime executor admission lock should not be poisoned")
+            .tenants
+            .values()
+            .map(|tenant| tenant.queued_jobs.len())
+            .sum()
+    }
+
+    pub(super) fn cancel_queued_owner(
+        &self,
+        owner_id: &crate::RuntimeOwnerId,
+    ) -> Vec<RuntimeWorkerJob> {
+        self.cancel_queued_matching(|job| {
+            job.context
+                .runtime_owner_lease()
+                .is_some_and(|lease| lease.owner_id() == owner_id)
+        })
+    }
+
+    pub(super) fn cancel_queued_deployment_authority(
+        &self,
+        authority_id: &crate::RuntimeDeploymentAuthorityId,
+    ) -> Vec<RuntimeWorkerJob> {
+        self.cancel_queued_matching(|job| {
+            job.context
+                .deployment_authority_lease()
+                .is_some_and(|lease| lease.authority_id() == authority_id)
+        })
+    }
+
+    fn cancel_queued_matching(
+        &self,
+        predicate: impl Fn(&RuntimeWorkerJob) -> bool,
+    ) -> Vec<RuntimeWorkerJob> {
+        let mut state = self
+            .state
+            .lock()
+            .expect("runtime executor admission lock should not be poisoned");
+        let tenant_labels = state.tenants.keys().cloned().collect::<Vec<_>>();
+        let mut cancelled = Vec::new();
+        for tenant_label in &tenant_labels {
+            let Some(tenant_state) = state.tenants.get_mut(tenant_label) else {
+                continue;
+            };
+            let mut retained = std::collections::VecDeque::new();
+            for job in tenant_state.queued_jobs.drain(..) {
+                if predicate(&job) {
+                    cancelled.push(job);
+                } else {
+                    retained.push_back(job);
+                }
+            }
+            tenant_state.queued_jobs = retained;
+            if tenant_state.queued_jobs.is_empty() {
+                tenant_state.queued_in_rotation = false;
+            }
+        }
+        let nonempty_queues = state
+            .tenants
+            .iter()
+            .filter(|(_, tenant_state)| !tenant_state.queued_jobs.is_empty())
+            .map(|(tenant_label, _)| tenant_label.clone())
+            .collect::<std::collections::HashSet<_>>();
+        state
+            .queued_tenants
+            .retain(|tenant_label| nonempty_queues.contains(tenant_label));
+        for tenant_label in tenant_labels {
+            cleanup_tenant_locked(&mut state, &tenant_label);
+        }
+        cancelled
+    }
+
     pub(super) async fn acquire_active_permit(
         &self,
         tenant_label: &str,

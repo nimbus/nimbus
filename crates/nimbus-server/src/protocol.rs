@@ -85,6 +85,7 @@ pub(crate) struct VersionUpgradeAction {
 
 #[derive(Debug, Serialize)]
 pub(crate) struct RuntimeDiagnosticsResponse {
+    pub manager: nimbus_compute::runtime_manager::RuntimeManagerDiagnostics,
     pub limits: Option<RuntimeLimitsResponse>,
     pub reset_capabilities: Option<RuntimeResetCapabilities>,
     pub metrics: Option<RuntimeMetricsSnapshot>,

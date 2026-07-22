@@ -58,6 +58,10 @@ impl TenantIsolationContext {
         &self.tenant_id
     }
 
+    pub fn deployment_generation(&self) -> Option<u64> {
+        self.deployment_generation
+    }
+
     pub fn ensure_system_or_operator_authority(&self, context: &str) -> Result<()> {
         if self.authority.is_system_or_operator() {
             return Ok(());

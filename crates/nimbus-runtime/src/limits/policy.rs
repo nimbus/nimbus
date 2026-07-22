@@ -37,6 +37,26 @@ impl RuntimePolicy {
         )
     }
 
+    /// Constructs a policy for backend contract tests whose axis combination
+    /// is intentionally rejected by product normalization.
+    #[cfg(test)]
+    pub(crate) fn new_unchecked_for_backend_contract_test(limits: RuntimeLimits) -> Self {
+        let host_resource_budget = default_host_resource_budget_for_limits(&limits);
+        Self {
+            runtime_instance_semaphore: Arc::new(Semaphore::new(
+                limits.max_concurrent_runtime_instances,
+            )),
+            metrics: Arc::new(RuntimeMetrics::default()),
+            limits,
+            host_resource_budget,
+            host_pressure_source: Arc::new(NominalRuntimeHostPressureSource),
+            host_resource_governor_enabled: false,
+            adaptive_controller_settings: RuntimeAdaptiveControllerSettings::default(),
+            effective_scaling_plans: RuntimeScalingPlanSet::default(),
+            file_system: RuntimeFileSystem::default(),
+        }
+    }
+
     pub fn with_host_resource_governor(
         limits: RuntimeLimits,
         host_resource_budget: RuntimeHostResourceBudget,
@@ -175,7 +195,9 @@ impl RuntimePolicy {
         self.metrics.snapshot()
     }
 
-    pub(crate) fn runtime_profile(&self) -> Option<RuntimeProfile> {
+    /// Returns the derived low-cardinality runtime profile used by lane
+    /// diagnostics and telemetry. Non-V8 lanes do not have a V8 profile.
+    pub fn runtime_profile(&self) -> Option<RuntimeProfile> {
         RuntimeProfile::for_limits(&self.limits)
     }
 

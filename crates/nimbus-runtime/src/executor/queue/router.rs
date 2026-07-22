@@ -5,17 +5,21 @@ use std::time::Instant;
 
 use tokio::sync::mpsc;
 
-use crate::affinity::{RuntimeAffinityKey, runtime_affinity_key};
+use crate::affinity::{RuntimeRouteKey, runtime_route_key};
 use crate::error::{NimbusRuntimeError, Result};
 use crate::limits::RuntimeRoutingAffinity;
 use crate::metrics::RuntimeMetrics;
+use crate::{RuntimeDeploymentAuthorityId, RuntimeOwnerId};
 
 use super::controller::RuntimeWorkerQueueController;
-use super::job::RuntimeWorkerJob;
+use super::job::{
+    RuntimeWorkerControl, RuntimeWorkerControlCommand, RuntimeWorkerJob, RuntimeWorkerMessage,
+    RuntimeWorkerRetirementAck,
+};
 use super::signal::WorkerActivitySignal;
 
 struct WorkerDispatchQueue {
-    sender: Mutex<Option<mpsc::Sender<RuntimeWorkerJob>>>,
+    sender: Mutex<Option<mpsc::Sender<RuntimeWorkerMessage>>>,
     load: AtomicUsize,
     last_assigned_sequence: AtomicU64,
     activity_signal: Arc<WorkerActivitySignal>,
@@ -27,10 +31,11 @@ enum WorkerRouteStrategy {
     LeastLoaded,
 }
 
-#[derive(Clone, Copy)]
 struct RuntimeAffinityAssignment {
     worker_id: usize,
     last_assigned_sequence: u64,
+    owner_id: Option<RuntimeOwnerId>,
+    deployment_authority_id: Option<RuntimeDeploymentAuthorityId>,
 }
 
 #[derive(Clone, Copy)]
@@ -41,13 +46,13 @@ struct WorkerRouteSelection {
 
 struct WorkerAssignment {
     worker_id: usize,
-    affinity_key: Option<RuntimeAffinityKey>,
+    affinity_key: Option<RuntimeRouteKey>,
     last_assigned_sequence: u64,
 }
 
 impl WorkerDispatchQueue {
     fn new(
-        sender: mpsc::Sender<RuntimeWorkerJob>,
+        sender: mpsc::Sender<RuntimeWorkerMessage>,
         activity_signal: Arc<WorkerActivitySignal>,
     ) -> Self {
         Self {
@@ -65,7 +70,7 @@ pub(in crate::executor) struct RuntimeWorkerRouter {
     routing_affinity: RuntimeRoutingAffinity,
     routing_affinity_max_entries: usize,
     next_assignment_sequence: AtomicU64,
-    affinity: Mutex<HashMap<RuntimeAffinityKey, RuntimeAffinityAssignment>>,
+    affinity: Mutex<HashMap<RuntimeRouteKey, RuntimeAffinityAssignment>>,
 }
 
 impl RuntimeWorkerRouter {
@@ -80,7 +85,7 @@ impl RuntimeWorkerRouter {
         let mut worker_receivers = Vec::with_capacity(worker_count);
 
         for _ in 0..worker_count {
-            let (sender, receiver) = mpsc::channel::<RuntimeWorkerJob>(queue_capacity);
+            let (sender, receiver) = mpsc::channel::<RuntimeWorkerMessage>(queue_capacity);
             let activity_signal = Arc::new(WorkerActivitySignal::new());
             workers.push(WorkerDispatchQueue::new(sender, activity_signal.clone()));
             worker_receivers.push((Arc::new(Mutex::new(receiver)), activity_signal));
@@ -115,7 +120,7 @@ impl RuntimeWorkerRouter {
         NimbusRuntimeError::Contract("runtime executor unexpectedly closed".to_string())
     }
 
-    fn dispatch_sender(&self, worker_id: usize) -> Result<mpsc::Sender<RuntimeWorkerJob>> {
+    fn dispatch_sender(&self, worker_id: usize) -> Result<mpsc::Sender<RuntimeWorkerMessage>> {
         self.workers[worker_id]
             .sender
             .lock()
@@ -125,12 +130,12 @@ impl RuntimeWorkerRouter {
             .ok_or_else(Self::closed_error)
     }
 
-    fn affinity_key(&self, job: &RuntimeWorkerJob) -> Result<Option<RuntimeAffinityKey>> {
-        runtime_affinity_key(self.routing_affinity, Some(&job.context), &job.bundle)
+    fn affinity_key(&self, job: &RuntimeWorkerJob) -> Result<Option<RuntimeRouteKey>> {
+        runtime_route_key(self.routing_affinity, Some(&job.context), &job.bundle)
             .map_err(|error| NimbusRuntimeError::Contract(error.to_string()))
     }
 
-    fn choose_worker(&self, affinity_key: Option<&RuntimeAffinityKey>) -> WorkerRouteSelection {
+    fn choose_worker(&self, affinity_key: Option<&RuntimeRouteKey>) -> WorkerRouteSelection {
         // Routing uses an eventually consistent snapshot only to choose a
         // best-effort worker. Assignment and completion keep the counters
         // themselves consistent.
@@ -185,7 +190,9 @@ impl RuntimeWorkerRouter {
     fn note_assignment(
         &self,
         worker_id: usize,
-        affinity_key: Option<RuntimeAffinityKey>,
+        affinity_key: Option<RuntimeRouteKey>,
+        owner_id: Option<RuntimeOwnerId>,
+        deployment_authority_id: Option<RuntimeDeploymentAuthorityId>,
     ) -> WorkerAssignment {
         let sequence = self.next_assignment_sequence.fetch_add(1, Ordering::SeqCst);
         let worker = &self.workers[worker_id];
@@ -203,6 +210,8 @@ impl RuntimeWorkerRouter {
                 RuntimeAffinityAssignment {
                     worker_id,
                     last_assigned_sequence: sequence,
+                    owner_id,
+                    deployment_authority_id,
                 },
             );
             while affinity.len() > self.routing_affinity_max_entries {
@@ -261,20 +270,36 @@ impl RuntimeWorkerRouter {
 
     async fn dispatch_job_inner(&self, job: RuntimeWorkerJob) -> Result<()> {
         let affinity_key = self.affinity_key(&job)?;
+        let owner_id = job
+            .context
+            .runtime_owner_lease()
+            .map(|lease| lease.owner_id().clone());
+        let deployment_authority_id = job
+            .context
+            .deployment_authority_lease()
+            .map(|lease| lease.authority_id().clone());
         let selection = self.choose_worker(affinity_key.as_ref());
         let dispatch_handle = job.dispatch_handle.clone();
         let sender = self.dispatch_sender(selection.worker_id)?;
         // Account for the assignment before enqueueing so a very fast worker
         // completion cannot beat the router's load increment.
-        let assignment = self.note_assignment(selection.worker_id, affinity_key);
-        sender.send(job).await.map_err(|error| {
-            self.rollback_assignment(assignment);
-            if let Some(dispatch_handle) = dispatch_handle {
-                dispatch_handle.rollback_dispatch();
-            }
-            drop(error);
-            Self::closed_error()
-        })?;
+        let assignment = self.note_assignment(
+            selection.worker_id,
+            affinity_key,
+            owner_id,
+            deployment_authority_id,
+        );
+        sender
+            .send(RuntimeWorkerMessage::Job(Box::new(job)))
+            .await
+            .map_err(|error| {
+                self.rollback_assignment(assignment);
+                if let Some(dispatch_handle) = dispatch_handle {
+                    dispatch_handle.rollback_dispatch();
+                }
+                drop(error);
+                Self::closed_error()
+            })?;
         self.record_route(selection.strategy);
         self.workers[selection.worker_id].activity_signal.notify();
         Ok(())
@@ -299,6 +324,14 @@ impl RuntimeWorkerRouter {
             Ok(affinity_key) => affinity_key,
             Err(_) => return Err(Box::new(job)),
         };
+        let owner_id = job
+            .context
+            .runtime_owner_lease()
+            .map(|lease| lease.owner_id().clone());
+        let deployment_authority_id = job
+            .context
+            .deployment_authority_lease()
+            .map(|lease| lease.authority_id().clone());
         let selection = self.choose_worker(affinity_key.as_ref());
         let dispatch_handle = job.dispatch_handle.clone();
         let sender = match self.dispatch_sender(selection.worker_id) {
@@ -312,14 +345,26 @@ impl RuntimeWorkerRouter {
         };
         // Account for the assignment before enqueueing so a very fast worker
         // completion cannot beat the router's load increment.
-        let assignment = self.note_assignment(selection.worker_id, affinity_key);
-        sender.blocking_send(job).map_err(|error| {
-            self.rollback_assignment(assignment);
-            if let Some(dispatch_handle) = dispatch_handle {
-                dispatch_handle.rollback_dispatch();
-            }
-            Box::new(error.0)
-        })?;
+        let assignment = self.note_assignment(
+            selection.worker_id,
+            affinity_key,
+            owner_id,
+            deployment_authority_id,
+        );
+        sender
+            .blocking_send(RuntimeWorkerMessage::Job(Box::new(job)))
+            .map_err(|error| {
+                self.rollback_assignment(assignment);
+                if let Some(dispatch_handle) = dispatch_handle {
+                    dispatch_handle.rollback_dispatch();
+                }
+                match error.0 {
+                    RuntimeWorkerMessage::Job(job) => job,
+                    RuntimeWorkerMessage::Control(_) => {
+                        unreachable!("job dispatch cannot return a control message")
+                    }
+                }
+            })?;
         self.record_route(selection.strategy);
         self.workers[selection.worker_id].activity_signal.notify();
         Ok(())
@@ -335,6 +380,67 @@ impl RuntimeWorkerRouter {
         debug_assert!(update.is_ok(), "worker load should not underflow");
     }
 
+    pub(in crate::executor) async fn broadcast_retirement(
+        &self,
+        command_for_worker: impl Fn() -> RuntimeWorkerControlCommand,
+    ) -> Result<Vec<tokio::sync::oneshot::Receiver<RuntimeWorkerRetirementAck>>> {
+        let mut acknowledgements = Vec::with_capacity(self.workers.len());
+        for worker_id in 0..self.workers.len() {
+            let sender = self.dispatch_sender(worker_id)?;
+            let (acknowledged, acknowledgement) = tokio::sync::oneshot::channel();
+            sender
+                .send(RuntimeWorkerMessage::Control(RuntimeWorkerControl {
+                    command: command_for_worker(),
+                    acknowledged,
+                }))
+                .await
+                .map_err(|_| Self::closed_error())?;
+            self.workers[worker_id].activity_signal.notify();
+            acknowledgements.push(acknowledgement);
+        }
+        Ok(acknowledgements)
+    }
+
+    pub(in crate::executor) fn purge_affinity(&self) -> usize {
+        let mut affinity = self
+            .affinity
+            .lock()
+            .expect("worker affinity lock should not be poisoned");
+        let purged = affinity.len();
+        affinity.clear();
+        self.metrics.update_worker_affinity_cache_entries(0);
+        purged
+    }
+
+    pub(in crate::executor) fn purge_owner_affinity(&self, owner_id: &RuntimeOwnerId) -> usize {
+        self.purge_affinity_matching(|assignment| assignment.owner_id.as_ref() == Some(owner_id))
+    }
+
+    pub(in crate::executor) fn purge_deployment_authority_affinity(
+        &self,
+        authority_id: &RuntimeDeploymentAuthorityId,
+    ) -> usize {
+        self.purge_affinity_matching(|assignment| {
+            assignment.deployment_authority_id.as_ref() == Some(authority_id)
+        })
+    }
+
+    fn purge_affinity_matching(
+        &self,
+        predicate: impl Fn(&RuntimeAffinityAssignment) -> bool,
+    ) -> usize {
+        let mut affinity = self
+            .affinity
+            .lock()
+            .expect("worker affinity lock should not be poisoned");
+        let before = affinity.len();
+        affinity.retain(|_, assignment| !predicate(assignment));
+        let purged = before.saturating_sub(affinity.len());
+        self.metrics
+            .update_worker_affinity_cache_entries(affinity.len());
+        purged
+    }
+
     pub(in crate::executor) fn close(&self) {
         for worker in &self.workers {
             worker
@@ -344,12 +450,7 @@ impl RuntimeWorkerRouter {
                 .take();
             worker.activity_signal.notify();
         }
-        let mut affinity = self
-            .affinity
-            .lock()
-            .expect("worker affinity lock should not be poisoned");
-        affinity.clear();
-        self.metrics.update_worker_affinity_cache_entries(0);
+        self.purge_affinity();
     }
 }
 
@@ -407,6 +508,7 @@ mod tests {
             response_ready_tx: None,
             result_tx: RuntimeWorkerResultSender::Blocking(std::sync::mpsc::sync_channel(1).0),
             dispatch_handle: None,
+            _retirement_guard: None,
         }
     }
 

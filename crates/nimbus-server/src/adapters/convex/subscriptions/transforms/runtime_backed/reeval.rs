@@ -10,6 +10,7 @@ use crate::adapters::convex::execution::{
 };
 use crate::adapters::convex::subscriptions::next_runtime_subscription_server_request_id;
 use nimbus_bridge::read_tracking::{RuntimeReadSet, commit_intersects_runtime_read_set};
+use nimbus_compute::runtime_manager::RuntimeManager;
 use nimbus_convex::subscriptions::{
     ConvexSubscriptionEvent, ConvexSubscriptionTransform, ConvexSubscriptionTransforms,
     update_runtime_transform_read_set,
@@ -22,6 +23,7 @@ pub(in crate::adapters::convex::subscriptions) struct RuntimeTransformContext<'a
     pub(in crate::adapters::convex::subscriptions) registry: &'a Arc<ConvexRegistry>,
     pub(in crate::adapters::convex::subscriptions) runtime_service_registry:
         &'a Arc<dyn RuntimeServiceRegistry>,
+    pub(in crate::adapters::convex::subscriptions) runtime_manager: &'a Arc<RuntimeManager>,
     pub(in crate::adapters::convex::subscriptions) tenant_context: &'a TenantIsolationContext,
     pub(in crate::adapters::convex::subscriptions) transforms:
         &'a RwLock<ConvexSubscriptionTransforms>,
@@ -36,6 +38,7 @@ impl<'a> RuntimeTransformContext<'a> {
             self.engine,
             self.registry,
             self.runtime_service_registry,
+            self.runtime_manager,
             self.tenant_context.reauthorize_application(
                 nimbus_core::PrincipalContext::anonymous(),
                 "convex_subscription_runtime",

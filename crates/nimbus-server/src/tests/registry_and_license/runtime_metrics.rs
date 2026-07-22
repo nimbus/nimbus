@@ -1,23 +1,29 @@
 use super::*;
 
 #[tokio::test]
-async fn runtime_metrics_route_returns_null_fields_without_convex_support() {
+async fn runtime_metrics_route_returns_canonical_manager_defaults_without_adapters() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(router_for_engine(fixture.engine())).await;
     let api = HttpApiFixture::new(&server);
 
     let response = api.runtime_metrics().await;
 
-    // Returns 200 with a stable shape so the operator settings UI sees a
-    // single null-fields payload instead of a 404 on default `nimbus start`.
+    // Runtime defaults belong to the Nimbus manager, so diagnostics remain
+    // meaningful even when no runtime-using adapter is linked.
     assert_eq!(response.status(), StatusCode::OK);
     let body = response
         .json::<serde_json::Value>()
         .await
         .expect("runtime metrics json should parse");
-    assert!(body["limits"].is_null());
-    assert!(body["reset_capabilities"].is_null());
-    assert!(body["metrics"].is_null());
+    assert_eq!(body["limits"]["runtime_backend"], json!("v8"));
+    assert!(body["reset_capabilities"].is_object());
+    assert!(body["metrics"].is_object());
+    assert_eq!(body["manager"]["lanes"], json!([]));
+    assert_eq!(body["manager"]["active_owners"], json!(0));
+    assert_eq!(
+        body["manager"]["active_owners_by_class"]["tenant"],
+        json!(0)
+    );
     assert_eq!(body["lanes"], json!([]));
 }
 

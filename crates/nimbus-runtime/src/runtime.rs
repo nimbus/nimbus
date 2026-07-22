@@ -32,7 +32,6 @@ mod realm_lifecycle;
 use self::bootstrap::RuntimeCancellationState;
 pub(crate) use self::bootstrap::RuntimeInvocationTimeoutController;
 pub(crate) use self::bundle::RuntimeBundleEntrypointKind;
-pub(crate) use self::bundle::RuntimeBundleIdentity;
 pub use self::bundle::{
     RuntimeBundle, RuntimeBundleContent, RuntimeBundleWasmComponentContent, RuntimeComponentWorld,
 };

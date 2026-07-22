@@ -372,8 +372,12 @@ mod tests {
         let runtime_service_registry = Arc::new(ServiceInstanceBindingRegistry::new(Arc::new(
             EmptyServiceInstanceCatalog,
         )));
-        let mut scope =
-            ConvexHostBridgeScope::new(engine, registry, decision, runtime_service_registry);
+        let mut scope = ConvexHostBridgeScope::new_for_test(
+            engine,
+            registry,
+            decision,
+            runtime_service_registry,
+        );
         if let Some(readiness) = readiness {
             scope = scope.with_egress_readiness(readiness);
         }

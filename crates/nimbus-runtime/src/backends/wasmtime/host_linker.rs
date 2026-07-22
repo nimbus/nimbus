@@ -179,6 +179,8 @@ pub(crate) fn component_linker_diagnostics() -> Result<()> {
             is_top_level: true,
             bypasses_concurrency_limit: true,
             tenant_label: Some("diagnostics".to_string()),
+            runtime_owner_lease: None,
+            deployment_authority_lease: None,
             server_request_id: None,
         },
         None,

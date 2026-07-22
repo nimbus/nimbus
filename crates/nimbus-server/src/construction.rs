@@ -3,7 +3,7 @@ use std::sync::Arc;
 use nimbus_engine::Engine;
 use nimbus_runtime::{
     EffectiveRuntimeScalingPlan, RuntimeAdaptiveControllerSettings, RuntimeHostResourceBudget,
-    RuntimeScalingPlanSet,
+    RuntimeLimits, RuntimeScalingPlanSet,
 };
 
 use crate::adapters::cloud_functions::CloudFunctionsRegistry;
@@ -153,6 +153,10 @@ impl ServeOptions {
     /// guard that later runtime admission consumes.
     pub fn with_runtime_host_resource_budget(self, budget: RuntimeHostResourceBudget) -> Self {
         self.with_router_options(|options| options.with_runtime_host_resource_budget(budget))
+    }
+
+    pub fn with_runtime_limits(self, limits: RuntimeLimits) -> Self {
+        self.with_router_options(|options| options.with_runtime_limits(limits))
     }
 
     pub fn with_runtime_adaptive_controller_settings(

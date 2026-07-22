@@ -8,6 +8,7 @@ use crate::error::Result;
 use crate::executor::RuntimeExecutor;
 use crate::host::{HostBridge, HostCallCancellation};
 use crate::limits::{RuntimeLimits, RuntimePolicy};
+use crate::retained_state::RuntimeOwnerLease;
 
 use super::{InvocationRequest, NimbusRuntime, RuntimeBundle, RuntimeHost};
 
@@ -89,6 +90,23 @@ impl NimbusRuntime {
             .await
     }
 
+    #[cfg(test)]
+    pub(crate) async fn invoke_bundle_for_tenant_for_test(
+        &self,
+        bundle: &RuntimeBundle,
+        request: &InvocationRequest,
+        tenant_label: impl Into<String>,
+    ) -> Result<Value> {
+        let tenant_label = tenant_label.into();
+        self.invoke_bundle_for_tenant_with_owner(
+            bundle,
+            request,
+            tenant_label.clone(),
+            crate::test_support::runtime_owner_lease_for_test(&tenant_label),
+        )
+        .await
+    }
+
     pub async fn invoke_bundle_for_tenant_with_cancellation(
         &self,
         bundle: &RuntimeBundle,
@@ -102,6 +120,65 @@ impl NimbusRuntime {
                 bundle.clone(),
                 request.clone(),
                 RuntimeInvocationContext::top_level_for_tenant(request, tenant_label),
+                cancellation,
+            )
+            .await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn invoke_bundle_for_tenant_with_cancellation_for_test(
+        &self,
+        bundle: &RuntimeBundle,
+        request: &InvocationRequest,
+        tenant_label: impl Into<String>,
+        cancellation: Option<HostCallCancellation>,
+    ) -> Result<Value> {
+        let tenant_label = tenant_label.into();
+        self.invoke_bundle_for_tenant_with_owner_and_cancellation(
+            bundle,
+            request,
+            tenant_label.clone(),
+            crate::test_support::runtime_owner_lease_for_test(&tenant_label),
+            cancellation,
+        )
+        .await
+    }
+
+    pub async fn invoke_bundle_for_tenant_with_owner(
+        &self,
+        bundle: &RuntimeBundle,
+        request: &InvocationRequest,
+        tenant_label: impl Into<String>,
+        runtime_owner_lease: RuntimeOwnerLease,
+    ) -> Result<Value> {
+        self.invoke_bundle_for_tenant_with_owner_and_cancellation(
+            bundle,
+            request,
+            tenant_label,
+            runtime_owner_lease,
+            None,
+        )
+        .await
+    }
+
+    pub async fn invoke_bundle_for_tenant_with_owner_and_cancellation(
+        &self,
+        bundle: &RuntimeBundle,
+        request: &InvocationRequest,
+        tenant_label: impl Into<String>,
+        runtime_owner_lease: RuntimeOwnerLease,
+        cancellation: Option<HostCallCancellation>,
+    ) -> Result<Value> {
+        self.executor()
+            .invoke_on_worker(
+                self.clone(),
+                bundle.clone(),
+                request.clone(),
+                RuntimeInvocationContext::top_level_for_tenant_with_owner(
+                    request,
+                    tenant_label,
+                    runtime_owner_lease,
+                ),
                 cancellation,
             )
             .await
@@ -144,6 +221,22 @@ impl NimbusRuntime {
         )
     }
 
+    #[cfg(test)]
+    pub(crate) fn invoke_bundle_blocking_for_tenant_for_test(
+        &self,
+        bundle: &RuntimeBundle,
+        request: &InvocationRequest,
+        tenant_label: impl Into<String>,
+    ) -> Result<Value> {
+        let tenant_label = tenant_label.into();
+        self.invoke_bundle_blocking_for_tenant_with_owner(
+            bundle,
+            request,
+            tenant_label.clone(),
+            crate::test_support::runtime_owner_lease_for_test(&tenant_label),
+        )
+    }
+
     pub fn invoke_bundle_blocking_for_tenant_with_cancellation(
         &self,
         bundle: &RuntimeBundle,
@@ -156,6 +249,43 @@ impl NimbusRuntime {
             bundle.clone(),
             request.clone(),
             RuntimeInvocationContext::top_level_for_tenant(request, tenant_label),
+            cancellation,
+        )
+    }
+
+    pub fn invoke_bundle_blocking_for_tenant_with_owner(
+        &self,
+        bundle: &RuntimeBundle,
+        request: &InvocationRequest,
+        tenant_label: impl Into<String>,
+        runtime_owner_lease: RuntimeOwnerLease,
+    ) -> Result<Value> {
+        self.invoke_bundle_blocking_for_tenant_with_owner_and_cancellation(
+            bundle,
+            request,
+            tenant_label,
+            runtime_owner_lease,
+            None,
+        )
+    }
+
+    pub fn invoke_bundle_blocking_for_tenant_with_owner_and_cancellation(
+        &self,
+        bundle: &RuntimeBundle,
+        request: &InvocationRequest,
+        tenant_label: impl Into<String>,
+        runtime_owner_lease: RuntimeOwnerLease,
+        cancellation: Option<HostCallCancellation>,
+    ) -> Result<Value> {
+        self.executor().invoke_blocking_with_cancellation(
+            self.clone(),
+            bundle.clone(),
+            request.clone(),
+            RuntimeInvocationContext::top_level_for_tenant_with_owner(
+                request,
+                tenant_label,
+                runtime_owner_lease,
+            ),
             cancellation,
         )
     }

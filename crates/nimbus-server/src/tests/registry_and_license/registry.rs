@@ -307,7 +307,6 @@ fn convex_registry_selects_bun_jsc_lane_from_manifest_metadata() {
         .iter()
         .find(|lane| lane.lane_name == "bun_jsc")
         .expect("Bun/JSC lane diagnostics should be present");
-    assert!(!bun_diagnostics.executor_started);
     assert_eq!(
         bun_diagnostics.execution_adapter_state,
         nimbus_runtime::RuntimeExecutionAdapterState::NotLinked
@@ -449,7 +448,6 @@ fn convex_registry_runtime_limit_overrides_do_not_leak_backend_axes_across_lanes
         RuntimeMemoryEnforcement::OuterQuotaRequired
     );
     assert_eq!(bun.limits.max_heap_mb, 96);
-    assert!(!bun.executor_started);
 }
 
 #[test]
