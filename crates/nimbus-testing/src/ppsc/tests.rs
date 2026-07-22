@@ -174,6 +174,39 @@ fn ppsc_backend_capability_table_rejects_unsupported_steps() {
 }
 
 #[test]
+fn ppsc_embedded_backend_rejects_provider_authority_steps() {
+    for (operation, expected) in [
+        (
+            PpscOperation::ExpireProviderLease {
+                tenant: "tenant-a".to_string(),
+            },
+            PpscExpectedOutcome::Observed,
+        ),
+        (
+            PpscOperation::ProviderTakeover {
+                tenant: "tenant-a".to_string(),
+            },
+            PpscExpectedOutcome::Committed,
+        ),
+        (
+            PpscOperation::AttemptStaleProviderWrite {
+                tenant: "tenant-a".to_string(),
+            },
+            PpscExpectedOutcome::Fenced,
+        ),
+    ] {
+        let scenario = one_step_scenario(operation, expected);
+        for backend in [PpscBackend::Redb, PpscBackend::Sqlite] {
+            let error = scenario
+                .validate_for_backend(backend)
+                .expect_err("embedded adapters must reject provider-authority operations");
+            assert!(error.to_string().contains("provider sequence authority"));
+            assert!(error.to_string().contains("NIMBUS_PPSC_SEED=17"));
+        }
+    }
+}
+
+#[test]
 fn ppsc_legal_state_auditor_accepts_every_declared_terminal_state() {
     let scenario = one_step_scenario(
         PpscOperation::AdvanceWallClock { millis: 1 },

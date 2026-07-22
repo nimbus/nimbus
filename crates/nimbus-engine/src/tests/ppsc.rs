@@ -5,11 +5,13 @@ use nimbus_core::{
     SeededIdSource, TenantEventKind, TriggerDeliveryCursor, hex_encode,
 };
 use nimbus_storage::PointInTimeRestoreArchive;
+use nimbus_storage::provider_test_fixtures::ProviderLeaseTimeControl;
 use nimbus_testing::ppsc::{
     PpscBackend, PpscCommitOrder, PpscEffect, PpscExpectedOutcome, PpscFrontiers, PpscHistory,
     PpscInjectedFault, PpscJournalEntry, PpscObservedStep, PpscOperation, PpscPublication,
     PpscRoute, PpscScenario, PpscSequenceClaim, PpscSequenceOwnership, PpscStep,
     PpscStorageFaultInjector, PpscTenantState, PpscTerminalState, audit_ppsc_history,
+    retained_ppsc_scenarios, retained_provider_authority_scenarios,
 };
 
 use super::*;
@@ -35,6 +37,9 @@ struct PpscEngineRunner {
     tenants: BTreeMap<String, TenantId>,
     publisher_limited_tenants: BTreeSet<TenantId>,
     restore_archives: BTreeMap<u64, PointInTimeRestoreArchive>,
+    takeover_engine_factory: Option<PpscEngineFactory>,
+    provider_lease_time_control: Option<Arc<dyn ProviderLeaseTimeControl>>,
+    stale_engine: Option<Arc<Engine>>,
     crashed_heads: Option<BTreeMap<String, u64>>,
     crashed_runtime_identities: Option<BTreeMap<String, u64>>,
     scenario_seed: u64,
@@ -257,6 +262,9 @@ impl PpscEngineRunner {
             tenants,
             publisher_limited_tenants,
             restore_archives,
+            takeover_engine_factory: None,
+            provider_lease_time_control: None,
+            stale_engine: None,
             crashed_heads: None,
             crashed_runtime_identities: None,
             scenario_seed: scenario.seed,
@@ -326,6 +334,9 @@ impl PpscEngineRunner {
 
         let terminal = self.terminal_state().await;
         self.engine.quiesce().await;
+        if let Some(stale_engine) = self.stale_engine.take() {
+            stale_engine.quiesce().await;
+        }
         PpscHistory {
             backend: self.backend,
             scenario,
@@ -688,6 +699,58 @@ impl PpscEngineRunner {
                 self.monotonic_clock.advance(Duration::from_millis(*millis));
                 PpscExpectedOutcome::Observed
             }
+            PpscOperation::ExpireProviderLease { tenant } => {
+                assert_eq!(expected, PpscExpectedOutcome::Observed);
+                let control = self
+                    .provider_lease_time_control
+                    .as_ref()
+                    .expect("provider-authority scenario requires lease-time control");
+                assert_eq!(
+                    control.provider_name(),
+                    self.backend.as_str(),
+                    "provider lease-time adapter must match the scenario backend"
+                );
+                control
+                    .expire_lease(self.tenant(tenant))
+                    .await
+                    .expect("provider-owned committer lease should expire");
+                PpscExpectedOutcome::Observed
+            }
+            PpscOperation::ProviderTakeover { tenant } => {
+                assert_eq!(expected, PpscExpectedOutcome::Committed);
+                self.take_over_provider_tenant(index, tenant).await;
+                PpscExpectedOutcome::Committed
+            }
+            PpscOperation::AttemptStaleProviderWrite { tenant } => {
+                assert_eq!(expected, PpscExpectedOutcome::Fenced);
+                let stale_engine = self
+                    .stale_engine
+                    .as_ref()
+                    .expect("stale-writer step requires a completed provider takeover")
+                    .clone();
+                let error = self
+                    .commit_route_insert_with_engine(
+                        &stale_engine,
+                        index,
+                        tenant,
+                        PpscRoute::QueuedJournal,
+                        "provider-stale-writer",
+                        provider_takeover_value(self.scenario_seed).saturating_add(1),
+                    )
+                    .await
+                    .expect_err("stale provider writer must be fenced");
+                assert!(
+                    matches!(error, Error::CommitterFenced { .. }),
+                    "stale provider write must retain the typed fence error: {error}"
+                );
+                assert_eq!(error.retryability(), nimbus_core::Retryability::Terminal);
+                assert_ne!(
+                    error.commit_class(),
+                    Some(nimbus_core::CommitErrorClass::Conflict),
+                    "provider fencing is not an OCC conflict"
+                );
+                PpscExpectedOutcome::Fenced
+            }
             PpscOperation::Crash => {
                 assert!(self.backend.capabilities().durable_reopen);
                 self.crashed_heads = Some(self.journal_heads());
@@ -712,7 +775,6 @@ impl PpscEngineRunner {
                 PpscExpectedOutcome::Observed
             }
             PpscOperation::Quiesce => PpscExpectedOutcome::Shutdown,
-            other => panic!("PPSC Engine runner does not yet implement operation {other:?}"),
         }
     }
 
@@ -730,26 +792,40 @@ impl PpscEngineRunner {
         key: &str,
         value: i64,
     ) -> nimbus_core::Result<()> {
+        self.commit_route_insert_with_engine(
+            &self.engine.current(),
+            step,
+            tenant,
+            route,
+            key,
+            value,
+        )
+        .await
+    }
+
+    async fn commit_route_insert_with_engine(
+        &self,
+        engine: &Arc<Engine>,
+        step: usize,
+        tenant: &str,
+        route: PpscRoute,
+        key: &str,
+        value: i64,
+    ) -> nimbus_core::Result<()> {
         let tenant_id = self.tenant(tenant).clone();
         let document_id = ppsc_document_id(self.scenario_seed, step, key);
         let fields = ppsc_fields(key, value);
         match route {
             PpscRoute::QueuedJournal => {
-                self.engine
+                engine
                     .insert_document_async_with_id(tenant_id, tasks_table(), document_id, fields)
                     .await?;
             }
             PpscRoute::Direct => {
-                self.engine.insert_document_with_id(
-                    &tenant_id,
-                    tasks_table(),
-                    document_id,
-                    fields,
-                )?;
+                engine.insert_document_with_id(&tenant_id, tasks_table(), document_id, fields)?;
             }
             PpscRoute::ExecutionUnit => {
-                let unit = self
-                    .engine
+                let unit = engine
                     .begin_mutation_execution_unit(tenant_id, PrincipalContext::anonymous())?;
                 unit.insert_document_with_id(tasks_table(), Some(document_id), fields)?;
                 unit.commit()?
@@ -757,6 +833,57 @@ impl PpscEngineRunner {
             }
         }
         Ok(())
+    }
+
+    async fn take_over_provider_tenant(&mut self, step: usize, tenant: &str) {
+        assert!(
+            self.backend.capabilities().provider_authority,
+            "provider takeover requires provider sequence authority"
+        );
+        assert!(
+            self.stale_engine.is_none(),
+            "one bounded PPSC scenario may perform at most one provider takeover"
+        );
+        let factory = self
+            .takeover_engine_factory
+            .take()
+            .expect("provider takeover requires an independent Engine factory");
+        let takeover_engine = factory
+            .build(
+                self.wall_clock.clone(),
+                self.monotonic_clock.clone(),
+                self.storage_faults.clone(),
+                self.id_source.clone(),
+            )
+            .await;
+        takeover_engine
+            .install_committed_mutation_observer(PPSC_OBSERVER, self.publications.clone());
+        for tenant_id in self.tenants.values() {
+            takeover_engine
+                .ensure_tenant_ready_async(tenant_id.clone())
+                .await
+                .expect("takeover Engine should open every scenario tenant");
+            takeover_engine
+                .shutdown_trigger_candidates_for_testing(tenant_id)
+                .expect("takeover Engine trigger worker should stop before continuation");
+            takeover_engine
+                .flush_tenant_committer_for_testing(tenant_id)
+                .await
+                .expect("takeover Engine should reconcile before continuation");
+        }
+
+        let stale_engine = self.engine.replace(takeover_engine);
+        self.engine_factory = factory;
+        self.stale_engine = Some(stale_engine);
+        self.commit_route_insert(
+            step,
+            tenant,
+            PpscRoute::QueuedJournal,
+            "provider-takeover",
+            provider_takeover_value(self.scenario_seed),
+        )
+        .await
+        .expect("successor provider Engine should acquire the expired lease and commit");
     }
 
     async fn reopen_engine(&mut self) {
@@ -1355,27 +1482,253 @@ async fn ppsc_durable_crash_reopen_preserves_prefix_and_continues() {
     assert_eq!(terminal_states[0], terminal_states[1]);
 }
 
-pub(crate) async fn exercise_ppsc_provider_three_route_differential(
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn redb_ppsc_seeded_journal_differential() {
+    for scenario in retained_ppsc_scenarios() {
+        let first = PpscEngineRunner::new_embedded(PpscBackend::Redb, &scenario)
+            .await
+            .run(scenario.clone())
+            .await;
+        let replay = PpscEngineRunner::new_embedded(PpscBackend::Redb, &scenario)
+            .await
+            .run(scenario.clone())
+            .await;
+        audit_ppsc_history(&first).unwrap_or_else(|error| panic!("redb first run: {error}"));
+        audit_ppsc_history(&replay).unwrap_or_else(|error| panic!("redb replay: {error}"));
+        assert_ppsc_terminal_matches(
+            PpscBackend::Redb,
+            &scenario,
+            &first.terminal,
+            &replay.terminal,
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn sqlite_ppsc_seeded_journal_differential() {
+    for scenario in retained_ppsc_scenarios() {
+        let oracle = PpscEngineRunner::new_embedded(PpscBackend::Redb, &scenario)
+            .await
+            .run(scenario.clone())
+            .await;
+        let sqlite = PpscEngineRunner::new_embedded(PpscBackend::Sqlite, &scenario)
+            .await
+            .run(scenario.clone())
+            .await;
+        audit_ppsc_history(&oracle).unwrap_or_else(|error| panic!("redb oracle: {error}"));
+        audit_ppsc_history(&sqlite).unwrap_or_else(|error| panic!("sqlite: {error}"));
+        assert_ppsc_terminal_matches(
+            PpscBackend::Sqlite,
+            &scenario,
+            &oracle.terminal,
+            &sqlite.terminal,
+        );
+    }
+}
+
+pub(crate) async fn exercise_ppsc_provider_retained_differential(
     backend: PpscBackend,
     config: EnginePersistenceConfig,
 ) {
-    let scenario = three_route_scenario();
-    let oracle = PpscEngineRunner::new_embedded(PpscBackend::Redb, &scenario)
-        .await
-        .run(scenario.clone())
-        .await;
-    let provider = PpscEngineRunner::new_configured_provider(backend, &scenario, config)
-        .await
-        .run(scenario)
-        .await;
+    for scenario in retained_ppsc_scenarios() {
+        let oracle = PpscEngineRunner::new_embedded(PpscBackend::Redb, &scenario)
+            .await
+            .run(scenario.clone())
+            .await;
+        let provider =
+            PpscEngineRunner::new_configured_provider(backend, &scenario, config.clone())
+                .await
+                .run(scenario.clone())
+                .await;
 
-    audit_ppsc_history(&oracle).unwrap_or_else(|error| panic!("redb oracle: {error}"));
-    audit_ppsc_history(&provider)
-        .unwrap_or_else(|error| panic!("{} provider: {error}", backend.as_str()));
-    assert_eq!(
-        provider.terminal,
-        oracle.terminal,
-        "{} should match the redb terminal state and canonical journal bytes",
-        backend.as_str()
-    );
+        audit_ppsc_history(&oracle).unwrap_or_else(|error| panic!("redb oracle: {error}"));
+        audit_ppsc_history(&provider)
+            .unwrap_or_else(|error| panic!("{} provider: {error}", backend.as_str()));
+        assert_ppsc_terminal_matches(backend, &scenario, &oracle.terminal, &provider.terminal);
+    }
+}
+
+pub(crate) async fn exercise_ppsc_provider_authority_extension(
+    backend: PpscBackend,
+    first_config: EnginePersistenceConfig,
+    takeover_config: EnginePersistenceConfig,
+    lease_time_control: Arc<dyn ProviderLeaseTimeControl>,
+) {
+    for scenario in retained_provider_authority_scenarios() {
+        let oracle_scenario = provider_authority_terminal_oracle(&scenario);
+        let oracle = PpscEngineRunner::new_embedded(PpscBackend::Redb, &oracle_scenario)
+            .await
+            .run(oracle_scenario)
+            .await;
+        let mut provider =
+            PpscEngineRunner::new_configured_provider(backend, &scenario, first_config.clone())
+                .await;
+        provider.takeover_engine_factory = Some(PpscEngineFactory::Configured(Box::new(
+            takeover_config.clone(),
+        )));
+        provider.provider_lease_time_control = Some(lease_time_control.clone());
+        let provider = provider.run(scenario.clone()).await;
+
+        audit_ppsc_history(&oracle)
+            .unwrap_or_else(|error| panic!("provider terminal oracle: {error}"));
+        audit_ppsc_history(&provider)
+            .unwrap_or_else(|error| panic!("{} provider authority: {error}", backend.as_str()));
+        assert_ppsc_terminal_matches(backend, &scenario, &oracle.terminal, &provider.terminal);
+    }
+}
+
+fn provider_authority_terminal_oracle(scenario: &PpscScenario) -> PpscScenario {
+    let steps = scenario
+        .steps
+        .iter()
+        .map(|step| match &step.operation {
+            PpscOperation::ExpireProviderLease { .. }
+            | PpscOperation::AttemptStaleProviderWrite { .. } => PpscStep::new(
+                PpscOperation::AdvanceMonotonicClock { millis: 0 },
+                PpscExpectedOutcome::Observed,
+            ),
+            PpscOperation::ProviderTakeover { tenant } => PpscStep::new(
+                PpscOperation::Mutation {
+                    tenant: tenant.clone(),
+                    route: PpscRoute::QueuedJournal,
+                    key: "provider-takeover".to_string(),
+                    value: provider_takeover_value(scenario.seed),
+                },
+                PpscExpectedOutcome::Committed,
+            ),
+            _ => step.clone(),
+        })
+        .collect();
+    PpscScenario::new(
+        format!("{}-terminal-oracle", scenario.name),
+        scenario.seed,
+        steps,
+    )
+    .expect("provider-authority terminal oracle should remain a valid bounded scenario")
+}
+
+fn provider_takeover_value(seed: u64) -> i64 {
+    i64::try_from(seed).expect("retained PPSC seed should fit in i64")
+}
+
+fn assert_ppsc_terminal_matches(
+    backend: PpscBackend,
+    scenario: &PpscScenario,
+    oracle: &PpscTerminalState,
+    candidate: &PpscTerminalState,
+) {
+    if candidate == oracle {
+        return;
+    }
+    let tenant_names = oracle
+        .tenants
+        .keys()
+        .chain(candidate.tenants.keys())
+        .collect::<BTreeSet<_>>();
+    for tenant in tenant_names {
+        let Some(expected) = oracle.tenants.get(tenant) else {
+            panic!(
+                "PPSC {} seed {} has unexpected tenant {tenant}; replay: {}",
+                backend.as_str(),
+                scenario.seed,
+                scenario.replay_command(backend)
+            );
+        };
+        let Some(actual) = candidate.tenants.get(tenant) else {
+            panic!(
+                "PPSC {} seed {} is missing tenant {tenant}; replay: {}",
+                backend.as_str(),
+                scenario.seed,
+                scenario.replay_command(backend)
+            );
+        };
+        if actual.frontiers != expected.frontiers {
+            panic!(
+                "PPSC {} seed {} tenant {tenant} frontier divergence: expected {:?}, actual {:?}; replay: {}",
+                backend.as_str(),
+                scenario.seed,
+                expected.frontiers,
+                actual.frontiers,
+                scenario.replay_command(backend)
+            );
+        }
+        if actual.journal.len() != expected.journal.len() {
+            panic!(
+                "PPSC {} seed {} tenant {tenant} journal length divergence: expected {}, actual {}; frontiers {:?}; replay: {}",
+                backend.as_str(),
+                scenario.seed,
+                expected.journal.len(),
+                actual.journal.len(),
+                actual.frontiers,
+                scenario.replay_command(backend)
+            );
+        }
+        for (index, (expected_record, actual_record)) in expected
+            .journal
+            .iter()
+            .zip(actual.journal.iter())
+            .enumerate()
+        {
+            if expected_record == actual_record {
+                continue;
+            }
+            let expected_kind = ppsc_record_kind(&expected_record.canonical_bytes);
+            let actual_kind = ppsc_record_kind(&actual_record.canonical_bytes);
+            let byte_offset = expected_record
+                .canonical_bytes
+                .iter()
+                .zip(actual_record.canonical_bytes.iter())
+                .position(|(expected, actual)| expected != actual)
+                .unwrap_or_else(|| {
+                    expected_record
+                        .canonical_bytes
+                        .len()
+                        .min(actual_record.canonical_bytes.len())
+                });
+            panic!(
+                "PPSC {} seed {} tenant {tenant} first journal divergence at record {index}, sequence expected {} actual {}, byte {byte_offset}, lengths expected {} actual {}, event kinds expected {expected_kind} actual {actual_kind}; frontiers {:?}; replay: {}",
+                backend.as_str(),
+                scenario.seed,
+                expected_record.sequence,
+                actual_record.sequence,
+                expected_record.canonical_bytes.len(),
+                actual_record.canonical_bytes.len(),
+                actual.frontiers,
+                scenario.replay_command(backend)
+            );
+        }
+        for (field, matches) in [
+            ("publications", actual.publications == expected.publications),
+            ("documents", actual.documents == expected.documents),
+            ("schema", actual.schema == expected.schema),
+            (
+                "scheduled-jobs",
+                actual.scheduled_jobs == expected.scheduled_jobs,
+            ),
+            (
+                "trigger-cursor",
+                actual.trigger_cursor == expected.trigger_cursor,
+            ),
+            (
+                "projection-durable-sequence",
+                actual.projection_durable_sequence == expected.projection_durable_sequence,
+            ),
+        ] {
+            if !matches {
+                panic!(
+                    "PPSC {} seed {} tenant {tenant} terminal field {field} diverged after identical journal/frontiers; replay: {}",
+                    backend.as_str(),
+                    scenario.seed,
+                    scenario.replay_command(backend)
+                );
+            }
+        }
+    }
+    unreachable!("a terminal-state difference must identify a tenant field")
+}
+
+fn ppsc_record_kind(bytes: &[u8]) -> String {
+    nimbus_storage::commit_log::deserialize_tenant_event_record(bytes)
+        .map(|record| record_kind(record.events()))
+        .unwrap_or_else(|error| format!("invalid-record:{error}"))
 }

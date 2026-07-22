@@ -94,6 +94,12 @@ impl PpscEngineSlot {
         assert!(self.0.is_none(), "PPSC reopen requires a crashed Engine");
         self.0 = Some(engine);
     }
+
+    pub(super) fn replace(&mut self, engine: Arc<Engine>) -> Arc<Engine> {
+        self.0
+            .replace(engine)
+            .expect("PPSC takeover requires a running Engine")
+    }
 }
 
 impl Deref for PpscEngineSlot {
