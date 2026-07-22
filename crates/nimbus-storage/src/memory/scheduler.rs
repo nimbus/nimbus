@@ -171,6 +171,38 @@ impl MemoryTenantStore {
             .collect())
     }
 
+    pub fn get_pending_scheduled_job(&self, job_id: &DocumentId) -> Result<Option<ScheduledJob>> {
+        Ok(self
+            .read_state()?
+            .scheduled_jobs
+            .values()
+            .find(|job| &job.id == job_id)
+            .cloned())
+    }
+
+    pub fn get_running_scheduled_job(&self, job_id: &DocumentId) -> Result<Option<ScheduledJob>> {
+        Ok(self.read_state()?.running_jobs.get(job_id).cloned())
+    }
+
+    pub fn peek_due_scheduled_jobs(
+        &self,
+        now: Timestamp,
+        max_jobs: usize,
+    ) -> Result<Vec<ScheduledJob>> {
+        Ok(self
+            .read_state()?
+            .scheduled_jobs
+            .values()
+            .take_while(|job| job.run_at <= now)
+            .take(max_jobs)
+            .cloned()
+            .collect())
+    }
+
+    pub fn list_running_scheduled_jobs(&self) -> Result<Vec<ScheduledJob>> {
+        Ok(self.read_state()?.running_jobs.values().cloned().collect())
+    }
+
     pub fn save_cron_job(&self, cron: &CronJob) -> Result<()> {
         self.execute_write(|transaction| transaction.save_cron_job(cron))?;
         Ok(())
@@ -183,6 +215,10 @@ impl MemoryTenantStore {
 
     pub fn load_cron_jobs(&self) -> Result<Vec<CronJob>> {
         Ok(self.read_state()?.cron_jobs.values().cloned().collect())
+    }
+
+    pub fn get_cron_job(&self, name: &str) -> Result<Option<CronJob>> {
+        Ok(self.read_state()?.cron_jobs.get(name).cloned())
     }
 
     pub fn next_scheduled_work_at(&self) -> Result<Option<Timestamp>> {

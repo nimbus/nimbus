@@ -731,6 +731,26 @@ impl SqliteReadSnapshot {
         load_scheduled_jobs_from_conn(&self.conn, "scheduled_jobs")
     }
 
+    pub fn get_pending_scheduled_job(&self, job_id: &JobId) -> Result<Option<ScheduledJob>> {
+        load_scheduled_job_by_id_from_conn(&self.conn, "scheduled_jobs", job_id)
+    }
+
+    pub fn list_running_scheduled_jobs(&self) -> Result<Vec<ScheduledJob>> {
+        load_scheduled_jobs_from_conn(&self.conn, "running_scheduled_jobs")
+    }
+
+    pub fn get_running_scheduled_job(&self, job_id: &JobId) -> Result<Option<ScheduledJob>> {
+        load_scheduled_job_by_id_from_conn(&self.conn, "running_scheduled_jobs", job_id)
+    }
+
+    pub fn peek_due_scheduled_jobs(
+        &self,
+        now: Timestamp,
+        max_jobs: usize,
+    ) -> Result<Vec<ScheduledJob>> {
+        load_due_scheduled_jobs_from_conn(&self.conn, now, max_jobs)
+    }
+
     pub fn get_scheduled_job_result(&self, job_id: &JobId) -> Result<Option<ScheduledJobResult>> {
         self.conn
             .query_row(
@@ -761,6 +781,19 @@ impl SqliteReadSnapshot {
             )?);
         }
         Ok(crons)
+    }
+
+    pub fn get_cron_job(&self, name: &str) -> Result<Option<CronJob>> {
+        self.conn
+            .query_row(
+                "SELECT data_json FROM cron_jobs WHERE name = ?1",
+                params![name],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(map_sqlite_error)?
+            .map(|json| deserialize_json::<CronJob>(json.as_str()))
+            .transpose()
     }
 
     pub fn next_scheduled_work_at(&self) -> Result<Option<Timestamp>> {

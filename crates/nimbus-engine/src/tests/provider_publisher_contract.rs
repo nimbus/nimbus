@@ -66,8 +66,8 @@ pub(crate) async fn exercise_provider_publisher_contract(
         .await
         .expect("contract tenant should be admitted through the async lifecycle");
     engine
-        .shutdown_trigger_candidates_for_testing(&tenant_id)
-        .expect("trigger cursor should not add unrelated contract records");
+        .disable_trigger_candidates_for_testing(&tenant_id)
+        .expect("trigger cursor should remain suppressed for the parity contract");
     assert_eq!(
         engine
             .mutation_journal_stats_for_testing(&tenant_id)
@@ -147,6 +147,145 @@ pub(crate) async fn exercise_provider_publisher_contract(
         .complete_scheduled_job_async(tenant_id.clone(), scheduled_job_id)
         .await
         .expect("scheduled job completion should persist");
+
+    // A provider may durably commit a scheduler transition and lose only its
+    // acknowledgement. The storage-owned pre/post-state proof must return the
+    // original result instead of surfacing an error that invites a duplicate
+    // insert or strands a claimed job.
+    engine
+        .commit_fault_handle_for_testing()
+        .inject_error_on_nth_hit(
+            crate::engine::commit_fault_labels::SCHEDULER_DURABLE_BEFORE_ACK,
+            1,
+            Error::Internal("injected scheduler insert acknowledgement loss".to_string()),
+        );
+    let ack_lost_job_id = engine
+        .schedule_mutation_async(
+            tenant_id.clone(),
+            nimbus_core::ScheduleRequest {
+                run_after_ms: 0,
+                mutation: nimbus_core::Mutation::Insert {
+                    table: tasks_table(),
+                    id: None,
+                    fields: marker("scheduler-ack-loss"),
+                },
+            },
+        )
+        .await
+        .expect("committed scheduler insert must survive acknowledgement loss");
+    assert_eq!(
+        engine
+            .list_scheduled_jobs_async(tenant_id.clone())
+            .await
+            .expect("acknowledged scheduler state should read")
+            .iter()
+            .filter(|job| job.id == ack_lost_job_id)
+            .count(),
+        1,
+        "acknowledgement recovery must not duplicate the scheduled job"
+    );
+    engine
+        .commit_fault_handle_for_testing()
+        .inject_error_on_nth_hit(
+            crate::engine::commit_fault_labels::SCHEDULER_DURABLE_BEFORE_ACK,
+            1,
+            Error::Internal("injected scheduler claim acknowledgement loss".to_string()),
+        );
+    let ack_lost_claim = engine
+        .claim_due_jobs_async(tenant_id.clone(), Timestamp(u64::MAX))
+        .await
+        .expect("committed scheduler claim must return its original jobs after ack loss");
+    assert_eq!(
+        ack_lost_claim
+            .iter()
+            .map(|job| job.id.clone())
+            .collect::<Vec<_>>(),
+        vec![ack_lost_job_id.clone()]
+    );
+    engine
+        .complete_scheduled_job_async(tenant_id.clone(), ack_lost_job_id)
+        .await
+        .expect("ack-loss test job should complete");
+
+    // Cancellation must reach the one-shot recovery transaction, not only the
+    // requested write that follows it. A cancelled recovery stays armed and
+    // leaves the orphaned running job untouched for the next authority-owned
+    // scheduler operation.
+    let recovery_job_id = engine
+        .schedule_mutation_async(
+            tenant_id.clone(),
+            nimbus_core::ScheduleRequest {
+                run_after_ms: 0,
+                mutation: nimbus_core::Mutation::Insert {
+                    table: tasks_table(),
+                    id: None,
+                    fields: marker("scheduler-recovery-cancel"),
+                },
+            },
+        )
+        .await
+        .expect("recovery cancellation job should schedule");
+    assert_eq!(
+        engine
+            .claim_due_jobs_async(tenant_id.clone(), Timestamp(u64::MAX))
+            .await
+            .expect("recovery cancellation job should enter running state")
+            .len(),
+        1
+    );
+    engine
+        .arm_scheduler_recovery_for_testing(&tenant_id)
+        .expect("scheduler recovery should arm for the cancellation test");
+    let cancellation_checks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let cancellation_checks_for_write = cancellation_checks.clone();
+    let error = engine
+        .schedule_mutation_async_cancellable(
+            tenant_id.clone(),
+            nimbus_core::ScheduleRequest {
+                run_after_ms: 1_000,
+                mutation: nimbus_core::Mutation::Insert {
+                    table: tasks_table(),
+                    id: None,
+                    fields: marker("must-not-land-after-recovery-cancel"),
+                },
+            },
+            std::future::pending(),
+            move || {
+                if cancellation_checks_for_write.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                    == 0
+                {
+                    Ok(())
+                } else {
+                    Err(Error::Cancelled)
+                }
+            },
+        )
+        .await
+        .expect_err("cancellation during recovery must reach the caller");
+    assert!(matches!(error, Error::Cancelled));
+    assert!(
+        engine
+            .list_scheduled_jobs_async(tenant_id.clone())
+            .await
+            .expect("cancelled recovery state should remain readable")
+            .is_empty(),
+        "cancelled recovery must not move the running job back to pending"
+    );
+    let recovered_claim = engine
+        .claim_due_jobs_async(tenant_id.clone(), Timestamp(u64::MAX))
+        .await
+        .expect("the next scheduler write should retry recovery and claim the orphan");
+    assert_eq!(
+        recovered_claim
+            .iter()
+            .map(|job| job.id.clone())
+            .collect::<Vec<_>>(),
+        vec![recovery_job_id.clone()]
+    );
+    engine
+        .complete_scheduled_job_async(tenant_id.clone(), recovery_job_id)
+        .await
+        .expect("recovered cancellation job should complete");
 
     // A failed assignment must discard its staged suffix. Retrying the exact
     // document identity then commits once, proving the public replay boundary
@@ -386,6 +525,10 @@ pub(crate) async fn exercise_provider_publisher_contract(
             nimbus_core::TenantEventKind::Barrier { .. } => "barrier",
         })
         .collect::<Vec<_>>();
+    assert!(
+        !journal_event_kinds.contains(&"trigger_delivery"),
+        "the parity contract must not admit timing-dependent trigger cursor writes"
+    );
     let final_sequence = engine
         .latest_sequence_async(tenant_id.clone())
         .await

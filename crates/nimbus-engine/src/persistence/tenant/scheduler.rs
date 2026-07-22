@@ -22,6 +22,20 @@ impl TenantPersistence {
         })
     }
 
+    pub(crate) fn prepare_scheduler_write(
+        &self,
+        operation: SchedulerWrite,
+    ) -> Result<nimbus_storage::PreparedSchedulerWrite> {
+        match_tenant_persistence!(self, |store| { store.prepare_scheduler_write(operation) })
+    }
+
+    pub(crate) fn reconcile_scheduler_write(
+        &self,
+        prepared: &nimbus_storage::PreparedSchedulerWrite,
+    ) -> Result<nimbus_storage::SchedulerWriteReconciliation> {
+        match_tenant_persistence!(self, |store| { store.reconcile_scheduler_write(prepared) })
+    }
+
     pub(crate) fn fenced_scheduler_write_cancellable<Check>(
         &self,
         owner_id: &str,

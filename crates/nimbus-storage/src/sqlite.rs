@@ -56,7 +56,8 @@ use self::journal::{
 pub(crate) use self::scheduler::scheduled_run_at_key;
 use self::scheduler::{
     apply_schedule_ops_in_transaction, begin_scheduled_execution_in_conn,
-    load_due_scheduled_jobs_from_conn, load_scheduled_jobs_from_conn,
+    load_due_scheduled_jobs_from_conn, load_scheduled_job_by_id_from_conn,
+    load_scheduled_jobs_from_conn,
 };
 pub(crate) use self::schema::rebuild_sqlite_indexes_from_loaded_schema;
 use self::schema::{

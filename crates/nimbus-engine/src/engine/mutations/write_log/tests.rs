@@ -1,5 +1,7 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{self, TryRecvError};
+use std::time::{Duration, Instant};
 
 use nimbus_core::{
     Filter, FilterOp, IndexId, IndexRangeDependency, ManualWallClock, PaginatedWindowDependency,
@@ -260,13 +262,12 @@ fn frontier_diagnostics_remain_ordered_under_concurrent_sampling() {
     let log = Arc::new(test_log(WriteLogConfig::for_tests(30, 300, usize::MAX)));
     let durable_head = Arc::new(AtomicU64::new(0));
     let applied_head = Arc::new(AtomicU64::new(0));
-    let finished = Arc::new(AtomicBool::new(false));
+    let (finished_tx, finished_rx) = mpsc::sync_channel(1);
 
     let writer = {
         let log = Arc::clone(&log);
         let durable_head = Arc::clone(&durable_head);
         let applied_head = Arc::clone(&applied_head);
-        let finished = Arc::clone(&finished);
         std::thread::spawn(move || {
             for sequence in 1..=COMMITS {
                 let sequence = SequenceNumber(sequence);
@@ -276,12 +277,26 @@ fn frontier_diagnostics_remain_ordered_under_concurrent_sampling() {
                 log.publish_pending_through(sequence, Timestamp(sequence.0), SequenceNumber(0));
                 applied_head.store(sequence.0, Ordering::Release);
             }
-            finished.store(true, Ordering::Release);
+            finished_tx
+                .send(())
+                .expect("frontier sampler should remain connected");
         })
     };
 
     let mut previous: Option<MutationFrontierStats> = None;
-    while !finished.load(Ordering::Acquire) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match finished_rx.try_recv() {
+            Ok(()) => break,
+            Err(TryRecvError::Empty) => {}
+            Err(TryRecvError::Disconnected) => {
+                panic!("frontier writer exited without reporting completion")
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "frontier writer did not finish within five seconds; last sample: {previous:?}"
+        );
         let before = JournalFrontierSample {
             durable_head: SequenceNumber(durable_head.load(Ordering::Acquire)),
             applied_head: SequenceNumber(applied_head.load(Ordering::Acquire)),

@@ -4,6 +4,10 @@ use std::{future::Future, sync::Arc};
 use nimbus_core::{Error, Result, ScheduledJob, TenantId};
 use nimbus_storage::{SchedulerWrite, SchedulerWriteResult};
 
+use crate::engine::execution_units::labels;
+use crate::engine::mutations::{
+    finish_durable_recovery_eviction, finish_durable_recovery_eviction_blocking,
+};
 use crate::engine::tenants::with_tenant_runtime_operation;
 use crate::persistence::TenantPersistence;
 use crate::{Engine, tenant::TenantRuntime};
@@ -54,32 +58,38 @@ where
         .await
 }
 
-pub(super) fn write_loaded_scheduler_state(
-    runtime: Arc<TenantRuntime>,
-    operation: SchedulerWrite,
-) -> Result<SchedulerWriteResult> {
-    let recovery_now = match &operation {
-        SchedulerWrite::RecoverRunning { now } => *now,
-        _ => nimbus_core::Timestamp(0),
-    };
-    let runtime_for_commit = runtime.clone();
-    runtime.submit_internal_committer(move || {
-        runtime_for_commit.persist_scheduler_write(operation, recovery_now, || Ok(()))
-    })
-}
-
 pub(super) fn write_scheduler_state_blocking(
     engine: &Engine,
     tenant_id: &TenantId,
     operation: SchedulerWrite,
 ) -> Result<SchedulerWriteResult> {
     let runtime = engine.get_existing_tenant(tenant_id)?;
-    let _operation = runtime.enter_operation(tenant_id)?;
+    let operation_guard = runtime.enter_operation(tenant_id)?;
     let recovery_now = engine.now();
+    let initiated_eviction = Arc::new(AtomicBool::new(false));
+    let initiated_eviction_for_commit = initiated_eviction.clone();
     let runtime_for_commit = runtime.clone();
-    runtime.submit_internal_committer(move || {
-        runtime_for_commit.persist_scheduler_write(operation, recovery_now, || Ok(()))
-    })
+    let commit_faults = engine.commit_faults.clone();
+    let result = runtime.submit_internal_committer(move || {
+        runtime_for_commit.persist_scheduler_write(
+            operation,
+            recovery_now,
+            || Ok(()),
+            move || {
+                commit_faults
+                    .wait(labels::SCHEDULER_DURABLE_BEFORE_ACK)
+                    .into_result()
+            },
+            initiated_eviction_for_commit,
+        )
+    });
+    drop(operation_guard);
+    if initiated_eviction.load(Ordering::Acquire) {
+        let _ = runtime.wait_for_committed_mutation_observers_drained_blocking();
+        runtime.wait_for_operation_drain_for_eviction_blocking();
+        finish_durable_recovery_eviction_blocking(engine, runtime);
+    }
+    result
 }
 
 pub(super) async fn write_scheduler_state(
@@ -88,14 +98,30 @@ pub(super) async fn write_scheduler_state(
     operation: SchedulerWrite,
 ) -> Result<SchedulerWriteResult> {
     let runtime = engine.get_existing_tenant_async(&tenant_id).await?;
-    let _operation = runtime.enter_operation(&tenant_id)?;
+    let operation_guard = runtime.enter_operation(&tenant_id)?;
     let recovery_now = engine.now();
+    let initiated_eviction = Arc::new(AtomicBool::new(false));
+    let initiated_eviction_for_commit = initiated_eviction.clone();
     let runtime_for_commit = runtime.clone();
-    runtime
+    let commit_faults = engine.commit_faults.clone();
+    let result = runtime
         .submit_internal_committer_async(move || {
-            runtime_for_commit.persist_scheduler_write(operation, recovery_now, || Ok(()))
+            runtime_for_commit.persist_scheduler_write(
+                operation,
+                recovery_now,
+                || Ok(()),
+                move || {
+                    commit_faults
+                        .wait(labels::SCHEDULER_DURABLE_BEFORE_ACK)
+                        .into_result()
+                },
+                initiated_eviction_for_commit,
+            )
         })
-        .await
+        .await;
+    drop(operation_guard);
+    finish_scheduler_eviction_if_started(engine, runtime, &initiated_eviction).await;
+    result
 }
 
 pub(super) async fn write_scheduler_state_cancellable<Fut, Check>(
@@ -111,6 +137,7 @@ where
 {
     let runtime = engine.get_existing_tenant_async(&tenant_id).await?;
     write_loaded_scheduler_state_cancellable(
+        engine,
         runtime,
         tenant_id,
         operation,
@@ -122,6 +149,7 @@ where
 }
 
 pub(super) async fn write_loaded_scheduler_state_cancellable<Fut, Check>(
+    engine: &Arc<Engine>,
     runtime: Arc<TenantRuntime>,
     tenant_id: TenantId,
     operation: SchedulerWrite,
@@ -133,30 +161,63 @@ where
     Fut: Future<Output = ()> + Send,
     Check: Fn() -> Result<()> + Send + 'static,
 {
-    let _operation = runtime.enter_operation(&tenant_id)?;
+    let operation_guard = runtime.enter_operation(&tenant_id)?;
     let cancelled = Arc::new(AtomicBool::new(false));
     let cancelled_for_commit = cancelled.clone();
+    let initiated_eviction = Arc::new(AtomicBool::new(false));
+    let initiated_eviction_for_commit = initiated_eviction.clone();
     let runtime_for_commit = runtime.clone();
-    let submit = runtime.submit_internal_committer_async(move || {
-        runtime_for_commit.persist_scheduler_write(operation, recovery_now, move || {
-            check_cancel()?;
-            if cancelled_for_commit.load(Ordering::Acquire) {
-                Err(Error::Cancelled)
-            } else {
-                Ok(())
+    let commit_faults = engine.commit_faults.clone();
+    let result = {
+        let submit = runtime.submit_internal_committer_async(move || {
+            runtime_for_commit.persist_scheduler_write(
+                operation,
+                recovery_now,
+                move || {
+                    check_cancel()?;
+                    if cancelled_for_commit.load(Ordering::Acquire) {
+                        Err(Error::Cancelled)
+                    } else {
+                        Ok(())
+                    }
+                },
+                move || {
+                    commit_faults
+                        .wait(labels::SCHEDULER_DURABLE_BEFORE_ACK)
+                        .into_result()
+                },
+                initiated_eviction_for_commit,
+            )
+        });
+        tokio::pin!(submit);
+        tokio::pin!(cancel_wait);
+        tokio::select! {
+            biased;
+            result = &mut submit => result,
+            () = &mut cancel_wait => {
+                cancelled.store(true, Ordering::Release);
+                submit.as_mut().await
             }
-        })
-    });
-    tokio::pin!(submit);
-    tokio::pin!(cancel_wait);
-    tokio::select! {
-        biased;
-        result = &mut submit => result,
-        () = &mut cancel_wait => {
-            cancelled.store(true, Ordering::Release);
-            submit.await
         }
+    };
+    drop(operation_guard);
+    finish_scheduler_eviction_if_started(engine, runtime, &initiated_eviction).await;
+    result
+}
+
+async fn finish_scheduler_eviction_if_started(
+    engine: &Arc<Engine>,
+    runtime: Arc<TenantRuntime>,
+    initiated_eviction: &AtomicBool,
+) {
+    if !initiated_eviction.load(Ordering::Acquire) {
+        return;
     }
+    runtime
+        .wait_for_committed_mutation_observers_drained()
+        .await;
+    runtime.wait_for_operation_drain_for_eviction().await;
+    finish_durable_recovery_eviction(engine.clone(), runtime).await;
 }
 
 pub(super) fn expect_scheduler_unit(result: SchedulerWriteResult) -> Result<()> {

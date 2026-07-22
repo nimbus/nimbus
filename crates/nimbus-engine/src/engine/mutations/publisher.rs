@@ -821,7 +821,7 @@ fn begin_tenant_runtime_eviction(runtime: &TenantRuntime, error: &Error, ambiguo
     runtime.subscriptions.shutdown_all(reason);
 }
 
-pub(super) async fn finish_durable_recovery_eviction(
+pub(in crate::engine) async fn finish_durable_recovery_eviction(
     engine: Arc<Engine>,
     runtime: Arc<TenantRuntime>,
 ) {
@@ -834,7 +834,7 @@ pub(super) async fn finish_durable_recovery_eviction(
     drop(_tenant_load_guard);
 }
 
-pub(super) fn finish_durable_recovery_eviction_blocking(
+pub(in crate::engine) fn finish_durable_recovery_eviction_blocking(
     engine: &Engine,
     runtime: Arc<TenantRuntime>,
 ) {

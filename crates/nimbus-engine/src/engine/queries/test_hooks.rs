@@ -624,6 +624,26 @@ impl Engine {
         self.with_runtime_for_testing(tenant_id, |runtime| runtime.shutdown_trigger_candidates())
     }
 
+    /// Permanently suppresses the trigger-candidate producer for a test
+    /// runtime. Unlike a lifecycle shutdown, later document commits cannot
+    /// restart this worker and add cursor-only journal records.
+    #[cfg(test)]
+    pub(crate) fn disable_trigger_candidates_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<()> {
+        self.with_runtime_for_testing(tenant_id, |runtime| {
+            runtime.disable_trigger_candidates_for_testing()
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn arm_scheduler_recovery_for_testing(&self, tenant_id: &TenantId) -> Result<()> {
+        self.with_runtime_for_testing(tenant_id, |runtime| {
+            runtime.mark_scheduler_recovery_pending()
+        })
+    }
+
     /// Waits until committer work accepted before this call has completed.
     ///
     /// Tests use this after stopping durable background producers so a

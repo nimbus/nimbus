@@ -345,12 +345,104 @@ impl PostgresTenantStore {
         })
     }
 
+    pub fn get_pending_scheduled_job(&self, job_id: &DocumentId) -> Result<Option<ScheduledJob>> {
+        self.load_scheduler_job_by_id("scheduled_jobs", job_id)
+    }
+
+    pub fn list_running_scheduled_jobs(&self) -> Result<Vec<ScheduledJob>> {
+        let provider = self.provider.clone();
+        let schema_name = self.schema_name.clone();
+        self.block_on(async move {
+            let client = provider.client().await?;
+            load_scheduled_jobs_from_session(&client, &schema_name, "running_scheduled_jobs").await
+        })
+    }
+
+    pub fn get_running_scheduled_job(&self, job_id: &DocumentId) -> Result<Option<ScheduledJob>> {
+        self.load_scheduler_job_by_id("running_scheduled_jobs", job_id)
+    }
+
+    fn load_scheduler_job_by_id(
+        &self,
+        table_name: &str,
+        job_id: &DocumentId,
+    ) -> Result<Option<ScheduledJob>> {
+        debug_assert!(matches!(
+            table_name,
+            "scheduled_jobs" | "running_scheduled_jobs"
+        ));
+        let provider = self.provider.clone();
+        let schema_name = self.schema_name.clone();
+        let table_name = table_name.to_string();
+        let job_id = job_id.to_string();
+        self.block_on(async move {
+            let client = provider.client().await?;
+            let query = format!(
+                "SELECT data_json FROM {} WHERE id = $1",
+                qualified_table(&schema_name, &table_name)
+            );
+            client
+                .query_opt(query.as_str(), &[&job_id])
+                .await
+                .map_err(map_postgres_error)?
+                .map(|row| deserialize_json::<ScheduledJob>(row.get::<_, String>(0).as_str()))
+                .transpose()
+        })
+    }
+
+    pub fn peek_due_scheduled_jobs(
+        &self,
+        now: Timestamp,
+        max_jobs: usize,
+    ) -> Result<Vec<ScheduledJob>> {
+        if max_jobs == 0 {
+            return Ok(Vec::new());
+        }
+        let provider = self.provider.clone();
+        let schema_name = self.schema_name.clone();
+        let max_jobs = i64::try_from(max_jobs).unwrap_or(i64::MAX);
+        self.block_on(async move {
+            let client = provider.client().await?;
+            let query = format!(
+                "SELECT data_json FROM {} WHERE run_at <= $1 ORDER BY run_at, id LIMIT $2",
+                qualified_table(&schema_name, "scheduled_jobs")
+            );
+            let run_at = claim_due_jobs_upper_bound(now);
+            client
+                .query(query.as_str(), &[&run_at, &max_jobs])
+                .await
+                .map_err(map_postgres_error)?
+                .into_iter()
+                .map(|row| deserialize_json::<ScheduledJob>(row.get::<_, String>(0).as_str()))
+                .collect()
+        })
+    }
+
     pub fn load_cron_jobs(&self) -> Result<Vec<CronJob>> {
         let provider = self.provider.clone();
         let schema_name = self.schema_name.clone();
         self.block_on(async move {
             let client = provider.client().await?;
             load_cron_jobs_from_session(&client, &schema_name).await
+        })
+    }
+
+    pub fn get_cron_job(&self, name: &str) -> Result<Option<CronJob>> {
+        let provider = self.provider.clone();
+        let schema_name = self.schema_name.clone();
+        let name = name.to_string();
+        self.block_on(async move {
+            let client = provider.client().await?;
+            let query = format!(
+                "SELECT data_json FROM {} WHERE name = $1",
+                qualified_table(&schema_name, "cron_jobs")
+            );
+            client
+                .query_opt(query.as_str(), &[&name])
+                .await
+                .map_err(map_postgres_error)?
+                .map(|row| deserialize_json::<CronJob>(row.get::<_, String>(0).as_str()))
+                .transpose()
         })
     }
 

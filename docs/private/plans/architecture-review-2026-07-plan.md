@@ -151,8 +151,10 @@ ADR supersedes this deletion's naming, not its cleanup.
 
 Recorded so later reviews do not re-flag these:
 
-- `nimbus-egress/src/policy.rs` split — **no action**: 1,486 raw lines but
-  tests start at :888; production size is under threshold.
+- `nimbus-egress/src/policy.rs` split — **no action**: 1,532 raw lines but
+  tests start at :936; production size is under threshold. The architecture
+  quality ledger records the combined production-and-test file for threshold
+  enforcement; split the tests by policy family if it reaches 2,000 lines.
 - `nimbus-server` `http/{resource}.rs` vs `resource_control/{resource}.rs`
   — **legitimate seam** (route/response vs authorization), not duplication.
 - `ws/` module, `nimbus-code-index`, `nimbus-license`, `nimbus-bin` —

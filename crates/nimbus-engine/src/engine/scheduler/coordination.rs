@@ -8,8 +8,7 @@ use crate::tenant::TenantRuntime;
 
 use super::super::Engine;
 use super::access::{
-    expect_scheduler_unit, read_loaded_tenant_store, with_scheduler_runtime,
-    write_loaded_scheduler_state,
+    expect_scheduler_unit, read_loaded_tenant_store, write_scheduler_state_blocking,
 };
 
 impl Engine {
@@ -98,12 +97,11 @@ impl Engine {
                 continue;
             }
 
-            with_scheduler_runtime(self, &tenant_id, move |runtime| {
-                expect_scheduler_unit(write_loaded_scheduler_state(
-                    runtime,
-                    SchedulerWrite::RecoverRunning { now },
-                )?)
-            })?;
+            expect_scheduler_unit(write_scheduler_state_blocking(
+                self,
+                &tenant_id,
+                SchedulerWrite::RecoverRunning { now },
+            )?)?;
         }
 
         Ok(())
