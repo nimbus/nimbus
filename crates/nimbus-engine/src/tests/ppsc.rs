@@ -7,10 +7,10 @@ use nimbus_core::{
 };
 use nimbus_storage::PointInTimeRestoreArchive;
 use nimbus_testing::ppsc::{
-    PpscBackend, PpscEffect, PpscExpectedOutcome, PpscFrontiers, PpscHistory, PpscJournalEntry,
-    PpscObservedStep, PpscOperation, PpscPublication, PpscRoute, PpscScenario, PpscSequenceClaim,
-    PpscSequenceOwnership, PpscStep, PpscStorageFaultInjector, PpscTenantState, PpscTerminalState,
-    audit_ppsc_history,
+    PpscBackend, PpscCommitOrder, PpscEffect, PpscExpectedOutcome, PpscFrontiers, PpscHistory,
+    PpscJournalEntry, PpscObservedStep, PpscOperation, PpscPublication, PpscRoute, PpscScenario,
+    PpscSequenceClaim, PpscSequenceOwnership, PpscStep, PpscStorageFaultInjector, PpscTenantState,
+    PpscTerminalState, audit_ppsc_history,
 };
 
 use super::*;
@@ -369,45 +369,138 @@ impl PpscEngineRunner {
                 key,
                 value,
             } => {
+                self.commit_route_insert(index, tenant, *route, key, *value)
+                    .await;
+                PpscExpectedOutcome::Committed
+            }
+            PpscOperation::CommitPermutation {
+                tenant,
+                order,
+                value_base,
+            } => {
+                for route in routes_for_order(*order) {
+                    let (route_name, value_offset) = match route {
+                        PpscRoute::QueuedJournal => ("queued", 1_i64),
+                        PpscRoute::Direct => ("direct", 2),
+                        PpscRoute::ExecutionUnit => ("execution-unit", 3),
+                    };
+                    self.commit_route_insert(
+                        index,
+                        tenant,
+                        route,
+                        &format!("permutation-{route_name}"),
+                        value_base.saturating_add(value_offset),
+                    )
+                    .await;
+                }
+                PpscExpectedOutcome::Committed
+            }
+            PpscOperation::ZeroWriteExecutionUnit { tenant } => {
+                let tenant_id = self.tenant(tenant).clone();
+                let before = self
+                    .engine
+                    .latest_sequence(&tenant_id)
+                    .expect("PPSC zero-write head should read");
+                let unit = self
+                    .engine
+                    .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+                    .expect("PPSC zero-write execution unit should begin");
+                assert_eq!(
+                    unit.commit()
+                        .expect("PPSC zero-write execution unit should finalize"),
+                    None,
+                    "PPSC zero-write execution unit must not emit a commit"
+                );
+                assert_eq!(
+                    self.engine
+                        .latest_sequence(&tenant_id)
+                        .expect("PPSC zero-write final head should read"),
+                    before,
+                    "PPSC zero-write execution unit must not consume a sequence"
+                );
+                PpscExpectedOutcome::Observed
+            }
+            PpscOperation::ConflictRetry {
+                tenant,
+                key,
+                first,
+                second,
+            } => {
                 let tenant_id = self.tenant(tenant).clone();
                 let document_id = DocumentId::from_key(format!(
-                    "ppsc-{:016x}-{index:03}-{key}",
+                    "ppsc-{:016x}-{index:03}-conflict-{key}",
                     self.scenario_seed
                 ))
-                .expect("scenario document id should parse");
-                let fields = serde_json::Map::from_iter([
-                    ("key".to_string(), json!(key)),
-                    ("value".to_string(), json!(value)),
-                ]);
-                match route {
-                    PpscRoute::QueuedJournal => {
-                        self.engine
-                            .insert_document_async_with_id(
-                                tenant_id,
-                                tasks_table(),
-                                document_id,
-                                fields,
-                            )
-                            .await
-                            .expect("queued PPSC mutation should commit");
-                    }
-                    PpscRoute::Direct => {
-                        self.engine
-                            .insert_document_with_id(&tenant_id, tasks_table(), document_id, fields)
-                            .expect("direct PPSC mutation should commit");
-                    }
-                    PpscRoute::ExecutionUnit => {
-                        let unit = self
-                            .engine
-                            .begin_mutation_execution_unit(tenant_id, PrincipalContext::anonymous())
-                            .expect("PPSC execution unit should begin");
-                        unit.insert_document_with_id(tasks_table(), Some(document_id), fields)
-                            .expect("PPSC execution-unit mutation should stage");
-                        unit.commit()
-                            .expect("PPSC execution unit should commit")
-                            .expect("PPSC execution unit should emit a durable record");
-                    }
-                }
+                .expect("PPSC conflict document id should parse");
+                let first_unit = self
+                    .engine
+                    .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+                    .expect("PPSC first conflict execution unit should begin");
+                let second_unit = self
+                    .engine
+                    .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+                    .expect("PPSC second conflict execution unit should begin");
+                first_unit
+                    .insert_document_with_id(
+                        tasks_table(),
+                        Some(document_id.clone()),
+                        ppsc_fields(key, *first),
+                    )
+                    .expect("PPSC first conflict write should stage");
+                second_unit
+                    .insert_document_with_id(
+                        tasks_table(),
+                        Some(document_id.clone()),
+                        ppsc_fields(key, *second),
+                    )
+                    .expect("PPSC second conflict write should stage");
+                let first_commit = first_unit
+                    .commit()
+                    .expect("PPSC first conflict execution unit should commit")
+                    .expect("PPSC first conflict execution unit should emit a record");
+                let conflict = second_unit
+                    .commit()
+                    .expect_err("PPSC stale execution unit should conflict");
+                assert!(
+                    matches!(&conflict, nimbus_core::Error::Conflict { .. }),
+                    "PPSC stale execution unit must report a typed conflict: {conflict}"
+                );
+                let conflicting_sequence = conflict
+                    .conflicting_sequence()
+                    .unwrap_or(first_commit.sequence);
+                assert_eq!(conflicting_sequence, first_commit.sequence);
+                let retry_count_before = self
+                    .engine
+                    .tenant_engine_diagnostics(&tenant_id)
+                    .expect("PPSC conflict diagnostics should read")
+                    .commit_phases
+                    .reprepare_total;
+                self.engine
+                    .record_mutation_conflict_retry(&tenant_id)
+                    .expect("PPSC conflict retry should be recorded");
+                self.engine
+                    .wait_for_applied_sequence_blocking(&tenant_id, conflicting_sequence)
+                    .expect("PPSC conflict retry should wait for the conflicting sequence");
+                let retry = self
+                    .engine
+                    .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+                    .expect("PPSC conflict retry execution unit should begin");
+                retry
+                    .update_document(tasks_table(), document_id, ppsc_fields(key, *second))
+                    .expect("PPSC conflict retry update should stage");
+                retry
+                    .commit()
+                    .expect("PPSC conflict retry should commit")
+                    .expect("PPSC conflict retry should emit a record");
+                assert_eq!(
+                    self.engine
+                        .tenant_engine_diagnostics(&tenant_id)
+                        .expect("PPSC final conflict diagnostics should read")
+                        .commit_phases
+                        .reprepare_total,
+                    retry_count_before + 1,
+                    "PPSC conflict retry must increment the retry diagnostic exactly once"
+                );
                 PpscExpectedOutcome::Committed
             }
             PpscOperation::SchemaSet { tenant, revision } => {
@@ -503,6 +596,45 @@ impl PpscEngineRunner {
         self.tenants
             .get(name)
             .unwrap_or_else(|| panic!("scenario tenant '{name}' should be loaded"))
+    }
+
+    async fn commit_route_insert(
+        &self,
+        step: usize,
+        tenant: &str,
+        route: PpscRoute,
+        key: &str,
+        value: i64,
+    ) {
+        let tenant_id = self.tenant(tenant).clone();
+        let document_id =
+            DocumentId::from_key(format!("ppsc-{:016x}-{step:03}-{key}", self.scenario_seed))
+                .expect("scenario document id should parse");
+        let fields = ppsc_fields(key, value);
+        match route {
+            PpscRoute::QueuedJournal => {
+                self.engine
+                    .insert_document_async_with_id(tenant_id, tasks_table(), document_id, fields)
+                    .await
+                    .expect("queued PPSC mutation should commit");
+            }
+            PpscRoute::Direct => {
+                self.engine
+                    .insert_document_with_id(&tenant_id, tasks_table(), document_id, fields)
+                    .expect("direct PPSC mutation should commit");
+            }
+            PpscRoute::ExecutionUnit => {
+                let unit = self
+                    .engine
+                    .begin_mutation_execution_unit(tenant_id, PrincipalContext::anonymous())
+                    .expect("PPSC execution unit should begin");
+                unit.insert_document_with_id(tasks_table(), Some(document_id), fields)
+                    .expect("PPSC execution-unit mutation should stage");
+                unit.commit()
+                    .expect("PPSC execution unit should commit")
+                    .expect("PPSC execution unit should emit a durable record");
+            }
+        }
     }
 
     fn journal_heads(&self) -> BTreeMap<String, u64> {
@@ -695,6 +827,48 @@ fn ppsc_schema(table: TableName, revision: u64) -> TableSchema {
     }
 }
 
+fn ppsc_fields(key: &str, value: i64) -> serde_json::Map<String, serde_json::Value> {
+    serde_json::Map::from_iter([
+        ("key".to_string(), json!(key)),
+        ("value".to_string(), json!(value)),
+    ])
+}
+
+const fn routes_for_order(order: PpscCommitOrder) -> [PpscRoute; 3] {
+    match order {
+        PpscCommitOrder::QueuedDirectExecutionUnit => [
+            PpscRoute::QueuedJournal,
+            PpscRoute::Direct,
+            PpscRoute::ExecutionUnit,
+        ],
+        PpscCommitOrder::QueuedExecutionUnitDirect => [
+            PpscRoute::QueuedJournal,
+            PpscRoute::ExecutionUnit,
+            PpscRoute::Direct,
+        ],
+        PpscCommitOrder::DirectQueuedExecutionUnit => [
+            PpscRoute::Direct,
+            PpscRoute::QueuedJournal,
+            PpscRoute::ExecutionUnit,
+        ],
+        PpscCommitOrder::DirectExecutionUnitQueued => [
+            PpscRoute::Direct,
+            PpscRoute::ExecutionUnit,
+            PpscRoute::QueuedJournal,
+        ],
+        PpscCommitOrder::ExecutionUnitQueuedDirect => [
+            PpscRoute::ExecutionUnit,
+            PpscRoute::QueuedJournal,
+            PpscRoute::Direct,
+        ],
+        PpscCommitOrder::ExecutionUnitDirectQueued => [
+            PpscRoute::ExecutionUnit,
+            PpscRoute::Direct,
+            PpscRoute::QueuedJournal,
+        ],
+    }
+}
+
 fn record_kind(events: &[TenantEventKind]) -> String {
     events
         .iter()
@@ -810,6 +984,53 @@ fn internal_durable_jobs_scenario() -> PpscScenario {
     .expect("internal durable-jobs scenario should build")
 }
 
+fn mutation_edge_scenario(order: PpscCommitOrder) -> PpscScenario {
+    let tenant = "ppsc-mutation-edges".to_string();
+    PpscScenario::new(
+        format!("mutation-edges-{order:?}"),
+        419,
+        vec![
+            PpscStep::new(
+                PpscOperation::CommitPermutation {
+                    tenant: tenant.clone(),
+                    order,
+                    value_base: 100,
+                },
+                PpscExpectedOutcome::Committed,
+            ),
+            PpscStep::new(
+                PpscOperation::ZeroWriteExecutionUnit {
+                    tenant: tenant.clone(),
+                },
+                PpscExpectedOutcome::Observed,
+            ),
+            PpscStep::new(
+                PpscOperation::ConflictRetry {
+                    tenant,
+                    key: "shared".to_string(),
+                    first: 201,
+                    second: 202,
+                },
+                PpscExpectedOutcome::Committed,
+            ),
+            PpscStep::new(PpscOperation::Quiesce, PpscExpectedOutcome::Shutdown),
+        ],
+    )
+    .expect("mutation-edge scenario should build")
+}
+
+fn logical_ppsc_documents(state: &PpscTenantState) -> BTreeMap<String, serde_json::Value> {
+    state
+        .documents
+        .iter()
+        .map(|(document_id, bytes)| {
+            let document = serde_json::from_slice::<serde_json::Value>(bytes)
+                .expect("PPSC terminal document should deserialize");
+            (document_id.clone(), document["fields"].clone())
+        })
+        .collect()
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn ppsc_engine_runner_exercises_three_production_commit_paths() {
     let scenario = three_route_scenario();
@@ -904,6 +1125,52 @@ async fn ppsc_engine_runner_internal_durable_jobs_match_embedded_backends() {
     }
     assert_eq!(terminal_states[0], terminal_states[1]);
     assert_eq!(terminal_states[1], terminal_states[2]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ppsc_commit_order_permutations_preserve_terminal_state() {
+    const ORDERS: [PpscCommitOrder; 6] = [
+        PpscCommitOrder::QueuedDirectExecutionUnit,
+        PpscCommitOrder::QueuedExecutionUnitDirect,
+        PpscCommitOrder::DirectQueuedExecutionUnit,
+        PpscCommitOrder::DirectExecutionUnitQueued,
+        PpscCommitOrder::ExecutionUnitQueuedDirect,
+        PpscCommitOrder::ExecutionUnitDirectQueued,
+    ];
+
+    let mut expected_documents = None;
+    for order in ORDERS {
+        let scenario = mutation_edge_scenario(order);
+        let mut backend_terminals = Vec::new();
+        for backend in [PpscBackend::Memory, PpscBackend::Redb, PpscBackend::Sqlite] {
+            let history = PpscEngineRunner::new_embedded(backend, &scenario)
+                .await
+                .run(scenario.clone())
+                .await;
+            audit_ppsc_history(&history).unwrap_or_else(|error| panic!("{error}"));
+            assert_eq!(history.observed_steps[0].effects.len(), 3);
+            assert!(history.observed_steps[1].effects.is_empty());
+            assert_eq!(history.observed_steps[2].effects.len(), 2);
+            let state = &history.terminal.tenants["ppsc-mutation-edges"];
+            assert_eq!(state.frontiers.assigned_high_water, 5);
+            assert_eq!(state.frontiers.active_assigned_head, 5);
+            assert_eq!(state.frontiers.durable_head, 5);
+            assert_eq!(state.frontiers.storage_applied_head, 5);
+            assert_eq!(state.frontiers.published_head, 5);
+            assert_eq!(state.frontiers.applied_head, 5);
+            assert_eq!(state.journal.len(), 5);
+            assert_eq!(state.publications.len(), 5);
+            assert_eq!(state.documents.len(), 4);
+            let logical_documents = logical_ppsc_documents(state);
+            match &expected_documents {
+                Some(expected) => assert_eq!(&logical_documents, expected),
+                None => expected_documents = Some(logical_documents),
+            }
+            backend_terminals.push(history.terminal);
+        }
+        assert_eq!(backend_terminals[0], backend_terminals[1]);
+        assert_eq!(backend_terminals[1], backend_terminals[2]);
+    }
 }
 
 pub(crate) async fn exercise_ppsc_provider_three_route_differential(
