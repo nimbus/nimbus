@@ -376,6 +376,37 @@ mod tests {
         assert_eq!(stored.region.as_deref(), Some("us-east-1"));
     }
 
+    #[tokio::test]
+    async fn async_lookup_reopens_durable_key_store_after_engine_restart() {
+        let data_dir = tempfile::tempdir().expect("temporary data dir should create");
+        let tenant_id = tenant("acme");
+        let engine = Arc::new(Engine::new(data_dir.path()).expect("embedded engine should create"));
+
+        put_access_key_async(
+            &engine,
+            "AKIARESTART",
+            &tenant_id,
+            Some("fixture-dynamodb".to_owned()),
+            Some("us-east-1".to_owned()),
+        )
+        .await
+        .expect("async put should create the durable key-store tenant");
+        engine.quiesce().await;
+        drop(engine);
+
+        let reopened = Arc::new(
+            Engine::new(data_dir.path()).expect("engine should reopen without a loaded runtime"),
+        );
+        let stored = lookup_async(&reopened, "AKIARESTART")
+            .await
+            .expect("async lookup should open the durable key-store tenant")
+            .expect("persisted key should survive the engine restart");
+        assert_eq!(stored.tenant, tenant_id.as_str());
+        assert_eq!(stored.secret.as_deref(), Some("fixture-dynamodb"));
+        assert_eq!(stored.region.as_deref(), Some("us-east-1"));
+        reopened.quiesce().await;
+    }
+
     #[test]
     fn put_then_lookup_roundtrips_all_fields() {
         let (engine, _t) = engine();

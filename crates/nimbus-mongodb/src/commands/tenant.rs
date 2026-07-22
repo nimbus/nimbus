@@ -135,13 +135,13 @@ pub fn ensure_database_matches_context(
         .map_err(MongoError::from)
 }
 
-#[cfg(not(test))]
 pub fn ensure_tenant(
     engine: &Arc<Engine>,
     context: &TenantIsolationContext,
 ) -> Result<(), MongoError> {
     engine
-        .ensure_tenant_exists(context.tenant_id())
+        .ensure_tenant_ready_blocking(context.tenant_id().clone())
+        .map(|_| ())
         .map_err(MongoError::from)
 }
 
@@ -154,19 +154,6 @@ pub async fn ensure_tenant_async(
         .await
         .map(|_| ())
         .map_err(MongoError::from)
-}
-
-#[cfg(test)]
-pub fn ensure_tenant(
-    engine: &Arc<Engine>,
-    context: &TenantIsolationContext,
-) -> Result<(), MongoError> {
-    match engine.create_tenant(context.tenant_id().clone()) {
-        // tenant-lifecycle: test-only
-        Ok(()) => Ok(()),
-        Err(nimbus_core::Error::AlreadyExists(_)) => Ok(()),
-        Err(e) => Err(MongoError::from(e)),
-    }
 }
 
 #[cfg(test)]

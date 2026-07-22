@@ -26,9 +26,18 @@ fn embedded_blocking_tenant_creation_supports_redb_and_sqlite() {
         let tenant_id = TenantId::new(format!("blocking-{provider:?}").to_lowercase())
             .expect("tenant id should build");
 
-        engine
-            .create_tenant(tenant_id.clone())
-            .expect("blocking embedded lifecycle should create the tenant");
+        assert_eq!(
+            engine
+                .ensure_tenant_ready_blocking(tenant_id.clone())
+                .expect("blocking embedded lifecycle should create the tenant"),
+            crate::TenantAdmissionOutcome::Created
+        );
+        assert_eq!(
+            engine
+                .ensure_tenant_ready_blocking(tenant_id.clone())
+                .expect("blocking embedded lifecycle should be idempotent"),
+            crate::TenantAdmissionOutcome::Existing
+        );
         assert!(
             data_dir
                 .path()
@@ -61,6 +70,15 @@ async fn provider_composition_has_no_blocking_tenant_lifecycle() {
             .contains("embedded-only blocking tenant lifecycle"),
         "unexpected blocking-lifecycle error: {error}"
     );
+    let error = engine
+        .ensure_tenant_ready_blocking(tenant_id.clone())
+        .expect_err("provider composition must reject missing blocking admission");
+    assert!(
+        error
+            .to_string()
+            .contains("embedded-only blocking tenant lifecycle"),
+        "unexpected blocking-admission error: {error}"
+    );
     engine
         .create_tenant_async(tenant_id.clone())
         .await
@@ -69,6 +87,14 @@ async fn provider_composition_has_no_blocking_tenant_lifecycle() {
         .ensure_tenant_exists_async(tenant_id)
         .await
         .expect("async lifecycle must register the runtime");
+    assert_eq!(
+        engine
+            .ensure_tenant_ready_blocking(
+                TenantId::new("provider-lifecycle").expect("tenant id should build")
+            )
+            .expect("blocking command core should accept the pre-admitted provider runtime"),
+        crate::TenantAdmissionOutcome::Existing
+    );
 }
 
 #[tokio::test]

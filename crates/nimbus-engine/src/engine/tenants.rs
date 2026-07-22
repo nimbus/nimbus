@@ -126,6 +126,36 @@ impl Engine {
         Ok(())
     }
 
+    /// Ensures a tenant runtime is ready through the blocking lifecycle.
+    ///
+    /// An already-loaded runtime is accepted for every persistence topology so
+    /// synchronous command cores can verify the async admission performed by
+    /// their transport. When the runtime is absent, only redb and SQLite may
+    /// create or reopen it; external-provider compositions fail with the
+    /// embedded-only lifecycle error and must use
+    /// [`Engine::ensure_tenant_ready_async`]. The registry lookup is the fast
+    /// path. Embedded first use may open storage and initialize a runtime.
+    pub fn ensure_tenant_ready_blocking(
+        &self,
+        tenant_id: TenantId,
+    ) -> Result<TenantAdmissionOutcome> {
+        match self.ensure_tenant_exists(&tenant_id) {
+            Ok(()) => Ok(TenantAdmissionOutcome::Existing),
+            Err(Error::TenantNotFound(_)) => {
+                match self.create_tenant(tenant_id.clone()) {
+                    // tenant-lifecycle: embedded-only
+                    Ok(()) => Ok(TenantAdmissionOutcome::Created),
+                    Err(Error::AlreadyExists(_)) => {
+                        self.ensure_tenant_exists(&tenant_id)?;
+                        Ok(TenantAdmissionOutcome::Existing)
+                    }
+                    Err(error) => Err(error),
+                }
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     /// Creates a tenant through the canonical persistence-provider lifecycle.
     ///
     /// Background work starts before admission. Tenant creation is serialized;
@@ -340,6 +370,11 @@ impl Engine {
         {
             return Ok(runtime);
         }
+
+        // A provider-backed runtime must be admitted through the async
+        // lifecycle. Fail at the interface boundary instead of reaching
+        // `tenant_path`, which is intentionally embedded-only.
+        self.require_embedded_provider_kind()?;
 
         let _tenant_load_guard = self.lock_tenant_load_gate_blocking();
         let mut tenants = self

@@ -204,19 +204,23 @@ pub fn tenant_context(tenant: TenantId, surface: &'static str) -> TenantIsolatio
     TenantIsolationContext::application(tenant, PrincipalContext::system(), surface)
 }
 
-/// Ensure the context's tenant exists in the engine (idempotent), mapping engine
+/// Ensure the context's tenant runtime is ready (idempotent), mapping engine
 /// errors to the DynamoDB taxonomy.
+///
+/// Synchronous embedded callers own first-use admission. Provider transports
+/// must call [`ensure_tenant_async`] first; this check then accepts the loaded
+/// runtime without invoking an embedded lifecycle.
 ///
 /// # Errors
 /// A mapped `DynamoDbError` if tenant creation fails for any reason other than
 /// the tenant already existing.
-#[cfg(not(test))]
 pub fn ensure_tenant(
     engine: &Arc<Engine>,
     context: &TenantIsolationContext,
 ) -> Result<(), DynamoDbError> {
     engine
-        .ensure_tenant_exists(context.tenant_id())
+        .ensure_tenant_ready_blocking(context.tenant_id().clone())
+        .map(|_| ())
         .map_err(map_core_error)
 }
 
@@ -233,18 +237,6 @@ pub async fn ensure_tenant_async(
         .await
         .map(|_| ())
         .map_err(map_core_error)
-}
-
-#[cfg(test)]
-pub fn ensure_tenant(
-    engine: &Arc<Engine>,
-    context: &TenantIsolationContext,
-) -> Result<(), DynamoDbError> {
-    match engine.create_tenant(context.tenant_id().clone()) {
-        // tenant-lifecycle: test-only
-        Ok(()) | Err(nimbus_core::Error::AlreadyExists(_)) => Ok(()),
-        Err(error) => Err(map_core_error(error)),
-    }
 }
 
 #[cfg(test)]
