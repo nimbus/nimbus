@@ -32,6 +32,26 @@ impl SqliteTenantStore {
         self.read_snapshot()?.list_scheduled_jobs()
     }
 
+    pub fn get_pending_scheduled_job(&self, job_id: &JobId) -> Result<Option<ScheduledJob>> {
+        self.read_snapshot()?.get_pending_scheduled_job(job_id)
+    }
+
+    pub fn list_running_scheduled_jobs(&self) -> Result<Vec<ScheduledJob>> {
+        self.read_snapshot()?.list_running_scheduled_jobs()
+    }
+
+    pub fn get_running_scheduled_job(&self, job_id: &JobId) -> Result<Option<ScheduledJob>> {
+        self.read_snapshot()?.get_running_scheduled_job(job_id)
+    }
+
+    pub fn peek_due_scheduled_jobs(
+        &self,
+        now: Timestamp,
+        max_jobs: usize,
+    ) -> Result<Vec<ScheduledJob>> {
+        self.read_snapshot()?.peek_due_scheduled_jobs(now, max_jobs)
+    }
+
     pub fn record_scheduled_job_result(&self, result: &ScheduledJobResult) -> Result<()> {
         self.execute_write(move |transaction| transaction.record_scheduled_job_result(result))?;
         Ok(())
@@ -48,6 +68,10 @@ impl SqliteTenantStore {
 
     pub fn load_cron_jobs(&self) -> Result<Vec<CronJob>> {
         self.read_snapshot()?.load_cron_jobs()
+    }
+
+    pub fn get_cron_job(&self, name: &str) -> Result<Option<CronJob>> {
+        self.read_snapshot()?.get_cron_job(name)
     }
 
     pub fn delete_cron_job(&self, name: &str) -> Result<()> {
@@ -104,6 +128,25 @@ pub(super) fn load_scheduled_jobs_from_conn(
         )?);
     }
     Ok(jobs)
+}
+
+pub(super) fn load_scheduled_job_by_id_from_conn(
+    conn: &Connection,
+    table_name: &str,
+    job_id: &JobId,
+) -> Result<Option<ScheduledJob>> {
+    debug_assert!(matches!(
+        table_name,
+        "scheduled_jobs" | "running_scheduled_jobs"
+    ));
+    let sql = format!("SELECT data_json FROM {table_name} WHERE id = ?1");
+    conn.query_row(sql.as_str(), params![job_id.to_string()], |row| {
+        row.get::<_, String>(0)
+    })
+    .optional()
+    .map_err(map_sqlite_error)?
+    .map(|json| deserialize_json::<ScheduledJob>(json.as_str()))
+    .transpose()
 }
 
 pub(crate) fn scheduled_run_at_key(timestamp: Timestamp) -> String {

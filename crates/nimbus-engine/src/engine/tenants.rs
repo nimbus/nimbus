@@ -630,6 +630,7 @@ impl Engine {
             ),
             self.committer_owner_id_for_store(&opened.persistence),
         ));
+        runtime.mark_scheduler_recovery_pending();
         self.restore_publisher_error_counts(&runtime);
         self.start_committer_actor(runtime.clone());
         let runtime_init_elapsed = runtime_init_started.elapsed();

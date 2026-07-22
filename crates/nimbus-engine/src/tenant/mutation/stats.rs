@@ -1,5 +1,7 @@
-use nimbus_core::{SequenceNumber, Timestamp};
+use nimbus_core::Timestamp;
 use serde::Serialize;
+
+use super::frontiers::MutationFrontierStats;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum MutationAdmissionPhase {
@@ -30,17 +32,9 @@ pub struct MutationIsolateAdmissionStats {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum CommitterArm {
-    OrderedPublisher,
-    Serial,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct MutationJournalStats {
-    pub durable_head: SequenceNumber,
-    pub applied_head: SequenceNumber,
-    pub apply_lag: u64,
+    #[serde(flatten)]
+    pub frontiers: MutationFrontierStats,
     pub queue_depth: usize,
     pub queue_capacity: usize,
     pub oldest_queue_age_nanos: u64,
@@ -72,7 +66,7 @@ pub struct MutationJournalStats {
     pub publisher_transient_error_count: u64,
     pub publisher_fatal_error_count: u64,
     pub publisher_ambiguous_error_count: u64,
-    pub committer_arm: CommitterArm,
+    pub committer_arm: super::CommitterArm,
     pub observer_queue_depth: usize,
     /// Largest observer queue depth reserved by this tenant runtime.
     pub observer_queue_peak_depth: usize,
@@ -98,4 +92,12 @@ pub struct MutationJournalStats {
     pub observer_spawned_work_reconciliation_retry_count: u64,
     pub observer_spawned_work_current_reconciliation_backoff_millis: u64,
     pub observer_spawned_work_poisoned: bool,
+}
+
+impl std::ops::Deref for MutationJournalStats {
+    type Target = MutationFrontierStats;
+
+    fn deref(&self) -> &Self::Target {
+        &self.frontiers
+    }
 }

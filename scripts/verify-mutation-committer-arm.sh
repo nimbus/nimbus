@@ -24,14 +24,64 @@ for required_file in \
     || fail "Family-A caller does not consult immutable selection: ${required_file}"
 done
 
-selection_count="$(rg -c 'let uses_ordered_publisher = store\.has_process_local_sequence_authority\(\)' "${engine_root}/tenant.rs" || true)"
+selection_count="$(rg -c 'let committer_arm = CommitterArm::for_persistence\(&store\)' "${engine_root}/tenant.rs" || true)"
 [[ "${selection_count}" == "1" ]] \
-  || fail "tenant construction must derive exactly one production committer arm"
-rg -q 'PublisherHandoff::new\(uses_ordered_publisher,' "${engine_root}/tenant.rs" \
+  || fail "tenant construction must derive exactly one exhaustive production committer arm"
+rg -q 'PublisherHandoff::new\(committer_arm,' "${engine_root}/tenant.rs" \
   || fail "tenant construction does not install the immutable committer arm"
+
+arm_file="${engine_root}/tenant/mutation/arm.rs"
+for adapter in Redb Sqlite LibsqlReplica Postgres MySql Memory; do
+  rg -q "TenantPersistence::${adapter}\\(_\\) => Self::" "${arm_file}" \
+    || fail "production selector does not exhaustively name ${adapter}"
+done
+rg -q 'CommitterArm::OrderedPublisher' "${arm_file}" \
+  || fail "production selector does not choose the ordered publisher"
+if rg -n 'has_process_local_sequence_authority' "${arm_file}" \
+  || rg -n 'committer_arm.*has_process_local_sequence_authority|uses_ordered_publisher.*has_process_local_sequence_authority' \
+    "${engine_root}/tenant.rs"; then
+  fail "committer-arm selection is coupled to process-local window authority"
+fi
+if rg -n 'SerialJob|send_publisher_serial_job|send_serial_job' "${engine_root}"; then
+  fail "publisher handoff still exposes obsolete serial-job vocabulary"
+fi
+
+scheduler_persistence="${engine_root}/persistence/tenant/scheduler.rs"
+for obsolete_method in \
+  insert_scheduled_job \
+  claim_due_jobs \
+  complete_scheduled_job \
+  cancel_scheduled_job \
+  record_scheduled_job_result \
+  save_cron_job \
+  delete_cron_job \
+  recover_running_jobs; do
+  if rg -n "pub\(crate\) fn ${obsolete_method}\(" "${scheduler_persistence}"; then
+    fail "engine persistence exposes an unfenced scheduler-write bypass: ${obsolete_method}"
+  fi
+done
+rg -q 'submit_internal_committer' "${engine_root}/engine/scheduler/access.rs" \
+  || fail "scheduler writes do not enter the tenant committer"
+rg -q 'persist_scheduler_write' "${engine_root}/engine/scheduler/access.rs" \
+  || fail "scheduler writes do not use the shared lease-aware persistence interface"
+rg -q 'fenced_scheduler_write_cancellable' "${engine_root}/tenant/committer_lease.rs" \
+  || fail "provider scheduler writes do not validate the held committer lease"
+scheduler_write_interface="${repo_root}/crates/nimbus-storage/src/scheduler/write.rs"
+for adapter in TenantStore SqliteTenantStore MemoryTenantStore \
+  PostgresTenantStore MySqlTenantStore LibsqlReplicaTenantStore; do
+  rg -q "impl_.*scheduler_write_store!\(${adapter}\)" "${scheduler_write_interface}" \
+    || fail "scheduler-write interface does not name ${adapter}"
+done
+rg -Fq '#[cfg(any(test, feature = "test-hooks"))]' "${arm_file}" \
+  || fail "serial reference is not fenced behind test/test-hooks"
+rg -q 'SerialReference' "${arm_file}" \
+  || fail "test-only serial reference adapter is missing"
 
 rg -q '`committer_arm` is the immutable construction-time mutation owner' \
   "${repo_root}/docs/operators/observability.md" \
   || fail "operator diagnostics do not document immutable committer ownership"
+rg -q '`ordered-publisher` for every production persistence topology' \
+  "${repo_root}/docs/operators/observability.md" \
+  || fail "operator diagnostics do not document the all-topology production arm"
 
 printf 'mutation-committer-arm: immutable selection verified\n'

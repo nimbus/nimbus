@@ -27,17 +27,6 @@ macro_rules! match_tenant_persistence {
 }
 
 macro_rules! match_tenant_persistence_executor {
-    ($value:expr, |$storage:ident| $body:expr) => {
-        match $value {
-            crate::persistence::TenantPersistenceExecutor::Redb($storage) => $body,
-            crate::persistence::TenantPersistenceExecutor::Sqlite($storage) => $body,
-            crate::persistence::TenantPersistenceExecutor::LibsqlReplica($storage) => $body,
-            crate::persistence::TenantPersistenceExecutor::Postgres($storage) => $body,
-            crate::persistence::TenantPersistenceExecutor::MySql($storage) => $body,
-            #[cfg(any(test, feature = "test-hooks"))]
-            crate::persistence::TenantPersistenceExecutor::Memory($storage) => $body,
-        }
-    };
     ($value:expr, |$wrap:ident, $storage:ident| $body:expr) => {
         match $value {
             crate::persistence::TenantPersistenceExecutor::Redb($storage) => {
@@ -103,7 +92,6 @@ mod read_capabilities;
 mod runtime_hooks;
 mod snapshot;
 mod tenant;
-mod write_ops;
 
 pub(crate) use control::ControlPlaneProvider;
 pub(crate) use executor::TenantPersistenceExecutor;
@@ -113,4 +101,3 @@ pub(crate) use runtime_hooks::{
 };
 pub(crate) use snapshot::TenantPersistenceSnapshot;
 pub(crate) use tenant::TenantPersistence;
-pub(crate) use write_ops::TenantPersistenceWriteOps;

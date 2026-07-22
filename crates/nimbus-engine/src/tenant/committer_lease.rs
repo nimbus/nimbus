@@ -3,9 +3,9 @@ use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use nimbus_core::{Error, Result, StorageErrorKind, Timestamp};
-use nimbus_storage::{CommitterLease, CommitterLeaseError};
+use nimbus_storage::{CommitterLease, CommitterLeaseError, SchedulerWriteReconciliation};
 
-use crate::engine::ProjectionToken;
+use crate::engine::{ProjectionToken, begin_durable_recovery_eviction};
 
 use super::TenantRuntime;
 use super::background::BackgroundWorker;
@@ -314,6 +314,131 @@ impl TenantRuntime {
             records,
             cursor,
         ))
+    }
+
+    /// Persists scheduler state behind the same per-tenant sequence owner as
+    /// journal, schema, restore, and trigger writes. Scheduler state does not
+    /// advance the durable journal, so provider transactions validate the
+    /// held lease at the current durable sequence and update scheduler rows in
+    /// that same transaction.
+    pub(crate) fn persist_scheduler_write<Check, AfterPersist>(
+        self: &Arc<Self>,
+        operation: nimbus_storage::SchedulerWrite,
+        recovery_now: Timestamp,
+        check_cancel: Check,
+        after_persist: AfterPersist,
+        initiated_eviction: Arc<AtomicBool>,
+    ) -> Result<nimbus_storage::SchedulerWriteResult>
+    where
+        Check: Fn() -> Result<()> + Send + 'static,
+        AfterPersist: Fn() -> Result<()> + Send + 'static,
+    {
+        let check_cancel = Arc::new(Mutex::new(check_cancel));
+        check_cancel
+            .lock()
+            .expect("scheduler cancellation check lock should not be poisoned")()?;
+        if self.begin_scheduler_recovery()
+            && let Err(error) = self.persist_scheduler_write_once(
+                nimbus_storage::SchedulerWrite::RecoverRunning { now: recovery_now },
+                {
+                    let check_cancel = check_cancel.clone();
+                    move || {
+                        check_cancel
+                            .lock()
+                            .expect("scheduler cancellation check lock should not be poisoned")(
+                        )
+                    }
+                },
+                || Ok(()),
+                initiated_eviction.clone(),
+            )
+        {
+            self.restore_scheduler_recovery();
+            return Err(error);
+        }
+        self.persist_scheduler_write_once(
+            operation,
+            move || {
+                check_cancel
+                    .lock()
+                    .expect("scheduler cancellation check lock should not be poisoned")(
+                )
+            },
+            after_persist,
+            initiated_eviction,
+        )
+    }
+
+    fn persist_scheduler_write_once<Check, AfterPersist>(
+        self: &Arc<Self>,
+        operation: nimbus_storage::SchedulerWrite,
+        check_cancel: Check,
+        after_persist: AfterPersist,
+        initiated_eviction: Arc<AtomicBool>,
+    ) -> Result<nimbus_storage::SchedulerWriteResult>
+    where
+        Check: Fn() -> Result<()> + Send + 'static,
+        AfterPersist: Fn() -> Result<()> + Send + 'static,
+    {
+        self.ensure_committer_lease_for_assignment()?;
+        let prepared = self.store.prepare_scheduler_write(operation)?;
+        let expected_durable_sequence = self.durable_head();
+        let result = match self.held_committer_lease()? {
+            Some((owner_id, epoch)) => self.store.fenced_scheduler_write_cancellable(
+                &owner_id,
+                epoch,
+                expected_durable_sequence,
+                prepared.operation(),
+                check_cancel,
+            ),
+            None => self
+                .store
+                .scheduler_write_cancellable(prepared.operation(), check_cancel)
+                .map_err(CommitterLeaseError::Storage),
+        };
+        let write_error = match result {
+            Ok(result) => match after_persist() {
+                Ok(()) => return Ok(result),
+                Err(error) => error,
+            },
+            Err(CommitterLeaseError::Fenced { owner_id, epoch }) => {
+                self.record_committer_fenced(owner_id.clone(), epoch);
+                return Err(Error::CommitterFenced { owner_id, epoch });
+            }
+            Err(CommitterLeaseError::Storage(error)) => error,
+            Err(CommitterLeaseError::Held | CommitterLeaseError::Unsupported) => {
+                return Err(Error::Internal(
+                    "provider scheduler write requires fenced-apply support".to_string(),
+                ));
+            }
+        };
+
+        match self.store.reconcile_scheduler_write(&prepared) {
+            Ok(SchedulerWriteReconciliation::Committed(result)) => Ok(result),
+            Ok(SchedulerWriteReconciliation::RolledBack) => Err(write_error),
+            Ok(SchedulerWriteReconciliation::Ambiguous) => {
+                let error = Error::Internal(format!(
+                    "scheduler write outcome is ambiguous; crash-and-replay required after persistence failed ({write_error})"
+                ));
+                self.begin_scheduler_durable_recovery(&error, initiated_eviction);
+                Err(error)
+            }
+            Err(progress_error) => {
+                let error = Error::Internal(format!(
+                    "scheduler write outcome is ambiguous; crash-and-replay required after persistence failed ({write_error}) and scheduler state could not be read ({progress_error})"
+                ));
+                self.begin_scheduler_durable_recovery(&error, initiated_eviction);
+                Err(error)
+            }
+        }
+    }
+
+    fn begin_scheduler_durable_recovery(&self, error: &Error, initiated_eviction: Arc<AtomicBool>) {
+        self.publisher_record_ambiguous_error();
+        begin_durable_recovery_eviction(self, error);
+        self.fail_and_drain_mutation_queues(error);
+        self.close_committed_mutation_observers();
+        initiated_eviction.store(true, Ordering::Release);
     }
 
     pub(crate) fn persist_point_in_time_restore_archive(

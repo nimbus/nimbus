@@ -1,6 +1,8 @@
 mod actor;
 mod admission;
+mod arm;
 mod codel;
+mod frontiers;
 mod isolate_admission;
 mod journal;
 #[cfg(any(test, feature = "test-hooks"))]
@@ -16,6 +18,9 @@ pub(crate) use self::actor::{
     run_job, validate_append_sequences,
 };
 pub(super) use self::admission::{MutationAdmissionDecision, MutationAdmissionGate};
+pub use self::arm::CommitterArm;
+pub use self::frontiers::MutationFrontierStats;
+pub(crate) use self::frontiers::{JournalFrontierSample, WriteLogFrontierSample};
 pub(super) use self::isolate_admission::MutationIsolateAdmission;
 pub(crate) use self::isolate_admission::MutationIsolateAdmissionPermit;
 pub(super) use self::journal::MutationJournalState;
@@ -23,6 +28,8 @@ pub(super) use self::journal::MutationJournalState;
 pub use self::pause::MutationJournalPauseHandle;
 #[cfg(any(test, feature = "test-hooks"))]
 pub(in crate::tenant) use self::pause::MutationJournalPauseState;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use self::publisher::OrderedPublisherPauseHandle;
 pub(crate) use self::publisher::{
     AssignedPublisherBatch, DeferredPublisherResponse, ObserverHandoff, PendingPublisherResponse,
     PublisherErrorCounts, PublisherHandoff, PublisherMessage, PublisherQueueError,
@@ -41,6 +48,6 @@ pub(crate) use self::requests::{
     MutationResponseSender, PreparedPayloadAccounting, QueuedMutationRequest, QueuedMutationResult,
 };
 pub use self::stats::{
-    CommitterArm, MutationAdmissionPhase, MutationAdmissionStats, MutationIsolateAdmissionStats,
+    MutationAdmissionPhase, MutationAdmissionStats, MutationIsolateAdmissionStats,
     MutationJournalStats,
 };

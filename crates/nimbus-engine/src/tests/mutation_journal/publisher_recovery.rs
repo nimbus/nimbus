@@ -438,7 +438,7 @@ async fn serial_assignment_failure_discards_staged_suffix_and_keeps_tenant_live(
     let tenant_id = TenantId::new("serial-assignment-failure").expect("tenant id should build");
     crate::tenant::configure_committer_arm_for_testing(
         tenant_id.clone(),
-        crate::tenant::CommitterArm::Serial,
+        crate::tenant::CommitterArm::SerialReference,
     );
     engine
         .create_tenant_async(tenant_id.clone())
@@ -503,7 +503,10 @@ async fn serial_assignment_failure_discards_staged_suffix_and_keeps_tenant_live(
     let stats = engine
         .mutation_journal_stats_for_testing(&tenant_id)
         .expect("serial journal diagnostics should load");
-    assert_eq!(stats.committer_arm, crate::tenant::CommitterArm::Serial);
+    assert_eq!(
+        stats.committer_arm,
+        crate::tenant::CommitterArm::SerialReference
+    );
     assert_eq!(stats.durable_head, SequenceNumber(1));
     assert_eq!(stats.applied_head, SequenceNumber(1));
     let journal = engine
@@ -529,7 +532,7 @@ async fn serial_lost_ack_evicts_and_replays_without_retryable_error() {
     let tenant_id = TenantId::new("serial-recovery-fallback").expect("tenant id should build");
     crate::tenant::configure_committer_arm_for_testing(
         tenant_id.clone(),
-        crate::tenant::CommitterArm::Serial,
+        crate::tenant::CommitterArm::SerialReference,
     );
     engine
         .create_tenant_async(tenant_id.clone())
@@ -617,7 +620,7 @@ async fn quiesce_racing_serial_crash_replay_completes_without_panic() {
     let tenant_id = TenantId::new("serial-quiesce-race").expect("tenant id should build");
     crate::tenant::configure_committer_arm_for_testing(
         tenant_id.clone(),
-        crate::tenant::CommitterArm::Serial,
+        crate::tenant::CommitterArm::SerialReference,
     );
     engine
         .create_tenant_async(tenant_id.clone())
@@ -738,7 +741,7 @@ async fn shutdown_serial_recovery_deregisters_and_preserves_diagnostics() {
     let tenant_id = TenantId::new("serial-shutdown-eviction").expect("tenant id should build");
     crate::tenant::configure_committer_arm_for_testing(
         tenant_id.clone(),
-        crate::tenant::CommitterArm::Serial,
+        crate::tenant::CommitterArm::SerialReference,
     );
     engine
         .create_tenant_async(tenant_id.clone())
@@ -931,7 +934,7 @@ async fn serial_crash_replay_rejects_residual_direct_commit_without_running_it()
     let tenant_id = TenantId::new("serial-residual-direct").expect("tenant id should build");
     crate::tenant::configure_committer_arm_for_testing(
         tenant_id.clone(),
-        crate::tenant::CommitterArm::Serial,
+        crate::tenant::CommitterArm::SerialReference,
     );
     engine
         .create_tenant_async(tenant_id.clone())
@@ -1203,7 +1206,7 @@ async fn serial_err_err_recovery_evicts_when_append_did_not_land() {
     let tenant_id = TenantId::new("serial-unlanded-ambiguity").expect("tenant id should build");
     crate::tenant::configure_committer_arm_for_testing(
         tenant_id.clone(),
-        crate::tenant::CommitterArm::Serial,
+        crate::tenant::CommitterArm::SerialReference,
     );
     engine
         .create_tenant_async(tenant_id.clone())
@@ -1352,7 +1355,7 @@ async fn serial_assignment_worker_panic_discards_staged_suffix_and_keeps_tenant_
     let tenant_id = TenantId::new("serial-assignment-panic").expect("tenant id should build");
     crate::tenant::configure_committer_arm_for_testing(
         tenant_id.clone(),
-        crate::tenant::CommitterArm::Serial,
+        crate::tenant::CommitterArm::SerialReference,
     );
     engine
         .create_tenant_async(tenant_id.clone())
@@ -1724,7 +1727,7 @@ async fn serial_discard_rewrites_same_batch_conflict_before_retry() {
     let tenant_id = TenantId::new("serial-deferred-conflict").expect("tenant id should build");
     crate::tenant::configure_committer_arm_for_testing(
         tenant_id.clone(),
-        crate::tenant::CommitterArm::Serial,
+        crate::tenant::CommitterArm::SerialReference,
     );
     engine
         .create_tenant_async(tenant_id.clone())

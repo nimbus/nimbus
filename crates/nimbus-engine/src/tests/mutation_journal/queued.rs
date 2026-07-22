@@ -1280,7 +1280,7 @@ async fn bounded_committer_inbox_times_out_with_typed_retryable_error_and_report
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn rejected_serial_job_returns_typed_retryable_publisher_error() {
+async fn rejected_ordered_opaque_job_returns_typed_retryable_publisher_error() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();
     let tenant_id = TenantId::new("serial-job-rejection").expect("tenant id should build");
@@ -1353,7 +1353,7 @@ async fn rejected_serial_job_returns_typed_retryable_publisher_error() {
             },
         )
         .await
-        .expect_err("full publisher queue should reject the opaque serial job");
+        .expect_err("full publisher queue should reject the ordered opaque job");
     assert!(matches!(schema_error, Error::CommitterFull { .. }));
     assert_eq!(
         schema_error.retryability(),

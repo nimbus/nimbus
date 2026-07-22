@@ -190,7 +190,21 @@ impl TenantRuntime {
     }
 
     pub(crate) fn shutdown_committer(&self) {
+        #[cfg(any(test, feature = "test-hooks"))]
+        self.publisher.release_test_pause_for_shutdown();
         self.committer.shutdown();
+    }
+
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) async fn wait_for_ordered_publisher_pause_for_testing(&self) {
+        self.publisher.wait_for_test_pause().await;
+    }
+
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) fn ordered_publisher_pause_handle_for_testing(
+        &self,
+    ) -> super::OrderedPublisherPauseHandle {
+        self.publisher.pause_handle()
     }
 
     pub(crate) fn publisher_record_transient_error(&self) {
@@ -227,11 +241,11 @@ impl TenantRuntime {
         self.publisher.wait_finished().await;
     }
 
-    pub(crate) async fn send_publisher_serial_job(
+    pub(crate) async fn send_publisher_ordered_opaque_job(
         &self,
         job: super::CommitterJob,
     ) -> std::result::Result<tokio::sync::oneshot::Receiver<()>, (super::CommitterJob, Error)> {
-        self.publisher.send_serial_job(job).await
+        self.publisher.send_ordered_opaque_job(job).await
     }
 
     pub(crate) async fn send_queued_committer_batch(
@@ -296,7 +310,7 @@ impl TenantRuntime {
     {
         let result = self
             .committer
-            .submit_blocking(CommitterMessage::InternalSerial, task);
+            .submit_blocking(CommitterMessage::InternalCommit, task);
         if let Err(error) = &result {
             self.maybe_report_overload_error(error);
         }
@@ -310,7 +324,7 @@ impl TenantRuntime {
     {
         let result = self
             .committer
-            .submit_async(CommitterMessage::InternalSerial, task)
+            .submit_async(CommitterMessage::InternalCommit, task)
             .await;
         if let Err(error) = &result {
             self.maybe_report_overload_error(error);
@@ -665,7 +679,11 @@ impl TenantRuntime {
     }
 
     pub(crate) fn mutation_journal_stats(&self) -> MutationJournalStats {
-        let mut stats = self.mutation_journal.stats();
+        let journal_before = self.mutation_journal.frontier_sample();
+        let write_log = self.write_log.frontier_sample();
+        let journal_after = self.mutation_journal.frontier_sample();
+        let frontiers = MutationFrontierStats::reconcile(write_log, journal_before, journal_after);
+        let mut stats = self.mutation_journal.stats(frontiers);
         stats.committer_inbox_depth = self.committer.depth();
         stats.committer_inbox_capacity = self.committer.capacity();
         stats.committer_send_timeout_millis =

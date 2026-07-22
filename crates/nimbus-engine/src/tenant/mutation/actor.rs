@@ -165,7 +165,7 @@ pub(crate) enum CommitterMessage {
     DirectCommit(CommitterJob),
     ExecutionUnitCommit(CommitterJob),
     JournalProgressSync(CommitterJob),
-    InternalSerial(CommitterJob),
+    InternalCommit(CommitterJob),
 }
 
 impl CommitterMessage {
@@ -175,7 +175,7 @@ impl CommitterMessage {
             Self::DirectCommit(_) => "direct",
             Self::ExecutionUnitCommit(_) => "execution-unit",
             Self::JournalProgressSync(_) => "journal-progress",
-            Self::InternalSerial(_) => "internal",
+            Self::InternalCommit(_) => "internal",
         }
     }
 }
@@ -574,7 +574,7 @@ pub(crate) async fn run_committer_actor(
             runtime.fail_and_drain_mutation_queues(&error);
             Some(runtime)
         } else if runtime.eviction_started() {
-            // Internal serial jobs do not have a route-specific outer caller
+            // Internal ordered jobs do not have a route-specific outer caller
             // that can finish eviction after their operation guard drops. The
             // actor is the common owner that survives every durable route.
             let error = runtime.durable_recovery_eviction_error();
@@ -677,7 +677,7 @@ async fn run_committer_actor_loop(
             CommitterMessage::DirectCommit(job)
             | CommitterMessage::ExecutionUnitCommit(job)
             | CommitterMessage::JournalProgressSync(job)
-            | CommitterMessage::InternalSerial(job) => job,
+            | CommitterMessage::InternalCommit(job) => job,
             CommitterMessage::QueuedBatch { .. } => unreachable!(),
         };
         if runtime.eviction_started() {
@@ -686,7 +686,7 @@ async fn run_committer_actor_loop(
             continue;
         }
         if runtime.uses_ordered_publisher() {
-            match runtime.send_publisher_serial_job(job).await {
+            match runtime.send_publisher_ordered_opaque_job(job).await {
                 Ok(drained) => {
                     if drained.await.is_err() {
                         runtime.record_mutation_worker_failure();
@@ -698,7 +698,7 @@ async fn run_committer_actor_loop(
                     tracing::warn!(
                         tenant = %runtime.tenant_id(),
                         error = %error,
-                        "committer serial job rejected by the ordered publisher"
+                        "committer opaque job rejected by the ordered publisher"
                     );
                 }
             }
@@ -731,7 +731,7 @@ fn fail_committer_message_during_fence_eviction(
         CommitterMessage::DirectCommit(job)
         | CommitterMessage::ExecutionUnitCommit(job)
         | CommitterMessage::JournalProgressSync(job)
-        | CommitterMessage::InternalSerial(job) => {
+        | CommitterMessage::InternalCommit(job) => {
             job.fail(error.clone());
             runtime.record_mutation_worker_failure();
         }
@@ -753,7 +753,7 @@ fn fail_committer_message_during_shutdown_eviction(
         CommitterMessage::DirectCommit(job)
         | CommitterMessage::ExecutionUnitCommit(job)
         | CommitterMessage::JournalProgressSync(job)
-        | CommitterMessage::InternalSerial(job) => {
+        | CommitterMessage::InternalCommit(job) => {
             job.fail(runtime.durable_recovery_eviction_error());
             runtime.record_mutation_worker_failure();
         }

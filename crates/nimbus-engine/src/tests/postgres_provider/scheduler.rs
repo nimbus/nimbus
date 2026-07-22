@@ -2,6 +2,39 @@ use super::support::*;
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(postgres_provider)]
+async fn postgres_scheduler_writes_are_atomically_fenced() {
+    with_shared_postgres_engine_configs(
+        |engine_config_a, engine_config_b, provider_config| async move {
+            let tenant_id = TenantId::new("pg-scheduler-fence").expect("tenant id should build");
+            let engine_a = Arc::new(
+                Engine::new_with_persistence_config(engine_config_a)
+                    .await
+                    .expect("first postgres-backed engine should create"),
+            );
+            let engine_b = Arc::new(
+                Engine::new_with_persistence_config(engine_config_b)
+                    .await
+                    .expect("second postgres-backed engine should create"),
+            );
+            let tenant_id_for_expiry = tenant_id.clone();
+            exercise_provider_scheduler_fence_contract(
+                engine_a,
+                engine_b,
+                tenant_id,
+                move || async move {
+                    expire_postgres_committer_lease(&provider_config, &tenant_id_for_expiry)
+                        .await
+                        .expect("postgres scheduler holder lease should expire");
+                },
+            )
+            .await;
+        },
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial(postgres_provider)]
 async fn postgres_notifications_load_unloaded_tenants_with_scheduled_work() {
     with_shared_postgres_engine_configs(
         |engine_config_a, engine_config_b, _provider_config| async move {
@@ -26,9 +59,6 @@ async fn postgres_notifications_load_unloaded_tenants_with_scheduled_work() {
                 .await
                 .expect("tenant should create");
 
-            let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-            let scheduler_handle =
-                tokio::spawn(crate::run_scheduler(engine_b.clone(), shutdown_rx));
             engine_a
                 .schedule_mutation_async(
                     tenant_id.clone(),
@@ -47,8 +77,27 @@ async fn postgres_notifications_load_unloaded_tenants_with_scheduled_work() {
                 .await
                 .expect("scheduled mutation should persist");
 
+            // Keep the due row pending until the notification path has proved
+            // tenant discovery; scheduler execution is a separate assertion.
             wait_for_value(
-                "postgres notification should load tenant and execute scheduled work",
+                "postgres notification should load the scheduled tenant into the second engine",
+                Duration::from_secs(2),
+                Duration::from_millis(25),
+                || {
+                    let engine = engine_b.clone();
+                    async move { engine.loaded_tenant_ids() }
+                },
+                |tenant_ids| tenant_ids.contains(&tenant_id),
+            )
+            .await;
+
+            let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+            let scheduler_handle_a =
+                tokio::spawn(crate::run_scheduler(engine_a.clone(), shutdown_rx.clone()));
+            let scheduler_handle_b =
+                tokio::spawn(crate::run_scheduler(engine_b.clone(), shutdown_rx));
+            wait_for_value(
+                "postgres lease owner should execute externally visible scheduled work",
                 Duration::from_secs(2),
                 Duration::from_millis(25),
                 || {
@@ -72,20 +121,14 @@ async fn postgres_notifications_load_unloaded_tenants_with_scheduled_work() {
                 },
             )
             .await;
-            wait_for_value(
-                "postgres notification should load the scheduled tenant into the second engine",
-                Duration::from_secs(2),
-                Duration::from_millis(25),
-                || {
-                    let engine = engine_b.clone();
-                    async move { engine.loaded_tenant_ids() }
-                },
-                |tenant_ids| tenant_ids.contains(&tenant_id),
-            )
-            .await;
 
             let _ = shutdown_tx.send(true);
-            scheduler_handle.await.expect("scheduler should shut down");
+            scheduler_handle_a
+                .await
+                .expect("lease-owner scheduler should shut down");
+            scheduler_handle_b
+                .await
+                .expect("notification scheduler should shut down");
             engine_a.quiesce().await;
             engine_b.quiesce().await;
         },

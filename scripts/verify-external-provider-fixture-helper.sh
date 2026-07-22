@@ -226,6 +226,7 @@ run_fixture() {
 
 assert_contains "${repo_root}/compose.test-external-providers.yaml" "image: postgres:16"
 assert_contains "${repo_root}/compose.test-external-providers.yaml" "image: mysql:8.4"
+assert_contains "${repo_root}/compose.test-external-providers.yaml" "--innodb-redo-log-capacity=536870912"
 assert_contains "${repo_root}/compose.test-external-providers.yaml" "image: ghcr.io/tursodatabase/libsql-server:v0.24.33"
 assert_contains "${repo_root}/compose.test-external-providers.yaml" "127.0.0.1:\${NIMBUS_PROVIDER_FIXTURE_MYSQL_PORT:-3306}:3306"
 assert_not_contains "${repo_root}/Cargo.toml" "testcontainers-modules"

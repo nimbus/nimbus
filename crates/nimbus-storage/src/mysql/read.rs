@@ -465,12 +465,112 @@ impl MySqlTenantStore {
         })
     }
 
+    pub fn get_pending_scheduled_job(&self, job_id: &DocumentId) -> Result<Option<ScheduledJob>> {
+        self.load_scheduler_job_by_id("scheduled_jobs", job_id)
+    }
+
+    pub fn list_running_scheduled_jobs(&self) -> Result<Vec<ScheduledJob>> {
+        let provider = self.provider.clone();
+        let database_name = self.database_name.clone();
+        self.block_on(async move {
+            let mut conn = provider.conn().await?;
+            load_scheduled_jobs_from_session(&mut conn, &database_name, "running_scheduled_jobs")
+                .await
+        })
+    }
+
+    pub fn get_running_scheduled_job(&self, job_id: &DocumentId) -> Result<Option<ScheduledJob>> {
+        self.load_scheduler_job_by_id("running_scheduled_jobs", job_id)
+    }
+
+    fn load_scheduler_job_by_id(
+        &self,
+        table_name: &str,
+        job_id: &DocumentId,
+    ) -> Result<Option<ScheduledJob>> {
+        debug_assert!(matches!(
+            table_name,
+            "scheduled_jobs" | "running_scheduled_jobs"
+        ));
+        let provider = self.provider.clone();
+        let database_name = self.database_name.clone();
+        let table_name = table_name.to_string();
+        let job_id = job_id.to_string();
+        self.block_on(async move {
+            let mut conn = provider.conn().await?;
+            let query = format!(
+                "SELECT data_json FROM {} WHERE id = ?",
+                qualified_table(&database_name, &table_name)
+            );
+            conn.exec_first::<Row, _, _>(query, (job_id,))
+                .await
+                .map_err(map_mysql_error)?
+                .map(|row| {
+                    deserialize_json::<ScheduledJob>(
+                        mysql_async::from_row::<(String,)>(row).0.as_str(),
+                    )
+                })
+                .transpose()
+        })
+    }
+
+    pub fn peek_due_scheduled_jobs(
+        &self,
+        now: Timestamp,
+        max_jobs: usize,
+    ) -> Result<Vec<ScheduledJob>> {
+        if max_jobs == 0 {
+            return Ok(Vec::new());
+        }
+        let provider = self.provider.clone();
+        let database_name = self.database_name.clone();
+        let max_jobs = u64::try_from(max_jobs).unwrap_or(u64::MAX);
+        self.block_on(async move {
+            let mut conn = provider.conn().await?;
+            let query = format!(
+                "SELECT data_json FROM {} WHERE run_at <= ? ORDER BY run_at, id LIMIT ?",
+                qualified_table(&database_name, "scheduled_jobs")
+            );
+            let rows: Vec<Row> = conn
+                .exec(query, (claim_due_jobs_upper_bound(now), max_jobs))
+                .await
+                .map_err(map_mysql_error)?;
+            rows.into_iter()
+                .map(|row| {
+                    deserialize_json::<ScheduledJob>(
+                        mysql_async::from_row::<(String,)>(row).0.as_str(),
+                    )
+                })
+                .collect()
+        })
+    }
+
     pub fn load_cron_jobs(&self) -> Result<Vec<CronJob>> {
         let provider = self.provider.clone();
         let database_name = self.database_name.clone();
         self.block_on(async move {
             let mut conn = provider.conn().await?;
             load_cron_jobs_from_session(&mut conn, &database_name).await
+        })
+    }
+
+    pub fn get_cron_job(&self, name: &str) -> Result<Option<CronJob>> {
+        let provider = self.provider.clone();
+        let database_name = self.database_name.clone();
+        let name = name.to_string();
+        self.block_on(async move {
+            let mut conn = provider.conn().await?;
+            let query = format!(
+                "SELECT data_json FROM {} WHERE name = ?",
+                qualified_table(&database_name, "cron_jobs")
+            );
+            conn.exec_first::<Row, _, _>(query, (name,))
+                .await
+                .map_err(map_mysql_error)?
+                .map(|row| {
+                    deserialize_json::<CronJob>(mysql_async::from_row::<(String,)>(row).0.as_str())
+                })
+                .transpose()
         })
     }
 

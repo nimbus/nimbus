@@ -15,6 +15,8 @@ use super::super::{
     CommitterJob, MutationResponseSender, QueuedMutationResult, TenantOperationGuard,
 };
 use super::CommitterArm;
+#[cfg(any(test, feature = "test-hooks"))]
+use crate::tenant::pause_barrier::{PauseBarrier, PauseBarrierHandle};
 
 const DEFAULT_PUBLISHER_QUEUE_CAPACITY: usize = 32;
 const DEFAULT_PUBLISHER_SEND_TIMEOUT_MS: u64 = 500;
@@ -926,7 +928,7 @@ pub(crate) struct PublisherErrorCounts {
 pub(crate) enum PublisherMessage {
     Batch(AssignedPublisherBatch),
     ResponseFence(Vec<DeferredPublisherResponse>),
-    SerialJob {
+    OrderedOpaqueJob {
         job: CommitterJob,
         drained: oneshot::Sender<()>,
     },
@@ -946,25 +948,39 @@ pub(crate) struct PublisherHandoff {
     assignment_recovery_gate: tokio::sync::Mutex<()>,
     finished: AtomicBool,
     finished_notify: Notify,
+    #[cfg(any(test, feature = "test-hooks"))]
+    pause_before_message: Arc<PauseBarrier>,
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+#[derive(Debug, Clone)]
+pub struct OrderedPublisherPauseHandle(PauseBarrierHandle);
+
+#[cfg(any(test, feature = "test-hooks"))]
+impl OrderedPublisherPauseHandle {
+    pub fn arm(&self) {
+        self.0.arm();
+    }
+
+    pub fn wait_until_entered(&self, timeout: Duration) -> bool {
+        self.0.wait_until_entered(timeout).is_some()
+    }
+
+    pub fn release(&self) {
+        self.0.release();
+    }
 }
 
 impl PublisherHandoff {
-    pub(crate) fn new(uses_ordered_publisher: bool, _tenant_id: &TenantId) -> Self {
+    pub(crate) fn new(committer_arm: CommitterArm, _tenant_id: &TenantId) -> Self {
         #[cfg(test)]
         let (capacity, send_timeout) =
             take_publisher_limits_for_testing(_tenant_id).unwrap_or_else(publisher_limits_from_env);
         #[cfg(not(test))]
         let (capacity, send_timeout) = publisher_limits_from_env();
         let (sender, receiver) = mpsc::channel(capacity);
-        let default_arm = if uses_ordered_publisher {
-            CommitterArm::OrderedPublisher
-        } else {
-            CommitterArm::Serial
-        };
         #[cfg(test)]
-        let arm = take_committer_arm_for_testing(_tenant_id).unwrap_or(default_arm);
-        #[cfg(not(test))]
-        let arm = default_arm;
+        let committer_arm = take_committer_arm_for_testing(_tenant_id).unwrap_or(committer_arm);
         Self {
             sender,
             receiver: Mutex::new(Some(receiver)),
@@ -975,15 +991,35 @@ impl PublisherHandoff {
             transient_error_count: AtomicU64::new(0),
             fatal_error_count: AtomicU64::new(0),
             ambiguous_error_count: AtomicU64::new(0),
-            arm,
+            arm: committer_arm,
             assignment_recovery_gate: tokio::sync::Mutex::new(()),
             finished: AtomicBool::new(false),
             finished_notify: Notify::new(),
+            #[cfg(any(test, feature = "test-hooks"))]
+            pause_before_message: Arc::new(PauseBarrier::default()),
         }
     }
 
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) fn pause_handle(&self) -> OrderedPublisherPauseHandle {
+        OrderedPublisherPauseHandle(PauseBarrierHandle::new(self.pause_before_message.clone()))
+    }
+
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) async fn wait_for_test_pause(&self) {
+        let pause = self.pause_before_message.clone();
+        tokio::task::spawn_blocking(move || pause.wait_if_armed(()))
+            .await
+            .expect("ordered publisher pause task should not panic");
+    }
+
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) fn release_test_pause_for_shutdown(&self) {
+        self.pause_before_message.release_for_shutdown();
+    }
+
     pub(crate) fn uses_ordered_publisher(&self) -> bool {
-        matches!(self.arm, CommitterArm::OrderedPublisher)
+        self.arm.uses_ordered_publisher()
     }
 
     pub(crate) fn arm(&self) -> CommitterArm {
@@ -1054,14 +1090,14 @@ impl PublisherHandoff {
         }
     }
 
-    pub(crate) async fn send_serial_job(
+    pub(crate) async fn send_ordered_opaque_job(
         &self,
         job: CommitterJob,
     ) -> std::result::Result<oneshot::Receiver<()>, (CommitterJob, Error)> {
-        match self.reserve("serial job").await {
+        match self.reserve("ordered opaque job").await {
             Ok(permit) => {
                 let (drained, wait_for_drain) = oneshot::channel();
-                permit.send(PublisherMessage::SerialJob { job, drained });
+                permit.send(PublisherMessage::OrderedOpaqueJob { job, drained });
                 Ok(wait_for_drain)
             }
             Err(error) => Err((job, error)),

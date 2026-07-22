@@ -73,10 +73,12 @@ stages a write or read passes through:
   capacity, age of the oldest queued mutation, admitted versus shed
   counts, and the current load-shedding phase. This is where overload
   shows up first.
-- **Mutation journal** — durability progress: the durable head versus the
-  applied head, the lag between them, pending responses, and the apply
-  worker's health (running, start and restart counts, failures). A
-  growing apply lag means commits are durable but not yet visible.
+- **Mutation journal** — causal write progress through assignment, durable
+  append, storage application, contiguous publication, and reader visibility.
+  Six ordered heads and four adjacent-phase lags distinguish which phase owns
+  a backlog; the snapshot reconciles concurrent observations without advancing
+  production state. The group also includes pending responses and worker health
+  (running, start and restart counts, failures).
 - **Subscription delivery** — the reactive fan-out queue: depth, worker
   health, and coalescing counters showing how many commits were batched
   per wakeup. This tells you whether live queries are keeping up with

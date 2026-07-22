@@ -34,6 +34,57 @@ const LIBSQL_ADMIN_URL_ENV: &str = "NIMBUS_LIBSQL_ADMIN_URL";
 const LIBSQL_ADMIN_AUTH_HEADER_ENV: &str = "NIMBUS_LIBSQL_ADMIN_AUTH_HEADER";
 static TEST_SUFFIX_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+#[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial(libsql_replica_provider)]
+async fn libsql_provider_publisher_contract() {
+    with_libsql_replica_engine_config(|engine_config, _provider_config| async move {
+        let engine = Arc::new(
+            Engine::new_with_persistence_config(engine_config)
+                .await
+                .expect("libSQL-backed engine should create"),
+        );
+        exercise_provider_publisher_contract(
+            engine,
+            TenantId::new("libsql-publisher-contract").expect("tenant id should build"),
+            None,
+        )
+        .await;
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial(libsql_replica_provider)]
+async fn libsql_scheduler_writes_are_atomically_fenced() {
+    with_shared_libsql_replica_engine_configs(
+        |engine_config_a, engine_config_b, provider_config| async move {
+            let tenant_id =
+                TenantId::new("libsql-scheduler-fence").expect("tenant id should build");
+            let engine_a = Arc::new(
+                Engine::new_with_persistence_config(engine_config_a)
+                    .await
+                    .expect("first libsql-backed engine should create"),
+            );
+            let engine_b = Arc::new(
+                Engine::new_with_persistence_config(engine_config_b)
+                    .await
+                    .expect("second libsql-backed engine should create"),
+            );
+            let tenant_id_for_expiry = tenant_id.clone();
+            exercise_provider_scheduler_fence_contract(
+                engine_a,
+                engine_b,
+                tenant_id,
+                move || async move {
+                    expire_libsql_committer_lease(&provider_config, &tenant_id_for_expiry).await;
+                },
+            )
+            .await;
+        },
+    )
+    .await;
+}
+
 #[derive(Default)]
 struct ArmedLibsqlCommitAcknowledgementLoss {
     armed: AtomicBool,
@@ -413,8 +464,8 @@ async fn typed_libsql_replica_config_supports_async_schema_mutation_journal_and_
                 .mutation_journal_stats_for_testing(&tenant_id)
                 .expect("libSQL committer-arm diagnostics should load")
                 .committer_arm,
-            crate::tenant::CommitterArm::Serial,
-            "U5 must leave the libSQL production arm serial"
+            crate::tenant::CommitterArm::OrderedPublisher,
+            "libSQL must install the production ordered publisher"
         );
         engine
             .set_table_schema_async(tenant_id.clone(), tasks_schema())
@@ -689,9 +740,6 @@ async fn libsql_replica_background_poll_loads_unloaded_tenants_with_scheduled_wo
                 .await
                 .expect("tenant should create");
 
-            let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-            let scheduler_handle =
-                tokio::spawn(crate::run_scheduler(engine_b.clone(), shutdown_rx));
             engine_a
                 .schedule_mutation_async(
                     tenant_id.clone(),
@@ -710,6 +758,8 @@ async fn libsql_replica_background_poll_loads_unloaded_tenants_with_scheduled_wo
                 .await
                 .expect("scheduled mutation should persist");
 
+            // Keep the due row pending until the polling path has proved tenant
+            // discovery; scheduler execution is a separate assertion.
             wait_for_value(
                 "replica poll should load the scheduled tenant into the second engine",
                 Duration::from_secs(3),
@@ -721,12 +771,18 @@ async fn libsql_replica_background_poll_loads_unloaded_tenants_with_scheduled_wo
                 |tenant_ids| tenant_ids.contains(&tenant_id),
             )
             .await;
+
+            let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+            let scheduler_handle_a =
+                tokio::spawn(crate::run_scheduler(engine_a.clone(), shutdown_rx.clone()));
+            let scheduler_handle_b =
+                tokio::spawn(crate::run_scheduler(engine_b.clone(), shutdown_rx));
             wait_for_value(
-                "replica poll should execute scheduled work on the second engine",
+                "libsql lease owner should execute externally visible scheduled work",
                 Duration::from_secs(3),
                 Duration::from_millis(25),
                 || {
-                    let engine = engine_b.clone();
+                    let engine = engine_a.clone();
                     let tenant_id = tenant_id.clone();
                     async move {
                         engine
@@ -748,7 +804,12 @@ async fn libsql_replica_background_poll_loads_unloaded_tenants_with_scheduled_wo
             .await;
 
             let _ = shutdown_tx.send(true);
-            scheduler_handle.await.expect("scheduler should shut down");
+            scheduler_handle_a
+                .await
+                .expect("lease-owner scheduler should shut down");
+            scheduler_handle_b
+                .await
+                .expect("polling scheduler should shut down");
             engine_a.quiesce().await;
             engine_b.quiesce().await;
         },
@@ -1299,4 +1360,29 @@ async fn open_remote_namespace_database(
     builder.build().await.map_err(|error| {
         nimbus_core::Error::storage(nimbus_core::StorageErrorKind::Other, error.to_string())
     })
+}
+
+async fn expire_libsql_committer_lease(config: &LibsqlReplicaProviderConfig, tenant_id: &TenantId) {
+    let provider = LibsqlReplicaProvider::connect(config.clone())
+        .await
+        .expect("libsql expiry provider should connect");
+    let namespace = provider
+        .tenant_namespace(tenant_id)
+        .expect("libsql tenant namespace should derive");
+    let database = open_remote_namespace_database(config, &namespace)
+        .await
+        .expect("libsql expiry namespace should open");
+    let connection = database
+        .connect()
+        .expect("libsql expiry connection should open");
+    let updated = connection
+        .execute(
+            "UPDATE committer_lease \
+             SET expires_at = CAST(unixepoch('subsec') * 1000 AS INTEGER) - 1000 \
+             WHERE singleton = 1",
+            (),
+        )
+        .await
+        .expect("libsql scheduler holder lease should expire");
+    assert_eq!(updated, 1, "exactly one libsql lease row should expire");
 }

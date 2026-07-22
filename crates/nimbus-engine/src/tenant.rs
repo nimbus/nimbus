@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::num::NonZeroU64;
 use std::sync::atomic::AtomicU64;
+#[cfg(test)]
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -22,6 +24,11 @@ use crate::triggers::TriggerRegistration;
 use crate::triggers::TriggerRegistry;
 use crate::triggers::execution::SharedTriggerInvocationExecutor;
 
+#[cfg(test)]
+// Heap addresses can be reused immediately after eviction, so pointer values
+// are not stable evidence that a replacement runtime was constructed.
+static NEXT_TENANT_RUNTIME_TEST_IDENTITY: AtomicU64 = AtomicU64::new(1);
+
 mod background;
 mod committer_lease;
 mod document_cache;
@@ -31,10 +38,11 @@ mod materialized_reads;
 mod materialized_reads_facade;
 mod mutation;
 mod mutation_facade;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(crate) mod pause_barrier;
 mod query_planning;
 mod query_planning_facade;
+mod scheduler_recovery;
 mod subscription_delivery;
 mod subscription_delivery_facade;
 mod trigger_candidates;
@@ -69,11 +77,15 @@ pub use self::materialized_reads::{
 pub(crate) use self::mutation::DEFAULT_MUTATION_ADMISSION_QUEUE_CAPACITY;
 #[cfg(test)]
 pub(crate) use self::mutation::DEFAULT_MUTATION_JOURNAL_QUEUE_CAPACITY;
+#[cfg(test)]
+pub(crate) use self::mutation::JournalFrontierSample;
 pub(crate) use self::mutation::MutationIsolateAdmissionPermit;
 #[cfg(any(test, feature = "test-hooks"))]
 pub use self::mutation::MutationJournalPauseHandle;
 #[cfg(any(test, feature = "test-hooks"))]
 use self::mutation::MutationJournalPauseState;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use self::mutation::OrderedPublisherPauseHandle;
 #[cfg(test)]
 pub(crate) use self::mutation::configure_committer_limits_for_testing;
 pub(crate) use self::mutation::{
@@ -82,12 +94,12 @@ pub(crate) use self::mutation::{
     PublisherQueueError, QueuedMutationRequest, QueuedMutationResult,
 };
 pub(crate) use self::mutation::{
-    CommitterActor, CommitterJob, CommitterMessage, assign_and_validate, run_committer_actor,
-    run_job, validate_append_sequences,
+    CommitterActor, CommitterJob, CommitterMessage, WriteLogFrontierSample, assign_and_validate,
+    run_committer_actor, run_job, validate_append_sequences,
 };
 pub use self::mutation::{
-    CommitterArm, MutationAdmissionPhase, MutationAdmissionStats, MutationIsolateAdmissionStats,
-    MutationJournalStats,
+    CommitterArm, MutationAdmissionPhase, MutationAdmissionStats, MutationFrontierStats,
+    MutationIsolateAdmissionStats, MutationJournalStats,
 };
 use self::mutation::{
     MutationAdmissionDecision, MutationAdmissionGate, MutationIsolateAdmission,
@@ -101,6 +113,7 @@ pub(crate) use self::mutation::{
 use self::query_planning::QueryPlanningMetrics;
 pub use self::query_planning::QueryPlanningStats;
 pub(crate) use self::query_planning::{QueryPlanMetricKind, QueryPlanMetricOperation};
+use self::scheduler_recovery::SchedulerRecoveryIntent;
 #[cfg(test)]
 pub(crate) use self::subscription_delivery::DEFAULT_SUBSCRIPTION_WORK_QUEUE_CAPACITY;
 pub(crate) use self::subscription_delivery::SubscriptionDeliveryMetrics;
@@ -147,6 +160,7 @@ pub struct TenantRuntime {
     mutation_journal: Arc<MutationJournalState>,
     committer: Arc<CommitterActor>,
     committer_lease: Option<Arc<CommitterLeaseLifecycle>>,
+    scheduler_recovery: SchedulerRecoveryIntent,
     publisher: Arc<PublisherHandoff>,
     observer_dispatch: Arc<ObserverHandoff>,
     observer_lifetime: Arc<()>,
@@ -155,6 +169,8 @@ pub struct TenantRuntime {
     last_assigned_commit_timestamp: AtomicU64,
     prepared_table_ids: Mutex<HashMap<TableName, TableId>>,
     prepare_permits: Arc<Semaphore>,
+    #[cfg(test)]
+    test_identity: u64,
     #[cfg(any(test, feature = "test-hooks"))]
     subscription_bootstrap_pause: Arc<MutationJournalPauseState>,
 }
@@ -291,13 +307,13 @@ impl TenantRuntime {
             progress,
             last_commit_timestamp,
         } = initial_state;
-        // U5 deliberately preserves the production mapping. U7 changes only
-        // this construction policy after provider pipelining and lifecycle
-        // proof are complete; write-log/window trust remains a separate
-        // dynamic question owned by `has_process_local_sequence_authority`.
-        let uses_ordered_publisher = store.has_process_local_sequence_authority();
+        // Publisher ownership is a topology-independent construction choice.
+        // Whether the process-local write-log window is authoritative remains
+        // a separate persistence policy owned by
+        // `has_process_local_sequence_authority`.
+        let committer_arm = CommitterArm::for_persistence(&store);
         let committer = Arc::new(CommitterActor::new(tenant_id.clone()));
-        let publisher = Arc::new(PublisherHandoff::new(uses_ordered_publisher, &tenant_id));
+        let publisher = Arc::new(PublisherHandoff::new(committer_arm, &tenant_id));
         let observer_dispatch = Arc::new(ObserverHandoff::new(&tenant_id));
         Self {
             tenant_id,
@@ -327,6 +343,7 @@ impl TenantRuntime {
             committer_lease: committer_owner_id.map(|owner_id| {
                 Arc::new(CommitterLeaseLifecycle::new(owner_id, timing.renewal_clock))
             }),
+            scheduler_recovery: SchedulerRecoveryIntent::default(),
             publisher,
             observer_dispatch,
             observer_lifetime: Arc::new(()),
@@ -335,9 +352,16 @@ impl TenantRuntime {
             last_assigned_commit_timestamp: AtomicU64::new(last_commit_timestamp.0),
             prepared_table_ids: Mutex::new(HashMap::new()),
             prepare_permits: Arc::new(Semaphore::new(prepare_concurrency())),
+            #[cfg(test)]
+            test_identity: NEXT_TENANT_RUNTIME_TEST_IDENTITY.fetch_add(1, Ordering::Relaxed),
             #[cfg(any(test, feature = "test-hooks"))]
             subscription_bootstrap_pause: Arc::new(MutationJournalPauseState::default()),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn test_identity(&self) -> u64 {
+        self.test_identity
     }
 
     pub(crate) fn from_loaded_state(

@@ -69,9 +69,18 @@ async fn assert_engine_reload_recovers_durable_journal_before_serving_async_read
             .mutation_journal_stats_for_testing(&tenant_id)
             .expect("journal stats should read after recovery"),
         crate::tenant::MutationJournalStats {
-            durable_head: SequenceNumber(1),
-            applied_head: SequenceNumber(1),
-            apply_lag: 0,
+            frontiers: crate::tenant::MutationFrontierStats {
+                assigned_high_water: SequenceNumber(1),
+                active_assigned_head: SequenceNumber(1),
+                durable_head: SequenceNumber(1),
+                storage_applied_head: SequenceNumber(1),
+                published_head: SequenceNumber(1),
+                applied_head: SequenceNumber(1),
+                assignment_lag: 0,
+                apply_lag: 0,
+                publication_lag: 0,
+                visibility_lag: 0,
+            },
             queue_depth: 0,
             queue_capacity: crate::tenant::DEFAULT_MUTATION_JOURNAL_QUEUE_CAPACITY,
             oldest_queue_age_nanos: 0,

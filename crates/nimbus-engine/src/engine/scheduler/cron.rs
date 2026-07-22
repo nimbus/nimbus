@@ -1,9 +1,13 @@
 use std::sync::Arc;
 
 use nimbus_core::{CreateCronRequest, CronJob, Error, Result, TenantId, Timestamp};
+use nimbus_storage::SchedulerWrite;
 
 use super::super::Engine;
-use super::access::{read_scheduler_store, with_scheduler_runtime, write_scheduler_transaction};
+use super::access::{
+    expect_scheduler_unit, read_scheduler_store, with_scheduler_runtime, write_scheduler_state,
+    write_scheduler_state_blocking,
+};
 
 impl Engine {
     /// Creates a new cron job definition.
@@ -16,9 +20,11 @@ impl Engine {
         )?;
 
         let cron = cron_job_from_request(self.now(), request);
-        with_scheduler_runtime(self, tenant_id, move |runtime| {
-            runtime.store.save_cron_job(&cron)
-        })?;
+        expect_scheduler_unit(write_scheduler_state_blocking(
+            self,
+            tenant_id,
+            SchedulerWrite::SaveCron(cron),
+        )?)?;
         self.wake_scheduler();
         Ok(())
     }
@@ -36,10 +42,9 @@ impl Engine {
         )?;
 
         let cron = cron_job_from_request(self.now(), request);
-        write_scheduler_transaction(self, tenant_id, move |transaction| {
-            transaction.save_cron_job(&cron)
-        })
-        .await?;
+        expect_scheduler_unit(
+            write_scheduler_state(self, tenant_id, SchedulerWrite::SaveCron(cron)).await?,
+        )?;
         self.wake_scheduler();
         Ok(())
     }
@@ -61,9 +66,11 @@ impl Engine {
 
     /// Persists an updated cron job definition.
     pub fn update_cron_job(&self, tenant_id: &TenantId, cron: &CronJob) -> Result<()> {
-        with_scheduler_runtime(self, tenant_id, move |runtime| {
-            runtime.store.save_cron_job(cron)
-        })
+        expect_scheduler_unit(write_scheduler_state_blocking(
+            self,
+            tenant_id,
+            SchedulerWrite::SaveCron(cron.clone()),
+        )?)
     }
 
     /// Persists an updated cron job definition asynchronously.
@@ -72,17 +79,18 @@ impl Engine {
         tenant_id: TenantId,
         cron: CronJob,
     ) -> Result<()> {
-        write_scheduler_transaction(self, tenant_id, move |transaction| {
-            transaction.save_cron_job(&cron)
-        })
-        .await
+        expect_scheduler_unit(
+            write_scheduler_state(self, tenant_id, SchedulerWrite::SaveCron(cron)).await?,
+        )
     }
 
     /// Deletes a cron job definition if present.
     pub fn delete_cron_job(&self, tenant_id: &TenantId, name: &str) -> Result<()> {
-        with_scheduler_runtime(self, tenant_id, move |runtime| {
-            runtime.store.delete_cron_job(name)
-        })
+        expect_scheduler_unit(write_scheduler_state_blocking(
+            self,
+            tenant_id,
+            SchedulerWrite::DeleteCron(name.to_string()),
+        )?)
     }
 
     /// Deletes a cron job definition if present asynchronously.
@@ -91,10 +99,9 @@ impl Engine {
         tenant_id: TenantId,
         name: String,
     ) -> Result<()> {
-        write_scheduler_transaction(self, tenant_id, move |transaction| {
-            transaction.delete_cron_job(&name)
-        })
-        .await
+        expect_scheduler_unit(
+            write_scheduler_state(self, tenant_id, SchedulerWrite::DeleteCron(name)).await?,
+        )
     }
 }
 

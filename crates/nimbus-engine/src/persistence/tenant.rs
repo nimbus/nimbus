@@ -13,7 +13,8 @@ use nimbus_storage::{
     DurableJournalPage, FaultPoint, JournalProgress, LibsqlReplicaFreshnessStats,
     LibsqlReplicaTenantStore, MySqlTenantStore, PointInTimeRestoreArchive,
     PointInTimeRestoreTarget, PostgresTenantStore, ProviderWritePipelineDiagnostic,
-    ResolvedScheduleOp, ResolvedWrite, RetentionGcConfig, SqliteTenantStore,
+    ResolvedScheduleOp, ResolvedWrite, RetentionGcConfig, SchedulerWrite,
+    SchedulerWriteOutcomeStore, SchedulerWriteResult, SchedulerWriteStore, SqliteTenantStore,
     TenantStore as RedbTenantStore,
 };
 

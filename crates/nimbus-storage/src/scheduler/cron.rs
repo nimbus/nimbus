@@ -57,6 +57,24 @@ impl TenantStore {
         Ok(crons)
     }
 
+    /// Loads one cron definition by its durable name.
+    pub fn get_cron_job(&self, name: &str) -> Result<Option<CronJob>> {
+        let read_txn = self.db.begin_read().map_err(map_redb_error)?;
+        let table = match read_txn.open_table(CRON_JOBS) {
+            Ok(table) => table,
+            Err(TableError::TableDoesNotExist(_)) => return Ok(None),
+            Err(error) => return Err(map_redb_error(error)),
+        };
+        table
+            .get(name)
+            .map_err(map_redb_error)?
+            .map(|value| {
+                rmp_serde::from_slice(value.value())
+                    .map_err(|error| Error::Serialization(error.to_string()))
+            })
+            .transpose()
+    }
+
     /// Deletes a cron job definition if present.
     pub fn delete_cron_job(&self, name: &str) -> Result<()> {
         self.execute_write(move |transaction| transaction.delete_cron_job(name))?;

@@ -115,6 +115,10 @@ pub(crate) async fn run_ordered_publisher(
         let Some(message) = message else {
             break;
         };
+        #[cfg(any(test, feature = "test-hooks"))]
+        if let Some(runtime) = runtime.upgrade() {
+            runtime.wait_for_ordered_publisher_pause_for_testing().await;
+        }
         let batch = match message {
             PublisherMessage::Batch(batch) => batch,
             PublisherMessage::ResponseFence(responses) => {
@@ -123,15 +127,15 @@ pub(crate) async fn run_ordered_publisher(
                 }
                 continue;
             }
-            PublisherMessage::SerialJob { job, drained } => {
+            PublisherMessage::OrderedOpaqueJob { job, drained } => {
                 let Some(runtime) = runtime.upgrade() else {
                     job.fail(Error::Internal(
-                        "tenant runtime stopped before serial publisher job".to_string(),
+                        "tenant runtime stopped before ordered opaque publisher job".to_string(),
                     ));
                     let _ = drained.send(());
                     break;
                 };
-                run_serial_publisher_job(runtime, job).await;
+                run_ordered_opaque_publisher_job(runtime, job).await;
                 let _ = drained.send(());
                 continue;
             }
@@ -173,10 +177,9 @@ pub(crate) async fn run_ordered_publisher(
         )
         .await;
 
-        // Opaque embedded commit jobs share this publisher and fence later
-        // assignment until they drain. Re-anchor in case the preceding queue
-        // item was such a job; provider jobs remain on the actor-owned serial
-        // arm and never share this publisher.
+        // Opaque commit jobs share this publisher in every production
+        // topology and fence later assignment until they drain. Re-anchor in
+        // case the preceding queue item was such a job.
         let expected_previous = runtime.durable_head();
 
         if let Err(invariant) = crate::tenant::validate_append_sequences(
@@ -250,7 +253,10 @@ pub(crate) async fn run_ordered_publisher(
     }
 }
 
-async fn run_serial_publisher_job(runtime: Arc<TenantRuntime>, job: crate::tenant::CommitterJob) {
+async fn run_ordered_opaque_publisher_job(
+    runtime: Arc<TenantRuntime>,
+    job: crate::tenant::CommitterJob,
+) {
     if runtime.eviction_started() {
         job.fail(runtime.durable_recovery_eviction_error());
         runtime.record_mutation_worker_failure();
@@ -675,7 +681,7 @@ async fn fail_definitive_batch_and_recover(
         .iter()
         .filter_map(|message| match message {
             PublisherMessage::Batch(batch) => Some(batch.first_sequence()),
-            PublisherMessage::ResponseFence(_) | PublisherMessage::SerialJob { .. } => None,
+            PublisherMessage::ResponseFence(_) | PublisherMessage::OrderedOpaqueJob { .. } => None,
         })
         .fold(batch.first_sequence(), std::cmp::min);
     runtime.discard_unpersisted_write_log_suffix(first_sequence);
@@ -702,8 +708,8 @@ async fn fail_definitive_batch_and_recover(
                     response.complete_after_recovery(first_sequence, &error);
                 }
             }
-            PublisherMessage::SerialJob { job, drained } => {
-                run_serial_publisher_job(runtime.clone(), job).await;
+            PublisherMessage::OrderedOpaqueJob { job, drained } => {
+                run_ordered_opaque_publisher_job(runtime.clone(), job).await;
                 let _ = drained.send(());
             }
         }
@@ -723,7 +729,7 @@ fn defer_publisher_message_failure(
             .into_iter()
             .map(|response| response.defer_failure(error))
             .collect(),
-        PublisherMessage::SerialJob { job, drained } => {
+        PublisherMessage::OrderedOpaqueJob { job, drained } => {
             let complete_job = job.defer_failure(error.clone());
             vec![Box::new(move || {
                 complete_job();
@@ -815,7 +821,7 @@ fn begin_tenant_runtime_eviction(runtime: &TenantRuntime, error: &Error, ambiguo
     runtime.subscriptions.shutdown_all(reason);
 }
 
-pub(super) async fn finish_durable_recovery_eviction(
+pub(in crate::engine) async fn finish_durable_recovery_eviction(
     engine: Arc<Engine>,
     runtime: Arc<TenantRuntime>,
 ) {
@@ -828,7 +834,7 @@ pub(super) async fn finish_durable_recovery_eviction(
     drop(_tenant_load_guard);
 }
 
-pub(super) fn finish_durable_recovery_eviction_blocking(
+pub(in crate::engine) fn finish_durable_recovery_eviction_blocking(
     engine: &Engine,
     runtime: Arc<TenantRuntime>,
 ) {
@@ -1124,7 +1130,7 @@ mod tests {
         let response_slot = Arc::new(std::sync::Mutex::new(None));
         let response_slot_for_rejection = response_slot.clone();
         let (job, mut completed) = crate::tenant::CommitterJob::new(
-            || panic!("a failed stashed serial job must not execute"),
+            || panic!("a failed stashed ordered opaque job must not execute"),
             move |error| {
                 *response_slot_for_rejection
                     .lock()
@@ -1133,7 +1139,7 @@ mod tests {
         );
         let (drained, mut drain_completed) = tokio::sync::oneshot::channel();
         completions.extend(defer_publisher_message_failure(
-            PublisherMessage::SerialJob { job, drained },
+            PublisherMessage::OrderedOpaqueJob { job, drained },
             SequenceNumber(1),
             &typed,
         ));

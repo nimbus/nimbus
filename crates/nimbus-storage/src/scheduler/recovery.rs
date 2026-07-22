@@ -1,22 +1,24 @@
 use nimbus_core::{Result, Timestamp};
 use redb::{ReadableTable, TableError};
 
-use crate::store::{RUNNING_SCHEDULED_JOBS, SCHEDULED_JOBS, TenantStore, map_redb_error};
+use crate::store::{
+    RUNNING_SCHEDULED_JOBS, SCHEDULED_JOBS, TenantStore, TenantWriteTransaction, map_redb_error,
+};
 
 use super::codec::{deserialize_job, scheduled_job_key, serialize_job};
 
-impl TenantStore {
-    /// Moves orphaned running jobs back into the pending queue.
-    pub fn recover_running_jobs(&self, now: Timestamp) -> Result<()> {
-        let write_txn = self.db.begin_write().map_err(map_redb_error)?;
+impl TenantWriteTransaction {
+    pub fn recover_running_jobs(&mut self, now: Timestamp) -> Result<()> {
+        self.check_cancel()?;
         let running_jobs = {
-            let table = match write_txn.open_table(RUNNING_SCHEDULED_JOBS) {
+            let table = match self.write_txn()?.open_table(RUNNING_SCHEDULED_JOBS) {
                 Ok(table) => table,
                 Err(TableError::TableDoesNotExist(_)) => return Ok(()),
                 Err(error) => return Err(map_redb_error(error)),
             };
             let mut jobs = Vec::new();
             for entry in table.iter().map_err(map_redb_error)? {
+                self.check_cancel()?;
                 let (key, value) = entry.map_err(map_redb_error)?;
                 jobs.push((key.value().to_vec(), deserialize_job(value.value())?));
             }
@@ -28,13 +30,16 @@ impl TenantStore {
         }
 
         {
-            let mut running = write_txn
+            let mut running = self
+                .write_txn()?
                 .open_table(RUNNING_SCHEDULED_JOBS)
                 .map_err(map_redb_error)?;
-            let mut scheduled = write_txn
+            let mut scheduled = self
+                .write_txn()?
                 .open_table(SCHEDULED_JOBS)
                 .map_err(map_redb_error)?;
             for (running_key, mut job) in running_jobs {
+                self.check_cancel()?;
                 // A recovered running job was already DUE when it was claimed
                 // (claim only takes run_at <= now), so keep its original due
                 // time instead of re-stamping the recovery instant: stamping
@@ -55,8 +60,14 @@ impl TenantStore {
                     .map_err(map_redb_error)?;
             }
         }
+        Ok(())
+    }
+}
 
-        self.commit_write_txn(write_txn)?;
+impl TenantStore {
+    /// Moves orphaned running jobs back into the pending queue.
+    pub fn recover_running_jobs(&self, now: Timestamp) -> Result<()> {
+        self.execute_write(move |transaction| transaction.recover_running_jobs(now))?;
         Ok(())
     }
 }

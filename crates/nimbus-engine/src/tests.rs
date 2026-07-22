@@ -56,6 +56,7 @@ mod mysql_provider;
 mod policy;
 mod postgres_provider;
 mod provider_fixtures;
+mod provider_publisher_contract;
 mod queries;
 mod subscriptions;
 
@@ -63,6 +64,10 @@ pub(crate) use nimbus_storage::provider_test_fixtures::{
     ExternalProviderFixtureMode, external_provider_fixture_mode,
 };
 pub(crate) use provider_fixtures::expect_external_provider_future_within;
+pub(crate) use provider_publisher_contract::{
+    ProviderPipelineExpectation, exercise_provider_publisher_contract,
+    exercise_provider_scheduler_fence_contract,
+};
 
 pub(crate) fn tasks_table() -> TableName {
     TableName::new("tasks").expect("table name should be valid")

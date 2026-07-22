@@ -34,6 +34,11 @@ services:
       MYSQL_DATABASE: test
       MYSQL_ROOT_HOST: "%"
       MYSQL_ROOT_PASSWORD: fixture-mysql-root
+    # The external-provider lane creates and drops many isolated tenant
+    # databases. MySQL's 100 MiB default can exhaust the reusable fixture's
+    # redo window and stall otherwise healthy polling tests behind the
+    # checkpointer. Keep the capacity deterministic locally and in hosted CI.
+    command: ["--innodb-redo-log-capacity=536870912"]
     healthcheck:
       test:
         [

@@ -31,6 +31,32 @@ one resample bound; a backward correction cannot execute the job early; and
 shutdown interrupts a far-future wait. The waiter does not busy-loop at a zero
 configured interval.
 
+Provider runtime load arms orphaned-running-job recovery but does not execute
+it. The first scheduler transition consumes that one-shot intent only after the
+tenant's serialized committer has acquired provider-backed sequence authority;
+failed recovery restores the intent. A process that observes scheduled work
+owned by another healthy lease holder applies a tenant-local monotonic retry
+deadline and excludes only that tenant from durable-deadline selection until
+the deadline. This prevents an already-due row from becoming a process-wide
+busy loop while unrelated tenants remain runnable. Provider time continues to
+own lease validity; neither the wall deadline nor the local retry cadence can
+authorize a write.
+
+Scheduler rows do not advance the mutation journal, so a journal-head read
+cannot classify a provider acknowledgement loss. `nimbus-storage` owns the
+cross-backend outcome interface: before a scheduler transaction, it captures
+only the rows affected by that operation; after an error, it compares those
+rows with the exact pre-state and intended post-state. Exact post-state returns
+the original result, exact pre-state returns the original error, and any mixed
+or unreadable state forces tenant eviction and durable reload. External
+providers and SQLite use indexed point reads for ordinary
+insert/cancel/complete/result/cron operations; redb's deadline-keyed pending
+queue uses a local scan for identity lookups. Due claims inspect at most the
+requested batch, and only one-shot orphan recovery scales with the number of
+running jobs. These observations are serialized by the tenant committer and,
+for external providers, protected by the same held lease that fences the
+following transaction.
+
 Convex `runAt` adapters pass the requested absolute timestamp into the Engine.
 They do not convert it to a relative delay outside the Engine, including inside
 a mutation execution unit where the scheduled write must commit or roll back

@@ -4,6 +4,8 @@ use std::sync::Arc;
 #[cfg(test)]
 use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
+#[cfg(test)]
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use nimbus_core::CommitEntry;
@@ -54,6 +56,8 @@ pub(super) struct TriggerCandidateFeed {
     worker: Arc<TriggerCandidateWorker>,
     #[cfg(test)]
     pause: Arc<TriggerCandidatePauseState>,
+    #[cfg(test)]
+    disabled: AtomicBool,
 }
 
 #[cfg(test)]
@@ -215,10 +219,16 @@ impl TriggerCandidateFeed {
             worker: Arc::new(TriggerCandidateWorker::new()),
             #[cfg(test)]
             pause: Arc::new(TriggerCandidatePauseState::default()),
+            #[cfg(test)]
+            disabled: AtomicBool::new(false),
         }
     }
 
     pub(super) fn start_worker(&self, runtime: &Arc<TenantRuntime>) {
+        #[cfg(test)]
+        if self.disabled.load(Ordering::Acquire) {
+            return;
+        }
         self.worker.start(
             runtime,
             self.queue.clone(),
@@ -230,6 +240,10 @@ impl TriggerCandidateFeed {
     }
 
     pub(super) fn enqueue_commits(&self, commits: Vec<CommitEntry>) {
+        #[cfg(test)]
+        if self.disabled.load(Ordering::Acquire) {
+            return;
+        }
         self.queue.enqueue(commits);
     }
 
@@ -239,6 +253,12 @@ impl TriggerCandidateFeed {
             #[cfg(test)]
             &self.pause,
         );
+    }
+
+    #[cfg(test)]
+    pub(super) fn disable(&self) {
+        self.disabled.store(true, Ordering::Release);
+        self.shutdown();
     }
 
     #[cfg(test)]
@@ -268,6 +288,11 @@ impl TenantRuntime {
 
     pub(crate) fn shutdown_trigger_candidates(&self) {
         self.trigger_candidates.shutdown();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn disable_trigger_candidates_for_testing(&self) {
+        self.trigger_candidates.disable();
     }
 
     #[cfg(test)]

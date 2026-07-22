@@ -805,6 +805,15 @@ pub(super) fn map_fenced_write_result<T>(
 }
 
 impl PostgresWriteTransaction {
+    pub(crate) fn validate_fenced_committer_lease(
+        &mut self,
+        owner_id: &str,
+        epoch: u64,
+        durable_sequence: SequenceNumber,
+    ) -> Result<u64> {
+        self.advance_fenced_committer_lease(owner_id, epoch, durable_sequence, durable_sequence)
+    }
+
     pub(super) fn advance_fenced_committer_lease(
         &mut self,
         owner_id: &str,

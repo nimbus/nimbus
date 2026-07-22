@@ -31,6 +31,7 @@ pub mod labels {
     pub const PRE_PERSIST: Label = Label::new("PRE_PERSIST");
     pub const DURABLE_BEFORE_PUBLISH: Label = Label::new("DURABLE_BEFORE_PUBLISH");
     pub const SCHEMA_ASSIGNED_BEFORE_VISIBLE: Label = Label::new("SCHEMA_ASSIGNED_BEFORE_VISIBLE");
+    pub const SCHEDULER_DURABLE_BEFORE_ACK: Label = Label::new("SCHEDULER_DURABLE_BEFORE_ACK");
     pub const POST_PUBLISH_PRE_FANOUT: Label = Label::new("POST_PUBLISH_PRE_FANOUT");
 }
 

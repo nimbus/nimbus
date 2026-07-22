@@ -186,8 +186,99 @@ impl LibsqlReplicaTenantStore {
         self.block_on(self.load_remote_scheduled_jobs("scheduled_jobs"))
     }
 
+    pub fn get_pending_scheduled_job(&self, job_id: &DocumentId) -> Result<Option<ScheduledJob>> {
+        self.load_remote_scheduler_job_by_id("scheduled_jobs", job_id)
+    }
+
+    pub fn list_running_scheduled_jobs(&self) -> Result<Vec<ScheduledJob>> {
+        self.block_on(self.load_remote_scheduled_jobs("running_scheduled_jobs"))
+    }
+
+    pub fn get_running_scheduled_job(&self, job_id: &DocumentId) -> Result<Option<ScheduledJob>> {
+        self.load_remote_scheduler_job_by_id("running_scheduled_jobs", job_id)
+    }
+
+    fn load_remote_scheduler_job_by_id(
+        &self,
+        table_name: &str,
+        job_id: &DocumentId,
+    ) -> Result<Option<ScheduledJob>> {
+        debug_assert!(matches!(
+            table_name,
+            "scheduled_jobs" | "running_scheduled_jobs"
+        ));
+        let table_name = table_name.to_string();
+        let job_id = job_id.to_string();
+        self.block_on(async move {
+            let conn = self.remote_connection()?;
+            let query = format!("SELECT data_json FROM {table_name} WHERE id = ?1");
+            let mut rows = conn
+                .query(query.as_str(), libsql::params![job_id])
+                .await
+                .map_err(map_libsql_error)?;
+            let Some(row) = rows.next().await.map_err(map_libsql_error)? else {
+                return Ok(None);
+            };
+            deserialize_json::<ScheduledJob>(
+                row.get::<String>(0).map_err(map_libsql_error)?.as_str(),
+            )
+            .map(Some)
+        })
+    }
+
+    pub fn peek_due_scheduled_jobs(
+        &self,
+        now: Timestamp,
+        max_jobs: usize,
+    ) -> Result<Vec<ScheduledJob>> {
+        if max_jobs == 0 {
+            return Ok(Vec::new());
+        }
+        let run_at_upper = scheduled_run_at_key(now);
+        let max_jobs = i64::try_from(max_jobs).unwrap_or(i64::MAX);
+        self.block_on(async move {
+            let conn = self.remote_connection()?;
+            let mut rows = conn
+                .query(
+                    "SELECT data_json FROM scheduled_jobs
+                     WHERE run_at <= ?1
+                     ORDER BY run_at, id
+                     LIMIT ?2",
+                    libsql::params![run_at_upper, max_jobs],
+                )
+                .await
+                .map_err(map_libsql_error)?;
+            let mut jobs = Vec::new();
+            while let Some(row) = rows.next().await.map_err(map_libsql_error)? {
+                jobs.push(deserialize_json::<ScheduledJob>(
+                    row.get::<String>(0).map_err(map_libsql_error)?.as_str(),
+                )?);
+            }
+            Ok(jobs)
+        })
+    }
+
     pub fn load_cron_jobs(&self) -> Result<Vec<CronJob>> {
         self.block_on(self.load_remote_cron_jobs())
+    }
+
+    pub fn get_cron_job(&self, name: &str) -> Result<Option<CronJob>> {
+        let name = name.to_string();
+        self.block_on(async move {
+            let conn = self.remote_connection()?;
+            let mut rows = conn
+                .query(
+                    "SELECT data_json FROM cron_jobs WHERE name = ?1",
+                    libsql::params![name],
+                )
+                .await
+                .map_err(map_libsql_error)?;
+            let Some(row) = rows.next().await.map_err(map_libsql_error)? else {
+                return Ok(None);
+            };
+            deserialize_json::<CronJob>(row.get::<String>(0).map_err(map_libsql_error)?.as_str())
+                .map(Some)
+        })
     }
 
     pub fn next_scheduled_work_at(&self) -> Result<Option<Timestamp>> {

@@ -132,6 +132,85 @@ impl TenantStore {
         }
         Ok(jobs)
     }
+
+    /// Returns one pending job by identity. redb orders pending rows by
+    /// deadline, so this lookup scans keys while provider-backed adapters use
+    /// their primary-key indexes.
+    pub fn get_pending_scheduled_job(&self, job_id: &JobId) -> Result<Option<ScheduledJob>> {
+        let read_txn = self.db.begin_read().map_err(map_redb_error)?;
+        let table = match read_txn.open_table(SCHEDULED_JOBS) {
+            Ok(table) => table,
+            Err(TableError::TableDoesNotExist(_)) => return Ok(None),
+            Err(error) => return Err(map_redb_error(error)),
+        };
+        for entry in table.iter().map_err(map_redb_error)? {
+            let (key, value) = entry.map_err(map_redb_error)?;
+            if scheduled_key_matches_job_id(key.value(), job_id) {
+                return deserialize_job(value.value()).map(Some);
+            }
+        }
+        Ok(None)
+    }
+
+    /// Returns one claimed job by identity.
+    pub fn get_running_scheduled_job(&self, job_id: &JobId) -> Result<Option<ScheduledJob>> {
+        let read_txn = self.db.begin_read().map_err(map_redb_error)?;
+        let table = match read_txn.open_table(RUNNING_SCHEDULED_JOBS) {
+            Ok(table) => table,
+            Err(TableError::TableDoesNotExist(_)) => return Ok(None),
+            Err(error) => return Err(map_redb_error(error)),
+        };
+        let key = running_job_key(job_id);
+        table
+            .get(key.as_slice())
+            .map_err(map_redb_error)?
+            .map(|value| deserialize_job(value.value()))
+            .transpose()
+    }
+
+    /// Peeks at the same bounded due prefix that `claim_due_jobs` would move.
+    pub fn peek_due_scheduled_jobs(
+        &self,
+        now: Timestamp,
+        max_jobs: usize,
+    ) -> Result<Vec<ScheduledJob>> {
+        if max_jobs == 0 {
+            return Ok(Vec::new());
+        }
+        let read_txn = self.db.begin_read().map_err(map_redb_error)?;
+        let table = match read_txn.open_table(SCHEDULED_JOBS) {
+            Ok(table) => table,
+            Err(TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
+            Err(error) => return Err(map_redb_error(error)),
+        };
+        let upper = due_jobs_upper_bound(now);
+        table
+            .range::<&[u8]>(..=upper.as_slice())
+            .map_err(map_redb_error)?
+            .take(max_jobs)
+            .map(|entry| {
+                let (_, value) = entry.map_err(map_redb_error)?;
+                deserialize_job(value.value())
+            })
+            .collect()
+    }
+
+    /// Returns all claimed jobs that have not yet been completed or recovered.
+    pub fn list_running_scheduled_jobs(&self) -> Result<Vec<ScheduledJob>> {
+        let read_txn = self.db.begin_read().map_err(map_redb_error)?;
+        let table = match read_txn.open_table(RUNNING_SCHEDULED_JOBS) {
+            Ok(table) => table,
+            Err(TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
+            Err(error) => return Err(map_redb_error(error)),
+        };
+
+        let mut jobs = Vec::new();
+        for entry in table.iter().map_err(map_redb_error)? {
+            let (_, value) = entry.map_err(map_redb_error)?;
+            jobs.push(deserialize_job(value.value())?);
+        }
+        Ok(jobs)
+    }
 }
 
 pub(crate) fn insert_scheduled_job_in_write_txn(
