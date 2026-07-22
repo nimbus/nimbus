@@ -280,22 +280,30 @@ impl Engine {
         Ok(())
     }
 
-    /// Creates or loads a tenant through the canonical async lifecycle.
+    /// Ensures a tenant is loaded through the canonical async lifecycle.
     ///
-    /// `AlreadyExists` is not accepted by itself: the existing durable tenant
-    /// is opened and its runtime must be registered before this method returns.
-    /// That makes retries safe after cancellation or process failure between
-    /// provider creation and runtime publication. Every other provider or
-    /// bootstrap error remains visible to the caller.
+    /// An already-loaded runtime is the lock-free fast path, so unrelated
+    /// tenant creation or deletion cannot stall callers that only need to
+    /// confirm a ready runtime. When the runtime is absent, existing durable
+    /// state is opened before creation is attempted. `AlreadyExists` is not
+    /// accepted by itself: a concurrent or replayed creation must still leave
+    /// a complete runtime registered before this method returns. Every other
+    /// provider or bootstrap error remains visible to the caller.
     pub async fn ensure_tenant_ready_async(
         self: &Arc<Self>,
         tenant_id: TenantId,
     ) -> Result<TenantAdmissionOutcome> {
-        match self.create_tenant_async(tenant_id.clone()).await {
-            Ok(()) => Ok(TenantAdmissionOutcome::Created),
-            Err(Error::AlreadyExists(_)) => {
-                self.ensure_tenant_exists_async(tenant_id).await?;
-                Ok(TenantAdmissionOutcome::Existing)
+        match self.ensure_tenant_exists_async(tenant_id.clone()).await {
+            Ok(()) => Ok(TenantAdmissionOutcome::Existing),
+            Err(Error::TenantNotFound(_)) => {
+                match self.create_tenant_async(tenant_id.clone()).await {
+                    Ok(()) => Ok(TenantAdmissionOutcome::Created),
+                    Err(Error::AlreadyExists(_)) => {
+                        self.ensure_tenant_exists_async(tenant_id).await?;
+                        Ok(TenantAdmissionOutcome::Existing)
+                    }
+                    Err(error) => Err(error),
+                }
             }
             Err(error) => Err(error),
         }
