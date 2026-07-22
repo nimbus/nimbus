@@ -648,6 +648,16 @@ async fn rapid_provider_catch_up_triggers_coalesce_into_one_tail_reader() {
             "a later frontier must not spawn another parked catch-up task"
         );
     }
+    assert!(
+        !engine
+            .trigger_provider_catch_up_observers_with_token_for_testing(
+                &tenant_id,
+                std::slice::from_ref(records.last().expect("journal should have a tail")),
+                latest_token,
+            )
+            .expect("latest projection token should coalesce while the observer is parked"),
+        "a provenance-only frontier advance must not spawn a second catch-up task"
+    );
     assert_eq!(
         engine
             .provider_catch_up_observer_task_count_for_testing(&tenant_id)

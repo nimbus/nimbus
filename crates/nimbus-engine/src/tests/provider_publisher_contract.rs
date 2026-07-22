@@ -14,22 +14,21 @@ pub(crate) struct ProviderPublisherContractSnapshot {
     journal_event_kinds: Vec<&'static str>,
 }
 
-struct ArmedPause {
-    faults: crate::CommitFaultHandle,
+struct ArmedJournalPause {
+    pause: crate::tenant::MutationJournalPauseHandle,
     released: bool,
 }
 
-impl ArmedPause {
+impl ArmedJournalPause {
     fn release(&mut self) {
         if !self.released {
-            self.faults
-                .release(crate::engine::commit_fault_labels::POST_PUBLISH_PRE_FANOUT);
+            self.pause.release();
             self.released = true;
         }
     }
 }
 
-impl Drop for ArmedPause {
+impl Drop for ArmedJournalPause {
     fn drop(&mut self) {
         self.release();
     }
@@ -341,38 +340,22 @@ pub(crate) async fn exercise_provider_publisher_contract(
         Some(&json!("retried"))
     );
 
-    // Hold the production publisher after durable/apply publication. A queued
-    // follower cancelled while waiting must resolve as Cancelled and append no
-    // durable record after the held predecessor drains.
-    let faults = engine.commit_fault_handle_for_testing();
-    let pause_label = crate::engine::commit_fault_labels::POST_PUBLISH_PRE_FANOUT;
-    faults.arm(pause_label);
-    let mut release_on_unwind = ArmedPause {
-        faults: faults.clone(),
+    // Hold the production journal before assignment. A queued follower
+    // cancelled while waiting must resolve as Cancelled and append no durable
+    // record. Sequence assignment is the cancellation boundary, so pausing a
+    // previously assigned publisher batch would not prove this contract.
+    let pause = engine
+        .mutation_journal_pause_handle_for_testing(&tenant_id)
+        .expect("mutation journal pause should load");
+    pause.arm();
+    let mut release_on_unwind = ArmedJournalPause {
+        pause: pause.clone(),
         released: false,
     };
-    let blocker = tokio::spawn({
-        let engine = engine.clone();
-        let tenant_id = tenant_id.clone();
-        async move {
-            engine
-                .insert_document_async(tenant_id, tasks_table(), marker("blocker"))
-                .await
-        }
-    });
-    let wait_faults = faults.clone();
-    assert!(
-        tokio::task::spawn_blocking(move || {
-            wait_faults.wait_until_entered(pause_label, Duration::from_secs(5))
-        })
-        .await
-        .expect("publisher pause waiter should join"),
-        "publisher should reach the post-publication pause"
-    );
     let before_cancelled_follower = engine
         .latest_sequence_async(tenant_id.clone())
         .await
-        .expect("held predecessor sequence should be durable");
+        .expect("pre-cancellation sequence should load");
     let cancel = Arc::new(Notify::new());
     let cancel_for_wait = cancel.clone();
     let cancelled = tokio::spawn({
@@ -393,6 +376,15 @@ pub(crate) async fn exercise_provider_publisher_contract(
                 .await
         }
     });
+    let wait_pause = pause.clone();
+    assert!(
+        tokio::task::spawn_blocking(move || {
+            wait_pause.wait_until_entered(Duration::from_secs(5))
+        })
+        .await
+        .expect("journal pause waiter should join"),
+        "queued follower should reach the pre-assignment pause"
+    );
     let scheduler_cancel = Arc::new(Notify::new());
     let scheduler_cancel_for_wait = scheduler_cancel.clone();
     let cancelled_scheduler_write = tokio::spawn({
@@ -426,11 +418,6 @@ pub(crate) async fn exercise_provider_publisher_contract(
     .expect("cancelled follower should be observed")
     .expect("cancellation observation should succeed");
     release_on_unwind.release();
-    timeout(Duration::from_secs(5), blocker)
-        .await
-        .expect("held predecessor should finish")
-        .expect("held predecessor task should join")
-        .expect("held predecessor should commit");
     let cancellation_error = timeout(Duration::from_secs(5), cancelled)
         .await
         .expect("cancelled follower should resolve")
