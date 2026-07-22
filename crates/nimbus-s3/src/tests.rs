@@ -8,7 +8,7 @@ use bytes::Bytes;
 use futures::StreamExt;
 use nimbus_blob::{BlobHash, BlobStore, MemoryBlobStore};
 use nimbus_core::{
-    CommitEntry, Error, Result, SequenceNumber, SystemWallClock, TenantId, Timestamp, WallClock,
+    CommitEntry, Error, Result, SequenceNumber, SystemWallClock, TenantId, WallClock,
 };
 use nimbus_storage::{
     ObjectBlobLayout, ObjectChunkRef, ObjectManifest, ObjectManifestAttributes,

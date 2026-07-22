@@ -877,7 +877,7 @@ async fn ordered_assignment_panic_keeps_preassigned_outcomes_and_fails_active_re
     let engine = Arc::new(
         Engine::new_with_simulation_and_memory_persistence(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(46_660))),
+            Arc::new(ManualWallClock::new(Timestamp(46_660))),
             Arc::new(nimbus_storage::NoopFaultInjector),
             Arc::new(nimbus_core::SeededIdSource::new(46_660)),
         )

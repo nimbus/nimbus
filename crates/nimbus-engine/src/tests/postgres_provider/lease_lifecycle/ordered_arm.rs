@@ -44,8 +44,11 @@ async fn embedded_and_provider_arms_are_selected_at_construction() {
             crate::tenant::CommitterArm::OrderedPublisher
         );
 
-        let provider =
-            provider_engine(engine_config, Arc::new(ManualClock::new(Timestamp(9_000)))).await;
+        let provider = provider_engine(
+            engine_config,
+            Arc::new(ManualWallClock::new(Timestamp(9_000))),
+        )
+        .await;
         let provider_tenant =
             TenantId::new("provider-static-arm").expect("provider tenant id should build");
         provider
@@ -71,8 +74,11 @@ async fn embedded_and_provider_arms_are_selected_at_construction() {
 #[serial_test::serial(postgres_provider)]
 async fn provider_pipeline_acquires_lease_before_assignment() {
     with_postgres_engine_config(|engine_config, provider_config| async move {
-        let engine =
-            provider_engine(engine_config, Arc::new(ManualClock::new(Timestamp(9_100)))).await;
+        let engine = provider_engine(
+            engine_config,
+            Arc::new(ManualWallClock::new(Timestamp(9_100))),
+        )
+        .await;
         let tenant_id =
             TenantId::new("pg-ordered-first-assignment").expect("tenant id should build");
         crate::tenant::configure_committer_arm_for_testing(
@@ -137,9 +143,9 @@ async fn provider_pipeline_acquires_lease_before_assignment() {
 async fn provider_pipeline_acquire_failure_stages_no_suffix() {
     with_shared_postgres_engine_configs(|config_a, config_b, provider_config| async move {
         let engine_a =
-            provider_engine(config_a, Arc::new(ManualClock::new(Timestamp(9_200)))).await;
+            provider_engine(config_a, Arc::new(ManualWallClock::new(Timestamp(9_200)))).await;
         let engine_b =
-            provider_engine(config_b, Arc::new(ManualClock::new(Timestamp(9_200)))).await;
+            provider_engine(config_b, Arc::new(ManualWallClock::new(Timestamp(9_200)))).await;
         let tenant_id =
             create_shared_ordered_tenant(&engine_a, &engine_b, "pg-ordered-acquire-failure").await;
         terminate_postgres_hint_listeners(&provider_config)
@@ -203,9 +209,17 @@ async fn provider_pipeline_acquire_failure_stages_no_suffix() {
 async fn provider_pipeline_head_reconciles_before_baseline_capture() {
     with_shared_postgres_engine_configs(|config_a, config_b, provider_config| async move {
         let engine_a =
-            provider_engine(config_a, Arc::new(ManualClock::new(Timestamp(9_300)))).await;
+            provider_engine(
+                config_a,
+                Arc::new(ManualWallClock::new(Timestamp(9_300))),
+            )
+            .await;
         let engine_b =
-            provider_engine(config_b, Arc::new(ManualClock::new(Timestamp(9_300)))).await;
+            provider_engine(
+                config_b,
+                Arc::new(ManualWallClock::new(Timestamp(9_300))),
+            )
+            .await;
         let tenant_id =
             create_shared_ordered_tenant(&engine_a, &engine_b, "pg-ordered-reconcile").await;
         terminate_postgres_hint_listeners(&provider_config)
@@ -276,8 +290,11 @@ async fn provider_pipeline_head_reconciles_before_baseline_capture() {
 #[serial_test::serial(postgres_provider)]
 async fn provider_ordered_progress_sync_cannot_overtake_publisher() {
     with_postgres_engine_config(|engine_config, _provider_config| async move {
-        let engine =
-            provider_engine(engine_config, Arc::new(ManualClock::new(Timestamp(9_350)))).await;
+        let engine = provider_engine(
+            engine_config,
+            Arc::new(ManualWallClock::new(Timestamp(9_350))),
+        )
+        .await;
         let tenant_id = TenantId::new("pg-ordered-progress-order").expect("tenant id should build");
         crate::tenant::configure_committer_arm_for_testing(
             tenant_id.clone(),
@@ -357,9 +374,9 @@ async fn provider_ordered_progress_sync_cannot_overtake_publisher() {
 async fn two_provider_engines_never_assign_under_one_tenant_lease() {
     with_shared_postgres_engine_configs(|config_a, config_b, provider_config| async move {
         let engine_a =
-            provider_engine(config_a, Arc::new(ManualClock::new(Timestamp(9_400)))).await;
+            provider_engine(config_a, Arc::new(ManualWallClock::new(Timestamp(9_400)))).await;
         let engine_b =
-            provider_engine(config_b, Arc::new(ManualClock::new(Timestamp(9_400)))).await;
+            provider_engine(config_b, Arc::new(ManualWallClock::new(Timestamp(9_400)))).await;
         let tenant_id =
             create_shared_ordered_tenant(&engine_a, &engine_b, "pg-ordered-one-owner").await;
         terminate_postgres_hint_listeners(&provider_config)
@@ -406,9 +423,9 @@ async fn two_provider_engines_never_assign_under_one_tenant_lease() {
 async fn provider_pipeline_cancellation_before_lease_admission_stages_no_suffix() {
     with_shared_postgres_engine_configs(|config_a, config_b, provider_config| async move {
         let engine_a =
-            provider_engine(config_a, Arc::new(ManualClock::new(Timestamp(9_500)))).await;
+            provider_engine(config_a, Arc::new(ManualWallClock::new(Timestamp(9_500)))).await;
         let engine_b =
-            provider_engine(config_b, Arc::new(ManualClock::new(Timestamp(9_500)))).await;
+            provider_engine(config_b, Arc::new(ManualWallClock::new(Timestamp(9_500)))).await;
         let tenant_id =
             create_shared_ordered_tenant(&engine_a, &engine_b, "pg-ordered-cancel").await;
         terminate_postgres_hint_listeners(&provider_config)
@@ -483,8 +500,11 @@ async fn provider_pipeline_cancellation_before_lease_admission_stages_no_suffix(
 #[serial_test::serial(postgres_provider)]
 async fn provider_pipeline_shutdown_before_lease_admission_stages_no_suffix() {
     with_postgres_engine_config(|engine_config, provider_config| async move {
-        let engine =
-            provider_engine(engine_config, Arc::new(ManualClock::new(Timestamp(9_600)))).await;
+        let engine = provider_engine(
+            engine_config,
+            Arc::new(ManualWallClock::new(Timestamp(9_600))),
+        )
+        .await;
         let tenant_id = TenantId::new("pg-ordered-shutdown").expect("tenant id should build");
         crate::tenant::configure_committer_arm_for_testing(
             tenant_id.clone(),

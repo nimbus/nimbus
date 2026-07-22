@@ -176,6 +176,23 @@ pub(crate) struct TenantRuntimeInitialStateProfile {
     pub total: Duration,
 }
 
+pub(crate) struct TenantRuntimeTiming {
+    monotonic_clock: Arc<dyn MonotonicClock>,
+    renewal_clock: Arc<dyn LeaseRenewalClock>,
+}
+
+impl TenantRuntimeTiming {
+    pub(crate) fn new(
+        monotonic_clock: Arc<dyn MonotonicClock>,
+        renewal_clock: Arc<dyn LeaseRenewalClock>,
+    ) -> Self {
+        Self {
+            monotonic_clock,
+            renewal_clock,
+        }
+    }
+}
+
 fn prepare_concurrency() -> usize {
     std::env::var_os("NIMBUS_PREPARE_CONCURRENCY")
         .and_then(|value| value.into_string().ok())
@@ -219,8 +236,7 @@ impl TenantRuntime {
         store: TenantPersistence,
         read_storage: TenantPersistenceExecutor,
         initial_state: TenantRuntimeInitialState,
-        monotonic_clock: Arc<dyn MonotonicClock>,
-        renewal_clock: Arc<dyn LeaseRenewalClock>,
+        timing: TenantRuntimeTiming,
         committer_owner_id: Option<String>,
     ) -> Self {
         let TenantRuntimeInitialState {
@@ -261,12 +277,13 @@ impl TenantRuntime {
             mutation_isolate_admission: Arc::new(MutationIsolateAdmission::from_env()),
             mutation_journal: Arc::new(MutationJournalState::new(progress)),
             committer,
-            committer_lease: committer_owner_id
-                .map(|owner_id| Arc::new(CommitterLeaseLifecycle::new(owner_id, renewal_clock))),
+            committer_lease: committer_owner_id.map(|owner_id| {
+                Arc::new(CommitterLeaseLifecycle::new(owner_id, timing.renewal_clock))
+            }),
             publisher,
             observer_dispatch,
             observer_lifetime: Arc::new(()),
-            monotonic_clock,
+            monotonic_clock: timing.monotonic_clock,
             write_rate: TenantWriteRateLimiter::new(),
             last_assigned_commit_timestamp: AtomicU64::new(last_commit_timestamp.0),
             prepared_table_ids: Mutex::new(HashMap::new()),
@@ -282,8 +299,7 @@ impl TenantRuntime {
         store: TenantPersistence,
         read_storage: TenantPersistenceExecutor,
         initial_state: TenantRuntimeInitialState,
-        monotonic_clock: Arc<dyn MonotonicClock>,
-        renewal_clock: Arc<dyn LeaseRenewalClock>,
+        timing: TenantRuntimeTiming,
         committer_owner_id: Option<String>,
     ) -> Self {
         Self::from_initialized_parts(
@@ -292,8 +308,7 @@ impl TenantRuntime {
             store,
             read_storage,
             initial_state,
-            monotonic_clock,
-            renewal_clock,
+            timing,
             committer_owner_id,
         )
     }
@@ -364,8 +379,7 @@ impl TenantRuntime {
                 progress,
                 last_commit_timestamp,
             },
-            monotonic_clock,
-            renewal_clock,
+            TenantRuntimeTiming::new(monotonic_clock, renewal_clock),
             committer_owner_id,
         ))
     }
@@ -387,8 +401,7 @@ impl TenantRuntime {
             store,
             read_storage,
             initial_state,
-            monotonic_clock,
-            renewal_clock,
+            TenantRuntimeTiming::new(monotonic_clock, renewal_clock),
             committer_owner_id,
         ))
     }
