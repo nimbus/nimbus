@@ -8,7 +8,7 @@ pub(super) use super::super::{
     ExternalProviderFixtureMode, FieldSchema, FieldType, MySqlProvider, MySqlProviderConfig,
     TenantEventRecord, TenantReadStorage, external_provider_fixture_mode,
 };
-pub(super) use crate::{ResolvedScheduleOp, ResolvedWrite};
+pub(super) use crate::{FaultInjector, FaultPoint, ResolvedScheduleOp, ResolvedWrite};
 pub(super) use mysql_async::prelude::Queryable;
 pub(super) use mysql_async::{Opts, Pool};
 pub(super) use nimbus_core::{
@@ -26,6 +26,17 @@ where
     F: FnOnce(MySqlProvider, MySqlProviderConfig) -> Fut,
     Fut: Future<Output = ()>,
 {
+    with_test_provider_and_fault_injector(std::sync::Arc::new(crate::NoopFaultInjector), test)
+        .await;
+}
+
+pub(super) async fn with_test_provider_and_fault_injector<F, Fut>(
+    fault_injector: std::sync::Arc<dyn FaultInjector>,
+    test: F,
+) where
+    F: FnOnce(MySqlProvider, MySqlProviderConfig) -> Fut,
+    Fut: Future<Output = ()>,
+{
     let connection = match test_connection().await {
         Some(connection) => connection,
         None => return,
@@ -40,9 +51,14 @@ where
         min_connections: Some(1),
         max_connections: Some(4),
     };
-    let provider = MySqlProvider::connect(config.clone())
-        .await
-        .expect("provider should connect");
+    let provider = MySqlProvider::connect_with_simulation(
+        config.clone(),
+        tokio::runtime::Handle::current(),
+        std::sync::Arc::new(crate::SystemClock),
+        fault_injector,
+    )
+    .await
+    .expect("provider should connect");
     test(provider.clone(), config).await;
     provider
         .drop_provider_databases_for_test()

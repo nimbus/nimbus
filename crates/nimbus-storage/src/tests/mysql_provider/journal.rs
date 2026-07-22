@@ -3,7 +3,19 @@ use crate::tests::{
     exercise_applied_sequence_corruption_rejection, exercise_applied_sequence_recovery_replay,
     exercise_durable_update_guard_is_corruption, exercise_pending_prefix_blocks_generic_zero_write,
 };
-use nimbus_core::Error;
+use nimbus_core::{Error, Result};
+
+struct CancelBeforeCommitVisibility;
+
+impl FaultInjector for CancelBeforeCommitVisibility {
+    fn check(&self, point: FaultPoint) -> Result<()> {
+        if point == FaultPoint::StorageCommitBeforeVisibility {
+            Err(Error::Cancelled)
+        } else {
+            Ok(())
+        }
+    }
+}
 
 fn mysql_pipeline_barriers(count: u64) -> Vec<TenantEventRecord> {
     (1..=count)
@@ -156,6 +168,68 @@ async fn mysql_sql_pipeline_cancellation_rolls_back() {
             SequenceNumber(0)
         );
     })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mysql_sql_pipeline_post_runner_cancellation_is_counted_once() {
+    with_test_provider_and_fault_injector(
+        std::sync::Arc::new(CancelBeforeCommitVisibility),
+        |provider, _config| async move {
+            let tenant =
+                TenantId::new("pipeline-post-runner-cancel").expect("tenant id should build");
+            let opened = provider
+                .create_opened_tenant(&tenant)
+                .await
+                .expect("tenant should create and open");
+            let lease = opened
+                .store
+                .acquire_committer_lease(
+                    "post-runner-cancel-owner",
+                    std::time::Duration::from_secs(30),
+                )
+                .expect("lease should be acquired");
+            let records = mysql_pipeline_barriers(1);
+
+            let error = opened
+                .store
+                .fenced_append_and_apply_durable_records_batch(
+                    &lease.owner_id,
+                    lease.epoch,
+                    SequenceNumber(0),
+                    &records,
+                )
+                .expect_err("pre-visibility cancellation should abort after batch apply");
+            assert!(matches!(
+                error,
+                crate::CommitterLeaseError::Storage(Error::Cancelled)
+            ));
+            let diagnostic = opened.store.write_pipeline_diagnostic();
+            assert_eq!(diagnostic.batch_attempt_count, 1);
+            assert_eq!(diagnostic.provider_operation_count, 1);
+            assert_eq!(diagnostic.cancellation_count, 1);
+            assert_eq!(diagnostic.error_count, 1);
+            assert_eq!(
+                opened
+                    .store
+                    .journal_progress()
+                    .expect("progress should read"),
+                crate::store::JournalProgress {
+                    durable_head: SequenceNumber(0),
+                    applied_head: SequenceNumber(0),
+                }
+            );
+            assert_eq!(
+                opened
+                    .store
+                    .read_committer_lease()
+                    .expect("lease should read")
+                    .expect("lease should exist")
+                    .durable_sequence,
+                SequenceNumber(0)
+            );
+        },
+    )
     .await;
 }
 

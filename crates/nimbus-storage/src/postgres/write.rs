@@ -372,6 +372,8 @@ impl PostgresTenantStore {
         let owner_id = owner_id.to_string();
         let fenced_owner_id = owner_id.clone();
         let records = records.to_vec();
+        let pipeline_operations_completed = Arc::new(AtomicBool::new(false));
+        let pipeline_operations_completed_in_transaction = pipeline_operations_completed.clone();
         let result = self.execute_write_cancellable(check_cancel, move |transaction| {
             let durable_sequence = records
                 .last()
@@ -392,8 +394,19 @@ impl PostgresTenantStore {
                 transaction.applied_sequence()?,
                 records[0].sequence,
             )?;
-            transaction.append_and_apply_durable_records_batch(&records)
+            transaction.append_and_apply_durable_records_batch(&records)?;
+            pipeline_operations_completed_in_transaction.store(true, AtomicOrdering::Release);
+            Ok(())
         });
+        if let Err(error @ Error::Cancelled) = &result
+            && pipeline_operations_completed.load(AtomicOrdering::Acquire)
+        {
+            // The ordered runner records its own errors. A cancellation can
+            // still arrive at the transaction's final pre-commit check after
+            // that runner has completed, so record only that outer-boundary
+            // case and avoid double-counting an inner cancellation.
+            self.pipeline_metrics.record_error(error);
+        }
         match result {
             Ok(_) => Ok(()),
             Err(Error::PreconditionFailed(message)) if message == FENCED_COMMITTER_LEASE_MARKER => {

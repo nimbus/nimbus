@@ -9,7 +9,7 @@ pub(super) use super::super::{
     PostgresProvider, PostgresProviderConfig, TableSchema, TenantEventRecord, WriteOp, WriteOpType,
     external_provider_fixture_mode, timeout,
 };
-pub(super) use crate::{ResolvedScheduleOp, ResolvedWrite};
+pub(super) use crate::{FaultInjector, FaultPoint, ResolvedScheduleOp, ResolvedWrite};
 pub(super) use nimbus_core::{
     CollectionName, CronJob, CronSchedule, DocumentLocator, DocumentPath, Mutation,
     ResourcePathBinding, ScheduledJob, ScheduledJobOutcome, ScheduledJobResult, Schema,
@@ -22,6 +22,17 @@ pub(super) static TEST_SUFFIX_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub(super) async fn with_test_provider<F, Fut>(test: F)
 where
+    F: FnOnce(PostgresProvider, PostgresProviderConfig) -> Fut,
+    Fut: Future<Output = ()>,
+{
+    with_test_provider_and_fault_injector(std::sync::Arc::new(crate::NoopFaultInjector), test)
+        .await;
+}
+
+pub(super) async fn with_test_provider_and_fault_injector<F, Fut>(
+    fault_injector: std::sync::Arc<dyn FaultInjector>,
+    test: F,
+) where
     F: FnOnce(PostgresProvider, PostgresProviderConfig) -> Fut,
     Fut: Future<Output = ()>,
 {
@@ -39,9 +50,14 @@ where
         min_connections: Some(1),
         max_connections: Some(4),
     };
-    let provider = PostgresProvider::connect(config.clone())
-        .await
-        .expect("provider should connect");
+    let provider = PostgresProvider::connect_with_simulation(
+        config.clone(),
+        tokio::runtime::Handle::current(),
+        std::sync::Arc::new(crate::SystemClock),
+        fault_injector,
+    )
+    .await
+    .expect("provider should connect");
     test(provider.clone(), config).await;
     provider
         .drop_metadata_schema_for_test()

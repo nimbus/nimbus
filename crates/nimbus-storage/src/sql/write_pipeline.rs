@@ -238,7 +238,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-    use tokio::sync::{Notify, Semaphore};
+    use tokio::sync::{Notify, Semaphore, mpsc};
 
     use super::*;
 
@@ -345,24 +345,36 @@ mod tests {
     async fn sql_pipeline_bounds_in_flight_statements() {
         let metrics = Arc::new(SqlWritePipelineMetrics::new("fake", 2));
         let permits = Arc::new(Semaphore::new(0));
+        let (admitted_tx, mut admitted_rx) = mpsc::unbounded_channel();
         let operations = (0..5)
             .map(|_| {
                 let permits = permits.clone();
+                let admitted_tx = admitted_tx.clone();
                 operation(async move {
+                    admitted_tx
+                        .send(())
+                        .expect("admission observer should remain open");
                     let permit = permits.acquire().await.expect("semaphore should stay open");
                     permit.forget();
                     Ok(())
                 })
             })
             .collect::<Vec<_>>();
+        drop(admitted_tx);
         let run = run_ordered_bounded(metrics.as_ref(), 2, &|| Ok(()), operations);
         let inspect = async {
-            for _ in 0..100 {
-                if metrics.snapshot().provider_operation_count == 2 {
-                    break;
+            tokio::time::timeout(std::time::Duration::from_secs(1), async {
+                for admitted in 1..=2 {
+                    admitted_rx.recv().await.unwrap_or_else(|| {
+                        panic!(
+                            "pipeline closed after {admitted_minus_one} admissions; expected two",
+                            admitted_minus_one = admitted - 1
+                        )
+                    });
                 }
-                tokio::task::yield_now().await;
-            }
+            })
+            .await
+            .expect("pipeline did not admit exactly two provider operations within one second");
             let blocked = metrics.snapshot();
             assert_eq!(blocked.provider_operation_count, 2);
             assert_eq!(blocked.max_observed_in_flight, 2);

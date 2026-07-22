@@ -266,29 +266,47 @@ pub(crate) fn sql_apply_resolved_write<B: SqlWriteBackend>(
 /// Finalize the transaction: fold buffered document writes into a leading
 /// `DocumentWrite` event, append the commit entry when anything changed, flush
 /// the notification, then `COMMIT` and invalidate the schema cache if touched.
-/// Consumes the transaction so no further statements can run after commit.
+/// Every error before the visibility boundary explicitly rolls the transaction
+/// back. Consumes the transaction so no further statements can run after
+/// commit.
 pub(crate) fn sql_commit<B: SqlWriteBackend>(mut backend: B) -> Result<Option<CommitEntry>> {
-    backend.check_cancel()?;
-    let writes = backend.take_commit_writes();
-    if !writes.is_empty() {
-        backend.prepend_tenant_event(TenantEventKind::DocumentWrite {
-            writes: writes.clone(),
-        });
-    }
-    let prepared_record = backend.take_prepared_record();
-    let commit = if let Some(record) = prepared_record {
-        let events = backend.take_tenant_events();
-        crate::store::validate_prepared_record_shape(&record, &writes, &events)?;
-        Some(backend.append_prepared_record(&record)?)
-    } else if backend.tenant_events_is_empty() {
-        None
-    } else {
-        let events = backend.take_tenant_events();
-        Some(backend.append_commit_entry(writes, events)?)
+    let before_visibility = (|| -> Result<Option<CommitEntry>> {
+        backend.check_cancel()?;
+        let writes = backend.take_commit_writes();
+        if !writes.is_empty() {
+            backend.prepend_tenant_event(TenantEventKind::DocumentWrite {
+                writes: writes.clone(),
+            });
+        }
+        let prepared_record = backend.take_prepared_record();
+        let commit = if let Some(record) = prepared_record {
+            let events = backend.take_tenant_events();
+            crate::store::validate_prepared_record_shape(&record, &writes, &events)?;
+            Some(backend.append_prepared_record(&record)?)
+        } else if backend.tenant_events_is_empty() {
+            None
+        } else {
+            let events = backend.take_tenant_events();
+            Some(backend.append_commit_entry(writes, events)?)
+        };
+        backend.enqueue_notification()?;
+        backend.check_fault(FaultPoint::StorageCommitBeforeVisibility)?;
+        Ok(commit)
+    })();
+    let commit = match before_visibility {
+        Ok(commit) => commit,
+        Err(error) => {
+            sql_rollback(&mut backend);
+            return Err(error);
+        }
     };
-    backend.enqueue_notification()?;
-    backend.check_fault(FaultPoint::StorageCommitBeforeVisibility)?;
-    backend.batch_execute("COMMIT")?;
+    if let Err(error) = backend.batch_execute("COMMIT") {
+        // A provider error at COMMIT may be ambiguous to the caller. ROLLBACK
+        // cannot undo a transaction that landed, but it does close any still-
+        // open transaction before the pooled connection is reused.
+        sql_rollback(&mut backend);
+        return Err(error);
+    }
     if backend.schema_cache_changed() {
         backend.invalidate_schema_cache();
     }

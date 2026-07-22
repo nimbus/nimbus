@@ -629,7 +629,7 @@ impl SeedResource {
 
 impl ReopenedResource {
     pub(super) async fn cleanup(self, engine: Arc<Engine>, context: &str) -> BenchResult<()> {
-        quiesce_engine_for_reopen(&engine, context).await?;
+        quiesce_engine(&engine, context).await?;
         drop(engine);
         match self {
             Self::Sqlite { bench_dir } => {
