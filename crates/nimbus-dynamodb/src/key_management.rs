@@ -247,6 +247,43 @@ pub fn lookup(
     }
 }
 
+/// Look up a persisted access key through the provider-capable async engine
+/// lifecycle.
+///
+/// This is the authentication-path counterpart to [`lookup`]. Provider-backed
+/// transports must use it because the key-store tenant may need to be opened
+/// asynchronously before Nimbus can determine that a key is absent.
+///
+/// # Errors
+/// A mapped engine error for a storage failure other than "not found".
+pub async fn lookup_async(
+    engine: &Arc<Engine>,
+    access_key_id: &str,
+) -> Result<Option<StoredAccessKey>, DynamoDbError> {
+    let context = store_context()?;
+    match engine
+        .get_document_async(
+            context.tenant_id().clone(),
+            store_table()?,
+            key_id(access_key_id)?,
+        )
+        .await
+    {
+        Ok(document) => {
+            let record = serde_json::from_value(Value::Object(document.fields.clone())).map_err(
+                |error| DynamoDbError::InternalServerError(format!("corrupt access key: {error}")),
+            )?;
+            Ok(Some(record))
+        }
+        Err(
+            nimbus_core::Error::NotFound(_)
+            | nimbus_core::Error::DocumentNotFound(_)
+            | nimbus_core::Error::TenantNotFound(_),
+        ) => Ok(None),
+        Err(error) => Err(map_core_error(error)),
+    }
+}
+
 /// List every configured access key as `(access_key_id, redacted_record)` pairs,
 /// sorted by id. The returned [`RedactedAccessKey`] omits the secret — it is
 /// never exposed over the listing surface (F6b).
@@ -310,6 +347,33 @@ mod tests {
         let (engine, _t) = engine();
         assert_eq!(lookup(&engine, "AKIANOPE").unwrap(), None);
         assert!(list_access_keys(&engine).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn async_lookup_uses_memory_provider_lifecycle_for_absent_and_present_keys() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let engine = Arc::new(
+            Engine::new_with_memory_persistence(temp.path()).expect("memory provider engine"),
+        );
+
+        assert_eq!(lookup_async(&engine, "AKIANOPE").await.unwrap(), None);
+
+        put_access_key_async(
+            &engine,
+            "AKIAACME",
+            &tenant("acme"),
+            Some("secret-1".to_owned()),
+            Some("us-east-1".to_owned()),
+        )
+        .await
+        .expect("async put");
+        let stored = lookup_async(&engine, "AKIAACME")
+            .await
+            .expect("async lookup")
+            .expect("present");
+        assert_eq!(stored.tenant, "acme");
+        assert_eq!(stored.secret.as_deref(), Some("secret-1"));
+        assert_eq!(stored.region.as_deref(), Some("us-east-1"));
     }
 
     #[test]
