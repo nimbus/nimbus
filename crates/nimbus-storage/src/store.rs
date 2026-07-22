@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use nimbus_core::{
     CommitEntry, Document, Error, IndexDefinition, JobId, ResourcePathBinding, Result,
-    ScheduledJob, SequenceNumber, TenantEventKind, Timestamp, WriteOp,
+    ScheduledJob, SequenceNumber, TenantEventKind, Timestamp, WallClock, WriteOp,
 };
 use redb::{Database, ReadTransaction, TableDefinition};
 
@@ -25,7 +25,7 @@ use self::scan::ScanMetrics;
 #[cfg(test)]
 pub(crate) use self::scan::ScanStats;
 use crate::RetentionFloor;
-use crate::simulation::{Clock, FaultInjector};
+use crate::simulation::FaultInjector;
 
 pub use index_versions::HistoricalIndexDocumentPage;
 pub(crate) use journal_snapshot::MATERIALIZED_JOURNAL_SNAPSHOT_VERSION;
@@ -88,7 +88,7 @@ pub(crate) const EMPTY_TABLE_VALUE: &[u8] = &[];
 /// implement the same product semantics over different storage mechanics.
 pub struct TenantStore {
     pub(crate) db: Database,
-    pub(crate) clock: Arc<dyn Clock>,
+    pub(crate) clock: Arc<dyn WallClock>,
     pub(crate) fault_injector: Arc<dyn FaultInjector>,
     pub(crate) retention_floor: Arc<RetentionFloor>,
     scan_metrics: Arc<ScanMetrics>,
@@ -164,7 +164,7 @@ pub struct JournalProgress {
 /// between rollback and durable commit before returning to the engine.
 pub struct TenantWriteTransaction {
     write_txn: Option<redb::WriteTransaction>,
-    clock: Arc<dyn Clock>,
+    clock: Arc<dyn WallClock>,
     fault_injector: Arc<dyn FaultInjector>,
     commit_writes: Vec<WriteOp>,
     tenant_events: Vec<TenantEventKind>,

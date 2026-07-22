@@ -1,6 +1,6 @@
 /// Wall-clock millis for resource stamping. Pure plumbing (no struct here
 /// holds test-observable state), so this routes through the one canonical
-/// `SystemClock` implementation (CO7) rather than injecting a per-call
+/// `SystemWallClock` implementation (CO7) rather than injecting a per-call
 /// clock.
 pub(super) fn now_millis() -> u64 {
     nimbus_core::clock::system_now_millis()

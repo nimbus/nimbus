@@ -9,7 +9,7 @@ use axum::routing::get;
 use axum::{Extension, Json, Router};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use nimbus_core::{Error, TenantId};
+use nimbus_core::{Error, SystemWallClock, TenantId, WallClock};
 use nimbus_storage::KvPut;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -384,7 +384,7 @@ pub(super) fn decode_cursor(raw: &str) -> Result<Vec<u8>, KvRestError> {
 }
 
 pub(super) fn now_ms() -> i64 {
-    let millis = nimbus_core::Timestamp::now().0;
+    let millis = SystemWallClock.now_millis();
     millis.min(i64::MAX as u64) as i64
 }
 

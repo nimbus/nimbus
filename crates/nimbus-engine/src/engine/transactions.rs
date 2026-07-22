@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use base64::Engine as Base64Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -23,6 +24,7 @@ struct StoredTransactionSession {
     tenant_id: TenantId,
     principal: PrincipalContext,
     session: TransactionSession,
+    expires_at: Instant,
     execution_unit: Arc<MutationExecutionUnit>,
 }
 
@@ -32,7 +34,7 @@ pub(super) struct TransactionSessionRegistry {
 }
 
 impl TransactionSessionRegistry {
-    fn insert(&mut self, session: StoredTransactionSession, now: Timestamp) -> Result<()> {
+    fn insert(&mut self, session: StoredTransactionSession, now: Instant) -> Result<()> {
         self.prune_expired(now);
         if self.sessions.len() >= MAX_ACTIVE_TRANSACTION_SESSIONS {
             return Err(Error::ResourceExhausted(format!(
@@ -48,7 +50,7 @@ impl TransactionSessionRegistry {
         tenant_id: &TenantId,
         token: &TransactionSessionToken,
         principal: &PrincipalContext,
-        now: Timestamp,
+        now: Instant,
     ) -> Result<StoredTransactionSession> {
         let Some(session) = self.sessions.get(token).cloned() else {
             return Err(transaction_session_not_found());
@@ -61,7 +63,7 @@ impl TransactionSessionRegistry {
         tenant_id: &TenantId,
         token: &TransactionSessionToken,
         principal: &PrincipalContext,
-        now: Timestamp,
+        now: Instant,
     ) -> Result<StoredTransactionSession> {
         let Some(session) = self.sessions.remove(token) else {
             return Err(transaction_session_not_found());
@@ -74,11 +76,11 @@ impl TransactionSessionRegistry {
         token: &TransactionSessionToken,
         tenant_id: &TenantId,
         principal: &PrincipalContext,
-        now: Timestamp,
+        now: Instant,
         session: StoredTransactionSession,
         already_removed: bool,
     ) -> Result<StoredTransactionSession> {
-        if session.session.expires_at <= now {
+        if session.expires_at <= now {
             if !already_removed {
                 self.sessions.remove(token);
             }
@@ -103,10 +105,9 @@ impl TransactionSessionRegistry {
         Ok(session)
     }
 
-    fn prune_expired(&mut self, now: Timestamp) -> usize {
+    fn prune_expired(&mut self, now: Instant) -> usize {
         let before = self.sessions.len();
-        self.sessions
-            .retain(|_, session| session.session.expires_at > now);
+        self.sessions.retain(|_, session| session.expires_at > now);
         before.saturating_sub(self.sessions.len())
     }
 
@@ -126,11 +127,13 @@ impl Engine {
         mode: TransactionSessionMode,
     ) -> Result<TransactionSession> {
         let started_at = self.now();
+        let started_at_monotonic = self.monotonic_now();
         let session = TransactionSession {
             token: generate_transaction_session_token()?,
             mode,
             started_at,
-            expires_at: Timestamp(started_at.0.saturating_add(TRANSACTION_SESSION_TTL_MS)),
+            expires_at: started_at
+                .saturating_add_duration(Duration::from_millis(TRANSACTION_SESSION_TTL_MS)),
         };
         let execution_unit =
             self.begin_mutation_execution_unit(tenant_id.clone(), principal.clone())?;
@@ -142,9 +145,12 @@ impl Engine {
                     tenant_id,
                     principal,
                     session: session.clone(),
+                    expires_at: started_at_monotonic
+                        .checked_add(Duration::from_millis(TRANSACTION_SESSION_TTL_MS))
+                        .expect("transaction session monotonic deadline must be representable"),
                     execution_unit,
                 },
-                started_at,
+                started_at_monotonic,
             )?;
         Ok(session)
     }
@@ -222,7 +228,7 @@ impl Engine {
             .transaction_sessions
             .write()
             .expect("transaction session lock should not be poisoned")
-            .clone_active(tenant_id, token, principal, self.now())?;
+            .clone_active(tenant_id, token, principal, self.monotonic_now())?;
         if matches!(session.session.mode, TransactionSessionMode::ReadOnly)
             && !batch.writes.is_empty()
         {
@@ -246,7 +252,7 @@ impl Engine {
             .transaction_sessions
             .write()
             .expect("transaction session lock should not be poisoned")
-            .take_active(tenant_id, token, principal, self.now())?;
+            .take_active(tenant_id, token, principal, self.monotonic_now())?;
         if matches!(session.session.mode, TransactionSessionMode::ReadOnly)
             && batch.as_ref().is_some_and(|batch| !batch.writes.is_empty())
         {
@@ -276,7 +282,7 @@ impl Engine {
             .transaction_sessions
             .write()
             .expect("transaction session lock should not be poisoned")
-            .take_active(tenant_id, token, principal, self.now())?;
+            .take_active(tenant_id, token, principal, self.monotonic_now())?;
         Ok(())
     }
 
@@ -285,7 +291,7 @@ impl Engine {
         self.transaction_sessions
             .write()
             .expect("transaction session lock should not be poisoned")
-            .prune_expired(self.now())
+            .prune_expired(self.monotonic_now())
     }
 
     #[cfg(test)]
@@ -306,7 +312,7 @@ impl Engine {
             .transaction_sessions
             .write()
             .expect("transaction session lock should not be poisoned")
-            .clone_active(tenant_id, token, principal, self.now())?
+            .clone_active(tenant_id, token, principal, self.monotonic_now())?
             .execution_unit)
     }
 }
@@ -346,14 +352,15 @@ fn commit_transaction_without_writes(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::sync::{Arc, Barrier};
+    use std::time::Duration;
 
     use nimbus_core::{
-        AtomicWrite, AtomicWriteBatch, DocumentId, DocumentLocator, Error, OrderBy, OrderDirection,
-        PrincipalContext, Query, TableName, TenantId, Timestamp, TransactionSessionMode, WriteKey,
-        WritePrecondition, WriteSetMode,
+        AtomicWrite, AtomicWriteBatch, DocumentId, DocumentLocator, Error, ManualMonotonicClock,
+        ManualWallClock, OrderBy, OrderDirection, PrincipalContext, Query, TableName, TenantId,
+        Timestamp, TransactionSessionMode, WriteKey, WritePrecondition, WriteSetMode,
     };
-    use nimbus_storage::{ManualClock, NoopFaultInjector};
+    use nimbus_storage::NoopFaultInjector;
     use nimbus_testing::EngineFixture;
     use serde_json::json;
     use tempfile::tempdir;
@@ -685,13 +692,15 @@ mod tests {
     }
 
     #[test]
-    fn transaction_session_expiry_prunes_the_session() {
+    fn transaction_session_exact_deadline_is_expired() {
         let data_dir = tempdir().expect("engine tempdir should create");
-        let clock = Arc::new(ManualClock::new(Timestamp(5_000)));
+        let wall = Arc::new(ManualWallClock::new(Timestamp(5_000)));
+        let monotonic = Arc::new(ManualMonotonicClock::new());
         let engine = Arc::new(
-            Engine::new_with_simulation(
+            Engine::new_with_simulation_clocks(
                 data_dir.path(),
-                clock.clone(),
+                wall,
+                monotonic.clone(),
                 Arc::new(NoopFaultInjector),
             )
             .expect("engine should create"),
@@ -711,7 +720,7 @@ mod tests {
             .expect("transaction session should start");
         assert_eq!(engine.active_transaction_session_count(), 1);
 
-        clock.advance_ms(TRANSACTION_SESSION_TTL_MS.saturating_add(1));
+        monotonic.advance(Duration::from_millis(TRANSACTION_SESSION_TTL_MS));
         let error = engine
             .rollback_transaction_session(&tenant_id, &session.token, &principal)
             .expect_err("expired transaction should fail");
@@ -722,14 +731,122 @@ mod tests {
     }
 
     #[test]
-    fn transaction_session_principal_mismatch_invalidates_the_session() {
+    fn transaction_session_expires_after_elapsed_ttl_when_wall_moves_backward() {
+        let data_dir = tempdir().expect("engine tempdir should create");
+        let wall = Arc::new(ManualWallClock::new(Timestamp(5_000)));
+        let monotonic = Arc::new(ManualMonotonicClock::new());
+        let engine = Arc::new(
+            Engine::new_with_simulation_clocks(
+                data_dir.path(),
+                wall.clone(),
+                monotonic.clone(),
+                Arc::new(NoopFaultInjector),
+            )
+            .expect("engine should create"),
+        );
+        let tenant_id = TenantId::new("transaction-backward-wall").expect("tenant should parse");
+        engine
+            .create_tenant(tenant_id.clone())
+            .expect("tenant should create");
+        let principal = PrincipalContext::anonymous();
+        let session = engine
+            .begin_transaction_session(
+                tenant_id.clone(),
+                principal.clone(),
+                TransactionSessionMode::ReadOnly,
+            )
+            .expect("transaction session should start");
+
+        wall.set(Timestamp(1));
+        monotonic.advance(Duration::from_millis(TRANSACTION_SESSION_TTL_MS));
+
+        assert!(matches!(
+            engine.rollback_transaction_session(&tenant_id, &session.token, &principal),
+            Err(Error::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn transaction_session_survives_forward_wall_step_before_elapsed_ttl() {
+        let data_dir = tempdir().expect("engine tempdir should create");
+        let wall = Arc::new(ManualWallClock::new(Timestamp(5_000)));
+        let monotonic = Arc::new(ManualMonotonicClock::new());
+        let engine = Arc::new(
+            Engine::new_with_simulation_clocks(
+                data_dir.path(),
+                wall.clone(),
+                monotonic,
+                Arc::new(NoopFaultInjector),
+            )
+            .expect("engine should create"),
+        );
+        let tenant_id = TenantId::new("transaction-forward-wall").expect("tenant should parse");
+        engine
+            .create_tenant(tenant_id.clone())
+            .expect("tenant should create");
+        let principal = PrincipalContext::anonymous();
+        let session = engine
+            .begin_transaction_session(
+                tenant_id.clone(),
+                principal.clone(),
+                TransactionSessionMode::ReadOnly,
+            )
+            .expect("transaction session should start");
+
+        wall.advance(Duration::from_secs(86_400));
+
+        engine
+            .rollback_transaction_session(&tenant_id, &session.token, &principal)
+            .expect("forward wall movement must not expire an elapsed-time session");
+    }
+
+    #[test]
+    fn transaction_session_wall_metadata_remains_stable() {
+        let data_dir = tempdir().expect("engine tempdir should create");
+        let wall = Arc::new(ManualWallClock::new(Timestamp(5_000)));
+        let monotonic = Arc::new(ManualMonotonicClock::new());
+        let engine = Arc::new(
+            Engine::new_with_simulation_clocks(
+                data_dir.path(),
+                wall.clone(),
+                monotonic.clone(),
+                Arc::new(NoopFaultInjector),
+            )
+            .expect("engine should create"),
+        );
+        let tenant_id = TenantId::new("transaction-wall-metadata").expect("tenant should parse");
+        engine
+            .create_tenant(tenant_id.clone())
+            .expect("tenant should create");
+        let principal = PrincipalContext::anonymous();
+        let session = engine
+            .begin_transaction_session(
+                tenant_id.clone(),
+                principal.clone(),
+                TransactionSessionMode::ReadOnly,
+            )
+            .expect("transaction session should start");
+
+        assert_eq!(session.started_at, Timestamp(5_000));
+        assert_eq!(session.expires_at, Timestamp(65_000));
+        wall.set(Timestamp(500_000));
+        monotonic.advance(Duration::from_millis(1));
+        assert_eq!(session.started_at, Timestamp(5_000));
+        assert_eq!(session.expires_at, Timestamp(65_000));
+        engine
+            .rollback_transaction_session(&tenant_id, &session.token, &principal)
+            .expect("session should remain active");
+    }
+
+    #[test]
+    fn transaction_session_pruning_respects_tenant_and_principal_invalidation() {
         let fixture = EngineFixture::new(|path| Engine::new(path));
         let engine = fixture.engine();
         let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
         let owner = principal_with_subject("owner-1");
         let intruder = principal_with_subject("owner-2");
 
-        let session = engine
+        let tenant_mismatch_session = engine
             .begin_transaction_session(
                 tenant_id.clone(),
                 owner.clone(),
@@ -738,16 +855,94 @@ mod tests {
             .expect("transaction session should start");
         assert_eq!(engine.active_transaction_session_count(), 1);
 
+        let other_tenant = TenantId::new("other-tenant").expect("tenant id should parse");
         let error = engine
-            .rollback_transaction_session(&tenant_id, &session.token, &intruder)
+            .rollback_transaction_session(&other_tenant, &tenant_mismatch_session.token, &owner)
+            .expect_err("tenant mismatch should fail");
+        assert!(matches!(error, Error::PermissionDenied(_)));
+        assert_eq!(engine.active_transaction_session_count(), 0);
+
+        let principal_mismatch_session = engine
+            .begin_transaction_session(
+                tenant_id.clone(),
+                owner.clone(),
+                TransactionSessionMode::ReadWrite,
+            )
+            .expect("transaction session should start");
+        let error = engine
+            .rollback_transaction_session(&tenant_id, &principal_mismatch_session.token, &intruder)
             .expect_err("principal mismatch should fail");
 
         assert!(matches!(error, Error::PermissionDenied(_)));
         assert_eq!(engine.active_transaction_session_count(), 0);
         assert!(matches!(
-            engine.rollback_transaction_session(&tenant_id, &session.token, &owner),
+            engine.rollback_transaction_session(
+                &tenant_id,
+                &principal_mismatch_session.token,
+                &owner
+            ),
             Err(Error::InvalidInput(_))
         ));
+    }
+
+    #[test]
+    fn transaction_session_concurrent_commit_or_expire_has_one_terminal_outcome() {
+        let data_dir = tempdir().expect("engine tempdir should create");
+        let wall = Arc::new(ManualWallClock::new(Timestamp(5_000)));
+        let monotonic = Arc::new(ManualMonotonicClock::new());
+        let engine = Arc::new(
+            Engine::new_with_simulation_clocks(
+                data_dir.path(),
+                wall,
+                monotonic.clone(),
+                Arc::new(NoopFaultInjector),
+            )
+            .expect("engine should create"),
+        );
+        let tenant_id = TenantId::new("transaction-terminal-race").expect("tenant should parse");
+        engine
+            .create_tenant(tenant_id.clone())
+            .expect("tenant should create");
+        let principal = PrincipalContext::anonymous();
+        let session = engine
+            .begin_transaction_session(
+                tenant_id.clone(),
+                principal.clone(),
+                TransactionSessionMode::ReadOnly,
+            )
+            .expect("transaction session should start");
+        let start = Arc::new(Barrier::new(3));
+
+        let commit = {
+            let engine = engine.clone();
+            let tenant_id = tenant_id.clone();
+            let principal = principal.clone();
+            let token = session.token.clone();
+            let start = start.clone();
+            std::thread::spawn(move || {
+                start.wait();
+                engine.commit_transaction_session(&tenant_id, &token, &principal, None)
+            })
+        };
+        let expire = {
+            let engine = engine.clone();
+            let monotonic = monotonic.clone();
+            let start = start.clone();
+            std::thread::spawn(move || {
+                start.wait();
+                monotonic.advance(Duration::from_millis(TRANSACTION_SESSION_TTL_MS));
+                engine.prune_expired_transaction_sessions()
+            })
+        };
+        start.wait();
+        let commit_result = commit.join().expect("commit worker should join");
+        let pruned = expire.join().expect("expiry worker should join");
+
+        assert_eq!(engine.active_transaction_session_count(), 0);
+        assert!(
+            !(commit_result.is_ok() && pruned == 1),
+            "commit and expiry must not both claim the same session"
+        );
     }
 
     #[test]

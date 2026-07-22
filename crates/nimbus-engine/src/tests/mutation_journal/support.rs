@@ -69,7 +69,7 @@ pub(super) fn new_faulted_engine(
     let engine = Arc::new(
         Engine::new_with_simulation(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(timestamp))),
+            Arc::new(ManualWallClock::new(Timestamp(timestamp))),
             faults.clone(),
         )
         .expect("engine should create"),

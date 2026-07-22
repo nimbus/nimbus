@@ -64,7 +64,7 @@ impl RunTrace {
 /// `RunTrace::started_at` stamp. `RunTrace` is a transient per-invocation
 /// telemetry value (constructed fresh per request, discarded after
 /// `record`), not unit-tested for its timing, so this is plumbing rather
-/// than a site worth threading `Arc<dyn Clock>` through every
+/// than a site worth threading `Arc<dyn WallClock>` through every
 /// action/mutation/query call site for.
 fn unix_time_millis_lossy() -> u64 {
     nimbus_core::clock::system_now_millis()

@@ -2,11 +2,11 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::sync::{Arc, RwLock};
 
-use nimbus_core::{Error, Result, TenantId};
+use nimbus_core::{Error, Result, TenantId, WallClock};
 use tokio::runtime::Handle as TokioRuntimeHandle;
 
 use crate::async_storage::{BlockingReadExecutor, BlockingWriteExecutor};
-use crate::simulation::{Clock, FaultInjector};
+use crate::simulation::FaultInjector;
 use crate::{TenantReadStorage, TenantWriteCommit, TenantWriteOutcome, TenantWriteStorage};
 
 use super::{MemoryTenantStore, MemoryWriteTransaction};
@@ -19,7 +19,7 @@ pub struct OpenedMemoryTenant {
 #[derive(Clone)]
 pub struct MemoryTenantProvider {
     tenants: Arc<RwLock<HashMap<TenantId, Arc<MemoryTenantStore>>>>,
-    clock: Arc<dyn Clock>,
+    clock: Arc<dyn WallClock>,
     fault_injector: Arc<dyn FaultInjector>,
     storage_handle: TokioRuntimeHandle,
     tenant_read_parallelism: usize,
@@ -27,7 +27,7 @@ pub struct MemoryTenantProvider {
 
 impl MemoryTenantProvider {
     pub fn new(
-        clock: Arc<dyn Clock>,
+        clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
         storage_handle: TokioRuntimeHandle,
     ) -> Self {

@@ -15,9 +15,9 @@ use native_tls::TlsConnector as NativeTlsConnector;
 use nimbus_core::{
     CommitEntry, CronJob, Document, DocumentId, Error, HistoricalIndexCursor, HistoricalReadShape,
     IndexLifecycleEvent, Result, ScheduledJob, ScheduledJobResult, Schema, SchemaChangeEvent,
-    SequenceNumber, StorageErrorKind, TableId, TableLifecycleEvent, TableName, TableSchema,
-    TableState, TenantEventKind, TenantEventRecord, TenantId, Timestamp, TriggerDeliveryCursor,
-    TriggerWriteOrigin, WriteOp, WriteOpType,
+    SequenceNumber, StorageErrorKind, SystemWallClock, TableId, TableLifecycleEvent, TableName,
+    TableSchema, TableState, TenantEventKind, TenantEventRecord, TenantId, Timestamp,
+    TriggerDeliveryCursor, TriggerWriteOrigin, WallClock, WriteOp, WriteOpType,
 };
 use nimbus_crypto::{
     LocalKeyProvider, LocalKeySubject, ManifestCipher, resolve_subject_encryption_key,
@@ -43,7 +43,7 @@ use crate::async_storage::{
 };
 use crate::commit_log::{deserialize_tenant_event_record, serialize_tenant_event_record};
 use crate::runtime_bridge::{bridge_tokio_runtime, bridge_tokio_runtime_local};
-use crate::simulation::{Clock, FaultInjector, NoopFaultInjector, SystemClock};
+use crate::simulation::{FaultInjector, NoopFaultInjector};
 use crate::sqlite::{
     SQLITE_INIT_SQL, SqliteReadSnapshot, SqliteTenantStore,
     rebuild_sqlite_indexes_from_loaded_schema, scheduled_run_at_key,
@@ -201,7 +201,7 @@ pub struct LibsqlReplicaProvider {
     replica_cache_dir: PathBuf,
     encryption_provider: Option<Arc<dyn LocalKeyProvider>>,
     runtime_handle: TokioRuntimeHandle,
-    clock: Arc<dyn Clock>,
+    clock: Arc<dyn WallClock>,
     remote_fault_injector: Arc<dyn FaultInjector>,
     replica_fault_injector: Arc<dyn FaultInjector>,
     tenant_read_parallelism: usize,

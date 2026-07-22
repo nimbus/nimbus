@@ -9,7 +9,7 @@ async fn run_static_arm_workload(arm: crate::tenant::CommitterArm) -> (Vec<u8>, 
     let engine = Arc::new(
         Engine::new_with_simulation_and_memory_persistence(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(47_000))),
+            Arc::new(ManualWallClock::new(Timestamp(47_000))),
             Arc::new(NoopFaultInjector),
             Arc::new(nimbus_core::SeededIdSource::new(47_000)),
         )

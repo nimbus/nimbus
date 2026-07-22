@@ -79,14 +79,14 @@ impl<S> EngineFixture<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nimbus_core::Timestamp;
-    use nimbus_storage::Clock;
+    use nimbus_core::{MonotonicClock, Timestamp, WallClock};
 
     #[derive(Debug)]
     struct DummyEngine {
         scenario_name: String,
         seed: u64,
         now_ms: u64,
+        monotonic_now: std::time::Instant,
     }
 
     #[test]
@@ -98,6 +98,7 @@ mod tests {
                 scenario_name: harness.name().to_string(),
                 seed: harness.seed(),
                 now_ms: harness.clock().now().0,
+                monotonic_now: harness.monotonic_clock().now(),
             })
         });
 
@@ -105,6 +106,7 @@ mod tests {
         assert_eq!(engine.scenario_name, "fixture-builder");
         assert_eq!(engine.seed, 19);
         assert_eq!(engine.now_ms, 12_345);
+        assert_eq!(engine.monotonic_now, harness.monotonic_clock().now());
         assert!(fixture.data_dir().exists());
     }
 }

@@ -475,7 +475,7 @@ impl Engine {
             matches!(&mode, MutationExecutionMode::Scheduled { .. }),
         );
         check_mutation_caps(&runtime, usage)?;
-        runtime.check_tenant_write_rate(self.now(), usage.total_write_bytes())?;
+        runtime.check_tenant_write_rate(usage.total_write_bytes())?;
         let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
         runtime.begin_pending_mutation_response();
         let _pending_response = PendingMutationResponseGuard {

@@ -33,7 +33,10 @@ pub use auth::{
     PrincipalClaimSource, PrincipalContext, PrincipalSnapshot, TableAccessPolicy,
     policy_revision_id,
 };
-pub use clock::{Clock, ManualClock, SystemClock, system_now_millis, system_now_secs};
+pub use clock::{
+    ManualMonotonicClock, ManualWallClock, MonotonicClock, SystemMonotonicClock, SystemWallClock,
+    WallClock, system_now_millis, system_now_secs,
+};
 pub use dependency::{
     DependencySet, IndexRangeDependency, PaginatedWindowDependency, PredicateDependency,
     commit_intersects_dependency_set, durable_record_intersects_dependency_set,

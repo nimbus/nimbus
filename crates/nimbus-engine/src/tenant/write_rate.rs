@@ -1,9 +1,9 @@
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use nimbus_core::{Error, Result, Timestamp};
+use nimbus_core::{Error, Result};
 use serde::Serialize;
 use tracing::warn;
 
@@ -50,7 +50,7 @@ static TENANT_WRITE_RATE_CONFIG: LazyLock<TenantWriteRateConfig> =
 
 #[derive(Debug, Clone, Copy)]
 struct WriteEvent {
-    timestamp: Timestamp,
+    observed_at: Instant,
     bytes: u64,
 }
 
@@ -61,11 +61,11 @@ struct SlidingWindow {
 }
 
 impl SlidingWindow {
-    fn prune(&mut self, now: Timestamp, window_ms: u64) {
+    fn prune(&mut self, now: Instant, window: Duration) {
         while self
             .events
             .front()
-            .is_some_and(|event| event.timestamp.0.saturating_add(window_ms) <= now.0)
+            .is_some_and(|event| now.saturating_duration_since(event.observed_at) >= window)
         {
             let event = self
                 .events
@@ -75,31 +75,32 @@ impl SlidingWindow {
         }
     }
 
-    fn retry_after(&self, now: Timestamp, bytes: u64, limit: u64, window_ms: u64) -> Duration {
+    fn retry_after(&self, now: Instant, bytes: u64, limit: u64, window: Duration) -> Duration {
         let projected = self.bytes.saturating_add(bytes);
         let mut bytes_to_expire = projected.saturating_sub(limit);
         for event in &self.events {
             bytes_to_expire = bytes_to_expire.saturating_sub(event.bytes);
             if bytes_to_expire == 0 {
-                let retry_at = event.timestamp.0.saturating_add(window_ms);
-                return Duration::from_millis(retry_at.saturating_sub(now.0).max(1));
+                return window
+                    .saturating_sub(now.saturating_duration_since(event.observed_at))
+                    .max(Duration::from_millis(1));
             }
         }
         // A single mutation larger than the limit cannot fit in the current
         // configuration. Return one whole window as a stable backoff hint.
-        Duration::from_millis(window_ms)
+        window
     }
 
-    fn push(&mut self, now: Timestamp, bytes: u64) {
+    fn push(&mut self, now: Instant, bytes: u64) {
         self.bytes = self.bytes.saturating_add(bytes);
         if let Some(event) = self.events.back_mut()
-            && event.timestamp == now
+            && event.observed_at == now
         {
             event.bytes = event.bytes.saturating_add(bytes);
             return;
         }
         self.events.push_back(WriteEvent {
-            timestamp: now,
+            observed_at: now,
             bytes,
         });
     }
@@ -142,7 +143,7 @@ impl TenantWriteRateLimiter {
     fn check(
         &self,
         tenant: &nimbus_core::TenantId,
-        now: Timestamp,
+        now: Instant,
         bytes: u64,
         config: TenantWriteRateConfig,
     ) -> Result<()> {
@@ -158,21 +159,18 @@ impl TenantWriteRateLimiter {
         };
         let proposed_limit = window_limit(config.proposed_bytes_per_sec);
         let enforced_limit = config.enforced_bytes_per_sec.map(window_limit);
+        let window_duration = Duration::from_millis(config.window_ms);
 
         let (projected, retry_after) = {
             let mut window = self
                 .window
                 .lock()
                 .expect("tenant write rate window lock should not be poisoned");
-            let now = window
-                .events
-                .back()
-                .map_or(now, |event| Timestamp(now.0.max(event.timestamp.0)));
-            window.prune(now, config.window_ms);
+            window.prune(now, window_duration);
             let projected = window.bytes.saturating_add(bytes);
             let retry_after = enforced_limit
                 .filter(|limit| projected > *limit)
-                .map(|limit| window.retry_after(now, bytes, limit, config.window_ms));
+                .map(|limit| window.retry_after(now, bytes, limit, window_duration));
             if retry_after.is_none() {
                 window.push(now, bytes);
             }
@@ -211,9 +209,13 @@ impl TenantWriteRateLimiter {
 }
 
 impl TenantRuntime {
-    pub(crate) fn check_tenant_write_rate(&self, now: Timestamp, bytes: u64) -> Result<()> {
-        self.write_rate
-            .check(&self.tenant_id, now, bytes, *TENANT_WRITE_RATE_CONFIG)
+    pub(crate) fn check_tenant_write_rate(&self, bytes: u64) -> Result<()> {
+        self.write_rate.check(
+            &self.tenant_id,
+            self.monotonic_now(),
+            bytes,
+            *TENANT_WRITE_RATE_CONFIG,
+        )
     }
 }
 
@@ -226,8 +228,12 @@ fn env_positive_u64(key: &str) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
-    use nimbus_core::{Retryability, TenantId};
-    use nimbus_storage::{Clock, ManualClock};
+    use std::sync::Arc;
+
+    use nimbus_core::{
+        ManualMonotonicClock, ManualWallClock, MonotonicClock, Retryability, TenantId, Timestamp,
+        WallClock,
+    };
 
     use super::*;
 
@@ -239,7 +245,7 @@ mod tests {
     fn hot_workload_shadow_mode_counts_and_samples_without_rejecting() {
         let limiter = TenantWriteRateLimiter::new();
         let config = TenantWriteRateConfig::for_tests(100, None, 1_000);
-        let now = Timestamp(10_000);
+        let now = Instant::now();
 
         limiter
             .check(&tenant(), now, 60, config)
@@ -265,13 +271,18 @@ mod tests {
     fn enforced_write_rate_returns_rate_limited_with_retry_after() {
         let limiter = TenantWriteRateLimiter::new();
         let config = TenantWriteRateConfig::for_tests(u64::MAX, Some(100), 1_000);
-        let now = Timestamp(20_000);
+        let now = Instant::now();
 
         limiter
             .check(&tenant(), now, 80, config)
             .expect("under-limit write should be admitted");
         let error = limiter
-            .check(&tenant(), Timestamp(20_250), 30, config)
+            .check(
+                &tenant(),
+                now.checked_add(Duration::from_millis(250)).unwrap(),
+                30,
+                config,
+            )
             .expect_err("over-limit write should be rejected");
 
         assert!(matches!(error, Error::RateLimited { .. }));
@@ -284,33 +295,124 @@ mod tests {
     fn under_limit_traffic_is_unaffected() {
         let limiter = TenantWriteRateLimiter::new();
         let config = TenantWriteRateConfig::for_tests(100, Some(100), 1_000);
+        let now = Instant::now();
 
         limiter
-            .check(&tenant(), Timestamp(30_000), 40, config)
+            .check(&tenant(), now, 40, config)
             .expect("first write should pass");
         limiter
-            .check(&tenant(), Timestamp(30_100), 60, config)
+            .check(
+                &tenant(),
+                now.checked_add(Duration::from_millis(100)).unwrap(),
+                60,
+                config,
+            )
             .expect("traffic exactly at the rate should pass");
         assert_eq!(limiter.stats(), TenantWriteRateStats::default());
     }
 
     #[test]
-    fn sliding_window_uses_manual_clock_and_releases_expired_bytes() {
+    fn write_rate_exact_window_edge_releases_bytes() {
         let limiter = TenantWriteRateLimiter::new();
         let config = TenantWriteRateConfig::for_tests(u64::MAX, Some(100), 1_000);
-        let clock = ManualClock::new(Timestamp(40_000));
+        let clock = ManualMonotonicClock::new();
 
         limiter
             .check(&tenant(), clock.now(), 100, config)
             .expect("initial write should pass");
-        clock.advance_ms(999);
+        clock.advance(Duration::from_millis(999));
         assert!(matches!(
             limiter.check(&tenant(), clock.now(), 1, config),
             Err(Error::RateLimited { .. })
         ));
-        clock.advance_ms(1);
+        clock.advance(Duration::from_millis(1));
         limiter
             .check(&tenant(), clock.now(), 100, config)
             .expect("expired bytes should leave the sliding window");
+    }
+
+    #[test]
+    fn write_rate_window_expires_on_monotonic_time_when_wall_moves_backward() {
+        let limiter = TenantWriteRateLimiter::new();
+        let config = TenantWriteRateConfig::for_tests(u64::MAX, Some(100), 1_000);
+        let wall = ManualWallClock::new(Timestamp(40_000));
+        let monotonic = ManualMonotonicClock::new();
+
+        limiter
+            .check(&tenant(), monotonic.now(), 100, config)
+            .expect("initial write should pass");
+        wall.set(Timestamp(1));
+        monotonic.advance(Duration::from_secs(1));
+
+        limiter
+            .check(&tenant(), monotonic.now(), 100, config)
+            .expect("elapsed window must expire despite a backward wall step");
+        assert_eq!(wall.now(), Timestamp(1));
+    }
+
+    #[test]
+    fn write_rate_window_does_not_reset_when_wall_moves_forward() {
+        let limiter = TenantWriteRateLimiter::new();
+        let config = TenantWriteRateConfig::for_tests(u64::MAX, Some(100), 1_000);
+        let wall = ManualWallClock::new(Timestamp(40_000));
+        let monotonic = ManualMonotonicClock::new();
+
+        limiter
+            .check(&tenant(), monotonic.now(), 100, config)
+            .expect("initial write should pass");
+        wall.advance(Duration::from_secs(86_400));
+
+        assert!(matches!(
+            limiter.check(&tenant(), monotonic.now(), 1, config),
+            Err(Error::RateLimited { .. })
+        ));
+    }
+
+    #[test]
+    fn write_rate_retry_after_uses_remaining_monotonic_duration() {
+        let limiter = TenantWriteRateLimiter::new();
+        let config = TenantWriteRateConfig::for_tests(u64::MAX, Some(100), 1_000);
+        let clock = ManualMonotonicClock::new();
+
+        limiter
+            .check(&tenant(), clock.now(), 80, config)
+            .expect("initial write should pass");
+        clock.advance(Duration::from_millis(250));
+        let error = limiter
+            .check(&tenant(), clock.now(), 30, config)
+            .expect_err("projected write should exceed the window");
+
+        assert_eq!(error.retry_after(), Some(Duration::from_millis(750)));
+    }
+
+    #[test]
+    fn write_rate_concurrent_checks_preserve_limit_and_byte_accounting() {
+        let limiter = Arc::new(TenantWriteRateLimiter::new());
+        let accepted = Arc::new(AtomicU64::new(0));
+        let config = TenantWriteRateConfig::for_tests(u64::MAX, Some(50), 1_000);
+        let now = Instant::now();
+        let handles = (0..100)
+            .map(|_| {
+                let limiter = limiter.clone();
+                let accepted = accepted.clone();
+                std::thread::spawn(move || {
+                    if limiter.check(&tenant(), now, 1, config).is_ok() {
+                        accepted.fetch_add(1, Ordering::Relaxed);
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for handle in handles {
+            handle.join().expect("write-rate worker should finish");
+        }
+
+        assert_eq!(accepted.load(Ordering::Relaxed), 50);
+        assert_eq!(limiter.stats().rejections_total, 50);
+        let window = limiter
+            .window
+            .lock()
+            .expect("tenant write rate window lock should not be poisoned");
+        assert_eq!(window.bytes, 50);
     }
 }

@@ -561,7 +561,7 @@ fn generated_mvcc_history_required_seed_corpus_matches_pitr_and_cdc_models() {
 
 #[test]
 fn canonical_digest_generated_history_matches_redb_sqlite_pitr_cdc_and_rebuild_paths() {
-    let clock = Arc::new(ManualClock::new(Timestamp(90_000)));
+    let clock = Arc::new(ManualWallClock::new(Timestamp(90_000)));
     let redb = TenantStore::create_in_memory_with_simulation(
         clock.clone(),
         Arc::new(crate::NoopFaultInjector),

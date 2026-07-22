@@ -71,14 +71,8 @@ pub(crate) async fn schedule_at(
             run_at_ms,
         } => (run_at_ms, mutation),
     };
-    let delay_ms = run_at_ms.saturating_sub(Timestamp::now().0);
-    let request = ScheduleRequest {
-        run_after_ms: delay_ms,
-        mutation,
-    };
-
     let job_id = service
-        .schedule_mutation_async(tenant_id.clone(), request)
+        .schedule_mutation_at_async(tenant_id.clone(), Timestamp(run_at_ms), mutation)
         .await?;
     nimbus_system::sync_scheduler_state_for_tenant_async(&service, &tenant_id).await?;
     Ok((

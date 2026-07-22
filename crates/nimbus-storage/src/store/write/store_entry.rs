@@ -2,26 +2,26 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use nimbus_core::{Result, Timestamp};
+use nimbus_core::{Result, SystemWallClock, Timestamp, WallClock};
 use redb::backends::InMemoryBackend;
 
 use crate::RetentionFloor;
 use crate::encrypted_redb::{
     EncryptedFileBackend, EncryptedMemoryBackend, EncryptedReadProfileSnapshot,
 };
-use crate::simulation::{Clock, FaultInjector, FaultPoint, NoopFaultInjector, SystemClock};
+use crate::simulation::{FaultInjector, FaultPoint, NoopFaultInjector};
 
 use super::super::scan::ScanMetrics;
 use super::super::{TenantStore, TenantWriteCommit, TenantWriteTransaction, map_redb_error};
 
 impl TenantStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        Self::open_with_simulation(path, Arc::new(SystemClock), Arc::new(NoopFaultInjector))
+        Self::open_with_simulation(path, Arc::new(SystemWallClock), Arc::new(NoopFaultInjector))
     }
 
     pub fn open_with_simulation(
         path: impl AsRef<Path>,
-        clock: Arc<dyn Clock>,
+        clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
     ) -> Result<Self> {
         let path = path.as_ref();
@@ -56,7 +56,7 @@ impl TenantStore {
         Self::open_encrypted_with_simulation(
             path,
             dek,
-            Arc::new(SystemClock),
+            Arc::new(SystemWallClock),
             Arc::new(NoopFaultInjector),
         )
     }
@@ -65,7 +65,7 @@ impl TenantStore {
     pub fn open_encrypted_with_simulation(
         path: impl AsRef<Path>,
         dek: &[u8; 32],
-        clock: Arc<dyn Clock>,
+        clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
     ) -> Result<Self> {
         let path = path.as_ref();
@@ -96,11 +96,14 @@ impl TenantStore {
     }
 
     pub fn create_in_memory() -> Result<Self> {
-        Self::create_in_memory_with_simulation(Arc::new(SystemClock), Arc::new(NoopFaultInjector))
+        Self::create_in_memory_with_simulation(
+            Arc::new(SystemWallClock),
+            Arc::new(NoopFaultInjector),
+        )
     }
 
     pub fn create_in_memory_with_simulation(
-        clock: Arc<dyn Clock>,
+        clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
     ) -> Result<Self> {
         let db = redb::Database::builder()
@@ -119,7 +122,7 @@ impl TenantStore {
     pub fn create_in_memory_encrypted(dek: &[u8; 32]) -> Result<Self> {
         Self::create_in_memory_encrypted_with_simulation(
             dek,
-            Arc::new(SystemClock),
+            Arc::new(SystemWallClock),
             Arc::new(NoopFaultInjector),
         )
     }
@@ -127,7 +130,7 @@ impl TenantStore {
     /// Creates an in-memory encrypted tenant store with simulation support.
     pub fn create_in_memory_encrypted_with_simulation(
         dek: &[u8; 32],
-        clock: Arc<dyn Clock>,
+        clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
     ) -> Result<Self> {
         let backend = EncryptedMemoryBackend::new(dek).map_err(map_redb_error)?;

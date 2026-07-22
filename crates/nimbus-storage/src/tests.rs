@@ -6,9 +6,9 @@ pub(crate) use std::sync::{Condvar, Mutex};
 
 pub(crate) use nimbus_core::{
     DependencySet, Document, DocumentId, Error, FieldSchema, FieldType, IndexDefinition,
-    IndexLifecycleEvent, IndexRangeDependency, Schema, SchemaChangeEvent, SequenceNumber, TableId,
-    TableName, TableSchema, TenantEventKind, TenantEventRecord, Timestamp, TriggerDeliveryCursor,
-    WriteOp, WriteOpType, durable_record_intersects_dependency_set,
+    IndexLifecycleEvent, IndexRangeDependency, ManualWallClock, Schema, SchemaChangeEvent,
+    SequenceNumber, TableId, TableName, TableSchema, TenantEventKind, TenantEventRecord, Timestamp,
+    TriggerDeliveryCursor, WriteOp, WriteOpType, durable_record_intersects_dependency_set,
 };
 pub(crate) use serde_json::json;
 pub(crate) use tempfile::tempdir;
@@ -21,7 +21,7 @@ pub(crate) use crate::{
     CommitterLeaseError, CommitterLeaseStore, DeterministicHarness, DurableJournal, FaultInjector,
     FaultOccurrence, FaultPoint, GeneratedTaskHistory, GeneratedTaskHistorySeedCase,
     GeneratedTaskRecord, HardDeleteDecision, LibsqlReplicaProvider, LibsqlReplicaProviderConfig,
-    ManualClock, MemoryTenantStore, MySqlProvider, MySqlProviderConfig, PostgresProvider,
+    MemoryTenantStore, MySqlProvider, MySqlProviderConfig, PostgresProvider,
     PostgresProviderConfig, RedbTenantStorage, RestartBoundary, RetentionFloor,
     RetentionParticipant, ScriptedRestartSchedule, SeededFaultInjector, ShadowMaterializer,
     ShadowMaterializerConfig, ShadowMaterializerManifest, SqliteTenantStorage, SqliteTenantStore,
@@ -140,6 +140,55 @@ where
             .read_committer_lease()
             .expect("winning lease should read"),
         Some(winner)
+    );
+}
+
+pub(crate) fn exercise_committer_lease_takeover_after_expiry_under_concurrency<S>(store: S)
+where
+    S: CommitterLeaseStore + Clone + Send + Sync + 'static,
+{
+    let original = store
+        .acquire_committer_lease("expired-owner", Duration::ZERO)
+        .expect("original lease should be acquired");
+
+    let barrier = Arc::new(std::sync::Barrier::new(3));
+    let renew = {
+        let store = store.clone();
+        let barrier = barrier.clone();
+        std::thread::spawn(move || {
+            barrier.wait();
+            store.renew_committer_lease("expired-owner", original.epoch, Duration::from_secs(60))
+        })
+    };
+    let takeover = {
+        let store = store.clone();
+        let barrier = barrier.clone();
+        std::thread::spawn(move || {
+            barrier.wait();
+            store.acquire_committer_lease("successor", Duration::from_secs(60))
+        })
+    };
+    barrier.wait();
+
+    let renewed = renew.join().expect("renewal contender should join");
+    let successor = takeover
+        .join()
+        .expect("takeover contender should join")
+        .expect("successor should acquire the expired lease");
+    assert!(matches!(
+        renewed,
+        Err(CommitterLeaseError::Fenced {
+            ref owner_id,
+            epoch,
+        }) if owner_id == "expired-owner" && epoch == original.epoch
+    ));
+    assert_eq!(successor.owner_id, "successor");
+    assert_eq!(successor.epoch, original.epoch.saturating_add(1));
+    assert_eq!(
+        store
+            .read_committer_lease()
+            .expect("winning lease should read"),
+        Some(successor)
     );
 }
 

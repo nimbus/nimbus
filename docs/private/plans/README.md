@@ -128,7 +128,8 @@ extension-registry seam before the second concern edits `extensions.rs`.
 - `horizontal-scaling-plan.md` - `deferred`. Leads all multi-node work. Owns node
   identity, discovery, membership, placement replication, gossip invalidation,
   isolate placement, microVM placement, content distribution, and the
-  cluster-mode integration layer.
+  cluster-mode integration layer, including HS5's per-Durable-Object placement,
+  shared lease authority, and epoch-fenced protected writes.
 - `nimbus-fips-iroh-ed25519-retrofit-plan.md` - `draft`. Owns a future
   aws-lc-rs/PQ TLS posture, NodeSigner seam, and CMVP-triggered identity-key
   retrofit. Promote only after the current FIPS and iroh identity facts are
@@ -150,6 +151,12 @@ extension-registry seam before the second concern edits `extensions.rs`.
   which share Convex's network-persistence shape. Testability seams
   (S0–S5) are binding scope. Governing research:
   `research/parallel-prepare-serial-commit-redesign.md`.
+- `archive/clock-architecture-reliability-plan.md` - `complete, archived`
+  (2026-07-21; independent Opus 4.8 review clean). Delivered canonical wall and
+  monotonic clock seams, Engine-owned absolute scheduling, monotonic local
+  duration policies, explicit temporal-validation observations, clock-source
+  guards, and structural gates that leave unproved distributed clock authority
+  disabled under the horizontal-scaling plan.
 - `layered-admission-control-plan.md` - `deferred`. Owns future layered
   admission experiments and EO8-style promotion work. Consumes the
   retry-amplification admission signal from

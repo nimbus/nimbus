@@ -1,4 +1,3 @@
-mod clocks;
 mod coordination;
 mod faults;
 mod generated;
@@ -9,7 +8,6 @@ mod verification;
 #[cfg(test)]
 mod tests;
 
-pub use self::clocks::{Clock, ManualClock, SystemClock};
 pub use self::coordination::{
     RestartBoundary, RestartPoint, ScenarioMetadata, ScenarioSignal, ScenarioSignalKind,
     ScriptedRestartSchedule,

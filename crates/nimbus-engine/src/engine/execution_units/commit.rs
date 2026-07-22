@@ -66,10 +66,8 @@ impl MutationExecutionUnit {
             ..CommitPhaseDurations::default()
         };
         check_mutation_caps(&self.runtime, prepared_commit.usage())?;
-        self.runtime.check_tenant_write_rate(
-            self.engine.now(),
-            prepared_commit.usage().total_write_bytes(),
-        )?;
+        self.runtime
+            .check_tenant_write_rate(prepared_commit.usage().total_write_bytes())?;
         if prepared_commit.is_empty_execution_unit() {
             return Ok(None);
         }

@@ -28,7 +28,7 @@ async fn exercise_schema_outcome(operation: SchemaOperation, case: OutcomeCase, 
     let engine = Arc::new(
         Engine::new_with_simulation_and_memory_persistence(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(47_000))),
+            Arc::new(ManualWallClock::new(Timestamp(47_000))),
             faults.clone(),
             Arc::new(nimbus_core::SeededIdSource::new(47_001)),
         )
@@ -280,7 +280,7 @@ async fn exercise_execution_unit_outcome(case: OutcomeCase, tenant: &str) {
     let engine = Arc::new(
         Engine::new_with_simulation_and_memory_persistence(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(47_100))),
+            Arc::new(ManualWallClock::new(Timestamp(47_100))),
             faults.clone(),
             Arc::new(nimbus_core::SeededIdSource::new(47_101)),
         )
@@ -442,7 +442,7 @@ async fn exercise_trigger_cursor_outcome(case: OutcomeCase, tenant: &str) {
     let engine = Arc::new(
         Engine::new_with_simulation_and_memory_persistence(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(47_200))),
+            Arc::new(ManualWallClock::new(Timestamp(47_200))),
             faults.clone(),
             Arc::new(nimbus_core::SeededIdSource::new(47_201)),
         )
@@ -641,7 +641,7 @@ async fn exercise_point_in_time_restore_outcome(case: OutcomeCase, tenant: &str)
     let engine = Arc::new(
         Engine::new_with_simulation_and_memory_persistence(
             destination_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(47_300))),
+            Arc::new(ManualWallClock::new(Timestamp(47_300))),
             faults.clone(),
             Arc::new(nimbus_core::SeededIdSource::new(47_301)),
         )

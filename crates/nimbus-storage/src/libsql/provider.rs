@@ -6,7 +6,7 @@ impl LibsqlReplicaProvider {
         Self::connect_with_simulation(
             config,
             TokioRuntimeHandle::current(),
-            Arc::new(SystemClock),
+            Arc::new(SystemWallClock),
             Arc::new(NoopFaultInjector),
         )
         .await
@@ -15,7 +15,7 @@ impl LibsqlReplicaProvider {
     pub async fn connect_with_simulation(
         config: LibsqlReplicaProviderConfig,
         runtime_handle: TokioRuntimeHandle,
-        clock: Arc<dyn Clock>,
+        clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
     ) -> Result<Self> {
         Self::connect_with_simulation_faults(
@@ -32,7 +32,7 @@ impl LibsqlReplicaProvider {
     pub async fn connect_with_simulation_faults(
         config: LibsqlReplicaProviderConfig,
         runtime_handle: TokioRuntimeHandle,
-        clock: Arc<dyn Clock>,
+        clock: Arc<dyn WallClock>,
         remote_fault_injector: Arc<dyn FaultInjector>,
         replica_fault_injector: Arc<dyn FaultInjector>,
     ) -> Result<Self> {

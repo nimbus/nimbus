@@ -88,7 +88,7 @@ async fn generate_elle_history(label: &str) -> (PathBuf, String) {
     let engine = Arc::new(
         Engine::new_with_simulation_and_memory_persistence(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(90_000))),
+            Arc::new(ManualWallClock::new(Timestamp(90_000))),
             Arc::new(NoopFaultInjector),
             Arc::new(SeededIdSource::new(ELLE_SEED)),
         )

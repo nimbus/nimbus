@@ -13,6 +13,9 @@ use super::background::BackgroundWorker;
 const ACQUIRE_LEASE_DURATION: Duration = Duration::from_secs(30);
 const RENEW_LEASE_DURATION: Duration = Duration::from_secs(60);
 const RENEW_INTERVAL: Duration = Duration::from_secs(10);
+const TRANSIENT_RETRY_BASE: Duration = Duration::from_secs(1);
+const TRANSIENT_RETRY_CAP: Duration = Duration::from_secs(4);
+const PROVIDER_EXPIRY_SAFETY_MARGIN: Duration = Duration::from_secs(15);
 const MAX_RENEW_WAIT_SLICE: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -24,6 +27,8 @@ pub(crate) struct CommitterLeaseStats {
     pub(crate) acquire_count: u64,
     pub(crate) renewal_count: u64,
     pub(crate) renewal_failure_count: u64,
+    pub(crate) renewal_failure_streak: u64,
+    pub(crate) last_success_age_millis: Option<u64>,
     pub(crate) renewal_worker_running: bool,
 }
 
@@ -31,6 +36,7 @@ enum CommitterLeaseStatus {
     Unacquired,
     Held(CommitterLease),
     Fenced { owner_id: String, epoch: u64 },
+    ValidityUnknown { owner_id: String, epoch: u64 },
 }
 
 struct CommitterLeaseState {
@@ -38,6 +44,9 @@ struct CommitterLeaseState {
     acquire_count: u64,
     renewal_count: u64,
     renewal_failure_count: u64,
+    renewal_failure_streak: u64,
+    last_success_at: Option<Instant>,
+    local_safety_deadline: Option<Instant>,
     next_renewal_at: Instant,
 }
 
@@ -45,7 +54,7 @@ struct CommitterLeaseState {
 ///
 /// Durable lease validity remains provider-owned: storage adapters compare
 /// expiry against their database server's clock inside the lease CAS. Keeping
-/// this seam separate from [`nimbus_storage::Clock`] prevents local wall-clock
+/// this seam separate from [`nimbus_core::WallClock`] prevents local wall-clock
 /// adjustments from delaying or accelerating the renewal cadence.
 pub(crate) trait LeaseRenewalClock: Send + Sync {
     fn now(&self) -> Instant;
@@ -371,6 +380,9 @@ impl CommitterLeaseLifecycle {
                 acquire_count: 0,
                 renewal_count: 0,
                 renewal_failure_count: 0,
+                renewal_failure_streak: 0,
+                last_success_at: None,
+                local_safety_deadline: None,
                 next_renewal_at: now,
             }),
             wake: Arc::new(RenewalWake {
@@ -403,6 +415,9 @@ impl CommitterLeaseLifecycle {
             CommitterLeaseStatus::Fenced { owner_id, epoch } => {
                 return Err(fenced_error(owner_id, *epoch));
             }
+            CommitterLeaseStatus::ValidityUnknown { owner_id, epoch } => {
+                return Err(validity_unknown_error(owner_id, *epoch));
+            }
             CommitterLeaseStatus::Unacquired => {}
         }
 
@@ -425,7 +440,12 @@ impl CommitterLeaseLifecycle {
         // No assignment can observe the pre-acquisition heads after this point.
         runtime.publish_mutation_journal_progress_in_actor(progress);
         state.acquire_count = state.acquire_count.saturating_add(1);
-        state.next_renewal_at = renewal_deadline(self.renewal_clock.as_ref());
+        let observed_at = self.renewal_clock.now();
+        state.last_success_at = Some(observed_at);
+        state.local_safety_deadline =
+            Some(local_safety_deadline(observed_at, ACQUIRE_LEASE_DURATION));
+        state.renewal_failure_streak = 0;
+        state.next_renewal_at = normal_renewal_deadline(observed_at);
         state.status = CommitterLeaseStatus::Held(lease);
         drop(state);
 
@@ -466,6 +486,9 @@ impl CommitterLeaseLifecycle {
         match &state.status {
             CommitterLeaseStatus::Held(lease) => Ok((lease.owner_id.clone(), lease.epoch)),
             CommitterLeaseStatus::Fenced { owner_id, epoch } => Err(fenced_error(owner_id, *epoch)),
+            CommitterLeaseStatus::ValidityUnknown { owner_id, epoch } => {
+                Err(validity_unknown_error(owner_id, *epoch))
+            }
             CommitterLeaseStatus::Unacquired => Err(Error::Internal(
                 "provider durable write attempted without an acquired committer lease".to_string(),
             )),
@@ -483,6 +506,7 @@ impl CommitterLeaseLifecycle {
             // this runtime before takeover. Keeping it available prevents a
             // concurrent fence notification from erasing that provenance.
             CommitterLeaseStatus::Fenced { epoch, .. } => Ok(*epoch),
+            CommitterLeaseStatus::ValidityUnknown { epoch, .. } => Ok(*epoch),
             CommitterLeaseStatus::Unacquired => Err(Error::Internal(
                 "provider projection attempted without an acquired committer lease".to_string(),
             )),
@@ -505,6 +529,9 @@ impl CommitterLeaseLifecycle {
         match &state.status {
             CommitterLeaseStatus::Fenced { owner_id, epoch } => {
                 Some(fenced_error(owner_id, *epoch))
+            }
+            CommitterLeaseStatus::ValidityUnknown { owner_id, epoch } => {
+                Some(validity_unknown_error(owner_id, *epoch))
             }
             CommitterLeaseStatus::Unacquired | CommitterLeaseStatus::Held(_) => None,
         }
@@ -568,27 +595,46 @@ impl CommitterLeaseLifecycle {
     }
 
     fn renew_once(&self, runtime: &TenantRuntime) -> bool {
+        let (owner_id, epoch) = {
+            let state = self
+                .state
+                .lock()
+                .expect("committer lease state lock should not be poisoned");
+            match &state.status {
+                CommitterLeaseStatus::Held(lease) => (lease.owner_id.clone(), lease.epoch),
+                CommitterLeaseStatus::Unacquired
+                | CommitterLeaseStatus::Fenced { .. }
+                | CommitterLeaseStatus::ValidityUnknown { .. } => {
+                    return false;
+                }
+            }
+        };
+
+        let result =
+            runtime
+                .store
+                .renew_committer_lease(owner_id.as_str(), epoch, RENEW_LEASE_DURATION);
+        let observed_at = self.renewal_clock.now();
         let mut state = self
             .state
             .lock()
             .expect("committer lease state lock should not be poisoned");
-        let (owner_id, epoch) = match &state.status {
-            CommitterLeaseStatus::Held(lease) => (lease.owner_id.clone(), lease.epoch),
-            CommitterLeaseStatus::Unacquired | CommitterLeaseStatus::Fenced { .. } => return false,
-        };
+        if !matches!(
+            &state.status,
+            CommitterLeaseStatus::Held(lease)
+                if lease.owner_id == owner_id && lease.epoch == epoch
+        ) {
+            return false;
+        }
 
-        match runtime
-            .store
-            .renew_committer_lease(owner_id.as_str(), epoch, RENEW_LEASE_DURATION)
-        {
+        match result {
             Ok(lease) => {
-                state.renewal_count = state.renewal_count.saturating_add(1);
-                state.next_renewal_at = renewal_deadline(self.renewal_clock.as_ref());
-                state.status = CommitterLeaseStatus::Held(lease);
+                record_renewal_success(&mut state, lease, observed_at);
                 true
             }
             Err(CommitterLeaseError::Fenced { owner_id, epoch }) => {
                 state.renewal_failure_count = state.renewal_failure_count.saturating_add(1);
+                state.renewal_failure_streak = state.renewal_failure_streak.saturating_add(1);
                 state.status = CommitterLeaseStatus::Fenced { owner_id, epoch };
                 drop(state);
                 // Do not run eviction from this renewal thread: eviction joins
@@ -599,7 +645,25 @@ impl CommitterLeaseLifecycle {
             }
             Err(error) => {
                 state.renewal_failure_count = state.renewal_failure_count.saturating_add(1);
-                state.next_renewal_at = renewal_deadline(self.renewal_clock.as_ref());
+                state.renewal_failure_streak = state.renewal_failure_streak.saturating_add(1);
+                let Some(next_renewal_at) = transient_retry_deadline(
+                    observed_at,
+                    state.local_safety_deadline,
+                    &self.owner_id,
+                    runtime.tenant_id().as_str(),
+                    state.renewal_failure_streak,
+                ) else {
+                    state.status = CommitterLeaseStatus::ValidityUnknown { owner_id, epoch };
+                    drop(state);
+                    tracing::error!(
+                        tenant = %runtime.tenant_id(),
+                        error = %error,
+                        "committer lease renewal exhausted its local safety budget; failing closed"
+                    );
+                    runtime.shutdown_committer();
+                    return false;
+                };
+                state.next_renewal_at = next_renewal_at;
                 tracing::warn!(
                     tenant = %runtime.tenant_id(),
                     error = %error,
@@ -619,6 +683,16 @@ impl CommitterLeaseLifecycle {
             acquire_count: state.acquire_count,
             renewal_count: state.renewal_count,
             renewal_failure_count: state.renewal_failure_count,
+            renewal_failure_streak: state.renewal_failure_streak,
+            last_success_age_millis: state.last_success_at.map(|last_success_at| {
+                u64::try_from(
+                    self.renewal_clock
+                        .now()
+                        .saturating_duration_since(last_success_at)
+                        .as_millis(),
+                )
+                .unwrap_or(u64::MAX)
+            }),
             renewal_worker_running: self.worker_active.load(Ordering::Acquire),
             ..CommitterLeaseStats::default()
         };
@@ -632,6 +706,9 @@ impl CommitterLeaseLifecycle {
             CommitterLeaseStatus::Fenced { epoch, .. } => {
                 stats.epoch = *epoch;
                 stats.fenced = true;
+            }
+            CommitterLeaseStatus::ValidityUnknown { epoch, .. } => {
+                stats.epoch = *epoch;
             }
         }
         stats
@@ -734,11 +811,68 @@ fn run_renewal_worker(
     }
 }
 
-fn renewal_deadline(clock: &dyn LeaseRenewalClock) -> Instant {
-    clock
-        .now()
+fn normal_renewal_deadline(observed_at: Instant) -> Instant {
+    observed_at
         .checked_add(RENEW_INTERVAL)
         .expect("fixed lease-renewal interval must fit in the monotonic clock")
+}
+
+fn record_renewal_success(
+    state: &mut CommitterLeaseState,
+    lease: CommitterLease,
+    observed_at: Instant,
+) {
+    state.renewal_count = state.renewal_count.saturating_add(1);
+    state.renewal_failure_streak = 0;
+    state.last_success_at = Some(observed_at);
+    state.local_safety_deadline = Some(local_safety_deadline(observed_at, RENEW_LEASE_DURATION));
+    state.next_renewal_at = normal_renewal_deadline(observed_at);
+    state.status = CommitterLeaseStatus::Held(lease);
+}
+
+fn transient_retry_deadline(
+    observed_at: Instant,
+    local_safety_deadline: Option<Instant>,
+    owner_id: &str,
+    tenant_id: &str,
+    failure_streak: u64,
+) -> Option<Instant> {
+    let retry_delay = transient_retry_delay(owner_id, tenant_id, failure_streak);
+    let remaining_budget = match local_safety_deadline {
+        Some(deadline) if deadline > observed_at => {
+            deadline.duration_since(observed_at).min(retry_delay)
+        }
+        Some(_) => return None,
+        None => retry_delay,
+    };
+    observed_at.checked_add(remaining_budget)
+}
+
+fn local_safety_deadline(observed_at: Instant, requested_duration: Duration) -> Instant {
+    observed_at
+        .checked_add(requested_duration.saturating_sub(PROVIDER_EXPIRY_SAFETY_MARGIN))
+        .expect("provider-derived local lease safety budget must fit in the monotonic clock")
+}
+
+fn transient_retry_delay(owner_id: &str, tenant_id: &str, failure_streak: u64) -> Duration {
+    let exponent = u32::try_from(failure_streak.saturating_sub(1).min(2)).unwrap_or(2);
+    let base = TRANSIENT_RETRY_BASE
+        .checked_mul(1_u32 << exponent)
+        .unwrap_or(TRANSIENT_RETRY_CAP)
+        .min(TRANSIENT_RETRY_CAP);
+    let jitter_ceiling_nanos = base.as_nanos() / 4;
+    let hash = owner_id
+        .bytes()
+        .chain([0xff])
+        .chain(tenant_id.bytes())
+        .chain(failure_streak.to_le_bytes())
+        .fold(0xcbf29ce484222325_u64, |hash, byte| {
+            hash.wrapping_mul(0x100000001b3) ^ u64::from(byte)
+        });
+    let jitter_nanos = u128::from(hash) % jitter_ceiling_nanos.saturating_add(1);
+    base.saturating_add(Duration::from_nanos(
+        u64::try_from(jitter_nanos).unwrap_or(u64::MAX),
+    ))
 }
 
 fn fenced_error(owner_id: &str, epoch: u64) -> Error {
@@ -746,6 +880,15 @@ fn fenced_error(owner_id: &str, epoch: u64) -> Error {
         owner_id: owner_id.to_string(),
         epoch,
     }
+}
+
+fn validity_unknown_error(owner_id: &str, epoch: u64) -> Error {
+    Error::storage(
+        StorageErrorKind::Unavailable,
+        format!(
+            "committer lease validity is unknown after the local renewal safety budget was exhausted for owner {owner_id} epoch {epoch}"
+        ),
+    )
 }
 
 fn map_lease_error(error: CommitterLeaseError) -> Error {
@@ -759,5 +902,236 @@ fn map_lease_error(error: CommitterLeaseError) -> Error {
             Error::Internal("provider assignment requires committer-lease support".to_string())
         }
         CommitterLeaseError::Storage(error) => error,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use nimbus_core::{SequenceNumber, SystemMonotonicClock, TenantId};
+    use nimbus_storage::NoopFaultInjector;
+    use tempfile::{TempDir, tempdir};
+
+    use super::*;
+    use crate::Engine;
+
+    fn lease(expires_at: Timestamp) -> CommitterLease {
+        CommitterLease {
+            owner_id: "lease-owner".to_string(),
+            epoch: 7,
+            expires_at,
+            durable_sequence: SequenceNumber(0),
+        }
+    }
+
+    fn lease_test_runtime(
+        tenant: &str,
+    ) -> (
+        TempDir,
+        Arc<TenantRuntime>,
+        Arc<CommitterLeaseLifecycle>,
+        Arc<ManualLeaseRenewalClock>,
+    ) {
+        let data_dir = tempdir().expect("lease test tempdir should build");
+        let engine = Engine::new_with_simulation(
+            data_dir.path(),
+            Arc::new(nimbus_core::ManualWallClock::new(Timestamp(1_000))),
+            Arc::new(NoopFaultInjector),
+        )
+        .expect("engine should create");
+        let tenant_id = TenantId::new(tenant).expect("tenant id should parse");
+        engine
+            .create_tenant(tenant_id.clone())
+            .expect("tenant should create");
+        let base_runtime = engine
+            .tenant_runtime_for_testing(&tenant_id)
+            .expect("base runtime should load");
+        let clock = Arc::new(ManualLeaseRenewalClock::new());
+        let runtime = Arc::new(
+            TenantRuntime::from_parts(
+                tenant_id,
+                1,
+                base_runtime.store.clone(),
+                base_runtime.read_storage.clone(),
+                Arc::new(SystemMonotonicClock),
+                clock.clone(),
+                Some("lease-owner".to_string()),
+            )
+            .expect("test runtime should construct"),
+        );
+        let lifecycle = runtime
+            .committer_lease
+            .as_ref()
+            .expect("test runtime should own a lease lifecycle")
+            .clone();
+        (data_dir, runtime, lifecycle, clock)
+    }
+
+    #[test]
+    fn lease_transient_failure_retries_before_local_safety_budget() {
+        let last_success = Instant::now();
+        for requested_duration in [ACQUIRE_LEASE_DURATION, RENEW_LEASE_DURATION] {
+            let safety_deadline = local_safety_deadline(last_success, requested_duration);
+            assert_eq!(
+                safety_deadline.duration_since(last_success),
+                requested_duration.saturating_sub(PROVIDER_EXPIRY_SAFETY_MARGIN)
+            );
+            let elapsed = requested_duration
+                .saturating_sub(PROVIDER_EXPIRY_SAFETY_MARGIN)
+                .saturating_sub(Duration::from_millis(1));
+            let observed_at = last_success.checked_add(elapsed).unwrap();
+            let deadline = transient_retry_deadline(
+                observed_at,
+                Some(safety_deadline),
+                "owner-a",
+                "tenant-a",
+                8,
+            )
+            .expect("retry before the safety deadline should remain scheduled");
+            assert!(deadline > observed_at);
+            assert!(deadline <= safety_deadline);
+            assert_eq!(
+                transient_retry_deadline(
+                    safety_deadline,
+                    Some(safety_deadline),
+                    "owner-a",
+                    "tenant-a",
+                    9,
+                ),
+                None,
+                "no retry may be scheduled once the local safety budget is exhausted"
+            );
+        }
+    }
+
+    #[test]
+    fn lease_retry_jitter_is_deterministic_and_bounded() {
+        for streak in 1..=8 {
+            let first = transient_retry_delay("owner-a", "tenant-a", streak);
+            let second = transient_retry_delay("owner-a", "tenant-a", streak);
+            assert_eq!(first, second);
+            assert!(first >= TRANSIENT_RETRY_BASE);
+            assert!(first <= TRANSIENT_RETRY_CAP + TRANSIENT_RETRY_CAP / 4);
+        }
+    }
+
+    #[test]
+    fn lease_renewal_success_resets_failure_streak() {
+        let observed_at = Instant::now();
+        let mut state = CommitterLeaseState {
+            status: CommitterLeaseStatus::Held(lease(Timestamp(1))),
+            acquire_count: 1,
+            renewal_count: 0,
+            renewal_failure_count: 3,
+            renewal_failure_streak: 3,
+            last_success_at: None,
+            local_safety_deadline: None,
+            next_renewal_at: observed_at,
+        };
+
+        record_renewal_success(&mut state, lease(Timestamp(99)), observed_at);
+
+        assert_eq!(state.renewal_count, 1);
+        assert_eq!(state.renewal_failure_count, 3);
+        assert_eq!(state.renewal_failure_streak, 0);
+        assert_eq!(state.last_success_at, Some(observed_at));
+        assert_eq!(
+            state.local_safety_deadline,
+            Some(local_safety_deadline(observed_at, RENEW_LEASE_DURATION))
+        );
+        assert_eq!(
+            state.next_renewal_at,
+            observed_at.checked_add(RENEW_INTERVAL).unwrap()
+        );
+    }
+
+    #[test]
+    fn lease_stats_report_monotonic_age_since_last_success() {
+        let clock = Arc::new(ManualLeaseRenewalClock::new());
+        let lifecycle = CommitterLeaseLifecycle::new("lease-owner".to_string(), clock.clone());
+        let observed_at = clock.now();
+        {
+            let mut state = lifecycle.state.lock().expect("lease state should lock");
+            state.status = CommitterLeaseStatus::Held(lease(Timestamp(123_456)));
+            state.last_success_at = Some(observed_at);
+        }
+        clock.advance(Duration::from_millis(2_500));
+
+        assert_eq!(lifecycle.stats().last_success_age_millis, Some(2_500));
+    }
+
+    #[test]
+    fn lease_stats_never_compare_provider_expiry_to_local_wall_clock() {
+        let clock = Arc::new(ManualLeaseRenewalClock::new());
+        let lifecycle = CommitterLeaseLifecycle::new("lease-owner".to_string(), clock.clone());
+        let observed_at = clock.now();
+        {
+            let mut state = lifecycle.state.lock().expect("lease state should lock");
+            state.status = CommitterLeaseStatus::Held(lease(Timestamp(u64::MAX)));
+            state.last_success_at = Some(observed_at);
+        }
+        clock.advance(Duration::from_millis(42));
+
+        let stats = lifecycle.stats();
+        assert_eq!(stats.expires_at, Timestamp(u64::MAX));
+        assert_eq!(stats.last_success_age_millis, Some(42));
+    }
+
+    #[test]
+    fn lease_shutdown_during_provider_error_drains_worker() {
+        let (_data_dir, runtime, lifecycle, clock) = lease_test_runtime("lease-provider-error");
+        {
+            let mut state = lifecycle.state.lock().expect("lease state should lock");
+            let observed_at = clock.now();
+            state.status = CommitterLeaseStatus::Held(lease(Timestamp(999_999)));
+            state.last_success_at = Some(observed_at);
+            state.next_renewal_at = observed_at;
+        }
+        lifecycle.start_worker(&runtime);
+
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while lifecycle.stats().renewal_failure_count == 0 {
+            assert!(
+                Instant::now() < deadline,
+                "provider error should be observed"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let started = Instant::now();
+        lifecycle.shutdown();
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert!(!lifecycle.stats().renewal_worker_running);
+    }
+
+    #[test]
+    fn lease_safety_budget_exhaustion_fails_closed() {
+        let (_data_dir, runtime, lifecycle, clock) = lease_test_runtime("lease-budget-exhaustion");
+        {
+            let mut state = lifecycle.state.lock().expect("lease state should lock");
+            let observed_at = clock.now();
+            state.status = CommitterLeaseStatus::Held(lease(Timestamp(999_999)));
+            state.last_success_at = Some(observed_at);
+            state.local_safety_deadline = Some(observed_at);
+            state.next_renewal_at = observed_at;
+        }
+
+        assert!(!lifecycle.renew_once(runtime.as_ref()));
+        let error = runtime
+            .committer_fenced_error()
+            .expect("an exhausted safety budget must block later assignments");
+        assert_eq!(error.storage_kind(), Some(StorageErrorKind::Unavailable));
+        assert!(
+            error
+                .storage_message()
+                .is_some_and(|message| message.contains("validity is unknown"))
+        );
+        assert_eq!(lifecycle.source_epoch().unwrap(), 7);
+        let stats = lifecycle.stats();
+        assert!(!stats.acquired);
+        assert!(!stats.fenced);
+        assert_eq!(stats.epoch, 7);
+        assert_eq!(stats.renewal_failure_count, 1);
+        assert_eq!(stats.renewal_failure_streak, 1);
     }
 }

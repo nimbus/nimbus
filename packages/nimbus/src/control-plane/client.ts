@@ -45,6 +45,16 @@ type ControlPlaneRouteRequest = <T = unknown>(
   options?: ControlPlaneRouteRequestOptions,
 ) => Promise<T>;
 
+export interface NimbusServiceWaitTiming {
+  monotonicNow(): number;
+  sleep(ms: number): Promise<void>;
+}
+
+const systemServiceWaitTiming: NimbusServiceWaitTiming = {
+  monotonicNow: () => globalThis.performance.now(),
+  sleep,
+};
+
 export class Nimbus {
   readonly services: NimbusServices;
   readonly sandboxes: NimbusSandboxes;
@@ -111,6 +121,7 @@ export class NimbusServices {
   constructor(
     private readonly client: Nimbus,
     private readonly sendControlPlaneRequest: ControlPlaneRouteRequest,
+    private readonly waitTiming: NimbusServiceWaitTiming = systemServiceWaitTiming,
   ) {}
 
   async start(input: NimbusServiceStartRequest): Promise<NimbusService> {
@@ -192,15 +203,15 @@ export class NimbusServices {
   async wait(input: NimbusServiceWaitRequest): Promise<NimbusService> {
     const timeoutMs = positiveFiniteNumber(input.timeoutMs, 30_000, "timeoutMs");
     const intervalMs = positiveFiniteNumber(input.intervalMs, 250, "intervalMs");
-    const deadline = Date.now() + timeoutMs;
+    const deadline = this.waitTiming.monotonicNow() + timeoutMs;
     let latest: NimbusService | null = null;
 
-    while (Date.now() <= deadline) {
+    while (this.waitTiming.monotonicNow() <= deadline) {
       latest = await this.get(input);
       if (serviceMatchesCondition(latest, input.until)) {
         return latest;
       }
-      await sleep(intervalMs);
+      await this.waitTiming.sleep(intervalMs);
     }
 
     const observed = latest

@@ -366,7 +366,7 @@ async fn queued_cancellable_mutation_response_still_resolves_after_blocked_read_
     let engine = Arc::new(
         Engine::new_with_simulation(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(42_750))),
+            Arc::new(ManualWallClock::new(Timestamp(42_750))),
             faults.clone(),
         )
         .expect("engine should create"),
@@ -505,7 +505,7 @@ async fn queued_mutation_response_still_resolves_after_blocked_cancellable_read_
     let engine = Arc::new(
         Engine::new_with_simulation(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(42_900))),
+            Arc::new(ManualWallClock::new(Timestamp(42_900))),
             faults.clone(),
         )
         .expect("engine should create"),
@@ -649,7 +649,7 @@ async fn queued_mutation_response_resolves_when_worker_starts_on_ephemeral_curre
     let engine = Arc::new(
         Engine::new_with_simulation(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(43_050))),
+            Arc::new(ManualWallClock::new(Timestamp(43_050))),
             faults.clone(),
         )
         .expect("engine should create"),
@@ -743,7 +743,7 @@ async fn assignment_failure_keeps_the_cancelled_requests_own_outcome() {
     let engine = Arc::new(
         Engine::new_with_simulation_and_memory_persistence(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(46_650))),
+            Arc::new(ManualWallClock::new(Timestamp(46_650))),
             Arc::new(nimbus_storage::NoopFaultInjector),
             Arc::new(nimbus_core::SeededIdSource::new(46_650)),
         )
@@ -877,7 +877,7 @@ async fn ordered_assignment_panic_keeps_preassigned_outcomes_and_fails_active_re
     let engine = Arc::new(
         Engine::new_with_simulation_and_memory_persistence(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(46_660))),
+            Arc::new(ManualWallClock::new(Timestamp(46_660))),
             Arc::new(nimbus_storage::NoopFaultInjector),
             Arc::new(nimbus_core::SeededIdSource::new(46_660)),
         )

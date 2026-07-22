@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use nimbus_core::{Clock, Result, SystemClock};
+use nimbus_core::{Result, SystemWallClock, WallClock};
 
 use crate::local::{GcSummary, LocalBlobEntry};
 use crate::pins::BlobPinRegistry;
@@ -164,7 +164,7 @@ pub struct BlobGc<R> {
     store: LocalPackStore,
     roots: R,
     grace_window: Duration,
-    clock: Arc<dyn Clock>,
+    clock: Arc<dyn WallClock>,
     pins: BlobPinRegistry,
     backups: BlobPinRegistry,
     /// Optional liveness gate; see [`Self::with_release_guard`].
@@ -180,16 +180,16 @@ where
             store,
             roots,
             grace_window,
-            clock: Arc::new(SystemClock),
+            clock: Arc::new(SystemWallClock),
             pins: BlobPinRegistry::new(),
             backups: BlobPinRegistry::new(),
             release_guard: None,
         }
     }
 
-    /// Overrides the sweep-cutoff clock (e.g. `ManualClock` for
+    /// Overrides the sweep-cutoff clock (e.g. `ManualWallClock` for
     /// deterministic tests). Defaults to the real system clock.
-    pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
+    pub fn with_clock(mut self, clock: Arc<dyn WallClock>) -> Self {
         self.clock = clock;
         self
     }
@@ -300,7 +300,7 @@ mod tests {
     use std::ops::Range;
 
     use bytes::Bytes;
-    use nimbus_core::{ManualClock, StorageErrorKind, Timestamp};
+    use nimbus_core::{ManualWallClock, StorageErrorKind, Timestamp};
 
     use super::*;
     use crate::local::RECORD_MAGIC;
@@ -436,7 +436,7 @@ mod tests {
     #[tokio::test]
     async fn gc_grace_retains_when_clock_regresses() {
         let (_dir, store) = open_temp(128);
-        let clock = Arc::new(ManualClock::new(Timestamp(100_000)));
+        let clock = Arc::new(ManualWallClock::new(Timestamp(100_000)));
         let store = store.with_clock(clock.clone());
         let hash = store
             .put(Bytes::from_static(b"future write"))
@@ -445,7 +445,7 @@ mod tests {
 
         // The clock regresses far below the write timestamp. Age saturates to
         // zero, so any positive grace window retains the blob.
-        let regressed = Arc::new(ManualClock::new(Timestamp(1_000)));
+        let regressed = Arc::new(ManualWallClock::new(Timestamp(1_000)));
         let gc = BlobGc::new(
             store.clone(),
             StaticBlobRoots::default(),
@@ -486,7 +486,7 @@ mod tests {
     #[tokio::test]
     async fn pinned_blob_past_grace_is_retained_as_intent_not_swept() {
         let (_dir, store) = open_temp(128);
-        let clock = Arc::new(ManualClock::new(Timestamp(0)));
+        let clock = Arc::new(ManualWallClock::new(Timestamp(0)));
         let store = store.with_clock(clock.clone());
         let hash = store.put(Bytes::from_static(b"pinned")).await.unwrap();
 
@@ -515,7 +515,7 @@ mod tests {
     #[tokio::test]
     async fn dropped_pin_past_grace_and_unrooted_is_swept() {
         let (_dir, store) = open_temp(128);
-        let clock = Arc::new(ManualClock::new(Timestamp(0)));
+        let clock = Arc::new(ManualWallClock::new(Timestamp(0)));
         let store = store.with_clock(clock.clone());
         let hash = store.put(Bytes::from_static(b"was-pinned")).await.unwrap();
 
@@ -541,7 +541,7 @@ mod tests {
     #[tokio::test]
     async fn refcounted_pin_keeps_blob_retained_until_last_guard_drops() {
         let (_dir, store) = open_temp(128);
-        let clock = Arc::new(ManualClock::new(Timestamp(0)));
+        let clock = Arc::new(ManualWallClock::new(Timestamp(0)));
         let store = store.with_clock(clock.clone());
         let hash = store
             .put(Bytes::from_static(b"double-pinned"))
@@ -578,7 +578,7 @@ mod tests {
     #[tokio::test]
     async fn gc_leaves_quarantined_packs() {
         let (dir, store) = open_temp(64 * 1024);
-        let clock = Arc::new(ManualClock::new(Timestamp(0)));
+        let clock = Arc::new(ManualWallClock::new(Timestamp(0)));
         let store = store.with_clock(clock.clone());
         let victim = quarantine_one(&dir, &store, b"quarantined bytes").await;
 
@@ -615,7 +615,7 @@ mod tests {
     #[tokio::test]
     async fn gc_respects_backup_in_progress() {
         let (_dir, store) = open_temp(64 * 1024);
-        let clock = Arc::new(ManualClock::new(Timestamp(0)));
+        let clock = Arc::new(ManualWallClock::new(Timestamp(0)));
         let store = store.with_clock(clock.clone());
         let a = store
             .put(Bytes::from_static(b"backup root a"))
@@ -679,7 +679,7 @@ mod tests {
     #[tokio::test]
     async fn gc_never_reclaims_pinned_or_rooted() {
         let (_dir, store) = open_temp(64 * 1024);
-        let clock = Arc::new(ManualClock::new(Timestamp(0)));
+        let clock = Arc::new(ManualWallClock::new(Timestamp(0)));
         let store = store.with_clock(clock.clone());
         let manifest_root = store
             .put(Bytes::from_static(b"manifest root"))
@@ -787,7 +787,7 @@ mod tests {
         // millisecond) is still reclaimed at zero grace instead of being
         // grace-retained forever.
         let (_dir, store) = open_temp(64 * 1024);
-        let clock = Arc::new(ManualClock::new(Timestamp(1_000)));
+        let clock = Arc::new(ManualWallClock::new(Timestamp(1_000)));
         let store = store.with_clock(clock.clone());
         let hash = store.put(Bytes::from_static(b"same tick")).await.unwrap();
 
@@ -865,7 +865,7 @@ mod tests {
         // pre-snapshot orphans survive when the owning composition
         // fail-stops mid-enumeration.
         let (_dir, store) = open_temp(64 * 1024);
-        let clock = Arc::new(ManualClock::new(Timestamp(0)));
+        let clock = Arc::new(ManualWallClock::new(Timestamp(0)));
         let store = store.with_clock(clock.clone());
         let orphan = store
             .put(Bytes::from_static(b"stale orphan"))

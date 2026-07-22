@@ -252,7 +252,7 @@ pub(super) async fn assert_seeded_convex_demo_usage_scenario_matches_model(
                 format!("{test_name}-faulted-overlap"),
                 seed.saturating_add(10_000),
             ),
-            Arc::new(nimbus_storage::ManualClock::new(nimbus_core::Timestamp(
+            Arc::new(nimbus_core::ManualWallClock::new(nimbus_core::Timestamp(
                 seed.saturating_add(10_000),
             ))),
             faults.clone(),

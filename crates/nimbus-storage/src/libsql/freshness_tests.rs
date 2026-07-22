@@ -71,7 +71,7 @@ async fn test_replica(refresh_override: TestRefreshOverride) -> TestReplica {
     let local_store = Arc::new(
         SqliteTenantStore::open_with_simulation_and_max_read_connections(
             &replica_path,
-            Arc::new(SystemClock),
+            Arc::new(SystemWallClock),
             Arc::new(NoopFaultInjector),
             2,
         )
@@ -101,7 +101,7 @@ async fn test_replica(refresh_override: TestRefreshOverride) -> TestReplica {
         replica_cache_dir,
         encryption_provider: None,
         runtime_handle: TokioRuntimeHandle::current(),
-        clock: Arc::new(SystemClock),
+        clock: Arc::new(SystemWallClock),
         remote_fault_injector: Arc::new(NoopFaultInjector),
         replica_fault_injector: Arc::new(NoopFaultInjector),
         tenant_read_parallelism: 1,

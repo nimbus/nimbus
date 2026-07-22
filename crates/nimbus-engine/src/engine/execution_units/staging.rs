@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use nimbus_core::{
     AccessAction, Document, DocumentId, Error, Mutation, Result, TableName, Timestamp,
 };
@@ -148,7 +150,7 @@ impl MutationExecutionUnit {
         let now = self.engine.now();
         let job = nimbus_core::ScheduledJob {
             id: self.engine.next_document_id(),
-            run_at: Timestamp(now.0.saturating_add(delay_ms)),
+            run_at: now.saturating_add_duration(Duration::from_millis(delay_ms)),
             mutation,
             created_at: Timestamp(0),
         };
@@ -163,10 +165,9 @@ impl MutationExecutionUnit {
         timestamp_ms: u64,
     ) -> Result<nimbus_core::JobId> {
         let _operation = self.runtime.enter_operation(&self.tenant_id)?;
-        let now = self.engine.now();
         let job = nimbus_core::ScheduledJob {
             id: self.engine.next_document_id(),
-            run_at: Timestamp(timestamp_ms.max(now.0)),
+            run_at: Timestamp(timestamp_ms),
             mutation,
             created_at: Timestamp(0),
         };

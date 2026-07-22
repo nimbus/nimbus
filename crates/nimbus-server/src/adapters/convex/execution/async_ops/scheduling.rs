@@ -64,17 +64,14 @@ pub(in crate::adapters::convex) async fn execute_schedule_command_async(
                 &args,
                 visibility.unwrap_or(ConvexFunctionVisibility::Public),
             )?;
-            let delay_ms = timestamp_ms.saturating_sub(Timestamp::now().0);
             let job_id = match cancellation {
                 Some(cancellation) => {
                     let check_cancellation = cancellation.clone();
                     service
-                        .schedule_mutation_async_cancellable(
+                        .schedule_mutation_at_async_cancellable(
                             tenant_id.clone(),
-                            ScheduleRequest {
-                                run_after_ms: delay_ms,
-                                mutation,
-                            },
+                            Timestamp(timestamp_ms),
+                            mutation,
                             cancellation.cancelled(),
                             move || check_host_cancellation(&check_cancellation),
                         )
@@ -82,12 +79,10 @@ pub(in crate::adapters::convex) async fn execute_schedule_command_async(
                 }
                 None => {
                     service
-                        .schedule_mutation_async(
+                        .schedule_mutation_at_async(
                             tenant_id.clone(),
-                            ScheduleRequest {
-                                run_after_ms: delay_ms,
-                                mutation,
-                            },
+                            Timestamp(timestamp_ms),
+                            mutation,
                         )
                         .await?
                 }
@@ -126,5 +121,76 @@ pub(in crate::adapters::convex) async fn execute_schedule_command_async(
             .await?;
             Ok(Value::Null)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use nimbus_core::{ManualWallClock, Timestamp};
+    use nimbus_storage::NoopFaultInjector;
+    use serde_json::json;
+    use tempfile::tempdir;
+
+    use super::*;
+
+    fn registry() -> ConvexRegistry {
+        let root = tempdir().expect("registry tempdir should build");
+        let convex_dir = root.path().join(".nimbus/convex");
+        std::fs::create_dir_all(&convex_dir).expect("registry directory should build");
+        std::fs::write(
+            convex_dir.join("functions.json"),
+            serde_json::to_vec(&json!({
+                "functions": [{
+                    "name": "messages:send",
+                    "kind": "mutation",
+                    "visibility": "public",
+                    "schedulable": true,
+                    "plan": { "type": "insert", "table": "messages", "fields": {} }
+                }]
+            }))
+            .expect("registry should serialize"),
+        )
+        .expect("registry should write");
+        ConvexRegistry::from_app_dir(root.path()).expect("registry should load")
+    }
+
+    #[tokio::test]
+    async fn convex_async_run_at_uses_engine_wall_clock() {
+        let data_dir = tempdir().expect("engine tempdir should build");
+        let engine = Arc::new(
+            nimbus_engine::Engine::new_with_simulation(
+                data_dir.path(),
+                Arc::new(ManualWallClock::new(Timestamp(50_000))),
+                Arc::new(NoopFaultInjector),
+            )
+            .expect("engine should build"),
+        );
+        let tenant_id = TenantId::new("clock-async").expect("tenant id should parse");
+        engine
+            .create_tenant(tenant_id.clone())
+            .expect("tenant should create");
+
+        execute_schedule_command_async(
+            &engine,
+            &Arc::new(registry()),
+            &tenant_id,
+            ConvexScheduledCommand::RunAt {
+                timestamp_ms: 1_000,
+                name: "messages:send".to_string(),
+                visibility: None,
+                args: json!({}),
+            },
+            None,
+        )
+        .await
+        .expect("async runAt should schedule");
+
+        let jobs = engine
+            .list_scheduled_jobs_async(tenant_id)
+            .await
+            .expect("scheduled jobs should list");
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].run_at, Timestamp(1_000));
+        assert_eq!(jobs[0].created_at, Timestamp(50_000));
     }
 }

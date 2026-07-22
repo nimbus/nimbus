@@ -990,7 +990,7 @@ async fn projection_provider_restart_reconciles_cancelled_scope() {
     let engine_b = Arc::new(
         Engine::new_with_simulation_and_persistence_config(
             config_b,
-            Arc::new(nimbus_core::SystemClock),
+            Arc::new(nimbus_core::SystemWallClock),
             acknowledgement_loss.clone(),
         )
         .await
@@ -1118,7 +1118,7 @@ async fn projection_libsql_two_engine_takeover_rejects_late_old_document_schema_
     let engine_b = Arc::new(
         Engine::new_with_simulation_and_persistence_config_and_libsql_faults(
             config_b,
-            Arc::new(nimbus_core::SystemClock),
+            Arc::new(nimbus_core::SystemWallClock),
             acknowledgement_loss.clone(),
             Arc::new(NoopFaultInjector),
         )
@@ -1224,7 +1224,7 @@ async fn projection_mysql_two_engine_takeover_rejects_late_old_document_schema_a
     let engine_b = Arc::new(
         Engine::new_with_simulation_and_persistence_config(
             config_b,
-            Arc::new(nimbus_core::SystemClock),
+            Arc::new(nimbus_core::SystemWallClock),
             acknowledgement_loss.clone(),
         )
         .await

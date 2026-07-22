@@ -99,13 +99,13 @@ mod tests {
 
     use nimbus_core::{
         Document, DocumentId, DocumentLocator, DocumentPath, FieldSchema, FieldType,
-        IndexDefinition, ResourcePathBinding, SequenceNumber, TableName, TableSchema, Timestamp,
-        WriteOp, WriteOpType,
+        IndexDefinition, ManualWallClock, ResourcePathBinding, SequenceNumber, TableName,
+        TableSchema, Timestamp, WriteOp, WriteOpType,
     };
     use serde_json::json;
 
     use crate::simulation::{
-        FaultOccurrence, FaultPoint, ManualClock, NoopFaultInjector, ScriptedFaultInjector,
+        FaultOccurrence, FaultPoint, NoopFaultInjector, ScriptedFaultInjector,
     };
     use crate::store::INDEXES;
 
@@ -258,7 +258,7 @@ mod tests {
 
     #[test]
     fn failed_point_delete_rolls_back_document_indexes_bindings_and_commit_log() {
-        let clock = Arc::new(ManualClock::new(Timestamp(10_000)));
+        let clock = Arc::new(ManualWallClock::new(Timestamp(10_000)));
         let faults = Arc::new(ScriptedFaultInjector::new([FaultOccurrence {
             point: FaultPoint::StorageCommitBeforeVisibility,
             visit: 3,
@@ -330,7 +330,7 @@ mod tests {
 
     #[test]
     fn with_index_point_update_stamps_update_time() {
-        let clock = Arc::new(ManualClock::new(Timestamp(10_000)));
+        let clock = Arc::new(ManualWallClock::new(Timestamp(10_000)));
         let store = TenantStore::create_in_memory_with_simulation(
             clock.clone(),
             Arc::new(NoopFaultInjector),
@@ -432,7 +432,7 @@ mod tests {
         current.update_time = Timestamp(2_000);
         let patch = serde_json::Map::from_iter([("body".to_string(), json!("after"))]);
 
-        let no_index_clock = Arc::new(ManualClock::new(Timestamp(2_000)));
+        let no_index_clock = Arc::new(ManualWallClock::new(Timestamp(2_000)));
         let no_index_store = TenantStore::create_in_memory_with_simulation(
             no_index_clock,
             Arc::new(NoopFaultInjector),
@@ -445,7 +445,7 @@ mod tests {
             .update(&table, &previous.id, &patch)
             .expect("no-index update should commit");
 
-        let with_index_clock = Arc::new(ManualClock::new(Timestamp(2_000)));
+        let with_index_clock = Arc::new(ManualWallClock::new(Timestamp(2_000)));
         let with_index_store = TenantStore::create_in_memory_with_simulation(
             with_index_clock,
             Arc::new(NoopFaultInjector),

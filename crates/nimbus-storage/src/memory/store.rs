@@ -1,17 +1,17 @@
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use nimbus_core::{Error, Result, Timestamp};
+use nimbus_core::{Error, Result, SystemWallClock, Timestamp, WallClock};
 
 use crate::TenantWriteCommit;
 use crate::async_storage::BlockingWriteStore;
-use crate::simulation::{Clock, FaultInjector, FaultPoint, NoopFaultInjector, SystemClock};
+use crate::simulation::{FaultInjector, FaultPoint, NoopFaultInjector};
 
 use super::state::MemoryState;
 
 /// A deterministic, process-local tenant store backed only by Rust data structures.
 pub struct MemoryTenantStore {
     pub(super) state: Arc<RwLock<MemoryState>>,
-    pub(super) clock: Arc<dyn Clock>,
+    pub(super) clock: Arc<dyn WallClock>,
     pub(super) fault_injector: Arc<dyn FaultInjector>,
 }
 
@@ -23,10 +23,13 @@ impl Default for MemoryTenantStore {
 
 impl MemoryTenantStore {
     pub fn new() -> Self {
-        Self::with_simulation(Arc::new(SystemClock), Arc::new(NoopFaultInjector))
+        Self::with_simulation(Arc::new(SystemWallClock), Arc::new(NoopFaultInjector))
     }
 
-    pub fn with_simulation(clock: Arc<dyn Clock>, fault_injector: Arc<dyn FaultInjector>) -> Self {
+    pub fn with_simulation(
+        clock: Arc<dyn WallClock>,
+        fault_injector: Arc<dyn FaultInjector>,
+    ) -> Self {
         Self {
             state: Arc::new(RwLock::new(MemoryState::default())),
             clock,

@@ -17,7 +17,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use nimbus_core::{Clock, Error, Result, StorageErrorKind, SystemClock};
+use nimbus_core::{Error, Result, StorageErrorKind, SystemWallClock, WallClock};
 use nimbus_crypto::{FramedBlobKey, open_framed_blob};
 
 use crate::disk;
@@ -145,7 +145,7 @@ pub struct ScrubReport {
 pub struct LocalPackScrubber {
     store: LocalPackStore,
     pacing: ScrubPacing,
-    clock: Arc<dyn Clock>,
+    clock: Arc<dyn WallClock>,
 }
 
 impl LocalPackScrubber {
@@ -153,7 +153,7 @@ impl LocalPackScrubber {
         Self {
             store,
             pacing: ScrubPacing::default(),
-            clock: Arc::new(SystemClock),
+            clock: Arc::new(SystemWallClock),
         }
     }
 
@@ -162,7 +162,7 @@ impl LocalPackScrubber {
         self
     }
 
-    pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
+    pub fn with_clock(mut self, clock: Arc<dyn WallClock>) -> Self {
         self.clock = clock;
         self
     }

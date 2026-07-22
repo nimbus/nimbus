@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 const BANNED_AMBIENT_MINTS: [(&str, &str); 6] = [
-    // Direct system-time reads bypass the injected Clock.
-    ("SystemTime::now(", "bypasses the injected Clock"),
+    // Direct system-time reads bypass the injected WallClock.
+    ("SystemTime::now(", "bypasses the injected WallClock"),
     // Direct ULID generation bypasses the injected IdSource.
     ("Ulid::new(", "bypasses the injected IdSource"),
     // Timestamp's convenience constructor reads ambient wall-clock time.

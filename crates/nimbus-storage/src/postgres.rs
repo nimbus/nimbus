@@ -12,9 +12,9 @@ use nimbus_core::{
     CommitEntry, CronJob, Document, DocumentId, Error, FieldType, Filter, HistoricalIndexCursor,
     HistoricalIndexTuple, HistoricalReadShape, IndexDefinition, IndexLifecycleEvent,
     ResourcePathBinding, Result, ScheduledJob, ScheduledJobResult, Schema, SchemaChangeEvent,
-    SequenceNumber, StorageErrorKind, TableId, TableLifecycleEvent, TableName, TableSchema,
-    TableState, TenantEventKind, TenantEventRecord, TenantId, Timestamp, TriggerDeliveryCursor,
-    TriggerWriteOrigin, WriteOp, WriteOpType,
+    SequenceNumber, StorageErrorKind, SystemWallClock, TableId, TableLifecycleEvent, TableName,
+    TableSchema, TableState, TenantEventKind, TenantEventRecord, TenantId, Timestamp,
+    TriggerDeliveryCursor, TriggerWriteOrigin, WallClock, WriteOp, WriteOpType,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -33,7 +33,7 @@ use crate::async_storage::{
 };
 use crate::commit_log::{deserialize_tenant_event_record, serialize_tenant_event_record};
 use crate::runtime_bridge::bridge_tokio_runtime;
-use crate::simulation::{Clock, FaultInjector, FaultPoint, NoopFaultInjector, SystemClock};
+use crate::simulation::{FaultInjector, FaultPoint, NoopFaultInjector};
 use crate::store::{
     DurableJournalBootstrap, DurableJournalPage, JournalProgress, MaterializedJournalSnapshot,
     PointInTimeRestoreArchive, PointInTimeRestoreTarget, ResolvedScheduleOp, ResolvedWrite,
@@ -100,7 +100,7 @@ pub struct PostgresProvider {
     pool_application_name: String,
     notification_channel: String,
     runtime_handle: TokioRuntimeHandle,
-    clock: Arc<dyn Clock>,
+    clock: Arc<dyn WallClock>,
     fault_injector: Arc<dyn FaultInjector>,
     tenant_read_parallelism: usize,
 }

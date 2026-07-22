@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
 use nimbus_core::{
-    Error, FieldSchema, FieldType, IndexDefinition, SequenceNumber, TableId, TableName,
-    TableSchema, TableState, TenantEventRecord, Timestamp, WriteOp, WriteOpType,
+    Error, FieldSchema, FieldType, IndexDefinition, ManualWallClock, SequenceNumber, TableId,
+    TableName, TableSchema, TableState, TenantEventRecord, Timestamp, WriteOp, WriteOpType,
 };
 use serde_json::json;
 
 use crate::{
-    ManualClock, MaterializedJournalSnapshot, NoopFaultInjector, PointInTimeRestoreTarget,
-    RetentionGcConfig, TableIdentitySnapshotEntry, TenantStore,
+    MaterializedJournalSnapshot, NoopFaultInjector, PointInTimeRestoreTarget, RetentionGcConfig,
+    TableIdentitySnapshotEntry, TenantStore,
 };
 
 fn tasks_schema() -> TableSchema {
@@ -236,7 +236,7 @@ fn materialized_snapshot_rebuild_can_stop_at_a_point_in_time_sequence() {
 
 #[test]
 fn point_in_time_archive_restores_sequence_and_timestamp_to_matching_fingerprints() {
-    let clock = Arc::new(ManualClock::new(Timestamp(1_000)));
+    let clock = Arc::new(ManualWallClock::new(Timestamp(1_000)));
     let live =
         TenantStore::create_in_memory_with_simulation(clock.clone(), Arc::new(NoopFaultInjector))
             .expect("store should open");

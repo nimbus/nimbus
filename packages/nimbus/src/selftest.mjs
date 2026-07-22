@@ -24,6 +24,7 @@ async function main() {
     return;
   }
   const indexBundle = await bundleModule("index.ts", "neutral");
+  const controlPlaneBundle = await bundleModule("control-plane/client.ts", "neutral");
   const controlPlaneRoutesBundle = await bundleModule("control_plane_routes.ts", "neutral");
   await assertControlPlaneRouteManifest(controlPlaneRoutesBundle);
   await bundleModule("browser.ts", "browser");
@@ -34,6 +35,7 @@ async function main() {
   await assertRestClientRouteParity(restBundle);
   await assertExplicitOptionsBypassLocalCredentialFile(indexBundle);
   await assertLifecycleWaitValidation(indexBundle);
+  await assertServiceWaitUsesMonotonicTime(controlPlaneBundle);
   await assertServiceDefinitionRoutes(indexBundle);
   await assertSandboxRoutes(indexBundle);
   await assertSessionRoutes(indexBundle);
@@ -239,6 +241,57 @@ async function assertLifecycleWaitValidation(indexBundle) {
 
   await client.services.start({ name: "db", waitUntil: "healthy" });
   assert.equal(fetchCalls, 2, "start with healthy wait should POST then poll GET");
+}
+
+async function assertServiceWaitUsesMonotonicTime(controlPlaneBundle) {
+  const { Nimbus, NimbusServices } = await import(
+    `${pathToFileURL(controlPlaneBundle).href}?monotonic=${Date.now()}`
+  );
+  const client = new Nimbus({ tenantId: "tenant" });
+  const originalDateNow = Date.now;
+
+  async function runCase(wallObservations) {
+    let monotonicNow = 0;
+    let requests = 0;
+    let sleeps = 0;
+    Date.now = () => wallObservations.shift() ?? 0;
+    const services = new NimbusServices(
+      client,
+      async () => {
+        requests += 1;
+        return {
+          name: "db",
+          lifecycleState: "starting",
+          readiness: "starting",
+          health: "unknown",
+          state: "starting",
+        };
+      },
+      {
+        monotonicNow: () => monotonicNow,
+        sleep: async (ms) => {
+          sleeps += 1;
+          monotonicNow += ms;
+        },
+      },
+    );
+
+    await assert.rejects(
+      services.wait({ name: "db", until: "healthy", timeoutMs: 10, intervalMs: 6 }),
+      new Error(
+        "Nimbus service db did not reach healthy within 10ms; last observed status was starting.",
+      ),
+    );
+    assert.equal(requests, 2);
+    assert.equal(sleeps, 2);
+  }
+
+  try {
+    await runCase([0, 100_000, 200_000]);
+    await runCase([100_000, 50_000, 0]);
+  } finally {
+    Date.now = originalDateNow;
+  }
 }
 
 async function assertServiceDefinitionRoutes(indexBundle) {

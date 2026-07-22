@@ -7,7 +7,9 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use futures::StreamExt;
 use nimbus_blob::{BlobHash, BlobStore, MemoryBlobStore};
-use nimbus_core::{CommitEntry, Error, Result, SequenceNumber, TenantId, Timestamp};
+use nimbus_core::{
+    CommitEntry, Error, Result, SequenceNumber, SystemWallClock, TenantId, WallClock,
+};
 use nimbus_storage::{
     ObjectBlobLayout, ObjectChunkRef, ObjectManifest, ObjectManifestAttributes,
     ObjectMultipartUpload,
@@ -316,7 +318,7 @@ impl S3ObjectMeta for InMemoryTenantMeta {
 fn commit() -> CommitEntry {
     CommitEntry {
         sequence: SequenceNumber(1),
-        timestamp: Timestamp::now(),
+        timestamp: SystemWallClock.now(),
         writes: Vec::new(),
     }
 }

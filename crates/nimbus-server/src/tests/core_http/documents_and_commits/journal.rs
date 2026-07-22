@@ -78,7 +78,7 @@ async fn journal_bootstrap_route_returns_snapshot_and_durable_cut() {
     let faults = BlockingFaultInjector::new(FaultPoint::JournalDurableAppendBeforeApply);
     let harness = DeterministicHarness::with_fault_injector(
         ScenarioMetadata::new("journal-bootstrap-route", 40),
-        Arc::new(ManualClock::new(nimbus_core::Timestamp(40_000))),
+        Arc::new(ManualWallClock::new(nimbus_core::Timestamp(40_000))),
         faults.clone(),
     );
     let fixture = EngineFixture::new_with_harness(harness.clone(), |path, harness| {

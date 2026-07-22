@@ -488,7 +488,7 @@ async fn sync_subscription_bootstrap_does_not_miss_lagged_applied_commit() {
     let engine = Arc::new(
         Engine::new_with_simulation(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(60_000))),
+            Arc::new(ManualWallClock::new(Timestamp(60_000))),
             faults.clone(),
         )
         .expect("engine should create"),

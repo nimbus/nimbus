@@ -10,10 +10,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use nimbus_core::{
-    Error, SeededIdSource, SequenceNumber, TableName, TenantEventKind, TenantEventRecord, TenantId,
-    Timestamp,
+    Error, ManualWallClock, SeededIdSource, SequenceNumber, TableName, TenantEventKind,
+    TenantEventRecord, TenantId, Timestamp,
 };
-use nimbus_storage::{FaultInjector, FaultPoint, ManualClock, NoopFaultInjector};
+use nimbus_storage::{FaultInjector, FaultPoint, NoopFaultInjector};
 use serde_json::json;
 use tempfile::tempdir;
 use tokio::time::timeout;
@@ -373,7 +373,7 @@ async fn run_crash_case(case: CrashCase) {
     let engine = Arc::new(
         Engine::new_with_simulation_and_id_source(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(50_000))),
+            Arc::new(ManualWallClock::new(Timestamp(50_000))),
             storage_faults.clone(),
             Arc::new(SeededIdSource::new(50_000)),
         )
@@ -522,7 +522,7 @@ async fn run_crash_case(case: CrashCase) {
     let recovered = Arc::new(
         Engine::new_with_simulation_and_id_source(
             data_dir.path(),
-            Arc::new(ManualClock::new(Timestamp(60_000))),
+            Arc::new(ManualWallClock::new(Timestamp(60_000))),
             Arc::new(NoopFaultInjector),
             Arc::new(SeededIdSource::new(60_000)),
         )

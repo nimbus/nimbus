@@ -16,9 +16,9 @@ use super::bundle::{
 use crate::backend::{SandboxBackend, SandboxBackendKind, SandboxFuture};
 use crate::backends::conmon::lifecycle::{
     RuntimeStatusProbe, configured_stop_signal, configured_stop_timeout,
-    detect_runtime_status as detect_conmon_runtime_status, ensure_linux_host, now_millis,
-    read_exit_code, read_pid, remove_if_exists, run_status_best_effort, run_status_checked,
-    signal_process, spawn_background, wait_for_path, wait_for_runtime_state,
+    detect_runtime_status as detect_conmon_runtime_status, ensure_linux_host, read_exit_code,
+    read_pid, remove_if_exists, run_status_best_effort, run_status_checked, signal_process,
+    spawn_background, wait_for_path, wait_for_runtime_state,
 };
 use crate::backends::oci::buildah::{BuildahCli, OciImageLaunchDefaults};
 use crate::backends::oci::builder::OciDockerfileBuilder;
@@ -551,7 +551,7 @@ impl ContainerSandboxBackend {
     }
 
     fn maybe_restart_after_exit(&self, manifest: &mut ContainerSandboxManifest) -> Result<bool> {
-        match mark_restart_decision_after_exit(manifest, now_millis()?)? {
+        match mark_restart_decision_after_exit(manifest, nimbus_core::clock::system_now_millis())? {
             ContainerRestartDecision::NotRestarting => Ok(false),
             ContainerRestartDecision::WaitingForBackoff => Ok(true),
             ContainerRestartDecision::RestartNow => {

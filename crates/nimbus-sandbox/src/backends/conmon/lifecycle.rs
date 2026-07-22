@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 
@@ -33,17 +33,6 @@ pub(crate) fn restart_backoff_delay(restart_count: u32) -> Duration {
     let multiplier = 1_u128 << restart_count.min(31);
     let millis = initial.saturating_mul(multiplier).min(max);
     Duration::from_millis(millis as u64)
-}
-
-pub(crate) fn now_millis() -> Result<u64> {
-    let elapsed = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| SandboxError::OperationFailed {
-            message: format!("system clock is before unix epoch: {error}"),
-        })?;
-    u64::try_from(elapsed.as_millis()).map_err(|_| SandboxError::OperationFailed {
-        message: "system clock milliseconds exceed supported range".to_owned(),
-    })
 }
 
 pub(crate) fn ensure_linux_host(backend_name: &str) -> Result<()> {

@@ -57,7 +57,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use nimbus_core::{Clock, Error, Result, StorageErrorKind, SystemClock};
+use nimbus_core::{Error, Result, StorageErrorKind, SystemWallClock, WallClock};
 use tokio::io::AsyncReadExt;
 
 use crate::disk::{self, SyncObserver};
@@ -104,7 +104,7 @@ pub struct LocalBlobEntry {
     /// record offset): later writes always compare greater. The epoch leads
     /// because compaction restructures pack ids wholesale (the empty-store
     /// branch resets them), so a bare (pack_id, offset) is NOT monotonic
-    /// across compactions. Clock-free ordering marker for GC's
+    /// across compactions. WallClock-free ordering marker for GC's
     /// root-snapshot boundary (a millisecond timestamp cannot distinguish
     /// same-tick writes; a non-advancing test clock would retain them
     /// forever).
@@ -248,7 +248,7 @@ pub(crate) enum CompactionCrashPoint {
 #[derive(Clone)]
 pub struct LocalPackStore {
     state: Arc<Mutex<LocalPackState>>,
-    clock: Arc<dyn Clock>,
+    clock: Arc<dyn WallClock>,
 }
 
 impl std::fmt::Debug for LocalPackStore {
@@ -326,7 +326,7 @@ impl LocalPackStore {
 
         let root = root.as_ref().to_path_buf();
         let observer: Arc<dyn SyncObserver> = Arc::new(disk::NoopSyncObserver);
-        let clock: Arc<dyn Clock> = Arc::new(SystemClock);
+        let clock: Arc<dyn WallClock> = Arc::new(SystemWallClock);
 
         // Serialize opens through the process-wide registry so two concurrent
         // first-opens of one root cannot race the flock (one would spuriously
@@ -549,13 +549,13 @@ impl LocalPackStore {
                 #[cfg(test)]
                 body_bytes_read: 0,
             })),
-            clock: Arc::new(SystemClock),
+            clock: Arc::new(SystemWallClock),
         })
     }
 
-    /// Overrides the write-timestamp clock (e.g. `ManualClock` for
+    /// Overrides the write-timestamp clock (e.g. `ManualWallClock` for
     /// deterministic GC tests). Defaults to the real system clock.
-    pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
+    pub fn with_clock(mut self, clock: Arc<dyn WallClock>) -> Self {
         self.clock = clock;
         self
     }

@@ -4,8 +4,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwap;
-use nimbus_core::{Error, Result, Schema, TableId, TableName, TenantId, Timestamp};
-use nimbus_storage::{Clock, LibsqlReplicaFreshnessStats};
+use nimbus_core::{
+    Error, MonotonicClock, Result, Schema, TableId, TableName, TenantId, Timestamp, WallClock,
+};
+use nimbus_storage::LibsqlReplicaFreshnessStats;
 use serde::Serialize;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
@@ -147,6 +149,7 @@ pub struct TenantRuntime {
     publisher: Arc<PublisherHandoff>,
     observer_dispatch: Arc<ObserverHandoff>,
     observer_lifetime: Arc<()>,
+    monotonic_clock: Arc<dyn MonotonicClock>,
     write_rate: TenantWriteRateLimiter,
     last_assigned_commit_timestamp: AtomicU64,
     prepared_table_ids: Mutex<HashMap<TableName, TableId>>,
@@ -171,6 +174,23 @@ pub(crate) struct TenantRuntimeInitialStateProfile {
     pub schema_load: Duration,
     pub journal_progress: Duration,
     pub total: Duration,
+}
+
+pub(crate) struct TenantRuntimeTiming {
+    monotonic_clock: Arc<dyn MonotonicClock>,
+    renewal_clock: Arc<dyn LeaseRenewalClock>,
+}
+
+impl TenantRuntimeTiming {
+    pub(crate) fn new(
+        monotonic_clock: Arc<dyn MonotonicClock>,
+        renewal_clock: Arc<dyn LeaseRenewalClock>,
+    ) -> Self {
+        Self {
+            monotonic_clock,
+            renewal_clock,
+        }
+    }
 }
 
 fn prepare_concurrency() -> usize {
@@ -216,7 +236,7 @@ impl TenantRuntime {
         store: TenantPersistence,
         read_storage: TenantPersistenceExecutor,
         initial_state: TenantRuntimeInitialState,
-        renewal_clock: Arc<dyn LeaseRenewalClock>,
+        timing: TenantRuntimeTiming,
         committer_owner_id: Option<String>,
     ) -> Self {
         let TenantRuntimeInitialState {
@@ -257,11 +277,13 @@ impl TenantRuntime {
             mutation_isolate_admission: Arc::new(MutationIsolateAdmission::from_env()),
             mutation_journal: Arc::new(MutationJournalState::new(progress)),
             committer,
-            committer_lease: committer_owner_id
-                .map(|owner_id| Arc::new(CommitterLeaseLifecycle::new(owner_id, renewal_clock))),
+            committer_lease: committer_owner_id.map(|owner_id| {
+                Arc::new(CommitterLeaseLifecycle::new(owner_id, timing.renewal_clock))
+            }),
             publisher,
             observer_dispatch,
             observer_lifetime: Arc::new(()),
+            monotonic_clock: timing.monotonic_clock,
             write_rate: TenantWriteRateLimiter::new(),
             last_assigned_commit_timestamp: AtomicU64::new(last_commit_timestamp.0),
             prepared_table_ids: Mutex::new(HashMap::new()),
@@ -277,7 +299,7 @@ impl TenantRuntime {
         store: TenantPersistence,
         read_storage: TenantPersistenceExecutor,
         initial_state: TenantRuntimeInitialState,
-        renewal_clock: Arc<dyn LeaseRenewalClock>,
+        timing: TenantRuntimeTiming,
         committer_owner_id: Option<String>,
     ) -> Self {
         Self::from_initialized_parts(
@@ -286,7 +308,7 @@ impl TenantRuntime {
             store,
             read_storage,
             initial_state,
-            renewal_clock,
+            timing,
             committer_owner_id,
         )
     }
@@ -332,6 +354,7 @@ impl TenantRuntime {
         tenant_incarnation: u64,
         store: TenantPersistence,
         read_storage: TenantPersistenceExecutor,
+        monotonic_clock: Arc<dyn MonotonicClock>,
         renewal_clock: Arc<dyn LeaseRenewalClock>,
         committer_owner_id: Option<String>,
     ) -> Result<Self> {
@@ -356,7 +379,7 @@ impl TenantRuntime {
                 progress,
                 last_commit_timestamp,
             },
-            renewal_clock,
+            TenantRuntimeTiming::new(monotonic_clock, renewal_clock),
             committer_owner_id,
         ))
     }
@@ -367,6 +390,7 @@ impl TenantRuntime {
         tenant_incarnation: u64,
         store: TenantPersistence,
         read_storage: TenantPersistenceExecutor,
+        monotonic_clock: Arc<dyn MonotonicClock>,
         renewal_clock: Arc<dyn LeaseRenewalClock>,
         committer_owner_id: Option<String>,
     ) -> Result<Self> {
@@ -377,7 +401,7 @@ impl TenantRuntime {
             store,
             read_storage,
             initial_state,
-            renewal_clock,
+            TenantRuntimeTiming::new(monotonic_clock, renewal_clock),
             committer_owner_id,
         ))
     }
@@ -393,6 +417,10 @@ impl TenantRuntime {
 
     pub(crate) fn observer_identity(&self) -> crate::engine::TenantRuntimeObserverIdentity {
         crate::engine::TenantRuntimeObserverIdentity::new(&self.observer_lifetime)
+    }
+
+    pub(crate) fn monotonic_now(&self) -> std::time::Instant {
+        self.monotonic_clock.now()
     }
 
     /// Reserves one stable identity while concurrent prepares race to create a
@@ -568,7 +596,7 @@ impl TenantRuntime {
 
     pub(crate) fn ensure_trigger_execution_worker_started(
         self: &Arc<Self>,
-        clock: Arc<dyn Clock>,
+        clock: Arc<dyn WallClock>,
         executor: SharedTriggerInvocationExecutor,
     ) {
         self.trigger_execution.start_worker(self, clock, executor);
