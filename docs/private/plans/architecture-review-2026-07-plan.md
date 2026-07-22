@@ -286,20 +286,20 @@ against `main` at `9a40b60a4`. The report's 28 lane findings normalize to 25
 unique items because three findings were independently reported by two lanes.
 Every unique item remains visible here, including already-fixed and refuted
 claims, so completion cannot hide work by omission. The implementation branch
-was rebased onto updated `origin/main` at `a035fc90f`. RR26 records one additional
+was rebased onto updated `origin/main` at `c789db2fd`. RR26 records one additional
 private-fence regression discovered by the required docs-site completion gate.
 
 | ID | Item | Where | Severity / verdict | Status |
 | --- | --- | --- | --- | --- |
-| RR1 | Make DynamoDB single-item put/update/delete condition evaluation and read-modify-write atomic. | `nimbus-dynamodb/src/commands/{item,transact}.rs` | high / confirmed | done (`concurrent_add_updates_retry_from_a_fresh_snapshot_without_lost_writes` plus single-item stream rollback; workspace 4,627/4,627) |
+| RR1 | Make DynamoDB single-item put/update/delete condition evaluation and read-modify-write atomic. | `nimbus-dynamodb/src/commands/{item,transact}.rs` | high / confirmed | done (`concurrent_add_updates_retry_from_a_fresh_snapshot_without_lost_writes` plus single-item stream rollback; workspace 4,674/4,674) |
 | RR2 | Preserve Firestore Timestamp, GeoPoint, Bytes, Reference, and special-double values through write/read round trips. | `nimbus-firebase/src/serializer.rs` + REST/gRPC lowering | high / confirmed | done (Firebase 66/66 plus REST, gRPC, nested patch, persistence, and Mongo projection round trips) |
-| RR3 | Authorize the outer HTTPS CONNECT at L4 and enforce method/path rules on the decrypted request without permitting splice bypass. | `nimbus-proxy/src/request.rs` + CONNECT classification/tests | high / confirmed | done (focused decrypted method/path interception and splice-denial tests; workspace 4,627/4,627) |
+| RR3 | Authorize the outer HTTPS CONNECT at L4 and enforce method/path rules on the decrypted request without permitting splice bypass. | `nimbus-proxy/src/request.rs` + CONNECT classification/tests | high / confirmed | done (focused decrypted method/path interception and splice-denial tests; workspace 4,674/4,674) |
 | RR4 | Alt-Svc/HTTP-3 forward-proxy bypass claim. | `nimbus-proxy/src/pingora_app.rs`, sandbox egress pin | info / refuted | no-action (sandbox netns default-drops UDP; QUIC cannot bypass the PEP) |
 | RR5 | Mongo `_id` fast-path `$ne`/null divergence claim; separately correct shared Mongo missing-field compatibility semantics if confirmed. | `nimbus-mongodb/src/commands/crud/filter.rs`, engine matcher | info / fast-path claim refuted | done (fast-path claim refuted; confirmed missing/null gap fixed with end-to-end `$eq`/`$ne`/`$exists` coverage and `_id` fast-path regression test) |
 | RR6 | Restore the complete workspace inventory by documenting `nimbus-compute`. | `ARCHITECTURE.md` | medium / confirmed | done (workspace inventory and compute-plane ownership corrected; both docs gates green) |
-| RR7 | Keep internal diagnostic strings out of external error envelopes and retain server-side correlation. | `nimbus-server/src/error_envelope.rs` | low / confirmed | done (`internal_errors_are_redacted_and_correlated` plus three HTTP runtime boundary regressions; workspace 4,627/4,627) |
+| RR7 | Keep internal diagnostic strings out of external error envelopes and retain server-side correlation. | `nimbus-server/src/error_envelope.rs` | low / confirmed | done (`internal_errors_are_redacted_and_correlated` plus three HTTP runtime boundary regressions; workspace 4,674/4,674) |
 | RR8 | Consolidate the duplicated Convex tenant/team-binding authorization preamble. | Convex registry/auth + httpAction dispatch | low / plausible | done (duplication confirmed; canonical registry authorization helper covers handler and httpAction dispatch paths; server suite green) |
-| RR9 | Fail startup loudly when a default-on MongoDB, DynamoDB, or S3 listener cannot bind its conventional port. | `nimbus-cli/src/start/adapters/{mongodb,dynamodb,s3}.rs` | low / high confidence | done (`busy_default_listener_port_fails_boot` covers all three adapters; workspace 4,627/4,627) |
+| RR9 | Fail startup loudly when a default-on MongoDB, DynamoDB, or S3 listener cannot bind its conventional port. | `nimbus-cli/src/start/adapters/{mongodb,dynamodb,s3}.rs` | low / high confidence | done (`busy_default_listener_port_fails_boot` covers all three adapters; workspace 4,674/4,674) |
 | RR10 | Make the SQLite invariant-bypassing insert helper unavailable to production code. | `nimbus-storage/src/sqlite/write.rs` | low / high confidence | done (helper restricted to tests; storage and workspace suites green) |
 | RR11 | Cover every compiled vendored dependency in top-level attribution and its verification gate. | `NOTICE`, `third_party/`, attribution scripts | low / high confidence | done (attribution helper 11/11 and full attribution gate green) |
 | RR12 | Make TypeScript typechecking a required local and hosted CI gate. | `Makefile`, `.github/workflows/ci.yml` | low / high confidence | done (required workspace typecheck wired into local/hosted CI; all workspace typechecks green) |
@@ -323,13 +323,15 @@ evidence, `cargo fmt --all --check`, `make clippy`, `make ci`, both docs gates,
 and the structured closeout review are green before the branch is pushed.
 
 Closeout evidence (2026-07-21): the initial remediation state passed `make ci`.
-After the conflict-free rebase onto `a035fc90f`, the same required component set
-passed again, with the workspace lane bounded to two test threads because other
-worktrees were concurrently loading the shared host: 493 runtime tests,
-4,627/4,627 runnable workspace tests (31 ignored; 4,658 inventoried), 377/377
-storage tests (2 external-provider skips), the required verification harness,
-all workspace JS build/typecheck/test lanes (51 UI files / 336 tests), and proof
-helpers. The exact storage PITR performance regression also passed independently.
+After rebasing through the current `origin/main` at `c789db2fd`, the required
+component set passed again, with the workspace lane bounded to two test threads
+because other worktrees were concurrently loading the shared host: 493 runtime
+tests, 4,674/4,674 runnable workspace tests (31 ignored; 4,705 inventoried),
+377/377 storage tests (2 external-provider skips), the required verification
+harness, all workspace JS build/typecheck/test lanes (51 UI files / 336 tests),
+and proof helpers. The exact storage PITR performance regression also passed
+independently; the final clock-integration conflict surfaces passed 71/71
+Firebase and 16/16 atomic-write-batch focused tests.
 `scripts/check-docs.sh` passed all 108 public pages and
 `scripts/verify-nimbus-docs-site.sh` passed 17/17 conditions. The first Opus
 4.8 code review found stale Firestore typed-value sidecars in unmasked

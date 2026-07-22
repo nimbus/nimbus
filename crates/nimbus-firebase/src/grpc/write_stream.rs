@@ -9,8 +9,7 @@ use futures::stream;
 use nimbus_core::{
     AtomicWrite, AtomicWriteBatch, AtomicWriteBatchOutcome, Error, FieldTransform,
     FieldTransformOperation, MonotonicClock, NumericValue, PrincipalContext, StoredValue,
-    SystemMonotonicClock, Timestamp, TypedFieldMap, TypedScalarValue, WritePrecondition,
-    WriteSetMode,
+    SystemMonotonicClock, Timestamp, TypedFieldMap, WritePrecondition, WriteSetMode,
 };
 use nimbus_engine::Engine;
 use nimbus_tenant::TenantIsolationContext;
