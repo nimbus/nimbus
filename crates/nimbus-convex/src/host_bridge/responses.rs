@@ -1,5 +1,8 @@
 use super::*;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
+
+use nimbus_core::RuntimeTimeoutKind;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
@@ -12,6 +15,11 @@ pub enum ConvexRuntimeResponseEnvelope {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ConvexRuntimeEncodedError {
     Cancelled,
+    RuntimeTimeout {
+        timeout_kind: RuntimeTimeoutKind,
+        timeout: Duration,
+    },
+    RuntimePromiseStalled,
     TenantNotFound {
         tenant_id: String,
     },
@@ -93,6 +101,8 @@ pub enum ConvexRuntimeEncodedError {
     },
     Internal {
         message: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        request_id: Option<String>,
     },
 }
 
@@ -200,6 +210,11 @@ impl ConvexRuntimeEncodedError {
 
         match error {
             Error::Cancelled => Self::Cancelled,
+            Error::RuntimeTimeout { kind, timeout } => Self::RuntimeTimeout {
+                timeout_kind: kind,
+                timeout,
+            },
+            Error::RuntimePromiseStalled => Self::RuntimePromiseStalled,
             Error::TenantNotFound(tenant_id) => Self::TenantNotFound {
                 tenant_id: tenant_id.to_string(),
             },
@@ -230,16 +245,32 @@ impl ConvexRuntimeEncodedError {
             Error::Serialization(message) => Self::Serialization { message },
             Error::NotFound(message) => Self::NotFound { message },
             Error::Transport(message) => Self::Transport { message },
-            Error::Internal(message) => Self::Internal { message },
-            other => Self::Internal {
-                message: other.to_string(),
-            },
+            error @ Error::Internal(_) => Self::internal(error),
+            other => Self::internal(other),
+        }
+    }
+
+    fn internal(error: Error) -> Self {
+        let request_id = next_convex_runtime_host_request_id();
+        tracing::error!(
+            %request_id,
+            error = %error,
+            "internal error mapped to Convex runtime host response"
+        );
+        Self::Internal {
+            message: "An internal runtime host error occurred.".to_string(),
+            request_id: Some(request_id),
         }
     }
 
     pub fn into_core_error(self) -> Error {
         match self {
             Self::Cancelled => Error::Cancelled,
+            Self::RuntimeTimeout {
+                timeout_kind,
+                timeout,
+            } => Error::runtime_timeout(timeout_kind, timeout),
+            Self::RuntimePromiseStalled => Error::RuntimePromiseStalled,
             Self::TenantNotFound { tenant_id } => TenantId::new(tenant_id)
                 .map(Error::TenantNotFound)
                 .unwrap_or_else(|error| Error::Internal(error.to_string())),
@@ -318,9 +349,24 @@ impl ConvexRuntimeEncodedError {
             Self::Serialization { message } => Error::Serialization(message),
             Self::NotFound { message } => Error::NotFound(message),
             Self::Transport { message } => Error::Transport(message),
-            Self::Internal { message } => Error::Internal(message),
+            Self::Internal {
+                message,
+                request_id,
+            } => match request_id {
+                Some(request_id) => {
+                    Error::Internal(format!("{message} (runtime host request ID: {request_id})"))
+                }
+                None => Error::Internal(message),
+            },
         }
     }
+}
+
+fn next_convex_runtime_host_request_id() -> String {
+    static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
+
+    let id = NEXT_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
+    format!("convex-runtime-host-{id:016x}")
 }
 
 fn historical_read_kind_from_str(value: &str) -> Option<nimbus_core::HistoricalReadErrorKind> {
@@ -423,5 +469,59 @@ mod tests {
             let decoded = ConvexRuntimeEncodedError::from_core_error(error).into_core_error();
             assert_eq!(decoded.to_string(), expected);
         }
+    }
+
+    #[test]
+    fn runtime_timeout_round_trips_through_runtime_encoding() {
+        let error = Error::runtime_timeout(RuntimeTimeoutKind::System, Duration::from_millis(250));
+
+        let decoded = ConvexRuntimeEncodedError::from_core_error(error).into_core_error();
+        assert!(matches!(
+            decoded,
+            Error::RuntimeTimeout {
+                kind: RuntimeTimeoutKind::System,
+                timeout,
+            } if timeout == Duration::from_millis(250)
+        ));
+    }
+
+    #[test]
+    fn stalled_runtime_promise_round_trips_through_runtime_encoding() {
+        let decoded = ConvexRuntimeEncodedError::from_core_error(Error::RuntimePromiseStalled)
+            .into_core_error();
+
+        assert!(matches!(decoded, Error::RuntimePromiseStalled));
+    }
+
+    #[test]
+    fn internal_runtime_host_errors_are_redacted_and_correlated() {
+        let encoded = ConvexRuntimeEncodedError::from_core_error(Error::Internal(
+            "sensitive-internal-diagnostic-marker".to_string(),
+        ));
+        let serialized = serde_json::to_value(&encoded).expect("encoded error should serialize");
+
+        assert_eq!(serialized["kind"], "internal");
+        assert_eq!(
+            serialized["message"],
+            "An internal runtime host error occurred."
+        );
+        assert!(
+            serialized["request_id"]
+                .as_str()
+                .is_some_and(|request_id| !request_id.is_empty())
+        );
+        assert!(
+            !serialized
+                .to_string()
+                .contains("sensitive-internal-diagnostic-marker")
+        );
+
+        let decoded = encoded.into_core_error();
+        assert!(
+            !decoded
+                .to_string()
+                .contains("sensitive-internal-diagnostic-marker")
+        );
+        assert!(decoded.to_string().contains("runtime host request ID"));
     }
 }

@@ -122,10 +122,18 @@ pub(super) fn translate_sort(sort_doc: Option<&bson::Document>) -> Vec<OrderBy> 
         .collect()
 }
 
-pub(super) fn matches_simple_filters(doc: &Document, filters: &[Filter]) -> bool {
+pub(super) fn matches_mongodb_filters(doc: &Document, filters: &[Filter]) -> bool {
     for filter in filters {
         let Some(field_val) = doc.get_field(&filter.field) else {
-            return false;
+            let missing_matches = match filter.op {
+                FilterOp::Eq => filter.value.is_null(),
+                FilterOp::Neq => !filter.value.is_null(),
+                FilterOp::Gt | FilterOp::Gte | FilterOp::Lt | FilterOp::Lte => false,
+            };
+            if !missing_matches {
+                return false;
+            }
+            continue;
         };
         let matched = match filter.op {
             FilterOp::Eq => field_val == &filter.value,
@@ -140,6 +148,14 @@ pub(super) fn matches_simple_filters(doc: &Document, filters: &[Filter]) -> bool
         }
     }
     true
+}
+
+fn filters_can_match_missing_fields(filters: &[Filter]) -> bool {
+    filters.iter().any(|filter| match filter.op {
+        FilterOp::Eq => filter.value.is_null(),
+        FilterOp::Neq => !filter.value.is_null(),
+        FilterOp::Gt | FilterOp::Gte | FilterOp::Lt | FilterOp::Lte => false,
+    })
 }
 
 pub(super) struct QueryDocumentsRequest<'a> {
@@ -187,7 +203,7 @@ pub(super) fn query_documents(
                 Ok(doc) => {
                     let non_id_filters = translate_filter_excluding_id(filter_doc)?;
                     if let Some(doc) = doc
-                        && matches_simple_filters(&doc, &non_id_filters)
+                        && matches_mongodb_filters(&doc, &non_id_filters)
                     {
                         return Ok(vec![doc]);
                     }
@@ -202,11 +218,24 @@ pub(super) fn query_documents(
 
     let primary_order = orders.first().cloned();
     let filters = translate_filter(filter_doc)?;
+    // The shared query engine intentionally uses protocol-neutral missing-field
+    // semantics. MongoDB additionally matches missing fields for equality with
+    // null and inequality with a non-null value, so those filters need a broad
+    // engine scan followed by adapter-owned filtering.
+    let needs_adapter_filtering = filters_can_match_missing_fields(&filters);
     let query = Query {
         table: table.clone(),
-        filters,
+        filters: if needs_adapter_filtering {
+            vec![]
+        } else {
+            filters.clone()
+        },
         order: primary_order,
-        limit: if orders.len() > 1 { None } else { limit },
+        limit: if orders.len() > 1 || needs_adapter_filtering {
+            None
+        } else {
+            limit
+        },
     };
     let mut docs = match transaction_token {
         Some(transaction_token) => {
@@ -216,11 +245,17 @@ pub(super) fn query_documents(
     }
     .map_err(MongoError::from)?;
 
+    if needs_adapter_filtering {
+        docs.retain(|doc| matches_mongodb_filters(doc, &filters));
+    }
+
     if orders.len() > 1 {
         apply_compound_sort(&mut docs, &orders);
-        if let Some(lim) = limit {
-            docs.truncate(lim);
-        }
+    }
+    if (orders.len() > 1 || needs_adapter_filtering)
+        && let Some(limit) = limit
+    {
+        docs.truncate(limit);
     }
 
     Ok(docs)
@@ -417,5 +452,36 @@ mod tests {
         assert!(compare_json_values(Some(&a_one), Some(&a_one_b_zero)).is_lt());
         assert!(compare_json_values(Some(&a_one), Some(&a_two)).is_lt());
         assert!(compare_json_values(Some(&a_one), Some(&b_zero)).is_lt());
+    }
+
+    #[test]
+    fn mongodb_missing_field_filter_semantics_are_explicit() {
+        let document = Document::with_id(
+            DocumentId::from_key("doc").unwrap(),
+            TableName::new("items").unwrap(),
+            serde_json::Map::new(),
+        );
+        let filter = |op, value| Filter {
+            field: "missing".to_owned(),
+            op,
+            value,
+        };
+
+        assert!(matches_mongodb_filters(
+            &document,
+            &[filter(FilterOp::Eq, serde_json::Value::Null)]
+        ));
+        assert!(matches_mongodb_filters(
+            &document,
+            &[filter(FilterOp::Neq, json!("value"))]
+        ));
+        assert!(!matches_mongodb_filters(
+            &document,
+            &[filter(FilterOp::Neq, serde_json::Value::Null)]
+        ));
+        assert!(!matches_mongodb_filters(
+            &document,
+            &[filter(FilterOp::Gt, json!(0))]
+        ));
     }
 }

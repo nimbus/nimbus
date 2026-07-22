@@ -49,7 +49,7 @@ pub use encoding::{
 };
 pub use error::{
     CommitErrorClass, Error, HistoricalReadErrorKind, MutationCap, Result, Retryability,
-    StorageErrorKind, non_empty,
+    RuntimeTimeoutKind, StorageErrorKind, non_empty,
 };
 pub use firestore::{
     DEFAULT_FIRESTORE_DATABASE_ID, locator_for_document_path, parse_document_path,

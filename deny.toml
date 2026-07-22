@@ -79,7 +79,7 @@ deny = [
     # `cargo update` cannot silently re-bump it; the advisory is ignored with
     # justification in [advisories] above. Lift both when a later release lands
     # clean against the full nimbus-server suite.
-    { crate = "crossbeam-epoch@0.9.20", reason = "Aborts nimbus-server test binary on macOS; hold 0.9.18 (see RUSTSEC-2026-0204 ignore)." },
+    { crate = "crossbeam-epoch:>0.9.18, <0.10", reason = "Versions newer than the validated 0.9.18 hold are not approved; 0.9.20 aborts the nimbus-server test binary on macOS (see RUSTSEC-2026-0204 ignore)." },
 ]
 skip = [
     { crate = "addr2line@0.25.1", reason = "Pingora 0.8.1's optional tracing/cache lane carries cf-rustracing/backtrace on addr2line 0.25 alongside Wasmtime's newer addr2line lane." },

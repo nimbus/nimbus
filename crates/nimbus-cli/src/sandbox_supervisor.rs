@@ -102,7 +102,6 @@ fn print_json(value: &impl Serialize) -> nimbus::Result<()> {
 
 fn egress_mode_label(mode: EgressEnforcementMode) -> &'static str {
     match mode {
-        EgressEnforcementMode::LaunchMetadata => "launch_metadata",
         EgressEnforcementMode::SupervisorProxy => "supervisor_proxy",
     }
 }
@@ -165,11 +164,11 @@ mod tests {
     }
 
     #[test]
-    fn supervisor_command_rejects_invalid_contract_policy() {
+    fn supervisor_command_rejects_removed_launch_metadata_mode() {
         let contract = serde_json::json!({
             "schema_version": EGRESS_ENFORCEMENT_SCHEMA_VERSION,
             "mode": "launch_metadata",
-            "reload_policy": "live_reload",
+            "reload_policy": "recreate_required",
             "policy": {}
         })
         .to_string();
@@ -180,11 +179,13 @@ mod tests {
         let error = evaluate_sandbox_supervisor_command(&command, |key| {
             (key == EGRESS_ENFORCEMENT_ENV).then_some(contract)
         })
-        .expect_err("false live reload claim should fail closed");
+        .expect_err("removed launch-metadata mode should fail closed");
 
         assert!(
-            error.to_string().contains("cannot claim live reload"),
-            "invalid contract should surface validation reason: {error}"
+            error
+                .to_string()
+                .contains("unknown variant `launch_metadata`"),
+            "removed contract mode should surface the validation reason: {error}"
         );
     }
 

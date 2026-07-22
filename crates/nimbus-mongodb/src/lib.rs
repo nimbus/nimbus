@@ -36,10 +36,11 @@ pub struct AuthConfig {
     pub password: String,
     pub salt: [u8; 16],
     pub iterations: u32,
-    /// Whether this credential authenticates a specific tenant (credential->TenantId)
-    /// rather than being the single tenant-agnostic credential. Always `false` today;
-    /// set when per-tenant credential binding lands (M9a, issue #23). The `nimbus-server`
-    /// bind guard refuses any non-loopback bind while this is `false`.
+    /// Whether this standalone credential authenticates a specific tenant.
+    ///
+    /// `AuthConfig` represents the loopback-only, tenant-agnostic mode and is
+    /// therefore always `false`. Network-reachable, tenant-bound listeners use
+    /// [`MongoAuth::Bound`] and [`CredentialRegistry`] instead.
     tenant_bound: bool,
 }
 
@@ -75,20 +76,16 @@ impl AuthConfig {
             password,
             salt,
             iterations: 4096,
-            // The shipped credential is tenant-agnostic; per-tenant binding is M9(a) (#23).
+            // Standalone AuthConfig is the loopback-only, tenant-agnostic mode.
             tenant_bound: false,
         })
     }
 
     /// Whether this credential authenticates a specific tenant.
     ///
-    /// `false` for the single tenant-agnostic credential the adapter ships with today
-    /// (tenant chosen from the wire `$db`). The `nimbus-server` bind guard
-    /// (`guard_bind_address`) refuses any non-loopback bind while this is `false`,
-    /// because a network-reachable listener under a tenant-agnostic credential would
-    /// expose every tenant. M9(a) — credential->TenantId binding, mirroring the DynamoDB
-    /// `AccessKeyRegistry` — makes this `true` for bound credentials, the prerequisite
-    /// for a non-loopback bind. See issue #23.
+    /// This is `false` for [`AuthConfig`], whose tenant is selected from wire
+    /// `$db` and whose listener is consequently loopback-only. Bound mode uses
+    /// [`MongoAuth::Bound`] and fixes the tenant during SCRAM authentication.
     pub fn is_tenant_bound(&self) -> bool {
         self.tenant_bound
     }
@@ -103,8 +100,7 @@ mod auth_config_tests {
         let auth = AuthConfig::new("admin".into(), "admin".into());
         assert!(
             !auth.is_tenant_bound(),
-            "the single shipped credential is tenant-agnostic (unbound); the non-loopback bind \
-             guard must stay fail-closed until credential->TenantId binding lands (M9a, #23)"
+            "standalone AuthConfig is tenant-agnostic; non-loopback serving must use bound mode"
         );
     }
 }

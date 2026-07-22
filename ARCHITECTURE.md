@@ -27,6 +27,7 @@ All Rust workspace members, per the root `Cargo.toml`.
 | `nimbus-cli` | The `nimbus` CLI application library: `start`, `dev`, `deploy`, `run`, `sandbox`, `init`, `machine`, `backup`, `compose`, `encryption`, codegen, and more. Invoked by the thin `nimbus-bin` entrypoint. |
 | `nimbus-cloud-functions` | Cloud Functions-compatible adapter contracts and runtime bridge. |
 | `nimbus-code-index` | Deploy-time structural JavaScript/TypeScript code-navigation index built with oxc. |
+| `nimbus-compute` | Transport-free compute-plane composition: execution workers, runtime provenance, filesystem grants, and service/runtime wiring shared by server and CLI. |
 | `nimbus-convex` | Convex protocol semantics: function registry, subscriptions, document identity, host-call payloads. |
 | `nimbus-core` | Shared types and validation. Zero I/O. |
 | `nimbus-crypto` | At-rest envelope/keyring primitives, crypto-shred, and framed blob AEAD; depends only on `nimbus-core` plus external crypto crates. |
@@ -273,7 +274,7 @@ and storage has its own diagnostics surface.
 ## Where to start reading
 
 - `crates/nimbus-bin/src/main.rs` — CLI entry point and command dispatch.
-- `crates/nimbus-bin/src/start/mod.rs` — server boot path.
+- `crates/nimbus-cli/src/start/mod.rs` — server boot path.
 - `crates/nimbus-server/src/router.rs` — every mounted route family in one place.
 - `crates/nimbus-engine/src/engine/mod.rs` — the `Engine` struct.
 - `crates/nimbus-engine/src/engine/mutations/direct/api.rs` — the public mutation API.

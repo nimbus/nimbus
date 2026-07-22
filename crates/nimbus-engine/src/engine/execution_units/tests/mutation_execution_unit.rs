@@ -31,6 +31,7 @@ fn collection_group_read_conflicts_with_first_insert_into_new_binding() {
     let batch = AtomicWriteBatch::new(vec![AtomicWrite::Set {
         key: WriteKey::from(binding),
         document: serde_json::Map::from_iter([("body".to_string(), json!("first"))]),
+        typed_fields: Default::default(),
         mode: WriteSetMode::Overwrite,
         precondition: WritePrecondition::default(),
         transforms: Vec::new(),

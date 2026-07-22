@@ -66,6 +66,7 @@ mod tests {
                     .expect("document path should parse"),
             )),
             document: Map::from_iter([("name".to_string(), json!(document_id))]),
+            typed_fields: Default::default(),
             mode: WriteSetMode::Overwrite,
             precondition: WritePrecondition::default(),
             transforms: Vec::new(),

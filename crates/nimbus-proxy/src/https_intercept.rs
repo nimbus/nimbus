@@ -42,24 +42,19 @@ const MAX_INFORMATIONAL_RESPONSES: usize = 8;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ConnectInterceptAction {
     Splice,
-    Intercept(ConnectInterceptReason),
+    Intercept,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ConnectInterceptReason {
-    Credential,
-    Dlp,
-    CredentialAndDlp,
-}
-
-pub(crate) fn classify_connect(matched_rule: Option<&EgressRule>) -> ConnectInterceptAction {
-    let requires_credential = matched_rule.is_some_and(|rule| rule.credential.is_some());
-    let requires_dlp = matched_rule.is_some_and(|rule| !rule.dlp.is_empty());
-    match (requires_credential, requires_dlp) {
-        (false, false) => ConnectInterceptAction::Splice,
-        (true, false) => ConnectInterceptAction::Intercept(ConnectInterceptReason::Credential),
-        (false, true) => ConnectInterceptAction::Intercept(ConnectInterceptReason::Dlp),
-        (true, true) => ConnectInterceptAction::Intercept(ConnectInterceptReason::CredentialAndDlp),
+pub(crate) fn classify_connect(
+    matched_rule: Option<&EgressRule>,
+    policy_requires_interception: bool,
+) -> ConnectInterceptAction {
+    if policy_requires_interception
+        || matched_rule.is_some_and(|rule| rule.credential.is_some() || !rule.dlp.is_empty())
+    {
+        ConnectInterceptAction::Intercept
+    } else {
+        ConnectInterceptAction::Splice
     }
 }
 
@@ -1231,20 +1226,25 @@ mod tests {
             .with_dlp_rules([EgressDlpRule::new("secret", "secret")]);
 
         assert_eq!(
-            classify_connect(Some(&plain)),
+            classify_connect(Some(&plain), false),
             ConnectInterceptAction::Splice
         );
         assert_eq!(
-            classify_connect(Some(&credential)),
-            ConnectInterceptAction::Intercept(ConnectInterceptReason::Credential)
+            classify_connect(Some(&credential), false),
+            ConnectInterceptAction::Intercept
         );
         assert_eq!(
-            classify_connect(Some(&dlp)),
-            ConnectInterceptAction::Intercept(ConnectInterceptReason::Dlp)
+            classify_connect(Some(&dlp), false),
+            ConnectInterceptAction::Intercept
         );
         assert_eq!(
-            classify_connect(Some(&both)),
-            ConnectInterceptAction::Intercept(ConnectInterceptReason::CredentialAndDlp)
+            classify_connect(Some(&both), false),
+            ConnectInterceptAction::Intercept
+        );
+        assert_eq!(
+            classify_connect(Some(&plain), true),
+            ConnectInterceptAction::Intercept,
+            "method/path policy must force inspection even without credentials or DLP"
         );
     }
 

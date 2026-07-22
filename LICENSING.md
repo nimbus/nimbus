@@ -94,6 +94,18 @@ Commercial licensing is for:
 
 See [COMMERCIAL.md](COMMERCIAL.md).
 
+## Runtime license status
+
+The optional local license JSON file is operator-supplied status metadata. It
+is not signed, Nimbus does not cryptographically verify it, and the server does
+not use it to gate feature execution. Your legal obligations come from
+[LICENSE](LICENSE), regardless of the file's contents.
+
+The status endpoint reports configured entitlements for active licenses. When
+a trial or enterprise license is expired, it reports every entitlement as
+`false` so the machine-readable status cannot claim an expired entitlement is
+active. Expiration warnings remain available to monitoring and operators.
+
 ## Trademarks
 
 Nimbus trademarks and branding are not open for unrestricted use. See

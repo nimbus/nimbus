@@ -46,3 +46,47 @@ fn explicit_license_file_loads_and_tracks_path_source() {
     assert_eq!(snapshot.status, LicenseStatus::TrialActive);
     assert!(snapshot.entitlements.premium_support);
 }
+
+#[test]
+fn expired_license_snapshots_do_not_report_active_entitlements() {
+    for (kind, expires_at, expected_status) in [
+        (
+            LicenseKind::Trial,
+            (None, Some(1)),
+            LicenseStatus::TrialExpired,
+        ),
+        (
+            LicenseKind::Enterprise,
+            (Some(1), None),
+            LicenseStatus::EnterpriseExpired,
+        ),
+    ] {
+        let state = LicenseState {
+            source: LicenseSourceInfo {
+                kind: LicenseSourceKind::ExplicitFile,
+                path: None,
+            },
+            document: LicenseDocument {
+                schema_version: 1,
+                kind,
+                issued_to: None,
+                issued_by: None,
+                issued_at_unix_ms: None,
+                expires_at_unix_ms: expires_at.0,
+                trial_expires_at_unix_ms: expires_at.1,
+                revenue_limit_usd: None,
+                monthly_active_user_limit: None,
+                entitlements: LicenseEntitlements {
+                    premium_support: true,
+                    audit_logs: true,
+                    ..LicenseEntitlements::default()
+                },
+                notes: None,
+            },
+        };
+
+        let snapshot = state.snapshot();
+        assert_eq!(snapshot.status, expected_status);
+        assert_eq!(snapshot.entitlements, LicenseEntitlements::default());
+    }
+}

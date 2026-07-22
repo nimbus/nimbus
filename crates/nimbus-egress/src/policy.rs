@@ -106,6 +106,17 @@ impl CompiledEgressPolicy {
     }
 
     pub fn authorize(&self, request: &EgressRequest) -> EgressAuthorization {
+        self.authorize_with_l7(request, true)
+    }
+
+    /// Authorize the authority phase of an HTTPS CONNECT request. This checks
+    /// protocol, host, port, and the internal-address guard, but deliberately
+    /// defers HTTP method/path constraints until the decrypted inner request.
+    pub fn authorize_connect(&self, request: &EgressRequest) -> EgressAuthorization {
+        self.authorize_with_l7(request, false)
+    }
+
+    fn authorize_with_l7(&self, request: &EgressRequest, enforce_l7: bool) -> EgressAuthorization {
         let canonical_request_host = match request.canonical_host_result() {
             Ok(host) => host,
             Err(error) => {
@@ -115,6 +126,7 @@ impl CompiledEgressPolicy {
             }
         };
         let mut matched_but_denied = None;
+        let mut allowed_fallback = None;
         for rule in &self.policy.allow {
             if !rule.matches_l4(request, &canonical_request_host) {
                 continue;
@@ -129,7 +141,7 @@ impl CompiledEgressPolicy {
                 });
                 continue;
             }
-            if !rule.matches_l7(request) {
+            if enforce_l7 && !rule.matches_l7(request) {
                 matched_but_denied.get_or_insert_with(|| {
                     format!(
                         "sandbox egress rule `{}` matched {}, but HTTP method/path policy denied the request",
@@ -139,10 +151,16 @@ impl CompiledEgressPolicy {
                 });
                 continue;
             }
-            return EgressAuthorization::allow(
-                rule.name.clone(),
-                rule.requires_proxy_enforcement(),
-            );
+            let allowed =
+                EgressAuthorization::allow(rule.name.clone(), rule.requires_proxy_enforcement());
+            if enforce_l7 || rule.requires_connect_interception() {
+                return allowed;
+            }
+            allowed_fallback.get_or_insert(allowed);
+        }
+
+        if let Some(allowed) = allowed_fallback {
+            return allowed;
         }
 
         if let Some(reason) = matched_but_denied {
@@ -167,6 +185,30 @@ impl CompiledEgressPolicy {
         let mut request = request.clone();
         request.resolved_ip = None;
         self.authorize(&request)
+    }
+
+    /// Hostname-only form of [`Self::authorize_connect`]. The caller must
+    /// authorize the selected resolved IP again before dialing.
+    pub fn authorize_connect_hostname_without_resolved_ip(
+        &self,
+        request: &EgressRequest,
+    ) -> EgressAuthorization {
+        let mut request = request.clone();
+        request.resolved_ip = None;
+        self.authorize_connect(&request)
+    }
+
+    /// Whether any authority-matching rule requires the decrypted HTTPS
+    /// request to be inspected for method/path, credentials, or DLP.
+    pub fn connect_requires_interception(&self, request: &EgressRequest) -> bool {
+        let Ok(canonical_request_host) = request.canonical_host_result() else {
+            return false;
+        };
+        self.policy.allow.iter().any(|rule| {
+            rule.matches_l4(request, &canonical_request_host)
+                && (!request.targets_internal_address() || rule.allow_internal_ips)
+                && rule.requires_connect_interception()
+        })
     }
 }
 
@@ -319,6 +361,12 @@ impl EgressRule {
     /// than egress without those controls. (audit H4.)
     fn requires_proxy_enforcement(&self) -> bool {
         self.credential.is_some() || !self.dlp.is_empty()
+    }
+
+    fn requires_connect_interception(&self) -> bool {
+        !self.methods.is_empty()
+            || !self.path_prefixes.is_empty()
+            || self.requires_proxy_enforcement()
     }
 
     fn matches_l4(&self, request: &EgressRequest, canonical_request_host: &str) -> bool {
@@ -993,7 +1041,7 @@ mod tests {
     fn sandbox_egress_enforcement_plan_fails_closed_for_invalid_raw_policy() {
         let plan = EgressEnforcementPlan {
             schema_version: EGRESS_ENFORCEMENT_SCHEMA_VERSION,
-            mode: EgressEnforcementMode::LaunchMetadata,
+            mode: EgressEnforcementMode::SupervisorProxy,
             reload_policy: EgressReloadPolicy::RecreateRequired,
             policy: EgressPolicy::new([EgressRule::new(
                 "wildcard",
@@ -1013,20 +1061,18 @@ mod tests {
     }
 
     #[test]
-    fn sandbox_egress_enforcement_plan_rejects_false_live_reload_claims() {
-        let plan = EgressEnforcementPlan {
-            schema_version: EGRESS_ENFORCEMENT_SCHEMA_VERSION,
-            mode: EgressEnforcementMode::LaunchMetadata,
-            reload_policy: EgressReloadPolicy::LiveReload,
-            policy: EgressPolicy::deny_all(),
-        };
-
-        let error = plan
-            .validate()
-            .expect_err("launch metadata must not claim live reload");
+    fn sandbox_egress_enforcement_plan_rejects_removed_launch_metadata_mode() {
+        let error = serde_json::from_value::<EgressEnforcementPlan>(serde_json::json!({
+            "schema_version": EGRESS_ENFORCEMENT_SCHEMA_VERSION,
+            "mode": "launch_metadata",
+            "reload_policy": "recreate_required",
+            "policy": { "rules": [] },
+        }))
+        .expect_err("removed launch-metadata mode must not deserialize");
         assert!(
-            error.contains("cannot claim live reload"),
-            "reload lifecycle mismatch should fail closed: {error}"
+            error
+                .to_string()
+                .contains("unknown variant `launch_metadata`")
         );
     }
 

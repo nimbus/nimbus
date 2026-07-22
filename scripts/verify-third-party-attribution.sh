@@ -115,16 +115,64 @@ shopt -u nullglob
 
 if [ "${#crate_dirs[@]}" -eq 0 ]; then
   printf 'no guarded crates exist yet (crates/nimbus-blob, crates/nimbus-guest, crates/nimbus-libkrun-*)\n'
-  printf 'gate passes: nothing to enforce until Band B2 / Band S land\n'
-  exit 0
+else
+  for d in "${crate_dirs[@]}"; do
+    check_crate "${d}"
+    printf '\n'
+  done
 fi
 
-for d in "${crate_dirs[@]}"; do
-  check_crate "${d}"
-  printf '\n'
-done
+checked_patches=0
+if [ -f Cargo.toml ]; then
+  while IFS= read -r line; do
+    if [[ "${line}" =~ ^([A-Za-z0-9_-]+)[[:space:]]*=[[:space:]]*\{.*path[[:space:]]*=[[:space:]]*\"([^\"]+)\" ]]; then
+      crate_name="${BASH_REMATCH[1]}"
+      patch_dir="${BASH_REMATCH[2]}"
+      case "${patch_dir}" in
+        third_party/*)
+          checked_patches=$((checked_patches + 1))
+          printf '[vendored patch] %s (%s)\n' "${crate_name}" "${patch_dir}"
+          if [ ! -d "${patch_dir}" ]; then
+            fail "${crate_name}: vendored patch directory ${patch_dir} is missing"
+          elif compgen -G "${patch_dir}/LICENSE*" > /dev/null \
+            || compgen -G "${patch_dir}/COPYING*" > /dev/null; then
+            pass "${crate_name}: upstream license retained"
+          else
+            fail "${crate_name}: ${patch_dir} has no LICENSE* or COPYING* file"
+          fi
+          if grep -Fq "${crate_name}" NOTICE; then
+            pass "${crate_name}: root NOTICE attribution present"
+          else
+            fail "${crate_name}: root NOTICE does not name vendored patch"
+          fi
+          printf '\n'
+          ;;
+      esac
+    fi
+  done < <(awk '
+    /^\[patch\.crates-io\]$/ { in_patches = 1; next }
+    /^\[/ { if (in_patches) exit }
+    in_patches { print }
+  ' Cargo.toml)
+fi
+
+if [ "${checked_patches}" -gt 0 ]; then
+  if grep -Fq 'Apache Arrow Object Store' NOTICE \
+    && grep -Fq 'The Apache Software Foundation (http://www.apache.org/).' NOTICE; then
+    pass "object_store upstream NOTICE text retained"
+  else
+    fail "root NOTICE is missing object_store upstream NOTICE text"
+  fi
+  if grep -Fq 'Copyright (c) 2016 Dropbox, Inc.' NOTICE \
+    && grep -Fq 'Neither the name of the copyright holder' NOTICE; then
+    pass "Brotli BSD notice retained"
+  else
+    fail "root NOTICE is missing the Brotli BSD notice"
+  fi
+fi
 
 printf 'crates checked: %d\n' "${checked_crates}"
+printf 'vendored patches checked: %d\n' "${checked_patches}"
 if [ "${fail_count}" -gt 0 ]; then
   printf 'third-party attribution gate: FAIL (%d violation(s))\n' "${fail_count}" >&2
   exit 1

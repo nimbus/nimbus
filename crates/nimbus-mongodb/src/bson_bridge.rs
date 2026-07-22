@@ -361,10 +361,13 @@ fn typed_scalar_to_bson(typed: &TypedScalarValue) -> Bson {
         TypedScalarValue::MinKey => Bson::MinKey,
         TypedScalarValue::MaxKey => Bson::MaxKey,
         TypedScalarValue::JavaScriptCode { code } => Bson::JavaScriptCode(code.clone()),
-        // DynamoDB-specific scalars (N/SS/NS/BS) are not native MongoDB types.
-        // They only reach here when a DynamoDB-written document is read back
-        // through the MongoDB adapter (cross-adapter); project via clean JSON.
-        TypedScalarValue::Number { .. }
+        // Firestore- and DynamoDB-specific scalars are not native MongoDB
+        // types. On cross-adapter reads, project them through clean JSON.
+        TypedScalarValue::FirestoreTimestamp { .. }
+        | TypedScalarValue::Bytes { .. }
+        | TypedScalarValue::Reference { .. }
+        | TypedScalarValue::GeoPoint { .. }
+        | TypedScalarValue::Number { .. }
         | TypedScalarValue::StringSet { .. }
         | TypedScalarValue::NumberSet { .. }
         | TypedScalarValue::BinarySet { .. } => json_to_bson(&typed.projected_json()),

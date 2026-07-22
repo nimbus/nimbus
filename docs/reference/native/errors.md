@@ -47,7 +47,7 @@ error object under their `error` field.
 | `detail` | object or null | Code-specific structured context; commit-path errors include `retryability` |
 | `remediation` | object | Optional; `{"action": "<verb>", "message": "..."}` |
 
-Remediation `action` values: `retry`, `wait_and_retry`, `fix_request`,
+Remediation `action` values: `retry`, `wait_and_retry`, `fix_request`, `fix_function`,
 `reauthenticate`, `refresh_resource`, `create_index`, `upgrade_client`,
 `upgrade_server`, `contact_operator`.
 
@@ -60,6 +60,7 @@ Remediation `action` values: `retry`, `wait_and_retry`, `fix_request`,
 | `op.*` | A specific operation failed; the request itself is at fault or the target is missing |
 | `session.*` | Session- or tenant-level conditions |
 | `rate.*` | Capacity and rate limiting |
+| `runtime.*` | Function runtime deadlines, stalls, and execution limits |
 | `service.*` | Server-side infrastructure conditions |
 
 ## HTTP error codes
@@ -71,6 +72,9 @@ Remediation `action` values: `retry`, `wait_and_retry`, `fix_request`,
 | `auth.permission_denied` | 403 | no | — | Operation not permitted for principal |
 | `op.invalid_input` | 400 | no | — | Malformed request payload or path value |
 | `op.cancelled` | 408 | yes | — | Request cancelled before completion |
+| `runtime.execution_timeout` | 408 | no | `{"timeoutKind":"execution", "timeoutMs"}` | Function exhausted its execution-time budget; reduce work or increase the configured limit |
+| `runtime.system_timeout` | 408 | no | `{"timeoutKind":"system", "timeoutMs"}` | Function exhausted its end-to-end wall-time budget; ensure returned promises settle and background work completes within the configured limit |
+| `runtime.promise_stalled` | 422 | no | — | A returned promise cannot settle because the event loop is idle; fix the function so the promise has a reachable resolution or rejection path |
 | `op.document_not_found` | 404 | no | `{"documentId"}` | — |
 | `op.scheduled_job_not_found` | 404 | no | `{"jobId"}` | — |
 | `op.schema_not_found` | 404 | no | `{"table"}` | — |
@@ -98,7 +102,7 @@ Remediation `action` values: `retry`, `wait_and_retry`, `fix_request`,
 | `service.storage_corruption` | 500 | no | `{"storageKind"}` | Severity `fatal`; operator intervention required |
 | `service.storage_other` | 500 | no | `{"storageKind"}` | — |
 | `service.serialization` | 500 | no | — | — |
-| `service.internal` | 500 | no | — | Severity `fatal` |
+| `service.internal` | 500 | no | — | Severity `fatal`; the fixed public message is correlated to server diagnostics by `requestId` |
 
 ## Commit-path taxonomy
 

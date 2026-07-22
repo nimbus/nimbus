@@ -1,7 +1,5 @@
 use super::*;
-use crate::application_auth::verify_optional_application_auth_from_headers_in_deployment;
-use nimbus_auth::normalize_principal_context;
-use nimbus_tenant::TenantIsolationContext;
+use crate::adapters::convex::handlers::registry_auth::registry_and_auth;
 
 pub(in crate::adapters::convex) async fn dispatch_http_route(
     state: Arc<AppState>,
@@ -9,67 +7,14 @@ pub(in crate::adapters::convex) async fn dispatch_http_route(
     route_request: ConvexHttpRouteRequest,
 ) -> Result<Response, AppError> {
     let tenant_id = TenantId::new(tenant_id)?;
-    let deployment = state.current_deployment();
-    let registry = deployment
-        .convex_registry()
-        .ok_or_else(|| AppError::not_found("convex http route requires Convex support state"))?;
-    let request_auth = match verify_optional_application_auth_from_headers_in_deployment(
-        deployment.as_ref(),
+    let (registry, request_auth, tenant_context) = registry_and_auth(
+        &state,
+        crate::local_server::LocalServerRouteFamily::ConvexHttp,
+        &tenant_id,
         &route_request.headers,
+        "convex http route requires Convex support state",
     )
-    .await
-    {
-        Ok(auth) => {
-            state.record_local_server_audit(crate::local_server::LocalServerAuditEvent {
-                route_family: crate::local_server::LocalServerRouteFamily::ConvexHttp,
-                tenant_id: Some(tenant_id.to_string()),
-                auth_scope: "application",
-                auth_method: Some(if auth.is_some() {
-                    "application_bearer"
-                } else {
-                    "anonymous"
-                }),
-                success: true,
-                origin: crate::local_server::origin_from_headers(&route_request.headers),
-                reason: if auth.is_some() {
-                    "application.authenticated".to_string()
-                } else {
-                    "application.anonymous".to_string()
-                },
-            });
-            auth
-        }
-        Err(error) => {
-            state.record_local_server_audit(crate::local_server::LocalServerAuditEvent {
-                route_family: crate::local_server::LocalServerRouteFamily::ConvexHttp,
-                tenant_id: Some(tenant_id.to_string()),
-                auth_scope: "application",
-                auth_method: Some("application_bearer"),
-                success: false,
-                origin: crate::local_server::origin_from_headers(&route_request.headers),
-                reason: error.to_string(),
-            });
-            return Err(error);
-        }
-    };
-    crate::state::record_authenticated_usage(&state, request_auth.as_ref()).await;
-    let principal = normalize_principal_context(request_auth.as_ref());
-    // #41 team-binding gate (all-fail-closed) — the http-action path's copy of the
-    // same gate as `registry_and_auth`: a principal may only select a silo owned
-    // by its team. Replaces the `admit_if` Admit hole and supersedes the #43
-    // stopgap (cross-team refused on every bind).
-    deployment
-        .convex_tenancy()
-        .unwrap_or_default()
-        .authorize_silo_selection(&tenant_id, &principal)
-        .map_err(|error| AppError::forbidden(error.to_string()))?;
-    let tenant_context =
-        TenantIsolationContext::application(tenant_id.clone(), principal, "convex.http_action")
-            .with_deployment_generation(deployment.generation);
-    tenant_context.ensure_deployment_generation_matches(
-        deployment.generation,
-        "convex http action active deployment",
-    )?;
+    .await?;
     let route = registry
         .resolve_http_route(&route_request.method, &route_request.request_path)
         .cloned();

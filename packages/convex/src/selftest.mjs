@@ -683,7 +683,7 @@ async function testInjectedNodeSocketSupportsAnyApiSubscriptions(browserModule) 
   assertClientHello(socket.sent[0]);
   assert.deepEqual(socket.sent[1], {
     type: "subscribe_named",
-    request_id: "convex-1",
+    request_id: "nimbus-1",
     name: "messages:list",
     args: {},
   });

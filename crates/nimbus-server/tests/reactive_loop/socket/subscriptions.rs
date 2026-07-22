@@ -73,6 +73,75 @@ async fn websocket_multiple_subscriptions_share_a_connection() {
 }
 
 #[tokio::test]
+async fn websocket_bounds_pending_subscription_registration_tasks() {
+    const REGISTRATION_LIMIT: usize = 32;
+
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let service = fixture.engine();
+    let server = ServerFixture::start(router_for_engine(service.clone())).await;
+    let api = HttpApiFixture::new(&server);
+    assert!(api.create_tenant("demo").await.status().is_success());
+    let tenant_id = nimbus_core::TenantId::new("demo").expect("tenant id should be valid");
+    service
+        .arm_subscription_bootstrap_pause_for_testing(&tenant_id)
+        .expect("bootstrap pause handle should arm");
+
+    let mut socket = WebSocketFixture::connect(&api.ws_url("/ws"), "demo").await;
+    for index in 0..REGISTRATION_LIMIT {
+        socket
+            .subscribe_all(&format!("pending-{index}"), "tasks")
+            .await;
+    }
+    socket.subscribe_all("overflow", "tasks").await;
+
+    let pause_service = service.clone();
+    let pause_tenant = tenant_id.clone();
+    let pause_entered = tokio::task::spawn_blocking(move || {
+        pause_service.wait_for_subscription_bootstrap_pause_for_testing(
+            &pause_tenant,
+            Duration::from_secs(2),
+        )
+    })
+    .await
+    .expect("bootstrap pause waiter task should join")
+    .expect("bootstrap pause waiter should succeed");
+    assert!(
+        pause_entered,
+        "registrations should reach the bounded bootstrap pause"
+    );
+
+    let mut results = 0;
+    let mut overflow = None;
+    for _ in 0..=REGISTRATION_LIMIT {
+        let message = socket.next_json().await;
+        match message["type"].as_str() {
+            Some("subscription_result") => results += 1,
+            Some("op.error") if message["id"] == json!("overflow") => overflow = Some(message),
+            other => panic!("unexpected websocket message type {other:?}: {message}"),
+        }
+    }
+
+    assert_eq!(results, REGISTRATION_LIMIT);
+    let overflow = overflow.expect("the request above the registration cap must be rejected");
+    assert_eq!(
+        overflow["error"]["code"],
+        json!("rate.subscription_registration_limit")
+    );
+    assert_eq!(overflow["error"]["retryable"], json!(true));
+    assert_eq!(
+        service
+            .active_subscription_count(&tenant_id)
+            .expect("subscription count should load"),
+        REGISTRATION_LIMIT,
+        "the overflow request must not create another engine registration"
+    );
+
+    service
+        .release_subscription_bootstrap_pause_for_testing(&tenant_id)
+        .expect("bootstrap pause should release");
+}
+
+#[tokio::test]
 async fn websocket_disconnect_drops_subscription_without_explicit_unsubscribe() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let service = fixture.engine();

@@ -377,6 +377,7 @@ mod tests {
             writes: vec![AtomicWrite::Patch {
                 key: WriteKey::from(DocumentLocator::new(table.clone(), document_id.clone())),
                 field_patch: serde_json::Map::from_iter([("body".to_string(), json!(body))]),
+                typed_fields: Default::default(),
                 mask: vec!["body".to_string()],
                 precondition: WritePrecondition::default(),
                 transforms: Vec::new(),
@@ -511,6 +512,7 @@ mod tests {
                 AtomicWriteBatch::new(vec![AtomicWrite::Set {
                     key: WriteKey::from(DocumentLocator::new(table.clone(), document_id.clone())),
                     document: serde_json::Map::from_iter([("body".to_string(), json!("inside"))]),
+                    typed_fields: Default::default(),
                     mode: WriteSetMode::Create,
                     precondition: WritePrecondition::default(),
                     transforms: Vec::new(),
@@ -650,6 +652,7 @@ mod tests {
                 AtomicWriteBatch::new(vec![AtomicWrite::Set {
                     key: WriteKey::from(DocumentLocator::new(table, document_id)),
                     document: serde_json::Map::from_iter([("body".to_string(), json!("bad"))]),
+                    typed_fields: Default::default(),
                     mode: WriteSetMode::Create,
                     precondition: WritePrecondition::default(),
                     transforms: Vec::new(),

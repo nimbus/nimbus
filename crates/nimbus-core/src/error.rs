@@ -85,6 +85,34 @@ impl std::fmt::Display for HistoricalReadErrorKind {
     }
 }
 
+/// Runtime deadline that terminated a function invocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeTimeoutKind {
+    /// The invocation exhausted its configured execution-time budget.
+    Execution,
+    /// The invocation exhausted its configured end-to-end wall-time budget.
+    System,
+}
+
+impl RuntimeTimeoutKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Execution => "execution",
+            Self::System => "system",
+        }
+    }
+}
+
+impl std::fmt::Display for RuntimeTimeoutKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Execution => f.write_str("execution"),
+            Self::System => f.write_str("system wall time"),
+        }
+    }
+}
+
 /// Machine-readable guidance for retrying an operation failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -170,6 +198,15 @@ impl std::fmt::Display for MutationCap {
 pub enum Error {
     #[error("operation canceled")]
     Cancelled,
+
+    #[error("runtime {kind} timed out after {timeout:?}")]
+    RuntimeTimeout {
+        kind: RuntimeTimeoutKind,
+        timeout: Duration,
+    },
+
+    #[error("runtime promise cannot settle because the event loop is idle")]
+    RuntimePromiseStalled,
 
     #[error("tenant not found: {0}")]
     TenantNotFound(TenantId),
@@ -390,6 +427,8 @@ impl Error {
                 ..
             } => Retryability::RetryableAfterBackoff,
             Self::Cancelled
+            | Self::RuntimeTimeout { .. }
+            | Self::RuntimePromiseStalled
             | Self::TenantNotFound(_)
             | Self::DocumentNotFound(_)
             | Self::ScheduledJobNotFound(_)
@@ -436,7 +475,12 @@ impl Error {
                 | Self::SchemaValidation(_)
                 | Self::SchemaNotFound(_)
                 | Self::CapExceeded { .. }
+                | Self::RuntimePromiseStalled
         )
+    }
+
+    pub fn runtime_timeout(kind: RuntimeTimeoutKind, timeout: Duration) -> Self {
+        Self::RuntimeTimeout { kind, timeout }
     }
 
     pub fn is_environmental(&self) -> bool {

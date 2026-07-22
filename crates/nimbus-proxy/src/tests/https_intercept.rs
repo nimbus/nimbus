@@ -42,6 +42,41 @@ fn egress_proxy_intercept_required_connect_fails_closed_without_tls_authority() 
 }
 
 #[test]
+fn egress_proxy_method_restricted_connect_requires_tls_interception() {
+    let upstream = TestTcpServer::start(b"pong");
+    let proxy = start_test_proxy(allow_policy([EgressRule::new(
+        "get-only-https",
+        EgressProtocol::Https,
+        "allowed.test",
+        upstream.addr.port(),
+    )
+    .allow_internal_ips(true)
+    .with_methods(["GET"])]));
+
+    let response = proxy_request(
+        proxy.local_addr(),
+        format!(
+            "CONNECT allowed.test:{} HTTP/1.1\r\nHost: allowed.test:{}\r\n\r\n",
+            upstream.addr.port(),
+            upstream.addr.port()
+        ),
+    );
+
+    assert!(
+        response.starts_with("HTTP/1.1 403 Forbidden")
+            && response.contains("TLS authority is unavailable"),
+        "method-restricted CONNECT must reach the interception gate, got: {response}"
+    );
+    assert!(
+        upstream
+            .request
+            .recv_timeout(Duration::from_millis(100))
+            .is_err(),
+        "missing TLS authority must deny before a method-restricted tunnel reaches upstream"
+    );
+}
+
+#[test]
 fn egress_proxy_intercepts_https_and_injects_credentials_after_tls_decryption() {
     let upstream_authority =
         WorkloadPepTlsAuthority::generate_ephemeral().expect("upstream authority should build");

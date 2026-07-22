@@ -1,6 +1,8 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use nimbus_core::{CommitErrorClass, Error, HistoricalReadErrorKind, Result, StorageErrorKind};
+use nimbus_core::{
+    CommitErrorClass, Error, HistoricalReadErrorKind, Result, RuntimeTimeoutKind, StorageErrorKind,
+};
 use nimbus_runtime::NimbusRuntimeError;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -20,12 +22,28 @@ impl RuntimeHostResponseEnvelope {
     }
 
     pub fn from_core_error(error: &Error) -> Self {
-        let error = serde_json::to_value(RuntimeHostPublicError::from_core_error(error))
-            .unwrap_or_else(|serialization_error| {
-                Value::String(format!(
-                    "failed to serialize runtime host error `{error}`: {serialization_error}"
-                ))
-            });
+        let public = RuntimeHostPublicError::from_core_error(error);
+        let error = serde_json::to_value(&public).unwrap_or_else(|serialization_error| {
+            tracing::error!(
+                request_id = %public.request_id,
+                error = %error,
+                %serialization_error,
+                "runtime host error envelope serialization failed"
+            );
+            json!({
+                "code": "service.internal",
+                "message": "An internal runtime host error occurred.",
+                "requestId": public.request_id,
+                "timestamp": public.timestamp,
+                "severity": "fatal",
+                "retryable": false,
+                "detail": null,
+                "remediation": {
+                    "action": "contact_operator",
+                    "message": "Internal runtime host failures require operator investigation."
+                }
+            })
+        });
         Self::Error { error }
     }
 }
@@ -176,6 +194,40 @@ impl RuntimeHostPublicError {
                     "Retry the operation.",
                 )),
             ),
+            Error::RuntimeTimeout { kind, timeout } => {
+                let (code, remediation) = match kind {
+                    RuntimeTimeoutKind::Execution => (
+                        "runtime.execution_timeout",
+                        "Reduce function work or increase the configured execution timeout.",
+                    ),
+                    RuntimeTimeoutKind::System => (
+                        "runtime.system_timeout",
+                        "Ensure returned promises settle and background work completes within the configured system timeout.",
+                    ),
+                };
+                Self::new(
+                    code,
+                    error.to_string(),
+                    RuntimeHostErrorSeverity::Error,
+                    false,
+                    json!({
+                        "timeoutKind": kind.as_str(),
+                        "timeoutMs": u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
+                    }),
+                    Some(RuntimeHostErrorRemediation::new("fix_request", remediation)),
+                )
+            }
+            Error::RuntimePromiseStalled => Self::new(
+                "runtime.promise_stalled",
+                error.to_string(),
+                RuntimeHostErrorSeverity::Error,
+                false,
+                Value::Null,
+                Some(RuntimeHostErrorRemediation::new(
+                    "fix_function",
+                    "Ensure every returned promise has a reachable resolution or rejection path.",
+                )),
+            ),
             Error::TenantNotFound(tenant_id) => Self::new(
                 "session.tenant_not_found",
                 error.to_string(),
@@ -303,17 +355,7 @@ impl RuntimeHostPublicError {
                 Value::Null,
                 None,
             ),
-            Error::Internal(_) => Self::new(
-                "service.internal",
-                error.to_string(),
-                RuntimeHostErrorSeverity::Fatal,
-                false,
-                Value::Null,
-                Some(RuntimeHostErrorRemediation::new(
-                    "contact_operator",
-                    "Internal server failures require operator investigation.",
-                )),
-            ),
+            Error::Internal(_) => Self::internal(error),
             Error::NotFound(_) => Self::new(
                 "op.not_found",
                 error.to_string(),
@@ -333,18 +375,28 @@ impl RuntimeHostPublicError {
                     "Retry once the transport or connection issue clears.",
                 )),
             ),
-            _ => Self::new(
-                "service.internal",
-                error.to_string(),
-                RuntimeHostErrorSeverity::Fatal,
-                false,
-                Value::Null,
-                Some(RuntimeHostErrorRemediation::new(
-                    "contact_operator",
-                    "Internal server failures require operator investigation.",
-                )),
-            ),
+            _ => Self::internal(error),
         }
+    }
+
+    fn internal(error: &Error) -> Self {
+        let public = Self::new(
+            "service.internal",
+            "An internal runtime host error occurred.",
+            RuntimeHostErrorSeverity::Fatal,
+            false,
+            Value::Null,
+            Some(RuntimeHostErrorRemediation::new(
+                "contact_operator",
+                "Internal runtime host failures require operator investigation.",
+            )),
+        );
+        tracing::error!(
+            request_id = %public.request_id,
+            error = %error,
+            "internal error mapped to runtime host envelope"
+        );
+        public
     }
 
     fn from_storage_error(error: &Error, kind: StorageErrorKind) -> Self {
@@ -474,6 +526,8 @@ pub fn encode_runtime_core_result(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
 
     #[test]
@@ -512,5 +566,61 @@ mod tests {
         );
         assert_eq!(encoded["error"]["retryable"], false);
         assert_eq!(encoded["error"]["remediation"]["action"], "create_index");
+    }
+
+    #[test]
+    fn runtime_host_timeout_envelope_preserves_safe_metadata() {
+        let error = Error::runtime_timeout(RuntimeTimeoutKind::System, Duration::from_millis(250));
+
+        let encoded = serde_json::to_value(RuntimeHostResponseEnvelope::from_core_error(&error))
+            .expect("error envelope should serialize");
+
+        assert_eq!(encoded["status"], "error");
+        assert_eq!(encoded["error"]["code"], "runtime.system_timeout");
+        assert_eq!(encoded["error"]["detail"]["timeoutKind"], "system");
+        assert_eq!(encoded["error"]["detail"]["timeoutMs"], 250);
+        assert_eq!(encoded["error"]["retryable"], false);
+    }
+
+    #[test]
+    fn runtime_host_stalled_promise_is_safe_and_actionable() {
+        let encoded = serde_json::to_value(RuntimeHostResponseEnvelope::from_core_error(
+            &Error::RuntimePromiseStalled,
+        ))
+        .expect("error envelope should serialize");
+
+        assert_eq!(encoded["status"], "error");
+        assert_eq!(encoded["error"]["code"], "runtime.promise_stalled");
+        assert_eq!(
+            encoded["error"]["message"],
+            "runtime promise cannot settle because the event loop is idle"
+        );
+        assert_eq!(encoded["error"]["retryable"], false);
+        assert_eq!(encoded["error"]["remediation"]["action"], "fix_function");
+    }
+
+    #[test]
+    fn runtime_host_internal_errors_are_redacted_and_correlated() {
+        let error = Error::Internal("sensitive-internal-diagnostic-marker".to_string());
+
+        let encoded = serde_json::to_value(RuntimeHostResponseEnvelope::from_core_error(&error))
+            .expect("error envelope should serialize");
+
+        assert_eq!(encoded["status"], "error");
+        assert_eq!(encoded["error"]["code"], "service.internal");
+        assert_eq!(
+            encoded["error"]["message"],
+            "An internal runtime host error occurred."
+        );
+        assert!(
+            encoded["error"]["requestId"]
+                .as_str()
+                .is_some_and(|request_id| !request_id.is_empty())
+        );
+        assert!(
+            !encoded
+                .to_string()
+                .contains("sensitive-internal-diagnostic-marker")
+        );
     }
 }

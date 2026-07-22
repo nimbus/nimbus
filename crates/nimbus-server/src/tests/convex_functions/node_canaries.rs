@@ -881,17 +881,21 @@ async fn run_convex_use_node_dangling_promise_canary(
     let response = api
         .convex_named_action("demo", "messages:danglingPromise", json!({}))
         .await;
-    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let status = response.status();
     let body = response
         .json::<serde_json::Value>()
         .await
         .expect("dangling promise diagnostic response should parse");
-    let message = body["error"]["message"]
-        .as_str()
-        .expect("dangling promise diagnostic should include a message");
-    assert!(
-        message.contains("timed out") || message.contains("pending") || message.contains("Promise"),
-        "dangling promise canary should fail with an actionable async diagnostic: {body}"
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body:#}");
+    assert_eq!(body["error"]["code"], json!("runtime.promise_stalled"));
+    assert_eq!(
+        body["error"]["message"],
+        json!("runtime promise cannot settle because the event loop is idle")
+    );
+    assert_eq!(body["error"]["detail"], json!(null));
+    assert_eq!(
+        body["error"]["remediation"]["action"],
+        json!("fix_function")
     );
 }
 

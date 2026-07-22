@@ -6743,6 +6743,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tracing",
  "workspace-hack",
 ]
 
@@ -6818,6 +6819,7 @@ version = "0.1.45"
 dependencies = [
  "nimbus-core",
  "serde",
+ "serde_json",
  "workspace-hack",
 ]
 
@@ -6914,6 +6916,7 @@ dependencies = [
  "rand 0.8.5",
  "redis",
  "redis-protocol",
+ "subtle",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
