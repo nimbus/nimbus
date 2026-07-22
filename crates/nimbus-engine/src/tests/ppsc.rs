@@ -1,7 +1,10 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use nimbus_core::{DocumentId, ManualMonotonicClock, SeededIdSource, TenantEventKind, hex_encode};
+use nimbus_core::{
+    DocumentId, FieldSchema, FieldType, ManualMonotonicClock, Mutation, ScheduleRequest,
+    SeededIdSource, TenantEventKind, TriggerDeliveryCursor, hex_encode,
+};
 use nimbus_testing::ppsc::{
     PpscBackend, PpscEffect, PpscExpectedOutcome, PpscFrontiers, PpscHistory, PpscJournalEntry,
     PpscObservedStep, PpscOperation, PpscPublication, PpscRoute, PpscScenario, PpscSequenceClaim,
@@ -16,7 +19,8 @@ const PPSC_OBSERVER: &str = "ppsc-scenario-recorder";
 #[derive(Default)]
 struct PpscPublicationRecorder {
     current_step: AtomicUsize,
-    publications: Mutex<Vec<(TenantId, SequenceNumber, usize)>>,
+    observer_publications: Mutex<Vec<(TenantId, SequenceNumber, usize)>>,
+    published_prefix: Mutex<BTreeMap<TenantId, BTreeMap<SequenceNumber, usize>>>,
 }
 
 impl PpscPublicationRecorder {
@@ -24,10 +28,42 @@ impl PpscPublicationRecorder {
         self.current_step.store(step, Ordering::Release);
     }
 
-    fn for_tenant(&self, tenant_id: &TenantId) -> Vec<(SequenceNumber, usize)> {
-        self.publications
+    fn observe_published_prefix(
+        &self,
+        tenant_id: &TenantId,
+        published_head: SequenceNumber,
+        step: usize,
+    ) {
+        let mut prefixes = self
+            .published_prefix
             .lock()
-            .expect("PPSC publication recorder lock should not be poisoned")
+            .expect("PPSC published-prefix recorder lock should not be poisoned");
+        let tenant_prefix = prefixes.entry(tenant_id.clone()).or_default();
+        for sequence in 1..=published_head.0 {
+            tenant_prefix
+                .entry(SequenceNumber(sequence))
+                .or_insert(step);
+        }
+    }
+
+    fn published_for_tenant(&self, tenant_id: &TenantId) -> Vec<(SequenceNumber, usize)> {
+        self.published_prefix
+            .lock()
+            .expect("PPSC published-prefix recorder lock should not be poisoned")
+            .get(tenant_id)
+            .map(|prefix| {
+                prefix
+                    .iter()
+                    .map(|(sequence, step)| (*sequence, *step))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn observer_for_tenant(&self, tenant_id: &TenantId) -> Vec<(SequenceNumber, usize)> {
+        self.observer_publications
+            .lock()
+            .expect("PPSC observer recorder lock should not be poisoned")
             .iter()
             .filter_map(|(candidate, sequence, step)| {
                 (candidate == tenant_id).then_some((*sequence, *step))
@@ -38,7 +74,7 @@ impl PpscPublicationRecorder {
 
 impl crate::CommittedMutationObserver for PpscPublicationRecorder {
     fn committed_mutation_applied(&self, event: crate::CommittedMutationEvent) {
-        self.publications
+        self.observer_publications
             .lock()
             .expect("PPSC publication recorder lock should not be poisoned")
             .push((
@@ -223,6 +259,7 @@ impl PpscEngineRunner {
                     .await
                     .expect("scenario publication work should drain");
             }
+            self.observe_published_prefixes(index);
             let effects = self.new_effects(&before);
             for effect in &effects {
                 let Some(sequence) = effect.sequence else {
@@ -315,6 +352,71 @@ impl PpscEngineRunner {
                 }
                 PpscExpectedOutcome::Committed
             }
+            PpscOperation::SchemaSet { tenant, revision } => {
+                self.engine
+                    .set_table_schema_async(
+                        self.tenant(tenant).clone(),
+                        ppsc_schema(tasks_table(), *revision),
+                    )
+                    .await
+                    .expect("PPSC schema set should commit");
+                PpscExpectedOutcome::Committed
+            }
+            PpscOperation::SchemaDelete { tenant } => {
+                self.engine
+                    .delete_table_schema_async(self.tenant(tenant).clone(), tasks_table())
+                    .await
+                    .expect("PPSC schema delete should commit");
+                PpscExpectedOutcome::Committed
+            }
+            PpscOperation::TriggerCursorAdvance { tenant, through } => {
+                self.engine
+                    .set_trigger_delivery_cursor_for_testing(
+                        self.tenant(tenant),
+                        TriggerDeliveryCursor::new(SequenceNumber(*through)),
+                    )
+                    .expect("PPSC trigger cursor should advance through the internal committer");
+                PpscExpectedOutcome::Committed
+            }
+            PpscOperation::Schedule { tenant, job } => {
+                let document_id = DocumentId::from_key(format!(
+                    "ppsc-{:016x}-scheduled-{job:016x}",
+                    self.scenario_seed
+                ))
+                .expect("PPSC scheduled document id should parse");
+                self.engine
+                    .schedule_mutation_async(
+                        self.tenant(tenant).clone(),
+                        ScheduleRequest {
+                            run_after_ms: 10_000_u64.saturating_add(*job % 10_000),
+                            mutation: Mutation::Insert {
+                                table: tasks_table(),
+                                id: Some(document_id),
+                                fields: serde_json::Map::from_iter([
+                                    ("key".to_string(), json!(format!("scheduled-{job}"))),
+                                    ("value".to_string(), json!(job)),
+                                ]),
+                            },
+                        },
+                    )
+                    .await
+                    .expect("PPSC scheduled work should commit");
+                PpscExpectedOutcome::Committed
+            }
+            PpscOperation::ProjectionUpdate { tenant, revision } => {
+                self.engine
+                    .set_table_schema_async(
+                        self.tenant(tenant).clone(),
+                        ppsc_schema(
+                            TableName::new("ppsc_projection")
+                                .expect("PPSC projection table should parse"),
+                            *revision,
+                        ),
+                    )
+                    .await
+                    .expect("PPSC projection source update should commit");
+                PpscExpectedOutcome::Committed
+            }
             PpscOperation::AdvanceWallClock { millis } => {
                 self.wall_clock.advance_ms(*millis);
                 PpscExpectedOutcome::Observed
@@ -370,6 +472,17 @@ impl PpscEngineRunner {
             .collect()
     }
 
+    fn observe_published_prefixes(&self, step: usize) {
+        for tenant_id in self.tenants.values() {
+            let stats = self
+                .engine
+                .mutation_journal_stats_for_testing(tenant_id)
+                .expect("scenario publication frontier should load");
+            self.publications
+                .observe_published_prefix(tenant_id, stats.published_head, step);
+        }
+    }
+
     async fn terminal_state(&self) -> PpscTerminalState {
         let mut tenants = BTreeMap::new();
         for (name, tenant_id) in &self.tenants {
@@ -393,9 +506,20 @@ impl PpscEngineRunner {
                 .iter()
                 .map(|record| (record.sequence, hex_encode(record.integrity_sha256)))
                 .collect::<BTreeMap<_, _>>();
+            let mut observer_sequences = BTreeSet::new();
+            for (sequence, _) in self.publications.observer_for_tenant(tenant_id) {
+                assert!(
+                    identities.contains_key(&sequence),
+                    "observer publication {sequence} must identify a durable record"
+                );
+                assert!(
+                    observer_sequences.insert(sequence),
+                    "observer publication {sequence} must be delivered at most once"
+                );
+            }
             let publications = self
                 .publications
-                .for_tenant(tenant_id)
+                .published_for_tenant(tenant_id)
                 .into_iter()
                 .map(|(sequence, step)| PpscPublication {
                     tenant: name.clone(),
@@ -420,6 +544,42 @@ impl PpscEngineRunner {
                     )
                 })
                 .collect();
+            let mut schema = self
+                .engine
+                .get_schema_async(tenant_id.clone())
+                .await
+                .expect("terminal schema should read")
+                .tables
+                .into_values()
+                .collect::<Vec<_>>();
+            schema.sort_by(|left, right| left.table.as_str().cmp(right.table.as_str()));
+            let schema =
+                serde_json::to_vec(&schema).expect("terminal schema should serialize canonically");
+            let mut scheduled_jobs = self
+                .engine
+                .list_scheduled_jobs_async(tenant_id.clone())
+                .await
+                .expect("terminal scheduled jobs should read")
+                .into_iter()
+                .map(|job| {
+                    serde_json::to_vec(&job)
+                        .expect("terminal scheduled job should serialize canonically")
+                })
+                .collect::<Vec<_>>();
+            scheduled_jobs.sort();
+            let trigger_cursor = self
+                .engine
+                .trigger_delivery_cursor_for_testing(tenant_id)
+                .expect("terminal trigger cursor should read")
+                .materialized_through
+                .0;
+            let projection_durable_sequence = self
+                .engine
+                .projection_token_for_tenant_async(tenant_id)
+                .await
+                .expect("terminal projection token should read")
+                .durable_sequence
+                .0;
             tenants.insert(
                 name.clone(),
                 PpscTenantState {
@@ -442,11 +602,27 @@ impl PpscEngineRunner {
                         .collect(),
                     publications,
                     documents,
-                    ..PpscTenantState::default()
+                    schema,
+                    scheduled_jobs,
+                    trigger_cursor,
+                    projection_durable_sequence,
                 },
             );
         }
         PpscTerminalState { tenants }
+    }
+}
+
+fn ppsc_schema(table: TableName, revision: u64) -> TableSchema {
+    TableSchema {
+        table,
+        fields: vec![FieldSchema {
+            name: format!("revision_{revision:016x}"),
+            field_type: FieldType::Any,
+            required: false,
+        }],
+        indexes: Vec::new(),
+        access_policy: None,
     }
 }
 
@@ -513,6 +689,50 @@ fn three_route_scenario() -> PpscScenario {
     .expect("three-route scenario should build")
 }
 
+fn internal_durable_jobs_scenario() -> PpscScenario {
+    let tenant = "ppsc-internal".to_string();
+    PpscScenario::new(
+        "internal-durable-jobs",
+        409,
+        vec![
+            PpscStep::new(
+                PpscOperation::SchemaSet {
+                    tenant: tenant.clone(),
+                    revision: 41,
+                },
+                PpscExpectedOutcome::Committed,
+            ),
+            PpscStep::new(
+                PpscOperation::Schedule {
+                    tenant: tenant.clone(),
+                    job: 42,
+                },
+                PpscExpectedOutcome::Committed,
+            ),
+            PpscStep::new(
+                PpscOperation::TriggerCursorAdvance {
+                    tenant: tenant.clone(),
+                    through: 1,
+                },
+                PpscExpectedOutcome::Committed,
+            ),
+            PpscStep::new(
+                PpscOperation::ProjectionUpdate {
+                    tenant: tenant.clone(),
+                    revision: 43,
+                },
+                PpscExpectedOutcome::Committed,
+            ),
+            PpscStep::new(
+                PpscOperation::SchemaDelete { tenant },
+                PpscExpectedOutcome::Committed,
+            ),
+            PpscStep::new(PpscOperation::Quiesce, PpscExpectedOutcome::Shutdown),
+        ],
+    )
+    .expect("internal durable-jobs scenario should build")
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn ppsc_engine_runner_exercises_three_production_commit_paths() {
     let scenario = three_route_scenario();
@@ -543,6 +763,47 @@ async fn ppsc_engine_runner_replay_is_byte_deterministic() {
         .run(scenario)
         .await;
     assert_eq!(first.canonical_bytes(), replay.canonical_bytes());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ppsc_engine_runner_internal_durable_jobs_match_embedded_backends() {
+    let scenario = internal_durable_jobs_scenario();
+    let mut terminal_states = Vec::new();
+    for backend in [PpscBackend::Memory, PpscBackend::Redb, PpscBackend::Sqlite] {
+        let history = PpscEngineRunner::new_embedded(backend, &scenario)
+            .await
+            .run(scenario.clone())
+            .await;
+        audit_ppsc_history(&history).unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(history.observed_steps.len(), scenario.steps.len());
+        assert!(
+            history.observed_steps[1].effects.is_empty(),
+            "scheduler persistence is serial and durable but does not consume a journal sequence"
+        );
+        let state = &history.terminal.tenants["ppsc-internal"];
+        assert_eq!(state.frontiers.assigned_high_water, 4);
+        assert_eq!(state.frontiers.active_assigned_head, 4);
+        assert_eq!(state.frontiers.durable_head, 4);
+        assert_eq!(state.frontiers.storage_applied_head, 4);
+        assert_eq!(state.frontiers.published_head, 4);
+        assert_eq!(state.frontiers.applied_head, 4);
+        assert_eq!(state.journal.len(), 4);
+        assert_eq!(state.publications.len(), 4);
+        assert_eq!(state.scheduled_jobs.len(), 1);
+        assert_eq!(state.trigger_cursor, 1);
+        assert_eq!(state.projection_durable_sequence, 4);
+        assert_eq!(
+            state.schema,
+            serde_json::to_vec(&vec![ppsc_schema(
+                TableName::new("ppsc_projection").expect("PPSC projection table should parse"),
+                43,
+            )])
+            .expect("expected PPSC terminal schema should serialize")
+        );
+        terminal_states.push(history.terminal);
+    }
+    assert_eq!(terminal_states[0], terminal_states[1]);
+    assert_eq!(terminal_states[1], terminal_states[2]);
 }
 
 pub(crate) async fn exercise_ppsc_provider_three_route_differential(

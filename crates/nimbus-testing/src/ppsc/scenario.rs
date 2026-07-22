@@ -523,7 +523,7 @@ fn universal_step(seed: u64, index: usize, step_count: usize, draw: u64) -> Ppsc
         6 => PpscStep::new(
             PpscOperation::TriggerCursorAdvance {
                 tenant: hot,
-                through: draw % 64,
+                through: (draw % 3) + 1,
             },
             PpscExpectedOutcome::Committed,
         ),
@@ -598,7 +598,7 @@ fn universal_step(seed: u64, index: usize, step_count: usize, draw: u64) -> Ppsc
         ),
         17 => PpscStep::new(
             PpscOperation::RestoreImport {
-                tenant: hot,
+                tenant: format!("tenant-{seed}-restore"),
                 archive: draw,
             },
             PpscExpectedOutcome::Committed,

@@ -22,7 +22,7 @@ impl Engine {
         tenant_id: &TenantId,
         request: ScheduleRequest,
     ) -> Result<JobId> {
-        let job = scheduled_job_from_request(self.now(), request);
+        let job = scheduled_job_from_request(self.now(), self.next_document_id(), request);
         self.persist_scheduled_job(tenant_id, job)
     }
 
@@ -33,7 +33,7 @@ impl Engine {
         run_at: Timestamp,
         mutation: Mutation,
     ) -> Result<JobId> {
-        let job = scheduled_job_at(self.now(), run_at, mutation);
+        let job = scheduled_job_at(self.now(), self.next_document_id(), run_at, mutation);
         self.persist_scheduled_job(tenant_id, job)
     }
 
@@ -87,7 +87,7 @@ impl Engine {
         Fut: future::Future<Output = ()> + Send,
         Check: Fn() -> Result<()> + Send + 'static,
     {
-        let job = scheduled_job_from_request(self.now(), request);
+        let job = scheduled_job_from_request(self.now(), self.next_document_id(), request);
         self.persist_scheduled_job_async_cancellable(tenant_id, job, cancel_wait, check_cancel)
             .await
     }
@@ -106,7 +106,7 @@ impl Engine {
         Fut: future::Future<Output = ()> + Send,
         Check: Fn() -> Result<()> + Send + 'static,
     {
-        let job = scheduled_job_at(self.now(), run_at, mutation);
+        let job = scheduled_job_at(self.now(), self.next_document_id(), run_at, mutation);
         self.persist_scheduled_job_async_cancellable(tenant_id, job, cancel_wait, check_cancel)
             .await
     }
@@ -313,17 +313,27 @@ impl Engine {
     }
 }
 
-fn scheduled_job_from_request(now: Timestamp, request: ScheduleRequest) -> ScheduledJob {
+fn scheduled_job_from_request(
+    now: Timestamp,
+    job_id: JobId,
+    request: ScheduleRequest,
+) -> ScheduledJob {
     scheduled_job_at(
         now,
+        job_id,
         now.saturating_add_duration(Duration::from_millis(request.run_after_ms)),
         request.mutation,
     )
 }
 
-fn scheduled_job_at(created_at: Timestamp, run_at: Timestamp, mutation: Mutation) -> ScheduledJob {
+fn scheduled_job_at(
+    created_at: Timestamp,
+    job_id: JobId,
+    run_at: Timestamp,
+    mutation: Mutation,
+) -> ScheduledJob {
     ScheduledJob {
-        id: JobId::new(),
+        id: job_id,
         run_at,
         mutation,
         created_at,

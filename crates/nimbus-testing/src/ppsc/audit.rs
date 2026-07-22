@@ -79,7 +79,7 @@ pub struct PpscTenantState {
     pub schema: Vec<u8>,
     pub scheduled_jobs: Vec<Vec<u8>>,
     pub trigger_cursor: u64,
-    pub projection_revision: u64,
+    pub projection_durable_sequence: u64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
