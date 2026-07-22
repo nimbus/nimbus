@@ -75,12 +75,17 @@ pub struct ProviderWritePipelineDiagnostic {
     /// a count of SQL statements issued internally while applying a record.
     pub provider_operation_count: u64,
     pub max_observed_in_flight: u64,
-    /// Cancellations observed at pipeline admission or by an admitted
-    /// operation. Cancellations are also included in `error_count`.
+    /// Cancellations observed after a batch enters the provider pipeline,
+    /// including later transaction checks. Cancellations are also included in
+    /// `error_count`.
     pub cancellation_count: u64,
-    /// Errors returned by admitted pipeline operations. Transaction setup,
-    /// validation, and commit errors are reported by their owning diagnostics.
+    /// Errors returned by admitted pipeline operations, plus cancellations
+    /// observed after batch admission. Other transaction setup, validation,
+    /// apply, and commit errors are reported by their owning diagnostics.
     pub error_count: u64,
+    /// Wall time for the operations admitted by this adapter. PostgreSQL times
+    /// its append/apply pair; MySQL times its batched journal operation, so this
+    /// value must not be compared across adapters as end-to-end commit latency.
     pub elapsed_nanos: u64,
 }
 
