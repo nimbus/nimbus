@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use nimbus_core::{Error, Result, TenantId, Timestamp};
@@ -8,7 +9,7 @@ use crate::tenant::TenantRuntime;
 use super::super::Engine;
 use super::access::{
     expect_scheduler_unit, read_loaded_tenant_store, with_scheduler_runtime,
-    write_loaded_scheduler_state, write_loaded_scheduler_state_async,
+    write_loaded_scheduler_state,
 };
 
 impl Engine {
@@ -29,12 +30,25 @@ impl Engine {
     pub(crate) async fn next_loaded_scheduled_work_at_async(
         self: &Arc<Self>,
     ) -> Result<Option<Timestamp>> {
+        self.next_loaded_scheduled_work_at_excluding_async(&BTreeSet::new())
+            .await
+    }
+
+    /// Returns the earliest durable deadline for a tenant not held in the
+    /// scheduler's local retry set. Exclusion is tenant-local: a contended or
+    /// failed tenant cannot turn its already-due row into a process-wide busy
+    /// loop or delay unrelated tenants.
+    pub(crate) async fn next_loaded_scheduled_work_at_excluding_async(
+        self: &Arc<Self>,
+        excluded: &BTreeSet<TenantId>,
+    ) -> Result<Option<Timestamp>> {
         self.ensure_provider_background_tasks_started();
         let loaded_tenants = self
             .tenants
             .read()
             .expect("tenant registry lock should not be poisoned")
             .iter()
+            .filter(|(tenant_id, _)| !excluded.contains(*tenant_id))
             .map(|(tenant_id, runtime)| (tenant_id.clone(), runtime.clone()))
             .collect::<Vec<_>>();
 
@@ -95,7 +109,9 @@ impl Engine {
         Ok(())
     }
 
-    /// Loads tenants with scheduled work asynchronously across the active provider.
+    /// Loads tenants with scheduled work asynchronously across the active
+    /// provider and arms one-shot running-job recovery for their first
+    /// authority-owning scheduler write.
     pub async fn load_tenants_with_scheduled_work_async(self: &Arc<Self>) -> Result<()> {
         self.ensure_provider_background_tasks_started();
         let tenant_ids = self.persistence_provider.list_tenants().await?;
@@ -127,10 +143,10 @@ impl Engine {
         Ok(())
     }
 
-    /// Preloads scheduled-work tenants during startup, recovers orphaned
-    /// running jobs, and only then starts the provider hint worker for
-    /// steady-state wake delivery. The regular scheduler loop remains the
-    /// owner of actually executing due work after startup.
+    /// Preloads scheduled-work tenants during startup, arms orphaned-job
+    /// recovery, and only then starts the provider hint worker for steady-state
+    /// wake delivery. Recovery and execution occur in the regular scheduler
+    /// loop after that runtime acquires per-tenant committer authority.
     pub async fn recover_scheduled_work_on_startup_async(self: &Arc<Self>) -> Result<()> {
         self.load_tenants_with_scheduled_work_from_provider_async(false)
             .await?;
@@ -162,7 +178,6 @@ impl Engine {
         self: &Arc<Self>,
         tenant_id: TenantId,
     ) -> Result<bool> {
-        let now = self.now();
         if let Some(runtime) = self.loaded_runtime_for_scheduler(&tenant_id) {
             let _operation = runtime.enter_operation(&tenant_id)?;
             let has_scheduled_work = runtime
@@ -224,6 +239,7 @@ impl Engine {
             )
             .await?,
         );
+        runtime.mark_scheduler_recovery_pending();
         self.start_committer_actor(runtime.clone());
         let progress = opened
             .persistence
@@ -244,17 +260,6 @@ impl Engine {
         }
         self.bootstrap_trigger_candidate_feed(runtime.clone())?;
         self.bootstrap_trigger_execution(runtime.clone())?;
-        // Running-job recovery belongs to startup/unloaded-tenant activation.
-        // Once a tenant is already loaded, the live scheduler owns claim
-        // state and provider wake paths must not requeue in-flight jobs.
-        expect_scheduler_unit(
-            write_loaded_scheduler_state_async(
-                runtime.clone(),
-                tenant_id.clone(),
-                SchedulerWrite::RecoverRunning { now },
-            )
-            .await?,
-        )?;
         self.tenants
             .write()
             .expect("tenant registry lock should not be poisoned")

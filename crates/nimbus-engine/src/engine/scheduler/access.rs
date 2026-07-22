@@ -58,9 +58,13 @@ pub(super) fn write_loaded_scheduler_state(
     runtime: Arc<TenantRuntime>,
     operation: SchedulerWrite,
 ) -> Result<SchedulerWriteResult> {
+    let recovery_now = match &operation {
+        SchedulerWrite::RecoverRunning { now } => *now,
+        _ => nimbus_core::Timestamp(0),
+    };
     let runtime_for_commit = runtime.clone();
     runtime.submit_internal_committer(move || {
-        runtime_for_commit.persist_scheduler_write(operation, || Ok(()))
+        runtime_for_commit.persist_scheduler_write(operation, recovery_now, || Ok(()))
     })
 }
 
@@ -71,7 +75,11 @@ pub(super) fn write_scheduler_state_blocking(
 ) -> Result<SchedulerWriteResult> {
     let runtime = engine.get_existing_tenant(tenant_id)?;
     let _operation = runtime.enter_operation(tenant_id)?;
-    write_loaded_scheduler_state(runtime, operation)
+    let recovery_now = engine.now();
+    let runtime_for_commit = runtime.clone();
+    runtime.submit_internal_committer(move || {
+        runtime_for_commit.persist_scheduler_write(operation, recovery_now, || Ok(()))
+    })
 }
 
 pub(super) async fn write_scheduler_state(
@@ -81,24 +89,11 @@ pub(super) async fn write_scheduler_state(
 ) -> Result<SchedulerWriteResult> {
     let runtime = engine.get_existing_tenant_async(&tenant_id).await?;
     let _operation = runtime.enter_operation(&tenant_id)?;
+    let recovery_now = engine.now();
     let runtime_for_commit = runtime.clone();
     runtime
         .submit_internal_committer_async(move || {
-            runtime_for_commit.persist_scheduler_write(operation, || Ok(()))
-        })
-        .await
-}
-
-pub(super) async fn write_loaded_scheduler_state_async(
-    runtime: Arc<TenantRuntime>,
-    tenant_id: TenantId,
-    operation: SchedulerWrite,
-) -> Result<SchedulerWriteResult> {
-    let _operation = runtime.enter_operation(&tenant_id)?;
-    let runtime_for_commit = runtime.clone();
-    runtime
-        .submit_internal_committer_async(move || {
-            runtime_for_commit.persist_scheduler_write(operation, || Ok(()))
+            runtime_for_commit.persist_scheduler_write(operation, recovery_now, || Ok(()))
         })
         .await
 }
@@ -119,6 +114,7 @@ where
         runtime,
         tenant_id,
         operation,
+        engine.now(),
         cancel_wait,
         check_cancel,
     )
@@ -129,6 +125,7 @@ pub(super) async fn write_loaded_scheduler_state_cancellable<Fut, Check>(
     runtime: Arc<TenantRuntime>,
     tenant_id: TenantId,
     operation: SchedulerWrite,
+    recovery_now: nimbus_core::Timestamp,
     cancel_wait: Fut,
     check_cancel: Check,
 ) -> Result<SchedulerWriteResult>
@@ -141,7 +138,7 @@ where
     let cancelled_for_commit = cancelled.clone();
     let runtime_for_commit = runtime.clone();
     let submit = runtime.submit_internal_committer_async(move || {
-        runtime_for_commit.persist_scheduler_write(operation, move || {
+        runtime_for_commit.persist_scheduler_write(operation, recovery_now, move || {
             check_cancel()?;
             if cancelled_for_commit.load(Ordering::Acquire) {
                 Err(Error::Cancelled)

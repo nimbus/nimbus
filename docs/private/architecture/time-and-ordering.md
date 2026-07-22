@@ -31,6 +31,17 @@ one resample bound; a backward correction cannot execute the job early; and
 shutdown interrupts a far-future wait. The waiter does not busy-loop at a zero
 configured interval.
 
+Provider runtime load arms orphaned-running-job recovery but does not execute
+it. The first scheduler transition consumes that one-shot intent only after the
+tenant's serialized committer has acquired provider-backed sequence authority;
+failed recovery restores the intent. A process that observes scheduled work
+owned by another healthy lease holder applies a tenant-local monotonic retry
+deadline and excludes only that tenant from durable-deadline selection until
+the deadline. This prevents an already-due row from becoming a process-wide
+busy loop while unrelated tenants remain runnable. Provider time continues to
+own lease validity; neither the wall deadline nor the local retry cadence can
+authorize a write.
+
 Convex `runAt` adapters pass the requested absolute timestamp into the Engine.
 They do not convert it to a relative delay outside the Engine, including inside
 a mutation execution unit where the scheduled write must commit or roll back

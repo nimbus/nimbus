@@ -237,6 +237,7 @@ that stops moving while its preceding lag grows identifies the owning phase;
 | Rising `visibility_lag` | Publication completed but the applied waiter watermark has stalled | Inspect journal worker health and restart/failure counters. |
 | Admission `queue_rejection_count`, committer send timeouts, or publisher send timeouts rising | Bounded backpressure is rejecting work | Identify whether admission, committer inbox, or publisher capacity is saturated before raising a bound. |
 | `committer_lease_fenced: true`, renewal failures, or a stopped renewal worker on a loaded provider tenant | Lease authority was lost or cannot be maintained | Expect tenant-local fencing and runtime replacement; investigate provider clock/availability and a competing owner. |
+| Repeated `scheduler failed for tenant; applying tenant-local bounded retry` events for one tenant | This process observed due scheduler state but could not complete its authority-fenced transition | Check whether another healthy process owns the tenant lease. The log's `retry_after_millis` is a monotonic local delay; other tenants remain runnable. If no healthy owner exists, investigate provider availability or stalled takeover. |
 | Rising `publisher_ambiguous_error_count` with a crash-and-replay log | Commit acknowledgement was ambiguous | Expect tenant-local eviction and replay. Do not retry as a definitive non-commit until the rebuilt runtime reports healthy progress. |
 | Rising `provider_catch_up_failure_count`, observer catch-up failures, or reconciliation backoff with stalled heads | Restart or takeover recovery is stalled | Inspect provider reads and observer reconciliation; the tenant remains unavailable until the contiguous prefix is recovered. |
 
@@ -264,7 +265,11 @@ together:
   heads, but they enter this same per-tenant publisher. On external providers,
   the scheduler row change and current-lease validation share one transaction;
   a stale scheduler writer therefore sets the same fenced/eviction signals
-  instead of producing an invisible second-owner write.
+  instead of producing an invisible second-owner write. Runtime load only arms
+  one-shot running-job recovery; it executes after the serialized committer
+  acquires authority. Lease contention is retried on a bounded, tenant-local
+  monotonic deadline and is reported by the event in the decision table rather
+  than spinning on an already-due durable row.
 
 - `observer_spawned_work_depth` is currently executing or queued observer
   work. Compare it with `observer_spawned_work_capacity` and

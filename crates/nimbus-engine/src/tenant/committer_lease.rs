@@ -324,6 +324,28 @@ impl TenantRuntime {
     pub(crate) fn persist_scheduler_write<Check>(
         self: &Arc<Self>,
         operation: nimbus_storage::SchedulerWrite,
+        recovery_now: Timestamp,
+        check_cancel: Check,
+    ) -> Result<nimbus_storage::SchedulerWriteResult>
+    where
+        Check: Fn() -> Result<()> + Send + 'static,
+    {
+        check_cancel()?;
+        if self.begin_scheduler_recovery()
+            && let Err(error) = self.persist_scheduler_write_once(
+                nimbus_storage::SchedulerWrite::RecoverRunning { now: recovery_now },
+                || Ok(()),
+            )
+        {
+            self.restore_scheduler_recovery();
+            return Err(error);
+        }
+        self.persist_scheduler_write_once(operation, check_cancel)
+    }
+
+    fn persist_scheduler_write_once<Check>(
+        self: &Arc<Self>,
+        operation: nimbus_storage::SchedulerWrite,
         check_cancel: Check,
     ) -> Result<nimbus_storage::SchedulerWriteResult>
     where

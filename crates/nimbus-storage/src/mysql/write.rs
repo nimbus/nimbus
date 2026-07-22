@@ -790,7 +790,29 @@ impl MySqlWriteTransaction {
         epoch: u64,
         durable_sequence: SequenceNumber,
     ) -> Result<u64> {
-        self.advance_fenced_committer_lease(owner_id, epoch, durable_sequence, durable_sequence)
+        // Scheduler writes validate without advancing the durable sequence. A
+        // no-op `UPDATE durable_sequence = durable_sequence` cannot be used as
+        // a matched-row test: MySQL reports changed rows by default, so a
+        // valid lease produces zero affected rows. Lock the matching lease row
+        // instead; the lock remains held through the scheduler mutation and
+        // transaction commit, preserving the same atomic fencing boundary as
+        // the sequence-advancing CAS below.
+        let query = format!(
+            "SELECT 1 FROM {} \
+             WHERE singleton = TRUE AND owner_id = ? AND epoch = ? \
+                   AND expires_at > CURRENT_TIMESTAMP(6) AND durable_sequence = ? \
+             FOR UPDATE",
+            qualified_table(&self.database_name, "committer_lease")
+        );
+        let owner_id = owner_id.to_string();
+        let runtime_handle = self.provider.runtime_handle.clone();
+        let conn = self.session()?;
+        Self::block_on(&runtime_handle, async move {
+            conn.exec_first::<u8, _, _>(query, (owner_id, epoch, durable_sequence.0))
+                .await
+                .map(|matched| u64::from(matched.is_some()))
+                .map_err(map_mysql_error)
+        })
     }
 
     pub(super) fn advance_fenced_committer_lease(

@@ -35,6 +35,7 @@ mod mutation_facade;
 pub(crate) mod pause_barrier;
 mod query_planning;
 mod query_planning_facade;
+mod scheduler_recovery;
 mod subscription_delivery;
 mod subscription_delivery_facade;
 mod trigger_candidates;
@@ -105,6 +106,7 @@ pub(crate) use self::mutation::{
 use self::query_planning::QueryPlanningMetrics;
 pub use self::query_planning::QueryPlanningStats;
 pub(crate) use self::query_planning::{QueryPlanMetricKind, QueryPlanMetricOperation};
+use self::scheduler_recovery::SchedulerRecoveryIntent;
 #[cfg(test)]
 pub(crate) use self::subscription_delivery::DEFAULT_SUBSCRIPTION_WORK_QUEUE_CAPACITY;
 pub(crate) use self::subscription_delivery::SubscriptionDeliveryMetrics;
@@ -151,6 +153,7 @@ pub struct TenantRuntime {
     mutation_journal: Arc<MutationJournalState>,
     committer: Arc<CommitterActor>,
     committer_lease: Option<Arc<CommitterLeaseLifecycle>>,
+    scheduler_recovery: SchedulerRecoveryIntent,
     publisher: Arc<PublisherHandoff>,
     observer_dispatch: Arc<ObserverHandoff>,
     observer_lifetime: Arc<()>,
@@ -331,6 +334,7 @@ impl TenantRuntime {
             committer_lease: committer_owner_id.map(|owner_id| {
                 Arc::new(CommitterLeaseLifecycle::new(owner_id, timing.renewal_clock))
             }),
+            scheduler_recovery: SchedulerRecoveryIntent::default(),
             publisher,
             observer_dispatch,
             observer_lifetime: Arc::new(()),

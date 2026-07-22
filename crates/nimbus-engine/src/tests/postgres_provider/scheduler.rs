@@ -60,7 +60,9 @@ async fn postgres_notifications_load_unloaded_tenants_with_scheduled_work() {
                 .expect("tenant should create");
 
             let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-            let scheduler_handle =
+            let scheduler_handle_a =
+                tokio::spawn(crate::run_scheduler(engine_a.clone(), shutdown_rx.clone()));
+            let scheduler_handle_b =
                 tokio::spawn(crate::run_scheduler(engine_b.clone(), shutdown_rx));
             engine_a
                 .schedule_mutation_async(
@@ -81,7 +83,7 @@ async fn postgres_notifications_load_unloaded_tenants_with_scheduled_work() {
                 .expect("scheduled mutation should persist");
 
             wait_for_value(
-                "postgres notification should load tenant and execute scheduled work",
+                "postgres lease owner should execute externally visible scheduled work",
                 Duration::from_secs(2),
                 Duration::from_millis(25),
                 || {
@@ -118,7 +120,12 @@ async fn postgres_notifications_load_unloaded_tenants_with_scheduled_work() {
             .await;
 
             let _ = shutdown_tx.send(true);
-            scheduler_handle.await.expect("scheduler should shut down");
+            scheduler_handle_a
+                .await
+                .expect("lease-owner scheduler should shut down");
+            scheduler_handle_b
+                .await
+                .expect("notification scheduler should shut down");
             engine_a.quiesce().await;
             engine_b.quiesce().await;
         },
