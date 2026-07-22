@@ -463,6 +463,13 @@ async fn provider_pipeline_cancellation_before_lease_admission_stages_no_suffix(
         .expect("pause wait should join");
         assert!(entered, "ordered batch should pause before lease admission");
         cancel.notify_one();
+        timeout(
+            Duration::from_secs(5),
+            engine_b.wait_for_queued_mutation_cancellation_observed_for_testing(&tenant_id),
+        )
+        .await
+        .expect("queued cancellation should be observed before lease admission resumes")
+        .expect("queued cancellation observation should succeed");
         pause.release();
         let error = timeout(Duration::from_secs(5), write)
             .await
