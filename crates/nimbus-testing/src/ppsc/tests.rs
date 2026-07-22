@@ -1,4 +1,6 @@
 use super::*;
+use nimbus_core::{Error, StorageErrorKind, TenantId};
+use nimbus_storage::{FaultInjector, FaultPoint};
 use std::collections::BTreeMap;
 
 fn observed(scenario: &PpscScenario) -> Vec<PpscObservedStep> {
@@ -439,4 +441,127 @@ fn ppsc_shrinker_retains_minimal_ordered_failure() {
         shrunk.steps[1].operation,
         PpscOperation::ReleaseFault { .. }
     ));
+}
+
+#[test]
+fn ppsc_storage_acknowledgement_loss_is_tenant_scoped_and_one_shot() {
+    let injector = PpscStorageFaultInjector::new();
+    let target = TenantId::new("ppsc-fault-target").expect("target tenant should build");
+    let peer = TenantId::new("ppsc-fault-peer").expect("peer tenant should build");
+    injector
+        .arm(target.clone(), PpscInjectedFault::AcknowledgementLoss)
+        .expect("acknowledgement loss should arm");
+
+    injector
+        .check(FaultPoint::StorageCommitAfterVisibilityBeforeReturn)
+        .expect("an unscoped check must not consume a tenant arm");
+    injector
+        .check_for_tenant(FaultPoint::StorageCommitAfterVisibilityBeforeReturn, &peer)
+        .expect("peer work must not consume the target tenant's arm");
+    let error = injector
+        .check_for_tenant(
+            FaultPoint::StorageCommitAfterVisibilityBeforeReturn,
+            &target,
+        )
+        .expect_err("the target tenant's acknowledgement should be lost once");
+    assert_eq!(error.storage_kind(), Some(StorageErrorKind::Transient));
+    injector
+        .check_for_tenant(
+            FaultPoint::StorageCommitAfterVisibilityBeforeReturn,
+            &target,
+        )
+        .expect("the one-shot arm must disarm after its first failure");
+
+    assert_eq!(
+        injector
+            .snapshot(&target, PpscInjectedFault::AcknowledgementLoss)
+            .expect("target snapshot should load"),
+        PpscStorageFaultSnapshot {
+            active: false,
+            visits: 1,
+            fires: 1,
+        }
+    );
+    assert_eq!(
+        injector
+            .snapshot(&peer, PpscInjectedFault::AcknowledgementLoss)
+            .expect("peer snapshot should load"),
+        PpscStorageFaultSnapshot {
+            active: false,
+            visits: 0,
+            fires: 0,
+        }
+    );
+}
+
+#[test]
+fn ppsc_storage_provider_transient_persists_until_explicit_release() {
+    let injector = PpscStorageFaultInjector::new();
+    let tenant = TenantId::new("ppsc-provider-transient").expect("tenant should build");
+    injector
+        .arm(tenant.clone(), PpscInjectedFault::ProviderTransient)
+        .expect("provider transient should arm");
+
+    for expected_fire in 1..=3 {
+        let error = injector
+            .check_for_tenant(FaultPoint::StorageCommitBeforeVisibility, &tenant)
+            .unwrap_err();
+        assert_eq!(error.storage_kind(), Some(StorageErrorKind::Transient));
+        assert!(error.to_string().contains(&format!("fire {expected_fire}")));
+    }
+    assert_eq!(
+        injector
+            .snapshot(&tenant, PpscInjectedFault::ProviderTransient)
+            .expect("armed snapshot should load"),
+        PpscStorageFaultSnapshot {
+            active: true,
+            visits: 3,
+            fires: 3,
+        }
+    );
+
+    injector
+        .release(&tenant, PpscInjectedFault::ProviderTransient)
+        .expect("provider transient should release");
+    injector
+        .check_for_tenant(FaultPoint::StorageCommitBeforeVisibility, &tenant)
+        .expect("released provider transient must stop failing");
+    assert!(
+        !injector
+            .snapshot(&tenant, PpscInjectedFault::ProviderTransient)
+            .expect("released snapshot should load")
+            .active
+    );
+}
+
+#[test]
+fn ppsc_storage_fault_interface_rejects_wrong_owner_and_invalid_transitions() {
+    let injector = PpscStorageFaultInjector::new();
+    let tenant = TenantId::new("ppsc-storage-fault-contract").expect("tenant should build");
+
+    let wrong_owner = injector
+        .arm(
+            tenant.clone(),
+            PpscInjectedFault::PublicationPredecessorHeld,
+        )
+        .expect_err("publisher fault must not arm through storage");
+    assert!(matches!(wrong_owner, Error::InvalidInput(_)));
+    let never_armed = injector
+        .release(&tenant, PpscInjectedFault::ProviderTransient)
+        .expect_err("release before arm must fail");
+    assert!(matches!(never_armed, Error::InvalidInput(_)));
+
+    injector
+        .arm(tenant.clone(), PpscInjectedFault::ProviderTransient)
+        .expect("first arm should succeed");
+    let duplicate = injector
+        .arm(tenant.clone(), PpscInjectedFault::ProviderTransient)
+        .expect_err("duplicate active arm must fail");
+    assert!(matches!(duplicate, Error::InvalidInput(_)));
+    injector
+        .release(&tenant, PpscInjectedFault::ProviderTransient)
+        .expect("release should succeed");
+    injector
+        .arm(tenant, PpscInjectedFault::ProviderTransient)
+        .expect("a released fault may be armed again");
 }

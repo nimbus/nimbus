@@ -89,7 +89,7 @@ pub enum PpscCommitOrder {
     ExecutionUnitDirectQueued,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum PpscInjectedFault {
     AcknowledgementLoss,
@@ -97,6 +97,18 @@ pub enum PpscInjectedFault {
     DurableBeforePublish,
     PublicationPredecessorHeld,
     PanicAfterDurable,
+}
+
+impl PpscInjectedFault {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::AcknowledgementLoss => "acknowledgement-loss",
+            Self::ProviderTransient => "provider-transient",
+            Self::DurableBeforePublish => "durable-before-publish",
+            Self::PublicationPredecessorHeld => "publication-predecessor-held",
+            Self::PanicAfterDurable => "panic-after-durable",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

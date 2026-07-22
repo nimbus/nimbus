@@ -8,6 +8,7 @@
 //! observed effect without normalization.
 
 mod audit;
+mod faults;
 mod scenario;
 mod shrink;
 
@@ -19,6 +20,7 @@ pub use audit::{
     PpscPublication, PpscSequenceClaim, PpscSequenceOwnership, PpscTenantState, PpscTerminalState,
     audit_ppsc_history,
 };
+pub use faults::{PpscStorageFaultInjector, PpscStorageFaultSnapshot};
 pub use scenario::{
     PPSC_MAX_STEPS, PpscBackend, PpscBackendCapabilities, PpscCommitOrder, PpscExpectedOutcome,
     PpscInjectedFault, PpscOperation, PpscRoute, PpscScenario, PpscScenarioError, PpscStep,
