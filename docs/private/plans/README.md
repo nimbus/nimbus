@@ -72,7 +72,21 @@ Phase 2 coordination: if future filesystem work, Wasmtime, or WAC need runtime
 bootstrap changes in the same window, create or reuse a shared
 extension-registry seam before the second concern edits `extensions.rs`.
 
-### Phase 3 - Sandbox And Machine Execution
+### Phase 3 - Network, Sandbox, And Machine Execution
+
+- `nimbus-network-control-plane-plan.md` - `active; independent architecture
+  review incorporated; implementation not started`. Sole owner for the transport-free
+  connectivity-resource control plane: portable network identities and plans,
+  crash-safe segment and cross-process host-port lease authority,
+  generation/epoch fencing, capability satisfaction, reconciliation, exact
+  provision/teardown choreography, and sovereignty proof. It must stay below
+  tenant, sandbox, services, machine, KV, compute, server, system, and future
+  cluster. NNC0.0 first makes the force-tracked owner plan durable in branch
+  history; the remaining NNC0 items capture the complete dependency/bind census,
+  real-process proof harnesses, and executable failure baselines before
+  extraction. Its workloads/compute, sandbox, egress/proxy, service, system,
+  and horizontal-scaling integrations consume those owners rather than forking
+  desired-workload state, policy, effects, projections, or cluster transport.
 
 - `nimbus-sandbox-plan.md` - `proposed`. Owns the multi-backend sandbox
   architecture (`ADOPT_MULTI_BACKEND_SANDBOX_ARCHITECTURE`, 2026-07-08): the
