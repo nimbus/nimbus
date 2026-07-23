@@ -61,5 +61,5 @@ slow-timeout = { period = "20m", terminate-after = 2 }
 
 [profile.ci-ppsc-seed-farm]
 inherits = "default"
-default-filter = 'package(nimbus-engine) and test(/^tests::ppsc::ppsc_seed_farm_executes_selected_redb_scenarios$/)'
+default-filter = 'package(nimbus-engine) and test(/^tests::ppsc::seed_farm::ppsc_seed_farm_executes_selected_redb_scenarios$/)'
 slow-timeout = { period = "30m", terminate-after = 1 }
