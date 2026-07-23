@@ -1,5 +1,7 @@
 use clap::{Parser, Subcommand};
 
+const CONVEX_SILO_ENV: &str = "NIMBUS_CONVEX_SILO";
+
 mod auth;
 mod backup;
 mod cli_ux;

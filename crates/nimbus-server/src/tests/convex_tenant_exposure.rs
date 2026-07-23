@@ -1,20 +1,17 @@
-//! #41 — Convex application-surface team-binding acceptance matrix.
+//! Convex application-surface silo-auth acceptance matrix.
 //!
 //! The Convex application routes (`/convex/{tenant_id}/…`) select a data silo
-//! (`TenantId`) from the caller-supplied URL. The #41 gate
-//! ([`nimbus_convex::ConvexTenancyConfig::authorize_silo_selection`]) is
-//! all-fail-closed: a request may select a silo only when the URL silo resolves
-//! to a team, the **verified** principal resolves to a team, and the two match.
-//! It runs on every bind (loopback included), superseding the removed #43
-//! network-bind stopgap.
+//! (`TenantId`) from the caller-supplied URL. Authenticated requests are
+//! all-fail-closed: the URL silo selects a trusted deployment-provisioned
+//! verifier before Nimbus examines the bearer. Anonymous requests are governed
+//! by a separate explicit policy.
 //!
 //! These tests drive the served HTTP/WebSocket path end-to-end with a genuinely
 //! verified principal (an ES256 `customJwt` bearer the deployment's auth verifier
 //! checks). The matrix:
 //!  1. anonymous selection of a registered silo → 403, nothing written.
-//!  2. cross-team selection by a verified team-a principal → 403 on a loopback
-//!     AND a non-loopback bind, nothing written (the non-loopback case proves the
-//!     binding, not a network guard, is what refuses).
+//!  2. a valid token naming a silo without its verifier → 401 on loopback and
+//!     non-loopback binds, nothing written.
 //!  3. same-team / same-silo selection → 200, the document lands in that silo.
 //!  4. same-team / OTHER-silo selection → 200, the document lands in the sibling
 //!     silo (the many-silos-per-team capability; each silo still isolated).
@@ -24,7 +21,7 @@
 use std::net::SocketAddr;
 
 use axum::http::HeaderValue;
-use nimbus_convex::{ConvexTenancyConfig, PrincipalTeamRegistry, SiloTeamRegistry, TeamId};
+use nimbus_convex::{ConvexTenancyConfig, SiloTeamRegistry, TeamId};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Error as TungsteniteError;
 
@@ -37,7 +34,7 @@ use super::*;
 const PUBLIC_BIND: &str = "203.0.113.5:8080";
 const ISSUER: &str = "https://idp.example.com";
 const APPLICATION_ID: &str = "nimbus-convex-team-binding";
-/// The verified token subject the principal registry binds to team-a.
+/// The subject carried by the test token.
 const SUBJECT: &str = "user-a";
 const SILO_A1: &str = "team-a-silo-1";
 const SILO_A2: &str = "team-a-silo-2";
@@ -53,18 +50,14 @@ fn team(id: &str) -> TeamId {
     TeamId::new(id).expect("team id should be valid")
 }
 
-/// The admin-provisioned #41 tenancy: team-a owns `team-a-silo-1` and
-/// `team-a-silo-2`; team-b owns `team-b-silo`. The verified principal `user-a`
-/// (matched by `subject`) is on team-a.
+/// Anonymous-policy metadata for the three test silos. Authenticated access is
+/// provisioned separately through the silo-auth registry.
 fn tenancy_config() -> ConvexTenancyConfig {
     let silo_teams = SiloTeamRegistry::new()
         .bind(&silo(SILO_A1), team(TEAM_A))
         .bind(&silo(SILO_A2), team(TEAM_A))
         .bind(&silo(SILO_B), team(TEAM_B));
-    let principal_teams = PrincipalTeamRegistry::new().bind(SUBJECT, team(TEAM_A));
-    ConvexTenancyConfig::new()
-        .with_silo_teams(silo_teams)
-        .with_principal_teams(principal_teams)
+    ConvexTenancyConfig::new().with_silo_teams(silo_teams)
 }
 
 /// An engine fixture with all three silos created. The returned fixture must be
@@ -104,8 +97,7 @@ fn mint_user_a_token() -> (String, String) {
 
 /// A Convex registry whose `customJwt` provider verifies a `user-a` token minted
 /// against `jwks_data_url`. Building the registry from the mint's JWKS is what
-/// makes the bearer carry a *verified* `subject`/`issuer`, which the team gate
-/// reads (it never trusts unverified claims).
+/// makes the bearer cryptographically verifiable by the bound registry.
 fn registry_verifying(jwks_data_url: &str) -> ConvexRegistry {
     convex_registry_with_routes_and_bundle_and_auth(
         json!([]),
@@ -159,26 +151,23 @@ async fn convex_anonymous_silo_selection_is_refused() {
     );
 }
 
-/// (2) Cross-team — a verified `user-a` (team-a) token naming `team-b-silo`
-/// (team-b) is refused (403, `CrossTeam`) on BOTH a loopback bind AND a
-/// non-loopback bind, and nothing is written to team-b's partition. The
-/// non-loopback sub-assert is the proof that the *team binding* — not the removed
-/// #43 network-bind stopgap — is what refuses: the verifier is wired so `user-a`
-/// is genuinely verified as team-a, yet it still cannot reach team-b's silo from
-/// a public bind.
+/// (2) A valid token is refused on both loopback and non-loopback binds when
+/// the requested silo has no provisioned verifier.
 #[tokio::test]
-async fn convex_cross_team_silo_selection_is_refused_on_loopback_and_non_loopback() {
+async fn convex_token_cannot_select_a_silo_without_its_verifier_on_any_bind() {
     let fixture = engine_with_silos();
     let engine = fixture.engine();
     let (token, jwks) = mint_user_a_token();
 
-    // Loopback bind: router_for_convex_with_tenancy wires the customJwt verifier
-    // from the registry, so the bearer is verified as subject `user-a` (team-a).
-    let loopback = ServerFixture::start(router_for_convex_with_tenancy(
-        engine.clone(),
-        registry_verifying(&jwks),
-        tenancy_config(),
-    ))
+    let loopback_registry = registry_verifying(&jwks);
+    let loopback_verifier = crate::router::convex_application_auth_verifier(&loopback_registry);
+    let loopback = ServerFixture::start(
+        RouterBuildConfig::core(engine.clone())
+            .with_convex_silo_auth_verifier(&silo(SILO_A1), loopback_verifier)
+            .with_convex(loopback_registry)
+            .with_convex_tenancy(tenancy_config())
+            .build(),
+    )
     .await;
     let loopback_response = loopback
         .client()
@@ -190,19 +179,17 @@ async fn convex_cross_team_silo_selection_is_refused_on_loopback_and_non_loopbac
         .expect("cross-team loopback mutation should send");
     assert_eq!(
         loopback_response.status(),
-        StatusCode::FORBIDDEN,
-        "a verified team-a principal must not select team-b's silo on a loopback bind"
+        StatusCode::UNAUTHORIZED,
+        "a token must not fall back to another silo's verifier on loopback"
     );
 
-    // Non-loopback bind. The verifier is wired explicitly (the raw build path does
-    // not wire it from the registry), so `user-a` is again genuinely verified as
-    // team-a — proving the 403 is the cross-team binding decision, not an
-    // unverified-principal refusal and not a blanket network guard.
+    // Repeat on a non-loopback bind to prove verifier selection is independent
+    // of the network-listener posture.
     let public_addr: SocketAddr = PUBLIC_BIND.parse().expect("public addr should parse");
     let public_registry = registry_verifying(&jwks);
     let verifier = crate::router::convex_application_auth_verifier(&public_registry);
     let public_router = RouterBuildConfig::core(engine.clone())
-        .with_application_auth_verifier(verifier)
+        .with_convex_silo_auth_verifier(&silo(SILO_A1), verifier)
         .with_convex(public_registry)
         .with_convex_tenancy(tenancy_config())
         .with_listen_addr(public_addr)
@@ -218,13 +205,13 @@ async fn convex_cross_team_silo_selection_is_refused_on_loopback_and_non_loopbac
         .expect("cross-team non-loopback mutation should send");
     assert_eq!(
         public_response.status(),
-        StatusCode::FORBIDDEN,
-        "a verified team-a principal must not select team-b's silo on a non-loopback bind"
+        StatusCode::UNAUTHORIZED,
+        "a token must not fall back to another silo's verifier on a non-loopback bind"
     );
 
     assert!(
         tasks_in(&engine, &silo(SILO_B)).is_empty(),
-        "no cross-team mutation (either bind) may write team-b's silo partition"
+        "no unprovisioned-silo mutation may write team-b's partition"
     );
 }
 
@@ -317,7 +304,7 @@ async fn convex_same_team_other_silo_mutation_is_admitted_and_lands() {
 /// (403) on every Convex application route type: the five POST families
 /// (query, paginated query, mutation, action, http action, scheduled mutation)
 /// and the WebSocket upgrade. Each POST body deserializes into its route's
-/// request type so the request reaches the team-binding gate (which runs before
+/// request type so the request reaches the anonymous policy (which runs before
 /// function resolution) rather than failing body extraction first.
 #[tokio::test]
 async fn convex_all_application_route_types_refuse_anonymous() {

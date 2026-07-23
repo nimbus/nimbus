@@ -38,6 +38,14 @@ cd my-app
 nimbus deploy http://127.0.0.1:8080 --dry-run
 ```
 
+For an app with a `convex/` source root, add `--convex-silo <tenant-id>` (or
+set `NIMBUS_CONVEX_SILO`) to both dry-run and activation commands. This binds
+the generated auth configuration to that deployment URL's tenant segment:
+
+```bash
+nimbus deploy http://127.0.0.1:8080 --convex-silo demo --dry-run
+```
+
 `nimbus deploy` runs codegen inside the binary, packages your functions,
 HTTP routes, schema, and runtime bundle, and asks the server to validate
 and diff them against whatever is currently active — without activating

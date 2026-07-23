@@ -3,18 +3,18 @@ use super::*;
 const DEPLOY_TOKEN: &str = "test-deploy-token";
 
 fn deploy_router(engine: Arc<Engine>, registry: Option<ConvexRegistry>) -> axum::Router {
-    // #41: the team gate guards every `/convex/<silo>` route these tests query
-    // after deploying, and `convex_tenancy` is carried forward to *every*
-    // activated generation — so provision the `demo` team tenancy
-    // unconditionally (even when no initial registry is supplied). The static
-    // verifier only matters for the initial deployment, so it stays gated on the
-    // initial registry; post-activation the deployed bundle is its own verifier.
+    // Provision a fail-closed anonymous policy for `demo` across every
+    // generation. The static verifier is bound only when an initial registry is
+    // present; activation installs the deployed registry as `demo`'s verifier.
     let mut config = crate::router::RouterBuildConfig::core(engine)
         .with_deploy_admin_token(DEPLOY_TOKEN)
         .with_convex_tenancy(convex_team_tenancy_for("demo"));
     if let Some(registry) = registry {
         config = config
-            .with_application_auth_verifier(std::sync::Arc::new(StaticConvexTeamVerifier))
+            .with_convex_silo_auth_verifier(
+                &TenantId::new("demo").expect("demo silo id"),
+                std::sync::Arc::new(StaticConvexTeamVerifier),
+            )
             .with_convex(registry);
     }
     config.build()
@@ -24,8 +24,7 @@ fn deploy_router_with_system_registry(
     engine: Arc<Engine>,
     registry: Option<ConvexRegistry>,
 ) -> axum::Router {
-    // #41: see `deploy_router` — provision the `demo` team tenancy
-    // unconditionally so every activated generation is admissible.
+    // See `deploy_router`: carry the `demo` anonymous policy through activation.
     let mut config = crate::router::RouterBuildConfig::core(engine)
         .with_deploy_admin_token(DEPLOY_TOKEN)
         .with_convex_tenancy(convex_team_tenancy_for("demo"))
@@ -35,7 +34,10 @@ fn deploy_router_with_system_registry(
         );
     if let Some(registry) = registry {
         config = config
-            .with_application_auth_verifier(std::sync::Arc::new(StaticConvexTeamVerifier))
+            .with_convex_silo_auth_verifier(
+                &TenantId::new("demo").expect("demo silo id"),
+                std::sync::Arc::new(StaticConvexTeamVerifier),
+            )
             .with_convex(registry);
     }
     config.build()
@@ -56,6 +58,7 @@ fn query_function(name: &str, table: &str) -> serde_json::Value {
 
 fn deploy_request(functions: serde_json::Value) -> serde_json::Value {
     json!({
+        "convex_silo": "demo",
         "artifacts": {
             "convex": {
                 "functions_json": { "functions": functions },
@@ -185,9 +188,10 @@ async fn deploy_admin_requires_configured_token() {
     let registry = convex_registry(json!([]));
     let server = ServerFixture::start(
         crate::router::RouterBuildConfig::core(fixture.engine())
-            .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
-                &registry,
-            ))
+            .with_convex_silo_auth_verifier(
+                &TenantId::new("demo").expect("demo silo id"),
+                crate::router::convex_application_auth_verifier(&registry),
+            )
             .with_convex(registry)
             .without_deploy_admin_token()
             .build(),
@@ -273,11 +277,8 @@ async fn deploy_dry_run_validates_and_diffs_without_activation() {
 
 #[tokio::test]
 async fn deploy_activation_swaps_new_requests_to_new_generation() {
-    // #41: this test queries the silo *after* activation, where the verifier is
-    // the deployed bundle (not the router's static verifier). So carry a real
-    // custom-JWT bearer and deploy its matching auth config inside the bundle —
-    // the activated generation verifies the token itself and the team tenancy
-    // admits it on the verified issuer.
+    // This test queries after activation, where the deployed registry—not the
+    // router's static fixture—must verify the token for `demo`.
     let (team_bearer, team_auth_config) = convex_team_real_auth();
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(deploy_router_with_system_registry(
@@ -323,6 +324,23 @@ async fn deploy_activation_swaps_new_requests_to_new_generation() {
             .await
             .status(),
         StatusCode::OK
+    );
+    assert_eq!(
+        api.create_tenant("other").await.status(),
+        StatusCode::CREATED
+    );
+    let wrong_silo = api
+        .convex_named_query("other", "notes:list", json!({}))
+        .await;
+    let wrong_silo_status = wrong_silo.status();
+    let wrong_silo_body = wrong_silo
+        .text()
+        .await
+        .expect("wrong-silo response should read");
+    assert_eq!(wrong_silo_status, StatusCode::UNAUTHORIZED);
+    assert!(
+        wrong_silo_body.contains("no Convex auth providers are configured for silo `other`"),
+        "a deploy for `demo` must not install its verifier for `other`: {wrong_silo_body}"
     );
     assert_ne!(
         api.convex_named_query("demo", "messages:list", json!({}))
@@ -396,6 +414,27 @@ async fn deploy_activation_swaps_new_requests_to_new_generation() {
 }
 
 #[tokio::test]
+async fn convex_deploy_without_a_trusted_silo_is_refused_before_activation() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(deploy_router(fixture.engine(), None)).await;
+    let mut request = deploy_request(json!([]));
+    request
+        .as_object_mut()
+        .expect("deploy request should be an object")
+        .remove("convex_silo");
+
+    let response = deploy(&server, request, Some(DEPLOY_TOKEN)).await;
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .expect("missing-silo error should read");
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body.contains("Convex deploy artifacts require `convex_silo`"));
+}
+
+#[tokio::test]
 async fn deploy_validation_failure_leaves_previous_generation_live() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(deploy_router(
@@ -415,6 +454,7 @@ async fn deploy_validation_failure_leaves_previous_generation_live() {
     let response = deploy(
         &server,
         json!({
+            "convex_silo": "demo",
             "artifacts": {
                 "convex": {
                     "functions_json": { "functions": [query_function("notes:list", "notes")] },
@@ -635,8 +675,8 @@ async fn deploy_schema_validation_failure_leaves_previous_generation_live() {
 #[tokio::test]
 async fn deploy_persists_across_engine_restart_without_app_dir() {
     let data_dir = tempfile::tempdir().expect("data dir tempdir should create");
-    // #41: the post-activation (and post-restart) queries hit the deployed
-    // bundle's own verifier, so mint one real custom-JWT bearer + auth config and
+    // Post-activation (and post-restart) queries hit the deployed registry's
+    // verifier for `demo`, so mint one real custom-JWT bearer + auth config and
     // deploy that config inside *both* bundles. Reusing the same config keeps the
     // two deploy artifacts byte-identical, which the sha256 dedup below relies on.
     let (team_bearer, team_auth_config) = convex_team_real_auth();

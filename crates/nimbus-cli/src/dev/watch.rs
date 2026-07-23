@@ -156,7 +156,8 @@ pub(super) async fn run_dev_watch_loop(
 async fn activate_dev_generation(
     plan: &DevWatchPlan,
 ) -> Result<crate::deploy::DeployResponse, Box<dyn std::error::Error>> {
-    let request = DeployRequest::from_app_dir(&plan.app_dir, false)?;
+    let request =
+        DeployRequest::from_app_dir(&plan.app_dir, false, Some(plan.convex_silo.clone()))?;
     let admin_token = crate::deploy::load_local_admin_token_for_loopback(&plan.local_url);
     post_deploy_request(
         &plan.local_url,

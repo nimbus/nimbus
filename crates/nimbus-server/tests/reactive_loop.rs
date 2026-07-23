@@ -6,8 +6,7 @@ use base64::Engine as _;
 use nimbus_engine::{Engine, run_scheduler};
 use nimbus_runtime::RuntimeBundle;
 use nimbus_server::{
-    ConvexRegistry, ConvexTenancyConfig, PrincipalTeamRegistry, RouterOptions, SiloTeamRegistry,
-    TeamId, build_router,
+    ConvexRegistry, ConvexTenancyConfig, RouterOptions, SiloTeamRegistry, TeamId, build_router,
 };
 use nimbus_testing::{
     BlockingFaultInjector, DeterministicHarness, EngineFixture, HttpApiFixture, ScenarioMetadata,
@@ -24,15 +23,12 @@ use tokio::time::Duration;
 use tokio_tungstenite::tungstenite::Error as WebSocketError;
 
 // ---------------------------------------------------------------------------
-// #41 application-Convex team binding (public-API test target).
+// Application-Convex silo auth (public-API test target).
 //
-// The reactive_loop tests drive `/convex/demo/…` end-to-end, so under the #41
-// gate every request must arrive as a *verified* principal bound to the team
-// that owns `demo`. This target sees only the public surface (no crate-internal
-// static verifier), so it provisions the real path: every registry carries a
-// `customJwt` provider whose JWKS verifies a single shared ES256 bearer, the
-// router binds `demo` and that bearer's subject to one team, and the fixtures
-// carry the bearer. Anonymous requests resolve to no team and are refused — see
+// These tests drive `/convex/demo/…` through the public API. Every registry
+// carries a `customJwt` provider whose JWKS verifies one shared ES256 bearer,
+// and the router binds that registry directly to `demo`. Anonymous requests are
+// refused by the separate policy — see
 // `assert_convex_anonymous_query_refused`.
 // ---------------------------------------------------------------------------
 
@@ -61,13 +57,11 @@ fn convex_team_bearer() -> String {
     format!("Bearer {}", convex_team_token_and_jwks().0)
 }
 
-/// The #41 tenancy binding `demo`→team and the shared bearer's subject→team.
+/// The fail-closed anonymous policy for `demo`.
 fn convex_team_tenancy() -> ConvexTenancyConfig {
     let silo = nimbus_core::TenantId::new(CONVEX_TEAM_TENANT).expect("silo tenant id");
     let team = TeamId::new(CONVEX_TEAM).expect("team id");
-    ConvexTenancyConfig::new()
-        .with_silo_teams(SiloTeamRegistry::new().bind(&silo, team.clone()))
-        .with_principal_teams(PrincipalTeamRegistry::new().bind(CONVEX_TEAM_SUBJECT, team))
+    ConvexTenancyConfig::new().with_silo_teams(SiloTeamRegistry::new().bind(&silo, team))
 }
 
 /// The `customJwt` auth-config provider for the shared JWKS, injected into every
@@ -166,7 +160,10 @@ fn router_for_convex(engine: Arc<Engine>, convex_registry: ConvexRegistry) -> ax
     build_router(
         RouterOptions::new(engine)
             .with_runtime_limits(runtime_limits)
-            .with_convex_registry(convex_registry)
+            .with_convex_registry_for_silo(
+                &nimbus_core::TenantId::new(CONVEX_TEAM_TENANT).expect("silo tenant id"),
+                convex_registry,
+            )
             .with_convex_tenancy(convex_team_tenancy()),
     )
 }
@@ -184,8 +181,8 @@ fn convex_registry_with_bundle(
             .expect("convex manifest json should serialize"),
     )
     .expect("convex manifest should write");
-    // #41: every registry carries the shared customJwt provider so the derived
-    // verifier admits the shared team bearer.
+    // Every registry carries the shared customJwt provider so `demo`'s bound
+    // verifier admits the shared bearer.
     fs::write(
         convex_dir.join("auth.config.json"),
         serde_json::to_vec_pretty(&convex_team_auth_config())

@@ -15,7 +15,7 @@ use std::sync::{Arc, RwLock};
 
 use nimbus_auth::ApplicationAuthVerifier;
 use nimbus_cloud_functions::{CloudFunctionsHttpTenantBinding, CloudFunctionsRegistry};
-use nimbus_convex::{ConvexRegistry, ConvexTenancyConfig};
+use nimbus_convex::{ConvexRegistry, ConvexSiloAuthRegistry, ConvexTenancyConfig};
 use nimbus_engine::Engine;
 use nimbus_firebase::FirebaseConfig;
 use nimbus_license::LicenseState;
@@ -71,6 +71,7 @@ impl ComputeState {
             convex_registry,
             system_convex_registry,
             application_auth_verifier,
+            convex_silo_auth,
             cloud_functions_registry,
             cloud_functions_http_tenant,
             cloudflare_config,
@@ -88,6 +89,7 @@ impl ComputeState {
             generation: initial_generation,
             convex_registry,
             application_auth_verifier,
+            convex_silo_auth,
             cloud_functions_registry: cloud_functions_registry.map(|registry| {
                 Arc::new(registry.with_runtime_limits(base_runtime_limits.clone()))
             }),
@@ -237,6 +239,7 @@ pub struct DeploymentState {
     pub generation: u64,
     pub convex_registry: Option<Arc<ConvexRegistry>>,
     pub application_auth_verifier: Option<Arc<dyn ApplicationAuthVerifier>>,
+    pub convex_silo_auth: ConvexSiloAuthRegistry,
     pub cloud_functions_registry: Option<Arc<CloudFunctionsRegistry>>,
     pub cloud_functions_http_tenant: Option<CloudFunctionsHttpTenantBinding>,
     pub(crate) convex_artifact_lease: Option<Arc<DeploymentArtifactLease>>,
@@ -253,6 +256,10 @@ impl DeploymentState {
 
     pub fn application_auth_verifier(&self) -> Option<Arc<dyn ApplicationAuthVerifier>> {
         self.application_auth_verifier.clone()
+    }
+
+    pub fn convex_silo_auth(&self) -> &ConvexSiloAuthRegistry {
+        &self.convex_silo_auth
     }
 
     pub fn cloud_functions_registry(&self) -> Option<Arc<CloudFunctionsRegistry>> {
@@ -415,6 +422,7 @@ mod tests {
             generation: 1,
             convex_registry: Some(Arc::new(ConvexRegistry::empty())),
             application_auth_verifier: None,
+            convex_silo_auth: ConvexSiloAuthRegistry::new(),
             cloud_functions_registry: None,
             cloud_functions_http_tenant: None,
             convex_artifact_lease: None,
@@ -430,6 +438,7 @@ mod tests {
             generation: 2,
             convex_registry: Some(Arc::new(ConvexRegistry::empty())),
             application_auth_verifier: None,
+            convex_silo_auth: previous.convex_silo_auth().clone(),
             cloud_functions_registry: None,
             cloud_functions_http_tenant: None,
             convex_artifact_lease: previous.convex_artifact_lease(),
@@ -455,6 +464,7 @@ mod tests {
             generation: 1,
             convex_registry: None,
             application_auth_verifier: None,
+            convex_silo_auth: ConvexSiloAuthRegistry::new(),
             cloud_functions_registry: None,
             cloud_functions_http_tenant: None,
             convex_artifact_lease: None,
@@ -469,6 +479,7 @@ mod tests {
             generation: 2,
             convex_registry: None,
             application_auth_verifier: None,
+            convex_silo_auth: ConvexSiloAuthRegistry::new(),
             cloud_functions_registry: None,
             cloud_functions_http_tenant: None,
             convex_artifact_lease: None,

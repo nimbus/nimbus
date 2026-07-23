@@ -9,7 +9,7 @@ use axum::http::{HeaderMap, Method};
 use futures::{SinkExt, StreamExt};
 pub use nimbus_convex::ConvexRegistry;
 pub(crate) use nimbus_convex::*;
-pub use nimbus_convex::{ConvexTenancyConfig, PrincipalTeamRegistry, SiloTeamRegistry, TeamId};
+pub use nimbus_convex::{ConvexSiloAuthRegistry, ConvexTenancyConfig, SiloTeamRegistry, TeamId};
 use nimbus_core::{
     Cursor, DocumentId, Error, Filter, FilterOp, InvocationAuth, Mutation, OrderBy, PaginatedQuery,
     Query, ScheduleRequest, TableName, TenantId, Timestamp,

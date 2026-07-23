@@ -31,7 +31,7 @@ async fn convex_oidc_jwks_are_refetched_after_rotation() {
     let server = ServerFixture::start(router_for_convex_with_tenancy(
         fixture.engine(),
         registry,
-        convex_team_tenancy_binding("demo", provider.issuer()),
+        convex_team_tenancy_for("demo"),
     ))
     .await;
     let api = HttpApiFixture::new(&server);

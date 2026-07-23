@@ -23,7 +23,7 @@ use nimbus_convex::{
     ConvexFunctionDeploySummary, ConvexHttpRouteDeploySummary, ConvexRegistry,
     ConvexRegistryDeploySummary,
 };
-use nimbus_core::Error;
+use nimbus_core::{Error, TenantId};
 use nimbus_runtime::{RuntimeLimits, RuntimePolicy};
 use nimbus_system::{
     DiskSourcePackageStore, SourcePackageStore, SystemDeploymentFunctionRecordInput,
@@ -47,7 +47,23 @@ pub async fn deploy_app(
     compute: &ComputeState,
     request: DeployRequest,
 ) -> Result<DeployResponse, ComputeError> {
-    let DeployRequest { dry_run, artifacts } = request;
+    let DeployRequest {
+        dry_run,
+        convex_silo,
+        artifacts,
+    } = request;
+    let convex_silo = convex_silo
+        .map(TenantId::new)
+        .transpose()
+        .map_err(|error| Error::InvalidInput(format!("invalid Convex deploy silo: {error}")))?;
+    if artifacts.convex.is_some() && convex_silo.is_none() {
+        return Err(Error::InvalidInput(
+            "Convex deploy artifacts require `convex_silo`; auth configuration is activated for \
+             exactly one trusted silo"
+                .to_owned(),
+        )
+        .into());
+    }
     // Capture the source package before `artifacts` is moved into staging; it is
     // persisted (content-addressed) and projected only on a real activation.
     let source_package = artifacts.convex.as_ref().and_then(|convex| {
@@ -104,10 +120,18 @@ pub async fn deploy_app(
         let next_convex_registry = next_registry
             .map(Arc::new)
             .or_else(|| previous_deployment.convex_registry());
-        let next_application_auth_verifier = next_convex_registry
-            .as_ref()
-            .map(|registry| registry.clone() as Arc<dyn ApplicationAuthVerifier>)
-            .or_else(|| previous_deployment.application_auth_verifier());
+        let mut convex_silo_auth = previous_deployment.convex_silo_auth().clone();
+        if staged.includes_convex() {
+            let silo = convex_silo
+                .as_ref()
+                .expect("Convex deploy silo was validated above");
+            let verifier = next_convex_registry
+                .as_ref()
+                .expect("Convex artifacts build a registry")
+                .clone() as Arc<dyn ApplicationAuthVerifier>;
+            convex_silo_auth = convex_silo_auth.bind(silo, verifier);
+        }
+        let next_application_auth_verifier = previous_deployment.application_auth_verifier();
         let next_cloud_functions_registry = next_cloud_functions_registry
             .map(Arc::new)
             .or_else(|| previous_deployment.cloud_functions_registry());
@@ -125,6 +149,7 @@ pub async fn deploy_app(
             generation: next_generation,
             convex_registry: next_convex_registry,
             application_auth_verifier: next_application_auth_verifier,
+            convex_silo_auth,
             cloud_functions_registry: next_cloud_functions_registry.clone(),
             cloud_functions_http_tenant,
             convex_artifact_lease,
@@ -289,6 +314,8 @@ pub fn convex_system_deployment_record_input<'a>(
 pub struct DeployRequest {
     #[serde(default)]
     dry_run: bool,
+    #[serde(default)]
+    convex_silo: Option<String>,
     artifacts: DeployArtifacts,
 }
 

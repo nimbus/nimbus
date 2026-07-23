@@ -29,7 +29,7 @@ nimbus dev
 Then deploy the app:
 
 ```bash
-nimbus deploy [TARGET]
+nimbus deploy [TARGET] --convex-silo demo
 ```
 
 `TARGET` is a URL or a configured target name; omit it to target your local

@@ -46,6 +46,13 @@ auth, not any provider's verification logic:
 Because adapters consume this crate rather than each inventing principal
 handling, "who the caller is" has one definition server-wide.
 
+Convex adds a stricter selection seam around that shared trait. Its URL silo
+selects a deployment-provisioned `ApplicationAuthVerifier` before the bearer is
+examined. Only that verifier may establish the request identity, so the result
+is already bound to the selected silo. Nimbus never verifies a Convex token
+globally and then authorizes a caller-selected silo through subject or issuer
+string matching.
+
 ## The local admin token
 
 A freshly started server is administered with a single local credential,

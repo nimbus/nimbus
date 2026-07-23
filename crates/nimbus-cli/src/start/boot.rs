@@ -10,7 +10,7 @@ use nimbus::{
     Engine, Error, LicenseState, RuntimeHostResourceBudget, RuntimeLimits, TenantAdmissionOutcome,
     TenantId, run_scheduler,
 };
-use nimbus_convex::ConvexRegistry;
+use nimbus_convex::{ConvexRegistry, ConvexSiloAuthRegistry};
 use nimbus_operator::{
     LocalServerPaths, LocalServerSecurityState, load_or_create_local_admin_token,
 };
@@ -239,13 +239,28 @@ pub(crate) async fn run_start_command(
     }
 
     tracing::info!("nimbus listening on {}", listener.local_addr()?);
+    let convex_silo_auth =
+        convex_registry
+            .as_ref()
+            .map_or_else(ConvexSiloAuthRegistry::new, |registry| {
+                let verifier = Arc::new(registry.clone());
+                adapter_enablement
+                    .convex_auth_silos
+                    .iter()
+                    .cloned()
+                    .fold(ConvexSiloAuthRegistry::new(), |bindings, silo| {
+                        bindings.bind(&silo, verifier.clone())
+                    })
+            });
     let mut serve_options = ServeOptions::new(engine.clone())
         .with_license(license_state)
         .with_runtime_host_resource_budget(runtime_host_resource_budget)
         .with_runtime_adaptive_controller_settings(runtime_adaptive_controller_settings)
         .with_effective_runtime_scaling_plans(effective_runtime_scaling_plans);
     if let Some(registry) = convex_registry {
-        serve_options = serve_options.with_convex_registry(registry);
+        serve_options = serve_options
+            .with_convex_registry(registry)
+            .with_convex_silo_auth(convex_silo_auth);
     }
     if let Some(registry) = cloud_functions_registry {
         serve_options = serve_options.with_cloud_functions_registry(registry);

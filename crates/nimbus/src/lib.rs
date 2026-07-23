@@ -74,7 +74,8 @@ pub use nimbus_license::{
     LicenseUsageSnapshot,
 };
 pub use nimbus_server::{
-    CloudFunctionsHttpTenantBinding, RouterOptions, ServeOptions, build_router, serve,
+    CloudFunctionsHttpTenantBinding, ConvexRegistry, ConvexSiloAuthRegistry, ConvexTenancyConfig,
+    RouterOptions, ServeOptions, SiloTeamRegistry, TeamId, build_router, serve,
 };
 pub use nimbus_services::{
     BuiltInServiceSpec, EmptyServiceDefinitionCatalog, EmptyServiceInstanceCatalog,

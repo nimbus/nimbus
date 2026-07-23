@@ -78,7 +78,7 @@ refuse every anonymous application-Convex request outright
 `crates/nimbus-server/src/adapters/convex/handlers/registry_auth.rs`) now has
 dev-mode defaults: `nimbus dev` auto-provisions anonymous local traffic with
 zero env config, and `start` accepts an explicit opt-in
-(`NIMBUS_CONVEX_SILO_TEAMS`/`NIMBUS_CONVEX_PRINCIPAL_TEAMS`/`NIMBUS_CONVEX_ANONYMOUS_TEAM`).
+(`NIMBUS_CONVEX_SILO_TEAMS`/`NIMBUS_CONVEX_ANONYMOUS_TEAM`).
 A runtime-bridge fix (`ctx.db.get`/`patch`/`delete` now accept the public
 SDK's single table-scoped-id calling convention, plus faithful compiled-plan
 subscription replay) and an app-level fix (`toggle` now takes the next value
@@ -101,7 +101,7 @@ detail and evidence in the EX3.2 row of
 
 ```bash
 nimbus dev
-nimbus deploy [TARGET]
+nimbus deploy [TARGET] --convex-silo demo
 ```
 
 `TARGET` is a URL or a configured target name; omit it to target your local

@@ -83,6 +83,18 @@ the same provider shapes:
 `process.env` reads in the auth config are resolved when codegen runs, so
 set those variables in the environment where `nimbus dev` executes.
 
+Nimbus binds each generated auth configuration to one deployment silo.
+The URL silo selects that trusted verifier before Nimbus examines a bearer;
+there is no global subject- or issuer-to-silo lookup. When deploying outside
+the dev loop, name the silo explicitly:
+
+```bash
+nimbus deploy [TARGET] --convex-silo demo
+```
+
+`NIMBUS_CONVEX_SILO` is the environment-variable equivalent. A Convex deploy
+without either value is refused before activation.
+
 ## What works unchanged
 
 - **Function authoring** — `query`, `mutation`, `action`, `httpAction`, and

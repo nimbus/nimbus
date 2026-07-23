@@ -18,7 +18,7 @@ use tower_http::services::ServeDir;
 
 use crate::adapters::cloud_functions::{CloudFunctionsHttpTenantBinding, CloudFunctionsRegistry};
 use crate::adapters::cloudflare::CloudflareConfig;
-use crate::adapters::convex::{self, ConvexRegistry, ConvexTenancyConfig};
+use crate::adapters::convex::{self, ConvexRegistry, ConvexSiloAuthRegistry, ConvexTenancyConfig};
 use crate::adapters::firebase::{self, FirebaseConfig};
 use crate::adapters::http_mount::{
     CloudFunctionsHttpAdapter, CloudflareHttpAdapter, ConvexHttpAdapter, FirebaseHttpAdapter,
@@ -69,6 +69,24 @@ impl RouterOptions {
 
     pub fn with_convex_registry(mut self, convex_registry: ConvexRegistry) -> Self {
         self.deployment = self.deployment.with_convex(convex_registry);
+        self
+    }
+
+    pub fn with_convex_registry_for_silo(
+        mut self,
+        silo: &nimbus_core::TenantId,
+        convex_registry: ConvexRegistry,
+    ) -> Self {
+        let verifier = convex_application_auth_verifier(&convex_registry);
+        self.deployment = self
+            .deployment
+            .with_convex(convex_registry)
+            .with_convex_silo_auth_verifier(silo, verifier);
+        self
+    }
+
+    pub fn with_convex_silo_auth(mut self, convex_silo_auth: ConvexSiloAuthRegistry) -> Self {
+        self.deployment = self.deployment.with_convex_silo_auth(convex_silo_auth);
         self
     }
 
@@ -224,12 +242,7 @@ impl RouterOptions {
 
     pub(crate) fn into_build_config(self) -> RouterBuildConfig {
         let mut config = RouterBuildConfig::core(self.engine);
-        let mut deployment = self.deployment;
-        if let Some(convex_registry) = deployment.convex_registry.as_ref() {
-            deployment.application_auth_verifier =
-                Some(convex_application_auth_verifier(convex_registry));
-        }
-        config.deployment = deployment;
+        config.deployment = self.deployment;
         config
             .control_plane
             .overlay_router_options(self.control_plane);
@@ -315,6 +328,18 @@ impl RouterBuildConfig {
         self.deployment = self
             .deployment
             .with_application_auth_verifier(application_auth_verifier);
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_convex_silo_auth_verifier(
+        mut self,
+        silo: &nimbus_core::TenantId,
+        verifier: Arc<dyn ApplicationAuthVerifier>,
+    ) -> Self {
+        self.deployment = self
+            .deployment
+            .with_convex_silo_auth_verifier(silo, verifier);
         self
     }
 
@@ -494,6 +519,7 @@ impl RouterBuildConfig {
             convex_registry,
             system_convex_registry,
             application_auth_verifier,
+            convex_silo_auth,
             cloud_functions_registry,
             cloud_functions_http_tenant,
             cloudflare_config,
@@ -512,6 +538,7 @@ impl RouterBuildConfig {
                 convex_registry,
                 system_convex_registry,
                 application_auth_verifier,
+                convex_silo_auth,
                 cloud_functions_registry,
                 cloud_functions_http_tenant,
                 cloudflare_config,

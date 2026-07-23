@@ -19,7 +19,7 @@ Start the local server with `nimbus dev`, then deploy to it (omit TARGET for
 local; pass a URL or configured target name to deploy elsewhere):
 
 ```bash
-nimbus deploy --app-dir examples/convex/showcase
+nimbus deploy --app-dir examples/convex/showcase --convex-silo demo
 ```
 
 Then open the console (`nimbus auth url`) → Developer → Compute and open a

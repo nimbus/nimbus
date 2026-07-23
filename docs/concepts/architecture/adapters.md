@@ -149,10 +149,12 @@ token. The shared trait lives in `crates/nimbus-auth`
   providers (issuer domain plus application ID) and custom JWT
   providers (explicit issuer, JWKS, RS256 or ES256) in
   `crates/nimbus-convex/src/auth/`. The Convex registry implements
-  `ApplicationAuthVerifier`, and the server installs it as the
-  deployment-wide bearer verifier — so Firestore REST and gRPC calls
-  and Cloud Functions callable requests verify bearer tokens through
-  the same configured providers.
+  `ApplicationAuthVerifier`. The server stores those verifiers in a
+  deployment-owned silo map: the `/convex/{silo}` URL selects the verifier
+  before the bearer is examined. A verifier result is therefore intrinsically
+  bound to its silo, with no subject/issuer registry and no fallback to a
+  process-wide Convex verifier. Other adapter families retain their own
+  application-auth configuration.
 - **Firestore** additionally supports an emulator-style mock user
   token mode, but only as an explicit opt-in on `FirebaseConfig`;
   it is off by default.
