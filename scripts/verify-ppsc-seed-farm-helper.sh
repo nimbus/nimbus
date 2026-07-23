@@ -10,10 +10,15 @@ fake_cargo="${work_dir}/cargo"
 cat >"${fake_cargo}" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+expected_test="tests::ppsc::seed_farm::ppsc_seed_farm_executes_selected_redb_scenarios"
+if [[ " $* " != *" ${expected_test} "* ]]; then
+  echo "unexpected PPSC driver selection: $*" >&2
+  exit 64
+fi
 for argument in "$@"; do
   if [[ "${argument}" == "--list" ]]; then
     if [[ "${FAKE_PPSC_SELECTED:-1}" == "1" ]]; then
-      echo "tests::ppsc::ppsc_seed_farm_executes_selected_redb_scenarios: test"
+      echo "${expected_test}: test"
     fi
     exit 0
   fi

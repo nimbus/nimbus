@@ -600,6 +600,15 @@ impl Engine {
                 return;
             }
         };
+        if !runtime.store.has_process_local_sequence_authority() {
+            let _ = self.enqueue_provider_live_commit_observers(
+                runtime,
+                observers,
+                applied,
+                projection_token,
+            );
+            return;
+        }
         let claimed_through = runtime.claim_committed_mutation_observer_through(last_sequence);
         let events = applied
             .iter()
@@ -634,6 +643,41 @@ impl Engine {
         }
     }
 
+    /// Routes a provider's just-applied commits through the same durable-tail
+    /// owner as listener/reconnect catch-up.
+    ///
+    /// A process-local publisher may enqueue its applied batch directly
+    /// because it is the only sequence authority. A provider process cannot:
+    /// listener catch-up may already own an older prefix. Coalescing the live
+    /// frontier into that one tail reader prevents a later live sequence from
+    /// claiming past, dropping, or overtaking the unfinished prefix.
+    fn enqueue_provider_live_commit_observers(
+        &self,
+        runtime: Arc<TenantRuntime>,
+        observers: Vec<Arc<dyn CommittedMutationObserver>>,
+        applied: &[CommitEntry],
+        projection_token: ProjectionToken,
+    ) -> bool {
+        let Some(first_sequence) = applied
+            .iter()
+            .find(|commit| !commit.writes.is_empty())
+            .map(|commit| commit.sequence)
+        else {
+            return false;
+        };
+        let Some(requested_through) = applied.last().map(|commit| commit.sequence) else {
+            return false;
+        };
+        self.enqueue_provider_catch_up_range_observers(
+            runtime,
+            observers,
+            first_sequence,
+            requested_through,
+            projection_token,
+        )
+        .is_some()
+    }
+
     pub(crate) fn enqueue_provider_catch_up_commit_observers(
         &self,
         runtime: Arc<TenantRuntime>,
@@ -658,6 +702,23 @@ impl Engine {
             })
             .map(|record| record.sequence)?;
         let requested_through = applied.last()?.sequence;
+        self.enqueue_provider_catch_up_range_observers(
+            runtime,
+            observers,
+            first_sequence,
+            requested_through,
+            projection_token,
+        )
+    }
+
+    fn enqueue_provider_catch_up_range_observers(
+        &self,
+        runtime: Arc<TenantRuntime>,
+        observers: Vec<Arc<dyn CommittedMutationObserver>>,
+        first_sequence: SequenceNumber,
+        requested_through: SequenceNumber,
+        projection_token: ProjectionToken,
+    ) -> Option<tokio::sync::oneshot::Receiver<nimbus_core::Result<()>>> {
         if !runtime.request_committed_mutation_observer_catch_up(
             first_sequence,
             requested_through,
@@ -704,6 +765,28 @@ impl Engine {
                 Some(failure)
             }
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn enqueue_provider_live_commit_observers_for_testing(
+        &self,
+        runtime: Arc<TenantRuntime>,
+        applied: &[CommitEntry],
+    ) -> bool {
+        let observers = self
+            .committed_mutation_observers
+            .read()
+            .expect("committed mutation observer registry lock should not be poisoned")
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        if observers.is_empty() {
+            return false;
+        }
+        let projection_token = runtime
+            .projection_token()
+            .expect("provider live-observer test runtime should expose provenance");
+        self.enqueue_provider_live_commit_observers(runtime, observers, applied, projection_token)
     }
 
     /// Lets the next provider catch-up for `tenant_id` read `pages` journal

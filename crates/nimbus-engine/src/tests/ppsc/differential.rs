@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::env;
 use std::sync::Arc;
 
 use nimbus_storage::provider_test_fixtures::ProviderLeaseTimeControl;
@@ -60,7 +61,7 @@ pub(crate) async fn exercise_ppsc_provider_retained_differential(
     config: EnginePersistenceConfig,
     lease_time_control: Arc<dyn ProviderLeaseTimeControl>,
 ) {
-    for scenario in retained_ppsc_scenarios() {
+    for scenario in provider_replay_scenarios(retained_ppsc_scenarios(), false) {
         exercise_ppsc_provider_scenario_differential(
             backend,
             config.clone(),
@@ -97,7 +98,7 @@ pub(crate) async fn exercise_ppsc_provider_authority_extension(
     takeover_config: EnginePersistenceConfig,
     lease_time_control: Arc<dyn ProviderLeaseTimeControl>,
 ) {
-    for scenario in retained_provider_authority_scenarios() {
+    for scenario in provider_replay_scenarios(retained_provider_authority_scenarios(), true) {
         let oracle_scenario = provider_authority_terminal_oracle(&scenario);
         let oracle = PpscEngineRunner::new_embedded(PpscBackend::Redb, &oracle_scenario)
             .await
@@ -118,6 +119,25 @@ pub(crate) async fn exercise_ppsc_provider_authority_extension(
             .unwrap_or_else(|error| panic!("{} provider authority: {error}", backend.as_str()));
         assert_ppsc_terminal_matches(backend, &scenario, &oracle.terminal, &provider.terminal);
     }
+}
+
+fn provider_replay_scenarios(
+    defaults: Vec<PpscScenario>,
+    requires_provider_authority: bool,
+) -> Vec<PpscScenario> {
+    const REPLAY_SCENARIO_ENV: &str = "NIMBUS_PPSC_REPLAY_SCENARIO_JSON";
+    let Ok(json) = env::var(REPLAY_SCENARIO_ENV) else {
+        return defaults;
+    };
+    let scenario = PpscScenario::from_canonical_json(&json)
+        .unwrap_or_else(|error| panic!("{REPLAY_SCENARIO_ENV} is invalid: {error}"));
+    assert_eq!(
+        scenario.requires_provider_authority(),
+        requires_provider_authority,
+        "{REPLAY_SCENARIO_ENV} selected scenario '{}' for the wrong provider differential lane",
+        scenario.name
+    );
+    vec![scenario]
 }
 
 fn provider_authority_terminal_oracle(scenario: &PpscScenario) -> PpscScenario {

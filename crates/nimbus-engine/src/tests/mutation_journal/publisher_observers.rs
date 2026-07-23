@@ -632,8 +632,17 @@ async fn rapid_provider_catch_up_triggers_coalesce_into_one_tail_reader() {
     })
     .await;
 
-    for record in &records[2..] {
-        let projection_token = crate::ProjectionToken {
+    assert!(
+        !engine
+            .trigger_provider_live_commit_observers_for_testing(
+                &tenant_id,
+                std::slice::from_ref(&records[2]),
+            )
+            .expect("a live provider commit should coalesce"),
+        "a live provider frontier must join the parked durable-tail owner"
+    );
+    for record in &records[3..] {
+        let projection_provenance = crate::ProjectionToken {
             durable_sequence: record.sequence,
             ..initial_token
         };
@@ -642,7 +651,7 @@ async fn rapid_provider_catch_up_triggers_coalesce_into_one_tail_reader() {
                 .trigger_provider_catch_up_observers_with_token_for_testing(
                     &tenant_id,
                     std::slice::from_ref(record),
-                    projection_token,
+                    projection_provenance,
                 )
                 .expect("later catch-up trigger should coalesce"),
             "a later frontier must not spawn another parked catch-up task"

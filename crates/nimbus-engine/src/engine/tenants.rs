@@ -571,12 +571,12 @@ impl Engine {
         }
     }
 
-    async fn wait_for_runtime_eviction(
+    pub(crate) async fn wait_for_runtime_eviction(
         &self,
         tenant_id: &TenantId,
         runtime: Arc<TenantRuntime>,
     ) -> Result<()> {
-        let evicted_incarnation = runtime.tenant_incarnation();
+        let evicted_runtime = Arc::downgrade(&runtime);
         let error = runtime.durable_recovery_eviction_error();
         let completion = runtime.eviction_completion();
         // The completion token owns lifecycle state only. Dropping the stale
@@ -589,7 +589,11 @@ impl Engine {
             .read()
             .expect("tenant registry lock should not be poisoned")
             .get(tenant_id)
-            .is_some_and(|registered| registered.tenant_incarnation() == evicted_incarnation)
+            .is_some_and(|registered| {
+                evicted_runtime
+                    .upgrade()
+                    .is_some_and(|evicted| Arc::ptr_eq(registered, &evicted))
+            })
         {
             return Err(error);
         }

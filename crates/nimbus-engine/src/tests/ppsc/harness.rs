@@ -85,13 +85,16 @@ impl PpscEngineSlot {
             .clone()
     }
 
-    pub(super) async fn crash(&mut self) {
-        let engine = self.0.take().expect("PPSC crash requires a running Engine");
+    pub(super) async fn settled_restart(&mut self) {
+        let engine = self
+            .0
+            .take()
+            .expect("PPSC settled restart requires a running Engine");
         // Engine-owned provider workers retain an Arc back to the Engine. A
         // bare drop therefore does not model process death: the old poller can
         // keep observing provider commits after the replacement starts. Every
         // scenario step is flushed before it reaches this settled boundary;
-        // the mid-commit crash cases are exercised separately by the commit
+        // the mid-commit process-loss cases are exercised separately by the commit
         // fault operations. Stop all process-owned workers here before
         // dropping the final harness handle so reopen never has a ghost peer.
         engine.quiesce().await;
@@ -99,7 +102,10 @@ impl PpscEngineSlot {
     }
 
     pub(super) fn reopen(&mut self, engine: Arc<Engine>) {
-        assert!(self.0.is_none(), "PPSC reopen requires a crashed Engine");
+        assert!(
+            self.0.is_none(),
+            "PPSC reopen requires a settled Engine restart"
+        );
         self.0 = Some(engine);
     }
 

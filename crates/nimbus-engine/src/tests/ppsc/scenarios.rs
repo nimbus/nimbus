@@ -255,22 +255,22 @@ pub(super) fn cancellation_overload_scenario() -> PpscScenario {
     .expect("cancellation/overload scenario should build")
 }
 
-pub(super) fn crash_reopen_scenario() -> PpscScenario {
+pub(super) fn settled_restart_scenario() -> PpscScenario {
     let tenant = "ppsc-reopen".to_string();
     PpscScenario::new(
-        "durable-crash-reopen",
+        "durable-settled-restart",
         439,
         vec![
             PpscStep::new(
                 PpscOperation::Mutation {
                     tenant: tenant.clone(),
                     route: PpscRoute::QueuedJournal,
-                    key: "before-crash".to_string(),
+                    key: "before-restart".to_string(),
                     value: 321,
                 },
                 PpscExpectedOutcome::Committed,
             ),
-            PpscStep::new(PpscOperation::Crash, PpscExpectedOutcome::Observed),
+            PpscStep::new(PpscOperation::SettledRestart, PpscExpectedOutcome::Observed),
             PpscStep::new(PpscOperation::Reopen, PpscExpectedOutcome::Observed),
             PpscStep::new(
                 PpscOperation::Mutation {
@@ -284,7 +284,7 @@ pub(super) fn crash_reopen_scenario() -> PpscScenario {
             PpscStep::new(PpscOperation::Quiesce, PpscExpectedOutcome::Shutdown),
         ],
     )
-    .expect("crash/reopen scenario should build")
+    .expect("settled-restart scenario should build")
 }
 
 pub(super) fn commit_phase_fault_scenario() -> PpscScenario {

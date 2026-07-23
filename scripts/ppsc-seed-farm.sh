@@ -3,7 +3,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-test_name="tests::ppsc::ppsc_seed_farm_executes_selected_redb_scenarios"
+test_name="tests::ppsc::seed_farm::ppsc_seed_farm_executes_selected_redb_scenarios"
 filter_expr="package(nimbus-engine) and test(/^${test_name}$/)"
 artifact_dir="${NIMBUS_PPSC_FAILURE_DIR:?NIMBUS_PPSC_FAILURE_DIR must identify the seed-farm artifact directory}"
 if [[ "${artifact_dir}" != /* ]]; then

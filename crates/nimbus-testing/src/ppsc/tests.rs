@@ -1,5 +1,5 @@
 use super::*;
-use nimbus_core::{Error, StorageErrorKind, TenantId};
+use nimbus_core::{Document, DocumentId, Error, StorageErrorKind, TableName, TenantId, Timestamp};
 use nimbus_storage::{FaultInjector, FaultPoint};
 use std::collections::BTreeMap;
 
@@ -96,6 +96,42 @@ fn ppsc_scenario_replay_is_byte_deterministic() {
             .expect_err("oversized scenarios must fail")
             .to_string()
             .contains("maximum")
+    );
+}
+
+#[test]
+fn ppsc_replay_commands_preserve_exact_scenario_and_route_supported_lanes() {
+    let seeded = PpscScenario::seeded(83, 64).expect("seed should generate");
+    let redb = seeded.replay_command(PpscBackend::Redb);
+    assert!(redb.contains("NIMBUS_PPSC_SEED=83"));
+    assert!(redb.contains("NIMBUS_PPSC_STEP_COUNT=64"));
+    assert!(redb.contains("NIMBUS_PPSC_BACKEND=redb"));
+    assert!(redb.contains("make verify-ppsc-seed-farm"));
+
+    let custom = one_step_scenario(
+        PpscOperation::AdvanceWallClock { millis: 7 },
+        PpscExpectedOutcome::Observed,
+    );
+    let sqlite = custom.replay_command(PpscBackend::Sqlite);
+    assert!(sqlite.contains("NIMBUS_PPSC_REPLAY_SCENARIO_JSON="));
+    assert!(sqlite.contains("NIMBUS_PPSC_BACKEND=sqlite"));
+    assert!(sqlite.contains("ppsc_explicit_embedded_scenario_replay"));
+
+    let provider = seeded.replay_command(PpscBackend::Mysql);
+    assert!(provider.contains("NIMBUS_PPSC_REPLAY_SCENARIO_JSON="));
+    assert!(provider.contains("make test-external-provider PROVIDER=mysql"));
+    assert!(provider.contains("test(mysql_ppsc_seeded_journal_differential)"));
+    assert!(!provider.contains("make verify-ppsc-seed-farm"));
+
+    let provider_authority = retained_provider_authority_scenarios()
+        .into_iter()
+        .next()
+        .expect("provider retained scenario should exist");
+    let takeover = provider_authority.replay_command(PpscBackend::Libsql);
+    assert!(takeover.contains("make test-external-provider PROVIDER=libsql"));
+    assert!(
+        takeover
+            .contains("test(ppsc_provider_takeover_extension_matches_postgres_mysql_and_libsql)")
     );
 }
 
@@ -433,13 +469,22 @@ fn ppsc_scenario_rejects_cancellation_without_cancellable_admission() {
 
 #[test]
 fn ppsc_backend_capability_table_rejects_unsupported_steps() {
-    let crash = one_step_scenario(PpscOperation::Crash, PpscExpectedOutcome::Observed);
-    assert!(crash.validate_for_backend(PpscBackend::Redb).is_ok());
-    let memory_error = crash
+    let restart = one_step_scenario(PpscOperation::SettledRestart, PpscExpectedOutcome::Observed);
+    assert!(restart.validate_for_backend(PpscBackend::Redb).is_ok());
+    let memory_error = restart
         .validate_for_backend(PpscBackend::Memory)
         .expect_err("memory must not claim durable reopen");
     assert!(memory_error.to_string().contains("durable reopen"));
-    assert!(memory_error.to_string().contains("NIMBUS_PPSC_SEED=17"));
+    assert!(
+        memory_error
+            .to_string()
+            .contains("NIMBUS_PPSC_REPLAY_SCENARIO_JSON=")
+    );
+    assert!(
+        memory_error
+            .to_string()
+            .contains("ppsc_explicit_embedded_scenario_replay")
+    );
 
     let provider = one_step_scenario(
         PpscOperation::ExpireProviderLease {
@@ -491,7 +536,16 @@ fn ppsc_embedded_backend_rejects_provider_authority_steps() {
                 .validate_for_backend(backend)
                 .expect_err("embedded adapters must reject provider-authority operations");
             assert!(error.to_string().contains("provider sequence authority"));
-            assert!(error.to_string().contains("NIMBUS_PPSC_SEED=17"));
+            assert!(
+                error
+                    .to_string()
+                    .contains("NIMBUS_PPSC_REPLAY_SCENARIO_JSON=")
+            );
+            assert!(
+                error
+                    .to_string()
+                    .contains("ppsc_explicit_embedded_scenario_replay")
+            );
         }
     }
 }
@@ -614,7 +668,252 @@ fn ppsc_legal_state_auditor_rejects_durable_sequence_reuse() {
     ))
     .expect_err("different content may not reuse durable sequence identity");
     assert_eq!(error.invariant, "durable-sequence-identity-reuse");
-    assert!(error.to_string().contains("make verify-ppsc-seed-farm"));
+    assert!(
+        error
+            .to_string()
+            .contains("NIMBUS_PPSC_REPLAY_SCENARIO_JSON=")
+    );
+    assert!(
+        error
+            .to_string()
+            .contains("ppsc_explicit_embedded_scenario_replay")
+    );
+}
+
+#[test]
+fn ppsc_legal_state_auditor_rejects_committed_step_without_effect_or_terminal_tenant() {
+    let scenario = one_step_scenario(
+        PpscOperation::Mutation {
+            tenant: "tenant-a".to_string(),
+            route: PpscRoute::QueuedJournal,
+            key: "missing".to_string(),
+            value: 1,
+        },
+        PpscExpectedOutcome::Committed,
+    );
+    let error = audit_ppsc_history(&history(
+        PpscBackend::Redb,
+        scenario,
+        BTreeMap::new(),
+        Vec::new(),
+    ))
+    .expect_err("a committed mutation cannot disappear from both effects and terminal state");
+    assert_eq!(error.invariant, "committed-step-missing-durable-effect");
+}
+
+#[test]
+fn ppsc_legal_state_auditor_accepts_committed_zero_write_without_durable_effect() {
+    let scenario = one_step_scenario(
+        PpscOperation::ZeroWriteExecutionUnit {
+            tenant: "tenant-a".to_string(),
+        },
+        PpscExpectedOutcome::Committed,
+    );
+    audit_ppsc_history(&history(
+        PpscBackend::Redb,
+        scenario,
+        BTreeMap::new(),
+        Vec::new(),
+    ))
+    .expect("a committed zero-write execution unit intentionally has no durable effect");
+}
+
+#[test]
+fn ppsc_legal_state_auditor_accepts_restore_superseding_prior_journal_effects() {
+    let tenant = "tenant-a";
+    let scenario = PpscScenario::new(
+        "restore-supersedes-prior-effects",
+        18,
+        vec![
+            PpscStep::new(
+                PpscOperation::Mutation {
+                    tenant: tenant.to_string(),
+                    route: PpscRoute::QueuedJournal,
+                    key: "before-restore-1".to_string(),
+                    value: 1,
+                },
+                PpscExpectedOutcome::Committed,
+            ),
+            PpscStep::new(
+                PpscOperation::Mutation {
+                    tenant: tenant.to_string(),
+                    route: PpscRoute::Direct,
+                    key: "before-restore-2".to_string(),
+                    value: 2,
+                },
+                PpscExpectedOutcome::Committed,
+            ),
+            PpscStep::new(
+                PpscOperation::RestoreImport {
+                    tenant: tenant.to_string(),
+                    archive: 44,
+                },
+                PpscExpectedOutcome::Committed,
+            ),
+        ],
+    )
+    .expect("restore supersession scenario should build");
+    let mut restored = tenant_state(
+        PpscFrontiers {
+            assigned_high_water: 1,
+            active_assigned_head: 1,
+            durable_head: 1,
+            storage_applied_head: 1,
+            published_head: 1,
+            applied_head: 1,
+        },
+        tenant,
+    );
+    let restored_document = Document::with_id_at(
+        DocumentId::from_key("restored-document").expect("restored document id should parse"),
+        TableName::new("tasks").expect("restored table should parse"),
+        serde_json::Map::from_iter([
+            (
+                "key".to_string(),
+                serde_json::Value::String("archive-44".to_string()),
+            ),
+            ("archive".to_string(), serde_json::Value::from(44)),
+        ]),
+        Timestamp(1),
+    );
+    restored.documents.insert(
+        restored_document.id.to_string(),
+        serde_json::to_vec(&restored_document).expect("restored document should serialize"),
+    );
+    let mut candidate = history(
+        PpscBackend::Redb,
+        scenario,
+        BTreeMap::from([(tenant.to_string(), restored)]),
+        Vec::new(),
+    );
+    candidate.observed_steps[0].effects.push(PpscEffect {
+        tenant: tenant.to_string(),
+        sequence: Some(1),
+        kind: "document-write".to_string(),
+    });
+    candidate.observed_steps[1].effects.push(PpscEffect {
+        tenant: tenant.to_string(),
+        sequence: Some(2),
+        kind: "document-write".to_string(),
+    });
+    candidate.observed_steps[2].effects.extend([
+        PpscEffect {
+            tenant: tenant.to_string(),
+            sequence: Some(1),
+            kind: "document-write".to_string(),
+        },
+        PpscEffect {
+            tenant: tenant.to_string(),
+            sequence: None,
+            kind: "restore-import".to_string(),
+        },
+    ]);
+
+    audit_ppsc_history(&candidate)
+        .expect("a committed restore replaces prior journal and terminal effects");
+}
+
+#[test]
+fn ppsc_legal_state_auditor_rejects_committed_effect_without_terminal_document() {
+    let tenant = "tenant-a";
+    let scenario = one_step_scenario(
+        PpscOperation::Mutation {
+            tenant: tenant.to_string(),
+            route: PpscRoute::QueuedJournal,
+            key: "missing".to_string(),
+            value: 1,
+        },
+        PpscExpectedOutcome::Committed,
+    );
+    let mut candidate = history(
+        PpscBackend::Redb,
+        scenario,
+        BTreeMap::from([(
+            tenant.to_string(),
+            tenant_state(
+                PpscFrontiers {
+                    assigned_high_water: 1,
+                    active_assigned_head: 1,
+                    durable_head: 1,
+                    storage_applied_head: 1,
+                    published_head: 1,
+                    applied_head: 1,
+                },
+                tenant,
+            ),
+        )]),
+        Vec::new(),
+    );
+    candidate.observed_steps[0].effects.push(PpscEffect {
+        tenant: tenant.to_string(),
+        sequence: Some(1),
+        kind: "document-write".to_string(),
+    });
+
+    let error = audit_ppsc_history(&candidate)
+        .expect_err("a durable journal effect cannot substitute for the terminal document");
+    assert_eq!(error.invariant, "operation-terminal-state");
+}
+
+#[test]
+fn ppsc_legal_state_auditor_rejects_schedule_effect_without_terminal_job() {
+    let tenant = "tenant-a";
+    let scenario = one_step_scenario(
+        PpscOperation::Schedule {
+            tenant: tenant.to_string(),
+            job: 7,
+        },
+        PpscExpectedOutcome::Committed,
+    );
+    let mut candidate = history(
+        PpscBackend::Redb,
+        scenario,
+        BTreeMap::from([(
+            tenant.to_string(),
+            tenant_state(PpscFrontiers::default(), tenant),
+        )]),
+        Vec::new(),
+    );
+    candidate.observed_steps[0].effects.push(PpscEffect {
+        tenant: tenant.to_string(),
+        sequence: None,
+        kind: "scheduled-job-insert".to_string(),
+    });
+
+    let error = audit_ppsc_history(&candidate)
+        .expect_err("a scheduler effect marker cannot substitute for terminal scheduler state");
+    assert_eq!(error.invariant, "operation-terminal-state");
+}
+
+#[test]
+fn ppsc_legal_state_auditor_rejects_durable_ownership_downgrade() {
+    let scenario = one_step_scenario(
+        PpscOperation::AdvanceMonotonicClock { millis: 1 },
+        PpscExpectedOutcome::Observed,
+    );
+    let error = audit_ppsc_history(&history(
+        PpscBackend::Redb,
+        scenario,
+        BTreeMap::new(),
+        vec![
+            PpscSequenceClaim {
+                tenant: "tenant-a".to_string(),
+                sequence: 7,
+                identity: "durable-a".to_string(),
+                ownership: PpscSequenceOwnership::Durable,
+                step: 0,
+            },
+            PpscSequenceClaim {
+                tenant: "tenant-a".to_string(),
+                sequence: 7,
+                identity: "durable-a".to_string(),
+                ownership: PpscSequenceOwnership::DefinitiveRollback,
+                step: 0,
+            },
+        ],
+    ))
+    .expect_err("durable ownership cannot be downgraded to rollback");
+    assert_eq!(error.invariant, "owned-sequence-downgrade");
 }
 
 #[test]
@@ -657,7 +956,7 @@ fn ppsc_retained_seed_covers_ambiguous_recovery_and_takeover() {
         }) && scenario
             .steps
             .iter()
-            .any(|step| matches!(step.operation, PpscOperation::Crash))
+            .any(|step| matches!(step.operation, PpscOperation::SettledRestart))
             && scenario
                 .steps
                 .iter()
@@ -778,7 +1077,7 @@ fn ppsc_hot_tenant_failure_preserves_other_tenant_progress() {
     )
     .expect("isolation scenario should build");
     let hot = tenant_state(PpscFrontiers::default(), "hot");
-    let peer = tenant_state(
+    let mut peer = tenant_state(
         PpscFrontiers {
             assigned_high_water: 1,
             active_assigned_head: 1,
@@ -789,12 +1088,33 @@ fn ppsc_hot_tenant_failure_preserves_other_tenant_progress() {
         },
         "peer",
     );
-    let passing = history(
+    let peer_document = Document::with_id_at(
+        DocumentId::from_key("peer-document").expect("peer document id should parse"),
+        TableName::new("tasks").expect("peer table should parse"),
+        serde_json::Map::from_iter([
+            (
+                "key".to_string(),
+                serde_json::Value::String("peer-key".to_string()),
+            ),
+            ("value".to_string(), serde_json::Value::from(1)),
+        ]),
+        Timestamp(1),
+    );
+    peer.documents.insert(
+        peer_document.id.to_string(),
+        serde_json::to_vec(&peer_document).expect("peer document should serialize"),
+    );
+    let mut passing = history(
         PpscBackend::Memory,
         scenario.clone(),
         BTreeMap::from([("hot".to_string(), hot.clone()), ("peer".to_string(), peer)]),
         Vec::new(),
     );
+    passing.observed_steps[1].effects.push(PpscEffect {
+        tenant: "peer".to_string(),
+        sequence: Some(1),
+        kind: "document-write".to_string(),
+    });
     audit_ppsc_history(&passing).expect("peer progress should contain hot-tenant failure");
 
     let failing = history(
@@ -827,18 +1147,21 @@ fn ppsc_shrinker_retains_minimal_ordered_failure() {
                 PpscOperation::PublicationPredecessorRace { .. }
             )
         });
-        let saw_crash = candidate
+        let saw_restart = candidate
             .steps
             .iter()
-            .any(|step| matches!(step.operation, PpscOperation::Crash));
-        saw_race && saw_crash
+            .any(|step| matches!(step.operation, PpscOperation::SettledRestart));
+        saw_race && saw_restart
     });
     assert_eq!(shrunk.steps.len(), 2);
     assert!(matches!(
         shrunk.steps[0].operation,
         PpscOperation::PublicationPredecessorRace { .. }
     ));
-    assert!(matches!(shrunk.steps[1].operation, PpscOperation::Crash));
+    assert!(matches!(
+        shrunk.steps[1].operation,
+        PpscOperation::SettledRestart
+    ));
 }
 
 #[test]

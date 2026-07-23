@@ -46,8 +46,8 @@ struct PpscEngineRunner {
     takeover_engine_factory: Option<PpscEngineFactory>,
     provider_lease_time_control: Option<Arc<dyn ProviderLeaseTimeControl>>,
     stale_engine: Option<Arc<Engine>>,
-    crashed_heads: Option<BTreeMap<String, u64>>,
-    crashed_runtime_identities: Option<BTreeMap<String, u64>>,
+    restart_heads: Option<BTreeMap<String, u64>>,
+    restart_runtime_identities: Option<BTreeMap<String, u64>>,
     scenario_seed: u64,
     next_engine_generation: u64,
 }
@@ -275,8 +275,8 @@ impl PpscEngineRunner {
             takeover_engine_factory: None,
             provider_lease_time_control: None,
             stale_engine: None,
-            crashed_heads: None,
-            crashed_runtime_identities: None,
+            restart_heads: None,
+            restart_runtime_identities: None,
             scenario_seed: scenario.seed,
             next_engine_generation: 1,
         }
@@ -302,9 +302,9 @@ impl PpscEngineRunner {
             let before = if self.engine.is_running() {
                 self.journal_heads()
             } else {
-                self.crashed_heads
+                self.restart_heads
                     .clone()
-                    .expect("PPSC crashed Engine must retain its durable heads")
+                    .expect("PPSC settled restart must retain its durable heads")
             };
             let outcome = self
                 .execute_step(index, &step.operation, step.expected)
@@ -330,11 +330,22 @@ impl PpscEngineRunner {
             if self.engine.is_running() {
                 self.observe_published_prefixes(index);
             }
-            let effects = if self.engine.is_running() {
+            let mut effects = if self.engine.is_running() {
                 self.new_effects(&before)
             } else {
                 Vec::new()
             };
+            if matches!(
+                outcome,
+                PpscExpectedOutcome::Committed | PpscExpectedOutcome::AmbiguousRecovered
+            ) && let Some((tenant, kind)) = non_journal_effect(&step.operation)
+            {
+                effects.push(PpscEffect {
+                    tenant: tenant.to_string(),
+                    sequence: None,
+                    kind: kind.to_string(),
+                });
+            }
             for effect in &effects {
                 let Some(sequence) = effect.sequence else {
                     continue;
@@ -875,10 +886,10 @@ impl PpscEngineRunner {
                 );
                 PpscExpectedOutcome::Fenced
             }
-            PpscOperation::Crash => {
+            PpscOperation::SettledRestart => {
                 assert!(self.backend.capabilities().durable_reopen);
-                self.crashed_heads = Some(self.journal_heads());
-                self.crashed_runtime_identities = Some(
+                self.restart_heads = Some(self.journal_heads());
+                self.restart_runtime_identities = Some(
                     self.tenants
                         .iter()
                         .map(|(name, tenant_id)| {
@@ -886,7 +897,7 @@ impl PpscEngineRunner {
                                 name.clone(),
                                 self.engine
                                     .tenant_runtime_identity_for_testing(tenant_id)
-                                    .expect("PPSC pre-crash runtime identity should load"),
+                                    .expect("PPSC pre-restart runtime identity should load"),
                             )
                         })
                         .collect(),
@@ -895,21 +906,21 @@ impl PpscEngineRunner {
                     let control = self
                         .provider_lease_time_control
                         .as_ref()
-                        .expect("provider crash/reopen requires lease-time control");
+                        .expect("provider settled restart requires lease-time control");
                     assert_eq!(control.provider_name(), self.backend.as_str());
                     for tenant_id in self.tenants.values() {
                         self.engine
                             .pause_committer_lease_renewal_for_testing(tenant_id)
-                            .expect("crashed provider Engine lease renewal should pause");
+                            .expect("restarting provider Engine lease renewal should pause");
                     }
                     for tenant_id in self.tenants.values() {
                         control
                             .expire_lease(tenant_id)
                             .await
-                            .expect("crashed provider Engine lease should expire before reopen");
+                            .expect("restarting provider Engine lease should expire before reopen");
                     }
                 }
-                self.engine.crash().await;
+                self.engine.settled_restart().await;
                 PpscExpectedOutcome::Observed
             }
             PpscOperation::Reopen => {
@@ -1056,14 +1067,14 @@ impl PpscEngineRunner {
     async fn reopen_engine(&mut self) {
         assert!(
             !self.engine.is_running(),
-            "PPSC reopen requires a prior crash"
+            "PPSC reopen requires a prior settled restart"
         );
         let expected_heads = self
-            .crashed_heads
+            .restart_heads
             .take()
-            .expect("PPSC reopen requires recorded durable crash heads");
-        let crashed_runtime_identities = self
-            .crashed_runtime_identities
+            .expect("PPSC reopen requires recorded durable restart heads");
+        let restart_runtime_identities = self
+            .restart_runtime_identities
             .take()
             .expect("PPSC reopen requires recorded runtime identities");
         let engine = self
@@ -1107,7 +1118,7 @@ impl PpscEngineRunner {
                 self.engine
                     .tenant_runtime_identity_for_testing(tenant_id)
                     .expect("PPSC reopened runtime identity should load"),
-                crashed_runtime_identities[name],
+                restart_runtime_identities[name],
                 "PPSC reopen must construct a new runtime for tenant {name}"
             );
         }
@@ -1401,6 +1412,17 @@ fn record_kind(events: &[TenantEventKind]) -> String {
         .join("+")
 }
 
+fn non_journal_effect(operation: &PpscOperation) -> Option<(&str, &'static str)> {
+    match operation {
+        PpscOperation::Schedule { tenant, .. } => Some((tenant, "scheduled-job-insert")),
+        PpscOperation::TriggerCursorAdvance { tenant, .. } => {
+            Some((tenant, "trigger-cursor-advance"))
+        }
+        PpscOperation::RestoreImport { tenant, .. } => Some((tenant, "restore-import")),
+        _ => None,
+    }
+}
+
 fn logical_ppsc_documents(state: &PpscTenantState) -> BTreeMap<String, serde_json::Value> {
     state
         .documents
@@ -1411,6 +1433,32 @@ fn logical_ppsc_documents(state: &PpscTenantState) -> BTreeMap<String, serde_jso
             (document_id.clone(), document["fields"].clone())
         })
         .collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "explicit PPSC replay command supplies one canonical scenario and embedded backend"]
+async fn ppsc_explicit_embedded_scenario_replay() {
+    let json = std::env::var("NIMBUS_PPSC_REPLAY_SCENARIO_JSON")
+        .expect("NIMBUS_PPSC_REPLAY_SCENARIO_JSON must contain the failure scenario");
+    let scenario = PpscScenario::from_canonical_json(&json)
+        .unwrap_or_else(|error| panic!("PPSC replay scenario is invalid: {error}"));
+    let backend = match std::env::var("NIMBUS_PPSC_BACKEND").as_deref() {
+        Ok("memory") => PpscBackend::Memory,
+        Ok("redb") => PpscBackend::Redb,
+        Ok("sqlite") => PpscBackend::Sqlite,
+        Ok(provider @ ("libsql" | "postgres" | "mysql")) => {
+            panic!(
+                "PPSC embedded replay cannot run provider backend {provider}; use the fixture-backed command emitted with the failure"
+            )
+        }
+        Ok(unknown) => panic!("unknown PPSC embedded replay backend '{unknown}'"),
+        Err(error) => panic!("NIMBUS_PPSC_BACKEND is required for embedded replay: {error}"),
+    };
+    let history = PpscEngineRunner::new_embedded(backend, &scenario)
+        .await
+        .run(scenario)
+        .await;
+    audit_ppsc_history(&history).unwrap_or_else(|error| panic!("{error}"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1456,9 +1504,46 @@ async fn ppsc_engine_runner_internal_durable_jobs_match_embedded_backends() {
             .await;
         audit_ppsc_history(&history).unwrap_or_else(|error| panic!("{error}"));
         assert_eq!(history.observed_steps.len(), scenario.steps.len());
-        assert!(
-            history.observed_steps[1].effects.is_empty(),
+        assert_eq!(
+            history.observed_steps[1].effects,
+            [PpscEffect {
+                tenant: "ppsc-internal".to_string(),
+                sequence: None,
+                kind: "scheduled-job-insert".to_string(),
+            }],
             "scheduler persistence is serial and durable but does not consume a journal sequence"
+        );
+        assert_eq!(
+            history.observed_steps[2].effects,
+            [
+                PpscEffect {
+                    tenant: "ppsc-internal".to_string(),
+                    sequence: Some(2),
+                    kind: "trigger-delivery".to_string(),
+                },
+                PpscEffect {
+                    tenant: "ppsc-internal".to_string(),
+                    sequence: None,
+                    kind: "trigger-cursor-advance".to_string(),
+                },
+            ],
+            "trigger-cursor persistence must retain both its journal event and its internal durable state"
+        );
+        assert_eq!(
+            history.observed_steps[5].effects,
+            [
+                PpscEffect {
+                    tenant: "ppsc-restore".to_string(),
+                    sequence: Some(1),
+                    kind: "document-write".to_string(),
+                },
+                PpscEffect {
+                    tenant: "ppsc-restore".to_string(),
+                    sequence: None,
+                    kind: "restore-import".to_string(),
+                },
+            ],
+            "restore persistence must retain both the imported journal and the archive replacement effect"
         );
         let state = &history.terminal.tenants["ppsc-internal"];
         assert_eq!(state.frontiers.assigned_high_water, 4);
@@ -1658,8 +1743,8 @@ async fn ppsc_commit_phase_faults_preserve_prefix_and_recover() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn ppsc_durable_crash_reopen_preserves_prefix_and_continues() {
-    let scenario = crash_reopen_scenario();
+async fn ppsc_durable_settled_restart_preserves_prefix_and_continues() {
+    let scenario = settled_restart_scenario();
     let mut terminal_states = Vec::new();
     for backend in [PpscBackend::Redb, PpscBackend::Sqlite] {
         let history = PpscEngineRunner::new_embedded(backend, &scenario)

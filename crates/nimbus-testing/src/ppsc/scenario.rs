@@ -209,7 +209,12 @@ pub enum PpscOperation {
     AttemptStaleProviderWrite {
         tenant: String,
     },
-    Crash,
+    /// Gracefully drains the current Engine at a settled operation boundary,
+    /// drops it, and retains durable storage for a subsequent `Reopen`.
+    ///
+    /// This is restart/lifecycle coverage, not process-loss evidence. Abrupt
+    /// mid-commit loss is modeled by the dedicated commit-phase fault matrix.
+    SettledRestart,
     Reopen,
     Quiesce,
 }
@@ -238,14 +243,14 @@ impl PpscOperation {
             | Self::AttemptStaleProviderWrite { tenant } => Some(tenant),
             Self::AdvanceWallClock { .. }
             | Self::AdvanceMonotonicClock { .. }
-            | Self::Crash
+            | Self::SettledRestart
             | Self::Reopen
             | Self::Quiesce => None,
         }
     }
 
     const fn needs_durable_reopen(&self) -> bool {
-        matches!(self, Self::Crash | Self::Reopen)
+        matches!(self, Self::SettledRestart | Self::Reopen)
     }
 
     const fn needs_provider_authority(&self) -> bool {
@@ -385,12 +390,50 @@ impl PpscScenario {
         serde_json::to_vec(self).expect("PPSC scenario serialization should be infallible")
     }
 
+    pub fn from_canonical_json(json: &str) -> Result<Self, PpscScenarioError> {
+        let decoded: Self = serde_json::from_str(json).map_err(|error| {
+            PpscScenarioError::new(format!("PPSC replay scenario JSON is invalid: {error}"))
+        })?;
+        Self::new(decoded.name, decoded.seed, decoded.steps)
+    }
+
+    pub fn requires_provider_authority(&self) -> bool {
+        self.steps
+            .iter()
+            .any(|step| step.operation.needs_provider_authority())
+    }
+
     pub fn replay_command(&self, backend: PpscBackend) -> String {
-        format!(
-            "NIMBUS_PPSC_SEED={} NIMBUS_PPSC_BACKEND={} make verify-ppsc-seed-farm",
-            self.seed,
-            backend.as_str()
-        )
+        if backend == PpscBackend::Redb
+            && PpscScenario::seeded(self.seed, self.steps.len()).as_ref() == Ok(self)
+        {
+            return format!(
+                "NIMBUS_PPSC_SEED={} NIMBUS_PPSC_STEP_COUNT={} NIMBUS_PPSC_BACKEND=redb make verify-ppsc-seed-farm",
+                self.seed,
+                self.steps.len()
+            );
+        }
+
+        let scenario_json = String::from_utf8(self.canonical_bytes())
+            .expect("PPSC canonical JSON should always be UTF-8");
+        let scenario_env = shell_single_quote(&scenario_json);
+        match backend {
+            PpscBackend::Memory | PpscBackend::Redb | PpscBackend::Sqlite => format!(
+                "NIMBUS_PPSC_REPLAY_SCENARIO_JSON={scenario_env} NIMBUS_PPSC_BACKEND={} cargo test -p nimbus-engine tests::ppsc::ppsc_explicit_embedded_scenario_replay -- --ignored --exact --nocapture --test-threads=1",
+                backend.as_str()
+            ),
+            PpscBackend::Libsql | PpscBackend::Postgres | PpscBackend::Mysql => {
+                let test_name = if self.requires_provider_authority() {
+                    "ppsc_provider_takeover_extension_matches_postgres_mysql_and_libsql".to_string()
+                } else {
+                    format!("{}_ppsc_seeded_journal_differential", backend.as_str())
+                };
+                format!(
+                    "NIMBUS_PPSC_REPLAY_SCENARIO_JSON={scenario_env} make test-external-provider PROVIDER={} TEST_FILTER='test({test_name})'",
+                    backend.as_str()
+                )
+            }
+        }
     }
 
     pub fn validate_for_backend(&self, backend: PpscBackend) -> Result<(), PpscScenarioError> {
@@ -417,6 +460,10 @@ impl PpscScenario {
         }
         Ok(())
     }
+}
+
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 pub fn retained_ppsc_scenarios() -> Vec<PpscScenario> {
@@ -671,7 +718,7 @@ fn universal_step(seed: u64, index: usize, step_count: usize, draw: u64) -> Ppsc
             },
             PpscExpectedOutcome::AmbiguousRecovered,
         ),
-        22 => PpscStep::new(PpscOperation::Crash, PpscExpectedOutcome::Observed),
+        22 => PpscStep::new(PpscOperation::SettledRestart, PpscExpectedOutcome::Observed),
         23 => PpscStep::new(PpscOperation::Reopen, PpscExpectedOutcome::Observed),
         24 => PpscStep::new(
             PpscOperation::ArmFault {

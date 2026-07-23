@@ -123,6 +123,9 @@ redb seed-farm jobs; live-provider, Hermitage, Loom, and crash-matrix results
 remain separate evidence.
 
 Deterministic simulation proves the enumerated histories against the PPSC
-legal-state auditor and production Engine interface, including redb
-crash/reopen. It does not prove unenumerated schedules, provider transaction
-semantics, real network behavior, or external serializability-checker results.
+legal-state auditor and production Engine interface, including a settled redb
+Engine restart/reopen. That lifecycle operation gracefully drains workers and
+is not process-loss evidence; abrupt commit-phase loss is covered by the
+separate PPSC crash matrix and fault seams. Neither surface proves unenumerated
+schedules, provider transaction semantics, real network behavior, or external
+serializability-checker results.

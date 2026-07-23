@@ -869,6 +869,21 @@ impl Engine {
     }
 
     #[cfg(test)]
+    pub(crate) fn trigger_provider_live_commit_observers_for_testing(
+        &self,
+        tenant_id: &TenantId,
+        records: &[TenantEventRecord],
+    ) -> Result<bool> {
+        let runtime = self.get_existing_tenant(tenant_id)?;
+        let _operation = runtime.enter_operation(tenant_id)?;
+        let applied = records
+            .iter()
+            .map(TenantEventRecord::as_commit_entry)
+            .collect::<Vec<_>>();
+        Ok(self.enqueue_provider_live_commit_observers_for_testing(runtime, &applied))
+    }
+
+    #[cfg(test)]
     pub(crate) fn trigger_provider_catch_up_observers_with_token_for_testing(
         &self,
         tenant_id: &TenantId,

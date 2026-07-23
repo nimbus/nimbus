@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+use nimbus_core::{Document, Mutation, ScheduledJob, TableSchema};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use super::{PpscBackend, PpscExpectedOutcome, PpscOperation, PpscScenario};
 
@@ -161,12 +163,16 @@ pub fn audit_ppsc_history(history: &PpscHistory) -> Result<(), PpscAuditError> {
         .scenario
         .validate_for_backend(history.backend)
         .map_err(|error| failure(history, "backend-capability", None, None, error.to_string()))?;
+    // Diagnose the scenario-level blast-radius contract before the more
+    // general effect/terminal-state correspondence checks. A missing durable
+    // peer after another tenant overloads is specifically an isolation
+    // failure, even though it also implies a missing committed effect.
+    audit_tenant_isolation(history)?;
     audit_observed_steps(history)?;
     audit_sequence_claims(history)?;
     for (tenant, state) in &history.terminal.tenants {
         audit_tenant_state(history, tenant, state)?;
     }
-    audit_tenant_isolation(history)?;
     Ok(())
 }
 
@@ -225,6 +231,21 @@ fn audit_observed_steps(history: &PpscHistory) -> Result<(), PpscAuditError> {
                 ),
             ));
         }
+        if outcome_requires_durable_effect(observed.outcome)
+            && expected_effect_kind(&declared.operation).is_some()
+            && observed.effects.is_empty()
+        {
+            return Err(failure(
+                history,
+                "committed-step-missing-durable-effect",
+                Some(index),
+                declared.operation.tenant(),
+                format!(
+                    "{:?} for {:?} recorded no durable effect",
+                    observed.outcome, declared.operation
+                ),
+            ));
+        }
         if observed.effects.iter().any(|effect| {
             declared
                 .operation
@@ -239,8 +260,462 @@ fn audit_observed_steps(history: &PpscHistory) -> Result<(), PpscAuditError> {
                 "step recorded a durable effect for a different tenant",
             ));
         }
+        if outcome_requires_durable_effect(observed.outcome)
+            && let Some(expected_kind) = expected_effect_kind(&declared.operation)
+            && !observed
+                .effects
+                .iter()
+                .any(|effect| effect.kind.split('+').any(|kind| kind == expected_kind))
+        {
+            return Err(failure(
+                history,
+                "operation-effect-kind",
+                Some(index),
+                declared.operation.tenant(),
+                format!(
+                    "{:?} recorded no {expected_kind} effect: {:?}",
+                    declared.operation, observed.effects
+                ),
+            ));
+        }
+        for effect in &observed.effects {
+            let Some(state) = history.terminal.tenants.get(&effect.tenant) else {
+                return Err(failure(
+                    history,
+                    "effect-terminal-coverage",
+                    Some(index),
+                    Some(&effect.tenant),
+                    "durable effect tenant is missing from terminal state",
+                ));
+            };
+            if let Some(sequence) = effect.sequence {
+                if state.journal.iter().any(|entry| entry.sequence == sequence) {
+                    continue;
+                }
+                if has_later_restore(history, index, &effect.tenant) {
+                    continue;
+                }
+                return Err(failure(
+                    history,
+                    "effect-terminal-coverage",
+                    Some(index),
+                    Some(&effect.tenant),
+                    format!("durable effect sequence {sequence} is absent from terminal journal"),
+                ));
+            }
+            if !allows_non_journal_effect(&declared.operation, &effect.kind) {
+                return Err(failure(
+                    history,
+                    "effect-sequence",
+                    Some(index),
+                    Some(&effect.tenant),
+                    format!(
+                        "effect {:?} omitted its journal sequence without an operation-owned durable-state contract",
+                        effect.kind
+                    ),
+                ));
+            }
+        }
+        audit_operation_terminal_state(history, index, &declared.operation, observed.outcome)?;
     }
     Ok(())
+}
+
+fn outcome_requires_durable_effect(outcome: PpscExpectedOutcome) -> bool {
+    matches!(
+        outcome,
+        PpscExpectedOutcome::Committed | PpscExpectedOutcome::AmbiguousRecovered
+    )
+}
+
+fn expected_effect_kind(operation: &PpscOperation) -> Option<&'static str> {
+    match operation {
+        PpscOperation::Mutation { .. }
+        | PpscOperation::CommitPermutation { .. }
+        | PpscOperation::ConflictRetry { .. }
+        | PpscOperation::CommitPhaseFault { .. }
+        | PpscOperation::PublicationPredecessorRace { .. }
+        | PpscOperation::ProviderTakeover { .. } => Some("document-write"),
+        PpscOperation::SchemaSet { .. }
+        | PpscOperation::SchemaDelete { .. }
+        | PpscOperation::ProjectionUpdate { .. } => Some("schema-change"),
+        PpscOperation::TriggerCursorAdvance { .. } => Some("trigger-cursor-advance"),
+        PpscOperation::Schedule { .. } => Some("scheduled-job-insert"),
+        PpscOperation::RestoreImport { .. } => Some("restore-import"),
+        PpscOperation::ZeroWriteExecutionUnit { .. }
+        | PpscOperation::ArmFault { .. }
+        | PpscOperation::ReleaseFault { .. }
+        | PpscOperation::CancelNext { .. }
+        | PpscOperation::ForceOverload { .. }
+        | PpscOperation::AdvanceWallClock { .. }
+        | PpscOperation::AdvanceMonotonicClock { .. }
+        | PpscOperation::ExpireProviderLease { .. }
+        | PpscOperation::AttemptStaleProviderWrite { .. }
+        | PpscOperation::SettledRestart
+        | PpscOperation::Reopen
+        | PpscOperation::Quiesce => None,
+    }
+}
+
+fn allows_non_journal_effect(operation: &PpscOperation, kind: &str) -> bool {
+    matches!(
+        (operation, kind),
+        (PpscOperation::Schedule { .. }, "scheduled-job-insert")
+            | (
+                PpscOperation::TriggerCursorAdvance { .. },
+                "trigger-cursor-advance"
+            )
+            | (PpscOperation::RestoreImport { .. }, "restore-import")
+    )
+}
+
+fn audit_operation_terminal_state(
+    history: &PpscHistory,
+    index: usize,
+    operation: &PpscOperation,
+    outcome: PpscExpectedOutcome,
+) -> Result<(), PpscAuditError> {
+    if !outcome_requires_durable_effect(outcome) {
+        return Ok(());
+    }
+    match operation {
+        PpscOperation::Mutation {
+            tenant, key, value, ..
+        } => audit_expected_document(
+            history,
+            index,
+            tenant,
+            BTreeMap::from([
+                ("key".to_string(), Value::String(key.clone())),
+                ("value".to_string(), Value::from(*value)),
+            ]),
+        ),
+        PpscOperation::CommitPermutation {
+            tenant, value_base, ..
+        } => {
+            for (key, offset) in [
+                ("permutation-queued", 1_i64),
+                ("permutation-direct", 2),
+                ("permutation-execution-unit", 3),
+            ] {
+                audit_expected_document(
+                    history,
+                    index,
+                    tenant,
+                    BTreeMap::from([
+                        ("key".to_string(), Value::String(key.to_string())),
+                        (
+                            "value".to_string(),
+                            Value::from(value_base.saturating_add(offset)),
+                        ),
+                    ]),
+                )?;
+            }
+            Ok(())
+        }
+        PpscOperation::ConflictRetry {
+            tenant,
+            key,
+            second,
+            ..
+        } => audit_expected_document(
+            history,
+            index,
+            tenant,
+            BTreeMap::from([
+                ("key".to_string(), Value::String(key.clone())),
+                ("value".to_string(), Value::from(*second)),
+            ]),
+        ),
+        PpscOperation::CommitPhaseFault { tenant, fault, .. } => {
+            let (key, value) = match fault {
+                super::PpscInjectedFault::DurableBeforePublish => {
+                    ("durable-before-publish", 401_i64)
+                }
+                super::PpscInjectedFault::PanicAfterDurable => ("panic-after-durable", 421),
+                _ => return Ok(()),
+            };
+            audit_expected_document(
+                history,
+                index,
+                tenant,
+                BTreeMap::from([
+                    ("key".to_string(), Value::String(key.to_string())),
+                    ("value".to_string(), Value::from(value)),
+                ]),
+            )
+        }
+        PpscOperation::PublicationPredecessorRace { tenant, .. } => {
+            for (key, value) in [("held-predecessor", 411_i64), ("blocked-successor", 412)] {
+                audit_expected_document(
+                    history,
+                    index,
+                    tenant,
+                    BTreeMap::from([
+                        ("key".to_string(), Value::String(key.to_string())),
+                        ("value".to_string(), Value::from(value)),
+                    ]),
+                )?;
+            }
+            Ok(())
+        }
+        PpscOperation::ProviderTakeover { tenant } => audit_expected_document(
+            history,
+            index,
+            tenant,
+            BTreeMap::from([
+                (
+                    "key".to_string(),
+                    Value::String("provider-takeover".to_string()),
+                ),
+                ("value".to_string(), Value::from(history.scenario.seed)),
+            ]),
+        ),
+        PpscOperation::Schedule { tenant, job } => {
+            if has_later_restore(history, index, tenant) {
+                return Ok(());
+            }
+            let state = operation_tenant_state(history, index, tenant)?;
+            let found = state.scheduled_jobs.iter().any(|bytes| {
+                serde_json::from_slice::<ScheduledJob>(bytes)
+                    .ok()
+                    .is_some_and(|scheduled| match scheduled.mutation {
+                        Mutation::Insert { fields, .. } => {
+                            fields.get("key") == Some(&Value::String(format!("scheduled-{job}")))
+                                && fields.get("value") == Some(&Value::from(*job))
+                        }
+                        Mutation::Update { .. } | Mutation::Delete { .. } => false,
+                    })
+            });
+            if found {
+                Ok(())
+            } else {
+                Err(failure(
+                    history,
+                    "operation-terminal-state",
+                    Some(index),
+                    Some(tenant),
+                    format!("scheduled job {job} is absent from terminal scheduler state"),
+                ))
+            }
+        }
+        PpscOperation::TriggerCursorAdvance { tenant, through } => {
+            if has_later_restore(history, index, tenant) {
+                return Ok(());
+            }
+            let state = operation_tenant_state(history, index, tenant)?;
+            if state.trigger_cursor >= *through {
+                Ok(())
+            } else {
+                Err(failure(
+                    history,
+                    "operation-terminal-state",
+                    Some(index),
+                    Some(tenant),
+                    format!(
+                        "trigger cursor {} did not retain committed advance through {through}",
+                        state.trigger_cursor
+                    ),
+                ))
+            }
+        }
+        PpscOperation::RestoreImport { tenant, archive } => {
+            if has_later_restore(history, index, tenant) {
+                return Ok(());
+            }
+            audit_expected_document(
+                history,
+                index,
+                tenant,
+                BTreeMap::from([
+                    (
+                        "key".to_string(),
+                        Value::String(format!("archive-{archive}")),
+                    ),
+                    ("archive".to_string(), Value::from(*archive)),
+                ]),
+            )
+        }
+        PpscOperation::SchemaSet { tenant, revision } => {
+            if has_later_tasks_schema_change(history, index, tenant) {
+                return Ok(());
+            }
+            audit_expected_schema(
+                history,
+                index,
+                tenant,
+                "tasks",
+                Some(format!("revision_{revision:016x}")),
+            )
+        }
+        PpscOperation::SchemaDelete { tenant } => {
+            if has_later_tasks_schema_change(history, index, tenant) {
+                return Ok(());
+            }
+            audit_expected_schema(history, index, tenant, "tasks", None)
+        }
+        PpscOperation::ProjectionUpdate { tenant, revision } => {
+            if has_later_projection_change(history, index, tenant) {
+                return Ok(());
+            }
+            audit_expected_schema(
+                history,
+                index,
+                tenant,
+                "ppsc_projection",
+                Some(format!("revision_{revision:016x}")),
+            )
+        }
+        PpscOperation::ZeroWriteExecutionUnit { .. }
+        | PpscOperation::ArmFault { .. }
+        | PpscOperation::ReleaseFault { .. }
+        | PpscOperation::CancelNext { .. }
+        | PpscOperation::ForceOverload { .. }
+        | PpscOperation::AdvanceWallClock { .. }
+        | PpscOperation::AdvanceMonotonicClock { .. }
+        | PpscOperation::ExpireProviderLease { .. }
+        | PpscOperation::AttemptStaleProviderWrite { .. }
+        | PpscOperation::SettledRestart
+        | PpscOperation::Reopen
+        | PpscOperation::Quiesce => Ok(()),
+    }
+}
+
+fn operation_tenant_state<'a>(
+    history: &'a PpscHistory,
+    index: usize,
+    tenant: &str,
+) -> Result<&'a PpscTenantState, PpscAuditError> {
+    history.terminal.tenants.get(tenant).ok_or_else(|| {
+        failure(
+            history,
+            "operation-terminal-state",
+            Some(index),
+            Some(tenant),
+            "committed operation tenant is missing from terminal state",
+        )
+    })
+}
+
+fn audit_expected_document(
+    history: &PpscHistory,
+    index: usize,
+    tenant: &str,
+    expected_fields: BTreeMap<String, Value>,
+) -> Result<(), PpscAuditError> {
+    if has_later_restore(history, index, tenant) {
+        return Ok(());
+    }
+    let state = operation_tenant_state(history, index, tenant)?;
+    let found = state.documents.values().any(|bytes| {
+        serde_json::from_slice::<Document>(bytes)
+            .ok()
+            .is_some_and(|document| {
+                expected_fields
+                    .iter()
+                    .all(|(name, value)| document.fields.get(name) == Some(value))
+            })
+    });
+    if found {
+        Ok(())
+    } else {
+        Err(failure(
+            history,
+            "operation-terminal-state",
+            Some(index),
+            Some(tenant),
+            format!("no terminal document retains fields {expected_fields:?}"),
+        ))
+    }
+}
+
+fn audit_expected_schema(
+    history: &PpscHistory,
+    index: usize,
+    tenant: &str,
+    table: &str,
+    expected_field: Option<String>,
+) -> Result<(), PpscAuditError> {
+    let state = operation_tenant_state(history, index, tenant)?;
+    let schemas = serde_json::from_slice::<Vec<TableSchema>>(&state.schema).map_err(|error| {
+        failure(
+            history,
+            "operation-terminal-state",
+            Some(index),
+            Some(tenant),
+            format!("terminal schema did not deserialize: {error}"),
+        )
+    })?;
+    let schema = schemas.iter().find(|schema| schema.table.as_str() == table);
+    match expected_field {
+        Some(field)
+            if schema.is_some_and(|schema| {
+                schema
+                    .fields
+                    .iter()
+                    .any(|candidate| candidate.name == field)
+            }) =>
+        {
+            Ok(())
+        }
+        None if schema.is_none() => Ok(()),
+        expected => Err(failure(
+            history,
+            "operation-terminal-state",
+            Some(index),
+            Some(tenant),
+            format!("table {table:?} terminal schema did not match field {expected:?}"),
+        )),
+    }
+}
+
+fn has_later_restore(history: &PpscHistory, index: usize, tenant: &str) -> bool {
+    history.scenario.steps[index.saturating_add(1)..]
+        .iter()
+        .any(|step| {
+            matches!(
+                &step.operation,
+                PpscOperation::RestoreImport {
+                    tenant: candidate,
+                    ..
+                } if candidate == tenant
+            ) && outcome_requires_durable_effect(step.expected)
+        })
+}
+
+fn has_later_tasks_schema_change(history: &PpscHistory, index: usize, tenant: &str) -> bool {
+    history.scenario.steps[index.saturating_add(1)..]
+        .iter()
+        .any(|step| {
+            matches!(
+                &step.operation,
+                PpscOperation::SchemaSet {
+                    tenant: candidate,
+                    ..
+                } | PpscOperation::SchemaDelete { tenant: candidate }
+                    | PpscOperation::RestoreImport {
+                        tenant: candidate,
+                        ..
+                    } if candidate == tenant
+            ) && outcome_requires_durable_effect(step.expected)
+        })
+}
+
+fn has_later_projection_change(history: &PpscHistory, index: usize, tenant: &str) -> bool {
+    history.scenario.steps[index.saturating_add(1)..]
+        .iter()
+        .any(|step| {
+            matches!(
+                &step.operation,
+                PpscOperation::ProjectionUpdate {
+                    tenant: candidate,
+                    ..
+                } | PpscOperation::RestoreImport {
+                    tenant: candidate,
+                    ..
+                } if candidate == tenant
+            ) && outcome_requires_durable_effect(step.expected)
+        })
 }
 
 fn outcome_must_have_no_durable_effect(outcome: PpscExpectedOutcome) -> bool {
@@ -275,17 +750,20 @@ fn audit_sequence_claims(history: &PpscHistory) -> Result<(), PpscAuditError> {
                 ));
             }
             if identity == claim.identity
-                && matches!(ownership, PpscSequenceOwnership::Ambiguous)
+                && matches!(
+                    ownership,
+                    PpscSequenceOwnership::Durable | PpscSequenceOwnership::Ambiguous
+                )
                 && matches!(claim.ownership, PpscSequenceOwnership::DefinitiveRollback)
             {
                 return Err(failure(
                     history,
-                    "ambiguous-ownership-downgrade",
+                    "owned-sequence-downgrade",
                     Some(claim.step),
                     Some(&claim.tenant),
                     format!(
-                        "sequence {} ambiguous ownership cannot become a definitive rollback",
-                        claim.sequence
+                        "sequence {} {ownership:?} ownership cannot become a definitive rollback",
+                        claim.sequence,
                     ),
                 ));
             }
