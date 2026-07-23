@@ -1,6 +1,6 @@
 # Nimbus Network Control Plane Plan
 
-Status: `active; NNC0.0 durability checkpoint in progress`
+Status: `active; NNC0.0 complete; NNC0.1 queued`
 
 Owner: this plan is the sole implementation control plane for the
 transport-free `nimbus-network` crate and the connectivity-resource lifecycle
@@ -36,18 +36,18 @@ ledger transition.
 
 | Field | Current value |
 | --- | --- |
-| Plan status | `active; NNC0.0 durability checkpoint in progress` |
+| Plan status | `active; NNC0.0 complete; NNC0.1 queued` |
 | Current band | `NNC0 — executable baselines and verifier` |
-| Current item | `NNC0.0 — make the implementation control plane durable in branch history` |
-| Last completed item | `NNA7 — independent Fable review disposition and plan correction` |
-| Next action | Commit the force-tracked canonical plan and routing edit without fetching; prove `HEAD` contains the plan; then record the checkpoint commit and close NNC0.0 before rebasing onto `origin/main`. |
+| Current item | `NNC0.1 — dependency/owner/bind baseline, after main reconciliation` |
+| Last completed item | `NNC0.0 — canonical implementation control plane durable in branch history` |
+| Next action | Commit this NNC0.0 completion/evidence checkpoint, fetch `origin/main`, rebase the clean owner branch onto merged main `9c2d4f150c60f43dfdc0a3f1ec6550942e26ab8f`, then mark NNC0.1 `in_progress` and regenerate every baseline from the reconciled HEAD. |
 | Owner branch | `codex/nimbus-network-architecture-audit` |
 | Owner worktree | `/Users/jack/src/github.com/nimbus/nimbus-network-architecture-audit` |
 | Audit base | `origin/main` at `b69007a78a220847812370d9418049f1253f0384` |
-| Last checkpoint commit | None contains this plan yet; NNC0.0 records the first authorized durability commit before any fetch/rebase. |
-| Audit dirty state | This plan and the routing-index edit only; no implementation files are authorized in this worktree. The canonical plan is intentionally a narrow force-tracked exception to the private-doc ignore rule, following commit `dd5b178e4`; it is not durable until a future authorized commit places it in `HEAD`. |
+| Last checkpoint commit | `d692254ad246c5e153aa220fc19cc86e12585486` — first branch commit containing the canonical plan and routing edit. |
+| Audit dirty state | NNC0.0 completion/evidence update to this plan only; the bootstrap commit left the worktree clean. The canonical plan is intentionally a narrow force-tracked exception to the private-doc ignore rule, following commit `dd5b178e4`. |
 | Execution mode | Autonomous implementation goal active; commit each completed item with its ledger/evidence checkpoint; no push or PR without separate authority. |
-| Last verification | See `NNA7`, the independent-review disposition, and the evidence record at the end of this plan. |
+| Last verification | `git cat-file -e HEAD:docs/private/plans/nimbus-network-control-plane-plan.md` exited 0 at `d692254ad246c5e153aa220fc19cc86e12585486`; see NNC0.0 evidence below. |
 | Blocking decision | None. NNC0.0 is authorized; no fetch/rebase may precede its durability commit. Exact Rust names otherwise remain band-local decisions subject to NNC0 proofs and the seam-promotion rule. |
 
 Recovery protocol:
@@ -1255,7 +1255,7 @@ checkpoint.
 
 | Item | Status | Evidence / recovery checkpoint |
 | --- | --- | --- |
-| NNC0.0 | `in_progress` | Owned paths: this plan and `docs/private/plans/README.md`, both staged. Last green: `git diff --cached --check`, task/ledger bijection, docs check, and formatting passed. Next: commit the bootstrap checkpoint without fetch, run the `HEAD` plan proof, record its SHA, and close NNC0.0. Blocker: none. |
+| NNC0.0 | `done` | Bootstrap commit `d692254ad246c5e153aa220fc19cc86e12585486` contains the force-tracked plan and routing edit. Before any fetch/rebase, `git cat-file -e HEAD:docs/private/plans/nimbus-network-control-plane-plan.md` exited 0 and `git status --short --branch` showed a clean worktree. |
 | NNC0.1 | `todo` | — |
 | NNC0.1a | `todo` | — |
 | NNC0.1b | `todo` | — |
@@ -1413,6 +1413,22 @@ docs/private/plans/proof/nimbus-network-control-plane/
 Each band record must include base/HEAD, dirty state, commands with real exit
 status, test counts, environment/capabilities, skipped lanes, seeds, and
 artifacts.
+
+NNC0.0 durability evidence, 2026-07-23:
+
+- bootstrap commit:
+  `d692254ad246c5e153aa220fc19cc86e12585486`
+  (`docs(plans): establish nimbus network control plane`);
+- committed paths:
+  `docs/private/plans/nimbus-network-control-plane-plan.md` and
+  `docs/private/plans/README.md`, with no source or unrelated path;
+- pre-fetch recovery proof:
+  `git cat-file -e HEAD:docs/private/plans/nimbus-network-control-plane-plan.md`
+  exited 0;
+- post-commit state:
+  `git status --short --branch` showed the owner branch ahead 1/behind 2 and no
+  dirty path;
+- no fetch, rebase, source edit, push, or PR preceded the durability proof.
 
 ## Completion Gate
 
