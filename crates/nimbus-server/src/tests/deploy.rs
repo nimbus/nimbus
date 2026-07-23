@@ -66,6 +66,49 @@ fn deploy_request(functions: serde_json::Value) -> serde_json::Value {
 }
 
 fn cloud_functions_request(bundle: &str, bundle_sha256: &str) -> serde_json::Value {
+    cloud_functions_request_with_targets(
+        bundle,
+        bundle_sha256,
+        json!([{
+            "name": "syncUser",
+            "entrypoint": "exports.syncUser",
+            "authoring_surface": "firebase_v2",
+            "signature_type": "cloud_event",
+            "binding": {
+                "binding_kind": "firestore_document",
+                "event_type": "google.cloud.firestore.document.v1.written",
+                "database": "(default)",
+                "document": "users/{userId}",
+                "execution": "service_account"
+            }
+        }]),
+    )
+}
+
+fn cloud_functions_http_request(bundle: &str, bundle_sha256: &str) -> serde_json::Value {
+    cloud_functions_request_with_targets(
+        bundle,
+        bundle_sha256,
+        json!([{
+            "name": "hello",
+            "entrypoint": "exports.hello",
+            "authoring_surface": "functions_framework",
+            "signature_type": "http",
+            "binding": {
+                "binding_kind": "https",
+                "exposure": "http",
+                "path": "/hello",
+                "execution": "request_principal"
+            }
+        }]),
+    )
+}
+
+fn cloud_functions_request_with_targets(
+    bundle: &str,
+    bundle_sha256: &str,
+    targets: serde_json::Value,
+) -> serde_json::Value {
     json!({
         "artifacts": {
             "cloud_functions": {
@@ -91,19 +134,7 @@ fn cloud_functions_request(bundle: &str, bundle_sha256: &str) -> serde_json::Val
                 },
                 "targets_json": {
                     "version": 1,
-                    "targets": [{
-                        "name": "syncUser",
-                        "entrypoint": "exports.syncUser",
-                        "authoring_surface": "firebase_v2",
-                        "signature_type": "cloud_event",
-                        "binding": {
-                            "binding_kind": "firestore_document",
-                            "event_type": "google.cloud.firestore.document.v1.written",
-                            "database": "(default)",
-                            "document": "users/{userId}",
-                            "execution": "service_account"
-                        }
-                    }]
+                    "targets": targets
                 },
                 "bundle_mjs": bundle,
                 "bundle_sha256": bundle_sha256
@@ -438,6 +469,89 @@ async fn deploy_activation_accepts_cloud_functions_artifacts() {
     assert_eq!(body["activated"], json!(true));
     assert_eq!(body["generation"], json!(1));
     assert_eq!(body["previous_generation"], json!(0));
+}
+
+#[tokio::test]
+async fn deploy_refuses_cloud_functions_http_artifacts_without_tenant_binding() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(deploy_router(fixture.engine(), None)).await;
+    let bundle_source = r#"
+globalThis.__nimbusInvoke = async function () {
+  return { status: 200, headers: {}, body_kind: "text", body: "must not run" };
+};
+export {};
+"#;
+    let temp = tempfile::tempdir().expect("bundle tempdir should build");
+    let bundle_path = temp.path().join("bundle.mjs");
+    std::fs::write(&bundle_path, bundle_source).expect("bundle should write");
+    let bundle_sha256 = nimbus_runtime::RuntimeBundle::compute_sha256_for_path(&bundle_path)
+        .expect("bundle hash should compute");
+
+    let response = deploy(
+        &server,
+        cloud_functions_http_request(bundle_source, &bundle_sha256),
+        Some(DEPLOY_TOKEN),
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert!(
+        response
+            .text()
+            .await
+            .expect("error response should decode")
+            .contains("trusted deployment tenant binding")
+    );
+}
+
+#[tokio::test]
+async fn deploy_preserves_cloud_functions_http_tenant_binding_for_activated_routes() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    engine
+        .create_tenant(TenantId::new("demo").expect("tenant id should parse"))
+        .expect("tenant should create");
+    let binding = crate::CloudFunctionsHttpTenantBinding::new(
+        TenantId::new("demo").expect("tenant id should parse"),
+    )
+    .expect("HTTP tenant binding should build");
+    let server = ServerFixture::start(
+        crate::router::RouterBuildConfig::core(engine)
+            .with_deploy_admin_token(DEPLOY_TOKEN)
+            .with_cloud_functions_http_tenant(binding)
+            .build(),
+    )
+    .await;
+    let bundle_source = r#"
+globalThis.__nimbusInvoke = async function () {
+  return { status: 200, headers: {}, body_kind: "text", body: "bound" };
+};
+export {};
+"#;
+    let temp = tempfile::tempdir().expect("bundle tempdir should build");
+    let bundle_path = temp.path().join("bundle.mjs");
+    std::fs::write(&bundle_path, bundle_source).expect("bundle should write");
+    let bundle_sha256 = nimbus_runtime::RuntimeBundle::compute_sha256_for_path(&bundle_path)
+        .expect("bundle hash should compute");
+
+    let deploy_response = deploy(
+        &server,
+        cloud_functions_http_request(bundle_source, &bundle_sha256),
+        Some(DEPLOY_TOKEN),
+    )
+    .await;
+    assert_eq!(deploy_response.status(), StatusCode::OK);
+
+    let invocation = server
+        .client()
+        .get(server.http_url("/hello"))
+        .send()
+        .await
+        .expect("activated HTTP target request should send");
+    let status = invocation.status();
+    let body = invocation.text().await.expect("response should decode");
+    assert_eq!(status, StatusCode::OK, "unexpected invocation body: {body}");
+    assert_eq!(body, "bound");
 }
 
 #[tokio::test]

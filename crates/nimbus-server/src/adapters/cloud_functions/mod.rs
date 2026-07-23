@@ -3,7 +3,8 @@ mod http;
 
 pub(crate) use http::http_handler;
 pub use nimbus_cloud_functions::{
-    CloudFunctionsHttpExposure, CloudFunctionsRegistry, CloudFunctionsTargetBinding,
+    CloudFunctionsHttpExposure, CloudFunctionsHttpTenantBinding, CloudFunctionsRegistry,
+    CloudFunctionsTargetBinding,
 };
 // The artifact-layout constants are only reached from this crate's
 // fixture-building test modules now: the deploy orchestration that used to

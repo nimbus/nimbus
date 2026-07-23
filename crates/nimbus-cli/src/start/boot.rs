@@ -132,6 +132,10 @@ pub(crate) async fn run_start_command(
         load_convex_registry(&command, resolved_app_dir.as_ref(), &runtime_limits)?;
     let cloud_functions_registry =
         load_cloud_functions_registry(&command, resolved_app_dir.as_ref(), &runtime_limits)?;
+    super::adapters::cloud_functions::ensure_http_targets_are_bound(
+        cloud_functions_registry.as_ref(),
+        adapter_enablement.cloud_functions_http_tenant.as_ref(),
+    )?;
     let compose_selection = resolve_optional_compose_selection(&command)?;
     let workload_boot_plan = match compose_selection.as_ref() {
         Some(selection) => Some(crate::workload_boot::plan_compose_services(

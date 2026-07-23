@@ -10,10 +10,11 @@
 //! transport-framework type; `nimbus-server` bridges it into its own `AppError`
 //! (the crate's HTTP-response error) at the crate seam.
 
+use std::path::Path;
 use std::sync::{Arc, RwLock};
 
 use nimbus_auth::ApplicationAuthVerifier;
-use nimbus_cloud_functions::CloudFunctionsRegistry;
+use nimbus_cloud_functions::{CloudFunctionsHttpTenantBinding, CloudFunctionsRegistry};
 use nimbus_convex::{ConvexRegistry, ConvexTenancyConfig};
 use nimbus_engine::Engine;
 use nimbus_firebase::FirebaseConfig;
@@ -25,6 +26,7 @@ use nimbus_runtime::{
 };
 use nimbus_services::{RuntimeServiceRegistry, ServiceManager};
 use nimbus_tenant::TenantIsolationMode;
+use tempfile::TempDir;
 use tracing::warn;
 
 use crate::cloudflare_config::CloudflareConfig;
@@ -70,6 +72,7 @@ impl ComputeState {
             system_convex_registry,
             application_auth_verifier,
             cloud_functions_registry,
+            cloud_functions_http_tenant,
             cloudflare_config,
             firebase_config,
             convex_tenancy,
@@ -88,6 +91,9 @@ impl ComputeState {
             cloud_functions_registry: cloud_functions_registry.map(|registry| {
                 Arc::new(registry.with_runtime_limits(base_runtime_limits.clone()))
             }),
+            cloud_functions_http_tenant,
+            convex_artifact_lease: None,
+            cloud_functions_artifact_lease: None,
             cloudflare_config: cloudflare_config.map(Arc::new),
             firebase_config: firebase_config.map(Arc::new),
             convex_tenancy: convex_tenancy.map(Arc::new),
@@ -210,12 +216,31 @@ impl ComputeState {
     }
 }
 
+/// Owns a private staging directory for as long as a deployment snapshot can
+/// execute artifacts loaded from it.
+pub(crate) struct DeploymentArtifactLease {
+    app_dir: TempDir,
+}
+
+impl DeploymentArtifactLease {
+    pub(crate) fn new(app_dir: TempDir) -> Self {
+        Self { app_dir }
+    }
+
+    pub(crate) fn app_dir(&self) -> &Path {
+        self.app_dir.path()
+    }
+}
+
 #[derive(Clone)]
 pub struct DeploymentState {
     pub generation: u64,
     pub convex_registry: Option<Arc<ConvexRegistry>>,
     pub application_auth_verifier: Option<Arc<dyn ApplicationAuthVerifier>>,
     pub cloud_functions_registry: Option<Arc<CloudFunctionsRegistry>>,
+    pub cloud_functions_http_tenant: Option<CloudFunctionsHttpTenantBinding>,
+    pub(crate) convex_artifact_lease: Option<Arc<DeploymentArtifactLease>>,
+    pub(crate) cloud_functions_artifact_lease: Option<Arc<DeploymentArtifactLease>>,
     pub cloudflare_config: Option<Arc<CloudflareConfig>>,
     pub firebase_config: Option<Arc<FirebaseConfig>>,
     pub convex_tenancy: Option<Arc<ConvexTenancyConfig>>,
@@ -232,6 +257,18 @@ impl DeploymentState {
 
     pub fn cloud_functions_registry(&self) -> Option<Arc<CloudFunctionsRegistry>> {
         self.cloud_functions_registry.clone()
+    }
+
+    pub fn cloud_functions_http_tenant(&self) -> Option<CloudFunctionsHttpTenantBinding> {
+        self.cloud_functions_http_tenant.clone()
+    }
+
+    pub(crate) fn convex_artifact_lease(&self) -> Option<Arc<DeploymentArtifactLease>> {
+        self.convex_artifact_lease.clone()
+    }
+
+    pub(crate) fn cloud_functions_artifact_lease(&self) -> Option<Arc<DeploymentArtifactLease>> {
+        self.cloud_functions_artifact_lease.clone()
     }
 
     pub fn cloudflare_config(&self) -> Option<Arc<CloudflareConfig>> {
@@ -379,6 +416,9 @@ mod tests {
             convex_registry: Some(Arc::new(ConvexRegistry::empty())),
             application_auth_verifier: None,
             cloud_functions_registry: None,
+            cloud_functions_http_tenant: None,
+            convex_artifact_lease: None,
+            cloud_functions_artifact_lease: None,
             cloudflare_config: None,
             firebase_config: Some(Arc::new(FirebaseConfig::new())),
             convex_tenancy: None,
@@ -391,6 +431,9 @@ mod tests {
             convex_registry: Some(Arc::new(ConvexRegistry::empty())),
             application_auth_verifier: None,
             cloud_functions_registry: None,
+            cloud_functions_http_tenant: None,
+            convex_artifact_lease: previous.convex_artifact_lease(),
+            cloud_functions_artifact_lease: previous.cloud_functions_artifact_lease(),
             cloudflare_config: previous.cloudflare_config(),
             firebase_config: previous.firebase_config(),
             convex_tenancy: previous.convex_tenancy(),
@@ -401,6 +444,51 @@ mod tests {
         assert_eq!(Arc::as_ptr(&replaced), previous_ptr);
         assert_ne!(Arc::as_ptr(&current), previous_ptr);
         assert_eq!(Arc::as_ptr(&previous), previous_ptr);
+    }
+
+    #[test]
+    fn retired_deployment_releases_artifacts_only_after_its_last_snapshot_drops() {
+        let app_dir = tempdir().expect("artifact tempdir should build");
+        let artifact_path = app_dir.path().to_path_buf();
+        let artifact_lease = Arc::new(DeploymentArtifactLease::new(app_dir));
+        let deployment = ActiveDeployment::new(DeploymentState {
+            generation: 1,
+            convex_registry: None,
+            application_auth_verifier: None,
+            cloud_functions_registry: None,
+            cloud_functions_http_tenant: None,
+            convex_artifact_lease: None,
+            cloud_functions_artifact_lease: Some(artifact_lease.clone()),
+            cloudflare_config: None,
+            firebase_config: None,
+            convex_tenancy: None,
+        });
+        drop(artifact_lease);
+        let previous = deployment.current();
+        let replaced = deployment.activate(DeploymentState {
+            generation: 2,
+            convex_registry: None,
+            application_auth_verifier: None,
+            cloud_functions_registry: None,
+            cloud_functions_http_tenant: None,
+            convex_artifact_lease: None,
+            cloud_functions_artifact_lease: None,
+            cloudflare_config: None,
+            firebase_config: None,
+            convex_tenancy: None,
+        });
+
+        assert!(artifact_path.exists());
+        drop(previous);
+        assert!(
+            artifact_path.exists(),
+            "a second in-flight snapshot must retain the retired generation"
+        );
+        drop(replaced);
+        assert!(
+            !artifact_path.exists(),
+            "the private staging directory should be reclaimed with the generation"
+        );
     }
 
     #[test]

@@ -16,6 +16,7 @@
 //! and bind-address helpers the port-owning resolvers share, and the
 //! dispatcher that calls each resolver once per boot.
 
+pub(super) mod cloud_functions;
 mod cloudflare;
 mod convex_tenancy;
 mod dynamodb;
@@ -32,7 +33,8 @@ use std::path::Path;
 
 use nimbus::Error;
 use nimbus_server::{
-    CloudflareConfig, ConvexTenancyConfig, DynamoDbConfig, FirebaseConfig, MongoDbConfig, S3Config,
+    CloudFunctionsHttpTenantBinding, CloudflareConfig, ConvexTenancyConfig, DynamoDbConfig,
+    FirebaseConfig, MongoDbConfig, S3Config,
 };
 
 use crate::wire_credentials::{WireCredentials, load_or_generate};
@@ -51,6 +53,7 @@ const DEFAULT_WIRE_TENANT: &str = "default";
 pub(crate) struct AdapterEnablement {
     pub(crate) firebase: Option<FirebaseConfig>,
     pub(crate) cloudflare: Option<CloudflareConfig>,
+    pub(crate) cloud_functions_http_tenant: Option<CloudFunctionsHttpTenantBinding>,
     pub(crate) convex_tenancy: Option<ConvexTenancyConfig>,
     /// Loud boot notice when [`convex_tenancy`] admits anonymous requests —
     /// either `nimbus dev`'s auto-provisioned dev team (EX3.7) or an operator's
@@ -124,6 +127,9 @@ impl AdapterEnablement {
         }
         if let Some(convex_tenancy) = self.convex_tenancy {
             options = options.with_convex_tenancy(convex_tenancy);
+        }
+        if let Some(binding) = self.cloud_functions_http_tenant {
+            options = options.with_cloud_functions_http_tenant(binding);
         }
         if let Some(mongodb) = self.mongodb {
             options = options.with_mongodb(mongodb);
@@ -224,6 +230,10 @@ pub(crate) fn resolve_adapter_enablement_with_env_and_app_dir(
     Ok(AdapterEnablement {
         firebase: firebase::resolve_firebase(command, &env_lookup)?,
         cloudflare,
+        cloud_functions_http_tenant: cloud_functions::resolve_cloud_functions_http_tenant(
+            command,
+            &env_lookup,
+        )?,
         convex_tenancy,
         convex_tenancy_notice,
         mongodb,

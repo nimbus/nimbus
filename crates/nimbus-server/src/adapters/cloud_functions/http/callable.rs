@@ -5,9 +5,9 @@ use axum::body::{Body, Bytes};
 use axum::extract::OriginalUri;
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, header};
 use axum::response::Response;
+use nimbus_cloud_functions::CloudFunctionsHttpTenantBinding;
 use nimbus_cloud_functions::build_callable_request_args;
-use nimbus_core::InvocationAuth;
-use nimbus_core::{Error, TenantId};
+use nimbus_core::{Error, InvocationAuth};
 use serde_json::Value;
 
 use super::*;
@@ -34,7 +34,7 @@ pub(super) async fn handle_callable_target(
     state: Arc<AppState>,
     deployment: Arc<DeploymentState>,
     registry: Arc<CloudFunctionsRegistry>,
-    tenant_id: TenantId,
+    tenant_binding: CloudFunctionsHttpTenantBinding,
     function_name: String,
     request: CallableHttpRequest<'_>,
 ) -> std::result::Result<Response, AppError> {
@@ -89,7 +89,7 @@ pub(super) async fn handle_callable_target(
         runtime_manager: state.runtime_manager(),
         registry,
         deployment_generation: deployment.generation,
-        tenant_id,
+        tenant_binding,
         function_name,
         args,
         auth,

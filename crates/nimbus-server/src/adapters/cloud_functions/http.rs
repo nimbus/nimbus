@@ -40,7 +40,7 @@ pub(crate) async fn http_handler(
         ));
     };
     let entrypoint = target.entrypoint.clone();
-    let tenant_id = resolve_cloud_functions_http_tenant(&state)?;
+    let tenant_binding = resolve_cloud_functions_http_tenant(&state, deployment.as_ref())?;
     let exposure = match &target.binding {
         CloudFunctionsTargetBinding::Https { exposure, .. } => *exposure,
         _ => unreachable!("resolve_https_target only returns https bindings"),
@@ -62,7 +62,7 @@ pub(crate) async fn http_handler(
                 runtime_manager: state.runtime_manager(),
                 registry,
                 deployment_generation: deployment.generation,
-                tenant_id,
+                tenant_binding,
                 function_name: entrypoint,
                 args,
                 auth: None,
@@ -73,7 +73,7 @@ pub(crate) async fn http_handler(
                 state,
                 deployment,
                 registry,
-                tenant_id,
+                tenant_binding,
                 entrypoint,
                 CallableHttpRequest {
                     method: &method,
@@ -98,6 +98,7 @@ mod tests {
 
     use axum::http::header;
     use futures::future::BoxFuture;
+    use nimbus_cloud_functions::CloudFunctionsHttpTenantBinding;
     use nimbus_core::{
         InvocationAuth, Query, RuntimeUserIdentity, TableName, TenantId, VerifiedUserIdentity,
         VerifiedUserIdentityKind,
@@ -118,6 +119,13 @@ mod tests {
     };
 
     struct TenantClaimApplicationAuthVerifier;
+
+    fn http_tenant_binding(tenant_id: &str) -> CloudFunctionsHttpTenantBinding {
+        CloudFunctionsHttpTenantBinding::new(
+            TenantId::new(tenant_id).expect("HTTP tenant id should parse"),
+        )
+        .expect("HTTP tenant binding should build")
+    }
 
     impl nimbus_auth::ApplicationAuthVerifier for TenantClaimApplicationAuthVerifier {
         fn verify_bearer_token<'a>(
@@ -273,6 +281,7 @@ export {};
         let server = ServerFixture::start(
             crate::router::RouterBuildConfig::core(service.clone())
                 .with_cloud_functions(registry)
+                .with_cloud_functions_http_tenant(http_tenant_binding("demo"))
                 .build(),
         )
         .await;
@@ -360,7 +369,7 @@ export {};
     }
 
     #[tokio::test]
-    async fn cloud_functions_http_handler_rejects_ambiguous_multi_tenant_binding() {
+    async fn cloud_functions_http_handler_uses_trusted_binding_with_multiple_tenants() {
         let fixture = EngineFixture::new(|path| Engine::new(path));
         let service = fixture.engine();
         service
@@ -384,8 +393,90 @@ export {};
                 },
             }],
             r#"
-globalThis.__nimbusInvoke = async function () {
+globalThis.__nimbusInvoke = async function (request) {
+  const ctx = globalThis.__nimbusCreateContext({
+    request,
+    hostCallSessionId: `${request.kind}:${request.function_name}`,
+  });
+  await ctx.db.insert("audit", { tenant: "bound" });
   return { status: 200, body_kind: "text", body: "ok" };
+};
+
+export {};
+"#,
+        );
+        let registry = CloudFunctionsRegistry::from_app_dir(app_dir.path())
+            .expect("cloud functions registry should load");
+        let server = ServerFixture::start(
+            crate::router::RouterBuildConfig::core(service.clone())
+                .with_cloud_functions(registry)
+                .with_cloud_functions_http_tenant(http_tenant_binding("alpha"))
+                .build(),
+        )
+        .await;
+
+        let response = server
+            .client()
+            .get(server.http_url("/hello"))
+            .send()
+            .await
+            .expect("request should send");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let table = TableName::new("audit").expect("table should parse");
+        let query = Query {
+            table,
+            filters: Vec::new(),
+            order: None,
+            limit: None,
+        };
+        assert_eq!(
+            service
+                .query_documents(
+                    &TenantId::new("alpha").expect("tenant id should parse"),
+                    &query,
+                )
+                .expect("bound tenant query should succeed")
+                .len(),
+            1,
+            "the deployment binding must select alpha"
+        );
+        assert!(
+            service
+                .query_documents(
+                    &TenantId::new("beta").expect("tenant id should parse"),
+                    &query,
+                )
+                .expect("unbound tenant query should succeed")
+                .is_empty(),
+            "the other tenant must remain untouched"
+        );
+    }
+
+    #[tokio::test]
+    async fn cloud_functions_http_handler_refuses_missing_deployment_binding() {
+        let fixture = EngineFixture::new(|path| Engine::new(path));
+        let service = fixture.engine();
+        service
+            .create_tenant(TenantId::new("demo").expect("tenant id should parse"))
+            .expect("tenant should create");
+        let app_dir = tempdir().expect("app tempdir should build");
+        write_cloud_functions_artifact(
+            app_dir.path(),
+            &[CloudFunctionsTargetDefinition {
+                name: "helloWorld".to_owned(),
+                entrypoint: "registry.helloWorld".to_owned(),
+                authoring_surface: CloudFunctionsAuthoringSurface::FunctionsFramework,
+                signature_type: CloudFunctionsSignatureType::Http,
+                binding: CloudFunctionsTargetBinding::Https {
+                    exposure: CloudFunctionsHttpExposure::Http,
+                    path: "/hello".to_owned(),
+                    execution: CloudFunctionsExecutionPrincipal::RequestPrincipal,
+                },
+            }],
+            r#"
+globalThis.__nimbusInvoke = async function () {
+  return { status: 200, body_kind: "text", body: "must not run" };
 };
 
 export {};
@@ -413,7 +504,7 @@ export {};
                 .text()
                 .await
                 .expect("error body should decode")
-                .contains("exactly one tenant")
+                .contains("trusted deployment tenant binding")
         );
     }
 
@@ -482,6 +573,7 @@ export {};
         let server = ServerFixture::start(
             crate::router::RouterBuildConfig::core(service.clone())
                 .with_cloud_functions(registry)
+                .with_cloud_functions_http_tenant(http_tenant_binding("demo"))
                 .build(),
         )
         .await;
@@ -645,6 +737,7 @@ export {};
         let server = ServerFixture::start(
             crate::router::RouterBuildConfig::core(service)
                 .with_cloud_functions(registry)
+                .with_cloud_functions_http_tenant(http_tenant_binding("demo"))
                 .build(),
         )
         .await;
@@ -745,6 +838,7 @@ export {};
         let server = ServerFixture::start(
             crate::router::RouterBuildConfig::core(service)
                 .with_cloud_functions(registry)
+                .with_cloud_functions_http_tenant(http_tenant_binding("demo"))
                 .build(),
         )
         .await;
@@ -825,6 +919,7 @@ export {};
             crate::router::RouterBuildConfig::core(service)
                 .with_application_auth_verifier(Arc::new(TenantClaimApplicationAuthVerifier))
                 .with_cloud_functions(registry)
+                .with_cloud_functions_http_tenant(http_tenant_binding("tenant-a"))
                 .build(),
         )
         .await;
@@ -913,6 +1008,7 @@ export {};
         let server = ServerFixture::start(
             crate::router::RouterBuildConfig::core(service)
                 .with_cloud_functions(registry)
+                .with_cloud_functions_http_tenant(http_tenant_binding("demo"))
                 .build(),
         )
         .await;
@@ -984,6 +1080,7 @@ export {};
         let server = ServerFixture::start(
             crate::router::RouterBuildConfig::core(service)
                 .with_cloud_functions(registry)
+                .with_cloud_functions_http_tenant(http_tenant_binding("demo"))
                 .build(),
         )
         .await;
@@ -1056,6 +1153,7 @@ export {};
         let server = ServerFixture::start(
             crate::router::RouterBuildConfig::core(service)
                 .with_cloud_functions(registry)
+                .with_cloud_functions_http_tenant(http_tenant_binding("demo"))
                 .build(),
         )
         .await;

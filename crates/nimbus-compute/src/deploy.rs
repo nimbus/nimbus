@@ -39,7 +39,7 @@ use crate::execution::invocations::{
     RuntimeBundleInvocationOptions, invoke_runtime_bundle_blocking_with_egress_gateway,
 };
 use crate::runtime_manager::RuntimeManager;
-use crate::state::{ComputeError, ComputeState, DeploymentState};
+use crate::state::{ComputeError, ComputeState, DeploymentArtifactLease, DeploymentState};
 
 /// Orchestrates a `deploy_app` request: stage artifacts, diff against the
 /// active deployment, and (unless `dry_run`) activate the next generation.
@@ -89,6 +89,11 @@ pub async fn deploy_app(
                 .map(|registry| registry.with_runtime_limits(runtime_limits.clone()))
         })
         .transpose()?;
+    let cloud_functions_http_tenant = previous_deployment.cloud_functions_http_tenant();
+    if let Some(registry) = &next_cloud_functions_registry {
+        registry.ensure_http_tenant_binding(cloud_functions_http_tenant.as_ref())?;
+    }
+    let staged_artifact_lease = staged.artifact_lease();
 
     let generation = if dry_run {
         previous_generation
@@ -106,11 +111,24 @@ pub async fn deploy_app(
         let next_cloud_functions_registry = next_cloud_functions_registry
             .map(Arc::new)
             .or_else(|| previous_deployment.cloud_functions_registry());
+        let convex_artifact_lease = if staged.includes_convex() {
+            Some(staged_artifact_lease.clone())
+        } else {
+            previous_deployment.convex_artifact_lease()
+        };
+        let cloud_functions_artifact_lease = if staged.includes_cloud_functions() {
+            Some(staged_artifact_lease)
+        } else {
+            previous_deployment.cloud_functions_artifact_lease()
+        };
         let next_deployment = DeploymentState {
             generation: next_generation,
             convex_registry: next_convex_registry,
             application_auth_verifier: next_application_auth_verifier,
             cloud_functions_registry: next_cloud_functions_registry.clone(),
+            cloud_functions_http_tenant,
+            convex_artifact_lease,
+            cloud_functions_artifact_lease,
             cloudflare_config: previous_deployment.cloudflare_config(),
             firebase_config: previous_deployment.firebase_config(),
             convex_tenancy: previous_deployment.convex_tenancy(),
@@ -471,14 +489,18 @@ impl DeployHttpRouteChange {
 }
 
 struct StagedDeployArtifacts {
-    app_dir: tempfile::TempDir,
+    artifact_lease: Arc<DeploymentArtifactLease>,
     includes_convex: bool,
     includes_cloud_functions: bool,
 }
 
 impl StagedDeployArtifacts {
     fn app_dir(&self) -> &Path {
-        self.app_dir.path()
+        self.artifact_lease.app_dir()
+    }
+
+    fn artifact_lease(&self) -> Arc<DeploymentArtifactLease> {
+        self.artifact_lease.clone()
     }
 
     fn includes_convex(&self) -> bool {
@@ -580,7 +602,7 @@ fn stage_deploy_artifacts(artifacts: &DeployArtifacts) -> Result<StagedDeployArt
     }
 
     Ok(StagedDeployArtifacts {
-        app_dir,
+        artifact_lease: Arc::new(DeploymentArtifactLease::new(app_dir)),
         includes_convex: artifacts.convex.is_some(),
         includes_cloud_functions: artifacts.cloud_functions.is_some(),
     })
