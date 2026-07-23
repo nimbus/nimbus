@@ -130,17 +130,13 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 6 - Demand-Gated Policy, Admission, Transport, And Density
 
-- `parallel-prepare-serial-commit-plan.md` - `active`. Owns the per-tenant
-  committer evolution to Convex's production architecture — parallel
-  prepare, tiny serial assign, ordered publish, transparent bounded retry,
-  per-mutation caps — while keeping the single sequence. Convex is the
-  north star; all bands execute in order PPSC0→PPSC5 with verification
-  gates (tests/benchmarks) proving each band before the next, and a Status
-  Ledger + paste-ready /goal drive autonomous execution. PPSC5's provider
-  arm serves enterprise DBaaS backends (postgres/mysql/remote-libsql),
-  which share Convex's network-persistence shape. Testability seams
-  (S0–S5) are binding scope. Governing research:
-  `research/parallel-prepare-serial-commit-redesign.md`.
+- `archive/parallel-prepare-serial-commit-plan.md` - `complete, archived`
+  (2026-07-23; PRs #188–#236). Delivered the per-tenant Convex-parity
+  committer: parallel prepare, serial assignment, ordered publication,
+  bounded conflict retry, provider lease fencing/pipelining, deterministic
+  crash/replay and differential verification, and pinned external Elle
+  evidence. FINAL recorded all readiness dimensions `PASS` and all closeout
+  verdicts `SAFE`.
 - `archive/clock-architecture-reliability-plan.md` - `complete, archived`
   (2026-07-21; independent Opus 4.8 review clean). Delivered canonical wall and
   monotonic clock seams, Engine-owned absolute scheduling, monotonic local
@@ -150,7 +146,7 @@ extension-registry seam before the second concern edits `extensions.rs`.
 - `layered-admission-control-plan.md` - `deferred`. Owns future layered
   admission experiments and EO8-style promotion work. Consumes the
   retry-amplification admission signal from
-  `parallel-prepare-serial-commit-plan.md` if that plan's gated bands run.
+  `archive/parallel-prepare-serial-commit-plan.md`.
 - `native-transport-evolution-plan.md` - `proposed`. Owns benchmark-driven
   Nimbus-native transport evolution without replacing the established WebSocket
   protocol by default.
