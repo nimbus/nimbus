@@ -298,7 +298,8 @@ verify-ppsc-seed-farm:
 verify-ppsc-seed-farm-helper:
 	bash scripts/verify-ppsc-seed-farm-helper.sh
 
-# Pinned external Elle 0.1.9 serializability proof. The script owns download,
+# Pinned external ligurio/elle-cli 0.1.9 / Elle core 0.2.4 serializability proof.
+# The script owns download,
 # release + standalone-JAR checksum verification, Java readiness, exact ignored
 # test selection, and preservation of the checker/test exit status.
 verify-elle-serializability: $(UI_DIST_INDEX) $(EMBEDDED_PKG_MANIFEST)
