@@ -10,8 +10,8 @@ use nimbus_runtime::{RuntimeBundle, RuntimeLimits};
 
 use crate::{
     CLOUD_FUNCTIONS_ARTIFACT_MANIFEST_FILE, CLOUD_FUNCTIONS_INTERNAL_ARTIFACT_DIR,
-    CloudFunctionsArtifactManifest, CloudFunctionsTargetBinding, CloudFunctionsTargetDefinition,
-    CloudFunctionsTargetsManifest,
+    CloudFunctionsArtifactManifest, CloudFunctionsHttpTenantBinding, CloudFunctionsTargetBinding,
+    CloudFunctionsTargetDefinition, CloudFunctionsTargetsManifest,
 };
 #[derive(Debug)]
 pub struct CloudFunctionsRegistry {
@@ -137,6 +137,35 @@ impl CloudFunctionsRegistry {
         })
     }
 
+    /// Whether this deployment exposes any caller-invoked HTTP target.
+    ///
+    /// Hosts use this during startup/deploy validation to require a trusted
+    /// [`crate::CloudFunctionsHttpTenantBinding`] before mounting the targets.
+    #[must_use]
+    pub fn has_https_targets(&self) -> bool {
+        self.targets
+            .values()
+            .any(|target| matches!(target.binding, CloudFunctionsTargetBinding::Https { .. }))
+    }
+
+    /// Validate the trusted tenant authority required by this artifact.
+    ///
+    /// Trigger-only deployments derive their tenant from the durable engine
+    /// event and need no HTTP binding. Any caller-invoked HTTP target requires
+    /// one deployment-owned binding before startup or activation.
+    pub fn ensure_http_tenant_binding(
+        &self,
+        binding: Option<&CloudFunctionsHttpTenantBinding>,
+    ) -> Result<()> {
+        if self.has_https_targets() && binding.is_none() {
+            return Err(Error::InvalidInput(
+                "cloud functions HTTP targets require a trusted deployment tenant binding"
+                    .to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
     pub fn trigger_registrations(&self) -> Result<Vec<TriggerRegistration>> {
         let mut targets = self
             .targets
@@ -215,8 +244,8 @@ mod tests {
         CLOUD_FUNCTIONS_ARTIFACT_MANIFEST_FILE, CLOUD_FUNCTIONS_INTERNAL_ARTIFACT_DIR,
         CLOUD_FUNCTIONS_TARGETS_MANIFEST_FILE, CloudFunctionsArtifactManifest,
         CloudFunctionsAuthoringSurface, CloudFunctionsExecutionPrincipal,
-        CloudFunctionsSignatureType, CloudFunctionsTargetBinding, CloudFunctionsTargetDefinition,
-        CloudFunctionsTargetsManifest,
+        CloudFunctionsHttpTenantBinding, CloudFunctionsSignatureType, CloudFunctionsTargetBinding,
+        CloudFunctionsTargetDefinition, CloudFunctionsTargetsManifest,
     };
 
     #[test]
@@ -272,6 +301,48 @@ export {};
             .with_runtime_limits(limits.clone());
 
         assert_eq!(registry.runtime_limits(), limits);
+    }
+
+    #[test]
+    fn cloud_functions_registry_requires_tenant_binding_only_for_http_targets() {
+        let trigger_app = tempdir().expect("trigger app tempdir should build");
+        write_cloud_functions_artifact(trigger_app.path(), &[], "export {};");
+        let trigger_registry = CloudFunctionsRegistry::from_app_dir(trigger_app.path())
+            .expect("trigger-only registry should load");
+        trigger_registry
+            .ensure_http_tenant_binding(None)
+            .expect("an artifact without HTTP targets needs no HTTP binding");
+
+        let http_app = tempdir().expect("HTTP app tempdir should build");
+        write_cloud_functions_artifact(
+            http_app.path(),
+            &[CloudFunctionsTargetDefinition {
+                name: "hello".to_owned(),
+                entrypoint: "exports.hello".to_owned(),
+                authoring_surface: CloudFunctionsAuthoringSurface::FunctionsFramework,
+                signature_type: CloudFunctionsSignatureType::Http,
+                binding: CloudFunctionsTargetBinding::Https {
+                    exposure: crate::CloudFunctionsHttpExposure::Http,
+                    path: "/hello".to_owned(),
+                    execution: CloudFunctionsExecutionPrincipal::RequestPrincipal,
+                },
+            }],
+            "export {};",
+        );
+        let http_registry = CloudFunctionsRegistry::from_app_dir(http_app.path())
+            .expect("HTTP registry should load");
+        let error = http_registry
+            .ensure_http_tenant_binding(None)
+            .expect_err("HTTP artifact without a binding must be refused");
+        assert!(error.to_string().contains("trusted deployment"));
+
+        let binding = CloudFunctionsHttpTenantBinding::new(
+            nimbus_core::TenantId::new("tenant-a").expect("tenant id should parse"),
+        )
+        .expect("binding should build");
+        http_registry
+            .ensure_http_tenant_binding(Some(&binding))
+            .expect("HTTP artifact with a trusted binding should pass");
     }
 
     #[test]

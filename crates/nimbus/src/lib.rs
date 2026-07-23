@@ -73,7 +73,9 @@ pub use nimbus_license::{
     LicenseSnapshot, LicenseSourceInfo, LicenseSourceKind, LicenseState, LicenseStatus,
     LicenseUsageSnapshot,
 };
-pub use nimbus_server::{RouterOptions, ServeOptions, build_router, serve};
+pub use nimbus_server::{
+    CloudFunctionsHttpTenantBinding, RouterOptions, ServeOptions, build_router, serve,
+};
 pub use nimbus_services::{
     BuiltInServiceSpec, EmptyServiceDefinitionCatalog, EmptyServiceInstanceCatalog,
     ExternalServiceSpec, LocalBuildAdmission, ServiceBackend, ServiceDefinitionCatalog,

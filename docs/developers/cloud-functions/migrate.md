@@ -123,17 +123,26 @@ nimbus dev
 ```
 
 For production-shaped startup, pass the app path explicitly — `nimbus
-start` does no walk-up:
+start` does no walk-up. If the artifact contains `onRequest`, `onCall`, or
+Functions Framework HTTP targets, bind that deployment to an existing Nimbus
+tenant:
 
 ```bash
-nimbus start --app-dir .
+NIMBUS_CLOUD_FUNCTIONS_TENANT=app-production nimbus start --app-dir .
 ```
 
 In a monorepo where the functions package is not at the root:
 
 ```bash
-nimbus start --app-dir ./packages/functions
+NIMBUS_CLOUD_FUNCTIONS_TENANT=app-production \
+  nimbus start --app-dir ./packages/functions
 ```
+
+The binding is server configuration, not part of the request URL. It remains
+fixed when a new Cloud Functions artifact is deployed, so adding more tenants
+to the same Nimbus server cannot redirect an HTTP handler. Startup and deploy
+both refuse HTTP targets when the binding is missing. `nimbus dev` binds the
+detected app to its auto-provisioned development tenant.
 
 ## 5. Know the HTTP path rules
 

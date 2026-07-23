@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use axum::response::Response;
 use nimbus_cloud_functions::http::{
-    CloudFunctionsHttpInvocation, CloudFunctionsRuntimeContext,
+    CloudFunctionsHttpInvocation, CloudFunctionsHttpTenantBinding, CloudFunctionsRuntimeContext,
     execute_http_target as execute_adapter_http_target,
 };
-use nimbus_core::{InvocationAuth, TenantId};
+use nimbus_core::InvocationAuth;
 use nimbus_engine::Engine;
 use serde_json::Value;
 
@@ -25,7 +25,7 @@ pub(super) struct ServerCloudFunctionsHttpInvocation {
     pub runtime_manager: Arc<RuntimeManager>,
     pub registry: Arc<CloudFunctionsRegistry>,
     pub deployment_generation: u64,
-    pub tenant_id: TenantId,
+    pub tenant_binding: CloudFunctionsHttpTenantBinding,
     pub function_name: String,
     pub args: Value,
     pub auth: Option<InvocationAuth>,
@@ -41,7 +41,7 @@ pub(super) fn execute_http_target(
         runtime_manager,
         registry,
         deployment_generation,
-        tenant_id,
+        tenant_binding,
         function_name,
         args,
         auth,
@@ -58,7 +58,7 @@ pub(super) fn execute_http_target(
         CloudFunctionsHttpInvocation {
             registry,
             deployment_generation,
-            tenant_id,
+            tenant_binding,
             function_name,
             args,
             auth,
