@@ -58,3 +58,8 @@ slow-timeout = { period = "15m", terminate-after = 2 }
 inherits = "default"
 default-filter = 'test(/verification_harness_nightly_generated_history_seed_corpus_matches_model/) or test(/verification_harness_nightly_transport_liveness_campaigns/) or test(/verification_harness_nightly_runtime_liveness_and_integrity_cases/)'
 slow-timeout = { period = "20m", terminate-after = 2 }
+
+[profile.ci-ppsc-seed-farm]
+inherits = "default"
+default-filter = 'package(nimbus-engine) and test(/^tests::ppsc::ppsc_seed_farm_executes_selected_redb_scenarios$/)'
+slow-timeout = { period = "30m", terminate-after = 1 }

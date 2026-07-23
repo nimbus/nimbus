@@ -1458,6 +1458,49 @@ async fn provider_catch_up_pages_a_large_tail_instead_of_materialising_it() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn provider_catch_up_does_not_redeliver_live_observer_publication() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("provider-catch-up-live-dedup", Engine::create_tenant);
+    engine
+        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .expect("provider catch-up dedup trigger cursor should stop");
+    let observer = Arc::new(TenantSelectiveBlockingObserver::default());
+    engine.install_committed_mutation_observer("provider-live-dedup-test", observer.clone());
+
+    engine
+        .insert_document_async(
+            tenant_id.clone(),
+            tasks_table(),
+            serde_json::Map::from_iter([("index".to_string(), json!(1))]),
+        )
+        .await
+        .expect("live provider-dedup mutation should commit");
+    engine
+        .flush_committed_mutation_observers_for_testing(&tenant_id)
+        .await
+        .expect("live provider-dedup observer work should drain");
+    let records = engine
+        .read_durable_journal(&tenant_id, SequenceNumber(0))
+        .expect("provider-dedup journal should read");
+    assert_eq!(observer.sequences(&tenant_id), vec![SequenceNumber(1)]);
+
+    engine
+        .enqueue_provider_catch_up_observers_for_testing(&tenant_id, &records)
+        .await
+        .expect("redundant provider catch-up should complete");
+    engine
+        .flush_committed_mutation_observers_for_testing(&tenant_id)
+        .await
+        .expect("redundant provider catch-up observer work should drain");
+    assert_eq!(
+        observer.sequences(&tenant_id),
+        vec![SequenceNumber(1)],
+        "one runtime must not redeliver a live observer event during provider catch-up"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn provider_catch_up_page_failure_republishes_the_undelivered_tail() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();
@@ -1519,9 +1562,10 @@ async fn provider_catch_up_page_failure_republishes_the_undelivered_tail() {
         "a failed page read must not poison the tenant's dispatcher"
     );
 
-    // Ownership was abandoned back to the request's original first sequence,
-    // so a successor replays the whole range rather than resuming past the
-    // records the failed attempt never delivered.
+    // Ownership is abandoned back to the request's original first sequence,
+    // while the dispatcher frontier suppresses the prefix already accepted by
+    // the first task. The successor therefore resumes with only the
+    // undelivered suffix.
     engine
         .enqueue_provider_catch_up_observers_for_testing(&tenant_id, &records)
         .await
@@ -1531,11 +1575,9 @@ async fn provider_catch_up_page_failure_republishes_the_undelivered_tail() {
         .await
         .expect("successor catch-up work should drain");
 
-    let mut expected_total = delivered_before_failure.clone();
-    expected_total.extend(expected_sequences.iter().copied());
     assert_eq!(
         observer.sequences(&tenant_id),
-        expected_total,
-        "the successor must redeliver the abandoned request from its original first sequence"
+        expected_sequences,
+        "the successor must deliver each event exactly once across the failed and retrying tasks"
     );
 }

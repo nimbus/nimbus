@@ -85,8 +85,16 @@ impl PpscEngineSlot {
             .clone()
     }
 
-    pub(super) fn crash(&mut self) {
+    pub(super) async fn crash(&mut self) {
         let engine = self.0.take().expect("PPSC crash requires a running Engine");
+        // Engine-owned provider workers retain an Arc back to the Engine. A
+        // bare drop therefore does not model process death: the old poller can
+        // keep observing provider commits after the replacement starts. Every
+        // scenario step is flushed before it reaches this settled boundary;
+        // the mid-commit crash cases are exercised separately by the commit
+        // fault operations. Stop all process-owned workers here before
+        // dropping the final harness handle so reopen never has a ghost peer.
+        engine.quiesce().await;
         drop(engine);
     }
 
@@ -115,8 +123,38 @@ impl Deref for PpscEngineSlot {
 #[derive(Default)]
 pub(super) struct PpscPublicationRecorder {
     current_step: AtomicUsize,
-    observer_publications: Mutex<Vec<(TenantId, SequenceNumber, usize)>>,
+    observer_publications: Mutex<Vec<PpscObservedPublication>>,
     published_prefix: Mutex<BTreeMap<TenantId, BTreeMap<SequenceNumber, usize>>>,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct PpscObservedPublication {
+    pub(super) tenant_id: TenantId,
+    pub(super) sequence: SequenceNumber,
+    pub(super) step: usize,
+    pub(super) engine_generation: u64,
+    pub(super) projection_token: crate::ProjectionToken,
+}
+
+pub(super) struct PpscEnginePublicationObserver {
+    recorder: Arc<PpscPublicationRecorder>,
+    engine_generation: u64,
+}
+
+impl PpscEnginePublicationObserver {
+    pub(super) fn install(
+        engine: &Arc<Engine>,
+        recorder: Arc<PpscPublicationRecorder>,
+        engine_generation: u64,
+    ) {
+        engine.install_committed_mutation_observer(
+            PPSC_OBSERVER,
+            Arc::new(Self {
+                recorder,
+                engine_generation,
+            }),
+        );
+    }
 }
 
 impl PpscPublicationRecorder {
@@ -159,27 +197,29 @@ impl PpscPublicationRecorder {
             .unwrap_or_default()
     }
 
-    pub(super) fn observer_for_tenant(&self, tenant_id: &TenantId) -> Vec<(SequenceNumber, usize)> {
+    pub(super) fn observer_for_tenant(&self, tenant_id: &TenantId) -> Vec<PpscObservedPublication> {
         self.observer_publications
             .lock()
             .expect("PPSC observer recorder lock should not be poisoned")
             .iter()
-            .filter_map(|(candidate, sequence, step)| {
-                (candidate == tenant_id).then_some((*sequence, *step))
-            })
+            .filter(|publication| &publication.tenant_id == tenant_id)
+            .cloned()
             .collect()
     }
 }
 
-impl crate::CommittedMutationObserver for PpscPublicationRecorder {
+impl crate::CommittedMutationObserver for PpscEnginePublicationObserver {
     fn committed_mutation_applied(&self, event: crate::CommittedMutationEvent) {
-        self.observer_publications
+        self.recorder
+            .observer_publications
             .lock()
             .expect("PPSC publication recorder lock should not be poisoned")
-            .push((
-                event.tenant_id,
-                event.commit.sequence,
-                self.current_step.load(Ordering::Acquire),
-            ));
+            .push(PpscObservedPublication {
+                tenant_id: event.tenant_id,
+                sequence: event.commit.sequence,
+                step: self.recorder.current_step.load(Ordering::Acquire),
+                engine_generation: self.engine_generation,
+                projection_token: event.projection_token,
+            });
     }
 }

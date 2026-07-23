@@ -310,7 +310,7 @@ async fn catalog_row(
     namespace: &str,
     table: &TableName,
 ) -> Result<Option<(TableId, TableState)>> {
-    let mut rows = session
+    let rows = session
         .query(
             "SELECT table_id, state
              FROM table_catalog
@@ -319,7 +319,7 @@ async fn catalog_row(
         )
         .await
         .map_err(map_libsql_error)?;
-    let Some(row) = rows.next().await.map_err(map_libsql_error)? else {
+    let Some(row) = take_single_remote_row(rows).await? else {
         return Ok(None);
     };
     Ok(Some((
@@ -332,7 +332,7 @@ async fn table_identity_row_for_table_id(
     session: &Transaction,
     table_id: &TableId,
 ) -> Result<Option<(String, String, TableState)>> {
-    let mut rows = session
+    let rows = session
         .query(
             "SELECT namespace, table_name, state
              FROM table_catalog
@@ -341,7 +341,7 @@ async fn table_identity_row_for_table_id(
         )
         .await
         .map_err(map_libsql_error)?;
-    let Some(row) = rows.next().await.map_err(map_libsql_error)? else {
+    let Some(row) = take_single_remote_row(rows).await? else {
         return Ok(None);
     };
     Ok(Some((
@@ -356,7 +356,7 @@ async fn ensure_namespace_is_free(
     namespace: &str,
     table: &TableName,
 ) -> Result<()> {
-    let mut rows = session
+    let rows = session
         .query(
             "SELECT 1
              FROM table_catalog
@@ -365,7 +365,7 @@ async fn ensure_namespace_is_free(
         )
         .await
         .map_err(map_libsql_error)?;
-    if rows.next().await.map_err(map_libsql_error)?.is_some() {
+    if take_single_remote_row(rows).await?.is_some() {
         return Err(Error::conflict(format!(
             "table identity already exists for logical table {} in namespace {}",
             table, namespace

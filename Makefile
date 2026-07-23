@@ -2,7 +2,7 @@
 export
 
 .PHONY: test-node-workload-executor-live all build build-ui build-packages release check fmt fmt-check clippy test test-js typecheck-js build-js lint deny ci install clean changelog verify-release-version-contract verify-release-archive-layout-helper verify-release-oci-image-helper verify-release-oci-image-build-helper verify-release-oci-image-live verify-release-oci-image-live-helper verify-desktop-ui verify-tenant-isolation-conformance verify-enterprise-policy-egress verify-artifact-provenance verify-bun-jsc-runtime-contract verify-harness verify-harness-nightly verify-harness-repro verify-harness-storage verify-harness-engine verify-harness-server verify-harness-runtime verify-harness-nightly-storage verify-harness-nightly-engine verify-harness-nightly-server verify-harness-nightly-runtime node-compat-report node-compat-dashboard node-compat-status node-compat-inventory node-compat-classifications node-compat-sync node-compat-refresh node-compat-validate-fixtures node-compat-verify-fixture-upstream node-compat-publish-evidence node-compat-publish-docs node-compat-release-train node-compat-trends node-compat-required-surface-blockers node-compat-sync-watchpoints node-compat-validate-watchpoints node-compat-oracle node-compat-canaries-bootstrap node-compat-canaries node-compat-validate-claims check-vmm-host collect-vmm-package-versions collect-podman-machine-diagnostics collect-nimbus-machine-diagnostics collect-nimbus-machine-cli-proof collect-nimbus-machine-guest-proof collect-nimbus-machine-service-proof collect-nimbus-homebrew-cask-proof collect-sqlcipher-proof-bundles collect-encryption-benchmark-evidence build-nimbus-machine-guest-binary build-linux-release-packages build-apt-repository build-fedora-release-srpms check-podman-machine-socket-paths validate-podman-machine-readiness recreate-podman-machine recreate-nimbus-machine prepare-linux-vmm-validation-bundle verify-build-nimbus-machine-guest-binary-helper verify-build-linux-release-packages-helper verify-build-apt-repository-helper verify-build-fedora-release-srpms-helper verify-podman-machine-socket-paths-helper verify-podman-machine-readiness-helper verify-podman-machine-recreate-helper verify-nimbus-machine-diagnostics-helper verify-nimbus-machine-recreate-helper verify-nimbus-machine-cli-proof-helper verify-nimbus-machine-guest-proof-helper verify-nimbus-homebrew-cask-proof-helper verify-collect-sqlcipher-proof-bundles-helper verify-install-helper verify-linux-vmm-validation-bundle-helper prepare-krun-bundle verify-krun-bundle-helper prepare-direct-krun-drill verify-direct-krun-drill-helper verify-runtime-separation verify-runtime-separation-helper verify-podman-machine-diagnostics-helper prepare-conmon-krun-drill verify-conmon-krun-drill-helper bench-embedded-providers bench-postgres-provider bench-mysql-provider bench-libsql-replica-provider convex-demo convex-demo-node convex-demo-html convex-demo-http convex-demo-stop
-.PHONY: test-rust-runtime test-rust-workspace test-rust-docs test-external-provider test-external-providers provider-fixture-up provider-fixture-down verify-external-provider-fixture-helper verify-tenant-lifecycle-callers proof-helpers ci-required prove-linux-cgroup-memory-limit verify-bun-jsc-linked-adapter verify-bun-jsc-adapter-package verify-bun-jsc-release-assets verify-bun-jsc-installed-package-proof verify-profile-aware-runtime-crossover verify-runtime-tenant-isolation examples-verify
+.PHONY: test-rust-runtime test-rust-workspace test-rust-docs test-external-provider test-external-providers provider-fixture-up provider-fixture-down verify-external-provider-fixture-helper verify-tenant-lifecycle-callers verify-ppsc-seed-farm verify-ppsc-seed-farm-helper proof-helpers ci-required prove-linux-cgroup-memory-limit verify-bun-jsc-linked-adapter verify-bun-jsc-adapter-package verify-bun-jsc-release-assets verify-bun-jsc-installed-package-proof verify-profile-aware-runtime-crossover verify-runtime-tenant-isolation examples-verify
 .PHONY: verify-loom-handoff
 
 SINGLE_FLIGHT = bash scripts/single-flight.sh
@@ -259,6 +259,41 @@ verify-external-provider-fixture-helper:
 verify-tenant-lifecycle-callers:
 	bash scripts/verify-tenant-lifecycle-callers.sh
 
+# Deterministic PPSC redb seed farm. A single-seed replay is selected with
+# SEED=<u64> (or NIMBUS_PPSC_SEED); otherwise the explicit global range is
+# partitioned into non-overlapping contiguous shards. The ignored Engine driver
+# writes one interruption/failure bundle per current seed and a count-bearing
+# summary, while the script rejects zero-test filters before execution.
+BACKEND ?= redb
+SEED ?=
+SEED_START ?= 0
+SEED_COUNT ?= 1000
+SHARD_INDEX ?= 0
+SHARD_COUNT ?= 1
+STEP_COUNT ?= 32
+FAILURE_DIR ?= target/ppsc-seed-farm/shard-$(SHARD_INDEX)-of-$(SHARD_COUNT)
+
+verify-ppsc-seed-farm:
+	@set -eu; \
+	export NIMBUS_PPSC_BACKEND="$${NIMBUS_PPSC_BACKEND:-$(BACKEND)}"; \
+	export NIMBUS_PPSC_STEP_COUNT="$${NIMBUS_PPSC_STEP_COUNT:-$(STEP_COUNT)}"; \
+	export NIMBUS_PPSC_FAILURE_DIR="$${NIMBUS_PPSC_FAILURE_DIR:-$(FAILURE_DIR)}"; \
+	export NIMBUS_PPSC_REVISION="$${NIMBUS_PPSC_REVISION:-$$(git rev-parse HEAD)}"; \
+	selected_seed="$${NIMBUS_PPSC_SEED:-$(SEED)}"; \
+	if [ -n "$$selected_seed" ]; then \
+		export NIMBUS_PPSC_SEED="$$selected_seed"; \
+	else \
+		export NIMBUS_PPSC_SEED_START="$${NIMBUS_PPSC_SEED_START:-$(SEED_START)}"; \
+		export NIMBUS_PPSC_SEED_COUNT="$${NIMBUS_PPSC_SEED_COUNT:-$(SEED_COUNT)}"; \
+		export NIMBUS_PPSC_SHARD_INDEX="$${NIMBUS_PPSC_SHARD_INDEX:-$(SHARD_INDEX)}"; \
+		export NIMBUS_PPSC_SHARD_COUNT="$${NIMBUS_PPSC_SHARD_COUNT:-$(SHARD_COUNT)}"; \
+	fi; \
+	$(SINGLE_FLIGHT) --key "verify-ppsc-seed-farm-$${NIMBUS_PPSC_BACKEND}-$${NIMBUS_PPSC_SHARD_INDEX:-single}-$${NIMBUS_PPSC_SHARD_COUNT:-seed}" -- \
+		bash scripts/ppsc-seed-farm.sh
+
+verify-ppsc-seed-farm-helper:
+	bash scripts/verify-ppsc-seed-farm-helper.sh
+
 # Build JS packages
 build-js:
 	npm run build --workspaces --if-present
@@ -288,6 +323,9 @@ lint: fmt-check clippy
 proof-helpers:
 	bash -n scripts/verify-tenant-lifecycle-callers.sh
 	bash scripts/verify-tenant-lifecycle-callers.sh
+	bash -n scripts/ppsc-seed-farm.sh
+	bash -n scripts/verify-ppsc-seed-farm-helper.sh
+	bash scripts/verify-ppsc-seed-farm-helper.sh
 	bash -n scripts/external-provider-fixture.sh
 	bash -n scripts/test-external-providers.sh
 	bash -n scripts/verify-external-provider-fixture-helper.sh

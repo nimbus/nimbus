@@ -43,6 +43,31 @@ async fn postgres_provider_manages_tenant_registry_and_schemas() {
             provider.list_tenants().await.expect("tenants should list"),
             vec![alpha.clone(), beta.clone()]
         );
+        assert_eq!(
+            provider
+                .list_tenants_page(None, 1)
+                .await
+                .expect("first tenant page should list"),
+            vec![alpha.clone()]
+        );
+        assert_eq!(
+            provider
+                .list_tenants_page(Some(&alpha), 1)
+                .await
+                .expect("second tenant page should list"),
+            vec![beta.clone()]
+        );
+        assert!(
+            provider
+                .list_tenants_page(Some(&beta), 1)
+                .await
+                .expect("terminal tenant page should list")
+                .is_empty()
+        );
+        assert!(matches!(
+            provider.list_tenants_page(None, 0).await,
+            Err(nimbus_core::Error::InvalidInput(_))
+        ));
 
         let reopened = provider
             .open_existing_tenant(&alpha)

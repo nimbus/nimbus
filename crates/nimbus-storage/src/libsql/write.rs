@@ -771,7 +771,7 @@ impl LibsqlReplicaWriteTransaction {
     where
         Check: Fn() -> Result<()> + Send + 'static,
     {
-        let conn = store.remote_connection()?;
+        let conn = store.remote_write_connection()?;
         let tx = store.block_on(async move {
             conn.transaction_with_behavior(TransactionBehavior::Immediate)
                 .await
@@ -1439,6 +1439,19 @@ impl LibsqlReplicaWriteTransaction {
             let events = std::mem::take(&mut self.tenant_events);
             Some(self.append_commit_entry(writes, events)?)
         };
+        if commit.is_some() {
+            if let Some(record) = prepared_record_for_fault.as_ref() {
+                self.store.check_durable_records_fault(
+                    crate::FaultPoint::JournalAppendBeforeDurableFlush,
+                    std::slice::from_ref(record),
+                )?;
+            } else {
+                self.store
+                    .check_fault(crate::FaultPoint::JournalAppendBeforeDurableFlush)?;
+            }
+            self.store
+                .check_fault(crate::FaultPoint::JournalFlushBeforeVisibility)?;
+        }
         let tx = self.tx.take().ok_or_else(|| {
             Error::Internal("libsql replica write transaction already closed".to_string())
         })?;
@@ -1665,14 +1678,14 @@ async fn load_remote_table_schema_from_session(
     conn: &Connection,
     table: &TableName,
 ) -> Result<Option<TableSchema>> {
-    let mut rows = conn
+    let rows = conn
         .query(
             "SELECT schema_json FROM schemas WHERE table_name = ?1",
             libsql::params![table.as_str()],
         )
         .await
         .map_err(map_libsql_error)?;
-    let Some(row) = rows.next().await.map_err(map_libsql_error)? else {
+    let Some(row) = take_single_remote_row(rows).await? else {
         return Ok(None);
     };
     deserialize_json(row.get::<String>(0).map_err(map_libsql_error)?.as_str()).map(Some)

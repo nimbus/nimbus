@@ -298,6 +298,40 @@ impl TenantRuntime {
         ))
     }
 
+    /// Returns Engine publication progress immediately after a durable apply
+    /// API has succeeded through `committed_through`.
+    ///
+    /// External-provider mutation, schema, trigger, and restore transactions
+    /// atomically apply their materialized effects with the journal and lease
+    /// CAS. Their successful return is therefore the authoritative completion
+    /// evidence; a follow-up read is both redundant and, on libSQL, may observe
+    /// an older Hrana session snapshot. Embedded stores remain bound to their
+    /// storage-reported heads. This interface is deliberately scoped to the
+    /// successful-write path; passive observation and crash recovery must use
+    /// storage-reported progress without promotion.
+    pub(crate) fn progress_after_successful_durable_apply(
+        &self,
+        committed_through: nimbus_core::SequenceNumber,
+    ) -> Result<nimbus_storage::JournalProgress> {
+        successful_durable_apply_progress(
+            self.store.has_process_local_sequence_authority(),
+            committed_through,
+            || self.store.journal_progress(),
+        )
+    }
+
+    fn normalize_progress_after_successful_durable_apply(
+        &self,
+        mut progress: nimbus_storage::JournalProgress,
+        committed_through: nimbus_core::SequenceNumber,
+    ) -> nimbus_storage::JournalProgress {
+        if !self.store.has_process_local_sequence_authority() {
+            progress.durable_head = progress.durable_head.max(committed_through);
+            progress.applied_head = progress.durable_head;
+        }
+        progress
+    }
+
     pub(crate) fn persist_trigger_invocations(
         &self,
         expected_previous: nimbus_core::SequenceNumber,
@@ -446,15 +480,21 @@ impl TenantRuntime {
         expected_previous: nimbus_core::SequenceNumber,
         archive: &nimbus_storage::PointInTimeRestoreArchive,
     ) -> Result<nimbus_storage::JournalProgress> {
-        let Some((owner_id, epoch)) = self.held_committer_lease()? else {
-            return self.store.import_point_in_time_restore_archive(archive);
+        let progress = if let Some((owner_id, epoch)) = self.held_committer_lease()? {
+            self.map_fenced_write_result(self.store.fenced_import_point_in_time_restore_archive(
+                &owner_id,
+                epoch,
+                expected_previous,
+                archive,
+            ))?
+        } else {
+            self.store.import_point_in_time_restore_archive(archive)?
         };
-        self.map_fenced_write_result(self.store.fenced_import_point_in_time_restore_archive(
-            &owner_id,
-            epoch,
-            expected_previous,
-            archive,
-        ))
+        let committed_through = archive
+            .journal_tail
+            .last()
+            .map_or(expected_previous, |record| record.sequence);
+        Ok(self.normalize_progress_after_successful_durable_apply(progress, committed_through))
     }
 
     fn map_fenced_write_result<T>(
@@ -503,6 +543,23 @@ impl TenantRuntime {
             lifecycle.pause_renewal_for_testing();
         }
     }
+}
+
+fn successful_durable_apply_progress<F>(
+    has_process_local_sequence_authority: bool,
+    committed_through: nimbus_core::SequenceNumber,
+    storage_progress: F,
+) -> Result<nimbus_storage::JournalProgress>
+where
+    F: FnOnce() -> Result<nimbus_storage::JournalProgress>,
+{
+    if !has_process_local_sequence_authority {
+        return Ok(nimbus_storage::JournalProgress {
+            durable_head: committed_through,
+            applied_head: committed_through,
+        });
+    }
+    storage_progress()
 }
 
 impl CommitterLeaseLifecycle {
@@ -1060,6 +1117,48 @@ mod tests {
             expires_at,
             durable_sequence: SequenceNumber(0),
         }
+    }
+
+    #[test]
+    fn successful_provider_apply_uses_committed_frontier_without_post_write_read() {
+        let mut storage_read = false;
+        let progress = successful_durable_apply_progress(
+            false,
+            SequenceNumber(7),
+            || -> Result<nimbus_storage::JournalProgress> {
+                storage_read = true;
+                Err(Error::Internal(
+                    "stale provider progress read must not run".to_string(),
+                ))
+            },
+        )
+        .expect("the successful provider transaction is authoritative");
+
+        assert!(!storage_read);
+        assert_eq!(
+            progress,
+            nimbus_storage::JournalProgress {
+                durable_head: SequenceNumber(7),
+                applied_head: SequenceNumber(7),
+            }
+        );
+    }
+
+    #[test]
+    fn successful_embedded_apply_retains_storage_reported_frontiers() {
+        let mut storage_read = false;
+        let expected = nimbus_storage::JournalProgress {
+            durable_head: SequenceNumber(7),
+            applied_head: SequenceNumber(6),
+        };
+        let progress = successful_durable_apply_progress(true, SequenceNumber(7), || {
+            storage_read = true;
+            Ok(expected)
+        })
+        .expect("embedded progress should come from storage");
+
+        assert!(storage_read);
+        assert_eq!(progress, expected);
     }
 
     fn lease_test_runtime(

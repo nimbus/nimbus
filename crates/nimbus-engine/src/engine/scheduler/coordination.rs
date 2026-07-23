@@ -11,6 +11,8 @@ use super::access::{
     expect_scheduler_unit, read_loaded_tenant_store, write_scheduler_state_blocking,
 };
 
+const PROVIDER_TENANT_RECOVERY_PAGE_SIZE: usize = 64;
+
 impl Engine {
     /// Returns the IDs for all tenants currently loaded in memory.
     pub fn loaded_tenant_ids(&self) -> Vec<TenantId> {
@@ -112,28 +114,39 @@ impl Engine {
     /// authority-owning scheduler write.
     pub async fn load_tenants_with_scheduled_work_async(self: &Arc<Self>) -> Result<()> {
         self.ensure_provider_background_tasks_started();
-        let tenant_ids = self.persistence_provider.list_tenants().await?;
         let mut loaded_any = false;
-        for tenant_id in tenant_ids {
-            match self
-                .load_tenant_with_scheduled_work_if_present(tenant_id.clone())
-                .await
-            {
-                Ok(loaded) => loaded_any |= loaded,
-                Err(error) => {
-                    if self.background_shutdown_started() {
-                        return Err(error);
+        let mut after = None;
+        loop {
+            let tenant_page = self
+                .persistence_provider
+                .list_tenants_page(after.as_ref(), PROVIDER_TENANT_RECOVERY_PAGE_SIZE)
+                .await?;
+            let next_after = tenant_page.next_after;
+            for tenant_id in tenant_page.tenant_ids {
+                match self
+                    .load_tenant_with_scheduled_work_if_present(tenant_id.clone())
+                    .await
+                {
+                    Ok(loaded) => loaded_any |= loaded,
+                    Err(error) => {
+                        if self.background_shutdown_started() {
+                            return Err(error);
+                        }
+                        if let Some(runtime) = self.loaded_runtime_for_scheduler(&tenant_id) {
+                            runtime.record_provider_catch_up_failure();
+                        }
+                        tracing::warn!(
+                            tenant = %tenant_id,
+                            error = %error,
+                            "failed to inspect provider tenant for scheduled work; continuing scheduled-work load"
+                        );
                     }
-                    if let Some(runtime) = self.loaded_runtime_for_scheduler(&tenant_id) {
-                        runtime.record_provider_catch_up_failure();
-                    }
-                    tracing::warn!(
-                        tenant = %tenant_id,
-                        error = %error,
-                        "failed to inspect provider tenant for scheduled work; continuing scheduled-work load"
-                    );
                 }
             }
+            let Some(next_after) = next_after else {
+                break;
+            };
+            after = Some(next_after);
         }
         if loaded_any {
             self.wake_scheduler();
@@ -159,12 +172,23 @@ impl Engine {
         if start_provider_background_tasks {
             self.ensure_provider_background_tasks_started();
         }
-        let tenant_ids = self.persistence_provider.list_tenants().await?;
         let mut loaded_any = false;
-        for tenant_id in tenant_ids {
-            loaded_any |= self
-                .load_tenant_with_scheduled_work_if_present(tenant_id)
+        let mut after = None;
+        loop {
+            let tenant_page = self
+                .persistence_provider
+                .list_tenants_page(after.as_ref(), PROVIDER_TENANT_RECOVERY_PAGE_SIZE)
                 .await?;
+            let next_after = tenant_page.next_after;
+            for tenant_id in tenant_page.tenant_ids {
+                loaded_any |= self
+                    .load_tenant_with_scheduled_work_if_present(tenant_id)
+                    .await?;
+            }
+            let Some(next_after) = next_after else {
+                break;
+            };
+            after = Some(next_after);
         }
         if loaded_any {
             self.wake_scheduler();
@@ -203,18 +227,11 @@ impl Engine {
 
         let Some(opened) = self
             .persistence_provider
-            .open_existing_tenant(&tenant_id)
+            .open_existing_tenant_with_scheduled_work(&tenant_id)
             .await?
         else {
             return Ok(false);
         };
-        let has_scheduled_work = opened
-            .persistence
-            .has_scheduled_work_async(&opened.executor)
-            .await?;
-        if !has_scheduled_work {
-            return Ok(false);
-        }
 
         let opened_executor = opened.executor.clone();
         let tenant_incarnation = match opened.incarnation {
@@ -241,7 +258,7 @@ impl Engine {
             .await?,
         );
         runtime.mark_scheduler_recovery_pending();
-        self.start_committer_actor(runtime.clone());
+        self.start_committer_actor(runtime.clone())?;
         let progress = opened
             .persistence
             .recover_durable_journal_async(&opened.executor)

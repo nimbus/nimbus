@@ -1,5 +1,50 @@
 use super::*;
 
+const REMOTE_NAMESPACE_SNAPSHOT_SQL: &str = r#"
+SELECT namespace, table_name, table_id, state
+FROM table_catalog
+ORDER BY namespace, table_name, table_id, state;
+SELECT table_name, schema_json
+FROM schemas
+ORDER BY table_name;
+SELECT d.table_id, d.id, d.creation_time, d.update_time, d.data_json, d.typed_fields_json
+FROM documents AS d
+JOIN table_catalog AS c ON c.table_id = d.table_id
+WHERE c.namespace = 'default'
+ORDER BY c.table_name, d.id;
+SELECT table_id, id, commit_sequence, commit_time, tombstone, data_json, typed_fields_json,
+       creation_time, update_time
+FROM document_versions
+ORDER BY table_id, id, commit_sequence;
+SELECT table_id, index_id, encoded_tuple, document_id, visible_from, visible_until
+FROM index_versions
+ORDER BY table_id, index_id, encoded_tuple, document_id, visible_from;
+SELECT locator_key, document_path_key, collection_group, binding_blob, locator_blob
+FROM resource_path_bindings
+ORDER BY collection_group, document_path_key;
+SELECT id, run_at, data_json
+FROM scheduled_jobs
+ORDER BY run_at, id;
+SELECT id, data_json
+FROM running_scheduled_jobs
+ORDER BY id;
+SELECT job_id, data_json
+FROM scheduled_job_results
+ORDER BY job_id;
+SELECT execution_id
+FROM scheduled_job_executions
+ORDER BY execution_id;
+SELECT name, data_json
+FROM cron_jobs
+ORDER BY name;
+SELECT sequence, record_blob
+FROM commit_log
+ORDER BY sequence;
+SELECT key, value_blob
+FROM metadata
+ORDER BY key;
+"#;
+
 #[derive(Debug, Clone)]
 pub(super) struct RemoteNamespaceSnapshot {
     pub(super) table_catalog: Vec<RemoteTableCatalogRow>,
@@ -105,49 +150,110 @@ pub(super) struct RemoteMetadataRow {
 }
 
 pub(super) async fn fetch_remote_namespace_snapshot(
-    primary_url: &str,
-    auth_token: Option<&str>,
-    namespace: &str,
+    session: &LibsqlRemoteSession,
 ) -> Result<RemoteNamespaceSnapshot> {
-    let database = open_remote_database(primary_url, auth_token, namespace).await?;
-    let conn = database.connect().map_err(map_libsql_error)?;
-    conn.execute_batch("BEGIN")
-        .await
-        .map_err(map_libsql_error)?;
-    let snapshot = async {
-        Ok(RemoteNamespaceSnapshot {
-            table_catalog: query_remote_table_catalog_rows(&conn).await?,
-            schemas: query_remote_schema_rows(&conn).await?,
-            documents: query_remote_document_rows(&conn).await?,
-            document_versions: query_remote_document_version_rows(&conn).await?,
-            index_versions: query_remote_index_version_rows(&conn).await?,
-            resource_path_bindings: query_remote_resource_path_binding_rows(&conn).await?,
-            scheduled_jobs: query_remote_scheduled_job_rows(&conn).await?,
-            running_scheduled_jobs: query_remote_json_rows(&conn, "running_scheduled_jobs", "id")
-                .await?,
-            scheduled_job_results: query_remote_json_rows(&conn, "scheduled_job_results", "job_id")
-                .await?,
-            scheduled_job_executions: query_remote_execution_ids(&conn).await?,
-            cron_jobs: query_remote_named_json_rows(&conn, "cron_jobs", "name").await?,
-            commit_log: query_remote_commit_log_rows(&conn).await?,
-            metadata: query_remote_metadata_rows(&conn).await?,
-        })
-    }
-    .await;
-    let _ = conn.execute_batch("ROLLBACK").await;
-    snapshot
+    retry_idempotent_remote_operation(
+        session,
+        "fetch libsql namespace snapshot",
+        |conn| async move { fetch_remote_namespace_snapshot_once(&conn).await },
+    )
+    .await
 }
 
-async fn query_remote_table_catalog_rows(conn: &Connection) -> Result<Vec<RemoteTableCatalogRow>> {
-    let mut rows = conn
-        .query(
-            "SELECT namespace, table_name, table_id, state
-             FROM table_catalog
-             ORDER BY namespace, table_name, table_id, state",
-            (),
-        )
+async fn fetch_remote_namespace_snapshot_once(
+    conn: &Connection,
+) -> Result<RemoteNamespaceSnapshot> {
+    // A snapshot is already materialized fully in memory. Use one ordered
+    // transactional Hrana batch so every table belongs to the same provider
+    // snapshot and one tenant reopen consumes one HTTP request rather than
+    // thirteen streaming cursor connections.
+    let mut batch = conn
+        .execute_transactional_batch(REMOTE_NAMESPACE_SNAPSHOT_SQL)
         .await
         .map_err(map_libsql_error)?;
+    let snapshot = RemoteNamespaceSnapshot {
+        table_catalog: collect_remote_table_catalog_rows(take_snapshot_rows(
+            &mut batch,
+            "table_catalog",
+        )?)
+        .await?,
+        schemas: collect_remote_schema_rows(take_snapshot_rows(&mut batch, "schemas")?).await?,
+        documents: collect_remote_document_rows(take_snapshot_rows(&mut batch, "documents")?)
+            .await?,
+        document_versions: collect_remote_document_version_rows(take_snapshot_rows(
+            &mut batch,
+            "document_versions",
+        )?)
+        .await?,
+        index_versions: collect_remote_index_version_rows(take_snapshot_rows(
+            &mut batch,
+            "index_versions",
+        )?)
+        .await?,
+        resource_path_bindings: collect_remote_resource_path_binding_rows(take_snapshot_rows(
+            &mut batch,
+            "resource_path_bindings",
+        )?)
+        .await?,
+        scheduled_jobs: collect_remote_scheduled_job_rows(take_snapshot_rows(
+            &mut batch,
+            "scheduled_jobs",
+        )?)
+        .await?,
+        running_scheduled_jobs: collect_remote_json_rows(take_snapshot_rows(
+            &mut batch,
+            "running_scheduled_jobs",
+        )?)
+        .await?,
+        scheduled_job_results: collect_remote_json_rows(take_snapshot_rows(
+            &mut batch,
+            "scheduled_job_results",
+        )?)
+        .await?,
+        scheduled_job_executions: collect_remote_execution_ids(take_snapshot_rows(
+            &mut batch,
+            "scheduled_job_executions",
+        )?)
+        .await?,
+        cron_jobs: collect_remote_named_json_rows(take_snapshot_rows(&mut batch, "cron_jobs")?)
+            .await?,
+        commit_log: collect_remote_commit_log_rows(take_snapshot_rows(&mut batch, "commit_log")?)
+            .await?,
+        metadata: collect_remote_metadata_rows(take_snapshot_rows(&mut batch, "metadata")?).await?,
+    };
+    if batch.next_stmt_row().is_some() {
+        return Err(snapshot_batch_contract_error(
+            "provider returned more than the 13 required statement results",
+        ));
+    }
+    Ok(snapshot)
+}
+
+fn take_snapshot_rows(batch: &mut libsql::BatchRows, table: &str) -> Result<libsql::Rows> {
+    match batch.next_stmt_row() {
+        Some(Some(rows)) => Ok(rows),
+        Some(None) => Err(snapshot_batch_contract_error(format!(
+            "provider skipped required {table} statement"
+        ))),
+        None => Err(snapshot_batch_contract_error(format!(
+            "provider omitted required {table} statement result"
+        ))),
+    }
+}
+
+fn snapshot_batch_contract_error(message: impl Into<String>) -> Error {
+    Error::storage(
+        StorageErrorKind::Corruption,
+        format!(
+            "libSQL namespace snapshot batch contract violation: {}",
+            message.into()
+        ),
+    )
+}
+
+async fn collect_remote_table_catalog_rows(
+    mut rows: libsql::Rows,
+) -> Result<Vec<RemoteTableCatalogRow>> {
     let mut result = Vec::new();
     while let Some(row) = rows.next().await.map_err(map_libsql_error)? {
         result.push(RemoteTableCatalogRow {
@@ -161,13 +267,17 @@ async fn query_remote_table_catalog_rows(conn: &Connection) -> Result<Vec<Remote
 }
 
 pub(super) async fn query_remote_schema_rows(conn: &Connection) -> Result<Vec<RemoteSchemaRow>> {
-    let mut rows = conn
+    let rows = conn
         .query(
             "SELECT table_name, schema_json FROM schemas ORDER BY table_name",
             (),
         )
         .await
         .map_err(map_libsql_error)?;
+    collect_remote_schema_rows(rows).await
+}
+
+async fn collect_remote_schema_rows(mut rows: libsql::Rows) -> Result<Vec<RemoteSchemaRow>> {
     let mut result = Vec::new();
     while let Some(row) = rows.next().await.map_err(map_libsql_error)? {
         result.push(RemoteSchemaRow {
@@ -178,18 +288,7 @@ pub(super) async fn query_remote_schema_rows(conn: &Connection) -> Result<Vec<Re
     Ok(result)
 }
 
-async fn query_remote_document_rows(conn: &Connection) -> Result<Vec<RemoteDocumentRow>> {
-    let mut rows = conn
-        .query(
-            "SELECT d.table_id, d.id, d.creation_time, d.update_time, d.data_json, d.typed_fields_json
-             FROM documents AS d
-             JOIN table_catalog AS c ON c.table_id = d.table_id
-             WHERE c.namespace = 'default'
-             ORDER BY c.table_name, d.id",
-            (),
-        )
-        .await
-        .map_err(map_libsql_error)?;
+async fn collect_remote_document_rows(mut rows: libsql::Rows) -> Result<Vec<RemoteDocumentRow>> {
     let mut result = Vec::new();
     while let Some(row) = rows.next().await.map_err(map_libsql_error)? {
         let creation_time = row.get::<i64>(2).map_err(map_libsql_error)?;
@@ -220,18 +319,9 @@ async fn query_remote_document_rows(conn: &Connection) -> Result<Vec<RemoteDocum
     Ok(result)
 }
 
-async fn query_remote_document_version_rows(
-    conn: &Connection,
+async fn collect_remote_document_version_rows(
+    mut rows: libsql::Rows,
 ) -> Result<Vec<RemoteDocumentVersionRow>> {
-    let mut rows = conn
-        .query(
-            "SELECT table_id, id, commit_sequence, commit_time, tombstone, data_json, typed_fields_json, creation_time, update_time
-             FROM document_versions
-             ORDER BY table_id, id, commit_sequence",
-            (),
-        )
-        .await
-        .map_err(map_libsql_error)?;
     let mut result = Vec::new();
     while let Some(row) = rows.next().await.map_err(map_libsql_error)? {
         result.push(RemoteDocumentVersionRow {
@@ -249,16 +339,9 @@ async fn query_remote_document_version_rows(
     Ok(result)
 }
 
-async fn query_remote_index_version_rows(conn: &Connection) -> Result<Vec<RemoteIndexVersionRow>> {
-    let mut rows = conn
-        .query(
-            "SELECT table_id, index_id, encoded_tuple, document_id, visible_from, visible_until
-             FROM index_versions
-             ORDER BY table_id, index_id, encoded_tuple, document_id, visible_from",
-            (),
-        )
-        .await
-        .map_err(map_libsql_error)?;
+async fn collect_remote_index_version_rows(
+    mut rows: libsql::Rows,
+) -> Result<Vec<RemoteIndexVersionRow>> {
     let mut result = Vec::new();
     while let Some(row) = rows.next().await.map_err(map_libsql_error)? {
         result.push(RemoteIndexVersionRow {
@@ -273,18 +356,9 @@ async fn query_remote_index_version_rows(conn: &Connection) -> Result<Vec<Remote
     Ok(result)
 }
 
-async fn query_remote_resource_path_binding_rows(
-    conn: &Connection,
+async fn collect_remote_resource_path_binding_rows(
+    mut rows: libsql::Rows,
 ) -> Result<Vec<RemoteResourcePathBindingRow>> {
-    let mut rows = conn
-        .query(
-            "SELECT locator_key, document_path_key, collection_group, binding_blob, locator_blob
-             FROM resource_path_bindings
-             ORDER BY collection_group, document_path_key",
-            (),
-        )
-        .await
-        .map_err(map_libsql_error)?;
     let mut result = Vec::new();
     while let Some(row) = rows.next().await.map_err(map_libsql_error)? {
         result.push(RemoteResourcePathBindingRow {
@@ -298,16 +372,7 @@ async fn query_remote_resource_path_binding_rows(
     Ok(result)
 }
 
-async fn query_remote_json_rows(
-    conn: &Connection,
-    table: &str,
-    key_column: &str,
-) -> Result<Vec<RemoteJsonRow>> {
-    let sql = format!("SELECT {key_column}, data_json FROM {table} ORDER BY {key_column}");
-    let mut rows = conn
-        .query(sql.as_str(), ())
-        .await
-        .map_err(map_libsql_error)?;
+async fn collect_remote_json_rows(mut rows: libsql::Rows) -> Result<Vec<RemoteJsonRow>> {
     let mut result = Vec::new();
     while let Some(row) = rows.next().await.map_err(map_libsql_error)? {
         result.push(RemoteJsonRow {
@@ -318,14 +383,9 @@ async fn query_remote_json_rows(
     Ok(result)
 }
 
-async fn query_remote_scheduled_job_rows(conn: &Connection) -> Result<Vec<RemoteScheduledJobRow>> {
-    let mut rows = conn
-        .query(
-            "SELECT id, run_at, data_json FROM scheduled_jobs ORDER BY run_at, id",
-            (),
-        )
-        .await
-        .map_err(map_libsql_error)?;
+async fn collect_remote_scheduled_job_rows(
+    mut rows: libsql::Rows,
+) -> Result<Vec<RemoteScheduledJobRow>> {
     let mut result = Vec::new();
     while let Some(row) = rows.next().await.map_err(map_libsql_error)? {
         result.push(RemoteScheduledJobRow {
@@ -337,16 +397,7 @@ async fn query_remote_scheduled_job_rows(conn: &Connection) -> Result<Vec<Remote
     Ok(result)
 }
 
-async fn query_remote_named_json_rows(
-    conn: &Connection,
-    table: &str,
-    name_column: &str,
-) -> Result<Vec<RemoteNamedJsonRow>> {
-    let sql = format!("SELECT {name_column}, data_json FROM {table} ORDER BY {name_column}");
-    let mut rows = conn
-        .query(sql.as_str(), ())
-        .await
-        .map_err(map_libsql_error)?;
+async fn collect_remote_named_json_rows(mut rows: libsql::Rows) -> Result<Vec<RemoteNamedJsonRow>> {
     let mut result = Vec::new();
     while let Some(row) = rows.next().await.map_err(map_libsql_error)? {
         result.push(RemoteNamedJsonRow {
@@ -357,14 +408,7 @@ async fn query_remote_named_json_rows(
     Ok(result)
 }
 
-async fn query_remote_execution_ids(conn: &Connection) -> Result<Vec<String>> {
-    let mut rows = conn
-        .query(
-            "SELECT execution_id FROM scheduled_job_executions ORDER BY execution_id",
-            (),
-        )
-        .await
-        .map_err(map_libsql_error)?;
+async fn collect_remote_execution_ids(mut rows: libsql::Rows) -> Result<Vec<String>> {
     let mut result = Vec::new();
     while let Some(row) = rows.next().await.map_err(map_libsql_error)? {
         result.push(row.get::<String>(0).map_err(map_libsql_error)?);
@@ -372,14 +416,7 @@ async fn query_remote_execution_ids(conn: &Connection) -> Result<Vec<String>> {
     Ok(result)
 }
 
-async fn query_remote_commit_log_rows(conn: &Connection) -> Result<Vec<RemoteCommitLogRow>> {
-    let mut rows = conn
-        .query(
-            "SELECT sequence, record_blob FROM commit_log ORDER BY sequence",
-            (),
-        )
-        .await
-        .map_err(map_libsql_error)?;
+async fn collect_remote_commit_log_rows(mut rows: libsql::Rows) -> Result<Vec<RemoteCommitLogRow>> {
     let mut result = Vec::new();
     while let Some(row) = rows.next().await.map_err(map_libsql_error)? {
         let sequence = row.get::<i64>(0).map_err(map_libsql_error)?;
@@ -398,11 +435,7 @@ async fn query_remote_commit_log_rows(conn: &Connection) -> Result<Vec<RemoteCom
     Ok(result)
 }
 
-async fn query_remote_metadata_rows(conn: &Connection) -> Result<Vec<RemoteMetadataRow>> {
-    let mut rows = conn
-        .query("SELECT key, value_blob FROM metadata ORDER BY key", ())
-        .await
-        .map_err(map_libsql_error)?;
+async fn collect_remote_metadata_rows(mut rows: libsql::Rows) -> Result<Vec<RemoteMetadataRow>> {
     let mut result = Vec::new();
     while let Some(row) = rows.next().await.map_err(map_libsql_error)? {
         result.push(RemoteMetadataRow {
@@ -717,6 +750,33 @@ pub(super) async fn bootstrap_tenant_namespace(
     auth_token: Option<&str>,
     namespace: &str,
 ) -> Result<()> {
+    let primary_url = primary_url.to_owned();
+    let auth_token = auth_token.map(str::to_owned);
+    let namespace = namespace.to_owned();
+    retry_idempotent_remote_operation_without_session(
+        "bootstrap libsql tenant namespace",
+        move || {
+            let primary_url = primary_url.clone();
+            let auth_token = auth_token.clone();
+            let namespace = namespace.clone();
+            async move {
+                bootstrap_tenant_namespace_once(
+                    primary_url.as_str(),
+                    auth_token.as_deref(),
+                    namespace.as_str(),
+                )
+                .await
+            }
+        },
+    )
+    .await
+}
+
+async fn bootstrap_tenant_namespace_once(
+    primary_url: &str,
+    auth_token: Option<&str>,
+    namespace: &str,
+) -> Result<()> {
     let database = open_remote_database(primary_url, auth_token, namespace).await?;
     let conn = database.connect().map_err(map_libsql_error)?;
     conn.execute_batch(SQLITE_INIT_SQL)
@@ -741,12 +801,28 @@ pub(super) async fn clear_tenant_namespace(
     auth_token: Option<&str>,
     namespace: &str,
 ) -> Result<()> {
-    let database = open_remote_database(primary_url, auth_token, namespace).await?;
-    let conn = database.connect().map_err(map_libsql_error)?;
-    conn.execute_batch(LIBSQL_DROP_TENANT_SQL)
-        .await
-        .map_err(map_libsql_error)?;
-    Ok(())
+    let primary_url = primary_url.to_owned();
+    let auth_token = auth_token.map(str::to_owned);
+    let namespace = namespace.to_owned();
+    retry_idempotent_remote_operation_without_session("clear libsql tenant namespace", move || {
+        let primary_url = primary_url.clone();
+        let auth_token = auth_token.clone();
+        let namespace = namespace.clone();
+        async move {
+            let database = open_remote_database(
+                primary_url.as_str(),
+                auth_token.as_deref(),
+                namespace.as_str(),
+            )
+            .await?;
+            let conn = database.connect().map_err(map_libsql_error)?;
+            conn.execute_batch(LIBSQL_DROP_TENANT_SQL)
+                .await
+                .map_err(map_libsql_error)?;
+            Ok(())
+        }
+    })
+    .await
 }
 
 pub(super) async fn tenant_namespace_has_foundation(
@@ -754,16 +830,39 @@ pub(super) async fn tenant_namespace_has_foundation(
     auth_token: Option<&str>,
     namespace: &str,
 ) -> Result<bool> {
-    let database = open_remote_database(primary_url, auth_token, namespace).await?;
-    let conn = database.connect().map_err(map_libsql_error)?;
-    let mut rows = conn
-        .query(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'metadata'",
-            (),
-        )
-        .await
-        .map_err(map_libsql_error)?;
-    Ok(rows.next().await.map_err(map_libsql_error)?.is_some())
+    let primary_url = primary_url.to_owned();
+    let auth_token = auth_token.map(str::to_owned);
+    let namespace = namespace.to_owned();
+    retry_idempotent_remote_operation_without_session(
+        "inspect libsql tenant namespace foundation",
+        move || {
+            let primary_url = primary_url.clone();
+            let auth_token = auth_token.clone();
+            let namespace = namespace.clone();
+            async move {
+                let database = open_remote_database(
+                    primary_url.as_str(),
+                    auth_token.as_deref(),
+                    namespace.as_str(),
+                )
+                .await?;
+                let conn = database.connect().map_err(map_libsql_error)?;
+                let rows = conn
+                    .query(
+                        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'metadata'",
+                        (),
+                    )
+                    .await
+                    .map_err(map_libsql_error)?;
+                let exists = take_single_remote_row(rows).await?.is_some();
+                conn.execute("SELECT 1", ())
+                    .await
+                    .map_err(map_libsql_error)?;
+                Ok(exists)
+            }
+        },
+    )
+    .await
 }
 
 pub(super) async fn open_remote_database(
@@ -785,26 +884,37 @@ pub(super) async fn ensure_remote_namespace_exists(
     admin_auth_header: Option<&str>,
     namespace: &str,
 ) -> Result<()> {
-    let response = apply_admin_auth(
-        HttpClient::new()
-            .post(namespace_create_endpoint(admin_api_url, namespace))
-            .json(&serde_json::json!({})),
-        admin_auth_header,
-    )
-    .send()
+    let endpoint = namespace_create_endpoint(admin_api_url, namespace);
+    let auth_header = admin_auth_header.map(str::to_owned);
+    let namespace = namespace.to_owned();
+    retry_idempotent_remote_operation_without_session("create libsql namespace", move || {
+        let endpoint = endpoint.clone();
+        let auth_header = auth_header.clone();
+        let namespace = namespace.clone();
+        async move {
+            let response = apply_admin_auth(
+                libsql_admin_http_client()
+                    .post(endpoint)
+                    .json(&serde_json::json!({})),
+                auth_header.as_deref(),
+            )
+            .send()
+            .await
+            .map_err(map_admin_api_error)?;
+            let status = response.status();
+            let body = response.text().await.map_err(map_admin_api_error)?;
+            if status.is_success() || (status.as_u16() == 400 && body.contains("already exists")) {
+                return Ok(());
+            }
+            Err(Error::storage(
+                StorageErrorKind::Unavailable,
+                format!(
+                    "libsql admin namespace create failed for '{namespace}': status={status}, body={body}"
+                ),
+            ))
+        }
+    })
     .await
-    .map_err(map_admin_api_error)?;
-    let status = response.status();
-    let body = response.text().await.map_err(map_admin_api_error)?;
-    if status.is_success() || (status.as_u16() == 400 && body.contains("already exists")) {
-        return Ok(());
-    }
-    Err(Error::storage(
-        StorageErrorKind::Unavailable,
-        format!(
-            "libsql admin namespace create failed for '{namespace}': status={status}, body={body}"
-        ),
-    ))
 }
 
 pub(super) async fn drop_remote_namespace(
@@ -812,27 +922,42 @@ pub(super) async fn drop_remote_namespace(
     admin_auth_header: Option<&str>,
     namespace: &str,
 ) -> Result<()> {
-    let response = apply_admin_auth(
-        HttpClient::new().delete(namespace_endpoint(admin_api_url, namespace)),
-        admin_auth_header,
-    )
-    .send()
+    let endpoint = namespace_endpoint(admin_api_url, namespace);
+    let auth_header = admin_auth_header.map(str::to_owned);
+    let namespace = namespace.to_owned();
+    retry_idempotent_remote_operation_without_session("delete libsql namespace", move || {
+        let endpoint = endpoint.clone();
+        let auth_header = auth_header.clone();
+        let namespace = namespace.clone();
+        async move {
+            let response = apply_admin_auth(
+                libsql_admin_http_client().delete(endpoint),
+                auth_header.as_deref(),
+            )
+            .send()
+            .await
+            .map_err(map_admin_api_error)?;
+            let status = response.status();
+            let body = response.text().await.map_err(map_admin_api_error)?;
+            if status.is_success()
+                || (status.as_u16() == 404 && body.contains("doesn't exist"))
+                || (status.as_u16() == 500 && body.contains("Directory not empty"))
+            {
+                return Ok(());
+            }
+            Err(Error::storage(
+                StorageErrorKind::Unavailable,
+                format!(
+                    "libsql admin namespace delete failed for '{namespace}': status={status}, body={body}"
+                ),
+            ))
+        }
+    })
     .await
-    .map_err(map_admin_api_error)?;
-    let status = response.status();
-    let body = response.text().await.map_err(map_admin_api_error)?;
-    if status.is_success()
-        || (status.as_u16() == 404 && body.contains("doesn't exist"))
-        || (status.as_u16() == 500 && body.contains("Directory not empty"))
-    {
-        return Ok(());
-    }
-    Err(Error::storage(
-        StorageErrorKind::Unavailable,
-        format!(
-            "libsql admin namespace delete failed for '{namespace}': status={status}, body={body}"
-        ),
-    ))
+}
+
+fn libsql_admin_http_client() -> &'static HttpClient {
+    LIBSQL_ADMIN_HTTP_CLIENT.get_or_init(HttpClient::new)
 }
 
 fn apply_admin_auth(

@@ -111,9 +111,9 @@ pub(super) fn render_gate_hold_report(
         return;
     }
 
-    markdown.push_str("## Mixed-Load Commit Gate Under Injected RTT\n\n");
+    markdown.push_str("## Mixed-Load Durable Append Under Injected RTT\n\n");
     markdown.push_str(&format!(
-        "Gate hold is the B2 `durable_append` phase while the tenant sequence guard is held. The proxy adds `{}` in each direction, giving a nominal injected round trip of `{}`. Mean gate hold is exact across all recorded commits; the median is the median round-level mean because B2 snapshots are cumulative counters rather than per-commit histograms. Gate-hold share is `durable_append / total_commit` across the same committer samples.\n\n",
+        "The B2 `durable_append` phase measures provider persistence. Under the ordered provider publisher this I/O runs after serial assignment releases the assignment/recovery gate, so it is deliberately **not** a gate-hold measurement. The proxy adds `{}` in each direction, giving a nominal injected round trip of `{}`. Mean durable append is exact across all recorded commits; the median is the median round-level mean because B2 snapshots are cumulative counters rather than per-commit histograms. Durable-append share is `durable_append / total_commit` across the same publisher samples. For ordinary mutation persistence, the share of `durable_append` network wait under serial assignment is therefore 0% by construction and is guarded by the assignment/publisher interface tests. Initial lease acquisition intentionally remains before first assignment, and background lease renewal is a separate lifecycle; neither is counted as mutation `durable_append`.\n\n",
         format_duration(config.rtt_delay),
         format_duration(nominal_injected_round_trip(config.rtt_delay)),
     ));
@@ -121,7 +121,7 @@ pub(super) fn render_gate_hold_report(
         "Effective mutation ops per RTT is `completed mutation ops / (round wall time / nominal injected RTT)`. This normalizes completed inserts and updates by configured request/response delay intervals; it measures overlap or batching efficiency without treating proxy chunks as protocol-level round-trip counts. Reads and queries remain in round wall time but are not counted as mutation ops.\n\n",
     );
     markdown.push_str(
-        "| Backend | Concurrent tenants | Rounds | Mutation commits / round | Phase samples / round | Mean gate hold / commit | Median round mean gate hold / commit | Gate-hold share of commit | Mean round wall time | Mean effective mutation ops / RTT | Median effective mutation ops / RTT |\n",
+        "| Backend | Concurrent tenants | Rounds | Mutation commits / round | Phase samples / round | Mean durable append / commit | Median round mean durable append / commit | Durable-append share of commit | Mean round wall time | Mean effective mutation ops / RTT | Median effective mutation ops / RTT |\n",
     );
     markdown.push_str(
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n",

@@ -600,7 +600,7 @@ pub(crate) async fn run_committer_actor(
             runtime.wait_for_publisher_finished().await;
         }
         runtime.wait_for_operation_drain_for_eviction().await;
-        eviction_registry.finish(runtime);
+        eviction_registry.finish(runtime).await;
     }
 }
 

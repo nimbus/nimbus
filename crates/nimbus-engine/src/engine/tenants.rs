@@ -262,7 +262,7 @@ impl Engine {
             )
             .await?,
         );
-        self.start_committer_actor(runtime.clone());
+        self.start_committer_actor(runtime.clone())?;
         if !self.provider_background_ready() {
             self.catch_up_loaded_provider_tenant_async(
                 runtime.clone(),
@@ -399,6 +399,7 @@ impl Engine {
                     ))
                 })?;
             runtime.mark_delete_fenced();
+            runtime.begin_explicit_delete_shutdown();
             return Ok(TenantDeletionLease {
                 tenant_id,
                 tenant_incarnation,
@@ -413,14 +414,8 @@ impl Engine {
         self: &Arc<Self>,
         deletion: TenantDeletionLease<'_>,
     ) -> Result<()> {
-        deletion.runtime.wait_for_delete_operation_drain().await;
-        deletion.runtime.shutdown_trigger_candidates();
-        deletion.runtime.shutdown_trigger_execution();
-        deletion.runtime.shutdown_subscription_delivery();
-        deletion
-            .runtime
-            .subscriptions
-            .shutdown_all(format!("tenant deleted: {}", deletion.tenant_id));
+        deletion.runtime.wait_for_explicit_delete_shutdown().await;
+        deletion.runtime.store.retire_after_drain().await?;
         self.publisher_failure_diagnostics
             .write()
             .expect("publisher failure diagnostics lock should not be poisoned")
@@ -655,7 +650,7 @@ impl Engine {
         ));
         runtime.mark_scheduler_recovery_pending();
         self.restore_publisher_error_counts(&runtime);
-        self.start_committer_actor(runtime.clone());
+        self.start_committer_actor(runtime.clone())?;
         let runtime_init_elapsed = runtime_init_started.elapsed();
         let recover_started = Instant::now();
         let progress = if runtime.applied_head().0 < runtime.durable_head().0 {

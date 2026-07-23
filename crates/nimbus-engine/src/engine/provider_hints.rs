@@ -17,10 +17,8 @@ use super::mutations::document_bearing_commit_identity;
 const POSTGRES_HINT_RECONNECT_DELAY: Duration = Duration::from_secs(1);
 #[cfg(not(test))]
 const POSTGRES_HINT_RECONNECT_DELAY: Duration = Duration::from_millis(250);
-#[cfg(test)]
-const POLLING_PROVIDER_INTERVAL: Duration = Duration::from_millis(100);
-#[cfg(not(test))]
 const POLLING_PROVIDER_INTERVAL: Duration = Duration::from_millis(500);
+const PROVIDER_TENANT_SWEEP_PAGE_SIZE: usize = 8;
 
 #[derive(Clone, Copy)]
 pub(crate) enum ProviderPollWorker {
@@ -65,9 +63,15 @@ impl Engine {
             engine: self.clone(),
             shutdown: self.engine_executor.shutdown_token(),
         };
-        self.spawn_background(task_name, async move {
+        if let Err((error, _future)) = self.try_spawn_background(task_name, async move {
             runtime_hooks.spawn_workers(ctx).await;
-        });
+        }) {
+            self.provider_hint_worker_started
+                .store(false, Ordering::Release);
+            if !self.background_shutdown_started() {
+                warn!(error = %error, task = task_name, "failed to start provider runtime hooks");
+            }
+        }
     }
 
     pub(crate) async fn run_provider_notification_listener(
@@ -315,9 +319,16 @@ impl Engine {
         self.provider_hint_listener_ready
             .store(true, Ordering::Release);
         let mut last_next_due = None;
+        let mut tenant_sweep_after = None;
         loop {
-            match self.poll_provider_once(last_next_due).await {
-                Ok(next_due) => last_next_due = next_due,
+            match self
+                .poll_provider_once(last_next_due, tenant_sweep_after.as_ref())
+                .await
+            {
+                Ok((next_due, next_sweep_after)) => {
+                    last_next_due = next_due;
+                    tenant_sweep_after = next_sweep_after;
+                }
                 Err(error) => warn!(error = %error, "{}", worker.failure_message()),
             }
             if sleep_or_stop(POLLING_PROVIDER_INTERVAL, &shutdown).await {
@@ -329,7 +340,8 @@ impl Engine {
     async fn poll_provider_once(
         self: &Arc<Self>,
         last_next_due: Option<nimbus_core::Timestamp>,
-    ) -> Result<Option<nimbus_core::Timestamp>> {
+        tenant_sweep_after: Option<&TenantId>,
+    ) -> Result<(Option<nimbus_core::Timestamp>, Option<TenantId>)> {
         let loaded = self
             .tenants
             .read()
@@ -382,7 +394,12 @@ impl Engine {
             .map(|(tenant_id, _)| tenant_id.clone())
             .collect::<std::collections::BTreeSet<_>>();
         let mut loaded_unloaded_tenant = false;
-        for tenant_id in self.persistence_provider.list_tenants().await? {
+        let tenant_page = self
+            .persistence_provider
+            .list_tenants_page(tenant_sweep_after, PROVIDER_TENANT_SWEEP_PAGE_SIZE)
+            .await?;
+        let next_sweep_after = tenant_page.next_after;
+        for tenant_id in tenant_page.tenant_ids {
             if loaded_tenant_ids.contains(&tenant_id) {
                 continue;
             }
@@ -411,7 +428,7 @@ impl Engine {
         if loaded_unloaded_tenant || next_due != last_next_due {
             self.wake_scheduler();
         }
-        Ok(next_due)
+        Ok((next_due, next_sweep_after))
     }
 }
 

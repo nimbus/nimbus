@@ -2,6 +2,32 @@ use super::*;
 use nimbus_crypto::{KeyManifest, LocalKeySubject, ManifestCipher, resolve_subject_encryption_key};
 
 impl LibsqlReplicaProvider {
+    /// Retires provider-global metadata and scheduler-probe transports after
+    /// all engine-owned tenant and background work has drained.
+    pub async fn retire_after_drain(&self) -> Result<()> {
+        let probe_sessions = self
+            .scheduler_probe_sessions
+            .lock()
+            .map_err(|_| {
+                Error::Internal("libsql scheduler probe session lock is poisoned".to_string())
+            })?
+            .drain();
+        let mut first_error = None;
+        for session in probe_sessions {
+            if let Err(error) = session.retire_after_drain().await
+                && first_error.is_none()
+            {
+                first_error = Some(error);
+            }
+        }
+        if let Err(error) = self.metadata_session.retire_after_drain().await
+            && first_error.is_none()
+        {
+            first_error = Some(error);
+        }
+        first_error.map_or(Ok(()), Err)
+    }
+
     pub async fn connect(config: LibsqlReplicaProviderConfig) -> Result<Self> {
         Self::connect_with_simulation(
             config,
@@ -71,14 +97,13 @@ impl LibsqlReplicaProvider {
         )
         .await?;
 
-        let metadata_database = Arc::new(
-            open_remote_database(
-                &config.primary_url,
-                config.auth_token.as_deref(),
-                &config.metadata_namespace,
-            )
-            .await?,
-        );
+        let metadata_database = open_remote_database(
+            &config.primary_url,
+            config.auth_token.as_deref(),
+            &config.metadata_namespace,
+        )
+        .await?;
+        let metadata_session = LibsqlRemoteSession::new(metadata_database)?;
         let provider = Self {
             primary_url: config.primary_url,
             auth_token: config.auth_token,
@@ -94,7 +119,12 @@ impl LibsqlReplicaProvider {
             remote_fault_injector,
             replica_fault_injector,
             tenant_read_parallelism: LIBSQL_TENANT_READ_PARALLELISM,
-            metadata_database,
+            metadata_session,
+            scheduler_probe_sessions: Arc::new(Mutex::new(BoundedSchedulerProbeSessions::new(
+                LIBSQL_SCHEDULER_PROBE_SESSION_LIMIT,
+            ))),
+            #[cfg(test)]
+            scheduler_probe_session_open_count: Arc::new(AtomicU64::new(0)),
         };
         provider.ensure_metadata_namespace().await?;
         Ok(provider)
@@ -158,65 +188,201 @@ impl LibsqlReplicaProvider {
         self.open_registration(registration).await.map(Some)
     }
 
-    pub async fn list_tenants(&self) -> Result<Vec<TenantId>> {
-        let conn = self.metadata_connection()?;
-        let mut rows = conn
-            .query("SELECT tenant_id FROM tenants ORDER BY tenant_id", ())
-            .await
-            .map_err(map_libsql_error)?;
-        let mut tenants = Vec::new();
-        while let Some(row) = rows.next().await.map_err(map_libsql_error)? {
-            let tenant_id = row.get::<String>(0).map_err(map_libsql_error)?;
-            tenants.push(TenantId::new(tenant_id)?);
+    /// Opens an existing tenant only when its durable scheduler tables contain work.
+    ///
+    /// The provider poller calls this for unloaded tenants. Inspecting the
+    /// remote scheduler tables before materializing the local replica keeps a
+    /// poll proportional to the small scheduler predicate rather than a full
+    /// namespace snapshot. A false result is advisory: a concurrent scheduler
+    /// write is observed by a later bounded poll.
+    pub async fn open_existing_opened_tenant_with_scheduled_work(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<Option<OpenedLibsqlReplicaTenant>> {
+        let Some(registration) = self.load_tenant_registration(tenant_id).await? else {
+            return Ok(None);
+        };
+        let remote_session = self
+            .scheduler_probe_session(&registration.tenant_id, &registration.namespace)
+            .await?;
+        let has_scheduled_work = retry_idempotent_remote_operation(
+            &remote_session,
+            "inspect unloaded libsql tenant scheduler state",
+            |conn| async move {
+                Ok(table_has_entries_remote(&conn, "scheduled_jobs").await?
+                    || table_has_entries_remote(&conn, "running_scheduled_jobs").await?
+                    || table_has_entries_remote(&conn, "cron_jobs").await?)
+            },
+        )
+        .await?;
+        if !has_scheduled_work {
+            return Ok(None);
         }
-        Ok(tenants)
+        self.take_scheduler_probe_session(&registration.tenant_id, &registration.namespace)
+            .await?;
+        let opened = self
+            .open_registration_with_session(registration, remote_session.clone())
+            .await;
+        if opened.is_err() {
+            let _ = remote_session.retire_after_drain().await;
+        }
+        opened.map(Some)
+    }
+
+    pub async fn list_tenants(&self) -> Result<Vec<TenantId>> {
+        retry_idempotent_remote_operation(
+            &self.metadata_session,
+            "list provider tenants",
+            |conn| async move {
+                let mut rows = conn
+                    .query("SELECT tenant_id FROM tenants ORDER BY tenant_id", ())
+                    .await
+                    .map_err(map_libsql_error)?;
+                let mut tenants = Vec::new();
+                while let Some(row) = rows.next().await.map_err(map_libsql_error)? {
+                    let tenant_id = row.get::<String>(0).map_err(map_libsql_error)?;
+                    tenants.push(TenantId::new(tenant_id)?);
+                }
+                Ok(tenants)
+            },
+        )
+        .await
+    }
+
+    /// Lists one ordered tenant-registration page strictly after `after`.
+    ///
+    /// Provider pollers use this instead of materializing the full registry.
+    /// Callers advance with the last returned tenant and reset to `None` after
+    /// a short page to begin the next sweep.
+    pub async fn list_tenants_page(
+        &self,
+        after: Option<&TenantId>,
+        limit: usize,
+    ) -> Result<Vec<TenantId>> {
+        if limit == 0 {
+            return Err(Error::InvalidInput(
+                "libsql tenant page limit must be greater than zero".to_string(),
+            ));
+        }
+        let after = after.cloned();
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        retry_idempotent_remote_operation(
+            &self.metadata_session,
+            "list provider tenant page",
+            |conn| {
+                let after = after.clone();
+                async move {
+                    let mut rows = match after {
+                        Some(after) => {
+                            conn.query(
+                                "SELECT tenant_id FROM tenants \
+                                 WHERE tenant_id > ?1 ORDER BY tenant_id LIMIT ?2",
+                                libsql::params![after.as_str(), limit],
+                            )
+                            .await
+                        }
+                        None => {
+                            conn.query(
+                                "SELECT tenant_id FROM tenants ORDER BY tenant_id LIMIT ?1",
+                                libsql::params![limit],
+                            )
+                            .await
+                        }
+                    }
+                    .map_err(map_libsql_error)?;
+                    let mut tenants = Vec::new();
+                    while let Some(row) = rows.next().await.map_err(map_libsql_error)? {
+                        tenants.push(TenantId::new(
+                            row.get::<String>(0).map_err(map_libsql_error)?,
+                        )?);
+                    }
+                    Ok(tenants)
+                }
+            },
+        )
+        .await
     }
 
     pub async fn tenant_exists(&self, tenant_id: &TenantId) -> Result<bool> {
-        let conn = self.metadata_connection()?;
-        let mut rows = conn
-            .query(
-                "SELECT 1 FROM tenants WHERE tenant_id = ?",
-                libsql::params![tenant_id.as_str()],
-            )
-            .await
-            .map_err(map_libsql_error)?;
-        Ok(rows.next().await.map_err(map_libsql_error)?.is_some())
+        let tenant_id = tenant_id.clone();
+        retry_idempotent_remote_operation(
+            &self.metadata_session,
+            "inspect libsql tenant registration",
+            |conn| {
+                let tenant_id = tenant_id.clone();
+                async move {
+                    let rows = conn
+                        .query(
+                            "SELECT 1 FROM tenants WHERE tenant_id = ?",
+                            libsql::params![tenant_id.as_str()],
+                        )
+                        .await
+                        .map_err(map_libsql_error)?;
+                    Ok(take_single_remote_row(rows).await?.is_some())
+                }
+            },
+        )
+        .await
     }
 
     pub async fn open_existing_tenant(
         &self,
         tenant_id: &TenantId,
     ) -> Result<Option<LibsqlReplicaTenantRegistration>> {
-        let conn = self.metadata_connection()?;
-        let mut rows = conn
-            .query(
-                "SELECT tenants.namespace, tenant_incarnations.incarnation \
-                 FROM tenants LEFT JOIN tenant_incarnations USING (tenant_id) \
-                 WHERE tenants.tenant_id = ?",
-                libsql::params![tenant_id.as_str()],
-            )
-            .await
-            .map_err(map_libsql_error)?;
-        let Some(row) = rows.next().await.map_err(map_libsql_error)? else {
+        let Some(registration) = self.load_tenant_registration(tenant_id).await? else {
             return Ok(None);
         };
-        let namespace = row.get::<String>(0).map_err(map_libsql_error)?;
-        let incarnation = incarnation_from_i64(
-            row.get::<Option<i64>>(1).map_err(map_libsql_error)?,
-            tenant_id,
-        )?;
         if !tenant_namespace_has_foundation(
             &self.primary_url,
             self.auth_token.as_deref(),
-            &namespace,
+            &registration.namespace,
         )
         .await?
         {
             return Err(Error::Internal(format!(
-                "tenant registry points at missing libsql namespace '{namespace}'"
+                "tenant registry points at missing libsql namespace '{}'",
+                registration.namespace
             )));
         }
+        Ok(Some(registration))
+    }
+
+    async fn load_tenant_registration(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<Option<LibsqlReplicaTenantRegistration>> {
+        let query_tenant_id = tenant_id.clone();
+        let registration = retry_idempotent_remote_operation(
+            &self.metadata_session,
+            "load libsql tenant registration",
+            |conn| {
+                let tenant_id = query_tenant_id.clone();
+                async move {
+                    let rows = conn
+                        .query(
+                            "SELECT tenants.namespace, tenant_incarnations.incarnation \
+                             FROM tenants LEFT JOIN tenant_incarnations USING (tenant_id) \
+                             WHERE tenants.tenant_id = ?",
+                            libsql::params![tenant_id.as_str()],
+                        )
+                        .await
+                        .map_err(map_libsql_error)?;
+                    let Some(row) = take_single_remote_row(rows).await? else {
+                        return Ok(None);
+                    };
+                    let namespace = row.get::<String>(0).map_err(map_libsql_error)?;
+                    let incarnation = incarnation_from_i64(
+                        row.get::<Option<i64>>(1).map_err(map_libsql_error)?,
+                        &tenant_id,
+                    )?;
+                    Ok(Some((namespace, incarnation)))
+                }
+            },
+        )
+        .await?;
+        let Some((namespace, incarnation)) = registration else {
+            return Ok(None);
+        };
         Ok(Some(LibsqlReplicaTenantRegistration {
             tenant_id: tenant_id.clone(),
             namespace,
@@ -245,7 +411,7 @@ impl LibsqlReplicaProvider {
             .await?;
         self.remote_fault_injector
             .check_for_tenant(crate::FaultPoint::TenantCreateBeforeRegistration, tenant_id)?;
-        let conn = self.metadata_connection()?;
+        let conn = self.metadata_write_connection()?;
         let transaction = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .await
@@ -260,27 +426,22 @@ impl LibsqlReplicaProvider {
                 )
                 .await
                 .map_err(map_libsql_error)?;
-            let mut rows = transaction
+            let rows = transaction
                 .query(
                     "SELECT incarnation FROM tenant_incarnations WHERE tenant_id = ?",
                     libsql::params![tenant_id.as_str()],
                 )
                 .await
                 .map_err(map_libsql_error)?;
-            let row = rows
-                .next()
-                .await
-                .map_err(map_libsql_error)?
-                .ok_or_else(|| {
-                    Error::Internal(format!(
-                        "tenant incarnation allocation disappeared for {tenant_id}"
-                    ))
-                })?;
+            let row = take_single_remote_row(rows).await?.ok_or_else(|| {
+                Error::Internal(format!(
+                    "tenant incarnation allocation disappeared for {tenant_id}"
+                ))
+            })?;
             let incarnation = incarnation_from_i64(
                 Some(row.get::<i64>(0).map_err(map_libsql_error)?),
                 tenant_id,
             )?;
-            drop(rows);
             let inserted = transaction
                 .execute(
                     "INSERT INTO tenants (tenant_id, namespace) VALUES (?, ?) \
@@ -319,13 +480,18 @@ impl LibsqlReplicaProvider {
         let Some(registration) = self.open_existing_tenant(tenant_id).await? else {
             return Err(Error::TenantNotFound(tenant_id.clone()));
         };
-        self.sync_registration_snapshot(&registration).await
+        let remote_session = self.open_remote_session(&registration.namespace).await?;
+        self.sync_registration_snapshot(&registration, &remote_session)
+            .await
     }
 
     pub async fn delete_tenant(&self, tenant_id: &TenantId) -> Result<()> {
         let Some(registration) = self.open_existing_tenant(tenant_id).await? else {
             return Err(Error::TenantNotFound(tenant_id.clone()));
         };
+        if let Some(session) = self.remove_scheduler_probe_session(tenant_id)? {
+            session.retire_after_drain().await?;
+        }
         clear_tenant_namespace(
             &self.primary_url,
             self.auth_token.as_deref(),
@@ -338,13 +504,24 @@ impl LibsqlReplicaProvider {
             &registration.namespace,
         )
         .await?;
-        let conn = self.metadata_connection()?;
-        conn.execute(
-            "DELETE FROM tenants WHERE tenant_id = ?",
-            libsql::params![tenant_id.as_str()],
+        let tenant_id_for_delete = tenant_id.clone();
+        retry_idempotent_remote_operation(
+            &self.metadata_session,
+            "delete libsql tenant registration",
+            |conn| {
+                let tenant_id = tenant_id_for_delete.clone();
+                async move {
+                    conn.execute(
+                        "DELETE FROM tenants WHERE tenant_id = ?",
+                        libsql::params![tenant_id.as_str()],
+                    )
+                    .await
+                    .map_err(map_libsql_error)?;
+                    Ok(())
+                }
+            },
         )
-        .await
-        .map_err(map_libsql_error)?;
+        .await?;
         let replica_dir = self.replica_dir_for_tenant(tenant_id);
         if replica_dir.exists() {
             std::fs::remove_dir_all(&replica_dir).map_err(storage_io_error)?;
@@ -362,13 +539,9 @@ impl LibsqlReplicaProvider {
     async fn sync_registration_snapshot(
         &self,
         registration: &LibsqlReplicaTenantRegistration,
+        remote_session: &LibsqlRemoteSession,
     ) -> Result<PathBuf> {
-        let snapshot = fetch_remote_namespace_snapshot(
-            &self.primary_url,
-            self.auth_token.as_deref(),
-            &registration.namespace,
-        )
-        .await?;
+        let snapshot = fetch_remote_namespace_snapshot(remote_session).await?;
         let replica_path = self.replica_path_for_tenant(&registration.tenant_id);
         let path_for_publish = replica_path.clone();
         let replica_dir = self.replica_dir_for_tenant(&registration.tenant_id);
@@ -403,7 +576,7 @@ impl LibsqlReplicaProvider {
         for tenant_id in tenants {
             self.delete_tenant(&tenant_id).await?;
         }
-        let conn = self.metadata_connection()?;
+        let conn = self.metadata_write_connection()?;
         conn.execute_batch(
             "DROP TABLE IF EXISTS tenants; DROP TABLE IF EXISTS tenant_incarnations",
         )
@@ -422,16 +595,26 @@ impl LibsqlReplicaProvider {
         &self,
         registration: LibsqlReplicaTenantRegistration,
     ) -> Result<OpenedLibsqlReplicaTenant> {
+        let remote_session = match self
+            .take_scheduler_probe_session(&registration.tenant_id, &registration.namespace)
+            .await?
+        {
+            Some(session) => session,
+            None => self.open_remote_session(&registration.namespace).await?,
+        };
+        self.open_registration_with_session(registration, remote_session)
+            .await
+    }
+
+    async fn open_registration_with_session(
+        &self,
+        registration: LibsqlReplicaTenantRegistration,
+        remote_session: LibsqlRemoteSession,
+    ) -> Result<OpenedLibsqlReplicaTenant> {
         let incarnation = registration.incarnation;
-        let replica_path = self.sync_registration_snapshot(&registration).await?;
-        let remote_database = Arc::new(
-            open_remote_database(
-                &self.primary_url,
-                self.auth_token.as_deref(),
-                &registration.namespace,
-            )
-            .await?,
-        );
+        let replica_path = self
+            .sync_registration_snapshot(&registration, &remote_session)
+            .await?;
         let clock = self.clock.clone();
         let fault_injector = crate::simulation::tenant_scoped_fault_injector(
             self.replica_fault_injector.clone(),
@@ -476,7 +659,7 @@ impl LibsqlReplicaProvider {
             self.clone(),
             registration.tenant_id.clone(),
             registration.namespace.clone(),
-            remote_database,
+            remote_session,
             Arc::new(local_store),
             replica_path.clone(),
         ));
@@ -493,24 +676,125 @@ impl LibsqlReplicaProvider {
     }
 
     async fn ensure_metadata_namespace(&self) -> Result<()> {
-        let conn = self.metadata_connection()?;
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS tenants (
-                tenant_id TEXT NOT NULL PRIMARY KEY,
-                namespace TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS tenant_incarnations (
-                tenant_id TEXT NOT NULL PRIMARY KEY,
-                incarnation INTEGER NOT NULL CHECK (incarnation > 0)
-            );",
+        retry_idempotent_remote_operation(
+            &self.metadata_session,
+            "initialize provider metadata namespace",
+            |conn| async move {
+                conn.execute_batch(
+                    "CREATE TABLE IF NOT EXISTS tenants (
+                        tenant_id TEXT NOT NULL PRIMARY KEY,
+                        namespace TEXT NOT NULL
+                    );
+                    CREATE TABLE IF NOT EXISTS tenant_incarnations (
+                        tenant_id TEXT NOT NULL PRIMARY KEY,
+                        incarnation INTEGER NOT NULL CHECK (incarnation > 0)
+                    );",
+                )
+                .await
+                .map_err(map_libsql_error)?;
+                Ok(())
+            },
         )
         .await
-        .map_err(map_libsql_error)?;
-        Ok(())
     }
 
-    fn metadata_connection(&self) -> Result<Connection> {
-        self.metadata_database.connect().map_err(map_libsql_error)
+    fn metadata_write_connection(&self) -> Result<Connection> {
+        self.metadata_session.write_connection()
+    }
+
+    async fn open_remote_session(&self, namespace: &str) -> Result<LibsqlRemoteSession> {
+        let database =
+            open_remote_database(&self.primary_url, self.auth_token.as_deref(), namespace).await?;
+        LibsqlRemoteSession::new(database)
+    }
+
+    async fn scheduler_probe_session(
+        &self,
+        tenant_id: &TenantId,
+        namespace: &str,
+    ) -> Result<LibsqlRemoteSession> {
+        let (cached, stale) = self
+            .scheduler_probe_sessions
+            .lock()
+            .map_err(|_| {
+                Error::Internal("libsql scheduler probe session lock is poisoned".to_string())
+            })?
+            .get(tenant_id, namespace);
+        if let Some(stale) = stale {
+            stale.retire_after_drain().await?;
+        }
+        if let Some(cached) = cached {
+            return Ok(cached);
+        }
+
+        #[cfg(test)]
+        self.scheduler_probe_session_open_count
+            .fetch_add(1, Ordering::Relaxed);
+        let opened = self.open_remote_session(namespace).await?;
+        let (cached, retired) = {
+            let mut sessions = self.scheduler_probe_sessions.lock().map_err(|_| {
+                Error::Internal("libsql scheduler probe session lock is poisoned".to_string())
+            })?;
+            let (cached, stale) = sessions.get(tenant_id, namespace);
+            if let Some(cached) = cached {
+                (cached, Some(opened))
+            } else {
+                debug_assert!(
+                    stale.is_none(),
+                    "namespace mismatch was removed before opening a scheduler probe session"
+                );
+                let retired =
+                    sessions.insert(tenant_id.clone(), namespace.to_string(), opened.clone());
+                (opened, retired)
+            }
+        };
+        if let Some(retired) = retired {
+            retired.retire_after_drain().await?;
+        }
+        Ok(cached)
+    }
+
+    async fn take_scheduler_probe_session(
+        &self,
+        tenant_id: &TenantId,
+        namespace: &str,
+    ) -> Result<Option<LibsqlRemoteSession>> {
+        let (matched, stale) = self
+            .scheduler_probe_sessions
+            .lock()
+            .map_err(|_| {
+                Error::Internal("libsql scheduler probe session lock is poisoned".to_string())
+            })?
+            .take(tenant_id, namespace);
+        if let Some(stale) = stale {
+            stale.retire_after_drain().await?;
+        }
+        Ok(matched)
+    }
+
+    fn remove_scheduler_probe_session(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<Option<LibsqlRemoteSession>> {
+        self.scheduler_probe_sessions
+            .lock()
+            .map_err(|_| {
+                Error::Internal("libsql scheduler probe session lock is poisoned".to_string())
+            })
+            .map(|mut sessions| sessions.remove(tenant_id))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn scheduler_probe_session_stats_for_testing(&self) -> (u64, usize) {
+        let open_count = self
+            .scheduler_probe_session_open_count
+            .load(Ordering::Relaxed);
+        let cached_count = self
+            .scheduler_probe_sessions
+            .lock()
+            .expect("libsql scheduler probe session lock should not be poisoned")
+            .len();
+        (open_count, cached_count)
     }
 
     pub(super) fn replica_dir_for_tenant(&self, tenant_id: &TenantId) -> PathBuf {
@@ -540,5 +824,89 @@ impl OpenedLibsqlReplicaTenant {
 
     pub fn primary_url(&self) -> &str {
         &self.primary_url
+    }
+}
+
+#[cfg(test)]
+mod scheduler_probe_session_tests {
+    use super::*;
+
+    fn tenant(name: &str) -> TenantId {
+        TenantId::new(name).expect("test tenant id should parse")
+    }
+
+    #[test]
+    fn matching_probe_session_is_reused_and_transferred() {
+        let tenant = tenant("probe-reuse");
+        let mut sessions = BoundedSchedulerProbeSessions::new(2);
+        assert_eq!(
+            sessions.insert(tenant.clone(), "namespace-a".to_string(), "session-a"),
+            None
+        );
+
+        assert_eq!(
+            sessions.get(&tenant, "namespace-a"),
+            (Some("session-a"), None)
+        );
+        assert_eq!(
+            sessions.take(&tenant, "namespace-a"),
+            (Some("session-a"), None)
+        );
+        assert_eq!(sessions.get(&tenant, "namespace-a"), (None, None));
+    }
+
+    #[test]
+    fn namespace_replacement_retires_stale_probe_session() {
+        let tenant = tenant("probe-replaced");
+        let mut sessions = BoundedSchedulerProbeSessions::new(2);
+        sessions.insert(tenant.clone(), "namespace-a".to_string(), "session-a");
+
+        assert_eq!(
+            sessions.get(&tenant, "namespace-b"),
+            (None, Some("session-a"))
+        );
+        assert_eq!(sessions.get(&tenant, "namespace-b"), (None, None));
+    }
+
+    #[test]
+    fn probe_session_cache_evicts_least_recently_used_entry_at_bound() {
+        let tenant_a = tenant("probe-a");
+        let tenant_b = tenant("probe-b");
+        let tenant_c = tenant("probe-c");
+        let mut sessions = BoundedSchedulerProbeSessions::new(2);
+        sessions.insert(tenant_a.clone(), "namespace-a".to_string(), "session-a");
+        sessions.insert(tenant_b.clone(), "namespace-b".to_string(), "session-b");
+        assert_eq!(
+            sessions.get(&tenant_a, "namespace-a"),
+            (Some("session-a"), None)
+        );
+
+        assert_eq!(
+            sessions.insert(tenant_c.clone(), "namespace-c".to_string(), "session-c"),
+            Some("session-b")
+        );
+        assert_eq!(sessions.get(&tenant_b, "namespace-b"), (None, None));
+        assert_eq!(
+            sessions.get(&tenant_a, "namespace-a"),
+            (Some("session-a"), None)
+        );
+        assert_eq!(
+            sessions.get(&tenant_c, "namespace-c"),
+            (Some("session-c"), None)
+        );
+    }
+
+    #[test]
+    fn probe_session_removal_and_shutdown_drain_return_owned_sessions() {
+        let tenant_a = tenant("probe-remove");
+        let tenant_b = tenant("probe-drain");
+        let mut sessions = BoundedSchedulerProbeSessions::new(2);
+        sessions.insert(tenant_a.clone(), "namespace-a".to_string(), "session-a");
+        sessions.insert(tenant_b, "namespace-b".to_string(), "session-b");
+
+        assert_eq!(sessions.remove(&tenant_a), Some("session-a"));
+        assert_eq!(sessions.remove(&tenant_a), None);
+        assert_eq!(sessions.drain(), vec!["session-b"]);
+        assert!(sessions.drain().is_empty());
     }
 }

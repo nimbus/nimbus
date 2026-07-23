@@ -635,6 +635,16 @@ impl Engine {
     }
 
     #[cfg(test)]
+    pub(crate) fn trigger_candidates_disabled_for_testing(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Result<bool> {
+        self.with_runtime_for_testing(tenant_id, |runtime| {
+            runtime.trigger_candidates_disabled_for_testing()
+        })
+    }
+
+    #[cfg(test)]
     pub(crate) fn arm_scheduler_recovery_for_testing(&self, tenant_id: &TenantId) -> Result<()> {
         self.with_runtime_for_testing(tenant_id, |runtime| {
             runtime.mark_scheduler_recovery_pending()
@@ -744,17 +754,7 @@ impl Engine {
         cursor: TriggerDeliveryCursor,
     ) -> Result<()> {
         let runtime = self.get_existing_tenant(tenant_id)?;
-        let runtime_for_commit = runtime.clone();
-        runtime.submit_internal_committer(move || {
-            runtime_for_commit
-                .store
-                .set_trigger_delivery_cursor(cursor)?;
-            let progress = runtime_for_commit.store.journal_progress()?;
-            runtime_for_commit.advance_write_log_zero_write_coverage(progress.durable_head);
-            runtime_for_commit.sync_mutation_journal_progress_in_actor(progress);
-            Ok(())
-        })?;
-        Ok(())
+        crate::tenant::materialize_trigger_invocations_and_sync(&runtime, &[], cursor)
     }
 
     #[cfg(any(test, feature = "test-hooks"))]

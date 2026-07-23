@@ -20,7 +20,7 @@ impl LibsqlReplicaTenantStore {
         let owner_id = owner_id.to_string();
         let requested_owner_id = owner_id.clone();
         let (lease, acquired) = self.block_on(async move {
-            let conn = self.remote_connection()?;
+            let conn = self.remote_write_connection()?;
             let transaction = conn
                 .transaction_with_behavior(TransactionBehavior::Immediate)
                 .await
@@ -89,7 +89,7 @@ impl LibsqlReplicaTenantStore {
         let owner_id = owner_id.to_string();
         let fenced_owner_id = owner_id.clone();
         let renewed = self.block_on(async move {
-            let conn = self.remote_connection()?;
+            let conn = self.remote_write_connection()?;
             let transaction = conn
                 .transaction_with_behavior(TransactionBehavior::Immediate)
                 .await
@@ -135,7 +135,7 @@ fn validate_lease_request(owner_id: &str, duration: Duration) -> Result<i64> {
 }
 
 async fn load_committer_lease(conn: &Connection) -> Result<Option<CommitterLease>> {
-    let mut rows = conn
+    let rows = conn
         .query(
             "SELECT owner_id, epoch, expires_at, durable_sequence
              FROM committer_lease WHERE singleton = 1",
@@ -143,9 +143,8 @@ async fn load_committer_lease(conn: &Connection) -> Result<Option<CommitterLease
         )
         .await
         .map_err(map_libsql_error)?;
-    rows.next()
-        .await
-        .map_err(map_libsql_error)?
+    take_single_remote_row(rows)
+        .await?
         .map(libsql_row_to_committer_lease)
         .transpose()
 }
@@ -153,7 +152,7 @@ async fn load_committer_lease(conn: &Connection) -> Result<Option<CommitterLease
 async fn load_committer_lease_with_validity(
     conn: &Connection,
 ) -> Result<Option<(CommitterLease, bool)>> {
-    let mut rows = conn
+    let rows = conn
         .query(
             "SELECT owner_id, epoch, expires_at, durable_sequence,
                     expires_at > CAST(unixepoch('subsec') * 1000 AS INTEGER)
@@ -162,9 +161,8 @@ async fn load_committer_lease_with_validity(
         )
         .await
         .map_err(map_libsql_error)?;
-    rows.next()
-        .await
-        .map_err(map_libsql_error)?
+    take_single_remote_row(rows)
+        .await?
         .map(|row| {
             let unexpired = row.get::<i64>(4).map_err(map_libsql_error)? != 0;
             Ok((libsql_row_to_committer_lease(row)?, unexpired))

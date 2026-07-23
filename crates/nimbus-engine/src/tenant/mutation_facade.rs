@@ -85,6 +85,14 @@ impl TenantRuntime {
         self.observer_dispatch.catch_up_chunk_size()
     }
 
+    pub(crate) fn claim_committed_mutation_observer_through(
+        &self,
+        through: SequenceNumber,
+    ) -> SequenceNumber {
+        self.observer_dispatch
+            .claim_observer_publication_through(through)
+    }
+
     pub(crate) fn request_committed_mutation_observer_catch_up(
         &self,
         first_sequence: SequenceNumber,

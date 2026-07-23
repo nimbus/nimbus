@@ -184,7 +184,7 @@ async fn get_document_version_at_from_remote_conn(
     sequence: SequenceNumber,
 ) -> Result<Option<Document>> {
     validate_document_version_storage_format_remote(conn).await?;
-    let mut rows = conn
+    let rows = conn
         .query(
             "SELECT tombstone, creation_time, update_time, data_json, typed_fields_json
              FROM document_versions
@@ -199,7 +199,7 @@ async fn get_document_version_at_from_remote_conn(
         )
         .await
         .map_err(map_libsql_error)?;
-    let Some(row) = rows.next().await.map_err(map_libsql_error)? else {
+    let Some(row) = take_single_remote_row(rows).await? else {
         return Ok(None);
     };
     let tombstone = row.get::<i64>(0).map_err(map_libsql_error)?;
@@ -244,23 +244,19 @@ async fn document_version_storage_diagnostic_from_remote_conn(
     conn: &Connection,
 ) -> Result<DocumentVersionStorageDiagnostic> {
     let format_version = load_document_version_storage_format_remote(conn).await?;
-    let mut rows = conn
+    let rows = conn
         .query(
             "SELECT COUNT(*), MIN(commit_sequence), MAX(commit_sequence) FROM document_versions",
             (),
         )
         .await
         .map_err(map_libsql_error)?;
-    let row = rows
-        .next()
-        .await
-        .map_err(map_libsql_error)?
-        .ok_or_else(|| {
-            Error::storage(
-                StorageErrorKind::Corruption,
-                "libSQL document version aggregate query returned no row",
-            )
-        })?;
+    let row = take_single_remote_row(rows).await?.ok_or_else(|| {
+        Error::storage(
+            StorageErrorKind::Corruption,
+            "libSQL document version aggregate query returned no row",
+        )
+    })?;
     let version_count = u64_from_i64(row.get::<i64>(0).map_err(map_libsql_error)?)?;
     let min_sequence = row
         .get::<Option<i64>>(1)
@@ -320,20 +316,16 @@ async fn load_document_version_storage_format_remote(
 }
 
 async fn document_versions_have_rows_remote(conn: &Connection) -> Result<bool> {
-    let mut rows = conn
+    let rows = conn
         .query("SELECT EXISTS(SELECT 1 FROM document_versions LIMIT 1)", ())
         .await
         .map_err(map_libsql_error)?;
-    let row = rows
-        .next()
-        .await
-        .map_err(map_libsql_error)?
-        .ok_or_else(|| {
-            Error::storage(
-                StorageErrorKind::Corruption,
-                "libSQL document version existence query returned no row",
-            )
-        })?;
+    let row = take_single_remote_row(rows).await?.ok_or_else(|| {
+        Error::storage(
+            StorageErrorKind::Corruption,
+            "libSQL document version existence query returned no row",
+        )
+    })?;
     Ok(row.get::<i64>(0).map_err(map_libsql_error)? != 0)
 }
 

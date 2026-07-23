@@ -131,6 +131,44 @@ impl MySqlProvider {
             .collect()
     }
 
+    pub async fn list_tenants_page(
+        &self,
+        after: Option<&TenantId>,
+        limit: usize,
+    ) -> Result<Vec<TenantId>> {
+        if limit == 0 {
+            return Err(Error::InvalidInput(
+                "MySQL tenant page limit must be greater than zero".to_string(),
+            ));
+        }
+        let mut conn = self.conn().await?;
+        let limit = u64::try_from(limit).unwrap_or(u64::MAX);
+        let rows: Vec<Row> = match after {
+            Some(after) => {
+                let query = format!(
+                    "SELECT tenant_id FROM {} \
+                     WHERE tenant_id > ? ORDER BY tenant_id LIMIT ?",
+                    qualified_table(&self.metadata_database, "tenants")
+                );
+                conn.exec(query, (after.as_str(), limit)).await
+            }
+            None => {
+                let query = format!(
+                    "SELECT tenant_id FROM {} ORDER BY tenant_id LIMIT ?",
+                    qualified_table(&self.metadata_database, "tenants")
+                );
+                conn.exec(query, (limit,)).await
+            }
+        }
+        .map_err(map_mysql_error)?;
+        rows.into_iter()
+            .map(|row| {
+                let (tenant_id,): (String,) = mysql_async::from_row(row);
+                TenantId::new(tenant_id)
+            })
+            .collect()
+    }
+
     pub async fn tenant_exists(&self, tenant_id: &TenantId) -> Result<bool> {
         let mut conn = self.conn().await?;
         let query = format!(

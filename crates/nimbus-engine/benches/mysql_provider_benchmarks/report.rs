@@ -151,6 +151,24 @@ pub(super) fn render_markdown(config: &BenchmarkConfig, report: &BenchmarkReport
 
     render_gate_hold_report(&mut markdown, config, report);
 
+    markdown.push_str("## Raw Round Samples\n\n");
+    markdown.push_str(
+        "Wall-clock round durations before per-operation normalization. These are the samples used by the summary statistics and Student-t confidence intervals below.\n\n",
+    );
+    markdown.push_str("| Workload | Lane | Backend | Operations / sample | Round durations |\n");
+    markdown.push_str("| --- | --- | --- | ---: | --- |\n");
+    for measurement in &report.measurements {
+        markdown.push_str(&format!(
+            "| {} | {} | {} | {} | {} |\n",
+            measurement.workload.label(),
+            measurement.lane.label(),
+            measurement.backend.label(),
+            measurement.operations_per_sample,
+            format_duration_samples(&measurement.samples),
+        ));
+    }
+    markdown.push('\n');
+
     for workload in workloads {
         markdown.push_str(&format!("## {}\n\n", workload.label()));
         markdown.push_str(&format!("{}\n\n", workload.notes()));

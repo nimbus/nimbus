@@ -25,6 +25,15 @@ owner = "test-infra-rearchitecture"
 issue = "docs/private/plans/test-infra-rearchitecture/PLAN.md#b1-contract"
 
 [[exclusions]]
+pattern = "test(/ppsc_seed_farm_executes_selected_redb_scenarios/)"
+scope = "ignored"
+reason = "heavy-resource"
+evidence = "The ignored Engine wrapper is the dedicated four-shard PPSC reliability farm; make verify-ppsc-seed-farm supplies a nonempty deterministic range and fail-closed artifact contract."
+measured_at = "2026-07-23"
+owner = "parallel-prepare-serial-commit"
+issue = "docs/private/plans/parallel-prepare-serial-commit-plan.md#u8c--1000-seed-ci-farm-retained-regressions-and-performance-closeout"
+
+[[exclusions]]
 pattern = "test(/runtime::tests::node_compat::/)"
 scope = "ignored"
 reason = "heavy-resource"

@@ -233,6 +233,7 @@ pub(crate) struct ObserverHandoff {
     catch_up_next_sequence: AtomicU64,
     catch_up_requested_through: AtomicU64,
     catch_up_projection_token: Mutex<ProjectionToken>,
+    observer_claimed_through: AtomicU64,
     catch_up_state_changed: tokio::sync::Notify,
     #[cfg(test)]
     catch_up_task_count: AtomicUsize,
@@ -289,6 +290,7 @@ impl ObserverHandoff {
             catch_up_next_sequence: AtomicU64::new(u64::MAX),
             catch_up_requested_through: AtomicU64::new(0),
             catch_up_projection_token: Mutex::new(ProjectionToken::default()),
+            observer_claimed_through: AtomicU64::new(0),
             catch_up_state_changed: tokio::sync::Notify::new(),
             #[cfg(test)]
             catch_up_task_count: AtomicUsize::new(0),
@@ -556,6 +558,23 @@ impl ObserverHandoff {
             .saturating_sub(self.max_live_dispatch)
             .max(1);
         (self.queue_capacity / 2).max(1).min(catch_up_capacity)
+    }
+
+    /// Claims the process-local committed-observer prefix through `through`.
+    ///
+    /// Live publisher fan-out and provider catch-up race on this one monotonic
+    /// frontier. The caller owns only the suffix strictly above the returned
+    /// sequence. This is intentionally runtime-local: another Nimbus process
+    /// may replay the same durable source event, and observers that publish
+    /// durable effects must fence those replays with `ProjectionToken`.
+    pub(crate) fn claim_observer_publication_through(
+        &self,
+        through: SequenceNumber,
+    ) -> SequenceNumber {
+        SequenceNumber(
+            self.observer_claimed_through
+                .fetch_max(through.0, Ordering::AcqRel),
+        )
     }
 
     pub(crate) fn request_catch_up(

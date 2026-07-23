@@ -10,6 +10,7 @@
 mod audit;
 mod faults;
 mod scenario;
+mod seed_farm;
 mod shrink;
 
 #[cfg(test)]
@@ -25,5 +26,9 @@ pub use scenario::{
     PPSC_MAX_STEPS, PpscBackend, PpscBackendCapabilities, PpscCommitOrder, PpscExpectedOutcome,
     PpscInjectedFault, PpscOperation, PpscRoute, PpscScenario, PpscScenarioError, PpscStep,
     retained_ppsc_scenarios, retained_provider_authority_scenarios,
+};
+pub use seed_farm::{
+    PPSC_SEED_FARM_DEFAULT_STEPS, PpscSeedFarmArtifacts, PpscSeedFarmConfig, PpscSeedFarmError,
+    PpscSeedFarmFailureBundle, PpscSeedFarmFailureKind, PpscSeedFarmSummary, select_shard,
 };
 pub use shrink::shrink_failing_ppsc_scenario;

@@ -14,7 +14,7 @@ impl LibsqlReplicaTenantStore {
 
     pub fn set_trigger_delivery_cursor(&self, cursor: TriggerDeliveryCursor) -> Result<()> {
         self.block_on(async move {
-            let conn = self.remote_connection()?;
+            let conn = self.remote_write_connection()?;
             put_remote_metadata_u64(
                 &conn,
                 TRIGGER_DELIVERY_CURSOR_KEY,

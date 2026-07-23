@@ -57,6 +57,30 @@ fn history(
     }
 }
 
+fn seed_farm_vars() -> BTreeMap<String, String> {
+    BTreeMap::from([
+        ("NIMBUS_PPSC_BACKEND".to_string(), "redb".to_string()),
+        ("NIMBUS_PPSC_SEED_START".to_string(), "0".to_string()),
+        ("NIMBUS_PPSC_SEED_COUNT".to_string(), "1000".to_string()),
+        ("NIMBUS_PPSC_SHARD_INDEX".to_string(), "0".to_string()),
+        ("NIMBUS_PPSC_SHARD_COUNT".to_string(), "4".to_string()),
+        (
+            "NIMBUS_PPSC_FAILURE_DIR".to_string(),
+            "target/ppsc-seed-farm/test".to_string(),
+        ),
+        (
+            "NIMBUS_PPSC_REVISION".to_string(),
+            "test-revision".to_string(),
+        ),
+    ])
+}
+
+fn seed_farm_config(
+    vars: &BTreeMap<String, String>,
+) -> Result<PpscSeedFarmConfig, PpscSeedFarmError> {
+    PpscSeedFarmConfig::from_lookup(|name| vars.get(name).cloned())
+}
+
 #[test]
 fn ppsc_scenario_replay_is_byte_deterministic() {
     let first = PpscScenario::seeded(83, 64).expect("seed should generate");
@@ -72,6 +96,272 @@ fn ppsc_scenario_replay_is_byte_deterministic() {
             .expect_err("oversized scenarios must fail")
             .to_string()
             .contains("maximum")
+    );
+}
+
+#[test]
+fn ppsc_seed_farm_four_shards_cover_exact_range_without_overlap() {
+    let mut selected = Vec::new();
+    for shard_index in 0..4 {
+        let seeds = select_shard(10_000, 1_000, shard_index, 4)
+            .expect("valid seed-farm shard should select");
+        assert_eq!(seeds.len(), 250);
+        let shard_offset = u64::try_from(shard_index).expect("shard index should fit") * 250;
+        assert_eq!(seeds.first(), Some(&(10_000 + shard_offset)));
+        assert_eq!(seeds.last(), Some(&(10_249 + shard_offset)));
+        selected.extend(seeds);
+    }
+    assert_eq!(selected, (10_000..11_000).collect::<Vec<_>>());
+}
+
+#[test]
+fn ppsc_seed_farm_single_seed_replay_is_deterministic() {
+    let mut vars = seed_farm_vars();
+    vars.retain(|name, _| {
+        !matches!(
+            name.as_str(),
+            "NIMBUS_PPSC_SEED_START"
+                | "NIMBUS_PPSC_SEED_COUNT"
+                | "NIMBUS_PPSC_SHARD_INDEX"
+                | "NIMBUS_PPSC_SHARD_COUNT"
+        )
+    });
+    vars.insert("NIMBUS_PPSC_SEED".to_string(), "83".to_string());
+    let config = seed_farm_config(&vars).expect("single seed should configure");
+    assert_eq!(config.seeds, vec![83]);
+    assert_eq!(config.selected_count(), 1);
+
+    let first = PpscScenario::seeded(config.seeds[0], config.step_count)
+        .expect("single seed should generate");
+    let replay = PpscScenario::seeded(config.seeds[0], config.step_count)
+        .expect("single seed should replay");
+    assert_eq!(first.canonical_bytes(), replay.canonical_bytes());
+}
+
+#[test]
+fn ppsc_seed_farm_rejects_zero_count_unknown_backend_and_invalid_shard() {
+    let mut zero = seed_farm_vars();
+    zero.insert("NIMBUS_PPSC_SEED_COUNT".to_string(), "0".to_string());
+    assert!(
+        seed_farm_config(&zero)
+            .expect_err("zero-count farm must fail")
+            .to_string()
+            .contains("greater than zero")
+    );
+
+    let mut unknown = seed_farm_vars();
+    unknown.insert("NIMBUS_PPSC_BACKEND".to_string(), "mysql".to_string());
+    let error = seed_farm_config(&unknown).expect_err("bulk provider farm must fail");
+    assert!(error.to_string().contains("unsupported"));
+    assert!(error.to_string().contains("live-provider differential"));
+
+    let mut invalid_shard = seed_farm_vars();
+    invalid_shard.insert("NIMBUS_PPSC_SHARD_INDEX".to_string(), "4".to_string());
+    assert!(
+        seed_farm_config(&invalid_shard)
+            .expect_err("out-of-range shard must fail")
+            .to_string()
+            .contains("must be less")
+    );
+
+    let mut overflowing_range = seed_farm_vars();
+    overflowing_range.insert("NIMBUS_PPSC_SEED_START".to_string(), u64::MAX.to_string());
+    overflowing_range.insert("NIMBUS_PPSC_SEED_COUNT".to_string(), "2".to_string());
+    overflowing_range.insert("NIMBUS_PPSC_SHARD_COUNT".to_string(), "2".to_string());
+    assert!(
+        seed_farm_config(&overflowing_range)
+            .expect_err("globally overflowing range must fail in every shard")
+            .to_string()
+            .contains("overflows")
+    );
+}
+
+#[test]
+fn ppsc_seed_farm_partial_or_failed_summary_requires_nonzero_exit() {
+    let complete = PpscSeedFarmSummary {
+        format_version: 1,
+        revision: "test-revision".to_string(),
+        backend: PpscBackend::Redb,
+        seed_start: 0,
+        seed_count: 4,
+        shard_index: 0,
+        shard_count: 1,
+        selected: 4,
+        executed: 4,
+        passed: 4,
+        failed: 0,
+        retained: 0,
+    };
+    assert!(complete.is_complete_success());
+
+    for incomplete in [
+        PpscSeedFarmSummary {
+            executed: 0,
+            passed: 0,
+            ..complete.clone()
+        },
+        PpscSeedFarmSummary {
+            executed: 3,
+            passed: 3,
+            ..complete.clone()
+        },
+        PpscSeedFarmSummary {
+            passed: 3,
+            failed: 1,
+            ..complete.clone()
+        },
+    ] {
+        assert!(
+            !incomplete.is_complete_success(),
+            "zero, partial, and failed execution must propagate a nonzero result"
+        );
+    }
+}
+
+#[test]
+fn ppsc_seed_farm_failure_bundle_replaces_interruption_marker() {
+    let directory = tempfile::tempdir().expect("artifact directory should build");
+    let mut vars = seed_farm_vars();
+    vars.insert(
+        "NIMBUS_PPSC_FAILURE_DIR".to_string(),
+        directory.path().display().to_string(),
+    );
+    let config = seed_farm_config(&vars).expect("farm should configure");
+    let artifacts =
+        PpscSeedFarmArtifacts::new(directory.path()).expect("artifact owner should build");
+    let scenario =
+        PpscScenario::seeded(config.seeds[0], config.step_count).expect("scenario should build");
+    let pending = artifacts
+        .begin_seed(&config, &scenario)
+        .expect("interruption marker should write");
+    assert!(pending.is_file());
+
+    let failure = artifacts
+        .mark_seed_failed(
+            &config,
+            &scenario,
+            &pending,
+            "durable sequence identity diverged",
+        )
+        .expect("failure bundle should replace marker");
+    assert!(!pending.exists());
+    let bundle: PpscSeedFarmFailureBundle =
+        serde_json::from_slice(&std::fs::read(&failure).expect("failure bundle should read"))
+            .expect("failure bundle should deserialize");
+    assert_eq!(bundle.kind, PpscSeedFarmFailureKind::Failed);
+    assert_eq!(bundle.seed, scenario.seed);
+    assert_eq!(
+        bundle.scenario.canonical_bytes(),
+        scenario.canonical_bytes()
+    );
+    assert!(bundle.message.contains("sequence identity"));
+    assert!(bundle.replay_command.contains("make verify-ppsc-seed-farm"));
+}
+
+#[test]
+fn ppsc_seed_farm_interruption_retains_current_failure_bundle() {
+    let directory = tempfile::tempdir().expect("artifact directory should build");
+    let mut vars = seed_farm_vars();
+    vars.insert(
+        "NIMBUS_PPSC_FAILURE_DIR".to_string(),
+        directory.path().display().to_string(),
+    );
+    let config = seed_farm_config(&vars).expect("farm should configure");
+    let artifacts =
+        PpscSeedFarmArtifacts::new(directory.path()).expect("artifact owner should build");
+    let scenario =
+        PpscScenario::seeded(config.seeds[0], config.step_count).expect("scenario should build");
+    let pending = artifacts
+        .begin_seed(&config, &scenario)
+        .expect("interruption marker should write");
+
+    let bundle: PpscSeedFarmFailureBundle = serde_json::from_slice(
+        &std::fs::read(&pending).expect("interruption marker should survive"),
+    )
+    .expect("interruption marker should deserialize");
+    assert_eq!(bundle.kind, PpscSeedFarmFailureKind::Interrupted);
+    assert_eq!(bundle.seed, scenario.seed);
+    assert_eq!(bundle.scenario, scenario);
+}
+
+#[test]
+fn ppsc_seed_farm_success_removes_interruption_marker_and_writes_summary() {
+    let directory = tempfile::tempdir().expect("artifact directory should build");
+    let mut vars = seed_farm_vars();
+    vars.insert(
+        "NIMBUS_PPSC_FAILURE_DIR".to_string(),
+        directory.path().display().to_string(),
+    );
+    let config = seed_farm_config(&vars).expect("farm should configure");
+    let artifacts =
+        PpscSeedFarmArtifacts::new(directory.path()).expect("artifact owner should build");
+    let scenario =
+        PpscScenario::seeded(config.seeds[0], config.step_count).expect("scenario should build");
+    let pending = artifacts
+        .begin_seed(&config, &scenario)
+        .expect("interruption marker should write");
+    artifacts
+        .mark_seed_passed(&pending)
+        .expect("successful seed should remove marker");
+    assert!(!pending.exists());
+
+    let summary = PpscSeedFarmSummary {
+        format_version: 1,
+        revision: config.revision.clone(),
+        backend: config.backend,
+        seed_start: config.seed_start,
+        seed_count: config.seed_count,
+        shard_index: config.shard_index,
+        shard_count: config.shard_count,
+        selected: config.selected_count(),
+        executed: config.selected_count(),
+        passed: config.selected_count(),
+        failed: 0,
+        retained: 4,
+    };
+    let path = artifacts
+        .write_summary(&summary)
+        .expect("summary should publish");
+    let observed: PpscSeedFarmSummary =
+        serde_json::from_slice(&std::fs::read(path).expect("summary should read"))
+            .expect("summary should deserialize");
+    assert_eq!(observed, summary);
+    assert!(observed.is_complete_success());
+}
+
+#[test]
+fn ppsc_seed_farm_reuse_cleans_only_owned_stale_artifacts() {
+    let directory = tempfile::tempdir().expect("artifact directory should build");
+    let stale_summary = directory.path().join("summary.json");
+    let stale_failure = directory
+        .path()
+        .join("seed-00000000000000000083-failure.json");
+    let stale_summary_temporary = directory.path().join("summary.tmp-1234");
+    let stale_seed_temporary = directory
+        .path()
+        .join("seed-00000000000000000083-failure.tmp-1234");
+    let foreign = directory.path().join("operator-note.txt");
+    let foreign_lookalike = directory.path().join("summary.tmp-operator");
+    std::fs::write(&stale_summary, b"stale").expect("stale summary should write");
+    std::fs::write(&stale_failure, b"stale").expect("stale failure should write");
+    std::fs::write(&stale_summary_temporary, b"stale")
+        .expect("stale summary temporary should write");
+    std::fs::write(&stale_seed_temporary, b"stale").expect("stale seed temporary should write");
+    std::fs::write(&foreign, b"preserve").expect("foreign note should write");
+    std::fs::write(&foreign_lookalike, b"preserve").expect("foreign lookalike should write");
+
+    PpscSeedFarmArtifacts::new(directory.path()).expect("artifact owner should clean its files");
+    assert!(!stale_summary.exists());
+    assert!(!stale_failure.exists());
+    assert!(!stale_summary_temporary.exists());
+    assert!(!stale_seed_temporary.exists());
+    assert_eq!(
+        std::fs::read(&foreign).expect("foreign note should remain"),
+        b"preserve"
+    );
+    assert_eq!(
+        std::fs::read(&foreign_lookalike).expect("foreign lookalike should remain"),
+        b"preserve"
     );
 }
 

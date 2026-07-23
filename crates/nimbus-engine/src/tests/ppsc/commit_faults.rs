@@ -17,7 +17,13 @@ impl DurablePublishPause {
         }
     }
 
-    async fn wait_until_entered(&self) {
+    async fn wait_until_entered(
+        &self,
+        scenario_seed: u64,
+        step: usize,
+        tenant: &str,
+        route: PpscRoute,
+    ) {
         let faults = self.faults.clone();
         let entered = tokio::task::spawn_blocking(move || {
             faults.wait_until_entered(
@@ -29,7 +35,7 @@ impl DurablePublishPause {
         .expect("PPSC durable-before-publish waiter should join");
         assert!(
             entered,
-            "PPSC mutation did not reach durable-before-publish within {COMMIT_PHASE_TIMEOUT:?}"
+            "PPSC seed {scenario_seed} step {step} tenant {tenant} route {route:?} did not reach durable-before-publish within {COMMIT_PHASE_TIMEOUT:?}"
         );
     }
 
@@ -86,7 +92,9 @@ impl PpscEngineRunner {
         let mut pause = DurablePublishPause::arm(self.engine.as_ref());
         let (_, mut write) =
             self.spawn_route_insert(step, tenant, route, "durable-before-publish", 401);
-        pause.wait_until_entered().await;
+        pause
+            .wait_until_entered(self.scenario_seed, step, tenant, route)
+            .await;
         assert!(
             timeout(Duration::from_millis(50), &mut write)
                 .await
@@ -151,7 +159,9 @@ impl PpscEngineRunner {
         let mut pause = DurablePublishPause::arm(self.engine.as_ref());
         let (_, predecessor) =
             self.spawn_route_insert(step, tenant, predecessor_route, "held-predecessor", 411);
-        pause.wait_until_entered().await;
+        pause
+            .wait_until_entered(self.scenario_seed, step, tenant, predecessor_route)
+            .await;
 
         let (_, mut successor) =
             self.spawn_route_insert(step, tenant, successor_route, "blocked-successor", 412);
@@ -191,11 +201,29 @@ impl PpscEngineRunner {
         assert_eq!(after_journal.len(), before_journal.len() + 2);
         assert_eq!(
             after_journal[before_journal.len()].sequence.0,
-            before.published_head.0 + 1
+            before.published_head.0 + 1,
+            "PPSC held-predecessor first sequence must follow the published prefix; before={before:?}, before_journal={:?}, after_journal={:?}",
+            before_journal
+                .iter()
+                .map(|record| record.sequence)
+                .collect::<Vec<_>>(),
+            after_journal
+                .iter()
+                .map(|record| record.sequence)
+                .collect::<Vec<_>>()
         );
         assert_eq!(
             after_journal[before_journal.len() + 1].sequence.0,
-            before.published_head.0 + 2
+            before.published_head.0 + 2,
+            "PPSC held-predecessor successor sequence must remain contiguous; before={before:?}, before_journal={:?}, after_journal={:?}",
+            before_journal
+                .iter()
+                .map(|record| record.sequence)
+                .collect::<Vec<_>>(),
+            after_journal
+                .iter()
+                .map(|record| record.sequence)
+                .collect::<Vec<_>>()
         );
         let after = self
             .engine
@@ -236,6 +264,7 @@ impl PpscEngineRunner {
             "post-durable panic must demand crash-and-replay: {error}"
         );
 
+        self.prepare_publisher_limits_for_runtime_load(&tenant_id);
         let recovered = timeout(
             COMMIT_PHASE_TIMEOUT,
             self.engine

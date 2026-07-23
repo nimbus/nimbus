@@ -166,6 +166,43 @@ impl PostgresProvider {
             .collect()
     }
 
+    pub async fn list_tenants_page(
+        &self,
+        after: Option<&TenantId>,
+        limit: usize,
+    ) -> Result<Vec<TenantId>> {
+        if limit == 0 {
+            return Err(Error::InvalidInput(
+                "PostgreSQL tenant page limit must be greater than zero".to_string(),
+            ));
+        }
+        let client = self.client().await?;
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let rows = match after {
+            Some(after) => {
+                let query = format!(
+                    "SELECT tenant_id FROM {} \
+                     WHERE tenant_id > $1 ORDER BY tenant_id LIMIT $2",
+                    qualified_table(&self.metadata_schema, "tenants")
+                );
+                client
+                    .query(query.as_str(), &[&after.as_str(), &limit])
+                    .await
+            }
+            None => {
+                let query = format!(
+                    "SELECT tenant_id FROM {} ORDER BY tenant_id LIMIT $1",
+                    qualified_table(&self.metadata_schema, "tenants")
+                );
+                client.query(query.as_str(), &[&limit]).await
+            }
+        }
+        .map_err(map_postgres_error)?;
+        rows.into_iter()
+            .map(|row| TenantId::new(row.get::<_, String>(0)))
+            .collect()
+    }
+
     pub async fn tenant_exists(&self, tenant_id: &TenantId) -> Result<bool> {
         let client = self.client().await?;
         let query = format!(

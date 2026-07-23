@@ -528,6 +528,10 @@ impl Engine {
     /// accepted work drains, and exposes the failure in `MutationJournalStats`.
     /// Treat a poisoned dispatcher as a fatal health condition requiring
     /// operator intervention; already-durable observer events are not retried.
+    /// Live and catch-up delivery is de-duplicated within one loaded tenant
+    /// runtime. Provider processes may still observe the same durable source
+    /// record independently; observers that publish durable effects must use
+    /// the event's ordered [`ProjectionToken`] as their idempotency fence.
     pub fn install_committed_mutation_observer(
         &self,
         name: &'static str,
@@ -582,6 +586,9 @@ impl Engine {
         if observers.is_empty() {
             return;
         }
+        let Some(last_sequence) = applied.last().map(|commit| commit.sequence) else {
+            return;
+        };
         let projection_token = match runtime.projection_token() {
             Ok(token) => token,
             Err(error) => {
@@ -593,9 +600,10 @@ impl Engine {
                 return;
             }
         };
+        let claimed_through = runtime.claim_committed_mutation_observer_through(last_sequence);
         let events = applied
             .iter()
-            .filter(|commit| !commit.writes.is_empty())
+            .filter(|commit| commit.sequence > claimed_through && !commit.writes.is_empty())
             .cloned()
             .map(|commit| {
                 let mut affected_tables = commit.affected_tables().into_iter().collect::<Vec<_>>();
@@ -1165,19 +1173,34 @@ async fn deliver_provider_catch_up_tail(
             || (reached_frontier && dispatched < pending.len())
         {
             let end = pending.len().min(dispatched + chunk_size);
-            runtime
-                .enqueue_committed_mutation_observer_catch_up_dispatch(
-                    CommittedMutationObserverDispatch {
-                        observers: observers.to_vec(),
-                        events: pending[dispatched..end].to_vec(),
-                        completion: None,
-                    },
-                )
-                .await?;
+            let candidate = &pending[dispatched..end];
+            let through = candidate
+                .last()
+                .expect("non-empty catch-up dispatch must have a final event")
+                .commit
+                .sequence;
+            let claimed_through = runtime.claim_committed_mutation_observer_through(through);
+            let events = candidate
+                .iter()
+                .filter(|event| event.commit.sequence > claimed_through)
+                .cloned()
+                .collect::<Vec<_>>();
+            if !events.is_empty() {
+                runtime
+                    .enqueue_committed_mutation_observer_catch_up_dispatch(
+                        CommittedMutationObserverDispatch {
+                            observers: observers.to_vec(),
+                            events,
+                            completion: None,
+                        },
+                    )
+                    .await?;
+            }
             dispatched = end;
         }
         pending.drain(..dispatched);
         if reached_frontier {
+            runtime.claim_committed_mutation_observer_through(requested_through);
             return Ok(());
         }
         cursor = last_sequence;

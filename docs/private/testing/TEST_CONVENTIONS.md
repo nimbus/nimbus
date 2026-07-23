@@ -80,3 +80,49 @@ cargo nextest list -P ci-harness-nightly --workspace --run-ignored all --list-ty
 
 Harness profiles are explicitly scoped to `verification_harness_*` wrappers.
 Do not use a bare ignored-test run as a harness lane.
+
+## PPSC deterministic seed farm
+
+The PPSC mutation-path farm has one local/CI interface:
+
+```bash
+make verify-ppsc-seed-farm
+```
+
+The default run selects 1,000 redb scenarios from seed 0. CI uses the same
+target with four zero-based, non-overlapping shards:
+
+```bash
+make verify-ppsc-seed-farm \
+  BACKEND=redb SEED_START=0 SEED_COUNT=1000 \
+  SHARD_INDEX=0 SHARD_COUNT=4
+```
+
+Replay one failure without inheriting range inputs:
+
+```bash
+NIMBUS_PPSC_SEED=83 NIMBUS_PPSC_BACKEND=redb \
+  make verify-ppsc-seed-farm
+```
+
+The shared contract rejects zero counts, empty shards, unknown backends, and
+zero-test filters. It prints and writes `selected`, `executed`, `passed`,
+`failed`, and `retained` counts. Before each scenario it atomically writes an
+interruption bundle containing the exact generated scenario and replay command;
+success removes that marker, while a caught assertion replaces it with a
+failure bundle. The default artifact root is
+`target/ppsc-seed-farm/shard-<index>-of-<count>/`. A green result requires a
+complete `summary.json`; stale owned artifacts are cleared at invocation start
+without removing foreign files from an explicitly supplied directory.
+
+Confirmed failures graduate to the versioned retained seed list in
+`crates/nimbus-testing/src/ppsc/scenario.rs`. The ordinary redb/SQLite and live
+PostgreSQL/MySQL/libSQL differential tests replay that retained corpus through
+their production Engine adapters. The 1,000-scenario claim belongs only to the
+redb seed-farm jobs; live-provider, Hermitage, Loom, and crash-matrix results
+remain separate evidence.
+
+Deterministic simulation proves the enumerated histories against the PPSC
+legal-state auditor and production Engine interface, including redb
+crash/reopen. It does not prove unenumerated schedules, provider transaction
+semantics, real network behavior, or external serializability-checker results.

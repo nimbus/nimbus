@@ -4,7 +4,7 @@ use nimbus_core::{
 
 use crate::keys::{document_path_key, resource_locator_key};
 
-use super::{LibsqlReplicaWriteTransaction, map_libsql_error};
+use super::{LibsqlReplicaWriteTransaction, map_libsql_error, take_single_remote_row};
 
 impl super::LibsqlReplicaTenantStore {
     pub fn upsert_resource_path_binding(&self, binding: &ResourcePathBinding) -> Result<()> {
@@ -129,14 +129,14 @@ async fn load_resource_path_binding_remote(
     conn: &libsql::Transaction,
     locator_key: Vec<u8>,
 ) -> Result<Option<ResourcePathBinding>> {
-    let mut rows = conn
+    let rows = conn
         .query(
             "SELECT binding_blob FROM resource_path_bindings WHERE locator_key = ?1",
             libsql::params![locator_key],
         )
         .await
         .map_err(map_libsql_error)?;
-    let Some(row) = rows.next().await.map_err(map_libsql_error)? else {
+    let Some(row) = take_single_remote_row(rows).await? else {
         return Ok(None);
     };
     let blob = row.get::<Vec<u8>>(0).map_err(map_libsql_error)?;
@@ -147,14 +147,14 @@ async fn load_locator_for_document_path_key_remote(
     conn: &libsql::Transaction,
     document_path_key: Vec<u8>,
 ) -> Result<Option<DocumentLocator>> {
-    let mut rows = conn
+    let rows = conn
         .query(
             "SELECT locator_blob FROM resource_path_bindings WHERE document_path_key = ?1",
             libsql::params![document_path_key],
         )
         .await
         .map_err(map_libsql_error)?;
-    let Some(row) = rows.next().await.map_err(map_libsql_error)? else {
+    let Some(row) = take_single_remote_row(rows).await? else {
         return Ok(None);
     };
     let blob = row.get::<Vec<u8>>(0).map_err(map_libsql_error)?;

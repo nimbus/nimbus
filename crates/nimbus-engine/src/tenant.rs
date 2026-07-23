@@ -50,7 +50,7 @@ mod trigger_candidates;
 mod trigger_execution;
 mod write_rate;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(crate) use self::trigger_candidates::materialize_trigger_invocations_and_sync;
 
 use self::committer_lease::CommitterLeaseLifecycle;
@@ -648,6 +648,34 @@ impl TenantRuntime {
 
     pub(crate) async fn wait_for_delete_operation_drain(&self) {
         self.lifecycle.wait_for_operations_async().await;
+    }
+
+    /// Stops every tenant-owned producer before explicit persistence deletion.
+    ///
+    /// The deletion fence rejects new guarded work, but long-lived workers do
+    /// not hold an operation guard while parked. They must be stopped
+    /// explicitly so a provider namespace cannot be removed while lease,
+    /// committer, publisher, trigger, or subscription work can still issue
+    /// storage requests.
+    pub(crate) fn begin_explicit_delete_shutdown(&self) {
+        self.shutdown_committer_lease_renewal();
+        self.shutdown_committer();
+        self.shutdown_trigger_candidates();
+        self.shutdown_trigger_execution();
+        self.shutdown_subscription_delivery();
+        self.subscriptions
+            .shutdown_all(format!("tenant deleted: {}", self.tenant_id));
+    }
+
+    /// Waits until accepted tenant work and the mutation publication pipeline
+    /// have released provider storage before explicit deletion proceeds.
+    pub(crate) async fn wait_for_explicit_delete_shutdown(&self) {
+        self.wait_for_delete_operation_drain().await;
+        if self.uses_ordered_publisher() {
+            self.wait_for_publisher_finished().await;
+        } else {
+            self.wait_for_committed_mutation_observers_drained().await;
+        }
     }
 
     pub(crate) fn mark_deleting_for_eviction(&self) -> bool {

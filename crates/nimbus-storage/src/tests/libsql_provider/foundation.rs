@@ -44,6 +44,31 @@ async fn libsql_provider_manages_tenant_registry_and_namespaces() {
             provider.list_tenants().await.expect("tenants should list"),
             vec![alpha.clone(), beta.clone()]
         );
+        assert_eq!(
+            provider
+                .list_tenants_page(None, 1)
+                .await
+                .expect("first tenant page should list"),
+            vec![alpha.clone()]
+        );
+        assert_eq!(
+            provider
+                .list_tenants_page(Some(&alpha), 1)
+                .await
+                .expect("second tenant page should list"),
+            vec![beta.clone()]
+        );
+        assert!(
+            provider
+                .list_tenants_page(Some(&beta), 1)
+                .await
+                .expect("terminal tenant page should list")
+                .is_empty()
+        );
+        assert!(matches!(
+            provider.list_tenants_page(None, 0).await,
+            Err(Error::InvalidInput(_))
+        ));
 
         let reopened = provider
             .open_existing_tenant(&alpha)
@@ -119,6 +144,36 @@ async fn libsql_provider_reloads_registry_after_reconnect() {
                 .expect("tenant should exist")
                 .namespace,
             created.namespace
+        );
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn libsql_scheduler_probe_reuses_one_bounded_session_without_work() {
+    with_test_provider(|provider, _config| async move {
+        let tenant = TenantId::new("scheduler-probe-reuse").expect("tenant id should build");
+        provider
+            .create_tenant(&tenant)
+            .await
+            .expect("tenant should create");
+
+        for _ in 0..2 {
+            assert!(
+                provider
+                    .open_existing_opened_tenant_with_scheduled_work(&tenant)
+                    .await
+                    .expect("scheduler probe should complete")
+                    .is_none(),
+                "a tenant without scheduler rows must remain unloaded"
+            );
+        }
+
+        assert_eq!(
+            provider.scheduler_probe_session_stats_for_testing(),
+            (1, 1),
+            "repeated unloaded scheduler probes must reuse one bounded tenant session"
         );
     })
     .await;

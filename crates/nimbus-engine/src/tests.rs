@@ -67,6 +67,7 @@ pub(crate) use nimbus_storage::provider_test_fixtures::{
 };
 pub(crate) use ppsc::{
     exercise_ppsc_provider_authority_extension, exercise_ppsc_provider_retained_differential,
+    exercise_ppsc_provider_scenario_differential,
 };
 pub(crate) use provider_fixtures::expect_external_provider_future_within;
 pub(crate) use provider_publisher_contract::{

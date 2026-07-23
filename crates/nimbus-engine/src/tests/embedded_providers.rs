@@ -1,4 +1,5 @@
 use super::*;
+use crate::tenant::{SystemLeaseRenewalClock, TenantRuntime, TenantRuntimeEnvironment};
 use crate::{ControlPlaneConfig, LocalEncryptionConfig, TenantProviderConfig};
 
 #[test]
@@ -191,6 +192,101 @@ async fn provider_publisher_contract_matches_memory_redb_and_sqlite() {
     }
     assert_eq!(snapshots[0], snapshots[1], "Memory and redb diverged");
     assert_eq!(snapshots[0], snapshots[2], "Memory and SQLite diverged");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tenant_creation_paused_before_runtime_load_is_cancelled_by_quiesce() {
+    let data_dir = tempdir().expect("memory data dir");
+    let engine = Arc::new(
+        Engine::new_with_memory_persistence(data_dir.path()).expect("memory provider engine"),
+    );
+    let tenant_id = TenantId::new("quiescing-admission").expect("tenant id");
+    let pause = engine.pause_tenant_creation_after_provider_for_testing(tenant_id.clone());
+    let create_engine = engine.clone();
+    let create_tenant = tenant_id.clone();
+    let create =
+        tokio::spawn(async move { create_engine.create_tenant_async(create_tenant).await });
+
+    pause.wait_until_entered().await;
+    engine.quiesce().await;
+    pause.release();
+
+    let error = create
+        .await
+        .expect("tenant creation must return an error rather than panic")
+        .expect_err("quiesce must reject a tenant runtime that finishes opening too late");
+    assert!(
+        matches!(error, Error::Cancelled),
+        "storage quiescence should cancel a runtime that has not loaded yet, got {error}"
+    );
+    assert!(
+        !engine.loaded_tenant_ids().contains(&tenant_id),
+        "a runtime whose worker group was rejected must not enter the tenant registry"
+    );
+    assert!(
+        engine
+            .list_tenants_async()
+            .await
+            .expect("durable provider registration should remain readable")
+            .contains(&tenant_id),
+        "provider creation completed before quiesce and must remain replayable"
+    );
+}
+
+#[tokio::test]
+async fn committer_worker_group_rejected_after_quiesce_preserves_all_receivers() {
+    let data_dir = tempdir().expect("memory data dir");
+    let engine = Arc::new(
+        Engine::new_with_memory_persistence(data_dir.path()).expect("memory provider engine"),
+    );
+    let tenant_id = TenantId::new("quiescing-worker-group").expect("tenant id");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("base runtime should create");
+    let base_runtime = engine
+        .tenant_runtime_for_testing(&tenant_id)
+        .expect("base runtime should load");
+    let late_runtime = Arc::new(
+        TenantRuntime::from_parts(
+            tenant_id,
+            base_runtime.tenant_incarnation(),
+            base_runtime.store.clone(),
+            base_runtime.read_storage.clone(),
+            TenantRuntimeEnvironment::new(
+                Arc::new(nimbus_core::SystemMonotonicClock),
+                Arc::new(SystemLeaseRenewalClock),
+                None,
+                Arc::new(nimbus_core::SystemIdSource),
+            ),
+        )
+        .expect("unstarted runtime should construct"),
+    );
+
+    engine.quiesce().await;
+    let error = engine
+        .start_committer_actor(late_runtime.clone())
+        .expect_err("quiescing executor must reject the complete worker group");
+    assert!(
+        matches!(error, Error::ResourceExhausted(_)),
+        "worker-group rejection should identify executor quiescence, got {error}"
+    );
+
+    let mut committer = late_runtime.take_committer_receiver();
+    let mut publisher = late_runtime.take_publisher_receiver();
+    let mut observer = late_runtime.take_observer_dispatch_receiver();
+    assert!(matches!(
+        committer.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
+    assert!(matches!(
+        publisher.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
+    assert!(matches!(
+        observer.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
 }
 
 #[tokio::test]

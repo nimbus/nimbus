@@ -2,6 +2,8 @@ use super::support::*;
 use crate::RetentionGcConfig;
 use std::ops::Bound;
 
+mod ppsc;
+
 #[test]
 fn sqlite_direct_writes_emit_commit_entries_and_round_trip_journal_reads() {
     let dir = tempdir().expect("temporary directory should create");
@@ -48,25 +50,6 @@ fn sqlite_direct_writes_emit_commit_entries_and_round_trip_journal_reads() {
     assert_eq!(entries[0].writes[0].op_type, WriteOpType::Insert);
     assert_eq!(entries[1].writes[0].op_type, WriteOpType::Update);
     assert_eq!(entries[2].writes[0].op_type, WriteOpType::Delete);
-}
-
-#[test]
-fn sqlite_ppsc_identical_replay_is_idempotent_for_all_write_shapes() {
-    let dir = tempdir().expect("temporary directory should create");
-    let store = SqliteTenantStore::open(dir.path().join("tenant.sqlite3"))
-        .expect("sqlite tenant store should open");
-    exercise_ppsc_identical_applied_sequence_replay(&store, "sqlite_duplicate_replay");
-}
-
-#[test]
-fn sqlite_ppsc_different_content_sequence_reuse_is_rejected_for_all_write_shapes() {
-    let dir = tempdir().expect("temporary directory should create");
-    let store = SqliteTenantStore::open(dir.path().join("tenant.sqlite3"))
-        .expect("sqlite tenant store should open");
-    exercise_ppsc_different_content_applied_sequence_reuse_rejection(
-        &store,
-        "sqlite_duplicate_corruption",
-    );
 }
 
 #[test]
@@ -877,6 +860,90 @@ fn sqlite_durable_journal_batch_append_enforces_no_holes() {
             .map(|record| record.sequence)
             .collect::<Vec<_>>(),
         vec![SequenceNumber(1), SequenceNumber(2)]
+    );
+}
+
+#[test]
+fn sqlite_replica_journal_reconciliation_accepts_identical_overlap_and_missing_suffix() {
+    let dir = tempdir().expect("temporary directory should create");
+    let store = SqliteTenantStore::open(dir.path().join("tenant.sqlite3"))
+        .expect("sqlite tenant store should open");
+    let table_id = TableId::new();
+    let first = TenantEventRecord::new(
+        SequenceNumber(1),
+        Timestamp(10),
+        vec![WriteOp {
+            table: TableName::new("tasks").expect("table name should be valid"),
+            table_id: table_id.clone(),
+            op_type: WriteOpType::Insert,
+            doc_id: DocumentId::new(),
+            resource_path_binding: None,
+            trigger_write_origin: None,
+            previous: None,
+            current: Some(sample_document("tasks", "First")),
+        }],
+        None,
+    )
+    .expect("first durable record should build");
+    let second = TenantEventRecord::new(
+        SequenceNumber(2),
+        Timestamp(11),
+        vec![WriteOp {
+            table: TableName::new("tasks").expect("table name should be valid"),
+            table_id,
+            op_type: WriteOpType::Insert,
+            doc_id: DocumentId::new(),
+            resource_path_binding: None,
+            trigger_write_origin: None,
+            previous: None,
+            current: Some(sample_document("tasks", "Second")),
+        }],
+        None,
+    )
+    .expect("second durable record should build");
+
+    store
+        .append_durable_records_batch(std::slice::from_ref(&first))
+        .expect("the competing refresh should append the shared prefix");
+    store
+        .reconcile_replica_durable_records_batch(&[first.clone(), second.clone()])
+        .expect("an identical overlapping prefix plus missing suffix should reconcile");
+    store
+        .reconcile_replica_durable_records_batch(&[first.clone(), second.clone()])
+        .expect("a fully overlapping identical replay should be idempotent");
+
+    assert_eq!(
+        store
+            .read_durable_journal_from(SequenceNumber(1))
+            .expect("reconciled journal should read"),
+        vec![first.clone(), second]
+    );
+    assert_eq!(
+        store
+            .journal_progress()
+            .expect("reconciled journal progress should read"),
+        crate::store::JournalProgress {
+            durable_head: SequenceNumber(2),
+            applied_head: SequenceNumber(0),
+        }
+    );
+
+    let divergent =
+        TenantEventRecord::new(SequenceNumber(1), Timestamp(99), first.writes.clone(), None)
+            .expect("divergent replay record should build");
+    let error = store
+        .reconcile_replica_durable_records_batch(&[divergent])
+        .expect_err("different-content sequence reuse must fail closed");
+    assert_eq!(
+        error.storage_kind(),
+        Some(nimbus_core::StorageErrorKind::Corruption)
+    );
+    assert!(error.to_string().contains("already-applied sequence 1"));
+    assert_eq!(
+        store
+            .latest_sequence()
+            .expect("failed reconciliation must retain the durable head"),
+        SequenceNumber(2)
     );
 }
 

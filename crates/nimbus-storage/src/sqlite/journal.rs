@@ -248,6 +248,73 @@ impl SqliteTenantStore {
         Ok(())
     }
 
+    /// Reconciles a remotely fetched journal range into a derivative SQLite
+    /// replica cache in one write transaction.
+    ///
+    /// Concurrent refreshers may fetch from the same former local head. By the
+    /// time either owns the cache transaction, another refresher can already
+    /// have appended an identical prefix. Existing records must therefore
+    /// match byte-independent durable content exactly; only the contiguous
+    /// missing suffix is appended. This deliberately does not weaken
+    /// [`Self::append_durable_records_batch`], which remains the strict primary
+    /// append interface.
+    pub(crate) fn reconcile_replica_durable_records_batch(
+        &self,
+        records: &[TenantEventRecord],
+    ) -> Result<()> {
+        if records.is_empty() {
+            return Ok(());
+        }
+
+        let conn = self.open_connection()?;
+        conn.execute_batch("BEGIN IMMEDIATE")
+            .map_err(map_sqlite_error)?;
+        let mut next = latest_sequence_in_conn(&conn)?.0.saturating_add(1);
+        let mut appended = false;
+        for record in records {
+            if record.sequence.0 < next {
+                let payload = conn
+                    .query_row(
+                        "SELECT record_blob FROM commit_log WHERE sequence = ?1",
+                        params![record.sequence.0],
+                        |row| row.get::<_, Vec<u8>>(0),
+                    )
+                    .optional()
+                    .map_err(map_sqlite_error)?;
+                let durable = payload
+                    .as_deref()
+                    .map(deserialize_tenant_event_record)
+                    .transpose()?;
+                crate::commit_log::ensure_applied_record_matches(record, durable.as_ref())?;
+                continue;
+            }
+            if record.sequence.0 != next {
+                return Err(Error::Internal(format!(
+                    "replica journal reconciliation expected sequence {}, got {}",
+                    next, record.sequence.0
+                )));
+            }
+            conn.execute(
+                "INSERT INTO commit_log (sequence, record_blob) VALUES (?1, ?2)",
+                params![record.sequence.0, serialize_tenant_event_record(record)?],
+            )
+            .map_err(map_sqlite_error)?;
+            next = next.saturating_add(1);
+            appended = true;
+        }
+        if appended {
+            put_metadata_in_conn(&conn, NEXT_SEQUENCE_KEY, &encode_u64(next))?;
+            self.fault_injector
+                .check(FaultPoint::JournalAppendBeforeDurableFlush)?;
+        }
+        conn.execute_batch("COMMIT").map_err(map_sqlite_error)?;
+        if appended {
+            self.fault_injector
+                .check(FaultPoint::JournalFlushBeforeVisibility)?;
+        }
+        Ok(())
+    }
+
     pub fn apply_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
         if records.is_empty() {
             return Ok(());

@@ -261,7 +261,9 @@ fn apply_set_table_schema(
             }
         };
     }
-    let journal_progress = match runtime.store().journal_progress() {
+    let committed_through = nimbus_core::SequenceNumber(previous_durable_head.0.saturating_add(1));
+    let journal_progress = match runtime.progress_after_successful_durable_apply(committed_through)
+    {
         Ok(journal_progress) => journal_progress,
         Err(error) => {
             if let Some(pending) = pending_policy_termination {
@@ -344,7 +346,9 @@ fn apply_delete_table_schema(
             }
         };
     }
-    let journal_progress = match runtime.store().journal_progress() {
+    let committed_through = nimbus_core::SequenceNumber(previous_durable_head.0.saturating_add(1));
+    let journal_progress = match runtime.progress_after_successful_durable_apply(committed_through)
+    {
         Ok(journal_progress) => journal_progress,
         Err(error) => {
             if let Some(pending) = pending_policy_termination {

@@ -24,13 +24,36 @@ pub(super) fn apply_schedule_ops_in_libsql_transaction(
     Ok(())
 }
 
+/// Reads an optional scalar/unique query result and consumes the cursor's end
+/// marker before returning.
+///
+/// Remote libSQL rows stream over HTTP. Dropping the stream after its first
+/// row abandons the response body, so repeated scalar reads can poison pooled
+/// transports and eventually surface as truncated Hrana responses. Queries
+/// routed through this helper must return at most one row; duplicate rows are
+/// drained and reported as an invariant violation.
+pub(super) async fn take_single_remote_row(mut rows: libsql::Rows) -> Result<Option<libsql::Row>> {
+    let first = rows.next().await.map_err(map_libsql_error)?;
+    let mut duplicate = false;
+    while rows.next().await.map_err(map_libsql_error)?.is_some() {
+        duplicate = true;
+    }
+    if duplicate {
+        return Err(Error::storage(
+            StorageErrorKind::Corruption,
+            "libSQL scalar query returned more than one row",
+        ));
+    }
+    Ok(first)
+}
+
 pub(super) async fn table_has_entries_remote(conn: &Connection, table: &str) -> Result<bool> {
     let sql = format!("SELECT 1 FROM {table} LIMIT 1");
-    let mut rows = conn
+    let rows = conn
         .query(sql.as_str(), ())
         .await
         .map_err(map_libsql_error)?;
-    Ok(rows.next().await.map_err(map_libsql_error)?.is_some())
+    Ok(take_single_remote_row(rows).await?.is_some())
 }
 
 pub(super) async fn load_remote_document_from_session(
@@ -41,7 +64,7 @@ pub(super) async fn load_remote_document_from_session(
     let Some(table_id) = load_remote_table_id_from_session(conn, &table).await? else {
         return Ok(None);
     };
-    let mut rows = conn
+    let rows = conn
         .query(
             "SELECT creation_time, update_time, data_json, typed_fields_json
              FROM documents
@@ -50,7 +73,7 @@ pub(super) async fn load_remote_document_from_session(
         )
         .await
         .map_err(map_libsql_error)?;
-    let Some(row) = rows.next().await.map_err(map_libsql_error)? else {
+    let Some(row) = take_single_remote_row(rows).await? else {
         return Ok(None);
     };
     let creation_time = row.get::<i64>(0).map_err(map_libsql_error)?;
@@ -73,7 +96,7 @@ pub(super) async fn load_remote_document_by_table_id_from_session(
     table_id: &TableId,
     id: &DocumentId,
 ) -> Result<Option<Document>> {
-    let mut rows = conn
+    let rows = conn
         .query(
             "SELECT creation_time, update_time, data_json, typed_fields_json
              FROM documents
@@ -82,7 +105,7 @@ pub(super) async fn load_remote_document_by_table_id_from_session(
         )
         .await
         .map_err(map_libsql_error)?;
-    let Some(row) = rows.next().await.map_err(map_libsql_error)? else {
+    let Some(row) = take_single_remote_row(rows).await? else {
         return Ok(None);
     };
     let creation_time = row.get::<i64>(0).map_err(map_libsql_error)?;
@@ -103,14 +126,14 @@ pub(super) async fn load_remote_table_id_from_session(
     conn: &Connection,
     table: &TableName,
 ) -> Result<Option<TableId>> {
-    let mut rows = conn
+    let rows = conn
         .query(
             "SELECT table_id, state FROM table_catalog WHERE namespace = ?1 AND table_name = ?2",
             libsql::params!["default", table.as_str()],
         )
         .await
         .map_err(map_libsql_error)?;
-    let Some(row) = rows.next().await.map_err(map_libsql_error)? else {
+    let Some(row) = take_single_remote_row(rows).await? else {
         return Ok(None);
     };
     let table_id = row.get::<String>(0).map_err(map_libsql_error)?;
@@ -270,14 +293,14 @@ async fn remote_catalog_identity_row(
     namespace: &str,
     table: &TableName,
 ) -> Result<Option<(TableId, TableState)>> {
-    let mut rows = conn
+    let rows = conn
         .query(
             "SELECT table_id, state FROM table_catalog WHERE namespace = ?1 AND table_name = ?2",
             libsql::params![namespace, table.as_str()],
         )
         .await
         .map_err(map_libsql_error)?;
-    let Some(row) = rows.next().await.map_err(map_libsql_error)? else {
+    let Some(row) = take_single_remote_row(rows).await? else {
         return Ok(None);
     };
     Ok(Some((
@@ -291,14 +314,14 @@ async fn ensure_remote_table_id_available(
     table_id: &TableId,
     allowed_key: Option<(&str, &TableName)>,
 ) -> Result<()> {
-    let mut rows = conn
+    let rows = conn
         .query(
             "SELECT namespace, table_name, state FROM table_catalog WHERE table_id = ?1",
             libsql::params![table_id.as_str()],
         )
         .await
         .map_err(map_libsql_error)?;
-    let Some(row) = rows.next().await.map_err(map_libsql_error)? else {
+    let Some(row) = take_single_remote_row(rows).await? else {
         return Ok(());
     };
     let namespace = row.get::<String>(0).map_err(map_libsql_error)?;
@@ -322,11 +345,11 @@ pub(super) async fn load_next_sequence_from_session(conn: &Connection) -> Result
     if let Some(stored) = load_remote_metadata_u64(conn, NEXT_SEQUENCE_KEY).await? {
         return Ok(stored);
     }
-    let mut rows = conn
+    let rows = conn
         .query("SELECT MAX(sequence) FROM commit_log", ())
         .await
         .map_err(map_libsql_error)?;
-    let Some(row) = rows.next().await.map_err(map_libsql_error)? else {
+    let Some(row) = take_single_remote_row(rows).await? else {
         return Ok(1);
     };
     let latest = row.get::<Option<i64>>(0).map_err(map_libsql_error)?;
@@ -339,14 +362,14 @@ pub(super) async fn load_next_sequence_from_session(conn: &Connection) -> Result
 }
 
 pub(super) async fn load_remote_metadata_u64(conn: &Connection, key: &str) -> Result<Option<u64>> {
-    let mut rows = conn
+    let rows = conn
         .query(
             "SELECT value_blob FROM metadata WHERE key = ?1",
             libsql::params![key.to_string()],
         )
         .await
         .map_err(map_libsql_error)?;
-    let Some(row) = rows.next().await.map_err(map_libsql_error)? else {
+    let Some(row) = take_single_remote_row(rows).await? else {
         return Ok(None);
     };
     let bytes = row.get::<Vec<u8>>(0).map_err(map_libsql_error)?;
@@ -810,6 +833,103 @@ pub(super) fn map_libsql_error(error: libsql::Error) -> Error {
     }
 }
 
+/// Runs an idempotent remote operation once more after a provider transport failure.
+///
+/// Remote libSQL uses HTTP/1 connection pooling. A server may close a pooled
+/// connection between requests; Hyper reports the racing request as
+/// unavailable even though the next request can establish a fresh transport.
+/// Callers may use this for reads and idempotent provider bootstrap/control
+/// operations. They must never use it for mutations or transactions whose
+/// durable result can be ambiguous after dispatch.
+pub(super) async fn retry_idempotent_remote_operation<T, Op, Fut>(
+    session: &LibsqlRemoteSession,
+    operation_name: &'static str,
+    mut operation: Op,
+) -> Result<T>
+where
+    Op: FnMut(Connection) -> Fut,
+    Fut: Future<Output = Result<T>>,
+{
+    let LibsqlRemoteConnection {
+        generation,
+        connection,
+    } = session.versioned_retryable_connection()?;
+    match operation(connection).await {
+        Ok(value) => Ok(value),
+        Err(error) if idempotent_remote_error_is_retryable(&error) => {
+            debug!(
+                operation = operation_name,
+                error = %error,
+                "reconnecting and retrying idempotent libsql remote operation"
+            );
+            session
+                .reconnect_after_failure(generation)
+                .map_err(|error| contextualize_remote_operation_error(operation_name, error))?;
+            operation(session.retryable_connection()?)
+                .await
+                .map_err(|error| contextualize_remote_operation_error(operation_name, error))
+        }
+        Err(error) => Err(contextualize_remote_operation_error(operation_name, error)),
+    }
+}
+
+/// Applies the same bounded policy to idempotent HTTP control-plane calls.
+///
+/// These operations have no Hrana baton to reset. The operation itself must
+/// remain safe when a response is lost after the server handled the request.
+pub(super) async fn retry_idempotent_remote_operation_without_session<T, Op, Fut>(
+    operation_name: &'static str,
+    operation: Op,
+) -> Result<T>
+where
+    Op: FnMut() -> Fut,
+    Fut: Future<Output = Result<T>>,
+{
+    retry_idempotent_remote_operation_with_reset(operation_name, operation, || async {}).await
+}
+
+async fn retry_idempotent_remote_operation_with_reset<T, Op, OpFuture, Reset, ResetFuture>(
+    operation_name: &'static str,
+    mut operation: Op,
+    mut reset: Reset,
+) -> Result<T>
+where
+    Op: FnMut() -> OpFuture,
+    OpFuture: Future<Output = Result<T>>,
+    Reset: FnMut() -> ResetFuture,
+    ResetFuture: Future<Output = ()>,
+{
+    match operation().await {
+        Ok(value) => Ok(value),
+        Err(error) if idempotent_remote_error_is_retryable(&error) => {
+            debug!(
+                operation = operation_name,
+                error = %error,
+                "retrying idempotent libsql remote operation after transport failure"
+            );
+            reset().await;
+            operation()
+                .await
+                .map_err(|error| contextualize_remote_operation_error(operation_name, error))
+        }
+        Err(error) => Err(contextualize_remote_operation_error(operation_name, error)),
+    }
+}
+
+fn contextualize_remote_operation_error(operation_name: &str, error: Error) -> Error {
+    match (error.storage_kind(), error.storage_message()) {
+        (Some(kind), Some(message)) => Error::storage(kind, format!("{operation_name}: {message}")),
+        _ => error,
+    }
+}
+
+fn idempotent_remote_error_is_retryable(error: &Error) -> bool {
+    matches!(
+        error.storage_kind(),
+        Some(StorageErrorKind::Transient | StorageErrorKind::Unavailable)
+    )
+}
+
 pub(super) fn map_local_sqlite_error(error: rusqlite::Error) -> Error {
     let message = error.to_string();
     match error {
@@ -836,5 +956,110 @@ pub(super) fn map_sqlite_result_code(code: i32, message: String) -> Error {
         14 => Error::storage(StorageErrorKind::Unavailable, message),
         9 | 15 | 17 => Error::storage(StorageErrorKind::Transient, message),
         _ => Error::storage(StorageErrorKind::Other, message),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn idempotent_remote_retry_classification_is_transport_only() {
+        for kind in [StorageErrorKind::Transient, StorageErrorKind::Unavailable] {
+            assert!(
+                idempotent_remote_error_is_retryable(&Error::storage(kind, "provider transport")),
+                "{kind} idempotent operations should receive one bounded retry"
+            );
+        }
+
+        for kind in [
+            StorageErrorKind::Busy,
+            StorageErrorKind::Corruption,
+            StorageErrorKind::Io,
+            StorageErrorKind::Other,
+        ] {
+            assert!(
+                !idempotent_remote_error_is_retryable(&Error::storage(kind, "not transport")),
+                "{kind} must not be hidden by the remote-read retry policy"
+            );
+        }
+        assert!(!idempotent_remote_error_is_retryable(&Error::Cancelled));
+    }
+
+    #[tokio::test]
+    async fn idempotent_remote_retry_resets_once_and_preserves_second_result() {
+        let attempts = Arc::new(AtomicU8::new(0));
+        let resets = Arc::new(AtomicU8::new(0));
+        let result = retry_idempotent_remote_operation_with_reset(
+            "deterministic retry probe",
+            {
+                let attempts = attempts.clone();
+                move || {
+                    let attempts = attempts.clone();
+                    async move {
+                        if attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                            Err(Error::storage(
+                                StorageErrorKind::Unavailable,
+                                "injected response truncation",
+                            ))
+                        } else {
+                            Ok(41_u8)
+                        }
+                    }
+                }
+            },
+            {
+                let resets = resets.clone();
+                move || {
+                    let resets = resets.clone();
+                    async move {
+                        resets.fetch_add(1, Ordering::SeqCst);
+                    }
+                }
+            },
+        )
+        .await
+        .expect("one transient failure should be retried");
+
+        assert_eq!(result, 41);
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(resets.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn idempotent_remote_retry_never_retries_non_transport_errors() {
+        let attempts = Arc::new(AtomicU8::new(0));
+        let resets = Arc::new(AtomicU8::new(0));
+        let error = retry_idempotent_remote_operation_with_reset(
+            "deterministic no-retry probe",
+            {
+                let attempts = attempts.clone();
+                move || {
+                    let attempts = attempts.clone();
+                    async move {
+                        attempts.fetch_add(1, Ordering::SeqCst);
+                        Err::<(), _>(Error::storage(
+                            StorageErrorKind::Corruption,
+                            "injected corruption",
+                        ))
+                    }
+                }
+            },
+            {
+                let resets = resets.clone();
+                move || {
+                    let resets = resets.clone();
+                    async move {
+                        resets.fetch_add(1, Ordering::SeqCst);
+                    }
+                }
+            },
+        )
+        .await
+        .expect_err("corruption must remain fail-closed");
+
+        assert_eq!(error.storage_kind(), Some(StorageErrorKind::Corruption));
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+        assert_eq!(resets.load(Ordering::SeqCst), 0);
     }
 }

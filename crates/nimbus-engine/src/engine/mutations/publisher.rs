@@ -503,11 +503,11 @@ pub(crate) fn persist_assigned_batch_once(
             .store
             .check_fault(nimbus_storage::FaultPoint::JournalDurableAppendBeforeApply)
             .map_err(PublishAttemptError::Ambiguous)?;
-        commit_faults
-            .wait(labels::DURABLE_BEFORE_PUBLISH)
-            .into_result()
-            .map_err(PublishAttemptError::Ambiguous)?;
     }
+    commit_faults
+        .wait(labels::DURABLE_BEFORE_PUBLISH)
+        .into_result()
+        .map_err(PublishAttemptError::Ambiguous)?;
     let applied_head = if provider_applied {
         last_sequence
     } else {

@@ -1,10 +1,19 @@
 use std::env;
 use std::future::Future;
 use std::io::Read;
+use std::panic::{AssertUnwindSafe, resume_unwind};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use super::*;
+use crate::tenant::ManualLeaseRenewalClock;
+use crate::{
+    ControlPlaneConfig, LibsqlReplicaBarrierPath, LibsqlReplicaRefreshPath, LocalEncryptionConfig,
+    LocalKeyProviderConfig, MasterKeyFileConfig, PersistenceDialect, PersistenceTopology,
+    PoolConfig, ProviderCredentials, TenantProviderConfig, TenantRoutingConfig,
+};
+use futures::FutureExt;
 use libsql::{Builder, Database};
 use nimbus_core::{
     AtomicWrite, AtomicWriteBatch, CollectionName, DocumentId, DocumentLocator, DocumentPath,
@@ -21,61 +30,64 @@ use nimbus_storage::{
     NoopFaultInjector,
 };
 
-use super::*;
-use crate::tenant::ManualLeaseRenewalClock;
-use crate::{
-    ControlPlaneConfig, LibsqlReplicaBarrierPath, LibsqlReplicaRefreshPath, LocalEncryptionConfig,
-    LocalKeyProviderConfig, MasterKeyFileConfig, PersistenceDialect, PersistenceTopology,
-    PoolConfig, ProviderCredentials, TenantProviderConfig, TenantRoutingConfig,
-};
-
 const LIBSQL_URL_ENV: &str = "NIMBUS_LIBSQL_URL";
 const LIBSQL_AUTH_TOKEN_ENV: &str = "NIMBUS_LIBSQL_AUTH_TOKEN";
 const LIBSQL_ADMIN_URL_ENV: &str = "NIMBUS_LIBSQL_ADMIN_URL";
 const LIBSQL_ADMIN_AUTH_HEADER_ENV: &str = "NIMBUS_LIBSQL_ADMIN_AUTH_HEADER";
 static TEST_SUFFIX_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-#[tokio::test(flavor = "multi_thread")]
-#[serial_test::serial(libsql_replica_provider)]
-async fn libsql_ppsc_seeded_journal_differential() {
-    with_libsql_replica_engine_config(|engine_config, _provider_config| async move {
-        exercise_ppsc_provider_retained_differential(PpscBackend::Libsql, engine_config).await;
-    })
-    .await;
-}
+mod ppsc;
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(libsql_replica_provider)]
-async fn ppsc_provider_takeover_extension_matches_postgres_mysql_and_libsql() {
-    with_shared_libsql_replica_engine_configs(
-        |first_config, takeover_config, provider_config| async move {
-            exercise_ppsc_provider_authority_extension(
-                PpscBackend::Libsql,
-                first_config,
-                takeover_config,
-                Arc::new(LibsqlLeaseTimeControl::new(provider_config)),
-            )
-            .await;
-        },
-    )
-    .await;
-}
+async fn libsql_unloaded_scheduler_probe_skips_replica_bootstrap_without_work() {
+    with_libsql_replica_engine_config(|engine_config, provider_config| async move {
+        let tenant_id =
+            TenantId::new("libsql-scheduler-probe").expect("scheduler probe tenant should parse");
+        let replica_cache_dir = provider_config.replica_cache_dir.clone();
 
-#[tokio::test(flavor = "multi_thread")]
-#[serial_test::serial(libsql_replica_provider)]
-async fn libsql_provider_publisher_contract() {
-    with_libsql_replica_engine_config(|engine_config, _provider_config| async move {
-        let engine = Arc::new(
+        let first = Arc::new(
+            Engine::new_with_persistence_config(engine_config.clone())
+                .await
+                .expect("first libSQL engine should create"),
+        );
+        first
+            .create_tenant_async(tenant_id)
+            .await
+            .expect("scheduler probe tenant should create");
+        first.quiesce().await;
+        drop(first);
+
+        if replica_cache_dir.exists() {
+            std::fs::remove_dir_all(&replica_cache_dir)
+                .expect("closed scheduler probe cache should be removable");
+        }
+        std::fs::create_dir_all(&replica_cache_dir)
+            .expect("empty scheduler probe cache directory should recreate");
+
+        let reloaded = Arc::new(
             Engine::new_with_persistence_config(engine_config)
                 .await
-                .expect("libSQL-backed engine should create"),
+                .expect("reloaded libSQL engine should create"),
         );
-        exercise_provider_publisher_contract(
-            engine,
-            TenantId::new("libsql-publisher-contract").expect("tenant id should build"),
-            None,
-        )
-        .await;
+        reloaded
+            .load_tenants_with_scheduled_work_async()
+            .await
+            .expect("unloaded scheduler probe should complete");
+        assert!(
+            reloaded.loaded_tenant_ids().is_empty(),
+            "a tenant without scheduled work must remain unloaded"
+        );
+        reloaded.quiesce().await;
+        drop(reloaded);
+
+        assert!(
+            std::fs::read_dir(&replica_cache_dir)
+                .expect("scheduler probe cache directory should remain readable")
+                .next()
+                .is_none(),
+            "checking an unloaded tenant without scheduled work must not materialize a replica cache"
+        );
     })
     .await;
 }
@@ -160,8 +172,8 @@ async fn libsql_replica_post_visibility_ack_loss_forces_crash_and_replay() {
             .await
             .expect("tenant should create");
         engine
-            .shutdown_trigger_candidates_for_testing(&tenant_id)
-            .expect("trigger cursor should not add unrelated records");
+            .disable_trigger_candidates_for_testing(&tenant_id)
+            .expect("trigger cursor should remain disabled for acknowledgement-loss ownership");
         let failed_runtime = engine
             .tenant_runtime_for_testing(&tenant_id)
             .expect("loaded runtime should be inspectable");
@@ -218,8 +230,8 @@ async fn libsql_replica_post_visibility_ack_loss_forces_crash_and_replay() {
         );
 
         engine
-            .shutdown_trigger_candidates_for_testing(&tenant_id)
-            .expect("replacement trigger cursor should stay quiet");
+            .disable_trigger_candidates_for_testing(&tenant_id)
+            .expect("replacement trigger cursor should remain disabled");
         engine
             .insert_document_async(
                 tenant_id.clone(),
@@ -1128,14 +1140,11 @@ where
         )),
     };
 
-    test(engine_config, provider_config.clone()).await;
-
-    LibsqlReplicaProvider::connect(provider_config)
-        .await
-        .expect("cleanup provider should connect")
-        .drop_provider_namespaces_for_test()
-        .await
-        .expect("provider namespaces should clean up");
+    run_libsql_test_with_namespace_cleanup(
+        test(engine_config, provider_config.clone()),
+        provider_config,
+    )
+    .await;
     drop(connection);
 }
 
@@ -1200,15 +1209,38 @@ where
         local_encryption: LocalEncryptionConfig::Disabled,
     };
 
-    test(engine_config_a, engine_config_b, provider_config.clone()).await;
-
-    LibsqlReplicaProvider::connect(provider_config)
-        .await
-        .expect("cleanup provider should connect")
-        .drop_provider_namespaces_for_test()
-        .await
-        .expect("provider namespaces should clean up");
+    run_libsql_test_with_namespace_cleanup(
+        test(engine_config_a, engine_config_b, provider_config.clone()),
+        provider_config,
+    )
+    .await;
     drop(connection);
+}
+
+async fn run_libsql_test_with_namespace_cleanup<Fut>(
+    test: Fut,
+    provider_config: LibsqlReplicaProviderConfig,
+) where
+    Fut: Future<Output = ()>,
+{
+    let test_result = AssertUnwindSafe(test).catch_unwind().await;
+    let cleanup_result = async {
+        LibsqlReplicaProvider::connect(provider_config)
+            .await?
+            .drop_provider_namespaces_for_test()
+            .await
+    }
+    .await;
+
+    match (test_result, cleanup_result) {
+        (Ok(()), Ok(())) => {}
+        (Ok(()), Err(error)) => panic!("provider namespaces should clean up: {error}"),
+        (Err(payload), Ok(())) => resume_unwind(payload),
+        (Err(payload), Err(error)) => {
+            eprintln!("provider namespace cleanup also failed after test panic: {error}");
+            resume_unwind(payload);
+        }
+    }
 }
 
 struct TestConnection {
