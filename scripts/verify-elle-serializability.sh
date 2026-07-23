@@ -158,7 +158,6 @@ if [[ -n "${NIMBUS_ELLE_ARCHIVE_FILE:-}" ]]; then
     "${nextest_bin}" nextest run \
       --archive-file "${NIMBUS_ELLE_ARCHIVE_FILE}" \
       --workspace-remap "${GITHUB_WORKSPACE:-${PWD}}" \
-      --package nimbus-engine \
       --profile ci-pr \
       --run-ignored only \
       --no-tests fail \

@@ -132,6 +132,22 @@ printf 'cargo jar=%s java=%s' \
   "${NIMBUS_ELLE_JAVA_BIN:-}" >>"${FAKE_ELLE_COMMAND_LOG}"
 printf ' %q' "$@" >>"${FAKE_ELLE_COMMAND_LOG}"
 printf '\n' >>"${FAKE_ELLE_COMMAND_LOG}"
+archive_mode=0
+package_mode=0
+for argument in "$@"; do
+  case "${argument}" in
+    --archive-file)
+      archive_mode=1
+      ;;
+    --package)
+      package_mode=1
+      ;;
+  esac
+done
+if [[ "${archive_mode}" == "1" && "${package_mode}" == "1" ]]; then
+  printf 'fake cargo-nextest: --archive-file cannot be combined with --package\n' >&2
+  exit 92
+fi
 exit "${FAKE_ELLE_CARGO_EXIT:-0}"
 EOF
 
@@ -195,7 +211,8 @@ run_case 0 \
   "NIMBUS_CARGO_NEXTEST_BIN=${fake_cargo}" \
   "GITHUB_WORKSPACE=/tmp/nimbus-workspace"
 assert_contains "${command_log}" "nextest run --archive-file ${archive_file}"
-assert_contains "${command_log}" "--workspace-remap /tmp/nimbus-workspace --package nimbus-engine"
+assert_contains "${command_log}" "--workspace-remap /tmp/nimbus-workspace"
+assert_not_contains "${command_log}" "--package nimbus-engine"
 
 : >"${command_log}"
 run_case 37 \
