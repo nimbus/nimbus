@@ -5,8 +5,8 @@ use nimbus_core::{
 use crate::{
     CommitterLeaseError, CommitterLeaseResult, LibsqlReplicaTenantStore,
     LibsqlReplicaWriteTransaction, MemoryTenantStore, MemoryWriteTransaction, MySqlTenantStore,
-    MySqlWriteTransaction, PostgresTenantStore, PostgresWriteTransaction, SqliteTenantStore,
-    SqliteWriteTransaction, TenantStore, TenantWriteTransaction,
+    MySqlWriteTransaction, PostgresTenantStore, PostgresWriteTransaction, ResolvedScheduleOp,
+    SqliteTenantStore, SqliteWriteTransaction, TenantStore, TenantWriteTransaction,
 };
 
 const FENCED_SCHEDULER_WRITE_MARKER: &str = "fenced committer lease during scheduler write";
@@ -133,6 +133,23 @@ fn apply_scheduler_write(
     }
 }
 
+fn apply_schedule_batch(
+    transaction: &mut impl SchedulerWriteTransaction,
+    operations: &[ResolvedScheduleOp],
+) -> Result<()> {
+    for operation in operations {
+        match operation {
+            ResolvedScheduleOp::Insert { job } => transaction.insert_scheduled_job(job)?,
+            ResolvedScheduleOp::Cancel { job_id } => {
+                if !transaction.cancel_scheduled_job(job_id)? {
+                    return Err(Error::ScheduledJobNotFound(job_id.clone()));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Transactional scheduler-write seam shared by every production backend.
 pub trait SchedulerWriteStore {
     fn scheduler_write_cancellable<Check>(
@@ -140,6 +157,14 @@ pub trait SchedulerWriteStore {
         operation: SchedulerWrite,
         check_cancel: Check,
     ) -> Result<SchedulerWriteResult>
+    where
+        Check: Fn() -> Result<()> + Send + 'static;
+
+    fn schedule_batch_cancellable<Check>(
+        &self,
+        operations: &[ResolvedScheduleOp],
+        check_cancel: Check,
+    ) -> Result<()>
     where
         Check: Fn() -> Result<()> + Send + 'static;
 
@@ -163,6 +188,27 @@ pub trait SchedulerWriteStore {
         );
         Err(CommitterLeaseError::Unsupported)
     }
+
+    fn fenced_schedule_batch_cancellable<Check>(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        expected_durable_sequence: SequenceNumber,
+        operations: &[ResolvedScheduleOp],
+        check_cancel: Check,
+    ) -> CommitterLeaseResult<()>
+    where
+        Check: Fn() -> Result<()> + Send + 'static,
+    {
+        let _ = (
+            owner_id,
+            epoch,
+            expected_durable_sequence,
+            operations,
+            check_cancel,
+        );
+        Err(CommitterLeaseError::Unsupported)
+    }
 }
 
 macro_rules! impl_scheduler_write_store {
@@ -180,6 +226,21 @@ macro_rules! impl_scheduler_write_store {
                     apply_scheduler_write(transaction, operation)
                 })
                 .map(|committed| committed.value)
+            }
+
+            fn schedule_batch_cancellable<Check>(
+                &self,
+                operations: &[ResolvedScheduleOp],
+                check_cancel: Check,
+            ) -> Result<()>
+            where
+                Check: Fn() -> Result<()> + Send + 'static,
+            {
+                let operations = operations.to_vec();
+                self.execute_write_cancellable(check_cancel, move |transaction| {
+                    apply_schedule_batch(transaction, &operations)
+                })
+                .map(|_| ())
             }
         }
     };
@@ -204,6 +265,21 @@ macro_rules! impl_provider_scheduler_write_store {
                     apply_scheduler_write(transaction, operation)
                 })
                 .map(|committed| committed.value)
+            }
+
+            fn schedule_batch_cancellable<Check>(
+                &self,
+                operations: &[ResolvedScheduleOp],
+                check_cancel: Check,
+            ) -> Result<()>
+            where
+                Check: Fn() -> Result<()> + Send + 'static,
+            {
+                let operations = operations.to_vec();
+                self.execute_write_cancellable(check_cancel, move |transaction| {
+                    apply_schedule_batch(transaction, &operations)
+                })
+                .map(|_| ())
             }
 
             fn fenced_scheduler_write_cancellable<Check>(
@@ -234,6 +310,47 @@ macro_rules! impl_provider_scheduler_write_store {
                 });
                 match result {
                     Ok(committed) => Ok(committed.value),
+                    Err(Error::PreconditionFailed(message))
+                        if message == FENCED_SCHEDULER_WRITE_MARKER =>
+                    {
+                        Err(CommitterLeaseError::Fenced {
+                            owner_id: fenced_owner_id,
+                            epoch,
+                        })
+                    }
+                    Err(error) => Err(error.into()),
+                }
+            }
+
+            fn fenced_schedule_batch_cancellable<Check>(
+                &self,
+                owner_id: &str,
+                epoch: u64,
+                expected_durable_sequence: SequenceNumber,
+                operations: &[ResolvedScheduleOp],
+                check_cancel: Check,
+            ) -> CommitterLeaseResult<()>
+            where
+                Check: Fn() -> Result<()> + Send + 'static,
+            {
+                let owner_id = owner_id.to_string();
+                let fenced_owner_id = owner_id.clone();
+                let operations = operations.to_vec();
+                let result = self.execute_write_cancellable(check_cancel, move |transaction| {
+                    if transaction.validate_fenced_committer_lease(
+                        &owner_id,
+                        epoch,
+                        expected_durable_sequence,
+                    )? != 1
+                    {
+                        return Err(Error::PreconditionFailed(
+                            FENCED_SCHEDULER_WRITE_MARKER.to_string(),
+                        ));
+                    }
+                    apply_schedule_batch(transaction, &operations)
+                });
+                match result {
+                    Ok(_) => Ok(()),
                     Err(Error::PreconditionFailed(message))
                         if message == FENCED_SCHEDULER_WRITE_MARKER =>
                     {

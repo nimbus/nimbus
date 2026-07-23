@@ -242,6 +242,52 @@ pub fn validate_elle_edn_history(history: &str) -> Result<usize, String> {
     Ok(event_count)
 }
 
+/// Validates the terminal verdict emitted by the pinned standalone Elle CLI.
+///
+/// Elle CLI 0.1.9 writes one terminal line in the form
+/// `<history-path> true`. Diagnostics may precede that line, but the checker
+/// result is accepted only when the process exits successfully and exactly one
+/// terminal verdict names the history supplied by Nimbus. Multiple verdicts,
+/// negative or unknown outcomes, and path mismatches fail closed.
+pub fn validate_elle_cli_result(
+    exit_code: Option<i32>,
+    stdout: &str,
+    stderr: &str,
+    history_path: &Path,
+) -> Result<(), String> {
+    if exit_code != Some(0) {
+        return Err(format!(
+            "elle-cli exited with {exit_code:?}; stdout:\n{stdout}\nstderr:\n{stderr}"
+        ));
+    }
+
+    let expected_path = history_path.to_string_lossy();
+    let mut verdicts = Vec::new();
+    for line in stdout.lines().chain(stderr.lines()) {
+        let trimmed = line.trim();
+        let Some(remainder) = trimmed.strip_prefix(expected_path.as_ref()) else {
+            continue;
+        };
+        if remainder.is_empty() || !remainder.chars().next().is_some_and(char::is_whitespace) {
+            continue;
+        }
+        verdicts.push(remainder.trim().to_string());
+    }
+
+    match verdicts.as_slice() {
+        [verdict] if verdict == "true" => Ok(()),
+        [] => Err(format!(
+            "elle-cli did not emit the terminal verdict `{expected_path} true`; stdout:\n{stdout}\nstderr:\n{stderr}"
+        )),
+        [verdict] => Err(format!(
+            "elle-cli reported non-passing verdict `{verdict}` for `{expected_path}`"
+        )),
+        _ => Err(format!(
+            "elle-cli emitted contradictory or duplicate verdicts for `{expected_path}`: {verdicts:?}"
+        )),
+    }
+}
+
 fn parse_unsigned(line: &str, field: &str, line_number: usize) -> Result<u64, String> {
     let start = line
         .find(field)
@@ -346,5 +392,67 @@ mod tests {
         let history =
             "{:type :invoke, :f :txn, :value [[:r \"k0\" nil]], :process 0, :index 0, :time 0}\n";
         assert!(validate_elle_edn_history(history).is_err());
+    }
+
+    #[test]
+    fn cli_result_accepts_the_pinned_terminal_true_grammar() {
+        let path = Path::new("/tmp/nimbus elle/history.edn");
+        assert_eq!(
+            validate_elle_cli_result(
+                Some(0),
+                "checker startup\n/tmp/nimbus elle/history.edn  true\n",
+                "",
+                path,
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn cli_result_rejects_false_and_unknown_verdicts() {
+        let path = Path::new("/tmp/history.edn");
+        for verdict in ["false", ":unknown"] {
+            let output = format!("{}  {verdict}\n", path.display());
+            assert!(
+                validate_elle_cli_result(Some(0), &output, "", path)
+                    .expect_err("non-passing verdict must fail")
+                    .contains(verdict)
+            );
+        }
+    }
+
+    #[test]
+    fn cli_result_rejects_malformed_or_wrong_path_output() {
+        let path = Path::new("/tmp/history.edn");
+        for output in [
+            "/tmp/history.edn\n",
+            "/tmp/another-history.edn true\n",
+            "/tmp/history.edn true trailing\n",
+        ] {
+            assert!(
+                validate_elle_cli_result(Some(0), output, "", path).is_err(),
+                "malformed output must fail: {output:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn cli_result_rejects_contradictory_verdicts() {
+        let path = Path::new("/tmp/history.edn");
+        let output = "/tmp/history.edn true\n/tmp/history.edn false\n";
+        assert!(
+            validate_elle_cli_result(Some(0), output, "", path)
+                .expect_err("contradictory verdicts must fail")
+                .contains("contradictory")
+        );
+    }
+
+    #[test]
+    fn cli_result_rejects_nonzero_checker_exit_even_with_true_output() {
+        let path = Path::new("/tmp/history.edn");
+        let error = validate_elle_cli_result(Some(7), "/tmp/history.edn true\n", "boom", path)
+            .expect_err("nonzero checker exit must fail");
+        assert!(error.contains("Some(7)"));
+        assert!(error.contains("boom"));
     }
 }

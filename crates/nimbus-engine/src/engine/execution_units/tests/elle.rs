@@ -10,7 +10,8 @@
 use super::*;
 use nimbus_core::{Result, TableName};
 use nimbus_testing::{
-    BoundedTestBarrier as Barrier, ElleHistoryRecorder, ElleListAppendOp, validate_elle_edn_history,
+    BoundedTestBarrier as Barrier, ElleHistoryRecorder, ElleListAppendOp, validate_elle_cli_result,
+    validate_elle_edn_history,
 };
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -226,14 +227,14 @@ async fn elle_history_recorder_emits_wellformed_edn() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "dedicated pinned Elle checker lane owns the verified external lifecycle"]
 async fn elle_serializable_check_passes() {
-    let Some(jar) = std::env::var_os("NIMBUS_ELLE_CLI_JAR") else {
-        eprintln!("NIMBUS_ELLE_CLI_JAR is unset; skipping external Elle serializability check");
-        return;
-    };
+    let jar = std::env::var_os("NIMBUS_ELLE_CLI_JAR")
+        .expect("dedicated Elle lane must supply its checksum-verified CLI jar");
+    let java = std::env::var_os("NIMBUS_ELLE_JAVA_BIN").unwrap_or_else(|| "java".into());
     let (path, edn) = generate_elle_history("serializable").await;
     validate_elle_edn_history(&edn).expect("history passed to elle-cli should be well formed");
-    let output = std::process::Command::new("java")
+    let output = std::process::Command::new(java)
         .arg("-jar")
         .arg(jar)
         .args([
@@ -245,22 +246,8 @@ async fn elle_serializable_check_passes() {
         .arg(&path)
         .output()
         .expect("java should execute the configured elle-cli jar");
-    let combined = format!(
-        "{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(
-        output.status.success(),
-        "elle-cli failed with {}:\n{combined}",
-        output.status
-    );
-    assert!(
-        combined.contains(":valid? true") || combined.contains("valid? true"),
-        "elle-cli did not report a valid serializable history:\n{combined}"
-    );
-    assert!(
-        !combined.contains(":valid? false") && !combined.contains("valid? false"),
-        "elle-cli reported a serializability anomaly:\n{combined}"
-    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    validate_elle_cli_result(output.status.code(), &stdout, &stderr, &path)
+        .unwrap_or_else(|error| panic!("external Elle serializability proof failed: {error}"));
 }

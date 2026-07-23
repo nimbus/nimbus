@@ -8,7 +8,8 @@ mod results;
 mod write;
 
 pub use outcome::{
-    PreparedSchedulerWrite, SchedulerWriteOutcomeStore, SchedulerWriteReconciliation,
+    PreparedScheduleBatch, PreparedSchedulerWrite, ScheduleBatchReconciliation,
+    SchedulerWriteOutcomeStore, SchedulerWriteReconciliation,
 };
 pub use write::{SchedulerWrite, SchedulerWriteResult, SchedulerWriteStore};
 

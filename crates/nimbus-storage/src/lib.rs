@@ -32,6 +32,7 @@ pub mod store;
 mod table_identity;
 pub mod tenant_incarnation;
 pub mod traits;
+mod trigger_invocation_transition;
 pub mod usage_store;
 
 pub use async_storage::{
@@ -95,8 +96,9 @@ pub use retention::{
     RetentionPinGuard,
 };
 pub use scheduler::{
-    PreparedSchedulerWrite, SchedulerWrite, SchedulerWriteOutcomeStore,
-    SchedulerWriteReconciliation, SchedulerWriteResult, SchedulerWriteStore,
+    PreparedScheduleBatch, PreparedSchedulerWrite, ScheduleBatchReconciliation, SchedulerWrite,
+    SchedulerWriteOutcomeStore, SchedulerWriteReconciliation, SchedulerWriteResult,
+    SchedulerWriteStore,
 };
 pub use simulation::{
     DeterministicHarness, FaultInjector, FaultOccurrence, FaultPoint, GeneratedTaskHistory,
@@ -141,6 +143,7 @@ pub use traits::{
     SchedulerStore, StorageEngine, TenantKvStore, TenantLifecycle, TenantPointRead,
     TenantPointWrite, TenantRangeScan,
 };
+pub use trigger_invocation_transition::TriggerInvocationTransitionStore;
 pub use usage_store::{MonthlyActiveUsersSnapshot, UsageStore};
 
 #[cfg(test)]

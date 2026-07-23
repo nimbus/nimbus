@@ -229,6 +229,8 @@ assert_contains "${repo_root}/compose.test-external-providers.yaml" "image: mysq
 assert_contains "${repo_root}/compose.test-external-providers.yaml" "--innodb-redo-log-capacity=536870912"
 assert_contains "${repo_root}/compose.test-external-providers.yaml" "image: ghcr.io/tursodatabase/libsql-server:v0.24.33"
 assert_contains "${repo_root}/compose.test-external-providers.yaml" "127.0.0.1:\${NIMBUS_PROVIDER_FIXTURE_MYSQL_PORT:-3306}:3306"
+assert_contains "${repo_root}/Makefile" 'test-external-provider: $(UI_DIST_INDEX) $(EMBEDDED_PKG_MANIFEST)'
+assert_contains "${repo_root}/Makefile" 'test-external-providers: $(UI_DIST_INDEX) $(EMBEDDED_PKG_MANIFEST)'
 assert_not_contains "${repo_root}/Cargo.toml" "testcontainers-modules"
 assert_not_contains "${repo_root}/crates/nimbus-storage/Cargo.toml" "testcontainers-modules"
 assert_not_contains "${repo_root}/crates/nimbus-engine/Cargo.toml" "testcontainers-modules"

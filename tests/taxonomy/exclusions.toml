@@ -43,6 +43,15 @@ owner = "parallel-prepare-serial-commit"
 issue = "docs/private/plans/parallel-prepare-serial-commit-plan.md#u8c--1000-seed-ci-farm-retained-regressions-and-performance-closeout"
 
 [[exclusions]]
+pattern = "test(/elle_serializable_check_passes$/)"
+scope = "ignored"
+reason = "external-service"
+evidence = "The ignored Engine wrapper is the dedicated pinned Elle 0.1.9 serializability proof; make verify-elle-serializability verifies both release checksums, requires Java, rejects zero-test selection, and invokes only this entrypoint."
+measured_at = "2026-07-23"
+owner = "parallel-prepare-serial-commit"
+issue = "docs/private/plans/parallel-prepare-serial-commit-plan.md#u9-final-audit-closeout-and-archive"
+
+[[exclusions]]
 pattern = "test(/runtime::tests::node_compat::/)"
 scope = "ignored"
 reason = "heavy-resource"

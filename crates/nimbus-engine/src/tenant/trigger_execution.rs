@@ -227,9 +227,15 @@ fn run_trigger_execution_worker(
             match record.state {
                 TriggerInvocationState::Pending | TriggerInvocationState::RetryPending { .. } => {
                     record.begin_attempt(clock.now())?;
-                    runtime.store.save_trigger_invocation(&record)?;
+                    runtime.persist_trigger_invocation_transition(&record)?;
                 }
-                TriggerInvocationState::Running { .. } => {}
+                TriggerInvocationState::Running { .. } => {
+                    // A Running record is crash/takeover replay. Persisting the
+                    // identical record is an idempotent durable claim that
+                    // proves this worker still owns the provider lease before
+                    // it can invoke the external handler.
+                    runtime.persist_trigger_invocation_transition(&record)?;
+                }
                 _ => return Ok(None),
             }
             Ok(Some(record))
@@ -238,6 +244,14 @@ fn run_trigger_execution_worker(
         let mut record = match pre_execution {
             Ok(Some(record)) => record,
             Ok(None) => continue,
+            Err(error) if matches!(error, nimbus_core::Error::CommitterFenced { .. }) => {
+                warn!(
+                    error = %error,
+                    key = ?key,
+                    "trigger execution worker lost tenant authority before handler execution"
+                );
+                continue;
+            }
             Err(error) => {
                 requeue_for_store_retry(&queue, &key, clock.as_ref(), &error);
                 continue;
@@ -321,17 +335,28 @@ fn requeue_for_store_retry(
 /// and never double-executes.
 ///
 /// Returns whether the outcome was durably saved.
-fn persist_execution_outcome(runtime: &TenantRuntime, record: &TriggerInvocationRecord) -> bool {
+fn persist_execution_outcome(
+    runtime: &Arc<TenantRuntime>,
+    record: &TriggerInvocationRecord,
+) -> bool {
     for attempt in 1..=TRIGGER_EXECUTION_OUTCOME_SAVE_MAX_ATTEMPTS {
         let result: nimbus_core::Result<()> = (|| {
             runtime
                 .store
                 .check_fault(FaultPoint::TriggerExecutionBeforeSave)?;
-            runtime.store.save_trigger_invocation(record)?;
+            runtime.persist_trigger_invocation_transition(record)?;
             Ok(())
         })();
         match result {
             Ok(()) => return true,
+            Err(error) if matches!(error, nimbus_core::Error::CommitterFenced { .. }) => {
+                warn!(
+                    error = %error,
+                    key = ?record.key,
+                    "trigger execution worker lost tenant authority while persisting the computed outcome"
+                );
+                return false;
+            }
             Err(error) if attempt < TRIGGER_EXECUTION_OUTCOME_SAVE_MAX_ATTEMPTS => {
                 warn!(
                     error = %error,

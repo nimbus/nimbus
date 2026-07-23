@@ -3,7 +3,7 @@ use nimbus_core::{CronJob, DocumentId, Result, ScheduledJob, ScheduledJobResult,
 use super::{SchedulerWrite, SchedulerWriteResult};
 use crate::{
     LibsqlReplicaTenantStore, MemoryTenantStore, MySqlTenantStore, PostgresTenantStore,
-    SqliteTenantStore, TenantStore,
+    ResolvedScheduleOp, SqliteTenantStore, TenantStore,
 };
 
 /// Durable scheduler state needed to decide whether a failed write committed.
@@ -44,9 +44,37 @@ impl PreparedSchedulerWrite {
     }
 }
 
+/// A schedule-only execution-unit batch plus the exact scheduler state needed
+/// to classify a lost commit acknowledgement.
+///
+/// Unlike a normal mutation commit, this batch does not advance the mutation
+/// journal. Its generated job ids and cancelled job ids are therefore the
+/// authoritative outcome evidence. The engine holds one tenant committer
+/// authority while preparing and persisting this value, so an observation
+/// that matches neither endpoint is ambiguous and requires recovery.
+#[derive(Clone, Debug)]
+pub struct PreparedScheduleBatch {
+    operations: Vec<ResolvedScheduleOp>,
+    before: SchedulerWriteSnapshot,
+    intended: SchedulerWriteSnapshot,
+}
+
+impl PreparedScheduleBatch {
+    pub fn operations(&self) -> Vec<ResolvedScheduleOp> {
+        self.operations.clone()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum SchedulerWriteReconciliation {
     Committed(SchedulerWriteResult),
+    RolledBack,
+    Ambiguous,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ScheduleBatchReconciliation {
+    Committed,
     RolledBack,
     Ambiguous,
 }
@@ -61,6 +89,16 @@ pub trait SchedulerWriteOutcomeStore {
         &self,
         prepared: &PreparedSchedulerWrite,
     ) -> Result<SchedulerWriteReconciliation>;
+
+    fn prepare_schedule_batch(
+        &self,
+        operations: &[ResolvedScheduleOp],
+    ) -> Result<PreparedScheduleBatch>;
+
+    fn reconcile_schedule_batch(
+        &self,
+        prepared: &PreparedScheduleBatch,
+    ) -> Result<ScheduleBatchReconciliation>;
 }
 
 trait SchedulerStateReader {
@@ -98,6 +136,79 @@ fn reconcile(
         return Ok(SchedulerWriteReconciliation::RolledBack);
     }
     Ok(SchedulerWriteReconciliation::Ambiguous)
+}
+
+fn prepare_batch(
+    store: &impl SchedulerStateReader,
+    operations: &[ResolvedScheduleOp],
+) -> Result<PreparedScheduleBatch> {
+    let before = schedule_batch_snapshot(store, operations)?;
+    let intended = apply_schedule_batch_intended(before.clone(), operations);
+    Ok(PreparedScheduleBatch {
+        operations: operations.to_vec(),
+        before,
+        intended,
+    })
+}
+
+fn reconcile_batch(
+    store: &impl SchedulerStateReader,
+    prepared: &PreparedScheduleBatch,
+) -> Result<ScheduleBatchReconciliation> {
+    let observed = schedule_batch_snapshot(store, &prepared.operations)?;
+    // Reconciliation is entered only after the write returned an error. Check
+    // the pre-state first so an operation with identical before/intended
+    // endpoints (for example cancelling an absent job) cannot turn a
+    // rolled-back definitive error into a false committed acknowledgement.
+    if observed == prepared.before {
+        return Ok(ScheduleBatchReconciliation::RolledBack);
+    }
+    if observed == prepared.intended {
+        return Ok(ScheduleBatchReconciliation::Committed);
+    }
+    Ok(ScheduleBatchReconciliation::Ambiguous)
+}
+
+fn schedule_batch_snapshot(
+    store: &impl SchedulerStateReader,
+    operations: &[ResolvedScheduleOp],
+) -> Result<SchedulerWriteSnapshot> {
+    let mut job_ids = Vec::with_capacity(operations.len());
+    for operation in operations {
+        let job_id = match operation {
+            ResolvedScheduleOp::Insert { job } => &job.id,
+            ResolvedScheduleOp::Cancel { job_id } => job_id,
+        };
+        if !job_ids.contains(job_id) {
+            job_ids.push(job_id.clone());
+        }
+    }
+    let (mut pending, mut running) = jobs_by_id(store, &job_ids, true, true)?;
+    sort_jobs(&mut pending);
+    sort_jobs(&mut running);
+    Ok(SchedulerWriteSnapshot {
+        pending,
+        running,
+        result: None,
+        cron: None,
+    })
+}
+
+fn apply_schedule_batch_intended(
+    mut state: SchedulerWriteSnapshot,
+    operations: &[ResolvedScheduleOp],
+) -> SchedulerWriteSnapshot {
+    for operation in operations {
+        match operation {
+            ResolvedScheduleOp::Insert { job } => state.pending.push(job.clone()),
+            ResolvedScheduleOp::Cancel { job_id } => {
+                state.pending.retain(|job| &job.id != job_id);
+            }
+        }
+    }
+    sort_jobs(&mut state.pending);
+    sort_jobs(&mut state.running);
+    state
 }
 
 fn prepare_snapshot(
@@ -322,6 +433,20 @@ macro_rules! impl_scheduler_state_reader {
             ) -> Result<SchedulerWriteReconciliation> {
                 reconcile(self, prepared)
             }
+
+            fn prepare_schedule_batch(
+                &self,
+                operations: &[ResolvedScheduleOp],
+            ) -> Result<PreparedScheduleBatch> {
+                prepare_batch(self, operations)
+            }
+
+            fn reconcile_schedule_batch(
+                &self,
+                prepared: &PreparedScheduleBatch,
+            ) -> Result<ScheduleBatchReconciliation> {
+                reconcile_batch(self, prepared)
+            }
         }
     };
 }
@@ -511,6 +636,114 @@ mod tests {
                 .reconcile_scheduler_write(&prepared)
                 .expect("conflicting state should remain readable"),
             SchedulerWriteReconciliation::Ambiguous
+        );
+    }
+
+    #[test]
+    fn schedule_batch_outcome_contract_proves_rollback_and_commit() {
+        let store = TenantStore::create_in_memory().expect("store should open");
+        let cancelled = job("batch-cancelled", 10);
+        store
+            .scheduler_write_cancellable(SchedulerWrite::Insert(cancelled.clone()), || Ok(()))
+            .expect("cancellation target should seed");
+        let inserted = job("batch-inserted", 20);
+        let operations = vec![
+            ResolvedScheduleOp::Insert {
+                job: inserted.clone(),
+            },
+            ResolvedScheduleOp::Cancel {
+                job_id: cancelled.id.clone(),
+            },
+        ];
+
+        let prepared = store
+            .prepare_schedule_batch(&operations)
+            .expect("schedule batch pre-state should read");
+        assert_eq!(
+            store
+                .reconcile_schedule_batch(&prepared)
+                .expect("unchanged batch state should reconcile"),
+            ScheduleBatchReconciliation::RolledBack
+        );
+
+        store
+            .schedule_batch_cancellable(&operations, || Ok(()))
+            .expect("schedule batch should commit atomically");
+        assert_eq!(
+            store
+                .reconcile_schedule_batch(&prepared)
+                .expect("committed batch state should reconcile"),
+            ScheduleBatchReconciliation::Committed
+        );
+        assert_eq!(
+            store
+                .list_scheduled_jobs()
+                .expect("batch jobs should remain readable"),
+            vec![inserted]
+        );
+    }
+
+    #[test]
+    fn schedule_batch_outcome_contract_detects_ambiguity_and_cancellation() {
+        let store = TenantStore::create_in_memory().expect("store should open");
+        let intended = job("batch-collision", 10);
+        let operations = vec![ResolvedScheduleOp::Insert {
+            job: intended.clone(),
+        }];
+        let prepared = store
+            .prepare_schedule_batch(&operations)
+            .expect("schedule batch pre-state should read");
+
+        let cancelled = store
+            .schedule_batch_cancellable(&operations, || Err(nimbus_core::Error::Cancelled))
+            .expect_err("pre-commit cancellation should abort the batch");
+        assert!(matches!(cancelled, nimbus_core::Error::Cancelled));
+        assert_eq!(
+            store
+                .reconcile_schedule_batch(&prepared)
+                .expect("cancelled state should remain readable"),
+            ScheduleBatchReconciliation::RolledBack
+        );
+
+        let mut conflicting = intended;
+        conflicting.run_at = Timestamp(11);
+        store
+            .scheduler_write_cancellable(SchedulerWrite::Insert(conflicting), || Ok(()))
+            .expect("conflicting state should commit for reconciliation test");
+        assert_eq!(
+            store
+                .reconcile_schedule_batch(&prepared)
+                .expect("conflicting batch state should remain readable"),
+            ScheduleBatchReconciliation::Ambiguous
+        );
+    }
+
+    #[test]
+    fn schedule_batch_outcome_contract_does_not_claim_endpoint_collision_committed() {
+        let store = TenantStore::create_in_memory().expect("store should open");
+        let missing_job_id = job("batch-missing-cancel", 10).id;
+        let operations = vec![ResolvedScheduleOp::Cancel {
+            job_id: missing_job_id.clone(),
+        }];
+        let prepared = store
+            .prepare_schedule_batch(&operations)
+            .expect("missing cancellation pre-state should read");
+        assert_eq!(
+            prepared.before, prepared.intended,
+            "cancelling an absent job has identical observable endpoints"
+        );
+        assert!(matches!(
+            store
+                .schedule_batch_cancellable(&operations, || Ok(()))
+                .expect_err("cancelling an absent job must roll back"),
+            nimbus_core::Error::ScheduledJobNotFound(job_id) if job_id == missing_job_id
+        ));
+        assert_eq!(
+            store
+                .reconcile_schedule_batch(&prepared)
+                .expect("rolled-back endpoint collision should remain readable"),
+            ScheduleBatchReconciliation::RolledBack,
+            "identical before/intended endpoints cannot prove a commit after an error"
         );
     }
 }

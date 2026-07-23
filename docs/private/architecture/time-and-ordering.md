@@ -57,6 +57,13 @@ running jobs. These observations are serialized by the tenant committer and,
 for external providers, protected by the same held lease that fences the
 following transaction.
 
+An execution unit containing only schedule operations uses the same rule for
+the complete batch. It allocates no durable mutation sequence, but the provider
+transaction validates `(owner_id, epoch, expected durable head)` atomically
+with every schedule effect. An error is classified by comparing the entire
+affected batch with its captured pre-state and intended post-state; a mixed or
+unreadable batch is ambiguous and forces durable recovery.
+
 Convex `runAt` adapters pass the requested absolute timestamp into the Engine.
 They do not convert it to a relative delay outside the Engine, including inside
 a mutation execution unit where the scheduled write must commit or roll back
@@ -95,6 +102,16 @@ local safety budget:
 Platform suspension can consume the entire local safety budget. Nimbus never
 interprets a recent local observation as proof that a distributed lease is
 still valid; every protected provider operation remains epoch-fenced.
+
+Trigger-invocation lifecycle records follow that same provider authority even
+though they do not advance the mutation journal. Begin-attempt, takeover claim,
+retry, completion, and terminal-failure transitions are complete-record,
+idempotent replacements serialized through the committer. The provider
+transaction validates the held lease and current durable head with the record
+replacement. After an external handler runs, acknowledgement loss retries only
+the already-computed record; it never re-runs the handler in the same attempt.
+Crash or lease takeover may replay a durable `Running` record, so the external
+delivery contract remains explicitly at-least-once rather than exactly-once.
 
 ## Distributed activation gates
 

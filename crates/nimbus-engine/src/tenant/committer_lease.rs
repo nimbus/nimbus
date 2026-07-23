@@ -266,6 +266,75 @@ impl TenantRuntime {
         ))
     }
 
+    /// Persists an execution unit whose only durable effects are scheduler
+    /// operations.
+    ///
+    /// No mutation sequence is allocated, but provider-backed tenants still
+    /// require the current lease to be validated in the same transaction as
+    /// the complete schedule batch. Because there is no journal head change
+    /// to probe after acknowledgement loss, the scheduler pre/post-state seam
+    /// supplies the authoritative outcome evidence.
+    pub(crate) fn persist_schedule_only_execution_unit(
+        &self,
+        expected_durable_sequence: nimbus_core::SequenceNumber,
+        schedule_ops: &[nimbus_storage::ResolvedScheduleOp],
+    ) -> Result<Option<nimbus_core::CommitEntry>> {
+        let Some((owner_id, epoch)) = self.held_committer_lease()? else {
+            self.store
+                .schedule_batch_cancellable(schedule_ops, || Ok(()))?;
+            return Ok(None);
+        };
+
+        let prepared = self.store.prepare_schedule_batch(schedule_ops)?;
+        let shutdown = self.committer_shutdown_token();
+        let result = self.store.fenced_schedule_batch_cancellable(
+            &owner_id,
+            epoch,
+            expected_durable_sequence,
+            schedule_ops,
+            move || {
+                if shutdown.is_cancelled() {
+                    Err(Error::Cancelled)
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        let write_error = match result {
+            Ok(()) => return Ok(None),
+            Err(CommitterLeaseError::Fenced { owner_id, epoch }) => {
+                self.record_committer_fenced(owner_id.clone(), epoch);
+                return Err(Error::CommitterFenced { owner_id, epoch });
+            }
+            Err(CommitterLeaseError::Storage(error)) => error,
+            Err(CommitterLeaseError::Held | CommitterLeaseError::Unsupported) => {
+                return Err(Error::Internal(
+                    "provider schedule-only execution unit requires fenced batch support"
+                        .to_string(),
+                ));
+            }
+        };
+
+        match self.store.reconcile_schedule_batch(&prepared) {
+            Ok(nimbus_storage::ScheduleBatchReconciliation::Committed) => Ok(None),
+            Ok(nimbus_storage::ScheduleBatchReconciliation::RolledBack) => Err(write_error),
+            Ok(nimbus_storage::ScheduleBatchReconciliation::Ambiguous) => {
+                let error = Error::Internal(format!(
+                    "schedule-only execution-unit outcome is ambiguous; crash-and-replay required after persistence failed ({write_error})"
+                ));
+                self.begin_scheduler_durable_recovery(&error, Arc::new(AtomicBool::new(false)));
+                Err(error)
+            }
+            Err(progress_error) => {
+                let error = Error::Internal(format!(
+                    "schedule-only execution-unit outcome is ambiguous; crash-and-replay required after persistence failed ({write_error}) and scheduler state could not be read ({progress_error})"
+                ));
+                self.begin_scheduler_durable_recovery(&error, Arc::new(AtomicBool::new(false)));
+                Err(error)
+            }
+        }
+    }
+
     pub(crate) fn persist_table_schema(
         &self,
         expected_previous: nimbus_core::SequenceNumber,
@@ -347,6 +416,49 @@ impl TenantRuntime {
             expected_previous,
             records,
             cursor,
+        ))
+    }
+
+    /// Persists one trigger attempt transition under current tenant authority.
+    ///
+    /// The complete record replacement is idempotent, so acknowledgement loss
+    /// may retry the same transition without re-running the handler. Provider
+    /// adapters validate the held lease and durable head in the transaction
+    /// that saves the record; embedded adapters retain process-local
+    /// authority and use the same interface without a lease lookup.
+    pub(crate) fn persist_trigger_invocation_transition(
+        self: &Arc<Self>,
+        record: &nimbus_core::TriggerInvocationRecord,
+    ) -> Result<()> {
+        let runtime = self.clone();
+        let record = record.clone();
+        self.submit_internal_committer(move || {
+            runtime.persist_trigger_invocation_transition_once(&record)
+        })
+    }
+
+    /// Runs inside the tenant committer actor.
+    ///
+    /// Serializing the provider head observation with mutation, scheduler, and
+    /// execution-unit commits prevents a same-owner journal advance from being
+    /// misclassified as lease loss between the local head read and the
+    /// provider transaction's validation.
+    fn persist_trigger_invocation_transition_once(
+        self: &Arc<Self>,
+        record: &nimbus_core::TriggerInvocationRecord,
+    ) -> Result<()> {
+        self.ensure_committer_lease_for_assignment()?;
+        let Some((owner_id, epoch)) = self.held_committer_lease()? else {
+            return self.store.persist_trigger_invocation_transition(record);
+        };
+        let expected_durable_sequence = self.durable_head();
+        self.store
+            .check_fault(nimbus_storage::FaultPoint::TriggerTransitionAfterHeadObservation)?;
+        self.map_fenced_write_result(self.store.persist_fenced_trigger_invocation_transition(
+            &owner_id,
+            epoch,
+            expected_durable_sequence,
+            record,
         ))
     }
 
