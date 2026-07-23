@@ -16,7 +16,10 @@ mod timing;
 mod websocket_fixture;
 
 pub use bounded_barrier::BoundedTestBarrier;
-pub use elle::{ElleEventType, ElleHistoryRecorder, ElleListAppendOp, validate_elle_edn_history};
+pub use elle::{
+    ElleEventType, ElleHistoryRecorder, ElleListAppendOp, validate_elle_cli_result,
+    validate_elle_edn_history,
+};
 pub use engine_fixture::EngineFixture;
 pub use eventual::{wait_for_condition, wait_for_value};
 pub use faults::{ArmedBlockingFaultInjector, BlockingFaultInjector, CountedFaultInjector};

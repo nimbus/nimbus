@@ -161,11 +161,14 @@ impl MutationExecutionUnit {
                             schedule_ops,
                             None,
                         ),
-                        // Schedule-only units append no durable record under the
-                        // established contract, so no sequence fence is needed.
+                        // Schedule-only units append no durable record and do
+                        // not advance the mutation sequence, but provider
+                        // durability still belongs to the current lease holder.
+                        // This interface validates that lease atomically with
+                        // the complete scheduler batch and reconciles lost
+                        // acknowledgements from scheduler state.
                         None => runtime
-                            .store
-                            .apply_prepared_execution_unit_batch(None, schedule_ops),
+                            .persist_schedule_only_execution_unit(previous_sequence, schedule_ops),
                     };
                     let commit = match commit_result {
                         Ok(commit) => commit,

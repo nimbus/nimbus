@@ -21,6 +21,7 @@ pub enum FaultPoint {
     ScheduledJobCompleteBeforeWrite = 10,
     TriggerExecutionBeforeSave = 11,
     TenantCreateBeforeRegistration = 12,
+    TriggerTransitionAfterHeadObservation = 13,
 }
 
 impl FaultPoint {
@@ -44,6 +45,9 @@ impl FaultPoint {
             Self::ScheduledJobCompleteBeforeWrite => "scheduled_job_complete_before_write",
             Self::TriggerExecutionBeforeSave => "trigger_execution_before_save",
             Self::TenantCreateBeforeRegistration => "tenant_create_before_registration",
+            Self::TriggerTransitionAfterHeadObservation => {
+                "trigger_transition_after_head_observation"
+            }
         }
     }
 }

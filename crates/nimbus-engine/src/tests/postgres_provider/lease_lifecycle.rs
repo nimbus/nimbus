@@ -2,6 +2,7 @@ use nimbus_core::{
     ManualWallClock, PrincipalContext, SequenceNumber, TenantEventKind, TenantEventRecord,
     TriggerDeliveryCursor,
 };
+use nimbus_storage::provider_test_fixtures::PostgresLeaseTimeControl;
 use nimbus_storage::{FaultInjector, FaultPoint, NoopFaultInjector};
 
 use super::support::*;
@@ -121,6 +122,8 @@ fn title(value: &str) -> serde_json::Map<String, serde_json::Value> {
     serde_json::Map::from_iter([("title".to_string(), json!(value))])
 }
 
+#[path = "lease_lifecycle/internal_durable_jobs.rs"]
+mod internal_durable_jobs;
 #[path = "lease_lifecycle/ordered_arm.rs"]
 mod ordered_arm;
 

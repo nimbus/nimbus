@@ -103,6 +103,18 @@ discussion, not a workaround.
    There is no side channel, and no fourth path may be added. Every one of
    these routes must classify an ambiguous durable outcome the same way — see
    the crash-and-replay obligation in the mutation-path docs.
+
+   Sequence-adjacent durable state is not a fourth mutation path. Schema
+   set/delete, restore/import, trigger-delivery cursor materialization,
+   scheduler transitions, trigger-invocation lifecycle transitions, and
+   system projections execute as internal jobs behind the same per-tenant
+   committer authority. On external providers, the lease epoch and expected
+   durable head are validated in the same transaction as each protected
+   effect. Schedule-only execution units and trigger lifecycle transitions do
+   not advance the mutation journal, but they are still fenced at its current
+   head. Acknowledgement loss is reconciled from exact pre/post scheduler state
+   or retried as the identical complete trigger record; a mixed or unreadable
+   outcome fails closed into tenant recovery.
 4. **Storage commits are atomic.** The document write, its supporting index
    effects, and the commit-log append happen in one storage transaction.
    Never a document without its index entries; never a commit entry without

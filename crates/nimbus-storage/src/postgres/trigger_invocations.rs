@@ -77,6 +77,32 @@ impl PostgresTenantStore {
         self.execute_write(move |transaction| transaction.save_trigger_invocation(&record))?;
         Ok(())
     }
+
+    pub fn fenced_save_trigger_invocation(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        expected_durable_sequence: SequenceNumber,
+        record: &TriggerInvocationRecord,
+    ) -> CommitterLeaseResult<()> {
+        let owner_id = owner_id.to_string();
+        let fenced_owner_id = owner_id.clone();
+        let record = record.clone();
+        let result = self.execute_write(move |transaction| {
+            if transaction.validate_fenced_committer_lease(
+                &owner_id,
+                epoch,
+                expected_durable_sequence,
+            )? != 1
+            {
+                return Err(Error::PreconditionFailed(
+                    super::write::FENCED_COMMITTER_LEASE_MARKER.to_string(),
+                ));
+            }
+            transaction.save_trigger_invocation(&record)
+        });
+        super::write::map_fenced_write_result(result.map(|_| ()), fenced_owner_id, epoch)
+    }
 }
 
 impl PostgresWriteTransaction {

@@ -72,7 +72,11 @@ pub(crate) use ppsc::{
 pub(crate) use provider_fixtures::expect_external_provider_future_within;
 pub(crate) use provider_publisher_contract::{
     ProviderPipelineExpectation, exercise_provider_publisher_contract,
+    exercise_provider_schedule_only_execution_unit_fence_contract,
     exercise_provider_scheduler_fence_contract,
+    exercise_provider_trigger_invocation_fence_contract,
+    exercise_provider_trigger_outcome_acknowledgement_loss_contract,
+    exercise_provider_trigger_transition_serialization_contract,
 };
 
 pub(crate) fn tasks_table() -> TableName {

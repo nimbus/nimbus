@@ -109,6 +109,60 @@ async fn mysql_scheduler_writes_are_atomically_fenced() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(mysql_provider)]
+async fn mysql_schedule_only_execution_unit_rejects_stale_provider_holder() {
+    with_shared_mysql_engine_configs(
+        |engine_config_a, engine_config_b, provider_config| async move {
+            let engine_a = Arc::new(
+                Engine::new_with_persistence_config(engine_config_a)
+                    .await
+                    .expect("first mysql-backed engine should create"),
+            );
+            let engine_b = Arc::new(
+                Engine::new_with_persistence_config(engine_config_b)
+                    .await
+                    .expect("second mysql-backed engine should create"),
+            );
+            exercise_provider_schedule_only_execution_unit_fence_contract(
+                engine_a,
+                engine_b,
+                TenantId::new("mysql-fence-schedule-only-unit").expect("tenant id should build"),
+                Arc::new(MySqlLeaseTimeControl::new(provider_config)),
+            )
+            .await;
+        },
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial(mysql_provider)]
+async fn mysql_stale_trigger_outcome_cannot_overwrite_successor_state() {
+    with_shared_mysql_engine_configs(
+        |engine_config_a, engine_config_b, provider_config| async move {
+            let engine_a = Arc::new(
+                Engine::new_with_persistence_config(engine_config_a)
+                    .await
+                    .expect("first mysql-backed engine should create"),
+            );
+            let engine_b = Arc::new(
+                Engine::new_with_persistence_config(engine_config_b)
+                    .await
+                    .expect("second mysql-backed engine should create"),
+            );
+            exercise_provider_trigger_invocation_fence_contract(
+                engine_a,
+                engine_b,
+                TenantId::new("mysql-fence-trigger-lifecycle").expect("tenant id should build"),
+                Arc::new(MySqlLeaseTimeControl::new(provider_config)),
+            )
+            .await;
+        },
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial(mysql_provider)]
 async fn mysql_tenant_creation_async_contract() {
     with_mysql_engine_config(|engine_config, _provider_config| async move {
         let tenant_id = TenantId::new("mysql-tenant").expect("tenant id should build");

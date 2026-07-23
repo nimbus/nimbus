@@ -36,6 +36,33 @@ impl TenantPersistence {
         match_tenant_persistence!(self, |store| { store.reconcile_scheduler_write(prepared) })
     }
 
+    pub(crate) fn prepare_schedule_batch(
+        &self,
+        operations: &[ResolvedScheduleOp],
+    ) -> Result<nimbus_storage::PreparedScheduleBatch> {
+        match_tenant_persistence!(self, |store| { store.prepare_schedule_batch(operations) })
+    }
+
+    pub(crate) fn reconcile_schedule_batch(
+        &self,
+        prepared: &nimbus_storage::PreparedScheduleBatch,
+    ) -> Result<nimbus_storage::ScheduleBatchReconciliation> {
+        match_tenant_persistence!(self, |store| { store.reconcile_schedule_batch(prepared) })
+    }
+
+    pub(crate) fn schedule_batch_cancellable<Check>(
+        &self,
+        operations: &[ResolvedScheduleOp],
+        check_cancel: Check,
+    ) -> Result<()>
+    where
+        Check: Fn() -> Result<()> + Send + 'static,
+    {
+        match_tenant_persistence!(self, |store| {
+            store.schedule_batch_cancellable(operations, check_cancel)
+        })
+    }
+
     pub(crate) fn fenced_scheduler_write_cancellable<Check>(
         &self,
         owner_id: &str,
@@ -53,6 +80,28 @@ impl TenantPersistence {
                 epoch,
                 expected_durable_sequence,
                 operation,
+                check_cancel,
+            )
+        })
+    }
+
+    pub(crate) fn fenced_schedule_batch_cancellable<Check>(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        expected_durable_sequence: SequenceNumber,
+        operations: &[ResolvedScheduleOp],
+        check_cancel: Check,
+    ) -> nimbus_storage::CommitterLeaseResult<()>
+    where
+        Check: Fn() -> Result<()> + Send + 'static,
+    {
+        match_tenant_persistence!(self, |store| {
+            store.fenced_schedule_batch_cancellable(
+                owner_id,
+                epoch,
+                expected_durable_sequence,
+                operations,
                 check_cancel,
             )
         })
