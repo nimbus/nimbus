@@ -104,6 +104,7 @@ sources exist.
 | `developers/cloud-functions/index.md` | Artifact set `artifact.json`/`targets.json`/`bundle.mjs`/`bundle.sha256` | `crates/nimbus-cloud-functions/src/lib.rs` |
 | `developers/cloud-functions/index.md` | Authoring needs Node 22 or newer: external Node major below 22 rejected, 22 exact, newer majors allowed with a warning | `crates/nimbus-cli/src/node_runtime.rs` |
 | `developers/cloud-functions/migrate.md` | Version-1 `targets.json` schema; service-account execution for Firestore bindings | `crates/nimbus-cloud-functions/src/lib.rs`, `packages/codegen/src/selftest/cloud_functions_fixtures.mjs` |
+| `developers/cloud-functions/migrate.md` | Cloud Functions HTTP deployment→tenant binding; missing binding refused at startup/deploy; `nimbus dev` auto-tenant binding | `crates/nimbus-cloud-functions/src/http/tenant_binding.rs`, `crates/nimbus-cli/src/start/adapters/cloud_functions.rs`, `crates/nimbus-compute/src/deploy.rs` |
 | `developers/cloud-functions/migrate.md` | `nimbus deploy` positional `TARGET`/`--token` + env vars | `crates/nimbus-cli/src/deploy.rs` |
 | `reference/cloud-functions/compatibility.md` | Path rules; at-least-once delivery, replay, chain-depth limit | `packages/codegen/src/cloud_functions/runtime_sources.mjs`, `crates/nimbus-engine/src/triggers/execution.rs`, `crates/nimbus-server/src/adapters/cloud_functions/execution.rs` |
 | `reference/cloud-functions/compatibility.md` | Admin slice coverage; options matrix; callable envelope | `crates/nimbus-cloud-functions/src/runtime_api/firebase_admin/firestore.rs`, `crates/nimbus-server/src/adapters/cloud_functions/http/callable.rs` |
@@ -265,6 +266,7 @@ sources exist.
 | `reference/configuration.md` | Compose-file discovery order and `.git` boundary | `crates/nimbus-cli/src/compose/discovery.rs`, `crates/nimbus-cli/src/compose/file.rs` |
 | `reference/configuration.md` | License resolution: flag > env > XDG path > built-in community license | `crates/nimbus-cli/src/start/boot.rs`, `crates/nimbus-license/src/loading.rs`, `crates/nimbus-cli/src/dirs.rs` |
 | `reference/configuration.md` | `NIMBUS_DEPLOY_TOKEN` env-only enablement of the deploy admin API | `crates/nimbus-server/src/router.rs`, `crates/nimbus-operator/src/access_policy.rs` |
+| `reference/configuration.md` | `NIMBUS_CLOUD_FUNCTIONS_TENANT` trusted deployment→tenant binding for Cloud Functions HTTP targets | `crates/nimbus-cli/src/start/adapters/cloud_functions.rs`, `crates/nimbus-server/src/adapters/cloud_functions/http/tenant.rs` |
 | `reference/configuration.md` | `NIMBUS_TENANT_MUTATION_ISOLATE_CEILING` env-only per-tenant mutation-isolate admission cap; default 16 | `crates/nimbus-engine/src/tenant/mutation/isolate_admission.rs` |
 | `reference/configuration.md` | `_nimbus` table-projection per-tenant capacity/high-water defaults (1024/768) and process aggregate capacity/high-water defaults (8192/6144); cap breaches are non-blocking, scoped to the offending runtime enqueue, and caught up per table once capacity returns | `crates/nimbus-system/src/projection.rs` |
 

@@ -6,7 +6,7 @@ use nimbus_runtime::{
     RuntimeLimits, RuntimeScalingPlanSet,
 };
 
-use crate::adapters::cloud_functions::CloudFunctionsRegistry;
+use crate::adapters::cloud_functions::{CloudFunctionsHttpTenantBinding, CloudFunctionsRegistry};
 use crate::adapters::cloudflare::CloudflareConfig;
 use crate::adapters::convex::{ConvexRegistry, ConvexTenancyConfig};
 use crate::adapters::dynamodb::DynamoDbConfig;
@@ -83,6 +83,13 @@ impl ServeOptions {
         self.with_router_options(|options| {
             options.with_cloud_functions_registry(cloud_functions_registry)
         })
+    }
+
+    pub fn with_cloud_functions_http_tenant(
+        self,
+        binding: CloudFunctionsHttpTenantBinding,
+    ) -> Self {
+        self.with_router_options(|options| options.with_cloud_functions_http_tenant(binding))
     }
 
     pub fn with_firebase_config(self, firebase_config: FirebaseConfig) -> Self {

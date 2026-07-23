@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use nimbus_auth::ApplicationAuthVerifier;
-use nimbus_cloud_functions::CloudFunctionsRegistry;
+use nimbus_cloud_functions::{CloudFunctionsHttpTenantBinding, CloudFunctionsRegistry};
 use nimbus_convex::{ConvexRegistry, ConvexSiloAuthRegistry, ConvexTenancyConfig};
 use nimbus_firebase::FirebaseConfig;
 
@@ -14,6 +14,7 @@ pub struct DeploymentConfig {
     pub application_auth_verifier: Option<Arc<dyn ApplicationAuthVerifier>>,
     pub convex_silo_auth: ConvexSiloAuthRegistry,
     pub cloud_functions_registry: Option<CloudFunctionsRegistry>,
+    pub cloud_functions_http_tenant: Option<CloudFunctionsHttpTenantBinding>,
     pub cloudflare_config: Option<CloudflareConfig>,
     pub firebase_config: Option<FirebaseConfig>,
     pub convex_tenancy: Option<ConvexTenancyConfig>,
@@ -62,6 +63,14 @@ impl DeploymentConfig {
         cloud_functions_registry: CloudFunctionsRegistry,
     ) -> Self {
         self.cloud_functions_registry = Some(cloud_functions_registry);
+        self
+    }
+
+    pub fn with_cloud_functions_http_tenant(
+        mut self,
+        binding: CloudFunctionsHttpTenantBinding,
+    ) -> Self {
+        self.cloud_functions_http_tenant = Some(binding);
         self
     }
 

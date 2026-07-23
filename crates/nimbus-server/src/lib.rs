@@ -33,7 +33,7 @@ pub use nimbus_compute::machine_lifecycle;
 #[cfg(test)]
 use nimbus_compute::service_manager;
 
-pub use adapters::cloud_functions::CloudFunctionsRegistry;
+pub use adapters::cloud_functions::{CloudFunctionsHttpTenantBinding, CloudFunctionsRegistry};
 pub use adapters::cloudflare::{
     CloudflareBindingRegistry, CloudflareConfig, D1DatabaseBinding, DurableObjectBinding,
     KvNamespaceBinding, R2BucketBinding, WranglerConfigError,

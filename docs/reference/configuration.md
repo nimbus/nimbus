@@ -288,6 +288,7 @@ runs with the built-in community license.
 | Environment variable | Meaning |
 | --- | --- |
 | `NIMBUS_DEPLOY_TOKEN` | Enables the [deploy admin API](/reference/deploy-admin-api/) and sets the expected deploy bearer token. Unset, every deploy request returns `401`. |
+| `NIMBUS_CLOUD_FUNCTIONS_TENANT` | Binds every HTTP target in the active Cloud Functions deployment to one existing application tenant. Required by `nimbus start` when its app artifact contains HTTP targets; request paths never select a tenant. `nimbus dev` uses its auto-provisioned tenant instead. |
 | `NIMBUS_CONVEX_SILO` | Trusted silo for the Convex auth config loaded from a startup app directory, and the default for `nimbus deploy --convex-silo`. A Convex deploy requires this value or the flag. |
 | `NIMBUS_CONVEX_SILO_TEAMS` | Comma-separated `SILO:TEAM` bindings used only by explicit anonymous Convex access policy. |
 | `NIMBUS_CONVEX_ANONYMOUS_TEAM` | Explicitly assigns anonymous Convex requests to one team. Only silos assigned to the same team by `NIMBUS_CONVEX_SILO_TEAMS` are reachable anonymously. Unset is fail-closed. |

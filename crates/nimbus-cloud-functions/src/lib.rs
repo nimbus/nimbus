@@ -24,9 +24,9 @@ pub use app_contract::{
 pub use error::{CloudFunctionsCommitErrorVocabulary, cloud_functions_commit_error_vocabulary};
 pub use host_bridge::CloudFunctionsHostBridge;
 pub use http::{
-    CloudFunctionsHttpResponseParts, CloudFunctionsRuntimeContext, build_callable_request_args,
-    build_http_request_args, build_http_response_parts, header_value_contains, normalized_headers,
-    request_url,
+    CloudFunctionsHttpResponseParts, CloudFunctionsHttpTenantBinding, CloudFunctionsRuntimeContext,
+    build_callable_request_args, build_http_request_args, build_http_response_parts,
+    header_value_contains, normalized_headers, request_url,
 };
 pub use registry::CloudFunctionsRegistry;
 pub use runtime_invocation::{CloudFunctionsRuntimeInvocation, CloudFunctionsRuntimeInvoker};

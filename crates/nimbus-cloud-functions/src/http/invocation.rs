@@ -3,7 +3,7 @@ use std::sync::Arc;
 use nimbus_auth::normalize_principal_context;
 use nimbus_bridge::admission::RuntimeExecutionAdmission;
 use nimbus_bridge::{RuntimeHostInvocation, RuntimeHostScope};
-use nimbus_core::{InvocationAuth, Result, TenantId};
+use nimbus_core::{InvocationAuth, Result};
 use nimbus_engine::Engine;
 use nimbus_runtime::{InvocationKind, InvocationRequest};
 use nimbus_services::RuntimeServiceRegistry;
@@ -14,6 +14,7 @@ use nimbus_tenant::{
 use serde_json::Value;
 
 use super::response::{CloudFunctionsHttpResponseParts, build_http_response_parts};
+use super::tenant_binding::CloudFunctionsHttpTenantBinding;
 use crate::retry::execute_mutation_with_occ_retries;
 use crate::{
     CloudFunctionsHostBridge, CloudFunctionsRegistry, CloudFunctionsRuntimeInvocation,
@@ -47,7 +48,7 @@ impl CloudFunctionsRuntimeContext {
 pub struct CloudFunctionsHttpInvocation {
     pub registry: Arc<CloudFunctionsRegistry>,
     pub deployment_generation: u64,
-    pub tenant_id: TenantId,
+    pub tenant_binding: CloudFunctionsHttpTenantBinding,
     pub function_name: String,
     pub args: Value,
     pub auth: Option<InvocationAuth>,
@@ -61,12 +62,13 @@ pub fn execute_http_target(
     let CloudFunctionsHttpInvocation {
         registry,
         deployment_generation,
-        tenant_id,
+        tenant_binding,
         function_name,
         args,
         auth,
         server_request_id,
     } = invocation;
+    let tenant_id = tenant_binding.tenant_id().clone();
     let isolation = TenantIsolationContext::application(
         tenant_id.clone(),
         normalize_principal_context(auth.as_ref()),

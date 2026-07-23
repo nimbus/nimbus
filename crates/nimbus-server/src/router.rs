@@ -16,7 +16,7 @@ use nimbus_runtime::{
 use tower::ServiceBuilder;
 use tower_http::services::ServeDir;
 
-use crate::adapters::cloud_functions::CloudFunctionsRegistry;
+use crate::adapters::cloud_functions::{CloudFunctionsHttpTenantBinding, CloudFunctionsRegistry};
 use crate::adapters::cloudflare::CloudflareConfig;
 use crate::adapters::convex::{self, ConvexRegistry, ConvexSiloAuthRegistry, ConvexTenancyConfig};
 use crate::adapters::firebase::{self, FirebaseConfig};
@@ -104,6 +104,14 @@ impl RouterOptions {
         self.deployment = self
             .deployment
             .with_cloud_functions(cloud_functions_registry);
+        self
+    }
+
+    pub fn with_cloud_functions_http_tenant(
+        mut self,
+        binding: CloudFunctionsHttpTenantBinding,
+    ) -> Self {
+        self.deployment = self.deployment.with_cloud_functions_http_tenant(binding);
         self
     }
 
@@ -350,6 +358,15 @@ impl RouterBuildConfig {
     }
 
     #[cfg(test)]
+    pub(crate) fn with_cloud_functions_http_tenant(
+        mut self,
+        binding: CloudFunctionsHttpTenantBinding,
+    ) -> Self {
+        self.deployment = self.deployment.with_cloud_functions_http_tenant(binding);
+        self
+    }
+
+    #[cfg(test)]
     pub(crate) fn with_firebase(mut self, firebase_config: FirebaseConfig) -> Self {
         self.deployment = self.deployment.with_firebase(firebase_config);
         self
@@ -504,10 +521,16 @@ impl RouterBuildConfig {
             application_auth_verifier,
             convex_silo_auth,
             cloud_functions_registry,
+            cloud_functions_http_tenant,
             cloudflare_config,
             firebase_config,
             convex_tenancy,
         } = deployment;
+        // The deploy API can activate the first Cloud Functions registry after
+        // router construction. Mount its dynamic fallback whenever that API is
+        // available so activation cannot publish an unreachable HTTP target.
+        let cloud_functions_http_enabled =
+            cloud_functions_registry.is_some() || control_plane.deploy_admin_token().is_some();
         let cors_allowed_origins = transport.cors_allowed_origins().to_owned();
         let state = Arc::new(AppState::from_config(AppStateConfig {
             engine,
@@ -517,6 +540,7 @@ impl RouterBuildConfig {
                 application_auth_verifier,
                 convex_silo_auth,
                 cloud_functions_registry,
+                cloud_functions_http_tenant,
                 cloudflare_config,
                 firebase_config,
                 convex_tenancy,
@@ -606,9 +630,7 @@ impl RouterBuildConfig {
                 Box::new(ConvexHttpAdapter),
                 Box::new(FirebaseHttpAdapter::new(firebase_enabled, state.clone())),
                 Box::new(CloudflareHttpAdapter::new(cloudflare_config)),
-                Box::new(CloudFunctionsHttpAdapter::new(
-                    deployment.cloud_functions_registry().is_some(),
-                )),
+                Box::new(CloudFunctionsHttpAdapter::new(cloud_functions_http_enabled)),
             ],
         );
         router
