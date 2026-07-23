@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use nimbus_core::{Result, SystemWallClock, Timestamp, WallClock};
+use nimbus_core::{IdSource, Result, SystemIdSource, SystemWallClock, Timestamp, WallClock};
 use redb::backends::InMemoryBackend;
 
 use crate::RetentionFloor;
@@ -24,6 +24,20 @@ impl TenantStore {
         clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
     ) -> Result<Self> {
+        Self::open_with_simulation_and_id_source(
+            path,
+            clock,
+            fault_injector,
+            Arc::new(SystemIdSource),
+        )
+    }
+
+    pub fn open_with_simulation_and_id_source(
+        path: impl AsRef<Path>,
+        clock: Arc<dyn WallClock>,
+        fault_injector: Arc<dyn FaultInjector>,
+        id_source: Arc<dyn IdSource>,
+    ) -> Result<Self> {
         let path = path.as_ref();
         let total_started = Instant::now();
         let database_open_started = Instant::now();
@@ -42,6 +56,7 @@ impl TenantStore {
             db,
             clock,
             fault_injector,
+            id_source,
             retention_floor: RetentionFloor::new(),
             scan_metrics: Arc::new(ScanMetrics::new()),
         })
@@ -68,6 +83,22 @@ impl TenantStore {
         clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
     ) -> Result<Self> {
+        Self::open_encrypted_with_simulation_and_id_source(
+            path,
+            dek,
+            clock,
+            fault_injector,
+            Arc::new(SystemIdSource),
+        )
+    }
+
+    pub fn open_encrypted_with_simulation_and_id_source(
+        path: impl AsRef<Path>,
+        dek: &[u8; 32],
+        clock: Arc<dyn WallClock>,
+        fault_injector: Arc<dyn FaultInjector>,
+        id_source: Arc<dyn IdSource>,
+    ) -> Result<Self> {
         let path = path.as_ref();
         let total_started = Instant::now();
         let backend_open_started = Instant::now();
@@ -90,6 +121,7 @@ impl TenantStore {
             db,
             clock,
             fault_injector,
+            id_source,
             retention_floor: RetentionFloor::new(),
             scan_metrics: Arc::new(ScanMetrics::new()),
         })
@@ -106,6 +138,18 @@ impl TenantStore {
         clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
     ) -> Result<Self> {
+        Self::create_in_memory_with_simulation_and_id_source(
+            clock,
+            fault_injector,
+            Arc::new(SystemIdSource),
+        )
+    }
+
+    pub fn create_in_memory_with_simulation_and_id_source(
+        clock: Arc<dyn WallClock>,
+        fault_injector: Arc<dyn FaultInjector>,
+        id_source: Arc<dyn IdSource>,
+    ) -> Result<Self> {
         let db = redb::Database::builder()
             .create_with_backend(InMemoryBackend::new())
             .map_err(map_redb_error)?;
@@ -113,6 +157,7 @@ impl TenantStore {
             db,
             clock,
             fault_injector,
+            id_source,
             retention_floor: RetentionFloor::new(),
             scan_metrics: Arc::new(ScanMetrics::new()),
         })
@@ -133,6 +178,20 @@ impl TenantStore {
         clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
     ) -> Result<Self> {
+        Self::create_in_memory_encrypted_with_simulation_and_id_source(
+            dek,
+            clock,
+            fault_injector,
+            Arc::new(SystemIdSource),
+        )
+    }
+
+    pub fn create_in_memory_encrypted_with_simulation_and_id_source(
+        dek: &[u8; 32],
+        clock: Arc<dyn WallClock>,
+        fault_injector: Arc<dyn FaultInjector>,
+        id_source: Arc<dyn IdSource>,
+    ) -> Result<Self> {
         let backend = EncryptedMemoryBackend::new(dek).map_err(map_redb_error)?;
         let db = redb::Database::builder()
             .create_with_backend(backend)
@@ -141,6 +200,7 @@ impl TenantStore {
             db,
             clock,
             fault_injector,
+            id_source,
             retention_floor: RetentionFloor::new(),
             scan_metrics: Arc::new(ScanMetrics::new()),
         })
@@ -162,6 +222,7 @@ impl TenantStore {
             write_txn,
             self.clock.clone(),
             self.fault_injector.clone(),
+            self.id_source.clone(),
             check_cancel,
         ))
     }

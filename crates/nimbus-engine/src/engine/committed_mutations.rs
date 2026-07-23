@@ -528,6 +528,10 @@ impl Engine {
     /// accepted work drains, and exposes the failure in `MutationJournalStats`.
     /// Treat a poisoned dispatcher as a fatal health condition requiring
     /// operator intervention; already-durable observer events are not retried.
+    /// Live and catch-up delivery is de-duplicated within one loaded tenant
+    /// runtime. Provider processes may still observe the same durable source
+    /// record independently; observers that publish durable effects must use
+    /// the event's ordered [`ProjectionToken`] as their idempotency fence.
     pub fn install_committed_mutation_observer(
         &self,
         name: &'static str,
@@ -582,6 +586,9 @@ impl Engine {
         if observers.is_empty() {
             return;
         }
+        let Some(last_sequence) = applied.last().map(|commit| commit.sequence) else {
+            return;
+        };
         let projection_token = match runtime.projection_token() {
             Ok(token) => token,
             Err(error) => {
@@ -593,9 +600,19 @@ impl Engine {
                 return;
             }
         };
+        if !runtime.store.has_process_local_sequence_authority() {
+            let _ = self.enqueue_provider_live_commit_observers(
+                runtime,
+                observers,
+                applied,
+                projection_token,
+            );
+            return;
+        }
+        let claimed_through = runtime.claim_committed_mutation_observer_through(last_sequence);
         let events = applied
             .iter()
-            .filter(|commit| !commit.writes.is_empty())
+            .filter(|commit| commit.sequence > claimed_through && !commit.writes.is_empty())
             .cloned()
             .map(|commit| {
                 let mut affected_tables = commit.affected_tables().into_iter().collect::<Vec<_>>();
@@ -626,6 +643,41 @@ impl Engine {
         }
     }
 
+    /// Routes a provider's just-applied commits through the same durable-tail
+    /// owner as listener/reconnect catch-up.
+    ///
+    /// A process-local publisher may enqueue its applied batch directly
+    /// because it is the only sequence authority. A provider process cannot:
+    /// listener catch-up may already own an older prefix. Coalescing the live
+    /// frontier into that one tail reader prevents a later live sequence from
+    /// claiming past, dropping, or overtaking the unfinished prefix.
+    fn enqueue_provider_live_commit_observers(
+        &self,
+        runtime: Arc<TenantRuntime>,
+        observers: Vec<Arc<dyn CommittedMutationObserver>>,
+        applied: &[CommitEntry],
+        projection_token: ProjectionToken,
+    ) -> bool {
+        let Some(first_sequence) = applied
+            .iter()
+            .find(|commit| !commit.writes.is_empty())
+            .map(|commit| commit.sequence)
+        else {
+            return false;
+        };
+        let Some(requested_through) = applied.last().map(|commit| commit.sequence) else {
+            return false;
+        };
+        self.enqueue_provider_catch_up_range_observers(
+            runtime,
+            observers,
+            first_sequence,
+            requested_through,
+            projection_token,
+        )
+        .is_some()
+    }
+
     pub(crate) fn enqueue_provider_catch_up_commit_observers(
         &self,
         runtime: Arc<TenantRuntime>,
@@ -650,6 +702,23 @@ impl Engine {
             })
             .map(|record| record.sequence)?;
         let requested_through = applied.last()?.sequence;
+        self.enqueue_provider_catch_up_range_observers(
+            runtime,
+            observers,
+            first_sequence,
+            requested_through,
+            projection_token,
+        )
+    }
+
+    fn enqueue_provider_catch_up_range_observers(
+        &self,
+        runtime: Arc<TenantRuntime>,
+        observers: Vec<Arc<dyn CommittedMutationObserver>>,
+        first_sequence: SequenceNumber,
+        requested_through: SequenceNumber,
+        projection_token: ProjectionToken,
+    ) -> Option<tokio::sync::oneshot::Receiver<nimbus_core::Result<()>>> {
         if !runtime.request_committed_mutation_observer_catch_up(
             first_sequence,
             requested_through,
@@ -696,6 +765,28 @@ impl Engine {
                 Some(failure)
             }
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn enqueue_provider_live_commit_observers_for_testing(
+        &self,
+        runtime: Arc<TenantRuntime>,
+        applied: &[CommitEntry],
+    ) -> bool {
+        let observers = self
+            .committed_mutation_observers
+            .read()
+            .expect("committed mutation observer registry lock should not be poisoned")
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        if observers.is_empty() {
+            return false;
+        }
+        let projection_token = runtime
+            .projection_token()
+            .expect("provider live-observer test runtime should expose provenance");
+        self.enqueue_provider_live_commit_observers(runtime, observers, applied, projection_token)
     }
 
     /// Lets the next provider catch-up for `tenant_id` read `pages` journal
@@ -1165,19 +1256,34 @@ async fn deliver_provider_catch_up_tail(
             || (reached_frontier && dispatched < pending.len())
         {
             let end = pending.len().min(dispatched + chunk_size);
-            runtime
-                .enqueue_committed_mutation_observer_catch_up_dispatch(
-                    CommittedMutationObserverDispatch {
-                        observers: observers.to_vec(),
-                        events: pending[dispatched..end].to_vec(),
-                        completion: None,
-                    },
-                )
-                .await?;
+            let candidate = &pending[dispatched..end];
+            let through = candidate
+                .last()
+                .expect("non-empty catch-up dispatch must have a final event")
+                .commit
+                .sequence;
+            let claimed_through = runtime.claim_committed_mutation_observer_through(through);
+            let events = candidate
+                .iter()
+                .filter(|event| event.commit.sequence > claimed_through)
+                .cloned()
+                .collect::<Vec<_>>();
+            if !events.is_empty() {
+                runtime
+                    .enqueue_committed_mutation_observer_catch_up_dispatch(
+                        CommittedMutationObserverDispatch {
+                            observers: observers.to_vec(),
+                            events,
+                            completion: None,
+                        },
+                    )
+                    .await?;
+            }
             dispatched = end;
         }
         pending.drain(..dispatched);
         if reached_frontier {
+            runtime.claim_committed_mutation_observer_through(requested_through);
             return Ok(());
         }
         cursor = last_sequence;

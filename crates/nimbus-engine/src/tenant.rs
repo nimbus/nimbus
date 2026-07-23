@@ -8,7 +8,8 @@ use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwap;
 use nimbus_core::{
-    Error, MonotonicClock, Result, Schema, TableId, TableName, TenantId, Timestamp, WallClock,
+    Error, IdSource, MonotonicClock, Result, Schema, TableId, TableName, TenantId, Timestamp,
+    WallClock,
 };
 use nimbus_storage::LibsqlReplicaFreshnessStats;
 use serde::Serialize;
@@ -49,7 +50,7 @@ mod trigger_candidates;
 mod trigger_execution;
 mod write_rate;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(crate) use self::trigger_candidates::materialize_trigger_invocations_and_sync;
 
 use self::committer_lease::CommitterLeaseLifecycle;
@@ -165,6 +166,7 @@ pub struct TenantRuntime {
     observer_dispatch: Arc<ObserverHandoff>,
     observer_lifetime: Arc<()>,
     monotonic_clock: Arc<dyn MonotonicClock>,
+    id_source: Arc<dyn IdSource>,
     write_rate: TenantWriteRateLimiter,
     last_assigned_commit_timestamp: AtomicU64,
     prepared_table_ids: Mutex<HashMap<TableName, TableId>>,
@@ -177,6 +179,29 @@ pub struct TenantRuntime {
 
 pub struct TenantOperationGuard {
     lifecycle: Arc<TenantLifecycle>,
+}
+
+/// Store-independent completion token for one failed runtime's eviction.
+///
+/// Accessors clone this token and drop their [`TenantRuntime`] before waiting,
+/// so a redb handle cannot be kept alive by the waiter that will reopen it.
+#[derive(Clone)]
+pub(crate) struct TenantEvictionCompletion {
+    lifecycle: Arc<TenantLifecycle>,
+}
+
+impl TenantEvictionCompletion {
+    pub(crate) async fn wait(&self) {
+        self.lifecycle.wait_for_eviction_complete().await;
+    }
+
+    pub(crate) fn wait_blocking(&self) {
+        self.lifecycle.wait_for_eviction_complete_blocking();
+    }
+
+    pub(crate) fn finish(&self) {
+        self.lifecycle.finish_eviction();
+    }
 }
 
 /// Engine-issued proof that a canonical tenant incarnation remains live for
@@ -238,19 +263,30 @@ pub(crate) struct TenantRuntimeInitialStateProfile {
     pub total: Duration,
 }
 
-pub(crate) struct TenantRuntimeTiming {
+/// Process-local services installed into every runtime owned by one engine.
+///
+/// Keeping clocks, provider writer identity, and deterministic identity
+/// generation together makes the runtime construction contract explicit and
+/// prevents individual load paths from silently omitting one of these seams.
+pub(crate) struct TenantRuntimeEnvironment {
     monotonic_clock: Arc<dyn MonotonicClock>,
     renewal_clock: Arc<dyn LeaseRenewalClock>,
+    committer_owner_id: Option<String>,
+    id_source: Arc<dyn IdSource>,
 }
 
-impl TenantRuntimeTiming {
+impl TenantRuntimeEnvironment {
     pub(crate) fn new(
         monotonic_clock: Arc<dyn MonotonicClock>,
         renewal_clock: Arc<dyn LeaseRenewalClock>,
+        committer_owner_id: Option<String>,
+        id_source: Arc<dyn IdSource>,
     ) -> Self {
         Self {
             monotonic_clock,
             renewal_clock,
+            committer_owner_id,
+            id_source,
         }
     }
 }
@@ -299,8 +335,7 @@ impl TenantRuntime {
         store: TenantPersistence,
         read_storage: TenantPersistenceExecutor,
         initial_state: TenantRuntimeInitialState,
-        timing: TenantRuntimeTiming,
-        committer_owner_id: Option<String>,
+        environment: TenantRuntimeEnvironment,
     ) -> Self {
         let TenantRuntimeInitialState {
             schema,
@@ -340,14 +375,18 @@ impl TenantRuntime {
             mutation_isolate_admission: Arc::new(MutationIsolateAdmission::from_env()),
             mutation_journal: Arc::new(MutationJournalState::new(progress)),
             committer,
-            committer_lease: committer_owner_id.map(|owner_id| {
-                Arc::new(CommitterLeaseLifecycle::new(owner_id, timing.renewal_clock))
+            committer_lease: environment.committer_owner_id.map(|owner_id| {
+                Arc::new(CommitterLeaseLifecycle::new(
+                    owner_id,
+                    environment.renewal_clock,
+                ))
             }),
             scheduler_recovery: SchedulerRecoveryIntent::default(),
             publisher,
             observer_dispatch,
             observer_lifetime: Arc::new(()),
-            monotonic_clock: timing.monotonic_clock,
+            monotonic_clock: environment.monotonic_clock,
+            id_source: environment.id_source,
             write_rate: TenantWriteRateLimiter::new(),
             last_assigned_commit_timestamp: AtomicU64::new(last_commit_timestamp.0),
             prepared_table_ids: Mutex::new(HashMap::new()),
@@ -370,8 +409,7 @@ impl TenantRuntime {
         store: TenantPersistence,
         read_storage: TenantPersistenceExecutor,
         initial_state: TenantRuntimeInitialState,
-        timing: TenantRuntimeTiming,
-        committer_owner_id: Option<String>,
+        environment: TenantRuntimeEnvironment,
     ) -> Self {
         Self::from_initialized_parts(
             tenant_id,
@@ -379,8 +417,7 @@ impl TenantRuntime {
             store,
             read_storage,
             initial_state,
-            timing,
-            committer_owner_id,
+            environment,
         )
     }
 
@@ -425,9 +462,7 @@ impl TenantRuntime {
         tenant_incarnation: u64,
         store: TenantPersistence,
         read_storage: TenantPersistenceExecutor,
-        monotonic_clock: Arc<dyn MonotonicClock>,
-        renewal_clock: Arc<dyn LeaseRenewalClock>,
-        committer_owner_id: Option<String>,
+        environment: TenantRuntimeEnvironment,
     ) -> Result<Self> {
         let schema = store.load_schema()?;
         let progress = store.journal_progress()?;
@@ -450,8 +485,7 @@ impl TenantRuntime {
                 progress,
                 last_commit_timestamp,
             },
-            TenantRuntimeTiming::new(monotonic_clock, renewal_clock),
-            committer_owner_id,
+            environment,
         ))
     }
 
@@ -461,9 +495,7 @@ impl TenantRuntime {
         tenant_incarnation: u64,
         store: TenantPersistence,
         read_storage: TenantPersistenceExecutor,
-        monotonic_clock: Arc<dyn MonotonicClock>,
-        renewal_clock: Arc<dyn LeaseRenewalClock>,
-        committer_owner_id: Option<String>,
+        environment: TenantRuntimeEnvironment,
     ) -> Result<Self> {
         let (initial_state, _) = Self::load_initial_state_async(&store, &read_storage).await?;
         Ok(Self::from_loaded_state(
@@ -472,8 +504,7 @@ impl TenantRuntime {
             store,
             read_storage,
             initial_state,
-            TenantRuntimeTiming::new(monotonic_clock, renewal_clock),
-            committer_owner_id,
+            environment,
         ))
     }
 
@@ -504,11 +535,12 @@ impl TenantRuntime {
                 .insert(table.clone(), table_id.clone());
             return table_id;
         }
+        let id_source = self.id_source.clone();
         self.prepared_table_ids
             .lock()
             .expect("prepared table-id lock should not be poisoned")
             .entry(table.clone())
-            .or_default()
+            .or_insert_with(|| id_source.next_table_id())
             .clone()
     }
 
@@ -618,6 +650,34 @@ impl TenantRuntime {
         self.lifecycle.wait_for_operations_async().await;
     }
 
+    /// Stops every tenant-owned producer before explicit persistence deletion.
+    ///
+    /// The deletion fence rejects new guarded work, but long-lived workers do
+    /// not hold an operation guard while parked. They must be stopped
+    /// explicitly so a provider namespace cannot be removed while lease,
+    /// committer, publisher, trigger, or subscription work can still issue
+    /// storage requests.
+    pub(crate) fn begin_explicit_delete_shutdown(&self) {
+        self.shutdown_committer_lease_renewal();
+        self.shutdown_committer();
+        self.shutdown_trigger_candidates();
+        self.shutdown_trigger_execution();
+        self.shutdown_subscription_delivery();
+        self.subscriptions
+            .shutdown_all(format!("tenant deleted: {}", self.tenant_id));
+    }
+
+    /// Waits until accepted tenant work and the mutation publication pipeline
+    /// have released provider storage before explicit deletion proceeds.
+    pub(crate) async fn wait_for_explicit_delete_shutdown(&self) {
+        self.wait_for_delete_operation_drain().await;
+        if self.uses_ordered_publisher() {
+            self.wait_for_publisher_finished().await;
+        } else {
+            self.wait_for_committed_mutation_observers_drained().await;
+        }
+    }
+
     pub(crate) fn mark_deleting_for_eviction(&self) -> bool {
         if !self.lifecycle.begin_eviction() {
             return false;
@@ -637,10 +697,6 @@ impl TenantRuntime {
         self.lifecycle.wait_for_operations_async().await;
     }
 
-    pub(crate) fn wait_for_operation_drain_for_eviction_blocking(&self) {
-        self.lifecycle.wait_for_operations_blocking();
-    }
-
     pub(crate) fn eviction_started(&self) -> bool {
         self.lifecycle.eviction_started()
     }
@@ -655,10 +711,18 @@ impl TenantRuntime {
         )
     }
 
+    #[cfg(test)]
     pub(crate) async fn wait_for_eviction_complete(&self) {
         self.lifecycle.wait_for_eviction_complete().await;
     }
 
+    pub(crate) fn eviction_completion(&self) -> TenantEvictionCompletion {
+        TenantEvictionCompletion {
+            lifecycle: self.lifecycle.clone(),
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn finish_eviction(&self) {
         self.lifecycle.finish_eviction();
     }

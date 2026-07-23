@@ -30,6 +30,24 @@ impl MySqlProvider {
         clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
     ) -> Result<Self> {
+        Self::connect_with_simulation_and_id_source(
+            config,
+            runtime_handle,
+            clock,
+            fault_injector,
+            Arc::new(SystemIdSource),
+        )
+        .await
+    }
+
+    #[doc(hidden)]
+    pub async fn connect_with_simulation_and_id_source(
+        config: MySqlProviderConfig,
+        runtime_handle: TokioRuntimeHandle,
+        clock: Arc<dyn WallClock>,
+        fault_injector: Arc<dyn FaultInjector>,
+        id_source: Arc<dyn IdSource>,
+    ) -> Result<Self> {
         validate_identifier_input(&config.metadata_database, "metadata database")?;
         validate_identifier_input(&config.tenant_database_prefix, "tenant database prefix")?;
 
@@ -57,6 +75,7 @@ impl MySqlProvider {
             max_allowed_packet,
             runtime_handle,
             clock,
+            id_source,
             fault_injector,
             tenant_read_parallelism: default_mysql_read_parallelism(),
         };
@@ -104,6 +123,44 @@ impl MySqlProvider {
             qualified_table(&self.metadata_database, "tenants")
         );
         let rows: Vec<Row> = conn.query(query).await.map_err(map_mysql_error)?;
+        rows.into_iter()
+            .map(|row| {
+                let (tenant_id,): (String,) = mysql_async::from_row(row);
+                TenantId::new(tenant_id)
+            })
+            .collect()
+    }
+
+    pub async fn list_tenants_page(
+        &self,
+        after: Option<&TenantId>,
+        limit: usize,
+    ) -> Result<Vec<TenantId>> {
+        if limit == 0 {
+            return Err(Error::InvalidInput(
+                "MySQL tenant page limit must be greater than zero".to_string(),
+            ));
+        }
+        let mut conn = self.conn().await?;
+        let limit = u64::try_from(limit).unwrap_or(u64::MAX);
+        let rows: Vec<Row> = match after {
+            Some(after) => {
+                let query = format!(
+                    "SELECT tenant_id FROM {} \
+                     WHERE tenant_id > ? ORDER BY tenant_id LIMIT ?",
+                    qualified_table(&self.metadata_database, "tenants")
+                );
+                conn.exec(query, (after.as_str(), limit)).await
+            }
+            None => {
+                let query = format!(
+                    "SELECT tenant_id FROM {} ORDER BY tenant_id LIMIT ?",
+                    qualified_table(&self.metadata_database, "tenants")
+                );
+                conn.exec(query, (limit,)).await
+            }
+        }
+        .map_err(map_mysql_error)?;
         rows.into_iter()
             .map(|row| {
                 let (tenant_id,): (String,) = mysql_async::from_row(row);

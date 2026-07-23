@@ -149,14 +149,14 @@ impl LibsqlReplicaTenantStore {
         let execution_id = execution_id.to_string();
         self.block_on(async move {
             let conn = self.remote_connection()?;
-            let mut rows = conn
+            let rows = conn
                 .query(
                     "SELECT 1 FROM scheduled_job_executions WHERE execution_id = ?1",
                     libsql::params![execution_id],
                 )
                 .await
                 .map_err(map_libsql_error)?;
-            Ok(rows.next().await.map_err(map_libsql_error)?.is_some())
+            Ok(take_single_remote_row(rows).await?.is_some())
         })
     }
 
@@ -167,14 +167,14 @@ impl LibsqlReplicaTenantStore {
         let job_id = job_id.to_string();
         self.block_on(async move {
             let conn = self.remote_connection()?;
-            let mut rows = conn
+            let rows = conn
                 .query(
                     "SELECT data_json FROM scheduled_job_results WHERE job_id = ?1",
                     libsql::params![job_id],
                 )
                 .await
                 .map_err(map_libsql_error)?;
-            let Some(row) = rows.next().await.map_err(map_libsql_error)? else {
+            let Some(row) = take_single_remote_row(rows).await? else {
                 return Ok(None);
             };
             let json = row.get::<String>(0).map_err(map_libsql_error)?;
@@ -212,11 +212,11 @@ impl LibsqlReplicaTenantStore {
         self.block_on(async move {
             let conn = self.remote_connection()?;
             let query = format!("SELECT data_json FROM {table_name} WHERE id = ?1");
-            let mut rows = conn
+            let rows = conn
                 .query(query.as_str(), libsql::params![job_id])
                 .await
                 .map_err(map_libsql_error)?;
-            let Some(row) = rows.next().await.map_err(map_libsql_error)? else {
+            let Some(row) = take_single_remote_row(rows).await? else {
                 return Ok(None);
             };
             deserialize_json::<ScheduledJob>(
@@ -266,14 +266,14 @@ impl LibsqlReplicaTenantStore {
         let name = name.to_string();
         self.block_on(async move {
             let conn = self.remote_connection()?;
-            let mut rows = conn
+            let rows = conn
                 .query(
                     "SELECT data_json FROM cron_jobs WHERE name = ?1",
                     libsql::params![name],
                 )
                 .await
                 .map_err(map_libsql_error)?;
-            let Some(row) = rows.next().await.map_err(map_libsql_error)? else {
+            let Some(row) = take_single_remote_row(rows).await? else {
                 return Ok(None);
             };
             deserialize_json::<CronJob>(row.get::<String>(0).map_err(map_libsql_error)?.as_str())

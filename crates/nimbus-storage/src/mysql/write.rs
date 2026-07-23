@@ -917,6 +917,7 @@ impl MySqlWriteTransaction {
 
         let mut transaction = Self {
             provider,
+            tenant_id: store.tenant_id.clone(),
             database_name,
             schema_cache: store.schema_cache.clone(),
             pipeline_metrics: store.pipeline_metrics.clone(),
@@ -1606,9 +1607,16 @@ impl MySqlWriteTransaction {
         let runtime_handle = self.provider.runtime_handle.clone();
         let database_name = self.database_name.clone();
         let table = table.clone();
+        let id_source = self.provider.id_source.clone();
         let conn = self.session()?;
         Self::block_on(&runtime_handle, async move {
-            resolve_or_create_table_id_from_session(conn, &database_name, &table).await
+            resolve_or_create_table_id_from_session(
+                conn,
+                &database_name,
+                &table,
+                id_source.as_ref(),
+            )
+            .await
         })
     }
 
@@ -1721,7 +1729,9 @@ impl crate::sql::write_core::SqlWriteBackend for MySqlWriteTransaction {
     }
 
     fn check_fault(&self, point: FaultPoint) -> Result<()> {
-        self.provider.fault_injector.check(point)
+        self.provider
+            .fault_injector
+            .check_for_tenant(point, &self.tenant_id)
     }
 
     fn batch_execute(&mut self, sql: &str) -> Result<()> {

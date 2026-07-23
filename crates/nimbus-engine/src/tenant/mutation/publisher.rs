@@ -233,6 +233,7 @@ pub(crate) struct ObserverHandoff {
     catch_up_next_sequence: AtomicU64,
     catch_up_requested_through: AtomicU64,
     catch_up_projection_token: Mutex<ProjectionToken>,
+    observer_claimed_through: AtomicU64,
     catch_up_state_changed: tokio::sync::Notify,
     #[cfg(test)]
     catch_up_task_count: AtomicUsize,
@@ -289,6 +290,7 @@ impl ObserverHandoff {
             catch_up_next_sequence: AtomicU64::new(u64::MAX),
             catch_up_requested_through: AtomicU64::new(0),
             catch_up_projection_token: Mutex::new(ProjectionToken::default()),
+            observer_claimed_through: AtomicU64::new(0),
             catch_up_state_changed: tokio::sync::Notify::new(),
             #[cfg(test)]
             catch_up_task_count: AtomicUsize::new(0),
@@ -558,6 +560,23 @@ impl ObserverHandoff {
         (self.queue_capacity / 2).max(1).min(catch_up_capacity)
     }
 
+    /// Claims the process-local committed-observer prefix through `through`.
+    ///
+    /// Live publisher fan-out and provider catch-up race on this one monotonic
+    /// frontier. The caller owns only the suffix strictly above the returned
+    /// sequence. This is intentionally runtime-local: another Nimbus process
+    /// may replay the same durable source event, and observers that publish
+    /// durable effects must fence those replays with `ProjectionToken`.
+    pub(crate) fn claim_observer_publication_through(
+        &self,
+        through: SequenceNumber,
+    ) -> SequenceNumber {
+        SequenceNumber(
+            self.observer_claimed_through
+                .fetch_max(through.0, Ordering::AcqRel),
+        )
+    }
+
     pub(crate) fn request_catch_up(
         &self,
         first_sequence: SequenceNumber,
@@ -683,34 +702,26 @@ impl ObserverHandoff {
         }
     }
 
-    pub(crate) fn wait_drained_blocking(&self) -> Result<()> {
-        let deadline = Instant::now() + self.drain_blocking_timeout;
-        loop {
-            if self.drained.load(Ordering::Acquire) {
-                return Ok(());
-            }
-            let now = Instant::now();
-            if now >= deadline {
-                let stats = self.stats();
-                tracing::error!(
-                    tenant = %self.tenant_id,
-                    timeout = ?self.drain_blocking_timeout,
-                    observer_queue_depth = stats.depth,
-                    observer_queue_capacity = stats.capacity,
-                    observer_dispatcher_poisoned = stats.poisoned,
-                    "timed out waiting for committed-mutation observer dispatcher to drain during durable-recovery eviction"
-                );
-                return Err(Error::Internal(format!(
-                    "committed-mutation observer dispatcher for tenant {} did not drain within {:?}",
-                    self.tenant_id, self.drain_blocking_timeout
-                )));
-            }
-            std::thread::park_timeout(
-                deadline
-                    .saturating_duration_since(now)
-                    .min(Duration::from_millis(1)),
-            );
+    pub(crate) async fn wait_drained_for_eviction(&self) -> Result<()> {
+        if tokio::time::timeout(self.drain_blocking_timeout, self.wait_drained())
+            .await
+            .is_ok()
+        {
+            return Ok(());
         }
+        let stats = self.stats();
+        tracing::error!(
+            tenant = %self.tenant_id,
+            timeout = ?self.drain_blocking_timeout,
+            observer_queue_depth = stats.depth,
+            observer_queue_capacity = stats.capacity,
+            observer_dispatcher_poisoned = stats.poisoned,
+            "timed out waiting for committed-mutation observer dispatcher to drain during durable-recovery eviction"
+        );
+        Err(Error::Internal(format!(
+            "committed-mutation observer dispatcher for tenant {} did not drain within {:?}",
+            self.tenant_id, self.drain_blocking_timeout
+        )))
     }
 
     pub(crate) fn take_receiver(

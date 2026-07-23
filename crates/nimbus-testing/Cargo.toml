@@ -22,6 +22,7 @@ nimbus-workloads = { path = "../nimbus-workloads" }
 futures.workspace = true
 http.workspace = true
 reqwest.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 tokio.workspace = true

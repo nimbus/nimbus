@@ -234,7 +234,7 @@ async fn wait_for_row_count(
     table: &TableName,
     expected: u64,
 ) -> Document {
-    tokio::time::timeout(Duration::from_secs(10), async {
+    let result = tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             if let Some(row) = projected_row(engine, tenant_id, table).await
                 && row.fields.get("rowCount").and_then(Value::as_u64) == Some(expected)
@@ -244,8 +244,25 @@ async fn wait_for_row_count(
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
-    .await
-    .expect("runtime reconciliation should publish without another source mutation")
+    .await;
+    match result {
+        Ok(row) => row,
+        Err(error) => {
+            let source_snapshot = engine
+                .projection_reconciliation_snapshot_async(tenant_id)
+                .await
+                .map(|snapshot| (snapshot.active_tables, snapshot.projection_token));
+            let diagnostics = engine
+                .tenant_engine_diagnostics(tenant_id)
+                .map(|snapshot| snapshot.mutation_journal);
+            let visible_row = projected_row(engine, tenant_id, table).await;
+            panic!(
+                "runtime reconciliation should publish without another source mutation: {error:?}; \
+                 source_snapshot={source_snapshot:?}; diagnostics={diagnostics:?}; \
+                 visible_row={visible_row:?}"
+            );
+        }
+    }
 }
 
 async fn wait_for_schema(
@@ -401,6 +418,14 @@ async fn assert_provider_restart_reconciles_scope(
         .projection_token_for_tenant_async(tenant_id)
         .await
         .expect("the restarted provider source token should read");
+    let recovered_snapshot = engine
+        .projection_reconciliation_snapshot_async(tenant_id)
+        .await
+        .expect("the restarted provider source snapshot should read");
+    assert!(
+        recovered_snapshot.active_tables.contains(table),
+        "provider restart must recover the active source table before projection reconciliation"
+    );
     assert!(
         recovered_token >= pre_restart_token,
         "provider restart must not regress the source projection token"

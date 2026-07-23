@@ -77,20 +77,22 @@ async fn test_replica(refresh_override: TestRefreshOverride) -> TestReplica {
         )
         .expect("local replica cache should open"),
     );
-    let metadata_database = Arc::new(
+    let metadata_session = LibsqlRemoteSession::new(
         Builder::new_remote("http://127.0.0.1:1".to_string(), String::new())
             .connector(libsql_transport_connector().expect("libsql connector should build"))
             .build()
             .await
             .expect("metadata database should open"),
-    );
-    let remote_database = Arc::new(
+    )
+    .expect("metadata session should open");
+    let remote_session = LibsqlRemoteSession::new(
         Builder::new_remote("http://127.0.0.1:1".to_string(), String::new())
             .connector(libsql_transport_connector().expect("libsql connector should build"))
             .build()
             .await
             .expect("remote database should open"),
-    );
+    )
+    .expect("remote session should open");
     let provider = LibsqlReplicaProvider {
         primary_url: "memory://primary".to_string(),
         auth_token: None,
@@ -102,16 +104,21 @@ async fn test_replica(refresh_override: TestRefreshOverride) -> TestReplica {
         encryption_provider: None,
         runtime_handle: TokioRuntimeHandle::current(),
         clock: Arc::new(SystemWallClock),
+        id_source: Arc::new(SystemIdSource),
         remote_fault_injector: Arc::new(NoopFaultInjector),
         replica_fault_injector: Arc::new(NoopFaultInjector),
         tenant_read_parallelism: 1,
-        metadata_database,
+        metadata_session,
+        scheduler_probe_sessions: Arc::new(Mutex::new(BoundedSchedulerProbeSessions::new(
+            LIBSQL_SCHEDULER_PROBE_SESSION_LIMIT,
+        ))),
+        scheduler_probe_session_open_count: Arc::new(AtomicU64::new(0)),
     };
     let mut store = LibsqlReplicaTenantStore::new(
         provider,
         tenant_id,
         "tenant_freshness_test".to_string(),
-        remote_database,
+        remote_session,
         local_store,
         replica_path,
     );

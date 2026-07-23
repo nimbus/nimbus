@@ -4,7 +4,7 @@ use nimbus_core::{
 
 use super::{
     FENCED_COMMITTER_LEASE_MARKER, LibsqlReplicaTenantStore, LibsqlReplicaWriteTransaction,
-    map_libsql_error,
+    map_libsql_error, take_single_remote_row,
 };
 use crate::CommitterLeaseResult;
 
@@ -85,7 +85,7 @@ impl LibsqlReplicaTenantStore {
         let key = key.clone();
         self.block_on(async move {
             let conn = self.remote_connection()?;
-            let mut rows = conn
+            let rows = conn
                 .query(
                     "SELECT data_blob FROM trigger_invocations
                      WHERE registration_id = ?1 AND event_id = ?2",
@@ -93,7 +93,7 @@ impl LibsqlReplicaTenantStore {
                 )
                 .await
                 .map_err(map_libsql_error)?;
-            let Some(row) = rows.next().await.map_err(map_libsql_error)? else {
+            let Some(row) = take_single_remote_row(rows).await? else {
                 return Ok(None);
             };
             let payload = row.get::<Vec<u8>>(0).map_err(map_libsql_error)?;

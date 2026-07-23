@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use nimbus_core::{Error, Result, TenantId};
 
-use crate::tenant::{TenantRuntime, TenantRuntimeLease, TenantRuntimeTiming};
+use crate::tenant::{TenantRuntime, TenantRuntimeEnvironment, TenantRuntimeLease};
 
 use super::{Engine, TenantLoadGateGuard};
 
@@ -253,13 +253,16 @@ impl Engine {
                 tenant_incarnation,
                 opened.persistence,
                 opened.executor,
-                self.monotonic_clock.clone(),
-                self.committer_lease_clock.clone(),
-                committer_owner_id,
+                TenantRuntimeEnvironment::new(
+                    self.monotonic_clock.clone(),
+                    self.committer_lease_clock.clone(),
+                    committer_owner_id,
+                    self.id_source.clone(),
+                ),
             )
             .await?,
         );
-        self.start_committer_actor(runtime.clone());
+        self.start_committer_actor(runtime.clone())?;
         if !self.provider_background_ready() {
             self.catch_up_loaded_provider_tenant_async(
                 runtime.clone(),
@@ -396,6 +399,7 @@ impl Engine {
                     ))
                 })?;
             runtime.mark_delete_fenced();
+            runtime.begin_explicit_delete_shutdown();
             return Ok(TenantDeletionLease {
                 tenant_id,
                 tenant_incarnation,
@@ -410,14 +414,8 @@ impl Engine {
         self: &Arc<Self>,
         deletion: TenantDeletionLease<'_>,
     ) -> Result<()> {
-        deletion.runtime.wait_for_delete_operation_drain().await;
-        deletion.runtime.shutdown_trigger_candidates();
-        deletion.runtime.shutdown_trigger_execution();
-        deletion.runtime.shutdown_subscription_delivery();
-        deletion
-            .runtime
-            .subscriptions
-            .shutdown_all(format!("tenant deleted: {}", deletion.tenant_id));
+        deletion.runtime.wait_for_explicit_delete_shutdown().await;
+        deletion.runtime.store.retire_after_drain().await?;
         self.publisher_failure_diagnostics
             .write()
             .expect("publisher failure diagnostics lock should not be poisoned")
@@ -510,10 +508,7 @@ impl Engine {
             };
             if let Some(runtime) = cached_runtime {
                 if runtime.eviction_started() {
-                    runtime.wait_for_eviction_complete().await;
-                    if self.runtime_remains_registered(tenant_id, &runtime) {
-                        return Err(runtime.durable_recovery_eviction_error());
-                    }
+                    self.wait_for_runtime_eviction(tenant_id, runtime).await?;
                     continue;
                 }
                 maybe_emit_tenant_load_profile(TenantLoadProfileSample {
@@ -547,10 +542,7 @@ impl Engine {
             if let Some(runtime) = cached_runtime {
                 if runtime.eviction_started() {
                     drop(tenant_load_guard);
-                    runtime.wait_for_eviction_complete().await;
-                    if self.runtime_remains_registered(tenant_id, &runtime) {
-                        return Err(runtime.durable_recovery_eviction_error());
-                    }
+                    self.wait_for_runtime_eviction(tenant_id, runtime).await?;
                     continue;
                 }
                 maybe_emit_tenant_load_profile(TenantLoadProfileSample {
@@ -577,6 +569,35 @@ impl Engine {
                 .load_existing_tenant_async_locked(tenant_id, total_started, tenant_load_guard)
                 .await;
         }
+    }
+
+    pub(crate) async fn wait_for_runtime_eviction(
+        &self,
+        tenant_id: &TenantId,
+        runtime: Arc<TenantRuntime>,
+    ) -> Result<()> {
+        let evicted_runtime = Arc::downgrade(&runtime);
+        let error = runtime.durable_recovery_eviction_error();
+        let completion = runtime.eviction_completion();
+        // The completion token owns lifecycle state only. Dropping the stale
+        // runtime before awaiting prevents this accessor from retaining an
+        // embedded provider handle across the reopen boundary.
+        drop(runtime);
+        completion.wait().await;
+        if self
+            .tenants
+            .read()
+            .expect("tenant registry lock should not be poisoned")
+            .get(tenant_id)
+            .is_some_and(|registered| {
+                evicted_runtime
+                    .upgrade()
+                    .is_some_and(|evicted| Arc::ptr_eq(registered, &evicted))
+            })
+        {
+            return Err(error);
+        }
+        Ok(())
     }
 
     fn runtime_remains_registered(
@@ -624,15 +645,16 @@ impl Engine {
             opened.persistence.clone(),
             opened_executor,
             initial_state,
-            TenantRuntimeTiming::new(
+            TenantRuntimeEnvironment::new(
                 self.monotonic_clock.clone(),
                 self.committer_lease_clock.clone(),
+                self.committer_owner_id_for_store(&opened.persistence),
+                self.id_source.clone(),
             ),
-            self.committer_owner_id_for_store(&opened.persistence),
         ));
         runtime.mark_scheduler_recovery_pending();
         self.restore_publisher_error_counts(&runtime);
-        self.start_committer_actor(runtime.clone());
+        self.start_committer_actor(runtime.clone())?;
         let runtime_init_elapsed = runtime_init_started.elapsed();
         let recover_started = Instant::now();
         let progress = if runtime.applied_head().0 < runtime.durable_head().0 {

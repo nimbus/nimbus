@@ -262,6 +262,11 @@ impl TriggerCandidateFeed {
     }
 
     #[cfg(test)]
+    pub(super) fn is_disabled(&self) -> bool {
+        self.disabled.load(Ordering::Acquire)
+    }
+
+    #[cfg(test)]
     pub(super) fn pending_count(&self) -> usize {
         self.pending.len()
     }
@@ -293,6 +298,11 @@ impl TenantRuntime {
     #[cfg(test)]
     pub(crate) fn disable_trigger_candidates_for_testing(&self) {
         self.trigger_candidates.disable();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn trigger_candidates_disabled_for_testing(&self) -> bool {
+        self.trigger_candidates.is_disabled()
     }
 
     #[cfg(test)]
@@ -468,7 +478,8 @@ fn materialize_trigger_invocations_and_sync_in_actor(
             ),
         ));
     }
-    let progress = runtime.store.journal_progress()?;
+    let committed_through = nimbus_core::SequenceNumber(previous_durable_head.0.saturating_add(1));
+    let progress = runtime.progress_after_successful_durable_apply(committed_through)?;
     // The cursor-advance commit `materialize_trigger_invocations` just
     // appended is zero-write by construction, so it can never change what a
     // materialized-serving snapshot serves. Carry every loaded table's

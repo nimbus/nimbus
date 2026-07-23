@@ -919,6 +919,50 @@ async fn accessor_does_not_spin_on_registered_completed_eviction() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn eviction_wait_accepts_same_incarnation_replacement_runtime() {
+    let data_dir = tempdir().expect("replacement-runtime tempdir should build");
+    let engine = Arc::new(Engine::new(data_dir.path()).expect("engine should create"));
+    let tenant_id = TenantId::new("same-incarnation-replacement").expect("tenant id should build");
+    engine
+        .create_tenant_async(tenant_id.clone())
+        .await
+        .expect("tenant should create");
+    let evicted_runtime = engine
+        .begin_runtime_eviction_for_testing(&tenant_id)
+        .expect("runtime should enter eviction");
+    let evicted_incarnation = evicted_runtime.tenant_incarnation();
+    engine.remove_runtime_if_same_for_testing(&tenant_id, &evicted_runtime);
+    evicted_runtime.finish_eviction();
+
+    let replacement_identity = engine
+        .get_existing_tenant_async_for_testing(&tenant_id)
+        .await
+        .expect("tenant should reopen on a replacement runtime");
+    let replacement = engine
+        .registered_runtime_for_testing(&tenant_id)
+        .expect("replacement runtime should remain registered");
+    assert_eq!(
+        replacement_identity,
+        Arc::as_ptr(&replacement) as usize,
+        "the async accessor must return the registered replacement"
+    );
+    assert_eq!(
+        replacement.tenant_incarnation(),
+        evicted_incarnation,
+        "crash-and-replay reload must preserve the durable tenant incarnation"
+    );
+    assert!(
+        !Arc::ptr_eq(&replacement, &evicted_runtime),
+        "the replacement must be a distinct runtime generation"
+    );
+
+    engine
+        .wait_for_runtime_eviction(&tenant_id, evicted_runtime)
+        .await
+        .expect("a healthy replacement must not inherit the evicted runtime's error");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn serial_crash_replay_rejects_residual_direct_commit_without_running_it() {
     let data_dir = tempdir().expect("serial residual direct tempdir should build");
     let faults = BlockingAmbiguousApplyFaultInjector::new();

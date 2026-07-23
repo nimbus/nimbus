@@ -6,8 +6,10 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, warn};
 
+#[cfg(test)]
+use crate::Engine;
 use crate::engine::execution_units::{CommitFaultClient, labels};
-use crate::engine::{DurableWriteOutcome, DurableWriteRoute, Engine, classify_durable_write_error};
+use crate::engine::{DurableWriteOutcome, DurableWriteRoute, classify_durable_write_error};
 use crate::tenant::{AssignedPublisherBatch, PublisherMessage, TenantRuntime};
 
 const DEFAULT_PUBLISHER_RETRY_LIMIT: usize = 4;
@@ -247,9 +249,15 @@ pub(crate) async fn run_ordered_publisher(
     }
     if let Some(runtime) = runtime.upgrade() {
         runtime.close_committed_mutation_observers();
-        runtime
-            .wait_for_committed_mutation_observers_drained()
-            .await;
+        if runtime.eviction_started() {
+            let _ = runtime
+                .wait_for_committed_mutation_observers_drained_for_eviction()
+                .await;
+        } else {
+            runtime
+                .wait_for_committed_mutation_observers_drained()
+                .await;
+        }
     }
 }
 
@@ -495,11 +503,11 @@ pub(crate) fn persist_assigned_batch_once(
             .store
             .check_fault(nimbus_storage::FaultPoint::JournalDurableAppendBeforeApply)
             .map_err(PublishAttemptError::Ambiguous)?;
-        commit_faults
-            .wait(labels::DURABLE_BEFORE_PUBLISH)
-            .into_result()
-            .map_err(PublishAttemptError::Ambiguous)?;
     }
+    commit_faults
+        .wait(labels::DURABLE_BEFORE_PUBLISH)
+        .into_result()
+        .map_err(PublishAttemptError::Ambiguous)?;
     let applied_head = if provider_applied {
         last_sequence
     } else {
@@ -747,7 +755,6 @@ async fn fail_and_restart(
     receiver: &mut mpsc::Receiver<PublisherMessage>,
     pending_message: &mut Option<PublisherMessage>,
 ) {
-    let engine = batch.engine.clone();
     receiver.close();
     let mut queued_messages = Vec::new();
     if let Some(pending) = pending_message.take() {
@@ -784,12 +791,10 @@ async fn fail_and_restart(
     }
     runtime.fail_and_drain_mutation_queues(&error);
     runtime.close_committed_mutation_observers();
-    runtime
-        .wait_for_committed_mutation_observers_drained()
+    let _ = runtime
+        .wait_for_committed_mutation_observers_drained_for_eviction()
         .await;
     runtime.wait_for_operation_drain_for_eviction().await;
-
-    finish_durable_recovery_eviction(engine, runtime).await;
 }
 
 pub(crate) fn begin_durable_recovery_eviction(runtime: &TenantRuntime, error: &Error) {
@@ -821,40 +826,6 @@ fn begin_tenant_runtime_eviction(runtime: &TenantRuntime, error: &Error, ambiguo
     runtime.subscriptions.shutdown_all(reason);
 }
 
-pub(in crate::engine) async fn finish_durable_recovery_eviction(
-    engine: Arc<Engine>,
-    runtime: Arc<TenantRuntime>,
-) {
-    // No tenant operation guard crosses this engine-wide gate. Explicit
-    // deletion takes the gate before waiting for operations, so this order is
-    // what prevents the former AB-BA cycle.
-    let _tenant_load_guard = engine.tenant_load_gate.lock().await;
-    finish_durable_recovery_eviction_locked(engine.as_ref(), &runtime);
-    drop(runtime);
-    drop(_tenant_load_guard);
-}
-
-pub(in crate::engine) fn finish_durable_recovery_eviction_blocking(
-    engine: &Engine,
-    runtime: Arc<TenantRuntime>,
-) {
-    let _tenant_load_guard = engine.lock_tenant_load_gate_blocking();
-    finish_durable_recovery_eviction_locked(engine, &runtime);
-    drop(runtime);
-    drop(_tenant_load_guard);
-}
-
-pub(crate) fn finish_durable_recovery_eviction_locked(
-    engine: &Engine,
-    runtime: &Arc<TenantRuntime>,
-) {
-    crate::engine::TenantEvictionRegistry {
-        tenants: Arc::downgrade(&engine.tenants),
-        publisher_failure_diagnostics: Arc::downgrade(&engine.publisher_failure_diagnostics),
-    }
-    .finish(runtime);
-}
-
 #[cfg(test)]
 impl Engine {
     pub(crate) async fn evict_runtime_without_deleting_for_testing(
@@ -868,11 +839,9 @@ impl Engine {
         begin_durable_recovery_eviction(&runtime, &error);
         runtime.fail_and_drain_mutation_queues(&error);
         runtime.close_committed_mutation_observers();
-        runtime
-            .wait_for_committed_mutation_observers_drained()
-            .await;
-        runtime.wait_for_operation_drain_for_eviction().await;
-        finish_durable_recovery_eviction(self.clone(), runtime).await;
+        let completion = runtime.eviction_completion();
+        drop(runtime);
+        completion.wait().await;
         Ok(())
     }
 }

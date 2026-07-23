@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use mysql_async::Row;
 use mysql_async::prelude::Queryable;
-use nimbus_core::{Error, Result, TableId, TableName, TableState};
+use nimbus_core::{Error, IdSource, Result, TableId, TableName, TableState};
 
 use crate::table_identity::{
     DEFAULT_TABLE_NAMESPACE, deleting_table_namespace, hidden_table_namespace,
@@ -44,6 +44,7 @@ pub(super) async fn resolve_or_create_table_id_from_session<C>(
     session: &mut C,
     database_name: &str,
     table: &TableName,
+    id_source: &dyn IdSource,
 ) -> Result<TableId>
 where
     C: Queryable,
@@ -51,7 +52,7 @@ where
     if let Some(table_id) = load_table_id_from_session(session, database_name, table).await? {
         return Ok(table_id);
     }
-    let table_id = TableId::new();
+    let table_id = id_source.next_table_id();
     let query = format!(
         "INSERT IGNORE INTO {} (namespace, table_name, table_id, state) VALUES (?, ?, ?, ?)",
         qualified_table(database_name, "table_catalog")

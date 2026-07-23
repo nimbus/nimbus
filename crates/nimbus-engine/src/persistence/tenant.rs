@@ -41,6 +41,22 @@ macro_rules! delegate_store_method {
 }
 
 impl TenantPersistence {
+    /// Retires tenant-specific persistence resources after engine-owned work
+    /// drains and before shutdown or destructive provider deletion completes.
+    ///
+    /// libSQL retains one tenant-scoped Hrana session and must synchronously
+    /// close it. PostgreSQL and MySQL borrow per-operation connections from
+    /// provider-global pools, and the embedded adapters retain no remote
+    /// session, so their drained state requires no additional step.
+    pub(crate) async fn retire_after_drain(&self) -> Result<()> {
+        match self {
+            Self::LibsqlReplica(store) => store.retire_after_drain().await,
+            Self::Redb(_) | Self::Sqlite(_) | Self::Postgres(_) | Self::MySql(_) => Ok(()),
+            #[cfg(any(test, feature = "test-hooks"))]
+            Self::Memory(_) => Ok(()),
+        }
+    }
+
     pub(crate) fn provider_write_pipeline_diagnostic(
         &self,
     ) -> Option<ProviderWritePipelineDiagnostic> {

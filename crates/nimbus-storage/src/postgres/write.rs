@@ -1594,9 +1594,11 @@ impl PostgresWriteTransaction {
     fn resolve_or_create_table_id(&mut self, table: &TableName) -> Result<TableId> {
         let schema_name = self.schema_name.clone();
         let table = table.clone();
+        let id_source = self.provider.id_source.clone();
         let client = self.session()?;
         self.block_on(async move {
-            resolve_or_create_table_id_in_session(client, &schema_name, &table).await
+            resolve_or_create_table_id_in_session(client, &schema_name, &table, id_source.as_ref())
+                .await
         })
     }
 
@@ -1739,7 +1741,9 @@ impl crate::sql::write_core::SqlWriteBackend for PostgresWriteTransaction {
     }
 
     fn check_fault(&self, point: FaultPoint) -> Result<()> {
-        self.provider.fault_injector.check(point)
+        self.provider
+            .fault_injector
+            .check_for_tenant(point, &self.tenant_id)
     }
 
     fn batch_execute(&mut self, sql: &str) -> Result<()> {

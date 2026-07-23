@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use nimbus_core::{CommitEntry, Error, Result, TenantEventKind, Timestamp, WallClock, WriteOp};
+use nimbus_core::{
+    CommitEntry, Error, IdSource, Result, TableId, TableName, TenantEventKind, Timestamp,
+    WallClock, WriteOp,
+};
 
 use crate::simulation::FaultInjector;
 
@@ -12,6 +15,7 @@ impl TenantWriteTransaction {
         write_txn: redb::WriteTransaction,
         clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
+        id_source: Arc<dyn IdSource>,
         check_cancel: Check,
     ) -> Self
     where
@@ -21,6 +25,7 @@ impl TenantWriteTransaction {
             write_txn: Some(write_txn),
             clock,
             fault_injector,
+            id_source,
             commit_writes: Vec::new(),
             tenant_events: Vec::new(),
             prepared_record: None,
@@ -32,6 +37,14 @@ impl TenantWriteTransaction {
         self.write_txn
             .as_ref()
             .ok_or_else(|| Error::Internal("write transaction already closed".to_string()))
+    }
+
+    pub(crate) fn resolve_or_create_table_id(&self, table: &TableName) -> Result<TableId> {
+        super::super::table_catalog::resolve_or_create_table_id_in_write_txn(
+            self.write_txn()?,
+            table,
+            self.id_source.as_ref(),
+        )
     }
 
     pub(crate) fn check_cancel(&self) -> Result<()> {

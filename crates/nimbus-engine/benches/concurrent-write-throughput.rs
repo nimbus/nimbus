@@ -39,9 +39,8 @@
 //! concurrency," not as the engine's service time. A faithful SLA-latency number
 //! needs a separate open-loop / constant-rate run below Cmax (follow-up).
 //!
-//! Effective batch size (ops/fsync) is not measured directly here — that needs
-//! journal-worker fsync instrumentation (follow-up). The speedup S(N) is the
-//! implied fsync-amortization factor in the meantime.
+//! Effective batch size (ops/fsync) is measured directly from the journal
+//! worker's batch counters when `NIMBUS_CWB_SPLIT_PHASES=1`.
 //!
 //! Env overrides (all optional):
 //!   NIMBUS_CWB_WORKLOAD=crud|insert|hotkey    unit = CRUD (default), insert, or one shared-doc update
@@ -225,6 +224,7 @@ struct Rung {
 
 struct RungStats {
     n: usize,
+    raw_throughputs: Vec<f64>,
     mean_tps: f64,
     median_tps: f64,
     ci95_low: f64,
@@ -474,6 +474,7 @@ fn summarize(rung: &Rung) -> RungStats {
 
     RungStats {
         n: rung.n,
+        raw_throughputs: rung.throughputs.clone(),
         mean_tps,
         median_tps,
         ci95_low: (mean_tps - radius).max(0.0),
@@ -547,6 +548,21 @@ fn render_report(
             little,
         ));
     }
+    out.push_str("\n## Raw measured-round samples\n\n");
+    out.push_str(
+        "These durable-mutation throughput samples are the exact round inputs to the summary statistics and Student-t confidence intervals above.\n\n",
+    );
+    out.push_str("| N | measured mut/s samples |\n");
+    out.push_str("|---:|---|\n");
+    for s in stats {
+        let samples = s
+            .raw_throughputs
+            .iter()
+            .map(|sample| format!("{sample:.3}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        out.push_str(&format!("| {} | {} |\n", s.n, samples));
+    }
 
     // Headline: peak throughput + the rung achieving it.
     if let Some(peak) = stats
@@ -608,7 +624,7 @@ async fn run() -> String {
     );
     eprintln!("[cwb] {cfg}");
     if split_phases {
-        eprintln!("[cwb] under-gate phase split enabled");
+        eprintln!("[cwb] commit phase split enabled");
     }
 
     let dir = tempfile::tempdir().expect("tempdir should build");

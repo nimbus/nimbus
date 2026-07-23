@@ -6,6 +6,7 @@ mod engine_fixture;
 mod eventual;
 mod faults;
 mod http_api_fixture;
+pub mod ppsc;
 mod repro;
 mod runtime_profiles;
 mod server_fixture;

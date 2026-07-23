@@ -67,6 +67,7 @@ pub(super) async fn resolve_or_create_table_id_in_session<C>(
     session: &C,
     schema_name: &str,
     table: &TableName,
+    id_source: &dyn IdSource,
 ) -> Result<TableId>
 where
     C: GenericClient + Sync,
@@ -74,7 +75,7 @@ where
     if let Some(table_id) = load_table_id_from_session(session, schema_name, table).await? {
         return Ok(table_id);
     }
-    let table_id = TableId::new();
+    let table_id = id_source.next_table_id();
     let query = format!(
         "INSERT INTO {} (namespace, table_name, table_id, state)
            VALUES ($1, $2, $3, $4)

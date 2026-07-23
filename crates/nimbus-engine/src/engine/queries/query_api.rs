@@ -555,6 +555,7 @@ where
         let tenant_load = tenant_load_timer.finish();
         let required_sequence = runtime.durable_head();
         let visibility_timer = budgeted_segment(LatencySegment::WaitVisibility);
+        let eviction_completion = runtime.eviction_completion();
         tokio::select! {
             result = runtime.wait_for_applied_sequence_cancellable(
                 required_sequence,
@@ -562,8 +563,10 @@ where
             ) => {
                 if let Err(error) = result {
                     if runtime.eviction_started() {
+                        let completion = runtime.eviction_completion();
+                        drop(runtime);
                         tokio::select! {
-                            () = runtime.wait_for_eviction_complete() => continue,
+                            () = completion.wait() => continue,
                             () = cancel_wait.clone() => return Err(Error::Cancelled),
                         }
                     }
@@ -577,7 +580,8 @@ where
                     wait_visibility,
                 });
             }
-            () = runtime.wait_for_eviction_complete() => {
+            () = eviction_completion.wait() => {
+                drop(runtime);
                 // The durable head may have advanced while the failed runtime's
                 // applied head cannot. Retry against the replayed replacement.
             }

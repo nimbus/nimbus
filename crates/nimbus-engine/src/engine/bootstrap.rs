@@ -111,11 +111,13 @@ pub(super) fn build_memory_engine(
     let (engine_executor, storage_executor) = build_executors()?;
     let control_plane_provider =
         build_control_plane_provider(data_dir.clone(), None, &storage_executor)?;
-    let persistence_provider = PersistenceProvider::Memory(Arc::new(MemoryTenantProvider::new(
-        clock.clone(),
-        storage_fault_injector.clone(),
-        storage_executor.handle(),
-    )));
+    let persistence_provider =
+        PersistenceProvider::Memory(Arc::new(MemoryTenantProvider::new_with_id_source(
+            clock.clone(),
+            storage_fault_injector.clone(),
+            storage_executor.handle(),
+            id_source.clone(),
+        )));
 
     Ok(Engine::from_bootstrap_parts(EngineBootstrapParts {
         data_dir,
@@ -213,38 +215,42 @@ fn build_embedded_from_plan(
     let persistence_provider = match plan.provider_kind {
         EmbeddedProviderKind::Redb => {
             let provider = if let Some(provider) = encryption_provider {
-                EmbeddedRedbProvider::new_encrypted(
+                EmbeddedRedbProvider::new_encrypted_with_id_source(
                     plan.data_dir.clone(),
                     provider,
                     simulation.clock.clone(),
                     simulation.storage_fault_injector.clone(),
                     storage_executor.handle(),
+                    simulation.id_source.clone(),
                 )?
             } else {
-                EmbeddedRedbProvider::new(
+                EmbeddedRedbProvider::new_with_id_source(
                     plan.data_dir.clone(),
                     simulation.clock.clone(),
                     simulation.storage_fault_injector.clone(),
                     storage_executor.handle(),
+                    simulation.id_source.clone(),
                 )?
             };
             PersistenceProvider::Redb(Arc::new(provider))
         }
         EmbeddedProviderKind::Sqlite => {
             let provider = if let Some(provider) = encryption_provider {
-                EmbeddedSqliteProvider::new_encrypted(
+                EmbeddedSqliteProvider::new_encrypted_with_id_source(
                     plan.data_dir.clone(),
                     provider,
                     simulation.clock.clone(),
                     simulation.storage_fault_injector.clone(),
                     storage_executor.handle(),
+                    simulation.id_source.clone(),
                 )?
             } else {
-                EmbeddedSqliteProvider::new(
+                EmbeddedSqliteProvider::new_with_id_source(
                     plan.data_dir.clone(),
                     simulation.clock.clone(),
                     simulation.storage_fault_injector.clone(),
                     storage_executor.handle(),
+                    simulation.id_source.clone(),
                 )?
             };
             PersistenceProvider::Sqlite(Arc::new(provider))
@@ -285,11 +291,12 @@ async fn build_postgres_from_plan(
         max_connections: plan.pool.max_connections,
     };
     let postgres_provider = Arc::new(
-        PostgresProvider::connect_with_simulation(
+        PostgresProvider::connect_with_simulation_and_id_source(
             provider_config,
             storage_executor.handle(),
             simulation.clock.clone(),
             simulation.storage_fault_injector.clone(),
+            simulation.id_source.clone(),
         )
         .await?,
     );
@@ -338,12 +345,13 @@ async fn build_libsql_replica_from_plan(
         .clone()
         .unwrap_or_else(|| simulation.storage_fault_injector.clone());
     let libsql_replica_provider = Arc::new(
-        LibsqlReplicaProvider::connect_with_simulation_faults(
+        LibsqlReplicaProvider::connect_with_simulation_faults_and_id_source(
             provider_config,
             storage_executor.handle(),
             simulation.clock.clone(),
             simulation.storage_fault_injector.clone(),
             replica_fault_injector,
+            simulation.id_source.clone(),
         )
         .await?,
     );
@@ -382,11 +390,12 @@ async fn build_mysql_from_plan(
         max_connections: plan.pool.max_connections,
     };
     let mysql_provider = Arc::new(
-        MySqlProvider::connect_with_simulation(
+        MySqlProvider::connect_with_simulation_and_id_source(
             provider_config,
             storage_executor.handle(),
             simulation.clock.clone(),
             simulation.storage_fault_injector.clone(),
+            simulation.id_source.clone(),
         )
         .await?,
     );

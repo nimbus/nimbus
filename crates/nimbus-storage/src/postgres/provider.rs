@@ -17,6 +17,24 @@ impl PostgresProvider {
         clock: Arc<dyn WallClock>,
         fault_injector: Arc<dyn FaultInjector>,
     ) -> Result<Self> {
+        Self::connect_with_simulation_and_id_source(
+            config,
+            runtime_handle,
+            clock,
+            fault_injector,
+            Arc::new(SystemIdSource),
+        )
+        .await
+    }
+
+    #[doc(hidden)]
+    pub async fn connect_with_simulation_and_id_source(
+        config: PostgresProviderConfig,
+        runtime_handle: TokioRuntimeHandle,
+        clock: Arc<dyn WallClock>,
+        fault_injector: Arc<dyn FaultInjector>,
+        id_source: Arc<dyn IdSource>,
+    ) -> Result<Self> {
         validate_identifier_input(&config.metadata_schema, "metadata schema")?;
         validate_identifier_input(&config.tenant_schema_prefix, "tenant schema prefix")?;
 
@@ -32,6 +50,7 @@ impl PostgresProvider {
             notification_channel,
             runtime_handle,
             clock,
+            id_source,
             fault_injector,
             tenant_read_parallelism: default_postgres_read_parallelism(),
         };
@@ -142,6 +161,43 @@ impl PostgresProvider {
             .query(query.as_str(), &[])
             .await
             .map_err(map_postgres_error)?;
+        rows.into_iter()
+            .map(|row| TenantId::new(row.get::<_, String>(0)))
+            .collect()
+    }
+
+    pub async fn list_tenants_page(
+        &self,
+        after: Option<&TenantId>,
+        limit: usize,
+    ) -> Result<Vec<TenantId>> {
+        if limit == 0 {
+            return Err(Error::InvalidInput(
+                "PostgreSQL tenant page limit must be greater than zero".to_string(),
+            ));
+        }
+        let client = self.client().await?;
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let rows = match after {
+            Some(after) => {
+                let query = format!(
+                    "SELECT tenant_id FROM {} \
+                     WHERE tenant_id > $1 ORDER BY tenant_id LIMIT $2",
+                    qualified_table(&self.metadata_schema, "tenants")
+                );
+                client
+                    .query(query.as_str(), &[&after.as_str(), &limit])
+                    .await
+            }
+            None => {
+                let query = format!(
+                    "SELECT tenant_id FROM {} ORDER BY tenant_id LIMIT $1",
+                    qualified_table(&self.metadata_schema, "tenants")
+                );
+                client.query(query.as_str(), &[&limit]).await
+            }
+        }
+        .map_err(map_postgres_error)?;
         rows.into_iter()
             .map(|row| TenantId::new(row.get::<_, String>(0)))
             .collect()

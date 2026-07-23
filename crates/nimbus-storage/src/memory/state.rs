@@ -1,11 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use nimbus_core::{
-    CronJob, Document, DocumentId, DocumentLocator, DocumentPath, Error, ResourcePathBinding,
-    Result, ScheduledJob, ScheduledJobResult, Schema, SequenceNumber, TableId, TableName,
-    TableState, TenantEventKind, TenantEventRecord, Timestamp, TriggerDeliveryCursor,
-    TriggerInvocationKey, TriggerInvocationRecord, WriteOp,
+    CronJob, Document, DocumentId, DocumentLocator, DocumentPath, Error, IdSource,
+    ResourcePathBinding, Result, ScheduledJob, ScheduledJobResult, Schema, SequenceNumber,
+    SystemIdSource, TableId, TableName, TableState, TenantEventKind, TenantEventRecord, Timestamp,
+    TriggerDeliveryCursor, TriggerInvocationKey, TriggerInvocationRecord, WriteOp,
 };
+use std::sync::Arc;
 
 use crate::table_identity::{
     DEFAULT_TABLE_NAMESPACE, deleting_table_namespace, hidden_table_namespace,
@@ -18,10 +19,10 @@ pub(super) struct MemoryTableIdentity {
     pub state: TableState,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(super) struct MemoryState {
     pub revision: u64,
-    pub next_table_id: u64,
+    id_source: Arc<dyn IdSource>,
     pub active_tables: BTreeMap<TableName, TableId>,
     pub table_identities: BTreeMap<TableId, MemoryTableIdentity>,
     pub documents: BTreeMap<TableId, BTreeMap<DocumentId, Document>>,
@@ -40,7 +41,36 @@ pub(super) struct MemoryState {
     pub trigger_invocations: BTreeMap<TriggerInvocationKey, TriggerInvocationRecord>,
 }
 
+impl Default for MemoryState {
+    fn default() -> Self {
+        Self::with_id_source(Arc::new(SystemIdSource))
+    }
+}
+
 impl MemoryState {
+    pub fn with_id_source(id_source: Arc<dyn IdSource>) -> Self {
+        Self {
+            revision: 0,
+            id_source,
+            active_tables: BTreeMap::new(),
+            table_identities: BTreeMap::new(),
+            documents: BTreeMap::new(),
+            schema: Schema::default(),
+            durable_journal: BTreeMap::new(),
+            durable_head: SequenceNumber(0),
+            applied_head: SequenceNumber(0),
+            scheduled_execution_ids: BTreeSet::new(),
+            resource_bindings: HashMap::new(),
+            document_paths: HashMap::new(),
+            scheduled_jobs: BTreeMap::new(),
+            running_jobs: BTreeMap::new(),
+            scheduled_job_results: BTreeMap::new(),
+            cron_jobs: BTreeMap::new(),
+            trigger_delivery_cursor: TriggerDeliveryCursor::default(),
+            trigger_invocations: BTreeMap::new(),
+        }
+    }
+
     pub fn durable_head(&self) -> SequenceNumber {
         self.durable_head
     }
@@ -57,8 +87,7 @@ impl MemoryState {
             return Ok(table_id.clone());
         }
         let table_id = loop {
-            self.next_table_id = self.next_table_id.saturating_add(1);
-            let candidate = TableId::try_from(format!("memory-table-{}", self.next_table_id))?;
+            let candidate = self.id_source.next_table_id();
             if !self.table_identities.contains_key(&candidate) {
                 break candidate;
             }

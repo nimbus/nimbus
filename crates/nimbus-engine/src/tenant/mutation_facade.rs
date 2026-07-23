@@ -85,6 +85,14 @@ impl TenantRuntime {
         self.observer_dispatch.catch_up_chunk_size()
     }
 
+    pub(crate) fn claim_committed_mutation_observer_through(
+        &self,
+        through: SequenceNumber,
+    ) -> SequenceNumber {
+        self.observer_dispatch
+            .claim_observer_publication_through(through)
+    }
+
     pub(crate) fn request_committed_mutation_observer_catch_up(
         &self,
         first_sequence: SequenceNumber,
@@ -166,8 +174,10 @@ impl TenantRuntime {
         self.observer_dispatch.wait_drained().await;
     }
 
-    pub(crate) fn wait_for_committed_mutation_observers_drained_blocking(&self) -> Result<()> {
-        self.observer_dispatch.wait_drained_blocking()
+    pub(crate) async fn wait_for_committed_mutation_observers_drained_for_eviction(
+        &self,
+    ) -> Result<()> {
+        self.observer_dispatch.wait_drained_for_eviction().await
     }
 
     #[cfg(any(test, feature = "test-hooks"))]

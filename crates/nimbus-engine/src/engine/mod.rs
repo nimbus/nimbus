@@ -50,6 +50,7 @@ use crate::persistence::{ControlPlaneProvider, PersistenceProvider, TenantPersis
 use crate::persistence_config::EnginePersistenceConfig;
 use crate::tenant::{
     LeaseRenewalClock, PublisherErrorCounts, SystemLeaseRenewalClock, TenantRuntime,
+    TenantRuntimeEnvironment,
 };
 use crate::triggers::{TriggerRegistration, execution::SharedTriggerInvocationExecutor};
 use background_executor::BackgroundExecutor;
@@ -71,10 +72,7 @@ pub(crate) use mutations::phase_metrics::{
     CommitPhaseDurations, CommitPhaseMetrics, CommitTraceSample, maybe_emit_commit_trace,
 };
 pub use mutations::{AsyncMutationContext, MutationActor, MutationIsolatePermit};
-pub(crate) use mutations::{
-    begin_definitive_fence_eviction, begin_durable_recovery_eviction,
-    finish_durable_recovery_eviction_locked,
-};
+pub(crate) use mutations::{begin_definitive_fence_eviction, begin_durable_recovery_eviction};
 pub use objects::TenantObjectMeta;
 pub(crate) use provider_hints::ProviderPollWorker;
 pub(crate) use queries::{
@@ -128,8 +126,22 @@ pub(crate) struct TenantEvictionRegistry {
 }
 
 impl TenantEvictionRegistry {
-    pub(crate) fn finish(&self, runtime: &Arc<TenantRuntime>) {
+    pub(crate) async fn finish(&self, runtime: Arc<TenantRuntime>) {
         let tenant_id = runtime.tenant_id().clone();
+        let completion = runtime.eviction_completion();
+        // The committer actor reaches this point only after publisher,
+        // observer, and operation ownership has drained. Retire transport
+        // state before unregistering the runtime so a replacement cannot race
+        // stale provider sessions from the evicted generation. Engine
+        // quiescence handles only runtimes still present in the registry and
+        // therefore cannot own this crash-and-replay path.
+        if let Err(error) = runtime.store.retire_after_drain().await {
+            tracing::warn!(
+                tenant_id = %tenant_id,
+                error = %error,
+                "failed to retire tenant persistence during runtime eviction"
+            );
+        }
         if let Some(diagnostics) = self.publisher_failure_diagnostics.upgrade() {
             diagnostics
                 .write()
@@ -137,28 +149,33 @@ impl TenantEvictionRegistry {
                 .insert(tenant_id.clone(), runtime.publisher_error_counts());
         }
         if let Some(tenants) = self.tenants.upgrade() {
-            let removed = {
-                let mut tenants = tenants
-                    .write()
-                    .expect("tenant registry lock should not be poisoned");
-                if tenants
-                    .get(&tenant_id)
-                    .is_some_and(|loaded| Arc::ptr_eq(loaded, runtime))
-                {
-                    tenants.remove(&tenant_id)
-                } else {
-                    None
-                }
+            let mut tenants = tenants
+                .write()
+                .expect("tenant registry lock should not be poisoned");
+            let removed = if tenants
+                .get(&tenant_id)
+                .is_some_and(|loaded| Arc::ptr_eq(loaded, &runtime))
+            {
+                tenants.remove(&tenant_id)
+            } else {
+                None
             };
+            // Keep the registry write-locked until both Engine ownership and
+            // the actor's final runtime owner are gone. A loader cannot observe
+            // an empty slot and reopen redb while the failed handle is live.
             drop(removed);
+            drop(runtime);
+            drop(tenants);
         } else {
             // The Engine already dropped its registry. There is nothing left
             // to deregister, but wake any accessor still holding this runtime.
             tracing::debug!(tenant = %tenant_id, "engine registry dropped before eviction finished");
+            drop(runtime);
         }
-        // Wake accessors only after the failed runtime is absent from the
-        // registry. They will then serialize a fresh open behind the load gate.
-        runtime.finish_eviction();
+        // This token owns lifecycle state only, never persistence. Waking it
+        // therefore proves transport retirement was attempted and the actor
+        // and registry no longer own the old store.
+        completion.finish();
     }
 }
 
@@ -326,6 +343,32 @@ impl Engine {
         )
     }
 
+    /// Creates a test engine for an embedded adapter with every ambient source
+    /// used by the PPSC scenario contract supplied explicitly.
+    #[cfg(any(test, feature = "test-hooks"))]
+    #[doc(hidden)]
+    pub fn new_with_simulation_clocks_id_source_and_embedded_provider(
+        data_dir: impl Into<PathBuf>,
+        clock: Arc<dyn WallClock>,
+        monotonic_clock: Arc<dyn MonotonicClock>,
+        storage_fault_injector: Arc<dyn FaultInjector>,
+        id_source: Arc<dyn IdSource>,
+        embedded_provider_kind: EmbeddedProviderKind,
+    ) -> Result<Self> {
+        let data_dir = data_dir.into();
+        let mut engine = bootstrap::build_embedded_engine(
+            data_dir.clone(),
+            data_dir,
+            None,
+            clock,
+            storage_fault_injector,
+            id_source,
+            embedded_provider_kind,
+        )?;
+        engine.monotonic_clock = monotonic_clock;
+        Ok(engine)
+    }
+
     /// Creates a new engine with deterministic simulation seams and typed
     /// persistence configuration.
     pub async fn new_with_simulation_and_persistence_config(
@@ -352,6 +395,28 @@ impl Engine {
         let mut engine =
             Self::new_with_simulation_and_persistence_config(config, clock, storage_fault_injector)
                 .await?;
+        engine.monotonic_clock = monotonic_clock;
+        Ok(engine)
+    }
+
+    /// Creates a test engine for a configured persistence adapter with every
+    /// ambient source used by the PPSC scenario contract supplied explicitly.
+    #[cfg(any(test, feature = "test-hooks"))]
+    #[doc(hidden)]
+    pub async fn new_with_simulation_clocks_id_source_and_persistence_config(
+        config: EnginePersistenceConfig,
+        clock: Arc<dyn WallClock>,
+        monotonic_clock: Arc<dyn MonotonicClock>,
+        storage_fault_injector: Arc<dyn FaultInjector>,
+        id_source: Arc<dyn IdSource>,
+    ) -> Result<Self> {
+        let mut engine = bootstrap::build_from_persistence_config(
+            config,
+            clock,
+            storage_fault_injector,
+            id_source,
+        )
+        .await?;
         engine.monotonic_clock = monotonic_clock;
         Ok(engine)
     }
@@ -449,15 +514,6 @@ impl Engine {
         self.engine_executor.shutdown_token().is_cancelled()
     }
 
-    pub(crate) fn spawn_background<F>(&self, name: &'static str, future: F) -> JoinHandle<()>
-    where
-        F: Future<Output = ()> + Send + 'static,
-    {
-        self.engine_executor
-            .spawn(ENGINE_BACKGROUND_TASK.scope(name, future))
-            .expect("engine executor should accept background work before quiesce")
-    }
-
     pub(crate) fn try_spawn_background<F>(
         &self,
         name: &'static str,
@@ -470,33 +526,39 @@ impl Engine {
             .spawn_mapped(future, |future| ENGINE_BACKGROUND_TASK.scope(name, future))
     }
 
-    pub(crate) fn start_committer_actor(&self, runtime: Arc<TenantRuntime>) {
+    pub(crate) fn start_committer_actor(&self, runtime: Arc<TenantRuntime>) -> Result<()> {
+        let spawn_permit = self.engine_executor.acquire_spawn_permit()?;
         let receiver = runtime.take_committer_receiver();
         if runtime.uses_ordered_publisher() {
             let publisher_receiver = runtime.take_publisher_receiver();
             let engine_shutdown = self.engine_executor.shutdown_token();
             let tenant_shutdown = runtime.committer_shutdown_token();
             let publisher_runtime = Arc::downgrade(&runtime);
-            self.spawn_background("mutation_publisher", async move {
-                crate::engine::mutations::run_ordered_publisher(
-                    publisher_runtime,
-                    publisher_receiver,
-                    engine_shutdown,
-                    tenant_shutdown,
-                )
-                .await;
-            });
+            spawn_permit.spawn(
+                ENGINE_BACKGROUND_TASK.scope("mutation_publisher", async move {
+                    crate::engine::mutations::run_ordered_publisher(
+                        publisher_runtime,
+                        publisher_receiver,
+                        engine_shutdown,
+                        tenant_shutdown,
+                    )
+                    .await;
+                }),
+            );
         }
 
         let observer_receiver = runtime.take_observer_dispatch_receiver();
         let observer_runtime = Arc::downgrade(&runtime);
-        self.spawn_background("committed_mutation_observers", async move {
-            committed_mutations::run_committed_mutation_observer_dispatcher(
-                observer_receiver,
-                observer_runtime,
-            )
-            .await;
-        });
+        spawn_permit.spawn(ENGINE_BACKGROUND_TASK.scope(
+            "committed_mutation_observers",
+            async move {
+                committed_mutations::run_committed_mutation_observer_dispatcher(
+                    observer_receiver,
+                    observer_runtime,
+                )
+                .await;
+            },
+        ));
 
         let engine_shutdown = self.engine_executor.shutdown_token();
         let tenant_shutdown = runtime.committer_shutdown_token();
@@ -506,17 +568,20 @@ impl Engine {
             publisher_failure_diagnostics: Arc::downgrade(&self.publisher_failure_diagnostics),
         };
         let runtime = Arc::downgrade(&runtime);
-        self.spawn_background("mutation_committer", async move {
-            crate::tenant::run_committer_actor(
-                runtime,
-                receiver,
-                engine_shutdown,
-                tenant_shutdown,
-                closes_observer_dispatch,
-                eviction_registry,
-            )
-            .await;
-        });
+        spawn_permit.spawn(
+            ENGINE_BACKGROUND_TASK.scope("mutation_committer", async move {
+                crate::tenant::run_committer_actor(
+                    runtime,
+                    receiver,
+                    engine_shutdown,
+                    tenant_shutdown,
+                    closes_observer_dispatch,
+                    eviction_registry,
+                )
+                .await;
+            }),
+        );
+        Ok(())
     }
 
     pub async fn quiesce(&self) {
@@ -527,11 +592,26 @@ impl Engine {
             .values()
             .cloned()
             .collect::<Vec<_>>();
-        for runtime in runtimes {
+        for runtime in &runtimes {
             runtime.shutdown_committer_lease_renewal();
         }
         self.engine_executor.quiesce().await;
         self.storage_executor.quiesce().await;
+        for runtime in runtimes {
+            if let Err(error) = runtime.store.retire_after_drain().await {
+                tracing::warn!(
+                    tenant_id = %runtime.tenant_id(),
+                    error = %error,
+                    "failed to retire tenant persistence during engine quiesce"
+                );
+            }
+        }
+        if let Err(error) = self.persistence_provider.retire_after_drain().await {
+            tracing::warn!(
+                error = %error,
+                "failed to retire provider persistence during engine quiesce"
+            );
+        }
     }
 
     #[cfg(any(test, debug_assertions))]
@@ -559,7 +639,7 @@ impl Engine {
     fn committer_owner_id_for_store(&self, store: &TenantPersistence) -> Option<String> {
         store.requires_committer_lease().then(|| {
             self.committer_owner_id
-                .get_or_init(|| format!("nimbus-{}", self.id_source.next_document_id()))
+                .get_or_init(|| format!("nimbus-{}", self.id_source.next_committer_owner_id()))
                 .clone()
         })
     }
@@ -606,12 +686,15 @@ impl Engine {
             tenant_incarnation,
             store.clone(),
             read_storage,
-            self.monotonic_clock.clone(),
-            self.committer_lease_clock.clone(),
-            self.committer_owner_id_for_store(&store),
+            TenantRuntimeEnvironment::new(
+                self.monotonic_clock.clone(),
+                self.committer_lease_clock.clone(),
+                self.committer_owner_id_for_store(&store),
+                self.id_source.clone(),
+            ),
         )?);
         self.restore_publisher_error_counts(&runtime);
-        self.start_committer_actor(runtime.clone());
+        self.start_committer_actor(runtime.clone())?;
         runtime.replace_trigger_registrations(
             self.trigger_registrations
                 .read()

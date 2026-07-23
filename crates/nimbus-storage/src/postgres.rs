@@ -10,11 +10,12 @@ use deadpool_postgres::{
 };
 use nimbus_core::{
     CommitEntry, CronJob, Document, DocumentId, Error, FieldType, Filter, HistoricalIndexCursor,
-    HistoricalIndexTuple, HistoricalReadShape, IndexDefinition, IndexLifecycleEvent,
+    HistoricalIndexTuple, HistoricalReadShape, IdSource, IndexDefinition, IndexLifecycleEvent,
     ResourcePathBinding, Result, ScheduledJob, ScheduledJobResult, Schema, SchemaChangeEvent,
-    SequenceNumber, StorageErrorKind, SystemWallClock, TableId, TableLifecycleEvent, TableName,
-    TableSchema, TableState, TenantEventKind, TenantEventRecord, TenantId, Timestamp,
-    TriggerDeliveryCursor, TriggerWriteOrigin, WallClock, WriteOp, WriteOpType,
+    SequenceNumber, StorageErrorKind, SystemIdSource, SystemWallClock, TableId,
+    TableLifecycleEvent, TableName, TableSchema, TableState, TenantEventKind, TenantEventRecord,
+    TenantId, Timestamp, TriggerDeliveryCursor, TriggerWriteOrigin, WallClock, WriteOp,
+    WriteOpType,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -102,6 +103,7 @@ pub struct PostgresProvider {
     notification_channel: String,
     runtime_handle: TokioRuntimeHandle,
     clock: Arc<dyn WallClock>,
+    id_source: Arc<dyn IdSource>,
     fault_injector: Arc<dyn FaultInjector>,
     tenant_read_parallelism: usize,
 }

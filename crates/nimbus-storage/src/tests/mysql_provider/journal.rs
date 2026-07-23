@@ -1,7 +1,8 @@
 use super::support::*;
 use crate::tests::{
-    exercise_applied_sequence_corruption_rejection, exercise_applied_sequence_recovery_replay,
     exercise_durable_update_guard_is_corruption, exercise_pending_prefix_blocks_generic_zero_write,
+    exercise_ppsc_different_content_applied_sequence_reuse_rejection,
+    exercise_ppsc_identical_applied_sequence_replay,
 };
 use nimbus_core::{Error, Result};
 
@@ -358,27 +359,30 @@ async fn mysql_sql_pipeline_post_runner_cancellation_is_counted_once() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn mysql_applied_sequence_recovery_replay_is_idempotent_for_all_write_shapes() {
+async fn mysql_ppsc_identical_replay_is_idempotent_for_all_write_shapes() {
     with_test_provider(|provider, _config| async move {
         let tenant = TenantId::new("duplicate-replay").expect("tenant id should build");
         let opened = provider
             .create_opened_tenant(&tenant)
             .await
             .expect("tenant should create and open");
-        exercise_applied_sequence_recovery_replay(opened.store.as_ref(), "mysql_duplicate_replay");
+        exercise_ppsc_identical_applied_sequence_replay(
+            opened.store.as_ref(),
+            "mysql_duplicate_replay",
+        );
     })
     .await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn mysql_applied_sequence_rejects_divergent_content_for_all_write_shapes() {
+async fn mysql_ppsc_different_content_sequence_reuse_is_rejected_for_all_write_shapes() {
     with_test_provider(|provider, _config| async move {
         let tenant = TenantId::new("duplicate-corruption").expect("tenant id should build");
         let opened = provider
             .create_opened_tenant(&tenant)
             .await
             .expect("tenant should create and open");
-        exercise_applied_sequence_corruption_rejection(
+        exercise_ppsc_different_content_applied_sequence_reuse_rejection(
             opened.store.as_ref(),
             "mysql_duplicate_corruption",
         );

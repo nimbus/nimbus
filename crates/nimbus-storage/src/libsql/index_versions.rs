@@ -221,23 +221,19 @@ async fn index_version_storage_diagnostic_remote(
     conn: &Connection,
 ) -> Result<IndexVersionStorageDiagnostic> {
     let format_version = load_index_version_storage_format_remote(conn).await?;
-    let mut rows = conn
+    let rows = conn
         .query(
             "SELECT COUNT(*), MIN(visible_from), MAX(MAX(visible_from, COALESCE(visible_until, visible_from))) FROM index_versions",
             (),
         )
         .await
         .map_err(map_libsql_error)?;
-    let row = rows
-        .next()
-        .await
-        .map_err(map_libsql_error)?
-        .ok_or_else(|| {
-            Error::storage(
-                StorageErrorKind::Corruption,
-                "libSQL index version aggregate query returned no row",
-            )
-        })?;
+    let row = take_single_remote_row(rows).await?.ok_or_else(|| {
+        Error::storage(
+            StorageErrorKind::Corruption,
+            "libSQL index version aggregate query returned no row",
+        )
+    })?;
     let version_count = u64_from_i64(row.get::<i64>(0).map_err(map_libsql_error)?)?;
     let min_sequence = row
         .get::<Option<i64>>(1)
@@ -285,20 +281,16 @@ async fn load_index_version_storage_format_remote(
 }
 
 async fn index_versions_have_rows_remote(conn: &Connection) -> Result<bool> {
-    let mut rows = conn
+    let rows = conn
         .query("SELECT EXISTS(SELECT 1 FROM index_versions LIMIT 1)", ())
         .await
         .map_err(map_libsql_error)?;
-    let row = rows
-        .next()
-        .await
-        .map_err(map_libsql_error)?
-        .ok_or_else(|| {
-            Error::storage(
-                StorageErrorKind::Corruption,
-                "libSQL index version existence query returned no row",
-            )
-        })?;
+    let row = take_single_remote_row(rows).await?.ok_or_else(|| {
+        Error::storage(
+            StorageErrorKind::Corruption,
+            "libSQL index version existence query returned no row",
+        )
+    })?;
     Ok(row.get::<i64>(0).map_err(map_libsql_error)? != 0)
 }
 
@@ -306,14 +298,14 @@ async fn load_remote_table_schema_from_conn(
     conn: &Connection,
     table: &TableName,
 ) -> Result<Option<TableSchema>> {
-    let mut rows = conn
+    let rows = conn
         .query(
             "SELECT schema_json FROM schemas WHERE table_name = ?1",
             libsql::params![table.as_str()],
         )
         .await
         .map_err(map_libsql_error)?;
-    let Some(row) = rows.next().await.map_err(map_libsql_error)? else {
+    let Some(row) = take_single_remote_row(rows).await? else {
         return Ok(None);
     };
     deserialize_json(row.get::<String>(0).map_err(map_libsql_error)?.as_str()).map(Some)

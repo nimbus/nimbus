@@ -1,10 +1,11 @@
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::task::{Context, Poll};
 use std::time::Instant;
 
@@ -14,10 +15,11 @@ use libsql::{Builder, Connection, Database, Transaction, TransactionBehavior};
 use native_tls::TlsConnector as NativeTlsConnector;
 use nimbus_core::{
     CommitEntry, CronJob, Document, DocumentId, Error, HistoricalIndexCursor, HistoricalReadShape,
-    IndexLifecycleEvent, Result, ScheduledJob, ScheduledJobResult, Schema, SchemaChangeEvent,
-    SequenceNumber, StorageErrorKind, SystemWallClock, TableId, TableLifecycleEvent, TableName,
-    TableSchema, TableState, TenantEventKind, TenantEventRecord, TenantId, Timestamp,
-    TriggerDeliveryCursor, TriggerWriteOrigin, WallClock, WriteOp, WriteOpType,
+    IdSource, IndexLifecycleEvent, Result, ScheduledJob, ScheduledJobResult, Schema,
+    SchemaChangeEvent, SequenceNumber, StorageErrorKind, SystemIdSource, SystemWallClock, TableId,
+    TableLifecycleEvent, TableName, TableSchema, TableState, TenantEventKind, TenantEventRecord,
+    TenantId, Timestamp, TriggerDeliveryCursor, TriggerWriteOrigin, WallClock, WriteOp,
+    WriteOpType,
 };
 use nimbus_crypto::{
     LocalKeyProvider, LocalKeySubject, ManifestCipher, resolve_subject_encryption_key,
@@ -88,6 +90,7 @@ use self::remote::{
     remove_sqlite_artifacts, tenant_namespace_has_foundation, tenant_namespace_name,
     validate_namespace_input,
 };
+use self::transport::{LibsqlRemoteConnection, LibsqlRemoteSession};
 pub use self::transport::{
     LibsqlTransportConnector, LibsqlTransportStream, libsql_transport_connector,
 };
@@ -97,7 +100,9 @@ const TARGET_TENANT_HASH_HEX_LEN: usize = 40;
 const MIN_TENANT_HASH_HEX_LEN: usize = 16;
 const LIBSQL_TENANT_READ_PARALLELISM: usize = 4;
 const LIBSQL_TENANT_WRITE_PARALLELISM: usize = 1;
+const LIBSQL_SCHEDULER_PROBE_SESSION_LIMIT: usize = 64;
 const LIBSQL_REPLICA_FILENAME: &str = "tenant.sqlite3";
+static LIBSQL_ADMIN_HTTP_CLIENT: OnceLock<HttpClient> = OnceLock::new();
 const LIBSQL_DROP_TENANT_SQL: &str = r#"
 DROP TABLE IF EXISTS index_versions;
 DROP TABLE IF EXISTS document_versions;
@@ -202,10 +207,123 @@ pub struct LibsqlReplicaProvider {
     encryption_provider: Option<Arc<dyn LocalKeyProvider>>,
     runtime_handle: TokioRuntimeHandle,
     clock: Arc<dyn WallClock>,
+    id_source: Arc<dyn IdSource>,
     remote_fault_injector: Arc<dyn FaultInjector>,
     replica_fault_injector: Arc<dyn FaultInjector>,
     tenant_read_parallelism: usize,
-    metadata_database: Arc<Database>,
+    metadata_session: LibsqlRemoteSession,
+    scheduler_probe_sessions: Arc<Mutex<BoundedSchedulerProbeSessions<LibsqlRemoteSession>>>,
+    #[cfg(test)]
+    scheduler_probe_session_open_count: Arc<AtomicU64>,
+}
+
+struct BoundedSchedulerProbeSessions<T> {
+    capacity: usize,
+    next_use: u64,
+    entries: BTreeMap<TenantId, SchedulerProbeSession<T>>,
+}
+
+struct SchedulerProbeSession<T> {
+    namespace: String,
+    session: T,
+    last_used: u64,
+}
+
+impl<T> BoundedSchedulerProbeSessions<T> {
+    fn new(capacity: usize) -> Self {
+        assert!(
+            capacity > 0,
+            "libsql scheduler probe session capacity must be non-zero"
+        );
+        Self {
+            capacity,
+            next_use: 0,
+            entries: BTreeMap::new(),
+        }
+    }
+
+    fn next_use(&mut self) -> u64 {
+        let next = self.next_use;
+        // At one access every nanosecond this counter lasts more than five
+        // centuries. Saturation only makes equally ancient entries tie; the
+        // tenant-id tiebreaker keeps eviction deterministic.
+        self.next_use = self.next_use.saturating_add(1);
+        next
+    }
+
+    fn get(&mut self, tenant_id: &TenantId, namespace: &str) -> (Option<T>, Option<T>)
+    where
+        T: Clone,
+    {
+        if self
+            .entries
+            .get(tenant_id)
+            .is_some_and(|entry| entry.namespace != namespace)
+        {
+            let stale = self.entries.remove(tenant_id).map(|entry| entry.session);
+            return (None, stale);
+        }
+        let last_used = self.next_use();
+        let hit = self.entries.get_mut(tenant_id).map(|entry| {
+            entry.last_used = last_used;
+            entry.session.clone()
+        });
+        (hit, None)
+    }
+
+    fn insert(&mut self, tenant_id: TenantId, namespace: String, session: T) -> Option<T> {
+        let last_used = self.next_use();
+        let replaced = self.entries.insert(
+            tenant_id,
+            SchedulerProbeSession {
+                namespace,
+                session,
+                last_used,
+            },
+        );
+        if let Some(replaced) = replaced {
+            return Some(replaced.session);
+        }
+        if self.entries.len() <= self.capacity {
+            return None;
+        }
+        let evicted_tenant = self
+            .entries
+            .iter()
+            .min_by_key(|(tenant_id, entry)| (entry.last_used, *tenant_id))
+            .map(|(tenant_id, _)| tenant_id.clone())
+            .expect("an over-capacity scheduler probe cache must contain an entry");
+        self.entries
+            .remove(&evicted_tenant)
+            .map(|entry| entry.session)
+    }
+
+    fn take(&mut self, tenant_id: &TenantId, namespace: &str) -> (Option<T>, Option<T>) {
+        let Some(entry) = self.entries.remove(tenant_id) else {
+            return (None, None);
+        };
+        if entry.namespace == namespace {
+            (Some(entry.session), None)
+        } else {
+            (None, Some(entry.session))
+        }
+    }
+
+    fn remove(&mut self, tenant_id: &TenantId) -> Option<T> {
+        self.entries.remove(tenant_id).map(|entry| entry.session)
+    }
+
+    fn drain(&mut self) -> Vec<T> {
+        std::mem::take(&mut self.entries)
+            .into_values()
+            .map(|entry| entry.session)
+            .collect()
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
 }
 
 pub struct OpenedLibsqlReplicaTenant {
@@ -223,7 +341,7 @@ pub struct LibsqlReplicaTenantStore {
     provider: LibsqlReplicaProvider,
     tenant_id: TenantId,
     namespace: String,
-    remote_database: Arc<Database>,
+    remote_session: LibsqlRemoteSession,
     active_cache: Arc<RwLock<ReplicaCacheHandle>>,
     retired_caches: Arc<Mutex<Vec<ReplicaCacheHandle>>>,
     next_cache_generation: Arc<AtomicU64>,
@@ -280,7 +398,7 @@ impl LibsqlReplicaTenantStore {
         provider: LibsqlReplicaProvider,
         tenant_id: TenantId,
         namespace: String,
-        remote_database: Arc<Database>,
+        remote_session: LibsqlRemoteSession,
         local_store: Arc<SqliteTenantStore>,
         replica_path: PathBuf,
     ) -> Self {
@@ -292,7 +410,7 @@ impl LibsqlReplicaTenantStore {
             provider,
             tenant_id,
             namespace,
-            remote_database,
+            remote_session,
             active_cache: Arc::new(RwLock::new(ReplicaCacheHandle {
                 store: local_store,
                 replica_path,
@@ -348,7 +466,17 @@ impl LibsqlReplicaTenantStore {
     }
 
     fn remote_connection(&self) -> Result<Connection> {
-        self.remote_database.connect().map_err(map_libsql_error)
+        self.remote_session.retryable_connection()
+    }
+
+    fn remote_write_connection(&self) -> Result<Connection> {
+        self.remote_session.write_connection()
+    }
+
+    /// Retires the tenant-specific remote transport after engine-owned work
+    /// has drained and before shutdown or namespace deletion completes.
+    pub async fn retire_after_drain(&self) -> Result<()> {
+        self.remote_session.retire_after_drain().await
     }
 
     fn active_cache_handle(&self) -> Result<ReplicaCacheHandle> {
@@ -503,11 +631,7 @@ impl LibsqlReplicaTenantStore {
     }
 
     fn refresh_local_cache_from_snapshot(&self) -> Result<ReplicaRefreshOutcome> {
-        let snapshot = self.block_on(fetch_remote_namespace_snapshot(
-            &self.provider.primary_url,
-            self.provider.auth_token.as_deref(),
-            &self.namespace,
-        ))?;
+        let snapshot = self.block_on(fetch_remote_namespace_snapshot(&self.remote_session))?;
         let durable_head = snapshot
             .commit_log
             .last()
@@ -604,7 +728,7 @@ impl LibsqlReplicaTenantStore {
             let next_sequence = SequenceNumber(local_progress.durable_head.0.saturating_add(1));
             let records = self.block_on(self.load_remote_durable_records_from(next_sequence))?;
             if !records.is_empty() {
-                store.append_durable_records_batch(records.as_slice())?;
+                store.reconcile_replica_durable_records_batch(records.as_slice())?;
             }
         }
 
@@ -734,31 +858,75 @@ impl LibsqlReplicaTenantStore {
     }
 
     async fn load_remote_latest_sequence(&self) -> Result<SequenceNumber> {
-        Ok(SequenceNumber(
-            load_next_sequence_from_session(&self.remote_connection()?)
-                .await?
-                .saturating_sub(1),
-        ))
+        retry_idempotent_remote_operation(
+            &self.remote_session,
+            "load durable journal head",
+            |conn| async move {
+                Ok(SequenceNumber(
+                    load_next_sequence_from_session(&conn)
+                        .await?
+                        .saturating_sub(1),
+                ))
+            },
+        )
+        .await
     }
 
     async fn load_remote_durable_records_from(
         &self,
         sequence: SequenceNumber,
     ) -> Result<Vec<TenantEventRecord>> {
-        let conn = self.remote_connection()?;
-        let mut rows = conn
-            .query(
-                "SELECT record_blob FROM commit_log WHERE sequence >= ?1 ORDER BY sequence",
-                libsql::params![i64_from_u64(sequence.0)?],
-            )
-            .await
-            .map_err(map_libsql_error)?;
-        let mut records = Vec::new();
-        while let Some(row) = rows.next().await.map_err(map_libsql_error)? {
-            let payload = row.get::<Vec<u8>>(0).map_err(map_libsql_error)?;
-            records.push(deserialize_tenant_event_record(payload.as_slice())?);
-        }
-        Ok(records)
+        let sequence = i64_from_u64(sequence.0)?;
+        let sql = format!(
+            "SELECT record_blob FROM commit_log WHERE sequence >= {sequence} ORDER BY sequence"
+        );
+        retry_idempotent_remote_operation(
+            &self.remote_session,
+            "load durable journal records",
+            |conn| {
+                let sql = sql.clone();
+                async move {
+                    // Nimbus already materializes this ordered suffix before
+                    // reconciling it into the derivative cache. Use Hrana's
+                    // materialized pipeline response instead of its streaming
+                    // cursor endpoint so repeated freshness barriers reuse the
+                    // retained read lane rather than creating one HTTP cursor
+                    // connection per catch-up.
+                    let mut batch = conn
+                        .execute_batch(sql.as_str())
+                        .await
+                        .map_err(map_libsql_error)?;
+                    let mut rows = match batch.next_stmt_row() {
+                        Some(Some(rows)) => rows,
+                        Some(None) => {
+                            return Err(Error::storage(
+                                StorageErrorKind::Corruption,
+                                "libSQL durable journal batch skipped its SELECT result",
+                            ));
+                        }
+                        None => {
+                            return Err(Error::storage(
+                                StorageErrorKind::Corruption,
+                                "libSQL durable journal batch omitted its SELECT result",
+                            ));
+                        }
+                    };
+                    let mut records = Vec::new();
+                    while let Some(row) = rows.next().await.map_err(map_libsql_error)? {
+                        let payload = row.get::<Vec<u8>>(0).map_err(map_libsql_error)?;
+                        records.push(deserialize_tenant_event_record(payload.as_slice())?);
+                    }
+                    if batch.next_stmt_row().is_some() {
+                        return Err(Error::storage(
+                            StorageErrorKind::Corruption,
+                            "libSQL durable journal batch returned an extra statement result",
+                        ));
+                    }
+                    Ok(records)
+                }
+            },
+        )
+        .await
     }
 
     async fn load_remote_durable_journal_page(
@@ -798,7 +966,7 @@ impl LibsqlReplicaTenantStore {
             let payload = row.get::<Vec<u8>>(0).map_err(map_libsql_error)?;
             if records.len() == limit {
                 has_more = true;
-                break;
+                continue;
             }
             records.push(deserialize_tenant_event_record(payload.as_slice())?);
         }
@@ -817,11 +985,11 @@ impl LibsqlReplicaTenantStore {
 
     async fn load_remote_durable_journal_cursor_floor(&self) -> Result<SequenceNumber> {
         let conn = self.remote_connection()?;
-        let mut rows = conn
+        let rows = conn
             .query("SELECT MIN(sequence) FROM commit_log", ())
             .await
             .map_err(map_libsql_error)?;
-        let Some(row) = rows.next().await.map_err(map_libsql_error)? else {
+        let Some(row) = take_single_remote_row(rows).await? else {
             return Ok(SequenceNumber(0));
         };
         let min_sequence = row.get::<Option<i64>>(0).map_err(map_libsql_error)?;
@@ -871,7 +1039,7 @@ impl LibsqlReplicaTenantStore {
         &self,
         records: &[TenantEventRecord],
     ) -> Result<()> {
-        let conn = self.remote_connection()?;
+        let conn = self.remote_write_connection()?;
         let tx = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .await
@@ -896,6 +1064,21 @@ impl LibsqlReplicaTenantStore {
             next = next.saturating_add(1);
         }
         put_remote_metadata_u64(&tx, NEXT_SEQUENCE_KEY, next).await?;
+        if let Err(error) = self
+            .check_durable_records_fault(
+                crate::FaultPoint::JournalAppendBeforeDurableFlush,
+                records,
+            )
+            .and_then(|()| {
+                self.check_durable_records_fault(
+                    crate::FaultPoint::JournalFlushBeforeVisibility,
+                    records,
+                )
+            })
+        {
+            let _ = tx.rollback().await;
+            return Err(error);
+        }
         tx.commit().await.map_err(map_libsql_error)?;
         self.check_fault(crate::FaultPoint::StorageCommitAfterVisibilityBeforeReturn)?;
         Ok(())
@@ -905,7 +1088,7 @@ impl LibsqlReplicaTenantStore {
         &self,
         records: &[TenantEventRecord],
     ) -> Result<SequenceNumber> {
-        let conn = self.remote_connection()?;
+        let conn = self.remote_write_connection()?;
         let tx = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .await
@@ -916,14 +1099,14 @@ impl LibsqlReplicaTenantStore {
             .unwrap_or(SequenceNumber(0));
         for record in records {
             if record.sequence.0 <= applied_head.0 {
-                let mut rows = tx
+                let rows = tx
                     .query(
                         "SELECT record_blob FROM commit_log WHERE sequence = ?1",
                         libsql::params![i64_from_u64(record.sequence.0)?],
                     )
                     .await
                     .map_err(map_libsql_error)?;
-                let durable = match rows.next().await.map_err(map_libsql_error)? {
+                let durable = match take_single_remote_row(rows).await? {
                     Some(row) => {
                         let payload = row.get::<Vec<u8>>(0).map_err(map_libsql_error)?;
                         Some(deserialize_tenant_event_record(payload.as_slice())?)
@@ -971,7 +1154,7 @@ impl LibsqlReplicaTenantStore {
             .expect("non-empty fenced durable apply batch")
             .sequence;
         let durable_sequence_i64 = i64_from_u64(durable_sequence.0)?;
-        let conn = self.remote_connection()?;
+        let conn = self.remote_write_connection()?;
         let tx = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .await
@@ -1046,6 +1229,21 @@ impl LibsqlReplicaTenantStore {
 
         match result {
             Ok(applied) => {
+                if let Err(error) = self
+                    .check_durable_records_fault(
+                        crate::FaultPoint::JournalAppendBeforeDurableFlush,
+                        records,
+                    )
+                    .and_then(|()| {
+                        self.check_durable_records_fault(
+                            crate::FaultPoint::JournalFlushBeforeVisibility,
+                            records,
+                        )
+                    })
+                {
+                    let _ = tx.rollback().await;
+                    return Err(error);
+                }
                 tx.commit().await.map_err(map_libsql_error)?;
                 self.check_durable_records_fault(
                     crate::FaultPoint::StorageCommitAfterVisibilityBeforeReturn,

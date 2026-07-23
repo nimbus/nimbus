@@ -22,7 +22,7 @@ fn phase_split_section_reports_plan_conflict_apply_and_fsync_shares() {
     );
     let report = render_phase_split_section(&[(8, split)]);
 
-    assert!(report.contains("## Under-gate phase split"));
+    assert!(report.contains("## Commit phase split"));
     assert!(report.contains("| N | avg effective batch | window/storage prepare | plan-CPU |"));
     assert!(report.contains("| 8 | 8.00 | 0/0 | 10.0% | 10.0% | 30.0% | 50.0% | 10.000 ms |"));
 }

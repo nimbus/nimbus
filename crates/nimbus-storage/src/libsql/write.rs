@@ -771,7 +771,7 @@ impl LibsqlReplicaWriteTransaction {
     where
         Check: Fn() -> Result<()> + Send + 'static,
     {
-        let conn = store.remote_connection()?;
+        let conn = store.remote_write_connection()?;
         let tx = store.block_on(async move {
             conn.transaction_with_behavior(TransactionBehavior::Immediate)
                 .await
@@ -847,13 +847,18 @@ impl LibsqlReplicaWriteTransaction {
         self.check_cancel()?;
         let mut table_schema = table_schema.clone();
         let mut recorded_event: Option<(TableId, Option<TableSchema>, TableSchema)> = None;
+        let id_source = self.store.provider.id_source.clone();
         self.store.block_on(async {
             let previous =
                 load_remote_table_schema_from_session(self.session()?, &table_schema.table).await?;
             table_schema.reconcile_index_metadata(previous.as_ref());
             let schema_json = serialize_json(&table_schema)?;
-            let table_id =
-                resolve_or_create_remote_table_id(self.session()?, &table_schema.table).await?;
+            let table_id = resolve_or_create_remote_table_id(
+                self.session()?,
+                &table_schema.table,
+                id_source.as_ref(),
+            )
+            .await?;
             self.session()?
                 .execute(
                     "INSERT INTO schemas (table_name, schema_json) VALUES (?1, ?2)
@@ -927,8 +932,10 @@ impl LibsqlReplicaWriteTransaction {
         self.check_cancel()?;
         let data_json = serialize_document_fields(document)?;
         let typed_fields_json = serialize_document_typed_fields(document)?;
+        let id_source = self.store.provider.id_source.clone();
         let table_id = self.store.block_on(async {
-            resolve_or_create_remote_table_id(self.session()?, &document.table).await
+            resolve_or_create_remote_table_id(self.session()?, &document.table, id_source.as_ref())
+                .await
         })?;
         let write_table_id = table_id.clone();
         self.store.block_on(async {
@@ -1432,6 +1439,19 @@ impl LibsqlReplicaWriteTransaction {
             let events = std::mem::take(&mut self.tenant_events);
             Some(self.append_commit_entry(writes, events)?)
         };
+        if commit.is_some() {
+            if let Some(record) = prepared_record_for_fault.as_ref() {
+                self.store.check_durable_records_fault(
+                    crate::FaultPoint::JournalAppendBeforeDurableFlush,
+                    std::slice::from_ref(record),
+                )?;
+            } else {
+                self.store
+                    .check_fault(crate::FaultPoint::JournalAppendBeforeDurableFlush)?;
+            }
+            self.store
+                .check_fault(crate::FaultPoint::JournalFlushBeforeVisibility)?;
+        }
         let tx = self.tx.take().ok_or_else(|| {
             Error::Internal("libsql replica write transaction already closed".to_string())
         })?;
@@ -1658,14 +1678,14 @@ async fn load_remote_table_schema_from_session(
     conn: &Connection,
     table: &TableName,
 ) -> Result<Option<TableSchema>> {
-    let mut rows = conn
+    let rows = conn
         .query(
             "SELECT schema_json FROM schemas WHERE table_name = ?1",
             libsql::params![table.as_str()],
         )
         .await
         .map_err(map_libsql_error)?;
-    let Some(row) = rows.next().await.map_err(map_libsql_error)? else {
+    let Some(row) = take_single_remote_row(rows).await? else {
         return Ok(None);
     };
     deserialize_json(row.get::<String>(0).map_err(map_libsql_error)?.as_str()).map(Some)

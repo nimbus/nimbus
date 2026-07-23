@@ -183,3 +183,11 @@ pub(super) fn format_duration(duration: Duration) -> String {
 pub(super) fn format_confidence_interval(lower: Duration, upper: Duration) -> String {
     format!("{} - {}", format_duration(lower), format_duration(upper))
 }
+
+pub(super) fn format_duration_samples(samples: &[Duration]) -> String {
+    samples
+        .iter()
+        .map(|sample| format_duration(*sample))
+        .collect::<Vec<_>>()
+        .join(", ")
+}

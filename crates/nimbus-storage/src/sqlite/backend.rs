@@ -160,12 +160,13 @@ pub(super) fn resolve_table_id_in_conn(
 pub(super) fn resolve_or_create_table_id_in_conn(
     conn: &Connection,
     table: &TableName,
+    id_source: &dyn IdSource,
 ) -> Result<TableId> {
     if let Some(table_id) = resolve_table_id_in_conn(conn, table)? {
         return Ok(table_id);
     }
 
-    let table_id = TableId::new();
+    let table_id = id_source.next_table_id();
     conn.execute(
         "INSERT OR IGNORE INTO table_catalog (namespace, table_name, table_id, state)
          VALUES (?1, ?2, ?3, ?4)",

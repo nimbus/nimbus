@@ -82,12 +82,12 @@ pub(crate) fn render_phase_split_section(rows: &[(usize, PhaseSplit)]) -> String
         return String::new();
     }
 
-    let mut out = String::from("\n## Under-gate phase split\n\n");
+    let mut out = String::from("\n## Commit phase split\n\n");
     out.push_str(
-        "Shares use measured-round committer wall time: `plan-CPU = prepare` (validation, authorization, serialization); `conflict-check` includes assign-time in-memory window validation and path C's sampled pre-append shadow observation, while path A's sampled shadow observation runs outside its serial closure; `apply = apply + publish` (storage apply plus engine visibility bookkeeping); `fsync/append = durable-append`. Average effective batch is `journal_batch_size_sum / journal_batch_count`; each journal batch performs one durable append.\n\n",
+        "Shares use measured-round commit phase time: `plan-CPU = prepare` (validation, authorization, serialization); `conflict-check` includes assign-time in-memory window validation and path C's sampled pre-append shadow observation, while path A's sampled shadow observation runs outside its serial closure; `apply = apply + publish` (storage apply plus engine visibility bookkeeping); `fsync/append = durable-append`. Ordered-publisher persistence phases execute after serial assignment, so this is not an under-gate measurement. Average effective batch is `journal_batch_size_sum / journal_batch_count`; each journal batch performs one durable append.\n\n",
     );
     out.push_str(
-        "| N | avg effective batch | window/storage prepare | plan-CPU | conflict-check | apply | fsync/append | measured under-gate |\n",
+        "| N | avg effective batch | window/storage prepare | plan-CPU | conflict-check | apply | fsync/append | measured phase time |\n",
     );
     out.push_str("|---|---|---|---|---|---|---|---|\n");
     for (n, split) in rows {
