@@ -1,11 +1,12 @@
 //! Seeded Elle list-append history generation through real execution units.
 //!
-//! Run the external serializability check locally with:
-//! `NIMBUS_ELLE_CLI_JAR=/path/to/elle-cli-standalone.jar cargo nextest run -p nimbus-engine elle_serializable_check_passes`.
-//! The test invokes `java -jar ... --model list-append --consistency-models
-//! serializable target/elle/<history>.edn`. The jar is optional and is not a CI
-//! dependency; `elle_history_recorder_emits_wellformed_edn` always exercises
-//! generation, file export, and the built-in structural self-check.
+//! Run the external serializability check through the owned lifecycle with
+//! `make verify-elle-serializability`. The dedicated local and hosted lanes
+//! supply the checksum-verified `ligurio/elle-cli` 0.1.9 artifact, which embeds
+//! Elle core 0.2.4, and invoke `java -jar ... --model list-append
+//! --consistency-models serializable target/elle/<history>.edn`. Ordinary
+//! workspace lanes exercise generation, file export, and the built-in
+//! structural self-check without counting an absent external checker as proof.
 
 use super::*;
 use nimbus_core::{Result, TableName};

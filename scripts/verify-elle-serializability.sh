@@ -3,6 +3,7 @@
 set -euo pipefail
 
 readonly ELLE_CLI_VERSION="0.1.9"
+readonly ELLE_CORE_VERSION="0.2.4"
 readonly ELLE_CLI_ARCHIVE="elle-cli-bin-${ELLE_CLI_VERSION}.zip"
 readonly ELLE_CLI_URL="https://github.com/ligurio/elle-cli/releases/download/${ELLE_CLI_VERSION}/${ELLE_CLI_ARCHIVE}"
 readonly ELLE_CLI_ARCHIVE_SHA256="7bb21b1c68580cd63816abee7655c68023b837bcca91eac9025674e4fe1ff12c"
@@ -143,6 +144,7 @@ if ! "${java_bin}" -version >/dev/null 2>&1; then
 fi
 
 printf 'Elle CLI version: %s\n' "${ELLE_CLI_VERSION}"
+printf 'Embedded Elle core version: %s\n' "${ELLE_CORE_VERSION}"
 printf 'Elle release archive SHA-256: %s\n' "${ELLE_CLI_ARCHIVE_SHA256}"
 printf 'Elle standalone jar SHA-256: %s\n' "${ELLE_CLI_JAR_SHA256}"
 printf 'Elle standalone jar: %s\n' "${elle_jar}"
