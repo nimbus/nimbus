@@ -48,7 +48,7 @@ async fn convex_runtime_query_exposes_nimbus_verified_identity_extension() {
     let server = ServerFixture::start(router_for_convex_with_tenancy(
         fixture.engine(),
         registry,
-        convex_team_tenancy_binding("demo", "user-123"),
+        convex_team_tenancy_for("demo"),
     ))
     .await;
     let api = HttpApiFixture::new(&server);

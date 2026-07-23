@@ -139,32 +139,31 @@ fn router_for_convex_with_tenancy(
     tenancy: nimbus_convex::ConvexTenancyConfig,
 ) -> Router {
     let runtime_limits = convex_registry.runtime_limits();
+    let verifier = crate::router::convex_application_auth_verifier(&convex_registry);
+    let silo_auth = tenancy.silos().into_iter().fold(
+        nimbus_convex::ConvexSiloAuthRegistry::new(),
+        |auth, silo| auth.bind(&silo, verifier.clone()),
+    );
     build_router(
         RouterOptions::new(engine)
             .with_runtime_limits(runtime_limits)
             .with_convex_registry(convex_registry)
+            .with_convex_silo_auth(silo_auth)
             .with_convex_tenancy(tenancy),
     )
 }
 
 // ---------------------------------------------------------------------------
-// #41 application-Convex team-binding test harness.
+// Application-Convex silo-auth test harness.
 //
-// The #41 gate (`ConvexTenancyConfig::authorize_silo_selection`) is
-// all-fail-closed: an application-Convex request reaches a silo only when the
-// URL silo resolves to a team, the *verified* principal resolves to a team, and
-// the two match. The pre-#41 data-access tests relied on the now-closed
-// anonymous hole, so every one of them must now drive the surface as a verified
-// principal bound to the silo's team (the success half) AND still prove the
-// anonymous case is refused (the non-vacuous half).
+// Authenticated requests are admitted only by the verifier bound to the URL
+// silo. Anonymous requests remain governed by an independent, fail-closed
+// operator policy.
 //
-// These helpers provision that binding without threading a full custom-JWT auth
-// config + minted token through every registry: a static verifier authenticates
-// exactly one magic bearer as a fixed verified principal, the tenancy binds that
-// principal's subject to the team that owns the test's silo, and the bearer is
-// carried by `HttpApiFixture::with_convex_bearer` / the WS bearer connectors. An
-// anonymous request carries no bearer, so it never resolves a team and is
-// refused — which is what `assert_convex_anonymous_query_refused` checks.
+// These helpers bind a static verifier directly to the named test silo without
+// threading a full custom-JWT config through every registry. The matching bearer
+// is admitted only at that silo; anonymous traffic is refused by the separate
+// fail-closed policy.
 // ---------------------------------------------------------------------------
 
 /// The default application-Convex silo most migrated tests select.
@@ -234,40 +233,13 @@ impl nimbus_auth::ApplicationAuthVerifier for StaticConvexTeamVerifier {
     }
 }
 
-/// The #41 tenancy that binds `tenant` (the silo) to [`CONVEX_TEAM`] and the
-/// verified principal keyed by `principal_key` (a verified `subject` or `issuer`)
-/// to the same team, so that principal — and only it — may select `tenant`. An
-/// anonymous or differently-keyed principal resolves to no team and is refused.
-fn convex_team_tenancy_binding(
-    tenant: &str,
-    principal_key: &str,
-) -> nimbus_convex::ConvexTenancyConfig {
-    let silo = TenantId::new(tenant).expect("team-binding silo tenant id should be valid");
-    let team = nimbus_convex::TeamId::new(CONVEX_TEAM).expect("team id should be valid");
-    let silo_teams = nimbus_convex::SiloTeamRegistry::new().bind(&silo, team.clone());
-    let principal_teams = nimbus_convex::PrincipalTeamRegistry::new().bind(principal_key, team);
-    nimbus_convex::ConvexTenancyConfig::new()
-        .with_silo_teams(silo_teams)
-        .with_principal_teams(principal_teams)
-}
-
-/// The #41 tenancy for the team principal: binds `tenant` (the silo) to
-/// [`CONVEX_TEAM`] and binds BOTH the verified `subject` and `issuer` to the same
-/// team. The dual binding means the gate admits the team principal whether it
-/// arrives via [`StaticConvexTeamVerifier`] (matched on `subject`) or a real
-/// custom-JWT deployment verifier such as [`convex_team_real_auth`] (matched on
-/// `issuer`, which is the robust key through a deploy/activation that swaps the
-/// router verifier for the deployed bundle's own).
+/// A fail-closed anonymous policy that registers `tenant` without assigning an
+/// anonymous team. The authenticated path is provisioned separately.
 fn convex_team_tenancy_for(tenant: &str) -> nimbus_convex::ConvexTenancyConfig {
     let silo = TenantId::new(tenant).expect("team-binding silo tenant id should be valid");
     let team = nimbus_convex::TeamId::new(CONVEX_TEAM).expect("team id should be valid");
-    let silo_teams = nimbus_convex::SiloTeamRegistry::new().bind(&silo, team.clone());
-    let principal_teams = nimbus_convex::PrincipalTeamRegistry::new()
-        .bind(CONVEX_TEAM_SUBJECT, team.clone())
-        .bind(CONVEX_TEAM_ISSUER, team);
     nimbus_convex::ConvexTenancyConfig::new()
-        .with_silo_teams(silo_teams)
-        .with_principal_teams(principal_teams)
+        .with_silo_teams(nimbus_convex::SiloTeamRegistry::new().bind(&silo, team))
 }
 
 /// A real ES256 custom-JWT bearer for the team principal plus the matching
@@ -277,8 +249,8 @@ fn convex_team_tenancy_for(tenant: &str) -> nimbus_convex::ConvexTenancyConfig {
 /// once a deploy activates a new generation (the deployed bundle becomes its own
 /// `ApplicationAuthVerifier`) — this auth config travels *inside* the deployed
 /// bundle. After activation the bundle verifies the minted token for real, and
-/// [`convex_team_tenancy_for`] admits it on the verified `issuer`. Returns the
-/// `Authorization` header value and the `auth_config_json` deploy artifact.
+/// Returns the `Authorization` header value and the `auth_config_json` deploy
+/// artifact.
 fn convex_team_real_auth() -> (String, serde_json::Value) {
     let application_id = "nimbus-convex-team";
     let (token, jwks) = auth_fixtures::issue_es256_test_token(
@@ -301,29 +273,19 @@ fn convex_team_real_auth() -> (String, serde_json::Value) {
     (format!("Bearer {token}"), auth_config)
 }
 
-/// A two-silo #41 tenancy for the cross-tenant rejection tests: `tenant-a`→
-/// `team-a`, `tenant-b`→`team-b`, and the verified subject `user-123`→`team-b`.
-/// So a verified `user-123` bearer reaches `tenant-b` (same team) but is refused
-/// with `CrossTeam` at `tenant-a` (a different team) — the team-binding form of
-/// "an application bearer may not select a different tenant".
+/// A two-silo anonymous policy for cross-silo authentication tests.
 fn convex_cross_tenant_tenancy() -> nimbus_convex::ConvexTenancyConfig {
     let team_a = nimbus_convex::TeamId::new("team-a").expect("team id should be valid");
     let team_b = nimbus_convex::TeamId::new("team-b").expect("team id should be valid");
     let silos = nimbus_convex::SiloTeamRegistry::new()
         .bind(&TenantId::new("tenant-a").expect("tenant id"), team_a)
-        .bind(
-            &TenantId::new("tenant-b").expect("tenant id"),
-            team_b.clone(),
-        );
-    let principals = nimbus_convex::PrincipalTeamRegistry::new().bind("user-123", team_b);
-    nimbus_convex::ConvexTenancyConfig::new()
-        .with_silo_teams(silos)
-        .with_principal_teams(principals)
+        .bind(&TenantId::new("tenant-b").expect("tenant id"), team_b);
+    nimbus_convex::ConvexTenancyConfig::new().with_silo_teams(silos)
 }
 
-/// A router for an application-Convex test that provisions the #41 team binding
-/// for `tenant` and wires the [`StaticConvexTeamVerifier`], so a request bearing
-/// [`convex_team_bearer`] is admitted while an anonymous one is refused. Pair it
+/// A router that binds [`StaticConvexTeamVerifier`] directly to `tenant`, so a
+/// request bearing [`convex_team_bearer`] is admitted while an anonymous one is
+/// refused. Pair it
 /// with `HttpApiFixture::with_convex_bearer(&server, convex_team_bearer())` and a
 /// `assert_convex_anonymous_query_refused` call to keep each test non-vacuous.
 fn router_for_convex_team_for(
@@ -336,7 +298,10 @@ fn router_for_convex_team_for(
     let runtime_limits = convex_registry.runtime_limits();
     RouterBuildConfig::core(engine)
         .with_runtime_limits(runtime_limits)
-        .with_application_auth_verifier(Arc::new(StaticConvexTeamVerifier))
+        .with_convex_silo_auth_verifier(
+            &TenantId::new(tenant).expect("test silo id should be valid"),
+            Arc::new(StaticConvexTeamVerifier),
+        )
         .with_convex(convex_registry)
         .with_convex_tenancy(convex_team_tenancy_for(tenant))
         .with_runtime_host_resource_budget(
@@ -352,20 +317,19 @@ fn router_for_convex_team(engine: Arc<Engine>, convex_registry: ConvexRegistry) 
     router_for_convex_team_for(engine, convex_registry, CONVEX_TEAM_TENANT)
 }
 
-/// Add the #41 team binding (the [`StaticConvexTeamVerifier`] and the tenancy
-/// for `tenant`) to a hand-built [`RouterBuildConfig`], for tests that assemble
-/// the router directly instead of through [`router_for_convex_team`].
+/// Bind [`StaticConvexTeamVerifier`] to `tenant` on a hand-built router.
 fn with_convex_team_binding(config: RouterBuildConfig, tenant: &str) -> RouterBuildConfig {
     config
-        .with_application_auth_verifier(Arc::new(StaticConvexTeamVerifier))
+        .with_convex_silo_auth_verifier(
+            &TenantId::new(tenant).expect("test silo id should be valid"),
+            Arc::new(StaticConvexTeamVerifier),
+        )
         .with_convex_tenancy(convex_team_tenancy_for(tenant))
 }
 
 /// The non-vacuous refusal half of a migrated data-access test: an anonymous
 /// (no-bearer) named query against `tenant` must be refused with HTTP 403 by the
-/// all-fail-closed #41 gate, which runs before function resolution. If the gate
-/// ever regressed to admit an unbound principal, this would observe a non-403
-/// status and fail.
+/// fail-closed anonymous policy, which runs before function resolution.
 async fn assert_convex_anonymous_query_refused(server: &ServerFixture, tenant: &str) {
     let response = server
         .client()
@@ -377,7 +341,7 @@ async fn assert_convex_anonymous_query_refused(server: &ServerFixture, tenant: &
     assert_eq!(
         response.status(),
         StatusCode::FORBIDDEN,
-        "an anonymous caller must not select application-Convex silo `{tenant}` (#41 gate)"
+        "an anonymous caller must not select application-Convex silo `{tenant}`"
     );
 }
 

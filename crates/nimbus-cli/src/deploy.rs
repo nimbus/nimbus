@@ -8,6 +8,7 @@ use nimbus_operator::{LOCAL_ADMIN_HEADER_NAME, LocalServerPaths, load_local_admi
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::CONVEX_SILO_ENV;
 use crate::cli_ux;
 use crate::codegen::run_codegen_for_app_dir;
 use crate::local_server_client::LocalServerHttpClient;
@@ -39,6 +40,11 @@ pub(crate) struct DeployCommand {
     /// App directory containing a nimbus/ or convex/ source root.
     #[arg(long)]
     pub(crate) app_dir: Option<PathBuf>,
+
+    /// Convex silo whose deployment/auth configuration is activated. Defaults
+    /// to NIMBUS_CONVEX_SILO and is required when Convex artifacts are present.
+    #[arg(long)]
+    pub(crate) convex_silo: Option<String>,
 
     /// Validate and diff without activating the new generation.
     #[arg(long, default_value_t = false)]
@@ -73,6 +79,8 @@ pub(crate) enum TypeCheckMode {
 #[derive(Debug, Serialize)]
 pub(crate) struct DeployRequest {
     pub(crate) dry_run: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) convex_silo: Option<String>,
     pub(crate) artifacts: DeployArtifacts,
 }
 
@@ -195,7 +203,10 @@ pub(crate) async fn run_deploy_command(
     if command.verbose {
         emit_deploy_phase("Packaging generated app artifacts");
     }
-    let request = DeployRequest::from_app_dir(&app_dir, command.dry_run)?;
+    let convex_silo = command
+        .convex_silo
+        .or_else(|| env::var(CONVEX_SILO_ENV).ok());
+    let request = DeployRequest::from_app_dir(&app_dir, command.dry_run, convex_silo)?;
 
     emit_deploy_phase(format!("Uploading app artifacts to {target_url}"));
     let response =
@@ -601,10 +612,23 @@ impl DeployRequest {
     pub(crate) fn from_app_dir(
         app_dir: &Path,
         dry_run: bool,
+        convex_silo: Option<String>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
+        let artifacts = DeployArtifacts::from_app_dir(app_dir)?;
+        if artifacts.convex.is_some() && convex_silo.is_none() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "Convex deploy requires --convex-silo or {CONVEX_SILO_ENV}; each auth config \
+                     must activate for exactly one trusted silo"
+                ),
+            )
+            .into());
+        }
         Ok(Self {
             dry_run,
-            artifacts: DeployArtifacts::from_app_dir(app_dir)?,
+            convex_silo,
+            artifacts,
         })
     }
 }
@@ -1245,6 +1269,27 @@ mod tests {
     }
 
     #[test]
+    fn convex_deploy_request_requires_an_explicit_silo_binding() {
+        let temp = tempfile::tempdir().expect("tempdir should create");
+        let generated = temp.path().join(".nimbus").join("convex");
+        fs::create_dir_all(&generated).expect("generated dir should create");
+        fs::write(generated.join("functions.json"), r#"{"functions":[]}"#)
+            .expect("functions should write");
+
+        let error = DeployRequest::from_app_dir(temp.path(), false, None)
+            .expect_err("Convex deploy without a silo must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("requires --convex-silo or NIMBUS_CONVEX_SILO")
+        );
+
+        let request = DeployRequest::from_app_dir(temp.path(), false, Some("demo".to_string()))
+            .expect("explicit silo binding should package");
+        assert_eq!(request.convex_silo.as_deref(), Some("demo"));
+    }
+
+    #[test]
     fn deploy_artifacts_require_bundle_pair() {
         let temp = tempfile::tempdir().expect("tempdir should create");
         let generated = temp.path().join(".nimbus").join("convex");
@@ -1453,6 +1498,7 @@ mod tests {
     fn minimal_deploy_request() -> DeployRequest {
         DeployRequest {
             dry_run: false,
+            convex_silo: Some("demo".to_string()),
             artifacts: DeployArtifacts {
                 convex: Some(ConvexDeployArtifacts {
                     functions_json: json!({ "functions": [] }),

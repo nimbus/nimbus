@@ -60,7 +60,7 @@ async fn convex_websocket_auth_message_sets_runtime_identity() {
     let server = ServerFixture::start(router_for_convex_with_tenancy(
         fixture.engine(),
         registry,
-        convex_team_tenancy_binding("demo", "user-123"),
+        convex_team_tenancy_for("demo"),
     ))
     .await;
     let api = HttpApiFixture::new(&server);
@@ -340,7 +340,7 @@ pub(crate) async fn convex_websocket_auth_change_drops_active_subscriptions_unti
     let server = ServerFixture::start(router_for_convex_with_tenancy(
         service.clone(),
         registry,
-        convex_team_tenancy_binding("demo", "user-123"),
+        convex_team_tenancy_for("demo"),
     ))
     .await;
     let api = HttpApiFixture::new(&server);

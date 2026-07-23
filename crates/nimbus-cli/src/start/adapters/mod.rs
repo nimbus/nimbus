@@ -30,7 +30,7 @@ pub(crate) use s3::S3_CONVENTIONAL_PORT;
 use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
 
-use nimbus::Error;
+use nimbus::{Error, TenantId};
 use nimbus_server::{
     CloudflareConfig, ConvexTenancyConfig, DynamoDbConfig, FirebaseConfig, MongoDbConfig, S3Config,
 };
@@ -52,6 +52,9 @@ pub(crate) struct AdapterEnablement {
     pub(crate) firebase: Option<FirebaseConfig>,
     pub(crate) cloudflare: Option<CloudflareConfig>,
     pub(crate) convex_tenancy: Option<ConvexTenancyConfig>,
+    /// Trusted silos that use the Convex verifier loaded from the startup app
+    /// directory. Empty means authenticated Convex requests fail closed.
+    pub(crate) convex_auth_silos: Vec<TenantId>,
     /// Loud boot notice when [`convex_tenancy`] admits anonymous requests —
     /// either `nimbus dev`'s auto-provisioned dev team (EX3.7) or an operator's
     /// explicit `NIMBUS_CONVEX_ANONYMOUS_TEAM`. `None` whenever anonymous
@@ -101,6 +104,18 @@ impl AdapterEnablement {
         let mut lines = vec![
             format!("firestore routes:\t{firestore}"),
             format!("cloudflare routes:\t{cloudflare}"),
+            format!(
+                "convex auth silos:\t{}",
+                if self.convex_auth_silos.is_empty() {
+                    "none (authenticated requests fail closed)".to_string()
+                } else {
+                    self.convex_auth_silos
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                }
+            ),
             format!("mongodb listener:\t{mongodb}"),
             format!("dynamodb listener:\t{dynamodb}"),
             format!("s3 listener:\t{s3}"),
@@ -221,10 +236,12 @@ pub(crate) fn resolve_adapter_enablement_with_env_and_app_dir(
     let cloudflare = cloudflare::resolve_cloudflare(command, app_dir, &mut store)?;
     let (convex_tenancy, convex_tenancy_notice) =
         convex_tenancy::resolve_convex_tenancy(command, &env_lookup)?;
+    let convex_auth_silos = convex_tenancy::resolve_convex_auth_silos(command, &env_lookup)?;
     Ok(AdapterEnablement {
         firebase: firebase::resolve_firebase(command, &env_lookup)?,
         cloudflare,
         convex_tenancy,
+        convex_auth_silos,
         convex_tenancy_notice,
         mongodb,
         dynamodb,
@@ -402,7 +419,7 @@ mod tests {
             .expect("nimbus dev must auto-provision a convex tenancy config");
         let tenant = TenantId::new("dev-project").expect("tenant id should parse");
         convex_tenancy
-            .authorize_silo_selection(&tenant, &nimbus_core::PrincipalContext::anonymous())
+            .authorize_anonymous_silo_selection(&tenant)
             .expect("anonymous access to the auto-tenant's silo must be admitted");
         assert!(
             resolved
@@ -440,6 +457,7 @@ mod tests {
             vec![
                 "firestore routes:\tmounted on the main listener".to_string(),
                 "cloudflare routes:\tmounted on the main listener".to_string(),
+                "convex auth silos:\tnone (authenticated requests fail closed)".to_string(),
                 format!("mongodb listener:\t127.0.0.1:{MONGODB_CONVENTIONAL_PORT}"),
                 format!("dynamodb listener:\t127.0.0.1:{DYNAMODB_CONVENTIONAL_PORT}"),
                 format!("s3 listener:\t127.0.0.1:{S3_CONVENTIONAL_PORT}"),
@@ -470,6 +488,7 @@ mod tests {
             vec![
                 "firestore routes:\toff".to_string(),
                 "cloudflare routes:\toff".to_string(),
+                "convex auth silos:\tnone (authenticated requests fail closed)".to_string(),
                 "mongodb listener:\toff".to_string(),
                 "dynamodb listener:\toff".to_string(),
                 "s3 listener:\toff".to_string(),

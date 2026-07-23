@@ -52,6 +52,20 @@ impl ServeOptions {
         self.with_router_options(|options| options.with_convex_registry(convex_registry))
     }
 
+    pub fn with_convex_registry_for_silo(
+        self,
+        silo: &nimbus_core::TenantId,
+        convex_registry: ConvexRegistry,
+    ) -> Self {
+        self.with_router_options(|options| {
+            options.with_convex_registry_for_silo(silo, convex_registry)
+        })
+    }
+
+    pub fn with_convex_silo_auth(self, convex_silo_auth: crate::ConvexSiloAuthRegistry) -> Self {
+        self.with_router_options(|options| options.with_convex_silo_auth(convex_silo_auth))
+    }
+
     pub fn with_convex_tenancy(self, convex_tenancy: ConvexTenancyConfig) -> Self {
         self.with_router_options(|options| options.with_convex_tenancy(convex_tenancy))
     }

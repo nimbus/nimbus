@@ -389,14 +389,13 @@ async fn convex_routes_keep_application_auth_and_reject_local_admin_bearers() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(
         RouterBuildConfig::core(fixture.engine())
-            .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
-                &registry,
-            ))
+            .with_convex_silo_auth_verifier(
+                &TenantId::new("demo").expect("demo silo id"),
+                crate::router::convex_application_auth_verifier(&registry),
+            )
             .with_convex(registry)
-            // #41: provision the verified `user-123` principal onto the team that
-            // owns `demo`, so the application JWT is admitted by the gate while
-            // an unbound bearer (the local-admin token below) is refused.
-            .with_convex_tenancy(convex_team_tenancy_binding("demo", "user-123"))
+            // Bind this registry's verifier directly to `demo`.
+            .with_convex_tenancy(convex_team_tenancy_for("demo"))
             .with_local_server_security(local_server_security)
             .build(),
     )
@@ -481,13 +480,12 @@ async fn convex_route_rejects_application_bearer_for_different_tenant() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(
         RouterBuildConfig::core(fixture.engine())
-            .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
-                &registry,
-            ))
+            .with_convex_silo_auth_verifier(
+                &TenantId::new("tenant-b").expect("tenant-b silo id"),
+                crate::router::convex_application_auth_verifier(&registry),
+            )
             .with_convex(registry)
-            // #41: tenant-a→team-a, tenant-b→team-b, verified `user-123`→team-b.
-            // The verified bearer reaches tenant-b but is refused (CrossTeam) at
-            // tenant-a — the team-binding form of the cross-tenant rejection.
+            // Only tenant-b receives this registry's verifier.
             .with_convex_tenancy(convex_cross_tenant_tenancy())
             .with_local_server_security(local_server_security)
             .build(),
@@ -540,16 +538,12 @@ async fn convex_route_rejects_application_bearer_for_different_tenant() {
         .expect("swapped-tenant application auth body should read");
     assert_eq!(
         rejected_status,
-        StatusCode::FORBIDDEN,
+        StatusCode::UNAUTHORIZED,
         "swapped-tenant query body: {rejected_body}"
     );
     assert!(
-        rejected_body.contains("tenant-a") && rejected_body.contains("belongs to team `team-a`"),
-        "swapped-tenant error should name the rejected target silo and its team: {rejected_body}"
-    );
-    assert!(
-        rejected_body.contains("authorized for team `team-b`"),
-        "swapped-tenant error should name the principal's verified team: {rejected_body}"
+        rejected_body.contains("no Convex auth providers are configured for silo `tenant-a`"),
+        "the unprovisioned target silo must fail before bearer verification: {rejected_body}"
     );
 }
 
@@ -603,12 +597,12 @@ async fn convex_http_action_rejects_application_bearer_for_different_tenant() {
     }
     let server = ServerFixture::start(
         RouterBuildConfig::core(service)
-            .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
-                &registry,
-            ))
+            .with_convex_silo_auth_verifier(
+                &TenantId::new("tenant-b").expect("tenant-b silo id"),
+                crate::router::convex_application_auth_verifier(&registry),
+            )
             .with_convex(registry)
-            // #41: same cross-tenant team binding as the query case, exercised
-            // through the Convex HTTP-action surface.
+            // Same tenant-b-only verifier binding as the query case.
             .with_convex_tenancy(convex_cross_tenant_tenancy())
             .build(),
     )
@@ -646,16 +640,12 @@ async fn convex_http_action_rejects_application_bearer_for_different_tenant() {
         .expect("swapped-tenant convex http action body should read");
     assert_eq!(
         rejected_status,
-        StatusCode::FORBIDDEN,
+        StatusCode::UNAUTHORIZED,
         "swapped-tenant convex http action body: {rejected_body}"
     );
     assert!(
-        rejected_body.contains("tenant-a") && rejected_body.contains("belongs to team `team-a`"),
-        "swapped-tenant convex http action error should name the rejected target silo and its team: {rejected_body}"
-    );
-    assert!(
-        rejected_body.contains("authorized for team `team-b`"),
-        "swapped-tenant convex http action error should name the principal's verified team: {rejected_body}"
+        rejected_body.contains("no Convex auth providers are configured for silo `tenant-a`"),
+        "the unprovisioned target silo must fail before bearer verification: {rejected_body}"
     );
 }
 
@@ -893,9 +883,10 @@ async fn convex_websocket_bad_origin_is_rejected_before_auth() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(
         RouterBuildConfig::core(fixture.engine())
-            .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
-                &registry,
-            ))
+            .with_convex_silo_auth_verifier(
+                &TenantId::new("demo").expect("demo silo id"),
+                crate::router::convex_application_auth_verifier(&registry),
+            )
             .with_convex(registry)
             .with_local_server_security(local_server_security)
             .build(),

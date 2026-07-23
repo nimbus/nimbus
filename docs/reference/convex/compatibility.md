@@ -149,6 +149,12 @@ Each tenant's deployment URL is `{host}/convex/{tenantId}`. Under it:
 | `DELETE /schedule/{jobId}` | Cancel a scheduled job |
 | `/ws` | WebSocket subscriptions |
 
+For authenticated requests, `{tenantId}` selects the trusted verifier installed
+for that silo before the bearer is inspected. A token accepted for one silo is
+not reusable against another silo unless that second silo is deliberately bound
+to a verifier that also accepts it. An unprovisioned silo fails with `401`;
+Nimbus does not fall back to a process-wide Convex verifier.
+
 ## Node runtime
 
 - `"use node"` modules are supported and may contain only actions.

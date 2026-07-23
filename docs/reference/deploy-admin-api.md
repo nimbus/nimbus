@@ -55,6 +55,7 @@ Notes:
 ```json
 {
   "dry_run": false,
+  "convex_silo": "demo",
   "artifacts": {
     "convex": {
       "functions_json": { "functions": [] },
@@ -77,6 +78,7 @@ Notes:
 | Field | Type | Required | Meaning |
 | --- | --- | --- | --- |
 | `dry_run` | boolean | no (default `false`) | Validate and diff without activating |
+| `convex_silo` | string | with `artifacts.convex` | Trusted silo that receives this Convex deployment's auth verifier |
 | `artifacts.convex` | object | at least one family | Convex-compatible artifact family |
 | `artifacts.cloud_functions` | object | at least one family | Cloud Functions artifact family |
 
@@ -114,6 +116,7 @@ other is a `400`.
 | Generation counter | Process-local: `0` on a server started without an app, `1` when started with one, incremented per activation; it resets on restart |
 | Rollback | There is no rollback endpoint and no retained generation history |
 | Partial families | A deploy that includes only one artifact family keeps the other family's active registry unchanged |
+| Convex auth scope | A Convex deploy replaces the verifier only for `convex_silo`; existing verifier bindings for other silos remain unchanged, and an unprovisioned silo never falls back to another verifier |
 | Diff scope | The `diff` object is computed from Convex artifacts only; Cloud Functions changes do not appear in it |
 
 ## Response schema
@@ -168,6 +171,7 @@ All errors use the standard [error envelope](/reference/native/errors/).
 | `401` | `auth.unauthorized` | Missing or invalid `X-Nimbus-Admin-Token` on a server with local security |
 | `403` | `auth.forbidden` | Non-loopback browser `Origin` header |
 | `400` | `op.invalid_input` | Neither `artifacts.convex` nor `artifacts.cloud_functions` present |
+| `400` | `op.invalid_input` | Convex artifacts are present without `convex_silo`, or the silo id is invalid |
 | `400` | `op.invalid_input` | `bundle_mjs` supplied without `bundle_sha256`, or vice versa |
 | `400` | `op.invalid_input` | Artifact staging or manifest/schema/bundle validation failed |
 | `500` | `service.internal` | Unexpected server-side failure while staging artifacts or loading the registry |

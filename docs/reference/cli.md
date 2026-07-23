@@ -154,6 +154,7 @@ automatically; for a remote server, pass `--admin-token` or set
 | `--token` | `NIMBUS_DEPLOY_TOKEN` | credentials file | Deploy admin bearer token. |
 | `--admin-token` | `NIMBUS_ADMIN_TOKEN` | local token file (loopback targets) | Local admin token sent as `X-Nimbus-Admin-Token`. |
 | `--app-dir` | — | auto-detected | App directory containing a `nimbus/` or `convex/` source root. |
+| `--convex-silo` | `NIMBUS_CONVEX_SILO` | — | Required for Convex artifacts. Binds the deployed auth configuration to exactly this trusted silo. |
 | `--dry-run` | — | `false` | Validate and diff without activating the new generation. |
 | `--skip-codegen` | — | `false` | Skip codegen and package already-generated artifacts. |
 | `--verbose` | — | `false` | Show packaging and deploy phase detail. |

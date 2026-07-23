@@ -23,6 +23,7 @@ pub mod host_bridge;
 mod manifest;
 mod registry;
 mod requests;
+mod silo_auth;
 pub mod subscriptions;
 mod templates;
 pub mod tenancy;
@@ -63,6 +64,7 @@ pub use requests::{
     ConvexQueryRequest, ConvexReadCommand, ConvexScheduleAfterRequest, ConvexScheduleAtRequest,
     ConvexScheduledCommand,
 };
+pub use silo_auth::ConvexSiloAuthRegistry;
 pub use subscriptions::{
     ConvexClientMessage, ConvexRuntimeSubscriptionSetup, ConvexSubscriptionEvent,
     ConvexSubscriptionTransform, ConvexSubscriptionTransforms, activate_transform,
@@ -76,8 +78,7 @@ pub use templates::{
     resolve_template,
 };
 pub use tenancy::{
-    ConvexTeamAuthzError, ConvexTenancyConfig, PrincipalTeamRegistry, SiloTeamRegistry, TeamId,
-    TenancySpecError,
+    ConvexTeamAuthzError, ConvexTenancyConfig, SiloTeamRegistry, TeamId, TenancySpecError,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

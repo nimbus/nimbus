@@ -53,7 +53,7 @@ remaining anchors.
 
 ```bash
 nimbus dev
-nimbus deploy [TARGET]
+nimbus deploy [TARGET] --convex-silo demo
 ```
 
 `TARGET` is a URL or configured target name; omit it to use the local target.

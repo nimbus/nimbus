@@ -55,23 +55,17 @@ async fn license_status_route_tracks_global_monthly_active_users_across_tenants(
     // silo. MAU still counts the two distinct verified *subjects*; the gate
     // admits on the verified *issuer*. Anonymous selection stays refused below.
     let team = nimbus_convex::TeamId::new(crate::tests::CONVEX_TEAM).expect("team id valid");
-    let tenancy = nimbus_convex::ConvexTenancyConfig::new()
-        .with_silo_teams(
-            nimbus_convex::SiloTeamRegistry::new()
-                .bind(
-                    &nimbus_core::TenantId::new("alpha").expect("alpha silo id valid"),
-                    team.clone(),
-                )
-                .bind(
-                    &nimbus_core::TenantId::new("beta").expect("beta silo id valid"),
-                    team.clone(),
-                ),
-        )
-        .with_principal_teams(
-            nimbus_convex::PrincipalTeamRegistry::new()
-                .bind(issuer_one, team.clone())
-                .bind(issuer_two, team),
-        );
+    let tenancy = nimbus_convex::ConvexTenancyConfig::new().with_silo_teams(
+        nimbus_convex::SiloTeamRegistry::new()
+            .bind(
+                &nimbus_core::TenantId::new("alpha").expect("alpha silo id valid"),
+                team.clone(),
+            )
+            .bind(
+                &nimbus_core::TenantId::new("beta").expect("beta silo id valid"),
+                team.clone(),
+            ),
+    );
     let server = ServerFixture::start(router_for_convex_with_tenancy(
         fixture.engine(),
         registry,

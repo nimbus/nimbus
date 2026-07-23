@@ -1,5 +1,5 @@
 use super::*;
-use crate::application_auth::verify_optional_application_auth_from_headers_in_deployment;
+use crate::application_auth::verify_optional_convex_auth_from_headers_in_deployment;
 use crate::local_server::authorize_standard_server_access;
 use nimbus_auth::normalize_principal_context;
 use nimbus_tenant::TenantIsolationContext;
@@ -78,8 +78,9 @@ pub(in crate::adapters::convex) async fn registry_and_auth(
     let registry = deployment
         .convex_registry()
         .ok_or_else(|| AppError::not_found(expectation))?;
-    let auth = match verify_optional_application_auth_from_headers_in_deployment(
+    let auth = match verify_optional_convex_auth_from_headers_in_deployment(
         deployment.as_ref(),
+        tenant_id,
         headers,
     )
     .await
@@ -119,18 +120,16 @@ pub(in crate::adapters::convex) async fn registry_and_auth(
     };
     record_authenticated_usage(state, auth.as_ref()).await;
     let principal = normalize_principal_context(auth.as_ref());
-    // #41 team-binding gate (all-fail-closed): a principal may only select a silo
-    // owned by its team. Replaces the pre-#41 `admit_if` Admit hole (which
-    // admitted a no-tenant-claim principal to any silo) AND supersedes the #43
-    // network-bind stopgap — it refuses cross-team selection on every bind,
-    // loopback included. An unconfigured deployment (no tenancy) defaults to the
-    // empty config → every silo is unregistered → refuse. The system-tenant path
-    // returns earlier (operator-gated) and is not affected.
-    deployment
-        .convex_tenancy()
-        .unwrap_or_default()
-        .authorize_silo_selection(tenant_id, &principal)
-        .map_err(|error| AppError::forbidden(error.to_string()))?;
+    // A verified caller is already bound to this silo because its bearer was
+    // accepted by the verifier selected above. Anonymous access has no such
+    // proof and therefore remains an explicit, fail-closed operator binding.
+    if auth.is_none() {
+        deployment
+            .convex_tenancy()
+            .unwrap_or_default()
+            .authorize_anonymous_silo_selection(tenant_id)
+            .map_err(|error| AppError::forbidden(error.to_string()))?;
+    }
     let tenant_context =
         TenantIsolationContext::application(tenant_id.clone(), principal, route_family.as_str())
             .with_deployment_generation(deployment.generation);

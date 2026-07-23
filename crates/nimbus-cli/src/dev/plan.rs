@@ -44,6 +44,7 @@ pub(super) struct DevWatchPlan {
     pub(super) tail_logs: DevTailLogsMode,
     pub(super) local_url: String,
     pub(super) deploy_admin_token: String,
+    pub(super) convex_silo: String,
 }
 
 impl DevPlan {
@@ -58,6 +59,11 @@ impl DevPlan {
                 .deploy_admin_token
                 .clone()
                 .expect("dev plan should configure deploy activation token"),
+            convex_silo: self
+                .start_command
+                .auto_tenant
+                .clone()
+                .expect("dev plan should configure an auto tenant"),
         }
     }
 

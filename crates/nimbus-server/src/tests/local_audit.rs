@@ -355,13 +355,14 @@ async fn tenant_application_auth_audit_keeps_application_scope() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let server = ServerFixture::start(
         RouterBuildConfig::core(fixture.engine())
-            .with_application_auth_verifier(crate::router::convex_application_auth_verifier(
-                &registry,
-            ))
+            .with_convex_silo_auth_verifier(
+                &TenantId::new("demo").expect("demo silo id"),
+                crate::router::convex_application_auth_verifier(&registry),
+            )
             .with_convex(registry)
-            // #41: bind the verified `user-123` principal to the team that owns
-            // `demo` so the application bearer is admitted by the gate.
-            .with_convex_tenancy(convex_team_tenancy_binding("demo", "user-123"))
+            // Keep anonymous access fail-closed; the authenticated path is
+            // admitted by the verifier bound directly to `demo`.
+            .with_convex_tenancy(convex_team_tenancy_for("demo"))
             .with_local_server_security(local_server_security)
             .build(),
     )

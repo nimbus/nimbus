@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use nimbus_auth::ApplicationAuthVerifier;
 use nimbus_cloud_functions::CloudFunctionsRegistry;
-use nimbus_convex::{ConvexRegistry, ConvexTenancyConfig};
+use nimbus_convex::{ConvexRegistry, ConvexSiloAuthRegistry, ConvexTenancyConfig};
 use nimbus_firebase::FirebaseConfig;
 
 use crate::cloudflare_config::CloudflareConfig;
@@ -12,6 +12,7 @@ pub struct DeploymentConfig {
     pub convex_registry: Option<ConvexRegistry>,
     pub system_convex_registry: Option<ConvexRegistry>,
     pub application_auth_verifier: Option<Arc<dyn ApplicationAuthVerifier>>,
+    pub convex_silo_auth: ConvexSiloAuthRegistry,
     pub cloud_functions_registry: Option<CloudFunctionsRegistry>,
     pub cloudflare_config: Option<CloudflareConfig>,
     pub firebase_config: Option<FirebaseConfig>,
@@ -30,6 +31,20 @@ impl DeploymentConfig {
 
     pub fn with_system_convex_registry(mut self, system_convex_registry: ConvexRegistry) -> Self {
         self.system_convex_registry = Some(system_convex_registry);
+        self
+    }
+
+    pub fn with_convex_silo_auth(mut self, convex_silo_auth: ConvexSiloAuthRegistry) -> Self {
+        self.convex_silo_auth = convex_silo_auth;
+        self
+    }
+
+    pub fn with_convex_silo_auth_verifier(
+        mut self,
+        silo: &nimbus_core::TenantId,
+        verifier: Arc<dyn ApplicationAuthVerifier>,
+    ) -> Self {
+        self.convex_silo_auth = self.convex_silo_auth.bind(silo, verifier);
         self
     }
 

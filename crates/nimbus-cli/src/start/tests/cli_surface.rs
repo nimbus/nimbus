@@ -618,6 +618,7 @@ fn adapterless_enablement() -> crate::start::adapters::AdapterEnablement {
         firebase: None,
         cloudflare: None,
         convex_tenancy: None,
+        convex_auth_silos: Vec::new(),
         convex_tenancy_notice: None,
         mongodb: None,
         dynamodb: None,

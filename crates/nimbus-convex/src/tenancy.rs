@@ -1,43 +1,28 @@
-//! Convex team-binding tenancy — the #41 complete fix (server-side, binding (b)).
+//! Explicit anonymous-access policy for Convex silos.
 //!
-//! **The gap (#41).** The convex application surface (`/convex/{tenant_id}/…`)
-//! selects a data silo from the caller-supplied URL with no verified
-//! principal→silo binding, so an unverified caller can reach an arbitrary silo
-//! (confirmed cross-tenant read + write). A verified convex token carries
-//! `issuer`/`subject`/`custom_claims` but **no team/tenant signal** (the firebase
-//! difference — there the issuer carried the project), and the auth verifier is
-//! global, so the binding cannot be a token parse. It must be **server-side and
-//! admin-provisioned**.
+//! Authenticated Convex callers are authorized by [`crate::ConvexSiloAuthRegistry`]:
+//! the URL silo selects a deployment-provisioned verifier before Nimbus examines
+//! the bearer token. A token accepted by that verifier is therefore intrinsically
+//! bound to the selected silo. No subject, issuer, or caller-controlled claim is
+//! translated into a silo authorization here.
 //!
-//! **The model.** Nimbus models one tenancy level: `TenantId` = data partition =
-//! the per-project **silo** (Convex isolates data per project). This adds the
-//! missing authz level — a **team** that owns silos — *entirely within the convex
-//! adapter*. `TenantId` stays the silo and the data-isolation unit; the engine
-//! still partitions per-silo. "Team" never partitions data — it only gates
-//! **which** silos a principal may select. So a team principal may reach any of
-//! its team's silos, each still isolated.
-//!
-//! Two registries (admin-provisioned config):
-//! - [`SiloTeamRegistry`]: silo (`TenantId`) → [`TeamId`]
-//! - [`PrincipalTeamRegistry`]: a verified principal (`subject` then `issuer`) → [`TeamId`]
-//!
-//! [`authorize_silo_selection`] is **all-fail-closed** (the M9 lesson — absent
-//! means refuse, never fall through): admit iff the URL silo resolves to a team
-//! AND the principal resolves to a team AND the two teams match. Any of the three
-//! absent → refuse.
+//! Anonymous callers have no verifier proof. They remain fail-closed unless an
+//! operator explicitly binds both the requested silo and anonymous traffic to the
+//! same team. This separate policy exists for local development and deliberate
+//! public-function deployments; it never widens authenticated access.
 
 use std::collections::BTreeMap;
 use std::fmt;
 
-use nimbus_core::{PrincipalContext, TenantId};
+use nimbus_core::TenantId;
 
-/// A team — the authz boundary that owns silos. Pure adapter-level authz label;
-/// never a data-partition key.
+/// An operator-defined group of silos that may share an anonymous-access policy.
+/// It is an adapter-level authorization label, never a data-partition key.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TeamId(String);
 
 impl TeamId {
-    /// Build a team id. Must be non-empty and free of whitespace and `:`
+    /// Build a team id. It must be non-empty and free of whitespace and `:`
     /// (the operator-spec separator).
     pub fn new(value: impl Into<String>) -> Result<Self, TeamIdError> {
         let value = value.into();
@@ -80,9 +65,8 @@ impl fmt::Display for TeamIdError {
 
 impl std::error::Error for TeamIdError {}
 
-/// Maps each Convex silo (`TenantId`, the URL segment / data partition) to the
-/// team that owns it. Strict: an unregistered silo resolves to nothing → the
-/// admission refuses it (fail-closed).
+/// Maps each Convex silo to the team that owns its anonymous-access policy.
+/// An unregistered silo is never anonymously reachable.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SiloTeamRegistry {
     bindings: BTreeMap<String, TeamId>,
@@ -100,7 +84,6 @@ impl SiloTeamRegistry {
         self
     }
 
-    /// The owning team of `silo`, or `None` if the silo is not registered.
     #[must_use]
     pub fn team_for_silo(&self, silo: &TenantId) -> Option<&TeamId> {
         self.bindings.get(silo.as_str())
@@ -111,9 +94,17 @@ impl SiloTeamRegistry {
         self.bindings.is_empty()
     }
 
-    /// Parse the operator spec (`NIMBUS_CONVEX_SILO_TEAMS`): comma-separated
-    /// `SILO:TEAM` entries. Split on the **last** `:` so a silo id may itself
-    /// contain `:`; the team (which may not contain `:`) is the final segment.
+    /// Provisioned silo ids. Values were validated when inserted or parsed.
+    #[must_use]
+    pub fn silos(&self) -> Vec<TenantId> {
+        self.bindings
+            .keys()
+            .map(|silo| TenantId::new(silo).expect("stored silo ids were validated"))
+            .collect()
+    }
+
+    /// Parse `NIMBUS_CONVEX_SILO_TEAMS`: comma-separated `SILO:TEAM` entries.
+    /// Splitting on the last `:` permits `:` inside a silo id.
     pub fn from_operator_spec(spec: &str) -> Result<Self, TenancySpecError> {
         let mut registry = Self::new();
         for entry in spec.split(',').map(str::trim).filter(|e| !e.is_empty()) {
@@ -137,112 +128,41 @@ impl SiloTeamRegistry {
     }
 }
 
-/// Maps a verified principal to its team, by `subject` then `issuer` (whichever
-/// is registered). Admin-provisioned because a convex token carries no team.
-/// Strict: an unregistered (or anonymous) principal resolves to nothing → the
-/// admission refuses it (fail-closed).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct PrincipalTeamRegistry {
-    bindings: BTreeMap<String, TeamId>,
-}
-
-impl PrincipalTeamRegistry {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    #[must_use]
-    pub fn bind(mut self, principal_key: impl Into<String>, team: TeamId) -> Self {
-        self.bindings.insert(principal_key.into(), team);
-        self
-    }
-
-    /// The team of a **verified** principal, read from `verified_claims` only
-    /// (never the unverified `claims` — a caller must not name its own team).
-    /// Tries the verified `subject`, then the verified `issuer`. An anonymous
-    /// principal has neither and resolves to `None`.
-    #[must_use]
-    pub fn team_for_principal(&self, principal: &PrincipalContext) -> Option<&TeamId> {
-        for key in ["subject", "issuer"] {
-            if let Some(value) = principal.verified_claims.get(key).and_then(|v| v.as_str())
-                && let Some(team) = self.bindings.get(value)
-            {
-                return Some(team);
-            }
-        }
-        None
-    }
-
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.bindings.is_empty()
-    }
-
-    /// Parse the operator spec (`NIMBUS_CONVEX_PRINCIPAL_TEAMS`): comma-separated
-    /// `PRINCIPAL:TEAM` entries, where PRINCIPAL is a verified `subject` or
-    /// `issuer`. Split on the **last** `:` so an issuer URL (which contains `:`)
-    /// is preserved as the key; the team is the final segment.
-    pub fn from_operator_spec(spec: &str) -> Result<Self, TenancySpecError> {
-        let mut registry = Self::new();
-        for entry in spec.split(',').map(str::trim).filter(|e| !e.is_empty()) {
-            let (principal_key, team) = entry.rsplit_once(':').ok_or_else(|| {
-                spec_error(format!(
-                    "invalid principal→team binding `{entry}`: expected PRINCIPAL:TEAM"
-                ))
-            })?;
-            if principal_key.is_empty() || team.is_empty() {
-                return Err(spec_error(format!(
-                    "invalid principal→team binding `{entry}`: every segment must be non-empty"
-                )));
-            }
-            let team_id = TeamId::new(team).map_err(|e| {
-                spec_error(format!("invalid principal→team binding `{entry}`: {e}"))
-            })?;
-            registry = registry.bind(principal_key, team_id);
-        }
-        Ok(registry)
-    }
-}
-
-/// Why a convex silo selection was refused. Every variant is a hard refusal —
-/// there is no admit-on-absence path.
+/// Why an anonymous Convex silo selection was refused.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConvexTeamAuthzError {
-    /// The URL silo is not registered to any team.
-    UnregisteredSilo { silo: String },
-    /// The principal (anonymous or unprovisioned) resolves to no team.
-    PrincipalHasNoTeam { silo: String },
-    /// The principal's team does not own the URL silo's team.
-    CrossTeam {
+    UnregisteredSilo {
+        silo: String,
+    },
+    AnonymousAccessDisabled {
+        silo: String,
+    },
+    AnonymousTeamDoesNotOwnSilo {
         silo: String,
         silo_team: String,
-        principal_team: String,
+        anonymous_team: String,
     },
 }
 
 impl fmt::Display for ConvexTeamAuthzError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ConvexTeamAuthzError::UnregisteredSilo { silo } => write!(
+            Self::UnregisteredSilo { silo } => write!(
                 f,
-                "Convex silo `{silo}` is not registered to a team; the request cannot select an \
-                 unregistered silo"
+                "Convex silo `{silo}` has no anonymous-access policy; anonymous selection is refused"
             ),
-            ConvexTeamAuthzError::PrincipalHasNoTeam { silo } => write!(
+            Self::AnonymousAccessDisabled { silo } => write!(
                 f,
-                "the request principal is not authorized for any team, so it cannot select Convex \
-                 silo `{silo}` (anonymous and unprovisioned principals are refused)"
+                "anonymous Convex access is disabled, so silo `{silo}` cannot be selected"
             ),
-            ConvexTeamAuthzError::CrossTeam {
+            Self::AnonymousTeamDoesNotOwnSilo {
                 silo,
                 silo_team,
-                principal_team,
+                anonymous_team,
             } => write!(
                 f,
-                "Convex silo `{silo}` belongs to team `{silo_team}`, but the principal is \
-                 authorized for team `{principal_team}`; a principal may only select silos within \
-                 its own team"
+                "Convex silo `{silo}` belongs to team `{silo_team}`, but anonymous access is bound \
+                 to team `{anonymous_team}`"
             ),
         }
     }
@@ -250,16 +170,13 @@ impl fmt::Display for ConvexTeamAuthzError {
 
 impl std::error::Error for ConvexTeamAuthzError {}
 
-/// The two #41 registries bundled for the convex adapter, plus an optional
-/// dev-mode anonymous-team escape hatch. Travels in deployment state and is
-/// read at the convex admission gate. **Defaults to empty/`None`** — an
-/// unconfigured deployment refuses every application-convex request (fail-closed
-/// by construction; the operator turns convex on by provisioning teams, not by
-/// leaving it unconfigured).
+/// Convex anonymous-access policy.
+///
+/// Defaults are empty and fail-closed. Authenticated requests do not consult
+/// this policy; they are admitted only by the verifier bound to their URL silo.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ConvexTenancyConfig {
     silo_teams: SiloTeamRegistry,
-    principal_teams: PrincipalTeamRegistry,
     anonymous_team: Option<TeamId>,
 }
 
@@ -276,80 +193,41 @@ impl ConvexTenancyConfig {
     }
 
     #[must_use]
-    pub fn with_principal_teams(mut self, principal_teams: PrincipalTeamRegistry) -> Self {
-        self.principal_teams = principal_teams;
-        self
+    pub fn silos(&self) -> Vec<TenantId> {
+        self.silo_teams.silos()
     }
 
-    /// Bind a team that **anonymous** (unauthenticated) requests are treated as
-    /// belonging to. Consulted only when a principal is anonymous and only when
-    /// set — a verified principal's authorization is entirely unaffected by this
-    /// setting, and an unconfigured (`None`, the default) deployment keeps
-    /// refusing every anonymous request exactly as before this field existed.
-    /// Intended for local-development ergonomics (e.g. `nimbus dev`'s
-    /// auto-provisioned tenant), never for production posture.
+    /// Explicitly bind anonymous requests to a team. This is intended for local
+    /// development or deliberate public-function policy.
     #[must_use]
     pub fn with_anonymous_team(mut self, anonymous_team: TeamId) -> Self {
         self.anonymous_team = Some(anonymous_team);
         self
     }
 
-    /// All-fail-closed authorization for an application-convex silo selection
-    /// (see [`authorize_silo_selection`]).
-    pub fn authorize_silo_selection(
+    /// Authorize an anonymous request to select `url_silo`.
+    pub fn authorize_anonymous_silo_selection(
         &self,
         url_silo: &TenantId,
-        principal: &PrincipalContext,
     ) -> Result<(), ConvexTeamAuthzError> {
-        authorize_silo_selection(
-            &self.silo_teams,
-            &self.principal_teams,
-            self.anonymous_team.as_ref(),
-            url_silo,
-            principal,
-        )
+        let silo = url_silo.as_str().to_string();
+        let silo_team = self
+            .silo_teams
+            .team_for_silo(url_silo)
+            .ok_or_else(|| ConvexTeamAuthzError::UnregisteredSilo { silo: silo.clone() })?;
+        let anonymous_team = self
+            .anonymous_team
+            .as_ref()
+            .ok_or_else(|| ConvexTeamAuthzError::AnonymousAccessDisabled { silo: silo.clone() })?;
+        if silo_team != anonymous_team {
+            return Err(ConvexTeamAuthzError::AnonymousTeamDoesNotOwnSilo {
+                silo,
+                silo_team: silo_team.to_string(),
+                anonymous_team: anonymous_team.to_string(),
+            });
+        }
+        Ok(())
     }
-}
-
-/// The #41 admission decision — **all-fail-closed**. Admit iff the URL silo
-/// resolves to a team, the principal resolves to a team, and the two match.
-///
-/// A principal resolves to a team either by the principal registry (verified
-/// `subject`/`issuer` lookup, unaffected by `anonymous_team`) or, only when the
-/// principal is anonymous (`!principal.authenticated`) and `anonymous_team` is
-/// `Some`, by that bound team. An anonymous principal is structurally never
-/// found in the principal registry (it carries no verified claims), so the two
-/// paths never overlap. `anonymous_team: None` reproduces the original
-/// all-fail-closed behavior exactly.
-///
-/// This is the binding that supersedes the #43 network-bind stopgap: it refuses
-/// cross-team selection on **every** bind (loopback included), not just
-/// non-loopback. Data stays per-silo isolated; this only gates selection.
-pub fn authorize_silo_selection(
-    silo_registry: &SiloTeamRegistry,
-    principal_registry: &PrincipalTeamRegistry,
-    anonymous_team: Option<&TeamId>,
-    url_silo: &TenantId,
-    principal: &PrincipalContext,
-) -> Result<(), ConvexTeamAuthzError> {
-    let silo = url_silo.as_str().to_string();
-    let silo_team = silo_registry
-        .team_for_silo(url_silo)
-        .ok_or_else(|| ConvexTeamAuthzError::UnregisteredSilo { silo: silo.clone() })?;
-    let principal_team = match principal_registry.team_for_principal(principal) {
-        Some(team) => team,
-        None if !principal.authenticated => anonymous_team
-            .ok_or_else(|| ConvexTeamAuthzError::PrincipalHasNoTeam { silo: silo.clone() })?,
-        None => return Err(ConvexTeamAuthzError::PrincipalHasNoTeam { silo: silo.clone() }),
-    };
-    if silo_team != principal_team {
-        return Err(ConvexTeamAuthzError::CrossTeam {
-            silo,
-            silo_team: silo_team.to_string(),
-            principal_team: principal_team.to_string(),
-        });
-    }
-    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -377,7 +255,6 @@ fn spec_error(message: String) -> TenancySpecError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     fn tenant(id: &str) -> TenantId {
         TenantId::new(id).expect("tenant id")
@@ -387,100 +264,22 @@ mod tests {
         TeamId::new(id).expect("team id")
     }
 
-    /// A verified principal carrying `subject` and `issuer` (as
-    /// `normalize_principal_context` records them for a verified convex token).
-    fn verified_principal(subject: &str, issuer: &str) -> PrincipalContext {
-        PrincipalContext {
-            authenticated: true,
-            claims: serde_json::Map::new(),
-            verified_claims: serde_json::Map::from_iter([
-                ("subject".to_string(), json!(subject)),
-                ("issuer".to_string(), json!(issuer)),
-            ]),
-        }
-    }
-
-    fn registries() -> (SiloTeamRegistry, PrincipalTeamRegistry) {
-        // team-a owns silo-1 and silo-2; team-b owns silo-3.
-        let silos = SiloTeamRegistry::new()
-            .bind(&tenant("silo-1"), team("team-a"))
-            .bind(&tenant("silo-2"), team("team-a"))
-            .bind(&tenant("silo-3"), team("team-b"));
-        // principal "user-a" (by subject) is on team-a; "user-b" on team-b.
-        let principals = PrincipalTeamRegistry::new()
-            .bind("user-a", team("team-a"))
-            .bind("user-b", team("team-b"));
-        (silos, principals)
+    fn policy() -> ConvexTenancyConfig {
+        ConvexTenancyConfig::new()
+            .with_silo_teams(
+                SiloTeamRegistry::new()
+                    .bind(&tenant("silo-1"), team("team-a"))
+                    .bind(&tenant("silo-2"), team("team-a"))
+                    .bind(&tenant("silo-3"), team("team-b")),
+            )
+            .with_anonymous_team(team("team-a"))
     }
 
     #[test]
-    fn anonymous_principal_is_refused() {
-        let (silos, principals) = registries();
-        let error = authorize_silo_selection(
-            &silos,
-            &principals,
-            None,
-            &tenant("silo-1"),
-            &PrincipalContext::anonymous(),
-        )
-        .expect_err("anonymous must be refused");
-        assert!(matches!(
-            error,
-            ConvexTeamAuthzError::PrincipalHasNoTeam { .. }
-        ));
-    }
-
-    #[test]
-    fn cross_team_silo_selection_is_refused() {
-        let (silos, principals) = registries();
-        // user-a (team-a) names silo-3 (team-b) → refused.
-        let principal = verified_principal("user-a", "https://idp.example.com");
-        let error =
-            authorize_silo_selection(&silos, &principals, None, &tenant("silo-3"), &principal)
-                .expect_err("cross-team must be refused");
-        match error {
-            ConvexTeamAuthzError::CrossTeam {
-                silo_team,
-                principal_team,
-                ..
-            } => {
-                assert_eq!(silo_team, "team-b");
-                assert_eq!(principal_team, "team-a");
-            }
-            other => panic!("expected CrossTeam, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn same_team_same_silo_is_admitted() {
-        let (silos, principals) = registries();
-        let principal = verified_principal("user-a", "https://idp.example.com");
-        authorize_silo_selection(&silos, &principals, None, &tenant("silo-1"), &principal)
-            .expect("same-team same-silo must be admitted");
-    }
-
-    #[test]
-    fn same_team_other_silo_is_admitted_many_silos_per_team() {
-        // The non-vacuous case: user-a (team-a) reaches silo-2 (also team-a) —
-        // proves many-silos-per-team works (the multi-project-per-tenant capability).
-        let (silos, principals) = registries();
-        let principal = verified_principal("user-a", "https://idp.example.com");
-        authorize_silo_selection(&silos, &principals, None, &tenant("silo-2"), &principal)
-            .expect("same-team other-silo must be admitted (many silos per team)");
-    }
-
-    #[test]
-    fn unregistered_silo_is_refused() {
-        let (silos, principals) = registries();
-        let principal = verified_principal("user-a", "https://idp.example.com");
-        let error = authorize_silo_selection(
-            &silos,
-            &principals,
-            None,
-            &tenant("silo-unknown"),
-            &principal,
-        )
-        .expect_err("unregistered silo must be refused");
+    fn anonymous_access_is_fail_closed_by_default() {
+        let error = ConvexTenancyConfig::new()
+            .authorize_anonymous_silo_selection(&tenant("silo-1"))
+            .expect_err("unconfigured policy must refuse anonymous access");
         assert!(matches!(
             error,
             ConvexTeamAuthzError::UnregisteredSilo { .. }
@@ -488,212 +287,55 @@ mod tests {
     }
 
     #[test]
-    fn unprovisioned_principal_is_refused() {
-        let (silos, principals) = registries();
-        // Authenticated, but neither subject nor issuer is registered.
-        let principal = verified_principal("user-unknown", "https://idp.unknown.com");
-        let error =
-            authorize_silo_selection(&silos, &principals, None, &tenant("silo-1"), &principal)
-                .expect_err("unprovisioned principal must be refused");
+    fn registered_silo_still_requires_an_explicit_anonymous_team() {
+        let config = ConvexTenancyConfig::new()
+            .with_silo_teams(SiloTeamRegistry::new().bind(&tenant("silo-1"), team("team-a")));
+        let error = config
+            .authorize_anonymous_silo_selection(&tenant("silo-1"))
+            .expect_err("registered silo alone must not enable anonymous access");
         assert!(matches!(
             error,
-            ConvexTeamAuthzError::PrincipalHasNoTeam { .. }
+            ConvexTeamAuthzError::AnonymousAccessDisabled { .. }
         ));
     }
 
     #[test]
-    fn principal_resolves_by_issuer_when_subject_unregistered() {
-        let silos = SiloTeamRegistry::new().bind(&tenant("silo-1"), team("team-a"));
-        // Provision by ISSUER (the per-deployment-IdP→team model).
-        let principals =
-            PrincipalTeamRegistry::new().bind("https://idp.example.com", team("team-a"));
-        let principal = verified_principal("any-user", "https://idp.example.com");
-        authorize_silo_selection(&silos, &principals, None, &tenant("silo-1"), &principal)
-            .expect("issuer-keyed principal binding should resolve");
-    }
-
-    #[test]
-    fn unverified_claims_cannot_name_a_team() {
-        let silos = SiloTeamRegistry::new().bind(&tenant("silo-1"), team("team-a"));
-        let principals = PrincipalTeamRegistry::new().bind("user-a", team("team-a"));
-        // subject only in UNVERIFIED claims → must not resolve.
-        let spoofed = PrincipalContext {
-            authenticated: true,
-            claims: serde_json::Map::from_iter([("subject".to_string(), json!("user-a"))]),
-            verified_claims: serde_json::Map::new(),
-        };
-        let error =
-            authorize_silo_selection(&silos, &principals, None, &tenant("silo-1"), &spoofed)
-                .expect_err("an unverified subject must not resolve a team");
+    fn anonymous_access_is_limited_to_the_bound_team() {
+        policy()
+            .authorize_anonymous_silo_selection(&tenant("silo-2"))
+            .expect("another silo owned by the anonymous team should be admitted");
+        let error = policy()
+            .authorize_anonymous_silo_selection(&tenant("silo-3"))
+            .expect_err("another team's silo must be refused");
         assert!(matches!(
             error,
-            ConvexTeamAuthzError::PrincipalHasNoTeam { .. }
+            ConvexTeamAuthzError::AnonymousTeamDoesNotOwnSilo { .. }
         ));
     }
 
     #[test]
-    fn operator_specs_parse_many_silos_per_team_and_issuer_keys() {
-        let silos =
-            SiloTeamRegistry::from_operator_spec("silo-1:team-a, silo-2:team-a , silo-3:team-b,")
+    fn unregistered_silo_is_refused_even_when_anonymous_access_is_enabled() {
+        let error = policy()
+            .authorize_anonymous_silo_selection(&tenant("unknown"))
+            .expect_err("unregistered silo must be refused");
+        assert!(matches!(
+            error,
+            ConvexTeamAuthzError::UnregisteredSilo { .. }
+        ));
+    }
+
+    #[test]
+    fn operator_spec_parses_multiple_silos_and_rejects_malformed_entries() {
+        let registry =
+            SiloTeamRegistry::from_operator_spec("silo-1:team-a, silo-2:team-a, silo-3:team-b,")
                 .expect("silo spec should parse");
         assert_eq!(
-            silos.team_for_silo(&tenant("silo-1")),
+            registry.team_for_silo(&tenant("silo-2")),
             Some(&team("team-a"))
         );
-        assert_eq!(
-            silos.team_for_silo(&tenant("silo-2")),
-            Some(&team("team-a"))
-        );
-        assert_eq!(
-            silos.team_for_silo(&tenant("silo-3")),
-            Some(&team("team-b"))
-        );
-        assert_eq!(silos.team_for_silo(&tenant("silo-x")), None);
-
-        // Issuer keys contain `:` (https://…) — rsplit on the last `:` keeps them whole.
-        let principals = PrincipalTeamRegistry::from_operator_spec(
-            "https://idp.example.com:team-a, user-b:team-b",
-        )
-        .expect("principal spec should parse");
-        let by_issuer = verified_principal("whoever", "https://idp.example.com");
-        assert_eq!(
-            principals.team_for_principal(&by_issuer),
-            Some(&team("team-a"))
-        );
-    }
-
-    #[test]
-    fn operator_specs_reject_malformed_entries() {
+        assert_eq!(registry.silos().len(), 3);
         assert!(SiloTeamRegistry::from_operator_spec("no-colon").is_err());
         assert!(SiloTeamRegistry::from_operator_spec("silo:").is_err());
         assert!(SiloTeamRegistry::from_operator_spec(":team").is_err());
-        assert!(PrincipalTeamRegistry::from_operator_spec("no-colon").is_err());
-    }
-
-    #[test]
-    fn anonymous_is_admitted_when_anonymous_team_matches_silo_team() {
-        let (silos, principals) = registries();
-        authorize_silo_selection(
-            &silos,
-            &principals,
-            Some(&team("team-a")),
-            &tenant("silo-1"),
-            &PrincipalContext::anonymous(),
-        )
-        .expect("anonymous should be admitted when bound to the silo's owning team");
-    }
-
-    #[test]
-    fn anonymous_is_refused_when_anonymous_team_does_not_own_the_silo() {
-        let (silos, principals) = registries();
-        // anonymous_team is team-b, but silo-1 belongs to team-a.
-        let error = authorize_silo_selection(
-            &silos,
-            &principals,
-            Some(&team("team-b")),
-            &tenant("silo-1"),
-            &PrincipalContext::anonymous(),
-        )
-        .expect_err("anonymous must still be refused for a silo outside its bound team");
-        match error {
-            ConvexTeamAuthzError::CrossTeam {
-                silo_team,
-                principal_team,
-                ..
-            } => {
-                assert_eq!(silo_team, "team-a");
-                assert_eq!(principal_team, "team-b");
-            }
-            other => panic!("expected CrossTeam, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn anonymous_is_still_refused_when_anonymous_team_is_unset() {
-        // Default (None) reproduces the pre-existing all-fail-closed behavior
-        // exactly, even with an anonymous_team-aware call site.
-        let (silos, principals) = registries();
-        let error = authorize_silo_selection(
-            &silos,
-            &principals,
-            None,
-            &tenant("silo-1"),
-            &PrincipalContext::anonymous(),
-        )
-        .expect_err("anonymous must be refused when no anonymous_team is configured");
-        assert!(matches!(
-            error,
-            ConvexTeamAuthzError::PrincipalHasNoTeam { .. }
-        ));
-    }
-
-    #[test]
-    fn anonymous_team_does_not_affect_verified_principals() {
-        let (silos, principals) = registries();
-        // user-a (team-a) still cannot reach silo-3 (team-b), even though
-        // anonymous_team is bound to team-b — verified-principal resolution
-        // never consults anonymous_team.
-        let principal = verified_principal("user-a", "https://idp.example.com");
-        let error = authorize_silo_selection(
-            &silos,
-            &principals,
-            Some(&team("team-b")),
-            &tenant("silo-3"),
-            &principal,
-        )
-        .expect_err("a verified principal's team must come only from the principal registry");
-        match error {
-            ConvexTeamAuthzError::CrossTeam {
-                silo_team,
-                principal_team,
-                ..
-            } => {
-                assert_eq!(silo_team, "team-b");
-                assert_eq!(principal_team, "team-a");
-            }
-            other => panic!("expected CrossTeam, got {other:?}"),
-        }
-
-        // And the matching verified case is still admitted normally.
-        authorize_silo_selection(
-            &silos,
-            &principals,
-            Some(&team("team-b")),
-            &tenant("silo-1"),
-            &principal,
-        )
-        .expect("verified same-team same-silo must still be admitted with anonymous_team set");
-    }
-
-    #[test]
-    fn convex_tenancy_config_wires_anonymous_team_through() {
-        let (silos, principals) = registries();
-        let config = ConvexTenancyConfig::new()
-            .with_silo_teams(silos)
-            .with_principal_teams(principals)
-            .with_anonymous_team(team("team-a"));
-
-        config
-            .authorize_silo_selection(&tenant("silo-1"), &PrincipalContext::anonymous())
-            .expect("config-level anonymous_team wiring should admit the bound team's silo");
-
-        let error = config
-            .authorize_silo_selection(&tenant("silo-3"), &PrincipalContext::anonymous())
-            .expect_err("config-level anonymous_team wiring must still refuse another team's silo");
-        assert!(matches!(error, ConvexTeamAuthzError::CrossTeam { .. }));
-    }
-
-    #[test]
-    fn default_convex_tenancy_config_still_refuses_anonymous() {
-        // Sanity check the whole-config default (no builders called at all)
-        // continues to refuse anonymous, matching pre-existing behavior.
-        let config = ConvexTenancyConfig::new();
-        let error = config
-            .authorize_silo_selection(&tenant("silo-1"), &PrincipalContext::anonymous())
-            .expect_err("an unconfigured ConvexTenancyConfig must refuse anonymous requests");
-        assert!(matches!(
-            error,
-            ConvexTeamAuthzError::UnregisteredSilo { .. }
-        ));
     }
 }
