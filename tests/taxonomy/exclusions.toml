@@ -34,6 +34,15 @@ owner = "parallel-prepare-serial-commit"
 issue = "docs/private/plans/parallel-prepare-serial-commit-plan.md#u8c--1000-seed-ci-farm-retained-regressions-and-performance-closeout"
 
 [[exclusions]]
+pattern = "test(/ppsc_explicit_embedded_scenario_replay/)"
+scope = "ignored"
+reason = "heavy-resource"
+evidence = "This ignored Engine entrypoint is a manual retained-failure reproducer: PPSC failure artifacts emit the exact NIMBUS_PPSC_REPLAY_SCENARIO_JSON, embedded backend, and --ignored command; ordinary and seed-farm lanes cover generated scenarios."
+measured_at = "2026-07-23"
+owner = "parallel-prepare-serial-commit"
+issue = "docs/private/plans/parallel-prepare-serial-commit-plan.md#u8c--1000-seed-ci-farm-retained-regressions-and-performance-closeout"
+
+[[exclusions]]
 pattern = "test(/runtime::tests::node_compat::/)"
 scope = "ignored"
 reason = "heavy-resource"
