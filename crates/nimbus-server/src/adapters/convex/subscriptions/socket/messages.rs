@@ -83,7 +83,7 @@ async fn handle_authenticate(
     active_subscriptions: &mut ActiveSubscriptions,
     token: String,
 ) {
-    match ctx.convex_registry.verify_socket_token(&token).await {
+    match ctx.auth_authority.verify_bearer_token(&token).await {
         Ok(auth) => {
             reset_active_subscriptions_for_auth_change(ctx, active_subscriptions).await;
             *current_auth = Some(auth);

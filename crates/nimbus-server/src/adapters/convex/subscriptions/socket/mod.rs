@@ -91,6 +91,7 @@ pub(super) struct SocketSessionCtx<'a> {
     pub(super) tenant_id: &'a TenantId,
     pub(super) tenant_context: &'a nimbus_tenant::TenantIsolationContext,
     pub(super) convex_registry: &'a Arc<ConvexRegistry>,
+    pub(super) auth_authority: &'a super::super::socket_auth::ConvexSocketAuthAuthority,
     pub(super) subscription_tx: &'a mpsc::Sender<SubscriptionUpdate>,
     pub(super) outbound_tx: &'a mpsc::Sender<ServerMessage>,
     pub(super) transforms: &'a Arc<RwLock<ConvexSubscriptionTransforms>>,
@@ -109,14 +110,18 @@ pub(super) struct NamedSubscriptionRequest {
 pub(super) async fn handle_convex_socket_for_tenant(
     socket: WebSocket,
     state: Arc<AppState>,
-    convex_registry: Arc<ConvexRegistry>,
-    tenant_id: TenantId,
-    tenant_context: nimbus_tenant::TenantIsolationContext,
-    initial_auth: Option<InvocationAuth>,
+    admission: super::super::socket_auth::ConvexSocketAdmission,
     protocol: NegotiatedWebSocketProtocol,
 ) {
     const OUTBOUND_CHANNEL_CAPACITY: usize = 256;
 
+    let super::super::socket_auth::ConvexSocketAdmission {
+        registry: convex_registry,
+        initial_auth,
+        tenant_context,
+        auth_authority,
+    } = admission;
+    let tenant_id = tenant_context.tenant_id().clone();
     let (socket_tx, mut socket_rx) = socket.split();
     let (outbound_tx, outbound_rx) = mpsc::channel::<ServerMessage>(OUTBOUND_CHANNEL_CAPACITY);
     let (subscription_tx, subscription_rx) =
@@ -149,6 +154,7 @@ pub(super) async fn handle_convex_socket_for_tenant(
         tenant_id: &tenant_id,
         tenant_context: &tenant_context,
         convex_registry: &convex_registry,
+        auth_authority: &auth_authority,
         subscription_tx: &subscription_tx,
         outbound_tx: &outbound_tx,
         transforms: &transforms,

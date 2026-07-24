@@ -6,7 +6,8 @@ use nimbus_auth::{
     firebase_emulator_verification_bypass_principal_from_bearer, normalize_principal_context,
     parse_bearer_value,
 };
-use nimbus_core::{InvocationAuth, TenantId};
+use nimbus_convex::ConvexSiloAuthAuthority;
+use nimbus_core::InvocationAuth;
 use tonic::{Status, metadata::MetadataMap};
 
 use crate::state::{AppError, AppState, DeploymentState};
@@ -98,20 +99,18 @@ pub(crate) async fn verify_optional_application_auth_from_headers_in_deployment(
     verify_optional_application_auth_from_bearer_in_deployment(deployment, bearer.as_deref()).await
 }
 
-/// Convex authentication is silo-scoped: the URL silo selects a
-/// deployment-provisioned verifier before the bearer is examined.
-pub(crate) async fn verify_optional_convex_auth_from_headers_in_deployment(
-    deployment: &DeploymentState,
-    silo: &TenantId,
+/// Convex authentication is silo-scoped: the caller must select a
+/// deployment-provisioned authority before the bearer is examined.
+pub(crate) async fn verify_optional_convex_auth_from_headers(
+    authority: &ConvexSiloAuthAuthority,
     headers: &HeaderMap,
 ) -> Result<Option<InvocationAuth>, AppError> {
     let bearer = extract_bearer_token(headers)?;
     let Some(bearer) = bearer else {
         return Ok(None);
     };
-    deployment
-        .convex_silo_auth()
-        .verify_bearer_token(silo, &bearer)
+    authority
+        .verify_bearer_token(&bearer)
         .await
         .map(Some)
         .map_err(app_error_from_application_auth)

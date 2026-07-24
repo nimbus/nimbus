@@ -64,7 +64,7 @@ pub use requests::{
     ConvexQueryRequest, ConvexReadCommand, ConvexScheduleAfterRequest, ConvexScheduleAtRequest,
     ConvexScheduledCommand,
 };
-pub use silo_auth::ConvexSiloAuthRegistry;
+pub use silo_auth::{ConvexSiloAuthAuthority, ConvexSiloAuthRegistry};
 pub use subscriptions::{
     ConvexClientMessage, ConvexRuntimeSubscriptionSetup, ConvexSubscriptionEvent,
     ConvexSubscriptionTransform, ConvexSubscriptionTransforms, activate_transform,
