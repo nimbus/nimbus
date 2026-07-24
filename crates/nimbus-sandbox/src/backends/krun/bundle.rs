@@ -606,7 +606,6 @@ mod tests {
     };
     use crate::backend::SandboxBackendKind;
     use crate::backends::oci::hardening::{DEFAULT_MASKED_PATHS, DEFAULT_READONLY_PATHS};
-    use crate::endpoint::PublishedEndpointProtocol;
     use crate::spec::{
         SandboxMountSource, SandboxMountSpec, SandboxOwnerSpec, SandboxPortBinding,
         SandboxProcessSpec, SandboxResourceLimits, SandboxRootSpec, SandboxRootfsSpec, SandboxSpec,
@@ -616,6 +615,7 @@ mod tests {
         EGRESS_NODE_EXTRA_CA_CERTS_ENV, EGRESS_PROXY_URL_ENV, EGRESS_RESERVED_ENV_KEYS,
         EgressPolicy, EgressProtocol, EgressRule,
     };
+    use nimbus_network::EndpointProtocol;
 
     fn env_from_config(config: &serde_json::Value) -> Vec<&str> {
         config["process"]["env"]
@@ -1399,8 +1399,8 @@ mod tests {
                 .with_env(["PATH=/usr/bin", "PGDATA=/var/lib/postgresql/data"]),
         )
         .with_port_bindings([
-            SandboxPortBinding::new("postgres", PublishedEndpointProtocol::Tcp, 15432, 5432),
-            SandboxPortBinding::new("health", PublishedEndpointProtocol::Http, 18080, 8080),
+            SandboxPortBinding::new("postgres", EndpointProtocol::Tcp, 15432, 5432),
+            SandboxPortBinding::new("health", EndpointProtocol::Http, 18080, 8080),
         ])
     }
 }

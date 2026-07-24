@@ -1,7 +1,8 @@
 use nimbus_core::TenantId;
+use nimbus_network::PublishedEndpoint;
 use nimbus_sandbox::{
-    PublishedEndpoint, SandboxBackendKind, SandboxId, SandboxLifecycleSpec, SandboxPortBinding,
-    SandboxResourceLimits, SandboxStatus,
+    SandboxBackendKind, SandboxId, SandboxLifecycleSpec, SandboxPortBinding, SandboxResourceLimits,
+    SandboxStatus,
 };
 #[cfg(unix)]
 use nimbus_sandbox::{SandboxHandle, SandboxSpec};

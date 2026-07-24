@@ -12,11 +12,12 @@ use nimbus_core::{
     VerifiedUserIdentityKind,
 };
 use nimbus_engine::Engine;
+use nimbus_network::{EndpointProtocol, PublishedEndpoint};
 use nimbus_runtime::HostCallCancellation;
 use nimbus_sandbox::{
-    PublishedEndpoint, PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind, SandboxError,
-    SandboxFuture, SandboxHandle, SandboxId, SandboxOciImageSource, SandboxOwnerSpec,
-    SandboxProcessSpec, SandboxRootSpec, SandboxSpec, SandboxStatus,
+    SandboxBackend, SandboxBackendKind, SandboxError, SandboxFuture, SandboxHandle, SandboxId,
+    SandboxOciImageSource, SandboxOwnerSpec, SandboxProcessSpec, SandboxRootSpec, SandboxSpec,
+    SandboxStatus,
 };
 use nimbus_services::{
     RuntimeServiceRegistry, ServiceBackend, ServiceDefinitionCatalog, ServiceManager,
@@ -87,7 +88,7 @@ impl ReadySandboxBackend {
             vec![
                 PublishedEndpoint::new(
                     "postgres",
-                    PublishedEndpointProtocol::Tcp,
+                    EndpointProtocol::Tcp,
                     SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 15432),
                 )
                 .with_guest_port(5432),

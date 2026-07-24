@@ -1,10 +1,11 @@
 use nimbus_core::{PrincipalContext, TenantId};
+use nimbus_network::EndpointProtocol;
 use nimbus_runtime::{
     RuntimeBackendKind, RuntimeBundle, RuntimeLimits, RuntimePolicy, RuntimeProfile,
 };
 use nimbus_sandbox::{
-    PublishedEndpointProtocol, SandboxBackendKind, SandboxOwnerSpec, SandboxProcessSpec,
-    SandboxResourceCharge, SandboxRootSpec, SandboxSpec,
+    SandboxBackendKind, SandboxOwnerSpec, SandboxProcessSpec, SandboxResourceCharge,
+    SandboxRootSpec, SandboxSpec,
 };
 
 use super::*;
@@ -58,7 +59,7 @@ fn tenant_decision_input(
             TenantNetworkEndpointDecision::new(
                 "db",
                 "postgres",
-                PublishedEndpointProtocol::Tcp,
+                EndpointProtocol::Tcp,
                 "127.0.0.1",
                 15432,
             )
@@ -511,7 +512,7 @@ fn tenant_isolation_decision_clones_inputs_so_policy_cannot_widen_after_admissio
         .push(TenantNetworkEndpointDecision::new(
             "other-tenant-db",
             "postgres",
-            PublishedEndpointProtocol::Tcp,
+            EndpointProtocol::Tcp,
             "127.0.0.1",
             25432,
         ));

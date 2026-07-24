@@ -32,13 +32,13 @@ pub(super) use crate::backends::oci::buildah::{
     ImageHealthcheck, OciExposedPort, OciExposedPortProtocol, OciImageLaunchDefaults,
 };
 pub(super) use crate::backends::oci::command::CommandSpec;
-pub(super) use crate::endpoint::PublishedEndpointProtocol;
 pub(super) use crate::instance::{SandboxId, SandboxStatus};
 pub(super) use crate::spec::{
     SandboxMountSpec, SandboxOciBuildSpec, SandboxOciImageSource, SandboxOwnerSpec,
     SandboxPortBinding, SandboxProcessSpec, SandboxResourceLimits, SandboxResourceQuotaPolicy,
     SandboxRestartPolicy, SandboxRootSpec, SandboxRootfsSpec, SandboxSpec,
 };
+pub(super) use nimbus_network::EndpointProtocol;
 
 pub(super) fn sample_spec() -> SandboxSpec {
     sample_spec_with_rootfs(Path::new("/srv/rootfs"))

@@ -7,13 +7,14 @@ use crate::local_server::{
     LocalServerPaths, LocalServerSecurityState, load_or_create_local_admin_token,
 };
 use crate::router::RouterBuildConfig;
+use nimbus_network::{EndpointProtocol, PublishedEndpoint};
 use nimbus_runtime::{
     HostCallCancellation, InvocationServiceBinding, InvocationServiceProtocol, RuntimeLimits,
 };
 use nimbus_sandbox::{
-    PublishedEndpoint, PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind, SandboxError,
-    SandboxFuture, SandboxHandle, SandboxId, SandboxMountSpec, SandboxOciImageSource,
-    SandboxOwnerSpec, SandboxProcessSpec, SandboxRootSpec, SandboxSpec, SandboxStatus,
+    SandboxBackend, SandboxBackendKind, SandboxError, SandboxFuture, SandboxHandle, SandboxId,
+    SandboxMountSpec, SandboxOciImageSource, SandboxOwnerSpec, SandboxProcessSpec, SandboxRootSpec,
+    SandboxSpec, SandboxStatus,
 };
 use nimbus_services::ServiceManager;
 use nimbus_services::{RuntimeServiceRegistry, ServiceBackend};
@@ -170,7 +171,7 @@ impl HarnessSandboxBackend {
             SandboxStatus::Ready,
             vec![PublishedEndpoint::new(
                 "postgres",
-                PublishedEndpointProtocol::Tcp,
+                EndpointProtocol::Tcp,
                 SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), tenant_service_port(tenant)),
             )],
         );

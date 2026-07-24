@@ -31,13 +31,13 @@ pub(super) fn parse_port_binding(
     warnings: &mut Vec<String>,
 ) -> Result<ComposePortBindingPlan, Error> {
     let (port_part, protocol) = match raw.rsplit_once('/') {
-        Some((port_part, "tcp")) => (port_part, PublishedEndpointProtocol::Tcp),
+        Some((port_part, "tcp")) => (port_part, EndpointProtocol::Tcp),
         Some((_, other)) => {
             return Err(Error::InvalidInput(format!(
                 "services.{service_name}.ports: unsupported protocol {other:?}; nimbus currently supports tcp only"
             )));
         }
-        None => (raw, PublishedEndpointProtocol::Tcp),
+        None => (raw, EndpointProtocol::Tcp),
     };
 
     let segments = port_part.split(':').collect::<Vec<_>>();

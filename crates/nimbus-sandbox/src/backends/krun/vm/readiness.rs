@@ -25,18 +25,18 @@ pub(super) fn readiness_probe_target(
     endpoints
         .iter()
         .find_map(|endpoint| match endpoint.protocol {
-            PublishedEndpointProtocol::Http => Some(ReadinessProbeTarget::Http(endpoint.address)),
-            PublishedEndpointProtocol::Https => Some(ReadinessProbeTarget::Tcp(endpoint.address)),
-            PublishedEndpointProtocol::Tcp => None,
+            EndpointProtocol::Http => Some(ReadinessProbeTarget::Http(endpoint.address)),
+            EndpointProtocol::Https => Some(ReadinessProbeTarget::Tcp(endpoint.address)),
+            EndpointProtocol::Tcp => None,
         })
         .or_else(|| {
             endpoints
                 .iter()
                 .find_map(|endpoint| match endpoint.protocol {
-                    PublishedEndpointProtocol::Tcp | PublishedEndpointProtocol::Https => {
+                    EndpointProtocol::Tcp | EndpointProtocol::Https => {
                         Some(ReadinessProbeTarget::Tcp(endpoint.address))
                     }
-                    PublishedEndpointProtocol::Http => None,
+                    EndpointProtocol::Http => None,
                 })
         })
 }

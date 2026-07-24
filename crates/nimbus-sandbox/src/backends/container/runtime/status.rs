@@ -4,9 +4,9 @@ use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
 
-use crate::endpoint::{PublishedEndpoint, PublishedEndpointProtocol};
 use crate::instance::SandboxStatus;
 use crate::spec::SandboxSpec;
+use nimbus_network::{EndpointProtocol, PublishedEndpoint};
 
 use super::config::ContainerStartMode;
 use super::manifest::ContainerSandboxManifest;
@@ -42,18 +42,18 @@ fn readiness_probe_target(manifest: &ContainerSandboxManifest) -> Option<Readine
     endpoints
         .iter()
         .find_map(|endpoint| match endpoint.protocol {
-            PublishedEndpointProtocol::Http => Some(ReadinessProbeTarget::Http(endpoint.address)),
-            PublishedEndpointProtocol::Https => Some(ReadinessProbeTarget::Tcp(endpoint.address)),
-            PublishedEndpointProtocol::Tcp => None,
+            EndpointProtocol::Http => Some(ReadinessProbeTarget::Http(endpoint.address)),
+            EndpointProtocol::Https => Some(ReadinessProbeTarget::Tcp(endpoint.address)),
+            EndpointProtocol::Tcp => None,
         })
         .or_else(|| {
             endpoints
                 .iter()
                 .find_map(|endpoint| match endpoint.protocol {
-                    PublishedEndpointProtocol::Tcp | PublishedEndpointProtocol::Https => {
+                    EndpointProtocol::Tcp | EndpointProtocol::Https => {
                         Some(ReadinessProbeTarget::Tcp(endpoint.address))
                     }
-                    PublishedEndpointProtocol::Http => None,
+                    EndpointProtocol::Http => None,
                 })
         })
 }

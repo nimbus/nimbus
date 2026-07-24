@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use nimbus::{
-    EgressPolicy, EgressProtocol, EgressRule, Error, PublishedEndpointProtocol, SandboxBackendKind,
+    EgressPolicy, EgressProtocol, EgressRule, EndpointProtocol, Error, SandboxBackendKind,
     SandboxLifecycleSpec, SandboxMountSpec, SandboxOciBuildSpec, SandboxOciImageReferenceSpec,
     SandboxOciImageSource, SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec,
     SandboxRestartPolicy, SandboxRootSpec, SandboxSpec, ServiceBackend, ServiceDefinitionCatalog,
@@ -126,7 +126,7 @@ pub(crate) enum ComposeCommandPlan {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct ComposePortBindingPlan {
     pub(crate) name: String,
-    pub(crate) protocol: PublishedEndpointProtocol,
+    pub(crate) protocol: EndpointProtocol,
     pub(crate) host_address: IpAddr,
     pub(crate) host_port: u16,
     pub(crate) guest_port: u16,

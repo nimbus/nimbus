@@ -5,10 +5,10 @@ use nimbus_core::TenantId;
 use serde::{Deserialize, Serialize};
 
 use super::runtime::ContainerSandboxBackendConfig;
-use crate::endpoint::PublishedEndpoint;
 use crate::error::{Result, SandboxError};
 use crate::instance::{SandboxHandle, SandboxId, SandboxStatus};
 use crate::spec::{SandboxLifecycleSpec, SandboxPortBinding, SandboxResourceLimits, SandboxSpec};
+use nimbus_network::PublishedEndpoint;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContainerSandboxStateView {
@@ -295,9 +295,9 @@ mod tests {
     use tempfile::TempDir;
 
     use super::ContainerSandboxStateView;
-    use crate::endpoint::{PublishedEndpoint, PublishedEndpointProtocol};
     use crate::instance::{SandboxHandle, SandboxId, SandboxStatus};
     use crate::spec::{SandboxPortBinding, SandboxResourceLimits};
+    use nimbus_network::{EndpointProtocol, PublishedEndpoint};
 
     #[test]
     fn state_view_lists_manifest_backed_summaries_and_skips_missing_manifest_dirs() {
@@ -602,7 +602,7 @@ mod tests {
             fixture.status,
             vec![PublishedEndpoint::new(
                 "http",
-                PublishedEndpointProtocol::Tcp,
+                EndpointProtocol::Tcp,
                 SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 18080),
             )],
         );

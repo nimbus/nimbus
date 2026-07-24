@@ -5,12 +5,12 @@ use std::sync::{Arc, Mutex};
 
 use nimbus_core::{Error, TenantId};
 use nimbus_egress::{EgressPolicy, EgressRule};
+use nimbus_network::{EndpointProtocol, PublishedEndpoint};
 use nimbus_runtime::HostCallCancellation;
 use nimbus_sandbox::{
-    PublishedEndpoint, PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind, SandboxError,
-    SandboxFuture, SandboxHandle, SandboxId, SandboxMountSpec, SandboxOciBuildSpec,
-    SandboxOciImageSource, SandboxOwnerSpec, SandboxProcessSpec, SandboxRootSpec, SandboxSpec,
-    SandboxStatus,
+    SandboxBackend, SandboxBackendKind, SandboxError, SandboxFuture, SandboxHandle, SandboxId,
+    SandboxMountSpec, SandboxOciBuildSpec, SandboxOciImageSource, SandboxOwnerSpec,
+    SandboxProcessSpec, SandboxRootSpec, SandboxSpec, SandboxStatus,
 };
 
 use crate::{
@@ -125,7 +125,7 @@ impl StubSandboxBackend {
             vec![
                 PublishedEndpoint::new(
                     "postgres",
-                    PublishedEndpointProtocol::Tcp,
+                    EndpointProtocol::Tcp,
                     SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 15432),
                 )
                 .with_guest_port(5432),

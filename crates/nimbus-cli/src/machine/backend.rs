@@ -146,7 +146,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use nimbus::{
-        Error, PublishedEndpoint, PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind,
+        EndpointProtocol, Error, PublishedEndpoint, SandboxBackend, SandboxBackendKind,
         SandboxError, SandboxHandle, SandboxId, SandboxOwnerSpec, SandboxPortBinding,
         SandboxProcessSpec, SandboxRootSpec, SandboxSpec, SandboxStatus, TenantId,
     };
@@ -312,7 +312,7 @@ mod tests {
         )
         .with_port_binding(SandboxPortBinding::new(
             "http",
-            PublishedEndpointProtocol::Http,
+            EndpointProtocol::Http,
             18080,
             8080,
         ))

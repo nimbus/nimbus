@@ -1,6 +1,7 @@
 use nimbus_core::Result;
+use nimbus_network::EndpointProtocol;
 use nimbus_runtime::{RuntimeCompatibilityTarget, RuntimeLimits};
-use nimbus_sandbox::{PublishedEndpointProtocol, SandboxBackendKind, SandboxResourceCharge};
+use nimbus_sandbox::{SandboxBackendKind, SandboxResourceCharge};
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -339,7 +340,7 @@ impl OperatorNetworkPolicy {
 pub struct OperatorNetworkEndpointPolicy {
     pub service: String,
     pub name: String,
-    pub protocol: PublishedEndpointProtocol,
+    pub protocol: EndpointProtocol,
     pub host: String,
     pub host_port: u16,
     pub guest_port: Option<u16>,

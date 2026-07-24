@@ -98,7 +98,7 @@ pub(super) fn write_container_machine_manifest(
         status,
         vec![nimbus::PublishedEndpoint::new(
             "http",
-            nimbus::PublishedEndpointProtocol::Tcp,
+            nimbus::EndpointProtocol::Tcp,
             SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 18080),
         )],
     );
@@ -212,7 +212,7 @@ pub(super) fn write_manifest(
         status,
         vec![nimbus::PublishedEndpoint::new(
             "http",
-            nimbus::PublishedEndpointProtocol::Tcp,
+            nimbus::EndpointProtocol::Tcp,
             SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 18080),
         )],
     );

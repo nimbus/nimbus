@@ -47,7 +47,6 @@ use crate::backends::oci::network::{
 };
 use crate::backends::oci::port_manager::{DEFAULT_MAX_PORTS_PER_TENANT, PortManager};
 use crate::backends::oci::resource_quota::ResourceQuotaManager;
-use crate::endpoint::{PublishedEndpoint, PublishedEndpointProtocol};
 use crate::error::{Result, SandboxError};
 use crate::instance::{SandboxHandle, SandboxId, SandboxStatus};
 use crate::spec::{
@@ -55,6 +54,7 @@ use crate::spec::{
     SandboxSpec, resolve_process_without_image_defaults,
 };
 use nimbus_core::net::NetworkSegment;
+use nimbus_network::{EndpointProtocol, PublishedEndpoint};
 
 mod lifecycle;
 mod readiness;

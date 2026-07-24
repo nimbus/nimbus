@@ -16,6 +16,7 @@ workspace = true
 nimbus-artifacts = { path = "../nimbus-artifacts" }
 nimbus-core = { path = "../nimbus-core" }
 nimbus-egress = { path = "../nimbus-egress" }
+nimbus-network = { path = "../nimbus-network" }
 nimbus-runtime = { path = "../nimbus-runtime" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
 oci-client = "0.16"

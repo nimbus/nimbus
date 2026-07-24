@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use nimbus::{
-    PublishedEndpoint, PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind, SandboxError,
+    EndpointProtocol, PublishedEndpoint, SandboxBackend, SandboxBackendKind, SandboxError,
     SandboxHandle, SandboxId, SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec,
     SandboxRootSpec, SandboxSpec, SandboxStatus, TenantId,
 };
@@ -1127,7 +1127,7 @@ impl SandboxBackend for RefreshingInspectBackend {
                 .push(sandbox_id.as_str().to_owned());
             let endpoints = vec![PublishedEndpoint::new(
                 "default",
-                PublishedEndpointProtocol::Tcp,
+                EndpointProtocol::Tcp,
                 SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 18080),
             )];
             write_container_manifest(

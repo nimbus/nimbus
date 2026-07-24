@@ -5,11 +5,12 @@ use nimbus_core::{
     Document, DocumentId, Error, Filter, FilterOp, Query, Result, TableName, TenantId,
 };
 use nimbus_engine::{Engine, ProjectionToken};
+use nimbus_network::EndpointProtocol;
 use nimbus_node::{
     HostLifecycleFuture, StatusEvidenceWrite, StatusEvidenceWriter, TenantWorkloadStatus,
     ensure_status_matches_projection,
 };
-use nimbus_sandbox::{PublishedEndpointProtocol, SandboxBackendKind, SandboxHandle, SandboxStatus};
+use nimbus_sandbox::{SandboxBackendKind, SandboxHandle, SandboxStatus};
 use nimbus_tenant::TenantIsolationContext;
 use nimbus_workloads::TenantSystemEvidenceProjection;
 use serde_json::{Map, Value, json};
@@ -554,11 +555,11 @@ pub fn sandbox_status(status: SandboxStatus) -> &'static str {
     }
 }
 
-pub fn endpoint_protocol(protocol: PublishedEndpointProtocol) -> &'static str {
+pub fn endpoint_protocol(protocol: EndpointProtocol) -> &'static str {
     match protocol {
-        PublishedEndpointProtocol::Tcp => "tcp",
-        PublishedEndpointProtocol::Http => "http",
-        PublishedEndpointProtocol::Https => "https",
+        EndpointProtocol::Tcp => "tcp",
+        EndpointProtocol::Http => "http",
+        EndpointProtocol::Https => "https",
     }
 }
 

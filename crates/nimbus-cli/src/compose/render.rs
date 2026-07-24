@@ -230,10 +230,10 @@ fn render_published_endpoints(endpoints: &[PublishedEndpoint]) -> String {
         .join(", ")
 }
 
-fn render_published_endpoint_protocol(protocol: nimbus::PublishedEndpointProtocol) -> &'static str {
+fn render_published_endpoint_protocol(protocol: nimbus::EndpointProtocol) -> &'static str {
     match protocol {
-        nimbus::PublishedEndpointProtocol::Tcp => "tcp",
-        nimbus::PublishedEndpointProtocol::Http => "http",
-        nimbus::PublishedEndpointProtocol::Https => "https",
+        nimbus::EndpointProtocol::Tcp => "tcp",
+        nimbus::EndpointProtocol::Http => "http",
+        nimbus::EndpointProtocol::Https => "https",
     }
 }

@@ -8,8 +8,10 @@
 //! `nimbus-core` is this crate's only workspace dependency. Upper-layer crates
 //! inject provider capabilities without creating reverse dependencies.
 
+mod endpoint;
 mod identity;
 
+pub use endpoint::{EndpointProtocol, PublishedEndpoint};
 pub use identity::{
     IngressRouteId, ListenerId, NetworkAttachmentId, NetworkLeaseEpoch, NetworkPlanId,
     NetworkProviderId, NetworkResourceGeneration, NetworkResourceIdParseError,

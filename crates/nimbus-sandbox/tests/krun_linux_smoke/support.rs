@@ -27,12 +27,7 @@ pub(super) fn sandbox_tenant() -> TenantId {
 }
 
 pub(super) fn http_binding(host_port: u16, guest_port: u16) -> SandboxPortBinding {
-    SandboxPortBinding::new(
-        "http",
-        PublishedEndpointProtocol::Http,
-        host_port,
-        guest_port,
-    )
+    SandboxPortBinding::new("http", EndpointProtocol::Http, host_port, guest_port)
 }
 
 pub(super) fn rootfs_spec(name: &str, rootfs: impl Into<PathBuf>) -> SandboxSpec {

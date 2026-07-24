@@ -693,15 +693,15 @@ async fn record_service_handle_removes_only_stale_ports_for_that_service() {
         nimbus_sandbox::SandboxBackendKind::Container,
         nimbus_sandbox::SandboxStatus::Ready,
         vec![
-            nimbus_sandbox::PublishedEndpoint::new(
+            nimbus_network::PublishedEndpoint::new(
                 "http",
-                nimbus_sandbox::PublishedEndpointProtocol::Http,
+                nimbus_network::EndpointProtocol::Http,
                 "127.0.0.1:18080".parse().expect("endpoint should parse"),
             )
             .with_guest_port(8080),
-            nimbus_sandbox::PublishedEndpoint::new(
+            nimbus_network::PublishedEndpoint::new(
                 "metrics",
-                nimbus_sandbox::PublishedEndpointProtocol::Tcp,
+                nimbus_network::EndpointProtocol::Tcp,
                 "127.0.0.1:19090".parse().expect("endpoint should parse"),
             )
             .with_guest_port(9090),
@@ -718,9 +718,9 @@ async fn record_service_handle_removes_only_stale_ports_for_that_service() {
         nimbus_sandbox::SandboxBackendKind::Container,
         nimbus_sandbox::SandboxStatus::Ready,
         vec![
-            nimbus_sandbox::PublishedEndpoint::new(
+            nimbus_network::PublishedEndpoint::new(
                 "api",
-                nimbus_sandbox::PublishedEndpointProtocol::Http,
+                nimbus_network::EndpointProtocol::Http,
                 "127.0.0.1:18081".parse().expect("endpoint should parse"),
             )
             .with_guest_port(8081),
@@ -737,9 +737,9 @@ async fn record_service_handle_removes_only_stale_ports_for_that_service() {
         nimbus_sandbox::SandboxBackendKind::Container,
         nimbus_sandbox::SandboxStatus::Ready,
         vec![
-            nimbus_sandbox::PublishedEndpoint::new(
+            nimbus_network::PublishedEndpoint::new(
                 "http",
-                nimbus_sandbox::PublishedEndpointProtocol::Http,
+                nimbus_network::EndpointProtocol::Http,
                 "127.0.0.1:28080".parse().expect("endpoint should parse"),
             )
             .with_guest_port(8080),

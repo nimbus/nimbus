@@ -15,6 +15,7 @@ workspace = true
 [dependencies]
 futures.workspace = true
 nimbus-core = { path = "../nimbus-core" }
+nimbus-network = { path = "../nimbus-network" }
 nimbus-runtime = { path = "../nimbus-runtime" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
 nimbus-tenant = { path = "../nimbus-tenant" }

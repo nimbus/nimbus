@@ -44,6 +44,7 @@ systemd-dbus-test-bus = ["systemd-dbus"]
 systemd-dbus-integration-tests = ["systemd-dbus"]
 
 [dev-dependencies]
+nimbus-network = { path = "../nimbus-network" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
 nimbus-testing = { path = "../nimbus-testing" }
 serde_json.workspace = true

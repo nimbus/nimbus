@@ -530,7 +530,7 @@ mod tests {
     use std::time::Duration;
 
     use nimbus::{
-        Error, PublishedEndpoint, PublishedEndpointProtocol, SandboxBackend, SandboxBackendKind,
+        EndpointProtocol, Error, PublishedEndpoint, SandboxBackend, SandboxBackendKind,
         SandboxHandle, SandboxId, SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec,
         SandboxRootSpec, SandboxSpec, SandboxStatus, TenantId,
     };
@@ -1422,7 +1422,7 @@ mod tests {
         )
         .with_port_binding(SandboxPortBinding::new(
             "http",
-            PublishedEndpointProtocol::Http,
+            EndpointProtocol::Http,
             18080,
             8080,
         ))
@@ -1490,7 +1490,7 @@ mod tests {
             status,
             vec![PublishedEndpoint::new(
                 "http",
-                PublishedEndpointProtocol::Tcp,
+                EndpointProtocol::Tcp,
                 SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 18080),
             )],
         );

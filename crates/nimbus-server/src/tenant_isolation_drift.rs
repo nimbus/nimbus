@@ -895,10 +895,10 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
     use nimbus_core::{DocumentId, TableName};
+    use nimbus_network::{EndpointProtocol, PublishedEndpoint};
     use nimbus_sandbox::{
-        PublishedEndpoint, PublishedEndpointProtocol, SandboxBackendKind, SandboxId,
-        SandboxMountSpec, SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec,
-        SandboxRootSpec,
+        SandboxBackendKind, SandboxId, SandboxMountSpec, SandboxOwnerSpec, SandboxPortBinding,
+        SandboxProcessSpec, SandboxRootSpec,
     };
     use serde_json::json;
     use tempfile::tempdir;
@@ -917,7 +917,7 @@ mod tests {
         let sandbox_id = SandboxId::new("sandbox-tenant-a-db");
         let endpoint = PublishedEndpoint::new(
             "postgres",
-            PublishedEndpointProtocol::Tcp,
+            EndpointProtocol::Tcp,
             SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 15_432),
         )
         .with_guest_port(5432);
@@ -987,7 +987,7 @@ mod tests {
                 SandboxStatus::Ready,
                 vec![PublishedEndpoint::new(
                     "vnc",
-                    PublishedEndpointProtocol::Tcp,
+                    EndpointProtocol::Tcp,
                     SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 16_000),
                 )],
             );

@@ -1,9 +1,8 @@
 use nimbus_core::{Error, Result};
 use nimbus_egress::{CompiledEgressPolicy, EgressAuthorization, EgressPolicy, EgressRequest};
+use nimbus_network::EndpointProtocol;
 use nimbus_runtime::{RuntimePolicy, RuntimeTenantBudget};
-use nimbus_sandbox::{
-    PublishedEndpointProtocol, SandboxResourceCharge, SandboxSpec, validate_sandbox_mounts,
-};
+use nimbus_sandbox::{SandboxResourceCharge, SandboxSpec, validate_sandbox_mounts};
 use serde::Serialize;
 
 use super::{
@@ -32,7 +31,7 @@ impl TenantServiceGrantPolicyDecision {
 pub struct TenantNetworkEndpointDecision {
     service_name: String,
     endpoint_name: String,
-    protocol: PublishedEndpointProtocol,
+    protocol: EndpointProtocol,
     host: String,
     host_port: u16,
     guest_port: Option<u16>,
@@ -42,7 +41,7 @@ impl TenantNetworkEndpointDecision {
     pub fn new(
         service_name: impl Into<String>,
         endpoint_name: impl Into<String>,
-        protocol: PublishedEndpointProtocol,
+        protocol: EndpointProtocol,
         host: impl Into<String>,
         host_port: u16,
     ) -> Self {

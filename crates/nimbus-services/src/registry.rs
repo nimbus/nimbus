@@ -4,11 +4,12 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use nimbus_core::{Error, TenantId};
+use nimbus_network::{EndpointProtocol, PublishedEndpoint};
 use nimbus_runtime::{
     HostCallCancellation, InvocationServiceBinding, InvocationServiceEndpoint,
     InvocationServiceProtocol, InvocationServices,
 };
-use nimbus_sandbox::{PublishedEndpoint, PublishedEndpointProtocol, SandboxHandle, SandboxStatus};
+use nimbus_sandbox::{SandboxHandle, SandboxStatus};
 use nimbus_tenant::TenantServiceAccessDecision;
 
 use crate::ServiceInstanceCatalog;
@@ -154,11 +155,11 @@ fn select_primary_endpoint(endpoints: &[PublishedEndpoint]) -> Option<&Published
     })
 }
 
-fn primary_protocol_rank(protocol: PublishedEndpointProtocol) -> u8 {
+fn primary_protocol_rank(protocol: EndpointProtocol) -> u8 {
     match protocol {
-        PublishedEndpointProtocol::Tcp => 0,
-        PublishedEndpointProtocol::Http => 1,
-        PublishedEndpointProtocol::Https => 2,
+        EndpointProtocol::Tcp => 0,
+        EndpointProtocol::Http => 1,
+        EndpointProtocol::Https => 2,
     }
 }
 
@@ -170,13 +171,11 @@ fn service_endpoint_from_published(endpoint: &PublishedEndpoint) -> InvocationSe
     }
 }
 
-fn service_protocol_from_published(
-    protocol: PublishedEndpointProtocol,
-) -> InvocationServiceProtocol {
+fn service_protocol_from_published(protocol: EndpointProtocol) -> InvocationServiceProtocol {
     match protocol {
-        PublishedEndpointProtocol::Tcp => InvocationServiceProtocol::Tcp,
-        PublishedEndpointProtocol::Http => InvocationServiceProtocol::Http,
-        PublishedEndpointProtocol::Https => InvocationServiceProtocol::Https,
+        EndpointProtocol::Tcp => InvocationServiceProtocol::Tcp,
+        EndpointProtocol::Http => InvocationServiceProtocol::Http,
+        EndpointProtocol::Https => InvocationServiceProtocol::Https,
     }
 }
 
@@ -217,12 +216,12 @@ mod tests {
                     vec![
                         PublishedEndpoint::new(
                             "health",
-                            PublishedEndpointProtocol::Http,
+                            EndpointProtocol::Http,
                             SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 18080),
                         ),
                         PublishedEndpoint::new(
                             "postgres",
-                            PublishedEndpointProtocol::Tcp,
+                            EndpointProtocol::Tcp,
                             SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 15432),
                         ),
                     ],
@@ -259,7 +258,7 @@ mod tests {
                     SandboxStatus::Starting,
                     vec![PublishedEndpoint::new(
                         "postgres",
-                        PublishedEndpointProtocol::Tcp,
+                        EndpointProtocol::Tcp,
                         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 15432),
                     )],
                 ),
@@ -287,7 +286,7 @@ mod tests {
                     SandboxStatus::Ready,
                     vec![PublishedEndpoint::new(
                         "postgres",
-                        PublishedEndpointProtocol::Tcp,
+                        EndpointProtocol::Tcp,
                         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 15432),
                     )],
                 ),
@@ -314,7 +313,7 @@ mod tests {
                     SandboxStatus::Ready,
                     vec![PublishedEndpoint::new(
                         "postgres",
-                        PublishedEndpointProtocol::Tcp,
+                        EndpointProtocol::Tcp,
                         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 15432),
                     )],
                 ),
@@ -345,7 +344,7 @@ mod tests {
                     SandboxStatus::Ready,
                     vec![PublishedEndpoint::new(
                         "postgres",
-                        PublishedEndpointProtocol::Tcp,
+                        EndpointProtocol::Tcp,
                         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 15432),
                     )],
                 ),

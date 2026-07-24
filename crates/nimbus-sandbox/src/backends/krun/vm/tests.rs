@@ -1075,7 +1075,7 @@ fn readiness_probe_target_prefers_http_endpoints() {
     )
     .with_port_bindings([
         SandboxPortBinding::tcp("postgres", 15432, 5432),
-        SandboxPortBinding::new("http", PublishedEndpointProtocol::Http, 18080, 8080),
+        SandboxPortBinding::new("http", EndpointProtocol::Http, 18080, 8080),
     ]);
     let manifest = sample_manifest(spec, KrunStartMode::Execute);
 
@@ -1148,7 +1148,7 @@ fn running_status_degrades_ready_sandboxes_to_not_ready_on_probe_failure() {
     )
     .with_port_binding(SandboxPortBinding::new(
         "http",
-        PublishedEndpointProtocol::Http,
+        EndpointProtocol::Http,
         address.port(),
         8080,
     ));
@@ -1185,7 +1185,7 @@ fn running_status_recovers_not_ready_sandboxes_when_probe_returns() {
     )
     .with_port_binding(SandboxPortBinding::new(
         "http",
-        PublishedEndpointProtocol::Http,
+        EndpointProtocol::Http,
         address.port(),
         8080,
     ));
