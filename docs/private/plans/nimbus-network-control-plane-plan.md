@@ -1,6 +1,6 @@
 # Nimbus Network Control Plane Plan
 
-Status: `active; NNC0.8 complete; NNC0.9 behavior/performance baseline in progress`
+Status: `active; NNC0 complete; NNC1.1 low-dependency crate scaffold in progress`
 
 Owner: this plan is the sole implementation control plane for the
 transport-free `nimbus-network` crate and the connectivity-resource lifecycle
@@ -36,20 +36,20 @@ ledger transition.
 
 | Field | Current value |
 | --- | --- |
-| Plan status | `active; NNC0.8 complete; NNC0.9 behavior/performance baseline in progress` |
-| Current band | `NNC0 — executable baselines and verifier` |
-| Current item | `NNC0.9 — listener/start/stop behavior and allocation-scale baseline` |
-| Last completed item | `NNC0.8 — expected-red network control-plane static verifier` |
-| Next action | Read the listener, sandbox allocation, and benchmark routing seams named by NNC0.9; define bounded smoke behavior and a custom-harness allocation-scale baseline without optimizing or changing production semantics. |
+| Plan status | `active; NNC0 complete; NNC1.1 low-dependency crate scaffold in progress` |
+| Current band | `NNC1 — low-dependency crate and portable vocabulary` |
+| Current item | `NNC1.1 — create the nimbus-network workspace crate with only nimbus-core` |
+| Last completed item | `NNC0.9 — listener lifecycle and allocation-scale characterization` |
+| Next action | Create the workspace `nimbus-network` crate with a minimal transport-free library root and exactly one workspace dependency on `nimbus-core`; regenerate dependency evidence and prove every profile remains acyclic before adding NNC1.2 vocabulary. |
 | Owner branch | `codex/nimbus-network-architecture-audit` |
 | Owner worktree | `/Users/jack/src/github.com/nimbus/nimbus-network-architecture-audit` |
 | Audit base | Original architecture audit: `b69007a78a220847812370d9418049f1253f0384`. |
 | Execution base | Rebased without conflicts onto `origin/main` at `9c2d4f150c60f43dfdc0a3f1ec6550942e26ab8f` after NNC0.0. |
-| Last checkpoint commit | `94f1e2212` — NNC0.7 completion and NNC0.8 activation checkpoint. |
-| Audit dirty state | NNC0.8 completion owns the executable static verifier, its proof record, the routing-index correction, and this plan transition. No production Rust behavior or dependency edge changed. |
+| Last checkpoint commit | `3959df383` — NNC0.8 completion and NNC0.9 activation checkpoint. |
+| Audit dirty state | NNC0.9 completion owns two ignored sandbox allocation-scale characterizations, timing instrumentation in the existing server shutdown smoke, its proof record, and this plan transition. All Rust changes are test-only; no production behavior or dependency edge changed. |
 | Execution mode | Autonomous implementation goal active; commit each completed item with its ledger/evidence checkpoint; no push or PR without separate authority. |
-| Last verification | NNC0.8: the aggregate gate passes eight conditions and fails exactly four intended pre-extraction conditions (`NNCV003`, `NNCV004`, `NNCV005`, and `NNCV011`). Seven child-process negative self-tests prove missing plan/inventory/dependency/core-source inputs, injected and post-test-item production binds, and genuine test-module exemption behavior. Bash parse, ShellCheck, diff, private-doc, docs-site, and independent-review gates are clean. Exact evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc0.8-expected-red-verifier.md`. |
-| Blocking decision | None. The verifier's four red conditions are deliberate executable targets for NNC1/NNC3, not execution blockers. Exact Rust names otherwise remain band-local decisions subject to NNC0 proofs and the seam-promotion rule. |
+| Last verification | NNC0.9: two 21-sample allocation-scale characterizations pass exact port/CIDR behavior from empty state through 1,024 manifests/tenants; the live listener binds, becomes healthy, accepts authenticated shutdown, and joins gracefully. Sandbox passes 243 with sixteen expected-red/explicit baseline ignores; all four local-admin tests and both-crate all-target Clippy are green. Exact evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc0.9-behavior-performance-baseline.md`. |
+| Blocking decision | None. The measured linear manifest scan and durable-JSON rewrite curves are baseline observations owned by later extraction items, not permission to optimize in NNC0.9. Exact Rust names otherwise remain band-local decisions subject to the seam-promotion rule. |
 
 Recovery protocol:
 
@@ -1233,7 +1233,7 @@ named dependency/owner decision and the next safe action.
 
 | Band | Status | Evidence required before `done` | Evidence path/result |
 | --- | --- | --- | --- |
-| NNC0 — baselines/verifier | `todo` | All NNC0 task criteria and expected-red evidence. | — |
+| NNC0 — baselines/verifier | `done` | NNC0.0-NNC0.9 proof records: durable owner, dependency/bind inventories, process/crash harnesses, eight fail-before risk families, expected-red verifier, and behavior/performance baseline. | `docs/private/plans/proof/nimbus-network-control-plane/` |
 | NNC1 — crate/vocabulary | `todo` | Acyclic crate, stable IDs/state model, endpoint/segment ownership migration. | — |
 | NNC2 — durable state/segment authority | `todo` | Crash-safe store, substitution, capacity reuse, epoch cleanup, no premature reuse. | — |
 | NNC3 — cross-process port leases | `todo` | Full conflict/bind matrix, every owner migrated, old allocators deleted. | — |
@@ -1268,8 +1268,8 @@ checkpoint.
 | NNC0.6a | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc0.6a-inspect-restart-withdrawal-baselines.md`; a shared bounded launch-entry probe proves both `inspect_sync` paths traverse restart policy into provider launch authority, then a stale copy overwrites durable withdrawal and records one effect. Both exact safety assertions exit `101`; 245 applicable sandbox unit/bin tests pass with expected-red/child-role tests ignored; all-target Clippy, format/diff, and independent review are green. |
 | NNC0.7 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc0.7-orphan-listener-baselines.md`; both OCI implementations perform provider effects before allocator hold, the crash image survives with no durable owner, all eight required evidence rows expose filename/hold-only classification, and a real kth `AddrInUse` leaves the first sibling listener serving. Three exact safety assertions exit `101`; sandbox/focused server seams, both-crate all-target Clippy, format/diff, and independent review are green. The broad server suite's two isolated Cloud Functions failures are recorded without weakening or scope expansion. |
 | NNC0.8 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc0.8-expected-red-verifier.md`; normal run exits exactly `1` with eight pass and four intended pre-extraction failures, while seven child-process self-tests prove missing inputs and test/production bind classification cannot false-pass. Bash 3.2 parse, ShellCheck, diff, docs, and independent review are green. |
-| NNC0.9 | `in_progress` | Owned paths at activation: the NNC0.8 verifier, proof, routing-index correction, and plan transition until their focused commit; no NNC0.9 source edit yet. Last green commit: `94f1e2212`; last green commands: expected-red 8-pass/4-fail assertion, seven verifier self-tests, Bash parse, ShellCheck, and diff check. Next: inspect the NNC0.9 listener/start/stop and allocation-scale seams, then add bounded baseline evidence without optimization. Blocker: none. |
-| NNC1.1 | `todo` | — |
+| NNC0.9 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc0.9-behavior-performance-baseline.md`; two 21-sample ignored scale runners preserve exact lowest-free port/CIDR behavior through 1,024 current records, and the live bind/health/authenticated-shutdown/join smoke is green. Sandbox 243/16, local-admin 4/0, both-crate all-target Clippy, format, diff, docs, and independent review are green. |
+| NNC1.1 | `in_progress` | Owned paths at activation: NNC0.9 sandbox/server test-only characterizations, proof, and plan transition until their focused commit; no NNC1.1 crate edit yet. Last green commit: `3959df383`; last green commands: two 21-sample allocation baselines, live listener lifecycle smoke, sandbox 243/16, local-admin 4/0, and both-crate all-target Clippy. Next: add the minimal `nimbus-network` workspace crate with exactly one workspace edge to `nimbus-core`, then regenerate and verify dependency profiles. Blocker: none. |
 | NNC1.2 | `todo` | — |
 | NNC1.3 | `todo` | — |
 | NNC1.4 | `todo` | — |

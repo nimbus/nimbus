@@ -529,6 +529,52 @@ mod tests {
         );
     }
 
+    #[test]
+    #[ignore = "NNC0.9 explicit allocation-scale characterization"]
+    fn manifest_scan_port_allocation_scale_baseline() {
+        const HOST_PORT_BASE: u16 = 20_000;
+        const SAMPLE_COUNT: usize = 21;
+
+        for manifest_count in [0usize, 64, 256, 1_024] {
+            let temp_dir = TempDir::new().expect("temporary directory should exist");
+            let tenant_id = tenant_id("nnc0-9-port-baseline");
+            for index in 0..manifest_count {
+                let offset = u16::try_from(index).expect("baseline manifest count fits u16");
+                write_manifest(
+                    temp_dir.path(),
+                    &tenant_id,
+                    &format!("baseline-{index:04}"),
+                    SandboxStatus::Ready,
+                    &[(HOST_PORT_BASE + offset, 10_000 + offset)],
+                );
+            }
+
+            let manager = PortManager::new(temp_dir.path(), HOST_PORT_BASE..=40_000);
+            let expected = HOST_PORT_BASE
+                + u16::try_from(manifest_count).expect("baseline manifest count fits u16");
+            let mut samples_ns = Vec::with_capacity(SAMPLE_COUNT);
+            for _ in 0..SAMPLE_COUNT {
+                let started = std::time::Instant::now();
+                let selected = manager
+                    .allocate_internal_host_port(&[])
+                    .expect("baseline allocation should select the first unreserved port");
+                samples_ns.push(started.elapsed().as_nanos());
+                assert_eq!(
+                    selected, expected,
+                    "manifest scanning must reserve every active host port"
+                );
+            }
+            samples_ns.sort_unstable();
+            let p95_index = (SAMPLE_COUNT * 95).div_ceil(100) - 1;
+
+            println!(
+                "NNC0.9 port-allocation-baseline manifests={manifest_count} samples={SAMPLE_COUNT} median_ns={} p95_ns={} selected_port={expected}",
+                samples_ns[SAMPLE_COUNT / 2],
+                samples_ns[p95_index]
+            );
+        }
+    }
+
     fn write_manifest(
         state_root: &std::path::Path,
         tenant_id: &TenantId,

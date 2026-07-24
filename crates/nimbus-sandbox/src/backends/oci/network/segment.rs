@@ -505,6 +505,60 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "NNC0.9 explicit allocation-scale characterization"]
+    fn durable_segment_assignment_scale_baseline() {
+        const SAMPLE_COUNT: usize = 21;
+
+        for existing_tenants in [0usize, 64, 256, 1_024] {
+            let dir = tempdir().expect("temp dir");
+            let allocator = SingleNodeSegmentAllocator::for_node_supernet(
+                dir.path(),
+                "10.0.0.0/8",
+                DEFAULT_TENANT_PREFIX,
+            )
+            .expect("baseline allocator should accept the node super-net");
+
+            let seed_started = std::time::Instant::now();
+            for index in 0..existing_tenants {
+                allocator
+                    .segment_for(&tenant(&format!("baseline-seed-{index:04}")))
+                    .expect("baseline seed assignment should fit the super-net");
+            }
+            let seed_elapsed_ns = seed_started.elapsed().as_nanos();
+
+            let mut samples_ns = Vec::with_capacity(SAMPLE_COUNT);
+            for sample in 0..SAMPLE_COUNT {
+                let expected_index = existing_tenants + sample;
+                let expected_cidr = Cidr::parse("10.0.0.0/8")
+                    .expect("baseline super-net should parse")
+                    .nth_subnet(
+                        DEFAULT_TENANT_PREFIX,
+                        u64::try_from(expected_index).expect("baseline index fits u64"),
+                    )
+                    .expect("baseline subnet should fit");
+                let started = std::time::Instant::now();
+                let segment = allocator
+                    .segment_for(&tenant(&format!("baseline-sample-{sample:02}")))
+                    .expect("baseline sample assignment should fit the super-net");
+                samples_ns.push(started.elapsed().as_nanos());
+                assert_eq!(
+                    segment.cidr(),
+                    expected_cidr,
+                    "durable allocation must remain lowest-free and collision-free at scale"
+                );
+            }
+            samples_ns.sort_unstable();
+            let p95_index = (SAMPLE_COUNT * 95).div_ceil(100) - 1;
+
+            println!(
+                "NNC0.9 segment-allocation-baseline existing_tenants={existing_tenants} seed_total_ns={seed_elapsed_ns} samples={SAMPLE_COUNT} median_ns={} p95_ns={}",
+                samples_ns[SAMPLE_COUNT / 2],
+                samples_ns[p95_index]
+            );
+        }
+    }
+
+    #[test]
     fn refcount_frees_the_index_only_after_the_last_sandbox_releases() {
         let dir = tempdir().expect("temp dir");
         let allocator = SingleNodeSegmentAllocator::single_node_default(dir.path());
