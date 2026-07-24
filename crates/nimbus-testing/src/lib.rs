@@ -26,8 +26,10 @@ pub use eventual::{wait_for_condition, wait_for_value};
 pub use faults::{ArmedBlockingFaultInjector, BlockingFaultInjector, CountedFaultInjector};
 pub use http_api_fixture::HttpApiFixture;
 pub use process_harness::{
-    ContentionChildContext, ContentionOutcome, ProcessDiagnostic, ProcessHarnessError,
-    ProcessRoleSpec, TwoProcessContentionHarness, TwoProcessContentionResult, run_contention_child,
+    ContentionChildContext, ContentionOutcome, CrashCutChildContext, ProcessDiagnostic,
+    ProcessHarnessError, ProcessRoleSpec, SubprocessCrashCutHarness, SubprocessCrashCutResult,
+    TwoProcessContentionHarness, TwoProcessContentionResult, run_contention_child,
+    run_crash_cut_child, run_crash_recovery_child,
 };
 pub use repro::DeterministicTestCase;
 pub use runtime_profiles::{

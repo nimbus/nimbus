@@ -1,6 +1,6 @@
 # Nimbus Network Control Plane Plan
 
-Status: `active; NNC0.1a complete; NNC0.1b crash-cut harness in progress`
+Status: `active; NNC0.1b complete; NNC0.2 allocator race baselines in progress`
 
 Owner: this plan is the sole implementation control plane for the
 transport-free `nimbus-network` crate and the connectivity-resource lifecycle
@@ -36,19 +36,19 @@ ledger transition.
 
 | Field | Current value |
 | --- | --- |
-| Plan status | `active; NNC0.1a complete; NNC0.1b crash-cut harness in progress` |
+| Plan status | `active; NNC0.1b complete; NNC0.2 allocator race baselines in progress` |
 | Current band | `NNC0 — executable baselines and verifier` |
-| Current item | `NNC0.1b — persistence-oriented subprocess crash-cut harness` |
-| Last completed item | `NNC0.1a — deterministic two-process contention harness` |
-| Next action | Read existing durable-write/fault-injection precedents and the segment/IPAM state paths, then add a bounded exact-boundary crash/restart protocol that keeps generic process coordination in `nimbus-testing` and network-scoped fault vocabulary in a dependency-safe owner. |
+| Current item | `NNC0.2 — fail-before sandbox/PEP and external machine-port races` |
+| Last completed item | `NNC0.1b — persistence-oriented subprocess crash-cut harness` |
+| Next action | Read the sandbox `PortManager` and managed-machine probe/drop tests and callers, then use the real-child harness to capture (a) two Nimbus allocator children selecting the same sandbox/PEP port and (b) an acknowledged external binder taking the machine port after probe/drop so the faithful provider bind fails with `AddrInUse` while persisted machine state still claims it. |
 | Owner branch | `codex/nimbus-network-architecture-audit` |
 | Owner worktree | `/Users/jack/src/github.com/nimbus/nimbus-network-architecture-audit` |
 | Audit base | Original architecture audit: `b69007a78a220847812370d9418049f1253f0384`. |
 | Execution base | Rebased without conflicts onto `origin/main` at `9c2d4f150c60f43dfdc0a3f1ec6550942e26ab8f` after NNC0.0. |
-| Last checkpoint commit | `929cf8955098fb8da91e454dd1aea558e88b8342` — NNC0.1 completion and NNC0.1a activation checkpoint. |
-| Audit dirty state | NNC0.1a completion owns `crates/nimbus-testing/src/process_harness.rs`, its `lib.rs` export, this plan/routing status, and the force-tracked NNC0.1a proof record. No manifest changed. |
+| Last checkpoint commit | `53ea4986a1e65eebce8504b113943311acdcd52d` — NNC0.1a completion and NNC0.1b activation checkpoint. |
+| Audit dirty state | NNC0.1b completion owns the shared process protocol extension, `crates/nimbus-testing/src/process_harness/crash.rs`, the `lib.rs` exports, this plan/routing status, and the force-tracked proof record. No manifest changed. |
 | Execution mode | Autonomous implementation goal active; commit each completed item with its ledger/evidence checkpoint; no push or PR without separate authority. |
-| Last verification | NNC0.1a: focused cargo test and nextest each passed seven parent tests; the ignored test is the explicitly spawned child entrypoint; missing participant, wrong checkpoint, early exit, timeout, cleanup, invalid bound, and exactly-one-winner behavior are proven without sleeps. Check, clippy, format, diff, and docs gates pass. Exact evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc0.1a-process-contention-harness.md`. |
+| Last verification | NNC0.1b: a real child is killed only after the exact named network-shaped boundary, a fresh process reopens the same root and proves state/effect evidence, and wrong-boundary/early-exit/timeout/cleanup/recovery mismatch paths retain complete diagnostics. Focused cargo test and nextest each pass 13 parent tests; check/clippy/format/diff/docs pass. Exact evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc0.1b-subprocess-crash-cut-harness.md`. |
 | Blocking decision | None. NNC0.0 is authorized; no fetch/rebase may precede its durability commit. Exact Rust names otherwise remain band-local decisions subject to NNC0 proofs and the seam-promotion rule. |
 
 Recovery protocol:
@@ -1259,8 +1259,8 @@ checkpoint.
 | NNC0.0 | `done` | Bootstrap commit `d692254ad246c5e153aa220fc19cc86e12585486` contains the force-tracked plan and routing edit. Before any fetch/rebase, `git cat-file -e HEAD:docs/private/plans/nimbus-network-control-plane-plan.md` exited 0 and `git status --short --branch` showed a clean worktree. |
 | NNC0.1 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc0.1-baseline.md`; source HEAD `e990c018a`; six normal/dev/all-feature/target profiles, 244 declared workspace edges, zero cycles, 24 uniquely classified production sites, zero unclassified sites. Script/JSON assertions and docs/diff checks passed. |
 | NNC0.1a | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc0.1a-process-contention-harness.md`; upper-layer `nimbus-testing` pipe protocol proves exactly one winner and self-tests missing participant, wrong checkpoint, early exit, timeout, cleanup/reap, and invalid bounds. Cargo test and nextest: 7/7 passed; check/clippy/format/docs passed. |
-| NNC0.1b | `in_progress` | Owned paths at activation: plan/routing checkpoint only; exact crash-harness and network fault-point owners follow source review. Last green: NNC0.1a focused cargo test + nextest + clippy. Next: inspect durable-write and network-state fault-injection precedents, then specify exact boundary/kill/restart evidence. Blocker: none. |
-| NNC0.2 | `todo` | — |
+| NNC0.1b | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc0.1b-subprocess-crash-cut-harness.md`; exact-boundary kill plus fresh-process same-root state/effect recovery pass; wrong boundary, crash/recovery early exit and timeout, mismatch, and cleanup are diagnostic. Cargo test/nextest: 13/13 parent tests; check/clippy/format/docs passed. No manifest edge. |
+| NNC0.2 | `in_progress` | Owned paths at activation: plan/routing checkpoint only; fail-before tests remain to be placed after reading allocator test owners. Last green: NNC0.1b 13-test cargo + nextest runs and clippy. Next: inspect sandbox and managed-machine allocation APIs and build exact expected-red process races. Blocker: none. |
 | NNC0.3 | `todo` | — |
 | NNC0.4 | `todo` | — |
 | NNC0.5 | `todo` | — |
@@ -1508,6 +1508,45 @@ NNC0.1a contention-harness evidence, 2026-07-23:
   the first 120-second test command expired during dependency compilation
   before any test ran and is not counted as evidence; the subsequent
   300-second bounded run passed after the shared test-profile cache existed.
+
+NNC0.1b crash-cut-harness evidence, 2026-07-23:
+
+- starting checkpoint:
+  `53ea4986a1e65eebce8504b113943311acdcd52d`;
+- evidence:
+  `docs/private/plans/proof/nimbus-network-control-plane/nnc0.1b-subprocess-crash-cut-harness.md`;
+- owner:
+  generic kill/restart coordination is a concept-owned child of the existing
+  `nimbus-testing` process harness; caller-supplied semantic tokens avoid
+  moving network or provider fault-point vocabulary into the fixture crate;
+- exact-boundary proof:
+  the crash child syncs durable state/effect evidence, acknowledges
+  `network.store.after-state-and-effect-sync`, remains live, and is killed and
+  reaped only after that exact acknowledgement;
+- fresh-process proof:
+  a different named child process opens the same canonical root and must report
+  exact `state-committed:effect-created` evidence before exiting successfully;
+- negative proof:
+  wrong boundary, crash/recovery early exit, crash/recovery timeout, recovery
+  mismatch, and cleanup paths report role, stdout, stderr, status, last
+  checkpoint, and reap outcome; recovery never starts after a rejected crash
+  boundary;
+- verification:
+  cargo test and nextest each passed all 13 process-harness parent tests; two
+  ignored tests are the explicitly spawned child entrypoints; all-target
+  check, focused clippy with denied warnings, format, diff, and private-doc
+  gates passed;
+- correction:
+  the first clippy run found test helpers after a test module; moving them above
+  the module fixed the root cause and the final clippy run exited 0;
+- independent review:
+  Opus 4.8/max audited the exact-boundary kill/reap paths, protocol framing,
+  non-`Copy` checkpoint refactor, same-root recovery, bounded waits, contention
+  regressions, and dependency direction; the structured run exited clean with
+  no accepted/actionable finding;
+- dependency:
+  no Cargo manifest changed, so the future low-level crate gains no normal or
+  dev dependency on `nimbus-testing`.
 
 ## Completion Gate
 

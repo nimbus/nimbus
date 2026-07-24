@@ -12,6 +12,13 @@ const PROTOCOL_PREFIX: &str = "NIMBUS_PROCESS_HARNESS/1\t";
 const ROLE_ENV: &str = "NIMBUS_PROCESS_HARNESS_ROLE";
 const STATE_ROOT_ENV: &str = "NIMBUS_PROCESS_HARNESS_STATE_ROOT";
 
+mod crash;
+
+pub use crash::{
+    CrashCutChildContext, SubprocessCrashCutHarness, SubprocessCrashCutResult, run_crash_cut_child,
+    run_crash_recovery_child,
+};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContentionOutcome {
     Won,
@@ -423,7 +430,7 @@ impl ChildGroup {
         let deadline = Instant::now() + timeout;
         for child in &mut self.roles {
             let checkpoint = child.receive_checkpoint(deadline, expectation.as_str())?;
-            if !expectation.matches(checkpoint) {
+            if !expectation.matches(&checkpoint) {
                 return Err(HarnessFailure::UnexpectedCheckpoint {
                     role: child.role.clone(),
                     expected: expectation.as_str().to_owned(),
@@ -537,7 +544,7 @@ impl SpawnedRole {
             })?;
         match self.events.recv_timeout(remaining) {
             Ok(ReaderEvent::Checkpoint(checkpoint)) => {
-                self.last_checkpoint = Some(checkpoint);
+                self.last_checkpoint = Some(checkpoint.clone());
                 Ok(checkpoint)
             }
             Ok(ReaderEvent::Malformed(message)) => Err(HarnessFailure::Protocol {
@@ -586,7 +593,7 @@ impl SpawnedRole {
         match self.events.recv_timeout(remaining) {
             Ok(ReaderEvent::Eof) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Ok(()),
             Ok(ReaderEvent::Checkpoint(checkpoint)) => {
-                self.last_checkpoint = Some(checkpoint);
+                self.last_checkpoint = Some(checkpoint.clone());
                 Err(HarnessFailure::UnexpectedCheckpoint {
                     role: self.role.clone(),
                     expected: "process exit after complete".to_owned(),
@@ -634,9 +641,7 @@ impl SpawnedRole {
             stderr: captured(&self.stderr),
             status: self.status.map(|status| status.to_string()),
             successful: self.status.map(|status| status.success()),
-            last_checkpoint: self
-                .last_checkpoint
-                .map(|checkpoint| checkpoint.to_string()),
+            last_checkpoint: self.last_checkpoint.as_ref().map(ToString::to_string),
             cleanup: self
                 .cleanup_result
                 .clone()
@@ -698,12 +703,14 @@ enum ReaderEvent {
     Eof,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum Checkpoint {
     Ready,
     Entered,
     Released,
     Complete(ContentionOutcome),
+    Boundary(String),
+    Recovered(String),
 }
 
 impl Checkpoint {
@@ -714,24 +721,36 @@ impl Checkpoint {
             "released" => Ok(Self::Released),
             "complete:won" => Ok(Self::Complete(ContentionOutcome::Won)),
             "complete:lost" => Ok(Self::Complete(ContentionOutcome::Lost)),
+            other if other.starts_with("boundary:") => {
+                let boundary = other
+                    .strip_prefix("boundary:")
+                    .expect("guarded by starts_with");
+                validate_semantic_token("boundary", boundary)?;
+                Ok(Self::Boundary(boundary.to_owned()))
+            }
+            other if other.starts_with("recovered:") => {
+                let observation = other
+                    .strip_prefix("recovered:")
+                    .expect("guarded by starts_with");
+                validate_semantic_token("recovery observation", observation)?;
+                Ok(Self::Recovered(observation.to_owned()))
+            }
             other => Err(format!("unrecognized checkpoint {other:?}")),
-        }
-    }
-
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Ready => "ready",
-            Self::Entered => "entered",
-            Self::Released => "released",
-            Self::Complete(ContentionOutcome::Won) => "complete:won",
-            Self::Complete(ContentionOutcome::Lost) => "complete:lost",
         }
     }
 }
 
 impl fmt::Display for Checkpoint {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.as_str())
+        match self {
+            Self::Ready => formatter.write_str("ready"),
+            Self::Entered => formatter.write_str("entered"),
+            Self::Released => formatter.write_str("released"),
+            Self::Complete(ContentionOutcome::Won) => formatter.write_str("complete:won"),
+            Self::Complete(ContentionOutcome::Lost) => formatter.write_str("complete:lost"),
+            Self::Boundary(boundary) => write!(formatter, "boundary:{boundary}"),
+            Self::Recovered(observation) => write!(formatter, "recovered:{observation}"),
+        }
     }
 }
 
@@ -751,12 +770,12 @@ impl CheckpointExpectation {
         }
     }
 
-    fn matches(self, checkpoint: Checkpoint) -> bool {
+    fn matches(self, checkpoint: &Checkpoint) -> bool {
         matches!(
             (self, checkpoint),
-            (Self::Ready, Checkpoint::Ready)
-                | (Self::Entered, Checkpoint::Entered)
-                | (Self::Released, Checkpoint::Released)
+            (Self::Ready, &Checkpoint::Ready)
+                | (Self::Entered, &Checkpoint::Entered)
+                | (Self::Released, &Checkpoint::Released)
         )
     }
 }
@@ -765,6 +784,8 @@ impl CheckpointExpectation {
 enum CommandMessage {
     Enter,
     Release,
+    Run,
+    Inspect,
 }
 
 impl CommandMessage {
@@ -772,6 +793,8 @@ impl CommandMessage {
         match self {
             Self::Enter => "enter",
             Self::Release => "release",
+            Self::Run => "run",
+            Self::Inspect => "inspect",
         }
     }
 
@@ -779,9 +802,26 @@ impl CommandMessage {
         match value {
             "enter" => Ok(Self::Enter),
             "release" => Ok(Self::Release),
+            "run" => Ok(Self::Run),
+            "inspect" => Ok(Self::Inspect),
             other => Err(format!("unrecognized parent command {other:?}")),
         }
     }
+}
+
+fn validate_semantic_token(kind: &str, value: &str) -> Result<(), String> {
+    if value.is_empty() {
+        return Err(format!("{kind} must not be empty"));
+    }
+    if !value
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b':'))
+    {
+        return Err(format!(
+            "{kind} {value:?} contains characters outside [A-Za-z0-9._:-]"
+        ));
+    }
+    Ok(())
 }
 
 fn child_context_from_env() -> Result<ContentionChildContext, String> {
