@@ -10,6 +10,7 @@ mod netavark;
 mod netns;
 mod placement;
 mod proxy;
+mod realization;
 mod reaper;
 mod segment;
 
@@ -24,6 +25,7 @@ pub(crate) use netavark::{setup_container_network, teardown_container_network};
 pub(crate) use netns::{create_persistent_network_namespace, remove_persistent_network_namespace};
 pub(crate) use placement::place_sandbox_on_block;
 pub(crate) use proxy::{MachinePortProxy, start_machine_port_proxies};
+pub(crate) use realization::OciSegmentRealization;
 pub(crate) use reaper::{
     purge_legacy_nimbus0_once, reconcile_network_segment_orphans, release_network_segment_hold,
 };

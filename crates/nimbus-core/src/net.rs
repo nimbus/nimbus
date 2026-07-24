@@ -89,7 +89,7 @@ pub struct Cidr {
 
 impl Cidr {
     /// Build a CIDR from an explicit base + prefix. The base MUST be the network
-    /// address for `prefix` (no host bits set), matching the sandbox bridge rule.
+    /// address for `prefix` (no host bits set).
     pub fn new(base: Ipv4Addr, prefix: u8) -> Result<Self, CidrError> {
         if prefix > 32 {
             return Err(CidrError::BadPrefix(format!("{base}/{prefix}")));
@@ -177,74 +177,6 @@ fn prefix_mask(prefix: u8) -> u32 {
         0
     } else {
         u32::MAX << (32 - prefix as u32)
-    }
-}
-
-/// A stable, collision-free netavark network identity (64 hex chars).
-///
-/// Derived from the allocator's collision-free INDEX, never a truncated hash, so
-/// two concurrent tenants can never alias onto one netavark network.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NetworkId(String);
-
-impl NetworkId {
-    /// Derive the id from a collision-free allocation index.
-    pub fn from_index(index: u32) -> Self {
-        NetworkId(format!("{index:064x}"))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for NetworkId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-/// A per-tenant network segment: the subnet plus the netavark bridge identity.
-///
-/// Every field derives from a single collision-free allocation index, so
-/// concurrent tenants can never share a subnet, a bridge interface (the
-/// IFNAMSIZ-safe `nb-<index>`, never a truncated hash), or a network id. The
-/// tenant↔index mapping is owned by the allocator's persisted state, not baked
-/// into the identity, so a released index is cleanly reusable after teardown.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NetworkSegment {
-    cidr: Cidr,
-    network_name: String,
-    network_interface: String,
-    network_id: NetworkId,
-}
-
-impl NetworkSegment {
-    /// Build a segment from a subnet + its collision-free index. `nb-<index>` is
-    /// `<= 15` chars (IFNAMSIZ) for every `u32` index, so it never truncates.
-    pub fn from_index(subnet: Cidr, index: u32) -> Self {
-        NetworkSegment {
-            cidr: subnet,
-            network_name: format!("nimbus-t-{index}"),
-            network_interface: format!("nb-{index}"),
-            network_id: NetworkId::from_index(index),
-        }
-    }
-
-    pub fn cidr(&self) -> Cidr {
-        self.cidr
-    }
-
-    pub fn network_name(&self) -> &str {
-        &self.network_name
-    }
-
-    pub fn network_interface(&self) -> &str {
-        &self.network_interface
-    }
-
-    pub fn network_id(&self) -> &NetworkId {
-        &self.network_id
     }
 }
 
@@ -396,34 +328,5 @@ mod tests {
         assert!(!a.contains("10.0.1.2".parse().unwrap()));
         assert!(!a.overlaps(&b), "adjacent /24s must not overlap");
         assert!(super_net.overlaps(&a), "a /16 overlaps its own /24");
-    }
-
-    #[test]
-    fn network_segment_from_index_is_collision_free_and_ifnamsiz_safe() {
-        let node = Cidr::parse("10.0.0.0/16").unwrap();
-        let seg0 = NetworkSegment::from_index(node.nth_subnet(24, 0).unwrap(), 0);
-        let seg1 = NetworkSegment::from_index(node.nth_subnet(24, 1).unwrap(), 1);
-
-        // Distinct subnet, interface, name, and id per index — no aliasing.
-        assert_eq!(seg0.cidr().to_string(), "10.0.0.0/24");
-        assert_eq!(seg1.cidr().to_string(), "10.0.1.0/24");
-        assert_ne!(seg0.network_interface(), seg1.network_interface());
-        assert_ne!(seg0.network_name(), seg1.network_name());
-        assert_ne!(seg0.network_id().as_str(), seg1.network_id().as_str());
-        assert_eq!(seg0.network_interface(), "nb-0");
-        assert_eq!(
-            seg0.network_id().as_str().len(),
-            64,
-            "network id is 64 hex chars"
-        );
-
-        // The interface name stays within IFNAMSIZ (<=15) even for the largest u32
-        // index, so it never truncates and never aliases.
-        let seg_max = NetworkSegment::from_index(node.nth_subnet(24, 0).unwrap(), u32::MAX);
-        assert!(
-            seg_max.network_interface().len() <= 15,
-            "nb-<index> must fit IFNAMSIZ, got {:?}",
-            seg_max.network_interface()
-        );
     }
 }

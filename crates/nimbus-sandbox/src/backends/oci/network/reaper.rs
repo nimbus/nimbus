@@ -11,13 +11,12 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use nimbus_core::TenantId;
-use nimbus_core::net::NetworkSegment;
 
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
 
 use super::segment::ReleaseOutcome;
-use super::{NetworkSegmentAllocator, SingleNodeSegmentAllocator};
+use super::{NetworkSegmentAllocator, OciSegmentRealization, SingleNodeSegmentAllocator};
 
 /// Remove a tenant block-bridge interface by name once its last sandbox has
 /// drained (netavark won't auto-GC it). Idempotent / best-effort: a bridge that
@@ -42,7 +41,7 @@ fn release_network_segment_hold_with(
     allocator: &dyn NetworkSegmentAllocator,
     tenant_id: &TenantId,
     sandbox_id: &SandboxId,
-    mut reap: impl FnMut(&NetworkSegment) -> Result<()>,
+    mut reap: impl FnMut(&OciSegmentRealization) -> Result<()>,
 ) -> Vec<SandboxError> {
     let segments = match allocator.release(tenant_id, sandbox_id) {
         Ok(ReleaseOutcome::TenantDrained { segments }) => segments,

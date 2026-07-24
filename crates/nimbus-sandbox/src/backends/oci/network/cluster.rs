@@ -30,14 +30,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use nimbus_core::TenantId;
-use nimbus_core::net::{Cidr, NetworkSegment};
+use nimbus_core::net::Cidr;
 
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
 
-use super::NetworkSegmentAllocator;
 use super::segment::ReleaseOutcome;
 use super::segment::{InstalledSuperNet, SingleNodeSegmentAllocator};
+use super::{NetworkSegmentAllocator, OciSegmentRealization};
 
 /// Promotion gate owned by horizontal-scaling HS5.
 ///
@@ -135,11 +135,11 @@ impl ClusterSegmentAllocator {
 }
 
 impl NetworkSegmentAllocator for ClusterSegmentAllocator {
-    fn segment_for(&self, tenant: &TenantId) -> Result<NetworkSegment> {
+    fn segment_for(&self, tenant: &TenantId) -> Result<OciSegmentRealization> {
         self.leased_inner()?.segment_for(tenant)
     }
 
-    fn acquire(&self, tenant: &TenantId, sandbox_id: &SandboxId) -> Result<NetworkSegment> {
+    fn acquire(&self, tenant: &TenantId, sandbox_id: &SandboxId) -> Result<OciSegmentRealization> {
         self.leased_inner()?.acquire(tenant, sandbox_id)
     }
 
@@ -147,7 +147,7 @@ impl NetworkSegmentAllocator for ClusterSegmentAllocator {
         self.leased_inner()?.release(tenant, sandbox_id)
     }
 
-    fn grow_block(&self, tenant: &TenantId) -> Result<NetworkSegment> {
+    fn grow_block(&self, tenant: &TenantId) -> Result<OciSegmentRealization> {
         self.leased_inner()?.grow_block(tenant)
     }
 

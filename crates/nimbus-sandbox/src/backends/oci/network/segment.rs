@@ -1,12 +1,14 @@
 //! Per-tenant network segment allocation.
 //!
 //! Ends the M1 collision: instead of every tenant drawing from one constant
-//! subnet on one shared bridge, each tenant is assigned a distinct subnet carved
-//! from the node's super-net, plus a collision-free bridge identity
-//! ([`nimbus_core::net::NetworkSegment`]). The allocator is injected
-//! HostBridge-style so the single-node implementation here and the future
-//! cluster leader — which hands each node a raft-committed, epoch-fenced
-//! super-net — satisfy the SAME trait; the sandbox backend consumes it unchanged.
+//! subnet on one shared bridge, each tenant is assigned a distinct portable
+//! allocation carved from the node's super-net. [`nimbus_network::AllocatedSegment`]
+//! owns its global identity, tenant attribution, CIDR, and lease epoch;
+//! [`super::OciSegmentRealization`] composes the host-local provider names around
+//! it. The allocator is injected HostBridge-style so the single-node
+//! implementation here and the future cluster leader — which hands each node a
+//! raft-committed, epoch-fenced super-net — satisfy the SAME trait; the sandbox
+//! backend consumes it unchanged.
 //!
 //! State lives at `<state_root>/networks/segments.json` (ABOVE `tenant_root`)
 //! guarded by an fs2-exclusive lock, mirroring the IPAM state pattern. Assign is
@@ -22,10 +24,13 @@ use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
 use nimbus_core::TenantId;
-use nimbus_core::net::{Cidr, NetworkSegment};
+use nimbus_core::net::Cidr;
+use nimbus_network::{AllocatedSegment, NetworkLeaseEpoch, NetworkSegmentId};
 
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
+
+use super::OciSegmentRealization;
 
 /// The default single-node super-net: the node-0 `/16` slice of the cluster pool
 /// (`10.0.0.0/8`), so enrolling into a cluster later never re-carves live tenants.
@@ -51,11 +56,11 @@ pub(crate) trait NetworkSegmentAllocator: Send + Sync {
     /// Idempotent read-or-assign: return the tenant's segment (assigning a fresh
     /// lowest-free index on first call) WITHOUT taking a sandbox hold. Fail-closed
     /// if no super-net is installed or the pool is exhausted.
-    fn segment_for(&self, tenant: &TenantId) -> Result<NetworkSegment>;
+    fn segment_for(&self, tenant: &TenantId) -> Result<OciSegmentRealization>;
     /// Take a sandbox hold on the tenant's segment (assigning the index on the
     /// first hold). Every started sandbox acquires; the index is not freed while
     /// any hold is live — the crash-safe reaper's refcount.
-    fn acquire(&self, tenant: &TenantId, sandbox_id: &SandboxId) -> Result<NetworkSegment>;
+    fn acquire(&self, tenant: &TenantId, sandbox_id: &SandboxId) -> Result<OciSegmentRealization>;
     /// Drop a sandbox's hold. Returns [`ReleaseOutcome::TenantDrained`] with EVERY
     /// block bridge to reap when the last hold is gone (all indices are then free),
     /// else [`ReleaseOutcome::StillLive`]. Idempotent.
@@ -65,7 +70,7 @@ pub(crate) trait NetworkSegmentAllocator: Send + Sync {
     /// per-tenant block cap. On-demand growth is a bridge CREATE, never a mutation
     /// of a live bridge (netavark has no live subnet-add — MTN6). Wired into
     /// block-aware sandbox placement (`place_sandbox_on_block`).
-    fn grow_block(&self, tenant: &TenantId) -> Result<NetworkSegment>;
+    fn grow_block(&self, tenant: &TenantId) -> Result<OciSegmentRealization>;
     /// Whether this allocator gates on a committed cluster lease (fail-closed
     /// without one). The single-node allocator has a config-default super-net, so
     /// this defaults to `false`; the cluster allocator returns `true`. Consumed by
@@ -79,7 +84,9 @@ pub(crate) trait NetworkSegmentAllocator: Send + Sync {
 pub(crate) enum ReleaseOutcome {
     /// The last sandbox released: the caller reaps EVERY listed block bridge and
     /// all of the tenant's indices are now free for reuse.
-    TenantDrained { segments: Vec<NetworkSegment> },
+    TenantDrained {
+        segments: Vec<OciSegmentRealization>,
+    },
     /// Other sandboxes still hold the tenant's segment; keep the bridges.
     StillLive,
 }
@@ -89,24 +96,34 @@ pub(crate) enum ReleaseOutcome {
 /// while bounding a runaway tenant's consumption of the node super-net.
 const MAX_BLOCKS_PER_TENANT: usize = 64;
 
-/// A tenant's allocation: its ordered list of block indices (element 0 is the
-/// primary/anchor bridge; additional blocks are appended on-demand by
-/// `grow_block` when a block's `/24` exhausts — each index is a self-contained
-/// single-subnet bridge) plus the set of live sandbox ids across all its blocks.
-/// The whole allocation is freed only when the last hold releases.
+/// Durable allocation record for one portable segment plus its host-local
+/// provider slot.
+///
+/// `segment_id` is the global identity. `local_slot` is deliberately separate:
+/// it may be reused only after cleanup and exists solely to derive host-local
+/// provider names in the sandbox adapter.
+#[derive(Clone, Serialize, Deserialize)]
+struct SegmentBlock {
+    local_slot: u32,
+    segment_id: NetworkSegmentId,
+}
+
+/// A tenant's allocation: its ordered list of blocks (element 0 is the
+/// primary/anchor allocation; additional blocks are appended on demand by
+/// `grow_block`) plus the set of live sandbox ids across all its blocks. The
+/// whole allocation is freed only when the last hold releases.
 #[derive(Default, Serialize, Deserialize)]
 struct TenantEntry {
-    indices: Vec<u32>,
+    blocks: Vec<SegmentBlock>,
     #[serde(default)]
     live_sandboxes: BTreeSet<String>,
 }
 
 impl TenantEntry {
-    /// The tenant's primary/anchor block index (element 0). A persisted entry is
+    /// The tenant's primary/anchor block (element 0). A persisted entry is
     /// never empty once assigned.
-    fn primary(&self) -> u32 {
-        *self
-            .indices
+    fn primary(&self) -> &SegmentBlock {
+        self.blocks
             .first()
             .expect("a persisted tenant entry always has at least its primary block")
     }
@@ -199,18 +216,38 @@ impl SingleNodeSegmentAllocator {
             })
     }
 
-    /// Build the segment for an index, or fail closed if it overflows the pool.
-    fn segment_at(&self, supernet: &InstalledSuperNet, index: u32) -> Result<NetworkSegment> {
-        let subnet = supernet
+    /// Resolve a local slot to its assigned CIDR, or fail closed if it overflows
+    /// the installed pool.
+    fn subnet_at(&self, supernet: &InstalledSuperNet, local_slot: u32) -> Result<Cidr> {
+        supernet
             .cidr
-            .nth_subnet(self.tenant_prefix, u64::from(index))
+            .nth_subnet(self.tenant_prefix, u64::from(local_slot))
             .ok_or_else(|| SandboxError::OperationFailed {
                 message: format!(
-                    "network segment pool exhausted: node super-net {} cannot carve a /{} at index {index}; raise the node super-net or the per-tenant prefix",
+                    "network segment pool exhausted: node super-net {} cannot carve a /{} at local slot {local_slot}; raise the node super-net or the per-tenant prefix",
                     supernet.cidr, self.tenant_prefix
                 ),
-            })?;
-        Ok(NetworkSegment::from_index(subnet, index))
+            })
+    }
+
+    /// Compose one durable portable allocation with its sandbox-owned provider
+    /// realization.
+    fn segment_at(
+        &self,
+        supernet: &InstalledSuperNet,
+        tenant: &TenantId,
+        block: &SegmentBlock,
+    ) -> Result<OciSegmentRealization> {
+        let allocation = AllocatedSegment::new(
+            block.segment_id.clone(),
+            tenant.clone(),
+            self.subnet_at(supernet, block.local_slot)?,
+            NetworkLeaseEpoch::new(supernet.epoch),
+        );
+        Ok(OciSegmentRealization::from_local_slot(
+            allocation,
+            block.local_slot,
+        ))
     }
 
     /// Fail closed if the persisted state was carved under a different super-net
@@ -307,39 +344,42 @@ impl SingleNodeSegmentAllocator {
         let used: BTreeSet<u32> = state
             .tenants
             .values()
-            .flat_map(|entry| entry.indices.iter().copied())
+            .flat_map(|entry| entry.blocks.iter().map(|block| block.local_slot))
             .collect();
         let index = (0u32..)
             .find(|candidate| !used.contains(candidate))
             .expect("the u32 index space cannot be exhausted by a live tenant set");
         // Fail closed BEFORE the caller commits if this index overflows the pool.
-        self.segment_at(supernet, index)?;
+        self.subnet_at(supernet, index)?;
         Ok(index)
     }
 
-    /// Get-or-assign the tenant's PRIMARY block index under a held state lock,
+    /// Get or assign the tenant's primary block under a held state lock,
     /// fail-closed on a stale super-net or pool exhaustion.
-    fn assign_index(
+    fn assign_block(
         &self,
         supernet: &InstalledSuperNet,
         state: &mut SegmentState,
         tenant: &TenantId,
-    ) -> Result<u32> {
+    ) -> Result<SegmentBlock> {
         self.ensure_supernet_matches(supernet, state)?;
         if let Some(entry) = state.tenants.get(tenant.as_str()) {
-            return Ok(entry.primary());
+            return Ok(entry.primary().clone());
         }
-        let index = self.next_free_index(supernet, state)?;
+        let block = SegmentBlock {
+            local_slot: self.next_free_index(supernet, state)?,
+            segment_id: NetworkSegmentId::generate(),
+        };
         state.tenants.insert(
             tenant.as_str().to_owned(),
             TenantEntry {
-                indices: vec![index],
+                blocks: vec![block.clone()],
                 live_sandboxes: BTreeSet::new(),
             },
         );
         state.supernet_cidr = Some(supernet.cidr.to_string());
         state.supernet_epoch = Some(supernet.epoch);
-        Ok(index)
+        Ok(block)
     }
 
     /// Startup orphan GC: reconcile persisted holds against the set of live
@@ -351,7 +391,7 @@ impl SingleNodeSegmentAllocator {
     pub(crate) fn reconcile_orphans(
         &self,
         live: &BTreeSet<(String, String)>,
-    ) -> Result<Vec<NetworkSegment>> {
+    ) -> Result<Vec<OciSegmentRealization>> {
         let supernet = self.installed()?.clone();
         self.with_state(|state| {
             let mut drained = Vec::new();
@@ -365,11 +405,17 @@ impl SingleNodeSegmentAllocator {
                     .live_sandboxes
                     .retain(|sandbox| live.contains(&(tenant.clone(), sandbox.clone())));
                 if entry.live_sandboxes.is_empty() {
-                    let indices = entry.indices.clone();
+                    let blocks = entry.blocks.clone();
                     state.tenants.remove(&tenant);
+                    let tenant_id =
+                        TenantId::new(&tenant).map_err(|error| SandboxError::OperationFailed {
+                            message: format!(
+                                "network segment state contains invalid tenant id {tenant:?}: {error}"
+                            ),
+                        })?;
                     // A drained tenant releases EVERY block bridge it grew.
-                    for index in indices {
-                        drained.push(self.segment_at(&supernet, index)?);
+                    for block in blocks {
+                        drained.push(self.segment_at(&supernet, &tenant_id, &block)?);
                     }
                 }
             }
@@ -379,25 +425,25 @@ impl SingleNodeSegmentAllocator {
 }
 
 impl NetworkSegmentAllocator for SingleNodeSegmentAllocator {
-    fn segment_for(&self, tenant: &TenantId) -> Result<NetworkSegment> {
+    fn segment_for(&self, tenant: &TenantId) -> Result<OciSegmentRealization> {
         let supernet = self.installed()?.clone();
-        let index = self.with_state(|state| self.assign_index(&supernet, state, tenant))?;
-        self.segment_at(&supernet, index)
+        let block = self.with_state(|state| self.assign_block(&supernet, state, tenant))?;
+        self.segment_at(&supernet, tenant, &block)
     }
 
-    fn acquire(&self, tenant: &TenantId, sandbox_id: &SandboxId) -> Result<NetworkSegment> {
+    fn acquire(&self, tenant: &TenantId, sandbox_id: &SandboxId) -> Result<OciSegmentRealization> {
         let supernet = self.installed()?.clone();
-        let index = self.with_state(|state| {
-            let index = self.assign_index(&supernet, state, tenant)?;
+        let block = self.with_state(|state| {
+            let block = self.assign_block(&supernet, state, tenant)?;
             state
                 .tenants
                 .get_mut(tenant.as_str())
-                .expect("assign_index inserts the tenant entry")
+                .expect("assign_block inserts the tenant entry")
                 .live_sandboxes
                 .insert(sandbox_id.as_str().to_owned());
-            Ok(index)
+            Ok(block)
         })?;
-        self.segment_at(&supernet, index)
+        self.segment_at(&supernet, tenant, &block)
     }
 
     fn release(&self, tenant: &TenantId, sandbox_id: &SandboxId) -> Result<ReleaseOutcome> {
@@ -408,12 +454,12 @@ impl NetworkSegmentAllocator for SingleNodeSegmentAllocator {
             };
             entry.live_sandboxes.remove(sandbox_id.as_str());
             if entry.live_sandboxes.is_empty() {
-                let indices = entry.indices.clone();
+                let blocks = entry.blocks.clone();
                 state.tenants.remove(tenant.as_str());
                 // Drain releases EVERY block bridge the tenant grew.
-                let mut segments = Vec::with_capacity(indices.len());
-                for index in indices {
-                    segments.push(self.segment_at(&supernet, index)?);
+                let mut segments = Vec::with_capacity(blocks.len());
+                for block in blocks {
+                    segments.push(self.segment_at(&supernet, tenant, &block)?);
                 }
                 Ok(ReleaseOutcome::TenantDrained { segments })
             } else {
@@ -422,9 +468,9 @@ impl NetworkSegmentAllocator for SingleNodeSegmentAllocator {
         })
     }
 
-    fn grow_block(&self, tenant: &TenantId) -> Result<NetworkSegment> {
+    fn grow_block(&self, tenant: &TenantId) -> Result<OciSegmentRealization> {
         let supernet = self.installed()?.clone();
-        let index = self.with_state(|state| {
+        let block = self.with_state(|state| {
             self.ensure_supernet_matches(&supernet, state)?;
             let entry = state
                 .tenants
@@ -435,7 +481,7 @@ impl NetworkSegmentAllocator for SingleNodeSegmentAllocator {
                         tenant.as_str()
                     ),
                 })?;
-            if entry.indices.len() >= MAX_BLOCKS_PER_TENANT {
+            if entry.blocks.len() >= MAX_BLOCKS_PER_TENANT {
                 return Err(SandboxError::OperationFailed {
                     message: format!(
                         "tenant {} already holds the maximum of {MAX_BLOCKS_PER_TENANT} network blocks; \
@@ -445,16 +491,19 @@ impl NetworkSegmentAllocator for SingleNodeSegmentAllocator {
                 });
             }
             // Fail-closed on pool exhaustion happens inside next_free_index.
-            let index = self.next_free_index(&supernet, state)?;
+            let block = SegmentBlock {
+                local_slot: self.next_free_index(&supernet, state)?,
+                segment_id: NetworkSegmentId::generate(),
+            };
             state
                 .tenants
                 .get_mut(tenant.as_str())
                 .expect("tenant entry checked above")
-                .indices
-                .push(index);
-            Ok(index)
+                .blocks
+                .push(block.clone());
+            Ok(block)
         })?;
-        self.segment_at(&supernet, index)
+        self.segment_at(&supernet, tenant, &block)
     }
 }
 
@@ -501,7 +550,67 @@ mod tests {
             .segment_for(&tenant("tenant-a"))
             .expect("re-assign");
         assert_eq!(first.cidr(), again.cidr());
+        assert_eq!(first.segment_id(), again.segment_id());
         assert_eq!(first.network_id().as_str(), again.network_id().as_str());
+    }
+
+    #[test]
+    fn node_supernets_mint_distinct_stable_segment_ids_at_the_same_local_slot() {
+        let node_a_root = tempdir().expect("node A temp dir");
+        let node_b_root = tempdir().expect("node B temp dir");
+        let node_a = SingleNodeSegmentAllocator::for_node_supernet(
+            node_a_root.path(),
+            "10.10.0.0/16",
+            DEFAULT_TENANT_PREFIX,
+        )
+        .expect("node A allocator");
+        let node_b = SingleNodeSegmentAllocator::for_node_supernet(
+            node_b_root.path(),
+            "10.20.0.0/16",
+            DEFAULT_TENANT_PREFIX,
+        )
+        .expect("node B allocator");
+
+        let segment_a = node_a
+            .segment_for(&tenant("tenant-shared"))
+            .expect("node A segment");
+        let segment_b = node_b
+            .segment_for(&tenant("tenant-shared"))
+            .expect("node B segment");
+
+        assert_eq!(segment_a.network_interface(), "nb-0");
+        assert_eq!(segment_b.network_interface(), "nb-0");
+        assert_eq!(segment_a.cidr().to_string(), "10.10.0.0/24");
+        assert_eq!(segment_b.cidr().to_string(), "10.20.0.0/24");
+        assert_ne!(
+            segment_a.segment_id(),
+            segment_b.segment_id(),
+            "global segment identity must not alias merely because two nodes use local slot zero"
+        );
+
+        let restarted_a = SingleNodeSegmentAllocator::for_node_supernet(
+            node_a_root.path(),
+            "10.10.0.0/16",
+            DEFAULT_TENANT_PREFIX,
+        )
+        .expect("restarted node A allocator")
+        .segment_for(&tenant("tenant-shared"))
+        .expect("restarted node A segment");
+        let restarted_b = SingleNodeSegmentAllocator::for_node_supernet(
+            node_b_root.path(),
+            "10.20.0.0/16",
+            DEFAULT_TENANT_PREFIX,
+        )
+        .expect("restarted node B allocator")
+        .segment_for(&tenant("tenant-shared"))
+        .expect("restarted node B segment");
+
+        assert_eq!(restarted_a.segment_id(), segment_a.segment_id());
+        assert_eq!(restarted_b.segment_id(), segment_b.segment_id());
+        assert_eq!(restarted_a.tenant_id(), &tenant("tenant-shared"));
+        assert_eq!(restarted_b.tenant_id(), &tenant("tenant-shared"));
+        assert_eq!(restarted_a.lease_epoch(), NetworkLeaseEpoch::new(0));
+        assert_eq!(restarted_b.lease_epoch(), NetworkLeaseEpoch::new(0));
     }
 
     #[test]
@@ -599,6 +708,11 @@ mod tests {
             .acquire(&tenant("tenant-c"), &sandbox("sb-c"))
             .expect("acquire c");
         assert_eq!(c.cidr().to_string(), "10.0.0.0/24");
+        assert_ne!(
+            c.segment_id(),
+            s1.segment_id(),
+            "reusing a cleaned local slot must mint a new global allocation identity"
+        );
 
         // Releasing an unknown sandbox is idempotent.
         assert!(matches!(

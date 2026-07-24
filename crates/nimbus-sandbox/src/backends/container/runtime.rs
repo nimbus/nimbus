@@ -33,18 +33,17 @@ use crate::backends::oci::egress::{
 use crate::backends::oci::materializer::{OciImageMaterializer, PreparedMaterializedImageLaunch};
 use crate::backends::oci::network::{
     MachinePortProxy, NetworkSegmentAllocator, OciNetworkConfig, OciNetworkDirectEgress,
-    OciNetworkLayout, SingleNodeSegmentAllocator, create_persistent_network_namespace,
-    expose_machine_ports, pin_netns_egress_to_own_proxy, place_sandbox_on_block,
-    purge_legacy_nimbus0_once, reconcile_network_segment_orphans, release_network_segment_hold,
-    remove_persistent_network_namespace, setup_container_network, start_machine_port_proxies,
-    teardown_container_network, unexpose_machine_ports,
+    OciNetworkLayout, OciSegmentRealization, SingleNodeSegmentAllocator,
+    create_persistent_network_namespace, expose_machine_ports, pin_netns_egress_to_own_proxy,
+    place_sandbox_on_block, purge_legacy_nimbus0_once, reconcile_network_segment_orphans,
+    release_network_segment_hold, remove_persistent_network_namespace, setup_container_network,
+    start_machine_port_proxies, teardown_container_network, unexpose_machine_ports,
 };
 use crate::backends::oci::port_manager::PortManager;
 use crate::backends::oci::resource_quota::ResourceQuotaManager;
 use crate::error::{Result, SandboxError};
 use crate::instance::{SandboxHandle, SandboxId, SandboxStatus};
 use crate::spec::{SandboxOciImageSource, SandboxRootSpec, SandboxSpec};
-use nimbus_core::net::NetworkSegment;
 use nimbus_egress::EgressPolicy;
 
 pub use config::{ContainerSandboxBackendConfig, ContainerStartMode};
@@ -166,7 +165,7 @@ impl ContainerSandboxBackend {
     /// Build the OCI network config for a specific resolved block segment — the
     /// bridge identity + `/24` subnet + DNS-off + deny-egress policy. Shared by the
     /// primary-block `network_config` and block-aware `place_sandbox_config` (MTN6).
-    fn config_from_segment(&self, segment: &NetworkSegment) -> OciNetworkConfig {
+    fn config_from_segment(&self, segment: &OciSegmentRealization) -> OciNetworkConfig {
         OciNetworkConfig {
             netavark_path: self.config.netavark_path.clone(),
             aardvark_dns_path: self.config.aardvark_dns_path.clone(),

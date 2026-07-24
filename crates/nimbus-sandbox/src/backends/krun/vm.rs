@@ -40,10 +40,11 @@ use crate::backends::oci::materializer::{
 use crate::backends::oci::network::{
     DEFAULT_AARDVARK_DNS_BINARY, DEFAULT_NETAVARK_BINARY, DEFAULT_NETWORK_INTERFACE,
     DEFAULT_NETWORK_NAME, DEFAULT_NETWORK_SUBNET, DEFAULT_TENANT_PREFIX, NetworkSegmentAllocator,
-    OciNetworkConfig, OciNetworkDirectEgress, OciNetworkLayout, SingleNodeSegmentAllocator,
-    create_persistent_network_namespace, pin_netns_egress_to_own_proxy, place_sandbox_on_block,
-    purge_legacy_nimbus0_once, reconcile_network_segment_orphans, release_network_segment_hold,
-    remove_persistent_network_namespace, setup_container_network, teardown_container_network,
+    OciNetworkConfig, OciNetworkDirectEgress, OciNetworkLayout, OciSegmentRealization,
+    SingleNodeSegmentAllocator, create_persistent_network_namespace, pin_netns_egress_to_own_proxy,
+    place_sandbox_on_block, purge_legacy_nimbus0_once, reconcile_network_segment_orphans,
+    release_network_segment_hold, remove_persistent_network_namespace, setup_container_network,
+    teardown_container_network,
 };
 use crate::backends::oci::port_manager::{DEFAULT_MAX_PORTS_PER_TENANT, PortManager};
 use crate::backends::oci::resource_quota::ResourceQuotaManager;
@@ -53,7 +54,6 @@ use crate::spec::{
     SandboxOciImageSource, SandboxResourceQuotaPolicy, SandboxRootSpec, SandboxRootfsSpec,
     SandboxSpec, resolve_process_without_image_defaults,
 };
-use nimbus_core::net::NetworkSegment;
 use nimbus_network::{EndpointProtocol, PublishedEndpoint};
 
 mod lifecycle;
@@ -224,7 +224,7 @@ impl KrunSandboxBackend {
     /// Build the OCI network config for a specific resolved block segment. Shared
     /// by the primary-block `network_config` and block-aware `place_sandbox_config`
     /// (MTN6).
-    fn config_from_segment(&self, segment: &NetworkSegment) -> OciNetworkConfig {
+    fn config_from_segment(&self, segment: &OciSegmentRealization) -> OciNetworkConfig {
         OciNetworkConfig {
             netavark_path: self.config.netavark_path.clone(),
             aardvark_dns_path: self.config.aardvark_dns_path.clone(),

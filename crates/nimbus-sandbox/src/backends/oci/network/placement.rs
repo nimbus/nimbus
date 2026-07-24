@@ -7,14 +7,13 @@
 //! both OCI-family backends so the placement policy is defined once.
 
 use nimbus_core::TenantId;
-use nimbus_core::net::NetworkSegment;
 
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
 
 use super::{
-    NetworkSegmentAllocator, OciNetworkConfig, OciNetworkLayout, SingleNodeSegmentAllocator,
-    allocate_container_ips,
+    NetworkSegmentAllocator, OciNetworkConfig, OciNetworkLayout, OciSegmentRealization,
+    SingleNodeSegmentAllocator, allocate_container_ips,
 };
 
 /// Reserve and return the network config of the block bridge that will host
@@ -31,7 +30,7 @@ pub(crate) fn place_sandbox_on_block(
     tenant: &TenantId,
     layout: &OciNetworkLayout,
     sandbox_id: &SandboxId,
-    build_config: impl Fn(&NetworkSegment) -> OciNetworkConfig,
+    build_config: impl Fn(&OciSegmentRealization) -> OciNetworkConfig,
 ) -> Result<OciNetworkConfig> {
     let mut segment = allocator.segment_for(tenant)?;
     loop {
@@ -75,7 +74,7 @@ mod tests {
             30,
         );
         let t = tenant("tenant-a");
-        let build = |segment: &NetworkSegment| OciNetworkConfig {
+        let build = |segment: &OciSegmentRealization| OciNetworkConfig {
             network_name: segment.network_name().to_owned(),
             network_interface: segment.network_interface().to_owned(),
             network_subnet: segment.cidr().to_string(),
@@ -119,7 +118,7 @@ mod tests {
             30,
         );
         let t = tenant("tenant-a");
-        let build = |segment: &NetworkSegment| OciNetworkConfig {
+        let build = |segment: &OciSegmentRealization| OciNetworkConfig {
             network_name: segment.network_name().to_owned(),
             network_interface: segment.network_interface().to_owned(),
             network_subnet: segment.cidr().to_string(),

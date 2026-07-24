@@ -10,6 +10,7 @@
 
 mod endpoint;
 mod identity;
+mod segment;
 
 pub use endpoint::{EndpointProtocol, PublishedEndpoint};
 pub use identity::{
@@ -17,6 +18,7 @@ pub use identity::{
     NetworkProviderId, NetworkResourceGeneration, NetworkResourceIdParseError,
     NetworkResourceIdParseErrorKind, NetworkSegmentId, PortLeaseId, PublishedEndpointId,
 };
+pub use segment::AllocatedSegment;
 
 #[cfg(test)]
 mod tests {
