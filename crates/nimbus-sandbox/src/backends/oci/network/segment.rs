@@ -48,7 +48,7 @@ pub(crate) const DEFAULT_TENANT_PREFIX: u8 = 24;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct InstalledSuperNet {
     pub(crate) cidr: Cidr,
-    pub(crate) epoch: u64,
+    pub(crate) epoch: NetworkLeaseEpoch,
 }
 
 /// The maximum number of `/24` blocks (bridges) a single tenant may hold. Each
@@ -95,7 +95,7 @@ struct SegmentState {
     /// A mismatch on load is fail-closed: the node must drain + re-carve, never
     /// silently reuse a stale-epoch block (the cluster reclamation-safety hook).
     supernet_cidr: Option<String>,
-    supernet_epoch: Option<u64>,
+    supernet_epoch: Option<NetworkLeaseEpoch>,
     /// tenant id → its allocation (index + live-attachment refcount).
     tenants: BTreeMap<String, TenantEntry>,
 }
@@ -162,7 +162,7 @@ impl SingleNodeSegmentAllocator {
         let supernet = InstalledSuperNet {
             cidr: Cidr::parse(DEFAULT_NODE_SUPERNET)
                 .expect("the default node super-net constant must be a valid CIDR"),
-            epoch: 0,
+            epoch: NetworkLeaseEpoch::new(0),
         };
         Self::new(state_root, Some(supernet), DEFAULT_TENANT_PREFIX)
             .expect("temporary local state root should support the network store contract")
@@ -180,7 +180,10 @@ impl SingleNodeSegmentAllocator {
         })?;
         Self::new(
             state_root,
-            Some(InstalledSuperNet { cidr, epoch: 0 }),
+            Some(InstalledSuperNet {
+                cidr,
+                epoch: NetworkLeaseEpoch::new(0),
+            }),
             tenant_prefix,
         )
     }
@@ -235,7 +238,7 @@ impl SingleNodeSegmentAllocator {
             block.segment_id.clone(),
             tenant.clone(),
             self.subnet_at(supernet, block.local_slot)?,
-            NetworkLeaseEpoch::new(supernet.epoch),
+            supernet.epoch,
         );
         Ok(OciSegmentRealization::from_local_slot(
             allocation,
@@ -265,8 +268,9 @@ impl SingleNodeSegmentAllocator {
         {
             return Err(SandboxError::OperationFailed {
                 message: format!(
-                    "network segment state was carved under super-net epoch {epoch}, not the installed {}; a stale-epoch block must not be reused",
-                    supernet.epoch
+                    "network segment state was carved under super-net epoch {}, not the installed {}; a stale-epoch block must not be reused",
+                    epoch.as_u64(),
+                    supernet.epoch.as_u64()
                 ),
             });
         }
@@ -586,6 +590,7 @@ impl NetworkSegmentAllocator for ConfiguredSegmentAllocator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
     use std::fs;
     use tempfile::tempdir;
 
@@ -705,6 +710,107 @@ mod tests {
         assert_eq!(restarted_b.lease_epoch(), NetworkLeaseEpoch::new(0));
     }
 
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(16))]
+
+        #[test]
+        fn disjoint_node_supernets_never_alias_segment_identity_and_restart_stably(
+            node_a_octet in 1u8..=120,
+            node_b_octet in 121u8..=240,
+            tenant_count in 1usize..=6,
+            epoch_a_raw in any::<u16>(),
+            epoch_b_raw in any::<u16>(),
+        ) {
+            let node_a_root = tempdir().expect("node A temp dir");
+            let node_b_root = tempdir().expect("node B temp dir");
+            let epoch_a = NetworkLeaseEpoch::new(u64::from(epoch_a_raw));
+            let epoch_b = NetworkLeaseEpoch::new(u64::from(epoch_b_raw));
+            let supernet_a = Cidr::parse(&format!("10.{node_a_octet}.0.0/16"))
+                .expect("generated node A super-net should parse");
+            let supernet_b = Cidr::parse(&format!("10.{node_b_octet}.0.0/16"))
+                .expect("generated node B super-net should parse");
+            let node_a = SingleNodeSegmentAllocator::new(
+                node_a_root.path(),
+                Some(InstalledSuperNet {
+                    cidr: supernet_a,
+                    epoch: epoch_a,
+                }),
+                DEFAULT_TENANT_PREFIX,
+            )
+            .expect("node A allocator");
+            let node_b = SingleNodeSegmentAllocator::new(
+                node_b_root.path(),
+                Some(InstalledSuperNet {
+                    cidr: supernet_b,
+                    epoch: epoch_b,
+                }),
+                DEFAULT_TENANT_PREFIX,
+            )
+            .expect("node B allocator");
+            let mut every_id = BTreeSet::new();
+            let mut expected = Vec::with_capacity(tenant_count);
+
+            for index in 0..tenant_count {
+                let tenant = tenant(&format!("tenant-{index}"));
+                let segment_a = node_a
+                    .segment_for(&tenant)
+                    .expect("node A segment should allocate");
+                let segment_b = node_b
+                    .segment_for(&tenant)
+                    .expect("node B segment should allocate");
+
+                prop_assert_eq!(
+                    segment_a.network_interface(),
+                    segment_b.network_interface(),
+                    "same local slot deliberately produces the same provider-local interface name"
+                );
+                prop_assert!(!segment_a.cidr().overlaps(&segment_b.cidr()));
+                prop_assert_ne!(segment_a.segment_id(), segment_b.segment_id());
+                prop_assert_eq!(segment_a.lease_epoch(), epoch_a);
+                prop_assert_eq!(segment_b.lease_epoch(), epoch_b);
+                prop_assert!(every_id.insert(segment_a.segment_id().clone()));
+                prop_assert!(every_id.insert(segment_b.segment_id().clone()));
+                expected.push((
+                    tenant,
+                    segment_a.segment_id().clone(),
+                    segment_b.segment_id().clone(),
+                ));
+            }
+
+            let restarted_a = SingleNodeSegmentAllocator::new(
+                node_a_root.path(),
+                Some(InstalledSuperNet {
+                    cidr: supernet_a,
+                    epoch: epoch_a,
+                }),
+                DEFAULT_TENANT_PREFIX,
+            )
+            .expect("restarted node A allocator");
+            let restarted_b = SingleNodeSegmentAllocator::new(
+                node_b_root.path(),
+                Some(InstalledSuperNet {
+                    cidr: supernet_b,
+                    epoch: epoch_b,
+                }),
+                DEFAULT_TENANT_PREFIX,
+            )
+            .expect("restarted node B allocator");
+
+            for (tenant, expected_a, expected_b) in expected {
+                let actual_a = restarted_a
+                    .segment_for(&tenant)
+                    .expect("node A identity should survive restart");
+                let actual_b = restarted_b
+                    .segment_for(&tenant)
+                    .expect("node B identity should survive restart");
+                prop_assert_eq!(actual_a.segment_id(), &expected_a);
+                prop_assert_eq!(actual_b.segment_id(), &expected_b);
+                prop_assert_eq!(actual_a.lease_epoch(), epoch_a);
+                prop_assert_eq!(actual_b.lease_epoch(), epoch_b);
+            }
+        }
+    }
+
     #[test]
     #[ignore = "NNC0.9 explicit allocation-scale characterization"]
     fn durable_segment_assignment_scale_baseline() {
@@ -821,7 +927,7 @@ mod tests {
         // A /30 super-net carved into /30 tenant subnets holds exactly one tenant.
         let supernet = InstalledSuperNet {
             cidr: Cidr::parse("10.9.0.0/30").unwrap(),
-            epoch: 0,
+            epoch: NetworkLeaseEpoch::new(0),
         };
         let allocator = SingleNodeSegmentAllocator::new(dir.path(), Some(supernet), 30)
             .expect("local network store should open");
@@ -852,7 +958,7 @@ mod tests {
         );
         allocator.install_supernet(InstalledSuperNet {
             cidr: Cidr::parse(DEFAULT_NODE_SUPERNET).unwrap(),
-            epoch: 0,
+            epoch: NetworkLeaseEpoch::new(0),
         });
         let seg = allocator
             .segment_for(&tenant("tenant-a"))
@@ -867,7 +973,7 @@ mod tests {
             dir.path(),
             Some(InstalledSuperNet {
                 cidr: Cidr::parse(DEFAULT_NODE_SUPERNET).unwrap(),
-                epoch: 0,
+                epoch: NetworkLeaseEpoch::new(0),
             }),
             DEFAULT_TENANT_PREFIX,
         )
@@ -880,7 +986,7 @@ mod tests {
             dir.path(),
             Some(InstalledSuperNet {
                 cidr: Cidr::parse(DEFAULT_NODE_SUPERNET).unwrap(),
-                epoch: 1,
+                epoch: NetworkLeaseEpoch::new(1),
             }),
             DEFAULT_TENANT_PREFIX,
         )
@@ -891,6 +997,66 @@ mod tests {
         assert!(
             format!("{error}").contains("epoch"),
             "must fail closed on epoch mismatch, got: {error}"
+        );
+    }
+
+    #[test]
+    fn stale_epoch_rejects_every_create_and_growth_entrypoint_without_mutation() {
+        let dir = tempdir().expect("temp dir");
+        let existing_tenant = tenant("tenant-existing");
+        let existing_attachment = attachment("sandbox-existing");
+        let old_epoch = SingleNodeSegmentAllocator::new(
+            dir.path(),
+            Some(InstalledSuperNet {
+                cidr: Cidr::parse(DEFAULT_NODE_SUPERNET).unwrap(),
+                epoch: NetworkLeaseEpoch::new(7),
+            }),
+            DEFAULT_TENANT_PREFIX,
+        )
+        .expect("old-epoch allocator should open");
+        old_epoch
+            .acquire(&existing_tenant, &existing_attachment)
+            .expect("old-epoch allocation should succeed");
+        let old_observation = old_epoch
+            .segments_for(&existing_tenant)
+            .expect("old-epoch observation should resolve");
+
+        let stale = SingleNodeSegmentAllocator::new(
+            dir.path(),
+            Some(InstalledSuperNet {
+                cidr: Cidr::parse(DEFAULT_NODE_SUPERNET).unwrap(),
+                epoch: NetworkLeaseEpoch::new(8),
+            }),
+            DEFAULT_TENANT_PREFIX,
+        )
+        .expect("new-epoch allocator should open");
+        let before = fs::read(stale.state_path()).expect("authority should read before attempts");
+
+        let errors = [
+            stale
+                .segment_for(&tenant("tenant-segment-for"))
+                .expect_err("segment_for must reject stale state"),
+            stale
+                .segments_for(&existing_tenant)
+                .expect_err("segments_for must reject stale state"),
+            stale
+                .acquire(&tenant("tenant-acquire"), &attachment("sandbox-acquire"))
+                .expect_err("acquire must reject stale state"),
+            stale
+                .grow_block_if_current(&existing_tenant, &old_observation)
+                .expect_err("growth must reject stale state"),
+        ];
+        for error in errors {
+            assert!(
+                error.to_string().contains("epoch"),
+                "every stale create/grow entrypoint must fail at the epoch fence: {error}"
+            );
+        }
+
+        let after = fs::read(stale.state_path()).expect("authority should read after attempts");
+        assert_eq!(
+            after, before,
+            "rejected stale-epoch create/grow attempts must not mutate durable authority"
         );
     }
 
@@ -1099,7 +1265,7 @@ mod tests {
         // A /24 super-net carved into /24 blocks holds exactly ONE block.
         let supernet = InstalledSuperNet {
             cidr: Cidr::parse("10.9.0.0/24").unwrap(),
-            epoch: 0,
+            epoch: NetworkLeaseEpoch::new(0),
         };
         let allocator = SingleNodeSegmentAllocator::new(dir.path(), Some(supernet), 24)
             .expect("local network store should open");

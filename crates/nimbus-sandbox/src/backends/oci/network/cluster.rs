@@ -33,7 +33,7 @@ use std::sync::Arc;
 use nimbus_core::TenantId;
 use nimbus_core::net::Cidr;
 use nimbus_network::{
-    NetworkAttachmentId, NetworkSegmentAllocator, NetworkSegmentGrowth,
+    NetworkAttachmentId, NetworkLeaseEpoch, NetworkSegmentAllocator, NetworkSegmentGrowth,
     NetworkSegmentReleaseOutcome,
 };
 
@@ -59,7 +59,7 @@ pub(crate) struct SuperNetLease {
     /// The lease's fencing epoch. A reclamation bumps it; the inner allocator's
     /// persisted state (stamped with the old epoch) then fails closed until drain
     /// and re-carve.
-    pub(crate) epoch: u64,
+    pub(crate) epoch: NetworkLeaseEpoch,
     /// Absolute deadline (wall-clock millis). Past it the node self-fences — the
     /// antidote to a partitioned former owner reusing a reassigned super-net. The
     /// leader must wait > this TTL before reassigning the super-net elsewhere.
@@ -231,7 +231,7 @@ mod tests {
         NetworkAttachmentId::for_workload_attachment(id, super::super::DEFAULT_ATTACHMENT_NAME)
     }
 
-    fn lease(super_net: &str, epoch: u64, expires_at_millis: u64) -> SuperNetLease {
+    fn lease(super_net: &str, epoch: NetworkLeaseEpoch, expires_at_millis: u64) -> SuperNetLease {
         SuperNetLease {
             super_net: Cidr::parse(super_net).expect("valid CIDR"),
             epoch,
@@ -264,8 +264,16 @@ mod tests {
     fn two_nodes_with_disjoint_leases_carve_disjoint_tenant_subnets() {
         let dir_a = tempdir().expect("temp dir");
         let dir_b = tempdir().expect("temp dir");
-        let node_a = node(dir_a.path(), Some(lease("10.10.0.0/16", 1, 10_000)), 0);
-        let node_b = node(dir_b.path(), Some(lease("10.20.0.0/16", 1, 10_000)), 0);
+        let node_a = node(
+            dir_a.path(),
+            Some(lease("10.10.0.0/16", NetworkLeaseEpoch::new(1), 10_000)),
+            0,
+        );
+        let node_b = node(
+            dir_b.path(),
+            Some(lease("10.20.0.0/16", NetworkLeaseEpoch::new(1), 10_000)),
+            0,
+        );
 
         let seg_a = node_a
             .acquire(&tenant("t"), &attachment("s"))
@@ -301,7 +309,11 @@ mod tests {
     fn expired_lease_self_fences() {
         let dir = tempdir().expect("temp dir");
         // now == expiry: the lease is no longer valid.
-        let node = node(dir.path(), Some(lease("10.10.0.0/16", 1, 5_000)), 5_000);
+        let node = node(
+            dir.path(),
+            Some(lease("10.10.0.0/16", NetworkLeaseEpoch::new(1), 5_000)),
+            5_000,
+        );
         let error = node
             .acquire(&tenant("t"), &attachment("s"))
             .expect_err("an expired lease must self-fence");
@@ -319,12 +331,20 @@ mod tests {
     fn reclaimed_supernet_new_epoch_fails_closed_until_recarve() {
         let dir = tempdir().expect("temp dir");
         // Carve under epoch 1 (stamps the shared network authority with epoch 1).
-        let epoch1 = node(dir.path(), Some(lease("10.10.0.0/16", 1, 10_000)), 0);
+        let epoch1 = node(
+            dir.path(),
+            Some(lease("10.10.0.0/16", NetworkLeaseEpoch::new(1), 10_000)),
+            0,
+        );
         epoch1
             .acquire(&tenant("t"), &attachment("s"))
             .expect("epoch-1 carve succeeds");
         // SAME super-net, epoch 2 (a reclamation) over the SAME state: fail closed.
-        let epoch2 = node(dir.path(), Some(lease("10.10.0.0/16", 2, 10_000)), 0);
+        let epoch2 = node(
+            dir.path(),
+            Some(lease("10.10.0.0/16", NetworkLeaseEpoch::new(2), 10_000)),
+            0,
+        );
         let error = epoch2
             .acquire(&tenant("t2"), &attachment("s2"))
             .expect_err("stale-epoch state must fail closed");
@@ -379,7 +399,7 @@ mod tests {
     fn expired_lease_must_fence_creation_but_allow_cleanup_of_a_durable_hold() {
         let dir = tempdir().expect("temp dir");
         let provider = Arc::new(MutableClockLeaseProvider {
-            lease: lease("10.10.0.0/16", 7, 5_000),
+            lease: lease("10.10.0.0/16", NetworkLeaseEpoch::new(7), 5_000),
             now: AtomicU64::new(0),
         });
         let allocator = ClusterSegmentAllocator::new(dir.path(), 24, provider.clone());

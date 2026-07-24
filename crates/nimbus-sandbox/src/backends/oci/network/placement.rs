@@ -7,6 +7,8 @@
 //! both OCI-family backends so the placement policy is defined once.
 
 use nimbus_core::TenantId;
+#[cfg(test)]
+use nimbus_network::NetworkLeaseEpoch;
 use nimbus_network::NetworkSegmentGrowth;
 
 use crate::error::{Result, SandboxError};
@@ -99,7 +101,7 @@ mod tests {
             state_root,
             Some(super::super::segment::InstalledSuperNet {
                 cidr: nimbus_core::net::Cidr::parse("10.7.0.0/23").unwrap(),
-                epoch: 0,
+                epoch: NetworkLeaseEpoch::new(0),
             }),
             30,
         )
@@ -142,7 +144,7 @@ mod tests {
             state_root,
             Some(super::super::segment::InstalledSuperNet {
                 cidr: nimbus_core::net::Cidr::parse("10.7.0.0/23").unwrap(),
-                epoch: 0,
+                epoch: NetworkLeaseEpoch::new(0),
             }),
             30,
         )
@@ -193,7 +195,7 @@ mod tests {
             state_root,
             Some(super::super::segment::InstalledSuperNet {
                 cidr: nimbus_core::net::Cidr::parse("10.7.0.0/23").unwrap(),
-                epoch: 0,
+                epoch: NetworkLeaseEpoch::new(0),
             }),
             30,
         )
@@ -259,7 +261,7 @@ mod tests {
                 state_root,
                 Some(super::super::segment::InstalledSuperNet {
                     cidr: nimbus_core::net::Cidr::parse("10.8.0.0/23").unwrap(),
-                    epoch: 0,
+                    epoch: NetworkLeaseEpoch::new(0),
                 }),
                 30,
             )
@@ -327,7 +329,7 @@ mod tests {
                 &state_root,
                 Some(super::super::segment::InstalledSuperNet {
                     cidr: nimbus_core::net::Cidr::parse("10.9.0.0/23").unwrap(),
-                    epoch: 0,
+                    epoch: NetworkLeaseEpoch::new(0),
                 }),
                 30,
             )
