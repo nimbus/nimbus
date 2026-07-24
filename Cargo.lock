@@ -6967,6 +6967,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "nimbus-network"
+version = "0.1.45"
+dependencies = [
+ "nimbus-core",
+]
+
+[[package]]
 name = "nimbus-node"
 version = "0.1.45"
 dependencies = [

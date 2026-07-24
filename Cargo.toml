@@ -21,6 +21,7 @@ members = [
     "crates/nimbus-license",
     "crates/nimbus-machine",
     "crates/nimbus-mongodb",
+    "crates/nimbus-network",
     "crates/nimbus-node",
     "crates/nimbus-object-storage",
     "crates/nimbus-operator",
