@@ -1,6 +1,6 @@
 # Nimbus Network Control Plane Plan
 
-Status: `active; NNC2.7 complete; NNC2.8 horizontal-scaling seam truth-up in progress`
+Status: `active; NNC2 complete; NNC3.1 port-lease state machine in progress`
 
 Owner: this plan is the sole implementation control plane for the
 transport-free `nimbus-network` crate and the connectivity-resource lifecycle
@@ -36,20 +36,20 @@ ledger transition.
 
 | Field | Current value |
 | --- | --- |
-| Plan status | `active; NNC2.7 complete; NNC2.8 horizontal-scaling seam truth-up in progress` |
-| Current band | `NNC2 — crash-safe durable state and segment authority` |
-| Current item | `NNC2.8 — truth up the horizontal-scaling shared-seam ledger` |
-| Last completed item | `NNC2.7 — preserve completed multi-tenant network invariants` |
-| Next action | Commit the completed NNC2.7 code/proof plus NNC2.8 activation checkpoint. Then materialize the ignored horizontal-scaling owner plan from the untouched original checkout into this owner worktree, replace its sandbox-owned allocator/install-supernet claims with the canonical `nimbus-network` seam, and prove no stale authority claim remains. |
+| Plan status | `active; NNC2 complete; NNC3.1 port-lease state machine in progress` |
+| Current band | `NNC3 — cross-process host-global PortLease` |
+| Current item | `NNC3.1 — atomic lease lifecycle in one node store/lock domain` |
+| Last completed item | `NNC2.8 — truth up the horizontal-scaling shared-seam ledger` |
+| Next action | Commit the completed NNC2.8 shared-seam proof plus NNC3.1 activation checkpoint. Then load the NNC0.1a/NNC0.2 port contention/collision baselines and NNC2 durable-store contract, add the exact reserve/adopt/activate/withdraw/release fail-before cases, and implement the smallest crash-safe port-lease state machine that makes them pass. |
 | Owner branch | `codex/nimbus-network-architecture-audit` |
 | Owner worktree | `/Users/jack/src/github.com/nimbus/nimbus-network-architecture-audit` |
 | Audit base | Original architecture audit: `b69007a78a220847812370d9418049f1253f0384`. |
 | Execution base | Rebased without conflicts onto `origin/main` at `9c2d4f150c60f43dfdc0a3f1ec6550942e26ab8f` after NNC0.0. |
-| Last checkpoint commit | `b2cb26e7ac57e563bc9be5dc1a7be2b50d7834a2` — NNC2.6 completion and NNC2.7 activation checkpoint. |
-| Audit dirty state | NNC2.7 completion owns this plan, `scripts/verify-multi-tenant-network.sh`, `crates/nimbus-sandbox/tests/krun_linux_egress.rs`, and `docs/private/plans/proof/nimbus-network-control-plane/nnc2.7-multi-tenant-invariants.md`; NNC2.8 activation owns the plan-index status. All are being committed in the preceding-item checkpoint; no unrelated paths are dirty. |
+| Last checkpoint commit | `ff071dc81da3597010785286b25f21ea8124a9a2` — NNC2.7 completion and NNC2.8 activation checkpoint. |
+| Audit dirty state | NNC2.8 completion owns this plan, `docs/private/plans/README.md`, the force-tracked horizontal-scaling owner plan, and `docs/private/plans/proof/nimbus-network-control-plane/nnc2.8-horizontal-scaling-seam-truth-up.md`; NNC3.1 activation owns the ledger transition. All are being committed in the preceding-item checkpoint; no unrelated paths are dirty. |
 | Execution mode | Autonomous implementation goal active; commit each completed item with its ledger/evidence checkpoint; no push or PR without separate authority. |
-| Last verification | NNC2.7 aggregate fail-before was 10/16; the canonicalized verifier is 16/16. Network is 63/0/0, the named OCI network suite is 71/0/3, workloads scheduling is 2/0/0, and sandbox is 269/0/10 plus helper 2/0/0. A fresh privileged Linux provider run passed both real Netavark/nft/container cases. The current host has no KVM; all six explicit KVM cases now assert usable `/dev/kvm` instead of returning a false pass, their pure guard test is 1/0/6 on Linux, and the unchanged real-KVM cross-tenant/growth evidence is identified by commit. Quality, dependency, verifier, and docs gates are green except the expected later NNCV005. Opus 4.8/max review is clean with `patch is correct (0.8)`. Exact evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc2.7-multi-tenant-invariants.md`. |
-| Blocking decision | None. NNC2.8 must make the horizontal-scaling shared-seam owner durable in this worktree without modifying its ignored source copy in the original checkout, then update only allocator ownership while retaining cluster transport authority there. |
+| Last verification | NNC2.8 copied the ignored horizontal-scaling source byte-for-byte into this owner worktree before editing, then force-tracked its shared-seam ledger without touching the original. The deferred plan now consumes the one `nimbus-network::NetworkSegmentAllocator`, retains sandbox provider adapters, and leaves raft lease source, membership, identity, routing, forwarding, mesh, and `ClusterTransport` in future `nimbus-cluster`. Stale sandbox-qualified allocator/install scans are empty; network metadata is still exactly `nimbus-core`; forbidden transport/provider/upper-layer scans are empty. The aggregate exposed and then closed a missing Last-green recovery cell; self-test is 15/15 and aggregate is 14/1 only at expected NNCV005. Docs are 108 pages and 17/17. Opus 4.8/max review is clean with `patch is correct (0.8)`. Exact evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc2.8-horizontal-scaling-seam-truth-up.md`. |
+| Blocking decision | None. NNC3.1 must reuse the one NNC2 local store/lock authority, preserve test-harness dependency direction, and establish lifecycle semantics before any production port owner migrates. |
 
 Recovery protocol:
 
@@ -1247,8 +1247,8 @@ named dependency/owner decision and the next safe action.
 | --- | --- | --- | --- |
 | NNC0 — baselines/verifier | `done` | NNC0.0-NNC0.9 proof records: durable owner, dependency/bind inventories, process/crash harnesses, eight fail-before risk families, expected-red verifier, and behavior/performance baseline. | `docs/private/plans/proof/nimbus-network-control-plane/` |
 | NNC1 — crate/vocabulary | `done` | Acyclic crate, stable IDs/state model, endpoint/segment ownership migration. | `docs/private/plans/proof/nimbus-network-control-plane/nnc1.1-low-dependency-crate.md` through `nnc1.6-static-verifier-deepening.md`; every NNC1 item done, network has one outgoing workspace edge, and verifier is 13 pass/2 deliberately later expected fail. |
-| NNC2 — durable state/segment authority | `in_progress` | Crash-safe store, substitution, capacity reuse, epoch cleanup, no premature reuse. | NNC2.1 through NNC2.7 passed in `docs/private/plans/proof/nimbus-network-control-plane/`; NNC2.8 is in progress. |
-| NNC3 — cross-process port leases | `todo` | Full conflict/bind matrix, every owner migrated, old allocators deleted. | — |
+| NNC2 — durable state/segment authority | `done` | Crash-safe store, substitution, capacity reuse, epoch cleanup, no premature reuse. | NNC2.1 through NNC2.8 passed in `docs/private/plans/proof/nimbus-network-control-plane/`; horizontal-scaling now consumes the canonical network seam without taking transport into the allocator. |
+| NNC3 — cross-process port leases | `in_progress` | Full conflict/bind matrix, every owner migrated, old allocators deleted. | NNC3.1 is in progress; no production owner migrates until the atomic lifecycle and cross-process authority proof pass. |
 | NNC4 — capabilities/sovereignty | `todo` | Named negative matrix, evidence-based seams, machine modes, offline local profile. | — |
 | NNC5 — sandbox attachment lifecycle | `todo` | Shared implementation, complete readiness, ambiguity/crash convergence. | — |
 | NNC6 — compute choreography | `todo` | Exact provision/teardown observers across every workload/retirement path. | — |
@@ -1294,8 +1294,8 @@ checkpoint.
 | NNC2.5 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc2.5-two-phase-detach-release-quarantine.md`; expected red exited `101` because a failed-cleanup bridge's `10.0.0.0/24` location was reused. Durable quarantine, explicit hold release, stable-ID/epoch finalization, restart/stale/exact-once/provider-retry/order proofs, and same-process plus cross-process authority locking now prevent premature reuse. Network 63/0/0; sandbox 267/0/11; quality/dependency/verifier/docs gates green; Opus 4.8/max review clean at 0.7. |
 | NNC2.6 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc2.6-expired-lease-cleanup-authority.md`; exact fail-before exited `101`, then the restricted durable capability preserved non-mutating inspect/quarantine/release/exact-once finalize across expiry, replacement-epoch observation, restart, and provider-lease loss while all assign/acquire/grow entry points stayed fenced. Checksum-valid incomplete fencing fails without mutation; network 63/0/0 and sandbox 269/0/10 plus helper 2/0/0, quality/dependency/verifier/docs gates, and clean Opus 4.8/max review at 0.77 pass. |
 | NNC2.7 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc2.7-multi-tenant-invariants.md`; stale verifier failed 10/16 then canonicalized to 16/16; network 63/0/0, named OCI network 71/0/3, workloads scheduling 2/0/0, and sandbox 269/0/10 plus helper 2/0/0 pass. A fresh privileged Linux run passes both real Netavark/nft/container cases. KVM remains unavailable locally and is not claimed: explicit provider cases now fail rather than silently pass without usable `/dev/kvm`, while durable unchanged real-KVM cross-tenant/growth evidence is identified. Quality/dependency/verifier/docs gates pass except expected later NNCV005; Opus 4.8/max review is clean at 0.8. |
-| NNC2.8 | `in_progress` | Owned paths after the NNC2.7 checkpoint: this plan, `docs/private/plans/README.md`, the horizontal-scaling owner plan materialized from the untouched original checkout, and the forthcoming NNC2.8 proof. Next: replace historical sandbox-owned allocator/install-supernet execution claims with the canonical network seam, link this owner, retain cluster transport/membership/routing authority, and run a stale-claim scan. Blocker: none. |
-| NNC3.1 | `todo` | — |
+| NNC2.8 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc2.8-horizontal-scaling-seam-truth-up.md`; the ignored source was materialized byte-for-byte and then force-tracked, stale sandbox-owned allocator/install claims were replaced by the canonical network contract plus dependency-safe future lease source, and cluster transport authority remains deferred/cluster-owned. Exact trait/dependency/forbidden-effect scans pass; the aggregate caught a missing Last-green recovery cell, then returned to 14/1 only at expected NNCV005; docs are 108 pages and 17/17; Opus 4.8/max review is clean at 0.8. |
+| NNC3.1 | `in_progress` | Owned paths until the NNC2.8 checkpoint commits: this plan and `docs/private/plans/README.md` activation only. Last green/checkpoint: `ff071dc81da3597010785286b25f21ea8124a9a2`; NNC2.8 source/dependency/docs gates are green and aggregate is 14/1 only at expected NNCV005. Next: commit NNC2.8, record its hash, then load the NNC0.1a/NNC0.2 baselines and NNC2 store before adding atomic lease lifecycle reds. Blocker: none. |
 | NNC3.2 | `todo` | — |
 | NNC3.3 | `todo` | — |
 | NNC3.4 | `todo` | — |

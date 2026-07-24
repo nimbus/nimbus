@@ -74,8 +74,8 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC2.7 complete; NNC2.8
-  horizontal-scaling seam truth-up in progress`. Sole owner for the transport-free
+- `nimbus-network-control-plane-plan.md` - `active; NNC2 complete; NNC3.1
+  port-lease state machine in progress`. Sole owner for the transport-free
   connectivity-resource control plane: portable network identities and plans,
   crash-safe segment and cross-process host-port lease authority,
   generation/epoch fencing, capability satisfaction, reconciliation, exact
@@ -133,7 +133,10 @@ extension-registry seam before the second concern edits `extensions.rs`.
   identity, discovery, membership, placement replication, gossip invalidation,
   isolate placement, microVM placement, content distribution, and the
   cluster-mode integration layer, including HS5's per-Durable-Object placement,
-  shared lease authority, and epoch-fenced protected writes.
+  shared lease authority, and epoch-fenced protected writes. It supplies
+  raft-committed fenced node super-net leases to the canonical
+  `nimbus-network` allocation contract; it does not own a second segment
+  allocator, provider effects, or local network state store.
 - `nimbus-fips-iroh-ed25519-retrofit-plan.md` - `draft`. Owns a future
   aws-lc-rs/PQ TLS posture, NodeSigner seam, and CMVP-triggered identity-key
   retrofit. Promote only after the current FIPS and iroh identity facts are
