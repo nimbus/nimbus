@@ -1,5 +1,10 @@
 use std::time::Duration;
 
+use nimbus_network::{NetworkAttachmentId, NetworkSegmentAllocator};
+
+use crate::error::SandboxError;
+use crate::instance::SandboxId;
+
 mod cluster;
 mod dto;
 mod egress_pin;
@@ -13,6 +18,8 @@ mod proxy;
 mod realization;
 mod reaper;
 mod segment;
+#[cfg(test)]
+mod test_support;
 
 pub(crate) use egress_pin::pin_netns_egress_to_own_proxy;
 pub use forwarding::OciMachinePortForwarderConfig;
@@ -29,9 +36,25 @@ pub(crate) use realization::OciSegmentRealization;
 pub(crate) use reaper::{
     purge_legacy_nimbus0_once, reconcile_network_segment_orphans, release_network_segment_hold,
 };
-pub(crate) use segment::{
-    DEFAULT_TENANT_PREFIX, NetworkSegmentAllocator, SingleNodeSegmentAllocator,
-};
+#[cfg(test)]
+pub(crate) use segment::SingleNodeSegmentAllocator;
+pub(crate) use segment::{ConfiguredSegmentAllocator, DEFAULT_TENANT_PREFIX};
+#[cfg(test)]
+pub(crate) use test_support::{RecordingSegmentAllocator, SegmentAllocatorOperation};
+
+/// OCI-family specialization of the portable segment allocation capability.
+pub(crate) type OciSegmentAllocator =
+    dyn NetworkSegmentAllocator<Segment = OciSegmentRealization, Error = SandboxError>;
+
+/// Stable name of the sole OCI workload attachment currently realized.
+///
+/// Multi-homing can add named siblings without changing workload identity or
+/// inheriting a previous incarnation's attachment hold.
+pub(crate) const DEFAULT_ATTACHMENT_NAME: &str = "default";
+
+pub(crate) fn default_network_attachment_id(sandbox_id: &SandboxId) -> NetworkAttachmentId {
+    NetworkAttachmentId::for_workload_attachment(sandbox_id.as_str(), DEFAULT_ATTACHMENT_NAME)
+}
 
 pub(crate) const DEFAULT_NETAVARK_BINARY: &str = "netavark";
 pub(crate) const DEFAULT_AARDVARK_DNS_BINARY: &str = "aardvark-dns";

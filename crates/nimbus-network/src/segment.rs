@@ -1,6 +1,8 @@
+use std::collections::BTreeSet;
+
 use nimbus_core::{Cidr, TenantId};
 
-use crate::{NetworkLeaseEpoch, NetworkSegmentId};
+use crate::{NetworkAttachmentId, NetworkLeaseEpoch, NetworkSegmentId};
 
 /// Provider-neutral allocation of one tenant network segment.
 ///
@@ -55,8 +57,79 @@ impl AllocatedSegment {
     }
 }
 
+/// Result of releasing one attachment hold from a tenant's segment allocation.
+///
+/// The segment value is an associated adapter type supplied by the allocator
+/// implementation. This keeps the lifecycle contract portable while allowing
+/// an effect-owning adapter to wrap [`AllocatedSegment`] in its own realization
+/// handle without making `nimbus-network` depend on that provider.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NetworkSegmentReleaseOutcome<Segment> {
+    /// The last attachment released, so every segment owned by the tenant is
+    /// returned for fenced provider cleanup.
+    TenantDrained {
+        /// All segment realizations that must be cleaned before allocation
+        /// authority may make their locations reusable.
+        segments: Vec<Segment>,
+    },
+    /// At least one other attachment still holds the tenant allocation.
+    StillLive,
+}
+
+/// Portable lifecycle capability for tenant segment allocation.
+///
+/// The interface owns allocation/hold/release semantics only. `Segment` and
+/// `Error` are associated adapter types so an upper effect-owning crate may
+/// compose provider-local realization names and domain errors without a
+/// reverse dependency. Attachment holds use [`NetworkAttachmentId`], never a
+/// sandbox, workload, address, or provider identifier.
+///
+/// The trait is object-safe once an adapter fixes both associated types. That
+/// lets consumers receive an injected capability instead of reaching through
+/// to a concrete single-node or future cluster allocator.
+pub trait NetworkSegmentAllocator: Send + Sync {
+    /// Segment view returned to the consuming adapter.
+    type Segment;
+    /// Domain error returned to the consuming adapter.
+    type Error;
+
+    /// Idempotently read or assign the tenant's primary segment without taking
+    /// an attachment hold.
+    fn segment_for(&self, tenant: &TenantId) -> Result<Self::Segment, Self::Error>;
+
+    /// Take an idempotent hold for one stable network attachment.
+    fn acquire(
+        &self,
+        tenant: &TenantId,
+        attachment_id: &NetworkAttachmentId,
+    ) -> Result<Self::Segment, Self::Error>;
+
+    /// Release one stable attachment hold.
+    fn release(
+        &self,
+        tenant: &TenantId,
+        attachment_id: &NetworkAttachmentId,
+    ) -> Result<NetworkSegmentReleaseOutcome<Self::Segment>, Self::Error>;
+
+    /// Append another segment block after all current blocks are exhausted.
+    fn grow_block(&self, tenant: &TenantId) -> Result<Self::Segment, Self::Error>;
+
+    /// Reconcile durable holds against the complete live attachment set.
+    fn reconcile_orphans(
+        &self,
+        live: &BTreeSet<(TenantId, NetworkAttachmentId)>,
+    ) -> Result<Vec<Self::Segment>, Self::Error>;
+
+    /// Whether allocation requires an externally committed cluster lease.
+    fn requires_cluster_lease(&self) -> bool {
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::convert::Infallible;
+
     use super::*;
 
     fn segment_id(value: &str) -> NetworkSegmentId {
@@ -96,5 +169,77 @@ mod tests {
 
         assert_eq!(first.cidr(), replacement.cidr());
         assert_ne!(first.segment_id(), replacement.segment_id());
+    }
+
+    struct FixedAllocator {
+        segment: AllocatedSegment,
+    }
+
+    impl NetworkSegmentAllocator for FixedAllocator {
+        type Segment = AllocatedSegment;
+        type Error = Infallible;
+
+        fn segment_for(&self, _tenant: &TenantId) -> Result<Self::Segment, Self::Error> {
+            Ok(self.segment.clone())
+        }
+
+        fn acquire(
+            &self,
+            _tenant: &TenantId,
+            _attachment_id: &NetworkAttachmentId,
+        ) -> Result<Self::Segment, Self::Error> {
+            Ok(self.segment.clone())
+        }
+
+        fn release(
+            &self,
+            _tenant: &TenantId,
+            _attachment_id: &NetworkAttachmentId,
+        ) -> Result<NetworkSegmentReleaseOutcome<Self::Segment>, Self::Error> {
+            Ok(NetworkSegmentReleaseOutcome::TenantDrained {
+                segments: vec![self.segment.clone()],
+            })
+        }
+
+        fn grow_block(&self, _tenant: &TenantId) -> Result<Self::Segment, Self::Error> {
+            Ok(self.segment.clone())
+        }
+
+        fn reconcile_orphans(
+            &self,
+            _live: &BTreeSet<(TenantId, NetworkAttachmentId)>,
+        ) -> Result<Vec<Self::Segment>, Self::Error> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[test]
+    fn allocator_contract_is_object_safe_with_adapter_owned_types() {
+        let tenant = TenantId::new("tenant-a").expect("tenant should parse");
+        let attachment = NetworkAttachmentId::generate();
+        let allocator: &dyn NetworkSegmentAllocator<Segment = AllocatedSegment, Error = Infallible> =
+            &FixedAllocator {
+                segment: AllocatedSegment::new(
+                    segment_id("netsegment_01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+                    tenant.clone(),
+                    Cidr::parse("10.7.0.0/24").expect("CIDR should parse"),
+                    NetworkLeaseEpoch::new(1),
+                ),
+            };
+
+        assert_eq!(
+            allocator
+                .acquire(&tenant, &attachment)
+                .expect("infallible allocator")
+                .tenant_id(),
+            &tenant
+        );
+        assert!(matches!(
+            allocator
+                .release(&tenant, &attachment)
+                .expect("infallible allocator"),
+            NetworkSegmentReleaseOutcome::TenantDrained { segments }
+                if segments.len() == 1
+        ));
     }
 }

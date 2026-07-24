@@ -32,12 +32,13 @@ use crate::backends::oci::egress::{
 };
 use crate::backends::oci::materializer::{OciImageMaterializer, PreparedMaterializedImageLaunch};
 use crate::backends::oci::network::{
-    MachinePortProxy, NetworkSegmentAllocator, OciNetworkConfig, OciNetworkDirectEgress,
-    OciNetworkLayout, OciSegmentRealization, SingleNodeSegmentAllocator,
-    create_persistent_network_namespace, expose_machine_ports, pin_netns_egress_to_own_proxy,
-    place_sandbox_on_block, purge_legacy_nimbus0_once, reconcile_network_segment_orphans,
-    release_network_segment_hold, remove_persistent_network_namespace, setup_container_network,
-    start_machine_port_proxies, teardown_container_network, unexpose_machine_ports,
+    ConfiguredSegmentAllocator, MachinePortProxy, OciNetworkConfig, OciNetworkDirectEgress,
+    OciNetworkLayout, OciSegmentAllocator, OciSegmentRealization,
+    create_persistent_network_namespace, default_network_attachment_id, expose_machine_ports,
+    pin_netns_egress_to_own_proxy, place_sandbox_on_block, purge_legacy_nimbus0_once,
+    reconcile_network_segment_orphans, release_network_segment_hold,
+    remove_persistent_network_namespace, setup_container_network, start_machine_port_proxies,
+    teardown_container_network, unexpose_machine_ports,
 };
 use crate::backends::oci::port_manager::PortManager;
 use crate::backends::oci::resource_quota::ResourceQuotaManager;
@@ -60,6 +61,7 @@ use status::{running_status, synchronize_handle_status, visible_published_endpoi
 #[derive(Clone)]
 pub struct ContainerSandboxBackend {
     config: ContainerSandboxBackendConfig,
+    segment_allocator: Arc<OciSegmentAllocator>,
     egress_proxies: EgressProxyRegistry,
     machine_port_proxies: Arc<Mutex<HashMap<SandboxId, Vec<MachinePortProxy>>>>,
     #[cfg(test)]
@@ -74,21 +76,29 @@ pub struct PreparedContainerServiceWorkload {
 
 impl ContainerSandboxBackend {
     pub fn new(config: ContainerSandboxBackendConfig) -> Self {
+        let segment_allocator: Arc<OciSegmentAllocator> =
+            Arc::new(ConfiguredSegmentAllocator::new(
+                config.state_root.clone(),
+                config.node_network_supernet.clone(),
+                config.node_tenant_subnet_prefix,
+            ));
+        Self::with_segment_allocator(config, segment_allocator)
+    }
+
+    pub(crate) fn with_segment_allocator(
+        config: ContainerSandboxBackendConfig,
+        segment_allocator: Arc<OciSegmentAllocator>,
+    ) -> Self {
         // Startup orphan GC: reclaim segment holds whose sandbox netns is gone
         // (best-effort; a fresh node with no persisted state is a no-op).
-        if let Ok(allocator) = SingleNodeSegmentAllocator::for_node_supernet(
-            &config.state_root,
-            &config.node_network_supernet,
-            config.node_tenant_subnet_prefix,
-        ) {
-            let _ = reconcile_network_segment_orphans(&config.state_root, &allocator);
-        }
+        let _ = reconcile_network_segment_orphans(&config.state_root, segment_allocator.as_ref());
         let egress_proxies = EgressProxyRegistry::with_roots(
             egress_decision_log_root(&config.state_root),
             egress_trust_anchor_root(&config.state_root),
         );
         Self {
             config,
+            segment_allocator,
             egress_proxies,
             machine_port_proxies: Arc::new(Mutex::new(HashMap::new())),
             #[cfg(test)]
@@ -152,16 +162,6 @@ impl ContainerSandboxBackend {
         )
     }
 
-    /// The per-node segment allocator, constructed on demand from the state root
-    /// (its payload is in the shared network authority, so it is stateless to hold).
-    fn segment_allocator(&self) -> Result<SingleNodeSegmentAllocator> {
-        SingleNodeSegmentAllocator::for_node_supernet(
-            &self.config.state_root,
-            &self.config.node_network_supernet,
-            self.config.node_tenant_subnet_prefix,
-        )
-    }
-
     /// Build the OCI network config for a specific resolved block segment — the
     /// bridge identity + `/24` subnet + DNS-off + deny-egress policy. Shared by the
     /// primary-block `network_config` and block-aware `place_sandbox_config` (MTN6).
@@ -186,7 +186,7 @@ impl ContainerSandboxBackend {
     fn network_config(&self, tenant: &nimbus_core::TenantId) -> Result<OciNetworkConfig> {
         // Per-tenant PRIMARY block: distinct subnet + bridge identity carved from
         // the node super-net, so two tenants never collide on one bridge (M1).
-        let segment = self.segment_allocator()?.segment_for(tenant)?;
+        let segment = self.segment_allocator.segment_for(tenant)?;
         Ok(self.config_from_segment(&segment))
     }
 
@@ -204,7 +204,7 @@ impl ContainerSandboxBackend {
         sandbox_id: &SandboxId,
     ) -> Result<OciNetworkConfig> {
         place_sandbox_on_block(
-            &self.segment_allocator()?,
+            self.segment_allocator.as_ref(),
             tenant,
             layout,
             sandbox_id,
@@ -866,8 +866,10 @@ impl ContainerSandboxBackend {
         }
         // Take the tenant's refcount hold now the netns is up and pinned; the
         // reaper frees the index + bridge when the last hold releases.
-        self.segment_allocator()?
-            .acquire(&manifest.spec.tenant_id, &manifest.handle.id)?;
+        self.segment_allocator.acquire(
+            &manifest.spec.tenant_id,
+            &default_network_attachment_id(&manifest.handle.id),
+        )?;
         Ok(())
     }
 
@@ -942,20 +944,15 @@ impl ContainerSandboxBackend {
         // Final teardown (not restart): drop this sandbox's hold; on the LAST hold
         // the tenant is drained, so reap EVERY block bridge it grew (netavark
         // won't auto-GC) and free all its indices for reuse.
-        match self.segment_allocator() {
-            Ok(allocator) => {
-                errors.extend(
-                    release_network_segment_hold(
-                        &allocator,
-                        &manifest.spec.tenant_id,
-                        &manifest.handle.id,
-                    )
-                    .into_iter()
-                    .map(|error| error.to_string()),
-                );
-            }
-            Err(error) => errors.push(error.to_string()),
-        }
+        errors.extend(
+            release_network_segment_hold(
+                self.segment_allocator.as_ref(),
+                &manifest.spec.tenant_id,
+                &manifest.handle.id,
+            )
+            .into_iter()
+            .map(|error| error.to_string()),
+        );
         if let Some(forwarder) = self.config.machine_port_forwarder.as_ref() {
             let _ = unexpose_machine_ports(forwarder, &manifest.spec.port_bindings);
         }

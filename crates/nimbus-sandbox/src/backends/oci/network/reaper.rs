@@ -2,7 +2,7 @@
 //!
 //! netavark creates the per-tenant bridge on first-sandbox setup but does NOT
 //! remove it on last-sandbox teardown, so the crash-safe reaper removes the
-//! bridge when the allocator reports the tenant drained (the last sandbox hold
+//! bridge when the allocator reports the tenant drained (the last attachment hold
 //! released). The one-shot legacy purge removes the pre-MTN shared `nimbus0`
 //! bridge before the first per-tenant setup, since the routed per-tenant model
 //! deletes the shared bridge (pre-launch, breaking — no compat path).
@@ -11,14 +11,14 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use nimbus_core::TenantId;
+use nimbus_network::NetworkSegmentReleaseOutcome;
 
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
 
-use super::segment::ReleaseOutcome;
-use super::{NetworkSegmentAllocator, OciSegmentRealization, SingleNodeSegmentAllocator};
+use super::{OciSegmentAllocator, OciSegmentRealization, default_network_attachment_id};
 
-/// Remove a tenant block-bridge interface by name once its last sandbox has
+/// Remove a tenant block-bridge interface by name once its last attachment has
 /// drained (netavark won't auto-GC it). Idempotent / best-effort: a bridge that
 /// is already gone is success.
 pub(crate) fn reap_bridge_interface(interface: &str) -> Result<()> {
@@ -28,7 +28,7 @@ pub(crate) fn reap_bridge_interface(interface: &str) -> Result<()> {
 /// Drop one sandbox's allocator hold and reap every bridge returned when the
 /// tenant drains. Both OCI-family backends use this exact ordering.
 pub(crate) fn release_network_segment_hold(
-    allocator: &dyn NetworkSegmentAllocator,
+    allocator: &OciSegmentAllocator,
     tenant_id: &TenantId,
     sandbox_id: &SandboxId,
 ) -> Vec<SandboxError> {
@@ -38,14 +38,15 @@ pub(crate) fn release_network_segment_hold(
 }
 
 fn release_network_segment_hold_with(
-    allocator: &dyn NetworkSegmentAllocator,
+    allocator: &OciSegmentAllocator,
     tenant_id: &TenantId,
     sandbox_id: &SandboxId,
     mut reap: impl FnMut(&OciSegmentRealization) -> Result<()>,
 ) -> Vec<SandboxError> {
-    let segments = match allocator.release(tenant_id, sandbox_id) {
-        Ok(ReleaseOutcome::TenantDrained { segments }) => segments,
-        Ok(ReleaseOutcome::StillLive) => return Vec::new(),
+    let attachment_id = default_network_attachment_id(sandbox_id);
+    let segments = match allocator.release(tenant_id, &attachment_id) {
+        Ok(NetworkSegmentReleaseOutcome::TenantDrained { segments }) => segments,
+        Ok(NetworkSegmentReleaseOutcome::StillLive) => return Vec::new(),
         Err(error) => return vec![error],
     };
     segments
@@ -65,9 +66,9 @@ fn release_network_segment_hold_with(
 /// metric).
 pub(crate) fn reconcile_network_segment_orphans(
     state_root: &Path,
-    allocator: &SingleNodeSegmentAllocator,
+    allocator: &OciSegmentAllocator,
 ) -> Result<usize> {
-    let live = live_netns_holds(state_root);
+    let live = live_netns_holds(state_root)?;
     let drained = allocator.reconcile_orphans(&live)?;
     for segment in &drained {
         reap_bridge_interface(segment.network_interface())?;
@@ -77,24 +78,35 @@ pub(crate) fn reconcile_network_segment_orphans(
 
 /// Enumerate the `(tenant_id, sandbox_id)` pairs that currently hold a persistent
 /// netns. A missing tree (fresh node) yields the empty set.
-fn live_netns_holds(state_root: &Path) -> BTreeSet<(String, String)> {
+fn live_netns_holds(
+    state_root: &Path,
+) -> Result<BTreeSet<(TenantId, nimbus_network::NetworkAttachmentId)>> {
     let mut holds = BTreeSet::new();
     let tenants_root = state_root.join("tenants");
     let Ok(tenants) = std::fs::read_dir(&tenants_root) else {
-        return holds;
+        return Ok(holds);
     };
     for tenant in tenants.flatten() {
-        let tenant_id = tenant.file_name().to_string_lossy().into_owned();
         let netns_dir = tenant.path().join("networks").join("netns");
         let Ok(sandboxes) = std::fs::read_dir(&netns_dir) else {
             continue;
         };
+        let tenant_name = tenant.file_name().to_string_lossy().into_owned();
+        let tenant_id =
+            TenantId::new(&tenant_name).map_err(|error| SandboxError::OperationFailed {
+                message: format!(
+                    "persistent network namespace tree contains invalid tenant id {tenant_name:?}: {error}"
+                ),
+            })?;
         for sandbox in sandboxes.flatten() {
             let sandbox_id = sandbox.file_name().to_string_lossy().into_owned();
-            holds.insert((tenant_id.clone(), sandbox_id));
+            holds.insert((
+                tenant_id.clone(),
+                default_network_attachment_id(&SandboxId::new(sandbox_id)),
+            ));
         }
     }
-    holds
+    Ok(holds)
 }
 
 /// One-shot migration: remove the legacy shared `nimbus0` bridge from the pre-MTN
@@ -158,10 +170,11 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
+    use crate::backends::oci::network::SingleNodeSegmentAllocator;
     use nimbus_core::TenantId;
+    use nimbus_network::NetworkSegmentAllocator;
     use tempfile::tempdir;
 
-    use crate::backends::oci::network::NetworkSegmentAllocator;
     use crate::instance::SandboxId;
 
     fn touch_netns(root: &Path, tenant: &str, sandbox: &str) {
@@ -221,7 +234,7 @@ mod tests {
         allocator
             .acquire(
                 &TenantId::new("tenant-live").unwrap(),
-                &SandboxId::new("sb-live"),
+                &default_network_attachment_id(&SandboxId::new("sb-live")),
             )
             .expect("acquire live");
         touch_netns(root, "tenant-live", "sb-live");
@@ -229,7 +242,7 @@ mod tests {
         allocator
             .acquire(
                 &TenantId::new("tenant-dead").unwrap(),
-                &SandboxId::new("sb-dead"),
+                &default_network_attachment_id(&SandboxId::new("sb-dead")),
             )
             .expect("acquire dead");
 
@@ -240,7 +253,7 @@ mod tests {
         let reused = allocator
             .acquire(
                 &TenantId::new("tenant-new").unwrap(),
-                &SandboxId::new("sb-new"),
+                &default_network_attachment_id(&SandboxId::new("sb-new")),
             )
             .expect("acquire new");
         assert_eq!(reused.cidr().to_string(), "10.0.1.0/24");
@@ -248,10 +261,37 @@ mod tests {
         let live = allocator
             .acquire(
                 &TenantId::new("tenant-live").unwrap(),
-                &SandboxId::new("sb-live"),
+                &default_network_attachment_id(&SandboxId::new("sb-live")),
             )
             .expect("re-acquire live");
         assert_eq!(live.cidr().to_string(), "10.0.0.0/24");
+    }
+
+    #[test]
+    fn reconcile_ignores_non_tenant_siblings_without_a_netns_tree() {
+        let dir = tempdir().expect("temp dir");
+        let root = dir.path();
+        let allocator = SingleNodeSegmentAllocator::single_node_default(root);
+        let tenant = TenantId::new("tenant-dead").expect("tenant should parse");
+        allocator
+            .acquire(
+                &tenant,
+                &default_network_attachment_id(&SandboxId::new("sb-dead")),
+            )
+            .expect("orphan hold should allocate");
+        let tenants_root = root.join("tenants");
+        std::fs::create_dir_all(&tenants_root).expect("tenants root should exist");
+        std::fs::write(tenants_root.join(".DS_Store"), b"foreign metadata")
+            .expect("foreign sibling fixture should write");
+
+        let reclaimed = reconcile_network_segment_orphans(root, &allocator)
+            .expect("a non-tenant sibling without a netns tree must be ignored");
+
+        assert_eq!(reclaimed, 1, "the real orphan must still be reclaimed");
+        assert!(
+            !allocator.has_hold(tenant.as_str(), "sb-dead"),
+            "foreign siblings must not suppress durable hold reconciliation"
+        );
     }
 
     #[derive(Clone, Copy)]
@@ -289,7 +329,7 @@ mod tests {
 
         if case.hold {
             allocator
-                .acquire(&tenant_id, &sandbox_id)
+                .acquire(&tenant_id, &default_network_attachment_id(&sandbox_id))
                 .expect("hold should persist");
         }
         if case.desired {
@@ -553,7 +593,10 @@ mod tests {
         let original_tenant = TenantId::new("tenant-original").expect("tenant should parse");
         let original_sandbox = SandboxId::new("sandbox-original");
         let original = allocator
-            .acquire(&original_tenant, &original_sandbox)
+            .acquire(
+                &original_tenant,
+                &default_network_attachment_id(&original_sandbox),
+            )
             .expect("original segment should allocate");
 
         let mut surviving_bridges = Vec::new();
@@ -583,7 +626,7 @@ mod tests {
         let replacement = allocator
             .acquire(
                 &TenantId::new("tenant-replacement").expect("tenant should parse"),
-                &SandboxId::new("sandbox-replacement"),
+                &default_network_attachment_id(&SandboxId::new("sandbox-replacement")),
             )
             .expect("replacement segment should allocate");
         assert_ne!(

@@ -3,6 +3,7 @@ use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -38,13 +39,13 @@ use crate::backends::oci::materializer::{
     MaterializedImageRootfs, OciImageMaterializer, PreparedMaterializedImageLaunch,
 };
 use crate::backends::oci::network::{
-    DEFAULT_AARDVARK_DNS_BINARY, DEFAULT_NETAVARK_BINARY, DEFAULT_NETWORK_INTERFACE,
-    DEFAULT_NETWORK_NAME, DEFAULT_NETWORK_SUBNET, DEFAULT_TENANT_PREFIX, NetworkSegmentAllocator,
-    OciNetworkConfig, OciNetworkDirectEgress, OciNetworkLayout, OciSegmentRealization,
-    SingleNodeSegmentAllocator, create_persistent_network_namespace, pin_netns_egress_to_own_proxy,
-    place_sandbox_on_block, purge_legacy_nimbus0_once, reconcile_network_segment_orphans,
-    release_network_segment_hold, remove_persistent_network_namespace, setup_container_network,
-    teardown_container_network,
+    ConfiguredSegmentAllocator, DEFAULT_AARDVARK_DNS_BINARY, DEFAULT_NETAVARK_BINARY,
+    DEFAULT_NETWORK_INTERFACE, DEFAULT_NETWORK_NAME, DEFAULT_NETWORK_SUBNET, DEFAULT_TENANT_PREFIX,
+    OciNetworkConfig, OciNetworkDirectEgress, OciNetworkLayout, OciSegmentAllocator,
+    OciSegmentRealization, create_persistent_network_namespace, default_network_attachment_id,
+    pin_netns_egress_to_own_proxy, place_sandbox_on_block, purge_legacy_nimbus0_once,
+    reconcile_network_segment_orphans, release_network_segment_hold,
+    remove_persistent_network_namespace, setup_container_network, teardown_container_network,
 };
 use crate::backends::oci::port_manager::{DEFAULT_MAX_PORTS_PER_TENANT, PortManager};
 use crate::backends::oci::resource_quota::ResourceQuotaManager;
@@ -177,6 +178,7 @@ impl Default for KrunSandboxBackendConfig {
 #[derive(Clone)]
 pub struct KrunSandboxBackend {
     config: KrunSandboxBackendConfig,
+    segment_allocator: Arc<OciSegmentAllocator>,
     egress_proxies: EgressProxyRegistry,
     #[cfg(test)]
     restart_launch_test_probe: Option<RestartLaunchTestProbe>,
@@ -184,21 +186,29 @@ pub struct KrunSandboxBackend {
 
 impl KrunSandboxBackend {
     pub fn new(config: KrunSandboxBackendConfig) -> Self {
+        let segment_allocator: Arc<OciSegmentAllocator> =
+            Arc::new(ConfiguredSegmentAllocator::new(
+                config.state_root.clone(),
+                config.node_network_supernet.clone(),
+                config.node_tenant_subnet_prefix,
+            ));
+        Self::with_segment_allocator(config, segment_allocator)
+    }
+
+    pub(crate) fn with_segment_allocator(
+        config: KrunSandboxBackendConfig,
+        segment_allocator: Arc<OciSegmentAllocator>,
+    ) -> Self {
         // Startup orphan GC: reclaim segment holds whose sandbox netns is gone
         // (best-effort; a fresh node with no persisted state is a no-op).
-        if let Ok(allocator) = SingleNodeSegmentAllocator::for_node_supernet(
-            &config.state_root,
-            &config.node_network_supernet,
-            config.node_tenant_subnet_prefix,
-        ) {
-            let _ = reconcile_network_segment_orphans(&config.state_root, &allocator);
-        }
+        let _ = reconcile_network_segment_orphans(&config.state_root, segment_allocator.as_ref());
         let egress_proxies = EgressProxyRegistry::with_roots(
             egress_decision_log_root(&config.state_root),
             egress_trust_anchor_root(&config.state_root),
         );
         Self {
             config,
+            segment_allocator,
             egress_proxies,
             #[cfg(test)]
             restart_launch_test_probe: None,
@@ -209,16 +219,6 @@ impl KrunSandboxBackend {
     fn with_restart_launch_test_probe(mut self, probe: RestartLaunchTestProbe) -> Self {
         self.restart_launch_test_probe = Some(probe);
         self
-    }
-
-    /// The per-node segment allocator, constructed on demand from the state root
-    /// (its payload is in the shared network authority, so it is stateless to hold).
-    fn segment_allocator(&self) -> Result<SingleNodeSegmentAllocator> {
-        SingleNodeSegmentAllocator::for_node_supernet(
-            &self.config.state_root,
-            &self.config.node_network_supernet,
-            self.config.node_tenant_subnet_prefix,
-        )
     }
 
     /// Build the OCI network config for a specific resolved block segment. Shared
@@ -243,7 +243,7 @@ impl KrunSandboxBackend {
 
     fn network_config(&self, tenant: &nimbus_core::TenantId) -> Result<OciNetworkConfig> {
         // Per-tenant PRIMARY block: distinct subnet + bridge identity (audit M1).
-        let segment = self.segment_allocator()?.segment_for(tenant)?;
+        let segment = self.segment_allocator.segment_for(tenant)?;
         Ok(self.config_from_segment(&segment))
     }
 
@@ -257,7 +257,7 @@ impl KrunSandboxBackend {
         sandbox_id: &SandboxId,
     ) -> Result<OciNetworkConfig> {
         place_sandbox_on_block(
-            &self.segment_allocator()?,
+            self.segment_allocator.as_ref(),
             tenant,
             layout,
             sandbox_id,

@@ -3,6 +3,7 @@ use std::fmt::{self, Display, Formatter};
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use ulid::Ulid;
 
 /// The reason a stable network resource ID could not be parsed.
@@ -184,6 +185,38 @@ define_stable_resource_id!(
     NetworkAttachmentId,
     "netattachment"
 );
+
+impl NetworkAttachmentId {
+    /// Derive the stable identity of one named attachment on one workload
+    /// incarnation.
+    ///
+    /// Length-framed, domain-separated hashing makes the result deterministic
+    /// across restart while keeping the workload key and attachment name as
+    /// separate identity dimensions. Replacing the workload incarnation or
+    /// selecting another attachment name necessarily produces a different
+    /// identity. The source strings are not retained in the ID.
+    pub fn for_workload_attachment(workload_incarnation_key: &str, attachment_name: &str) -> Self {
+        let mut hasher = Sha256::new();
+        hasher.update(b"nimbus.network.attachment.v1");
+        for component in [workload_incarnation_key, attachment_name] {
+            hasher.update(
+                u64::try_from(component.len())
+                    .expect("a Rust string length always fits u64 on supported targets")
+                    .to_be_bytes(),
+            );
+            hasher.update(component.as_bytes());
+        }
+        let digest = hasher.finalize();
+        let mut payload = [0_u8; 16];
+        payload.copy_from_slice(&digest[..16]);
+        Self(format!(
+            "{}_{}",
+            Self::PREFIX,
+            Ulid::from(u128::from_be_bytes(payload))
+        ))
+    }
+}
+
 define_stable_resource_id!(
     /// Globally stable portable segment allocation identity.
     ///
@@ -519,6 +552,31 @@ mod tests {
         assert_eq!(
             generated.as_str().parse::<NetworkAttachmentId>(),
             Ok(generated)
+        );
+    }
+
+    #[test]
+    fn attachment_identity_is_stable_and_separates_name_and_incarnation() {
+        let first =
+            NetworkAttachmentId::for_workload_attachment("sandbox-incarnation-a", "default");
+        let replay =
+            NetworkAttachmentId::for_workload_attachment("sandbox-incarnation-a", "default");
+        let another_name =
+            NetworkAttachmentId::for_workload_attachment("sandbox-incarnation-a", "service-mesh");
+        let replacement =
+            NetworkAttachmentId::for_workload_attachment("sandbox-incarnation-b", "default");
+
+        assert_eq!(first, replay);
+        assert_ne!(first, another_name);
+        assert_ne!(first, replacement);
+        assert_eq!(
+            first.as_str().parse::<NetworkAttachmentId>(),
+            Ok(first.clone())
+        );
+        assert_ne!(
+            NetworkAttachmentId::for_workload_attachment("ab", "c"),
+            NetworkAttachmentId::for_workload_attachment("a", "bc"),
+            "length framing must prevent component-boundary ambiguity"
         );
     }
 

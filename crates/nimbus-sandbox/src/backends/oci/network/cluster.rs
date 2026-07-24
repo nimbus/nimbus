@@ -26,18 +26,18 @@
 //! mesh join); until then it is exercised only by this module's tests.
 #![allow(dead_code)]
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use nimbus_core::TenantId;
 use nimbus_core::net::Cidr;
+use nimbus_network::{NetworkAttachmentId, NetworkSegmentAllocator, NetworkSegmentReleaseOutcome};
 
 use crate::error::{Result, SandboxError};
-use crate::instance::SandboxId;
 
-use super::segment::ReleaseOutcome;
 use super::segment::{InstalledSuperNet, SingleNodeSegmentAllocator};
-use super::{NetworkSegmentAllocator, OciSegmentRealization};
+use super::{OciSegmentAllocator, OciSegmentRealization};
 
 /// Promotion gate owned by horizontal-scaling HS5.
 ///
@@ -135,20 +135,38 @@ impl ClusterSegmentAllocator {
 }
 
 impl NetworkSegmentAllocator for ClusterSegmentAllocator {
+    type Segment = OciSegmentRealization;
+    type Error = SandboxError;
+
     fn segment_for(&self, tenant: &TenantId) -> Result<OciSegmentRealization> {
         self.leased_inner()?.segment_for(tenant)
     }
 
-    fn acquire(&self, tenant: &TenantId, sandbox_id: &SandboxId) -> Result<OciSegmentRealization> {
-        self.leased_inner()?.acquire(tenant, sandbox_id)
+    fn acquire(
+        &self,
+        tenant: &TenantId,
+        attachment_id: &NetworkAttachmentId,
+    ) -> Result<OciSegmentRealization> {
+        self.leased_inner()?.acquire(tenant, attachment_id)
     }
 
-    fn release(&self, tenant: &TenantId, sandbox_id: &SandboxId) -> Result<ReleaseOutcome> {
-        self.leased_inner()?.release(tenant, sandbox_id)
+    fn release(
+        &self,
+        tenant: &TenantId,
+        attachment_id: &NetworkAttachmentId,
+    ) -> Result<NetworkSegmentReleaseOutcome<OciSegmentRealization>> {
+        self.leased_inner()?.release(tenant, attachment_id)
     }
 
     fn grow_block(&self, tenant: &TenantId) -> Result<OciSegmentRealization> {
         self.leased_inner()?.grow_block(tenant)
+    }
+
+    fn reconcile_orphans(
+        &self,
+        live: &BTreeSet<(TenantId, NetworkAttachmentId)>,
+    ) -> Result<Vec<OciSegmentRealization>> {
+        self.leased_inner()?.reconcile_orphans(live)
     }
 
     fn requires_cluster_lease(&self) -> bool {
@@ -162,7 +180,7 @@ impl NetworkSegmentAllocator for ClusterSegmentAllocator {
 /// The cluster startup path calls this after mesh join.
 pub(crate) fn assert_cluster_admission(
     mesh_joined: bool,
-    allocator: &dyn NetworkSegmentAllocator,
+    allocator: &OciSegmentAllocator,
 ) -> Result<()> {
     if mesh_joined {
         if !allocator.requires_cluster_lease() {
@@ -197,8 +215,8 @@ mod tests {
         TenantId::new(id).expect("tenant id should parse")
     }
 
-    fn sandbox(id: &str) -> SandboxId {
-        SandboxId::new(id)
+    fn attachment(id: &str) -> NetworkAttachmentId {
+        NetworkAttachmentId::for_workload_attachment(id, super::super::DEFAULT_ATTACHMENT_NAME)
     }
 
     fn lease(super_net: &str, epoch: u64, expires_at_millis: u64) -> SuperNetLease {
@@ -237,8 +255,12 @@ mod tests {
         let node_a = node(dir_a.path(), Some(lease("10.10.0.0/16", 1, 10_000)), 0);
         let node_b = node(dir_b.path(), Some(lease("10.20.0.0/16", 1, 10_000)), 0);
 
-        let seg_a = node_a.acquire(&tenant("t"), &sandbox("s")).expect("node A");
-        let seg_b = node_b.acquire(&tenant("t"), &sandbox("s")).expect("node B");
+        let seg_a = node_a
+            .acquire(&tenant("t"), &attachment("s"))
+            .expect("node A");
+        let seg_b = node_b
+            .acquire(&tenant("t"), &attachment("s"))
+            .expect("node B");
 
         assert_eq!(seg_a.cidr().to_string(), "10.10.0.0/24");
         assert_eq!(seg_b.cidr().to_string(), "10.20.0.0/24");
@@ -255,7 +277,7 @@ mod tests {
         let dir = tempdir().expect("temp dir");
         let node = node(dir.path(), None, 0);
         let error = node
-            .acquire(&tenant("t"), &sandbox("s"))
+            .acquire(&tenant("t"), &attachment("s"))
             .expect_err("a node with no committed lease must fail closed");
         assert!(format!("{error}").contains("not committed"), "got: {error}");
     }
@@ -269,7 +291,7 @@ mod tests {
         // now == expiry: the lease is no longer valid.
         let node = node(dir.path(), Some(lease("10.10.0.0/16", 1, 5_000)), 5_000);
         let error = node
-            .acquire(&tenant("t"), &sandbox("s"))
+            .acquire(&tenant("t"), &attachment("s"))
             .expect_err("an expired lease must self-fence");
         let text = format!("{error}");
         assert!(
@@ -287,12 +309,12 @@ mod tests {
         // Carve under epoch 1 (stamps the shared network authority with epoch 1).
         let epoch1 = node(dir.path(), Some(lease("10.10.0.0/16", 1, 10_000)), 0);
         epoch1
-            .acquire(&tenant("t"), &sandbox("s"))
+            .acquire(&tenant("t"), &attachment("s"))
             .expect("epoch-1 carve succeeds");
         // SAME super-net, epoch 2 (a reclamation) over the SAME state: fail closed.
         let epoch2 = node(dir.path(), Some(lease("10.10.0.0/16", 2, 10_000)), 0);
         let error = epoch2
-            .acquire(&tenant("t2"), &sandbox("s2"))
+            .acquire(&tenant("t2"), &attachment("s2"))
             .expect_err("stale-epoch state must fail closed");
         assert!(
             format!("{error}").contains("epoch") || format!("{error}").contains("drain"),
@@ -350,16 +372,16 @@ mod tests {
         });
         let allocator = ClusterSegmentAllocator::new(dir.path(), 24, provider.clone());
         let original_tenant = tenant("tenant-original");
-        let original_sandbox = sandbox("sandbox-original");
+        let original_attachment = attachment("sandbox-original");
         allocator
-            .acquire(&original_tenant, &original_sandbox)
+            .acquire(&original_tenant, &original_attachment)
             .expect("the durable hold should be created under the live lease");
 
         provider.now.store(5_000, Ordering::SeqCst);
         let create_error = allocator
             .acquire(
                 &tenant("tenant-replacement"),
-                &sandbox("sandbox-replacement"),
+                &attachment("sandbox-replacement"),
             )
             .expect_err("lease expiry must continue to fence new creation");
         assert!(
@@ -367,7 +389,7 @@ mod tests {
             "the creation refusal must be the lease-expiry boundary: {create_error}"
         );
 
-        let cleanup = allocator.release(&original_tenant, &original_sandbox);
+        let cleanup = allocator.release(&original_tenant, &original_attachment);
         if let Err(error) = &cleanup {
             assert!(
                 error.to_string().contains("expired"),
@@ -375,7 +397,10 @@ mod tests {
             );
         }
         assert!(
-            matches!(cleanup, Ok(ReleaseOutcome::TenantDrained { .. })),
+            matches!(
+                cleanup,
+                Ok(NetworkSegmentReleaseOutcome::TenantDrained { .. })
+            ),
             "expired create authority must still permit cleanup of its durable old hold"
         );
     }

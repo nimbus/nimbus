@@ -12,8 +12,8 @@ use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
 
 use super::{
-    NetworkSegmentAllocator, OciNetworkConfig, OciNetworkLayout, OciSegmentRealization,
-    SingleNodeSegmentAllocator, allocate_container_ips,
+    OciNetworkConfig, OciNetworkLayout, OciSegmentAllocator, OciSegmentRealization,
+    allocate_container_ips,
 };
 
 /// Reserve and return the network config of the block bridge that will host
@@ -26,7 +26,7 @@ use super::{
 /// `OciNetworkConfig` (identical DNS-off/deny bodies differing only in binary
 /// paths), keeping this loop backend-agnostic.
 pub(crate) fn place_sandbox_on_block(
-    allocator: &SingleNodeSegmentAllocator,
+    allocator: &OciSegmentAllocator,
     tenant: &TenantId,
     layout: &OciNetworkLayout,
     sandbox_id: &SandboxId,
@@ -50,6 +50,7 @@ pub(crate) fn place_sandbox_on_block(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backends::oci::network::SingleNodeSegmentAllocator;
     use tempfile::tempdir;
 
     fn tenant(id: &str) -> TenantId {

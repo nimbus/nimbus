@@ -1,6 +1,11 @@
 use super::support::*;
 
-use crate::backends::oci::network::{OciMachinePortForwarderConfig, OciNetworkDirectEgress};
+use std::sync::Arc;
+
+use crate::backends::oci::network::{
+    OciMachinePortForwarderConfig, OciNetworkDirectEgress, OciSegmentAllocator,
+    RecordingSegmentAllocator, SegmentAllocatorOperation,
+};
 use nimbus_egress::{EGRESS_CA_BUNDLE_ENV, EGRESS_NODE_EXTRA_CA_CERTS_ENV, EGRESS_PROXY_URL_ENV};
 use tempfile::TempDir;
 
@@ -36,6 +41,38 @@ fn container_launch_network_config_denies_direct_egress_for_supervised_processes
         network_config.direct_egress,
         OciNetworkDirectEgress::Deny,
         "process-capable container launches must not keep ambient bridge egress"
+    );
+}
+
+#[test]
+fn container_backend_consumes_the_injected_portable_segment_allocator() {
+    let temp_dir = TempDir::new().expect("tempdir should build");
+    let tenant = nimbus_core::TenantId::new("injected-container").expect("tenant should parse");
+    let recorder = Arc::new(RecordingSegmentAllocator::new(
+        tenant.clone(),
+        "10.73.0.0/24",
+        73,
+    ));
+    let injected: Arc<OciSegmentAllocator> = recorder.clone();
+    let backend = ContainerSandboxBackend::with_segment_allocator(
+        ContainerSandboxBackendConfig::under_root(temp_dir.path()),
+        injected,
+    );
+
+    let network = backend
+        .network_config(&tenant)
+        .expect("injected allocator should resolve the network");
+
+    assert_eq!(network.network_subnet, "10.73.0.0/24");
+    assert_eq!(network.network_name, "nimbus-t-73");
+    assert_eq!(network.network_interface, "nb-73");
+    assert_eq!(
+        recorder.operations(),
+        [
+            SegmentAllocatorOperation::Reconcile(Default::default()),
+            SegmentAllocatorOperation::SegmentFor(tenant),
+        ],
+        "the container backend must use only the injected capability; startup reconciliation and resolution must not reconstruct or downcast a concrete allocator"
     );
 }
 

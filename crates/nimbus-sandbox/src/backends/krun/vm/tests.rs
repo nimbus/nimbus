@@ -1,6 +1,11 @@
 mod support;
 use support::*;
 
+use std::sync::Arc;
+
+use crate::backends::oci::network::{
+    OciSegmentAllocator, RecordingSegmentAllocator, SegmentAllocatorOperation,
+};
 use nimbus_egress::{EGRESS_CA_BUNDLE_ENV, EGRESS_NODE_EXTRA_CA_CERTS_ENV, EGRESS_PROXY_URL_ENV};
 
 fn env_from_config(config: &serde_json::Value) -> Vec<&str> {
@@ -1487,6 +1492,38 @@ fn launch_network_config_denies_direct_bridge_egress() {
             .direct_egress,
         crate::backends::oci::network::OciNetworkDirectEgress::Deny,
         "krun VMMs must run inside a deny-by-default bridge with no ambient egress route"
+    );
+}
+
+#[test]
+fn krun_backend_consumes_the_injected_portable_segment_allocator() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let tenant = TenantId::new("injected-krun").expect("tenant should parse");
+    let recorder = Arc::new(RecordingSegmentAllocator::new(
+        tenant.clone(),
+        "10.74.0.0/24",
+        74,
+    ));
+    let injected: Arc<OciSegmentAllocator> = recorder.clone();
+    let backend = KrunSandboxBackend::with_segment_allocator(
+        KrunSandboxBackendConfig::under_root(temp_dir.path().to_path_buf()),
+        injected,
+    );
+
+    let network = backend
+        .network_config(&tenant)
+        .expect("injected allocator should resolve the network");
+
+    assert_eq!(network.network_subnet, "10.74.0.0/24");
+    assert_eq!(network.network_name, "nimbus-t-74");
+    assert_eq!(network.network_interface, "nb-74");
+    assert_eq!(
+        recorder.operations(),
+        [
+            SegmentAllocatorOperation::Reconcile(Default::default()),
+            SegmentAllocatorOperation::SegmentFor(tenant),
+        ],
+        "the krun backend must use only the injected capability; startup reconciliation and resolution must not reconstruct or downcast a concrete allocator"
     );
 }
 

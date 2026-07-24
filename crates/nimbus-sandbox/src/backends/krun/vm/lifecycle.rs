@@ -276,8 +276,10 @@ impl KrunSandboxBackend {
         }
         // Take the tenant's refcount hold now the netns is up and pinned; the
         // reaper frees the index + bridge when the last hold releases.
-        self.segment_allocator()?
-            .acquire(&manifest.spec.tenant_id, &manifest.handle.id)?;
+        self.segment_allocator.acquire(
+            &manifest.spec.tenant_id,
+            &default_network_attachment_id(&manifest.handle.id),
+        )?;
         Ok(())
     }
 
@@ -398,20 +400,15 @@ impl KrunSandboxBackend {
         // Drop this sandbox's hold; on the LAST hold the tenant is drained, so
         // reap EVERY block bridge it grew (netavark won't auto-GC) and free all
         // its indices for reuse.
-        match self.segment_allocator() {
-            Ok(allocator) => {
-                errors.extend(
-                    release_network_segment_hold(
-                        &allocator,
-                        &manifest.spec.tenant_id,
-                        &manifest.handle.id,
-                    )
-                    .into_iter()
-                    .map(|error| error.to_string()),
-                );
-            }
-            Err(error) => errors.push(error.to_string()),
-        }
+        errors.extend(
+            release_network_segment_hold(
+                self.segment_allocator.as_ref(),
+                &manifest.spec.tenant_id,
+                &manifest.handle.id,
+            )
+            .into_iter()
+            .map(|error| error.to_string()),
+        );
         if errors.is_empty() {
             Ok(())
         } else {
