@@ -1,6 +1,6 @@
 # Nimbus Network Control Plane Plan
 
-Status: `active; NNC3.1 complete; NNC3.2 port-conflict model in progress`
+Status: `active; NNC3.2 complete; NNC3.3 provider bind/adoption in progress`
 
 Owner: this plan is the sole implementation control plane for the
 transport-free `nimbus-network` crate and the connectivity-resource lifecycle
@@ -36,20 +36,20 @@ ledger transition.
 
 | Field | Current value |
 | --- | --- |
-| Plan status | `active; NNC3.1 complete; NNC3.2 port-conflict model in progress` |
+| Plan status | `active; NNC3.2 complete; NNC3.3 provider bind/adoption in progress` |
 | Current band | `NNC3 — cross-process host-global PortLease` |
-| Current item | `NNC3.2 — model protocol, address overlap, bind realm, and request mode` |
-| Last completed item | `NNC3.1 — atomic lease lifecycle in one node store/lock domain` |
-| Next action | Commit the reviewed NNC3.1 lifecycle implementation, proof, ledger, and verifier repair, then record that checkpoint. Load the NNC0.1/NNC0.2 bind census and collision baseline, write the exhaustive positive/negative TCP/UDP, IPv4/IPv6, wildcard/specific, realm, exact/range/provider-assigned conflict matrix red, and implement only the portable NNC3.2 request/conflict model. |
+| Current item | `NNC3.3 — provider bind/adoption and pre-bound socket adoption` |
+| Last completed item | `NNC3.2 — portable protocol/address/realm/request-mode conflict model` |
+| Next action | Load the NNC0.2 external-binder collision baseline, add the provider bind/adoption interface and real `AddrInUse` fail-before, then prove a failed bind cannot publish and an adopted pre-bound socket matches durable lease identity/address. |
 | Owner branch | `codex/nimbus-network-architecture-audit` |
 | Owner worktree | `/Users/jack/src/github.com/nimbus/nimbus-network-architecture-audit` |
 | Audit base | Original architecture audit: `b69007a78a220847812370d9418049f1253f0384`. |
 | Execution base | Rebased without conflicts onto `origin/main` at `9c2d4f150c60f43dfdc0a3f1ec6550942e26ab8f` after NNC0.0. |
-| Last checkpoint commit | `b9e6caa6d4011463ce910c89f165b0b2031fa47b` — NNC2.8 completion and NNC3.1 activation checkpoint. |
-| Audit dirty state | The uncommitted NNC3.1 checkpoint owns `crates/nimbus-network/src/{lib.rs,port_lease.rs,state_store.rs}`, `crates/nimbus-testing/tests/network_port_lease.rs`, `scripts/verify-nimbus-network-control-plane.sh`, this plan, `docs/private/plans/README.md`, and `docs/private/plans/proof/nimbus-network-control-plane/nnc3.1-atomic-port-lease-lifecycle.md`. The owner worktree was clean at `b9e6caa6d4011463ce910c89f165b0b2031fa47b`; no unrelated paths are dirty. |
+| Last checkpoint commit | `003806f008bf648de2482a4b0b722420486a6d4a` — NNC3.1 completion and NNC3.2 activation checkpoint. |
+| Audit dirty state | NNC3.2 owns the portable request/conflict model, exhaustive matrix and real-process tests, this ledger transition, and `docs/private/plans/proof/nimbus-network-control-plane/nnc3.2-port-conflict-model.md`. The owner worktree was clean at `003806f008bf648de2482a4b0b722420486a6d4a` before NNC3.2; no unrelated paths are dirty. |
 | Execution mode | Autonomous implementation goal active; commit each completed item with its ledger/evidence checkpoint; no push or PR without separate authority. |
-| Last verification | NNC3.1 adds the exact-only crash-safe reserve/adopt/activate/withdraw/release lifecycle in the one NNC2 store/lock domain. Network tests are 69/69; the real two-process contention parent is 1/1 with its child entrypoint explicitly ignored; all-target/all-feature check and strict Clippy, rustdoc, format/diff, exact core-only metadata, Bash/ShellCheck, docs 108 pages, and site 17/17 gates pass. Checksum-valid semantic corruption fails during authority startup. NNCV008 now rejects nonexistent recovery hashes and its self-test is 16/16; aggregate is 14/1 only at expected later NNCV005. Opus 4.8/max reviewed the complete 100,121-byte bundle clean with `patch is correct (0.8)`. Exact evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc3.1-atomic-port-lease-lifecycle.md`. |
-| Blocking decision | None. NNC3.2 must extend the portable request/conflict model without binding sockets, selecting providers, migrating production owners, or weakening the conservative unknown-host rule. |
+| Last verification | NNC3.2 adds the portable TCP/UDP, address/family, bind-realm, exposure, and exact/range/provider-assigned conflict model without provider effects. Network tests are 79/79; three real-process contention parents pass with one child entrypoint ignored; all-target/all-feature check and strict Clippy, rustdoc, format/diff, exact core-only metadata, Bash/ShellCheck, docs 108 pages, and site 17/17 gates pass. Generated relation proofs cover 2,304 ordered binding pairs; validation and checksum-valid corruption fail closed. Verifier self-test is 16/16 and aggregate is 14/1 only at expected later NNCV005. Opus 4.8/max reviewed the complete 100,777-byte bundle clean with `patch is correct (0.8)`. Exact evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc3.2-port-conflict-model.md`. |
+| Blocking decision | None. NNC3.3 must add provider bind/adoption and pre-bound socket evidence without moving socket effects into `nimbus-network`, selecting production providers, or starting the NNC3.4+ listener migrations. |
 
 Recovery protocol:
 
@@ -1296,8 +1296,8 @@ checkpoint.
 | NNC2.7 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc2.7-multi-tenant-invariants.md`; stale verifier failed 10/16 then canonicalized to 16/16; network 63/0/0, named OCI network 71/0/3, workloads scheduling 2/0/0, and sandbox 269/0/10 plus helper 2/0/0 pass. A fresh privileged Linux run passes both real Netavark/nft/container cases. KVM remains unavailable locally and is not claimed: explicit provider cases now fail rather than silently pass without usable `/dev/kvm`, while durable unchanged real-KVM cross-tenant/growth evidence is identified. Quality/dependency/verifier/docs gates pass except expected later NNCV005; Opus 4.8/max review is clean at 0.8. |
 | NNC2.8 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc2.8-horizontal-scaling-seam-truth-up.md`; the ignored source was materialized byte-for-byte and then force-tracked, stale sandbox-owned allocator/install claims were replaced by the canonical network contract plus dependency-safe future lease source, and cluster transport authority remains deferred/cluster-owned. Exact trait/dependency/forbidden-effect scans pass; the aggregate caught a missing Last-green recovery cell, then returned to 14/1 only at expected NNCV005; docs are 108 pages and 17/17; Opus 4.8/max review is clean at 0.8. |
 | NNC3.1 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc3.1-atomic-port-lease-lifecycle.md`; exact-only reserve/adopt/activate/withdraw/release transitions share the NNC2 crash-safe store/lock, retain all non-terminal fences, reject stale/divergent requests and checksum-valid semantic corruption without mutation, and perform no provider effect. Thread and real-process contenders each race through activation but produce exactly one durable `Active` lease. Network 69/0/0 and process parent 1/0/1 pass; check/strict Clippy/rustdoc/format/diff, exact core-only dependency, verifier 16/16 self-test and 14/1 expected red pass. NNCV008 now resolves the Recovery Header checkpoint after catching and correcting a nonexistent full hash. |
-| NNC3.2 | `in_progress` | Owned paths until the NNC3.1 checkpoint commits: `crates/nimbus-network/src/{lib.rs,port_lease.rs,state_store.rs}`, `crates/nimbus-testing/tests/network_port_lease.rs`, `scripts/verify-nimbus-network-control-plane.sh`, this plan, `docs/private/plans/README.md`, and the NNC3.1 proof. Last green: source HEAD `b9e6caa6d4011463ce910c89f165b0b2031fa47b`; network 69/69, process parent 1/1, check/strict Clippy/rustdoc/format/diff/dependency/Bash/ShellCheck/docs green, verifier self-test 16/16 and aggregate 14/1 only NNCV005, Opus 4.8/max review clean at 0.8. Next: commit NNC3.1, record its hash, then load the bind census/collision baseline and add the exhaustive conflict-matrix red. Blocker: none. |
-| NNC3.3 | `todo` | — |
+| NNC3.2 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc3.2-port-conflict-model.md`; portable TCP/UDP, realm, address/family, exposure, exact/range/provider-assigned types feed one atomic conflict authority; unknown host semantics fail closed; range selects one lowest-free slot; provider assignment fences only at atomic adoption. Generated proofs cover 2,304 ordered binding pairs plus 18 named matrix cases; network 79/0/0 and three process parents 3/0/1 pass; check/strict Clippy/rustdoc/format/diff, exact core-only dependency, verifier 16/16 self-test and 14/1 expected-red, docs gates, and clean Opus 4.8/max review at 0.8 pass. |
+| NNC3.3 | `in_progress` | Next: load NNC0.2, write the real external-binder `AddrInUse` and pre-bound identity/address fail-before, then define provider-owned effects over the network-owned lease/adoption contract. Last green/checkpoint remains `003806f008bf648de2482a4b0b722420486a6d4a` until the NNC3.2 completion commit. Blocker: none. |
 | NNC3.4 | `todo` | — |
 | NNC3.5 | `todo` | — |
 | NNC3.6 | `todo` | — |

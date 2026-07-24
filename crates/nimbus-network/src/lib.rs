@@ -29,8 +29,11 @@ pub use plan::{
     NetworkPlanUpdateError,
 };
 pub use port_lease::{
-    LocalPortLeaseAuthority, PortLeaseBinding, PortLeaseError, PortLeaseFenceMismatch,
-    PortLeaseOperation, PortLeasePhase, PortLeaseRecord, PortLeaseRequest,
+    LocalPortLeaseAuthority, PortAddressFamily, PortBindRealm, PortBindRealmError,
+    PortBindRealmErrorKind, PortBindTarget, PortBindTargetError, PortBindingSpec, PortExposure,
+    PortIpv6Overlap, PortIsolatedRealm, PortLeaseBinding, PortLeaseError, PortLeaseFenceMismatch,
+    PortLeaseOperation, PortLeasePhase, PortLeaseRecord, PortLeaseRequest, PortProtocol, PortRange,
+    PortRangeError, PortRequestMode,
 };
 pub use provider::{NetworkProviderHandle, NetworkProviderHandleError};
 pub use segment::{

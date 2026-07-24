@@ -6,7 +6,7 @@
 //! [`LocalNetworkStateStore`] lock and transaction domain, so separately opened
 //! handles and separate Nimbus processes cannot publish conflicting authority.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error as StdError;
 use std::fmt::{self, Display, Formatter};
 use std::num::NonZeroU16;
@@ -19,6 +19,14 @@ use crate::{
     LocalNetworkStateStore, NetworkLeaseEpoch, NetworkProviderHandle, NetworkResourceGeneration,
     NetworkResourceId, NetworkStatePartition, NetworkStateStoreError, NetworkStateTransactionError,
     PortLeaseId,
+};
+
+mod request;
+
+pub use request::{
+    PortAddressFamily, PortBindRealm, PortBindRealmError, PortBindRealmErrorKind, PortBindTarget,
+    PortBindTargetError, PortBindingSpec, PortExposure, PortIpv6Overlap, PortIsolatedRealm,
+    PortProtocol, PortRange, PortRangeError, PortRequestMode,
 };
 
 /// Durable phase of one host-port lease generation.
@@ -54,29 +62,28 @@ impl PortLeasePhase {
 
 /// Immutable identity and fence carried by every lease operation.
 ///
-/// NNC3.1 deliberately admits only an exact non-zero host port. NNC3.2 extends
-/// the binding request with protocol, address family, realm, exposure,
-/// exact/range/provider-assigned modes, and conservative overlap rules without
-/// changing this lifecycle authority.
+/// The portable [`PortBindingSpec`] carries protocol, address/family overlap,
+/// realm, exposure, and exact/range/provider-assigned allocation semantics.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PortLeaseRequest {
     lease_id: PortLeaseId,
     owner_id: NetworkResourceId,
     tenant_id: Option<TenantId>,
     generation: NetworkResourceGeneration,
     lease_epoch: NetworkLeaseEpoch,
-    requested_port: NonZeroU16,
+    binding: PortBindingSpec,
 }
 
 impl PortLeaseRequest {
-    /// Construct an exact host-port reservation request.
-    pub fn new_exact(
+    /// Construct one immutable host-port lease request.
+    pub fn new(
         lease_id: PortLeaseId,
         owner_id: NetworkResourceId,
         tenant_id: Option<TenantId>,
         generation: NetworkResourceGeneration,
         lease_epoch: NetworkLeaseEpoch,
-        requested_port: NonZeroU16,
+        binding: PortBindingSpec,
     ) -> Self {
         Self {
             lease_id,
@@ -84,7 +91,7 @@ impl PortLeaseRequest {
             tenant_id,
             generation,
             lease_epoch,
-            requested_port,
+            binding,
         }
     }
 
@@ -113,14 +120,15 @@ impl PortLeaseRequest {
         self.lease_epoch
     }
 
-    /// Exact non-zero host port requested by this NNC3.1 contract.
-    pub const fn requested_port(&self) -> NonZeroU16 {
-        self.requested_port
+    /// Portable binding and conflict domain.
+    pub fn binding(&self) -> &PortBindingSpec {
+        &self.binding
     }
 }
 
 /// Concrete provider binding adopted into a reserved lease before activation.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PortLeaseBinding {
     actual_port: NonZeroU16,
     provider_handle: NetworkProviderHandle,
@@ -158,8 +166,10 @@ impl fmt::Debug for PortLeaseBinding {
 
 /// Durable port-lease record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PortLeaseRecord {
     request: PortLeaseRequest,
+    reserved_port: Option<NonZeroU16>,
     phase: PortLeasePhase,
     binding: Option<PortLeaseBinding>,
 }
@@ -168,6 +178,13 @@ impl PortLeaseRecord {
     /// Immutable identity/fence that admitted this record.
     pub fn request(&self) -> &PortLeaseRequest {
         &self.request
+    }
+
+    /// Numeric port currently fenced by this lease.
+    ///
+    /// Provider-assigned requests remain `None` until bind adoption.
+    pub const fn reserved_port(&self) -> Option<NonZeroU16> {
+        self.reserved_port
     }
 
     /// Current durable lifecycle phase.
@@ -182,13 +199,15 @@ impl PortLeaseRecord {
 }
 
 #[derive(Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PortLeaseState {
     leases: BTreeMap<PortLeaseId, PortLeaseRecord>,
 }
 
 impl PortLeaseState {
     fn validate(&self) -> Result<(), PortLeaseOperationError> {
-        let mut live_ports = BTreeMap::<NonZeroU16, PortLeaseId>::new();
+        let mut live_ports =
+            BTreeMap::<(PortProtocol, NonZeroU16), Vec<(&PortLeaseId, &PortLeaseRecord)>>::new();
 
         for (lease_id, record) in &self.leases {
             if lease_id != record.request.lease_id() {
@@ -221,31 +240,98 @@ impl PortLeaseState {
                 _ => {}
             }
 
+            match (record.request.binding.port(), record.reserved_port) {
+                (PortRequestMode::ProviderAssigned, None) => {}
+                (mode, Some(actual)) if mode.accepts(actual) => {}
+                (mode, reserved_port) => {
+                    return Err(PortLeaseOperationError::CorruptAuthority {
+                        reason: format!(
+                            "lease {lease_id} has reserved port {reserved_port:?} incompatible with request {mode:?}"
+                        ),
+                    });
+                }
+            }
+
             if let Some(binding) = &record.binding
-                && binding.actual_port != record.request.requested_port
+                && Some(binding.actual_port) != record.reserved_port
             {
                 return Err(PortLeaseOperationError::CorruptAuthority {
                     reason: format!(
-                        "lease {lease_id} requested exact port {} but records binding {}",
-                        record.request.requested_port, binding.actual_port
+                        "lease {lease_id} reserves {:?} but records binding {}",
+                        record.reserved_port, binding.actual_port
                     ),
                 });
             }
 
             if !record.phase.is_terminal()
-                && let Some(existing_lease_id) =
-                    live_ports.insert(record.request.requested_port, lease_id.clone())
+                && let Some(reserved_port) = record.reserved_port
             {
-                return Err(PortLeaseOperationError::CorruptAuthority {
-                    reason: format!(
-                        "non-terminal leases {existing_lease_id} and {lease_id} both fence port {}",
-                        record.request.requested_port
-                    ),
-                });
+                let key = (record.request.binding.protocol(), reserved_port);
+                let entries = live_ports.entry(key).or_default();
+                if let Some((existing_lease_id, _)) = entries.iter().find(|(_, existing)| {
+                    record.request.binding.overlaps(&existing.request.binding)
+                }) {
+                    return Err(PortLeaseOperationError::CorruptAuthority {
+                        reason: format!(
+                            "overlapping non-terminal leases {existing_lease_id} and {lease_id} both fence {:?} port {reserved_port}",
+                            record.request.binding.protocol()
+                        ),
+                    });
+                }
+                entries.push((lease_id, record));
             }
         }
 
         Ok(())
+    }
+
+    fn conflicting_record<'a>(
+        &'a self,
+        request: &PortLeaseRequest,
+        port: NonZeroU16,
+        exclude: Option<&PortLeaseId>,
+    ) -> Option<&'a PortLeaseRecord> {
+        self.leases.values().find(|record| {
+            !record.phase.is_terminal()
+                && record.reserved_port == Some(port)
+                && exclude != Some(record.request.lease_id())
+                && request.binding.overlaps(&record.request.binding)
+        })
+    }
+
+    fn reserve_port(
+        &self,
+        request: &PortLeaseRequest,
+    ) -> Result<Option<NonZeroU16>, PortLeaseOperationError> {
+        match request.binding.port() {
+            PortRequestMode::Exact(port) => {
+                if let Some(existing) = self.conflicting_record(request, *port, None) {
+                    return Err(port_conflict(request, existing, *port));
+                }
+                Ok(Some(*port))
+            }
+            PortRequestMode::Range(range) => {
+                let occupied = self
+                    .leases
+                    .values()
+                    .filter(|record| {
+                        !record.phase.is_terminal()
+                            && request.binding.overlaps(&record.request.binding)
+                    })
+                    .filter_map(|record| record.reserved_port)
+                    .collect::<BTreeSet<_>>();
+                let reserved_port = range
+                    .candidates()
+                    .find(|candidate| !occupied.contains(candidate))
+                    .ok_or_else(|| PortLeaseOperationError::PortRangeExhausted {
+                        requested_lease_id: request.lease_id.clone(),
+                        requested_owner_id: request.owner_id.clone(),
+                        requested_range: *range,
+                    })?;
+                Ok(Some(reserved_port))
+            }
+            PortRequestMode::ProviderAssigned => Ok(None),
+        }
     }
 }
 
@@ -265,12 +351,14 @@ impl LocalPortLeaseAuthority {
         Ok(authority)
     }
 
-    /// Atomically reserve one exact host port.
+    /// Atomically reserve an exact/range slot or provider-assigned identity.
     ///
     /// Replaying the same immutable request returns its existing record.
     /// Reusing a lease ID with different identity/fence data fails closed.
-    /// Every non-terminal record fences the requested port, including
-    /// `Withdrawing` and `CleanupPending`.
+    /// Every non-terminal record with a selected slot fences it, including
+    /// `Withdrawing` and `CleanupPending`. Range requests select the lowest
+    /// available slot in their complete overlap domain. Provider-assigned
+    /// requests acquire a numeric fence only during adoption.
     pub fn reserve(&self, request: PortLeaseRequest) -> Result<PortLeaseRecord, PortLeaseError> {
         self.transaction(|state| {
             if let Some(existing) = state.leases.get(request.lease_id()) {
@@ -282,22 +370,11 @@ impl LocalPortLeaseAuthority {
                 });
             }
 
-            if let Some(existing) = state.leases.values().find(|record| {
-                !record.phase.is_terminal()
-                    && record.request.requested_port == request.requested_port
-            }) {
-                return Err(PortLeaseOperationError::PortConflict {
-                    requested_port: request.requested_port,
-                    requested_lease_id: request.lease_id.clone(),
-                    requested_owner_id: request.owner_id.clone(),
-                    existing_lease_id: existing.request.lease_id.clone(),
-                    existing_owner_id: existing.request.owner_id.clone(),
-                    existing_phase: existing.phase,
-                });
-            }
+            let reserved_port = state.reserve_port(&request)?;
 
             let record = PortLeaseRecord {
                 request: request.clone(),
+                reserved_port,
                 phase: PortLeasePhase::Reserved,
                 binding: None,
             };
@@ -310,34 +387,26 @@ impl LocalPortLeaseAuthority {
 
     /// Durably adopt a concrete provider binding without making it active.
     ///
-    /// For the exact-only NNC3.1 contract, the actual port must equal the
-    /// requested port. Provider-assigned mode is introduced with its conflict
-    /// rules in NNC3.2.
+    /// Exact/range bindings must equal the atomically selected slot.
+    /// Provider-assigned adoption atomically checks and records the provider's
+    /// actual non-zero port before the lease may activate.
     pub fn adopt(
         &self,
         request: &PortLeaseRequest,
         binding: PortLeaseBinding,
     ) -> Result<PortLeaseRecord, PortLeaseError> {
         self.transaction(|state| {
-            let record = exact_record_mut(state, request)?;
-            if binding.actual_port != request.requested_port {
-                return Err(PortLeaseOperationError::BindingPortMismatch {
-                    lease_id: request.lease_id.clone(),
-                    requested_port: request.requested_port,
-                    actual_port: binding.actual_port,
-                });
-            }
-            match record.phase {
-                PortLeasePhase::Reserved => {
-                    record.phase = PortLeasePhase::Binding;
-                    record.binding = Some(binding);
+            let existing = exact_record(state, request)?;
+            match existing.phase {
+                PortLeasePhase::Binding if existing.binding.as_ref() == Some(&binding) => {
+                    return Ok(existing.clone());
                 }
-                PortLeasePhase::Binding if record.binding.as_ref() == Some(&binding) => {}
                 PortLeasePhase::Binding => {
                     return Err(PortLeaseOperationError::BindingConflict {
                         lease_id: request.lease_id.clone(),
                     });
                 }
+                PortLeasePhase::Reserved => {}
                 phase => {
                     return Err(PortLeaseOperationError::InvalidTransition {
                         lease_id: request.lease_id.clone(),
@@ -346,6 +415,34 @@ impl LocalPortLeaseAuthority {
                     });
                 }
             }
+
+            if let Some(reserved_port) = existing.reserved_port {
+                if binding.actual_port != reserved_port {
+                    return Err(PortLeaseOperationError::BindingPortMismatch {
+                        lease_id: request.lease_id.clone(),
+                        reserved_port,
+                        actual_port: binding.actual_port,
+                    });
+                }
+            } else if !matches!(request.binding.port(), PortRequestMode::ProviderAssigned) {
+                return Err(PortLeaseOperationError::CorruptAuthority {
+                    reason: format!(
+                        "non-provider-assigned lease {} has no reserved port",
+                        request.lease_id
+                    ),
+                });
+            }
+
+            if let Some(conflict) =
+                state.conflicting_record(request, binding.actual_port, Some(request.lease_id()))
+            {
+                return Err(port_conflict(request, conflict, binding.actual_port));
+            }
+
+            let record = exact_record_mut(state, request)?;
+            record.reserved_port = Some(binding.actual_port);
+            record.phase = PortLeasePhase::Binding;
+            record.binding = Some(binding);
             Ok(record.clone())
         })
     }
@@ -460,6 +557,21 @@ impl LocalPortLeaseAuthority {
     }
 }
 
+fn exact_record<'a>(
+    state: &'a PortLeaseState,
+    request: &PortLeaseRequest,
+) -> Result<&'a PortLeaseRecord, PortLeaseOperationError> {
+    let record =
+        state
+            .leases
+            .get(request.lease_id())
+            .ok_or_else(|| PortLeaseOperationError::NotFound {
+                lease_id: request.lease_id.clone(),
+            })?;
+    verify_exact_request(record, request)?;
+    Ok(record)
+}
+
 fn exact_record_mut<'a>(
     state: &'a mut PortLeaseState,
     request: &PortLeaseRequest,
@@ -469,6 +581,14 @@ fn exact_record_mut<'a>(
             lease_id: request.lease_id.clone(),
         }
     })?;
+    verify_exact_request(record, request)?;
+    Ok(record)
+}
+
+fn verify_exact_request(
+    record: &PortLeaseRecord,
+    request: &PortLeaseRequest,
+) -> Result<(), PortLeaseOperationError> {
     if record.request != *request {
         return Err(PortLeaseOperationError::StaleFence(Box::new(
             PortLeaseFenceMismatch {
@@ -477,7 +597,22 @@ fn exact_record_mut<'a>(
             },
         )));
     }
-    Ok(record)
+    Ok(())
+}
+
+fn port_conflict(
+    request: &PortLeaseRequest,
+    existing: &PortLeaseRecord,
+    conflicting_port: NonZeroU16,
+) -> PortLeaseOperationError {
+    PortLeaseOperationError::PortConflict {
+        conflicting_port,
+        requested_lease_id: request.lease_id.clone(),
+        requested_owner_id: request.owner_id.clone(),
+        existing_lease_id: existing.request.lease_id.clone(),
+        existing_owner_id: existing.request.owner_id.clone(),
+        existing_phase: existing.phase,
+    }
 }
 
 /// Expected and rejected immutable requests carried by a stale-fence error.
@@ -535,17 +670,22 @@ enum PortLeaseOperationError {
         lease_id: PortLeaseId,
     },
     PortConflict {
-        requested_port: NonZeroU16,
+        conflicting_port: NonZeroU16,
         requested_lease_id: PortLeaseId,
         requested_owner_id: NetworkResourceId,
         existing_lease_id: PortLeaseId,
         existing_owner_id: NetworkResourceId,
         existing_phase: PortLeasePhase,
     },
+    PortRangeExhausted {
+        requested_lease_id: PortLeaseId,
+        requested_owner_id: NetworkResourceId,
+        requested_range: PortRange,
+    },
     StaleFence(Box<PortLeaseFenceMismatch>),
     BindingPortMismatch {
         lease_id: PortLeaseId,
-        requested_port: NonZeroU16,
+        reserved_port: NonZeroU16,
         actual_port: NonZeroU16,
     },
     BindingConflict {
@@ -571,19 +711,25 @@ pub enum PortLeaseError {
     IdentityConflict { lease_id: PortLeaseId },
     /// Another non-terminal lease already fences the requested host port.
     PortConflict {
-        requested_port: NonZeroU16,
+        conflicting_port: NonZeroU16,
         requested_lease_id: PortLeaseId,
         requested_owner_id: NetworkResourceId,
         existing_lease_id: PortLeaseId,
         existing_owner_id: NetworkResourceId,
         existing_phase: PortLeasePhase,
     },
+    /// Every port in an overlapping requested range is fenced.
+    PortRangeExhausted {
+        requested_lease_id: PortLeaseId,
+        requested_owner_id: NetworkResourceId,
+        requested_range: PortRange,
+    },
     /// A generation/epoch/owner request did not match durable authority.
     StaleFence(Box<PortLeaseFenceMismatch>),
-    /// Exact reservation and concrete adopted port disagree.
+    /// Atomically reserved slot and concrete adopted port disagree.
     BindingPortMismatch {
         lease_id: PortLeaseId,
-        requested_port: NonZeroU16,
+        reserved_port: NonZeroU16,
         actual_port: NonZeroU16,
     },
     /// A second adoption supplied different provider evidence.
@@ -616,28 +762,37 @@ impl From<PortLeaseOperationError> for PortLeaseError {
                 Self::IdentityConflict { lease_id }
             }
             PortLeaseOperationError::PortConflict {
-                requested_port,
+                conflicting_port,
                 requested_lease_id,
                 requested_owner_id,
                 existing_lease_id,
                 existing_owner_id,
                 existing_phase,
             } => Self::PortConflict {
-                requested_port,
+                conflicting_port,
                 requested_lease_id,
                 requested_owner_id,
                 existing_lease_id,
                 existing_owner_id,
                 existing_phase,
             },
+            PortLeaseOperationError::PortRangeExhausted {
+                requested_lease_id,
+                requested_owner_id,
+                requested_range,
+            } => Self::PortRangeExhausted {
+                requested_lease_id,
+                requested_owner_id,
+                requested_range,
+            },
             PortLeaseOperationError::StaleFence(mismatch) => Self::StaleFence(mismatch),
             PortLeaseOperationError::BindingPortMismatch {
                 lease_id,
-                requested_port,
+                reserved_port,
                 actual_port,
             } => Self::BindingPortMismatch {
                 lease_id,
-                requested_port,
+                reserved_port,
                 actual_port,
             },
             PortLeaseOperationError::BindingConflict { lease_id } => {
@@ -671,7 +826,7 @@ impl Display for PortLeaseError {
                 "port lease {lease_id} was reused with different immutable reservation identity"
             ),
             Self::PortConflict {
-                requested_port,
+                conflicting_port,
                 requested_lease_id,
                 requested_owner_id,
                 existing_lease_id,
@@ -681,38 +836,50 @@ impl Display for PortLeaseError {
                 formatter,
                 "port {} requested by lease {} owner {:?} conflicts with lease {} owner {:?} in \
                  phase {:?}",
-                requested_port,
+                conflicting_port,
                 requested_lease_id,
                 requested_owner_id,
                 existing_lease_id,
                 existing_owner_id,
                 existing_phase
             ),
+            Self::PortRangeExhausted {
+                requested_lease_id,
+                requested_owner_id,
+                requested_range,
+            } => write!(
+                formatter,
+                "port range {}..={} requested by lease {} owner {:?} has no free slot in its \
+                 overlap domain",
+                requested_range.start(),
+                requested_range.end(),
+                requested_lease_id,
+                requested_owner_id
+            ),
             Self::StaleFence(mismatch) => write!(
                 formatter,
                 "port lease {} rejected stale or divergent fence: expected owner {:?} tenant {:?} \
-                 port {} generation {} epoch {}, candidate owner {:?} tenant {:?} port {} \
+                 binding {:?} generation {} epoch {}, candidate owner {:?} tenant {:?} binding {:?} \
                  generation {} epoch {}",
                 mismatch.expected.lease_id,
                 mismatch.expected.owner_id,
                 mismatch.expected.tenant_id,
-                mismatch.expected.requested_port,
+                mismatch.expected.binding,
                 mismatch.expected.generation.as_u64(),
                 mismatch.expected.lease_epoch.as_u64(),
                 mismatch.candidate.owner_id,
                 mismatch.candidate.tenant_id,
-                mismatch.candidate.requested_port,
+                mismatch.candidate.binding,
                 mismatch.candidate.generation.as_u64(),
                 mismatch.candidate.lease_epoch.as_u64()
             ),
             Self::BindingPortMismatch {
                 lease_id,
-                requested_port,
+                reserved_port,
                 actual_port,
             } => write!(
                 formatter,
-                "port lease {lease_id} requested exact port {requested_port} but provider reported \
-                 {actual_port}"
+                "port lease {lease_id} reserved port {reserved_port} but provider reported {actual_port}"
             ),
             Self::BindingConflict { lease_id } => write!(
                 formatter,
@@ -893,10 +1060,10 @@ mod tests {
         assert!(matches!(
             conflict,
             PortLeaseError::PortConflict {
-                requested_port,
+                conflicting_port,
                 existing_phase: PortLeasePhase::Reserved,
                 ..
-            } if requested_port.get() == PORT
+            } if conflicting_port.get() == PORT
         ));
 
         authority
@@ -1001,12 +1168,17 @@ mod tests {
         for (corruption, expected_reason) in [
             (CorruptionFixture::MapKeyMismatch, "does not match"),
             (CorruptionFixture::ActiveWithoutBinding, "has no binding"),
+            (CorruptionFixture::BindingPortMismatch, "reserves Some"),
             (
-                CorruptionFixture::BindingPortMismatch,
-                "requested exact port",
+                CorruptionFixture::ExactWithoutReservedPort,
+                "incompatible with request",
+            ),
+            (
+                CorruptionFixture::ExactWrongReservedPort,
+                "incompatible with request",
             ),
             (CorruptionFixture::FailedWithBinding, "terminal failed"),
-            (CorruptionFixture::DuplicateLivePort, "both fence port"),
+            (CorruptionFixture::DuplicateLivePort, "both fence"),
         ] {
             let root = tempfile::tempdir().expect("state root should exist");
             write_corrupt_state(root.path(), corruption);
@@ -1029,6 +1201,8 @@ mod tests {
         MapKeyMismatch,
         ActiveWithoutBinding,
         BindingPortMismatch,
+        ExactWithoutReservedPort,
+        ExactWrongReservedPort,
         FailedWithBinding,
         DuplicateLivePort,
     }
@@ -1042,6 +1216,9 @@ mod tests {
                     let first_request = request("01ARZ3NDEKTSV4RRFFQ69G5FAV", 1, 1, PORT);
                     let mut first = PortLeaseRecord {
                         request: first_request.clone(),
+                        reserved_port: Some(
+                            NonZeroU16::new(PORT).expect("fixture port should be non-zero"),
+                        ),
                         phase: PortLeasePhase::Reserved,
                         binding: None,
                     };
@@ -1062,6 +1239,14 @@ mod tests {
                             first.binding = Some(binding(PORT + 1, "wrong-port"));
                             state.leases.insert(first_request.lease_id().clone(), first);
                         }
+                        CorruptionFixture::ExactWithoutReservedPort => {
+                            first.reserved_port = None;
+                            state.leases.insert(first_request.lease_id().clone(), first);
+                        }
+                        CorruptionFixture::ExactWrongReservedPort => {
+                            first.reserved_port = NonZeroU16::new(PORT + 1);
+                            state.leases.insert(first_request.lease_id().clone(), first);
+                        }
                         CorruptionFixture::FailedWithBinding => {
                             first.phase = PortLeasePhase::Failed;
                             first.binding = Some(binding(PORT, "unexpected-provider-effect"));
@@ -1071,6 +1256,9 @@ mod tests {
                             let second_request = request("01ARZ3NDEKTSV4RRFFQ69G5FAW", 1, 1, PORT);
                             let second = PortLeaseRecord {
                                 request: second_request.clone(),
+                                reserved_port: Some(
+                                    NonZeroU16::new(PORT).expect("fixture port should be non-zero"),
+                                ),
                                 phase: PortLeasePhase::Reserved,
                                 binding: None,
                             };
@@ -1103,13 +1291,19 @@ mod tests {
         let owner_id: ListenerId = format!("netlistener_{owner_payload}")
             .parse()
             .expect("fixture listener id should parse");
-        PortLeaseRequest::new_exact(
+        PortLeaseRequest::new(
             lease_id,
             owner_id.into(),
             Some(TenantId::new("tenant-a").expect("fixture tenant should parse")),
             NetworkResourceGeneration::new(generation),
             NetworkLeaseEpoch::new(epoch),
-            NonZeroU16::new(port).expect("fixture port is non-zero"),
+            PortBindingSpec::new(
+                PortProtocol::Tcp,
+                PortBindRealm::Host,
+                PortBindTarget::ipv4_wildcard(),
+                PortExposure::Unknown,
+                PortRequestMode::Exact(NonZeroU16::new(port).expect("fixture port is non-zero")),
+            ),
         )
     }
 
