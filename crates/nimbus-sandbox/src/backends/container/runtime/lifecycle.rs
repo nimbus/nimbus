@@ -30,6 +30,45 @@ fn detect_runtime_status_marks_stale_pidfiles_as_failed() {
     );
 }
 
+/// NNC0.6 fail-before baseline for NNCF6. Reaching the netns-created boundary
+/// does not prove that Netavark status, the egress pin, forwarding, or the PEP
+/// exists. Runtime readiness must eventually consume complete attachment
+/// evidence rather than infer safety from workload liveness alone.
+#[test]
+#[ignore = "NNC0.6 expected red until NNC5.2 makes complete attachment evidence part of readiness"]
+fn nnc0_6_container_is_not_ready_at_partial_attachment_boundary() {
+    let temp_dir = TempDir::new().expect("tempdir should build");
+    let backend =
+        ContainerSandboxBackend::new(ContainerSandboxBackendConfig::under_root(temp_dir.path()));
+    let manifest = backend
+        .plan_start_with_id(&sample_spec(), &sandbox_id(), None, None)
+        .expect("plan should lower")
+        .manifest;
+    std::fs::create_dir_all(
+        manifest
+            .network_layout
+            .netns_path
+            .parent()
+            .expect("netns path should have a parent"),
+    )
+    .expect("netns parent should create");
+    std::fs::write(&manifest.network_layout.netns_path, b"netns")
+        .expect("netns-created boundary should persist");
+    assert!(
+        !manifest.network_layout.status_path.exists(),
+        "precondition: Netavark status must still be absent at this partial boundary"
+    );
+
+    let status = running_status(&manifest);
+
+    assert_ne!(
+        status,
+        SandboxStatus::Ready,
+        "NNCF6: workload liveness without complete same-generation attachment evidence \
+         must not publish container readiness"
+    );
+}
+
 #[test]
 fn restart_decision_keeps_failed_container_starting_until_backoff_elapses() {
     let temp_dir = TempDir::new().expect("tempdir should build");

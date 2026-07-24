@@ -22,6 +22,7 @@ use nimbus_tenant::{
     TenantIsolationPolicyInput, TenantServiceGrantPolicyDecision, TenantVolumePolicyDecision,
     WorkloadAttributes,
 };
+use tokio::sync::Semaphore;
 
 use super::*;
 
@@ -45,6 +46,20 @@ impl ServiceDefinitionCatalog for StubServiceDefinitionCatalog {
     }
 }
 
+struct StopBarrier {
+    entered: Semaphore,
+    release: Semaphore,
+}
+
+impl Default for StopBarrier {
+    fn default() -> Self {
+        Self {
+            entered: Semaphore::new(0),
+            release: Semaphore::new(0),
+        }
+    }
+}
+
 struct StubSandboxBackend {
     image_starts: AtomicUsize,
     build_starts: AtomicUsize,
@@ -56,6 +71,7 @@ struct StubSandboxBackend {
     ready_after_inspects: usize,
     handle_tenant_override: Option<TenantId>,
     handle_name_override: Option<String>,
+    stop_barrier: Option<Arc<StopBarrier>>,
     handles: Mutex<BTreeMap<String, SandboxHandle>>,
 }
 
@@ -72,6 +88,7 @@ impl StubSandboxBackend {
             ready_after_inspects,
             handle_tenant_override: None,
             handle_name_override: None,
+            stop_barrier: None,
             handles: Mutex::new(BTreeMap::new()),
         }
     }
@@ -83,6 +100,11 @@ impl StubSandboxBackend {
 
     fn with_handle_name_override(mut self, name: impl Into<String>) -> Self {
         self.handle_name_override = Some(name.into());
+        self
+    }
+
+    fn with_stop_barrier(mut self, barrier: Arc<StopBarrier>) -> Self {
+        self.stop_barrier = Some(barrier);
         self
     }
 
@@ -221,7 +243,19 @@ impl SandboxBackend for StubSandboxBackend {
             .lock()
             .expect("backend lock should not be poisoned")
             .remove(id.as_str());
-        Box::pin(async move { Ok(()) })
+        let stop_barrier = self.stop_barrier.clone();
+        Box::pin(async move {
+            if let Some(barrier) = stop_barrier {
+                barrier.entered.add_permits(1);
+                barrier
+                    .release
+                    .acquire()
+                    .await
+                    .expect("stop barrier should remain open")
+                    .forget();
+            }
+            Ok(())
+        })
     }
 
     fn reload_egress_policy(&self, id: &SandboxId, egress: EgressPolicy) -> SandboxFuture<()> {

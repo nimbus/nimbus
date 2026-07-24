@@ -494,6 +494,81 @@ async fn stop_service_for_context_async_stops_active_handle_and_clears_snapshot(
     );
 }
 
+/// NNC0.6 fail-before baseline for NNCF11. The semantic barrier parks the
+/// backend stop after it has begun, without a timing sleep, so a concurrent
+/// cache-only lookup can prove whether withdrawal happened before the await.
+#[tokio::test]
+#[ignore = "NNC0.6 expected red until NNC6.6 fences service resolution before backend stop"]
+async fn nnc0_6_service_binding_is_withdrawn_before_backend_stop_waits() {
+    let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+    let stop_barrier = Arc::new(StopBarrier::default());
+    let backend = Arc::new(StubSandboxBackend::new(1).with_stop_barrier(Arc::clone(&stop_barrier)));
+    let manager = Arc::new(
+        ServiceManager::new(
+            Arc::new(StubServiceDefinitionCatalog {
+                launches: BTreeMap::from([(
+                    "db".to_owned(),
+                    image_service_backend("db", "postgres:16"),
+                )]),
+            }),
+            backend,
+        )
+        .with_activation_poll_interval(Duration::from_millis(1))
+        .with_activation_timeout(Duration::from_secs(1)),
+    );
+    let isolation = TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
+
+    manager
+        .start_service_for_context_async(&isolation, "db", HostCallCancellation::default())
+        .await
+        .expect("service should start")
+        .expect("active handle should exist");
+    assert!(
+        manager
+            .resolve_service_binding(&tenant_id, "db")
+            .expect("pre-stop lookup should resolve")
+            .is_some(),
+        "precondition: the ready service must be routable before stop begins"
+    );
+
+    let stop_manager = Arc::clone(&manager);
+    let stop_task = tokio::spawn(async move {
+        stop_manager
+            .stop_service_for_context_async(&isolation, "db")
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(1), stop_barrier.entered.acquire())
+        .await
+        .expect("backend stop should reach the semantic barrier")
+        .expect("stop barrier should remain open")
+        .forget();
+
+    let binding_during_stop = manager
+        .resolve_service_binding(&tenant_id, "db")
+        .expect("concurrent cache lookup should not error");
+
+    // Always release and join before asserting the expected-red invariant so a
+    // failure cannot strand a task in the runtime during test teardown.
+    stop_barrier.release.add_permits(1);
+    let stopped = tokio::time::timeout(Duration::from_secs(1), stop_task)
+        .await
+        .expect("backend stop should complete after release")
+        .expect("stop task should join")
+        .expect("service stop should succeed")
+        .expect("stopped handle should be returned");
+    assert_eq!(stopped.status, SandboxStatus::Stopped);
+    assert!(
+        manager.snapshot_for_tenant(&tenant_id).is_empty(),
+        "completed stop should clear the cached service snapshot"
+    );
+
+    assert!(
+        binding_during_stop.is_none(),
+        "NNCF11: service resolution must be withdrawn before awaiting backend stop; \
+         the cache still returned a routable binding after stop had begun"
+    );
+}
+
 #[tokio::test]
 async fn stop_service_for_decision_async_requires_exact_service_grant() {
     let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");

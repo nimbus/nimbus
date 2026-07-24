@@ -94,6 +94,56 @@ fn execute_launch_permits_when_netns_installed_and_pep_ready() {
         .expect("all preconditions satisfied must permit the launch");
 }
 
+/// NNC0.6 fail-before baseline for NNCF6. This captures the exact unsafe
+/// boundary after the persistent namespace path exists but before Netavark has
+/// emitted status and before an attachment phase can prove the egress pin.
+#[test]
+#[ignore = "NNC0.6 expected red until NNC5.2 requires complete attachment evidence"]
+fn nnc0_6_krun_rejects_netns_path_without_complete_attachment_evidence() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::under_root(
+        temp_dir.path().to_path_buf(),
+    ));
+    let manifest = sample_manifest(
+        sample_spec_for_tenant("tenant-nnc0-6", "partial-attachment"),
+        KrunStartMode::Execute,
+    );
+    fs::create_dir_all(
+        manifest
+            .network_layout
+            .netns_path
+            .parent()
+            .expect("netns path should have a parent"),
+    )
+    .expect("netns parent should create");
+    fs::write(&manifest.network_layout.netns_path, b"netns")
+        .expect("netns-created boundary should persist");
+    assert!(
+        !manifest.network_layout.status_path.exists(),
+        "precondition: Netavark status must still be absent at this partial boundary"
+    );
+    backend
+        .egress_proxies
+        .ensure_running(
+            &manifest.spec.tenant_id,
+            &manifest.handle.id,
+            &EgressPolicy::deny_all(),
+            loopback_addr(),
+        )
+        .expect("ready PEP isolates the missing attachment-evidence condition");
+
+    let readiness = backend.ensure_execute_egress_preconditions(
+        &manifest.handle.id,
+        &manifest.network_layout.netns_path,
+    );
+
+    assert!(
+        readiness.is_err(),
+        "NNCF6: a netns path plus ready PEP cannot prove Netavark setup or egress pin; \
+         partial same-generation attachment must deny launch"
+    );
+}
+
 /// NETNS-ABSENT arm: even with a ready PEP, a missing deny-by-default netns must
 /// deny the launch fail-closed.
 #[test]
