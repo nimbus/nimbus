@@ -35,8 +35,9 @@ use nimbus_core::net::{Cidr, NetworkSegment};
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
 
+use super::NetworkSegmentAllocator;
+use super::segment::ReleaseOutcome;
 use super::segment::{InstalledSuperNet, SingleNodeSegmentAllocator};
-use super::{NetworkSegmentAllocator, ReleaseOutcome};
 
 /// Promotion gate owned by horizontal-scaling HS5.
 ///

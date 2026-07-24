@@ -38,11 +38,10 @@ use crate::backends::oci::materializer::{
 use crate::backends::oci::network::{
     DEFAULT_AARDVARK_DNS_BINARY, DEFAULT_NETAVARK_BINARY, DEFAULT_NETWORK_INTERFACE,
     DEFAULT_NETWORK_NAME, DEFAULT_NETWORK_SUBNET, DEFAULT_TENANT_PREFIX, NetworkSegmentAllocator,
-    OciNetworkConfig, OciNetworkDirectEgress, OciNetworkLayout, ReleaseOutcome,
-    SingleNodeSegmentAllocator, create_persistent_network_namespace, pin_netns_egress_to_own_proxy,
-    place_sandbox_on_block, purge_legacy_nimbus0_once, reap_bridge_interface,
-    reconcile_network_segment_orphans, remove_persistent_network_namespace,
-    setup_container_network, teardown_container_network,
+    OciNetworkConfig, OciNetworkDirectEgress, OciNetworkLayout, SingleNodeSegmentAllocator,
+    create_persistent_network_namespace, pin_netns_egress_to_own_proxy, place_sandbox_on_block,
+    purge_legacy_nimbus0_once, reconcile_network_segment_orphans, release_network_segment_hold,
+    remove_persistent_network_namespace, setup_container_network, teardown_container_network,
 };
 use crate::backends::oci::port_manager::{DEFAULT_MAX_PORTS_PER_TENANT, PortManager};
 use crate::backends::oci::resource_quota::ResourceQuotaManager;

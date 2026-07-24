@@ -31,12 +31,11 @@ use crate::backends::oci::egress::{
 use crate::backends::oci::materializer::{OciImageMaterializer, PreparedMaterializedImageLaunch};
 use crate::backends::oci::network::{
     MachinePortProxy, NetworkSegmentAllocator, OciNetworkConfig, OciNetworkDirectEgress,
-    OciNetworkLayout, ReleaseOutcome, SingleNodeSegmentAllocator,
-    create_persistent_network_namespace, expose_machine_ports, pin_netns_egress_to_own_proxy,
-    place_sandbox_on_block, purge_legacy_nimbus0_once, reap_bridge_interface,
-    reconcile_network_segment_orphans, remove_persistent_network_namespace,
-    setup_container_network, start_machine_port_proxies, teardown_container_network,
-    unexpose_machine_ports,
+    OciNetworkLayout, SingleNodeSegmentAllocator, create_persistent_network_namespace,
+    expose_machine_ports, pin_netns_egress_to_own_proxy, place_sandbox_on_block,
+    purge_legacy_nimbus0_once, reconcile_network_segment_orphans, release_network_segment_hold,
+    remove_persistent_network_namespace, setup_container_network, start_machine_port_proxies,
+    teardown_container_network, unexpose_machine_ports,
 };
 use crate::backends::oci::port_manager::PortManager;
 use crate::backends::oci::resource_quota::ResourceQuotaManager;
@@ -922,17 +921,15 @@ impl ContainerSandboxBackend {
         // won't auto-GC) and free all its indices for reuse.
         match self.segment_allocator() {
             Ok(allocator) => {
-                match allocator.release(&manifest.spec.tenant_id, &manifest.handle.id) {
-                    Ok(ReleaseOutcome::TenantDrained { segments }) => {
-                        for segment in &segments {
-                            if let Err(error) = reap_bridge_interface(segment.network_interface()) {
-                                errors.push(error.to_string());
-                            }
-                        }
-                    }
-                    Ok(ReleaseOutcome::StillLive) => {}
-                    Err(error) => errors.push(error.to_string()),
-                }
+                errors.extend(
+                    release_network_segment_hold(
+                        &allocator,
+                        &manifest.spec.tenant_id,
+                        &manifest.handle.id,
+                    )
+                    .into_iter()
+                    .map(|error| error.to_string()),
+                );
             }
             Err(error) => errors.push(error.to_string()),
         }

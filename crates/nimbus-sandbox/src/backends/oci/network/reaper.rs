@@ -10,15 +10,49 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use crate::error::{Result, SandboxError};
+use nimbus_core::TenantId;
+use nimbus_core::net::NetworkSegment;
 
-use super::SingleNodeSegmentAllocator;
+use crate::error::{Result, SandboxError};
+use crate::instance::SandboxId;
+
+use super::segment::ReleaseOutcome;
+use super::{NetworkSegmentAllocator, SingleNodeSegmentAllocator};
 
 /// Remove a tenant block-bridge interface by name once its last sandbox has
 /// drained (netavark won't auto-GC it). Idempotent / best-effort: a bridge that
 /// is already gone is success.
 pub(crate) fn reap_bridge_interface(interface: &str) -> Result<()> {
     delete_bridge(interface)
+}
+
+/// Drop one sandbox's allocator hold and reap every bridge returned when the
+/// tenant drains. Both OCI-family backends use this exact ordering.
+pub(crate) fn release_network_segment_hold(
+    allocator: &dyn NetworkSegmentAllocator,
+    tenant_id: &TenantId,
+    sandbox_id: &SandboxId,
+) -> Vec<SandboxError> {
+    release_network_segment_hold_with(allocator, tenant_id, sandbox_id, |segment| {
+        reap_bridge_interface(segment.network_interface())
+    })
+}
+
+fn release_network_segment_hold_with(
+    allocator: &dyn NetworkSegmentAllocator,
+    tenant_id: &TenantId,
+    sandbox_id: &SandboxId,
+    mut reap: impl FnMut(&NetworkSegment) -> Result<()>,
+) -> Vec<SandboxError> {
+    let segments = match allocator.release(tenant_id, sandbox_id) {
+        Ok(ReleaseOutcome::TenantDrained { segments }) => segments,
+        Ok(ReleaseOutcome::StillLive) => return Vec::new(),
+        Err(error) => return vec![error],
+    };
+    segments
+        .iter()
+        .filter_map(|segment| reap(segment).err())
+        .collect()
 }
 
 /// Startup orphan GC: reclaim segment holds whose sandbox netns no longer exists,
@@ -180,5 +214,57 @@ mod tests {
             )
             .expect("re-acquire live");
         assert_eq!(live.cidr().to_string(), "10.0.0.0/24");
+    }
+
+    #[test]
+    // This is the NNC0.3 fail-before executable baseline, not the pass-after
+    // fix. It must fail at the final safety assertion while the current
+    // allocator frees before provider cleanup. NNC2.5 owns quarantine, will
+    // turn this test green, and must remove the ignore marker.
+    #[ignore = "NNC0.3 expected red until failed bridge cleanup fences segment reuse"]
+    fn failed_bridge_cleanup_must_fence_segment_from_reuse() {
+        let dir = tempdir().expect("temp dir");
+        let allocator = SingleNodeSegmentAllocator::single_node_default(dir.path());
+        let original_tenant = TenantId::new("tenant-original").expect("tenant should parse");
+        let original_sandbox = SandboxId::new("sandbox-original");
+        let original = allocator
+            .acquire(&original_tenant, &original_sandbox)
+            .expect("original segment should allocate");
+
+        let mut surviving_bridges = Vec::new();
+        let cleanup_errors = release_network_segment_hold_with(
+            &allocator,
+            &original_tenant,
+            &original_sandbox,
+            |segment| {
+                surviving_bridges.push(segment.network_interface().to_owned());
+                Err(SandboxError::OperationFailed {
+                    message: "forced bridge provider cleanup failure".to_owned(),
+                })
+            },
+        );
+        assert_eq!(cleanup_errors.len(), 1);
+        assert!(
+            cleanup_errors[0]
+                .to_string()
+                .contains("forced bridge provider cleanup failure")
+        );
+        assert_eq!(
+            surviving_bridges,
+            [original.network_interface().to_owned()],
+            "the failed provider cleanup leaves the original bridge effect present"
+        );
+
+        let replacement = allocator
+            .acquire(
+                &TenantId::new("tenant-replacement").expect("tenant should parse"),
+                &SandboxId::new("sandbox-replacement"),
+            )
+            .expect("replacement segment should allocate");
+        assert_ne!(
+            replacement.cidr(),
+            original.cidr(),
+            "a segment with a surviving provider effect must remain fenced from reuse"
+        );
     }
 }

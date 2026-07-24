@@ -25,10 +25,10 @@ pub(crate) use netns::{create_persistent_network_namespace, remove_persistent_ne
 pub(crate) use placement::place_sandbox_on_block;
 pub(crate) use proxy::{MachinePortProxy, start_machine_port_proxies};
 pub(crate) use reaper::{
-    purge_legacy_nimbus0_once, reap_bridge_interface, reconcile_network_segment_orphans,
+    purge_legacy_nimbus0_once, reconcile_network_segment_orphans, release_network_segment_hold,
 };
 pub(crate) use segment::{
-    DEFAULT_TENANT_PREFIX, NetworkSegmentAllocator, ReleaseOutcome, SingleNodeSegmentAllocator,
+    DEFAULT_TENANT_PREFIX, NetworkSegmentAllocator, SingleNodeSegmentAllocator,
 };
 
 pub(crate) const DEFAULT_NETAVARK_BINARY: &str = "netavark";

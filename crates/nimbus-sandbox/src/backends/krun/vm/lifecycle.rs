@@ -388,17 +388,15 @@ impl KrunSandboxBackend {
         // its indices for reuse.
         match self.segment_allocator() {
             Ok(allocator) => {
-                match allocator.release(&manifest.spec.tenant_id, &manifest.handle.id) {
-                    Ok(ReleaseOutcome::TenantDrained { segments }) => {
-                        for segment in &segments {
-                            if let Err(error) = reap_bridge_interface(segment.network_interface()) {
-                                errors.push(error.to_string());
-                            }
-                        }
-                    }
-                    Ok(ReleaseOutcome::StillLive) => {}
-                    Err(error) => errors.push(error.to_string()),
-                }
+                errors.extend(
+                    release_network_segment_hold(
+                        &allocator,
+                        &manifest.spec.tenant_id,
+                        &manifest.handle.id,
+                    )
+                    .into_iter()
+                    .map(|error| error.to_string()),
+                );
             }
             Err(error) => errors.push(error.to_string()),
         }
