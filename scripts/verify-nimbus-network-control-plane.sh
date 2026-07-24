@@ -513,6 +513,7 @@ verify_checkpoint_ledger() {
   error="$(
     node - "${PLAN}" <<'NODE'
 const fs = require("fs");
+const {spawnSync} = require("child_process");
 const input = process.argv[2];
 if (!fs.existsSync(input)) {
   process.stdout.write("plan missing: " + input);
@@ -557,6 +558,19 @@ const currentItemLine = text.split("\n").find(line => line.startsWith("| Current
 const currentItem = currentItemLine?.split("|")[2]?.trim().replaceAll(tick, "");
 if (!currentItem || !inProgress[0] || !currentItem.startsWith(inProgress[0].id + " ")) {
   errors.push("Recovery Header current item does not match the in_progress ledger row");
+}
+const checkpointLine = text.split("\n").find(line => line.startsWith("| Last checkpoint commit |"));
+const checkpointHashes = checkpointLine?.match(/\b[0-9a-f]{40}\b/g) || [];
+if (checkpointHashes.length !== 1) {
+  errors.push("Recovery Header must contain exactly one full Last checkpoint commit hash");
+} else {
+  const checkpoint = checkpointHashes[0];
+  const resolution = spawnSync("git", ["cat-file", "-e", checkpoint + "^{commit}"], {
+    stdio: "ignore",
+  });
+  if (resolution.status !== 0) {
+    errors.push("Recovery Header Last checkpoint commit does not resolve: " + checkpoint);
+  }
 }
 process.stdout.write(errors.join("\n"));
 process.exit(errors.length === 0 ? 0 : 1);
@@ -768,6 +782,32 @@ run_self_test() {
     printf 'SELFTEST PASS missing dependency baseline fails closed as NNCV002\n'
   fi
 
+  invalid_checkpoint_plan="${temporary}/invalid-checkpoint-plan.md"
+  node - "${PLAN}" "${invalid_checkpoint_plan}" <<'NODE'
+const fs = require("fs");
+const [source, target] = process.argv.slice(2);
+const text = fs.readFileSync(source, "utf8");
+const invalid = text.replace(
+  /(\| Last checkpoint commit \| `)[0-9a-f]{40}/,
+  "$1" + "0".repeat(40),
+);
+if (invalid === text) process.exit(1);
+fs.writeFileSync(target, invalid);
+NODE
+  if NIMBUS_NETWORK_VERIFY_PLAN="${invalid_checkpoint_plan}" \
+    NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    "${script}" >"${temporary}/invalid-checkpoint.out" 2>&1; then
+    printf 'SELFTEST FAIL nonexistent checkpoint unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV008 checkpoint-ledger-recoverable' "${temporary}/invalid-checkpoint.out" ||
+    grep -q '^PASS NNCV008 checkpoint-ledger-recoverable' "${temporary}/invalid-checkpoint.out" ||
+    ! grep -q 'Last checkpoint commit does not resolve: 0000000000000000000000000000000000000000' "${temporary}/invalid-checkpoint.out"; then
+    printf 'SELFTEST FAIL nonexistent checkpoint did not produce the exact exclusive NNCV008 diagnostic\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS nonexistent checkpoint fails closed as NNCV008\n'
+  fi
+
   if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
     NIMBUS_NETWORK_VERIFY_TEST_UNCLASSIFIED="synthetic-unclassified.rs:1:TcpListener::bind" \
     "${script}" >"${temporary}/unclassified.out" 2>&1; then
@@ -925,7 +965,7 @@ run_self_test() {
     printf 'self-test: %d failed\n' "${self_fail}"
     exit 1
   fi
-  printf 'self-test: 15 passed, 0 failed\n'
+  printf 'self-test: 16 passed, 0 failed\n'
 }
 
 if [ "${1:-}" = "--self-test" ]; then

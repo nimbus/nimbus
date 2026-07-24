@@ -11,6 +11,7 @@
 mod endpoint;
 mod identity;
 mod plan;
+mod port_lease;
 mod provider;
 mod segment;
 mod state;
@@ -26,6 +27,10 @@ pub use identity::{
 pub use plan::{
     NetworkPlan, NetworkPlanDigest, NetworkPlanDigestParseError, NetworkPlanUpdate,
     NetworkPlanUpdateError,
+};
+pub use port_lease::{
+    LocalPortLeaseAuthority, PortLeaseBinding, PortLeaseError, PortLeaseFenceMismatch,
+    PortLeaseOperation, PortLeasePhase, PortLeaseRecord, PortLeaseRequest,
 };
 pub use provider::{NetworkProviderHandle, NetworkProviderHandleError};
 pub use segment::{

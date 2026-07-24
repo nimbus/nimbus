@@ -66,6 +66,8 @@ pub enum NetworkStatePartition {
     SegmentAllocations,
     /// Provider-adjacent IP allocation state for one tenant.
     TenantIpam(TenantId),
+    /// Host-global port lease lifecycle records.
+    PortLeases,
 }
 
 impl NetworkStatePartition {
@@ -73,6 +75,7 @@ impl NetworkStatePartition {
         match self {
             Self::SegmentAllocations => "segment-allocations".to_owned(),
             Self::TenantIpam(tenant_id) => format!("tenant-ipam/{}", tenant_id.as_str()),
+            Self::PortLeases => "port-leases".to_owned(),
         }
     }
 }
