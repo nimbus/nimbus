@@ -28,7 +28,9 @@ pub use plan::{
     NetworkPlanUpdateError,
 };
 pub use provider::{NetworkProviderHandle, NetworkProviderHandleError};
-pub use segment::{AllocatedSegment, NetworkSegmentAllocator, NetworkSegmentReleaseOutcome};
+pub use segment::{
+    AllocatedSegment, NetworkSegmentAllocator, NetworkSegmentGrowth, NetworkSegmentReleaseOutcome,
+};
 pub use state::{
     DurableNetworkResourceState, NetworkResourceId, NetworkResourcePhase, NetworkResourceVersion,
     NetworkStateError, NetworkStateMutation, NetworkStateTransition, NetworkTransitionEvidence,

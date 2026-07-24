@@ -1,6 +1,6 @@
 # Nimbus Network Control Plane Plan
 
-Status: `active; NNC2.2 complete; NNC2.3 atomic existing-block allocation in progress`
+Status: `active; NNC2.3 complete; NNC2.4 stable segment identity and lease epoch proof in progress`
 
 Owner: this plan is the sole implementation control plane for the
 transport-free `nimbus-network` crate and the connectivity-resource lifecycle
@@ -36,20 +36,20 @@ ledger transition.
 
 | Field | Current value |
 | --- | --- |
-| Plan status | `active; NNC2.2 complete; NNC2.3 atomic existing-block allocation in progress` |
+| Plan status | `active; NNC2.3 complete; NNC2.4 stable segment identity and lease epoch proof in progress` |
 | Current band | `NNC2 — crash-safe durable state and segment authority` |
-| Current item | `NNC2.3 — make allocation atomic across every existing tenant block before growth` |
-| Last completed item | `NNC2.2 — portable NetworkAttachmentId allocator contract and injected OCI consumers` |
-| Next action | Re-read the NNC0.5 existing-secondary-block expected-red proof, `placement.rs`, segment block state, IPAM allocation, and both backend placement callers; define one locked allocation operation that scans every existing block before growing, then convert the ignored regression without moving provider effects. |
+| Current item | `NNC2.4 — prove globally stable segment identity and node lease epoch fencing` |
+| Last completed item | `NNC2.3 — atomic all-existing-block reservation and identity-set-fenced growth` |
+| Next action | Commit the fully verified NNC2.3 checkpoint, then re-read NNC1.2/NNC1.4 proofs and the current segment/cluster identity and stale-epoch tests to inventory which NNC2.4 obligations are already green and which exact proof, if any, remains missing. |
 | Owner branch | `codex/nimbus-network-architecture-audit` |
 | Owner worktree | `/Users/jack/src/github.com/nimbus/nimbus-network-architecture-audit` |
 | Audit base | Original architecture audit: `b69007a78a220847812370d9418049f1253f0384`. |
 | Execution base | Rebased without conflicts onto `origin/main` at `9c2d4f150c60f43dfdc0a3f1ec6550942e26ab8f` after NNC0.0. |
-| Last checkpoint commit | Parent `46eb0ff3d`; the NNC2.2 completion/proof and NNC2.3 activation are the pending checkpoint in this owned diff. |
-| Audit dirty state | NNC2.2 owns the public portable allocator contract, deterministic attachment derivation, typed durable holds, injected container/krun trait objects, generalized placement/reaper/cluster consumers, substitution and foreign-sibling reconciliation tests, its proof, and this ledger transition. |
+| Last checkpoint commit | `c0e52f180` — NNC2.2 completion and NNC2.3 activation checkpoint. |
+| Audit dirty state | Pending NNC2.3 checkpoint owns `Cargo.lock`, the network allocator vocabulary/export, sandbox dev dependencies, OCI network module/cluster/IPAM/placement/realization/segment/test-support sources, the routing index, this recovery ledger, and the NNC2.3 proof. No unrelated path is modified. |
 | Execution mode | Autonomous implementation goal active; commit each completed item with its ledger/evidence checkpoint; no push or PR without separate authority. |
-| Last verification | NNC2.2: network 61/0/0; sandbox library 252/0/13 plus helper 2/0/0; injected container and krun substitutions and foreign-sibling reconcile regression green; all-target/all-feature check and Clippy, rustdoc, format/diff, exact metadata edge, verifier self-test 15/15 and aggregate 14/1 expected red. First Opus 4.8/max review found one filesystem-scan ordering regression; it was fixed and the full rerun was clean at 0.80. Exact evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc2.2-portable-allocator-contract.md`. |
-| Blocking decision | None. NNC2.3 must make selection and reservation atomic under the existing network authority lock, scan all existing tenant blocks before growth, preserve deterministic ordering and current provider-effect ownership, and turn only the named NNC0.5 placement regression green. |
+| Last verification | NNC2.3: expected-red exit `101`; network 61/0/0; sandbox library 258/0/12 plus helper 2/0/0; 16-case reuse property, deterministic/threaded growth races, retry recovery, and same-count ABA fence green; all-target/all-feature check/Clippy, rustdoc, format/diff, exact core-only metadata edge, verifier self-test 15/15 and aggregate 14/1 expected red, docs 108 pages and 17/17; Opus 4.8/max review clean at 0.78. Exact evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc2.3-atomic-existing-block-allocation.md`. |
+| Blocking decision | None. NNC2.4 must reuse the canonical network identity/epoch types and existing NNC1 evidence, add only missing behavior proof, and keep cluster lease issuance/transport outside this owner. |
 
 Recovery protocol:
 
@@ -1235,7 +1235,7 @@ named dependency/owner decision and the next safe action.
 | --- | --- | --- | --- |
 | NNC0 — baselines/verifier | `done` | NNC0.0-NNC0.9 proof records: durable owner, dependency/bind inventories, process/crash harnesses, eight fail-before risk families, expected-red verifier, and behavior/performance baseline. | `docs/private/plans/proof/nimbus-network-control-plane/` |
 | NNC1 — crate/vocabulary | `done` | Acyclic crate, stable IDs/state model, endpoint/segment ownership migration. | `docs/private/plans/proof/nimbus-network-control-plane/nnc1.1-low-dependency-crate.md` through `nnc1.6-static-verifier-deepening.md`; every NNC1 item done, network has one outgoing workspace edge, and verifier is 13 pass/2 deliberately later expected fail. |
-| NNC2 — durable state/segment authority | `in_progress` | Crash-safe store, substitution, capacity reuse, epoch cleanup, no premature reuse. | NNC2.1 and NNC2.2 passed in `docs/private/plans/proof/nimbus-network-control-plane/`; NNC2.3 active. |
+| NNC2 — durable state/segment authority | `in_progress` | Crash-safe store, substitution, capacity reuse, epoch cleanup, no premature reuse. | NNC2.1 through NNC2.3 passed in `docs/private/plans/proof/nimbus-network-control-plane/`; NNC2.4 active. |
 | NNC3 — cross-process port leases | `todo` | Full conflict/bind matrix, every owner migrated, old allocators deleted. | — |
 | NNC4 — capabilities/sovereignty | `todo` | Named negative matrix, evidence-based seams, machine modes, offline local profile. | — |
 | NNC5 — sandbox attachment lifecycle | `todo` | Shared implementation, complete readiness, ambiguity/crash convergence. | — |
@@ -1277,8 +1277,8 @@ checkpoint.
 | NNC1.6 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc1.6-static-verifier-deepening.md`; NNCV012-NNCV014 name forbidden dependency/effect, duplicate-definition/alias, and address-as-identity regressions; modular source scanner masks non-code/test items and fails missing inputs; 15/15 meta-tests cover workspace/transport/cloud dependencies, provider effect, duplicate type, CIDR-backed ID, positive lexical control, and missing roots; aggregate advances from 10/2 to 13/2 without hiding later authorities; Bash/ShellCheck/Node/Prettier/diff/docs gates pass; first Opus review finding fixed and scoped rerun clean. |
 | NNC2.1 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc2.1-crash-safe-local-state.md`; one network-owned versioned/checksummed envelope and bounded cross-process lock now own segment/IPAM state; exact fsync/replace/parent-sync crash cuts and two-process contention pass; corrupt/version/permission/revision/serialization failures fail closed; cleanup-pending survives; APFS startup probe and known-network-root rejection are explicit; the proof records the required ownership-based exception for the 1,760-line deep store plus private invariant-test module; network tests 59/0/0, process integration 2/0/1, sandbox 249/0/13, testing 62/0/2, three-crate all-target/all-feature Clippy, format/diff, metadata, verifier 15/15 and 13/2 expected red, and final Opus review pass are green. |
 | NNC2.2 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc2.2-portable-allocator-contract.md`; network owns the object-safe attachment-ID allocator contract, OCI realization/effects remain sandbox-owned, container and krun consume injected trait objects with real substitution proofs, typed holds/reconcile preserve lifecycle behavior, a reviewed filesystem-scan regression is fixed, network 61/0/0 and sandbox 252/0/13 plus helper 2/0/0 pass, all-target/all-feature check/Clippy/rustdoc/format/diff and the exact core-only metadata edge pass, verifier advances to 14/1 with only NNCV005 expected red, and the final Opus 4.8/max review is clean at 0.80. |
-| NNC2.3 | `in_progress` | Owned paths at activation: the NNC2.2 implementation, proof, and this plan transition pending their checkpoint commit over parent `46eb0ff3d`. Last green commands: network 61/0/0; sandbox 252/0/13 plus helper 2/0/0; all-target/all-feature check and Clippy; rustdoc; format/diff; exact core-only metadata edge; verifier self-test 15/15 and aggregate 14/1 expected red; final Opus 4.8/max review clean at 0.80. Next: commit NNC2.2, then inventory placement/segment/IPAM lock boundaries and rerun the NNC0.5 existing-secondary-block fail-before before editing NNC2.3. Blocker: none. |
-| NNC2.4 | `todo` | — |
+| NNC2.3 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc2.3-atomic-existing-block-allocation.md`; the NNC0.5 fail-before exits `101`, then one locked ordered all-block IPAM transaction reuses every tested free position before growth; complete identity-set CAS rejects concurrent and ABA-stale growers; retry is idempotent; provider effects stay sandbox-owned; network 61/0/0 and sandbox 258/0/12 plus helper 2/0/0 pass; check/Clippy/rustdoc/format/diff/docs, exact dependency, verifier 15/15 self-test and 14/1 expected red, and clean Opus 4.8/max review pass. |
+| NNC2.4 | `in_progress` | Owned paths at activation: this plan/routing recovery transition only until the verified NNC2.3 checkpoint is committed. Last green commit: `c0e52f180`; the pending NNC2.3 bundle is fully green with exact proof above. Next: commit NNC2.3, record its hash, then audit existing NNC1.2/NNC1.4 and segment/cluster identity/epoch evidence before any NNC2.4 source edit. Blocker: none. |
 | NNC2.5 | `todo` | — |
 | NNC2.6 | `todo` | — |
 | NNC2.7 | `todo` | — |

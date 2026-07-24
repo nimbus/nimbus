@@ -35,6 +35,7 @@ workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
 futures.workspace = true
+proptest = "1"
 tempfile.workspace = true
 
 [target.'cfg(windows)'.dependencies]

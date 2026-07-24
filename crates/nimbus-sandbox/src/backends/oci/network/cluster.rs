@@ -32,7 +32,10 @@ use std::sync::Arc;
 
 use nimbus_core::TenantId;
 use nimbus_core::net::Cidr;
-use nimbus_network::{NetworkAttachmentId, NetworkSegmentAllocator, NetworkSegmentReleaseOutcome};
+use nimbus_network::{
+    NetworkAttachmentId, NetworkSegmentAllocator, NetworkSegmentGrowth,
+    NetworkSegmentReleaseOutcome,
+};
 
 use crate::error::{Result, SandboxError};
 
@@ -142,6 +145,10 @@ impl NetworkSegmentAllocator for ClusterSegmentAllocator {
         self.leased_inner()?.segment_for(tenant)
     }
 
+    fn segments_for(&self, tenant: &TenantId) -> Result<Vec<OciSegmentRealization>> {
+        self.leased_inner()?.segments_for(tenant)
+    }
+
     fn acquire(
         &self,
         tenant: &TenantId,
@@ -158,8 +165,13 @@ impl NetworkSegmentAllocator for ClusterSegmentAllocator {
         self.leased_inner()?.release(tenant, attachment_id)
     }
 
-    fn grow_block(&self, tenant: &TenantId) -> Result<OciSegmentRealization> {
-        self.leased_inner()?.grow_block(tenant)
+    fn grow_block_if_current(
+        &self,
+        tenant: &TenantId,
+        observed_segments: &[OciSegmentRealization],
+    ) -> Result<NetworkSegmentGrowth<OciSegmentRealization>> {
+        self.leased_inner()?
+            .grow_block_if_current(tenant, observed_segments)
     }
 
     fn reconcile_orphans(

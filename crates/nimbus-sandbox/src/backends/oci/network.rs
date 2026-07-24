@@ -24,6 +24,7 @@ mod test_support;
 pub(crate) use egress_pin::pin_netns_egress_to_own_proxy;
 pub use forwarding::OciMachinePortForwarderConfig;
 pub(crate) use forwarding::{expose_machine_ports, unexpose_machine_ports};
+#[cfg(test)]
 pub(crate) use ipam::allocate_container_ips;
 pub(crate) use layout::{
     OciNetworkConfig, OciNetworkDirectEgress, OciNetworkLayout, bridge_gateway_addr,

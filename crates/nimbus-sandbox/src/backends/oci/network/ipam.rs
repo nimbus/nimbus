@@ -100,20 +100,82 @@ pub(crate) fn allocate_container_ips(
     config: &OciNetworkConfig,
     sandbox_id: &SandboxId,
 ) -> Result<Vec<Ipv4Addr>> {
+    allocate_container_ips_on_first_available(layout, std::slice::from_ref(config), sandbox_id)
+        .map(|allocation| allocation.ips)
+}
+
+/// One IPAM reservation together with the ordered block that owns it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct BlockIpAllocation {
+    pub(super) block_index: usize,
+    pub(super) ips: Vec<Ipv4Addr>,
+}
+
+/// Atomically choose and reserve the first available address across every
+/// existing tenant block.
+///
+/// The caller supplies configs in durable segment-allocation order. The whole
+/// scan and reservation occurs in one tenant-IPAM transaction under the shared
+/// network authority lock, so concurrent placers cannot select the same
+/// address. Existing idempotent reservations are mapped back to their owning
+/// block and fail closed if that block is no longer in the supplied set.
+pub(super) fn allocate_container_ips_on_first_available(
+    layout: &OciNetworkLayout,
+    configs: &[OciNetworkConfig],
+    sandbox_id: &SandboxId,
+) -> Result<BlockIpAllocation> {
+    if configs.is_empty() {
+        return Err(SandboxError::OperationFailed {
+            message: format!(
+                "cannot allocate OCI IPs for sandbox {} without an existing tenant block",
+                sandbox_id.as_str()
+            ),
+        });
+    }
+
     with_ipam_state(layout, |state| {
         if let Some(assigned) = state.allocations.get(sandbox_id.as_str()) {
-            return assigned
+            let ips = assigned
                 .iter()
                 .map(|ip| parse_ipv4_address(ip))
-                .collect::<Result<Vec<_>>>();
+                .collect::<Result<Vec<_>>>()?;
+            for (block_index, config) in configs.iter().enumerate() {
+                if allocation_belongs_to_block(config, &ips)? {
+                    return Ok(BlockIpAllocation { block_index, ips });
+                }
+            }
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "existing OCI IPAM reservation for sandbox {} is outside its current ordered tenant block set; refusing to remap the durable allocation",
+                    sandbox_id.as_str()
+                ),
+            });
         }
 
-        let allocation = allocate_next_ipv4(config, state)?;
-        state
-            .allocations
-            .insert(sandbox_id.as_str().to_owned(), vec![allocation.to_string()]);
-        state.last_assigned_ip = Some(allocation.to_string());
-        Ok(vec![allocation])
+        for (block_index, config) in configs.iter().enumerate() {
+            match allocate_next_ipv4(config, state) {
+                Ok(ip) => {
+                    state
+                        .allocations
+                        .insert(sandbox_id.as_str().to_owned(), vec![ip.to_string()]);
+                    state.last_assigned_ip = Some(ip.to_string());
+                    return Ok(BlockIpAllocation {
+                        block_index,
+                        ips: vec![ip],
+                    });
+                }
+                Err(SandboxError::NetworkSubnetExhausted { .. }) => {}
+                Err(error) => return Err(error),
+            }
+        }
+
+        Err(SandboxError::NetworkSubnetExhausted {
+            subnet: configs
+                .iter()
+                .map(|config| config.network_subnet.as_str())
+                .collect::<Vec<_>>()
+                .join(","),
+        })
     })
 }
 
@@ -166,6 +228,17 @@ fn ipam_store_error(error: impl std::fmt::Display) -> SandboxError {
     SandboxError::OperationFailed {
         message: format!("OCI IPAM network authority failed: {error}"),
     }
+}
+
+fn allocation_belongs_to_block(config: &OciNetworkConfig, allocation: &[Ipv4Addr]) -> Result<bool> {
+    let subnet = parse_ipv4_bridge_subnet(&config.network_subnet)?;
+    let gateway = ipv4_to_u32(subnet.gateway);
+    let broadcast = ipv4_to_u32(subnet.broadcast);
+    Ok(!allocation.is_empty()
+        && allocation.iter().all(|ip| {
+            let ip = ipv4_to_u32(*ip);
+            ip > gateway && ip < broadcast
+        }))
 }
 
 fn allocate_next_ipv4(config: &OciNetworkConfig, state: &IpamState) -> Result<Ipv4Addr> {

@@ -25,8 +25,8 @@ use nimbus_core::TenantId;
 use nimbus_core::net::Cidr;
 use nimbus_network::{
     AllocatedSegment, LocalNetworkStateStore, NetworkAttachmentId, NetworkLeaseEpoch,
-    NetworkSegmentAllocator, NetworkSegmentId, NetworkSegmentReleaseOutcome, NetworkStatePartition,
-    NetworkStateTransactionError,
+    NetworkSegmentAllocator, NetworkSegmentGrowth, NetworkSegmentId, NetworkSegmentReleaseOutcome,
+    NetworkStatePartition, NetworkStateTransactionError,
 };
 
 use crate::error::{Result, SandboxError};
@@ -69,9 +69,10 @@ struct SegmentBlock {
 }
 
 /// A tenant's allocation: its ordered list of blocks (element 0 is the
-/// primary/anchor allocation; additional blocks are appended on demand by
-/// `grow_block`) plus the set of live attachment IDs across all its blocks. The
-/// whole allocation is freed only when the last hold releases.
+/// primary/anchor allocation, with additional blocks appended through
+/// compare-and-swap-fenced growth) plus the set of live attachment IDs across
+/// all its blocks. The whole allocation is freed only when the last hold
+/// releases.
 #[derive(Default, Serialize, Deserialize)]
 struct TenantEntry {
     blocks: Vec<SegmentBlock>,
@@ -358,9 +359,32 @@ impl NetworkSegmentAllocator for SingleNodeSegmentAllocator {
     type Error = SandboxError;
 
     fn segment_for(&self, tenant: &TenantId) -> Result<OciSegmentRealization> {
+        self.segments_for(tenant)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| SandboxError::OperationFailed {
+                message: format!(
+                    "network segment authority returned no primary block for tenant {}",
+                    tenant.as_str()
+                ),
+            })
+    }
+
+    fn segments_for(&self, tenant: &TenantId) -> Result<Vec<OciSegmentRealization>> {
         let supernet = self.installed()?.clone();
-        let block = self.with_state(|state| self.assign_block(&supernet, state, tenant))?;
-        self.segment_at(&supernet, tenant, &block)
+        let blocks = self.with_state(|state| {
+            self.assign_block(&supernet, state, tenant)?;
+            Ok(state
+                .tenants
+                .get(tenant.as_str())
+                .expect("assign_block inserts the tenant entry")
+                .blocks
+                .clone())
+        })?;
+        blocks
+            .iter()
+            .map(|block| self.segment_at(&supernet, tenant, block))
+            .collect()
     }
 
     fn acquire(
@@ -408,7 +432,11 @@ impl NetworkSegmentAllocator for SingleNodeSegmentAllocator {
         })
     }
 
-    fn grow_block(&self, tenant: &TenantId) -> Result<OciSegmentRealization> {
+    fn grow_block_if_current(
+        &self,
+        tenant: &TenantId,
+        observed_segments: &[OciSegmentRealization],
+    ) -> Result<NetworkSegmentGrowth<OciSegmentRealization>> {
         let supernet = self.installed()?.clone();
         let block = self.with_state(|state| {
             self.ensure_supernet_matches(&supernet, state)?;
@@ -421,6 +449,15 @@ impl NetworkSegmentAllocator for SingleNodeSegmentAllocator {
                         tenant.as_str()
                     ),
                 })?;
+            let observation_is_current = entry.blocks.len() == observed_segments.len()
+                && entry
+                    .blocks
+                    .iter()
+                    .zip(observed_segments)
+                    .all(|(block, observed)| &block.segment_id == observed.segment_id());
+            if !observation_is_current {
+                return Ok(None);
+            }
             if entry.blocks.len() >= MAX_BLOCKS_PER_TENANT {
                 return Err(SandboxError::OperationFailed {
                     message: format!(
@@ -441,9 +478,14 @@ impl NetworkSegmentAllocator for SingleNodeSegmentAllocator {
                 .expect("tenant entry checked above")
                 .blocks
                 .push(block.clone());
-            Ok(block)
+            Ok(Some(block))
         })?;
-        self.segment_at(&supernet, tenant, &block)
+        match block {
+            Some(block) => self
+                .segment_at(&supernet, tenant, &block)
+                .map(NetworkSegmentGrowth::Grown),
+            None => Ok(NetworkSegmentGrowth::ObservationStale),
+        }
     }
 
     fn reconcile_orphans(
@@ -504,6 +546,10 @@ impl NetworkSegmentAllocator for ConfiguredSegmentAllocator {
         self.inner()?.segment_for(tenant)
     }
 
+    fn segments_for(&self, tenant: &TenantId) -> Result<Vec<Self::Segment>> {
+        self.inner()?.segments_for(tenant)
+    }
+
     fn acquire(
         &self,
         tenant: &TenantId,
@@ -520,8 +566,13 @@ impl NetworkSegmentAllocator for ConfiguredSegmentAllocator {
         self.inner()?.release(tenant, attachment_id)
     }
 
-    fn grow_block(&self, tenant: &TenantId) -> Result<Self::Segment> {
-        self.inner()?.grow_block(tenant)
+    fn grow_block_if_current(
+        &self,
+        tenant: &TenantId,
+        observed_segments: &[Self::Segment],
+    ) -> Result<NetworkSegmentGrowth<Self::Segment>> {
+        self.inner()?
+            .grow_block_if_current(tenant, observed_segments)
     }
 
     fn reconcile_orphans(
@@ -544,6 +595,21 @@ mod tests {
 
     fn attachment(id: &str) -> NetworkAttachmentId {
         NetworkAttachmentId::for_workload_attachment(id, super::super::DEFAULT_ATTACHMENT_NAME)
+    }
+
+    fn grow(allocator: &SingleNodeSegmentAllocator, tenant: &TenantId) -> OciSegmentRealization {
+        let observed = allocator
+            .segments_for(tenant)
+            .expect("observed segment set should resolve");
+        match allocator
+            .grow_block_if_current(tenant, &observed)
+            .expect("growth should resolve")
+        {
+            NetworkSegmentGrowth::Grown(segment) => segment,
+            NetworkSegmentGrowth::ObservationStale => {
+                panic!("single-threaded fixture observation must remain current")
+            }
+        }
     }
 
     #[test]
@@ -915,7 +981,7 @@ mod tests {
             .expect("acquire a");
         assert_eq!(a0.cidr().to_string(), "10.0.0.0/24");
         // Grow tenant-a: a second, distinct block/bridge at index 1.
-        let a1 = allocator.grow_block(&a).expect("grow a");
+        let a1 = grow(&allocator, &a);
         assert_eq!(a1.cidr().to_string(), "10.0.1.0/24");
         assert_ne!(a0.network_interface(), a1.network_interface());
         assert_ne!(a0.network_id().as_str(), a1.network_id().as_str());
@@ -928,13 +994,88 @@ mod tests {
     }
 
     #[test]
+    fn growth_fence_rejects_same_count_remove_and_recreate_aba() {
+        let dir = tempdir().expect("temp dir");
+        let allocator = SingleNodeSegmentAllocator::single_node_default(dir.path());
+        let tenant = tenant("tenant-a");
+        let old_attachment = attachment("old");
+        allocator
+            .acquire(&tenant, &old_attachment)
+            .expect("old allocation should resolve");
+        let stale_observation = allocator
+            .segments_for(&tenant)
+            .expect("old segment set should resolve");
+
+        assert!(matches!(
+            allocator
+                .release(&tenant, &old_attachment)
+                .expect("old allocation should release"),
+            NetworkSegmentReleaseOutcome::TenantDrained { .. }
+        ));
+        let replacement = allocator
+            .acquire(&tenant, &attachment("replacement"))
+            .expect("replacement allocation should resolve");
+        assert_ne!(
+            stale_observation[0].segment_id(),
+            replacement.segment_id(),
+            "remove-and-recreate must mint a distinct stable identity even when the local slot is reused"
+        );
+
+        assert!(matches!(
+            allocator
+                .grow_block_if_current(&tenant, &stale_observation)
+                .expect("stale growth should resolve"),
+            NetworkSegmentGrowth::ObservationStale
+        ));
+        assert_eq!(
+            allocator
+                .segments_for(&tenant)
+                .expect("replacement segment set should resolve")
+                .len(),
+            1,
+            "an ABA-stale observation must not grow the replacement allocation"
+        );
+    }
+
+    #[test]
+    fn two_growers_from_one_observation_append_exactly_one_block() {
+        let dir = tempdir().expect("temp dir");
+        let allocator = SingleNodeSegmentAllocator::single_node_default(dir.path());
+        let tenant = tenant("tenant-a");
+        let observation = allocator
+            .segments_for(&tenant)
+            .expect("initial segment set should resolve");
+
+        assert!(matches!(
+            allocator
+                .grow_block_if_current(&tenant, &observation)
+                .expect("first growth should resolve"),
+            NetworkSegmentGrowth::Grown(_)
+        ));
+        assert!(matches!(
+            allocator
+                .grow_block_if_current(&tenant, &observation)
+                .expect("second growth should resolve"),
+            NetworkSegmentGrowth::ObservationStale
+        ));
+        assert_eq!(
+            allocator
+                .segments_for(&tenant)
+                .expect("grown segment set should resolve")
+                .len(),
+            2,
+            "only the first caller with a current observation may append"
+        );
+    }
+
+    #[test]
     fn draining_a_multi_block_tenant_returns_every_block_to_reap() {
         let dir = tempdir().expect("temp dir");
         let allocator = SingleNodeSegmentAllocator::single_node_default(dir.path());
         let a = tenant("tenant-a");
         allocator.acquire(&a, &attachment("sb-1")).expect("acquire");
-        allocator.grow_block(&a).expect("grow to block 1");
-        allocator.grow_block(&a).expect("grow to block 2");
+        grow(&allocator, &a);
+        grow(&allocator, &a);
 
         // The sole sandbox's release drains the tenant and returns ALL 3 block
         // bridges so the caller reaps every one.
@@ -966,8 +1107,11 @@ mod tests {
         allocator
             .acquire(&t, &attachment("sb"))
             .expect("primary block fits");
+        let observed = allocator
+            .segments_for(&t)
+            .expect("observed segment set should resolve");
         let error = allocator
-            .grow_block(&t)
+            .grow_block_if_current(&t, &observed)
             .expect_err("a second block must not fit a single-child super-net");
         assert!(
             format!("{error}").contains("pool exhausted"),

@@ -76,6 +76,23 @@ pub enum NetworkSegmentReleaseOutcome<Segment> {
     StillLive,
 }
 
+/// Result of compare-and-swap-fenced segment growth.
+///
+/// A placement coordinator first observes the tenant's complete ordered block
+/// set and atomically attempts reservation across it. If every block is full,
+/// it may grow only while that observation is still current. A concurrent
+/// grower or replacement changes the ordered identity set and forces the caller
+/// to rescan instead of appending a redundant block.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NetworkSegmentGrowth<Segment> {
+    /// This caller appended the next segment block.
+    Grown(Segment),
+    /// Another caller changed the ordered block set after it was observed.
+    ///
+    /// The caller must fetch the current blocks and retry reservation.
+    ObservationStale,
+}
+
 /// Portable lifecycle capability for tenant segment allocation.
 ///
 /// The interface owns allocation/hold/release semantics only. `Segment` and
@@ -97,6 +114,13 @@ pub trait NetworkSegmentAllocator: Send + Sync {
     /// an attachment hold.
     fn segment_for(&self, tenant: &TenantId) -> Result<Self::Segment, Self::Error>;
 
+    /// Idempotently read or assign the tenant allocation and return every
+    /// segment block in deterministic allocation order.
+    ///
+    /// Placement must attempt reservation across this complete set before it
+    /// requests growth.
+    fn segments_for(&self, tenant: &TenantId) -> Result<Vec<Self::Segment>, Self::Error>;
+
     /// Take an idempotent hold for one stable network attachment.
     fn acquire(
         &self,
@@ -111,8 +135,19 @@ pub trait NetworkSegmentAllocator: Send + Sync {
         attachment_id: &NetworkAttachmentId,
     ) -> Result<NetworkSegmentReleaseOutcome<Self::Segment>, Self::Error>;
 
-    /// Append another segment block after all current blocks are exhausted.
-    fn grow_block(&self, tenant: &TenantId) -> Result<Self::Segment, Self::Error>;
+    /// Append another segment block only if the caller's complete-set
+    /// observation remains current.
+    ///
+    /// `observed_segments` is the complete ordered [`Self::segments_for`]
+    /// result from the immediately preceding atomic reservation attempt. An
+    /// implementation compares stable segment identities and fencing context,
+    /// not addresses or provider-local names, so remove-and-recreate ABA
+    /// replacement cannot masquerade as the same observation.
+    fn grow_block_if_current(
+        &self,
+        tenant: &TenantId,
+        observed_segments: &[Self::Segment],
+    ) -> Result<NetworkSegmentGrowth<Self::Segment>, Self::Error>;
 
     /// Reconcile durable holds against the complete live attachment set.
     fn reconcile_orphans(
@@ -183,6 +218,10 @@ mod tests {
             Ok(self.segment.clone())
         }
 
+        fn segments_for(&self, _tenant: &TenantId) -> Result<Vec<Self::Segment>, Self::Error> {
+            Ok(vec![self.segment.clone()])
+        }
+
         fn acquire(
             &self,
             _tenant: &TenantId,
@@ -201,8 +240,12 @@ mod tests {
             })
         }
 
-        fn grow_block(&self, _tenant: &TenantId) -> Result<Self::Segment, Self::Error> {
-            Ok(self.segment.clone())
+        fn grow_block_if_current(
+            &self,
+            _tenant: &TenantId,
+            _observed_segments: &[Self::Segment],
+        ) -> Result<NetworkSegmentGrowth<Self::Segment>, Self::Error> {
+            Ok(NetworkSegmentGrowth::Grown(self.segment.clone()))
         }
 
         fn reconcile_orphans(
@@ -234,6 +277,16 @@ mod tests {
                 .tenant_id(),
             &tenant
         );
+        let observed = allocator
+            .segments_for(&tenant)
+            .expect("infallible allocator");
+        assert_eq!(observed.len(), 1);
+        assert!(matches!(
+            allocator
+                .grow_block_if_current(&tenant, &observed)
+                .expect("infallible allocator"),
+            NetworkSegmentGrowth::Grown(_)
+        ));
         assert!(matches!(
             allocator
                 .release(&tenant, &attachment)

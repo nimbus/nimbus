@@ -5,12 +5,12 @@
 //! display names. Those names are provider handles, never portable identity.
 
 use nimbus_core::Cidr;
-use nimbus_network::AllocatedSegment;
+use nimbus_network::{AllocatedSegment, NetworkSegmentId};
 
 #[cfg(test)]
 use nimbus_core::TenantId;
 #[cfg(test)]
-use nimbus_network::{NetworkLeaseEpoch, NetworkSegmentId};
+use nimbus_network::NetworkLeaseEpoch;
 
 /// A Netavark network identity in the provider's required 64-hex form.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,7 +49,6 @@ impl OciSegmentRealization {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn segment_id(&self) -> &NetworkSegmentId {
         self.allocation.segment_id()
     }

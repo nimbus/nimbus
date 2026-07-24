@@ -7164,6 +7164,7 @@ dependencies = [
  "nimbus-network",
  "nimbus-proxy",
  "oci-client",
+ "proptest",
  "serde",
  "serde_json",
  "sha2 0.10.9",

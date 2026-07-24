@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use nimbus_core::{Cidr, TenantId};
 use nimbus_network::{
     AllocatedSegment, NetworkAttachmentId, NetworkLeaseEpoch, NetworkSegmentAllocator,
-    NetworkSegmentReleaseOutcome,
+    NetworkSegmentGrowth, NetworkSegmentReleaseOutcome,
 };
 
 use crate::error::SandboxError;
@@ -14,9 +14,10 @@ use super::OciSegmentRealization;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SegmentAllocatorOperation {
     SegmentFor(TenantId),
+    SegmentsFor(TenantId),
     Acquire(TenantId, NetworkAttachmentId),
     Release(TenantId, NetworkAttachmentId),
-    GrowBlock(TenantId),
+    GrowBlockIfCurrent(TenantId, Vec<String>),
     Reconcile(BTreeSet<(TenantId, NetworkAttachmentId)>),
 }
 
@@ -67,6 +68,11 @@ impl NetworkSegmentAllocator for RecordingSegmentAllocator {
         Ok(self.segment.clone())
     }
 
+    fn segments_for(&self, tenant: &TenantId) -> Result<Vec<Self::Segment>, Self::Error> {
+        self.record(SegmentAllocatorOperation::SegmentsFor(tenant.clone()));
+        Ok(vec![self.segment.clone()])
+    }
+
     fn acquire(
         &self,
         tenant: &TenantId,
@@ -93,9 +99,19 @@ impl NetworkSegmentAllocator for RecordingSegmentAllocator {
         })
     }
 
-    fn grow_block(&self, tenant: &TenantId) -> Result<Self::Segment, Self::Error> {
-        self.record(SegmentAllocatorOperation::GrowBlock(tenant.clone()));
-        Ok(self.segment.clone())
+    fn grow_block_if_current(
+        &self,
+        tenant: &TenantId,
+        observed_segments: &[Self::Segment],
+    ) -> Result<NetworkSegmentGrowth<Self::Segment>, Self::Error> {
+        self.record(SegmentAllocatorOperation::GrowBlockIfCurrent(
+            tenant.clone(),
+            observed_segments
+                .iter()
+                .map(|segment| segment.segment_id().as_str().to_owned())
+                .collect(),
+        ));
+        Ok(NetworkSegmentGrowth::Grown(self.segment.clone()))
     }
 
     fn reconcile_orphans(
