@@ -188,6 +188,8 @@ pub(crate) fn assert_cluster_admission(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
     use super::*;
     use tempfile::tempdir;
 
@@ -318,5 +320,63 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("clock-skew"), "got: {message}");
         assert!(message.contains("stale epochs"), "got: {message}");
+    }
+
+    struct MutableClockLeaseProvider {
+        lease: SuperNetLease,
+        now: AtomicU64,
+    }
+
+    impl ClusterLeaseProvider for MutableClockLeaseProvider {
+        fn current_lease(&self) -> Option<SuperNetLease> {
+            Some(self.lease.clone())
+        }
+
+        fn now_millis(&self) -> u64 {
+            self.now.load(Ordering::SeqCst)
+        }
+    }
+
+    #[test]
+    // NNC0.5 fail-before: expiry must fence new creation without revoking the
+    // cleanup authority carried by an already-durable handle. NNC2.6 owns that
+    // split and removal of this ignore marker.
+    #[ignore = "NNC0.5 expected red until expired create authority still permits cleanup"]
+    fn expired_lease_must_fence_creation_but_allow_cleanup_of_a_durable_hold() {
+        let dir = tempdir().expect("temp dir");
+        let provider = Arc::new(MutableClockLeaseProvider {
+            lease: lease("10.10.0.0/16", 7, 5_000),
+            now: AtomicU64::new(0),
+        });
+        let allocator = ClusterSegmentAllocator::new(dir.path(), 24, provider.clone());
+        let original_tenant = tenant("tenant-original");
+        let original_sandbox = sandbox("sandbox-original");
+        allocator
+            .acquire(&original_tenant, &original_sandbox)
+            .expect("the durable hold should be created under the live lease");
+
+        provider.now.store(5_000, Ordering::SeqCst);
+        let create_error = allocator
+            .acquire(
+                &tenant("tenant-replacement"),
+                &sandbox("sandbox-replacement"),
+            )
+            .expect_err("lease expiry must continue to fence new creation");
+        assert!(
+            create_error.to_string().contains("expired"),
+            "the creation refusal must be the lease-expiry boundary: {create_error}"
+        );
+
+        let cleanup = allocator.release(&original_tenant, &original_sandbox);
+        if let Err(error) = &cleanup {
+            assert!(
+                error.to_string().contains("expired"),
+                "the fail-before must expose cleanup rejected by the expiry gate: {error}"
+            );
+        }
+        assert!(
+            matches!(cleanup, Ok(ReleaseOutcome::TenantDrained { .. })),
+            "expired create authority must still permit cleanup of its durable old hold"
+        );
     }
 }

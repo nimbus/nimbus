@@ -101,4 +101,62 @@ mod tests {
         assert_eq!(c2.network_subnet, "10.7.0.4/30");
         assert_ne!(c1.network_interface, c2.network_interface);
     }
+
+    #[test]
+    // NNC0.5 fail-before: placement currently checks only the primary block
+    // before growing, so it strands free capacity in an existing secondary
+    // block. NNC2.3 owns the atomic all-block scan and removal of this ignore.
+    #[ignore = "NNC0.5 expected red until placement reuses existing secondary blocks"]
+    fn placement_must_reuse_free_capacity_in_an_existing_secondary_block() {
+        let dir = tempdir().expect("temp dir");
+        let state_root = dir.path();
+        let allocator = SingleNodeSegmentAllocator::new(
+            state_root,
+            Some(super::super::segment::InstalledSuperNet {
+                cidr: nimbus_core::net::Cidr::parse("10.7.0.0/23").unwrap(),
+                epoch: 0,
+            }),
+            30,
+        );
+        let t = tenant("tenant-a");
+        let build = |segment: &NetworkSegment| OciNetworkConfig {
+            network_name: segment.network_name().to_owned(),
+            network_interface: segment.network_interface().to_owned(),
+            network_subnet: segment.cidr().to_string(),
+            network_id: segment.network_id().as_str().to_owned(),
+            ..OciNetworkConfig::default()
+        };
+
+        let sb1 = SandboxId::new("sb-1");
+        let sb1_layout = OciNetworkLayout::new(state_root, &t, &sb1);
+        sb1_layout.ensure_directories().expect("sb-1 dirs");
+        let first = place_sandbox_on_block(&allocator, &t, &sb1_layout, &sb1, build)
+            .expect("sb-1 should fill the primary /30");
+        assert_eq!(first.network_subnet, "10.7.0.0/30");
+
+        let sb2 = SandboxId::new("sb-2");
+        let sb2_layout = OciNetworkLayout::new(state_root, &t, &sb2);
+        sb2_layout.ensure_directories().expect("sb-2 dirs");
+        let secondary = place_sandbox_on_block(&allocator, &t, &sb2_layout, &sb2, build)
+            .expect("sb-2 should grow the first secondary /30");
+        assert_eq!(secondary.network_subnet, "10.7.0.4/30");
+        super::super::ipam::deallocate_container_ips(&sb2_layout, &sb2)
+            .expect("free the secondary block's only container slot");
+
+        let sb3 = SandboxId::new("sb-3");
+        let sb3_layout = OciNetworkLayout::new(state_root, &t, &sb3);
+        sb3_layout.ensure_directories().expect("sb-3 dirs");
+        let replacement = place_sandbox_on_block(&allocator, &t, &sb3_layout, &sb3, build)
+            .expect("sb-3 placement should resolve");
+        if replacement.network_subnet != secondary.network_subnet {
+            assert_eq!(
+                replacement.network_subnet, "10.7.0.8/30",
+                "the fail-before must expose unnecessary growth to the next sibling block"
+            );
+        }
+        assert_eq!(
+            replacement.network_subnet, secondary.network_subnet,
+            "placement must reuse free capacity in an existing secondary block before growth"
+        );
+    }
 }
