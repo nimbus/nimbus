@@ -16,6 +16,7 @@ use super::OciSegmentRealization;
 pub(crate) enum SegmentAllocatorOperation {
     SegmentFor(TenantId),
     SegmentsFor(TenantId),
+    InspectSegments(TenantId),
     Acquire(TenantId, NetworkAttachmentId),
     Quarantine(TenantId, NetworkAttachmentId),
     Release(TenantId, NetworkAttachmentId),
@@ -74,6 +75,14 @@ impl NetworkSegmentAllocator for RecordingSegmentAllocator {
     fn segments_for(&self, tenant: &TenantId) -> Result<Vec<Self::Segment>, Self::Error> {
         self.record(SegmentAllocatorOperation::SegmentsFor(tenant.clone()));
         Ok(vec![self.segment.clone()])
+    }
+
+    fn inspect_segments(
+        &self,
+        tenant: &TenantId,
+    ) -> Result<Option<Vec<Self::Segment>>, Self::Error> {
+        self.record(SegmentAllocatorOperation::InspectSegments(tenant.clone()));
+        Ok(Some(vec![self.segment.clone()]))
     }
 
     fn acquire(

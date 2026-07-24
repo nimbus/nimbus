@@ -34,6 +34,10 @@ use crate::error::{Result, SandboxError};
 
 use super::OciSegmentRealization;
 
+mod cleanup;
+
+pub(crate) use cleanup::DurableSegmentCleanupAuthority;
+
 /// The default single-node super-net: the node-0 `/16` slice of the cluster pool
 /// (`10.0.0.0/8`), so enrolling into a cluster later never re-carves live tenants.
 /// The backend configs default `node_network_supernet` to this same value.
@@ -316,6 +320,12 @@ impl SingleNodeSegmentAllocator {
         }
     }
 
+    fn read_state(&self) -> Result<Option<SegmentState>> {
+        self.store
+            .read(&NetworkStatePartition::SegmentAllocations)
+            .map_err(network_store_error)
+    }
+
     #[cfg(test)]
     pub(super) fn has_hold(&self, tenant: &str, sandbox: &str) -> bool {
         let attachment =
@@ -443,6 +453,31 @@ impl NetworkSegmentAllocator for SingleNodeSegmentAllocator {
             .iter()
             .map(|block| self.segment_at(&supernet, tenant, block))
             .collect()
+    }
+
+    fn inspect_segments(&self, tenant: &TenantId) -> Result<Option<Vec<OciSegmentRealization>>> {
+        let supernet = self.installed()?.clone();
+        let Some(state) = self.read_state()? else {
+            return Ok(None);
+        };
+        self.ensure_supernet_matches(&supernet, &state)?;
+        let Some(entry) = state.tenants.get(tenant.as_str()) else {
+            return Ok(None);
+        };
+        if entry.blocks.is_empty() {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "network segment authority contains an empty allocation for tenant {}",
+                    tenant.as_str()
+                ),
+            });
+        }
+        entry
+            .blocks
+            .iter()
+            .map(|block| self.segment_at(&supernet, tenant, block))
+            .collect::<Result<Vec<_>>>()
+            .map(Some)
     }
 
     fn acquire(
@@ -724,6 +759,10 @@ impl NetworkSegmentAllocator for ConfiguredSegmentAllocator {
         self.inner()?.segments_for(tenant)
     }
 
+    fn inspect_segments(&self, tenant: &TenantId) -> Result<Option<Vec<Self::Segment>>> {
+        self.inner()?.inspect_segments(tenant)
+    }
+
     fn acquire(
         &self,
         tenant: &TenantId,
@@ -776,6 +815,7 @@ impl NetworkSegmentAllocator for ConfiguredSegmentAllocator {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+    use std::convert::Infallible;
     use std::fs;
     use tempfile::tempdir;
 
@@ -813,6 +853,66 @@ mod tests {
                 .expect("cleanup finalization should succeed"),
             NetworkSegmentFinalizeOutcome::Released
         );
+    }
+
+    #[test]
+    fn durable_cleanup_authority_rejects_incomplete_persisted_fencing() {
+        let cases = [
+            (Some("10.31.0.0/16"), None, false),
+            (None, Some(NetworkLeaseEpoch::new(31)), false),
+            (None, None, true),
+        ];
+        for (index, (cidr, epoch, include_tenant)) in cases.into_iter().enumerate() {
+            let dir = tempdir().expect("temp dir");
+            let store =
+                LocalNetworkStateStore::open(dir.path()).expect("local authority should open");
+            store
+                .transaction(
+                    &NetworkStatePartition::SegmentAllocations,
+                    |state: &mut SegmentState| {
+                        state.supernet_cidr = cidr.map(str::to_owned);
+                        state.supernet_epoch = epoch;
+                        if include_tenant {
+                            state.tenants.insert(
+                                "tenant-corrupt".to_owned(),
+                                TenantEntry {
+                                    blocks: vec![SegmentBlock {
+                                        local_slot: 0,
+                                        segment_id: NetworkSegmentId::generate(),
+                                    }],
+                                    live_attachments: BTreeSet::new(),
+                                    cleanup_pending_attachments: BTreeSet::new(),
+                                    allocation_cleanup_pending: true,
+                                },
+                            );
+                        }
+                        Ok::<_, Infallible>(())
+                    },
+                )
+                .expect("fixture should persist a checksum-valid malformed payload");
+            let authority_path = LocalNetworkStateStore::authority_path_for(dir.path());
+            let before = fs::read(&authority_path).expect("fixture authority should exist");
+
+            let error =
+                match DurableSegmentCleanupAuthority::open(dir.path(), DEFAULT_TENANT_PREFIX) {
+                    Ok(_) => panic!(
+                        "cleanup must fail closed when durable CIDR/epoch fencing is incomplete"
+                    ),
+                    Err(error) => error,
+                };
+
+            assert!(
+                error
+                    .to_string()
+                    .contains("incomplete durable cleanup fencing"),
+                "case {index} must name the invalid cleanup fence: {error}"
+            );
+            assert_eq!(
+                fs::read(&authority_path).expect("rejected open must preserve authority"),
+                before,
+                "case {index} must fail without mutating the malformed authority"
+            );
+        }
     }
 
     fn grow(allocator: &SingleNodeSegmentAllocator, tenant: &TenantId) -> OciSegmentRealization {

@@ -14,9 +14,11 @@
 //! here against an in-memory provider — a legitimate test double, not a stub: the
 //! allocator's behaviour is fully exercised. Fail-closed by construction: no
 //! committed lease → no allocation (no config-default fallback); locally
-//! observed expiry → the node self-fences; stale epoch → drain and re-carve (via
-//! the inner allocator's `ensure_supernet_matches`). Those local checks are not
-//! sufficient distributed authority: before promotion, HS5 must either prove a
+//! observed expiry → the node self-fences new create/grow authority while a
+//! restricted authority derived from durable state retains inspection and
+//! cleanup for old handles; stale epoch → drain and re-carve (via the inner
+//! allocator's `ensure_supernet_matches`). Those local checks are not sufficient
+//! distributed authority: before promotion, HS5 must either prove a
 //! maximum leader/node skew plus observation-delay model whose reassignment
 //! grace prevents overlap, or replace wall expiry with a clock-free authority.
 //! The resulting epoch must be validated atomically with every protected write.
@@ -40,7 +42,9 @@ use nimbus_network::{
 
 use crate::error::{Result, SandboxError};
 
-use super::segment::{InstalledSuperNet, SingleNodeSegmentAllocator};
+use super::segment::{
+    DurableSegmentCleanupAuthority, InstalledSuperNet, SingleNodeSegmentAllocator,
+};
 use super::{OciSegmentAllocator, OciSegmentRealization};
 
 /// Promotion gate owned by horizontal-scaling HS5.
@@ -108,7 +112,7 @@ impl ClusterSegmentAllocator {
     /// partitioned former owner) both refuse to allocate. Epoch fencing is the
     /// inner allocator's `ensure_supernet_matches`: state carved under an older
     /// epoch fails closed until drain + re-carve.
-    fn leased_inner(&self) -> Result<SingleNodeSegmentAllocator> {
+    fn live_inner(&self) -> Result<SingleNodeSegmentAllocator> {
         let lease = self
             .lease
             .current_lease()
@@ -136,6 +140,17 @@ impl ClusterSegmentAllocator {
             self.tenant_prefix,
         )
     }
+
+    /// Open only the inspection/cleanup capability encoded by durable state.
+    ///
+    /// This path deliberately does not consult the current lease provider:
+    /// expiry, partition, or a newly observed epoch must revoke creation but
+    /// cannot strand provider effects owned by a previously committed epoch.
+    /// The returned type has no assign/acquire/grow methods, so durable cleanup
+    /// state cannot be confused with live creation authority.
+    fn cleanup_inner(&self) -> Result<Option<DurableSegmentCleanupAuthority>> {
+        DurableSegmentCleanupAuthority::open(&self.state_root, self.tenant_prefix)
+    }
 }
 
 impl NetworkSegmentAllocator for ClusterSegmentAllocator {
@@ -143,11 +158,18 @@ impl NetworkSegmentAllocator for ClusterSegmentAllocator {
     type Error = SandboxError;
 
     fn segment_for(&self, tenant: &TenantId) -> Result<OciSegmentRealization> {
-        self.leased_inner()?.segment_for(tenant)
+        self.live_inner()?.segment_for(tenant)
     }
 
     fn segments_for(&self, tenant: &TenantId) -> Result<Vec<OciSegmentRealization>> {
-        self.leased_inner()?.segments_for(tenant)
+        self.live_inner()?.segments_for(tenant)
+    }
+
+    fn inspect_segments(&self, tenant: &TenantId) -> Result<Option<Vec<OciSegmentRealization>>> {
+        match self.cleanup_inner()? {
+            Some(cleanup) => cleanup.inspect_segments(tenant),
+            None => Ok(None),
+        }
     }
 
     fn acquire(
@@ -155,7 +177,7 @@ impl NetworkSegmentAllocator for ClusterSegmentAllocator {
         tenant: &TenantId,
         attachment_id: &NetworkAttachmentId,
     ) -> Result<OciSegmentRealization> {
-        self.leased_inner()?.acquire(tenant, attachment_id)
+        self.live_inner()?.acquire(tenant, attachment_id)
     }
 
     fn quarantine(
@@ -163,7 +185,10 @@ impl NetworkSegmentAllocator for ClusterSegmentAllocator {
         tenant: &TenantId,
         attachment_id: &NetworkAttachmentId,
     ) -> Result<NetworkSegmentQuarantineOutcome> {
-        self.leased_inner()?.quarantine(tenant, attachment_id)
+        match self.cleanup_inner()? {
+            Some(cleanup) => cleanup.quarantine(tenant, attachment_id),
+            None => Ok(NetworkSegmentQuarantineOutcome::AlreadyReleased),
+        }
     }
 
     fn release(
@@ -171,14 +196,20 @@ impl NetworkSegmentAllocator for ClusterSegmentAllocator {
         tenant: &TenantId,
         attachment_id: &NetworkAttachmentId,
     ) -> Result<NetworkSegmentReleaseOutcome<OciSegmentRealization>> {
-        self.leased_inner()?.release(tenant, attachment_id)
+        match self.cleanup_inner()? {
+            Some(cleanup) => cleanup.release(tenant, attachment_id),
+            None => Ok(NetworkSegmentReleaseOutcome::AlreadyReleased),
+        }
     }
 
     fn finalize_release(
         &self,
         cleanup: &NetworkSegmentCleanup<OciSegmentRealization>,
     ) -> Result<NetworkSegmentFinalizeOutcome> {
-        self.leased_inner()?.finalize_release(cleanup)
+        match self.cleanup_inner()? {
+            Some(authority) => authority.finalize_release(cleanup),
+            None => Ok(NetworkSegmentFinalizeOutcome::AlreadyReleased),
+        }
     }
 
     fn grow_block_if_current(
@@ -186,7 +217,7 @@ impl NetworkSegmentAllocator for ClusterSegmentAllocator {
         tenant: &TenantId,
         observed_segments: &[OciSegmentRealization],
     ) -> Result<NetworkSegmentGrowth<OciSegmentRealization>> {
-        self.leased_inner()?
+        self.live_inner()?
             .grow_block_if_current(tenant, observed_segments)
     }
 
@@ -194,7 +225,10 @@ impl NetworkSegmentAllocator for ClusterSegmentAllocator {
         &self,
         live: &BTreeSet<(TenantId, NetworkAttachmentId)>,
     ) -> Result<Vec<OciSegmentRealization>> {
-        self.leased_inner()?.reconcile_orphans(live)
+        match self.cleanup_inner()? {
+            Some(cleanup) => cleanup.reconcile_orphans(live),
+            None => Ok(Vec::new()),
+        }
     }
 
     fn requires_cluster_lease(&self) -> bool {
@@ -234,9 +268,12 @@ pub(crate) fn assert_cluster_admission(
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::*;
+    use nimbus_network::LocalNetworkStateStore;
     use tempfile::tempdir;
 
     fn tenant(id: &str) -> TenantId {
@@ -393,13 +430,16 @@ mod tests {
     }
 
     struct MutableClockLeaseProvider {
-        lease: SuperNetLease,
+        lease: Mutex<Option<SuperNetLease>>,
         now: AtomicU64,
     }
 
     impl ClusterLeaseProvider for MutableClockLeaseProvider {
         fn current_lease(&self) -> Option<SuperNetLease> {
-            Some(self.lease.clone())
+            self.lease
+                .lock()
+                .expect("mutable lease provider lock should not be poisoned")
+                .clone()
         }
 
         fn now_millis(&self) -> u64 {
@@ -408,24 +448,33 @@ mod tests {
     }
 
     #[test]
-    // NNC0.5 fail-before: expiry must fence new creation without revoking the
-    // cleanup authority carried by an already-durable handle. NNC2.6 owns that
-    // split and removal of this ignore marker.
-    #[ignore = "NNC0.5 expected red until expired create authority still permits cleanup"]
     fn expired_lease_must_fence_creation_but_allow_cleanup_of_a_durable_hold() {
         let dir = tempdir().expect("temp dir");
         let provider = Arc::new(MutableClockLeaseProvider {
-            lease: lease("10.10.0.0/16", NetworkLeaseEpoch::new(7), 5_000),
+            lease: Mutex::new(Some(lease(
+                "10.10.0.0/16",
+                NetworkLeaseEpoch::new(7),
+                5_000,
+            ))),
             now: AtomicU64::new(0),
         });
         let allocator = ClusterSegmentAllocator::new(dir.path(), 24, provider.clone());
         let original_tenant = tenant("tenant-original");
         let original_attachment = attachment("sandbox-original");
-        allocator
+        let original = allocator
             .acquire(&original_tenant, &original_attachment)
             .expect("the durable hold should be created under the live lease");
+        let authority_path = LocalNetworkStateStore::authority_path_for(dir.path());
+        let before_expiry =
+            fs::read(&authority_path).expect("durable authority should exist after acquire");
 
         provider.now.store(5_000, Ordering::SeqCst);
+        let inspected = allocator
+            .inspect_segments(&original_tenant)
+            .expect("expiry must retain non-creating inspection")
+            .expect("the durable old allocation must remain inspectable");
+        assert_eq!(inspected, vec![original.clone()]);
+
         let create_error = allocator
             .acquire(
                 &tenant("tenant-replacement"),
@@ -436,17 +485,121 @@ mod tests {
             create_error.to_string().contains("expired"),
             "the creation refusal must be the lease-expiry boundary: {create_error}"
         );
-
-        let cleanup = allocator.release(&original_tenant, &original_attachment);
-        if let Err(error) = &cleanup {
-            assert!(
-                error.to_string().contains("expired"),
-                "the fail-before must expose cleanup rejected by the expiry gate: {error}"
-            );
-        }
+        let primary_assign_error = allocator
+            .segment_for(&original_tenant)
+            .expect_err("primary assigning lookup must require live authority");
         assert!(
-            matches!(cleanup, Ok(NetworkSegmentReleaseOutcome::CleanupPending(_))),
-            "expired create authority must still permit cleanup of its durable old hold"
+            primary_assign_error.to_string().contains("expired"),
+            "primary assigning lookup must remain behind the expiry fence: {primary_assign_error}"
+        );
+        let assigning_read_error = allocator
+            .segments_for(&original_tenant)
+            .expect_err("even an existing assigning lookup must require live authority");
+        assert!(
+            assigning_read_error.to_string().contains("expired"),
+            "assign-capable lookup must remain behind the expiry fence: {assigning_read_error}"
+        );
+        let grow_error = allocator
+            .grow_block_if_current(&original_tenant, &inspected)
+            .expect_err("lease expiry must fence allocation growth");
+        assert!(
+            grow_error.to_string().contains("expired"),
+            "growth refusal must remain the lease-expiry boundary: {grow_error}"
+        );
+        assert_eq!(
+            fs::read(&authority_path)
+                .expect("rejected create/grow and inspection must preserve authority"),
+            before_expiry,
+            "inspection and rejected creation/growth must not mutate durable authority"
+        );
+
+        assert_eq!(
+            allocator
+                .quarantine(&original_tenant, &original_attachment)
+                .expect("expiry must retain durable quarantine authority"),
+            NetworkSegmentQuarantineOutcome::CleanupPending
+        );
+        *provider
+            .lease
+            .lock()
+            .expect("mutable lease provider lock should not be poisoned") =
+            Some(lease("10.20.0.0/16", NetworkLeaseEpoch::new(8), 10_000));
+        assert_eq!(
+            allocator
+                .inspect_segments(&original_tenant)
+                .expect("a new reported epoch must not hide durable old cleanup state"),
+            Some(vec![original.clone()])
+        );
+        let reassigned_create_error = allocator
+            .acquire(
+                &tenant("tenant-new-epoch"),
+                &attachment("sandbox-new-epoch"),
+            )
+            .expect_err("a new lease must not overwrite durable old-epoch state");
+        assert!(
+            reassigned_create_error.to_string().contains("super-net")
+                || reassigned_create_error.to_string().contains("epoch"),
+            "new-epoch creation must fail on the durable old fence: {reassigned_create_error}"
+        );
+        *provider
+            .lease
+            .lock()
+            .expect("mutable lease provider lock should not be poisoned") = None;
+        let restarted = ClusterSegmentAllocator::new(dir.path(), 24, provider);
+        assert_eq!(
+            restarted
+                .inspect_segments(&original_tenant)
+                .expect("restart without a reported lease must inspect durable old state"),
+            Some(vec![original]),
+            "cleanup authority must come from the durable fenced handle, not an in-memory lease"
+        );
+
+        let NetworkSegmentReleaseOutcome::CleanupPending(cleanup) = restarted
+            .release(&original_tenant, &original_attachment)
+            .expect("confirmed detach must release the durable old hold")
+        else {
+            panic!("the last durable old hold must enter allocation cleanup");
+        };
+        assert_eq!(cleanup.lease_epoch(), NetworkLeaseEpoch::new(7));
+        assert_eq!(
+            restarted
+                .finalize_release(&cleanup)
+                .expect("provider cleanup proof must finalize the old allocation"),
+            NetworkSegmentFinalizeOutcome::Released
+        );
+        assert_eq!(
+            restarted
+                .finalize_release(&cleanup)
+                .expect("repeated finalization must be idempotent"),
+            NetworkSegmentFinalizeOutcome::AlreadyReleased
+        );
+        assert_eq!(
+            restarted
+                .inspect_segments(&original_tenant)
+                .expect("released state remains inspectable as absent"),
+            None
+        );
+        assert_eq!(
+            restarted
+                .quarantine(&original_tenant, &original_attachment)
+                .expect("repeated quarantine must be idempotent"),
+            NetworkSegmentQuarantineOutcome::AlreadyReleased
+        );
+        assert_eq!(
+            restarted
+                .release(&original_tenant, &original_attachment)
+                .expect("repeated hold release must be idempotent"),
+            NetworkSegmentReleaseOutcome::AlreadyReleased
+        );
+        let no_lease_create_error = restarted
+            .acquire(
+                &tenant("tenant-still-fenced"),
+                &attachment("sandbox-still-fenced"),
+            )
+            .expect_err("cleanup must not manufacture new create authority");
+        assert!(
+            no_lease_create_error.to_string().contains("not committed"),
+            "new creation must remain fenced without a committed lease: {no_lease_create_error}"
         );
     }
 }

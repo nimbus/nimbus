@@ -192,6 +192,18 @@ pub trait NetworkSegmentAllocator: Send + Sync {
     /// requests growth.
     fn segments_for(&self, tenant: &TenantId) -> Result<Vec<Self::Segment>, Self::Error>;
 
+    /// Inspect an existing tenant allocation without creating or extending it.
+    ///
+    /// This is deliberately distinct from [`Self::segments_for`]: an expired
+    /// cluster lease may retain cleanup authority for a durable old handle but
+    /// must not retain any API that can mint allocation state. Implementations
+    /// return `None` when no durable allocation exists and must not mutate
+    /// authority while inspecting.
+    fn inspect_segments(
+        &self,
+        tenant: &TenantId,
+    ) -> Result<Option<Vec<Self::Segment>>, Self::Error>;
+
     /// Take an idempotent hold for one stable network attachment.
     fn acquire(
         &self,
@@ -203,6 +215,8 @@ pub trait NetworkSegmentAllocator: Send + Sync {
     ///
     /// A quarantined attachment continues to hold its allocation. New acquire
     /// attempts for that same identity fail closed until detach is confirmed.
+    /// An expiring create lease must not revoke this operation for a handle
+    /// whose identity and epoch remain present in durable authority.
     fn quarantine(
         &self,
         tenant: &TenantId,
@@ -215,6 +229,7 @@ pub trait NetworkSegmentAllocator: Send + Sync {
     /// Releasing the last hold does not free the allocation. It returns
     /// [`NetworkSegmentCleanup`] and leaves every local slot unavailable until
     /// [`Self::finalize_release`] confirms the exact identity-fenced cleanup.
+    /// This cleanup authority comes from durable identity, not lease freshness.
     fn release(
         &self,
         tenant: &TenantId,
@@ -322,6 +337,13 @@ mod tests {
             Ok(vec![self.segment.clone()])
         }
 
+        fn inspect_segments(
+            &self,
+            _tenant: &TenantId,
+        ) -> Result<Option<Vec<Self::Segment>>, Self::Error> {
+            Ok(Some(vec![self.segment.clone()]))
+        }
+
         fn acquire(
             &self,
             _tenant: &TenantId,
@@ -407,6 +429,14 @@ mod tests {
             .segments_for(&tenant)
             .expect("infallible allocator");
         assert_eq!(observed.len(), 1);
+        assert_eq!(
+            allocator
+                .inspect_segments(&tenant)
+                .expect("infallible allocator")
+                .expect("fixed allocation exists"),
+            observed,
+            "inspection remains available independently of allocating lookup"
+        );
         assert!(matches!(
             allocator
                 .grow_block_if_current(&tenant, &observed)
