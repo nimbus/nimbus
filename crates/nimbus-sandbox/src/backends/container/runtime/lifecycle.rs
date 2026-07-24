@@ -2,12 +2,17 @@ use super::support::*;
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
 use tempfile::TempDir;
 
 use crate::backends::oci::command::CommandSpec;
+use crate::backends::oci::network::{
+    OciSegmentAllocator, RecordingSegmentAllocator, SegmentAllocatorOperation,
+    default_network_attachment_id,
+};
 use nimbus_egress::{EgressPolicy, EgressProtocol, EgressRule};
 
 #[test]
@@ -272,6 +277,47 @@ fn release_execution_artifacts_stops_running_egress_proxy() {
             .contains(&manifest.handle.id)
             .expect("registry lock should hold"),
         "cleanup should drop the live egress proxy handle"
+    );
+}
+
+#[test]
+fn release_execution_artifacts_uses_quarantine_release_finalize_order() {
+    let temp_dir = TempDir::new().expect("tempdir should build");
+    let spec = sample_spec();
+    let sandbox_id = sandbox_id();
+    let recorder = Arc::new(RecordingSegmentAllocator::new(
+        spec.tenant_id.clone(),
+        "10.73.0.0/24",
+        73,
+    ));
+    let injected: Arc<OciSegmentAllocator> = recorder.clone();
+    let backend = ContainerSandboxBackend::with_segment_allocator(
+        ContainerSandboxBackendConfig::under_root(temp_dir.path()),
+        injected,
+    );
+    let mut manifest = backend
+        .plan_start_with_id(&spec, &sandbox_id, None, None)
+        .expect("plan should lower")
+        .manifest;
+
+    backend
+        .release_execution_artifacts(&mut manifest)
+        .expect("confirmed plan-only cleanup should release");
+
+    let attachment = default_network_attachment_id(&sandbox_id);
+    let operations = recorder.operations();
+    let expected_tail = [
+        SegmentAllocatorOperation::Quarantine(spec.tenant_id.clone(), attachment.clone()),
+        SegmentAllocatorOperation::Release(spec.tenant_id.clone(), attachment),
+        SegmentAllocatorOperation::FinalizeRelease(
+            spec.tenant_id,
+            vec!["netsegment_01ARZ3NDEKTSV4RRFFQ69G5FAV".to_owned()],
+        ),
+    ];
+    assert_eq!(
+        operations.get(operations.len().saturating_sub(expected_tail.len())..),
+        Some(expected_tail.as_slice()),
+        "provider/netns teardown must be enclosed by durable quarantine and identity-fenced finalization"
     );
 }
 

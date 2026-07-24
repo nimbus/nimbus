@@ -1528,6 +1528,45 @@ fn krun_backend_consumes_the_injected_portable_segment_allocator() {
 }
 
 #[test]
+fn plan_only_stop_uses_quarantine_release_finalize_order() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let spec = sample_spec_for_tenant("krun-stop-order", "api");
+    let recorder = Arc::new(RecordingSegmentAllocator::new(
+        spec.tenant_id.clone(),
+        "10.75.0.0/24",
+        75,
+    ));
+    let injected: Arc<OciSegmentAllocator> = recorder.clone();
+    let backend = KrunSandboxBackend::with_segment_allocator(
+        KrunSandboxBackendConfig::plan_only(
+            temp_dir.path().join("bundles"),
+            temp_dir.path().join("state"),
+        ),
+        injected,
+    );
+
+    let handle =
+        block_on(backend.start(spec.clone())).expect("plan-only krun start should succeed");
+    block_on(backend.stop(&handle.id)).expect("plan-only krun stop should release its network");
+
+    let attachment = crate::backends::oci::network::default_network_attachment_id(&handle.id);
+    let operations = recorder.operations();
+    let expected_tail = [
+        SegmentAllocatorOperation::Quarantine(spec.tenant_id.clone(), attachment.clone()),
+        SegmentAllocatorOperation::Release(spec.tenant_id.clone(), attachment),
+        SegmentAllocatorOperation::FinalizeRelease(
+            spec.tenant_id,
+            vec!["netsegment_01ARZ3NDEKTSV4RRFFQ69G5FAV".to_owned()],
+        ),
+    ];
+    assert_eq!(
+        operations.get(operations.len().saturating_sub(expected_tail.len())..),
+        Some(expected_tail.as_slice()),
+        "plan-only teardown must obey the same durable quarantine and identity-fenced finalization order"
+    );
+}
+
+#[test]
 fn execute_egress_proxy_binds_bridge_gateway_after_published_ports() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let mut config = KrunSandboxBackendConfig::under_root(temp_dir.path().to_path_buf());

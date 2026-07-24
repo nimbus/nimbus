@@ -25,8 +25,9 @@ use nimbus_core::TenantId;
 use nimbus_core::net::Cidr;
 use nimbus_network::{
     AllocatedSegment, LocalNetworkStateStore, NetworkAttachmentId, NetworkLeaseEpoch,
-    NetworkSegmentAllocator, NetworkSegmentGrowth, NetworkSegmentId, NetworkSegmentReleaseOutcome,
-    NetworkStatePartition, NetworkStateTransactionError,
+    NetworkSegmentAllocator, NetworkSegmentCleanup, NetworkSegmentFinalizeOutcome,
+    NetworkSegmentGrowth, NetworkSegmentId, NetworkSegmentQuarantineOutcome,
+    NetworkSegmentReleaseOutcome, NetworkStatePartition, NetworkStateTransactionError,
 };
 
 use crate::error::{Result, SandboxError};
@@ -71,12 +72,19 @@ struct SegmentBlock {
 /// A tenant's allocation: its ordered list of blocks (element 0 is the
 /// primary/anchor allocation, with additional blocks appended through
 /// compare-and-swap-fenced growth) plus the set of live attachment IDs across
-/// all its blocks. The whole allocation is freed only when the last hold
-/// releases.
+/// all its blocks. The whole allocation becomes cleanup-pending after the last
+/// hold releases and is freed only by an identity-fenced finalization.
 #[derive(Default, Serialize, Deserialize)]
 struct TenantEntry {
     blocks: Vec<SegmentBlock>,
     live_attachments: BTreeSet<String>,
+    /// Attachments fenced before provider detach. They continue to count as
+    /// live holds until the caller confirms provider and netns deletion.
+    cleanup_pending_attachments: BTreeSet<String>,
+    /// Fences new attachment/growth authority while every remaining hold is
+    /// pending, and remains set after the last hold releases until provider
+    /// bridge cleanup is identity-fenced and finalized.
+    allocation_cleanup_pending: bool,
 }
 
 impl TenantEntry {
@@ -246,6 +254,26 @@ impl SingleNodeSegmentAllocator {
         ))
     }
 
+    fn cleanup_for(
+        &self,
+        supernet: &InstalledSuperNet,
+        tenant: &TenantId,
+        entry: &TenantEntry,
+    ) -> Result<NetworkSegmentCleanup<OciSegmentRealization>> {
+        let mut segments = Vec::with_capacity(entry.blocks.len());
+        let mut segment_ids = Vec::with_capacity(entry.blocks.len());
+        for block in &entry.blocks {
+            segment_ids.push(block.segment_id.clone());
+            segments.push(self.segment_at(supernet, tenant, block)?);
+        }
+        Ok(NetworkSegmentCleanup::new(
+            tenant.clone(),
+            segment_ids,
+            supernet.epoch,
+            segments,
+        ))
+    }
+
     /// Fail closed if the persisted state was carved under a different super-net
     /// or epoch than the one this allocator has installed.
     fn ensure_supernet_matches(
@@ -302,6 +330,22 @@ impl SingleNodeSegmentAllocator {
                     .is_some_and(|entry| entry.live_attachments.contains(attachment.as_str()))
             })
     }
+
+    #[cfg(test)]
+    pub(super) fn has_pending_hold(&self, tenant: &str, sandbox: &str) -> bool {
+        let attachment =
+            NetworkAttachmentId::for_workload_attachment(sandbox, super::DEFAULT_ATTACHMENT_NAME);
+        self.store
+            .read::<SegmentState>(&NetworkStatePartition::SegmentAllocations)
+            .expect("segment authority should read")
+            .is_some_and(|state| {
+                state.tenants.get(tenant).is_some_and(|entry| {
+                    entry
+                        .cleanup_pending_attachments
+                        .contains(attachment.as_str())
+                })
+            })
+    }
 }
 
 fn network_store_error(error: impl std::fmt::Display) -> SandboxError {
@@ -339,6 +383,14 @@ impl SingleNodeSegmentAllocator {
     ) -> Result<SegmentBlock> {
         self.ensure_supernet_matches(supernet, state)?;
         if let Some(entry) = state.tenants.get(tenant.as_str()) {
+            if entry.allocation_cleanup_pending {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "network segment allocation for tenant {} is cleanup-pending; refusing reuse until provider deletion is confirmed",
+                        tenant.as_str()
+                    ),
+                });
+            }
             return Ok(entry.primary().clone());
         }
         let block = SegmentBlock {
@@ -350,6 +402,8 @@ impl SingleNodeSegmentAllocator {
             TenantEntry {
                 blocks: vec![block.clone()],
                 live_attachments: BTreeSet::new(),
+                cleanup_pending_attachments: BTreeSet::new(),
+                allocation_cleanup_pending: false,
             },
         );
         state.supernet_cidr = Some(supernet.cidr.to_string());
@@ -399,15 +453,58 @@ impl NetworkSegmentAllocator for SingleNodeSegmentAllocator {
         let supernet = self.installed()?.clone();
         let block = self.with_state(|state| {
             let block = self.assign_block(&supernet, state, tenant)?;
-            state
+            let entry = state
                 .tenants
                 .get_mut(tenant.as_str())
-                .expect("assign_block inserts the tenant entry")
+                .expect("assign_block inserts the tenant entry");
+            if entry
+                .cleanup_pending_attachments
+                .contains(attachment_id.as_str())
+            {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "network attachment {} is cleanup-pending; refusing reacquire until provider deletion is confirmed",
+                        attachment_id.as_str()
+                    ),
+                });
+            }
+            entry
                 .live_attachments
                 .insert(attachment_id.as_str().to_owned());
             Ok(block)
         })?;
         self.segment_at(&supernet, tenant, &block)
+    }
+
+    fn quarantine(
+        &self,
+        tenant: &TenantId,
+        attachment_id: &NetworkAttachmentId,
+    ) -> Result<NetworkSegmentQuarantineOutcome> {
+        let supernet = self.installed()?.clone();
+        self.with_state(|state| {
+            self.ensure_supernet_matches(&supernet, state)?;
+            let Some(entry) = state.tenants.get_mut(tenant.as_str()) else {
+                return Ok(NetworkSegmentQuarantineOutcome::AlreadyReleased);
+            };
+            if entry.allocation_cleanup_pending {
+                return Ok(NetworkSegmentQuarantineOutcome::CleanupPending);
+            }
+            if entry.live_attachments.contains(attachment_id.as_str()) {
+                entry
+                    .cleanup_pending_attachments
+                    .insert(attachment_id.as_str().to_owned());
+                if entry.cleanup_pending_attachments.len() == entry.live_attachments.len() {
+                    entry.allocation_cleanup_pending = true;
+                }
+                return Ok(NetworkSegmentQuarantineOutcome::CleanupPending);
+            }
+            if entry.live_attachments.is_empty() {
+                entry.allocation_cleanup_pending = true;
+                return Ok(NetworkSegmentQuarantineOutcome::CleanupPending);
+            }
+            Ok(NetworkSegmentQuarantineOutcome::AlreadyReleased)
+        })
     }
 
     fn release(
@@ -417,22 +514,79 @@ impl NetworkSegmentAllocator for SingleNodeSegmentAllocator {
     ) -> Result<NetworkSegmentReleaseOutcome<OciSegmentRealization>> {
         let supernet = self.installed()?.clone();
         self.with_state(|state| {
+            self.ensure_supernet_matches(&supernet, state)?;
             let Some(entry) = state.tenants.get_mut(tenant.as_str()) else {
-                return Ok(NetworkSegmentReleaseOutcome::StillLive);
+                return Ok(NetworkSegmentReleaseOutcome::AlreadyReleased);
             };
-            entry.live_attachments.remove(attachment_id.as_str());
-            if entry.live_attachments.is_empty() {
-                let blocks = entry.blocks.clone();
-                state.tenants.remove(tenant.as_str());
-                // Drain releases EVERY block bridge the tenant grew.
-                let mut segments = Vec::with_capacity(blocks.len());
-                for block in blocks {
-                    segments.push(self.segment_at(&supernet, tenant, &block)?);
-                }
-                Ok(NetworkSegmentReleaseOutcome::TenantDrained { segments })
-            } else {
-                Ok(NetworkSegmentReleaseOutcome::StillLive)
+            if entry.live_attachments.is_empty() && entry.allocation_cleanup_pending {
+                return self
+                    .cleanup_for(&supernet, tenant, entry)
+                    .map(NetworkSegmentReleaseOutcome::CleanupPending);
             }
+            if !entry
+                .cleanup_pending_attachments
+                .contains(attachment_id.as_str())
+            {
+                if entry.live_attachments.contains(attachment_id.as_str()) {
+                    return Err(SandboxError::OperationFailed {
+                        message: format!(
+                            "network attachment {} must be durably quarantined before release",
+                            attachment_id.as_str()
+                        ),
+                    });
+                }
+                return Ok(NetworkSegmentReleaseOutcome::AlreadyReleased);
+            }
+            entry.live_attachments.remove(attachment_id.as_str());
+            entry
+                .cleanup_pending_attachments
+                .remove(attachment_id.as_str());
+            if !entry.live_attachments.is_empty() {
+                entry.allocation_cleanup_pending =
+                    entry.cleanup_pending_attachments.len() == entry.live_attachments.len();
+                return Ok(NetworkSegmentReleaseOutcome::StillLive);
+            }
+            entry.allocation_cleanup_pending = true;
+            self.cleanup_for(&supernet, tenant, entry)
+                .map(NetworkSegmentReleaseOutcome::CleanupPending)
+        })
+    }
+
+    fn finalize_release(
+        &self,
+        cleanup: &NetworkSegmentCleanup<OciSegmentRealization>,
+    ) -> Result<NetworkSegmentFinalizeOutcome> {
+        let supernet = self.installed()?.clone();
+        self.with_state(|state| {
+            self.ensure_supernet_matches(&supernet, state)?;
+            let Some(entry) = state.tenants.get(cleanup.tenant_id().as_str()) else {
+                return Ok(NetworkSegmentFinalizeOutcome::AlreadyReleased);
+            };
+            if !entry.allocation_cleanup_pending || !entry.live_attachments.is_empty() {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "network segment allocation for tenant {} is not ready for final release",
+                        cleanup.tenant_id().as_str()
+                    ),
+                });
+            }
+            if cleanup.lease_epoch() != supernet.epoch
+                || entry.blocks.len() != cleanup.segment_ids().len()
+                || !entry
+                    .blocks
+                    .iter()
+                    .zip(cleanup.segment_ids())
+                    .all(|(block, segment_id)| &block.segment_id == segment_id)
+            {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "stale network segment cleanup proof for tenant {}; allocation identity or lease epoch changed",
+                        cleanup.tenant_id().as_str()
+                    ),
+                });
+            }
+            state.tenants.remove(cleanup.tenant_id().as_str());
+            Ok(NetworkSegmentFinalizeOutcome::Released)
         })
     }
 
@@ -453,6 +607,14 @@ impl NetworkSegmentAllocator for SingleNodeSegmentAllocator {
                         tenant.as_str()
                     ),
                 })?;
+            if entry.allocation_cleanup_pending {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "network segment allocation for tenant {} is cleanup-pending; refusing growth until provider deletion is confirmed",
+                        tenant.as_str()
+                    ),
+                });
+            }
             let observation_is_current = entry.blocks.len() == observed_segments.len()
                 && entry
                     .blocks
@@ -504,7 +666,7 @@ impl NetworkSegmentAllocator for SingleNodeSegmentAllocator {
                     (tenant.as_str().to_owned(), attachment.as_str().to_owned())
                 })
                 .collect();
-            let mut drained = Vec::new();
+            let mut quarantined = Vec::new();
             let tenants: Vec<String> = state.tenants.keys().cloned().collect();
             for tenant in tenants {
                 let tenant_id =
@@ -526,18 +688,26 @@ impl NetworkSegmentAllocator for SingleNodeSegmentAllocator {
                         }
                     })?;
                 }
-                entry
+                let orphaned: Vec<String> = entry
                     .live_attachments
-                    .retain(|attachment| live.contains(&(tenant.clone(), attachment.clone())));
-                if entry.live_attachments.is_empty() {
-                    let blocks = entry.blocks.clone();
-                    state.tenants.remove(&tenant);
-                    for block in blocks {
-                        drained.push(self.segment_at(&supernet, &tenant_id, &block)?);
-                    }
+                    .iter()
+                    .filter(|attachment| !live.contains(&(tenant.clone(), (*attachment).clone())))
+                    .cloned()
+                    .collect();
+                entry.cleanup_pending_attachments.extend(orphaned);
+                if entry.live_attachments.is_empty()
+                    || entry.cleanup_pending_attachments.len() == entry.live_attachments.len()
+                {
+                    entry.allocation_cleanup_pending = true;
+                    quarantined.extend(
+                        self.cleanup_for(&supernet, &tenant_id, entry)?
+                            .segments()
+                            .iter()
+                            .cloned(),
+                    );
                 }
             }
-            Ok(drained)
+            Ok(quarantined)
         })
     }
 }
@@ -562,12 +732,27 @@ impl NetworkSegmentAllocator for ConfiguredSegmentAllocator {
         self.inner()?.acquire(tenant, attachment_id)
     }
 
+    fn quarantine(
+        &self,
+        tenant: &TenantId,
+        attachment_id: &NetworkAttachmentId,
+    ) -> Result<NetworkSegmentQuarantineOutcome> {
+        self.inner()?.quarantine(tenant, attachment_id)
+    }
+
     fn release(
         &self,
         tenant: &TenantId,
         attachment_id: &NetworkAttachmentId,
     ) -> Result<NetworkSegmentReleaseOutcome<Self::Segment>> {
         self.inner()?.release(tenant, attachment_id)
+    }
+
+    fn finalize_release(
+        &self,
+        cleanup: &NetworkSegmentCleanup<Self::Segment>,
+    ) -> Result<NetworkSegmentFinalizeOutcome> {
+        self.inner()?.finalize_release(cleanup)
     }
 
     fn grow_block_if_current(
@@ -600,6 +785,34 @@ mod tests {
 
     fn attachment(id: &str) -> NetworkAttachmentId {
         NetworkAttachmentId::for_workload_attachment(id, super::super::DEFAULT_ATTACHMENT_NAME)
+    }
+
+    fn quarantine_and_release(
+        allocator: &SingleNodeSegmentAllocator,
+        tenant: &TenantId,
+        attachment: &NetworkAttachmentId,
+    ) -> NetworkSegmentReleaseOutcome<OciSegmentRealization> {
+        assert_eq!(
+            allocator
+                .quarantine(tenant, attachment)
+                .expect("quarantine should succeed"),
+            NetworkSegmentQuarantineOutcome::CleanupPending
+        );
+        allocator
+            .release(tenant, attachment)
+            .expect("release should succeed after quarantine")
+    }
+
+    fn finalize_cleanup(
+        allocator: &SingleNodeSegmentAllocator,
+        cleanup: &NetworkSegmentCleanup<OciSegmentRealization>,
+    ) {
+        assert_eq!(
+            allocator
+                .finalize_release(cleanup)
+                .expect("cleanup finalization should succeed"),
+            NetworkSegmentFinalizeOutcome::Released
+        );
     }
 
     fn grow(allocator: &SingleNodeSegmentAllocator, tenant: &TenantId) -> OciSegmentRealization {
@@ -883,9 +1096,7 @@ mod tests {
 
         // Releasing one leaves the tenant live — the bridge stays, index held.
         assert!(matches!(
-            allocator
-                .release(&a, &attachment("sb-1"))
-                .expect("release sb-1"),
+            quarantine_and_release(&allocator, &a, &attachment("sb-1")),
             NetworkSegmentReleaseOutcome::StillLive
         ));
         // A fresh tenant does NOT get tenant-a's still-held index.
@@ -894,13 +1105,18 @@ mod tests {
             .expect("acquire b");
         assert_eq!(b.cidr().to_string(), "10.0.1.0/24");
 
-        // Releasing the LAST sandbox drains the tenant and frees the index.
-        assert!(matches!(
-            allocator
-                .release(&a, &attachment("sb-2"))
-                .expect("release sb-2"),
-            NetworkSegmentReleaseOutcome::TenantDrained { .. }
-        ));
+        // Releasing the LAST sandbox quarantines the allocation; it remains
+        // unavailable until provider cleanup is identity-fenced and finalized.
+        let NetworkSegmentReleaseOutcome::CleanupPending(cleanup) =
+            quarantine_and_release(&allocator, &a, &attachment("sb-2"))
+        else {
+            panic!("the last release should enter cleanup pending");
+        };
+        let fenced = allocator
+            .acquire(&tenant("tenant-fenced"), &attachment("sb-fenced"))
+            .expect("a distinct local slot should remain available");
+        assert_eq!(fenced.cidr().to_string(), "10.0.2.0/24");
+        finalize_cleanup(&allocator, &cleanup);
         // The freed lowest index (10.0.0.0/24) is handed to the next new tenant.
         let c = allocator
             .acquire(&tenant("tenant-c"), &attachment("sb-c"))
@@ -917,8 +1133,222 @@ mod tests {
             allocator
                 .release(&tenant("nobody"), &attachment("ghost"))
                 .expect("release ghost"),
-            NetworkSegmentReleaseOutcome::StillLive
+            NetworkSegmentReleaseOutcome::AlreadyReleased
         ));
+    }
+
+    #[test]
+    fn cleanup_pending_survives_restart_and_reuses_only_after_fenced_finalize() {
+        let dir = tempdir().expect("temp dir");
+        let tenant_a = tenant("tenant-a");
+        let attachment_a = attachment("sb-a");
+        let allocator = SingleNodeSegmentAllocator::single_node_default(dir.path());
+        let original = allocator
+            .acquire(&tenant_a, &attachment_a)
+            .expect("original allocation should succeed");
+        assert_eq!(original.cidr().to_string(), "10.0.0.0/24");
+        assert_eq!(
+            allocator
+                .quarantine(&tenant_a, &attachment_a)
+                .expect("quarantine should persist"),
+            NetworkSegmentQuarantineOutcome::CleanupPending
+        );
+
+        let restarted = SingleNodeSegmentAllocator::single_node_default(dir.path());
+        let reacquire_error = restarted
+            .acquire(&tenant_a, &attachment_a)
+            .expect_err("a quarantined attachment must not reactivate after restart");
+        assert!(
+            reacquire_error.to_string().contains("cleanup-pending"),
+            "the refusal must identify the durable quarantine: {reacquire_error}"
+        );
+        let NetworkSegmentReleaseOutcome::CleanupPending(cleanup) = restarted
+            .release(&tenant_a, &attachment_a)
+            .expect("confirmed detach should release the pending hold")
+        else {
+            panic!("last hold should leave allocation cleanup pending");
+        };
+
+        let restarted_pending = SingleNodeSegmentAllocator::single_node_default(dir.path());
+        let other = restarted_pending
+            .acquire(&tenant("tenant-other"), &attachment("sb-other"))
+            .expect("another slot should remain allocatable");
+        assert_eq!(
+            other.cidr().to_string(),
+            "10.0.1.0/24",
+            "the cleanup-pending location must remain unavailable after restart"
+        );
+        finalize_cleanup(&restarted_pending, &cleanup);
+        assert_eq!(
+            restarted_pending
+                .finalize_release(&cleanup)
+                .expect("repeated finalization should be idempotent"),
+            NetworkSegmentFinalizeOutcome::AlreadyReleased
+        );
+
+        let restarted_released = SingleNodeSegmentAllocator::single_node_default(dir.path());
+        let recovered = restarted_released
+            .acquire(&tenant("tenant-recovered"), &attachment("sb-recovered"))
+            .expect("finalized location should be reusable");
+        assert_eq!(recovered.cidr(), original.cidr());
+        assert_ne!(recovered.segment_id(), original.segment_id());
+    }
+
+    #[test]
+    fn release_without_durable_quarantine_fails_without_mutation() {
+        let dir = tempdir().expect("temp dir");
+        let tenant_a = tenant("tenant-a");
+        let attachment_a = attachment("sb-a");
+        let allocator = SingleNodeSegmentAllocator::single_node_default(dir.path());
+        allocator
+            .acquire(&tenant_a, &attachment_a)
+            .expect("allocation should succeed");
+        let before =
+            fs::read(allocator.state_path()).expect("authority should read before invalid release");
+
+        let error = allocator
+            .release(&tenant_a, &attachment_a)
+            .expect_err("release must not bypass durable quarantine");
+
+        assert!(
+            error.to_string().contains("durably quarantined"),
+            "the refusal must identify the missing lifecycle phase: {error}"
+        );
+        assert_eq!(
+            fs::read(allocator.state_path()).expect("authority should read after invalid release"),
+            before,
+            "an out-of-order release must not change any authority byte"
+        );
+        assert!(allocator.has_hold(tenant_a.as_str(), "sb-a"));
+        assert!(!allocator.has_pending_hold(tenant_a.as_str(), "sb-a"));
+    }
+
+    #[test]
+    fn wrong_or_stale_cleanup_fence_cannot_release_an_allocation() {
+        let dir = tempdir().expect("temp dir");
+        let tenant_a = tenant("tenant-a");
+        let attachment_a = attachment("sb-a");
+        let allocator = SingleNodeSegmentAllocator::single_node_default(dir.path());
+        allocator
+            .acquire(&tenant_a, &attachment_a)
+            .expect("original allocation should succeed");
+        let NetworkSegmentReleaseOutcome::CleanupPending(cleanup) =
+            quarantine_and_release(&allocator, &tenant_a, &attachment_a)
+        else {
+            panic!("last release should enter cleanup pending");
+        };
+
+        let wrong = NetworkSegmentCleanup::new(
+            tenant_a.clone(),
+            vec![NetworkSegmentId::generate()],
+            cleanup.lease_epoch(),
+            cleanup.segments().to_vec(),
+        );
+        let before_wrong =
+            fs::read(allocator.state_path()).expect("authority should read before wrong proof");
+        let wrong_error = allocator
+            .finalize_release(&wrong)
+            .expect_err("wrong segment identity must not finalize");
+        assert!(wrong_error.to_string().contains("stale"));
+        assert_eq!(
+            fs::read(allocator.state_path()).expect("authority should read after wrong proof"),
+            before_wrong,
+            "rejected cleanup proof must not mutate durable authority"
+        );
+
+        finalize_cleanup(&allocator, &cleanup);
+        let replacement = allocator
+            .acquire(&tenant_a, &attachment("sb-replacement"))
+            .expect("replacement allocation should succeed");
+        let before_stale =
+            fs::read(allocator.state_path()).expect("authority should read before stale proof");
+        let stale_error = allocator
+            .finalize_release(&cleanup)
+            .expect_err("old cleanup must not release a replacement allocation");
+        assert!(
+            stale_error.to_string().contains("not ready")
+                || stale_error.to_string().contains("stale")
+        );
+        assert_eq!(
+            fs::read(allocator.state_path()).expect("authority should read after stale proof"),
+            before_stale,
+            "stale callback must not mutate the replacement allocation"
+        );
+        assert_ne!(
+            replacement.segment_id(),
+            cleanup
+                .segment_ids()
+                .first()
+                .expect("cleanup has one segment")
+        );
+    }
+
+    #[test]
+    fn concurrent_finalization_releases_one_identity_exactly_once() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let dir = tempdir().expect("temp dir");
+        let root = Arc::new(dir.path().to_path_buf());
+        let tenant_a = tenant("tenant-a");
+        let attachment_a = attachment("sb-a");
+        let allocator = SingleNodeSegmentAllocator::single_node_default(root.as_ref());
+        allocator
+            .acquire(&tenant_a, &attachment_a)
+            .expect("original allocation should succeed");
+        let NetworkSegmentReleaseOutcome::CleanupPending(cleanup) =
+            quarantine_and_release(&allocator, &tenant_a, &attachment_a)
+        else {
+            panic!("last release should enter cleanup pending");
+        };
+
+        let barrier = Arc::new(Barrier::new(2));
+        let handles: Vec<_> = (0..2)
+            .map(|_| {
+                let root = Arc::clone(&root);
+                let barrier = Arc::clone(&barrier);
+                let cleanup = cleanup.clone();
+                thread::spawn(move || {
+                    let allocator = SingleNodeSegmentAllocator::single_node_default(root.as_ref());
+                    barrier.wait();
+                    allocator
+                        .finalize_release(&cleanup)
+                        .expect("identity-fenced finalization should be idempotent")
+                })
+            })
+            .collect();
+        let outcomes: Vec<_> = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("finalizer should not panic"))
+            .collect();
+
+        assert_eq!(
+            outcomes
+                .iter()
+                .filter(|outcome| **outcome == NetworkSegmentFinalizeOutcome::Released)
+                .count(),
+            1,
+            "exactly one concurrent finalizer may release the allocation"
+        );
+        assert_eq!(
+            outcomes
+                .iter()
+                .filter(|outcome| **outcome == NetworkSegmentFinalizeOutcome::AlreadyReleased)
+                .count(),
+            1,
+            "the losing finalizer must observe idempotent completion"
+        );
+
+        let allocator = SingleNodeSegmentAllocator::single_node_default(root.as_ref());
+        let first = allocator
+            .acquire(&tenant("tenant-first"), &attachment("sb-first"))
+            .expect("freed slot should be reusable once");
+        let second = allocator
+            .acquire(&tenant("tenant-second"), &attachment("sb-second"))
+            .expect("next tenant should receive a different slot");
+        assert_eq!(first.cidr().to_string(), "10.0.0.0/24");
+        assert_eq!(second.cidr().to_string(), "10.0.1.0/24");
+        assert_ne!(first.segment_id(), second.segment_id());
     }
 
     #[test]
@@ -1079,10 +1509,13 @@ mod tests {
                     let attachment = attachment(&format!("sb-{i}"));
                     let segment = allocator.acquire(&tenant, &attachment).expect("acquire");
                     assert!(segment.cidr().to_string().starts_with("10.0."));
-                    matches!(
-                        allocator.release(&tenant, &attachment).expect("release"),
-                        NetworkSegmentReleaseOutcome::TenantDrained { .. }
-                    )
+                    let NetworkSegmentReleaseOutcome::CleanupPending(cleanup) =
+                        quarantine_and_release(&allocator, &tenant, &attachment)
+                    else {
+                        return false;
+                    };
+                    finalize_cleanup(&allocator, &cleanup);
+                    true
                 })
             })
             .collect();
@@ -1099,7 +1532,7 @@ mod tests {
     }
 
     #[test]
-    fn reconcile_orphans_prunes_leaked_holds_and_drains_empty_tenants() {
+    fn reconcile_orphans_quarantines_leaked_holds_without_reusing_allocations() {
         let dir = tempdir().expect("temp dir");
         let allocator = SingleNodeSegmentAllocator::single_node_default(dir.path());
         // tenant-a holds two sandboxes; sb-1 will be a crash-leaked hold, sb-2 live.
@@ -1118,22 +1551,36 @@ mod tests {
         // Only tenant-a/sb-2 is actually live at startup.
         let mut live = BTreeSet::new();
         live.insert((tenant("tenant-a"), attachment("sb-2")));
-        let drained = allocator.reconcile_orphans(&live).expect("reconcile");
+        let quarantined = allocator.reconcile_orphans(&live).expect("reconcile");
 
-        // tenant-b fully orphaned -> drained (its bridge must be reaped), segment returned.
-        assert_eq!(drained.len(), 1, "only the fully-orphaned tenant drains");
-        assert_eq!(drained[0].cidr().to_string(), "10.0.1.0/24");
-        // tenant-a still holds sb-2, so its index 0 is retained; the freed index 1
-        // is what the next new tenant reuses.
+        // tenant-b is fully orphaned, but netns absence alone is not provider
+        // deletion proof: its segment is returned as quarantined and remains held.
+        assert_eq!(
+            quarantined.len(),
+            1,
+            "only the fully-orphaned tenant is quarantined"
+        );
+        assert_eq!(quarantined[0].cidr().to_string(), "10.0.1.0/24");
+        assert!(
+            allocator.has_hold("tenant-b", "sb-b")
+                && allocator.has_pending_hold("tenant-b", "sb-b"),
+            "the uncertain orphan must retain a pending durable hold"
+        );
+        // tenant-a keeps index 0 and tenant-b's quarantined index 1 remains
+        // unavailable, so the next tenant receives index 2.
         let c = allocator
             .acquire(&tenant("tenant-c"), &attachment("sb-c"))
             .expect("acquire c");
-        assert_eq!(c.cidr().to_string(), "10.0.1.0/24");
+        assert_eq!(c.cidr().to_string(), "10.0.2.0/24");
         // tenant-a's still-live sandbox keeps its original segment.
         let a = allocator
             .acquire(&tenant("tenant-a"), &attachment("sb-2"))
             .expect("re-acquire a/2");
         assert_eq!(a.cidr().to_string(), "10.0.0.0/24");
+        assert!(
+            allocator.has_pending_hold("tenant-a", "sb-1"),
+            "the partial orphan is quarantined without disrupting its live sibling"
+        );
     }
 
     #[test]
@@ -1172,12 +1619,12 @@ mod tests {
             .segments_for(&tenant)
             .expect("old segment set should resolve");
 
-        assert!(matches!(
-            allocator
-                .release(&tenant, &old_attachment)
-                .expect("old allocation should release"),
-            NetworkSegmentReleaseOutcome::TenantDrained { .. }
-        ));
+        let NetworkSegmentReleaseOutcome::CleanupPending(cleanup) =
+            quarantine_and_release(&allocator, &tenant, &old_attachment)
+        else {
+            panic!("old allocation should enter cleanup pending");
+        };
+        finalize_cleanup(&allocator, &cleanup);
         let replacement = allocator
             .acquire(&tenant, &attachment("replacement"))
             .expect("replacement allocation should resolve");
@@ -1245,13 +1692,18 @@ mod tests {
 
         // The sole sandbox's release drains the tenant and returns ALL 3 block
         // bridges so the caller reaps every one.
-        let NetworkSegmentReleaseOutcome::TenantDrained { segments } =
-            allocator.release(&a, &attachment("sb-1")).expect("release")
+        let NetworkSegmentReleaseOutcome::CleanupPending(cleanup) =
+            quarantine_and_release(&allocator, &a, &attachment("sb-1"))
         else {
-            panic!("expected the last release to drain the tenant");
+            panic!("expected the last release to enter cleanup pending");
         };
-        let subnets: Vec<String> = segments.iter().map(|s| s.cidr().to_string()).collect();
+        let subnets: Vec<String> = cleanup
+            .segments()
+            .iter()
+            .map(|s| s.cidr().to_string())
+            .collect();
         assert_eq!(subnets, ["10.0.0.0/24", "10.0.1.0/24", "10.0.2.0/24"]);
+        finalize_cleanup(&allocator, &cleanup);
         // All 3 indices are freed, so the next new tenant reuses index 0.
         let c = allocator
             .acquire(&tenant("tenant-c"), &attachment("sb-c"))

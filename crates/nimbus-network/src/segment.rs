@@ -57,7 +57,71 @@ impl AllocatedSegment {
     }
 }
 
-/// Result of releasing one attachment hold from a tenant's segment allocation.
+/// Durable cleanup fence returned after the last attachment hold is released.
+///
+/// Provider cleanup operates on `segments`, but allocation finalization compares
+/// the tenant, stable segment identities, and lease epoch. A stale cleanup
+/// callback therefore cannot release a replacement allocation that happens to
+/// reuse the same CIDR or provider-local slot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkSegmentCleanup<Segment> {
+    tenant_id: TenantId,
+    segment_ids: Vec<NetworkSegmentId>,
+    lease_epoch: NetworkLeaseEpoch,
+    segments: Vec<Segment>,
+}
+
+impl<Segment> NetworkSegmentCleanup<Segment> {
+    /// Construct provider cleanup work and its portable identity fence.
+    ///
+    /// Allocator implementations create this value from their durable
+    /// authority. Callers must treat it as an opaque proof and pass the same
+    /// value back to [`NetworkSegmentAllocator::finalize_release`].
+    pub fn new(
+        tenant_id: TenantId,
+        segment_ids: Vec<NetworkSegmentId>,
+        lease_epoch: NetworkLeaseEpoch,
+        segments: Vec<Segment>,
+    ) -> Self {
+        Self {
+            tenant_id,
+            segment_ids,
+            lease_epoch,
+            segments,
+        }
+    }
+
+    /// Tenant allocation held unavailable until cleanup is confirmed.
+    pub fn tenant_id(&self) -> &TenantId {
+        &self.tenant_id
+    }
+
+    /// Complete ordered stable-identity set used as the finalization fence.
+    pub fn segment_ids(&self) -> &[NetworkSegmentId] {
+        &self.segment_ids
+    }
+
+    /// Node lease epoch under which the quarantined allocation was created.
+    pub fn lease_epoch(&self) -> NetworkLeaseEpoch {
+        self.lease_epoch
+    }
+
+    /// Adapter-owned provider realizations that must be removed.
+    pub fn segments(&self) -> &[Segment] {
+        &self.segments
+    }
+}
+
+/// Result of durably quarantining one attachment before provider detach.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NetworkSegmentQuarantineOutcome {
+    /// The attachment or unheld planned allocation is durably fenced from reuse.
+    CleanupPending,
+    /// No matching hold or allocation remains. Repeating quarantine is safe.
+    AlreadyReleased,
+}
+
+/// Result of releasing one quarantined attachment hold after detach proof.
 ///
 /// The segment value is an associated adapter type supplied by the allocator
 /// implementation. This keeps the lifecycle contract portable while allowing
@@ -65,15 +129,22 @@ impl AllocatedSegment {
 /// handle without making `nimbus-network` depend on that provider.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NetworkSegmentReleaseOutcome<Segment> {
-    /// The last attachment released, so every segment owned by the tenant is
-    /// returned for fenced provider cleanup.
-    TenantDrained {
-        /// All segment realizations that must be cleaned before allocation
-        /// authority may make their locations reusable.
-        segments: Vec<Segment>,
-    },
+    /// The last attachment released. Allocation authority remains quarantined
+    /// while the caller removes every provider realization.
+    CleanupPending(NetworkSegmentCleanup<Segment>),
     /// At least one other attachment still holds the tenant allocation.
     StillLive,
+    /// The attachment/allocation was already released. Repeating release is safe.
+    AlreadyReleased,
+}
+
+/// Result of finalizing an identity-fenced segment cleanup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NetworkSegmentFinalizeOutcome {
+    /// The quarantined allocation was removed and its local slots became reusable.
+    Released,
+    /// The exact allocation was already absent. Repeating finalization is safe.
+    AlreadyReleased,
 }
 
 /// Result of compare-and-swap-fenced segment growth.
@@ -128,12 +199,37 @@ pub trait NetworkSegmentAllocator: Send + Sync {
         attachment_id: &NetworkAttachmentId,
     ) -> Result<Self::Segment, Self::Error>;
 
-    /// Release one stable attachment hold.
+    /// Durably quarantine one attachment before the first provider-detach effect.
+    ///
+    /// A quarantined attachment continues to hold its allocation. New acquire
+    /// attempts for that same identity fail closed until detach is confirmed.
+    fn quarantine(
+        &self,
+        tenant: &TenantId,
+        attachment_id: &NetworkAttachmentId,
+    ) -> Result<NetworkSegmentQuarantineOutcome, Self::Error>;
+
+    /// Release one quarantined attachment hold after provider and namespace
+    /// deletion have been confirmed.
+    ///
+    /// Releasing the last hold does not free the allocation. It returns
+    /// [`NetworkSegmentCleanup`] and leaves every local slot unavailable until
+    /// [`Self::finalize_release`] confirms the exact identity-fenced cleanup.
     fn release(
         &self,
         tenant: &TenantId,
         attachment_id: &NetworkAttachmentId,
     ) -> Result<NetworkSegmentReleaseOutcome<Self::Segment>, Self::Error>;
+
+    /// Finalize provider cleanup for the exact quarantined allocation.
+    ///
+    /// Implementations compare stable segment identity plus lease epoch, never
+    /// an address or provider-local name. A stale or incomplete cleanup proof
+    /// must fail without changing authority.
+    fn finalize_release(
+        &self,
+        cleanup: &NetworkSegmentCleanup<Self::Segment>,
+    ) -> Result<NetworkSegmentFinalizeOutcome, Self::Error>;
 
     /// Append another segment block only if the caller's complete-set
     /// observation remains current.
@@ -150,6 +246,10 @@ pub trait NetworkSegmentAllocator: Send + Sync {
     ) -> Result<NetworkSegmentGrowth<Self::Segment>, Self::Error>;
 
     /// Reconcile durable holds against the complete live attachment set.
+    ///
+    /// Attachments absent from `live` are quarantined, not released. Filesystem
+    /// evidence alone cannot prove provider deletion; an upper reconciliation
+    /// owner must inspect/detach before calling [`Self::release`].
     fn reconcile_orphans(
         &self,
         live: &BTreeSet<(TenantId, NetworkAttachmentId)>,
@@ -230,14 +330,34 @@ mod tests {
             Ok(self.segment.clone())
         }
 
-        fn release(
+        fn quarantine(
             &self,
             _tenant: &TenantId,
             _attachment_id: &NetworkAttachmentId,
+        ) -> Result<NetworkSegmentQuarantineOutcome, Self::Error> {
+            Ok(NetworkSegmentQuarantineOutcome::CleanupPending)
+        }
+
+        fn release(
+            &self,
+            tenant: &TenantId,
+            _attachment_id: &NetworkAttachmentId,
         ) -> Result<NetworkSegmentReleaseOutcome<Self::Segment>, Self::Error> {
-            Ok(NetworkSegmentReleaseOutcome::TenantDrained {
-                segments: vec![self.segment.clone()],
-            })
+            Ok(NetworkSegmentReleaseOutcome::CleanupPending(
+                NetworkSegmentCleanup::new(
+                    tenant.clone(),
+                    vec![self.segment.segment_id().clone()],
+                    self.segment.lease_epoch(),
+                    vec![self.segment.clone()],
+                ),
+            ))
+        }
+
+        fn finalize_release(
+            &self,
+            _cleanup: &NetworkSegmentCleanup<Self::Segment>,
+        ) -> Result<NetworkSegmentFinalizeOutcome, Self::Error> {
+            Ok(NetworkSegmentFinalizeOutcome::Released)
         }
 
         fn grow_block_if_current(
@@ -277,6 +397,12 @@ mod tests {
                 .tenant_id(),
             &tenant
         );
+        assert_eq!(
+            allocator
+                .quarantine(&tenant, &attachment)
+                .expect("infallible allocator"),
+            NetworkSegmentQuarantineOutcome::CleanupPending
+        );
         let observed = allocator
             .segments_for(&tenant)
             .expect("infallible allocator");
@@ -287,12 +413,18 @@ mod tests {
                 .expect("infallible allocator"),
             NetworkSegmentGrowth::Grown(_)
         ));
-        assert!(matches!(
+        let NetworkSegmentReleaseOutcome::CleanupPending(cleanup) = allocator
+            .release(&tenant, &attachment)
+            .expect("infallible allocator")
+        else {
+            panic!("the fixed allocator should enter cleanup pending");
+        };
+        assert_eq!(cleanup.segments().len(), 1);
+        assert_eq!(
             allocator
-                .release(&tenant, &attachment)
+                .finalize_release(&cleanup)
                 .expect("infallible allocator"),
-            NetworkSegmentReleaseOutcome::TenantDrained { segments }
-                if segments.len() == 1
-        ));
+            NetworkSegmentFinalizeOutcome::Released
+        );
     }
 }

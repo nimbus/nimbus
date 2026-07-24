@@ -4,7 +4,8 @@ use std::sync::{Arc, Mutex};
 use nimbus_core::{Cidr, TenantId};
 use nimbus_network::{
     AllocatedSegment, NetworkAttachmentId, NetworkLeaseEpoch, NetworkSegmentAllocator,
-    NetworkSegmentGrowth, NetworkSegmentReleaseOutcome,
+    NetworkSegmentCleanup, NetworkSegmentFinalizeOutcome, NetworkSegmentGrowth,
+    NetworkSegmentQuarantineOutcome, NetworkSegmentReleaseOutcome,
 };
 
 use crate::error::SandboxError;
@@ -16,7 +17,9 @@ pub(crate) enum SegmentAllocatorOperation {
     SegmentFor(TenantId),
     SegmentsFor(TenantId),
     Acquire(TenantId, NetworkAttachmentId),
+    Quarantine(TenantId, NetworkAttachmentId),
     Release(TenantId, NetworkAttachmentId),
+    FinalizeRelease(TenantId, Vec<String>),
     GrowBlockIfCurrent(TenantId, Vec<String>),
     Reconcile(BTreeSet<(TenantId, NetworkAttachmentId)>),
 }
@@ -85,6 +88,18 @@ impl NetworkSegmentAllocator for RecordingSegmentAllocator {
         Ok(self.segment.clone())
     }
 
+    fn quarantine(
+        &self,
+        tenant: &TenantId,
+        attachment_id: &NetworkAttachmentId,
+    ) -> Result<NetworkSegmentQuarantineOutcome, Self::Error> {
+        self.record(SegmentAllocatorOperation::Quarantine(
+            tenant.clone(),
+            attachment_id.clone(),
+        ));
+        Ok(NetworkSegmentQuarantineOutcome::CleanupPending)
+    }
+
     fn release(
         &self,
         tenant: &TenantId,
@@ -94,9 +109,29 @@ impl NetworkSegmentAllocator for RecordingSegmentAllocator {
             tenant.clone(),
             attachment_id.clone(),
         ));
-        Ok(NetworkSegmentReleaseOutcome::TenantDrained {
-            segments: vec![self.segment.clone()],
-        })
+        Ok(NetworkSegmentReleaseOutcome::CleanupPending(
+            NetworkSegmentCleanup::new(
+                tenant.clone(),
+                vec![self.segment.segment_id().clone()],
+                self.segment.lease_epoch(),
+                vec![self.segment.clone()],
+            ),
+        ))
+    }
+
+    fn finalize_release(
+        &self,
+        cleanup: &NetworkSegmentCleanup<Self::Segment>,
+    ) -> Result<NetworkSegmentFinalizeOutcome, Self::Error> {
+        self.record(SegmentAllocatorOperation::FinalizeRelease(
+            cleanup.tenant_id().clone(),
+            cleanup
+                .segment_ids()
+                .iter()
+                .map(|segment_id| segment_id.as_str().to_owned())
+                .collect(),
+        ));
+        Ok(NetworkSegmentFinalizeOutcome::Released)
     }
 
     fn grow_block_if_current(

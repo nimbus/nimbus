@@ -35,7 +35,8 @@ pub(crate) use placement::place_sandbox_on_block;
 pub(crate) use proxy::{MachinePortProxy, start_machine_port_proxies};
 pub(crate) use realization::OciSegmentRealization;
 pub(crate) use reaper::{
-    purge_legacy_nimbus0_once, reconcile_network_segment_orphans, release_network_segment_hold,
+    purge_legacy_nimbus0_once, quarantine_network_segment_hold, reconcile_network_segment_orphans,
+    release_network_segment_hold,
 };
 #[cfg(test)]
 pub(crate) use segment::SingleNodeSegmentAllocator;

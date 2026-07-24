@@ -36,9 +36,9 @@ use crate::backends::oci::network::{
     OciNetworkLayout, OciSegmentAllocator, OciSegmentRealization,
     create_persistent_network_namespace, default_network_attachment_id, expose_machine_ports,
     pin_netns_egress_to_own_proxy, place_sandbox_on_block, purge_legacy_nimbus0_once,
-    reconcile_network_segment_orphans, release_network_segment_hold,
-    remove_persistent_network_namespace, setup_container_network, start_machine_port_proxies,
-    teardown_container_network, unexpose_machine_ports,
+    quarantine_network_segment_hold, reconcile_network_segment_orphans,
+    release_network_segment_hold, remove_persistent_network_namespace, setup_container_network,
+    start_machine_port_proxies, teardown_container_network, unexpose_machine_ports,
 };
 use crate::backends::oci::port_manager::PortManager;
 use crate::backends::oci::resource_quota::ResourceQuotaManager;
@@ -377,8 +377,7 @@ impl ContainerSandboxBackend {
                 manifest.last_exit_code = Some(0);
                 manifest.next_restart_at_millis = None;
                 synchronize_handle_status(&mut manifest, SandboxStatus::Stopped);
-                self.cleanup_manifest_launch_artifacts(&manifest)?;
-                manifest.launch_artifact = None;
+                self.release_execution_artifacts(&mut manifest)?;
                 self.write_manifest(&manifest)
             }
             ContainerStartMode::Execute => self.execute_stop(&mut manifest),
@@ -919,10 +918,21 @@ impl ContainerSandboxBackend {
 
     fn release_execution_artifacts(&self, manifest: &mut ContainerSandboxManifest) -> Result<()> {
         let mut errors = Vec::new();
+        let mut detach_confirmed = true;
+        if let Err(error) = quarantine_network_segment_hold(
+            self.segment_allocator.as_ref(),
+            &manifest.spec.tenant_id,
+            &manifest.handle.id,
+        ) {
+            detach_confirmed = false;
+            errors.push(error.to_string());
+        }
         if let Err(error) = self.stop_egress_proxy(&manifest.handle.id) {
+            detach_confirmed = false;
             errors.push(error.to_string());
         }
         if let Err(error) = self.stop_machine_port_proxies(&manifest.handle.id) {
+            detach_confirmed = false;
             errors.push(error.to_string());
         }
         let _ = run_status_best_effort(&manifest.conmon_launch.delete_command);
@@ -935,24 +945,28 @@ impl ContainerSandboxBackend {
             &manifest.spec.port_bindings,
             self.config.machine_port_forwarder.as_ref(),
         ) {
+            detach_confirmed = false;
             errors.push(error.to_string());
         }
         if let Err(error) = remove_persistent_network_namespace(&manifest.network_layout.netns_path)
         {
+            detach_confirmed = false;
             errors.push(error.to_string());
         }
-        // Final teardown (not restart): drop this sandbox's hold; on the LAST hold
-        // the tenant is drained, so reap EVERY block bridge it grew (netavark
-        // won't auto-GC) and free all its indices for reuse.
-        errors.extend(
-            release_network_segment_hold(
-                self.segment_allocator.as_ref(),
-                &manifest.spec.tenant_id,
-                &manifest.handle.id,
-            )
-            .into_iter()
-            .map(|error| error.to_string()),
-        );
+        // Final teardown (not restart): release the quarantined hold only after
+        // provider and persistent-netns deletion are confirmed. On the last
+        // hold, bridge cleanup must also succeed before allocation finalization.
+        if detach_confirmed {
+            errors.extend(
+                release_network_segment_hold(
+                    self.segment_allocator.as_ref(),
+                    &manifest.spec.tenant_id,
+                    &manifest.handle.id,
+                )
+                .into_iter()
+                .map(|error| error.to_string()),
+            );
+        }
         if let Some(forwarder) = self.config.machine_port_forwarder.as_ref() {
             let _ = unexpose_machine_ports(forwarder, &manifest.spec.port_bindings);
         }

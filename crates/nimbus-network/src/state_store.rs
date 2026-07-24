@@ -27,6 +27,7 @@ use std::fmt::{self, Display, Formatter};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, TryLockError, Weak};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -95,7 +96,12 @@ pub struct LocalNetworkStateStoreOptions {
 impl Default for LocalNetworkStateStoreOptions {
     fn default() -> Self {
         Self {
-            lock_timeout: Duration::from_secs(2),
+            // A segment teardown can require several fsync-backed authority
+            // transitions. Under legitimate same-node concurrency, a two
+            // second waiter could fail while prior owners were still making
+            // bounded forward progress. Keep contention fail-closed and
+            // bounded, but allow a realistic durability budget.
+            lock_timeout: Duration::from_secs(30),
             lock_retry_interval: Duration::from_millis(10),
         }
     }
@@ -108,6 +114,7 @@ pub struct LocalNetworkStateStore {
     store_root: PathBuf,
     state_path: PathBuf,
     lock_path: PathBuf,
+    process_lock: Arc<Mutex<()>>,
     filesystem_kind: String,
     options: LocalNetworkStateStoreOptions,
 }
@@ -146,10 +153,12 @@ impl LocalNetworkStateStore {
             });
         }
 
+        let lock_path = store_root.join(LOCK_FILE);
         let store = Self {
             state_root,
             state_path: store_root.join(STORE_FILE),
-            lock_path: store_root.join(LOCK_FILE),
+            process_lock: process_lock_for(&lock_path)?,
+            lock_path,
             store_root,
             filesystem_kind,
             options,
@@ -276,12 +285,37 @@ impl LocalNetworkStateStore {
         Ok(result)
     }
 
-    fn acquire_lock(&self) -> Result<AuthorityLock, NetworkStateStoreError> {
-        let file = open_owner_file(&self.lock_path, false)?;
+    fn acquire_lock(&self) -> Result<AuthorityLock<'_>, NetworkStateStoreError> {
         let started = Instant::now();
+        let process_guard = loop {
+            match self.process_lock.try_lock() {
+                Ok(guard) => break guard,
+                Err(TryLockError::WouldBlock) => {
+                    if started.elapsed() >= self.options.lock_timeout {
+                        return Err(NetworkStateStoreError::LockTimeout {
+                            path: self.lock_path.clone(),
+                            timeout: self.options.lock_timeout,
+                        });
+                    }
+                    let remaining = self.options.lock_timeout.saturating_sub(started.elapsed());
+                    thread::sleep(self.options.lock_retry_interval.min(remaining));
+                }
+                // This mutex protects no in-memory authority: durable state is
+                // loaded and validated only after the OS file lock is held.
+                // A panicking prior holder therefore cannot leave protected
+                // data inconsistent, so recover the serialization guard.
+                Err(TryLockError::Poisoned(poisoned)) => break poisoned.into_inner(),
+            }
+        };
+        let file = open_owner_file(&self.lock_path, false)?;
         loop {
             match file.try_lock_exclusive() {
-                Ok(()) => return Ok(AuthorityLock { file }),
+                Ok(()) => {
+                    return Ok(AuthorityLock {
+                        _process_guard: process_guard,
+                        file,
+                    });
+                }
                 Err(source) if is_lock_contended(&source) => {
                     if started.elapsed() >= self.options.lock_timeout {
                         return Err(NetworkStateStoreError::LockTimeout {
@@ -672,6 +706,35 @@ fn open_owner_file(path: &Path, create_new: bool) -> Result<File, NetworkStateSt
         })?;
     set_owner_file_permissions(path, &file)?;
     Ok(file)
+}
+
+fn process_lock_for(path: &Path) -> Result<Arc<Mutex<()>>, NetworkStateStoreError> {
+    static PROCESS_LOCKS: OnceLock<Mutex<BTreeMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
+
+    let parent = path
+        .parent()
+        .expect("the authority lock path always has its store directory");
+    let canonical_parent =
+        fs::canonicalize(parent).map_err(|source| NetworkStateStoreError::Io {
+            operation: "canonicalize authority lock directory",
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    let key = canonical_parent.join(
+        path.file_name()
+            .expect("the authority lock path always has a file name"),
+    );
+    let registry = PROCESS_LOCKS.get_or_init(|| Mutex::new(BTreeMap::new()));
+    let mut locks = registry
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) {
+        return Ok(lock);
+    }
+    locks.retain(|_, lock| lock.strong_count() > 0);
+    let lock = Arc::new(Mutex::new(()));
+    locks.insert(key, Arc::downgrade(&lock));
+    Ok(lock)
 }
 
 #[cfg(unix)]
@@ -1161,11 +1224,12 @@ where
     }
 }
 
-struct AuthorityLock {
+struct AuthorityLock<'a> {
+    _process_guard: MutexGuard<'a, ()>,
     file: File,
 }
 
-impl Drop for AuthorityLock {
+impl Drop for AuthorityLock<'_> {
     fn drop(&mut self) {
         let _ = FileExt::unlock(&self.file);
     }
@@ -1226,7 +1290,7 @@ pub mod test_support {
 mod tests {
     use std::convert::Infallible;
     use std::sync::mpsc;
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Barrier, Mutex};
 
     use serde::{Deserialize, Serialize};
     use tempfile::tempdir;
@@ -1282,6 +1346,66 @@ mod tests {
             store.authority_path(),
             restarted.authority_path(),
             "all handles must resolve one authority file"
+        );
+    }
+
+    #[test]
+    fn separately_opened_store_handles_serialize_same_process_transactions() {
+        let directory = tempdir().expect("state root");
+        let root = Arc::new(directory.path().to_path_buf());
+        let barrier = Arc::new(Barrier::new(8));
+        let handles: Vec<_> = (0..8)
+            .map(|worker| {
+                let root = Arc::clone(&root);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    let store =
+                        LocalNetworkStateStore::open(root.as_ref()).expect("store should open");
+                    store
+                        .transaction(&fixture_partition(), |state: &mut FixtureState| {
+                            state
+                                .cleanup_pending
+                                .insert(format!("worker-{worker}"), "committed".to_owned());
+                            Ok::<_, Infallible>(())
+                        })
+                        .expect("transaction should commit under the shared lock");
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle.join().expect("worker should not panic");
+        }
+
+        let store = LocalNetworkStateStore::open(root.as_ref()).expect("store should reopen");
+        let state: FixtureState = store
+            .read(&fixture_partition())
+            .expect("partition should read")
+            .expect("partition should exist");
+        assert_eq!(
+            state.cleanup_pending.len(),
+            8,
+            "each separately opened handle must publish exactly one serialized update"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_aliases_share_the_same_process_lock_domain() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempdir().expect("state root");
+        let alias_parent = tempdir().expect("alias parent");
+        let alias = alias_parent.path().join("state-alias");
+        symlink(directory.path(), &alias).expect("state-root alias should create");
+
+        let direct =
+            LocalNetworkStateStore::open(directory.path()).expect("direct store should open");
+        let aliased = LocalNetworkStateStore::open(&alias).expect("aliased store should open");
+
+        assert!(
+            Arc::ptr_eq(&direct.process_lock, &aliased.process_lock),
+            "path aliases for one authority inode must serialize through one in-process lock"
         );
     }
 

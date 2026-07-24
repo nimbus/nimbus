@@ -38,6 +38,7 @@ impl KrunSandboxBackend {
                 manifest.last_exit_code = Some(0);
                 manifest.status = SandboxStatus::Stopped;
                 manifest.handle.status = SandboxStatus::Stopped;
+                self.release_network_artifacts(&manifest)?;
                 self.cleanup_manifest_launch_artifacts(&manifest)?;
                 manifest.launch_artifact = None;
                 self.write_manifest(&manifest)
@@ -379,7 +380,17 @@ impl KrunSandboxBackend {
     /// failing step never short-circuits the rest of the cleanup.
     fn release_network_artifacts(&self, manifest: &KrunSandboxManifest) -> Result<()> {
         let mut errors = Vec::new();
+        let mut detach_confirmed = true;
+        if let Err(error) = quarantine_network_segment_hold(
+            self.segment_allocator.as_ref(),
+            &manifest.spec.tenant_id,
+            &manifest.handle.id,
+        ) {
+            detach_confirmed = false;
+            errors.push(error.to_string());
+        }
         if let Err(error) = self.egress_proxies.stop(&manifest.handle.id) {
+            detach_confirmed = false;
             errors.push(error.to_string());
         }
         if let Err(error) = teardown_container_network(
@@ -391,24 +402,28 @@ impl KrunSandboxBackend {
             &manifest.spec.port_bindings,
             None,
         ) {
+            detach_confirmed = false;
             errors.push(error.to_string());
         }
         if let Err(error) = remove_persistent_network_namespace(&manifest.network_layout.netns_path)
         {
+            detach_confirmed = false;
             errors.push(error.to_string());
         }
-        // Drop this sandbox's hold; on the LAST hold the tenant is drained, so
-        // reap EVERY block bridge it grew (netavark won't auto-GC) and free all
-        // its indices for reuse.
-        errors.extend(
-            release_network_segment_hold(
-                self.segment_allocator.as_ref(),
-                &manifest.spec.tenant_id,
-                &manifest.handle.id,
-            )
-            .into_iter()
-            .map(|error| error.to_string()),
-        );
+        // Drop the quarantined hold only after provider and persistent-netns
+        // deletion are confirmed. A failed bridge cleanup leaves the allocation
+        // cleanup-pending and unavailable.
+        if detach_confirmed {
+            errors.extend(
+                release_network_segment_hold(
+                    self.segment_allocator.as_ref(),
+                    &manifest.spec.tenant_id,
+                    &manifest.handle.id,
+                )
+                .into_iter()
+                .map(|error| error.to_string()),
+            );
+        }
         if errors.is_empty() {
             Ok(())
         } else {

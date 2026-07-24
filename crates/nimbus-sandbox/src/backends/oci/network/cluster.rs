@@ -33,7 +33,8 @@ use std::sync::Arc;
 use nimbus_core::TenantId;
 use nimbus_core::net::Cidr;
 use nimbus_network::{
-    NetworkAttachmentId, NetworkLeaseEpoch, NetworkSegmentAllocator, NetworkSegmentGrowth,
+    NetworkAttachmentId, NetworkLeaseEpoch, NetworkSegmentAllocator, NetworkSegmentCleanup,
+    NetworkSegmentFinalizeOutcome, NetworkSegmentGrowth, NetworkSegmentQuarantineOutcome,
     NetworkSegmentReleaseOutcome,
 };
 
@@ -157,12 +158,27 @@ impl NetworkSegmentAllocator for ClusterSegmentAllocator {
         self.leased_inner()?.acquire(tenant, attachment_id)
     }
 
+    fn quarantine(
+        &self,
+        tenant: &TenantId,
+        attachment_id: &NetworkAttachmentId,
+    ) -> Result<NetworkSegmentQuarantineOutcome> {
+        self.leased_inner()?.quarantine(tenant, attachment_id)
+    }
+
     fn release(
         &self,
         tenant: &TenantId,
         attachment_id: &NetworkAttachmentId,
     ) -> Result<NetworkSegmentReleaseOutcome<OciSegmentRealization>> {
         self.leased_inner()?.release(tenant, attachment_id)
+    }
+
+    fn finalize_release(
+        &self,
+        cleanup: &NetworkSegmentCleanup<OciSegmentRealization>,
+    ) -> Result<NetworkSegmentFinalizeOutcome> {
+        self.leased_inner()?.finalize_release(cleanup)
     }
 
     fn grow_block_if_current(
@@ -429,10 +445,7 @@ mod tests {
             );
         }
         assert!(
-            matches!(
-                cleanup,
-                Ok(NetworkSegmentReleaseOutcome::TenantDrained { .. })
-            ),
+            matches!(cleanup, Ok(NetworkSegmentReleaseOutcome::CleanupPending(_))),
             "expired create authority must still permit cleanup of its durable old hold"
         );
     }

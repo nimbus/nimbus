@@ -1,6 +1,6 @@
 # Nimbus Network Control Plane Plan
 
-Status: `active; NNC2.4 complete; NNC2.5 detach/release quarantine in progress`
+Status: `active; NNC2.5 complete; NNC2.6 expired-lease cleanup authority in progress`
 
 Owner: this plan is the sole implementation control plane for the
 transport-free `nimbus-network` crate and the connectivity-resource lifecycle
@@ -36,19 +36,19 @@ ledger transition.
 
 | Field | Current value |
 | --- | --- |
-| Plan status | `active; NNC2.4 complete; NNC2.5 detach/release quarantine in progress` |
+| Plan status | `active; NNC2.5 complete; NNC2.6 expired-lease cleanup authority in progress` |
 | Current band | `NNC2 — crash-safe durable state and segment authority` |
-| Current item | `NNC2.5 — add two-phase detach/release quarantine` |
-| Last completed item | `NNC2.4 — globally stable segment identity and typed node lease-epoch fencing` |
-| Next action | Commit the fully verified NNC2.4 checkpoint, then read the NNC0.3/NNC0.5 baselines and current provider cleanup, netns, hold, allocation, and reaper paths before editing NNC2.5. |
+| Current item | `NNC2.6 — separate create authority from cleanup authority on lease expiry` |
+| Last completed item | `NNC2.5 — two-phase detach/release quarantine` |
+| Next action | Commit the completed NNC2.5 code/proof plus NNC2.6 activation checkpoint; record that commit, then reproduce the ignored expired-lease cleanup expected red before editing source. |
 | Owner branch | `codex/nimbus-network-architecture-audit` |
 | Owner worktree | `/Users/jack/src/github.com/nimbus/nimbus-network-architecture-audit` |
 | Audit base | Original architecture audit: `b69007a78a220847812370d9418049f1253f0384`. |
 | Execution base | Rebased without conflicts onto `origin/main` at `9c2d4f150c60f43dfdc0a3f1ec6550942e26ab8f` after NNC0.0. |
-| Last checkpoint commit | `414d009938a6b35c62624e01d1c0195be6c05c1e` — NNC2.3 completion and NNC2.4 activation checkpoint. |
-| Audit dirty state | Pending NNC2.4 checkpoint owns this plan, its proof, and `crates/nimbus-sandbox/src/backends/oci/network/{segment,cluster,placement}.rs`. No other dirty paths. |
+| Last checkpoint commit | `994c2d593ffb661a50da13a80f0115c534ca059c` — NNC2.4 completion and NNC2.5 activation checkpoint. |
+| Audit dirty state | NNC2.5 completion owns its code/proof; NNC2.6 activation owns only this plan and the plan-index status. All are being committed in the preceding-item checkpoint; no unrelated paths are dirty. |
 | Execution mode | Autonomous implementation goal active; commit each completed item with its ledger/evidence checkpoint; no push or PR without separate authority. |
-| Last verification | NNC2.4: 16-case cross-node identity/restart property and every-entry-point stale-epoch/no-mutation proof green; network 61/0/0; sandbox library 260/0/12 plus helper 2/0/0; cluster 5/0/1 with the NNC2.6 expected-red ignore; all-target/all-feature check/Clippy, rustdoc, format/diff, exact core-only metadata edge, raw-u64 seam scan, verifier self-test 15/15 and aggregate 14/1 expected red, docs 108 pages and 17/17; Opus 4.8/max review clean at 0.82. Exact evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc2.4-stable-segment-identity-lease-epoch.md`. |
+| Last verification | NNC2.5 focused proofs green; `nimbus-network` 63/0/0 and `nimbus-sandbox` 267/0/11 planned ignores are green. All-target/all-feature check and strict Clippy, rustdoc, format/diff, exact core-only metadata, verifier self-test 15/15 and aggregate 14/1 expected NNCV005, docs 108 pages and 17/17 are green. Full-suite load exposed and closed same-process atomic-stage collision/default lock-budget failures through canonical-path process serialization plus the OS lock. Opus 4.8/max review was clean with `patch is correct (0.7)`. Exact evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc2.5-two-phase-detach-release-quarantine.md`. |
 | Blocking decision | None. NNC2.5 must preserve provider effects in sandbox, quarantine any failed or ambiguous provider/netns cleanup durably, and release allocation authority only after every required deletion proof. |
 
 Recovery protocol:
@@ -548,6 +548,18 @@ other network-mounted state roots are unsupported. When the filesystem type or
 required semantics are detectable and unsupported, startup fails closed before
 reading or allocating resources; an operator override cannot silently weaken
 the contract.
+
+Modularity exception: `nimbus-network/src/state_store.rs` and the sandbox
+allocator's `oci/network/segment.rs` are currently in the repository's
+1,500–1,999-line explicit-justification band. Each remains a deep,
+concept-owned module rather than a composition root: the former keeps the
+single lock/envelope/durable-replacement/filesystem contract beside its
+private crash-cut tests; the latter keeps one segment-allocation state machine
+beside the invariant, fencing, restart, and contention tests that inspect its
+private authority. Provider effects, port allocation, orchestration, and
+unrelated helpers may not extend either file. Before either reaches 2,000
+lines, its concept-local test module must move intact to a child test file;
+production logic must not be split mechanically across generic helpers.
 
 ### Durable workload/network saga handoff
 
@@ -1235,7 +1247,7 @@ named dependency/owner decision and the next safe action.
 | --- | --- | --- | --- |
 | NNC0 — baselines/verifier | `done` | NNC0.0-NNC0.9 proof records: durable owner, dependency/bind inventories, process/crash harnesses, eight fail-before risk families, expected-red verifier, and behavior/performance baseline. | `docs/private/plans/proof/nimbus-network-control-plane/` |
 | NNC1 — crate/vocabulary | `done` | Acyclic crate, stable IDs/state model, endpoint/segment ownership migration. | `docs/private/plans/proof/nimbus-network-control-plane/nnc1.1-low-dependency-crate.md` through `nnc1.6-static-verifier-deepening.md`; every NNC1 item done, network has one outgoing workspace edge, and verifier is 13 pass/2 deliberately later expected fail. |
-| NNC2 — durable state/segment authority | `in_progress` | Crash-safe store, substitution, capacity reuse, epoch cleanup, no premature reuse. | NNC2.1 through NNC2.4 passed in `docs/private/plans/proof/nimbus-network-control-plane/`; NNC2.5 active. |
+| NNC2 — durable state/segment authority | `in_progress` | Crash-safe store, substitution, capacity reuse, epoch cleanup, no premature reuse. | NNC2.1 through NNC2.5 passed in `docs/private/plans/proof/nimbus-network-control-plane/`; NNC2.6 is next. |
 | NNC3 — cross-process port leases | `todo` | Full conflict/bind matrix, every owner migrated, old allocators deleted. | — |
 | NNC4 — capabilities/sovereignty | `todo` | Named negative matrix, evidence-based seams, machine modes, offline local profile. | — |
 | NNC5 — sandbox attachment lifecycle | `todo` | Shared implementation, complete readiness, ambiguity/crash convergence. | — |
@@ -1279,8 +1291,8 @@ checkpoint.
 | NNC2.2 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc2.2-portable-allocator-contract.md`; network owns the object-safe attachment-ID allocator contract, OCI realization/effects remain sandbox-owned, container and krun consume injected trait objects with real substitution proofs, typed holds/reconcile preserve lifecycle behavior, a reviewed filesystem-scan regression is fixed, network 61/0/0 and sandbox 252/0/13 plus helper 2/0/0 pass, all-target/all-feature check/Clippy/rustdoc/format/diff and the exact core-only metadata edge pass, verifier advances to 14/1 with only NNCV005 expected red, and the final Opus 4.8/max review is clean at 0.80. |
 | NNC2.3 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc2.3-atomic-existing-block-allocation.md`; the NNC0.5 fail-before exits `101`, then one locked ordered all-block IPAM transaction reuses every tested free position before growth; complete identity-set CAS rejects concurrent and ABA-stale growers; retry is idempotent; provider effects stay sandbox-owned; network 61/0/0 and sandbox 258/0/12 plus helper 2/0/0 pass; check/Clippy/rustdoc/format/diff/docs, exact dependency, verifier 15/15 self-test and 14/1 expected red, and clean Opus 4.8/max review pass. |
 | NNC2.4 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc2.4-stable-segment-identity-lease-epoch.md`; typed epoch crosses installed/durable/cluster lease state, a 16-case generated two-node property proves globally distinct stable IDs and restart, all create/growth entry points reject stale epoch without durable mutation, raw-u64 seam scan is empty, affected suites and quality/dependency/verifier/docs gates pass, and Opus 4.8/max review is clean at 0.82. |
-| NNC2.5 | `in_progress` | Owned paths at activation: none; the pending dirty paths belong to the NNC2.4 checkpoint. Last green source commit before that checkpoint: `414d009938a6b35c62624e01d1c0195be6c05c1e`. Next: commit NNC2.4, then inspect NNC0.3/NNC0.5 and provider cleanup/netns/hold/allocation/reaper ordering. Blocker: none. |
-| NNC2.6 | `todo` | — |
+| NNC2.5 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc2.5-two-phase-detach-release-quarantine.md`; expected red exited `101` because a failed-cleanup bridge's `10.0.0.0/24` location was reused. Durable quarantine, explicit hold release, stable-ID/epoch finalization, restart/stale/exact-once/provider-retry/order proofs, and same-process plus cross-process authority locking now prevent premature reuse. Network 63/0/0; sandbox 267/0/11; quality/dependency/verifier/docs gates green; Opus 4.8/max review clean at 0.7. |
+| NNC2.6 | `in_progress` | Owned paths: this plan and `docs/private/plans/README.md` activation only until the NNC2.5 checkpoint commits; source paths will be recorded after fail-before. Last green: NNC2.5 network 63/0/0, sandbox 267/0/11, quality/dependency/verifier/docs gates, and clean Opus review. Next: commit NNC2.5, record its hash, then run the exact ignored expired-lease cleanup test with `--exact --ignored --nocapture`. Blocker: none. |
 | NNC2.7 | `todo` | — |
 | NNC2.8 | `todo` | — |
 | NNC3.1 | `todo` | — |

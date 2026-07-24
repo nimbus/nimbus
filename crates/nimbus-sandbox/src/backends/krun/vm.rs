@@ -44,8 +44,9 @@ use crate::backends::oci::network::{
     OciNetworkConfig, OciNetworkDirectEgress, OciNetworkLayout, OciSegmentAllocator,
     OciSegmentRealization, create_persistent_network_namespace, default_network_attachment_id,
     pin_netns_egress_to_own_proxy, place_sandbox_on_block, purge_legacy_nimbus0_once,
-    reconcile_network_segment_orphans, release_network_segment_hold,
-    remove_persistent_network_namespace, setup_container_network, teardown_container_network,
+    quarantine_network_segment_hold, reconcile_network_segment_orphans,
+    release_network_segment_hold, remove_persistent_network_namespace, setup_container_network,
+    teardown_container_network,
 };
 use crate::backends::oci::port_manager::{DEFAULT_MAX_PORTS_PER_TENANT, PortManager};
 use crate::backends::oci::resource_quota::ResourceQuotaManager;

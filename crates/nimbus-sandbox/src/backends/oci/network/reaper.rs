@@ -2,8 +2,9 @@
 //!
 //! netavark creates the per-tenant bridge on first-sandbox setup but does NOT
 //! remove it on last-sandbox teardown, so the crash-safe reaper removes the
-//! bridge when the allocator reports the tenant drained (the last attachment hold
-//! released). The one-shot legacy purge removes the pre-MTN shared `nimbus0`
+//! bridge after the last attachment hold releases into durable
+//! cleanup-pending state, then identity-fenced finalization frees the
+//! allocation. The one-shot legacy purge removes the pre-MTN shared `nimbus0`
 //! bridge before the first per-tenant setup, since the routed per-tenant model
 //! deletes the shared bridge (pre-launch, breaking — no compat path).
 
@@ -11,7 +12,9 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use nimbus_core::TenantId;
-use nimbus_network::NetworkSegmentReleaseOutcome;
+use nimbus_network::{
+    NetworkSegmentFinalizeOutcome, NetworkSegmentQuarantineOutcome, NetworkSegmentReleaseOutcome,
+};
 
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
@@ -25,8 +28,21 @@ pub(crate) fn reap_bridge_interface(interface: &str) -> Result<()> {
     delete_bridge(interface)
 }
 
-/// Drop one sandbox's allocator hold and reap every bridge returned when the
-/// tenant drains. Both OCI-family backends use this exact ordering.
+/// Fence one sandbox attachment before the first provider detach effect.
+///
+/// The hold remains authoritative until the caller has confirmed provider and
+/// persistent-netns deletion, then calls [`release_network_segment_hold`].
+pub(crate) fn quarantine_network_segment_hold(
+    allocator: &OciSegmentAllocator,
+    tenant_id: &TenantId,
+    sandbox_id: &SandboxId,
+) -> Result<NetworkSegmentQuarantineOutcome> {
+    allocator.quarantine(tenant_id, &default_network_attachment_id(sandbox_id))
+}
+
+/// Drop one quarantined sandbox hold after provider/netns deletion, reap every
+/// bridge returned when the tenant drains, then finalize the exact allocation.
+/// Any failed bridge deletion leaves durable cleanup-pending authority intact.
 pub(crate) fn release_network_segment_hold(
     allocator: &OciSegmentAllocator,
     tenant_id: &TenantId,
@@ -44,36 +60,48 @@ fn release_network_segment_hold_with(
     mut reap: impl FnMut(&OciSegmentRealization) -> Result<()>,
 ) -> Vec<SandboxError> {
     let attachment_id = default_network_attachment_id(sandbox_id);
-    let segments = match allocator.release(tenant_id, &attachment_id) {
-        Ok(NetworkSegmentReleaseOutcome::TenantDrained { segments }) => segments,
+    if let Err(error) = allocator.quarantine(tenant_id, &attachment_id) {
+        return vec![error];
+    }
+    let cleanup = match allocator.release(tenant_id, &attachment_id) {
+        Ok(NetworkSegmentReleaseOutcome::CleanupPending(cleanup)) => cleanup,
         Ok(NetworkSegmentReleaseOutcome::StillLive) => return Vec::new(),
+        Ok(NetworkSegmentReleaseOutcome::AlreadyReleased) => return Vec::new(),
         Err(error) => return vec![error],
     };
-    segments
+    let errors: Vec<SandboxError> = cleanup
+        .segments()
         .iter()
         .filter_map(|segment| reap(segment).err())
-        .collect()
+        .collect();
+    if !errors.is_empty() {
+        return errors;
+    }
+    match allocator.finalize_release(&cleanup) {
+        Ok(
+            NetworkSegmentFinalizeOutcome::Released
+            | NetworkSegmentFinalizeOutcome::AlreadyReleased,
+        ) => Vec::new(),
+        Err(error) => vec![error],
+    }
 }
 
-/// Startup orphan GC: reclaim segment holds whose sandbox netns no longer exists,
-/// and reap the tenant bridges that drain as a result. The live-hold set is read
+/// Startup orphan scan: quarantine segment holds whose sandbox netns no longer
+/// exists. The live-hold set is read
 /// directly from the persistent-netns tree
 /// (`<state_root>/tenants/<tenant>/networks/netns/<sandbox>`) — a live sandbox has
-/// a netns; a cleanly-torn-down one does not — so no manifest parsing is needed
-/// and a crash that leaked a hold (netns gone, allocator entry stranded) is
-/// reclaimed while a still-live sandbox is conservatively kept. Best-effort +
-/// idempotent. Returns the number of tenant bridges reclaimed (the reclaimed
-/// metric).
+/// a netns; absence is only incomplete orphan evidence, not provider-deletion
+/// proof. A crash-leaked hold therefore remains authoritative and unavailable
+/// until the later evidence-aware reconciler inspects/detaches it. Best-effort
+/// and idempotent. Returns the number of provider segment realizations covered
+/// by quarantined allocations (a multi-block tenant contributes each block).
 pub(crate) fn reconcile_network_segment_orphans(
     state_root: &Path,
     allocator: &OciSegmentAllocator,
 ) -> Result<usize> {
     let live = live_netns_holds(state_root)?;
-    let drained = allocator.reconcile_orphans(&live)?;
-    for segment in &drained {
-        reap_bridge_interface(segment.network_interface())?;
-    }
-    Ok(drained.len())
+    let quarantined = allocator.reconcile_orphans(&live)?;
+    Ok(quarantined.len())
 }
 
 /// Enumerate the `(tenant_id, sandbox_id)` pairs that currently hold a persistent
@@ -225,7 +253,7 @@ mod tests {
     }
 
     #[test]
-    fn reconcile_reclaims_holds_whose_netns_is_gone_and_keeps_live_ones() {
+    fn reconcile_quarantines_holds_whose_netns_is_gone_and_keeps_live_ones() {
         let dir = tempdir().expect("temp dir");
         let root = dir.path();
         let allocator = SingleNodeSegmentAllocator::single_node_default(root);
@@ -246,17 +274,22 @@ mod tests {
             )
             .expect("acquire dead");
 
-        let reclaimed = reconcile_network_segment_orphans(root, &allocator).expect("reconcile");
-        assert_eq!(reclaimed, 1, "only the netns-less tenant is reclaimed");
+        let quarantined = reconcile_network_segment_orphans(root, &allocator).expect("reconcile");
+        assert_eq!(quarantined, 1, "only the netns-less tenant is quarantined");
+        assert!(
+            allocator.has_hold("tenant-dead", "sb-dead")
+                && allocator.has_pending_hold("tenant-dead", "sb-dead"),
+            "netns absence alone must preserve and quarantine the durable hold"
+        );
 
-        // tenant-dead's index 1 was freed -> reused by the next new tenant.
-        let reused = allocator
+        // tenant-dead's uncertain index 1 remains unavailable.
+        let fresh = allocator
             .acquire(
                 &TenantId::new("tenant-new").unwrap(),
                 &default_network_attachment_id(&SandboxId::new("sb-new")),
             )
             .expect("acquire new");
-        assert_eq!(reused.cidr().to_string(), "10.0.1.0/24");
+        assert_eq!(fresh.cidr().to_string(), "10.0.2.0/24");
         // tenant-live still holds its original index 0.
         let live = allocator
             .acquire(
@@ -284,13 +317,14 @@ mod tests {
         std::fs::write(tenants_root.join(".DS_Store"), b"foreign metadata")
             .expect("foreign sibling fixture should write");
 
-        let reclaimed = reconcile_network_segment_orphans(root, &allocator)
+        let quarantined = reconcile_network_segment_orphans(root, &allocator)
             .expect("a non-tenant sibling without a netns tree must be ignored");
 
-        assert_eq!(reclaimed, 1, "the real orphan must still be reclaimed");
+        assert_eq!(quarantined, 1, "the real orphan must still be quarantined");
         assert!(
-            !allocator.has_hold(tenant.as_str(), "sb-dead"),
-            "foreign siblings must not suppress durable hold reconciliation"
+            allocator.has_hold(tenant.as_str(), "sb-dead")
+                && allocator.has_pending_hold(tenant.as_str(), "sb-dead"),
+            "foreign siblings must not suppress durable hold quarantine"
         );
     }
 
@@ -582,11 +616,8 @@ mod tests {
     }
 
     #[test]
-    // This is the NNC0.3 fail-before executable baseline, not the pass-after
-    // fix. It must fail at the final safety assertion while the current
-    // allocator frees before provider cleanup. NNC2.5 owns quarantine, will
-    // turn this test green, and must remove the ignore marker.
-    #[ignore = "NNC0.3 expected red until failed bridge cleanup fences segment reuse"]
+    // NNC0.3 pass-after: bridge cleanup failure leaves the exact allocation
+    // cleanup-pending; a later successful retry finalizes it exactly once.
     fn failed_bridge_cleanup_must_fence_segment_from_reuse() {
         let dir = tempdir().expect("temp dir");
         let allocator = SingleNodeSegmentAllocator::single_node_default(dir.path());
@@ -633,6 +664,62 @@ mod tests {
             replacement.cidr(),
             original.cidr(),
             "a segment with a surviving provider effect must remain fenced from reuse"
+        );
+
+        let mut successful_reaps = 0usize;
+        let retry_errors = release_network_segment_hold_with(
+            &allocator,
+            &original_tenant,
+            &original_sandbox,
+            |segment| {
+                successful_reaps += 1;
+                assert_eq!(segment.segment_id(), original.segment_id());
+                Ok(())
+            },
+        );
+        assert!(retry_errors.is_empty(), "cleanup retry should succeed");
+        assert_eq!(successful_reaps, 1, "the bridge should be deleted once");
+
+        let recovered = allocator
+            .acquire(
+                &TenantId::new("tenant-recovered").expect("tenant should parse"),
+                &default_network_attachment_id(&SandboxId::new("sandbox-recovered")),
+            )
+            .expect("confirmed cleanup should make the slot reusable");
+        assert_eq!(recovered.cidr(), original.cidr());
+        assert_ne!(
+            recovered.segment_id(),
+            original.segment_id(),
+            "reused location must receive a new stable identity"
+        );
+
+        let repeated_errors = release_network_segment_hold_with(
+            &allocator,
+            &original_tenant,
+            &original_sandbox,
+            |_| {
+                successful_reaps += 1;
+                Ok(())
+            },
+        );
+        assert!(
+            repeated_errors.is_empty(),
+            "repeated finalization should be idempotent"
+        );
+        assert_eq!(
+            successful_reaps, 1,
+            "already-finalized cleanup must not repeat provider deletion"
+        );
+        let next = allocator
+            .acquire(
+                &TenantId::new("tenant-next").expect("tenant should parse"),
+                &default_network_attachment_id(&SandboxId::new("sandbox-next")),
+            )
+            .expect("next segment should allocate");
+        assert_eq!(
+            next.cidr().to_string(),
+            "10.0.2.0/24",
+            "the recovered slot is owned exactly once, not handed out twice"
         );
     }
 }
