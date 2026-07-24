@@ -3,9 +3,10 @@ use std::num::NonZeroU16;
 
 use nimbus_network::{
     ListenerId, LocalPortLeaseAuthority, NetworkLeaseEpoch, NetworkProviderHandle,
-    NetworkProviderId, NetworkResourceGeneration, PortBindRealm, PortBindTarget, PortBindingSpec,
-    PortExposure, PortIpv6Overlap, PortLeaseBinding, PortLeaseError, PortLeaseId, PortLeasePhase,
-    PortLeaseRequest, PortProtocol, PortRequestMode,
+    NetworkProviderId, NetworkResourceGeneration, PortBindRealm, PortBindTarget,
+    PortBindingProvenance, PortBindingSpec, PortBoundEndpoint, PortExposure, PortIpv6Overlap,
+    PortLeaseBinding, PortLeaseError, PortLeaseId, PortLeasePhase, PortLeaseRequest, PortProtocol,
+    PortRequestMode,
 };
 
 const PORT: u16 = 41_473;
@@ -555,7 +556,14 @@ fn binding(value: u16, opaque: &str) -> PortLeaseBinding {
         .parse()
         .expect("fixture provider ID should parse");
     PortLeaseBinding::new(
-        port(value),
+        PortBoundEndpoint::new(
+            PortProtocol::Tcp,
+            PortBindRealm::Host,
+            PortBindTarget::ipv4_wildcard(),
+            port(value),
+        )
+        .expect("fixture endpoint should validate"),
+        PortBindingProvenance::ProviderAssigned,
         NetworkProviderHandle::new(provider_id, opaque)
             .expect("fixture provider handle should validate"),
     )

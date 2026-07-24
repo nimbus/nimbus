@@ -16,13 +16,18 @@ use nimbus_core::TenantId;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    LocalNetworkStateStore, NetworkLeaseEpoch, NetworkProviderHandle, NetworkResourceGeneration,
-    NetworkResourceId, NetworkStatePartition, NetworkStateStoreError, NetworkStateTransactionError,
-    PortLeaseId,
+    LocalNetworkStateStore, NetworkLeaseEpoch, NetworkResourceGeneration, NetworkResourceId,
+    NetworkStatePartition, NetworkStateStoreError, NetworkStateTransactionError, PortLeaseId,
 };
 
+mod binding;
 mod request;
 
+pub use binding::{
+    PortBindAttempt, PortBindAttemptError, PortBindFailure, PortBindFailureKind,
+    PortBindingMismatch, PortBindingProvenance, PortBoundEndpoint, PortBoundEndpointError,
+    PortLeaseBinding,
+};
 pub use request::{
     PortAddressFamily, PortBindRealm, PortBindRealmError, PortBindRealmErrorKind, PortBindTarget,
     PortBindTargetError, PortBindingSpec, PortExposure, PortIpv6Overlap, PortIsolatedRealm,
@@ -31,9 +36,9 @@ pub use request::{
 
 /// Durable phase of one host-port lease generation.
 ///
-/// `CleanupPending` is included from the start so later provider reconciliation
-/// can retain ambiguous unbind authority without changing the durable wire
-/// vocabulary. NNC3.1 does not manufacture provider cleanup evidence.
+/// `CleanupPending` is included from the start so NNC3.8 provider
+/// reconciliation can retain ambiguous unbind authority without changing the
+/// durable wire vocabulary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PortLeasePhase {
@@ -126,44 +131,6 @@ impl PortLeaseRequest {
     }
 }
 
-/// Concrete provider binding adopted into a reserved lease before activation.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PortLeaseBinding {
-    actual_port: NonZeroU16,
-    provider_handle: NetworkProviderHandle,
-}
-
-impl PortLeaseBinding {
-    /// Record one exact provider binding.
-    pub fn new(actual_port: NonZeroU16, provider_handle: NetworkProviderHandle) -> Self {
-        Self {
-            actual_port,
-            provider_handle,
-        }
-    }
-
-    /// Actual non-zero host port proven by the provider adapter.
-    pub const fn actual_port(&self) -> NonZeroU16 {
-        self.actual_port
-    }
-
-    /// Opaque provider handle used only by the owning adapter.
-    pub fn provider_handle(&self) -> &NetworkProviderHandle {
-        &self.provider_handle
-    }
-}
-
-impl fmt::Debug for PortLeaseBinding {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("PortLeaseBinding")
-            .field("actual_port", &self.actual_port)
-            .field("provider_handle", &self.provider_handle)
-            .finish()
-    }
-}
-
 /// Durable port-lease record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -172,6 +139,7 @@ pub struct PortLeaseRecord {
     reserved_port: Option<NonZeroU16>,
     phase: PortLeasePhase,
     binding: Option<PortLeaseBinding>,
+    failure: Option<PortBindFailure>,
 }
 
 impl PortLeaseRecord {
@@ -196,6 +164,11 @@ impl PortLeaseRecord {
     pub fn binding(&self) -> Option<&PortLeaseBinding> {
         self.binding.as_ref()
     }
+
+    /// Durable failed-bind evidence, when the lease terminated before adoption.
+    pub fn failure(&self) -> Option<&PortBindFailure> {
+        self.failure.as_ref()
+    }
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -219,21 +192,57 @@ impl PortLeaseState {
                 });
             }
 
-            match (record.phase, record.binding.as_ref()) {
-                (PortLeasePhase::Reserved, Some(_)) => {
+            match (
+                record.phase,
+                record.binding.as_ref(),
+                record.failure.as_ref(),
+            ) {
+                (PortLeasePhase::Reserved, Some(_), _) => {
                     return Err(PortLeaseOperationError::CorruptAuthority {
                         reason: format!("reserved lease {lease_id} has provider binding evidence"),
                     });
                 }
-                (PortLeasePhase::Binding | PortLeasePhase::Active, None) => {
+                (PortLeasePhase::Reserved, None, Some(_)) => {
+                    return Err(PortLeaseOperationError::CorruptAuthority {
+                        reason: format!("reserved lease {lease_id} has bind failure evidence"),
+                    });
+                }
+                (PortLeasePhase::Binding | PortLeasePhase::Active, None, _) => {
                     return Err(PortLeaseOperationError::CorruptAuthority {
                         reason: format!("{:?} lease {lease_id} has no binding", record.phase),
                     });
                 }
-                (PortLeasePhase::Failed, Some(_)) => {
+                (PortLeasePhase::Binding | PortLeasePhase::Active, Some(_), Some(_)) => {
+                    return Err(PortLeaseOperationError::CorruptAuthority {
+                        reason: format!(
+                            "{:?} lease {lease_id} has both binding and failure evidence",
+                            record.phase
+                        ),
+                    });
+                }
+                (PortLeasePhase::Failed, Some(_), _) => {
                     return Err(PortLeaseOperationError::CorruptAuthority {
                         reason: format!(
                             "terminal failed lease {lease_id} retains provider binding evidence"
+                        ),
+                    });
+                }
+                (PortLeasePhase::Failed, None, None) => {
+                    return Err(PortLeaseOperationError::CorruptAuthority {
+                        reason: format!("terminal failed lease {lease_id} has no failure evidence"),
+                    });
+                }
+                (
+                    PortLeasePhase::Withdrawing
+                    | PortLeasePhase::CleanupPending
+                    | PortLeasePhase::Released,
+                    _,
+                    Some(_),
+                ) => {
+                    return Err(PortLeaseOperationError::CorruptAuthority {
+                        reason: format!(
+                            "{:?} lease {lease_id} retains bind failure evidence",
+                            record.phase
                         ),
                     });
                 }
@@ -253,14 +262,51 @@ impl PortLeaseState {
             }
 
             if let Some(binding) = &record.binding
-                && Some(binding.actual_port) != record.reserved_port
+                && Some(binding.actual_port()) != record.reserved_port
             {
                 return Err(PortLeaseOperationError::CorruptAuthority {
                     reason: format!(
                         "lease {lease_id} reserves {:?} but records binding {}",
-                        record.reserved_port, binding.actual_port
+                        record.reserved_port,
+                        binding.actual_port()
                     ),
                 });
+            }
+            if let Some(binding) = &record.binding
+                && let Some(mismatch) = binding.mismatch(record.request.binding())
+            {
+                return Err(PortLeaseOperationError::CorruptAuthority {
+                    reason: format!(
+                        "lease {lease_id} has provider binding incompatible with its request: {mismatch}"
+                    ),
+                });
+            }
+            if let Some(failure) = &record.failure
+                && let Some(mismatch) = failure.mismatch(record.request.binding())
+            {
+                return Err(PortLeaseOperationError::CorruptAuthority {
+                    reason: format!(
+                        "lease {lease_id} has bind failure incompatible with its request: {mismatch}"
+                    ),
+                });
+            }
+            if let Some(failure) = &record.failure {
+                let selected_port_matches =
+                    match (record.request.binding.port(), record.reserved_port) {
+                        (PortRequestMode::ProviderAssigned, None) => failure.attempt().port() == 0,
+                        (
+                            PortRequestMode::Exact(_) | PortRequestMode::Range(_),
+                            Some(reserved_port),
+                        ) => failure.attempt().port() == reserved_port.get(),
+                        _ => false,
+                    };
+                if !selected_port_matches {
+                    return Err(PortLeaseOperationError::CorruptAuthority {
+                        reason: format!(
+                            "lease {lease_id} failed bind attempt does not match its selected port"
+                        ),
+                    });
+                }
             }
 
             if !record.phase.is_terminal()
@@ -377,6 +423,7 @@ impl LocalPortLeaseAuthority {
                 reserved_port,
                 phase: PortLeasePhase::Reserved,
                 binding: None,
+                failure: None,
             };
             state
                 .leases
@@ -416,12 +463,18 @@ impl LocalPortLeaseAuthority {
                 }
             }
 
+            if let Some(mismatch) = binding.mismatch(request.binding()) {
+                return Err(PortLeaseOperationError::BindingMismatch {
+                    lease_id: request.lease_id.clone(),
+                    mismatch,
+                });
+            }
+
             if let Some(reserved_port) = existing.reserved_port {
-                if binding.actual_port != reserved_port {
-                    return Err(PortLeaseOperationError::BindingPortMismatch {
+                if binding.actual_port() != reserved_port {
+                    return Err(PortLeaseOperationError::BindingMismatch {
                         lease_id: request.lease_id.clone(),
-                        reserved_port,
-                        actual_port: binding.actual_port,
+                        mismatch: PortBindingMismatch::Port,
                     });
                 }
             } else if !matches!(request.binding.port(), PortRequestMode::ProviderAssigned) {
@@ -434,15 +487,70 @@ impl LocalPortLeaseAuthority {
             }
 
             if let Some(conflict) =
-                state.conflicting_record(request, binding.actual_port, Some(request.lease_id()))
+                state.conflicting_record(request, binding.actual_port(), Some(request.lease_id()))
             {
-                return Err(port_conflict(request, conflict, binding.actual_port));
+                return Err(port_conflict(request, conflict, binding.actual_port()));
             }
 
             let record = exact_record_mut(state, request)?;
-            record.reserved_port = Some(binding.actual_port);
+            record.reserved_port = Some(binding.actual_port());
             record.phase = PortLeasePhase::Binding;
             record.binding = Some(binding);
+            Ok(record.clone())
+        })
+    }
+
+    /// Durably record a confirmed no-effect bind failure without publication.
+    ///
+    /// The effect-owning adapter may call this only after proving the failed
+    /// attempt created no resource requiring cleanup. Ambiguous effects belong
+    /// in `CleanupPending` reconciliation. This method itself performs no bind,
+    /// close, or provider call. A failed lease is inspectable and cannot
+    /// activate.
+    pub fn record_bind_failure_without_effect(
+        &self,
+        request: &PortLeaseRequest,
+        failure: PortBindFailure,
+    ) -> Result<PortLeaseRecord, PortLeaseError> {
+        self.transaction(|state| {
+            let existing = exact_record(state, request)?;
+            match existing.phase {
+                PortLeasePhase::Failed if existing.failure.as_ref() == Some(&failure) => {
+                    return Ok(existing.clone());
+                }
+                PortLeasePhase::Failed => {
+                    return Err(PortLeaseOperationError::BindFailureConflict {
+                        lease_id: request.lease_id.clone(),
+                    });
+                }
+                PortLeasePhase::Reserved => {}
+                phase => {
+                    return Err(PortLeaseOperationError::InvalidTransition {
+                        lease_id: request.lease_id.clone(),
+                        phase,
+                        operation: PortLeaseOperation::RecordBindFailureWithoutEffect,
+                    });
+                }
+            }
+
+            if let Some(mismatch) = failure.mismatch(request.binding()) {
+                return Err(PortLeaseOperationError::BindingMismatch {
+                    lease_id: request.lease_id.clone(),
+                    mismatch,
+                });
+            }
+            if let Some(reserved_port) = existing.reserved_port
+                && failure.attempt().port() != reserved_port.get()
+            {
+                return Err(PortLeaseOperationError::BindingMismatch {
+                    lease_id: request.lease_id.clone(),
+                    mismatch: PortBindingMismatch::Port,
+                });
+            }
+
+            let record = exact_record_mut(state, request)?;
+            record.phase = PortLeasePhase::Failed;
+            record.failure = Some(failure);
             Ok(record.clone())
         })
     }
@@ -639,6 +747,8 @@ impl PortLeaseFenceMismatch {
 pub enum PortLeaseOperation {
     /// Record a concrete provider binding.
     Adopt,
+    /// Record a confirmed no-effect provider bind failure.
+    RecordBindFailureWithoutEffect,
     /// Mark an adopted binding active.
     Activate,
     /// Fence new use.
@@ -651,6 +761,7 @@ impl Display for PortLeaseOperation {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::Adopt => "adopt",
+            Self::RecordBindFailureWithoutEffect => "record bind failure without provider effect",
             Self::Activate => "activate",
             Self::Withdraw => "withdraw",
             Self::Release => "release",
@@ -683,12 +794,14 @@ enum PortLeaseOperationError {
         requested_range: PortRange,
     },
     StaleFence(Box<PortLeaseFenceMismatch>),
-    BindingPortMismatch {
+    BindingMismatch {
         lease_id: PortLeaseId,
-        reserved_port: NonZeroU16,
-        actual_port: NonZeroU16,
+        mismatch: PortBindingMismatch,
     },
     BindingConflict {
+        lease_id: PortLeaseId,
+    },
+    BindFailureConflict {
         lease_id: PortLeaseId,
     },
     InvalidTransition {
@@ -726,14 +839,15 @@ pub enum PortLeaseError {
     },
     /// A generation/epoch/owner request did not match durable authority.
     StaleFence(Box<PortLeaseFenceMismatch>),
-    /// Atomically reserved slot and concrete adopted port disagree.
-    BindingPortMismatch {
+    /// Concrete provider evidence does not satisfy the durable request.
+    BindingMismatch {
         lease_id: PortLeaseId,
-        reserved_port: NonZeroU16,
-        actual_port: NonZeroU16,
+        mismatch: PortBindingMismatch,
     },
     /// A second adoption supplied different provider evidence.
     BindingConflict { lease_id: PortLeaseId },
+    /// A second failed-bind report supplied different provider evidence.
+    BindFailureConflict { lease_id: PortLeaseId },
     /// The requested operation is not legal from the durable phase.
     InvalidTransition {
         lease_id: PortLeaseId,
@@ -786,17 +900,14 @@ impl From<PortLeaseOperationError> for PortLeaseError {
                 requested_range,
             },
             PortLeaseOperationError::StaleFence(mismatch) => Self::StaleFence(mismatch),
-            PortLeaseOperationError::BindingPortMismatch {
-                lease_id,
-                reserved_port,
-                actual_port,
-            } => Self::BindingPortMismatch {
-                lease_id,
-                reserved_port,
-                actual_port,
-            },
+            PortLeaseOperationError::BindingMismatch { lease_id, mismatch } => {
+                Self::BindingMismatch { lease_id, mismatch }
+            }
             PortLeaseOperationError::BindingConflict { lease_id } => {
                 Self::BindingConflict { lease_id }
+            }
+            PortLeaseOperationError::BindFailureConflict { lease_id } => {
+                Self::BindFailureConflict { lease_id }
             }
             PortLeaseOperationError::InvalidTransition {
                 lease_id,
@@ -873,17 +984,19 @@ impl Display for PortLeaseError {
                 mismatch.candidate.generation.as_u64(),
                 mismatch.candidate.lease_epoch.as_u64()
             ),
-            Self::BindingPortMismatch {
-                lease_id,
-                reserved_port,
-                actual_port,
-            } => write!(
-                formatter,
-                "port lease {lease_id} reserved port {reserved_port} but provider reported {actual_port}"
-            ),
+            Self::BindingMismatch { lease_id, mismatch } => {
+                write!(
+                    formatter,
+                    "port lease {lease_id} rejected provider evidence: {mismatch}"
+                )
+            }
             Self::BindingConflict { lease_id } => write!(
                 formatter,
                 "port lease {lease_id} already has different adopted provider evidence"
+            ),
+            Self::BindFailureConflict { lease_id } => write!(
+                formatter,
+                "port lease {lease_id} already has different failed-bind evidence"
             ),
             Self::InvalidTransition {
                 lease_id,
@@ -901,6 +1014,7 @@ impl StdError for PortLeaseError {
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
         match self {
             Self::Store(error) => Some(error),
+            Self::BindingMismatch { mismatch, .. } => Some(mismatch),
             _ => None,
         }
     }
@@ -912,7 +1026,7 @@ mod tests {
     use std::sync::{Arc, Barrier};
     use std::thread;
 
-    use crate::{ListenerId, NetworkProviderId};
+    use crate::{ListenerId, NetworkProviderHandle, NetworkProviderId};
 
     use super::*;
 
@@ -1152,7 +1266,10 @@ mod tests {
 
         assert!(matches!(
             authority.adopt(&request, binding(PORT + 1, "wrong-port")),
-            Err(PortLeaseError::BindingPortMismatch { .. })
+            Err(PortLeaseError::BindingMismatch {
+                mismatch: PortBindingMismatch::Port,
+                ..
+            })
         ));
         authority
             .adopt(&request, binding(PORT, "provider-binding-a"))
@@ -1161,6 +1278,63 @@ mod tests {
             authority.adopt(&request, binding(PORT, "provider-binding-b")),
             Err(PortLeaseError::BindingConflict { .. })
         ));
+    }
+
+    #[test]
+    fn bind_failure_is_idempotent_durable_and_cannot_activate() {
+        let root = tempfile::tempdir().expect("state root should exist");
+        let authority = LocalPortLeaseAuthority::open(root.path()).expect("authority should open");
+        let request = request("01ARZ3NDEKTSV4RRFFQ69G5FAV", 1, 1, PORT);
+        let failure = bind_failure(PORT, "bind-attempt-a");
+        authority
+            .reserve(request.clone())
+            .expect("reservation should commit");
+
+        let failed = authority
+            .record_bind_failure_without_effect(&request, failure.clone())
+            .expect("bind failure should commit");
+        assert_eq!(failed.phase(), PortLeasePhase::Failed);
+        assert_eq!(failed.failure(), Some(&failure));
+        assert_eq!(failed.binding(), None);
+        assert_eq!(
+            authority
+                .record_bind_failure_without_effect(&request, failure.clone())
+                .expect("same failed-bind evidence should be idempotent"),
+            failed
+        );
+        assert!(matches!(
+            authority.record_bind_failure_without_effect(
+                &request,
+                bind_failure(PORT, "different-bind-attempt")
+            ),
+            Err(PortLeaseError::BindFailureConflict { .. })
+        ));
+        assert!(matches!(
+            authority.activate(&request),
+            Err(PortLeaseError::InvalidTransition {
+                phase: PortLeasePhase::Failed,
+                operation: PortLeaseOperation::Activate,
+                ..
+            })
+        ));
+        assert!(matches!(
+            authority.adopt(&request, binding(PORT, "late-binding")),
+            Err(PortLeaseError::InvalidTransition {
+                phase: PortLeasePhase::Failed,
+                operation: PortLeaseOperation::Adopt,
+                ..
+            })
+        ));
+
+        drop(authority);
+        let restarted =
+            LocalPortLeaseAuthority::open(root.path()).expect("authority should restart");
+        let durable = restarted
+            .inspect(request.lease_id())
+            .expect("failed lease should inspect")
+            .expect("failed lease should remain durable");
+        assert_eq!(durable.phase(), PortLeasePhase::Failed);
+        assert_eq!(durable.failure(), Some(&failure));
     }
 
     #[test]
@@ -1178,6 +1352,26 @@ mod tests {
                 "incompatible with request",
             ),
             (CorruptionFixture::FailedWithBinding, "terminal failed"),
+            (
+                CorruptionFixture::FailedWithoutFailure,
+                "has no failure evidence",
+            ),
+            (
+                CorruptionFixture::ReservedWithFailure,
+                "has bind failure evidence",
+            ),
+            (
+                CorruptionFixture::FailureEndpointMismatch,
+                "bind failure incompatible",
+            ),
+            (
+                CorruptionFixture::RangeFailureSelectedPortMismatch,
+                "does not match its selected port",
+            ),
+            (
+                CorruptionFixture::ProviderAssignedFailureWithReservedPort,
+                "does not match its selected port",
+            ),
             (CorruptionFixture::DuplicateLivePort, "both fence"),
         ] {
             let root = tempfile::tempdir().expect("state root should exist");
@@ -1204,6 +1398,11 @@ mod tests {
         ExactWithoutReservedPort,
         ExactWrongReservedPort,
         FailedWithBinding,
+        FailedWithoutFailure,
+        ReservedWithFailure,
+        FailureEndpointMismatch,
+        RangeFailureSelectedPortMismatch,
+        ProviderAssignedFailureWithReservedPort,
         DuplicateLivePort,
     }
 
@@ -1221,6 +1420,7 @@ mod tests {
                         ),
                         phase: PortLeasePhase::Reserved,
                         binding: None,
+                        failure: None,
                     };
 
                     match corruption {
@@ -1252,6 +1452,52 @@ mod tests {
                             first.binding = Some(binding(PORT, "unexpected-provider-effect"));
                             state.leases.insert(first_request.lease_id().clone(), first);
                         }
+                        CorruptionFixture::FailedWithoutFailure => {
+                            first.phase = PortLeasePhase::Failed;
+                            state.leases.insert(first_request.lease_id().clone(), first);
+                        }
+                        CorruptionFixture::ReservedWithFailure => {
+                            first.failure = Some(bind_failure(PORT, "unexpected-failure"));
+                            state.leases.insert(first_request.lease_id().clone(), first);
+                        }
+                        CorruptionFixture::FailureEndpointMismatch => {
+                            first.phase = PortLeasePhase::Failed;
+                            first.failure = Some(bind_failure(PORT + 1, "wrong-endpoint"));
+                            state.leases.insert(first_request.lease_id().clone(), first);
+                        }
+                        CorruptionFixture::RangeFailureSelectedPortMismatch => {
+                            first.request.binding = PortBindingSpec::new(
+                                PortProtocol::Tcp,
+                                PortBindRealm::Host,
+                                PortBindTarget::ipv4_wildcard(),
+                                PortExposure::Unknown,
+                                PortRequestMode::Range(
+                                    PortRange::new(
+                                        NonZeroU16::new(PORT)
+                                            .expect("fixture port should be non-zero"),
+                                        NonZeroU16::new(PORT + 1)
+                                            .expect("fixture port should be non-zero"),
+                                    )
+                                    .expect("fixture range should validate"),
+                                ),
+                            );
+                            first.phase = PortLeasePhase::Failed;
+                            first.failure = Some(bind_failure(PORT + 1, "different-selected-port"));
+                            state.leases.insert(first_request.lease_id().clone(), first);
+                        }
+                        CorruptionFixture::ProviderAssignedFailureWithReservedPort => {
+                            first.request.binding = PortBindingSpec::new(
+                                PortProtocol::Tcp,
+                                PortBindRealm::Host,
+                                PortBindTarget::ipv4_wildcard(),
+                                PortExposure::Unknown,
+                                PortRequestMode::ProviderAssigned,
+                            );
+                            first.phase = PortLeasePhase::Failed;
+                            first.failure =
+                                Some(provider_assigned_bind_failure("provider-assigned-attempt"));
+                            state.leases.insert(first_request.lease_id().clone(), first);
+                        }
                         CorruptionFixture::DuplicateLivePort => {
                             let second_request = request("01ARZ3NDEKTSV4RRFFQ69G5FAW", 1, 1, PORT);
                             let second = PortLeaseRecord {
@@ -1261,6 +1507,7 @@ mod tests {
                                 ),
                                 phase: PortLeasePhase::Reserved,
                                 binding: None,
+                                failure: None,
                             };
                             state.leases.insert(first_request.lease_id().clone(), first);
                             state
@@ -1312,9 +1559,52 @@ mod tests {
             .parse()
             .expect("fixture provider id should parse");
         PortLeaseBinding::new(
-            NonZeroU16::new(port).expect("fixture port is non-zero"),
+            PortBoundEndpoint::new(
+                PortProtocol::Tcp,
+                PortBindRealm::Host,
+                PortBindTarget::ipv4_wildcard(),
+                NonZeroU16::new(port).expect("fixture port is non-zero"),
+            )
+            .expect("fixture endpoint should validate"),
+            PortBindingProvenance::NimbusOwned,
             NetworkProviderHandle::new(provider_id, opaque)
                 .expect("fixture provider handle should validate"),
+        )
+    }
+
+    fn bind_failure(port: u16, opaque: &str) -> PortBindFailure {
+        let provider_id: NetworkProviderId = "netprovider_01ARZ3NDEKTSV4RRFFQ69G5FAV"
+            .parse()
+            .expect("fixture provider id should parse");
+        PortBindFailure::new(
+            PortBindFailureKind::AddrInUse,
+            PortBindAttempt::new(
+                PortProtocol::Tcp,
+                PortBindRealm::Host,
+                PortBindTarget::ipv4_wildcard(),
+                port,
+            )
+            .expect("fixture attempt should validate"),
+            NetworkProviderHandle::new(provider_id, opaque)
+                .expect("fixture provider attempt should validate"),
+        )
+    }
+
+    fn provider_assigned_bind_failure(opaque: &str) -> PortBindFailure {
+        let provider_id: NetworkProviderId = "netprovider_01ARZ3NDEKTSV4RRFFQ69G5FAV"
+            .parse()
+            .expect("fixture provider id should parse");
+        PortBindFailure::new(
+            PortBindFailureKind::ResourceExhausted,
+            PortBindAttempt::new(
+                PortProtocol::Tcp,
+                PortBindRealm::Host,
+                PortBindTarget::ipv4_wildcard(),
+                0,
+            )
+            .expect("fixture attempt should validate"),
+            NetworkProviderHandle::new(provider_id, opaque)
+                .expect("fixture provider attempt should validate"),
         )
     }
 }

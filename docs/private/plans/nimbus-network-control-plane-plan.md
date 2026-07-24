@@ -1,6 +1,6 @@
 # Nimbus Network Control Plane Plan
 
-Status: `active; NNC3.2 complete; NNC3.3 provider bind/adoption in progress`
+Status: `active; NNC3.3 complete; NNC3.4 sandbox/PEP/machine port migration in progress`
 
 Owner: this plan is the sole implementation control plane for the
 transport-free `nimbus-network` crate and the connectivity-resource lifecycle
@@ -36,20 +36,20 @@ ledger transition.
 
 | Field | Current value |
 | --- | --- |
-| Plan status | `active; NNC3.2 complete; NNC3.3 provider bind/adoption in progress` |
+| Plan status | `active; NNC3.3 complete; NNC3.4 sandbox/PEP/machine port migration in progress` |
 | Current band | `NNC3 — cross-process host-global PortLease` |
-| Current item | `NNC3.3 — provider bind/adoption and pre-bound socket adoption` |
-| Last completed item | `NNC3.2 — portable protocol/address/realm/request-mode conflict model` |
-| Next action | Load the NNC0.2 external-binder collision baseline, add the provider bind/adoption interface and real `AddrInUse` fail-before, then prove a failed bind cannot publish and an adopted pre-bound socket matches durable lease identity/address. |
+| Current item | `NNC3.4 — migrate sandbox endpoint, PEP listener reservation, and OCI MachinePortProxy` |
+| Last completed item | `NNC3.3 — provider bind/adoption and pre-bound socket adoption` |
+| Next action | Reconcile the NNC0.1 bind census and NNC0.2 sandbox/PEP collision baseline with the current sandbox endpoint, PEP listener, and OCI `MachinePortProxy` call graphs; write the shared-lease fail-before before migrating those three production authorities. |
 | Owner branch | `codex/nimbus-network-architecture-audit` |
 | Owner worktree | `/Users/jack/src/github.com/nimbus/nimbus-network-architecture-audit` |
 | Audit base | Original architecture audit: `b69007a78a220847812370d9418049f1253f0384`. |
 | Execution base | Rebased without conflicts onto `origin/main` at `9c2d4f150c60f43dfdc0a3f1ec6550942e26ab8f` after NNC0.0. |
-| Last checkpoint commit | `003806f008bf648de2482a4b0b722420486a6d4a` — NNC3.1 completion and NNC3.2 activation checkpoint. |
-| Audit dirty state | NNC3.2 owns the portable request/conflict model, exhaustive matrix and real-process tests, this ledger transition, and `docs/private/plans/proof/nimbus-network-control-plane/nnc3.2-port-conflict-model.md`. The owner worktree was clean at `003806f008bf648de2482a4b0b722420486a6d4a` before NNC3.2; no unrelated paths are dirty. |
-| Execution mode | Autonomous implementation goal active; commit each completed item with its ledger/evidence checkpoint; no push or PR without separate authority. |
-| Last verification | NNC3.2 adds the portable TCP/UDP, address/family, bind-realm, exposure, and exact/range/provider-assigned conflict model without provider effects. Network tests are 79/79; three real-process contention parents pass with one child entrypoint ignored; all-target/all-feature check and strict Clippy, rustdoc, format/diff, exact core-only metadata, Bash/ShellCheck, docs 108 pages, and site 17/17 gates pass. Generated relation proofs cover 2,304 ordered binding pairs; validation and checksum-valid corruption fail closed. Verifier self-test is 16/16 and aggregate is 14/1 only at expected later NNCV005. Opus 4.8/max reviewed the complete 100,777-byte bundle clean with `patch is correct (0.8)`. Exact evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc3.2-port-conflict-model.md`. |
-| Blocking decision | None. NNC3.3 must add provider bind/adoption and pre-bound socket evidence without moving socket effects into `nimbus-network`, selecting production providers, or starting the NNC3.4+ listener migrations. |
+| Last checkpoint commit | `deb1df57f1e51c155bcee24ef8ce0aaeb30e70bc` — NNC3.2 completion and NNC3.3 activation checkpoint. |
+| Audit dirty state | NNC3.3 owns the provider bind/adoption evidence contract, real external-binder and pre-bound socket tests, this NNC3.4 activation transition, and `docs/private/plans/proof/nimbus-network-control-plane/nnc3.3-provider-bind-adoption.md`. The owner worktree was clean at `deb1df57f1e51c155bcee24ef8ce0aaeb30e70bc` before NNC3.3; no unrelated paths are dirty. |
+| Execution mode | Autonomous implementation goal active; commit each completed item with its ledger/evidence checkpoint; no push or PR without separate authority. Per owner direction on 2026-07-24, all future structured autoreviews use `gpt-5.6-sol` at `xhigh` reasoning with fast mode explicitly enabled; do not use Claude Opus 4.8. |
+| Last verification | NNC3.3 records concrete bound endpoints, truthful bind attempts including provider-assigned port zero, binding provenance, redacted provider handles, and durable failed-bind evidence without importing socket effects. A separate OS process wins the exact loopback port, the real competing bind reports `AddrInUse`, failure survives restart, and activation remains impossible. A real pre-bound listener adopts exact lease/address/provenance, survives authority restart and withdrawal, keeps serving under external ownership, and remains fenced against replacement. Network tests are 86/86; binding-process parents are 3/0/1 and existing lease-process parents are 3/0/1. Format, strict Clippy, rustdoc, exact core-only metadata/effect scans, verifier self-test 16/16 and aggregate 14/1 only at expected later NNCV005, docs 108 pages, and site 17/17 gates pass. The first Sol/xhigh/fast review found three accepted P2 defects; all were fixed, and the complete 109,628-byte rerun is clean at `patch is correct (0.88)`. Exact evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc3.3-provider-bind-adoption.md`. |
+| Blocking decision | None. NNC3.4 may migrate only the named sandbox endpoint, PEP listener, and OCI `MachinePortProxy` authorities; server, KV, CLI, machine SSH, cleanup-pending, and old-authority deletion remain owned by their later NNC3 items. |
 
 Recovery protocol:
 
@@ -561,6 +561,16 @@ unrelated helpers may not extend either file. Before either reaches 2,000
 lines, its concept-local test module must move intact to a child test file;
 production logic must not be split mechanically across generic helpers.
 
+NNC3.3 also places `nimbus-network/src/port_lease.rs` at 1,610 lines. It remains
+one concept-owned lifecycle authority: reserve/adopt/fail/activate/withdraw/
+release transitions, store transaction integration, public lifecycle errors,
+and private corruption/transition tests. Portable request/overlap and concrete
+bind-evidence vocabulary already live in the concept-owned `request.rs` and
+`binding.rs` children; no socket/provider effect or unrelated listener logic
+may enter the parent. Before the parent reaches 2,000 lines, move its private
+test module intact to `port_lease/tests.rs` rather than splitting lifecycle
+logic across generic helpers.
+
 ### Durable workload/network saga handoff
 
 The cross-domain saga is not stored in the network node store. Its portable
@@ -613,7 +623,9 @@ Conflict rules:
   against the requested plan;
 - externally owned/inherited sockets are observed and fenced but never released
   as Nimbus-owned resources;
-- failed or ambiguous binds never publish and remain inspectable/fenced;
+- confirmed no-effect bind failures never publish and remain inspectable but
+  may become terminal; ambiguous or possibly effected attempts remain fenced
+  until provider cleanup is proved;
 - tenant quota remains an admission decision above the allocator.
 
 ### Provider capabilities and sovereignty
@@ -1297,8 +1309,8 @@ checkpoint.
 | NNC2.8 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc2.8-horizontal-scaling-seam-truth-up.md`; the ignored source was materialized byte-for-byte and then force-tracked, stale sandbox-owned allocator/install claims were replaced by the canonical network contract plus dependency-safe future lease source, and cluster transport authority remains deferred/cluster-owned. Exact trait/dependency/forbidden-effect scans pass; the aggregate caught a missing Last-green recovery cell, then returned to 14/1 only at expected NNCV005; docs are 108 pages and 17/17; Opus 4.8/max review is clean at 0.8. |
 | NNC3.1 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc3.1-atomic-port-lease-lifecycle.md`; exact-only reserve/adopt/activate/withdraw/release transitions share the NNC2 crash-safe store/lock, retain all non-terminal fences, reject stale/divergent requests and checksum-valid semantic corruption without mutation, and perform no provider effect. Thread and real-process contenders each race through activation but produce exactly one durable `Active` lease. Network 69/0/0 and process parent 1/0/1 pass; check/strict Clippy/rustdoc/format/diff, exact core-only dependency, verifier 16/16 self-test and 14/1 expected red pass. NNCV008 now resolves the Recovery Header checkpoint after catching and correcting a nonexistent full hash. |
 | NNC3.2 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc3.2-port-conflict-model.md`; portable TCP/UDP, realm, address/family, exposure, exact/range/provider-assigned types feed one atomic conflict authority; unknown host semantics fail closed; range selects one lowest-free slot; provider assignment fences only at atomic adoption. Generated proofs cover 2,304 ordered binding pairs plus 18 named matrix cases; network 79/0/0 and three process parents 3/0/1 pass; check/strict Clippy/rustdoc/format/diff, exact core-only dependency, verifier 16/16 self-test and 14/1 expected-red, docs gates, and clean Opus 4.8/max review at 0.8 pass. |
-| NNC3.3 | `in_progress` | Next: load NNC0.2, write the real external-binder `AddrInUse` and pre-bound identity/address fail-before, then define provider-owned effects over the network-owned lease/adoption contract. Last green/checkpoint remains `003806f008bf648de2482a4b0b722420486a6d4a` until the NNC3.2 completion commit. Blocker: none. |
-| NNC3.4 | `todo` | — |
+| NNC3.3 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc3.3-provider-bind-adoption.md`; portable binding evidence names the exact bound endpoint and ownership provenance, while failed attempts truthfully preserve provider-assigned port zero and a redacted attempt handle. Selected-port/failure relationships fail closed even for checksum-valid range/provider-assigned corruption. A separate external binder chooses and retains the real port before the lease request, produces `AddrInUse` evidence that survives restart, and cannot activate; a real inherited listener adopts exact stable identity/address/provenance, remains externally owned and serving after withdrawal, and retains the host-port fence. Network 86/0/0, new binding parents 3/0/1, existing lease parents 3/0/1, strict Clippy/rustdoc/format/diff, exact core-only dependency/effect scans, verifier 16/16 self-test and 14/1 expected red, docs 108 pages/site 17/17, and clean final Sol/xhigh/fast review at 0.88 pass. |
+| NNC3.4 | `in_progress` | Owned paths: this plan/README activation transition only; record the exact sandbox/PEP/machine source and proof paths after loading their call graphs and before the first NNC3.4 source edit. Next: load the NNC0.1 production bind census, NNC0.2 sandbox/PEP collision proof, sandbox endpoint/PEP/OCI `MachinePortProxy` call graphs, and write the shared-lease fail-before before changing those three owners. Last green/checkpoint remains `deb1df57f1e51c155bcee24ef8ce0aaeb30e70bc` until the NNC3.3 completion commit. Blocker: none. |
 | NNC3.5 | `todo` | — |
 | NNC3.6 | `todo` | — |
 | NNC3.7 | `todo` | — |

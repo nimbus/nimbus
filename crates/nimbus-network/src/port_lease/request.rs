@@ -152,6 +152,10 @@ impl PortBindRealm {
             (Self::Host, Self::ProvenIsolated(_)) | (Self::ProvenIsolated(_), Self::Host) => false,
         }
     }
+
+    pub(crate) fn accepts_bound(&self, actual: &Self) -> bool {
+        !matches!(actual, Self::Unknown) && (matches!(self, Self::Unknown) || self == actual)
+    }
 }
 
 /// Whether an IPv6 socket can occupy the IPv4 port namespace.
@@ -302,6 +306,42 @@ impl PortBindTarget {
         }
     }
 
+    pub(crate) fn accepts_bound(&self, actual: &Self) -> bool {
+        if actual.is_unknown() {
+            return false;
+        }
+        match (&self.0, &actual.0) {
+            (PortBindTargetWire::Unknown, _) => true,
+            (PortBindTargetWire::Ipv4Wildcard, PortBindTargetWire::Ipv4Wildcard) => true,
+            (
+                PortBindTargetWire::Ipv4Specific { address: expected },
+                PortBindTargetWire::Ipv4Specific { address: actual },
+            ) => expected == actual,
+            (
+                PortBindTargetWire::Ipv6Wildcard {
+                    ipv4_overlap: expected,
+                },
+                PortBindTargetWire::Ipv6Wildcard {
+                    ipv4_overlap: actual,
+                },
+            ) => ipv6_evidence_accepts(*expected, *actual),
+            (
+                PortBindTargetWire::Ipv6Specific {
+                    address: expected_address,
+                    ipv4_overlap: expected_overlap,
+                },
+                PortBindTargetWire::Ipv6Specific {
+                    address: actual_address,
+                    ipv4_overlap: actual_overlap,
+                },
+            ) => {
+                expected_address == actual_address
+                    && ipv6_evidence_accepts(*expected_overlap, *actual_overlap)
+            }
+            _ => false,
+        }
+    }
+
     fn from_wire(wire: PortBindTargetWire) -> Result<Self, PortBindTargetError> {
         if let PortBindTargetWire::Ipv6Specific { address, .. } = wire
             && address.to_ipv4_mapped().is_some()
@@ -310,6 +350,10 @@ impl PortBindTarget {
         }
         Ok(Self(wire))
     }
+}
+
+fn ipv6_evidence_accepts(expected: PortIpv6Overlap, actual: PortIpv6Overlap) -> bool {
+    matches!(expected, PortIpv6Overlap::Unknown) || expected == actual
 }
 
 impl<'de> Deserialize<'de> for PortBindTarget {
@@ -439,6 +483,14 @@ impl PortRequestMode {
             Self::Exact(expected) => *expected == port,
             Self::Range(range) => range.contains(port),
             Self::ProviderAssigned => true,
+        }
+    }
+
+    pub(crate) fn accepts_attempt(&self, port: u16) -> bool {
+        match self {
+            Self::Exact(expected) => expected.get() == port,
+            Self::Range(range) => NonZeroU16::new(port).is_some_and(|port| range.contains(port)),
+            Self::ProviderAssigned => port == 0,
         }
     }
 }

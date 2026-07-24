@@ -4,8 +4,8 @@ use std::time::Duration;
 use nimbus_network::{
     ListenerId, LocalPortLeaseAuthority, NetworkLeaseEpoch, NetworkProviderHandle,
     NetworkProviderId, NetworkResourceGeneration, NetworkResourceId, PortBindRealm, PortBindTarget,
-    PortBindingSpec, PortExposure, PortLeaseBinding, PortLeaseError, PortLeaseId, PortLeasePhase,
-    PortLeaseRequest, PortProtocol, PortRequestMode,
+    PortBindingProvenance, PortBindingSpec, PortBoundEndpoint, PortExposure, PortLeaseBinding,
+    PortLeaseError, PortLeaseId, PortLeasePhase, PortLeaseRequest, PortProtocol, PortRequestMode,
 };
 use nimbus_testing::{
     ContentionOutcome, ProcessRoleSpec, TwoProcessContentionHarness, run_contention_child,
@@ -122,7 +122,10 @@ fn network_port_lease_child() {
                 match authority.reserve(request.clone()) {
                     Ok(_) => {
                         authority
-                            .adopt(&request, binding(context.role()))
+                            .adopt(
+                                &request,
+                                binding(context.role(), PortBindingProvenance::NimbusOwned),
+                            )
                             .map_err(|error| {
                                 format!("failed to adopt provider evidence: {error}")
                             })?;
@@ -152,7 +155,10 @@ fn network_port_lease_child() {
                 authority
                     .reserve(request.clone())
                     .map_err(|error| format!("provider identity reservation failed: {error}"))?;
-                match authority.adopt(&request, binding(context.role())) {
+                match authority.adopt(
+                    &request,
+                    binding(context.role(), PortBindingProvenance::ProviderAssigned),
+                ) {
                     Ok(_) => Ok(ContentionOutcome::Won),
                     Err(PortLeaseError::PortConflict { .. }) => Ok(ContentionOutcome::Lost),
                     Err(error) => Err(format!("unexpected provider adoption failure: {error}")),
@@ -222,12 +228,19 @@ fn owner_id(role: &str) -> NetworkResourceId {
     value.into()
 }
 
-fn binding(role: &str) -> PortLeaseBinding {
+fn binding(role: &str, provenance: PortBindingProvenance) -> PortLeaseBinding {
     let provider_id: NetworkProviderId = "netprovider_01ARZ3NDEKTSV4RRFFQ69G5FAV"
         .parse()
         .expect("fixture provider id should parse");
     PortLeaseBinding::new(
-        port(PORT),
+        PortBoundEndpoint::new(
+            PortProtocol::Tcp,
+            PortBindRealm::Host,
+            PortBindTarget::ipv4_wildcard(),
+            port(PORT),
+        )
+        .expect("fixture endpoint should validate"),
+        provenance,
         NetworkProviderHandle::new(provider_id, format!("process-{role}"))
             .expect("fixture provider handle should validate"),
     )

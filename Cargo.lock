@@ -7385,6 +7385,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-tungstenite",
+ "wait-timeout",
  "workspace-hack",
 ]
 
