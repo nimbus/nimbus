@@ -1,6 +1,6 @@
 # Nimbus Network Control Plane Plan
 
-Status: `active; NNC1.4 complete; NNC1.5 network state model in progress`
+Status: `active; NNC1.5 complete; NNC1.6 static verifier deepening in progress`
 
 Owner: this plan is the sole implementation control plane for the
 transport-free `nimbus-network` crate and the connectivity-resource lifecycle
@@ -36,20 +36,20 @@ ledger transition.
 
 | Field | Current value |
 | --- | --- |
-| Plan status | `active; NNC1.4 complete; NNC1.5 network state model in progress` |
+| Plan status | `active; NNC1.5 complete; NNC1.6 static verifier deepening in progress` |
 | Current band | `NNC1 — low-dependency crate and portable vocabulary` |
-| Current item | `NNC1.5 — define desired, durable, and observed types plus legal phase transitions` |
-| Last completed item | `NNC1.4 — portable segment allocation and OCI provider realization split` |
-| Next action | Inventory the landed IDs, endpoint/segment vocabulary, binding state-model requirements, failure rows, and every existing lifecycle enum before specifying one provider-neutral `NetworkPlan`/durable-resource/observation model; enumerate the legal transition matrix and stale/equal-generation digest rules before editing. |
+| Current item | `NNC1.6 — deepen the static verifier` |
+| Last completed item | `NNC1.5 — desired, durable, and observed state model plus legal phase transitions` |
+| Next action | Inventory every existing verifier condition and the landed NNC1 vocabulary/state definitions, then add named fail-closed checks for forbidden network dependencies and effects, duplicate portable definitions, and address-as-identity patterns without suppressing the expected-red NNCV005 port or NNCV011 allocator obligations. |
 | Owner branch | `codex/nimbus-network-architecture-audit` |
 | Owner worktree | `/Users/jack/src/github.com/nimbus/nimbus-network-architecture-audit` |
 | Audit base | Original architecture audit: `b69007a78a220847812370d9418049f1253f0384`. |
 | Execution base | Rebased without conflicts onto `origin/main` at `9c2d4f150c60f43dfdc0a3f1ec6550942e26ab8f` after NNC0.0. |
-| Last checkpoint commit | `20ee91c35` — NNC1.3 completion and NNC1.4 activation checkpoint. |
-| Audit dirty state | NNC1.4 completion owns deletion of the core provider-coupled segment/ID types, the network-owned `AllocatedSegment`, sandbox-owned OCI realization, allocator state records with stable segment IDs, consumer rewiring, focused tests, proof record, and this plan/index transition. `Cidr` remains in zero-I/O core; provider naming/effects remain in sandbox. |
+| Last checkpoint commit | `032068ecf` — NNC1.4 completion and NNC1.5 activation checkpoint. |
+| Audit dirty state | NNC1.5 completion owns the network plan/digest envelope, provider handle, typed resource/version/phase state machine, observed conditions/status, validated serde boundaries, SHA-256 dependency, focused tests, proof record, and this plan/index transition. No provider effect or upper-layer workspace edge moved. |
 | Execution mode | Autonomous implementation goal active; commit each completed item with its ledger/evidence checkpoint; no push or PR without separate authority. |
-| Last verification | NNC1.4: core 191/0, network 17/0, sandbox 246/16 plus helper binary 2/0 pass; all-target check/Clippy, network rustdoc, cross-node same-slot ID/restart proof, local-slot identity-reuse proof, zero-old-owner/provider-term scans, six-profile acyclic dependency proof, format/diff, and the expected-red verifier transition are green. Independent Opus 4.8 maximum-reasoning review reported no actionable findings (0.80 confidence). Exact evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc1.4-portable-segment-allocation.md`. |
-| Blocking decision | None. NNC1.5 must keep desired intent, durable authority, and observed status structurally distinct; equal generation is idempotent only for the same digest, stale observations cannot advance state, and no provider effect or speculative capability interface enters the crate. |
+| Last verification | NNC1.5: network 40/0/0; exhaustive 484-case phase/evidence matrix; stale/future/wrong-identity generation/digest/epoch and malformed-wire rejection; all-target Clippy, rustdoc, six-profile acyclic dependency proof, source/effect scans, format/diff, and expected-red verifier at 10/2. First Opus 4.8 review found two serde validation gaps; both were fixed and the maximum-reasoning rerun was clean (0.77 confidence). Exact evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc1.5-network-state-model.md`. |
+| Blocking decision | None. NNC1.6 must make every forbidden dependency/effect, duplicate portable definition, and address-as-identity rule a named verifier condition; missing inputs must fail, and known later-band authorities must remain explicitly expected red rather than being hidden. |
 
 Recovery protocol:
 
@@ -1273,8 +1273,8 @@ checkpoint.
 | NNC1.2 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc1.2-stable-network-identities.md`; eight pinned domain-prefixed IDs plus distinct generation/lease-epoch fencing types pass 512-case round-trip, cross-domain, ordering, serde, overflow, exact-wire, all-target check/Clippy, rustdoc, format/diff/docs, dependency, expected-red, and independent-review proofs. |
 | NNC1.3 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc1.3-endpoint-vocabulary-migration.md`; `EndpointProtocol` and `PublishedEndpoint` have one network owner, exact wire/API parity, zero sandbox alias/re-export, direct consumer edges, 578 affected-library passes plus 165 focused CLI/server passes, all-target check/Clippy, six-profile dependency, source, format/diff, and expected-red proofs. Three guarded system external-provider cases did not execute live providers and are not claimed as provider evidence. Independent Opus 4.8 maximum-reasoning review was clean at 0.83 confidence. |
 | NNC1.4 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc1.4-portable-segment-allocation.md`; core retains pure `Cidr` but no provider-coupled segment/ID, network owns `AllocatedSegment`, sandbox owns OCI realization names, durable block records carry global IDs, same local slot across two node super-nets cannot alias identity, restart/reuse behavior is pinned, core/network/sandbox behavior and all-target check/Clippy/rustdoc pass, six profiles remain acyclic, NNCV011 now names only the later allocator-trait extraction, and independent Opus 4.8 review was clean at 0.80 confidence. |
-| NNC1.5 | `in_progress` | Owned paths at activation: NNC1.4 core/network/sandbox segment split, allocator state/test changes, proof record, and plan/index transition until their focused commit. Last green commit: `20ee91c35`; last green commands: core/network/sandbox all-target tests and check/Clippy, network rustdoc, cross-node/restart/reuse assertions, provider-term and old-owner scans, six-profile acyclic dependency assertion, format/diff, and expected-red verifier at 10/2. Next: inventory existing lifecycle/state vocabulary and specify the desired/durable/observed model plus complete legal transition matrix before editing. Blocker: none. |
-| NNC1.6 | `todo` | — |
+| NNC1.5 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc1.5-network-state-model.md`; distinct desired/durable/observed types, canonical SHA-256 desired digest, exact identity/generation/digest/epoch fencing, explicit 24-edge lifecycle, exhaustive 484-case transition proof, validated provider-handle and observation/status wire boundaries, 40/0/0 network tests, all-target Clippy/rustdoc, six-profile acyclic dependency/effect scans, expected-red verifier at 10/2, and clean second Opus 4.8 maximum-reasoning review after fixing its two accepted serde findings. |
+| NNC1.6 | `in_progress` | Owned paths at activation: NNC1.5 network plan/provider/state/status modules and manifest/lockfile, proof record, and plan/index transition until their focused commit. Last green commit: `032068ecf`; last green commands: 40/0/0 network all-target tests, all-target Clippy, rustdoc, 484-case transition matrix, malformed-wire and stale/future fencing tests, six-profile zero-cycle dependency capture, forbidden-effect/duplicate-owner scans, format/diff, and expected-red verifier at 10/2. Next: inventory the verifier and add named forbidden dependency/effect, duplicate-definition, and address-as-identity conditions with fail-before self-tests. Blocker: none. |
 | NNC2.1 | `todo` | — |
 | NNC2.2 | `todo` | — |
 | NNC2.3 | `todo` | — |

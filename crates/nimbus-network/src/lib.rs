@@ -10,7 +10,11 @@
 
 mod endpoint;
 mod identity;
+mod plan;
+mod provider;
 mod segment;
+mod state;
+mod status;
 
 pub use endpoint::{EndpointProtocol, PublishedEndpoint};
 pub use identity::{
@@ -18,7 +22,20 @@ pub use identity::{
     NetworkProviderId, NetworkResourceGeneration, NetworkResourceIdParseError,
     NetworkResourceIdParseErrorKind, NetworkSegmentId, PortLeaseId, PublishedEndpointId,
 };
+pub use plan::{
+    NetworkPlan, NetworkPlanDigest, NetworkPlanDigestParseError, NetworkPlanUpdate,
+    NetworkPlanUpdateError,
+};
+pub use provider::{NetworkProviderHandle, NetworkProviderHandleError};
 pub use segment::AllocatedSegment;
+pub use state::{
+    DurableNetworkResourceState, NetworkResourceId, NetworkResourcePhase, NetworkResourceVersion,
+    NetworkStateError, NetworkStateMutation, NetworkStateTransition, NetworkTransitionEvidence,
+};
+pub use status::{
+    NetworkCondition, NetworkConditionKind, NetworkConditionState, NetworkObservation,
+    NetworkObservationError, NetworkStatus, NetworkStatusError, NetworkStatusUpdate,
+};
 
 #[cfg(test)]
 mod tests {
