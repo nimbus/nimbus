@@ -8,6 +8,14 @@
 //! `nimbus-core` is this crate's only workspace dependency. Upper-layer crates
 //! inject provider capabilities without creating reverse dependencies.
 
+mod identity;
+
+pub use identity::{
+    IngressRouteId, ListenerId, NetworkAttachmentId, NetworkLeaseEpoch, NetworkPlanId,
+    NetworkProviderId, NetworkResourceGeneration, NetworkResourceIdParseError,
+    NetworkResourceIdParseErrorKind, NetworkSegmentId, PortLeaseId, PublishedEndpointId,
+};
+
 #[cfg(test)]
 mod tests {
     use nimbus_core::Cidr;

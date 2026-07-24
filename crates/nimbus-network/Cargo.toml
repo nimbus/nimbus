@@ -11,3 +11,9 @@ workspace = true
 
 [dependencies]
 nimbus-core = { path = "../nimbus-core" }
+serde.workspace = true
+ulid.workspace = true
+
+[dev-dependencies]
+proptest = "1"
+serde_json.workspace = true

@@ -6971,6 +6971,10 @@ name = "nimbus-network"
 version = "0.1.45"
 dependencies = [
  "nimbus-core",
+ "proptest",
+ "serde",
+ "serde_json",
+ "ulid",
 ]
 
 [[package]]

@@ -1,6 +1,6 @@
 # Nimbus Network Control Plane Plan
 
-Status: `active; NNC1.1 complete; NNC1.2 stable network identities in progress`
+Status: `active; NNC1.2 complete; NNC1.3 endpoint vocabulary migration in progress`
 
 Owner: this plan is the sole implementation control plane for the
 transport-free `nimbus-network` crate and the connectivity-resource lifecycle
@@ -36,20 +36,20 @@ ledger transition.
 
 | Field | Current value |
 | --- | --- |
-| Plan status | `active; NNC1.1 complete; NNC1.2 stable network identities in progress` |
+| Plan status | `active; NNC1.2 complete; NNC1.3 endpoint vocabulary migration in progress` |
 | Current band | `NNC1 — low-dependency crate and portable vocabulary` |
-| Current item | `NNC1.2 — stable network resource identities, generations, and epochs` |
-| Last completed item | `NNC1.1 — low-dependency nimbus-network workspace crate` |
-| Next action | Design the smallest domain-separated stable ID family plus generation/epoch types in `nimbus-network`; first inspect existing Nimbus ID/serialization conventions and every planned identity consumer, then add round-trip, domain-separation, and ordering tests without introducing provider effects or upper-layer dependencies. |
+| Current item | `NNC1.3 — move and generalize published endpoint vocabulary` |
+| Last completed item | `NNC1.2 — stable network identities, generations, and epochs` |
+| Next action | Inspect `nimbus-sandbox::endpoint`, every direct/re-exported consumer, and all serialized fixtures; move the generalized protocol and published-endpoint vocabulary into `nimbus-network`, migrate consumers directly, prove exact wire/API behavior, and delete the sandbox definition without a compatibility re-export. |
 | Owner branch | `codex/nimbus-network-architecture-audit` |
 | Owner worktree | `/Users/jack/src/github.com/nimbus/nimbus-network-architecture-audit` |
 | Audit base | Original architecture audit: `b69007a78a220847812370d9418049f1253f0384`. |
 | Execution base | Rebased without conflicts onto `origin/main` at `9c2d4f150c60f43dfdc0a3f1ec6550942e26ab8f` after NNC0.0. |
-| Last checkpoint commit | `ccc0977ec` — NNC0.9 completion and NNC1.1 activation checkpoint. |
-| Audit dirty state | NNC1.1 completion owns the workspace manifest/lock update, the new minimal `crates/nimbus-network` manifest and library root, its generated dependency graph and proof record, and this plan/index transition. The only new workspace edge is `nimbus-network -> nimbus-core`; no consumer or provider-effect code changed. |
+| Last checkpoint commit | `6f81754cb` — NNC1.1 completion and NNC1.2 activation checkpoint. |
+| Audit dirty state | NNC1.2 completion owns the network manifest/lock external dependency update, `identity.rs`, crate-root exports, its proof record, and this plan/index transition. No current consumer, provider effect, endpoint/segment definition, or workspace dependency edge changed. |
 | Execution mode | Autonomous implementation goal active; commit each completed item with its ledger/evidence checkpoint; no push or PR without separate authority. |
-| Last verification | NNC1.1: generated metadata contains 245 declared workspace edges and six resolved normal/dev/all-feature/target profiles with zero cycles; every profile contains exactly one network edge to `nimbus-core`. The crate test passes 1/1; all-target check and Clippy, format, diff, docs, and independent review are green. The expected-red verifier advances to ten passes and two deliberately later failures. Exact evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc1.1-low-dependency-crate.md`. |
-| Blocking decision | None. NNC1.2 must preserve domain separation between plan, attachment, segment, endpoint, listener, route, lease, and provider identities; an IP address is never workload identity. Exact Rust representation remains a band-local decision subject to the existing serialization and ordering conventions. |
+| Last verification | NNC1.2: eleven crate tests pass, including four 512-case property families over all eight ID domains plus pinned wire vectors, strict parse/serde rejection, ordering, and overflow. All-target check/Clippy, rustdoc, format/diff/docs, six-profile dependency proof, expected-red verifier, and independent review are green. Exact evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc1.2-stable-network-identities.md`. |
+| Blocking decision | None. NNC1.3 must preserve the current endpoint wire shape while adding stable ID/generation semantics deliberately; logical service-name ownership stays in services, real binds remain effect-owned, and the sandbox compatibility definition must be deleted rather than re-exported. |
 
 Recovery protocol:
 
@@ -1270,8 +1270,8 @@ checkpoint.
 | NNC0.8 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc0.8-expected-red-verifier.md`; normal run exits exactly `1` with eight pass and four intended pre-extraction failures, while seven child-process self-tests prove missing inputs and test/production bind classification cannot false-pass. Bash 3.2 parse, ShellCheck, diff, docs, and independent review are green. |
 | NNC0.9 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc0.9-behavior-performance-baseline.md`; two 21-sample ignored scale runners preserve exact lowest-free port/CIDR behavior through 1,024 current records, and the live bind/health/authenticated-shutdown/join smoke is green. Sandbox 243/16, local-admin 4/0, both-crate all-target Clippy, format, diff, docs, and independent review are green. |
 | NNC1.1 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc1.1-low-dependency-crate.md` and `nnc1.1-dependency-graph.json`; exactly one declared/resolved network edge (`nimbus-network -> nimbus-core`) in all six profiles, zero cycles, crate test 1/1, all-target check/Clippy, format/diff/docs, expected-red verifier transition, and independent review green. |
-| NNC1.2 | `in_progress` | Owned paths at activation: NNC1.1 workspace manifest/lock, new crate, generated dependency evidence, proof record, and plan/index transition until their focused commit. Last green commit: `ccc0977ec`; last green commands: metadata graph assertion, crate test 1/1, all-target check/Clippy, format/diff, and expected-red verifier with ten pass/two intended fail. Next: inspect existing stable-ID, serialization, generation, and epoch conventions plus planned consumers before designing the NNC1.2 vocabulary and tests. Blocker: none. |
-| NNC1.3 | `todo` | — |
+| NNC1.2 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc1.2-stable-network-identities.md`; eight pinned domain-prefixed IDs plus distinct generation/lease-epoch fencing types pass 512-case round-trip, cross-domain, ordering, serde, overflow, exact-wire, all-target check/Clippy, rustdoc, format/diff/docs, dependency, expected-red, and independent-review proofs. |
+| NNC1.3 | `in_progress` | Owned paths at activation: NNC1.2 network manifest/lock, identity module and exports, proof record, and plan/index transition until their focused commit. Last green commit: `6f81754cb`; last green commands: crate tests 11/11, all-target check/Clippy, rustdoc, format/diff, six-profile dependency assertion, and expected-red verifier with ten pass/two intended fail. Next: inventory the sandbox endpoint definition, imports/re-exports, serialized fixtures, and construction sites before moving the vocabulary directly to network with no compatibility re-export. Blocker: none. |
 | NNC1.4 | `todo` | — |
 | NNC1.5 | `todo` | — |
 | NNC1.6 | `todo` | — |
