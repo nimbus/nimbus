@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Aggregate completion-gate verifier for the Multi-Tenant-Per-Node Network plan
-# (`docs/private/plans/archive/multi-tenant-node-network-plan.md`).
+# Aggregate completion-gate verifier for the multi-tenant network invariants
+# now preserved by the canonical Nimbus network control-plane plan
+# (`docs/private/plans/nimbus-network-control-plane-plan.md`).
 #
-# Exits 0 iff every landed-band condition holds. Created in MTN4; MTN4..MTN7
-# progressively add conditions and flip them FAIL->PASS. Structural (anchors on
-# type/trait/test names + call sites, not token presence — the M21 lesson);
-# behavioral proof is the crates' own tests (`make test`) and the MTN5 KVM
-# cross-tenant deny-proof.
+# Exits 0 iff every landed-band structural condition holds. This verifier was
+# created in MTN4 and is retained as a regression guard through the
+# nimbus-network extraction. It anchors on canonical type/trait/test names and
+# concrete call sites, not loose token presence (the M21 lesson). Behavioral
+# proof remains in the named Rust tests plus the live KVM/Netavark lanes.
 #
-# The plan doc lives under untracked docs/private/; this script and the routing
-# pointer are the tracked artifacts. Run from the repo root.
+# Run from the repo root.
 
 set -u
 
@@ -17,12 +17,15 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}" || exit 2
 
 NET="crates/nimbus-core/src/net.rs"
+NETWORK_IDENTITY="crates/nimbus-network/src/identity.rs"
+NETWORK_SEGMENT="crates/nimbus-network/src/segment.rs"
 SEG="crates/nimbus-sandbox/src/backends/oci/network/segment.rs"
 LAYOUT="crates/nimbus-sandbox/src/backends/oci/network/layout.rs"
 NETAVARK="crates/nimbus-sandbox/src/backends/oci/network/netavark.rs"
 NETWORK="crates/nimbus-sandbox/src/backends/oci/network.rs"
 CONTAINER_RT="crates/nimbus-sandbox/src/backends/container/runtime.rs"
 KRUN_VM="crates/nimbus-sandbox/src/backends/krun/vm.rs"
+KRUN_LIFECYCLE="crates/nimbus-sandbox/src/backends/krun/vm/lifecycle.rs"
 EGRESS_PROOF="crates/nimbus-sandbox/tests/krun_linux_egress.rs"
 REAPER="crates/nimbus-sandbox/src/backends/oci/network/reaper.rs"
 SCHEDULING="crates/nimbus-workloads/src/scheduling.rs"
@@ -66,23 +69,28 @@ has_all() {
   return 0
 }
 
-# -------- MTN1: nimbus-core vocabulary --------------------------------------
+# -------- MTN1: portable vocabulary -----------------------------------------
 
-step 1 "MTN1 nimbus-core Cidr/NetworkSegment/NetworkId vocabulary (zero-I/O)"
-if has_all "${NET}" 'pub struct Cidr' 'fn nth_subnet' 'pub struct NetworkSegment' 'pub struct NetworkId'; then
-  pass "Cidr + nth_subnet carve + NetworkSegment/NetworkId present"
+step 1 "MTN1 zero-I/O CIDR math in core; stable segment identity in nimbus-network"
+if has_all "${NET}" 'pub struct Cidr' 'pub fn nth_subnet' \
+  && has_all "${NETWORK_SEGMENT}" 'pub struct AllocatedSegment' \
+  && has_all "${NETWORK_IDENTITY}" 'NetworkSegmentId' 'pub struct NetworkLeaseEpoch' \
+  && ! grep -qE 'pub struct (NetworkSegment|NetworkId)' "${NET}"; then
+  pass "core owns CIDR math; nimbus-network owns stable segment identity + lease epoch"
 else
-  fail "MTN1 vocabulary missing" "expected Cidr/nth_subnet/NetworkSegment/NetworkId in ${NET}"
+  fail "MTN1 vocabulary ownership is stale" "expected Cidr/nth_subnet only in core and AllocatedSegment/NetworkSegmentId/NetworkLeaseEpoch in nimbus-network"
 fi
 
 # -------- MTN2: allocator seam ---------------------------------------------
 
-step 2 "MTN2 NetworkSegmentAllocator trait + fail-closed SingleNodeSegmentAllocator"
-if has_all "${SEG}" 'trait NetworkSegmentAllocator' 'struct SingleNodeSegmentAllocator' \
-  'pool is unassigned' 'pool exhausted' 'segments\.json'; then
-  pass "allocator trait + single-node impl + fail-closed (unassigned/exhausted) present"
+step 2 "MTN2 portable allocator contract + fail-closed OCI realization"
+if has_all "${NETWORK_SEGMENT}" 'pub trait NetworkSegmentAllocator' \
+  'fn inspect_segments' 'NetworkAttachmentId' \
+  && has_all "${SEG}" 'struct SingleNodeSegmentAllocator' \
+  'LocalNetworkStateStore' 'pool is unassigned' 'pool exhausted'; then
+  pass "portable allocator contract + non-creating inspection + durable fail-closed OCI implementation present"
 else
-  fail "MTN2 allocator incomplete" "expected trait + SingleNodeSegmentAllocator + fail-closed gates in ${SEG}"
+  fail "MTN2 allocator incomplete" "expected public contract in nimbus-network plus LocalNetworkStateStore-backed fail-closed SingleNodeSegmentAllocator"
 fi
 
 # -------- MTN3: tenant-threaded per-tenant segments (M1 dead) ---------------
@@ -114,11 +122,13 @@ fi
 
 # -------- MTN4: crash-safe reaper + manifest persistence + legacy purge -----
 
-step 6 "MTN4 allocator refcounts live sandboxes + frees index on last release"
-if has_all "${SEG}" 'enum ReleaseOutcome' 'TenantDrained' 'fn acquire' 'fn release'; then
-  pass "acquire/release refcount + ReleaseOutcome::TenantDrained present"
+step 6 "MTN4 allocator quarantines attachments before effect cleanup and finalizes by fence"
+if has_all "${NETWORK_SEGMENT}" 'fn acquire' 'fn quarantine' 'fn release' \
+  'fn finalize_release' 'pub enum NetworkSegmentReleaseOutcome' \
+  'CleanupPending' 'NetworkAttachmentId'; then
+  pass "attachment hold + quarantine/release + identity-fenced finalization contract present"
 else
-  fail "MTN4 reaper refcount missing" "expected acquire/release + ReleaseOutcome::TenantDrained in ${SEG}"
+  fail "MTN4 teardown authority missing" "expected acquire/quarantine/release/finalize_release with CleanupPending in nimbus-network"
 fi
 
 step 7 "MTN4 the resolved network config is persisted in the manifest"
@@ -129,17 +139,19 @@ else
   fail "manifest does not persist the segment" "expected network_config: OciNetworkConfig on both manifests"
 fi
 
-step 8 "MTN4 reaper WIRED into the backends (acquire hold, reap on drain, legacy purge)"
-# Anchor on CALL SITES in the backend start/teardown (container/ + krun/), not the
-# reaper.rs definitions under oci/network/ — a defined-but-unwired reaper is vacuous.
-CB="crates/nimbus-sandbox/src/backends/container/ crates/nimbus-sandbox/src/backends/krun/"
-if grep -rqE '\.acquire\(&' ${CB} \
-  && grep -rqE 'ReleaseOutcome::TenantDrained' ${CB} \
-  && grep -rqE 'reap_bridge_interface\(' ${CB} \
-  && grep -rqE 'purge_legacy_nimbus0_once\(' ${CB}; then
-  pass "acquire hold + ReleaseOutcome::TenantDrained -> reap_bridge_interface (all blocks) + legacy purge wired in both backends"
+step 8 "MTN4 teardown saga WIRED in both backends (hold, quarantine, detach, release, finalize)"
+# Anchor on each backend's concrete call sites plus the shared reaper composition.
+# An aggregate tree search can pass when only one backend is wired.
+if has_all "${CONTAINER_RT}" '\.acquire\(' 'quarantine_network_segment_hold\(' \
+  'release_network_segment_hold\(' 'purge_legacy_nimbus0_once\(' \
+  && has_all "${KRUN_LIFECYCLE}" '\.acquire\(' 'quarantine_network_segment_hold\(' \
+  'release_network_segment_hold\(' 'purge_legacy_nimbus0_once\(' \
+  && has_all "${REAPER}" 'NetworkSegmentReleaseOutcome::CleanupPending' \
+  'reap_bridge_interface\(segment\.network_interface\(\)\)' \
+  'allocator\.finalize_release\(&cleanup\)'; then
+  pass "container + krun both hold/quarantine/release; shared reaper cleans all blocks and identity-fences finalization"
 else
-  fail "MTN4 reaper not wired into the backends" "expected .acquire + ReleaseOutcome::TenantDrained + reap_bridge_interface + purge_legacy_nimbus0_once call sites in container/ + krun/"
+  fail "MTN4 teardown saga not wired into both backends" "expected hold/quarantine/release/legacy-purge call sites in each backend and reap/finalize composition in reaper.rs"
 fi
 
 # -------- MTN5: host-side inter-tenant isolation + DNS-off -----------------
@@ -164,24 +176,28 @@ fi
 step 11 "MTN5 two-tenant cross-tenant KVM deny-proof present (with positive control)"
 if grep -qE 'fn krun_two_tenants_cannot_reach_each_others_sandbox' "${EGRESS_PROOF}" \
   && grep -qE 'own_egress=allowed' "${EGRESS_PROOF}" \
-  && grep -qE 'cross_tenant_reach=denied' "${EGRESS_PROOF}"; then
-  pass "cross-tenant deny-proof present (own_egress positive control + cross_tenant_reach denied)"
+  && grep -qE 'cross_tenant_reach=denied' "${EGRESS_PROOF}" \
+  && grep -qE 'fn assert_egress_proof_preconditions' "${EGRESS_PROOF}" \
+  && grep -qE 'must fail, never report a skipped lane as passed' "${EGRESS_PROOF}" \
+  && ! grep -qE 'egress_proof_preconditions_met' "${EGRESS_PROOF}"; then
+  pass "cross-tenant deny-proof has a positive control and fails loudly on a non-KVM host"
 else
-  fail "MTN5 cross-tenant KVM proof missing" "expected krun_two_tenants_cannot_reach_each_others_sandbox with own_egress + cross_tenant_reach"
+  fail "MTN5 cross-tenant KVM proof missing" "expected positive/negative controls plus an asserted, non-skipping KVM prerequisite"
 fi
 
-# -------- MTN6: startup orphan GC (reclaims crash-leaked segment holds) -----
+# -------- MTN6: startup orphan quarantine -----------------------------------
 
-step 12 "MTN6 startup orphan-GC WIRED into both backends' new() (reclaimed count)"
-# Anchor on the CALL sites in both backends' new() + the primitive + a reclaim
-# test — a defined-but-unwired GC is vacuous (M21).
+step 12 "MTN6 startup orphan quarantine WIRED into both backends' new()"
+# Netns absence is incomplete deletion evidence: startup may quarantine leaked
+# holds, but only the later evidence-aware reconciler may release/finalize them.
 if grep -qE 'reconcile_network_segment_orphans\(&config\.state_root' "${CONTAINER_RT}" \
   && grep -qE 'reconcile_network_segment_orphans\(&config\.state_root' "${KRUN_VM}" \
   && grep -qE 'fn reconcile_orphans' "${SEG}" \
-  && grep -qE 'reconcile_reclaims_holds_whose_netns_is_gone' "${REAPER}"; then
-  pass "reconcile_network_segment_orphans called in both new() + reconcile_orphans primitive + reclaim test"
+  && grep -qE 'reconcile_quarantines_holds_whose_netns_is_gone_and_keeps_live_ones' "${REAPER}" \
+  && grep -qE 'absence is only incomplete orphan evidence' "${REAPER}"; then
+  pass "both backends quarantine netns-absent holds without manufacturing provider-deletion proof"
 else
-  fail "MTN6 orphan-GC not wired" "expected reconcile_network_segment_orphans in both backends' new() + a reclaim test"
+  fail "MTN6 orphan quarantine not wired" "expected both startup call sites + quarantine test + explicit incomplete-evidence guard"
 fi
 
 step 13 "MTN6 remaining-segment dimension on NodeCapacity (fail-closed placement)"
@@ -193,18 +209,18 @@ else
   fail "MTN6 NodeCapacity segment dimension missing" "expected remaining_segments + fail-closed placement + test in ${SCHEDULING}"
 fi
 
-step 14 "MTN6 block-aware placement wired into BOTH backends (grow-on-exhaustion)"
-# Anchor on the shared placement helper + grow_block + the call sites at planning
+step 14 "MTN6 block-aware placement wired into BOTH backends (CAS-fenced growth)"
+# Anchor on the shared placement helper + portable growth contract + call sites
 # in both backends + the non-vacuous grow test — a defined-but-unwired placement
 # is vacuous (M21).
 if grep -qE 'fn place_sandbox_on_block' "${PLACEMENT}" \
   && grep -qE 'placement_grows_onto_a_new_block' "${PLACEMENT}" \
-  && grep -qE 'fn grow_block' "${SEG}" \
+  && grep -qE 'fn grow_block_if_current' "${NETWORK_SEGMENT}" \
   && grep -qE 'place_sandbox_config\(&resolved_spec\.tenant_id' "${CONTAINER_RT}" \
   && grep -qE 'place_sandbox_config\(&resolved_launch\.spec\.tenant_id' "${KRUN_START}"; then
-  pass "place_sandbox_on_block + grow_block + placement wired at planning in both backends + grow test"
+  pass "place_sandbox_on_block + CAS-fenced growth contract + both planning call sites + grow test"
 else
-  fail "MTN6 multi-block placement not wired" "expected place_sandbox_on_block + place_sandbox_config call sites in both backends' planning + a grow test"
+  fail "MTN6 multi-block placement not wired" "expected place_sandbox_on_block + grow_block_if_current + both planning call sites + grow test"
 fi
 
 step 15 "MTN6 KVM grow-on-exhaustion proof (tenant-prefix knob + grow test)"
@@ -221,21 +237,25 @@ fi
 
 # -------- MTN7: cluster allocator seam (lease-gated, behind the SAME trait) --
 
-step 16 "MTN7 ClusterSegmentAllocator + lease seam + fencing + disjointness invariant"
+step 16 "MTN7 transport-free cluster allocator: live-create lease + durable-cleanup authority"
 # The concrete raft-backed ClusterLeaseProvider is the HS lane's impl of the seam;
-# the allocator + fencing/admission LOGIC + the ∀ i≠j disjointness invariant are
-# built + tested here against an in-memory provider (non-vacuous).
+# allocation/cleanup split + fencing/admission logic + the disjointness invariant
+# are built and tested here against an in-memory provider. Cluster transport and
+# promotion remain owned by the horizontal-scaling plan.
 if grep -qE 'struct ClusterSegmentAllocator' "${CLUSTER}" \
   && grep -qE 'trait ClusterLeaseProvider' "${CLUSTER}" \
   && grep -qE 'fn assert_cluster_admission' "${CLUSTER}" \
-  && grep -qE 'fn requires_cluster_lease' "${SEG}" \
+  && grep -qE 'fn live_inner' "${CLUSTER}" \
+  && grep -qE 'fn cleanup_inner' "${CLUSTER}" \
+  && grep -qE 'fn requires_cluster_lease' "${NETWORK_SEGMENT}" \
   && grep -qE 'two_nodes_with_disjoint_leases_carve_disjoint_tenant_subnets' "${CLUSTER}" \
   && grep -qE 'expired_lease_self_fences' "${CLUSTER}" \
   && grep -qE 'no_committed_lease_fails_closed' "${CLUSTER}" \
-  && grep -qE 'reclaimed_supernet_new_epoch_fails_closed' "${CLUSTER}"; then
-  pass "cluster allocator behind the trait + lease seam + self-fence/epoch/admission fencing + cross-node disjointness test"
+  && grep -qE 'reclaimed_supernet_new_epoch_fails_closed_until_recarve' "${CLUSTER}" \
+  && grep -qE 'expired_lease_must_fence_creation_but_allow_cleanup_of_a_durable_hold' "${CLUSTER}"; then
+  pass "cluster allocator separates live creation from durable cleanup and proves lease/epoch fencing + disjointness"
 else
-  fail "MTN7 cluster seam incomplete" "expected ClusterSegmentAllocator + ClusterLeaseProvider + assert_cluster_admission + requires_cluster_lease + the four fencing/disjointness tests"
+  fail "MTN7 cluster seam incomplete" "expected transport-free lease seam, live/create split, durable cleanup, admission fence, and named disjointness/fencing tests"
 fi
 
 # -------- summary ----------------------------------------------------------

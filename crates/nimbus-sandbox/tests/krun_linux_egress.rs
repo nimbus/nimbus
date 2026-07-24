@@ -9,11 +9,11 @@
 //! bound on the bridge gateway. This test proves that a guest attempting direct
 //! external egress with no reachable proxy gets a route failure.
 //!
-//! It is gated behind both `#[ignore]` and a `/dev/kvm` precondition. The krun
-//! execute path is still fail-closed before launch planning (lifted by KME4),
-//! so until KME4 lands this proof cannot boot a guest; it exists now as the
-//! pinned runtime harness and runs once execute mode is enabled on real KVM
-//! hardware as root.
+//! It is gated behind both `#[ignore]` and an asserted `/dev/kvm` precondition.
+//! The krun execute path is admitted only through the KME4 readiness gate. The
+//! pinned runtime harness runs explicitly on real KVM hardware as root; a host
+//! that cannot enter that lane fails instead of reporting a skipped proof as
+//! passed.
 //!
 //! Teardown never relies on guest exit: a one-shot TSI guest that holds an
 //! ESTABLISHED connection hangs VM teardown, so the harness kills the VMM and
@@ -50,9 +50,7 @@ const FORCE_CMD_TIMEOUT_SECS: u64 = 10;
 #[test]
 #[ignore = "requires a Linux root host with /dev/kvm, crun(krun), conmon, buildah, netavark, aardvark-dns, and OCI image pull; the runtime deny proof is gated behind the KME4 execute fail-close lift"]
 fn krun_execute_mode_denies_direct_external_egress() {
-    if !egress_proof_preconditions_met() {
-        return;
-    }
+    assert_egress_proof_preconditions();
 
     let (temp_dir, workdir) = test_workdir("krun-direct-egress");
 
@@ -122,9 +120,7 @@ fn krun_execute_mode_denies_direct_external_egress() {
 #[test]
 #[ignore = "requires a Linux root host with /dev/kvm plus the full krun + container OCI runtime stack; boots a real guest and container to prove PEP allow/deny parity"]
 fn krun_and_container_pep_enforce_identical_allow_deny() {
-    if !egress_proof_preconditions_met() {
-        return;
-    }
+    assert_egress_proof_preconditions();
 
     // One allowed internal upstream plus one unlisted upstream (a second host
     // port the policy does not allow) that also stands in for `evil.example`.
@@ -314,20 +310,59 @@ impl TestHttpServer {
     }
 }
 
-fn egress_proof_preconditions_met() -> bool {
+fn assert_egress_proof_preconditions() {
     // SAFETY: geteuid has no preconditions and does not dereference pointers.
     let is_root = unsafe { libc::geteuid() } == 0;
+    let kvm_access = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/kvm")
+        .map(drop);
+    validate_egress_proof_preconditions(is_root, kvm_access)
+        .unwrap_or_else(|message| panic!("{message}"));
+}
+
+fn validate_egress_proof_preconditions(
+    is_root: bool,
+    kvm_access: std::io::Result<()>,
+) -> Result<(), String> {
     if !is_root {
-        eprintln!(
-            "skipping krun egress proof: must run as root to create persistent network namespaces"
+        return Err(
+            "KVM proof precondition failed: run as root to create persistent network namespaces; \
+             an explicitly selected ignored provider test must fail, never report a skipped lane \
+             as passed"
+                .to_owned(),
         );
-        return false;
     }
-    if !Path::new("/dev/kvm").exists() {
-        eprintln!("skipping krun egress proof: /dev/kvm is required to boot a libkrun microVM");
-        return false;
-    }
-    true
+    kvm_access.map_err(|error| {
+        format!(
+            "KVM proof precondition failed: /dev/kvm must exist and be readable/writable to boot \
+             a libkrun microVM ({error}); an explicitly selected ignored provider test must fail, \
+             never report a skipped lane as passed"
+        )
+    })
+}
+
+#[test]
+fn explicit_kvm_proof_preconditions_fail_instead_of_skipping() {
+    let not_root = validate_egress_proof_preconditions(false, Ok(()))
+        .expect_err("a non-root proof host must fail");
+    assert!(not_root.contains("run as root"));
+    assert!(not_root.contains("must fail, never report a skipped lane as passed"));
+
+    let no_kvm = validate_egress_proof_preconditions(
+        true,
+        Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "synthetic missing KVM",
+        )),
+    )
+    .expect_err("a host without usable KVM must fail");
+    assert!(no_kvm.contains("/dev/kvm must exist and be readable/writable"));
+    assert!(no_kvm.contains("synthetic missing KVM"));
+
+    validate_egress_proof_preconditions(true, Ok(()))
+        .expect("a root host with usable KVM may enter the live proof");
 }
 
 fn egress_backend_config(workdir: &Path, first_port: u16) -> KrunSandboxBackendConfig {
@@ -494,9 +529,7 @@ const BYPASS_VECTORS: &[&str] = &[
 #[test]
 #[ignore = "requires a Linux root host with /dev/kvm plus the full krun OCI runtime stack; boots a real libkrun guest to prove every direct-egress bypass vector is denied"]
 fn krun_execute_mode_denies_all_known_bypass_vectors() {
-    if !egress_proof_preconditions_met() {
-        return;
-    }
+    assert_egress_proof_preconditions();
 
     // Host loopback sentinel: if the guest's TSI 127.0.0.1 / ::1 ever leaked to
     // the host loopback it would fetch this body. Containment means it cannot.
@@ -603,9 +636,7 @@ fn bypass_vectors_probe_command(
 #[test]
 #[ignore = "requires a Linux root host with /dev/kvm plus the full krun OCI runtime stack; boots two libkrun guests to prove sibling-PEP isolation"]
 fn krun_guest_cannot_reach_a_sibling_tenants_pep() {
-    if !egress_proof_preconditions_met() {
-        return;
-    }
+    assert_egress_proof_preconditions();
 
     // One shared upstream both tenants' policies permit. The pin — not policy —
     // is what must make A's reach through B's PEP fail, so B would happily
@@ -726,9 +757,7 @@ fn sibling_reach_probe_command(sibling_proxy_url: &str, upstream_port: u16) -> S
 #[test]
 #[ignore = "requires a Linux root host with /dev/kvm plus the full krun OCI runtime stack; boots two tenants to prove cross-tenant bridge isolation"]
 fn krun_two_tenants_cannot_reach_each_others_sandbox() {
-    if !egress_proof_preconditions_met() {
-        return;
-    }
+    assert_egress_proof_preconditions();
 
     let upstream = TestHttpServer::start("shared-upstream-body");
     let upstream_port = upstream.addr.port();
@@ -817,9 +846,7 @@ fn host_bridge_exists(interface: &str) -> bool {
 #[test]
 #[ignore = "requires /dev/kvm + root; run explicitly on the Linux KVM proof box"]
 fn krun_tenant_grows_onto_a_second_block_when_the_first_is_full() {
-    if !egress_proof_preconditions_met() {
-        return;
-    }
+    assert_egress_proof_preconditions();
 
     let upstream = TestHttpServer::start("grow-upstream-body");
     let upstream_port = upstream.addr.port();
