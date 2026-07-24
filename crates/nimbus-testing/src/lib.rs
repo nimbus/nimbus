@@ -7,6 +7,7 @@ mod eventual;
 mod faults;
 mod http_api_fixture;
 pub mod ppsc;
+mod process_harness;
 mod repro;
 mod runtime_profiles;
 mod server_fixture;
@@ -24,6 +25,10 @@ pub use engine_fixture::EngineFixture;
 pub use eventual::{wait_for_condition, wait_for_value};
 pub use faults::{ArmedBlockingFaultInjector, BlockingFaultInjector, CountedFaultInjector};
 pub use http_api_fixture::HttpApiFixture;
+pub use process_harness::{
+    ContentionChildContext, ContentionOutcome, ProcessDiagnostic, ProcessHarnessError,
+    ProcessRoleSpec, TwoProcessContentionHarness, TwoProcessContentionResult, run_contention_child,
+};
 pub use repro::DeterministicTestCase;
 pub use runtime_profiles::{
     bounded_fairness_runtime_test_limits, cooperative_startup_snapshot_runtime_test_limits,
