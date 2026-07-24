@@ -296,3 +296,154 @@ pub async fn serve(
     }
     http_result
 }
+
+#[cfg(test)]
+mod tests {
+    use std::net::SocketAddr;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    use nimbus_testing::EngineFixture;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::task::AbortHandle;
+
+    use super::*;
+
+    struct ProbeAdapter {
+        bound_addr: Arc<Mutex<Option<SocketAddr>>>,
+        abort_handle: Arc<Mutex<Option<AbortHandle>>>,
+    }
+
+    impl WireProtocolAdapter for ProbeAdapter {
+        fn name(&self) -> &'static str {
+            "nnc0-7-probe"
+        }
+
+        fn protocol(&self) -> &'static str {
+            "tcp"
+        }
+
+        fn bind_addr(&self) -> SocketAddr {
+            "127.0.0.1:0".parse().expect("probe address should parse")
+        }
+
+        fn guard(&self, addr: SocketAddr) -> std::io::Result<()> {
+            *self
+                .bound_addr
+                .lock()
+                .expect("probe address lock should remain healthy") = Some(addr);
+            Ok(())
+        }
+
+        fn spawn(
+            self: Box<Self>,
+            listener: tokio::net::TcpListener,
+            _engine: Arc<Engine>,
+        ) -> Vec<tokio::task::JoinHandle<()>> {
+            let task = tokio::spawn(async move {
+                if let Ok((mut stream, _)) = listener.accept().await {
+                    let _ = stream.write_all(b"still-live").await;
+                }
+            });
+            *self
+                .abort_handle
+                .lock()
+                .expect("abort handle lock should remain healthy") = Some(task.abort_handle());
+            vec![task]
+        }
+    }
+
+    struct OccupiedAdapter {
+        addr: SocketAddr,
+    }
+
+    impl WireProtocolAdapter for OccupiedAdapter {
+        fn name(&self) -> &'static str {
+            "nnc0-7-occupied"
+        }
+
+        fn protocol(&self) -> &'static str {
+            "tcp"
+        }
+
+        fn bind_addr(&self) -> SocketAddr {
+            self.addr
+        }
+
+        fn guard(&self, _addr: SocketAddr) -> std::io::Result<()> {
+            unreachable!("the occupied address must fail before guard")
+        }
+
+        fn spawn(
+            self: Box<Self>,
+            _listener: tokio::net::TcpListener,
+            _engine: Arc<Engine>,
+        ) -> Vec<tokio::task::JoinHandle<()>> {
+            unreachable!("the occupied address must fail before spawn")
+        }
+    }
+
+    #[tokio::test]
+    // This is the NNC0.7 fail-before executable baseline for NNCF17. A later
+    // adapter bind fails after the first adapter owns a live socket/task.
+    // NNC7.1a must turn it green with structured group preparation/unwind and
+    // remove the ignore marker.
+    #[ignore = "NNC0.7 expected red until partial sibling-listener startup unwinds and joins every earlier task"]
+    async fn nnc0_7_kth_adapter_failure_must_not_leave_prior_listener_live() {
+        let fixture = EngineFixture::new(|path| Engine::new(path));
+        let main_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("main listener should bind");
+        let occupied = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("external owner should bind");
+        let occupied_addr = occupied
+            .local_addr()
+            .expect("external owner address should resolve");
+        let bound_addr = Arc::new(Mutex::new(None));
+        let abort_handle = Arc::new(Mutex::new(None));
+        let mut options = ServeOptions::new(fixture.engine());
+        options.wire_adapters.push(Box::new(ProbeAdapter {
+            bound_addr: Arc::clone(&bound_addr),
+            abort_handle: Arc::clone(&abort_handle),
+        }));
+        options.wire_adapters.push(Box::new(OccupiedAdapter {
+            addr: occupied_addr,
+        }));
+
+        let error = serve(main_listener, options)
+            .await
+            .expect_err("the kth occupied adapter must fail startup");
+        assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::AddrInUse,
+            "the baseline must reach the exact kth-adapter bind failure"
+        );
+        let first_addr = bound_addr
+            .lock()
+            .expect("probe address lock should remain healthy")
+            .expect("the first adapter must bind and pass its guard");
+        let survivor = tokio::time::timeout(Duration::from_secs(1), async {
+            let mut stream = tokio::net::TcpStream::connect(first_addr).await?;
+            let mut bytes = [0_u8; 10];
+            stream.read_exact(&mut bytes).await?;
+            Ok::<_, std::io::Error>(bytes)
+        })
+        .await;
+        let prior_listener_served = matches!(survivor, Ok(Ok(bytes)) if &bytes == b"still-live");
+
+        if let Some(handle) = abort_handle
+            .lock()
+            .expect("abort handle lock should remain healthy")
+            .take()
+        {
+            handle.abort();
+        }
+
+        assert!(
+            !prior_listener_served,
+            "NNCF17: startup returned {error}, but the earlier sibling listener still \
+             accepted and served bytes after the listener-group failure"
+        );
+    }
+}

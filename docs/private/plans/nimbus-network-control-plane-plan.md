@@ -1,6 +1,6 @@
 # Nimbus Network Control Plane Plan
 
-Status: `active; NNC0.6a complete; NNC0.7 orphan/listener baselines in progress`
+Status: `active; NNC0.7 complete; NNC0.8 expected-red verifier in progress`
 
 Owner: this plan is the sole implementation control plane for the
 transport-free `nimbus-network` crate and the connectivity-resource lifecycle
@@ -36,20 +36,20 @@ ledger transition.
 
 | Field | Current value |
 | --- | --- |
-| Plan status | `active; NNC0.6a complete; NNC0.7 orphan/listener baselines in progress` |
+| Plan status | `active; NNC0.7 complete; NNC0.8 expected-red verifier in progress` |
 | Current band | `NNC0 — executable baselines and verifier` |
-| Current item | `NNC0.7 — effect-before-hold, orphan blind-spot, and sibling-listener partial-start baselines` |
-| Last completed item | `NNC0.6a — inspect/self-restart versus withdrawal baselines for container and krun` |
-| Next action | Trace both OCI-family setup effect→hold ordering and the current orphan classifier, then trace server sibling-listener startup/task ownership; inject exact crash/effect matrices and kth-adapter failure to prove missing ownership evidence and any surviving earlier listener. |
+| Current item | `NNC0.8 — expected-red network control-plane static verifier` |
+| Last completed item | `NNC0.7 — effect-before-hold, orphan evidence-matrix, and sibling-listener partial-start baselines` |
+| Next action | Implement `scripts/verify-nimbus-network-control-plane.sh` as a named-condition verifier over durable plan presence, crate/dependency ownership, production bind census classification, duplicate authority, ledgers, and missing-input handling; prove the current tree fails only at the intended pre-extraction conditions. |
 | Owner branch | `codex/nimbus-network-architecture-audit` |
 | Owner worktree | `/Users/jack/src/github.com/nimbus/nimbus-network-architecture-audit` |
 | Audit base | Original architecture audit: `b69007a78a220847812370d9418049f1253f0384`. |
 | Execution base | Rebased without conflicts onto `origin/main` at `9c2d4f150c60f43dfdc0a3f1ec6550942e26ab8f` after NNC0.0. |
-| Last checkpoint commit | `f57bfbb3f` — NNC0.6 completion and NNC0.6a activation checkpoint. |
-| Audit dirty state | NNC0.6a completion owns the `cfg(test)` shared restart-launch probe, container/krun test hook fields and launch interceptors, two ignored inspect/restart race baselines, this plan transition, and `docs/private/plans/proof/nimbus-network-control-plane/nnc0.6a-inspect-restart-withdrawal-baselines.md`. Production builds contain no probe or hook; no manifest schema or dependency edge changed. |
+| Last checkpoint commit | `011692cf0` — NNC0.6a completion and NNC0.7 activation checkpoint. |
+| Audit dirty state | NNC0.7 completion owns two ignored sandbox orphan/crash-image baselines, one ignored server sibling-listener unwind baseline, this plan transition, and `docs/private/plans/proof/nimbus-network-control-plane/nnc0.7-orphan-listener-baselines.md`. All source additions are test-only; no production code or dependency edge changed. |
 | Execution mode | Autonomous implementation goal active; commit each completed item with its ledger/evidence checkpoint; no push or PR without separate authority. |
-| Last verification | NNC0.6a: two exact ignored fail-before tests exit `101` only because container and krun inspection each enter their real provider-launch authority after restart policy, then overwrite a durable withdrawal and record one launch effect. Sandbox tests pass 245/245 across applicable unit/bin targets with twelve expected-red/child-role ignores; all-target Clippy, format, diff, and independent review are clean. Exact evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc0.6a-inspect-restart-withdrawal-baselines.md`. |
-| Blocking decision | None. NNC0.0 is authorized; no fetch/rebase may precede its durability commit. Exact Rust names otherwise remain band-local decisions subject to NNC0 proofs and the seam-promotion rule. |
+| Last verification | NNC0.7: three exact ignored fail-before tests exit `101` only because an unowned provider effect survives, all eight orphan evidence rows lack canonical classification, and a prior sibling listener serves after kth-bind failure. Sandbox passes 243 with fourteen expected-red/child-role ignores; focused server wire/construction seams and both-crate all-target Clippy are green. The broad server library suite reports 485 pass, 2 deterministic pre-existing Cloud Functions trust-fixture failures, and 26 ignored; both failures reproduce alone and are outside the test-only diff. Format, diff, private docs (108 pages), docs site (109 pages, 17/17), and independent review are clean. Exact evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc0.7-orphan-listener-baselines.md`. |
+| Blocking decision | None. The two isolated Cloud Functions trust-fixture failures are recorded non-blocking evidence outside NNC0.7 ownership; do not weaken or absorb them into the network plan. Exact Rust names otherwise remain band-local decisions subject to NNC0 proofs and the seam-promotion rule. |
 
 Recovery protocol:
 
@@ -1266,8 +1266,8 @@ checkpoint.
 | NNC0.5 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc0.5-block-reuse-expired-cleanup-baselines.md`; a freed secondary `/30` slot is skipped for a newly grown third block, and an expired cluster lease correctly rejects new create but incorrectly rejects release of its durable old hold. Both exact safe assertions exit `101`; six ordinary focused tests, all-target Clippy, format/diff/docs, and independent review are green. |
 | NNC0.6 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc0.6-withdrawal-attachment-readiness-baselines.md`; a bounded semantic barrier proves cache-only service resolution remains routable while backend stop is parked, and container/krun tests prove readiness accepts incomplete attachment evidence. All three exact safety assertions exit `101`; 93 ordinary services tests and 245 applicable sandbox unit/bin tests pass, with expected-red/child-role tests ignored; all-target Clippy, format/diff, and independent review are green. |
 | NNC0.6a | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc0.6a-inspect-restart-withdrawal-baselines.md`; a shared bounded launch-entry probe proves both `inspect_sync` paths traverse restart policy into provider launch authority, then a stale copy overwrites durable withdrawal and records one effect. Both exact safety assertions exit `101`; 245 applicable sandbox unit/bin tests pass with expected-red/child-role tests ignored; all-target Clippy, format/diff, and independent review are green. |
-| NNC0.7 | `in_progress` | Owned paths at activation: NNC0.6a sandbox test-only probe/hooks/baselines, proof, and plan checkpoint until their focused commit; no NNC0.7 source edit yet. Last green commit: `f57bfbb3f`; last green commands: ordinary sandbox suite plus sandbox all-target Clippy. Next: trace OCI setup effect→hold and orphan evidence matrices plus server sibling-listener startup/unwind, then add exact crash/failure fail-before tests. Blocker: none. |
-| NNC0.8 | `todo` | — |
+| NNC0.7 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc0.7-orphan-listener-baselines.md`; both OCI implementations perform provider effects before allocator hold, the crash image survives with no durable owner, all eight required evidence rows expose filename/hold-only classification, and a real kth `AddrInUse` leaves the first sibling listener serving. Three exact safety assertions exit `101`; sandbox/focused server seams, both-crate all-target Clippy, format/diff, and independent review are green. The broad server suite's two isolated Cloud Functions failures are recorded without weakening or scope expansion. |
+| NNC0.8 | `in_progress` | Owned paths at activation: NNC0.7 sandbox/server test-only baselines, proof, and plan checkpoint until their focused commit; no NNC0.8 script edit yet. Last green commit: `011692cf0`; last green commands: sandbox suite, focused server seams, and sandbox/server all-target Clippy. Next: build the named-condition verifier with hard missing-input failures, prove plan-in-HEAD, and reproduce intended missing-crate/duplicate-authority/unclassified-bind red conditions. Blocker: none. |
 | NNC0.9 | `todo` | — |
 | NNC1.1 | `todo` | — |
 | NNC1.2 | `todo` | — |

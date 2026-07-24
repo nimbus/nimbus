@@ -156,8 +156,11 @@ fn delete_bridge(_interface: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
     use nimbus_core::TenantId;
+    use serde_json::Value;
     use tempfile::tempdir;
 
     use crate::backends::oci::network::NetworkSegmentAllocator;
@@ -171,6 +174,49 @@ mod tests {
             .join("netns");
         std::fs::create_dir_all(&dir).expect("netns dir");
         std::fs::write(dir.join(sandbox), b"").expect("netns file");
+    }
+
+    fn touch_evidence(root: &Path, directory: &str, tenant: &str, sandbox: &str, value: &str) {
+        let dir = root
+            .join("tenants")
+            .join(tenant)
+            .join("networks")
+            .join(directory);
+        std::fs::create_dir_all(&dir).expect("evidence directory");
+        std::fs::write(dir.join(format!("{sandbox}.json")), value).expect("evidence file");
+    }
+
+    fn touch_manifest(root: &Path, tenant: &str, sandbox: &str) {
+        let dir = root.join("tenants").join(tenant).join("sandboxes");
+        std::fs::create_dir_all(&dir).expect("manifest directory");
+        std::fs::write(dir.join(format!("{sandbox}.json")), "{}").expect("manifest file");
+    }
+
+    fn evidence_exists(root: &Path, directory: &str, tenant: &str, sandbox: &str) -> bool {
+        root.join("tenants")
+            .join(tenant)
+            .join("networks")
+            .join(directory)
+            .join(format!("{sandbox}.json"))
+            .exists()
+    }
+
+    fn manifest_exists(root: &Path, tenant: &str, sandbox: &str) -> bool {
+        root.join("tenants")
+            .join(tenant)
+            .join("sandboxes")
+            .join(format!("{sandbox}.json"))
+            .exists()
+    }
+
+    fn allocator_has_hold(root: &Path, tenant: &str, sandbox: &str) -> bool {
+        let Ok(bytes) = std::fs::read(root.join("networks").join("segments.json")) else {
+            return false;
+        };
+        let state: Value = serde_json::from_slice(&bytes).expect("segment state should parse");
+        state["tenants"][tenant]["live_sandboxes"]
+            .as_array()
+            .is_some_and(|holds| holds.iter().any(|hold| hold == sandbox))
     }
 
     #[test]
@@ -214,6 +260,293 @@ mod tests {
             )
             .expect("re-acquire live");
         assert_eq!(live.cidr().to_string(), "10.0.0.0/24");
+    }
+
+    #[derive(Clone, Copy)]
+    struct OrphanEvidenceCase {
+        name: &'static str,
+        hold: bool,
+        desired: bool,
+        netns: bool,
+        manifest: bool,
+        effect: bool,
+        desired_generation: u64,
+        effect_generation: u64,
+        inspection_unknown: bool,
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct OrphanObservation {
+        reclaimed_segments: usize,
+        hold: bool,
+        desired: bool,
+        netns: bool,
+        manifest: bool,
+        effect: bool,
+        classifier_result: &'static str,
+    }
+
+    fn observe_orphan_case(case: OrphanEvidenceCase) -> OrphanObservation {
+        let dir = tempdir().expect("temp dir");
+        let root = dir.path();
+        let allocator = SingleNodeSegmentAllocator::single_node_default(root);
+        let tenant = format!("tenant-{}", case.name);
+        let sandbox = format!("sandbox-{}", case.name);
+        let tenant_id = TenantId::new(&tenant).expect("tenant id should parse");
+        let sandbox_id = SandboxId::new(&sandbox);
+
+        if case.hold {
+            allocator
+                .acquire(&tenant_id, &sandbox_id)
+                .expect("hold should persist");
+        }
+        if case.desired {
+            touch_evidence(
+                root,
+                "attachments",
+                &tenant,
+                &sandbox,
+                &format!(r#"{{"generation":{}}}"#, case.desired_generation),
+            );
+        }
+        if case.netns {
+            touch_netns(root, &tenant, &sandbox);
+        }
+        if case.manifest {
+            touch_manifest(root, &tenant, &sandbox);
+        }
+        if case.effect {
+            touch_evidence(
+                root,
+                "provider-effects",
+                &tenant,
+                &sandbox,
+                &format!(
+                    r#"{{"generation":{},"inspection":"{}"}}"#,
+                    case.effect_generation,
+                    if case.inspection_unknown {
+                        "unknown"
+                    } else {
+                        "present"
+                    }
+                ),
+            );
+        }
+
+        let reclaimed_segments =
+            reconcile_network_segment_orphans(root, &allocator).expect("reconcile should run");
+        let hold = allocator_has_hold(root, &tenant, &sandbox);
+        let desired = evidence_exists(root, "attachments", &tenant, &sandbox);
+        let netns = root
+            .join("tenants")
+            .join(&tenant)
+            .join("networks")
+            .join("netns")
+            .join(&sandbox)
+            .exists();
+        let manifest = manifest_exists(root, &tenant, &sandbox);
+        let effect = evidence_exists(root, "provider-effects", &tenant, &sandbox);
+        let classifier_result = if hold {
+            "retained-by-netns-filename"
+        } else if desired || netns || manifest || effect {
+            "unowned-evidence-left-behind"
+        } else {
+            "fully-removed"
+        };
+
+        OrphanObservation {
+            reclaimed_segments,
+            hold,
+            desired,
+            netns,
+            manifest,
+            effect,
+            classifier_result,
+        }
+    }
+
+    #[test]
+    // This is the NNC0.7 fail-before executable baseline for the exact
+    // `provider effect -> allocator hold` crash window in both OCI-family
+    // backends. NNC0.1b already proves exact-boundary process killing and
+    // same-root recovery; this test materializes the durable recovery image
+    // left by that cut without duplicating the upper-layer subprocess harness
+    // (which cannot be a dependency of this low-level crate).
+    #[ignore = "NNC0.7 expected red until provider attempts precede effects and reconcile removes or quarantines unowned effects"]
+    fn nnc0_7_effect_before_hold_crash_must_not_leave_an_unowned_provider_effect() {
+        let observed = observe_orphan_case(OrphanEvidenceCase {
+            name: "crash-after-effect-before-hold",
+            hold: false,
+            desired: false,
+            netns: true,
+            manifest: true,
+            effect: true,
+            desired_generation: 0,
+            effect_generation: 7,
+            inspection_unknown: false,
+        });
+
+        assert!(!observed.hold, "the crash cut precedes allocator acquire");
+        assert!(
+            observed.netns && observed.effect,
+            "the exact provider-effect boundary must be present before the safety assertion"
+        );
+        assert_eq!(
+            observed.classifier_result, "fully-removed",
+            "NNCF8: recovery must remove or durably quarantine the provider effect and netns \
+             when no desired attachment/provider attempt owns them"
+        );
+    }
+
+    #[test]
+    // This is the complete NNC0.7 fail-before evidence matrix for NNCF8. It
+    // intentionally uses durable desired/effect/generation/inspection markers
+    // that the current filename-only reaper cannot read. NNC5.2a owns the
+    // classifier and must turn this green by adopting, removing, or
+    // quarantining every row; NNC8.3 owns restart convergence.
+    #[ignore = "NNC0.7 expected red until orphan recovery classifies durable intent, provider attempts, generations, and unknown inspection"]
+    fn nnc0_7_orphan_recovery_must_classify_the_complete_evidence_matrix() {
+        let cases = [
+            (
+                OrphanEvidenceCase {
+                    name: "hold-desired-effect",
+                    hold: true,
+                    desired: true,
+                    netns: true,
+                    manifest: true,
+                    effect: true,
+                    desired_generation: 7,
+                    effect_generation: 7,
+                    inspection_unknown: false,
+                },
+                "adopted",
+            ),
+            (
+                OrphanEvidenceCase {
+                    name: "hold-no-desired-effect",
+                    hold: true,
+                    desired: false,
+                    netns: true,
+                    manifest: true,
+                    effect: true,
+                    desired_generation: 0,
+                    effect_generation: 7,
+                    inspection_unknown: false,
+                },
+                "removed-or-quarantined",
+            ),
+            (
+                OrphanEvidenceCase {
+                    name: "hold-no-netns",
+                    hold: true,
+                    desired: true,
+                    netns: false,
+                    manifest: true,
+                    effect: false,
+                    desired_generation: 7,
+                    effect_generation: 0,
+                    inspection_unknown: false,
+                },
+                "removed-or-quarantined",
+            ),
+            (
+                OrphanEvidenceCase {
+                    name: "effect-no-hold",
+                    hold: false,
+                    desired: false,
+                    netns: true,
+                    manifest: true,
+                    effect: true,
+                    desired_generation: 0,
+                    effect_generation: 7,
+                    inspection_unknown: false,
+                },
+                "removed-or-quarantined",
+            ),
+            (
+                OrphanEvidenceCase {
+                    name: "manifest-no-hold",
+                    hold: false,
+                    desired: false,
+                    netns: false,
+                    manifest: true,
+                    effect: false,
+                    desired_generation: 0,
+                    effect_generation: 0,
+                    inspection_unknown: false,
+                },
+                "removed-or-quarantined",
+            ),
+            (
+                OrphanEvidenceCase {
+                    name: "hold-netns-no-manifest",
+                    hold: true,
+                    desired: true,
+                    netns: true,
+                    manifest: false,
+                    effect: true,
+                    desired_generation: 7,
+                    effect_generation: 7,
+                    inspection_unknown: false,
+                },
+                "adopted",
+            ),
+            (
+                OrphanEvidenceCase {
+                    name: "stale-generation",
+                    hold: true,
+                    desired: true,
+                    netns: true,
+                    manifest: true,
+                    effect: true,
+                    desired_generation: 8,
+                    effect_generation: 7,
+                    inspection_unknown: false,
+                },
+                "removed-or-quarantined",
+            ),
+            (
+                OrphanEvidenceCase {
+                    name: "unknown-inspection",
+                    hold: true,
+                    desired: true,
+                    netns: true,
+                    manifest: true,
+                    effect: true,
+                    desired_generation: 7,
+                    effect_generation: 7,
+                    inspection_unknown: true,
+                },
+                "cleanup-pending",
+            ),
+        ];
+
+        let observed: BTreeMap<&str, (&str, OrphanObservation)> = cases
+            .into_iter()
+            .map(|(case, expected)| (case.name, (expected, observe_orphan_case(case))))
+            .collect();
+        assert_eq!(observed.len(), 8, "every required evidence arm must run");
+        assert!(
+            observed.values().all(|(_, observation)| {
+                observation.classifier_result == "retained-by-netns-filename"
+                    || observation.classifier_result == "unowned-evidence-left-behind"
+            }),
+            "precondition: the current reaper must expose its filename/hold-only behavior"
+        );
+
+        let mismatches: BTreeMap<&str, (&str, &str)> = observed
+            .iter()
+            .filter_map(|(name, (expected, observation))| {
+                (*expected != observation.classifier_result)
+                    .then_some((*name, (*expected, observation.classifier_result)))
+            })
+            .collect();
+        assert!(
+            mismatches.is_empty(),
+            "NNCF8: every restart state must be adopted, removed, quarantined, or held \
+             cleanup-pending from durable ownership evidence; current mismatches: {mismatches:#?}; \
+             full observations: {observed:#?}"
+        );
     }
 
     #[test]
