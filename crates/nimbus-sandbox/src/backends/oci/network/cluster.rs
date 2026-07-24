@@ -123,14 +123,14 @@ impl ClusterSegmentAllocator {
                     .to_owned(),
             });
         }
-        Ok(SingleNodeSegmentAllocator::new(
+        SingleNodeSegmentAllocator::new(
             &self.state_root,
             Some(InstalledSuperNet {
                 cidr: lease.super_net,
                 epoch: lease.epoch,
             }),
             self.tenant_prefix,
-        ))
+        )
     }
 }
 
@@ -284,7 +284,7 @@ mod tests {
     #[test]
     fn reclaimed_supernet_new_epoch_fails_closed_until_recarve() {
         let dir = tempdir().expect("temp dir");
-        // Carve under epoch 1 (stamps segments.json with epoch 1).
+        // Carve under epoch 1 (stamps the shared network authority with epoch 1).
         let epoch1 = node(dir.path(), Some(lease("10.10.0.0/16", 1, 10_000)), 0);
         epoch1
             .acquire(&tenant("t"), &sandbox("s"))

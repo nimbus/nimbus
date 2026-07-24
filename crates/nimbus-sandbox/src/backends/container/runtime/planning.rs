@@ -445,26 +445,18 @@ fn plan_only_backend_scopes_network_state_by_tenant_for_same_sandbox_id() {
         "same sandbox id in different tenants must not share network namespaces"
     );
     assert_eq!(
-        tenant_a_plan.manifest.network_layout.ipam_state_path,
-        temp_dir
-            .path()
-            .join("state")
-            .join("tenants")
-            .join("tenant-a")
-            .join("networks")
-            .join("run")
-            .join("ipam-state.json")
+        tenant_a_plan.manifest.network_layout.state_root,
+        temp_dir.path().join("state")
     );
     assert_eq!(
-        tenant_b_plan.manifest.network_layout.ipam_state_path,
-        temp_dir
-            .path()
-            .join("state")
-            .join("tenants")
-            .join("tenant-b")
-            .join("networks")
-            .join("run")
-            .join("ipam-state.json")
+        tenant_b_plan.manifest.network_layout.state_root,
+        temp_dir.path().join("state"),
+        "all network resources on one node share one authority root"
+    );
+    assert_ne!(
+        tenant_a_plan.manifest.network_layout.tenant_id,
+        tenant_b_plan.manifest.network_layout.tenant_id,
+        "tenant IPAM payloads remain distinct typed partitions"
     );
 }
 

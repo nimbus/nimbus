@@ -1409,14 +1409,14 @@ fn manifest_deserialization_defaults_restart_fields_for_pre_restart_manifests() 
             "manifest_path": "/tmp/state/containers/sandbox-01/manifest.json",
         },
         "network_layout": {
+            "state_root": "/tmp/state",
+            "tenant_id": "tenant",
             "network_root": "/tmp/state/tenants/tenant/networks",
             "run_root": "/tmp/state/tenants/tenant/networks/run",
             "netns_root": "/tmp/state/tenants/tenant/networks/netns",
             "container_network_dir": "/tmp/state/tenants/tenant/networks/containers/sandbox-01",
             "netns_path": "/tmp/state/tenants/tenant/networks/netns/sandbox-01",
             "status_path": "/tmp/state/tenants/tenant/networks/containers/sandbox-01/status.json",
-            "ipam_state_path": "/tmp/state/tenants/tenant/networks/run/ipam-state.json",
-            "ipam_lock_path": "/tmp/state/tenants/tenant/networks/run/ipam.lock",
         },
         "egress_proxy": null,
         "conmon_launch": {

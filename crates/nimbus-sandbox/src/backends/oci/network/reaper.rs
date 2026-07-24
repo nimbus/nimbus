@@ -159,7 +159,6 @@ mod tests {
 
     use super::*;
     use nimbus_core::TenantId;
-    use serde_json::Value;
     use tempfile::tempdir;
 
     use crate::backends::oci::network::NetworkSegmentAllocator;
@@ -209,13 +208,7 @@ mod tests {
     }
 
     fn allocator_has_hold(root: &Path, tenant: &str, sandbox: &str) -> bool {
-        let Ok(bytes) = std::fs::read(root.join("networks").join("segments.json")) else {
-            return false;
-        };
-        let state: Value = serde_json::from_slice(&bytes).expect("segment state should parse");
-        state["tenants"][tenant]["live_sandboxes"]
-            .as_array()
-            .is_some_and(|holds| holds.iter().any(|hold| hold == sandbox))
+        SingleNodeSegmentAllocator::single_node_default(root).has_hold(tenant, sandbox)
     }
 
     #[test]

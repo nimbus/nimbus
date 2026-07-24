@@ -153,7 +153,7 @@ impl ContainerSandboxBackend {
     }
 
     /// The per-node segment allocator, constructed on demand from the state root
-    /// (its state is the fs-locked segments.json, so it is stateless to hold).
+    /// (its payload is in the shared network authority, so it is stateless to hold).
     fn segment_allocator(&self) -> Result<SingleNodeSegmentAllocator> {
         SingleNodeSegmentAllocator::for_node_supernet(
             &self.config.state_root,

@@ -1,10 +1,9 @@
 //! Tenant-scoped static IPv4 allocation for OCI bridge networks.
 
 use std::collections::BTreeSet;
-use std::fs::{self, OpenOptions};
 use std::net::Ipv4Addr;
 
-use fs2::FileExt;
+use nimbus_network::{LocalNetworkStateStore, NetworkStatePartition, NetworkStateTransactionError};
 
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
@@ -152,77 +151,21 @@ fn with_ipam_state<T>(
     layout: &OciNetworkLayout,
     mutator: impl FnOnce(&mut IpamState) -> Result<T>,
 ) -> Result<T> {
-    fs::create_dir_all(&layout.run_root).map_err(|error| SandboxError::OperationFailed {
-        message: format!(
-            "failed to create OCI network run directory {}: {error}",
-            layout.run_root.display()
-        ),
-    })?;
-    let lock = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(&layout.ipam_lock_path)
-        .map_err(|error| SandboxError::OperationFailed {
-            message: format!(
-                "failed to open OCI IPAM lock {}: {error}",
-                layout.ipam_lock_path.display()
-            ),
-        })?;
-    lock.lock_exclusive()
-        .map_err(|error| SandboxError::OperationFailed {
-            message: format!(
-                "failed to lock OCI IPAM state {}: {error}",
-                layout.ipam_lock_path.display()
-            ),
-        })?;
-
-    let mut state = if layout.ipam_state_path.exists() {
-        let contents =
-            fs::read(&layout.ipam_state_path).map_err(|error| SandboxError::OperationFailed {
-                message: format!(
-                    "failed to read OCI IPAM state {}: {error}",
-                    layout.ipam_state_path.display()
-                ),
-            })?;
-        serde_json::from_slice::<IpamState>(&contents).map_err(|error| {
-            SandboxError::OperationFailed {
-                message: format!(
-                    "failed to parse OCI IPAM state {}: {error}",
-                    layout.ipam_state_path.display()
-                ),
-            }
-        })?
-    } else {
-        IpamState::default()
-    };
-
-    let result = mutator(&mut state);
-    let persist = result.is_ok();
-    if persist {
-        let rendered =
-            serde_json::to_vec_pretty(&state).map_err(|error| SandboxError::OperationFailed {
-                message: format!("failed to serialize OCI IPAM state: {error}"),
-            })?;
-        fs::write(&layout.ipam_state_path, rendered).map_err(|error| {
-            SandboxError::OperationFailed {
-                message: format!(
-                    "failed to persist OCI IPAM state {}: {error}",
-                    layout.ipam_state_path.display()
-                ),
-            }
-        })?;
+    let store = LocalNetworkStateStore::open(&layout.state_root).map_err(ipam_store_error)?;
+    match store.transaction(
+        &NetworkStatePartition::TenantIpam(layout.tenant_id.clone()),
+        mutator,
+    ) {
+        Ok(result) => Ok(result),
+        Err(NetworkStateTransactionError::Operation(error)) => Err(error),
+        Err(NetworkStateTransactionError::Store(error)) => Err(ipam_store_error(error)),
     }
+}
 
-    lock.unlock()
-        .map_err(|error| SandboxError::OperationFailed {
-            message: format!(
-                "failed to unlock OCI IPAM state {}: {error}",
-                layout.ipam_lock_path.display()
-            ),
-        })?;
-    result
+fn ipam_store_error(error: impl std::fmt::Display) -> SandboxError {
+    SandboxError::OperationFailed {
+        message: format!("OCI IPAM network authority failed: {error}"),
+    }
 }
 
 fn allocate_next_ipv4(config: &OciNetworkConfig, state: &IpamState) -> Result<Ipv4Addr> {
@@ -319,6 +262,7 @@ fn u32_to_ipv4(value: u32) -> Ipv4Addr {
 #[cfg(test)]
 mod tests {
     use nimbus_core::TenantId;
+    use std::fs;
     use tempfile::tempdir;
 
     use super::*;
@@ -340,38 +284,40 @@ mod tests {
     fn torn_ipam_state_fails_closed_with_the_authority_path() {
         let (_dir, layout, config, sandbox) = fixture();
         allocate_container_ips(&layout, &config, &sandbox).expect("original IP should allocate");
-        fs::write(&layout.ipam_state_path, b"{").expect("torn state should be installed");
+        let authority_path = LocalNetworkStateStore::authority_path_for(&layout.state_root);
+        fs::write(&authority_path, b"{").expect("torn state should be installed");
 
         let error =
             load_container_ips(&layout, &sandbox).expect_err("torn IPAM JSON must fail closed");
         let rendered = error.to_string();
         assert!(
-            rendered.contains("failed to parse OCI IPAM state"),
-            "the failure must reach the IPAM parse boundary: {rendered}"
+            rendered.contains("network authority state") && rendered.contains("corrupt"),
+            "the failure must reach the checksummed authority boundary: {rendered}"
         );
         assert!(
-            rendered.contains(&layout.ipam_state_path.display().to_string()),
+            rendered.contains(&authority_path.display().to_string()),
             "the corruption diagnostic must name the affected authority path: {rendered}"
         );
     }
 
     #[test]
-    // NNC0.4 fail-before: this valid JSON erases the committed allocation
-    // without tripping serde. NNC2.1 owns the checksum/version envelope, will
-    // make the final fail-closed assertion pass, and must remove this ignore.
-    #[ignore = "NNC0.4 expected red until checksums reject valid IPAM-state corruption"]
     fn semantically_valid_ipam_state_corruption_must_not_reissue_a_live_ip() {
         let (_dir, layout, config, original_sandbox) = fixture();
         let original = allocate_container_ips(&layout, &config, &original_sandbox)
             .expect("original IP should allocate");
+        let authority_path = LocalNetworkStateStore::authority_path_for(&layout.state_root);
+        let mut envelope: serde_json::Value =
+            serde_json::from_slice(&fs::read(&authority_path).expect("authority should read"))
+                .expect("authority envelope should parse");
+        envelope["body"]["records"]["tenant-ipam/tenant-original"]["allocations"] =
+            serde_json::json!({});
+        envelope["body"]["records"]["tenant-ipam/tenant-original"]["last_assigned_ip"] =
+            serde_json::Value::Null;
         fs::write(
-            &layout.ipam_state_path,
-            br#"{
-  "allocations": {},
-  "last_assigned_ip": null
-}"#,
+            &authority_path,
+            serde_json::to_vec_pretty(&envelope).expect("tampered envelope should render"),
         )
-        .expect("semantically corrupt IPAM state should be installed");
+        .expect("semantically corrupt IPAM state should be installed without checksum update");
 
         let replacement =
             allocate_container_ips(&layout, &config, &SandboxId::new("sandbox-replacement"));

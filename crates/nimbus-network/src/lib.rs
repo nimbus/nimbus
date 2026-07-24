@@ -14,6 +14,7 @@ mod plan;
 mod provider;
 mod segment;
 mod state;
+mod state_store;
 mod status;
 
 pub use endpoint::{EndpointProtocol, PublishedEndpoint};
@@ -32,10 +33,17 @@ pub use state::{
     DurableNetworkResourceState, NetworkResourceId, NetworkResourcePhase, NetworkResourceVersion,
     NetworkStateError, NetworkStateMutation, NetworkStateTransition, NetworkTransitionEvidence,
 };
+pub use state_store::{
+    LocalNetworkStateStore, LocalNetworkStateStoreOptions, NetworkStatePartition,
+    NetworkStateStoreError, NetworkStateTransactionError,
+};
 pub use status::{
     NetworkCondition, NetworkConditionKind, NetworkConditionState, NetworkObservation,
     NetworkObservationError, NetworkStatus, NetworkStatusError, NetworkStatusUpdate,
 };
+
+#[cfg(feature = "test-support")]
+pub use state_store::test_support;
 
 #[cfg(test)]
 mod tests {

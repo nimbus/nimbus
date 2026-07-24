@@ -11,7 +11,6 @@ workspace = true
 
 [dependencies]
 flate2 = "1"
-fs2.workspace = true
 libc.workspace = true
 async-trait = "0.1"
 bytes = "1"

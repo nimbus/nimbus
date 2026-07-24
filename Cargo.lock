@@ -6972,12 +6972,16 @@ dependencies = [
 name = "nimbus-network"
 version = "0.1.45"
 dependencies = [
+ "fs2",
+ "libc",
  "nimbus-core",
  "proptest",
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tempfile",
  "ulid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7152,7 +7156,6 @@ dependencies = [
  "async-trait",
  "bytes",
  "flate2",
- "fs2",
  "futures",
  "libc",
  "nimbus-blob",
@@ -7370,6 +7373,7 @@ dependencies = [
  "futures",
  "http 1.4.2",
  "nimbus-core",
+ "nimbus-network",
  "nimbus-runtime",
  "nimbus-storage",
  "nimbus-tenant",

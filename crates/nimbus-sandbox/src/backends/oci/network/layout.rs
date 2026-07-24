@@ -19,14 +19,16 @@ use super::{
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct OciNetworkLayout {
+    /// Node-local root containing the single network control-plane authority.
+    pub state_root: PathBuf,
+    /// Typed IPAM partition owner inside that shared authority.
+    pub tenant_id: TenantId,
     pub network_root: PathBuf,
     pub run_root: PathBuf,
     pub netns_root: PathBuf,
     pub container_network_dir: PathBuf,
     pub netns_path: PathBuf,
     pub status_path: PathBuf,
-    pub ipam_state_path: PathBuf,
-    pub ipam_lock_path: PathBuf,
 }
 
 impl OciNetworkLayout {
@@ -41,9 +43,9 @@ impl OciNetworkLayout {
         let netns_root = network_root.join("netns");
         let container_network_dir = network_root.join("containers").join(sandbox_id.as_str());
         Self {
+            state_root,
+            tenant_id: tenant_id.clone(),
             status_path: container_network_dir.join("status.json"),
-            ipam_state_path: run_root.join("ipam-state.json"),
-            ipam_lock_path: run_root.join("ipam.lock"),
             netns_path: netns_root.join(sandbox_id.as_str()),
             network_root,
             run_root,

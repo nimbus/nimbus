@@ -72,7 +72,8 @@ mod tests {
                 epoch: 0,
             }),
             30,
-        );
+        )
+        .expect("local network store should open");
         let t = tenant("tenant-a");
         let build = |segment: &OciSegmentRealization| OciNetworkConfig {
             network_name: segment.network_name().to_owned(),
@@ -116,7 +117,8 @@ mod tests {
                 epoch: 0,
             }),
             30,
-        );
+        )
+        .expect("local network store should open");
         let t = tenant("tenant-a");
         let build = |segment: &OciSegmentRealization| OciNetworkConfig {
             network_name: segment.network_name().to_owned(),

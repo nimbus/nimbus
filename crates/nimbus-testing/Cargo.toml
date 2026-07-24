@@ -41,3 +41,6 @@ tempfile.workspace = true
 tokio.workspace = true
 tokio-tungstenite.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
+
+[dev-dependencies]
+nimbus-network = { path = "../nimbus-network", features = ["test-support"] }

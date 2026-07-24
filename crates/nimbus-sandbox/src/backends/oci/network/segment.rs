@@ -10,22 +10,23 @@
 //! raft-committed, epoch-fenced super-net — satisfy the SAME trait; the sandbox
 //! backend consumes it unchanged.
 //!
-//! State lives at `<state_root>/networks/segments.json` (ABOVE `tenant_root`)
-//! guarded by an fs2-exclusive lock, mirroring the IPAM state pattern. Assign is
-//! fail-closed until a super-net is installed, so the cluster leg cannot start a
-//! workload before its committed lease arrives, and a single-node node installs
-//! the node-0 slice at startup so the code path is identical.
+//! Payload state lives in the single checksummed/versioned
+//! [`nimbus_network::LocalNetworkStateStore`] authority above `tenant_root`.
+//! Assign is fail-closed until a super-net is installed, so the cluster leg
+//! cannot start a workload before its committed lease arrives, and a
+//! single-node node installs the node-0 slice at startup so the code path is
+//! identical.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::fs::{self, OpenOptions};
-use std::path::{Path, PathBuf};
-
-use fs2::FileExt;
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 use nimbus_core::TenantId;
 use nimbus_core::net::Cidr;
-use nimbus_network::{AllocatedSegment, NetworkLeaseEpoch, NetworkSegmentId};
+use nimbus_network::{
+    AllocatedSegment, LocalNetworkStateStore, NetworkLeaseEpoch, NetworkSegmentId,
+    NetworkStatePartition, NetworkStateTransactionError,
+};
 
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
@@ -141,9 +142,9 @@ struct SegmentState {
 }
 
 /// Single-node allocator: carves per-tenant subnets from a locally-installed
-/// super-net, persisting assignments under `<state_root>/networks/segments.json`.
+/// super-net, persisting assignments in the node's one network authority.
 pub(crate) struct SingleNodeSegmentAllocator {
-    networks_root: PathBuf,
+    store: LocalNetworkStateStore,
     supernet: Option<InstalledSuperNet>,
     tenant_prefix: u8,
 }
@@ -153,15 +154,20 @@ impl SingleNodeSegmentAllocator {
         state_root: &Path,
         supernet: Option<InstalledSuperNet>,
         tenant_prefix: u8,
-    ) -> Self {
-        Self {
-            networks_root: state_root.join("networks"),
+    ) -> Result<Self> {
+        let store = LocalNetworkStateStore::open(state_root).map_err(network_store_error)?;
+        Ok(Self {
+            store,
             supernet,
             tenant_prefix,
-        }
+        })
     }
 
-    /// The launch default: node-0 `/16` at epoch 0, `/24` per tenant.
+    /// Test-only convenience for a temporary node-0 `/16`, `/24` per tenant.
+    ///
+    /// Production construction uses [`Self::for_node_supernet`] and propagates
+    /// state-root validation errors. Tests intentionally panic if their fresh
+    /// temporary local filesystem cannot satisfy that prerequisite.
     #[cfg(test)]
     pub(crate) fn single_node_default(state_root: &Path) -> Self {
         let supernet = InstalledSuperNet {
@@ -170,6 +176,7 @@ impl SingleNodeSegmentAllocator {
             epoch: 0,
         };
         Self::new(state_root, Some(supernet), DEFAULT_TENANT_PREFIX)
+            .expect("temporary local state root should support the network store contract")
     }
 
     /// Build a single-node allocator carving `/24` tenant subnets from the given
@@ -182,11 +189,11 @@ impl SingleNodeSegmentAllocator {
         let cidr = Cidr::parse(supernet).map_err(|error| SandboxError::InvalidSpec {
             message: format!("invalid node network super-net {supernet:?}: {error}"),
         })?;
-        Ok(Self::new(
+        Self::new(
             state_root,
             Some(InstalledSuperNet { cidr, epoch: 0 }),
             tenant_prefix,
-        ))
+        )
     }
 
     /// Install (or replace) the node super-net. The cluster leg calls this at
@@ -197,12 +204,9 @@ impl SingleNodeSegmentAllocator {
         self.supernet = Some(supernet);
     }
 
-    fn state_path(&self) -> PathBuf {
-        self.networks_root.join("segments.json")
-    }
-
-    fn lock_path(&self) -> PathBuf {
-        self.networks_root.join("segments.lock")
+    #[cfg(test)]
+    fn state_path(&self) -> &Path {
+        self.store.authority_path()
     }
 
     fn installed(&self) -> Result<&InstalledSuperNet> {
@@ -281,57 +285,33 @@ impl SingleNodeSegmentAllocator {
     }
 
     fn with_state<T>(&self, mutator: impl FnOnce(&mut SegmentState) -> Result<T>) -> Result<T> {
-        fs::create_dir_all(&self.networks_root).map_err(|error| SandboxError::OperationFailed {
-            message: format!(
-                "failed to create network segment directory {}: {error}",
-                self.networks_root.display()
-            ),
-        })?;
-        let lock = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(self.lock_path())
-            .map_err(|error| SandboxError::OperationFailed {
-                message: format!("failed to open network segment lock: {error}"),
-            })?;
-        lock.lock_exclusive()
-            .map_err(|error| SandboxError::OperationFailed {
-                message: format!("failed to lock network segment state: {error}"),
-            })?;
-
-        let state_path = self.state_path();
-        let mut state = if state_path.exists() {
-            let contents =
-                fs::read(&state_path).map_err(|error| SandboxError::OperationFailed {
-                    message: format!("failed to read network segment state: {error}"),
-                })?;
-            serde_json::from_slice::<SegmentState>(&contents).map_err(|error| {
-                SandboxError::OperationFailed {
-                    message: format!("failed to parse network segment state: {error}"),
-                }
-            })?
-        } else {
-            SegmentState::default()
-        };
-
-        let result = mutator(&mut state);
-        if result.is_ok() {
-            let rendered = serde_json::to_vec_pretty(&state).map_err(|error| {
-                SandboxError::OperationFailed {
-                    message: format!("failed to serialize network segment state: {error}"),
-                }
-            })?;
-            fs::write(&state_path, rendered).map_err(|error| SandboxError::OperationFailed {
-                message: format!("failed to persist network segment state: {error}"),
-            })?;
+        match self
+            .store
+            .transaction(&NetworkStatePartition::SegmentAllocations, mutator)
+        {
+            Ok(result) => Ok(result),
+            Err(NetworkStateTransactionError::Operation(error)) => Err(error),
+            Err(NetworkStateTransactionError::Store(error)) => Err(network_store_error(error)),
         }
-        lock.unlock()
-            .map_err(|error| SandboxError::OperationFailed {
-                message: format!("failed to unlock network segment state: {error}"),
-            })?;
-        result
+    }
+
+    #[cfg(test)]
+    pub(super) fn has_hold(&self, tenant: &str, sandbox: &str) -> bool {
+        self.store
+            .read::<SegmentState>(&NetworkStatePartition::SegmentAllocations)
+            .expect("segment authority should read")
+            .is_some_and(|state| {
+                state
+                    .tenants
+                    .get(tenant)
+                    .is_some_and(|entry| entry.live_sandboxes.contains(sandbox))
+            })
+    }
+}
+
+fn network_store_error(error: impl std::fmt::Display) -> SandboxError {
+    SandboxError::OperationFailed {
+        message: format!("network segment authority failed: {error}"),
     }
 }
 
@@ -510,6 +490,7 @@ impl NetworkSegmentAllocator for SingleNodeSegmentAllocator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use tempfile::tempdir;
 
     fn tenant(id: &str) -> TenantId {
@@ -731,7 +712,8 @@ mod tests {
             cidr: Cidr::parse("10.9.0.0/30").unwrap(),
             epoch: 0,
         };
-        let allocator = SingleNodeSegmentAllocator::new(dir.path(), Some(supernet), 30);
+        let allocator = SingleNodeSegmentAllocator::new(dir.path(), Some(supernet), 30)
+            .expect("local network store should open");
         allocator
             .segment_for(&tenant("t0"))
             .expect("first tenant fits");
@@ -748,7 +730,8 @@ mod tests {
     fn assign_fails_closed_until_a_supernet_is_installed() {
         let dir = tempdir().expect("temp dir");
         let mut allocator =
-            SingleNodeSegmentAllocator::new(dir.path(), None, DEFAULT_TENANT_PREFIX);
+            SingleNodeSegmentAllocator::new(dir.path(), None, DEFAULT_TENANT_PREFIX)
+                .expect("local network store should open");
         let error = allocator
             .segment_for(&tenant("tenant-a"))
             .expect_err("no super-net installed must fail closed");
@@ -776,7 +759,8 @@ mod tests {
                 epoch: 0,
             }),
             DEFAULT_TENANT_PREFIX,
-        );
+        )
+        .expect("epoch 0 store should open");
         epoch0
             .segment_for(&tenant("tenant-a"))
             .expect("carve at epoch 0");
@@ -788,7 +772,8 @@ mod tests {
                 epoch: 1,
             }),
             DEFAULT_TENANT_PREFIX,
-        );
+        )
+        .expect("epoch 1 store should open");
         let error = epoch1
             .segment_for(&tenant("tenant-b"))
             .expect_err("stale-epoch state must fail closed");
@@ -806,7 +791,7 @@ mod tests {
         let dir = tempdir().expect("temp dir");
         let root = Arc::new(dir.path().to_path_buf());
         // 8 threads, each a distinct tenant, contending on the shared on-disk
-        // segments.json via the fs-exclusive lock: acquire a sole sandbox then
+        // shared network authority: acquire a sole sandbox then
         // release it, which must drain the tenant.
         let handles: Vec<_> = (0..8u32)
             .map(|i| {
@@ -928,7 +913,8 @@ mod tests {
             cidr: Cidr::parse("10.9.0.0/24").unwrap(),
             epoch: 0,
         };
-        let allocator = SingleNodeSegmentAllocator::new(dir.path(), Some(supernet), 24);
+        let allocator = SingleNodeSegmentAllocator::new(dir.path(), Some(supernet), 24)
+            .expect("local network store should open");
         let t = tenant("t0");
         allocator
             .acquire(&t, &sandbox("sb"))
@@ -943,10 +929,6 @@ mod tests {
     }
 
     #[test]
-    // NNC0.4 fail-before: the current parser does reject torn JSON, but its
-    // diagnostic omits the authority path. NNC2.1 owns the actionable,
-    // versioned corruption error and removal of this ignore marker.
-    #[ignore = "NNC0.4 expected red until torn segment state names its authority path"]
     fn torn_segment_state_error_must_name_the_authority_path() {
         let dir = tempdir().expect("temp dir");
         let allocator = SingleNodeSegmentAllocator::single_node_default(dir.path());
@@ -954,19 +936,20 @@ mod tests {
             .acquire(&tenant("tenant-original"), &sandbox("sandbox-original"))
             .expect("original segment should allocate");
         let state_path = allocator.state_path();
-        fs::write(&state_path, b"{").expect("torn state should be installed");
+        fs::write(state_path, b"{").expect("torn state should be installed");
 
-        let restarted = SingleNodeSegmentAllocator::single_node_default(dir.path());
-        let error = restarted
-            .acquire(
-                &tenant("tenant-replacement"),
-                &sandbox("sandbox-replacement"),
-            )
-            .expect_err("torn segment JSON must fail closed");
+        let error = match SingleNodeSegmentAllocator::for_node_supernet(
+            dir.path(),
+            DEFAULT_NODE_SUPERNET,
+            DEFAULT_TENANT_PREFIX,
+        ) {
+            Ok(_) => panic!("torn segment authority must fail closed during startup"),
+            Err(error) => error,
+        };
         let rendered = error.to_string();
         assert!(
-            rendered.contains("failed to parse network segment state"),
-            "the failure must reach the segment-state parse boundary: {rendered}"
+            rendered.contains("network authority state") && rendered.contains("corrupt"),
+            "the failure must reach the checksummed authority boundary: {rendered}"
         );
         assert!(
             rendered.contains(&state_path.display().to_string()),
@@ -975,50 +958,52 @@ mod tests {
     }
 
     #[test]
-    // NNC0.4 fail-before: this valid JSON erases the committed owner without
-    // tripping serde. NNC2.1 owns the checksum/version envelope, will make the
-    // final fail-closed assertion pass, and must remove this ignore marker.
-    #[ignore = "NNC0.4 expected red until checksums reject valid segment-state corruption"]
     fn semantically_valid_segment_state_corruption_must_not_reissue_a_live_segment() {
         let dir = tempdir().expect("temp dir");
         let allocator = SingleNodeSegmentAllocator::single_node_default(dir.path());
         let original = allocator
             .acquire(&tenant("tenant-original"), &sandbox("sandbox-original"))
             .expect("original segment should allocate");
+        let state_path = allocator.state_path();
+        let mut envelope: serde_json::Value =
+            serde_json::from_slice(&fs::read(state_path).expect("authority should read"))
+                .expect("authority envelope should parse");
+        envelope["body"]["records"]["segment-allocations"]["tenants"] = serde_json::json!({});
         fs::write(
-            allocator.state_path(),
-            br#"{
-  "supernet_cidr": "10.0.0.0/16",
-  "supernet_epoch": 0,
-  "tenants": {}
-}"#,
+            state_path,
+            serde_json::to_vec_pretty(&envelope).expect("tampered envelope should render"),
         )
-        .expect("semantically corrupt state should be installed");
+        .expect("semantically corrupt state should be installed without updating its checksum");
 
-        let restarted = SingleNodeSegmentAllocator::single_node_default(dir.path());
-        let replacement = restarted.acquire(
-            &tenant("tenant-replacement"),
-            &sandbox("sandbox-replacement"),
-        );
-        match replacement.as_ref() {
-            Ok(segment) => assert_eq!(
-                segment.cidr(),
-                original.cidr(),
-                "the unchecked corruption must expose the audited live-segment reuse"
-            ),
-            Err(error) => {
-                let rendered = error.to_string();
-                assert!(
-                    ["checksum", "corrupt", "integrity", "version"]
-                        .iter()
-                        .any(|needle| rendered.to_ascii_lowercase().contains(needle)),
-                    "a fixed store must reject corruption with a named integrity error: {rendered}"
+        let error = match SingleNodeSegmentAllocator::for_node_supernet(
+            dir.path(),
+            DEFAULT_NODE_SUPERNET,
+            DEFAULT_TENANT_PREFIX,
+        ) {
+            Ok(restarted) => {
+                let replacement = restarted.acquire(
+                    &tenant("tenant-replacement"),
+                    &sandbox("sandbox-replacement"),
                 );
+                if let Ok(segment) = &replacement {
+                    assert_eq!(
+                        segment.cidr(),
+                        original.cidr(),
+                        "unchecked corruption would expose the audited live-segment reuse"
+                    );
+                }
+                replacement.expect_err(
+                    "semantically valid corruption must fail closed instead of reissuing a live segment",
+                )
             }
-        }
+            Err(error) => error,
+        };
+        let rendered = error.to_string();
         assert!(
-            replacement.is_err(),
-            "semantically valid corruption must fail closed instead of reissuing a live segment"
+            ["checksum", "corrupt", "integrity", "version"]
+                .iter()
+                .any(|needle| rendered.to_ascii_lowercase().contains(needle)),
+            "the store must reject corruption with a named integrity error: {rendered}"
         );
     }
 }

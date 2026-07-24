@@ -661,9 +661,13 @@ mod tests {
                 .join("netns")
                 .join("db-01")
         );
+        assert_eq!(
+            layout_a.state_root, layout_b.state_root,
+            "one node-local authority owns every network partition"
+        );
         assert_ne!(
-            layout_a.ipam_state_path, layout_b.ipam_state_path,
-            "same sandbox id in different tenants must not share mutable IPAM state"
+            layout_a.tenant_id, layout_b.tenant_id,
+            "same sandbox id in different tenants must use distinct IPAM partitions"
         );
         assert_ne!(
             layout_a.status_path, layout_b.status_path,
