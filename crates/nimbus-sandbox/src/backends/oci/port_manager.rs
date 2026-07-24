@@ -234,7 +234,12 @@ impl SandboxStatus {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::fs::{self, OpenOptions};
+    use std::io::{BufRead as _, Read as _, Write as _};
+    use std::process::{Child, ChildStdin, Command, Stdio};
+    use std::sync::{Arc, Mutex, mpsc};
+    use std::thread::JoinHandle;
+    use std::time::Duration;
 
     use serde_json::json;
     use tempfile::TempDir;
@@ -245,6 +250,102 @@ mod tests {
     use crate::instance::{SandboxId, SandboxStatus};
     use crate::spec::SandboxPortBinding;
     use nimbus_core::TenantId;
+
+    const ALLOCATOR_CHILD_TEST: &str =
+        "backends::oci::port_manager::tests::sandbox_and_pep_allocator_child";
+    const ALLOCATOR_KIND_ENV: &str = "NIMBUS_PORT_MANAGER_ALLOCATOR_KIND";
+    const ALLOCATOR_ROLE_ENV: &str = "NIMBUS_PORT_MANAGER_ALLOCATOR_ROLE";
+    const ALLOCATOR_STATE_ROOT_ENV: &str = "NIMBUS_PORT_MANAGER_ALLOCATOR_STATE_ROOT";
+    const ALLOCATOR_PROTOCOL_PREFIX: &str = "NIMBUS_PORT_MANAGER_ALLOCATOR/1\t";
+    const CHARACTERIZATION_PORT_MIN: u16 = 41_337;
+    const CHARACTERIZATION_PORT_MAX: u16 = 41_338;
+
+    #[test]
+    #[ignore = "NNC0.2 expected red until sandbox and PEP share host-port lease authority"]
+    fn two_real_allocator_processes_expose_sandbox_pep_port_collision() {
+        let state_root = TempDir::new().expect("shared state root should exist");
+        let mut sandbox = AllocatorProcess::spawn("sandbox", "sandbox", state_root.path())
+            .expect("sandbox child");
+        let mut pep = AllocatorProcess::spawn("pep", "pep", state_root.path()).expect("PEP child");
+        assert_ne!(
+            sandbox.process_id(),
+            pep.process_id(),
+            "the allocators must execute in distinct OS processes"
+        );
+
+        sandbox
+            .wait_ready(Duration::from_secs(5))
+            .expect("sandbox allocator should reach the release barrier");
+        pep.wait_ready(Duration::from_secs(5))
+            .expect("PEP allocator should reach the release barrier");
+        sandbox.release().expect("sandbox child should release");
+        pep.release().expect("PEP child should release");
+        let sandbox_reported = sandbox
+            .wait_selected(Duration::from_secs(5))
+            .expect("sandbox allocator should report its selected port");
+        let pep_reported = pep
+            .wait_selected(Duration::from_secs(5))
+            .expect("PEP allocator should report its selected port");
+
+        let sandbox_port = read_characterized_port(state_root.path(), "sandbox");
+        let pep_port = read_characterized_port(state_root.path(), "pep");
+        assert_eq!(sandbox_port, sandbox_reported);
+        assert_eq!(pep_port, pep_reported);
+        assert!((CHARACTERIZATION_PORT_MIN..=CHARACTERIZATION_PORT_MAX).contains(&sandbox_port));
+        assert!((CHARACTERIZATION_PORT_MIN..=CHARACTERIZATION_PORT_MAX).contains(&pep_port));
+        assert_ne!(
+            sandbox_port, pep_port,
+            "sandbox and PEP allocations must hold distinct host-port leases"
+        );
+    }
+
+    #[test]
+    #[ignore = "spawned only by the sandbox/PEP contention characterization"]
+    fn sandbox_and_pep_allocator_child() {
+        let state_root = std::env::var_os(ALLOCATOR_STATE_ROOT_ENV)
+            .map(std::path::PathBuf::from)
+            .expect("allocator child state root should be set");
+        let role = std::env::var(ALLOCATOR_ROLE_ENV).expect("allocator child role should be set");
+        emit_allocator_checkpoint("ready");
+        let mut command = String::new();
+        std::io::stdin()
+            .read_line(&mut command)
+            .expect("allocator child should read its release command");
+        assert_eq!(
+            command.trim_end(),
+            format!("{ALLOCATOR_PROTOCOL_PREFIX}release")
+        );
+
+        let manager = PortManager::new(
+            &state_root,
+            CHARACTERIZATION_PORT_MIN..=CHARACTERIZATION_PORT_MAX,
+        );
+        let allocated_port = match std::env::var(ALLOCATOR_KIND_ENV).as_deref() {
+            Ok("sandbox") => {
+                manager
+                    .allocate_missing_bindings_for_tenant(
+                        &tenant_id("contention-tenant"),
+                        &[],
+                        &[tcp_exposed_port(8080)],
+                    )
+                    .expect("sandbox allocator should select its only configured port")
+                    .into_iter()
+                    .next()
+                    .expect("sandbox allocation should return one binding")
+                    .host_port
+            }
+            Ok("pep") => manager
+                .allocate_internal_host_port(&[])
+                .expect("PEP allocator should select its only configured port"),
+            Ok(other) => panic!("unknown allocator kind {other:?}"),
+            Err(error) => {
+                panic!("missing allocator kind in {ALLOCATOR_KIND_ENV}: {error}");
+            }
+        };
+        persist_characterized_port(&state_root, &role, allocated_port)
+            .expect("child should persist its selected port");
+        emit_allocator_checkpoint(&format!("selected:{allocated_port}"));
+    }
 
     #[test]
     fn allocate_missing_bindings_uses_range_and_skips_existing_guest_ports() {
@@ -510,6 +611,253 @@ mod tests {
             port,
             protocol: OciExposedPortProtocol::Udp,
             raw: format!("{port}/udp"),
+        }
+    }
+
+    fn persist_characterized_port(
+        state_root: &std::path::Path,
+        role: &str,
+        port: u16,
+    ) -> Result<(), String> {
+        let path = state_root.join(format!("{role}.selected-port"));
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|error| format!("failed to create {}: {error}", path.display()))?;
+        writeln!(file, "{port}")
+            .and_then(|()| file.sync_all())
+            .map_err(|error| format!("failed to persist {}: {error}", path.display()))
+    }
+
+    fn read_characterized_port(state_root: &std::path::Path, role: &str) -> u16 {
+        let path = state_root.join(format!("{role}.selected-port"));
+        fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()))
+            .trim()
+            .parse()
+            .unwrap_or_else(|error| panic!("failed to parse {}: {error}", path.display()))
+    }
+
+    fn emit_allocator_checkpoint(checkpoint: &str) {
+        let mut stdout = std::io::stdout().lock();
+        writeln!(stdout, "{ALLOCATOR_PROTOCOL_PREFIX}{checkpoint}")
+            .and_then(|()| stdout.flush())
+            .expect("allocator child checkpoint should flush");
+    }
+
+    #[derive(Debug)]
+    enum AllocatorEvent {
+        Ready,
+        Selected(u16),
+        ProtocolError(String),
+        Eof,
+    }
+
+    struct AllocatorProcess {
+        role: String,
+        child: Child,
+        stdin: Option<ChildStdin>,
+        events: mpsc::Receiver<AllocatorEvent>,
+        stdout: Arc<Mutex<String>>,
+        stderr: Arc<Mutex<String>>,
+        stdout_reader: Option<JoinHandle<()>>,
+        stderr_reader: Option<JoinHandle<()>>,
+    }
+
+    impl AllocatorProcess {
+        fn spawn(
+            role: &str,
+            allocator_kind: &str,
+            state_root: &std::path::Path,
+        ) -> Result<Self, String> {
+            let mut child = Command::new(
+                std::env::current_exe()
+                    .map_err(|error| format!("failed to resolve sandbox test binary: {error}"))?,
+            )
+            .arg("--exact")
+            .arg(ALLOCATOR_CHILD_TEST)
+            .arg("--ignored")
+            .arg("--nocapture")
+            .env(ALLOCATOR_KIND_ENV, allocator_kind)
+            .env(ALLOCATOR_ROLE_ENV, role)
+            .env(ALLOCATOR_STATE_ROOT_ENV, state_root)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| format!("failed to spawn allocator role {role:?}: {error}"))?;
+            let stdin = child
+                .stdin
+                .take()
+                .expect("piped allocator stdin should be present");
+            let stdout = child
+                .stdout
+                .take()
+                .expect("piped allocator stdout should be present");
+            let stderr = child
+                .stderr
+                .take()
+                .expect("piped allocator stderr should be present");
+
+            let stdout_capture = Arc::new(Mutex::new(String::new()));
+            let stdout_target = Arc::clone(&stdout_capture);
+            let (event_tx, events) = mpsc::sync_channel(4);
+            let stdout_reader = std::thread::spawn(move || {
+                let mut reader = std::io::BufReader::new(stdout);
+                loop {
+                    let mut line = String::new();
+                    match reader.read_line(&mut line) {
+                        Ok(0) => {
+                            let _ = event_tx.send(AllocatorEvent::Eof);
+                            return;
+                        }
+                        Ok(_) => {
+                            stdout_target
+                                .lock()
+                                .expect("allocator stdout lock should not be poisoned")
+                                .push_str(&line);
+                            let Some(value) =
+                                line.trim_end().strip_prefix(ALLOCATOR_PROTOCOL_PREFIX)
+                            else {
+                                continue;
+                            };
+                            let event = match value {
+                                "ready" => AllocatorEvent::Ready,
+                                selected if selected.starts_with("selected:") => selected
+                                    .trim_start_matches("selected:")
+                                    .parse::<u16>()
+                                    .map(AllocatorEvent::Selected)
+                                    .unwrap_or_else(|error| {
+                                        AllocatorEvent::ProtocolError(format!(
+                                            "invalid selected port {selected:?}: {error}"
+                                        ))
+                                    }),
+                                other => AllocatorEvent::ProtocolError(format!(
+                                    "unknown allocator checkpoint {other:?}"
+                                )),
+                            };
+                            if event_tx.send(event).is_err() {
+                                return;
+                            }
+                        }
+                        Err(error) => {
+                            let _ = event_tx.send(AllocatorEvent::ProtocolError(format!(
+                                "allocator stdout read failed: {error}"
+                            )));
+                            return;
+                        }
+                    }
+                }
+            });
+
+            let stderr_capture = Arc::new(Mutex::new(String::new()));
+            let stderr_target = Arc::clone(&stderr_capture);
+            let stderr_reader = std::thread::spawn(move || {
+                let mut reader = std::io::BufReader::new(stderr);
+                let mut captured = String::new();
+                if let Err(error) = reader.read_to_string(&mut captured) {
+                    captured.push_str(&format!("\n<stderr read failed: {error}>"));
+                }
+                *stderr_target
+                    .lock()
+                    .expect("allocator stderr lock should not be poisoned") = captured;
+            });
+
+            Ok(Self {
+                role: role.to_owned(),
+                child,
+                stdin: Some(stdin),
+                events,
+                stdout: stdout_capture,
+                stderr: stderr_capture,
+                stdout_reader: Some(stdout_reader),
+                stderr_reader: Some(stderr_reader),
+            })
+        }
+
+        fn process_id(&self) -> u32 {
+            self.child.id()
+        }
+
+        fn wait_ready(&mut self, timeout: Duration) -> Result<(), String> {
+            match self.receive(timeout, "ready")? {
+                AllocatorEvent::Ready => Ok(()),
+                event => Err(self.unexpected("ready", &event)),
+            }
+        }
+
+        fn release(&mut self) -> Result<(), String> {
+            let stdin = self
+                .stdin
+                .as_mut()
+                .ok_or_else(|| format!("allocator role {:?} stdin is closed", self.role))?;
+            writeln!(stdin, "{ALLOCATOR_PROTOCOL_PREFIX}release")
+                .and_then(|()| stdin.flush())
+                .map_err(|error| {
+                    format!("failed to release allocator role {:?}: {error}", self.role)
+                })
+        }
+
+        fn wait_selected(&mut self, timeout: Duration) -> Result<u16, String> {
+            match self.receive(timeout, "selected port")? {
+                AllocatorEvent::Selected(port) => Ok(port),
+                event => Err(self.unexpected("selected port", &event)),
+            }
+        }
+
+        fn receive(&mut self, timeout: Duration, expected: &str) -> Result<AllocatorEvent, String> {
+            match self.events.recv_timeout(timeout) {
+                Ok(event) => Ok(event),
+                Err(error) => {
+                    let role = self.role.clone();
+                    let diagnostic = self.diagnostic();
+                    Err(format!(
+                        "allocator role {role:?} did not reach {expected:?} within {timeout:?}: {error}; {diagnostic}"
+                    ))
+                }
+            }
+        }
+
+        fn unexpected(&mut self, expected: &str, event: &AllocatorEvent) -> String {
+            let event = match event {
+                AllocatorEvent::ProtocolError(message) => message.clone(),
+                other => format!("{other:?}"),
+            };
+            let role = self.role.clone();
+            let diagnostic = self.diagnostic();
+            format!("allocator role {role:?} reached {event}; expected {expected}; {diagnostic}")
+        }
+
+        fn diagnostic(&mut self) -> String {
+            let status = self
+                .child
+                .try_wait()
+                .map(|status| format!("{status:?}"))
+                .unwrap_or_else(|error| format!("<status error: {error}>"));
+            let stdout = self
+                .stdout
+                .lock()
+                .expect("allocator stdout lock should not be poisoned");
+            let stderr = self
+                .stderr
+                .lock()
+                .expect("allocator stderr lock should not be poisoned");
+            format!("status={status}; stdout={stdout:?}; stderr={stderr:?}")
+        }
+    }
+
+    impl Drop for AllocatorProcess {
+        fn drop(&mut self) {
+            drop(self.stdin.take());
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+            if let Some(reader) = self.stdout_reader.take() {
+                let _ = reader.join();
+            }
+            if let Some(reader) = self.stderr_reader.take() {
+                let _ = reader.join();
+            }
         }
     }
 }

@@ -1,6 +1,6 @@
 # Nimbus Network Control Plane Plan
 
-Status: `active; NNC0.1b complete; NNC0.2 allocator race baselines in progress`
+Status: `active; NNC0.2 complete; NNC0.3 segment cleanup/reuse baseline in progress`
 
 Owner: this plan is the sole implementation control plane for the
 transport-free `nimbus-network` crate and the connectivity-resource lifecycle
@@ -36,19 +36,19 @@ ledger transition.
 
 | Field | Current value |
 | --- | --- |
-| Plan status | `active; NNC0.1b complete; NNC0.2 allocator race baselines in progress` |
+| Plan status | `active; NNC0.2 complete; NNC0.3 segment cleanup/reuse baseline in progress` |
 | Current band | `NNC0 — executable baselines and verifier` |
-| Current item | `NNC0.2 — fail-before sandbox/PEP and external machine-port races` |
-| Last completed item | `NNC0.1b — persistence-oriented subprocess crash-cut harness` |
-| Next action | Read the sandbox `PortManager` and managed-machine probe/drop tests and callers, then use the real-child harness to capture (a) two Nimbus allocator children selecting the same sandbox/PEP port and (b) an acknowledged external binder taking the machine port after probe/drop so the faithful provider bind fails with `AddrInUse` while persisted machine state still claims it. |
+| Current item | `NNC0.3 — fail-before segment cleanup-failure/reuse race` |
+| Last completed item | `NNC0.2 — sandbox/PEP collision and external machine-port theft baselines` |
+| Next action | Read both backend release paths, `NetworkSegmentAllocator::release`, `reap_bridge_interface`, and their tests; add a dependency-safe fault seam that forces bridge cleanup to fail after the last hold is durably removed, then prove a new tenant can receive the freed segment while the prior provider effect remains. |
 | Owner branch | `codex/nimbus-network-architecture-audit` |
 | Owner worktree | `/Users/jack/src/github.com/nimbus/nimbus-network-architecture-audit` |
 | Audit base | Original architecture audit: `b69007a78a220847812370d9418049f1253f0384`. |
 | Execution base | Rebased without conflicts onto `origin/main` at `9c2d4f150c60f43dfdc0a3f1ec6550942e26ab8f` after NNC0.0. |
-| Last checkpoint commit | `53ea4986a1e65eebce8504b113943311acdcd52d` — NNC0.1a completion and NNC0.1b activation checkpoint. |
-| Audit dirty state | NNC0.1b completion owns the shared process protocol extension, `crates/nimbus-testing/src/process_harness/crash.rs`, the `lib.rs` exports, this plan/routing status, and the force-tracked proof record. No manifest changed. |
+| Last checkpoint commit | `aa57ad91608b661beb7f55894bc7ddbd2276c31d` — NNC0.1b completion and NNC0.2 activation checkpoint. |
+| Audit dirty state | NNC0.2 completion owns expected-red process tests in sandbox `port_manager.rs` and machine `ports_state.rs`, this plan transition, and `docs/private/plans/proof/nimbus-network-control-plane/nnc0.2-port-allocation-race-baselines.md`. No manifest or production source changed. |
 | Execution mode | Autonomous implementation goal active; commit each completed item with its ledger/evidence checkpoint; no push or PR without separate authority. |
-| Last verification | NNC0.1b: a real child is killed only after the exact named network-shaped boundary, a fresh process reopens the same root and proves state/effect evidence, and wrong-boundary/early-exit/timeout/cleanup/recovery mismatch paths retain complete diagnostics. Focused cargo test and nextest each pass 13 parent tests; check/clippy/format/diff/docs pass. Exact evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc0.1b-subprocess-crash-cut-harness.md`. |
+| Last verification | NNC0.2: exact ignored fail-before parents exit `101` only because sandbox/PEP both select `41337` and because machine state retains `Some(port)` after the acknowledged external owner makes the provider bind fail `AddrInUse`. Ordinary focused suites pass 11 tests with four expected-red/child entrypoints ignored; all-target Clippy, format, diff, docs, and the second independent review pass are clean. Exact evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc0.2-port-allocation-race-baselines.md`. |
 | Blocking decision | None. NNC0.0 is authorized; no fetch/rebase may precede its durability commit. Exact Rust names otherwise remain band-local decisions subject to NNC0 proofs and the seam-promotion rule. |
 
 Recovery protocol:
@@ -1260,8 +1260,8 @@ checkpoint.
 | NNC0.1 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc0.1-baseline.md`; source HEAD `e990c018a`; six normal/dev/all-feature/target profiles, 244 declared workspace edges, zero cycles, 24 uniquely classified production sites, zero unclassified sites. Script/JSON assertions and docs/diff checks passed. |
 | NNC0.1a | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc0.1a-process-contention-harness.md`; upper-layer `nimbus-testing` pipe protocol proves exactly one winner and self-tests missing participant, wrong checkpoint, early exit, timeout, cleanup/reap, and invalid bounds. Cargo test and nextest: 7/7 passed; check/clippy/format/docs passed. |
 | NNC0.1b | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc0.1b-subprocess-crash-cut-harness.md`; exact-boundary kill plus fresh-process same-root state/effect recovery pass; wrong boundary, crash/recovery early exit and timeout, mismatch, and cleanup are diagnostic. Cargo test/nextest: 13/13 parent tests; check/clippy/format/docs passed. No manifest edge. |
-| NNC0.2 | `in_progress` | Owned paths at activation: plan/routing checkpoint only; fail-before tests remain to be placed after reading allocator test owners. Last green: NNC0.1b 13-test cargo + nextest runs and clippy. Next: inspect sandbox and managed-machine allocation APIs and build exact expected-red process races. Blocker: none. |
-| NNC0.3 | `todo` | — |
+| NNC0.2 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc0.2-port-allocation-race-baselines.md`; two real sandbox/PEP allocator children fail the distinct-lease invariant with `41337 == 41337`; a real external owner wins the post-probe machine port, provider bind is `AddrInUse`, and persisted state fails the no-stale-claim invariant with `Some(port) == Some(port)`. Expected-red parents are ignored in ordinary CI; 11 sibling tests, Clippy, format/diff/docs, and second review pass are green. |
+| NNC0.3 | `in_progress` | Owned paths at activation: NNC0.2 test/proof/plan checkpoint until its focused commit; no NNC0.3 source edit yet. Last green commit: `aa57ad91608b661beb7f55894bc7ddbd2276c31d`; last green command: focused sandbox/machine suites plus all-target Clippy. Next: inspect container/krun release ordering and introduce the narrow cleanup-failure seam needed to prove freed allocator state can race a surviving bridge. Blocker: none. |
 | NNC0.4 | `todo` | — |
 | NNC0.5 | `todo` | — |
 | NNC0.6 | `todo` | — |
