@@ -1,6 +1,6 @@
 # Nimbus Network Control Plane Plan
 
-Status: `active; NNC0.1 dependency/owner/bind baseline in progress`
+Status: `active; NNC0.1 complete; NNC0.1a contention harness in progress`
 
 Owner: this plan is the sole implementation control plane for the
 transport-free `nimbus-network` crate and the connectivity-resource lifecycle
@@ -36,19 +36,19 @@ ledger transition.
 
 | Field | Current value |
 | --- | --- |
-| Plan status | `active; NNC0.1 dependency/owner/bind baseline in progress` |
+| Plan status | `active; NNC0.1 complete; NNC0.1a contention harness in progress` |
 | Current band | `NNC0 — executable baselines and verifier` |
-| Current item | `NNC0.1 — dependency/owner/bind baseline, after main reconciliation` |
-| Last completed item | `NNC0.0 — canonical implementation control plane durable in branch history` |
-| Next action | Generate the source-HEAD dependency graphs and exhaustive production bind/allocation/adoption census; classify every site; record commands and cycle results under the NNC0.1 proof directory; then close NNC0.1 only if normal, dev/test, target-conditioned, and all-feature checks are explicit. |
+| Current item | `NNC0.1a — deterministic two-process contention harness` |
+| Last completed item | `NNC0.1 — dependency/owner/bind baseline, after main reconciliation` |
+| Next action | Read existing process-test helpers and the sandbox/machine allocator callers, select a dependency-safe upper-layer harness owner, define the bounded semantic child protocol and diagnostics, then land its fail/pass self-tests without adding a `nimbus-network -> nimbus-testing` edge. |
 | Owner branch | `codex/nimbus-network-architecture-audit` |
 | Owner worktree | `/Users/jack/src/github.com/nimbus/nimbus-network-architecture-audit` |
 | Audit base | Original architecture audit: `b69007a78a220847812370d9418049f1253f0384`. |
 | Execution base | Rebased without conflicts onto `origin/main` at `9c2d4f150c60f43dfdc0a3f1ec6550942e26ab8f` after NNC0.0. |
-| Last checkpoint commit | `bbe1a0e80f7e4b63a7902956d33407a87d7fb97d` — rebased NNC0.0 completion checkpoint; bootstrap plan commit is `7083e67e59a9c1df7a08d7cfb0772888504c8504`. |
-| Audit dirty state | NNC0.1 header/ledger activation only before baseline artifacts are generated. The canonical plan remains the narrow force-tracked exception to the private-doc ignore rule, following `dd5b178e4`. |
+| Last checkpoint commit | `e990c018a20b063a0ac093ad0e78b8e71117ec70` — NNC0.1 start checkpoint; rebased NNC0.0 completion is `bbe1a0e80f7e4b63a7902956d33407a87d7fb97d`. |
+| Audit dirty state | NNC0.1 completion checkpoint owns only this plan, `docs/private/plans/README.md`, `scripts/capture-nimbus-network-dependency-baseline.mjs`, and the three force-tracked NNC0.1 proof artifacts. No Rust source or manifest changed. |
 | Execution mode | Autonomous implementation goal active; commit each completed item with its ledger/evidence checkpoint; no push or PR without separate authority. |
-| Last verification | Clean rebase onto `9c2d4f150`; `git cat-file -e HEAD:docs/private/plans/nimbus-network-control-plane-plan.md` still exited 0. The two pre-rebase checkpoint SHAs and their current equivalents are recorded in NNC0.0 evidence. |
+| Last verification | NNC0.1: six distinct dependency profiles contain zero cycles; 244 declared workspace edges retain kind/target/feature/optionality; 24 production sites have unique IDs and dispositions; JSON/schema assertions, script syntax, `git diff --check`, and private-doc validation pass. Exact evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc0.1-baseline.md`. |
 | Blocking decision | None. NNC0.0 is authorized; no fetch/rebase may precede its durability commit. Exact Rust names otherwise remain band-local decisions subject to NNC0 proofs and the seam-promotion rule. |
 
 Recovery protocol:
@@ -1257,8 +1257,8 @@ checkpoint.
 | Item | Status | Evidence / recovery checkpoint |
 | --- | --- | --- |
 | NNC0.0 | `done` | Bootstrap commit `d692254ad246c5e153aa220fc19cc86e12585486` contains the force-tracked plan and routing edit. Before any fetch/rebase, `git cat-file -e HEAD:docs/private/plans/nimbus-network-control-plane-plan.md` exited 0 and `git status --short --branch` showed a clean worktree. |
-| NNC0.1 | `in_progress` | Owned paths: this plan, `docs/private/plans/README.md`, and force-tracked NNC0.1 proof artifacts only. Last green: clean rebase onto `9c2d4f150`, plan-in-HEAD proof, and NNC0.0 docs gate. Next: generate dependency-kind/feature/target graphs and classify every production bind/probe/adoption/inherited socket from reconciled source. Blocker: none. |
-| NNC0.1a | `todo` | — |
+| NNC0.1 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc0.1-baseline.md`; source HEAD `e990c018a`; six normal/dev/all-feature/target profiles, 244 declared workspace edges, zero cycles, 24 uniquely classified production sites, zero unclassified sites. Script/JSON assertions and docs/diff checks passed. |
+| NNC0.1a | `in_progress` | Owned paths at activation: plan/routing checkpoint only; harness owner and source paths must be selected after reading existing process helpers. Last green: NNC0.1 proof bundle and docs gate. Next: inspect reusable bounded process-test patterns and define the real-child acknowledgement protocol. Blocker: none. |
 | NNC0.1b | `todo` | — |
 | NNC0.2 | `todo` | — |
 | NNC0.3 | `todo` | — |
@@ -1440,6 +1440,37 @@ NNC0.0 durability evidence, 2026-07-23:
   remained available from `HEAD`;
 - no fetch, rebase, source edit, push, or PR preceded the durability proof; no
   push or PR followed it.
+
+NNC0.1 baseline evidence, 2026-07-23:
+
+- source checkpoint:
+  `e990c018a20b063a0ac093ad0e78b8e71117ec70`, based on merged main
+  `9c2d4f150c60f43dfdc0a3f1ec6550942e26ab8f`;
+- evidence summary:
+  `docs/private/plans/proof/nimbus-network-control-plane/nnc0.1-baseline.md`;
+- machine-readable dependency graph:
+  `docs/private/plans/proof/nimbus-network-control-plane/nnc0.1-dependency-graph.json`;
+- machine-readable source census:
+  `docs/private/plans/proof/nimbus-network-control-plane/nnc0.1-bind-owner-inventory.json`;
+- capture implementation:
+  `scripts/capture-nimbus-network-dependency-baseline.mjs`;
+- dependency result:
+  244 declared workspace edges retain dependency kind, target, feature,
+  default-feature, and optionality metadata; six distinct normal, dev/test/build,
+  all-feature, and target-conditioned resolved graphs each contain zero cycles;
+- census result:
+  24 production sites, six portable owner sites, and three trust inputs have
+  unique classifications; zero production sites are unclassified and no
+  production UDP bind exists in the reconciled source;
+- PR #238/#239 reconciliation:
+  Cloud Functions trusted tenant binding, Convex silo verifier selection, and
+  compute deployment artifact lifetime remain upstream trust/lifecycle
+  authorities rather than network authorities;
+- verification:
+  script syntax, both JSON documents, profile-cycle assertions, summary/count
+  assertions, duplicate-ID checks, `git diff --check`, and
+  `bash scripts/check-docs.sh` passed; target-conditioned metadata resolution
+  did not claim cross-target compilation or provider execution.
 
 ## Completion Gate
 

@@ -1,0 +1,418 @@
+{
+  "schema_version": 1,
+  "source_head": "e990c018a20b063a0ac093ad0e78b8e71117ec70",
+  "scope": {
+    "production_network": "Every Rust production TCP/UDP allocation, availability probe, bind, provider bind request, pre-bound listener consumer, and inherited socket found by the recorded scans.",
+    "local_ipc": "Production Unix-domain binds and inherited descriptors are classified separately because a host TCP/UDP PortLease must not absorb filesystem-path ownership.",
+    "tests": "Inline and path-owned test/bench fixtures are non-production exemptions only when their enclosing cfg/module or target is recorded below."
+  },
+  "scan_commands": [
+    "rg -n --glob '*.rs' --glob '!**/target/**' --glob '!**/vendor/**' '(TcpListener|UdpSocket|Socket)::bind|from_std\\(|from_raw_fd|LISTEN_FDS|port_is_available|is_port_available|find_available_port|allocate_port|reserve_port|PortManager|port_manager' crates packages tests",
+    "rg -n --glob '*.rs' --glob '!**/tests/**' --glob '!**/benches/**' '(UdpSocket|UnixListener|TcpSocket|socket2::Socket|StdUnixListener|TcpListener)' crates",
+    "rg -n 'port_mappings|host_port|publish.*port|ssh-port|ssh_port|gvproxy|MachinePortProxy|WorkloadPep::start' crates/nimbus-sandbox crates/nimbus-proxy crates/nimbus-cli crates/nimbus-machine",
+    "rg -n 'PublishedEndpointProtocol|PublishedEndpoint' crates/nimbus-sandbox crates/nimbus-services crates/nimbus-tenant crates/nimbus-system crates/nimbus-machine crates/nimbus-node crates/nimbus-server crates/nimbus-cli"
+  ],
+  "production_sites": [
+    {
+      "id": "sandbox-manifest-port-allocation",
+      "category": "allocation-authority",
+      "path": "crates/nimbus-sandbox/src/backends/oci/port_manager.rs",
+      "line": 37,
+      "symbol": "PortManager::allocate_missing_bindings_for_tenant",
+      "current_owner": "nimbus-sandbox",
+      "current_truth": "Scans sandbox manifests and caller-local bindings, then selects the first unused configured port.",
+      "disposition": "migrate",
+      "target_owner": "nimbus-network PortLease authority",
+      "owner_item": "NNC3.4",
+      "deletion_item": "NNC3.9"
+    },
+    {
+      "id": "sandbox-pep-port-allocation",
+      "category": "allocation-authority",
+      "path": "crates/nimbus-sandbox/src/backends/oci/port_manager.rs",
+      "line": 83,
+      "symbol": "PortManager::allocate_internal_host_port",
+      "current_owner": "nimbus-sandbox",
+      "current_truth": "Shares the manifest scan but does not atomically reserve against the sandbox endpoint caller.",
+      "disposition": "migrate",
+      "target_owner": "nimbus-network PortLease authority",
+      "owner_item": "NNC3.4",
+      "deletion_item": "NNC3.9"
+    },
+    {
+      "id": "sandbox-pep-assignment",
+      "category": "allocation-consumer",
+      "path": "crates/nimbus-sandbox/src/backends/oci/egress.rs",
+      "line": 619,
+      "symbol": "allocate_egress_proxy",
+      "current_owner": "nimbus-sandbox",
+      "current_truth": "Builds a bridge-gateway PEP address from the manifest-scanning allocator.",
+      "disposition": "migrate",
+      "target_owner": "sandbox effect code consumes a network-owned lease",
+      "owner_item": "NNC3.4"
+    },
+    {
+      "id": "cli-dev-conventional-probe",
+      "category": "availability-probe",
+      "path": "crates/nimbus-cli/src/dev/wire.rs",
+      "line": 225,
+      "symbol": "resolve_listener_port",
+      "current_owner": "nimbus-cli",
+      "current_truth": "Binds and drops the conventional loopback port before later server construction.",
+      "disposition": "migrate",
+      "target_owner": "CLI composition consumes shared reserve/bind adoption",
+      "owner_item": "NNC3.7a",
+      "deletion_item": "NNC3.9"
+    },
+    {
+      "id": "cli-dev-ephemeral-probe",
+      "category": "availability-probe",
+      "path": "crates/nimbus-cli/src/dev/wire.rs",
+      "line": 247,
+      "symbol": "ephemeral_port",
+      "current_owner": "nimbus-cli",
+      "current_truth": "Binds port zero, reads the assigned port, drops the listener, and binds later.",
+      "disposition": "migrate",
+      "target_owner": "CLI composition adopts a pre-bound listener or a provider-assigned lease",
+      "owner_item": "NNC3.7a",
+      "deletion_item": "NNC3.9"
+    },
+    {
+      "id": "cli-start-adapter-probe",
+      "category": "availability-probe",
+      "path": "crates/nimbus-cli/src/start/adapters/mod.rs",
+      "line": 211,
+      "symbol": "resolve_adapter_enablement",
+      "current_owner": "nimbus-cli",
+      "current_truth": "Checks conventional adapter ports by binding and immediately dropping a temporary listener.",
+      "disposition": "migrate",
+      "target_owner": "CLI composition consumes shared reserve/bind adoption",
+      "owner_item": "NNC3.7a",
+      "deletion_item": "NNC3.9"
+    },
+    {
+      "id": "machine-ssh-port-allocation",
+      "category": "allocation-authority",
+      "path": "crates/nimbus-cli/src/machine/manager/ports.rs",
+      "line": 22,
+      "symbol": "allocate_machine_ssh_port",
+      "current_owner": "nimbus-cli machine manager",
+      "current_truth": "Uses a machine-local locked JSON map, independent of server, sandbox, PEP, and KV authorities.",
+      "disposition": "migrate",
+      "target_owner": "nimbus-network PortLease authority",
+      "owner_item": "NNC3.7",
+      "deletion_item": "NNC3.9"
+    },
+    {
+      "id": "machine-ssh-port-probe",
+      "category": "availability-probe",
+      "path": "crates/nimbus-cli/src/machine/manager/ports.rs",
+      "line": 98,
+      "symbol": "machine_port_is_available",
+      "current_owner": "nimbus-cli machine manager",
+      "current_truth": "Binds and drops the chosen loopback port before gvproxy performs the provider bind.",
+      "disposition": "migrate",
+      "target_owner": "network lease plus gvproxy provider-bind evidence",
+      "owner_item": "NNC3.3",
+      "deletion_item": "NNC3.7"
+    },
+    {
+      "id": "cli-main-direct-listener",
+      "category": "socket-bind",
+      "path": "crates/nimbus-cli/src/start/boot.rs",
+      "line": 588,
+      "symbol": "start_listener",
+      "current_owner": "nimbus-cli",
+      "current_truth": "Directly binds the configured main HTTP/WebSocket listener before passing it to nimbus-server.",
+      "disposition": "migrate",
+      "target_owner": "CLI/server composition adopts a network lease; CLI retains socket effect",
+      "owner_item": "NNC3.5"
+    },
+    {
+      "id": "cli-main-systemd-listener",
+      "category": "inherited-socket",
+      "path": "crates/nimbus-cli/src/start/boot.rs",
+      "line": 597,
+      "symbol": "activated_systemd_listener",
+      "current_owner": "systemd plus nimbus-cli adoption",
+      "current_truth": "Validates LISTEN_PID/LISTEN_FDS and takes ownership of inherited TCP fd 3.",
+      "disposition": "adopt",
+      "target_owner": "external/inherited PortLease provenance; Nimbus must never release it as Nimbus-owned",
+      "owner_item": "NNC3.3"
+    },
+    {
+      "id": "node-systemd-socket-unit",
+      "category": "external-socket-effect",
+      "path": "crates/nimbus-cli/src/node_service.rs",
+      "line": 488,
+      "symbol": "NativeSystemdNodeService::render_socket",
+      "current_owner": "nimbus-cli node service plus systemd",
+      "current_truth": "Declares the main TCP ListenStream for systemd to bind before process start.",
+      "disposition": "adopt",
+      "target_owner": "systemd retains bind effect; Nimbus records inherited lease provenance",
+      "owner_item": "NNC3.3"
+    },
+    {
+      "id": "server-sibling-wire-listeners",
+      "category": "socket-bind",
+      "path": "crates/nimbus-server/src/construction.rs",
+      "line": 274,
+      "symbol": "serve",
+      "current_owner": "nimbus-server",
+      "current_truth": "Sequentially binds MongoDB, DynamoDB, and S3 WireProtocolAdapter addresses.",
+      "disposition": "migrate",
+      "target_owner": "server retains binds and structured listener group; each consumes a network lease",
+      "owner_item": "NNC3.5",
+      "lifecycle_item": "NNC7.1a"
+    },
+    {
+      "id": "server-main-listener-consumer",
+      "category": "pre-bound-consumer",
+      "path": "crates/nimbus-server/src/construction.rs",
+      "line": 254,
+      "symbol": "serve",
+      "current_owner": "nimbus-server",
+      "current_truth": "Consumes the main listener bound or inherited by CLI; TLS and plain serving retain the same socket.",
+      "disposition": "adopt",
+      "target_owner": "server consumes generation-scoped listener/lease identity without becoming allocator",
+      "owner_item": "NNC3.5"
+    },
+    {
+      "id": "kv-direct-listener",
+      "category": "socket-bind",
+      "path": "crates/nimbus-kv/src/server.rs",
+      "line": 242,
+      "symbol": "run_listener",
+      "current_owner": "nimbus-kv",
+      "current_truth": "A standalone process directly binds the configured RESP address.",
+      "disposition": "migrate",
+      "target_owner": "KV retains RESP/socket effect and consumes the cross-process lease authority",
+      "owner_item": "NNC3.6"
+    },
+    {
+      "id": "kv-prebound-listener",
+      "category": "pre-bound-consumer",
+      "path": "crates/nimbus-kv/src/server.rs",
+      "line": 250,
+      "symbol": "serve",
+      "current_owner": "nimbus-kv",
+      "current_truth": "Already supports an injected tokio TCP listener.",
+      "disposition": "adopt",
+      "target_owner": "Preserve as the pre-bound lease adoption seam",
+      "owner_item": "NNC3.6"
+    },
+    {
+      "id": "pep-listener-bind",
+      "category": "socket-bind",
+      "path": "crates/nimbus-proxy/src/worker.rs",
+      "line": 220,
+      "symbol": "WorkloadPep::start",
+      "current_owner": "nimbus-proxy",
+      "current_truth": "Directly binds the bridge-gateway PEP address selected by sandbox PortManager.",
+      "disposition": "migrate",
+      "target_owner": "proxy retains PEP/forwarding bind effect and reports provider-bind evidence for the lease",
+      "owner_item": "NNC3.4"
+    },
+    {
+      "id": "machine-port-proxy-bind",
+      "category": "socket-bind",
+      "path": "crates/nimbus-sandbox/src/backends/oci/network/proxy.rs",
+      "line": 23,
+      "symbol": "MachinePortProxy::start",
+      "current_owner": "nimbus-sandbox",
+      "current_truth": "Directly binds a wildcard host TCP listener for machine-published container ports.",
+      "disposition": "migrate",
+      "target_owner": "sandbox retains proxy effect and consumes/reports a current network lease",
+      "owner_item": "NNC3.4"
+    },
+    {
+      "id": "netavark-port-mapping-effect",
+      "category": "provider-bind-request",
+      "path": "crates/nimbus-sandbox/src/backends/oci/network/netavark.rs",
+      "line": 199,
+      "symbol": "network_options",
+      "current_owner": "nimbus-sandbox/Netavark",
+      "current_truth": "Lowers SandboxPortBinding values into Netavark host port mappings; the provider owns the actual kernel effects.",
+      "disposition": "provider-bind",
+      "target_owner": "sandbox retains Netavark DTO/effect and reports opaque provider evidence against a network lease",
+      "owner_item": "NNC3.4"
+    },
+    {
+      "id": "machine-forwarder-port-effect",
+      "category": "provider-bind-request",
+      "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
+      "line": 48,
+      "symbol": "request_machine_port_forwarding",
+      "current_owner": "nimbus-sandbox/gvproxy machine forwarder",
+      "current_truth": "Posts expose and unexpose requests for an exact host address and port to the machine forwarder, which owns the host-forwarding effect.",
+      "disposition": "provider-bind",
+      "target_owner": "sandbox retains the provider effect; it consumes a network lease and records an opaque provider handle with inspect/delete evidence",
+      "owner_item": "NNC3.4, NNC5.4"
+    },
+    {
+      "id": "machine-gvproxy-ssh-bind",
+      "category": "provider-bind-request",
+      "path": "crates/nimbus-cli/src/machine/manager/launch.rs",
+      "line": 195,
+      "symbol": "build_gvproxy_args",
+      "current_owner": "nimbus-cli machine manager/gvproxy",
+      "current_truth": "Passes -ssh-port to gvproxy after the allocator has dropped its availability probe.",
+      "disposition": "provider-bind",
+      "target_owner": "machine retains gvproxy effect; provider bind adopts or fails the durable network lease",
+      "owner_item": "NNC3.3"
+    },
+    {
+      "id": "machine-api-unix-direct",
+      "category": "unix-bind",
+      "path": "crates/nimbus-cli/src/machine/api/listener.rs",
+      "line": 21,
+      "symbol": "bind_direct_listener",
+      "current_owner": "nimbus-cli machine API",
+      "current_truth": "Binds a filesystem Unix socket after removing a stale path.",
+      "disposition": "local-ipc-exempt",
+      "target_owner": "Remain machine-owned; not a TCP/UDP PortLease",
+      "owner_item": "NNC0.1"
+    },
+    {
+      "id": "machine-api-unix-systemd",
+      "category": "unix-inherited-socket",
+      "path": "crates/nimbus-cli/src/machine/api/listener.rs",
+      "line": 61,
+      "symbol": "inherited_systemd_listener",
+      "current_owner": "systemd plus nimbus-cli machine API",
+      "current_truth": "Validates and adopts one inherited Unix listener fd.",
+      "disposition": "local-ipc-exempt",
+      "target_owner": "Remain machine-owned inherited local IPC",
+      "owner_item": "NNC0.1"
+    },
+    {
+      "id": "machine-ready-unix-listener",
+      "category": "unix-bind",
+      "path": "crates/nimbus-cli/src/machine/manager/readiness.rs",
+      "line": 206,
+      "symbol": "bind_ready_listener",
+      "current_owner": "nimbus-cli machine manager",
+      "current_truth": "Provider-local readiness rendezvous over a filesystem Unix socket.",
+      "disposition": "local-ipc-exempt",
+      "target_owner": "Remain machine-provider effect",
+      "owner_item": "NNC0.1"
+    },
+    {
+      "id": "machine-ignition-unix-listener",
+      "category": "unix-bind",
+      "path": "crates/nimbus-cli/src/machine/manager/readiness.rs",
+      "line": 225,
+      "symbol": "serve_ignition_file",
+      "current_owner": "nimbus-cli machine manager",
+      "current_truth": "Provider-local one-shot ignition transport over a filesystem Unix socket.",
+      "disposition": "local-ipc-exempt",
+      "target_owner": "Remain machine-provider effect",
+      "owner_item": "NNC0.1"
+    }
+  ],
+  "portable_owner_sites": [
+    {
+      "id": "cidr-and-segment-vocabulary",
+      "path": "crates/nimbus-core/src/net.rs",
+      "lines": [85, 188, 215],
+      "current_owner": "nimbus-core",
+      "disposition": "Cidr remains core; portable segment identity/allocation moves to nimbus-network under NNC1."
+    },
+    {
+      "id": "segment-allocator-contract",
+      "path": "crates/nimbus-sandbox/src/backends/oci/network/segment.rs",
+      "line": 50,
+      "current_owner": "nimbus-sandbox",
+      "disposition": "Generalize to NetworkAttachmentId and inject from nimbus-network under NNC2."
+    },
+    {
+      "id": "single-node-segment-allocator",
+      "path": "crates/nimbus-sandbox/src/backends/oci/network/segment.rs",
+      "line": 128,
+      "current_owner": "nimbus-sandbox",
+      "disposition": "Portable allocation moves; Netavark realization remains sandbox-owned."
+    },
+    {
+      "id": "cluster-shaped-segment-allocator",
+      "path": "crates/nimbus-sandbox/src/backends/oci/network/cluster.rs",
+      "line": 81,
+      "current_owner": "nimbus-sandbox",
+      "disposition": "Consume fenced super-net lease only; cluster transport remains outside nimbus-network."
+    },
+    {
+      "id": "sandbox-ipam-effect-state",
+      "path": "crates/nimbus-sandbox/src/backends/oci/network/ipam.rs",
+      "line": 153,
+      "current_owner": "nimbus-sandbox",
+      "disposition": "Remain provider-adjacent effect state but conform to durable attachment fencing."
+    },
+    {
+      "id": "published-endpoint-vocabulary",
+      "path": "crates/nimbus-sandbox/src/endpoint.rs",
+      "line": 7,
+      "current_owner": "nimbus-sandbox",
+      "disposition": "Move/generalize to nimbus-network under NNC1.3 without compatibility re-export."
+    }
+  ],
+  "trust_inputs_not_network_authorities": [
+    {
+      "id": "cloud-functions-http-tenant-binding",
+      "path": "crates/nimbus-cloud-functions/src/http/tenant_binding.rs",
+      "line": 13,
+      "owner": "nimbus-cloud-functions deployment registry",
+      "network_rule": "Compute may compile only the already trusted/admitted tenant attribution; request path data never selects a network tenant."
+    },
+    {
+      "id": "convex-silo-auth-registry",
+      "path": "crates/nimbus-convex/src/silo_auth.rs",
+      "line": 20,
+      "owner": "nimbus-convex/auth/compute/server",
+      "network_rule": "Network never selects a verifier or inspects a bearer; failed silo authentication/admission makes zero network calls."
+    },
+    {
+      "id": "deployment-artifact-lease",
+      "path": "crates/nimbus-compute/src/state.rs",
+      "line": 223,
+      "owner": "nimbus-compute",
+      "network_rule": "An in-memory generation lifetime for staged artifacts is not a PortLease and must remain a distinct type and authority."
+    }
+  ],
+  "non_production_exemptions": [
+    {
+      "pattern": "crates/**/tests/** and crates/**/tests.rs",
+      "classification": "test-only",
+      "allowed_shape": "loopback port zero or explicit collision fixture; never callable from a production target"
+    },
+    {
+      "pattern": "a #[cfg(test)] module inside a production-named source file",
+      "classification": "test-only",
+      "examples": [
+        "crates/nimbus-runtime/src/egress.rs",
+        "crates/nimbus-cli/src/auth.rs",
+        "crates/nimbus-cli/src/token.rs",
+        "crates/nimbus-cli/src/ui.rs",
+        "crates/nimbus-cli/src/start/first_boot.rs",
+        "crates/nimbus-cli/src/deploy.rs",
+        "crates/nimbus-cli/src/machine/local_server.rs",
+        "crates/nimbus-sandbox/src/backends/container/runtime/lifecycle.rs"
+      ]
+    },
+    {
+      "pattern": "crates/**/benches/**",
+      "classification": "benchmark-only",
+      "allowed_shape": "loopback ephemeral fixture"
+    },
+    {
+      "pattern": "crates/nimbus-testing/src/server_fixture.rs",
+      "classification": "test-support-only",
+      "allowed_shape": "loopback ephemeral fixture; never a product allocation authority"
+    }
+  ],
+  "summary": {
+    "production_sites": 24,
+    "portable_owner_sites": 6,
+    "trust_inputs_not_network_authorities": 3,
+    "unclassified_production_sites": 0,
+    "production_udp_bind_sites": 0
+  }
+}
