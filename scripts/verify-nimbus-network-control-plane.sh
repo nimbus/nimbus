@@ -3,8 +3,8 @@
 #
 # NNC0.8 intentionally lands this gate red: later extraction bands remove the
 # named legacy authorities and create `nimbus-network`. Missing inputs are hard
-# failures. Run `--self-test` to prove the missing-input and unclassified-bind
-# diagnostics themselves fail closed.
+# failures. Run `--self-test` to prove missing-input, unclassified-bind, and
+# low-level source-contract diagnostics themselves fail closed.
 
 set -u
 
@@ -17,6 +17,7 @@ INVENTORY="${NIMBUS_NETWORK_VERIFY_INVENTORY:-docs/private/plans/proof/nimbus-ne
 DEPENDENCIES="${NIMBUS_NETWORK_VERIFY_DEPENDENCIES:-docs/private/plans/proof/nimbus-network-control-plane/nnc0.1-dependency-graph.json}"
 NETWORK_MANIFEST="crates/nimbus-network/Cargo.toml"
 CORE_SOURCE_ROOT="${NIMBUS_NETWORK_VERIFY_CORE_SCAN_ROOT:-crates/nimbus-core/src}"
+SOURCE_CONTRACT_HELPER="scripts/verify-nimbus-network-source-contract.mjs"
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -677,6 +678,48 @@ verify_portable_vocabulary_owner() {
   fi
 }
 
+verify_forbidden_network_dependencies_effects() {
+  if [ ! -f "${SOURCE_CONTRACT_HELPER}" ]; then
+    fail "NNCV012" "forbidden-network-dependencies-effects" "missing ${SOURCE_CONTRACT_HELPER}"
+    return
+  fi
+  error="$(node "${SOURCE_CONTRACT_HELPER}" forbidden-dependencies-effects 2>&1)"
+  status=$?
+  if [ "${status}" -eq 0 ]; then
+    pass "NNCV012" "forbidden-network-dependencies-effects"
+  else
+    fail "NNCV012" "forbidden-network-dependencies-effects" "${error}"
+  fi
+}
+
+verify_single_network_definition_owner() {
+  if [ ! -f "${SOURCE_CONTRACT_HELPER}" ]; then
+    fail "NNCV013" "single-network-definition-owner" "missing ${SOURCE_CONTRACT_HELPER}"
+    return
+  fi
+  error="$(node "${SOURCE_CONTRACT_HELPER}" single-definition-owner 2>&1)"
+  status=$?
+  if [ "${status}" -eq 0 ]; then
+    pass "NNCV013" "single-network-definition-owner"
+  else
+    fail "NNCV013" "single-network-definition-owner" "${error}"
+  fi
+}
+
+verify_address_is_not_network_identity() {
+  if [ ! -f "${SOURCE_CONTRACT_HELPER}" ]; then
+    fail "NNCV014" "address-is-not-network-identity" "missing ${SOURCE_CONTRACT_HELPER}"
+    return
+  fi
+  error="$(node "${SOURCE_CONTRACT_HELPER}" address-is-not-identity 2>&1)"
+  status=$?
+  if [ "${status}" -eq 0 ]; then
+    pass "NNCV014" "address-is-not-network-identity"
+  else
+    fail "NNCV014" "address-is-not-network-identity" "${error}"
+  fi
+}
+
 run_self_test() {
   temporary="$(mktemp -d "${TMPDIR:-/tmp}/nimbus-network-verifier-self-test.XXXXXX")" || {
     printf 'SELFTEST FAIL unable to create temporary directory\n'
@@ -775,11 +818,114 @@ run_self_test() {
     printf 'SELFTEST PASS missing core source fails closed as NNCV010\n'
   fi
 
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_FORBIDDEN_DEPENDENCY='nimbus-tenant' \
+    "${script}" >"${temporary}/forbidden-workspace-dependency.out" 2>&1; then
+    printf 'SELFTEST FAIL injected upper workspace dependency unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV012 forbidden-network-dependencies-effects' "${temporary}/forbidden-workspace-dependency.out" ||
+    grep -q '^PASS NNCV012 forbidden-network-dependencies-effects' "${temporary}/forbidden-workspace-dependency.out"; then
+    printf 'SELFTEST FAIL upper workspace dependency did not produce an exclusive NNCV012 failure\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS upper workspace dependency fails closed as NNCV012\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_FORBIDDEN_DEPENDENCY='axum' \
+    "${script}" >"${temporary}/forbidden-transport-dependency.out" 2>&1; then
+    printf 'SELFTEST FAIL injected transport dependency unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV012 forbidden-network-dependencies-effects' "${temporary}/forbidden-transport-dependency.out" ||
+    grep -q '^PASS NNCV012 forbidden-network-dependencies-effects' "${temporary}/forbidden-transport-dependency.out"; then
+    printf 'SELFTEST FAIL transport dependency did not produce an exclusive NNCV012 failure\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS transport dependency fails closed as NNCV012\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_FORBIDDEN_DEPENDENCY='aws-sdk-ec2' \
+    "${script}" >"${temporary}/forbidden-cloud-dependency.out" 2>&1; then
+    printf 'SELFTEST FAIL injected cloud SDK dependency unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV012 forbidden-network-dependencies-effects' "${temporary}/forbidden-cloud-dependency.out" ||
+    grep -q '^PASS NNCV012 forbidden-network-dependencies-effects' "${temporary}/forbidden-cloud-dependency.out"; then
+    printf 'SELFTEST FAIL cloud SDK dependency did not produce an exclusive NNCV012 failure\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS cloud SDK dependency fails closed as NNCV012\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_FORBIDDEN_EFFECT='fn bind_effect() { std::net::TcpListener::bind("127.0.0.1:0"); }' \
+    "${script}" >"${temporary}/forbidden-effect.out" 2>&1; then
+    printf 'SELFTEST FAIL injected provider effect unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV012 forbidden-network-dependencies-effects' "${temporary}/forbidden-effect.out" ||
+    grep -q '^PASS NNCV012 forbidden-network-dependencies-effects' "${temporary}/forbidden-effect.out"; then
+    printf 'SELFTEST FAIL injected provider effect did not produce an exclusive NNCV012 failure\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS injected provider effect fails closed as NNCV012\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_DUPLICATE_DEFINITION='pub struct NetworkPlan;' \
+    "${script}" >"${temporary}/duplicate-definition.out" 2>&1; then
+    printf 'SELFTEST FAIL injected duplicate definition unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV013 single-network-definition-owner' "${temporary}/duplicate-definition.out" ||
+    grep -q '^PASS NNCV013 single-network-definition-owner' "${temporary}/duplicate-definition.out"; then
+    printf 'SELFTEST FAIL injected duplicate definition did not produce an exclusive NNCV013 failure\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS injected duplicate definition fails closed as NNCV013\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_ADDRESS_IDENTITY='pub struct NetworkSegmentId(Cidr);' \
+    "${script}" >"${temporary}/address-identity.out" 2>&1; then
+    printf 'SELFTEST FAIL injected address identity unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV014 address-is-not-network-identity' "${temporary}/address-identity.out" ||
+    grep -q '^PASS NNCV014 address-is-not-network-identity' "${temporary}/address-identity.out"; then
+    printf 'SELFTEST FAIL injected address identity did not produce an exclusive NNCV014 failure\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS injected address identity fails closed as NNCV014\n'
+  fi
+
+  NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_FORBIDDEN_EFFECT=$'// TcpListener::bind is documentation only.\nconst NOTE: &str = "std::net::TcpListener::bind";\nfn pure_contract() {}\n' \
+    "${script}" >"${temporary}/non-code-effect-terms.out" 2>&1 || true
+  if ! grep -q '^PASS NNCV012 forbidden-network-dependencies-effects' "${temporary}/non-code-effect-terms.out" ||
+    grep -q '^FAIL NNCV012 forbidden-network-dependencies-effects' "${temporary}/non-code-effect-terms.out"; then
+    printf 'SELFTEST FAIL comment/string provider terms were misclassified as effects\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS comment/string provider terms remain non-effects for NNCV012\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_NETWORK_SCAN_ROOT="${temporary}/missing-network-source" \
+    NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    "${script}" >"${temporary}/missing-network-source.out" 2>&1; then
+    printf 'SELFTEST FAIL missing network source unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV012 forbidden-network-dependencies-effects' "${temporary}/missing-network-source.out" ||
+    ! grep -q '^FAIL NNCV013 single-network-definition-owner' "${temporary}/missing-network-source.out" ||
+    ! grep -q '^FAIL NNCV014 address-is-not-network-identity' "${temporary}/missing-network-source.out"; then
+    printf 'SELFTEST FAIL missing network source did not fail all source-contract conditions\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS missing network source fails closed for NNCV012-NNCV014\n'
+  fi
+
   if [ "${self_fail}" -ne 0 ]; then
     printf 'self-test: %d failed\n' "${self_fail}"
     exit 1
   fi
-  printf 'self-test: 7 passed, 0 failed\n'
+  printf 'self-test: 15 passed, 0 failed\n'
 }
 
 if [ "${1:-}" = "--self-test" ]; then
@@ -806,6 +952,9 @@ verify_checkpoint_ledger
 verify_routing_owner
 verify_foundation_invariants
 verify_portable_vocabulary_owner
+verify_forbidden_network_dependencies_effects
+verify_single_network_definition_owner
+verify_address_is_not_network_identity
 
 printf '\nSummary: %d passed, %d failed\n' "${PASS_COUNT}" "${FAIL_COUNT}"
 if [ "${FAIL_COUNT}" -ne 0 ]; then
