@@ -27,6 +27,7 @@ pub(super) use super::super::{
     slugify, visible_published_endpoints,
 };
 pub(super) use crate::backend::{SandboxBackend, SandboxBackendKind};
+pub(super) use crate::backends::conmon::lifecycle::RestartLaunchTestProbe;
 pub(super) use crate::backends::oci::buildah::{
     ImageHealthcheck, OciExposedPort, OciExposedPortProtocol, OciImageLaunchDefaults,
 };

@@ -142,6 +142,18 @@ impl KrunSandboxBackend {
         manifest: &mut KrunSandboxManifest,
         clear_last_exit_code: bool,
     ) -> Result<()> {
+        #[cfg(test)]
+        if let Some(probe) = self.restart_launch_test_probe.as_ref() {
+            probe.intercept_provider_launch()?;
+            manifest.shutdown_requested = false;
+            manifest.next_restart_at_millis = None;
+            if clear_last_exit_code {
+                manifest.last_exit_code = None;
+            }
+            synchronize_handle_status(manifest, SandboxStatus::Starting);
+            return self.write_manifest(manifest);
+        }
+
         ensure_linux_host("krun")?;
         ensure_guest_user_helper_available(&self.config, manifest)?;
         // Stand up the deny-by-default network namespace (deny chain + inbound

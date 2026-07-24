@@ -1,6 +1,6 @@
 # Nimbus Network Control Plane Plan
 
-Status: `active; NNC0.6 complete; NNC0.6a inspect/restart race baselines in progress`
+Status: `active; NNC0.6a complete; NNC0.7 orphan/listener baselines in progress`
 
 Owner: this plan is the sole implementation control plane for the
 transport-free `nimbus-network` crate and the connectivity-resource lifecycle
@@ -36,19 +36,19 @@ ledger transition.
 
 | Field | Current value |
 | --- | --- |
-| Plan status | `active; NNC0.6 complete; NNC0.6a inspect/restart race baselines in progress` |
+| Plan status | `active; NNC0.6a complete; NNC0.7 orphan/listener baselines in progress` |
 | Current band | `NNC0 — executable baselines and verifier` |
-| Current item | `NNC0.6a — fail-before inspect/self-restart versus withdrawal for container and krun` |
-| Last completed item | `NNC0.6 — concurrent service withdrawal and partial attachment readiness baselines` |
-| Next action | Trace both execute-mode `inspect_sync` paths through restart policy and launch, then introduce a bounded semantic barrier that races withdrawal/fencing against the actual self-restart side effect for container and krun; a readiness-only substitute is not sufficient. |
+| Current item | `NNC0.7 — effect-before-hold, orphan blind-spot, and sibling-listener partial-start baselines` |
+| Last completed item | `NNC0.6a — inspect/self-restart versus withdrawal baselines for container and krun` |
+| Next action | Trace both OCI-family setup effect→hold ordering and the current orphan classifier, then trace server sibling-listener startup/task ownership; inject exact crash/effect matrices and kth-adapter failure to prove missing ownership evidence and any surviving earlier listener. |
 | Owner branch | `codex/nimbus-network-architecture-audit` |
 | Owner worktree | `/Users/jack/src/github.com/nimbus/nimbus-network-architecture-audit` |
 | Audit base | Original architecture audit: `b69007a78a220847812370d9418049f1253f0384`. |
 | Execution base | Rebased without conflicts onto `origin/main` at `9c2d4f150c60f43dfdc0a3f1ec6550942e26ab8f` after NNC0.0. |
-| Last checkpoint commit | `d68b548ed` — NNC0.5 completion and NNC0.6 activation checkpoint. |
-| Audit dirty state | NNC0.6 completion owns test-only service-manager stop barrier/baseline paths, container and krun partial-attachment readiness baselines, this plan transition, and `docs/private/plans/proof/nimbus-network-control-plane/nnc0.6-withdrawal-attachment-readiness-baselines.md`. No production behavior, manifest, or dependency edge changed. |
+| Last checkpoint commit | `f57bfbb3f` — NNC0.6 completion and NNC0.6a activation checkpoint. |
+| Audit dirty state | NNC0.6a completion owns the `cfg(test)` shared restart-launch probe, container/krun test hook fields and launch interceptors, two ignored inspect/restart race baselines, this plan transition, and `docs/private/plans/proof/nimbus-network-control-plane/nnc0.6a-inspect-restart-withdrawal-baselines.md`. Production builds contain no probe or hook; no manifest schema or dependency edge changed. |
 | Execution mode | Autonomous implementation goal active; commit each completed item with its ledger/evidence checkpoint; no push or PR without separate authority. |
-| Last verification | NNC0.6: three exact ignored fail-before tests exit `101` only because cached service resolution remains routable after stop enters, container liveness reports ready without complete attachment evidence, and krun accepts a netns path plus ready PEP without Netavark/pin phase evidence. Ordinary services tests pass 93/93 with one expected-red ignored; sandbox tests pass 245/245 across applicable unit/bin targets with ten expected-red/child-role ignores; both crates' all-target Clippy, format, diff, and independent review are clean. Exact evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc0.6-withdrawal-attachment-readiness-baselines.md`. |
+| Last verification | NNC0.6a: two exact ignored fail-before tests exit `101` only because container and krun inspection each enter their real provider-launch authority after restart policy, then overwrite a durable withdrawal and record one launch effect. Sandbox tests pass 245/245 across applicable unit/bin targets with twelve expected-red/child-role ignores; all-target Clippy, format, diff, and independent review are clean. Exact evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc0.6a-inspect-restart-withdrawal-baselines.md`. |
 | Blocking decision | None. NNC0.0 is authorized; no fetch/rebase may precede its durability commit. Exact Rust names otherwise remain band-local decisions subject to NNC0 proofs and the seam-promotion rule. |
 
 Recovery protocol:
@@ -1265,8 +1265,8 @@ checkpoint.
 | NNC0.4 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc0.4-torn-corrupt-state-baselines.md`; torn IPAM JSON fails closed with its authority path, while the segment diagnostic omits the path and valid-looking corruption in either unchecked store reissues the live `10.0.0.0/24` or `10.89.0.2`. Three exact safe assertions exit `101`; 12 ordinary focused tests, all-target Clippy, format/diff/docs, and independent review are green. |
 | NNC0.5 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc0.5-block-reuse-expired-cleanup-baselines.md`; a freed secondary `/30` slot is skipped for a newly grown third block, and an expired cluster lease correctly rejects new create but incorrectly rejects release of its durable old hold. Both exact safe assertions exit `101`; six ordinary focused tests, all-target Clippy, format/diff/docs, and independent review are green. |
 | NNC0.6 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc0.6-withdrawal-attachment-readiness-baselines.md`; a bounded semantic barrier proves cache-only service resolution remains routable while backend stop is parked, and container/krun tests prove readiness accepts incomplete attachment evidence. All three exact safety assertions exit `101`; 93 ordinary services tests and 245 applicable sandbox unit/bin tests pass, with expected-red/child-role tests ignored; all-target Clippy, format/diff, and independent review are green. |
-| NNC0.6a | `in_progress` | Owned paths at activation: NNC0.6 service/sandbox test-only baselines, proof, and plan checkpoint until their focused commit; no NNC0.6a source edit yet. Last green commit: `d68b548ed`; last green commands: ordinary services/sandbox suites plus both crates' all-target Clippy. Next: trace container and krun `inspect_sync` through restart policy/launch and add a deterministic withdrawal-versus-self-restart barrier for each backend. Blocker: none. |
-| NNC0.7 | `todo` | — |
+| NNC0.6a | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc0.6a-inspect-restart-withdrawal-baselines.md`; a shared bounded launch-entry probe proves both `inspect_sync` paths traverse restart policy into provider launch authority, then a stale copy overwrites durable withdrawal and records one effect. Both exact safety assertions exit `101`; 245 applicable sandbox unit/bin tests pass with expected-red/child-role tests ignored; all-target Clippy, format/diff, and independent review are green. |
+| NNC0.7 | `in_progress` | Owned paths at activation: NNC0.6a sandbox test-only probe/hooks/baselines, proof, and plan checkpoint until their focused commit; no NNC0.7 source edit yet. Last green commit: `f57bfbb3f`; last green commands: ordinary sandbox suite plus sandbox all-target Clippy. Next: trace OCI setup effect→hold and orphan evidence matrices plus server sibling-listener startup/unwind, then add exact crash/failure fail-before tests. Blocker: none. |
 | NNC0.8 | `todo` | — |
 | NNC0.9 | `todo` | — |
 | NNC1.1 | `todo` | — |

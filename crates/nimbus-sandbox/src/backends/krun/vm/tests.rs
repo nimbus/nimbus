@@ -1280,6 +1280,81 @@ fn restart_backoff_delay_grows_and_caps() {
     assert_eq!(restart_backoff_delay(12), Duration::from_secs(60));
 }
 
+/// NNC0.6a fail-before baseline for NNCF20. The barrier is inside the actual
+/// krun provider-launch entry selected by inspect restart policy. Withdrawal
+/// persists while inspection holds a stale manifest; release proves inspection
+/// still performs and republishes the restart side effect.
+#[test]
+#[ignore = "NNC0.6a expected red until NNC5.6/NNC6.4a make inspect side-effect-free and fence restart"]
+fn nnc0_6a_krun_inspect_must_not_restart_after_withdrawal() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let restart_probe = RestartLaunchTestProbe::new(Duration::from_secs(1));
+    let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::under_root(
+        temp_dir.path().to_path_buf(),
+    ))
+    .with_restart_launch_test_probe(restart_probe.clone());
+    let sandbox_id = SandboxId::new("nnc0-6a-krun");
+    let mut manifest = backend
+        .plan_start_with_id(
+            &sample_spec_for_tenant("tenant-nnc0-6a", "restart-race")
+                .with_restart_policy(SandboxRestartPolicy::OnFailure { max_restarts: 1 }),
+            &sandbox_id,
+            None,
+            None,
+        )
+        .expect("execute manifest should plan")
+        .manifest;
+    manifest.conmon_launch.delete_command = CommandSpec::new("/usr/bin/true");
+    manifest.next_restart_at_millis = Some(0);
+    fs::write(&manifest.conmon_layout.exit_status_file, "42\n")
+        .expect("failed exit should persist");
+    backend
+        .write_manifest(&manifest)
+        .expect("restart-eligible manifest should persist");
+
+    let inspect_backend = backend.clone();
+    let inspect_id = sandbox_id.clone();
+    let inspect_thread = thread::spawn(move || inspect_backend.inspect_sync(&inspect_id));
+    if !restart_probe.wait_until_entered() {
+        let inspect_result = inspect_thread
+            .join()
+            .expect("inspect thread should join after a missing barrier");
+        panic!(
+            "inspect must reach the provider-launch barrier through restart policy; \
+             inspect completed instead with {inspect_result:?}"
+        );
+    }
+
+    let mut withdrawn = manifest;
+    withdrawn.shutdown_requested = true;
+    withdrawn.next_restart_at_millis = None;
+    withdrawn.status = SandboxStatus::Stopped;
+    withdrawn.handle.status = SandboxStatus::Stopped;
+    withdrawn.handle.published_endpoints.clear();
+    backend
+        .write_manifest(&withdrawn)
+        .expect("coordinator withdrawal should persist before launch release");
+
+    restart_probe.release();
+    let inspected = inspect_thread
+        .join()
+        .expect("inspect thread should join")
+        .expect("current inspect restart should complete through the test provider")
+        .expect("manifest should remain inspectable");
+    assert_eq!(
+        inspected.status,
+        SandboxStatus::Starting,
+        "precondition: stale inspection currently reactivates the withdrawn manifest"
+    );
+
+    assert_eq!(
+        restart_probe.effect_count(),
+        0,
+        "NNCF20: inspect must be side-effect-free; a withdrawal/fence persisted before \
+         release must veto the stale krun restart provider effect"
+    );
+}
+
 #[test]
 fn manifest_deserialization_defaults_restart_fields_for_pre_restart_manifests() {
     let manifest: KrunSandboxManifest = serde_json::from_value(json!({

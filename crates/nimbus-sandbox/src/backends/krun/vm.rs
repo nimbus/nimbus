@@ -11,6 +11,8 @@ use ulid::Ulid;
 
 use super::bundle::{KrunBundleLayout, KrunBundleMount, KrunBundleOptions, write_bundle_config};
 use crate::backend::{SandboxBackend, SandboxBackendKind, SandboxFuture};
+#[cfg(test)]
+use crate::backends::conmon::lifecycle::RestartLaunchTestProbe;
 use crate::backends::conmon::lifecycle::{
     RuntimeStatusProbe, configured_stop_signal, configured_stop_timeout,
     detect_runtime_status as detect_conmon_runtime_status, ensure_linux_host, read_exit_code,
@@ -176,6 +178,8 @@ impl Default for KrunSandboxBackendConfig {
 pub struct KrunSandboxBackend {
     config: KrunSandboxBackendConfig,
     egress_proxies: EgressProxyRegistry,
+    #[cfg(test)]
+    restart_launch_test_probe: Option<RestartLaunchTestProbe>,
 }
 
 impl KrunSandboxBackend {
@@ -196,7 +200,15 @@ impl KrunSandboxBackend {
         Self {
             config,
             egress_proxies,
+            #[cfg(test)]
+            restart_launch_test_probe: None,
         }
+    }
+
+    #[cfg(test)]
+    fn with_restart_launch_test_probe(mut self, probe: RestartLaunchTestProbe) -> Self {
+        self.restart_launch_test_probe = Some(probe);
+        self
     }
 
     /// The per-node segment allocator, constructed on demand from the state root

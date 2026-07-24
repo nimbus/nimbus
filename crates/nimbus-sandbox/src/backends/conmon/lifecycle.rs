@@ -1,5 +1,10 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
+#[cfg(test)]
+use std::{
+    sync::{Arc, Condvar, Mutex},
+    time::Duration as TestDuration,
+};
 
 use serde::Deserialize;
 
@@ -12,6 +17,89 @@ use crate::spec::{SandboxRestartPolicy, SandboxSpec};
 
 const DEFAULT_RESTART_BACKOFF_INITIAL_MILLIS: u64 = 1_000;
 const DEFAULT_RESTART_BACKOFF_MAX_MILLIS: u64 = 60_000;
+
+/// Test-only semantic barrier at the provider launch entry. It lets a
+/// concurrent test persist withdrawal after inspection has chosen restart but
+/// before the provider effect is observed, without sleeps or a live OCI
+/// runtime. Production builds contain neither this type nor the hook fields
+/// that consume it.
+#[cfg(test)]
+#[derive(Clone)]
+pub(crate) struct RestartLaunchTestProbe {
+    shared: Arc<(Mutex<RestartLaunchTestState>, Condvar)>,
+    timeout: TestDuration,
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct RestartLaunchTestState {
+    entered: bool,
+    released: bool,
+    effects: usize,
+}
+
+#[cfg(test)]
+impl RestartLaunchTestProbe {
+    pub(crate) fn new(timeout: TestDuration) -> Self {
+        Self {
+            shared: Arc::new((
+                Mutex::new(RestartLaunchTestState::default()),
+                Condvar::new(),
+            )),
+            timeout,
+        }
+    }
+
+    pub(crate) fn intercept_provider_launch(&self) -> Result<()> {
+        let (lock, changed) = &*self.shared;
+        let mut state = lock.lock().map_err(|_| SandboxError::OperationFailed {
+            message: "restart launch test probe lock was poisoned".to_owned(),
+        })?;
+        state.entered = true;
+        changed.notify_all();
+        let (mut state, wait) = changed
+            .wait_timeout_while(state, self.timeout, |state| !state.released)
+            .map_err(|_| SandboxError::OperationFailed {
+                message: "restart launch test probe wait was poisoned".to_owned(),
+            })?;
+        if wait.timed_out() && !state.released {
+            return Err(SandboxError::OperationFailed {
+                message: "restart launch test probe timed out awaiting release".to_owned(),
+            });
+        }
+        state.effects += 1;
+        changed.notify_all();
+        Ok(())
+    }
+
+    pub(crate) fn wait_until_entered(&self) -> bool {
+        let (lock, changed) = &*self.shared;
+        let state = lock
+            .lock()
+            .expect("restart launch test probe lock should not be poisoned");
+        let (state, _) = changed
+            .wait_timeout_while(state, self.timeout, |state| !state.entered)
+            .expect("restart launch test probe wait should not be poisoned");
+        state.entered
+    }
+
+    pub(crate) fn release(&self) {
+        let (lock, changed) = &*self.shared;
+        let mut state = lock
+            .lock()
+            .expect("restart launch test probe lock should not be poisoned");
+        state.released = true;
+        changed.notify_all();
+    }
+
+    pub(crate) fn effect_count(&self) -> usize {
+        self.shared
+            .0
+            .lock()
+            .expect("restart launch test probe lock should not be poisoned")
+            .effects
+    }
+}
 
 pub(crate) fn restart_policy_allows_restart(
     policy: SandboxRestartPolicy,
