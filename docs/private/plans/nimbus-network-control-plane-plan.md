@@ -1,6 +1,6 @@
 # Nimbus Network Control Plane Plan
 
-Status: `active; NNC0.3 complete; NNC0.4 torn/corrupt state baseline in progress`
+Status: `active; NNC0.4 complete; NNC0.5 block-reuse/lease-expiry baselines in progress`
 
 Owner: this plan is the sole implementation control plane for the
 transport-free `nimbus-network` crate and the connectivity-resource lifecycle
@@ -36,19 +36,19 @@ ledger transition.
 
 | Field | Current value |
 | --- | --- |
-| Plan status | `active; NNC0.3 complete; NNC0.4 torn/corrupt state baseline in progress` |
+| Plan status | `active; NNC0.4 complete; NNC0.5 block-reuse/lease-expiry baselines in progress` |
 | Current band | `NNC0 — executable baselines and verifier` |
-| Current item | `NNC0.4 — fail-before torn/corrupt segment/IPAM state` |
-| Last completed item | `NNC0.3 — segment cleanup-failure/reuse race baseline` |
-| Next action | Trace every `segments.json` read/write/fsync/rename boundary and its recovery behavior, then add deterministic truncation and exact crash-cut cases that reach the named unsafe or unhandled state without relying on an unrelated parse or fixture failure. |
+| Current item | `NNC0.5 — fail-before secondary-block reuse and expired-lease cleanup` |
+| Last completed item | `NNC0.4 — torn/corrupt segment and IPAM state baselines` |
+| Next action | Trace block-aware placement across all existing tenant blocks and the cluster allocator's lease checks around release; add deterministic cases proving stranded secondary capacity triggers unnecessary growth and an expired lease blocks cleanup of a durable old hold. |
 | Owner branch | `codex/nimbus-network-architecture-audit` |
 | Owner worktree | `/Users/jack/src/github.com/nimbus/nimbus-network-architecture-audit` |
 | Audit base | Original architecture audit: `b69007a78a220847812370d9418049f1253f0384`. |
 | Execution base | Rebased without conflicts onto `origin/main` at `9c2d4f150c60f43dfdc0a3f1ec6550942e26ab8f` after NNC0.0. |
-| Last checkpoint commit | `d2bedefc5` — NNC0.2 completion and NNC0.3 activation checkpoint. |
-| Audit dirty state | NNC0.3 completion owns the shared container/krun release/reap extraction in `nimbus-sandbox`, its ignored expected-red test, this plan transition, and `docs/private/plans/proof/nimbus-network-control-plane/nnc0.3-segment-cleanup-reuse-baseline.md`. No manifest or dependency edge changed. |
+| Last checkpoint commit | `973db83d2` — NNC0.3 completion and NNC0.4 activation checkpoint. |
+| Audit dirty state | NNC0.4 completion owns test-only torn/corrupt state baselines in sandbox `segment.rs` and `ipam.rs`, this plan transition, and `docs/private/plans/proof/nimbus-network-control-plane/nnc0.4-torn-corrupt-state-baselines.md`. No production source, manifest, or dependency edge changed. |
 | Execution mode | Autonomous implementation goal active; commit each completed item with its ledger/evidence checkpoint; no push or PR without separate authority. |
-| Last verification | NNC0.3: the exact ignored fail-before exits `101` only because the replacement tenant receives the surviving-effect `10.0.0.0/24`; ordinary reaper and segment suites pass 12 tests with one expected-red ignored; sandbox all-target check/Clippy, format, diff, docs, and the scoped second independent review pass are clean. Exact evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc0.3-segment-cleanup-reuse-baseline.md`. |
+| Last verification | NNC0.4: three exact ignored fail-before tests exit `101` only for missing segment-state path or accepted semantic corruption that reissues the live CIDR/IP; the torn-IPAM positive control and 12 ordinary focused tests pass with three expected-red ignored; sandbox all-target Clippy, format, diff, docs, and independent review are clean. Exact evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc0.4-torn-corrupt-state-baselines.md`. |
 | Blocking decision | None. NNC0.0 is authorized; no fetch/rebase may precede its durability commit. Exact Rust names otherwise remain band-local decisions subject to NNC0 proofs and the seam-promotion rule. |
 
 Recovery protocol:
@@ -1262,8 +1262,8 @@ checkpoint.
 | NNC0.1b | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc0.1b-subprocess-crash-cut-harness.md`; exact-boundary kill plus fresh-process same-root state/effect recovery pass; wrong boundary, crash/recovery early exit and timeout, mismatch, and cleanup are diagnostic. Cargo test/nextest: 13/13 parent tests; check/clippy/format/docs passed. No manifest edge. |
 | NNC0.2 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc0.2-port-allocation-race-baselines.md`; two real sandbox/PEP allocator children fail the distinct-lease invariant with `41337 == 41337`; a real external owner wins the post-probe machine port, provider bind is `AddrInUse`, and persisted state fails the no-stale-claim invariant with `Some(port) == Some(port)`. Expected-red parents are ignored in ordinary CI; 11 sibling tests, Clippy, format/diff/docs, and second review pass are green. |
 | NNC0.3 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc0.3-segment-cleanup-reuse-baseline.md`; forced provider cleanup failure leaves the original bridge effect present, then the real durable allocator gives the replacement tenant the same `10.0.0.0/24` segment. The exact safety assertion exits `101`; 12 ordinary focused tests, all-target check/Clippy, format/diff/docs, and scoped second review pass are green. NNC2.5 owns quarantine and green conversion. |
-| NNC0.4 | `in_progress` | Owned paths at activation: NNC0.3 sandbox release/reap extraction, expected-red test, proof, and plan checkpoint until its focused commit; no NNC0.4 source edit yet. Last green commit: `d2bedefc5`; last green commands: focused reaper/segment suites plus sandbox all-target check/Clippy. Next: inventory direct `segments.json` persistence boundaries and add deterministic truncation/exact crash-cut baselines at the named unsafe boundary. Blocker: none. |
-| NNC0.5 | `todo` | — |
+| NNC0.4 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc0.4-torn-corrupt-state-baselines.md`; torn IPAM JSON fails closed with its authority path, while the segment diagnostic omits the path and valid-looking corruption in either unchecked store reissues the live `10.0.0.0/24` or `10.89.0.2`. Three exact safe assertions exit `101`; 12 ordinary focused tests, all-target Clippy, format/diff/docs, and independent review are green. |
+| NNC0.5 | `in_progress` | Owned paths at activation: NNC0.4 sandbox state tests, proof, and plan checkpoint until its focused commit; no NNC0.5 source edit yet. Last green commit: `973db83d2`; last green commands: focused segment/IPAM suites plus sandbox all-target Clippy. Next: inspect `place_sandbox_on_block`, every secondary-block occupancy scan, and `ClusterSegmentAllocator::release` lease validation, then add exact fail-before capacity and expired-cleanup cases. Blocker: none. |
 | NNC0.6 | `todo` | — |
 | NNC0.6a | `todo` | — |
 | NNC0.7 | `todo` | — |

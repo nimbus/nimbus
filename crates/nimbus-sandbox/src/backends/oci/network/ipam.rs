@@ -315,3 +315,84 @@ fn ipv4_to_u32(ip: Ipv4Addr) -> u32 {
 fn u32_to_ipv4(value: u32) -> Ipv4Addr {
     Ipv4Addr::from(value)
 }
+
+#[cfg(test)]
+mod tests {
+    use nimbus_core::TenantId;
+    use tempfile::tempdir;
+
+    use super::*;
+
+    fn fixture() -> (
+        tempfile::TempDir,
+        OciNetworkLayout,
+        OciNetworkConfig,
+        SandboxId,
+    ) {
+        let dir = tempdir().expect("temp dir");
+        let tenant = TenantId::new("tenant-original").expect("tenant should parse");
+        let sandbox = SandboxId::new("sandbox-original");
+        let layout = OciNetworkLayout::new(dir.path(), &tenant, &sandbox);
+        (dir, layout, OciNetworkConfig::default(), sandbox)
+    }
+
+    #[test]
+    fn torn_ipam_state_fails_closed_with_the_authority_path() {
+        let (_dir, layout, config, sandbox) = fixture();
+        allocate_container_ips(&layout, &config, &sandbox).expect("original IP should allocate");
+        fs::write(&layout.ipam_state_path, b"{").expect("torn state should be installed");
+
+        let error =
+            load_container_ips(&layout, &sandbox).expect_err("torn IPAM JSON must fail closed");
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("failed to parse OCI IPAM state"),
+            "the failure must reach the IPAM parse boundary: {rendered}"
+        );
+        assert!(
+            rendered.contains(&layout.ipam_state_path.display().to_string()),
+            "the corruption diagnostic must name the affected authority path: {rendered}"
+        );
+    }
+
+    #[test]
+    // NNC0.4 fail-before: this valid JSON erases the committed allocation
+    // without tripping serde. NNC2.1 owns the checksum/version envelope, will
+    // make the final fail-closed assertion pass, and must remove this ignore.
+    #[ignore = "NNC0.4 expected red until checksums reject valid IPAM-state corruption"]
+    fn semantically_valid_ipam_state_corruption_must_not_reissue_a_live_ip() {
+        let (_dir, layout, config, original_sandbox) = fixture();
+        let original = allocate_container_ips(&layout, &config, &original_sandbox)
+            .expect("original IP should allocate");
+        fs::write(
+            &layout.ipam_state_path,
+            br#"{
+  "allocations": {},
+  "last_assigned_ip": null
+}"#,
+        )
+        .expect("semantically corrupt IPAM state should be installed");
+
+        let replacement =
+            allocate_container_ips(&layout, &config, &SandboxId::new("sandbox-replacement"));
+        match replacement.as_ref() {
+            Ok(ips) => assert_eq!(
+                ips, &original,
+                "the unchecked corruption must expose the audited live-IP reuse"
+            ),
+            Err(error) => {
+                let rendered = error.to_string();
+                assert!(
+                    ["checksum", "corrupt", "integrity", "version"]
+                        .iter()
+                        .any(|needle| rendered.to_ascii_lowercase().contains(needle)),
+                    "a fixed store must reject corruption with a named integrity error: {rendered}"
+                );
+            }
+        }
+        assert!(
+            replacement.is_err(),
+            "semantically valid corruption must fail closed instead of reissuing a live IP"
+        );
+    }
+}

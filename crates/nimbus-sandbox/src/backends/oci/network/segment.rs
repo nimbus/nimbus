@@ -773,4 +773,84 @@ mod tests {
             "grow must fail closed on exhaustion, got: {error}"
         );
     }
+
+    #[test]
+    // NNC0.4 fail-before: the current parser does reject torn JSON, but its
+    // diagnostic omits the authority path. NNC2.1 owns the actionable,
+    // versioned corruption error and removal of this ignore marker.
+    #[ignore = "NNC0.4 expected red until torn segment state names its authority path"]
+    fn torn_segment_state_error_must_name_the_authority_path() {
+        let dir = tempdir().expect("temp dir");
+        let allocator = SingleNodeSegmentAllocator::single_node_default(dir.path());
+        allocator
+            .acquire(&tenant("tenant-original"), &sandbox("sandbox-original"))
+            .expect("original segment should allocate");
+        let state_path = allocator.state_path();
+        fs::write(&state_path, b"{").expect("torn state should be installed");
+
+        let restarted = SingleNodeSegmentAllocator::single_node_default(dir.path());
+        let error = restarted
+            .acquire(
+                &tenant("tenant-replacement"),
+                &sandbox("sandbox-replacement"),
+            )
+            .expect_err("torn segment JSON must fail closed");
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("failed to parse network segment state"),
+            "the failure must reach the segment-state parse boundary: {rendered}"
+        );
+        assert!(
+            rendered.contains(&state_path.display().to_string()),
+            "a corruption diagnostic must name the affected authority path: {rendered}"
+        );
+    }
+
+    #[test]
+    // NNC0.4 fail-before: this valid JSON erases the committed owner without
+    // tripping serde. NNC2.1 owns the checksum/version envelope, will make the
+    // final fail-closed assertion pass, and must remove this ignore marker.
+    #[ignore = "NNC0.4 expected red until checksums reject valid segment-state corruption"]
+    fn semantically_valid_segment_state_corruption_must_not_reissue_a_live_segment() {
+        let dir = tempdir().expect("temp dir");
+        let allocator = SingleNodeSegmentAllocator::single_node_default(dir.path());
+        let original = allocator
+            .acquire(&tenant("tenant-original"), &sandbox("sandbox-original"))
+            .expect("original segment should allocate");
+        fs::write(
+            allocator.state_path(),
+            br#"{
+  "supernet_cidr": "10.0.0.0/16",
+  "supernet_epoch": 0,
+  "tenants": {}
+}"#,
+        )
+        .expect("semantically corrupt state should be installed");
+
+        let restarted = SingleNodeSegmentAllocator::single_node_default(dir.path());
+        let replacement = restarted.acquire(
+            &tenant("tenant-replacement"),
+            &sandbox("sandbox-replacement"),
+        );
+        match replacement.as_ref() {
+            Ok(segment) => assert_eq!(
+                segment.cidr(),
+                original.cidr(),
+                "the unchecked corruption must expose the audited live-segment reuse"
+            ),
+            Err(error) => {
+                let rendered = error.to_string();
+                assert!(
+                    ["checksum", "corrupt", "integrity", "version"]
+                        .iter()
+                        .any(|needle| rendered.to_ascii_lowercase().contains(needle)),
+                    "a fixed store must reject corruption with a named integrity error: {rendered}"
+                );
+            }
+        }
+        assert!(
+            replacement.is_err(),
+            "semantically valid corruption must fail closed instead of reissuing a live segment"
+        );
+    }
 }
