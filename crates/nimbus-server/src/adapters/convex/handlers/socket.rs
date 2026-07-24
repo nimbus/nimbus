@@ -1,4 +1,4 @@
-use super::registry_auth::registry_and_auth_for_path;
+use super::registry_auth::socket_admission_for_path;
 use super::*;
 
 /// WebSocket endpoint for Convex-style query subscriptions bound to a tenant in the URL.
@@ -10,7 +10,7 @@ pub(crate) async fn ws(
 ) -> Result<Response, AppError> {
     let negotiated_protocol = crate::ws::negotiate(&headers)?;
     let service = state.engine.clone();
-    let (registry, auth, tenant_context) = registry_and_auth_for_path(
+    let admission = socket_admission_for_path(
         &state,
         crate::local_server::LocalServerRouteFamily::ConvexWebSocket,
         tenant_id,
@@ -18,8 +18,7 @@ pub(crate) async fn ws(
         "convex websocket route requires Convex support state",
     )
     .await?;
-    let tenant_id = tenant_context.tenant_id().clone();
-    let socket_tenant_context = tenant_context.clone();
+    let tenant_id = admission.tenant_id().clone();
     if !nimbus_system::is_system_tenant_id(&tenant_id) {
         service
             .ensure_tenant_exists_async(tenant_id.clone())
@@ -37,16 +36,7 @@ pub(crate) async fn ws(
             else {
                 return;
             };
-            handle_convex_socket_for_tenant(
-                socket,
-                state,
-                registry,
-                tenant_id,
-                socket_tenant_context,
-                auth,
-                negotiated_protocol,
-            )
-            .await;
+            handle_convex_socket_for_tenant(socket, state, admission, negotiated_protocol).await;
         }),
     )
 }

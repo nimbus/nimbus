@@ -158,6 +158,7 @@ async fn deploy_admin_requires_local_admin_header_even_with_deploy_bearer() {
     .await;
 
     let request = json!({
+        "convex_silo": "demo",
         "artifacts": {
             "convex": {
                 "functions_json": { "functions": [] },

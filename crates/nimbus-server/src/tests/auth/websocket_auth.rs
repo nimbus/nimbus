@@ -125,6 +125,63 @@ async fn convex_websocket_auth_message_sets_runtime_identity() {
 }
 
 #[tokio::test]
+async fn convex_websocket_auth_message_cannot_switch_to_another_silo_verifier() {
+    let _guard = auth_test_guard().await;
+    let issuer = "https://other-silo.example.com";
+    let application_id = "other-silo";
+    let (other_silo_token, jwks_data_url) =
+        issue_es256_test_token(issuer, application_id, "other-silo-user", json!({}));
+    let registry = convex_registry_with_routes_and_bundle_and_auth(
+        json!([]),
+        json!([]),
+        None,
+        Some(json!({
+            "providers": [
+                {
+                    "type": "customJwt",
+                    "issuer": issuer,
+                    "jwks": jwks_data_url,
+                    "algorithm": "ES256",
+                    "applicationID": application_id
+                }
+            ]
+        })),
+    );
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let server = ServerFixture::start(router_for_convex_team(fixture.engine(), registry)).await;
+    let api = HttpApiFixture::new(&server);
+    assert_eq!(
+        api.create_tenant("demo").await.status(),
+        StatusCode::CREATED
+    );
+
+    let mut socket = WebSocketFixture::connect_for_browser_with_bearer(
+        &api.ws_url("/convex/demo/ws"),
+        "demo",
+        &convex_team_bearer(),
+    )
+    .await
+    .expect("silo-bound bearer should admit the websocket upgrade");
+    socket
+        .send_text(
+            json!({
+                "type": "authenticate",
+                "token": other_silo_token,
+            })
+            .to_string(),
+        )
+        .await;
+
+    let rejected = socket.next_json().await;
+    assert_eq!(rejected["type"], json!("error"));
+    assert_eq!(rejected["error"]["code"], json!("auth.unauthorized"));
+    assert_eq!(
+        rejected["error"]["message"],
+        json!("static convex team verifier rejects unknown bearer tokens")
+    );
+}
+
+#[tokio::test]
 async fn convex_websocket_disconnect_releases_runtime_subscription_children() {
     convex_websocket_disconnect_releases_runtime_subscription_children_inner().await;
 }

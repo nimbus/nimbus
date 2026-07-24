@@ -290,6 +290,8 @@ Every unique item remains visible here, including already-fixed and refuted
 claims, so completion cannot hide work by omission. The implementation branch
 was rebased onto updated `origin/main` at `c789db2fd`. RR26 records one additional
 private-fence regression discovered by the required docs-site completion gate.
+RR27 through RR29 record three release-readiness findings verified on
+2026-07-23 after the original remediation branch landed.
 
 | ID | Item | Where | Severity / verdict | Status |
 | --- | --- | --- | --- | --- |
@@ -319,6 +321,9 @@ private-fence regression discovered by the required docs-site completion gate.
 | RR24 | Make the crossbeam-epoch deny express the entire unsafe range promised by its comment. | `deny.toml` | info / confirmed | done (deny range covers the promised versions; `cargo deny check` green) |
 | RR25 | Delete the pre-launch consumer-compat-only `EgressEnforcementMode::LaunchMetadata` path. | `nimbus-egress`, CLI label/tests | info / confirmed | done (`sandbox_egress_enforcement_plan_rejects_removed_launch_metadata_mode` and CLI boundary regression green) |
 | RR26 | Restore the docs private fence after runtime evidence, review history, and Node proof artifacts were reintroduced at legacy public paths. | `docs/private/{architecture,code-review,plans}`, live Node tooling/references | low / confirmed by docs-site gate | done (legacy public trees removed, live references and generators repointed; the public Node support fallback now consumes only published projections; 108-page docs check, 17/17 site verifier, both generator checks, and the 9-pass/1-private-skip/0-fail public fallback gate are green) |
+| RR27 | Bind Convex WebSocket reauthentication to the URL-selected silo verifier from the same deployment snapshot that admitted the socket. | `nimbus-convex/src/silo_auth.rs`, server Convex registry/socket-auth/subscription seams | high / confirmed by fail-before cross-silo bearer acceptance | done (`ConvexSiloAuthAuthority` and `ConvexSocketAdmission` make the selected trust domain a snapshot-bound capability; four silo-auth unit tests plus the cross-silo rejection and existing identity WebSocket tests are green) |
+| RR28 | Restore the required Convex silo in the deploy-admin authorization fixture so the test reaches the security boundary it asserts. | `nimbus-server/src/tests/local_server_security.rs` | low / confirmed by fail-before 400 response | done (`deploy_admin_requires_local_admin_header_even_with_deploy_bearer` now reaches the valid deploy path and passes without weakening its authorization assertions) |
+| RR29 | Bind the Cloud Functions runtime-owner conformance fixture to its explicit HTTP tenant. | `nimbus-server/src/tests/runtime_owner_conformance.rs` | low / confirmed by fail-before 409 response | done (`cloud_functions_passes_runtime_owner_lifecycle_conformance` exercises the lifecycle contract through a valid trusted tenant binding and passes unchanged assertions) |
 
 Completion gate: every RR row is `done` or `no-action (reason)` with focused
 evidence, `cargo fmt --all --check`, `make clippy`, `make ci`, both docs gates,
@@ -348,6 +353,17 @@ with no accepted or actionable findings. Its two explicitly non-actionable
 observations were also checked: `backup_api` no longer exists in the license
 surface, and the narrower public Node projection intentionally makes its
 Node24-specific zero-gap check overlap the preceding all-version assertion.
+
+Release-readiness follow-up evidence (2026-07-23): RR27 through RR29 each
+failed deterministically before repair and passed after repair. The final
+`make ci` run passed 517 runtime tests (134 intentionally ignored), 4,853
+workspace tests (36 skipped), the required deterministic verification harness,
+all workspace JavaScript build/typecheck/test lanes (51 UI files / 336 tests),
+and the release/install proof helpers. Workspace Clippy first exposed an
+eight-argument socket entrypoint created by the security fix; the final design
+collapsed the correlated values into the concept-owned `ConvexSocketAdmission`
+capability and the rerun passed with warnings denied. The independent Opus 4.8
+high-reasoning structured review found no accepted or actionable findings.
 
 ### Band CP — `nimbus-compute` extraction (AD1, staged)
 

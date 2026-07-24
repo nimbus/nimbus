@@ -28,6 +28,7 @@ mod execution;
 pub(in crate::adapters::convex) mod handlers;
 mod host_bridge;
 mod http_actions;
+mod socket_auth;
 mod subscriptions;
 #[cfg(test)]
 mod tests;

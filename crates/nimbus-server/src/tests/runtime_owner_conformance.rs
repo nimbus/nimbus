@@ -13,8 +13,8 @@ use crate::adapters::cloud_functions::{
     CLOUD_FUNCTIONS_ARTIFACT_MANIFEST_FILE, CLOUD_FUNCTIONS_INTERNAL_ARTIFACT_DIR,
     CLOUD_FUNCTIONS_TARGETS_MANIFEST_FILE, CloudFunctionsArtifactManifest,
     CloudFunctionsAuthoringSurface, CloudFunctionsExecutionPrincipal, CloudFunctionsHttpExposure,
-    CloudFunctionsRegistry, CloudFunctionsSignatureType, CloudFunctionsTargetBinding,
-    CloudFunctionsTargetDefinition, CloudFunctionsTargetsManifest,
+    CloudFunctionsHttpTenantBinding, CloudFunctionsRegistry, CloudFunctionsSignatureType,
+    CloudFunctionsTargetBinding, CloudFunctionsTargetDefinition, CloudFunctionsTargetsManifest,
 };
 
 trait RuntimeOwnerConformanceDriver {
@@ -206,6 +206,12 @@ async fn cloud_functions_passes_runtime_owner_lifecycle_conformance_subprocess()
     let server = ServerFixture::start(
         RouterBuildConfig::core(fixture.engine())
             .with_cloud_functions(registry)
+            .with_cloud_functions_http_tenant(
+                CloudFunctionsHttpTenantBinding::new(
+                    TenantId::new("demo").expect("HTTP tenant id should parse"),
+                )
+                .expect("HTTP tenant binding should build"),
+            )
             .build(),
     )
     .await;

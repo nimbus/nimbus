@@ -14,6 +14,45 @@ use std::sync::Arc;
 use nimbus_auth::{ApplicationAuthError, ApplicationAuthVerifier};
 use nimbus_core::{InvocationAuth, TenantId};
 
+/// Snapshot-bound authority for one Convex silo.
+///
+/// Long-lived transports retain this value so every authentication attempt
+/// uses the verifier selected from the same deployment snapshot that admitted
+/// the transport. Replacing the active deployment cannot silently switch the
+/// trust domain of an established connection.
+#[derive(Clone)]
+pub struct ConvexSiloAuthAuthority {
+    silo: TenantId,
+    verifier: Option<Arc<dyn ApplicationAuthVerifier>>,
+}
+
+impl ConvexSiloAuthAuthority {
+    /// Verify with the verifier captured for this authority's silo. Missing
+    /// provisioning fails closed instead of falling back to another verifier.
+    pub async fn verify_bearer_token(
+        &self,
+        token: &str,
+    ) -> Result<InvocationAuth, ApplicationAuthError> {
+        let verifier = self.verifier.as_ref().ok_or_else(|| {
+            ApplicationAuthError::unauthorized(format!(
+                "no Convex auth providers are configured for silo `{}`",
+                self.silo
+            ))
+        })?;
+        verifier.verify_bearer_token(token).await
+    }
+}
+
+impl fmt::Debug for ConvexSiloAuthAuthority {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ConvexSiloAuthAuthority")
+            .field("silo", &self.silo)
+            .field("provisioned", &self.verifier.is_some())
+            .finish()
+    }
+}
+
 /// Trusted, deployment-owned mapping from a Convex silo to that silo's
 /// application-auth verifier.
 #[derive(Clone, Default)]
@@ -40,6 +79,15 @@ impl ConvexSiloAuthRegistry {
         self.verifiers.get(silo.as_str()).cloned()
     }
 
+    /// Select a snapshot-bound authentication authority for a silo.
+    #[must_use]
+    pub fn authority_for_silo(&self, silo: &TenantId) -> ConvexSiloAuthAuthority {
+        ConvexSiloAuthAuthority {
+            silo: silo.clone(),
+            verifier: self.verifier_for_silo(silo),
+        }
+    }
+
     #[must_use]
     pub fn contains_silo(&self, silo: &TenantId) -> bool {
         self.verifiers.contains_key(silo.as_str())
@@ -57,12 +105,9 @@ impl ConvexSiloAuthRegistry {
         silo: &TenantId,
         token: &str,
     ) -> Result<InvocationAuth, ApplicationAuthError> {
-        let verifier = self.verifier_for_silo(silo).ok_or_else(|| {
-            ApplicationAuthError::unauthorized(format!(
-                "no Convex auth providers are configured for silo `{silo}`"
-            ))
-        })?;
-        verifier.verify_bearer_token(token).await
+        self.authority_for_silo(silo)
+            .verify_bearer_token(token)
+            .await
     }
 }
 
@@ -132,5 +177,45 @@ mod tests {
 
         assert!(error.message().contains("unprovisioned"));
         assert!(!error.message().contains("alpha-verifier"));
+    }
+
+    #[tokio::test]
+    async fn selected_authority_keeps_its_deployment_snapshot() {
+        let alpha = silo("alpha");
+        let original_registry = ConvexSiloAuthRegistry::new()
+            .bind(&alpha, Arc::new(NamedVerifier("original-verifier")));
+        let authority = original_registry.authority_for_silo(&alpha);
+        let replacement_registry =
+            original_registry.bind(&alpha, Arc::new(NamedVerifier("replacement-verifier")));
+
+        let authority_error = authority
+            .verify_bearer_token("same-token")
+            .await
+            .expect_err("fixture authority should refuse");
+        let replacement_error = replacement_registry
+            .verify_bearer_token(&alpha, "same-token")
+            .await
+            .expect_err("fixture verifier should refuse");
+
+        assert_eq!(authority_error.message(), "original-verifier:same-token");
+        assert_eq!(
+            replacement_error.message(),
+            "replacement-verifier:same-token"
+        );
+    }
+
+    #[tokio::test]
+    async fn unprovisioned_authority_remains_fail_closed() {
+        let authority = ConvexSiloAuthRegistry::new().authority_for_silo(&silo("unprovisioned"));
+
+        let error = authority
+            .verify_bearer_token("token")
+            .await
+            .expect_err("unprovisioned authority must fail closed");
+
+        assert_eq!(
+            error.message(),
+            "no Convex auth providers are configured for silo `unprovisioned`"
+        );
     }
 }

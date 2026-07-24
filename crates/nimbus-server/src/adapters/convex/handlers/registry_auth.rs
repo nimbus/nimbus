@@ -1,8 +1,15 @@
 use super::*;
-use crate::application_auth::verify_optional_convex_auth_from_headers_in_deployment;
+use crate::application_auth::verify_optional_convex_auth_from_headers;
 use crate::local_server::authorize_standard_server_access;
 use nimbus_auth::normalize_principal_context;
 use nimbus_tenant::TenantIsolationContext;
+
+struct ResolvedConvexRequest {
+    registry: Arc<ConvexRegistry>,
+    auth: Option<InvocationAuth>,
+    tenant_context: TenantIsolationContext,
+    socket_auth_authority: crate::adapters::convex::socket_auth::ConvexSocketAuthAuthority,
+}
 
 pub(super) async fn registry_and_auth_for_path(
     state: &Arc<AppState>,
@@ -22,6 +29,26 @@ pub(super) async fn registry_and_auth_for_path(
     registry_and_auth(state, route_family, &tenant_id, headers, expectation).await
 }
 
+pub(super) async fn socket_admission_for_path(
+    state: &Arc<AppState>,
+    route_family: crate::local_server::LocalServerRouteFamily,
+    tenant_id: String,
+    headers: &HeaderMap,
+    expectation: &'static str,
+) -> Result<crate::adapters::convex::socket_auth::ConvexSocketAdmission, AppError> {
+    let tenant_id = TenantId::new(tenant_id)?;
+    let resolved =
+        resolve_registry_and_auth(state, route_family, &tenant_id, headers, expectation).await?;
+    Ok(
+        crate::adapters::convex::socket_auth::ConvexSocketAdmission {
+            registry: resolved.registry,
+            initial_auth: resolved.auth,
+            tenant_context: resolved.tenant_context,
+            auth_authority: resolved.socket_auth_authority,
+        },
+    )
+}
+
 pub(in crate::adapters::convex) async fn registry_and_auth(
     state: &Arc<AppState>,
     route_family: crate::local_server::LocalServerRouteFamily,
@@ -36,6 +63,18 @@ pub(in crate::adapters::convex) async fn registry_and_auth(
     ),
     AppError,
 > {
+    let resolved =
+        resolve_registry_and_auth(state, route_family, tenant_id, headers, expectation).await?;
+    Ok((resolved.registry, resolved.auth, resolved.tenant_context))
+}
+
+async fn resolve_registry_and_auth(
+    state: &Arc<AppState>,
+    route_family: crate::local_server::LocalServerRouteFamily,
+    tenant_id: &TenantId,
+    headers: &HeaderMap,
+    expectation: &'static str,
+) -> Result<ResolvedConvexRequest, AppError> {
     if nimbus_system::is_system_tenant_id(tenant_id) {
         let registry = state
             .system_convex_registry()
@@ -67,24 +106,26 @@ pub(in crate::adapters::convex) async fn registry_and_auth(
             origin: crate::local_server::origin_from_headers(headers),
             reason: "authorized".to_string(),
         });
-        return Ok((
+        return Ok(ResolvedConvexRequest {
+            socket_auth_authority:
+                crate::adapters::convex::socket_auth::ConvexSocketAuthAuthority::system(
+                    registry.clone(),
+                ),
             registry,
-            None,
-            TenantIsolationContext::operator(tenant_id.clone(), route_family.as_str()),
-        ));
+            auth: None,
+            tenant_context: TenantIsolationContext::operator(
+                tenant_id.clone(),
+                route_family.as_str(),
+            ),
+        });
     }
 
     let deployment = state.current_deployment();
     let registry = deployment
         .convex_registry()
         .ok_or_else(|| AppError::not_found(expectation))?;
-    let auth = match verify_optional_convex_auth_from_headers_in_deployment(
-        deployment.as_ref(),
-        tenant_id,
-        headers,
-    )
-    .await
-    {
+    let silo_auth_authority = deployment.convex_silo_auth().authority_for_silo(tenant_id);
+    let auth = match verify_optional_convex_auth_from_headers(&silo_auth_authority, headers).await {
         Ok(auth) => {
             state.record_local_server_audit(crate::local_server::LocalServerAuditEvent {
                 route_family,
@@ -135,5 +176,13 @@ pub(in crate::adapters::convex) async fn registry_and_auth(
             .with_deployment_generation(deployment.generation);
     tenant_context
         .ensure_deployment_generation_matches(deployment.generation, "convex active deployment")?;
-    Ok((registry, auth, tenant_context))
+    Ok(ResolvedConvexRequest {
+        registry,
+        auth,
+        tenant_context,
+        socket_auth_authority:
+            crate::adapters::convex::socket_auth::ConvexSocketAuthAuthority::application(
+                silo_auth_authority,
+            ),
+    })
 }
