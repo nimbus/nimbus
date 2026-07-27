@@ -1,6 +1,8 @@
 use std::io;
-use std::net::TcpListener;
+use std::net::{Ipv4Addr, SocketAddr, TcpListener};
 use std::path::Path;
+
+use nimbus_server::PreboundServerListeners;
 
 use crate::start::adapters::{
     DYNAMODB_CONVENTIONAL_PORT, MONGODB_CONVENTIONAL_PORT, S3_CONVENTIONAL_PORT,
@@ -67,6 +69,12 @@ pub(super) struct WirePlan {
     pub(super) dynamodb_port: WireListenerPort,
     pub(super) s3_port: WireListenerPort,
     pub(super) credentials: WireCredentials,
+}
+
+#[derive(Debug)]
+pub(super) struct PreparedWirePlan {
+    pub(super) plan: WirePlan,
+    pub(super) listeners: PreboundServerListeners,
 }
 
 impl WirePlan {
@@ -194,14 +202,46 @@ impl WirePlan {
     }
 }
 
-pub(super) fn resolve_wire_plan(surfaces: WireSurfaces, data_dir: &Path) -> io::Result<WirePlan> {
+pub(super) fn resolve_wire_plan(
+    surfaces: WireSurfaces,
+    data_dir: &Path,
+) -> io::Result<PreparedWirePlan> {
     let credentials = load_or_generate(data_dir)?;
-    Ok(WirePlan {
-        mongodb_port: resolve_listener_port(surfaces.mongodb, MONGODB_CONVENTIONAL_PORT)?,
-        dynamodb_port: resolve_listener_port(surfaces.dynamodb, DYNAMODB_CONVENTIONAL_PORT)?,
-        s3_port: resolve_listener_port(surfaces.s3, S3_CONVENTIONAL_PORT)?,
-        credentials,
-    })
+    let mut listeners = PreboundServerListeners::new(data_dir);
+    let result = (|| {
+        let mongodb_port = prepare_wire_listener(
+            &mut listeners,
+            "mongodb",
+            surfaces.mongodb,
+            MONGODB_CONVENTIONAL_PORT,
+        )?;
+        let dynamodb_port = prepare_wire_listener(
+            &mut listeners,
+            "dynamodb",
+            surfaces.dynamodb,
+            DYNAMODB_CONVENTIONAL_PORT,
+        )?;
+        let s3_port =
+            prepare_wire_listener(&mut listeners, "s3", surfaces.s3, S3_CONVENTIONAL_PORT)?;
+        Ok(WirePlan {
+            mongodb_port,
+            dynamodb_port,
+            s3_port,
+            credentials,
+        })
+    })();
+    match result {
+        Ok(plan) => Ok(PreparedWirePlan { plan, listeners }),
+        Err(primary) => match listeners.close_and_settle() {
+            Ok(()) => Err(primary),
+            Err(cleanup_error) => Err(io::Error::new(
+                primary.kind(),
+                format!(
+                    "{primary}; failed to settle earlier pre-bound dev listeners: {cleanup_error}"
+                ),
+            )),
+        },
+    }
 }
 
 /// One stderr notice per detected surface whose conventional port was busy,
@@ -222,31 +262,127 @@ pub(super) fn port_fallback_notices(plan: &WirePlan, surfaces: WireSurfaces) -> 
         .collect()
 }
 
-fn resolve_listener_port(detected: bool, conventional: u16) -> io::Result<WireListenerPort> {
+fn prepare_wire_listener(
+    listeners: &mut PreboundServerListeners,
+    adapter_name: &str,
+    detected: bool,
+    conventional: u16,
+) -> io::Result<WireListenerPort> {
     if detected {
-        return match TcpListener::bind(("127.0.0.1", conventional)) {
-            Ok(probe) => {
-                drop(probe);
-                Ok(WireListenerPort {
-                    port: conventional,
+        let requested = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), conventional);
+        match bind_and_retain_wire_listener(
+            listeners,
+            adapter_name,
+            &format!("dev-{adapter_name}-conventional"),
+            requested,
+        ) {
+            Ok(port) => {
+                return Ok(WireListenerPort {
+                    port,
                     conventional_fallback: false,
-                })
+                });
             }
-            Err(_) => Ok(WireListenerPort {
-                port: ephemeral_port()?,
-                conventional_fallback: true,
-            }),
-        };
+            Err(error) if error.kind() == io::ErrorKind::AddrInUse => {}
+            Err(error) => return Err(error),
+        }
     }
+    let port = bind_and_retain_wire_listener(
+        listeners,
+        adapter_name,
+        &format!("dev-{adapter_name}-provider-assigned"),
+        SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0),
+    )?;
     Ok(WireListenerPort {
-        port: ephemeral_port()?,
-        conventional_fallback: false,
+        port,
+        conventional_fallback: detected,
     })
 }
 
-fn ephemeral_port() -> io::Result<u16> {
-    let listener = TcpListener::bind(("127.0.0.1", 0))?;
+fn bind_and_retain_wire_listener(
+    listeners: &mut PreboundServerListeners,
+    adapter_name: &str,
+    listener_name: &str,
+    requested_addr: SocketAddr,
+) -> io::Result<u16> {
+    let prepared = listeners.prepare(listener_name, requested_addr)?;
+    let listener = match TcpListener::bind(requested_addr) {
+        Ok(listener) => listener,
+        Err(error) => {
+            return match prepared.record_bind_failure(error) {
+                Ok(receipt) => Err(receipt.into_error()),
+                Err(authority_error) => Err(authority_error),
+            };
+        }
+    };
+    let prebound = prepared.adopt_std(listener)?;
+    let actual_port = match prebound.local_addr() {
+        Ok(addr) => addr.port(),
+        Err(primary) => {
+            return match prebound.close_and_settle() {
+                Ok(()) => Err(primary),
+                Err(cleanup_error) => Err(io::Error::new(
+                    primary.kind(),
+                    format!(
+                        "{primary}; failed to settle the pre-bound {adapter_name} listener after \
+                         its assigned address could not be observed: {cleanup_error}"
+                    ),
+                )),
+            };
+        }
+    };
+    listeners.insert(adapter_name, prebound)?;
+    Ok(actual_port)
+}
+
+#[cfg(test)]
+fn test_free_port() -> io::Result<u16> {
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
     Ok(listener.local_addr()?.port())
+}
+
+#[cfg(test)]
+fn close_test_listeners(listeners: PreboundServerListeners) {
+    listeners
+        .close_and_settle()
+        .expect("test listeners should close and settle");
+}
+
+#[cfg(test)]
+fn prepare_test_wire_listener(
+    data_dir: &Path,
+    detected: bool,
+    conventional: u16,
+) -> io::Result<(WireListenerPort, PreboundServerListeners)> {
+    let mut listeners = PreboundServerListeners::new(data_dir);
+    let port = prepare_wire_listener(&mut listeners, "mongodb", detected, conventional)?;
+    Ok((port, listeners))
+}
+
+#[cfg(test)]
+fn assert_port_is_still_held(port: u16) {
+    let competing_bind = TcpListener::bind((Ipv4Addr::LOCALHOST, port));
+    assert!(
+        matches!(
+            competing_bind,
+            Err(ref error) if error.kind() == io::ErrorKind::AddrInUse
+        ),
+        "the pre-bound provider socket {port} must remain held"
+    );
+}
+
+#[cfg(test)]
+fn provider_assigned_fixture(
+    data_dir: &Path,
+) -> io::Result<(WireListenerPort, PreboundServerListeners)> {
+    let (resolved, listeners) =
+        prepare_test_wire_listener(data_dir, false, MONGODB_CONVENTIONAL_PORT)?;
+    Ok((
+        WireListenerPort {
+            port: resolved.port,
+            conventional_fallback: false,
+        },
+        listeners,
+    ))
 }
 
 #[cfg(test)]
@@ -264,22 +400,27 @@ mod tests {
 
     #[test]
     fn detected_surface_prefers_conventional_port() {
-        // Probe a port the OS just confirmed free, then resolve against it
-        // as the "conventional" port: a detected surface must take it.
-        let free = ephemeral_port().expect("probe a free port");
-        let resolved = resolve_listener_port(true, free).expect("resolve");
+        let temp = tempfile::tempdir().expect("temp dir");
+        let free = test_free_port().expect("select a free test port");
+        let (resolved, listeners) =
+            prepare_test_wire_listener(temp.path(), true, free).expect("prepare listener");
         assert_eq!(resolved.port, free);
         assert!(!resolved.conventional_fallback);
+        assert_port_is_still_held(resolved.port);
+        close_test_listeners(listeners);
     }
 
     #[test]
     fn port_conflict_fallback_updates_nimbus_owned_key() {
+        let temp = tempfile::tempdir().expect("temp dir");
         let blocker = TcpListener::bind(("127.0.0.1", 0)).expect("blocker");
         let blocked_port = blocker.local_addr().expect("blocker addr").port();
 
-        let resolved = resolve_listener_port(true, blocked_port).expect("resolve");
+        let (resolved, listeners) =
+            prepare_test_wire_listener(temp.path(), true, blocked_port).expect("prepare fallback");
         assert!(resolved.conventional_fallback);
         assert_ne!(resolved.port, blocked_port);
+        assert_port_is_still_held(resolved.port);
 
         let mut plan = WirePlan::fixture();
         plan.mongodb_port = resolved;
@@ -298,19 +439,33 @@ mod tests {
         let notices = port_fallback_notices(&plan, surfaces(true, false, false));
         assert_eq!(notices.len(), 1);
         assert!(notices[0].contains(&resolved.port.to_string()));
+        close_test_listeners(listeners);
     }
 
     #[test]
     fn undetected_surfaces_take_ephemeral_ports() {
+        let temp = tempfile::tempdir().expect("temp dir");
         // Hold the would-be conventional port busy: an undetected surface
         // must neither take it nor report a fallback, because it never
         // probes the conventional port at all.
         let blocker = TcpListener::bind(("127.0.0.1", 0)).expect("blocker");
         let conventional = blocker.local_addr().expect("blocker addr").port();
 
-        let resolved = resolve_listener_port(false, conventional).expect("resolve");
+        let (resolved, listeners) =
+            prepare_test_wire_listener(temp.path(), false, conventional).expect("prepare listener");
         assert_ne!(resolved.port, conventional);
         assert!(!resolved.conventional_fallback);
+        assert_port_is_still_held(resolved.port);
+        close_test_listeners(listeners);
+    }
+
+    #[test]
+    fn provider_assigned_wire_port_stays_held_until_server_adoption() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let (resolved, listeners) =
+            provider_assigned_fixture(temp.path()).expect("prepare provider-assigned listener");
+        assert_port_is_still_held(resolved.port);
+        close_test_listeners(listeners);
     }
 
     #[test]

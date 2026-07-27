@@ -123,7 +123,8 @@ pub(super) fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<De
     // conventional ports, undetected go ephemeral) and the shared persisted
     // credentials (D5); the start command below serves exactly those
     // endpoints so `.env.local` and the run banner stay truthful.
-    let wire = resolve_wire_plan(wire_surfaces, &data_dir)?;
+    let prepared_wire = resolve_wire_plan(wire_surfaces, &data_dir)?;
+    let wire = prepared_wire.plan;
     let start_compose_files = compose_selection
         .as_ref()
         .map(|selection| selection.files.clone())
@@ -164,6 +165,7 @@ pub(super) fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<De
         compose_file: start_compose_files,
         deploy_admin_token: Some(deploy_admin_token),
         auto_tenant: Some(auto_tenant),
+        prebound_wire_listeners: Some(prepared_wire.listeners),
         tenant_isolation_mode: nimbus_tenant::TenantIsolationMode::LocalDevelopment,
         ..StartCommand::default()
     };

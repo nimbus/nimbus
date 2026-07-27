@@ -26,18 +26,73 @@ fn cloudflare_routes_refuse_non_loopback_main_bind_without_allow_network() {
         ..StartCommand::default()
     };
 
-    let error = super::super::adapters::resolve_adapter_enablement_with_env(
-        &command,
-        temp.path(),
-        |_| None,
-        |_| true,
-    )
-    .expect_err("Cloudflare routes should share the main non-loopback bind guard");
+    let error =
+        super::super::adapters::resolve_adapter_enablement_with_env(&command, temp.path(), |_| {
+            None
+        })
+        .expect_err("Cloudflare routes should share the main non-loopback bind guard");
 
     assert!(
         error.to_string().contains("Cloudflare routes")
             && error.to_string().contains("non-loopback"),
         "Cloudflare non-loopback refusal should name the shared bind guard: {error}"
+    );
+}
+
+#[tokio::test]
+async fn conventional_port_conflict_fails_through_shared_authority_with_guidance() {
+    let temp = tempfile::tempdir().expect("tempdir should build");
+    let command = StartCommand {
+        firestore: false,
+        cloudflare: false,
+        mongodb: true,
+        dynamodb: false,
+        s3: false,
+        ..StartCommand::default()
+    };
+    let enablement =
+        super::super::adapters::resolve_adapter_enablement_with_env(&command, temp.path(), |_| {
+            None
+        })
+        .expect("pure default desired state should resolve before availability is known");
+
+    let conflict_authority = nimbus_server::PreboundServerListeners::new(temp.path());
+    let conventional_addr = format!(
+        "127.0.0.1:{}",
+        super::super::adapters::MONGODB_CONVENTIONAL_PORT
+    )
+    .parse()
+    .expect("conventional MongoDB address should parse");
+    let _conflicting_claim = conflict_authority
+        .prepare("existing-mongodb-owner", conventional_addr)
+        .expect("the earlier authority should fence the conventional port");
+
+    let engine =
+        Arc::new(nimbus::Engine::new(temp.path().join("engine")).expect("engine should build"));
+    let main_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("main listener should bind");
+    let options = enablement
+        .apply_to(nimbus_server::ServeOptions::new(engine).with_network_state_root(temp.path()));
+    let error = nimbus_server::serve(main_listener, options)
+        .await
+        .expect_err("the durable conventional-port fence must fail startup");
+    assert_eq!(error.kind(), std::io::ErrorKind::AddrInUse);
+    assert!(
+        error.to_string().contains("mongodb listener")
+            && error.to_string().contains(&conventional_addr.to_string()),
+        "the authoritative failure should identify its adapter and desired address: {error}"
+    );
+
+    let guided = super::super::boot::conventional_wire_port_guidance(&command, error);
+    assert_eq!(guided.kind(), std::io::ErrorKind::AddrInUse);
+    assert!(
+        guided
+            .to_string()
+            .contains("MongoDB conventional port 27017 is busy")
+            && guided.to_string().contains("--mongodb-port")
+            && guided.to_string().contains("--no-mongodb"),
+        "moving the decision to the shared authority must preserve recovery guidance: {guided}"
     );
 }
 
@@ -76,7 +131,6 @@ async fn cli_adapters_serve_store_backed_by_default_and_opt_outs_disable() {
         &opted_out_command,
         temp.path(),
         |_| None,
-        |_| true,
     )
     .expect("opted-out enablement should resolve");
     let opted_out_listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
@@ -133,13 +187,11 @@ async fn cli_adapters_serve_store_backed_by_default_and_opt_outs_disable() {
         s3_port: Some(s3_port),
         ..StartCommand::default()
     };
-    let enablement = super::super::adapters::resolve_adapter_enablement_with_env(
-        &command,
-        temp.path(),
-        |_| None,
-        |_| true,
-    )
-    .expect("store-backed enablement should resolve");
+    let enablement =
+        super::super::adapters::resolve_adapter_enablement_with_env(&command, temp.path(), |_| {
+            None
+        })
+        .expect("store-backed enablement should resolve");
 
     let http_listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .await

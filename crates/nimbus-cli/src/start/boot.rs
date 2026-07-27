@@ -63,7 +63,16 @@ impl ResolvedStartAppDir {
 }
 
 pub(crate) async fn run_start_command(
+    mut command: StartCommand,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut prebound_wire_listeners = command.prebound_wire_listeners.take();
+    let result = run_start_command_inner(command, &mut prebound_wire_listeners).await;
+    finish_prebound_listener_ownership(result, prebound_wire_listeners)
+}
+
+async fn run_start_command_inner(
     command: StartCommand,
+    prebound_wire_listeners: &mut Option<nimbus_server::PreboundServerListeners>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Stage 1 of the network-bind gate runs before any expensive
     // initialization so a typo'd `--host` (or a forgotten
@@ -225,6 +234,9 @@ pub(crate) async fn run_start_command(
         .with_runtime_host_resource_budget(runtime_host_resource_budget)
         .with_runtime_adaptive_controller_settings(runtime_adaptive_controller_settings)
         .with_effective_runtime_scaling_plans(effective_runtime_scaling_plans);
+    if let Some(listeners) = prebound_wire_listeners.as_ref() {
+        serve_options = serve_options.with_prebound_listener_authority(listeners);
+    }
     if let Some(registry) = convex_registry {
         serve_options = serve_options
             .with_convex_registry(registry)
@@ -303,6 +315,9 @@ pub(crate) async fn run_start_command(
 
     tracing::info!("nimbus listening on {listener_addr}");
     serve_options = adapter_enablement.apply_to(serve_options);
+    if let Some(listeners) = prebound_wire_listeners.take() {
+        serve_options = serve_options.with_prebound_wire_listeners(listeners);
+    }
     let server_result = serve_leased(listener, serve_options).await;
     drop(discovery_lease);
     let _ = shutdown_tx.send(true);
@@ -312,8 +327,96 @@ pub(crate) async fn run_start_command(
         let _ = handle.await;
     }
     shutdown_engine.quiesce().await;
-    server_result?;
+    server_result.map_err(|error| conventional_wire_port_guidance(&command, error))?;
     Ok(())
+}
+
+pub(super) fn conventional_wire_port_guidance(
+    command: &StartCommand,
+    error: std::io::Error,
+) -> std::io::Error {
+    if error.kind() != std::io::ErrorKind::AddrInUse {
+        return error;
+    }
+    let message = error.to_string();
+    let conventional_conflict = [
+        (
+            "mongodb",
+            "MongoDB",
+            command.mongodb,
+            command.mongodb_port,
+            super::adapters::MONGODB_CONVENTIONAL_PORT,
+            "--mongodb-port",
+            "--no-mongodb",
+        ),
+        (
+            "dynamodb",
+            "DynamoDB",
+            command.dynamodb,
+            command.dynamodb_port,
+            super::adapters::DYNAMODB_CONVENTIONAL_PORT,
+            "--dynamodb-port",
+            "--no-dynamodb",
+        ),
+        (
+            "s3",
+            "S3",
+            command.s3,
+            command.s3_port,
+            super::adapters::S3_CONVENTIONAL_PORT,
+            "--s3-port",
+            "--no-s3",
+        ),
+    ]
+    .into_iter()
+    .find(|(adapter, _, enabled, explicit_port, conventional, _, _)| {
+        *enabled
+            && explicit_port.is_none()
+            && message.contains(&format!("{adapter} listener"))
+            && message.contains(&format!(":{conventional}"))
+    });
+    let Some((_, display_name, _, _, conventional, port_flag, disable_flag)) =
+        conventional_conflict
+    else {
+        return error;
+    };
+    std::io::Error::new(
+        error.kind(),
+        format!(
+            "{display_name} conventional port {conventional} is busy; pass {port_flag} to serve \
+             on another port or {disable_flag} to disable the listener: {error}"
+        ),
+    )
+}
+
+fn finish_prebound_listener_ownership(
+    result: Result<(), Box<dyn std::error::Error>>,
+    listeners: Option<nimbus_server::PreboundServerListeners>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(listeners) = listeners else {
+        return result;
+    };
+    let cleanup = listeners.close_and_settle();
+    match (result, cleanup) {
+        (Err(primary), Ok(())) => Err(primary),
+        (Err(primary), Err(cleanup_error)) => Err(Box::new(std::io::Error::new(
+            cleanup_error.kind(),
+            format!(
+                "{primary}; failed to settle pre-bound dev listeners after startup failed: \
+                 {cleanup_error}"
+            ),
+        ))),
+        (Ok(()), Ok(())) => Err(Box::new(std::io::Error::other(
+            "startup completed without transferring its pre-bound dev listeners",
+        ))),
+        (Ok(()), Err(cleanup_error)) => Err(Box::new(std::io::Error::new(
+            cleanup_error.kind(),
+            format!(
+                "startup completed without transferring its pre-bound dev listeners; \
+                 failed to settle them: {cleanup_error}"
+            ),
+        ))),
+    }
 }
 
 pub(super) async fn run_codegen_preflight(
@@ -1011,6 +1114,46 @@ mod listener_tests {
         tokio::net::TcpListener::bind(actual_addr)
             .await
             .expect("confirmed startup failure must close the CLI-owned socket");
+    }
+
+    #[test]
+    fn startup_error_closes_and_releases_untransferred_prebound_listeners() {
+        let state_root = tempfile::tempdir().expect("state root should be created");
+        let mut listeners = nimbus_server::PreboundServerListeners::new(state_root.path());
+        let requested_addr = "127.0.0.1:0"
+            .parse()
+            .expect("provider-assigned address should parse");
+        let prepared = listeners
+            .prepare("dev-mongodb-provider-assigned", requested_addr)
+            .expect("pre-bound listener should reserve");
+        let raw = std::net::TcpListener::bind(requested_addr)
+            .expect("provider should bind its requested socket");
+        let listener = prepared
+            .adopt_std(raw)
+            .expect("pre-bound listener should activate");
+        let actual_addr = listener
+            .local_addr()
+            .expect("pre-bound address should resolve");
+        listeners
+            .insert("mongodb", listener)
+            .expect("listener should enter the handoff bundle");
+
+        let result: Result<(), Box<dyn std::error::Error>> = Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "startup validation failed",
+        )));
+        let error = finish_prebound_listener_ownership(result, Some(listeners))
+            .expect_err("the primary startup failure must remain visible");
+        assert!(error.to_string().contains("startup validation failed"));
+
+        let records = LocalPortLeaseAuthority::open(state_root.path())
+            .expect("port authority should reopen")
+            .list()
+            .expect("port records should list");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].phase(), PortLeasePhase::Released);
+        std::net::TcpListener::bind(actual_addr)
+            .expect("startup failure must close every untransferred pre-bound socket");
     }
 
     #[test]

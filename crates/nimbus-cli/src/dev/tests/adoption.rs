@@ -11,6 +11,23 @@ fn repo_root() -> PathBuf {
         .to_path_buf()
 }
 
+fn dev_serve_options(
+    plan: &mut DevPlan,
+    engine: &std::sync::Arc<nimbus::Engine>,
+    enablement: crate::start::adapters::AdapterEnablement,
+) -> nimbus_server::ServeOptions {
+    let listeners = plan
+        .start_command
+        .prebound_wire_listeners
+        .take()
+        .expect("dev plan should retain its wire-listener handoff bundle");
+    let options = nimbus_server::ServeOptions::new(engine.clone())
+        .with_prebound_listener_authority(&listeners);
+    enablement
+        .apply_to(options)
+        .with_prebound_wire_listeners(listeners)
+}
+
 #[tokio::test]
 async fn dev_serves_firestore_routes_without_firebase_markers() {
     // DX contract: dev mounts the Firestore-compatible route family
@@ -20,7 +37,7 @@ async fn dev_serves_firestore_routes_without_firebase_markers() {
     let temp = tempdir().expect("tempdir should build");
     create_source_root(temp.path(), "convex");
 
-    let plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
+    let mut plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
         .expect("dev plan should resolve");
     assert!(
         plan.start_command.firestore,
@@ -37,7 +54,6 @@ async fn dev_serves_firestore_routes_without_firebase_markers() {
             .as_deref()
             .expect("dev plan sets the control data dir"),
         |_| None,
-        |_| true,
     )
     .expect("dev enablement should resolve");
     assert!(enablement.firebase.is_some());
@@ -54,7 +70,7 @@ async fn dev_serves_firestore_routes_without_firebase_markers() {
     let addr = listener.local_addr().expect("addr should resolve");
     let task = tokio::spawn(nimbus_server::serve(
         listener,
-        enablement.apply_to(nimbus_server::ServeOptions::new(engine.clone())),
+        dev_serve_options(&mut plan, &engine, enablement),
     ));
     crate::test_support::wait_for_live_server_health(
         "dev-shaped server should answer /health",
@@ -90,7 +106,7 @@ async fn pure_convex_dev_serves_wire_listeners_on_ephemeral_ports() {
     let temp = tempdir().expect("tempdir should build");
     create_source_root(temp.path(), "convex");
 
-    let plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
+    let mut plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
         .expect("dev plan should resolve");
     assert!(!plan.wire_surfaces.mongodb && !plan.wire_surfaces.dynamodb && !plan.wire_surfaces.s3);
     let mongodb_port = plan
@@ -113,7 +129,6 @@ async fn pure_convex_dev_serves_wire_listeners_on_ephemeral_ports() {
             .as_deref()
             .expect("dev plan sets the control data dir"),
         |_| None,
-        |_| true,
     )
     .expect("dev enablement should resolve");
     assert!(enablement.mongodb.is_some());
@@ -129,7 +144,7 @@ async fn pure_convex_dev_serves_wire_listeners_on_ephemeral_ports() {
     let addr = listener.local_addr().expect("addr should resolve");
     let task = tokio::spawn(nimbus_server::serve(
         listener,
-        enablement.apply_to(nimbus_server::ServeOptions::new(engine.clone())),
+        dev_serve_options(&mut plan, &engine, enablement),
     ));
     crate::test_support::wait_for_live_server_health(
         "dev-shaped server should answer /health",
@@ -212,7 +227,7 @@ async fn detected_wire_app_round_trips_mongodb_and_dynamodb_drivers() {
     )
     .expect("package.json should write");
 
-    let plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
+    let mut plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
         .expect("dev plan should resolve");
     assert!(plan.wire_surfaces.mongodb && plan.wire_surfaces.dynamodb);
 
@@ -223,7 +238,6 @@ async fn detected_wire_app_round_trips_mongodb_and_dynamodb_drivers() {
             .as_deref()
             .expect("dev plan sets the control data dir"),
         |_| None,
-        |_| true,
     )
     .expect("dev enablement should resolve");
     let engine = std::sync::Arc::new(
@@ -244,7 +258,7 @@ async fn detected_wire_app_round_trips_mongodb_and_dynamodb_drivers() {
     let addr = listener.local_addr().expect("addr should resolve");
     let task = tokio::spawn(nimbus_server::serve(
         listener,
-        enablement.apply_to(nimbus_server::ServeOptions::new(engine.clone())),
+        dev_serve_options(&mut plan, &engine, enablement),
     ));
     crate::test_support::wait_for_live_server_health(
         "dev-shaped server should answer /health",
@@ -332,7 +346,7 @@ async fn mid_session_mongodb_adoption_round_trips_with_subscriptions_intact() {
     fs::write(temp.path().join("package.json"), r#"{"dependencies": {}}"#)
         .expect("package.json should write");
 
-    let plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
+    let mut plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
         .expect("dev plan should resolve");
     assert!(
         !plan.wire_surfaces.mongodb,
@@ -350,7 +364,6 @@ async fn mid_session_mongodb_adoption_round_trips_with_subscriptions_intact() {
             .as_deref()
             .expect("dev plan sets the control data dir"),
         |_| None,
-        |_| true,
     )
     .expect("dev enablement should resolve");
     assert!(
@@ -374,7 +387,7 @@ async fn mid_session_mongodb_adoption_round_trips_with_subscriptions_intact() {
     let addr = listener.local_addr().expect("addr should resolve");
     let task = tokio::spawn(nimbus_server::serve(
         listener,
-        enablement.apply_to(nimbus_server::ServeOptions::new(engine.clone())),
+        dev_serve_options(&mut plan, &engine, enablement),
     ));
     crate::test_support::wait_for_live_server_health(
         "dev-shaped server should answer /health",
@@ -551,7 +564,7 @@ async fn covered_app_round_trips_firestore_via_emulator_connection() {
     )
     .expect(".firebaserc should write");
 
-    let plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
+    let mut plan = resolve_dev_plan(parse_dev(["nimbus", "dev"]), temp.path())
         .expect("dev plan should resolve");
     assert_eq!(plan.adapter, Some(DevAdapter::FirestoreClient));
     assert_eq!(
@@ -567,7 +580,6 @@ async fn covered_app_round_trips_firestore_via_emulator_connection() {
             .as_deref()
             .expect("dev plan sets the control data dir"),
         |_| None,
-        |_| true,
     )
     .expect("dev enablement should resolve");
     let firebase = enablement
@@ -589,7 +601,7 @@ async fn covered_app_round_trips_firestore_via_emulator_connection() {
     let addr = listener.local_addr().expect("addr should resolve");
     let task = tokio::spawn(nimbus_server::serve(
         listener,
-        enablement.apply_to(nimbus_server::ServeOptions::new(engine.clone())),
+        dev_serve_options(&mut plan, &engine, enablement),
     ));
     crate::test_support::wait_for_live_server_health(
         "dev-shaped server should answer /health",

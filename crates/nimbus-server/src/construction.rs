@@ -16,9 +16,9 @@ use crate::adapters::s3::S3Config;
 use crate::adapters::wire::WireProtocolAdapter;
 use crate::license::LicenseState;
 use crate::listener_lease::{
-    ActiveServerListenerLease, LeasedServerListener, PreparedServerListener,
-    RecordedListenerBindFailure, ServerListenerLeaseAuthority,
-    abandon_prepared_after_guard_failure,
+    ActiveServerListenerLease, LeasedServerListener, PreboundServerListener,
+    PreboundServerListeners, PreparedServerListener, RecordedListenerBindFailure,
+    ServerListenerLeaseAuthority, abandon_prepared_after_guard_failure,
 };
 use crate::local_server::LocalServerSecurityState;
 use crate::machine_lifecycle::MachineLifecycleManager;
@@ -34,6 +34,7 @@ pub struct ServeOptions {
     wire_adapters: Vec<Box<dyn WireProtocolAdapter>>,
     tls_config: Option<TlsConfig>,
     listener_leases: ServerListenerLeaseAuthority,
+    prebound_wire_listeners: Option<PreboundServerListeners>,
 }
 
 impl ServeOptions {
@@ -49,6 +50,7 @@ impl ServeOptions {
             wire_adapters: Vec::new(),
             tls_config: None,
             listener_leases,
+            prebound_wire_listeners: None,
         }
     }
 
@@ -58,6 +60,27 @@ impl ServeOptions {
     /// one host-global network authority with other providers may override it.
     pub fn with_network_state_root(mut self, state_root: impl Into<std::path::PathBuf>) -> Self {
         self.listener_leases = self.listener_leases.with_state_root(state_root);
+        self
+    }
+
+    /// Use the same authority incarnation that owns an upcoming pre-bound
+    /// sibling-listener bundle.
+    ///
+    /// Call this before preparing the main listener. The bundle itself may
+    /// remain with the composition owner until every other startup step has
+    /// succeeded, allowing exact cleanup on an earlier error.
+    pub fn with_prebound_listener_authority(mut self, listeners: &PreboundServerListeners) -> Self {
+        self.listener_leases = listeners.authority();
+        self
+    }
+
+    /// Transfer continuously held sibling sockets into server ownership.
+    ///
+    /// Their authority must already have been selected with
+    /// [`with_prebound_listener_authority`](Self::with_prebound_listener_authority)
+    /// before the main listener was prepared.
+    pub fn with_prebound_wire_listeners(mut self, listeners: PreboundServerListeners) -> Self {
+        self.prebound_wire_listeners = Some(listeners);
         self
     }
 
@@ -300,10 +323,10 @@ pub async fn serve(
 /// Runs Nimbus only after the main listener has Active durable lease authority.
 pub async fn serve_leased(
     listener: LeasedServerListener,
-    options: ServeOptions,
+    mut options: ServeOptions,
 ) -> std::io::Result<()> {
     if !options.listener_leases.owns(listener.owner_incarnation()) {
-        return match listener.close_and_settle() {
+        let mut result = match listener.close_and_settle() {
             Ok(()) => Err(std::io::Error::other(
                 "leased main listener belongs to a different ServeOptions incarnation",
             )),
@@ -313,6 +336,12 @@ pub async fn serve_leased(
                  {cleanup_error}"
             ))),
         };
+        settle_unconsumed_prebound_listeners(
+            &mut result,
+            &mut options.prebound_wire_listeners,
+            "main-listener authority mismatch",
+        );
+        return result;
     }
     let (listener, main_lease, _) = listener.into_parts();
     let ServeOptions {
@@ -320,6 +349,7 @@ pub async fn serve_leased(
         wire_adapters,
         tls_config,
         listener_leases,
+        mut prebound_wire_listeners,
     } = options;
     let mut main_listener = Some(listener);
     let mut adapter_handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
@@ -338,41 +368,114 @@ pub async fn serve_leased(
         // returns converge through one confirmed-close cleanup path.
         for (ordinal, adapter) in wire_adapters.into_iter().enumerate() {
             let requested_addr = adapter.bind_addr();
-            let prepared =
-                listener_leases.prepare_sibling(ordinal, adapter.name(), requested_addr)?;
-            let adapter_listener = match tokio::net::TcpListener::bind(requested_addr).await {
-                Ok(listener) => listener,
-                Err(error) => {
-                    return Err(bind_failure_error(prepared.record_bind_failure(error)));
+            let leased_listener = if let Some(prebound) = prebound_wire_listeners
+                .as_mut()
+                .and_then(|listeners| listeners.remove(adapter.name()))
+            {
+                if !listener_leases.owns(prebound.owner_incarnation()) {
+                    return close_prebound_after_error(
+                        prebound,
+                        std::io::Error::other(format!(
+                            "pre-bound {} listener belongs to a different ServeOptions \
+                                 incarnation",
+                            adapter.name()
+                        )),
+                        "failed to settle the mismatched pre-bound sibling",
+                    );
                 }
+                let adapter_addr = match prebound.local_addr() {
+                    Ok(addr) => addr,
+                    Err(error) => {
+                        return close_prebound_after_error(
+                            prebound,
+                            error,
+                            "failed to settle the pre-bound sibling after its address could \
+                                 not be observed",
+                        );
+                    }
+                };
+                if adapter_addr != requested_addr {
+                    return close_prebound_after_error(
+                        prebound,
+                        std::io::Error::other(format!(
+                            "pre-bound {} listener address {adapter_addr} does not match \
+                                 configured address {requested_addr}",
+                            adapter.name()
+                        )),
+                        "failed to settle the mismatched pre-bound sibling address",
+                    );
+                }
+                if let Err(guard_error) = adapter.guard(adapter_addr) {
+                    return close_prebound_after_error(
+                        prebound,
+                        guard_error,
+                        "failed to settle the pre-bound listener after its guard refused the \
+                             bind",
+                    );
+                }
+                prebound.into_leased()?
+            } else {
+                let prepared = listener_leases
+                    .prepare_sibling(ordinal, adapter.name(), requested_addr)
+                    .map_err(|error| {
+                        wire_listener_setup_error(adapter.name(), requested_addr, error)
+                    })?;
+                let adapter_listener = match tokio::net::TcpListener::bind(requested_addr).await {
+                    Ok(listener) => listener,
+                    Err(error) => {
+                        return Err(wire_listener_setup_error(
+                            adapter.name(),
+                            requested_addr,
+                            bind_failure_error(prepared.record_bind_failure(error)),
+                        ));
+                    }
+                };
+                let adapter_addr = match adapter_listener.local_addr() {
+                    Ok(addr) => addr,
+                    Err(error) => {
+                        return match abandon_prepared_after_guard_failure(
+                            prepared,
+                            adapter_listener,
+                        ) {
+                            Ok(()) => Err(error),
+                            Err(cleanup_error) => append_cleanup_error(
+                                Err(error),
+                                "failed to settle the claimed sibling after its bound address \
+                                     could not be observed",
+                                cleanup_error,
+                            ),
+                        };
+                    }
+                };
+                // Fail closed: the adapter's guard refuses unsafe bind shapes
+                // before the listener serves a single byte.
+                if let Err(guard_error) = adapter.guard(adapter_addr) {
+                    return match abandon_prepared_after_guard_failure(prepared, adapter_listener) {
+                        Ok(()) => Err(guard_error),
+                        Err(cleanup_error) => append_cleanup_error(
+                            Err(guard_error),
+                            "failed to settle the claimed listener after its guard refused \
+                                 the bind",
+                            cleanup_error,
+                        ),
+                    };
+                }
+                prepared.adopt(adapter_listener)?
             };
-            let adapter_addr = match adapter_listener.local_addr() {
+            let adapter_addr = match leased_listener.local_addr() {
                 Ok(addr) => addr,
                 Err(error) => {
-                    return match abandon_prepared_after_guard_failure(prepared, adapter_listener) {
+                    return match leased_listener.close_and_settle() {
                         Ok(()) => Err(error),
                         Err(cleanup_error) => append_cleanup_error(
                             Err(error),
-                            "failed to settle the claimed sibling after its bound address \
-                             could not be observed",
+                            "failed to settle the sibling lease after its adopted address could \
+                             not be observed",
                             cleanup_error,
                         ),
                     };
                 }
             };
-            // Fail closed: the adapter's guard refuses unsafe bind shapes
-            // before the listener serves a single byte.
-            if let Err(guard_error) = adapter.guard(adapter_addr) {
-                return match abandon_prepared_after_guard_failure(prepared, adapter_listener) {
-                    Ok(()) => Err(guard_error),
-                    Err(cleanup_error) => append_cleanup_error(
-                        Err(guard_error),
-                        "failed to settle the claimed listener after its guard refused the bind",
-                        cleanup_error,
-                    ),
-                };
-            }
-            let leased_listener = prepared.adopt(adapter_listener)?;
             let (adapter_listener, adapter_lease, listener_owner) = leased_listener.into_parts();
             debug_assert!(
                 listener_leases.owns(listener_owner.as_ref()),
@@ -404,6 +507,23 @@ pub async fn serve_leased(
             adapter_leases.push(adapter_lease);
         }
 
+        if let Some(unused_name) = prebound_wire_listeners
+            .as_ref()
+            .and_then(PreboundServerListeners::first_name)
+            .map(str::to_owned)
+        {
+            return close_prebound_bundle_after_error(
+                prebound_wire_listeners
+                    .take()
+                    .expect("the unmatched listener name came from this bundle"),
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("pre-bound listener `{unused_name}` has no matching wire adapter"),
+                ),
+                "failed to settle unmatched pre-bound listeners",
+            );
+        }
+
         let listener = main_listener
             .take()
             .expect("the main listener must be consumed exactly once");
@@ -411,6 +531,11 @@ pub async fn serve_leased(
     }
     .await;
 
+    settle_unconsumed_prebound_listeners(
+        &mut result,
+        &mut prebound_wire_listeners,
+        "sibling-listener setup failure",
+    );
     let main_was_served = main_listener.is_none();
     // A synchronous setup error leaves the main socket here. Dropping it
     // proves local closure before the lease is settled below.
@@ -460,6 +585,56 @@ fn bind_failure_error(
     match result {
         Ok(recorded) => recorded.into_error(),
         Err(error) => error,
+    }
+}
+
+fn wire_listener_setup_error(
+    adapter_name: &str,
+    requested_addr: std::net::SocketAddr,
+    error: std::io::Error,
+) -> std::io::Error {
+    std::io::Error::new(
+        error.kind(),
+        format!("{adapter_name} listener {requested_addr}: {error}"),
+    )
+}
+
+fn settle_unconsumed_prebound_listeners(
+    result: &mut std::io::Result<()>,
+    listeners: &mut Option<PreboundServerListeners>,
+    failure_context: &str,
+) {
+    let Some(listeners) = listeners.take() else {
+        return;
+    };
+    if let Err(cleanup_error) = listeners.close_and_settle() {
+        *result = append_cleanup_error(
+            std::mem::replace(result, Ok(())),
+            &format!("failed to settle unconsumed pre-bound listeners after {failure_context}"),
+            cleanup_error,
+        );
+    }
+}
+
+fn close_prebound_after_error(
+    listener: PreboundServerListener,
+    primary: std::io::Error,
+    cleanup_context: &str,
+) -> std::io::Result<()> {
+    match listener.close_and_settle() {
+        Ok(()) => Err(primary),
+        Err(cleanup_error) => append_cleanup_error(Err(primary), cleanup_context, cleanup_error),
+    }
+}
+
+fn close_prebound_bundle_after_error(
+    listeners: PreboundServerListeners,
+    primary: std::io::Error,
+    cleanup_context: &str,
+) -> std::io::Result<()> {
+    match listeners.close_and_settle() {
+        Ok(()) => Err(primary),
+        Err(cleanup_error) => append_cleanup_error(Err(primary), cleanup_context, cleanup_error),
     }
 }
 
@@ -618,6 +793,50 @@ mod tests {
             vec![tokio::spawn(async move {
                 if let Ok((mut stream, _)) = listener.accept().await {
                     let _ = stream.write_all(b"lease-owned").await;
+                }
+            })]
+        }
+    }
+
+    struct PreboundAdapter {
+        addr: SocketAddr,
+        state_root: PathBuf,
+        active_observed: Arc<AtomicBool>,
+    }
+
+    impl WireProtocolAdapter for PreboundAdapter {
+        fn name(&self) -> &'static str {
+            "nnc3-7a-prebound"
+        }
+
+        fn protocol(&self) -> &'static str {
+            "tcp"
+        }
+
+        fn bind_addr(&self) -> SocketAddr {
+            self.addr
+        }
+
+        fn guard(&self, addr: SocketAddr) -> std::io::Result<()> {
+            let active = active_lease_matches_addr(&self.state_root, addr);
+            self.active_observed.store(active, Ordering::Release);
+            if active {
+                Ok(())
+            } else {
+                Err(std::io::Error::other(
+                    "pre-bound sibling reached its guard without an Active lease",
+                ))
+            }
+        }
+
+        fn spawn(
+            self: Box<Self>,
+            listener: tokio::net::TcpListener,
+            _engine: Arc<Engine>,
+        ) -> Vec<tokio::task::JoinHandle<()>> {
+            vec![tokio::spawn(async move {
+                if let Ok((mut stream, _)) = listener.accept().await {
+                    let _ = stream.write_all(b"prebound-owned").await;
                 }
             })]
         }
@@ -816,6 +1035,216 @@ mod tests {
             Some(b"lease-owned".as_slice()),
             "the lease migration must preserve sibling protocol bytes"
         );
+    }
+
+    #[tokio::test]
+    async fn nnc3_7a_prebound_sibling_is_adopted_without_rebind() {
+        let fixture = EngineFixture::new(|path| Engine::new(path));
+        let mut prebound = PreboundServerListeners::new(fixture.data_dir());
+        let requested_addr = "127.0.0.1:0"
+            .parse()
+            .expect("provider-assigned address should parse");
+        let prepared = prebound
+            .prepare("dev-nnc3-7a-prebound", requested_addr)
+            .expect("pre-bound listener should reserve before bind");
+        let raw = std::net::TcpListener::bind(requested_addr)
+            .expect("provider should bind its requested socket");
+        let listener = prepared
+            .adopt_std(raw)
+            .expect("provider socket should activate its lease");
+        let sibling_addr = listener
+            .local_addr()
+            .expect("pre-bound address should resolve");
+        prebound
+            .insert("nnc3-7a-prebound", listener)
+            .expect("pre-bound listener should enter its bundle");
+
+        let competing_bind = std::net::TcpListener::bind(sibling_addr);
+        assert!(
+            matches!(
+                competing_bind,
+                Err(ref error) if error.kind() == std::io::ErrorKind::AddrInUse
+            ),
+            "the provider-assigned socket must remain continuously held before server adoption"
+        );
+
+        let main_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("main listener should bind");
+        let active_observed = Arc::new(AtomicBool::new(false));
+        let mut options =
+            ServeOptions::new(fixture.engine()).with_prebound_listener_authority(&prebound);
+        options.wire_adapters.push(Box::new(PreboundAdapter {
+            addr: sibling_addr,
+            state_root: fixture.data_dir().to_path_buf(),
+            active_observed: Arc::clone(&active_observed),
+        }));
+        options = options.with_prebound_wire_listeners(prebound);
+        let task = tokio::spawn(serve(main_listener, options));
+
+        let bytes = tokio::time::timeout(Duration::from_secs(1), async {
+            let mut stream = tokio::net::TcpStream::connect(sibling_addr).await?;
+            let mut bytes = [0_u8; 14];
+            stream.read_exact(&mut bytes).await?;
+            Ok::<_, std::io::Error>(bytes)
+        })
+        .await
+        .expect("the adopted sibling should accept before timeout")
+        .expect("the adopted sibling should serve its protocol bytes");
+
+        task.abort();
+        let _ = task.await;
+        assert!(
+            active_observed.load(Ordering::Acquire),
+            "the pre-bound sibling guard must observe its durable Active lease"
+        );
+        assert_eq!(
+            bytes.as_slice(),
+            b"prebound-owned",
+            "adopting the retained socket must preserve the wire behavior"
+        );
+    }
+
+    #[tokio::test]
+    async fn nnc3_7a_mismatched_handoff_settles_every_prebound_listener() {
+        let fixture = EngineFixture::new(|path| Engine::new(path));
+        let mut prebound = PreboundServerListeners::new(fixture.data_dir());
+        let requested_addr = "127.0.0.1:0"
+            .parse()
+            .expect("provider-assigned address should parse");
+
+        let prepared = prebound
+            .prepare("dev-nnc3-7a-prebound", requested_addr)
+            .expect("matching listener should reserve");
+        let raw = std::net::TcpListener::bind(requested_addr)
+            .expect("matching provider socket should bind");
+        let listener = prepared
+            .adopt_std(raw)
+            .expect("matching provider socket should activate");
+        let matching_addr = listener
+            .local_addr()
+            .expect("matching address should resolve");
+        prebound
+            .insert("nnc3-7a-prebound", listener)
+            .expect("matching listener should enter the bundle");
+
+        let prepared = prebound
+            .prepare("dev-nnc3-7a-orphan", requested_addr)
+            .expect("unconsumed listener should reserve");
+        let raw = std::net::TcpListener::bind(requested_addr)
+            .expect("unconsumed provider socket should bind");
+        let listener = prepared
+            .adopt_std(raw)
+            .expect("unconsumed provider socket should activate");
+        let orphan_addr = listener
+            .local_addr()
+            .expect("unconsumed address should resolve");
+        prebound
+            .insert("nnc3-7a-orphan", listener)
+            .expect("unconsumed listener should enter the bundle");
+
+        let active_observed = Arc::new(AtomicBool::new(false));
+        let mut options = ServeOptions::new(fixture.engine());
+        options.wire_adapters.push(Box::new(PreboundAdapter {
+            addr: matching_addr,
+            state_root: fixture.data_dir().to_path_buf(),
+            active_observed: Arc::clone(&active_observed),
+        }));
+        // Deliberately omit `with_prebound_listener_authority`: the server
+        // must reject the foreign incarnation and settle both the selected
+        // listener and every still-unconsumed bundle member.
+        options = options.with_prebound_wire_listeners(prebound);
+        let main_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("main listener should bind");
+
+        let error = serve(main_listener, options)
+            .await
+            .expect_err("cross-incarnation pre-bound adoption must fail closed");
+        assert!(
+            error
+                .to_string()
+                .contains("different ServeOptions incarnation"),
+            "the failure should identify the authority mismatch: {error}"
+        );
+        assert!(
+            !active_observed.load(Ordering::Acquire),
+            "an authority mismatch must fail before the adapter guard or serving effect"
+        );
+        for addr in [matching_addr, orphan_addr] {
+            std::net::TcpListener::bind(addr)
+                .expect("every rejected pre-bound socket must be confirmed closed");
+        }
+        let records = LocalPortLeaseAuthority::open(fixture.data_dir())
+            .expect("port authority should reopen")
+            .list()
+            .expect("port records should list");
+        for addr in [matching_addr, orphan_addr] {
+            let record = records
+                .iter()
+                .find(|record| {
+                    record
+                        .binding()
+                        .is_some_and(|binding| binding.actual_port().get() == addr.port())
+                })
+                .expect("each rejected pre-bound lease should remain inspectable");
+            assert_eq!(record.phase(), PortLeasePhase::Released);
+        }
+    }
+
+    #[test]
+    fn nnc3_7a_serve_options_drop_and_replacement_settle_prebound_bundles() {
+        let fixture = EngineFixture::new(|path| Engine::new(path));
+        let prepare_bundle = |listener_name: &str, adapter_name: &str| {
+            let mut listeners = PreboundServerListeners::new(fixture.data_dir());
+            let requested_addr = "127.0.0.1:0"
+                .parse()
+                .expect("provider-assigned address should parse");
+            let prepared = listeners
+                .prepare(listener_name, requested_addr)
+                .expect("pre-bound listener should reserve");
+            let raw = std::net::TcpListener::bind(requested_addr)
+                .expect("provider should bind its requested socket");
+            let listener = prepared
+                .adopt_std(raw)
+                .expect("pre-bound listener should activate");
+            let actual_addr = listener
+                .local_addr()
+                .expect("pre-bound address should resolve");
+            listeners
+                .insert(adapter_name, listener)
+                .expect("listener should enter the handoff bundle");
+            (listeners, actual_addr)
+        };
+
+        let (first, first_addr) = prepare_bundle("dev-mongodb-provider-assigned", "mongodb");
+        let (second, second_addr) = prepare_bundle("dev-s3-provider-assigned", "s3");
+        let options = ServeOptions::new(fixture.engine())
+            .with_prebound_listener_authority(&first)
+            .with_prebound_wire_listeners(first)
+            .with_prebound_wire_listeners(second);
+
+        std::net::TcpListener::bind(first_addr)
+            .expect("replacing a pre-bound bundle must close and settle the old bundle");
+        drop(options);
+        std::net::TcpListener::bind(second_addr)
+            .expect("dropping ServeOptions must close and settle its unconsumed bundle");
+
+        let records = LocalPortLeaseAuthority::open(fixture.data_dir())
+            .expect("port authority should reopen")
+            .list()
+            .expect("port records should list");
+        for addr in [first_addr, second_addr] {
+            let record = records
+                .iter()
+                .find(|record| {
+                    record
+                        .binding()
+                        .is_some_and(|binding| binding.actual_port().get() == addr.port())
+                })
+                .expect("each pre-bound lease should remain inspectable");
+            assert_eq!(record.phase(), PortLeasePhase::Released);
+        }
     }
 
     #[tokio::test]

@@ -63,7 +63,8 @@ pub use adapters::mongodb::{
 };
 pub use construction::{ServeOptions, serve, serve_leased};
 pub use listener_lease::{
-    LeasedServerListener, PreparedServerListener, RecordedListenerBindFailure,
+    LeasedServerListener, PreboundServerListener, PreboundServerListeners, PreparedServerListener,
+    RecordedListenerBindFailure,
 };
 pub use local_server::{
     SERVER_DISCOVERY_PROTOCOL_VERSIONS, ServerDiscoveryLease, ServerDiscoveryRecord,

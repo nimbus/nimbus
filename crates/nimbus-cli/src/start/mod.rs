@@ -100,14 +100,14 @@ pub(crate) struct StartCommand {
     pub(crate) cloudflare: bool,
 
     /// Disable the MongoDB wire-protocol listener (served by default on
-    /// port 27017 when free, with SCRAM credentials from the data dir's
+    /// port 27017, with SCRAM credentials from the data dir's
     /// wire-credential store unless operator credentials are provided).
     #[arg(long = "no-mongodb", action = clap::ArgAction::SetFalse, default_value_t = true)]
     pub(crate) mongodb: bool,
 
     /// Explicit port for the MongoDB wire-protocol listener. Without this
-    /// flag the listener serves on 27017 when free and is skipped (with a
-    /// warning) when busy; an explicit port fails loud instead.
+    /// flag the listener serves on 27017 and a conflict fails startup with
+    /// guidance to choose another port or disable the listener.
     #[arg(long)]
     pub(crate) mongodb_port: Option<u16>,
 
@@ -125,15 +125,14 @@ pub(crate) struct StartCommand {
     pub(crate) mongodb_username: Option<String>,
 
     /// Disable the DynamoDB HTTP listener (served by default on port 8000
-    /// when free, with the generated wire-credential store key bound to
+    /// with the generated wire-credential store key bound to
     /// the `default` tenant unless operator bindings are provided).
     #[arg(long = "no-dynamodb", action = clap::ArgAction::SetFalse, default_value_t = true)]
     pub(crate) dynamodb: bool,
 
     /// Explicit port for the DynamoDB HTTP listener (DynamoDB Local
-    /// convention is 8000). Without this flag the listener serves on 8000
-    /// when free and is skipped (with a warning) when busy; an explicit
-    /// port fails loud instead.
+    /// convention is 8000). Without this flag a conflict on 8000 fails
+    /// startup with guidance to choose another port or disable the listener.
     #[arg(long)]
     pub(crate) dynamodb_port: Option<u16>,
 
@@ -150,15 +149,14 @@ pub(crate) struct StartCommand {
     pub(crate) dynamodb_access_key: Vec<String>,
 
     /// Disable the S3 HTTP listener (served by default on port 9000
-    /// when free, with the generated wire-credential store key bound to
+    /// with the generated wire-credential store key bound to
     /// the `default` tenant unless operator bindings are provided).
     #[arg(long = "no-s3", action = clap::ArgAction::SetFalse, default_value_t = true)]
     pub(crate) s3: bool,
 
     /// Explicit port for the S3 HTTP listener (S3-compatible local
-    /// convention is 9000). Without this flag the listener serves on 9000
-    /// when free and is skipped (with a warning) when busy; an explicit
-    /// port fails loud instead.
+    /// convention is 9000). Without this flag a conflict on 9000 fails
+    /// startup with guidance to choose another port or disable the listener.
     #[arg(long)]
     pub(crate) s3_port: Option<u16>,
 
@@ -402,6 +400,11 @@ pub(crate) struct StartCommand {
     #[arg(skip)]
     pub(crate) mongodb_credentials_from_store: bool,
 
+    /// Continuously held dev wire listeners awaiting transfer into the
+    /// server's matching listener-authority incarnation.
+    #[arg(skip)]
+    pub(crate) prebound_wire_listeners: Option<nimbus_server::PreboundServerListeners>,
+
     /// Tenant-isolation mode selected by the owning command.
     #[arg(skip = nimbus_tenant::TenantIsolationMode::Production)]
     pub(crate) tenant_isolation_mode: nimbus_tenant::TenantIsolationMode,
@@ -492,6 +495,7 @@ impl Default for StartCommand {
             deploy_admin_token: None,
             auto_tenant: None,
             mongodb_credentials_from_store: false,
+            prebound_wire_listeners: None,
             tenant_isolation_mode: nimbus_tenant::TenantIsolationMode::Production,
         }
     }

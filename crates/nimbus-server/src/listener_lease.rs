@@ -4,6 +4,8 @@
 //! translates real Tokio listener observations into that vocabulary while
 //! leaving every kernel bind in its existing effect owner.
 
+use std::collections::BTreeMap;
+use std::fmt;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::num::NonZeroU16;
@@ -108,11 +110,46 @@ impl PreparedServerListener {
         })
     }
 
+    /// Adopt and activate a pre-bound standard-library listener.
+    ///
+    /// CLI composition uses this before a Tokio runtime owns the socket so a
+    /// provider-assigned port can be advertised without dropping its kernel
+    /// reservation. The returned listener remains bound and carries the same
+    /// Active lease into [`ServeOptions`](crate::ServeOptions).
+    pub fn adopt_std(self, listener: std::net::TcpListener) -> io::Result<PreboundServerListener> {
+        let binding = match listener
+            .local_addr()
+            .and_then(|actual_addr| self.binding_for_addr(actual_addr))
+        {
+            Ok(binding) => binding,
+            Err(error) => return Err(self.close_std_after_failed_adoption(listener, error)),
+        };
+        if let Err(error) = self.authority.adopt_claimed_and_activate_batch(
+            &[(self.request.clone(), self.claim.clone(), binding)],
+            None,
+        ) {
+            return Err(self.close_std_after_failed_adoption(listener, network_error(error)));
+        }
+        Ok(PreboundServerListener {
+            listener,
+            lease: ActiveServerListenerLease {
+                authority: self.authority,
+                request: self.request,
+                provenance: self.provenance,
+            },
+            owner_incarnation: self.owner_incarnation,
+        })
+    }
+
     fn binding_for_listener(
         &self,
         listener: &tokio::net::TcpListener,
     ) -> io::Result<PortLeaseBinding> {
         let actual_addr = listener.local_addr()?;
+        self.binding_for_addr(actual_addr)
+    }
+
+    fn binding_for_addr(&self, actual_addr: SocketAddr) -> io::Result<PortLeaseBinding> {
         let actual_port = NonZeroU16::new(actual_addr.port()).ok_or_else(|| {
             io::Error::other("a bound server listener reported the non-concrete port zero")
         })?;
@@ -148,6 +185,24 @@ impl PreparedServerListener {
         }
     }
 
+    fn close_std_after_failed_adoption(
+        self,
+        listener: std::net::TcpListener,
+        primary: io::Error,
+    ) -> io::Error {
+        drop(listener);
+        match self.abandon_after_confirmed_close() {
+            Ok(()) => primary,
+            Err(cleanup_error) => io::Error::new(
+                primary.kind(),
+                format!(
+                    "{primary}; failed to settle the claimed pre-bound listener after adoption \
+                     failed: {cleanup_error}"
+                ),
+            ),
+        }
+    }
+
     fn abandon_after_confirmed_close(self) -> io::Result<()> {
         settle_claim_without_effect(&self.authority, &self.request, self.claim, self.provenance)
     }
@@ -158,6 +213,87 @@ pub struct LeasedServerListener {
     listener: tokio::net::TcpListener,
     lease: ActiveServerListenerLease,
     owner_incarnation: Arc<str>,
+}
+
+/// A standard-library TCP listener backed by an Active durable port lease.
+///
+/// This is the handoff form used when CLI composition must know an
+/// OS-assigned port before the asynchronous server begins. It owns the real
+/// descriptor continuously; converting it for Tokio never opens a second bind
+/// window.
+pub struct PreboundServerListener {
+    listener: std::net::TcpListener,
+    lease: ActiveServerListenerLease,
+    owner_incarnation: Arc<str>,
+}
+
+impl fmt::Debug for PreboundServerListener {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PreboundServerListener")
+            .field("local_addr", &self.listener.local_addr())
+            .field("owner_incarnation", &self.owner_incarnation)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PreboundServerListener {
+    /// Return the concrete address assigned to the continuously held socket.
+    pub fn local_addr(&self) -> io::Result<SocketAddr> {
+        self.listener.local_addr()
+    }
+
+    /// Close a listener that never entered server ownership and settle its
+    /// exact durable lease.
+    pub fn close_and_settle(self) -> io::Result<()> {
+        drop(self.listener);
+        self.lease.settle_after_confirmed_local_close()
+    }
+
+    pub(crate) fn owner_incarnation(&self) -> &str {
+        self.owner_incarnation.as_ref()
+    }
+
+    pub(crate) fn into_leased(self) -> io::Result<LeasedServerListener> {
+        let Self {
+            listener,
+            lease,
+            owner_incarnation,
+        } = self;
+        if let Err(error) = listener.set_nonblocking(true) {
+            drop(listener);
+            return match lease.settle_after_confirmed_local_close() {
+                Ok(()) => Err(error),
+                Err(cleanup_error) => Err(io::Error::new(
+                    error.kind(),
+                    format!(
+                        "{error}; failed to settle the pre-bound listener after nonblocking \
+                         setup failed: {cleanup_error}"
+                    ),
+                )),
+            };
+        }
+        match tokio::net::TcpListener::from_std(listener) {
+            Ok(listener) => Ok(LeasedServerListener {
+                listener,
+                lease,
+                owner_incarnation,
+            }),
+            Err(error) => {
+                let cleanup_error = lease.settle_after_confirmed_local_close().err();
+                match cleanup_error {
+                    Some(cleanup_error) => Err(io::Error::new(
+                        error.kind(),
+                        format!(
+                            "{error}; failed to settle the pre-bound listener after Tokio \
+                             adoption failed: {cleanup_error}"
+                        ),
+                    )),
+                    None => Err(error),
+                }
+            }
+        }
+    }
 }
 
 impl LeasedServerListener {
@@ -214,6 +350,137 @@ pub(crate) struct ServerListenerLeaseAuthority {
     state_root: PathBuf,
     incarnation: Arc<str>,
     next_main_attempt: Arc<AtomicU64>,
+}
+
+/// Pre-bound sibling listeners plus the exact server authority incarnation
+/// that claimed and activated them.
+///
+/// The bundle is intentionally not a numeric-port handoff: it retains every
+/// concrete socket until [`ServeOptions`](crate::ServeOptions) consumes it.
+pub struct PreboundServerListeners {
+    authority: ServerListenerLeaseAuthority,
+    listeners: BTreeMap<String, PreboundServerListener>,
+}
+
+impl Drop for PreboundServerListeners {
+    fn drop(&mut self) {
+        if self.listeners.is_empty() {
+            return;
+        }
+        if let Err(error) = self.close_and_settle_remaining() {
+            tracing::error!(
+                %error,
+                "failed to settle pre-bound server listeners during ownership drop"
+            );
+        }
+    }
+}
+
+impl fmt::Debug for PreboundServerListeners {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let addresses = self
+            .listeners
+            .iter()
+            .map(|(name, listener)| (name.as_str(), listener.local_addr()))
+            .collect::<Vec<_>>();
+        formatter
+            .debug_struct("PreboundServerListeners")
+            .field("listeners", &addresses)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PreboundServerListeners {
+    /// Create one server listener authority for an upcoming serve
+    /// incarnation.
+    pub fn new(state_root: impl Into<PathBuf>) -> Self {
+        Self {
+            authority: ServerListenerLeaseAuthority::new(state_root),
+            listeners: BTreeMap::new(),
+        }
+    }
+
+    /// Reserve and claim a named sibling before the caller-owned socket bind.
+    pub fn prepare(
+        &self,
+        listener_name: &str,
+        requested_addr: SocketAddr,
+    ) -> io::Result<PreparedServerListener> {
+        self.authority.prepare(
+            listener_name,
+            requested_addr,
+            nimbus_owned_provenance(requested_addr),
+        )
+    }
+
+    /// Retain an adopted listener under the adapter name that will consume it.
+    pub fn insert(
+        &mut self,
+        adapter_name: impl Into<String>,
+        listener: PreboundServerListener,
+    ) -> io::Result<()> {
+        let adapter_name = adapter_name.into();
+        if !self.authority.owns(listener.owner_incarnation()) {
+            let primary = io::Error::other(format!(
+                "pre-bound {adapter_name} listener belongs to a different server authority"
+            ));
+            return match listener.close_and_settle() {
+                Ok(()) => Err(primary),
+                Err(cleanup_error) => Err(io::Error::other(format!(
+                    "{primary}; failed to settle the rejected listener: {cleanup_error}"
+                ))),
+            };
+        }
+        if self.listeners.contains_key(&adapter_name) {
+            let primary = io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!("pre-bound listener `{adapter_name}` is already registered"),
+            );
+            return match listener.close_and_settle() {
+                Ok(()) => Err(primary),
+                Err(cleanup_error) => Err(io::Error::new(
+                    primary.kind(),
+                    format!("{primary}; failed to settle the duplicate: {cleanup_error}"),
+                )),
+            };
+        }
+        self.listeners.insert(adapter_name, listener);
+        Ok(())
+    }
+
+    /// Close and settle every listener that has not entered server ownership.
+    pub fn close_and_settle(mut self) -> io::Result<()> {
+        self.close_and_settle_remaining()
+    }
+
+    fn close_and_settle_remaining(&mut self) -> io::Result<()> {
+        let mut failure: Option<io::Error> = None;
+        for (adapter_name, listener) in std::mem::take(&mut self.listeners) {
+            if let Err(error) = listener.close_and_settle() {
+                failure = Some(match failure {
+                    Some(previous) => io::Error::other(format!(
+                        "{previous}; failed to settle pre-bound {adapter_name} listener: {error}"
+                    )),
+                    None => io::Error::other(format!(
+                        "failed to settle pre-bound {adapter_name} listener: {error}"
+                    )),
+                });
+            }
+        }
+        failure.map_or(Ok(()), Err)
+    }
+
+    pub(crate) fn authority(&self) -> ServerListenerLeaseAuthority {
+        self.authority.clone()
+    }
+
+    pub(crate) fn remove(&mut self, adapter_name: &str) -> Option<PreboundServerListener> {
+        self.listeners.remove(adapter_name)
+    }
+
+    pub(crate) fn first_name(&self) -> Option<&str> {
+        self.listeners.keys().next().map(String::as_str)
+    }
 }
 
 impl ServerListenerLeaseAuthority {
@@ -691,5 +958,39 @@ mod tests {
                 .to_string()
                 .contains("failed to record durable no-effect bind failure")
         );
+    }
+
+    #[test]
+    fn dropping_prebound_bundle_closes_socket_and_settles_active_lease() {
+        let state_root = tempfile::tempdir().expect("state root should be created");
+        let mut listeners = PreboundServerListeners::new(state_root.path());
+        let requested_addr = "127.0.0.1:0"
+            .parse()
+            .expect("provider-assigned address should parse");
+        let prepared = listeners
+            .prepare("dev-mongodb-provider-assigned", requested_addr)
+            .expect("pre-bound listener should reserve");
+        let raw = std::net::TcpListener::bind(requested_addr)
+            .expect("provider should bind its requested socket");
+        let listener = prepared
+            .adopt_std(raw)
+            .expect("pre-bound listener should activate");
+        let actual_addr = listener
+            .local_addr()
+            .expect("pre-bound address should resolve");
+        listeners
+            .insert("mongodb", listener)
+            .expect("listener should enter the handoff bundle");
+
+        drop(listeners);
+
+        std::net::TcpListener::bind(actual_addr)
+            .expect("dropping pre-serve ownership must close the retained socket");
+        let records = LocalPortLeaseAuthority::open(state_root.path())
+            .expect("port authority should reopen")
+            .list()
+            .expect("port records should list");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].phase(), PortLeasePhase::Released);
     }
 }
