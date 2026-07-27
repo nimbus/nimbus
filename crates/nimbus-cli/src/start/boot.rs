@@ -14,7 +14,10 @@ use nimbus_convex::{ConvexRegistry, ConvexSiloAuthRegistry};
 use nimbus_operator::{
     LocalServerPaths, LocalServerSecurityState, load_or_create_local_admin_token,
 };
-use nimbus_server::{CloudFunctionsRegistry, ServeOptions, ServerDiscoveryLease, serve};
+use nimbus_server::{
+    CloudFunctionsRegistry, LeasedServerListener, RecordedListenerBindFailure, ServeOptions,
+    ServerDiscoveryLease, serve_leased,
+};
 use nimbus_tenant::OperatorPolicyDocument;
 
 use super::StartCommand;
@@ -173,7 +176,7 @@ pub(crate) async fn run_start_command(
         emit_rotation_warning(rotation_warning);
     }
     let activated_listener = if command.systemd_socket_activation {
-        let listener = start_listener(&command).await?;
+        let listener = activated_systemd_listener()?;
         let activated_host = listener.local_addr()?.ip().to_string();
         ensure_host_opt_in(&activated_host, command.allow_network)?;
         ensure_firebase_bypass_loopback_only(&activated_host, firebase_bypass_enabled)?;
@@ -202,23 +205,82 @@ pub(crate) async fn run_start_command(
     let scheduler_handle = tokio::spawn(async move {
         run_scheduler(scheduler_engine, shutdown_rx).await;
     });
+    let convex_silo_auth =
+        convex_registry
+            .as_ref()
+            .map_or_else(ConvexSiloAuthRegistry::new, |registry| {
+                let verifier = Arc::new(registry.clone());
+                adapter_enablement
+                    .convex_auth_silos
+                    .iter()
+                    .cloned()
+                    .fold(ConvexSiloAuthRegistry::new(), |bindings, silo| {
+                        bindings.bind(&silo, verifier.clone())
+                    })
+            });
+    let mut serve_options = ServeOptions::new(engine.clone())
+        .with_network_state_root(compose_control_data_dir.clone())
+        .with_license(license_state)
+        .with_runtime_host_resource_budget(runtime_host_resource_budget)
+        .with_runtime_adaptive_controller_settings(runtime_adaptive_controller_settings)
+        .with_effective_runtime_scaling_plans(effective_runtime_scaling_plans);
+    if let Some(registry) = convex_registry {
+        serve_options = serve_options
+            .with_convex_registry(registry)
+            .with_convex_silo_auth(convex_silo_auth);
+    }
+    if let Some(registry) = cloud_functions_registry {
+        serve_options = serve_options.with_cloud_functions_registry(registry);
+    }
+    if let Some(manager) = service_manager {
+        serve_options = serve_options.with_service_manager(manager);
+    }
+    serve_options = serve_options.with_machine_lifecycle_manager(machine_lifecycle_manager);
+    if let Some(token) = command.deploy_admin_token.clone() {
+        serve_options = serve_options.with_deploy_admin_token(token);
+    }
+    serve_options = serve_options.with_local_server_security(local_server_security);
+    serve_options = serve_options.with_tenant_isolation_mode(command.tenant_isolation_mode);
+    serve_options = serve_options.with_cors_allowed_origins(cors_allowed_origins);
+    if let Some(tls_config) = tls_config {
+        serve_options = serve_options.with_tls(tls_config);
+    }
+
     let listener = match activated_listener {
-        Some(listener) => listener,
-        None => start_listener(&command).await?,
+        Some(listener) => serve_options.adopt_external_main_listener(listener)?,
+        None => start_listener(&command, &serve_options).await?,
     };
-    let discovery_lease =
-        ServerDiscoveryLease::acquire(&local_server_paths, listener.local_addr()?)?;
+    let listener_addr = match listener.local_addr() {
+        Ok(addr) => addr,
+        Err(error) => {
+            return Err(Box::new(close_listener_after_startup_error(
+                listener,
+                error,
+                "failed to settle the main listener after its bound address could not be observed",
+            )));
+        }
+    };
+    let discovery_lease = match ServerDiscoveryLease::acquire(&local_server_paths, listener_addr) {
+        Ok(lease) => lease,
+        Err(error) => {
+            return Err(Box::new(close_listener_after_startup_error(
+                listener,
+                error,
+                "failed to settle the main listener after discovery acquisition failed",
+            )));
+        }
+    };
     emit_start_startup_summary(
         &command,
         resolved_app_dir.as_ref(),
         compose_selection.as_ref(),
         &adapter_enablement,
-        listener.local_addr()?,
+        listener_addr,
         deploy_admin_enabled,
     );
     let first_boot_handle = if is_first_boot_run {
         let console_url =
-            operator_console_url_from_base(&local_listen_url(listener.local_addr()?, tls_enabled));
+            operator_console_url_from_base(&local_listen_url(listener_addr, tls_enabled));
         Some(spawn_first_boot_announce(
             console_url,
             local_server_paths.clone(),
@@ -238,49 +300,9 @@ pub(crate) async fn run_start_command(
         tracing::warn!(license_warning = %warning, "nimbus license warning");
     }
 
-    tracing::info!("nimbus listening on {}", listener.local_addr()?);
-    let convex_silo_auth =
-        convex_registry
-            .as_ref()
-            .map_or_else(ConvexSiloAuthRegistry::new, |registry| {
-                let verifier = Arc::new(registry.clone());
-                adapter_enablement
-                    .convex_auth_silos
-                    .iter()
-                    .cloned()
-                    .fold(ConvexSiloAuthRegistry::new(), |bindings, silo| {
-                        bindings.bind(&silo, verifier.clone())
-                    })
-            });
-    let mut serve_options = ServeOptions::new(engine.clone())
-        .with_license(license_state)
-        .with_runtime_host_resource_budget(runtime_host_resource_budget)
-        .with_runtime_adaptive_controller_settings(runtime_adaptive_controller_settings)
-        .with_effective_runtime_scaling_plans(effective_runtime_scaling_plans);
-    if let Some(registry) = convex_registry {
-        serve_options = serve_options
-            .with_convex_registry(registry)
-            .with_convex_silo_auth(convex_silo_auth);
-    }
-    if let Some(registry) = cloud_functions_registry {
-        serve_options = serve_options.with_cloud_functions_registry(registry);
-    }
-    if let Some(manager) = service_manager {
-        serve_options = serve_options.with_service_manager(manager);
-    }
-    serve_options = serve_options.with_machine_lifecycle_manager(machine_lifecycle_manager);
-    if let Some(token) = command.deploy_admin_token {
-        serve_options = serve_options.with_deploy_admin_token(token);
-    }
-    serve_options = serve_options.with_local_server_security(local_server_security);
-    serve_options = serve_options.with_tenant_isolation_mode(command.tenant_isolation_mode);
-    serve_options = serve_options.with_cors_allowed_origins(cors_allowed_origins);
+    tracing::info!("nimbus listening on {listener_addr}");
     serve_options = adapter_enablement.apply_to(serve_options);
-    if let Some(tls_config) = tls_config {
-        serve_options = serve_options.with_tls(tls_config);
-    }
-
-    let server_result = serve(listener, serve_options).await;
+    let server_result = serve_leased(listener, serve_options).await;
     drop(discovery_lease);
     let _ = shutdown_tx.send(true);
     let _ = scheduler_handle.await;
@@ -585,11 +607,77 @@ fn local_listen_url(addr: SocketAddr, tls_enabled: bool) -> String {
     format!("{scheme}://{host}:{}/", addr.port())
 }
 
-async fn start_listener(command: &StartCommand) -> std::io::Result<tokio::net::TcpListener> {
-    if command.systemd_socket_activation {
-        activated_systemd_listener()
+async fn start_listener(
+    command: &StartCommand,
+    serve_options: &ServeOptions,
+) -> std::io::Result<LeasedServerListener> {
+    let candidates = tokio::net::lookup_host((command.host.as_str(), command.port)).await?;
+    let mut last_error = None;
+    for requested_addr in candidates {
+        let prepared = match serve_options.prepare_main_listener(requested_addr) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                retain_candidate_preparation_failure(&mut last_error, error)?;
+                continue;
+            }
+        };
+        match tokio::net::TcpListener::bind(requested_addr).await {
+            Ok(listener) => return prepared.adopt(listener),
+            Err(error) => {
+                retain_recorded_candidate_failure(
+                    &mut last_error,
+                    prepared.record_bind_failure(error),
+                )?;
+            }
+        }
+    }
+    Err(last_error.unwrap_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::AddrNotAvailable,
+            format!(
+                "host `{}` resolved no usable TCP addresses for port {}",
+                command.host, command.port
+            ),
+        )
+    }))
+}
+
+fn retain_candidate_preparation_failure(
+    last_error: &mut Option<std::io::Error>,
+    error: std::io::Error,
+) -> std::io::Result<()> {
+    if error.kind() == std::io::ErrorKind::AddrInUse {
+        *last_error = Some(error);
+        Ok(())
     } else {
-        tokio::net::TcpListener::bind((command.host.as_str(), command.port)).await
+        Err(error)
+    }
+}
+
+fn retain_recorded_candidate_failure(
+    last_error: &mut Option<std::io::Error>,
+    receipt: Result<RecordedListenerBindFailure, std::io::Error>,
+) -> std::io::Result<()> {
+    match receipt {
+        Ok(recorded_bind_failure) => {
+            *last_error = Some(recorded_bind_failure.into_error());
+            Ok(())
+        }
+        Err(authority_error) => Err(authority_error),
+    }
+}
+
+fn close_listener_after_startup_error(
+    listener: LeasedServerListener,
+    primary: std::io::Error,
+    context: &str,
+) -> std::io::Error {
+    match listener.close_and_settle() {
+        Ok(()) => primary,
+        Err(cleanup_error) => std::io::Error::new(
+            primary.kind(),
+            format!("{primary}; {context}: {cleanup_error}"),
+        ),
     }
 }
 
@@ -804,4 +892,179 @@ pub(super) fn resolve_license_path(explicit: Option<&Path>) -> Option<PathBuf> {
     let config_dir = dirs::global_config_dir().ok()?;
     let default_path = config_dir.join("license.json");
     default_path.exists().then_some(default_path)
+}
+
+#[cfg(test)]
+mod listener_tests {
+    use nimbus_network::{
+        LocalPortLeaseAuthority, PortBindFailureKind, PortBindingProvenance, PortLeasePhase,
+    };
+
+    use super::*;
+
+    #[tokio::test]
+    async fn start_listener_activates_provider_assigned_lease_for_cli_owned_bind() {
+        let state_root = tempfile::tempdir().expect("state root should be created");
+        let engine = Arc::new(Engine::new(state_root.path()).expect("engine should initialize"));
+        let options =
+            ServeOptions::new(engine).with_network_state_root(state_root.path().to_path_buf());
+        let command = StartCommand {
+            host: "127.0.0.1".to_owned(),
+            port: 0,
+            ..StartCommand::default()
+        };
+
+        let listener = start_listener(&command, &options)
+            .await
+            .expect("CLI-owned listener should bind through durable authority");
+        let actual_addr = listener
+            .local_addr()
+            .expect("leased listener address should resolve");
+        let records = LocalPortLeaseAuthority::open(state_root.path())
+            .expect("port authority should open")
+            .list()
+            .expect("port records should list");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].phase(), PortLeasePhase::Active);
+        let binding = records[0]
+            .binding()
+            .expect("Active lease should retain binding evidence");
+        assert_eq!(binding.actual_port().get(), actual_addr.port());
+        assert_eq!(
+            binding.provenance(),
+            PortBindingProvenance::ProviderAssigned
+        );
+    }
+
+    #[tokio::test]
+    async fn start_listener_records_exact_addr_in_use_failure_without_serving() {
+        let state_root = tempfile::tempdir().expect("state root should be created");
+        let external = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("external owner should bind");
+        let occupied_addr = external
+            .local_addr()
+            .expect("external address should resolve");
+        let engine = Arc::new(Engine::new(state_root.path()).expect("engine should initialize"));
+        let options =
+            ServeOptions::new(engine).with_network_state_root(state_root.path().to_path_buf());
+        let command = StartCommand {
+            host: occupied_addr.ip().to_string(),
+            port: occupied_addr.port(),
+            ..StartCommand::default()
+        };
+
+        let error = match start_listener(&command, &options).await {
+            Ok(_) => panic!("external owner should win the exact kernel bind"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), std::io::ErrorKind::AddrInUse);
+        let records = LocalPortLeaseAuthority::open(state_root.path())
+            .expect("port authority should open")
+            .list()
+            .expect("port records should list");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].phase(), PortLeasePhase::Failed);
+        assert_eq!(
+            records[0]
+                .failure()
+                .expect("failed bind should retain evidence")
+                .kind(),
+            PortBindFailureKind::AddrInUse
+        );
+    }
+
+    #[tokio::test]
+    async fn startup_error_closes_and_releases_cli_owned_listener() {
+        let state_root = tempfile::tempdir().expect("state root should be created");
+        let engine = Arc::new(Engine::new(state_root.path()).expect("engine should initialize"));
+        let options =
+            ServeOptions::new(engine).with_network_state_root(state_root.path().to_path_buf());
+        let command = StartCommand {
+            host: "127.0.0.1".to_owned(),
+            port: 0,
+            ..StartCommand::default()
+        };
+        let listener = start_listener(&command, &options)
+            .await
+            .expect("CLI-owned listener should activate");
+        let actual_addr = listener
+            .local_addr()
+            .expect("leased listener address should resolve");
+
+        let error = close_listener_after_startup_error(
+            listener,
+            std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "discovery record already exists",
+            ),
+            "failed discovery cleanup",
+        );
+        assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+        let records = LocalPortLeaseAuthority::open(state_root.path())
+            .expect("port authority should reopen")
+            .list()
+            .expect("port records should list");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].phase(), PortLeasePhase::Released);
+        tokio::net::TcpListener::bind(actual_addr)
+            .await
+            .expect("confirmed startup failure must close the CLI-owned socket");
+    }
+
+    #[test]
+    fn authority_receipt_failure_aborts_candidate_fallback() {
+        let mut last_error = Some(std::io::Error::new(
+            std::io::ErrorKind::AddrInUse,
+            "earlier recorded candidate",
+        ));
+        let error = retain_recorded_candidate_failure(
+            &mut last_error,
+            Err(std::io::Error::other("authority receipt failed")),
+        )
+        .expect_err("authority failure must stop hostname candidate iteration");
+        assert_eq!(error.to_string(), "authority receipt failed");
+        assert_eq!(
+            last_error
+                .expect("the earlier recorded bind diagnostic should remain visible")
+                .kind(),
+            std::io::ErrorKind::AddrInUse
+        );
+    }
+
+    #[test]
+    fn authority_preparation_failure_aborts_candidate_fallback() {
+        let mut last_error = Some(std::io::Error::new(
+            std::io::ErrorKind::AddrInUse,
+            "earlier safe candidate conflict",
+        ));
+        let error = retain_candidate_preparation_failure(
+            &mut last_error,
+            std::io::Error::other("bind-claim authority receipt failed"),
+        )
+        .expect_err("authority preparation failure must stop candidate iteration");
+        assert_eq!(error.to_string(), "bind-claim authority receipt failed");
+        assert_eq!(
+            last_error
+                .expect("the earlier safe conflict should remain visible")
+                .kind(),
+            std::io::ErrorKind::AddrInUse
+        );
+    }
+
+    #[test]
+    fn durable_port_conflict_may_try_the_next_hostname_candidate() {
+        let mut last_error = None;
+        retain_candidate_preparation_failure(
+            &mut last_error,
+            std::io::Error::new(std::io::ErrorKind::AddrInUse, "durable port conflict"),
+        )
+        .expect("a proven conflict has no partial preparation to reconcile");
+        assert_eq!(
+            last_error
+                .expect("the conflict should remain as the fallback diagnostic")
+                .kind(),
+            std::io::ErrorKind::AddrInUse
+        );
+    }
 }

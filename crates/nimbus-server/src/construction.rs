@@ -15,6 +15,11 @@ use crate::adapters::mongodb::MongoDbConfig;
 use crate::adapters::s3::S3Config;
 use crate::adapters::wire::WireProtocolAdapter;
 use crate::license::LicenseState;
+use crate::listener_lease::{
+    ActiveServerListenerLease, LeasedServerListener, PreparedServerListener,
+    RecordedListenerBindFailure, ServerListenerLeaseAuthority,
+    abandon_prepared_after_guard_failure,
+};
 use crate::local_server::LocalServerSecurityState;
 use crate::machine_lifecycle::MachineLifecycleManager;
 use crate::router::{RouterBuildConfig, RouterOptions};
@@ -28,6 +33,7 @@ pub struct ServeOptions {
     router_options: RouterOptions,
     wire_adapters: Vec<Box<dyn WireProtocolAdapter>>,
     tls_config: Option<TlsConfig>,
+    listener_leases: ServerListenerLeaseAuthority,
 }
 
 impl ServeOptions {
@@ -36,11 +42,39 @@ impl ServeOptions {
     }
 
     pub fn from_router_options(router_options: RouterOptions) -> Self {
+        let listener_leases =
+            ServerListenerLeaseAuthority::new(router_options.engine().data_dir().to_path_buf());
         Self {
             router_options,
             wire_adapters: Vec::new(),
             tls_config: None,
+            listener_leases,
         }
+    }
+
+    /// Use this node-local root for durable listener leases.
+    ///
+    /// The default is the engine data directory. Composition roots that share
+    /// one host-global network authority with other providers may override it.
+    pub fn with_network_state_root(mut self, state_root: impl Into<std::path::PathBuf>) -> Self {
+        self.listener_leases = self.listener_leases.with_state_root(state_root);
+        self
+    }
+
+    /// Reserve and claim the main TCP listener before the caller-owned bind.
+    pub fn prepare_main_listener(
+        &self,
+        requested_addr: std::net::SocketAddr,
+    ) -> std::io::Result<PreparedServerListener> {
+        self.listener_leases.prepare_main(requested_addr)
+    }
+
+    /// Adopt a listener supplied by systemd, an embedder, or another owner.
+    pub fn adopt_external_main_listener(
+        &self,
+        listener: tokio::net::TcpListener,
+    ) -> std::io::Result<LeasedServerListener> {
+        self.listener_leases.adopt_external_main(listener)
     }
 
     fn with_router_options(mut self, update: impl FnOnce(RouterOptions) -> RouterOptions) -> Self {
@@ -249,60 +283,212 @@ fn load_default_system_convex_registry() -> std::io::Result<ConvexRegistry> {
         .map_err(|error| std::io::Error::other(error.to_string()))
 }
 
-/// Runs the Nimbus HTTP/WebSocket server on an existing listener.
+/// Runs the Nimbus HTTP/WebSocket server on an externally supplied listener.
+///
+/// Embedders that own the socket effect may use this convenience entry point;
+/// it adopts the already-bound socket with external provenance before serving.
+/// Nimbus-owned bind paths should call [`ServeOptions::prepare_main_listener`]
+/// before their effect and then use [`serve_leased`].
 pub async fn serve(
     listener: tokio::net::TcpListener,
     options: ServeOptions,
 ) -> std::io::Result<()> {
+    let listener = options.adopt_external_main_listener(listener)?;
+    serve_leased(listener, options).await
+}
+
+/// Runs Nimbus only after the main listener has Active durable lease authority.
+pub async fn serve_leased(
+    listener: LeasedServerListener,
+    options: ServeOptions,
+) -> std::io::Result<()> {
+    if !options.listener_leases.owns(listener.owner_incarnation()) {
+        return match listener.close_and_settle() {
+            Ok(()) => Err(std::io::Error::other(
+                "leased main listener belongs to a different ServeOptions incarnation",
+            )),
+            Err(cleanup_error) => Err(std::io::Error::other(format!(
+                "leased main listener belongs to a different ServeOptions incarnation; \
+                 failed to settle its lease after the confirmed local socket close: \
+                 {cleanup_error}"
+            ))),
+        };
+    }
+    let (listener, main_lease, _) = listener.into_parts();
     let ServeOptions {
         mut router_options,
         wire_adapters,
         tls_config,
+        listener_leases,
     } = options;
-    let engine = router_options.engine();
-    if !router_options.has_system_convex_registry() {
-        router_options =
-            router_options.with_system_convex_registry(load_default_system_convex_registry()?);
-    }
-    let config = router_options.into_build_config();
-
-    // Sibling adapter listeners share the same `Arc<Engine>`; collect their
-    // task handles so the main HTTP server's return aborts every one of them.
+    let mut main_listener = Some(listener);
     let mut adapter_handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
+    let mut adapter_leases: Vec<ActiveServerListenerLease> = Vec::new();
 
-    for adapter in wire_adapters {
-        let adapter_listener = tokio::net::TcpListener::bind(adapter.bind_addr()).await?;
-        let adapter_addr = adapter_listener.local_addr()?;
-        // Fail closed: the adapter's guard refuses unsafe bind shapes before
-        // the listener serves a single byte.
-        adapter.guard(adapter_addr)?;
-        crate::system_tenant::record_listener_state_async(
-            &engine,
-            adapter.name(),
-            adapter.protocol(),
-            &adapter_addr.to_string(),
-            "listening",
-            Some(env!("CARGO_PKG_VERSION")),
-            None,
-        )
-        .await
-        .map_err(|error| std::io::Error::other(error.to_string()))?;
-        adapter_handles.extend(adapter.spawn(adapter_listener, Arc::clone(&engine)));
-    }
+    let mut result = async {
+        let engine = router_options.engine();
+        if !router_options.has_system_convex_registry() {
+            router_options =
+                router_options.with_system_convex_registry(load_default_system_convex_registry()?);
+        }
+        let config = router_options.into_build_config();
 
-    let http_result = serve_with_router_config(listener, config, tls_config).await;
-    for handle in adapter_handles {
-        handle.abort();
+        // Sibling adapter listeners share the same `Arc<Engine>`. Keep every
+        // task and lease outside this fallible setup block so all synchronous
+        // returns converge through one confirmed-close cleanup path.
+        for (ordinal, adapter) in wire_adapters.into_iter().enumerate() {
+            let requested_addr = adapter.bind_addr();
+            let prepared =
+                listener_leases.prepare_sibling(ordinal, adapter.name(), requested_addr)?;
+            let adapter_listener = match tokio::net::TcpListener::bind(requested_addr).await {
+                Ok(listener) => listener,
+                Err(error) => {
+                    return Err(bind_failure_error(prepared.record_bind_failure(error)));
+                }
+            };
+            let adapter_addr = match adapter_listener.local_addr() {
+                Ok(addr) => addr,
+                Err(error) => {
+                    return match abandon_prepared_after_guard_failure(prepared, adapter_listener) {
+                        Ok(()) => Err(error),
+                        Err(cleanup_error) => append_cleanup_error(
+                            Err(error),
+                            "failed to settle the claimed sibling after its bound address \
+                             could not be observed",
+                            cleanup_error,
+                        ),
+                    };
+                }
+            };
+            // Fail closed: the adapter's guard refuses unsafe bind shapes
+            // before the listener serves a single byte.
+            if let Err(guard_error) = adapter.guard(adapter_addr) {
+                return match abandon_prepared_after_guard_failure(prepared, adapter_listener) {
+                    Ok(()) => Err(guard_error),
+                    Err(cleanup_error) => append_cleanup_error(
+                        Err(guard_error),
+                        "failed to settle the claimed listener after its guard refused the bind",
+                        cleanup_error,
+                    ),
+                };
+            }
+            let leased_listener = prepared.adopt(adapter_listener)?;
+            let (adapter_listener, adapter_lease, listener_owner) = leased_listener.into_parts();
+            debug_assert!(
+                listener_leases.owns(listener_owner.as_ref()),
+                "sibling listener must belong to the serving incarnation"
+            );
+            if let Err(error) = crate::system_tenant::record_listener_state_async(
+                &engine,
+                adapter.name(),
+                adapter.protocol(),
+                &adapter_addr.to_string(),
+                "listening",
+                Some(env!("CARGO_PKG_VERSION")),
+                None,
+            )
+            .await
+            {
+                drop(adapter_listener);
+                let mut result = Err(std::io::Error::other(error.to_string()));
+                if let Err(cleanup_error) = adapter_lease.settle_after_confirmed_local_close() {
+                    result = append_cleanup_error(
+                        result,
+                        "failed to settle the sibling lease after its projection failed",
+                        cleanup_error,
+                    );
+                }
+                return result;
+            }
+            adapter_handles.extend(adapter.spawn(adapter_listener, Arc::clone(&engine)));
+            adapter_leases.push(adapter_lease);
+        }
+
+        let listener = main_listener
+            .take()
+            .expect("the main listener must be consumed exactly once");
+        serve_with_router_config(listener, config, tls_config).await
     }
-    http_result
+    .await;
+
+    let main_was_served = main_listener.is_none();
+    // A synchronous setup error leaves the main socket here. Dropping it
+    // proves local closure before the lease is settled below.
+    drop(main_listener.take());
+
+    if main_was_served {
+        // Abort every sibling before awaiting any one cancellation. A
+        // cancellation-resistant first task must not delay closure of later
+        // listeners.
+        for handle in &adapter_handles {
+            handle.abort();
+        }
+        for handle in adapter_handles {
+            let _ = handle.await;
+        }
+        for lease in adapter_leases {
+            if let Err(error) = lease.settle_after_confirmed_local_close() {
+                result = append_cleanup_error(
+                    result,
+                    "failed to settle a sibling listener lease after confirmed task closure",
+                    error,
+                );
+            }
+        }
+    } else {
+        // NNC7.1a owns atomic preparation/unwind of siblings that started
+        // before a later synchronous setup failure. Dropping these handles
+        // deliberately preserves the pre-existing detached-task behavior and
+        // their Active durable fences; NNC3.5 must not manufacture provider
+        // absence or release those leases.
+        drop(adapter_handles);
+        drop(adapter_leases);
+    }
+    if let Err(error) = main_lease.settle_after_confirmed_local_close() {
+        result = append_cleanup_error(
+            result,
+            "failed to settle the main listener lease after confirmed local closure",
+            error,
+        );
+    }
+    result
+}
+
+fn bind_failure_error(
+    result: Result<RecordedListenerBindFailure, std::io::Error>,
+) -> std::io::Error {
+    match result {
+        Ok(recorded) => recorded.into_error(),
+        Err(error) => error,
+    }
+}
+
+fn append_cleanup_error(
+    result: std::io::Result<()>,
+    context: &str,
+    cleanup_error: std::io::Error,
+) -> std::io::Result<()> {
+    match result {
+        Ok(()) => Err(std::io::Error::new(
+            cleanup_error.kind(),
+            format!("{context}: {cleanup_error}"),
+        )),
+        Err(primary) => Err(std::io::Error::new(
+            primary.kind(),
+            format!("{primary}; {context}: {cleanup_error}"),
+        )),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::net::SocketAddr;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
+    use nimbus_network::{LocalPortLeaseAuthority, PortLeasePhase};
     use nimbus_testing::EngineFixture;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::task::AbortHandle;
@@ -381,6 +567,255 @@ mod tests {
         ) -> Vec<tokio::task::JoinHandle<()>> {
             unreachable!("the occupied address must fail before spawn")
         }
+    }
+
+    struct LeaseAwareAdapter {
+        state_root: PathBuf,
+        bound_addr: Arc<Mutex<Option<SocketAddr>>>,
+        claim_observed: Arc<AtomicBool>,
+    }
+
+    impl WireProtocolAdapter for LeaseAwareAdapter {
+        fn name(&self) -> &'static str {
+            "nnc3-5-lease-aware"
+        }
+
+        fn protocol(&self) -> &'static str {
+            "tcp"
+        }
+
+        fn bind_addr(&self) -> SocketAddr {
+            "127.0.0.1:0".parse().expect("probe address should parse")
+        }
+
+        fn guard(&self, addr: SocketAddr) -> std::io::Result<()> {
+            *self
+                .bound_addr
+                .lock()
+                .expect("probe address lock should remain healthy") = Some(addr);
+            let claim_observed = LocalPortLeaseAuthority::open(&self.state_root)
+                .and_then(|authority| authority.list())
+                .is_ok_and(|records| {
+                    records.iter().any(|record| {
+                        record.phase() == PortLeasePhase::Reserved && record.bind_claim().is_some()
+                    })
+                });
+            self.claim_observed.store(claim_observed, Ordering::Release);
+            if claim_observed {
+                Ok(())
+            } else {
+                Err(std::io::Error::other(
+                    "sibling bind reached its guard without a claimed port lease",
+                ))
+            }
+        }
+
+        fn spawn(
+            self: Box<Self>,
+            listener: tokio::net::TcpListener,
+            _engine: Arc<Engine>,
+        ) -> Vec<tokio::task::JoinHandle<()>> {
+            vec![tokio::spawn(async move {
+                if let Ok((mut stream, _)) = listener.accept().await {
+                    let _ = stream.write_all(b"lease-owned").await;
+                }
+            })]
+        }
+    }
+
+    fn active_lease_matches_addr(state_root: &Path, addr: SocketAddr) -> bool {
+        LocalPortLeaseAuthority::open(state_root)
+            .and_then(|authority| authority.list())
+            .is_ok_and(|records| {
+                records.iter().any(|record| {
+                    record.phase() == PortLeasePhase::Active
+                        && record
+                            .binding()
+                            .is_some_and(|binding| binding.actual_port().get() == addr.port())
+                })
+            })
+    }
+
+    #[tokio::test]
+    async fn nnc3_5_main_listener_is_active_in_port_authority_while_serving() {
+        let fixture = EngineFixture::new(|path| Engine::new(path));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("main listener should bind");
+        let addr = listener.local_addr().expect("main address should resolve");
+        let task = tokio::spawn(serve(listener, ServeOptions::new(fixture.engine())));
+
+        let mut active = false;
+        for _ in 0..100 {
+            if active_lease_matches_addr(fixture.data_dir(), addr) {
+                active = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        task.abort();
+        let _ = task.await;
+        assert!(
+            active,
+            "NNC3.5: the main server accepted a listener without an Active durable port lease"
+        );
+    }
+
+    #[tokio::test]
+    async fn nnc3_5_mismatched_options_close_socket_and_release_lease() {
+        let fixture = EngineFixture::new(|path| Engine::new(path));
+        let preparing_options = ServeOptions::new(fixture.engine());
+        let prepared = preparing_options
+            .prepare_main_listener("127.0.0.1:0".parse().expect("fixture address should parse"))
+            .expect("main listener should reserve");
+        let raw = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("main listener should bind");
+        let leased = prepared.adopt(raw).expect("main listener should activate");
+        let serving_options = ServeOptions::new(fixture.engine());
+
+        let error = serve_leased(leased, serving_options)
+            .await
+            .expect_err("another ServeOptions incarnation must not consume the lease");
+        assert!(
+            error
+                .to_string()
+                .contains("different ServeOptions incarnation")
+        );
+        let records = LocalPortLeaseAuthority::open(fixture.data_dir())
+            .expect("port authority should reopen")
+            .list()
+            .expect("port records should list");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].phase(), PortLeasePhase::Released);
+    }
+
+    #[tokio::test]
+    async fn nnc3_5_synchronous_sibling_failure_closes_and_releases_owned_main_listener() {
+        let fixture = EngineFixture::new(|path| Engine::new(path));
+        let mut options = ServeOptions::new(fixture.engine());
+        let prepared = options
+            .prepare_main_listener("127.0.0.1:0".parse().expect("fixture address should parse"))
+            .expect("main listener should reserve");
+        let raw = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("main listener should bind");
+        let main_addr = raw.local_addr().expect("main address should resolve");
+        let leased = prepared.adopt(raw).expect("main listener should activate");
+        let occupied = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("external sibling owner should bind");
+        let occupied_addr = occupied
+            .local_addr()
+            .expect("occupied sibling address should resolve");
+        options.wire_adapters.push(Box::new(OccupiedAdapter {
+            addr: occupied_addr,
+        }));
+
+        let error = serve_leased(leased, options)
+            .await
+            .expect_err("occupied sibling must fail synchronous setup");
+        assert_eq!(error.kind(), std::io::ErrorKind::AddrInUse);
+        let records = LocalPortLeaseAuthority::open(fixture.data_dir())
+            .expect("port authority should reopen")
+            .list()
+            .expect("port records should list");
+        let main = records
+            .iter()
+            .find(|record| {
+                record
+                    .binding()
+                    .is_some_and(|binding| binding.actual_port().get() == main_addr.port())
+            })
+            .expect("main lease should remain inspectable");
+        assert_eq!(main.phase(), PortLeasePhase::Released);
+        assert!(
+            records.iter().any(|record| {
+                record.phase() == PortLeasePhase::Failed
+                    && record.failure().is_some_and(|failure| {
+                        failure.kind() == nimbus_network::PortBindFailureKind::AddrInUse
+                    })
+            }),
+            "the sibling collision must retain its durable no-effect evidence"
+        );
+        tokio::net::TcpListener::bind(main_addr)
+            .await
+            .expect("the synchronously failed start must close the owned main socket");
+    }
+
+    #[test]
+    fn cleanup_error_is_aggregated_without_hiding_the_primary_failure() {
+        let error = append_cleanup_error(
+            Err(std::io::Error::new(
+                std::io::ErrorKind::AddrInUse,
+                "primary serve failure",
+            )),
+            "main lease cleanup",
+            std::io::Error::other("durable cleanup failed"),
+        )
+        .expect_err("the primary result is already an error");
+        assert_eq!(error.kind(), std::io::ErrorKind::AddrInUse);
+        assert!(error.to_string().contains("primary serve failure"));
+        assert!(error.to_string().contains("main lease cleanup"));
+        assert!(error.to_string().contains("durable cleanup failed"));
+    }
+
+    #[tokio::test]
+    async fn nnc3_5_sibling_bind_is_claimed_before_guard_and_serves_identical_bytes() {
+        let fixture = EngineFixture::new(|path| Engine::new(path));
+        let main_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("main listener should bind");
+        let bound_addr = Arc::new(Mutex::new(None));
+        let claim_observed = Arc::new(AtomicBool::new(false));
+        let mut options = ServeOptions::new(fixture.engine());
+        options.wire_adapters.push(Box::new(LeaseAwareAdapter {
+            state_root: fixture.data_dir().to_path_buf(),
+            bound_addr: Arc::clone(&bound_addr),
+            claim_observed: Arc::clone(&claim_observed),
+        }));
+        let task = tokio::spawn(serve(main_listener, options));
+
+        let sibling_addr = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if let Some(addr) = *bound_addr
+                    .lock()
+                    .expect("probe address lock should remain healthy")
+                {
+                    break addr;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("sibling guard should run");
+        let claimed_before_guard = claim_observed.load(Ordering::Acquire);
+        let bytes = if claimed_before_guard {
+            tokio::time::timeout(Duration::from_secs(1), async {
+                let mut stream = tokio::net::TcpStream::connect(sibling_addr).await?;
+                let mut bytes = [0_u8; 11];
+                stream.read_exact(&mut bytes).await?;
+                Ok::<_, std::io::Error>(bytes)
+            })
+            .await
+            .ok()
+            .and_then(Result::ok)
+        } else {
+            None
+        };
+
+        task.abort();
+        let _ = task.await;
+        assert!(
+            claimed_before_guard,
+            "NNC3.5: the sibling kernel bind reached its guard without an exact durable claim"
+        );
+        assert_eq!(
+            bytes.as_ref().map(<[u8; 11]>::as_slice),
+            Some(b"lease-owned".as_slice()),
+            "the lease migration must preserve sibling protocol bytes"
+        );
     }
 
     #[tokio::test]

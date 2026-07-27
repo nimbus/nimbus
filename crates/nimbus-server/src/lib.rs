@@ -8,6 +8,7 @@ mod error_envelope;
 mod http;
 mod latency;
 mod license;
+mod listener_lease;
 mod local_server;
 mod owned_tasks;
 mod protocol;
@@ -60,7 +61,10 @@ pub fn enable_firebase_emulator_token_verification_bypass(
 pub use adapters::mongodb::{
     AuthConfig as MongoDbAuthConfig, CredentialRegistry as MongoDbCredentialRegistry, MongoDbConfig,
 };
-pub use construction::{ServeOptions, serve};
+pub use construction::{ServeOptions, serve, serve_leased};
+pub use listener_lease::{
+    LeasedServerListener, PreparedServerListener, RecordedListenerBindFailure,
+};
 pub use local_server::{
     SERVER_DISCOVERY_PROTOCOL_VERSIONS, ServerDiscoveryLease, ServerDiscoveryRecord,
     read_live_server_discovery,
