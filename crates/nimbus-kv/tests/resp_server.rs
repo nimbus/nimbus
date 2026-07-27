@@ -2,7 +2,9 @@ use std::io::ErrorKind;
 use std::net::{Ipv4Addr, SocketAddr};
 
 use nimbus_core::TenantId;
-use nimbus_kv::{CredentialRegistry, KvError, NimbusKvConfig, run_listener, serve};
+use nimbus_kv::{
+    CredentialRegistry, KvError, NimbusKvConfig, NimbusKvListenerConfig, run_listener, serve,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinHandle;
@@ -13,12 +15,18 @@ fn tenant(id: &str) -> TenantId {
 }
 
 async fn spawn_test_server(credentials: CredentialRegistry) -> (SocketAddr, JoinHandle<()>) {
+    let state_root = tempfile::tempdir().expect("listener state root should exist");
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
         .await
         .expect("listener binds");
     let addr = listener.local_addr().expect("listener has addr");
-    let config = NimbusKvConfig::new(addr, credentials);
+    let config = NimbusKvConfig::new(
+        addr,
+        credentials,
+        NimbusKvListenerConfig::new(state_root.path()),
+    );
     let handle = tokio::spawn(async move {
+        let _state_root = state_root;
         serve(listener, config).await.expect("server should run");
     });
     (addr, handle)
@@ -99,9 +107,11 @@ async fn hello_3_negotiates_resp3() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn listener_rejects_non_loopback_bind() {
+    let state_root = tempfile::tempdir().expect("listener state root should exist");
     let config = NimbusKvConfig::new(
         "0.0.0.0:0".parse().expect("addr parses"),
         CredentialRegistry::generated_dev(tenant("tenant-a")).0,
+        NimbusKvListenerConfig::new(state_root.path()),
     );
 
     let error = run_listener(config)

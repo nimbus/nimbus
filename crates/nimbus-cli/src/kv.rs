@@ -4,7 +4,10 @@ use std::path::PathBuf;
 
 use clap::Args;
 use nimbus::TenantId;
-use nimbus_kv::{CredentialRegistry, NimbusKvConfig, NimbusKvStore, TieringConfig, run_listener};
+use nimbus_kv::{
+    CredentialRegistry, NimbusKvConfig, NimbusKvListenerConfig, NimbusKvStore, TieringConfig,
+    run_listener,
+};
 
 #[derive(Debug, Args)]
 #[command(
@@ -27,6 +30,9 @@ pub(crate) struct KvCommand {
     /// redb tenant file for durable mode.
     #[arg(long)]
     data: Option<PathBuf>,
+    /// Shared control-plane directory containing host-global network authority.
+    #[arg(long)]
+    control_data_dir: Option<PathBuf>,
     /// Keep state in memory only.
     #[arg(long)]
     no_disk: bool,
@@ -70,7 +76,8 @@ pub(crate) async fn run_kv_command(command: KvCommand) -> Result<(), Box<dyn Err
     );
 
     let store = kv_store_for_command(&command, &tenant)?;
-    let config = NimbusKvConfig::new(command.bind, credentials).with_store(store);
+    let listener = NimbusKvListenerConfig::new(kv_network_state_root(&command));
+    let config = NimbusKvConfig::new(command.bind, credentials, listener).with_store(store);
     run_listener(config).await?;
     Ok(())
 }
@@ -116,6 +123,21 @@ fn default_data_path(tenant: &TenantId) -> PathBuf {
         .join(format!("{}.redb", tenant.as_str()))
 }
 
+fn kv_network_state_root(command: &KvCommand) -> PathBuf {
+    kv_network_state_root_from(command, std::env::var_os("NIMBUS_CONTROL_DATA_DIR"))
+}
+
+fn kv_network_state_root_from(
+    command: &KvCommand,
+    environment_root: Option<std::ffi::OsString>,
+) -> PathBuf {
+    command
+        .control_data_dir
+        .clone()
+        .or_else(|| environment_root.map(PathBuf::from))
+        .unwrap_or_else(|| PathBuf::from("./data"))
+}
+
 impl Default for KvCommand {
     fn default() -> Self {
         Self {
@@ -124,9 +146,39 @@ impl Default for KvCommand {
             username: None,
             password: None,
             data: None,
+            control_data_dir: None,
             no_disk: false,
             no_cache: false,
             maxmemory: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsString;
+
+    use super::*;
+
+    #[test]
+    fn network_state_root_precedence_is_flag_then_environment_then_default() {
+        let command = KvCommand {
+            control_data_dir: Some(PathBuf::from("/flag-root")),
+            ..KvCommand::default()
+        };
+        assert_eq!(
+            kv_network_state_root_from(&command, Some(OsString::from("/environment-root"))),
+            PathBuf::from("/flag-root")
+        );
+
+        let command = KvCommand::default();
+        assert_eq!(
+            kv_network_state_root_from(&command, Some(OsString::from("/environment-root"))),
+            PathBuf::from("/environment-root")
+        );
+        assert_eq!(
+            kv_network_state_root_from(&command, None),
+            PathBuf::from("./data")
+        );
     }
 }

@@ -21,7 +21,9 @@ use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
-use crate::{NimbusKvMetrics, NimbusKvStore, TieringConfig};
+use crate::{
+    NimbusKvListener, NimbusKvListenerConfig, NimbusKvMetrics, NimbusKvStore, TieringConfig,
+};
 
 const MAX_FRAME_BYTES: usize = 1024 * 1024;
 
@@ -33,6 +35,14 @@ pub enum KvError {
     Protocol(#[from] RedisProtocolError),
     #[error(transparent)]
     Core(#[from] nimbus_core::Error),
+    #[error(transparent)]
+    Network(#[from] nimbus_network::PortLeaseError),
+    #[error("{primary}; {context}: {cleanup}")]
+    ListenerLifecycle {
+        primary: Box<KvError>,
+        context: &'static str,
+        cleanup: Box<nimbus_network::PortLeaseError>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -155,16 +165,22 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
 pub struct NimbusKvConfig {
     pub bind_addr: SocketAddr,
     pub credentials: CredentialRegistry,
+    pub listener: NimbusKvListenerConfig,
     pub store: Option<NimbusKvStore>,
     pub metrics: Option<NimbusKvMetrics>,
 }
 
 impl NimbusKvConfig {
     #[must_use]
-    pub fn new(bind_addr: SocketAddr, credentials: CredentialRegistry) -> Self {
+    pub fn new(
+        bind_addr: SocketAddr,
+        credentials: CredentialRegistry,
+        listener: NimbusKvListenerConfig,
+    ) -> Self {
         Self {
             bind_addr,
             credentials,
+            listener,
             store: None,
             metrics: None,
         }
@@ -242,38 +258,54 @@ struct CommandOutcome {
 /// Bind and run the RESP listener until the process is interrupted.
 pub async fn run_listener(config: NimbusKvConfig) -> Result<(), KvError> {
     refuse_non_loopback_bind(config.bind_addr)?;
-    let listener = TcpListener::bind(config.bind_addr).await?;
-    serve(listener, config).await
+    let listener = bind_listener(&config).await?;
+    serve_leased(listener, config).await
 }
 
 /// Serve an already-bound listener.
 pub async fn serve(listener: TcpListener, config: NimbusKvConfig) -> Result<(), KvError> {
     refuse_non_loopback_bind(listener.local_addr()?)?;
+    let listener = adopt_listener(listener, &config)?;
+    serve_leased(listener, config).await
+}
+
+/// Bind the configured RESP socket in the `nimbus-kv` effect owner.
+pub async fn bind_listener(config: &NimbusKvConfig) -> Result<NimbusKvListener, KvError> {
+    refuse_non_loopback_bind(config.bind_addr)?;
+    crate::listener::bind(&config.listener, config.bind_addr).await
+}
+
+/// Wrap an already-bound RESP socket at the pre-bound adoption seam.
+pub fn adopt_listener(
+    listener: TcpListener,
+    config: &NimbusKvConfig,
+) -> Result<NimbusKvListener, KvError> {
+    refuse_non_loopback_bind(listener.local_addr()?)?;
+    crate::listener::adopt(&config.listener, config.bind_addr, listener)
+}
+
+async fn serve_leased(listener: NimbusKvListener, config: NimbusKvConfig) -> Result<(), KvError> {
     let NimbusKvConfig {
         bind_addr: _,
         credentials,
+        listener: _,
         store,
         metrics,
     } = config;
-    let store = match (store, metrics) {
-        (Some(_), Some(_)) => {
-            return Err(nimbus_core::Error::InvalidInput(
-                "NimbusKvConfig::with_metrics cannot be combined with a prebuilt NimbusKvStore"
-                    .to_string(),
-            )
-            .into());
-        }
-        (Some(store), None) => store,
-        (None, Some(metrics)) => {
-            NimbusKvStore::no_disk_with_metrics(TieringConfig::no_disk(), metrics)?
-        }
-        (None, None) => NimbusKvStore::no_disk(TieringConfig::no_disk())?,
+    let store = match create_store(store, metrics) {
+        Ok(store) => store,
+        Err(error) => return Err(listener.close_after_confirmed_local_error(error)),
     };
     let credentials = Arc::new(credentials);
     let metrics = store.metrics();
 
     loop {
-        let (stream, peer_addr) = listener.accept().await?;
+        let (stream, peer_addr) = match listener.accept().await {
+            Ok(accepted) => accepted,
+            Err(error) => {
+                return Err(listener.close_after_confirmed_local_error(error.into()));
+            }
+        };
         let credentials = Arc::clone(&credentials);
         let store = store.clone();
         let metrics = metrics.clone();
@@ -282,6 +314,24 @@ pub async fn serve(listener: TcpListener, config: NimbusKvConfig) -> Result<(), 
                 tracing::warn!(%peer_addr, error = %error, "nimbus-kv connection ended with error");
             }
         });
+    }
+}
+
+fn create_store(
+    store: Option<NimbusKvStore>,
+    metrics: Option<NimbusKvMetrics>,
+) -> Result<NimbusKvStore, KvError> {
+    match (store, metrics) {
+        (Some(_), Some(_)) => Err(nimbus_core::Error::InvalidInput(
+            "NimbusKvConfig::with_metrics cannot be combined with a prebuilt NimbusKvStore"
+                .to_string(),
+        )
+        .into()),
+        (Some(store), None) => Ok(store),
+        (None, Some(metrics)) => {
+            NimbusKvStore::no_disk_with_metrics(TieringConfig::no_disk(), metrics)
+        }
+        (None, None) => NimbusKvStore::no_disk(TieringConfig::no_disk()),
     }
 }
 

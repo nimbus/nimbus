@@ -6913,7 +6913,9 @@ version = "0.1.45"
 dependencies = [
  "hex",
  "nimbus-core",
+ "nimbus-network",
  "nimbus-storage",
+ "nimbus-testing",
  "rand 0.8.5",
  "redis",
  "redis-protocol",
@@ -6922,6 +6924,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "ulid",
  "workspace-hack",
 ]
 
