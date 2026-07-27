@@ -210,68 +210,6 @@ fn write_json_file_atomically_replaces_existing_state_record() {
 }
 
 #[test]
-fn machine_remove_releases_reserved_machine_port() {
-    let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::test_sibling_roots(
-        temp_dir.path().join("config"),
-        temp_dir.path().join("state"),
-        temp_dir.path().join("runtime"),
-    );
-    let paths = layout.paths(DEFAULT_MACHINE_NAME);
-    run_machine_command_for_test(
-        MachineCommand {
-            command: MachineSubcommand::Init(MachineInitCommand {
-                cpus: DEFAULT_MACHINE_CPUS,
-                memory_mib: DEFAULT_MACHINE_MEMORY_MIB,
-                disk_gib: DEFAULT_MACHINE_DISK_GIB,
-                image: default_machine_image().to_owned(),
-                ssh_identity: None,
-                ignition_file: None,
-                bootc_native: false,
-                efi_store: None,
-                volumes: Vec::new(),
-                now: false,
-                name: None,
-            }),
-        },
-        &layout,
-    )
-    .expect("machine init should succeed");
-    fs::write(
-        layout.port_allocation_state_path(),
-        serde_json::to_vec_pretty(&serde_json::json!({
-            "machine_ports": {
-                DEFAULT_MACHINE_NAME: 20022
-            }
-        }))
-        .expect("port allocation state should serialize"),
-    )
-    .expect("port allocation state should write");
-
-    run_machine_command_for_test(
-        MachineCommand {
-            command: MachineSubcommand::Rm(MachineRmCommand { name: None }),
-        },
-        &layout,
-    )
-    .expect("machine rm should succeed");
-
-    let allocation_state = fs::read(layout.port_allocation_state_path())
-        .expect("port allocation state should still read after release");
-    let json: serde_json::Value =
-        serde_json::from_slice(&allocation_state).expect("port allocation state should parse");
-    assert_eq!(
-        json["machine_ports"]
-            .as_object()
-            .expect("machine ports should be an object")
-            .len(),
-        0
-    );
-    assert!(!paths.config_dir.exists());
-    assert!(!paths.state_dir.exists());
-}
-
-#[test]
 fn machine_remove_only_deletes_requested_machine() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
     let layout = MachineRootLayout::test_sibling_roots(

@@ -48,6 +48,7 @@ nimbus-crypto = { path = "../nimbus-crypto" }
 nimbus-fs = { path = "../nimbus-fs" }
 nimbus-kv = { path = "../nimbus-kv" }
 nimbus-machine = { path = "../nimbus-machine" }
+nimbus-network = { path = "../nimbus-network" }
 nimbus-node = { path = "../nimbus-node" }
 nimbus-operator = { path = "../nimbus-operator" }
 nimbus-server = { path = "../nimbus-server", default-features = false }
@@ -72,6 +73,7 @@ time.workspace = true
 tokio.workspace = true
 toml.workspace = true
 tracing.workspace = true
+ulid.workspace = true
 zeroize.workspace = true
 flate2 = "1"
 oci-client = "0.16"
@@ -85,7 +87,6 @@ serde_json.workspace = true
 nimbus-engine = { path = "../nimbus-engine", default-features = false, features = [
     "test-hooks",
 ] }
-nimbus-network = { path = "../nimbus-network" }
 nimbus-testing = { path = "../nimbus-testing", default-features = false }
 serial_test.workspace = true
 tempfile.workspace = true

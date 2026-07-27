@@ -125,7 +125,7 @@ pub(super) fn mount_tag(target: &Path) -> String {
 
 pub(super) fn release_machine_ssh_port(
     _roots: &MachineRootLayout,
-    _machine_name: &str,
+    _state: &MachineStateRecord,
 ) -> Result<(), Error> {
     Ok(())
 }

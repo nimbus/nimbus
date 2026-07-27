@@ -627,7 +627,7 @@ fn delete_machine_with_layout_locked(
         )));
     }
 
-    release_machine_ssh_port(roots, machine_name)?;
+    release_machine_ssh_port(roots, &state)?;
     remove_dir_if_exists(&paths.config_dir)?;
     remove_dir_if_exists(&paths.state_dir)?;
     remove_dir_if_exists(&paths.data_dir)?;

@@ -168,9 +168,16 @@ fn confirmed_stop_rebind_transition_is_exact_fenced_and_idempotent() {
         authority.prepare_rebind_after_confirmed_stop(&lease_request, &wrong_binding),
         Err(PortLeaseError::BindingConflict { .. })
     ));
+    authority
+        .withdraw(&lease_request)
+        .expect("restart teardown must fence the active binding before provider stop");
+    assert!(matches!(
+        authority.prepare_rebind_after_confirmed_stop(&lease_request, &wrong_binding),
+        Err(PortLeaseError::BindingConflict { .. })
+    ));
     let reserved = authority
         .prepare_rebind_after_confirmed_stop(&lease_request, &expected_binding)
-        .expect("exact confirmed stop may retain the port for rebind");
+        .expect("exact confirmed stop may retain a withdrawing port for rebind");
     assert_eq!(reserved.phase(), PortLeasePhase::Reserved);
     assert_eq!(reserved.reserved_port(), NonZeroU16::new(PORT));
     assert!(reserved.binding().is_none());
@@ -190,17 +197,6 @@ fn confirmed_stop_rebind_transition_is_exact_fenced_and_idempotent() {
     assert!(matches!(
         authority.prepare_rebind_after_confirmed_stop(&stale, &expected_binding),
         Err(PortLeaseError::StaleFence(_))
-    ));
-    authority
-        .withdraw(&lease_request)
-        .expect("reserved request should withdraw");
-    assert!(matches!(
-        authority.prepare_rebind_after_confirmed_stop(&lease_request, &expected_binding),
-        Err(PortLeaseError::InvalidTransition {
-            phase: PortLeasePhase::Withdrawing,
-            operation: PortLeaseOperation::PrepareRebindAfterConfirmedStop,
-            ..
-        })
     ));
 }
 

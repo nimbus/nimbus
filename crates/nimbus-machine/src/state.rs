@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 
+use nimbus_network::ListenerId;
 use serde::{Deserialize, Serialize};
 
 // The machine state schema (`status.json`) is at its first version. The
@@ -104,6 +105,8 @@ pub struct MachineRuntimeState {
     pub efi_variable_store_path: PathBuf,
     #[serde(default)]
     pub machine_image_source: String,
+    /// Address-independent identity of the host SSH listener lease.
+    pub ssh_listener_id: ListenerId,
     pub ssh_port: u16,
     pub rest_uri: String,
     pub ready_vsock_port: u32,

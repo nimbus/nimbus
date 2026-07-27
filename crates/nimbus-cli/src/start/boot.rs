@@ -164,7 +164,8 @@ pub(crate) async fn run_start_command(
         &compose_control_data_dir,
         command.tenant_isolation_mode,
     )?;
-    let machine_lifecycle_manager = crate::machine::host_machine_lifecycle_manager()?;
+    let machine_lifecycle_manager =
+        crate::machine::host_machine_lifecycle_manager(compose_control_data_dir.clone())?;
     let local_server_paths = LocalServerPaths::resolve_for_current_platform()?;
     let local_admin_token = load_or_create_local_admin_token(&local_server_paths)?;
     if !command.systemd_socket_activation {

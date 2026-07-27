@@ -220,18 +220,46 @@ pub(super) fn start_machine(
     ensure_machine_bootstrap_identity(paths, config)?;
     validate_machine_bootstrap_contract(config)?;
 
+    let startup_signals = StartupSignalMonitor::install()?;
     cleanup_runtime_artifacts(paths)?;
     let launch_plan = MachineLaunchPlan::build(paths, config, state)?;
-    let startup_signals = StartupSignalMonitor::install()?;
 
     state.lifecycle = MachineLifecycle::Starting;
     state.manager = MachineManagerState::Launching;
     state.runtime = Some(launch_plan.runtime().clone());
     state.last_error = None;
-    write_json_file(&paths.state_path, state)?;
+    if let Err(error) = write_json_file(&paths.state_path, state) {
+        return Err(with_pre_provider_lease_cleanup(&launch_plan, error));
+    }
 
-    let ready_listener = bind_ready_listener(&paths.ready_socket_path)?;
-    let _ignition_server = start_bootstrap_server(paths, config, &launch_plan)?;
+    let ready_listener = match bind_ready_listener(&paths.ready_socket_path) {
+        Ok(listener) => listener,
+        Err(error) => {
+            return handle_start_machine_error(
+                paths,
+                config,
+                state,
+                with_pre_provider_lease_cleanup(&launch_plan, error),
+                None,
+                None,
+                None,
+            );
+        }
+    };
+    let _ignition_server = match start_bootstrap_server(paths, config, &launch_plan) {
+        Ok(server) => server,
+        Err(error) => {
+            return handle_start_machine_error(
+                paths,
+                config,
+                state,
+                with_pre_provider_lease_cleanup(&launch_plan, error),
+                None,
+                None,
+                None,
+            );
+        }
+    };
 
     let mut gvproxy_child = None;
     let mut api_forward_child = None;
@@ -239,6 +267,11 @@ pub(super) fn start_machine(
     if let Err(error) =
         pre_start_networking(paths, &launch_plan, &mut gvproxy_child, &startup_signals)
     {
+        let error = if gvproxy_child.is_none() {
+            with_pre_provider_lease_cleanup(&launch_plan, error)
+        } else {
+            error
+        };
         return handle_start_machine_error(
             paths,
             config,
@@ -299,6 +332,17 @@ pub(super) fn start_machine(
             api_forward_child.as_mut(),
         );
     }
+    if let Err(error) = launch_plan.ssh_port_lease().activate_exact_loopback() {
+        return handle_start_machine_error(
+            paths,
+            config,
+            state,
+            error,
+            vmm_child.as_mut(),
+            gvproxy_child.as_mut(),
+            api_forward_child.as_mut(),
+        );
+    }
     if let Err(error) = post_start_networking(
         paths,
         config,
@@ -341,6 +385,15 @@ pub(super) fn start_machine(
     state.last_error = None;
     write_json_file(&paths.state_path, state)?;
     Ok(())
+}
+
+fn with_pre_provider_lease_cleanup(launch_plan: &MachineLaunchPlan, primary: Error) -> Error {
+    match launch_plan.ssh_port_lease().abandon_before_provider_start() {
+        Ok(()) => primary,
+        Err(cleanup) => Error::Internal(format!(
+            "{primary}; failed to settle the machine SSH lease before gvproxy started: {cleanup}"
+        )),
+    }
 }
 
 fn ensure_machine_bootstrap_identity(
@@ -490,9 +543,9 @@ pub(super) fn stop_machine(
 
 pub(super) fn release_machine_ssh_port(
     roots: &MachineRootLayout,
-    machine_name: &str,
+    state: &MachineStateRecord,
 ) -> Result<(), Error> {
-    self::ports::release_machine_ssh_port(roots, machine_name)
+    self::ports::release_machine_ssh_port(roots, state)
 }
 
 pub(super) fn refresh_machine_state(

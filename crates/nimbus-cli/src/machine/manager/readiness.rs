@@ -116,17 +116,10 @@ pub(super) fn pre_start_networking(
     gvproxy_child: &mut Option<Child>,
     startup_signals: &StartupSignalMonitor,
 ) -> Result<(), Error> {
-    // The launch plan only carries a gvproxy command when the resolved backend
-    // requires it; provider-managed networking backends leave it `None` and have
-    // nothing to pre-start here.
-    let Some(gvproxy_command) = launch_plan.gvproxy_command.as_ref() else {
-        return Ok(());
-    };
-
     // Store the child in the caller's slot before awaiting readiness so a
     // `wait_for_path` failure still hands the spawned gvproxy back through the
     // start-error cleanup path to be reaped, rather than dropping it un-waited.
-    let child = gvproxy_child.insert(gvproxy_command.spawn()?);
+    let child = gvproxy_child.insert(launch_plan.gvproxy_command.spawn()?);
     wait_for_path(
         &paths.gvproxy_socket_path,
         GVPROXY_SOCKET_WAIT_TIMEOUT,

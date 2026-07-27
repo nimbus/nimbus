@@ -51,6 +51,15 @@ fn stop_machine_uses_graceful_vmm_stop_before_cleaning_up_helpers() {
     }
     assert!(request_path.exists(), "endpoint should appear before stop");
 
+    let prepared = super::super::ports::PreparedMachineSshPortLease::prepare(
+        &config.roots,
+        &config.name,
+        &MachineStateRecord::initialized(),
+    )
+    .expect("machine SSH listener should prepare");
+    prepared
+        .activate_exact_loopback()
+        .expect("exact provider observation should activate");
     let mut state = MachineStateRecord::initialized();
     state.lifecycle = MachineLifecycle::Running;
     state.manager = MachineManagerState::Ready;
@@ -62,7 +71,8 @@ fn stop_machine_uses_graceful_vmm_stop_before_cleaning_up_helpers() {
         image_path,
         efi_variable_store_path: paths.efi_variable_store_path.clone(),
         machine_image_source: describe_machine_image_source(&config.guest.image_source),
-        ssh_port: 20022,
+        ssh_listener_id: prepared.listener_id().clone(),
+        ssh_port: prepared.selected_port(),
         rest_uri: format!("unix://{}", paths.vmm_endpoint_path.display()),
         ready_vsock_port: READY_VSOCK_PORT,
     });
@@ -77,6 +87,22 @@ fn stop_machine_uses_graceful_vmm_stop_before_cleaning_up_helpers() {
     assert_eq!(state.lifecycle, MachineLifecycle::Stopped);
     assert_eq!(state.manager, MachineManagerState::HelpersResolved);
     assert_eq!(state.last_error, None);
+    let lease = nimbus_network::LocalPortLeaseAuthority::open(&config.roots.network_state_root)
+        .expect("shared authority should reopen")
+        .inspect(&nimbus_network::PortLeaseId::for_listener(
+            &state
+                .runtime
+                .as_ref()
+                .expect("stopped runtime should remain")
+                .ssh_listener_id,
+        ))
+        .expect("machine SSH lease should inspect")
+        .expect("machine SSH lease should remain durable");
+    assert_eq!(lease.phase(), nimbus_network::PortLeasePhase::Reserved);
+    assert!(
+        lease.confirmed_stopped_binding().is_some(),
+        "confirmed gvproxy stop should retain exact absence evidence"
+    );
     assert!(
         wait_for_pid_exit(vmm_pid, Duration::from_secs(2))
             .expect("machine VMM pid should become not alive"),
@@ -93,6 +119,79 @@ fn stop_machine_uses_graceful_vmm_stop_before_cleaning_up_helpers() {
     gvproxy_reaper
         .join()
         .expect("gvproxy reaper should observe process exit");
+}
+
+#[test]
+fn ambiguous_gvproxy_stop_preserves_runtime_evidence_and_port_fence() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let image_path = temp_dir.path().join("disk.raw");
+    fs::write(&image_path, []).expect("image should write");
+    let config = sample_config(&image_path);
+    let paths = config.roots.paths("default");
+    paths
+        .ensure_directories()
+        .expect("machine directories should exist");
+    fs::write(&paths.gvproxy_log_path, b"provider evidence")
+        .expect("provider evidence should write");
+
+    let prepared = super::super::ports::PreparedMachineSshPortLease::prepare(
+        &config.roots,
+        &config.name,
+        &MachineStateRecord::initialized(),
+    )
+    .expect("machine SSH listener should prepare");
+    prepared
+        .activate_exact_loopback()
+        .expect("exact provider observation should activate");
+    let mut state = MachineStateRecord::initialized();
+    state.lifecycle = MachineLifecycle::Running;
+    state.manager = MachineManagerState::Ready;
+    state.runtime = Some(MachineRuntimeState {
+        helper_binaries: MachineHelperBinaryPaths {
+            vmm: PathBuf::from("/opt/homebrew/bin/krunkit"),
+            gvproxy: PathBuf::from("/opt/homebrew/bin/gvproxy"),
+        },
+        image_path,
+        efi_variable_store_path: paths.efi_variable_store_path.clone(),
+        machine_image_source: describe_machine_image_source(&config.guest.image_source),
+        ssh_listener_id: prepared.listener_id().clone(),
+        ssh_port: prepared.selected_port(),
+        rest_uri: format!("unix://{}", paths.vmm_endpoint_path.display()),
+        ready_vsock_port: READY_VSOCK_PORT,
+    });
+
+    let error = stop_machine(&paths, &config, &mut state)
+        .expect_err("missing exact gvproxy stop evidence must fail closed");
+    assert!(error.to_string().contains("stop is incomplete"));
+    assert_eq!(state.lifecycle, MachineLifecycle::Failed);
+    assert_eq!(state.manager, MachineManagerState::Stale);
+    assert!(
+        state
+            .last_error
+            .as_deref()
+            .is_some_and(|message| message.contains("gvproxy pid evidence is missing"))
+    );
+    assert_eq!(
+        fs::read(&paths.gvproxy_log_path).expect("provider evidence should remain"),
+        b"provider evidence",
+        "ambiguous stop must not erase evidence needed by reconciliation"
+    );
+    let lease = nimbus_network::LocalPortLeaseAuthority::open(&config.roots.network_state_root)
+        .expect("shared authority should reopen")
+        .inspect(&nimbus_network::PortLeaseId::for_listener(
+            &state
+                .runtime
+                .as_ref()
+                .expect("failed runtime should remain")
+                .ssh_listener_id,
+        ))
+        .expect("machine SSH lease should inspect")
+        .expect("machine SSH lease should remain durable");
+    assert_eq!(lease.phase(), nimbus_network::PortLeasePhase::Withdrawing);
+    assert!(
+        lease.binding().is_some(),
+        "ambiguous stop must retain exact prior provider evidence"
+    );
 }
 
 #[test]

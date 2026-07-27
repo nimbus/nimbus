@@ -605,6 +605,10 @@ async fn record_machine_state_projects_machine_listener_and_port_documents() {
         image_path: fixture.data_dir().join("default.raw"),
         efi_variable_store_path: fixture.data_dir().join("efi"),
         machine_image_source: "docker://ghcr.io/nimbus/machine-os:v0.1.31".to_string(),
+        ssh_listener_id: nimbus_network::ListenerId::for_workload_listener(
+            "system-projection-fixture",
+            "ssh-forward",
+        ),
         ssh_port: 2222,
         rest_uri: "unix:///tmp/nimbus/default-krunkit.sock".to_string(),
         ready_vsock_port: 1025,

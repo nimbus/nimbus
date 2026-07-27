@@ -13,6 +13,9 @@ use crate::paths::{
     resolve_data_root_with_env, resolve_runtime_root_with_env, resolve_state_root_with_env,
 };
 
+pub const NETWORK_STATE_ROOT_ENV: &str = "NIMBUS_CONTROL_DATA_DIR";
+pub const DEFAULT_NETWORK_STATE_ROOT: &str = "./data";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MachineRootLayout {
     pub config_root: PathBuf,
@@ -20,6 +23,12 @@ pub struct MachineRootLayout {
     pub data_root: PathBuf,
     pub cache_root: PathBuf,
     pub runtime_root: PathBuf,
+    /// Shared node-local network authority used by every host listener owner.
+    ///
+    /// This path is composition data. Machine provider effects remain in their
+    /// owning adapters; the portable lease state itself remains
+    /// `nimbus-network` owned.
+    pub network_state_root: PathBuf,
 }
 
 impl MachineRootLayout {
@@ -28,12 +37,16 @@ impl MachineRootLayout {
     }
 
     fn resolve_with_env(mut lookup: impl FnMut(&str) -> Option<OsString>) -> Result<Self, Error> {
+        let network_state_root = lookup(NETWORK_STATE_ROOT_ENV)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_NETWORK_STATE_ROOT));
         Ok(Self {
             config_root: resolve_config_root_with_env(&mut lookup)?,
             state_root: resolve_state_root_with_env(&mut lookup)?,
             data_root: resolve_data_root_with_env(&mut lookup)?,
             cache_root: resolve_cache_root_with_env(&mut lookup)?,
             runtime_root: resolve_runtime_root_with_env(&mut lookup),
+            network_state_root,
         })
     }
 
@@ -44,6 +57,7 @@ impl MachineRootLayout {
             data_root: PathBuf::from("/var/lib/nimbus/machine/data"),
             cache_root: PathBuf::from("/var/lib/nimbus/machine/cache"),
             runtime_root,
+            network_state_root: PathBuf::from("/var/lib/nimbus/control"),
         }
     }
 
@@ -56,11 +70,19 @@ impl MachineRootLayout {
     ) -> Self {
         Self {
             config_root,
+            network_state_root: state_root.clone(),
             state_root,
             data_root,
             cache_root,
             runtime_root,
         }
+    }
+
+    /// Override the shared node-local network authority at a composition root.
+    #[must_use]
+    pub fn with_network_state_root(mut self, network_state_root: impl Into<PathBuf>) -> Self {
+        self.network_state_root = network_state_root.into();
+        self
     }
 
     pub fn from_sibling_roots(
@@ -105,14 +127,6 @@ impl MachineRootLayout {
         self.state_root.join(format!("{name}.lock"))
     }
 
-    pub fn port_allocation_state_path(&self) -> PathBuf {
-        self.state_root.join("port-alloc.dat")
-    }
-
-    pub fn port_allocation_lock_path(&self) -> PathBuf {
-        self.state_root.join("port-alloc.lck")
-    }
-
     pub fn paths(&self, name: &str) -> MachinePaths {
         let config_dir = self.config_root.join(name);
         let state_dir = self.state_root.join(name);
@@ -154,7 +168,7 @@ mod tests {
     use std::ffi::OsString;
     use std::path::PathBuf;
 
-    use super::MachineRootLayout;
+    use super::{DEFAULT_NETWORK_STATE_ROOT, MachineRootLayout, NETWORK_STATE_ROOT_ENV};
     use crate::paths::{DEFAULT_MACHINE_RUNTIME_ROOT, MACHINE_RUNTIME_ROOT_ENV};
 
     #[test]
@@ -169,6 +183,7 @@ mod tests {
 
         assert_eq!(layout.data_root, PathBuf::from("root/data"));
         assert_eq!(layout.cache_root, PathBuf::from("root/cache"));
+        assert_eq!(layout.network_state_root, PathBuf::from("root/state"));
     }
 
     #[test]
@@ -207,6 +222,7 @@ mod tests {
             ("XDG_DATA_HOME", "/xdg/data"),
             ("XDG_CACHE_HOME", "/xdg/cache"),
             (MACHINE_RUNTIME_ROOT_ENV, "/run/nimbus-machine"),
+            (NETWORK_STATE_ROOT_ENV, "/var/lib/nimbus/control"),
         ]))
         .expect("xdg roots should resolve");
 
@@ -224,6 +240,10 @@ mod tests {
             PathBuf::from("/xdg/cache/nimbus/machine")
         );
         assert_eq!(layout.runtime_root, PathBuf::from("/run/nimbus-machine"));
+        assert_eq!(
+            layout.network_state_root,
+            PathBuf::from("/var/lib/nimbus/control")
+        );
     }
 
     #[test]
@@ -250,6 +270,10 @@ mod tests {
         assert_eq!(
             layout.runtime_root,
             PathBuf::from(DEFAULT_MACHINE_RUNTIME_ROOT)
+        );
+        assert_eq!(
+            layout.network_state_root,
+            PathBuf::from(DEFAULT_NETWORK_STATE_ROOT)
         );
     }
 

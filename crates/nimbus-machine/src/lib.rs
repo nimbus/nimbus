@@ -22,7 +22,7 @@ pub use paths::{
 pub use provider::{
     MachineBootstrapMode, MachineImageFormat, MachineProvider, MachineProviderCapabilities,
 };
-pub use roots::MachineRootLayout;
+pub use roots::{DEFAULT_NETWORK_STATE_ROOT, MachineRootLayout, NETWORK_STATE_ROOT_ENV};
 pub use state::{
     CURRENT_MACHINE_STATE_VERSION, MachineHelperBinaryPaths, MachineLifecycle, MachineManagerState,
     MachineRuntimeState, MachineStateRecord,

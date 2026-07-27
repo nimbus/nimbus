@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use nimbus::Error;
@@ -13,9 +14,11 @@ use super::handlers::{
     start_machine_with_layout, stop_machine_with_layout, update_machine_with_layout,
 };
 
-pub(crate) fn host_machine_lifecycle_manager() -> Result<Arc<dyn MachineLifecycleManager>, Error> {
+pub(crate) fn host_machine_lifecycle_manager(
+    network_state_root: impl Into<PathBuf>,
+) -> Result<Arc<dyn MachineLifecycleManager>, Error> {
     Ok(Arc::new(HostMachineLifecycleManager {
-        roots: MachineRootLayout::resolve()?,
+        roots: MachineRootLayout::resolve()?.with_network_state_root(network_state_root),
     }))
 }
 

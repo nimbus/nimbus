@@ -10,13 +10,15 @@ use super::{
 use crate::PortLeaseId;
 
 impl LocalPortLeaseAuthority {
-    /// Return an exact active binding to `Reserved` after confirmed stop.
+    /// Return an exact active or withdrawing binding to `Reserved` after
+    /// confirmed stop.
     ///
     /// This transition grants no provider-absence authority: the adapter must
     /// already hold exact process-local evidence and an acknowledged stop for
-    /// `expected_binding`. The selected numeric port remains fenced while old
-    /// binding evidence is cleared so the same generation can execute the
-    /// normal claim → bind → adopt → activate sequence again.
+    /// `expected_binding`. `Withdrawing` is accepted so effect owners can fence
+    /// new use before stopping the provider. The selected numeric port remains
+    /// fenced while old binding evidence is cleared so the same generation can
+    /// execute the normal claim → bind → adopt → activate sequence again.
     pub fn prepare_rebind_after_confirmed_stop(
         &self,
         request: &PortLeaseRequest,
@@ -67,9 +69,10 @@ impl LocalPortLeaseAuthority {
                     });
                 }
                 match record.phase {
-                    PortLeasePhase::Active if record.binding.as_ref() == Some(expected_binding) => {
-                    }
-                    PortLeasePhase::Active => {
+                    PortLeasePhase::Active | PortLeasePhase::Withdrawing
+                        if record.binding.as_ref() == Some(expected_binding)
+                            && record.bind_claim.is_none() => {}
+                    PortLeasePhase::Active | PortLeasePhase::Withdrawing => {
                         return Err(PortLeaseOperationError::BindingConflict {
                             lease_id: request.lease_id().clone(),
                         });
@@ -97,7 +100,10 @@ impl LocalPortLeaseAuthority {
 
             for (request, expected_binding) in distinct.into_values() {
                 let record = exact_record_mut(state, request)?;
-                if record.phase == PortLeasePhase::Active {
+                if matches!(
+                    record.phase,
+                    PortLeasePhase::Active | PortLeasePhase::Withdrawing
+                ) {
                     debug_assert_eq!(record.binding.as_ref(), Some(expected_binding));
                     record.phase = PortLeasePhase::Reserved;
                     record.reservation_claim = None;

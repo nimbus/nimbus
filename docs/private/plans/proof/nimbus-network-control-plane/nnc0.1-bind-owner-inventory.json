@@ -94,26 +94,26 @@
       "id": "machine-ssh-port-allocation",
       "category": "allocation-authority",
       "path": "crates/nimbus-cli/src/machine/manager/ports.rs",
-      "line": 22,
-      "symbol": "allocate_machine_ssh_port",
-      "current_owner": "nimbus-cli machine manager",
-      "current_truth": "Uses a machine-local locked JSON map, independent of server, sandbox, PEP, and KV authorities.",
+      "line": 50,
+      "symbol": "PreparedMachineSshPortLease::prepare",
+      "current_owner": "nimbus-cli machine adapter consuming nimbus-network authority",
+      "current_truth": "Reserves and claims a range-selected loopback port in the shared node-local authority before gvproxy can start.",
       "disposition": "migrate",
       "target_owner": "nimbus-network PortLease authority",
       "owner_item": "NNC3.7",
-      "deletion_item": "NNC3.9"
+      "deletion_item": "NNC3.7"
     },
     {
       "id": "machine-ssh-port-probe",
       "category": "availability-probe",
       "path": "crates/nimbus-cli/src/machine/manager/ports.rs",
-      "line": 98,
-      "symbol": "machine_port_is_available",
-      "current_owner": "nimbus-cli machine manager",
-      "current_truth": "Binds and drops the chosen loopback port before gvproxy performs the provider bind.",
+      "line": 49,
+      "symbol": "deleted: machine_port_is_available",
+      "current_owner": "deleted from production by NNC3.7",
+      "current_truth": "Production machine allocation performs no socket probe/drop; only an explicit test harness probes to create real external-binder evidence.",
       "disposition": "migrate",
       "target_owner": "network lease plus gvproxy provider-bind evidence",
-      "owner_item": "NNC3.3",
+      "owner_item": "NNC3.7",
       "deletion_item": "NNC3.7"
     },
     {
@@ -253,13 +253,13 @@
       "id": "machine-gvproxy-ssh-bind",
       "category": "provider-bind-request",
       "path": "crates/nimbus-cli/src/machine/manager/launch.rs",
-      "line": 195,
+      "line": 212,
       "symbol": "build_gvproxy_args",
       "current_owner": "nimbus-cli machine manager/gvproxy",
-      "current_truth": "Passes -ssh-port to gvproxy after the allocator has dropped its availability probe.",
+      "current_truth": "Passes only the shared authority's durably reserved and claimed port to gvproxy; exact SSH readiness adopts and activates the provider result.",
       "disposition": "provider-bind",
       "target_owner": "machine retains gvproxy effect; provider bind adopts or fails the durable network lease",
-      "owner_item": "NNC3.3"
+      "owner_item": "NNC3.7"
     },
     {
       "id": "machine-api-unix-direct",

@@ -558,6 +558,10 @@ mod tests {
                 image_path: paths.materialized_image_path,
                 efi_variable_store_path: paths.efi_variable_store_path,
                 machine_image_source: "docker://ghcr.io/nimbus/machine-os:v0.1.31".to_owned(),
+                ssh_listener_id: nimbus_network::ListenerId::for_workload_listener(
+                    "local-server-fixture",
+                    "ssh-forward",
+                ),
                 ssh_port: 10022,
                 rest_uri: format!("unix://{}", paths.api_socket_path.display()),
                 ready_vsock_port: 1025,

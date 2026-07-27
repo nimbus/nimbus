@@ -13,6 +13,7 @@ use super::super::{
     MachineBootstrapMode, MachineConfigRecord, MachineLifecycle, MachinePaths, MachineProvider,
     MachineStateRecord, machine_bootstrap_mode,
 };
+use super::ports::{retain_machine_ssh_port_after_confirmed_stop, withdraw_machine_ssh_port};
 use super::{HARD_STOP_WAIT_TIMEOUT, MachineManagerState, POLL_INTERVAL};
 
 pub(super) fn stop_machine(
@@ -26,6 +27,19 @@ pub(super) fn stop_machine(
     ) {
         return Ok(());
     }
+
+    let host_network_runtime = if config.provider.uses_provider_networking() {
+        None
+    } else {
+        let runtime = state.runtime.as_ref().ok_or_else(|| {
+            Error::conflict(format!(
+                "machine '{}' has no runtime identity for its host SSH listener",
+                config.name
+            ))
+        })?;
+        withdraw_machine_ssh_port(&config.roots, runtime)?;
+        Some(runtime.clone())
+    };
 
     let mut stop_errors = Vec::new();
     if let Err(error) = stop_provider_machine(paths, config, resolve_stop_wait_timeout()) {
@@ -45,27 +59,55 @@ pub(super) fn stop_machine(
     {
         stop_errors.push(error.to_string());
     }
-    if !config.provider.uses_provider_networking()
-        && let Some(pid) = read_pid(&paths.gvproxy_pid_path)?
-        && let Err(error) = stop_pid(pid, HARD_STOP_WAIT_TIMEOUT)
+    let mut gvproxy_stop_confirmed = false;
+    if !config.provider.uses_provider_networking() {
+        match read_pid(&paths.gvproxy_pid_path)? {
+            Some(pid) => match stop_pid(pid, HARD_STOP_WAIT_TIMEOUT) {
+                Ok(()) => {
+                    gvproxy_stop_confirmed = true;
+                }
+                Err(error) => stop_errors.push(error.to_string()),
+            },
+            None => stop_errors.push(
+                "gvproxy pid evidence is missing; the machine SSH port remains fenced for reconciliation"
+                    .to_owned(),
+            ),
+        }
+    }
+    if gvproxy_stop_confirmed
+        && let Some(runtime) = host_network_runtime.as_ref()
+        && let Err(error) = retain_machine_ssh_port_after_confirmed_stop(&config.roots, runtime)
     {
         stop_errors.push(error.to_string());
     }
 
-    cleanup_runtime_artifacts(paths)?;
-    state.lifecycle = MachineLifecycle::Stopped;
-    state.manager = if state.runtime.is_some() {
-        MachineManagerState::HelpersResolved
-    } else {
-        MachineManagerState::Unconfigured
-    };
-    state.last_error = if stop_errors.is_empty() {
-        None
-    } else {
-        Some(stop_errors.join("; "))
-    };
+    if stop_errors.is_empty()
+        && let Err(error) = cleanup_runtime_artifacts(paths)
+    {
+        stop_errors.push(error.to_string());
+    }
+
+    if stop_errors.is_empty() {
+        state.lifecycle = MachineLifecycle::Stopped;
+        state.manager = if state.runtime.is_some() {
+            MachineManagerState::HelpersResolved
+        } else {
+            MachineManagerState::Unconfigured
+        };
+        state.last_error = None;
+        super::write_json_file(&paths.state_path, state)?;
+        return Ok(());
+    }
+
+    let diagnostic = stop_errors.join("; ");
+    state.lifecycle = MachineLifecycle::Failed;
+    state.manager = MachineManagerState::Stale;
+    state.last_error = Some(diagnostic.clone());
     super::write_json_file(&paths.state_path, state)?;
-    Ok(())
+    Err(Error::Internal(format!(
+        "machine '{}' stop is incomplete; runtime evidence and network authority remain fenced: {diagnostic}",
+        config.name
+    )))
 }
 
 pub(super) fn stop_provider_machine(

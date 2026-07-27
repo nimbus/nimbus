@@ -27,10 +27,7 @@ use super::image::{
 use super::launch::{
     MachineCommandLine, MachineLaunchPlan, build_virtio_vsock_listen_arg, build_virtiofs_arg,
 };
-use super::ports::{
-    load_machine_port_allocation_state, managed_machine_port_range_contains,
-    with_port_allocation_lock, write_machine_port_allocation_state,
-};
+use super::ports::managed_machine_port_range_contains;
 use super::readiness::{
     build_machine_api_forward_command, ssh_port_is_listening, wait_for_path, wait_for_ssh_ready,
 };
@@ -52,6 +49,11 @@ use crate::machine::{
     default_machine_image_for_provider, describe_machine_image_source,
     machine_image_reference_repository,
 };
+use nimbus_network::ListenerId;
+
+fn fixture_machine_ssh_listener_id(scope: &str) -> ListenerId {
+    ListenerId::for_workload_listener("nimbus-cli-machine-test", scope)
+}
 
 mod attestation;
 mod helper_resolution;

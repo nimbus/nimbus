@@ -59,6 +59,7 @@ fn converge_machine_image_contract_rebuilds_boot_artifacts_when_recorded_image_d
         image_path: paths.materialized_image_path.clone(),
         efi_variable_store_path: paths.efi_variable_store_path.clone(),
         machine_image_source: "docker://quay.io/podman/machine-os@sha256:old-digest".to_owned(),
+        ssh_listener_id: fixture_machine_ssh_listener_id("launch-image"),
         ssh_port: 20022,
         rest_uri: format!("unix://{}", paths.vmm_endpoint_path.display()),
         ready_vsock_port: READY_VSOCK_PORT,
@@ -146,8 +147,6 @@ fn launch_plan_requires_bootable_local_disk_image() {
     assert!(
         !plan
             .gvproxy_command
-            .as_ref()
-            .expect("krunkit requires a gvproxy command")
             .args
             .iter()
             .any(|arg| arg == "-forward-sock")
@@ -230,20 +229,12 @@ fn launch_plan_keeps_gvproxy_network_only_and_builds_separate_machine_api_forwar
     let state = MachineStateRecord::initialized();
     let plan = MachineLaunchPlan::build(&paths, &config, &state).expect("launch plan should build");
 
-    assert!(
-        !plan
-            .gvproxy_command
-            .as_ref()
-            .expect("krunkit requires a gvproxy command")
-            .args
-            .iter()
-            .any(|arg| {
-                matches!(
-                    arg.as_str(),
-                    "-forward-sock" | "-forward-dest" | "-forward-user" | "-forward-identity"
-                )
-            })
-    );
+    assert!(!plan.gvproxy_command.args.iter().any(|arg| {
+        matches!(
+            arg.as_str(),
+            "-forward-sock" | "-forward-dest" | "-forward-user" | "-forward-identity"
+        )
+    }));
     let forward = build_machine_api_forward_command(&paths, &config, 20022)
         .expect("machine API forward command should build");
     let forward_args = forward

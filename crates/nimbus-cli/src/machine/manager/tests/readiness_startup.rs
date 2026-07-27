@@ -218,6 +218,7 @@ fn interrupted_start_transitions_to_stopped_and_cleans_runtime_artifacts() {
         image_path,
         efi_variable_store_path: paths.efi_variable_store_path.clone(),
         machine_image_source: describe_machine_image_source(&config.guest.image_source),
+        ssh_listener_id: fixture_machine_ssh_listener_id("readiness-interrupted"),
         ssh_port: 20022,
         rest_uri: format!("unix://{}", paths.vmm_endpoint_path.display()),
         ready_vsock_port: READY_VSOCK_PORT,

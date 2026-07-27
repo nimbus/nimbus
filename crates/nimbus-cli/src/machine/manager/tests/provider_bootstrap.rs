@@ -49,8 +49,6 @@ fn krunkit_provider_capabilities_match_podman_aligned_contract() {
 fn krunkit_backend_pairs_gvproxy_unixgram_listen_mode() {
     let backend = KrunkitVmmBackend;
     assert_eq!(backend.provider(), MachineProvider::Krunkit);
-    // krunkit drives host networking through gvproxy.
-    assert!(backend.requires_gvproxy());
 
     // The host side listens on a unixgram socket and the krunkit
     // `virtio-net,type=unixgram` device dials it. gvproxy's `-listen-vfkit`
@@ -70,8 +68,6 @@ fn krunkit_backend_pairs_gvproxy_unixgram_listen_mode() {
 fn vfkit_backend_pairs_gvproxy_unixgram_listen_mode() {
     let backend = VfkitVmmBackend;
     assert_eq!(backend.provider(), MachineProvider::Vfkit);
-    // vfkit, like krunkit, drives host networking through gvproxy.
-    assert!(backend.requires_gvproxy());
 
     // vfkit's `virtio-net,unixSocketPath=` device dials gvproxy's `-listen-vfkit`
     // unixgram listener. The host listen contract is identical to krunkit (krunkit
@@ -389,6 +385,37 @@ fn vmm_backend_routes_managed_applehv_providers_and_rejects_wsl2() {
     assert!(
         error.to_string().contains("WSL2"),
         "WSL2 start error should name the unavailable provider: {error}"
+    );
+}
+
+#[test]
+fn provider_managed_backend_is_rejected_before_host_listener_authority() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let image_path = temp_dir.path().join("disk.tar");
+    let mut config = sample_config(&image_path);
+    config.provider = MachineProvider::Wsl2;
+    let paths = config.roots.paths("default");
+
+    let error = MachineLaunchPlan::build(&paths, &config, &MachineStateRecord::initialized())
+        .expect_err(
+            "provider-managed networking must not enter the host-managed launch/lease seam",
+        );
+
+    assert!(
+        matches!(error, Error::InvalidInput(_)),
+        "provider-managed mode must fail closed before launch planning: {error}"
+    );
+    assert!(
+        error.to_string().contains("WSL2"),
+        "the rejected provider should be named: {error}"
+    );
+    assert!(
+        !config.roots.network_state_root.exists(),
+        "rejection must happen before the host listener authority creates durable state"
+    );
+    assert!(
+        !paths.state_dir.exists() && !paths.runtime_dir.exists(),
+        "rejection must happen before machine state or runtime effects"
     );
 }
 
