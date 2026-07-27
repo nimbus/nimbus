@@ -259,7 +259,8 @@ impl LocalNetworkStateStore {
             .load_body()
             .map_err(NetworkStateTransactionError::Store)?;
         let key = partition.key();
-        let mut payload = match body.records.get(&key).cloned() {
+        let original_payload = body.records.get(&key).cloned();
+        let mut payload = match original_payload.clone() {
             Some(value) => serde_json::from_value(value).map_err(|source| {
                 NetworkStateTransactionError::Store(NetworkStateStoreError::Corrupt {
                     path: self.state_path.clone(),
@@ -277,6 +278,25 @@ impl LocalNetworkStateStore {
                 reason: source.to_string(),
             })
         })?;
+        let absent_default = if original_payload.is_none() {
+            Some(serde_json::to_value(T::default()).map_err(|source| {
+                NetworkStateTransactionError::Store(NetworkStateStoreError::Serialization {
+                    partition: partition.clone(),
+                    reason: source.to_string(),
+                })
+            })?)
+        } else {
+            None
+        };
+        // A concept owner may need the exclusive cross-process lock merely to
+        // authenticate a no-effect or already-terminal transition. Preserve
+        // the exact authority revision and bytes when that locked decision
+        // leaves an existing partition unchanged or leaves an absent
+        // partition at its default.
+        if original_payload.as_ref() == Some(&payload) || absent_default.as_ref() == Some(&payload)
+        {
+            return Ok(result);
+        }
         body.records.insert(key, payload);
         body.revision = body.revision.checked_add(1).ok_or_else(|| {
             NetworkStateTransactionError::Store(NetworkStateStoreError::RevisionExhausted {
@@ -1448,6 +1468,49 @@ mod tests {
     }
 
     #[test]
+    fn absent_partition_noop_preserves_exact_authority_and_revision() {
+        let root = tempdir().expect("state root");
+        let store = LocalNetworkStateStore::open(root.path()).expect("store should open");
+        store
+            .transaction(
+                &NetworkStatePartition::SegmentAllocations,
+                |state: &mut FixtureState| {
+                    state.owner = Some("sibling-owner".to_owned());
+                    Ok::<_, Infallible>(())
+                },
+            )
+            .expect("sibling partition should commit");
+        let before = fs::read(store.authority_path()).expect("authority bytes should read");
+        let before_envelope: Value =
+            serde_json::from_slice(&before).expect("authority envelope should parse");
+
+        store
+            .transaction(&fixture_partition(), |_state: &mut FixtureState| {
+                Ok::<_, Infallible>(())
+            })
+            .expect("absent partition no-op should succeed");
+
+        let after = fs::read(store.authority_path()).expect("authority bytes should reread");
+        let after_envelope: Value =
+            serde_json::from_slice(&after).expect("authority envelope should reparse");
+        assert_eq!(
+            after, before,
+            "a locked absent-partition no-op must not rewrite shared authority"
+        );
+        assert_eq!(
+            after_envelope["body"]["revision"], before_envelope["body"]["revision"],
+            "a no-op must not consume a global authority revision"
+        );
+        assert!(
+            store
+                .read::<FixtureState>(&fixture_partition())
+                .expect("absent partition should read")
+                .is_none(),
+            "a no-op must not materialize a default partition"
+        );
+    }
+
+    #[test]
     fn closure_rejection_does_not_publish_partial_state() {
         let root = tempdir().expect("state root");
         let store = LocalNetworkStateStore::open(root.path()).expect("store should open");
@@ -1563,7 +1626,8 @@ mod tests {
         let root = tempdir().expect("state root");
         let store = LocalNetworkStateStore::open(root.path()).expect("store should open");
         store
-            .transaction(&fixture_partition(), |_state: &mut FixtureState| {
+            .transaction(&fixture_partition(), |state: &mut FixtureState| {
+                state.owner = Some("truncate-me".to_owned());
                 Ok::<_, Infallible>(())
             })
             .expect("seed should commit");
@@ -1609,7 +1673,8 @@ mod tests {
         let root = tempdir().expect("state root");
         let store = LocalNetworkStateStore::open(root.path()).expect("store should open");
         store
-            .transaction(&fixture_partition(), |_state: &mut FixtureState| {
+            .transaction(&fixture_partition(), |state: &mut FixtureState| {
+                state.owner = Some("future-version".to_owned());
                 Ok::<_, Infallible>(())
             })
             .expect("seed should commit");
@@ -1681,7 +1746,8 @@ mod tests {
         let root = tempdir().expect("state root");
         let store = LocalNetworkStateStore::open(root.path()).expect("store should open");
         store
-            .transaction(&fixture_partition(), |_state: &mut FixtureState| {
+            .transaction(&fixture_partition(), |state: &mut FixtureState| {
+                state.owner = Some("private-authority".to_owned());
                 Ok::<_, Infallible>(())
             })
             .expect("seed should commit");
@@ -1714,7 +1780,8 @@ mod tests {
         let root = tempdir().expect("state root");
         let store = LocalNetworkStateStore::open(root.path()).expect("store should open");
         store
-            .transaction(&fixture_partition(), |_state: &mut FixtureState| {
+            .transaction(&fixture_partition(), |state: &mut FixtureState| {
+                state.owner = Some("permission-check".to_owned());
                 Ok::<_, Infallible>(())
             })
             .expect("seed should commit");

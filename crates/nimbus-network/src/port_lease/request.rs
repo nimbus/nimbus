@@ -37,6 +37,81 @@ pub enum PortExposure {
     Unknown,
 }
 
+/// Exact desired host publication carried independently from a bind effect.
+///
+/// A provider may bind a wildcard listener in one network realm while
+/// publishing a specific external address in another. Publication intent is
+/// immutable request authority, but never workload or lease identity and never
+/// participates in kernel port-overlap decisions.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PortPublicationIntent {
+    /// The listener is host-internal and must not be externally published.
+    Unpublished,
+    /// Publish the selected port on this exact canonical host address.
+    Host {
+        /// Desired external host address.
+        address: IpAddr,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum PortPublicationIntentWire {
+    Unpublished,
+    Host { address: IpAddr },
+}
+
+impl PortPublicationIntent {
+    /// Construct exact host publication intent.
+    ///
+    /// IPv4-mapped IPv6 inputs canonicalize to IPv4 so equivalent address
+    /// spellings cannot create divergent durable authority.
+    pub fn host(address: IpAddr) -> Self {
+        Self::Host {
+            address: canonical_ip(address),
+        }
+    }
+
+    /// Exact canonical host address, or `None` for an internal listener.
+    pub const fn host_address(&self) -> Option<IpAddr> {
+        match self {
+            Self::Unpublished => None,
+            Self::Host { address } => Some(*address),
+        }
+    }
+
+    pub(crate) fn canonicalized(self) -> Self {
+        match self {
+            Self::Unpublished => Self::Unpublished,
+            Self::Host { address } => Self::host(address),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for PortPublicationIntent {
+    fn deserialize<Deserializer>(deserializer: Deserializer) -> Result<Self, Deserializer::Error>
+    where
+        Deserializer: serde::Deserializer<'de>,
+    {
+        Ok(
+            match PortPublicationIntentWire::deserialize(deserializer)? {
+                PortPublicationIntentWire::Unpublished => Self::Unpublished,
+                PortPublicationIntentWire::Host { address } => Self::host(address),
+            },
+        )
+    }
+}
+
+fn canonical_ip(address: IpAddr) -> IpAddr {
+    match address {
+        IpAddr::V6(address) => address
+            .to_ipv4_mapped()
+            .map_or(IpAddr::V6(address), IpAddr::V4),
+        address => address,
+    }
+}
+
 /// Validated stable identity of one proven-isolated bind realm.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(transparent)]
@@ -549,7 +624,13 @@ impl PortBindingSpec {
         &self.port
     }
 
-    pub(crate) fn overlaps(&self, other: &Self) -> bool {
+    /// Whether two binding intents occupy an overlapping kernel namespace.
+    ///
+    /// Numeric-port comparison is intentionally separate because exact,
+    /// ranged, and provider-assigned requests select their ports at different
+    /// lifecycle stages. Allocation and preview adapters use this predicate
+    /// only after selecting the same candidate number.
+    pub fn overlaps(&self, other: &Self) -> bool {
         self.protocol == other.protocol
             && self.realm.overlaps(&other.realm)
             && self.target.overlaps(&other.target)

@@ -25,6 +25,7 @@ impl SingleNodeSegmentAllocator {
         else {
             return Ok(None);
         };
+        validate_segment_state(&state)?;
         let supernet = match (state.supernet_cidr.as_deref(), state.supernet_epoch) {
             (Some(cidr), Some(epoch)) => InstalledSuperNet {
                 cidr: Cidr::parse(cidr).map_err(|error| SandboxError::OperationFailed {
@@ -64,20 +65,50 @@ impl DurableSegmentCleanupAuthority {
         self.inner.inspect_segments(tenant)
     }
 
+    pub(crate) fn release_reserved_attachment_without_effect(
+        &self,
+        tenant: &TenantId,
+        attachment_id: &NetworkAttachmentId,
+        reservation_claim: &NetworkReservationClaim,
+    ) -> Result<NetworkSegmentReleaseOutcome<OciSegmentRealization>> {
+        self.inner.release_reserved_attachment_without_effect(
+            tenant,
+            attachment_id,
+            reservation_claim,
+        )
+    }
+
+    pub(crate) fn finalize_reserved_attachment_without_effect(
+        &self,
+        tenant: &TenantId,
+        attachment_id: &NetworkAttachmentId,
+        reservation_claim: &NetworkReservationClaim,
+    ) -> Result<NetworkSegmentReleaseOutcome<OciSegmentRealization>> {
+        self.inner.finalize_reserved_attachment_without_effect(
+            tenant,
+            attachment_id,
+            reservation_claim,
+        )
+    }
+
     pub(crate) fn quarantine(
         &self,
         tenant: &TenantId,
         attachment_id: &NetworkAttachmentId,
+        expected_adoption_receipt: Option<&NetworkReservationClaim>,
     ) -> Result<NetworkSegmentQuarantineOutcome> {
-        self.inner.quarantine(tenant, attachment_id)
+        self.inner
+            .quarantine(tenant, attachment_id, expected_adoption_receipt)
     }
 
     pub(crate) fn release(
         &self,
         tenant: &TenantId,
         attachment_id: &NetworkAttachmentId,
+        expected_adoption_receipt: Option<&NetworkReservationClaim>,
     ) -> Result<NetworkSegmentReleaseOutcome<OciSegmentRealization>> {
-        self.inner.release(tenant, attachment_id)
+        self.inner
+            .release(tenant, attachment_id, expected_adoption_receipt)
     }
 
     pub(crate) fn finalize_release(

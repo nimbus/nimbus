@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use nimbus_network::{
     ListenerId, LocalPortLeaseAuthority, NetworkLeaseEpoch, NetworkProviderHandle,
-    NetworkProviderId, NetworkResourceGeneration, PortBindAttempt, PortBindFailure,
+    NetworkProviderId, NetworkResourceGeneration, PortBindAttempt, PortBindClaim, PortBindFailure,
     PortBindFailureKind, PortBindRealm, PortBindTarget, PortBindingMismatch, PortBindingProvenance,
     PortBindingSpec, PortBoundEndpoint, PortExposure, PortLeaseBinding, PortLeaseError,
     PortLeaseId, PortLeasePhase, PortLeaseRequest, PortProtocol, PortRequestMode,
@@ -51,14 +51,18 @@ fn external_addr_in_use_is_durable_and_cannot_publish() {
         attempt.clone(),
         provider_handle("direct-bind-attempt"),
     );
+    let claim = PortBindClaim::new(failure.provider_attempt().clone());
+    authority
+        .claim_bind(&request, None, claim.clone())
+        .expect("real bind attempt should claim the reservation");
     let failed = authority
-        .record_bind_failure_without_effect(&request, failure.clone())
+        .record_claimed_bind_failure_without_effect(&request, None, &claim, failure.clone())
         .expect("real bind failure should commit");
     assert_eq!(failed.phase(), PortLeasePhase::Failed);
     assert_eq!(failed.failure(), Some(&failure));
     assert_eq!(failed.binding(), None);
     assert!(matches!(
-        authority.activate(&request),
+        authority.activate_claimed(&request, &claim),
         Err(PortLeaseError::InvalidTransition {
             phase: PortLeasePhase::Failed,
             ..
@@ -109,8 +113,12 @@ fn externally_owned_prebound_listener_adopts_exact_identity_and_address() {
     authority
         .reserve(lease_request.clone())
         .expect("pre-bound address should reserve under its stable lease");
+    let claim = PortBindClaim::new(binding.provider_handle().clone());
+    authority
+        .claim_bind(&lease_request, None, claim.clone())
+        .expect("inherited-listener adoption should claim the reservation");
     let adopted = authority
-        .adopt(&lease_request, binding.clone())
+        .adopt_claimed(&lease_request, None, &claim, binding.clone())
         .expect("matching inherited listener should adopt");
     assert_eq!(adopted.request().lease_id(), lease_request.lease_id());
     assert_eq!(adopted.binding(), Some(&binding));
@@ -134,7 +142,7 @@ fn externally_owned_prebound_listener_adopts_exact_identity_and_address() {
     );
 
     let active = authority
-        .activate(&lease_request)
+        .activate_claimed(&lease_request, &claim)
         .expect("durably adopted inherited listener should activate");
     assert_eq!(active.phase(), PortLeasePhase::Active);
 
@@ -193,6 +201,10 @@ fn adopted_address_and_provenance_must_satisfy_the_durable_request() {
     authority
         .reserve(request.clone())
         .expect("exact request should reserve");
+    let claim = PortBindClaim::new(provider_handle("binding-validation-attempt"));
+    authority
+        .claim_bind(&request, None, claim.clone())
+        .expect("binding validation attempt should claim the reservation");
 
     let wrong_address = PortLeaseBinding::new(
         PortBoundEndpoint::new(
@@ -206,7 +218,7 @@ fn adopted_address_and_provenance_must_satisfy_the_durable_request() {
         provider_handle("wrong-address"),
     );
     assert!(matches!(
-        authority.adopt(&request, wrong_address),
+        authority.adopt_claimed(&request, None, &claim, wrong_address),
         Err(PortLeaseError::BindingMismatch {
             mismatch: PortBindingMismatch::Target,
             ..
@@ -219,7 +231,7 @@ fn adopted_address_and_provenance_must_satisfy_the_durable_request() {
         provider_handle("wrong-provenance"),
     );
     assert!(matches!(
-        authority.adopt(&request, wrong_provenance),
+        authority.adopt_claimed(&request, None, &claim, wrong_provenance),
         Err(PortLeaseError::BindingMismatch {
             mismatch: PortBindingMismatch::Provenance,
             ..
@@ -273,8 +285,12 @@ fn request(payload: &str, target: PortBindTarget, port: NonZeroU16) -> PortLease
         lease_id,
         owner_id.into(),
         None,
-        NetworkResourceGeneration::new(7),
-        NetworkLeaseEpoch::new(11),
+        nimbus_network::PortLeaseFence::new(
+            NetworkResourceGeneration::new(7),
+            NetworkLeaseEpoch::new(11),
+        ),
+        nimbus_network::PortLeaseAccounting::HostInternal,
+        nimbus_network::PortPublicationIntent::Unpublished,
         PortBindingSpec::new(
             PortProtocol::Tcp,
             PortBindRealm::Host,

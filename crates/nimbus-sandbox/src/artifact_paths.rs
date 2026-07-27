@@ -49,13 +49,12 @@ pub(crate) fn tenant_volume_dir(root: &Path, tenant_id: &TenantId, volume_name: 
 
 pub(crate) fn remove_tenant_root(root: &Path, tenant_id: &TenantId) -> io::Result<()> {
     let path = tenant_root(root, tenant_id);
-    if path.exists() {
+    if try_path_exists(&path, "tenant artifact root")? {
         fs::remove_dir_all(path)?;
     }
     Ok(())
 }
 
-#[cfg(test)]
 pub(crate) fn manifest_path(
     state_root: &Path,
     tenant_id: &TenantId,
@@ -68,15 +67,21 @@ pub(crate) fn manifest_path(
 }
 
 pub(crate) fn all_manifest_paths(state_root: &Path) -> io::Result<Vec<PathBuf>> {
+    manifest_paths_from_container_state_dirs(all_container_state_dirs(state_root)?)
+}
+
+/// Find every canonical per-sandbox container state directory, including a
+/// first manifest publication that crashed after creating only a stage file.
+pub(crate) fn all_container_state_dirs(state_root: &Path) -> io::Result<Vec<PathBuf>> {
     let tenants_root = state_root.join(TENANTS_DIR);
-    if !tenants_root.exists() {
+    if !try_path_exists(&tenants_root, "tenants artifact root")? {
         return Ok(Vec::new());
     }
 
     let mut paths = Vec::new();
     for tenant_entry in fs::read_dir(&tenants_root)? {
         let tenant_entry = tenant_entry?;
-        paths.extend(manifest_paths_under_tenant_root(tenant_entry.path())?);
+        paths.extend(container_state_dirs_under_tenant_root(tenant_entry.path())?);
     }
     paths.sort();
     Ok(paths)
@@ -96,7 +101,7 @@ pub(crate) fn manifest_path_for_sandbox_id(
     sandbox_id: &SandboxId,
 ) -> io::Result<Option<PathBuf>> {
     let tenants_root = state_root.join(TENANTS_DIR);
-    if !tenants_root.exists() {
+    if !try_path_exists(&tenants_root, "tenants artifact root")? {
         return Ok(None);
     }
 
@@ -111,7 +116,7 @@ pub(crate) fn manifest_path_for_sandbox_id(
             .join(CONTAINERS_DIR)
             .join(sandbox_id.as_str())
             .join(MANIFEST_FILE);
-        if !manifest_path.exists() {
+        if !try_path_exists(&manifest_path, "sandbox manifest")? {
             continue;
         }
         if selected.is_some() {
@@ -129,8 +134,25 @@ pub(crate) fn manifest_path_for_sandbox_id(
 }
 
 fn manifest_paths_under_tenant_root(tenant_root: PathBuf) -> io::Result<Vec<PathBuf>> {
+    manifest_paths_from_container_state_dirs(container_state_dirs_under_tenant_root(tenant_root)?)
+}
+
+fn manifest_paths_from_container_state_dirs(
+    container_state_dirs: Vec<PathBuf>,
+) -> io::Result<Vec<PathBuf>> {
+    let mut manifest_paths = Vec::new();
+    for container_state_dir in container_state_dirs {
+        let manifest_path = container_state_dir.join(MANIFEST_FILE);
+        if try_path_exists(&manifest_path, "sandbox manifest")? {
+            manifest_paths.push(manifest_path);
+        }
+    }
+    Ok(manifest_paths)
+}
+
+fn container_state_dirs_under_tenant_root(tenant_root: PathBuf) -> io::Result<Vec<PathBuf>> {
     let sandboxes_root = tenant_root.join(SANDBOXES_DIR);
-    if !sandboxes_root.exists() {
+    if !try_path_exists(&sandboxes_root, "tenant sandboxes root")? {
         return Ok(Vec::new());
     }
 
@@ -138,15 +160,54 @@ fn manifest_paths_under_tenant_root(tenant_root: PathBuf) -> io::Result<Vec<Path
     for sandbox_entry in fs::read_dir(&sandboxes_root)? {
         let sandbox_entry = sandbox_entry?;
         let sandbox_name = sandbox_entry.file_name();
-        let manifest_path = sandbox_entry
+        let container_state_dir = sandbox_entry
             .path()
             .join(STATE_DIR)
             .join(CONTAINERS_DIR)
-            .join(sandbox_name)
-            .join(MANIFEST_FILE);
-        if manifest_path.exists() {
-            paths.push(manifest_path);
+            .join(sandbox_name);
+        if try_path_exists(&container_state_dir, "sandbox container state directory")? {
+            paths.push(container_state_dir);
         }
     }
     Ok(paths)
+}
+
+fn try_path_exists(path: &Path, artifact_kind: &str) -> io::Result<bool> {
+    path.try_exists().map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!("cannot inspect {artifact_kind} {}: {error}", path.display()),
+        )
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(unix)]
+    #[test]
+    fn state_directory_discovery_surfaces_metadata_errors() {
+        use std::os::unix::fs::symlink;
+
+        let temp_dir = tempfile::TempDir::new().expect("temporary directory should exist");
+        let sandbox_root = temp_dir
+            .path()
+            .join(super::TENANTS_DIR)
+            .join("tenant")
+            .join(super::SANDBOXES_DIR)
+            .join("sandbox");
+        std::fs::create_dir_all(&sandbox_root).expect("sandbox directory should exist");
+        symlink("state", sandbox_root.join(super::STATE_DIR))
+            .expect("self-referential state symlink should exist");
+
+        let error = super::all_container_state_dirs(temp_dir.path())
+            .expect_err("metadata failure must not be classified as an absent state directory");
+        assert_ne!(error.kind(), std::io::ErrorKind::NotFound);
+        assert!(
+            error
+                .to_string()
+                .contains("sandbox container state directory")
+                && error.to_string().contains("state"),
+            "the error should identify the state path that could not be inspected: {error}"
+        );
+    }
 }

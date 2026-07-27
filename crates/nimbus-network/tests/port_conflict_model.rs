@@ -3,7 +3,7 @@ use std::num::NonZeroU16;
 
 use nimbus_network::{
     ListenerId, LocalPortLeaseAuthority, NetworkLeaseEpoch, NetworkProviderHandle,
-    NetworkProviderId, NetworkResourceGeneration, PortBindRealm, PortBindTarget,
+    NetworkProviderId, NetworkResourceGeneration, PortBindClaim, PortBindRealm, PortBindTarget,
     PortBindingProvenance, PortBindingSpec, PortBoundEndpoint, PortExposure, PortIpv6Overlap,
     PortLeaseBinding, PortLeaseError, PortLeaseId, PortLeasePhase, PortLeaseRequest, PortProtocol,
     PortRequestMode,
@@ -314,9 +314,22 @@ fn provider_assigned_port_is_fenced_atomically_at_adoption() {
         .expect("second provider request should reserve identity");
     assert_eq!(first_pending.reserved_port(), None);
     assert_eq!(second_pending.reserved_port(), None);
+    let first_claim = bind_claim("provider-a-attempt");
+    authority
+        .claim_bind(&first_request, None, first_claim.clone())
+        .expect("first provider attempt should claim");
+    let second_claim = bind_claim("provider-b-attempt");
+    authority
+        .claim_bind(&second_request, None, second_claim.clone())
+        .expect("second provider attempt should claim");
 
     let conflict = authority
-        .adopt(&first_request, binding(PORT, "provider-conflict"))
+        .adopt_claimed(
+            &first_request,
+            None,
+            &first_claim,
+            binding(PORT, "provider-conflict"),
+        )
         .expect_err("provider result must conflict with exact claim");
     assert!(matches!(
         conflict,
@@ -336,7 +349,12 @@ fn provider_assigned_port_is_fenced_atomically_at_adoption() {
     );
 
     let first_binding = authority
-        .adopt(&first_request, binding(PORT + 1, "provider-a"))
+        .adopt_claimed(
+            &first_request,
+            None,
+            &first_claim,
+            binding(PORT + 1, "provider-a"),
+        )
         .expect("unused provider result should adopt");
     assert_eq!(first_binding.phase(), PortLeasePhase::Binding);
     assert_eq!(
@@ -345,14 +363,24 @@ fn provider_assigned_port_is_fenced_atomically_at_adoption() {
     );
 
     assert!(matches!(
-        authority.adopt(&second_request, binding(PORT + 1, "provider-b")),
+        authority.adopt_claimed(
+            &second_request,
+            None,
+            &second_claim,
+            binding(PORT + 1, "provider-b")
+        ),
         Err(PortLeaseError::PortConflict {
             conflicting_port,
             ..
         }) if conflicting_port.get() == PORT + 1
     ));
     let second_binding = authority
-        .adopt(&second_request, binding(PORT + 2, "provider-b"))
+        .adopt_claimed(
+            &second_request,
+            None,
+            &second_claim,
+            binding(PORT + 2, "provider-b"),
+        )
         .expect("a distinct provider result should adopt");
     assert_eq!(
         second_binding.reserved_port().map(NonZeroU16::get),
@@ -493,8 +521,12 @@ fn request(index: usize, binding: PortBindingSpec) -> PortLeaseRequest {
         lease_id,
         owner_id.into(),
         None,
-        NetworkResourceGeneration::new(7),
-        NetworkLeaseEpoch::new(11),
+        nimbus_network::PortLeaseFence::new(
+            NetworkResourceGeneration::new(7),
+            NetworkLeaseEpoch::new(11),
+        ),
+        nimbus_network::PortLeaseAccounting::HostInternal,
+        nimbus_network::PortPublicationIntent::Unpublished,
         binding,
     )
 }
@@ -552,9 +584,6 @@ fn port(value: u16) -> NonZeroU16 {
 }
 
 fn binding(value: u16, opaque: &str) -> PortLeaseBinding {
-    let provider_id: NetworkProviderId = "netprovider_01ARZ3NDEKTSV4RRFFQ69G5FAV"
-        .parse()
-        .expect("fixture provider ID should parse");
     PortLeaseBinding::new(
         PortBoundEndpoint::new(
             PortProtocol::Tcp,
@@ -564,9 +593,22 @@ fn binding(value: u16, opaque: &str) -> PortLeaseBinding {
         )
         .expect("fixture endpoint should validate"),
         PortBindingProvenance::ProviderAssigned,
-        NetworkProviderHandle::new(provider_id, opaque)
+        NetworkProviderHandle::new(provider_id(), opaque)
             .expect("fixture provider handle should validate"),
     )
+}
+
+fn bind_claim(opaque: &str) -> PortBindClaim {
+    PortBindClaim::new(
+        NetworkProviderHandle::new(provider_id(), opaque)
+            .expect("fixture bind claim should validate"),
+    )
+}
+
+fn provider_id() -> NetworkProviderId {
+    "netprovider_01ARZ3NDEKTSV4RRFFQ69G5FAV"
+        .parse()
+        .expect("fixture provider ID should parse")
 }
 
 #[test]

@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use nimbus_core::{Cidr, TenantId};
 
-use crate::{NetworkAttachmentId, NetworkLeaseEpoch, NetworkSegmentId};
+use crate::{NetworkAttachmentId, NetworkLeaseEpoch, NetworkReservationClaim, NetworkSegmentId};
 
 /// Provider-neutral allocation of one tenant network segment.
 ///
@@ -129,6 +129,13 @@ pub enum NetworkSegmentQuarantineOutcome {
 /// handle without making `nimbus-network` depend on that provider.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NetworkSegmentReleaseOutcome<Segment> {
+    /// The exact never-realized attachment is durably fenced while its
+    /// adapter-owned IPAM allocation is removed.
+    ///
+    /// The caller must confirm that cleanup, then call
+    /// [`NetworkSegmentAllocator::finalize_reserved_attachment_without_effect`]
+    /// with the same claim before the attachment hold is removed.
+    AttachmentCleanupPending,
     /// The last attachment released. Allocation authority remains quarantined
     /// while the caller removes every provider realization.
     CleanupPending(NetworkSegmentCleanup<Segment>),
@@ -204,7 +211,78 @@ pub trait NetworkSegmentAllocator: Send + Sync {
         tenant: &TenantId,
     ) -> Result<Option<Vec<Self::Segment>>, Self::Error>;
 
+    /// Durably reserve one unplaced attachment for an attempt-unique launch
+    /// coordinator.
+    ///
+    /// An exact replay carrying the same claim is idempotent. A different
+    /// claim, a direct acquire, or generic teardown must fail while this
+    /// reservation remains unadopted. This step deliberately returns no
+    /// segment: allocation authority must not imply that placement selected the
+    /// tenant's primary block.
+    fn reserve_attachment_for_coordinator(
+        &self,
+        tenant: &TenantId,
+        attachment_id: &NetworkAttachmentId,
+        reservation_claim: &NetworkReservationClaim,
+    ) -> Result<(), Self::Error>;
+
+    /// Bind an unplaced coordinator reservation to the exact selected segment.
+    ///
+    /// Placement calls this only after its IPAM transaction durably selects a
+    /// block. Exact replay is idempotent; a different claim or segment fails
+    /// without remapping the attachment.
+    fn bind_reserved_attachment_to_segment(
+        &self,
+        tenant: &TenantId,
+        attachment_id: &NetworkAttachmentId,
+        segment_id: &NetworkSegmentId,
+        reservation_claim: &NetworkReservationClaim,
+    ) -> Result<Self::Segment, Self::Error>;
+
+    /// Verify and adopt a coordinator-owned attachment before provider effects.
+    ///
+    /// Adoption removes no hold. It only closes the never-realized
+    /// compensation capability so ordinary quarantine/release may own the
+    /// provider-backed attachment lifecycle. Exact adoption replay is
+    /// idempotent; a foreign claim fails without mutation.
+    fn adopt_reserved_attachment(
+        &self,
+        tenant: &TenantId,
+        attachment_id: &NetworkAttachmentId,
+        reservation_claim: &NetworkReservationClaim,
+    ) -> Result<Self::Segment, Self::Error>;
+
+    /// Release an exact coordinator reservation proven to have no provider effect.
+    ///
+    /// This transition is atomic and claim-authenticated; it does not rely on
+    /// generic quarantine, filesystem observation, or address identity.
+    fn release_reserved_attachment_without_effect(
+        &self,
+        tenant: &TenantId,
+        attachment_id: &NetworkAttachmentId,
+        reservation_claim: &NetworkReservationClaim,
+    ) -> Result<NetworkSegmentReleaseOutcome<Self::Segment>, Self::Error>;
+
+    /// Confirm adapter-owned cleanup for an exact never-realized attachment.
+    ///
+    /// This is the second half of
+    /// [`Self::release_reserved_attachment_without_effect`]. The first
+    /// transition retains claim-authenticated attachment authority while the
+    /// effect-owning adapter removes IPAM. Only this exact confirmation removes
+    /// the hold, so cleanup failure and process restart remain retryable without
+    /// granting a foreign coordinator mutation authority.
+    fn finalize_reserved_attachment_without_effect(
+        &self,
+        tenant: &TenantId,
+        attachment_id: &NetworkAttachmentId,
+        reservation_claim: &NetworkReservationClaim,
+    ) -> Result<NetworkSegmentReleaseOutcome<Self::Segment>, Self::Error>;
+
     /// Take an idempotent hold for one stable network attachment.
+    ///
+    /// This direct-active path is for coordinators that already own provider
+    /// lifecycle authority. It must reject an attachment carrying an
+    /// unadopted reservation claim.
     fn acquire(
         &self,
         tenant: &TenantId,
@@ -217,10 +295,14 @@ pub trait NetworkSegmentAllocator: Send + Sync {
     /// attempts for that same identity fail closed until detach is confirmed.
     /// An expiring create lease must not revoke this operation for a handle
     /// whose identity and epoch remain present in durable authority.
+    /// `expected_adoption_receipt` must match the receipt stored by
+    /// [`Self::adopt_reserved_attachment`] in the same atomic transition.
+    /// Directly acquired attachments carry `None`.
     fn quarantine(
         &self,
         tenant: &TenantId,
         attachment_id: &NetworkAttachmentId,
+        expected_adoption_receipt: Option<&NetworkReservationClaim>,
     ) -> Result<NetworkSegmentQuarantineOutcome, Self::Error>;
 
     /// Release one quarantined attachment hold after provider and namespace
@@ -230,10 +312,14 @@ pub trait NetworkSegmentAllocator: Send + Sync {
     /// [`NetworkSegmentCleanup`] and leaves every local slot unavailable until
     /// [`Self::finalize_release`] confirms the exact identity-fenced cleanup.
     /// This cleanup authority comes from durable identity, not lease freshness.
+    /// The expected adoption receipt is compared atomically before removing
+    /// the quarantined hold, preventing delayed cleanup from crossing an
+    /// attachment replacement.
     fn release(
         &self,
         tenant: &TenantId,
         attachment_id: &NetworkAttachmentId,
+        expected_adoption_receipt: Option<&NetworkReservationClaim>,
     ) -> Result<NetworkSegmentReleaseOutcome<Self::Segment>, Self::Error>;
 
     /// Finalize provider cleanup for the exact quarantined allocation.
@@ -344,6 +430,66 @@ mod tests {
             Ok(Some(vec![self.segment.clone()]))
         }
 
+        fn reserve_attachment_for_coordinator(
+            &self,
+            _tenant: &TenantId,
+            _attachment_id: &NetworkAttachmentId,
+            _reservation_claim: &NetworkReservationClaim,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn bind_reserved_attachment_to_segment(
+            &self,
+            _tenant: &TenantId,
+            _attachment_id: &NetworkAttachmentId,
+            _segment_id: &NetworkSegmentId,
+            _reservation_claim: &NetworkReservationClaim,
+        ) -> Result<Self::Segment, Self::Error> {
+            Ok(self.segment.clone())
+        }
+
+        fn adopt_reserved_attachment(
+            &self,
+            _tenant: &TenantId,
+            _attachment_id: &NetworkAttachmentId,
+            _reservation_claim: &NetworkReservationClaim,
+        ) -> Result<Self::Segment, Self::Error> {
+            Ok(self.segment.clone())
+        }
+
+        fn release_reserved_attachment_without_effect(
+            &self,
+            tenant: &TenantId,
+            _attachment_id: &NetworkAttachmentId,
+            _reservation_claim: &NetworkReservationClaim,
+        ) -> Result<NetworkSegmentReleaseOutcome<Self::Segment>, Self::Error> {
+            Ok(NetworkSegmentReleaseOutcome::CleanupPending(
+                NetworkSegmentCleanup::new(
+                    tenant.clone(),
+                    vec![self.segment.segment_id().clone()],
+                    self.segment.lease_epoch(),
+                    vec![self.segment.clone()],
+                ),
+            ))
+        }
+
+        fn finalize_reserved_attachment_without_effect(
+            &self,
+            tenant: &TenantId,
+            _attachment_id: &NetworkAttachmentId,
+            _reservation_claim: &NetworkReservationClaim,
+        ) -> Result<NetworkSegmentReleaseOutcome<Self::Segment>, Self::Error> {
+            Ok(NetworkSegmentReleaseOutcome::CleanupPending(
+                NetworkSegmentCleanup::new(
+                    tenant.clone(),
+                    vec![self.segment.segment_id().clone()],
+                    self.segment.lease_epoch(),
+                    vec![self.segment.clone()],
+                ),
+            ))
+        }
+
         fn acquire(
             &self,
             _tenant: &TenantId,
@@ -356,6 +502,7 @@ mod tests {
             &self,
             _tenant: &TenantId,
             _attachment_id: &NetworkAttachmentId,
+            _expected_adoption_receipt: Option<&NetworkReservationClaim>,
         ) -> Result<NetworkSegmentQuarantineOutcome, Self::Error> {
             Ok(NetworkSegmentQuarantineOutcome::CleanupPending)
         }
@@ -364,6 +511,7 @@ mod tests {
             &self,
             tenant: &TenantId,
             _attachment_id: &NetworkAttachmentId,
+            _expected_adoption_receipt: Option<&NetworkReservationClaim>,
         ) -> Result<NetworkSegmentReleaseOutcome<Self::Segment>, Self::Error> {
             Ok(NetworkSegmentReleaseOutcome::CleanupPending(
                 NetworkSegmentCleanup::new(
@@ -421,7 +569,7 @@ mod tests {
         );
         assert_eq!(
             allocator
-                .quarantine(&tenant, &attachment)
+                .quarantine(&tenant, &attachment, None)
                 .expect("infallible allocator"),
             NetworkSegmentQuarantineOutcome::CleanupPending
         );
@@ -444,7 +592,7 @@ mod tests {
             NetworkSegmentGrowth::Grown(_)
         ));
         let NetworkSegmentReleaseOutcome::CleanupPending(cleanup) = allocator
-            .release(&tenant, &attachment)
+            .release(&tenant, &attachment, None)
             .expect("infallible allocator")
         else {
             panic!("the fixed allocator should enter cleanup pending");

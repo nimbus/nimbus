@@ -89,6 +89,23 @@ pub(super) fn sample_plan_only_backend(root: &std::path::Path) -> ContainerSandb
     })
 }
 
+pub(super) fn mark_runtime_absent_for_cleanup(manifest: &mut ContainerSandboxManifest) {
+    manifest.creator_handoff = ContainerCreatorHandoffState::Quiesced {
+        attempt_id: "test-confirmed-no-creator".to_owned(),
+    };
+    manifest.conmon_launch.delete_command =
+        crate::backends::oci::command::CommandSpec::new("/usr/bin/true");
+    manifest.conmon_launch.state_command =
+        crate::backends::oci::command::CommandSpec::new("/bin/sh").args([
+            "-c".to_owned(),
+            format!(
+                "printf '%s\\n' 'container `{0}` does not exist: open \
+                 `/run/crun/{0}/status`: No such file or directory' >&2; exit 1",
+                manifest.handle.id
+            ),
+        ]);
+}
+
 pub(super) fn sandbox_id() -> SandboxId {
     SandboxId::new("db-01")
 }

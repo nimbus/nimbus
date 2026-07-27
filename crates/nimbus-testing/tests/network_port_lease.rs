@@ -3,9 +3,10 @@ use std::time::Duration;
 
 use nimbus_network::{
     ListenerId, LocalPortLeaseAuthority, NetworkLeaseEpoch, NetworkProviderHandle,
-    NetworkProviderId, NetworkResourceGeneration, NetworkResourceId, PortBindRealm, PortBindTarget,
-    PortBindingProvenance, PortBindingSpec, PortBoundEndpoint, PortExposure, PortLeaseBinding,
-    PortLeaseError, PortLeaseId, PortLeasePhase, PortLeaseRequest, PortProtocol, PortRequestMode,
+    NetworkProviderId, NetworkResourceGeneration, NetworkResourceId, PortBindClaim, PortBindRealm,
+    PortBindTarget, PortBindingProvenance, PortBindingSpec, PortBoundEndpoint, PortExposure,
+    PortLeaseBinding, PortLeaseError, PortLeaseId, PortLeasePhase, PortLeaseRequest, PortProtocol,
+    PortRequestMode,
 };
 use nimbus_testing::{
     ContentionOutcome, ProcessRoleSpec, TwoProcessContentionHarness, run_contention_child,
@@ -109,6 +110,39 @@ fn two_real_processes_cannot_adopt_one_provider_assigned_port() {
 }
 
 #[test]
+fn two_real_processes_same_request_get_exactly_one_bind_attempt_claim() {
+    let root = tempfile::tempdir().expect("state root should exist");
+    let result = TwoProcessContentionHarness::new(Duration::from_secs(5))
+        .run(
+            root.path(),
+            [
+                child("alpha", "same-request-claim"),
+                child("beta", "same-request-claim"),
+            ],
+        )
+        .unwrap_or_else(|error| panic!("same-request bind-claim contention failed: {error}"));
+
+    let authority =
+        LocalPortLeaseAuthority::open(root.path()).expect("port authority should reopen");
+    let records = authority.list().expect("durable leases should be readable");
+    assert_eq!(records.len(), 1, "identical request replay has one record");
+    assert_eq!(records[0].phase(), PortLeasePhase::Reserved);
+    let claim = records[0]
+        .bind_claim()
+        .expect("the winning provider attempt must remain durably claimed");
+    assert_eq!(
+        claim.provider_attempt().expose_to_provider(),
+        format!("same-request-claim-{}", result.winner()),
+        "durable attempt identity must agree with the real-process winner"
+    );
+    assert_eq!(
+        records[0].request().owner_id(),
+        &owner_id("alpha"),
+        "both processes must have replayed the exact same stable request"
+    );
+}
+
+#[test]
 #[ignore = "spawned only by the real-process port-lease contention parent"]
 fn network_port_lease_child() {
     let mode = std::env::var(MODE_ENV).expect("child test mode should be set");
@@ -121,16 +155,24 @@ fn network_port_lease_child() {
                 let request = request(context.role(), exact_port());
                 match authority.reserve(request.clone()) {
                     Ok(_) => {
+                        let claim = bind_claim(context.role());
                         authority
-                            .adopt(
+                            .claim_bind(&request, None, claim.clone())
+                            .map_err(|error| {
+                                format!("failed to claim provider attempt: {error}")
+                            })?;
+                        authority
+                            .adopt_claimed(
                                 &request,
+                                None,
+                                &claim,
                                 binding(context.role(), PortBindingProvenance::NimbusOwned),
                             )
                             .map_err(|error| {
                                 format!("failed to adopt provider evidence: {error}")
                             })?;
                         authority
-                            .activate(&request)
+                            .activate_claimed(&request, &claim)
                             .map_err(|error| format!("failed to activate port lease: {error}"))?;
                         Ok(ContentionOutcome::Won)
                     }
@@ -155,13 +197,30 @@ fn network_port_lease_child() {
                 authority
                     .reserve(request.clone())
                     .map_err(|error| format!("provider identity reservation failed: {error}"))?;
-                match authority.adopt(
+                let claim = bind_claim(context.role());
+                authority
+                    .claim_bind(&request, None, claim.clone())
+                    .map_err(|error| format!("provider attempt claim failed: {error}"))?;
+                match authority.adopt_claimed(
                     &request,
+                    None,
+                    &claim,
                     binding(context.role(), PortBindingProvenance::ProviderAssigned),
                 ) {
                     Ok(_) => Ok(ContentionOutcome::Won),
                     Err(PortLeaseError::PortConflict { .. }) => Ok(ContentionOutcome::Lost),
                     Err(error) => Err(format!("unexpected provider adoption failure: {error}")),
+                }
+            }
+            "same-request-claim" => {
+                let request = request("alpha", exact_port());
+                authority
+                    .reserve(request.clone())
+                    .map_err(|error| format!("shared request reservation failed: {error}"))?;
+                match authority.claim_bind(&request, None, bind_claim(context.role())) {
+                    Ok(_) => Ok(ContentionOutcome::Won),
+                    Err(PortLeaseError::BindClaimConflict { .. }) => Ok(ContentionOutcome::Lost),
+                    Err(error) => Err(format!("unexpected bind-claim failure: {error}")),
                 }
             }
             other => Err(format!("unexpected child mode {other:?}")),
@@ -187,8 +246,12 @@ fn request(role: &str, port_request: PortRequestMode) -> PortLeaseRequest {
         lease_id(role),
         owner_id(role),
         None,
-        NetworkResourceGeneration::new(7),
-        NetworkLeaseEpoch::new(11),
+        nimbus_network::PortLeaseFence::new(
+            NetworkResourceGeneration::new(7),
+            NetworkLeaseEpoch::new(11),
+        ),
+        nimbus_network::PortLeaseAccounting::HostInternal,
+        nimbus_network::PortPublicationIntent::Unpublished,
         PortBindingSpec::new(
             PortProtocol::Tcp,
             PortBindRealm::Host,
@@ -243,5 +306,15 @@ fn binding(role: &str, provenance: PortBindingProvenance) -> PortLeaseBinding {
         provenance,
         NetworkProviderHandle::new(provider_id, format!("process-{role}"))
             .expect("fixture provider handle should validate"),
+    )
+}
+
+fn bind_claim(role: &str) -> PortBindClaim {
+    let provider_id: NetworkProviderId = "netprovider_01ARZ3NDEKTSV4RRFFQ69G5FAV"
+        .parse()
+        .expect("fixture provider id should parse");
+    PortBindClaim::new(
+        NetworkProviderHandle::new(provider_id, format!("same-request-claim-{role}"))
+            .expect("fixture bind claim should validate"),
     )
 }

@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::time::Duration;
 
 use nimbus_network::{NetworkAttachmentId, NetworkSegmentAllocator};
@@ -26,17 +27,34 @@ pub use forwarding::OciMachinePortForwarderConfig;
 pub(crate) use forwarding::{expose_machine_ports, unexpose_machine_ports};
 #[cfg(test)]
 pub(crate) use ipam::allocate_container_ips;
+pub(crate) use ipam::{
+    deallocate_container_ips_after_confirmed_detach, reconcile_terminal_container_ipam_releases,
+    retire_terminal_container_ipam_release,
+};
 pub(crate) use layout::{
     OciNetworkConfig, OciNetworkDirectEgress, OciNetworkLayout, bridge_gateway_addr,
 };
-pub(crate) use netavark::{setup_container_network, teardown_container_network};
+pub(crate) use netavark::{
+    authenticate_container_network_generation,
+    authenticate_container_network_generation_for_cleanup, setup_container_network,
+    teardown_container_network,
+};
 pub(crate) use netns::{create_persistent_network_namespace, remove_persistent_network_namespace};
 pub(crate) use placement::place_sandbox_on_block;
-pub(crate) use proxy::{MachinePortProxy, start_machine_port_proxies};
+pub(crate) use proxy::{
+    MachinePortPreparationReleaseAuthority, MachinePortProxy, MachinePortProxyRoute,
+    machine_port_proxy_routes, prepare_machine_port_proxies_with_release_authority,
+    start_machine_port_proxies_with_recovery,
+};
+#[cfg(test)]
+pub(crate) use proxy::{
+    panicking_machine_port_proxy_for_test, prepare_machine_port_proxies, start_machine_port_proxies,
+};
 pub(crate) use realization::OciSegmentRealization;
 pub(crate) use reaper::{
-    purge_legacy_nimbus0_once, quarantine_network_segment_hold, reconcile_network_segment_orphans,
-    release_network_segment_hold,
+    compensate_reserved_network_launch_after_ports, purge_legacy_nimbus0_once,
+    quarantine_network_segment_hold, reconcile_network_segment_orphans,
+    release_network_segment_hold, release_reserved_network_launch_after_ports,
 };
 #[cfg(test)]
 pub(crate) use segment::SingleNodeSegmentAllocator;
@@ -58,6 +76,45 @@ pub(crate) fn default_network_attachment_id(sandbox_id: &SandboxId) -> NetworkAt
     NetworkAttachmentId::for_workload_attachment(sandbox_id.as_str(), DEFAULT_ATTACHMENT_NAME)
 }
 
+/// Reconcile every node-local network authority before admitting new work.
+///
+/// Both passes run so independent cleanup can still converge, but any failure
+/// is returned as one fail-closed admission diagnostic. Backends retain that
+/// diagnostic for their lifetime; cleanup and inspection remain available,
+/// while planning and provider launch effects require a fresh backend whose
+/// startup reconciliation completed.
+pub(crate) fn reconcile_startup_network_state(
+    state_root: &Path,
+    allocator: &OciSegmentAllocator,
+) -> crate::error::Result<()> {
+    let mut errors = Vec::new();
+    if let Err(error) = reconcile_terminal_container_ipam_releases(state_root) {
+        errors.push(error.to_string());
+    }
+    if let Err(error) = reconcile_network_segment_orphans(state_root, allocator) {
+        errors.push(error.to_string());
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(SandboxError::OperationFailed {
+            message: format!(
+                "startup network reconciliation failed under {}: {}",
+                state_root.display(),
+                errors.join("; ")
+            ),
+        })
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn inspect_container_ips(
+    layout: &OciNetworkLayout,
+    sandbox_id: &SandboxId,
+) -> crate::error::Result<Vec<std::net::Ipv4Addr>> {
+    ipam::load_container_ips(layout, sandbox_id)
+}
+
 pub(crate) const DEFAULT_NETAVARK_BINARY: &str = "netavark";
 pub(crate) const DEFAULT_AARDVARK_DNS_BINARY: &str = "aardvark-dns";
 pub(crate) const DEFAULT_NETWORK_NAME: &str = "nimbus";
@@ -76,39 +133,45 @@ const MACHINE_PORT_PROXY_ACCEPT_SLEEP: Duration = Duration::from_millis(50);
 const MACHINE_PORT_PROXY_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[cfg(test)]
+use crate::backends::oci::port_manager::machine_port_proxy_guest_listener_addr;
+#[cfg(test)]
 use forwarding::machine_forward_remote;
 #[cfg(test)]
-use ipam::{deallocate_container_ips, load_container_ips, parse_ipv4_subnet_and_gateway};
+use ipam::{load_container_ips, parse_ipv4_subnet_and_gateway};
 #[cfg(test)]
 use netavark::{
     build_bridge_network, build_netavark_request, netavark_path_env, netavark_port_bindings,
     render_netavark_failure,
 };
-#[cfg(test)]
-use proxy::machine_port_proxy_bind_addr;
 
 #[cfg(test)]
 mod tests {
     use std::ffi::OsString;
+    use std::fs;
     use std::io::{Read, Write};
     use std::net::{IpAddr, Ipv4Addr, TcpListener, TcpStream};
     use std::thread;
     use std::time::Duration;
 
     use nimbus_core::TenantId;
+    use nimbus_network::NetworkSegmentId;
     use tempfile::tempdir;
 
     use super::{
         DEFAULT_MACHINE_FORWARDER_HOST, DEFAULT_MACHINE_FORWARDER_PATH,
         DEFAULT_MACHINE_FORWARDER_PORT, NETAVARK_OPTION_NO_DEFAULT_ROUTE,
         OciMachinePortForwarderConfig, OciNetworkConfig, OciNetworkDirectEgress, OciNetworkLayout,
-        allocate_container_ips, build_bridge_network, build_netavark_request,
-        deallocate_container_ips, load_container_ips, machine_forward_remote,
-        machine_port_proxy_bind_addr, netavark_path_env, netavark_port_bindings,
-        parse_ipv4_subnet_and_gateway, render_netavark_failure, start_machine_port_proxies,
+        allocate_container_ips, authenticate_container_network_generation, build_bridge_network,
+        build_netavark_request, deallocate_container_ips_after_confirmed_detach,
+        load_container_ips, machine_forward_remote, machine_port_proxy_guest_listener_addr,
+        netavark_path_env, netavark_port_bindings, parse_ipv4_subnet_and_gateway,
+        prepare_machine_port_proxies, render_netavark_failure, setup_container_network,
+        start_machine_port_proxies, teardown_container_network,
     };
     use crate::backend::SandboxBackendKind;
+    use crate::backends::oci::port_manager::PortManager;
     use crate::error::SandboxError;
+    use crate::instance::SandboxId;
     use crate::spec::{
         SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec, SandboxRootSpec,
         SandboxRootfsSpec, SandboxSpec,
@@ -423,12 +486,14 @@ mod tests {
     }
 
     #[test]
-    fn machine_port_proxy_binds_guest_wildcard_port() {
+    fn machine_port_proxy_binds_internal_ipv4_wildcard() {
         let binding = SandboxPortBinding::tcp("http", 18080, 8080);
 
         assert_eq!(
-            machine_port_proxy_bind_addr(&binding),
-            "0.0.0.0:18080".parse().expect("socket addr should parse")
+            machine_port_proxy_guest_listener_addr(&binding),
+            "0.0.0.0:18080".parse().expect("socket addr should parse"),
+            "gvproxy targets the guest VM address, so the guest listener must not reuse the \
+             external publication address"
         );
     }
 
@@ -454,8 +519,55 @@ mod tests {
         });
 
         let binding = SandboxPortBinding::tcp("http", proxy_port, target_port);
-        let proxies = start_machine_port_proxies(&[Ipv4Addr::LOCALHOST], &[binding])
-            .expect("machine port proxy should start");
+        let state = tempdir().expect("network state root");
+        let manager = PortManager::new(state.path(), proxy_port..=proxy_port)
+            .with_machine_port_proxy_bindings();
+        let tenant = TenantId::new("machine-proxy-test").expect("tenant id");
+        let sandbox_id = SandboxId::new("machine-proxy-test");
+        let reservation_claim = crate::backends::oci::port_lease::new_launch_reservation_claim()
+            .expect("machine proxy test claim should mint");
+        let reservations = manager
+            .reserve_launch_ports_for_sandbox(
+                crate::backends::oci::port_manager::SandboxLaunchPortPlan::new(
+                    &tenant,
+                    &sandbox_id,
+                    std::slice::from_ref(&binding),
+                    &[],
+                ),
+                &reservation_claim,
+            )
+            .expect("machine port should reserve");
+        let prepared = prepare_machine_port_proxies(
+            &tenant,
+            &sandbox_id,
+            &[Ipv4Addr::LOCALHOST],
+            std::slice::from_ref(&binding),
+            &reservations.published_leases,
+            &manager,
+        )
+        .expect("machine port proxy socket should prepare");
+        let bind_claims = prepared
+            .iter()
+            .map(|proxy| proxy.bind_claim().clone())
+            .collect::<Vec<_>>();
+        manager
+            .activate_machine_bindings(
+                &tenant,
+                &sandbox_id,
+                std::slice::from_ref(&binding),
+                &reservations.published_leases,
+                &bind_claims,
+            )
+            .expect("machine port proxy binding should activate");
+        let proxies = start_machine_port_proxies(
+            &tenant,
+            &sandbox_id,
+            std::slice::from_ref(&binding),
+            &reservations.published_leases,
+            &manager,
+            prepared,
+        )
+        .expect("active machine port proxy should start");
         let mut stream = connect_with_retry(proxy_port);
         stream
             .write_all(b"ping")
@@ -466,7 +578,11 @@ mod tests {
             .expect("client should read response");
 
         assert_eq!(&response, b"pong");
-        drop(proxies);
+        for mut proxy in proxies {
+            proxy
+                .shutdown()
+                .expect("machine port proxy should stop after draining connections");
+        }
         target_thread
             .join()
             .expect("target thread should finish cleanly");
@@ -522,6 +638,436 @@ mod tests {
     fn netavark_path_env_preserves_existing_usr_sbin() {
         let rendered = netavark_path_env(Some(OsString::from("/usr/bin:/usr/sbin:/bin")));
         assert_eq!(rendered, OsString::from("/usr/bin:/usr/sbin:/bin"));
+    }
+
+    #[test]
+    fn failed_netavark_setup_retains_ipam_for_ambiguous_detach_reconciliation() {
+        let temp_dir = tempdir().expect("temp dir should create");
+        let tenant_id = TenantId::new("tenant-netavark-failure").expect("tenant should parse");
+        let sandbox_id = SandboxId::new("netavark-failure");
+        let layout = OciNetworkLayout::new(temp_dir.path(), &tenant_id, &sandbox_id);
+        layout
+            .ensure_directories()
+            .expect("network layout should exist");
+        let config = OciNetworkConfig {
+            netavark_path: "/usr/bin/false".into(),
+            ..OciNetworkConfig::default()
+        };
+        allocate_container_ips(&layout, &config, &sandbox_id)
+            .expect("placement should reserve IPAM before Netavark setup");
+
+        setup_container_network(
+            &layout,
+            &config,
+            &sandbox_id,
+            "netavark-failure",
+            "netavark-failure",
+            &[],
+            None,
+        )
+        .expect_err("injected Netavark setup failure should remain ambiguous");
+
+        assert!(
+            load_container_ips(&layout, &sandbox_id).is_ok(),
+            "ambiguous provider setup must retain exact IPAM until detach is confirmed"
+        );
+    }
+
+    #[test]
+    fn status_removal_failure_keeps_projection_and_ipam_release_fenced() {
+        let temp_dir = tempdir().expect("temp dir should create");
+        let tenant_id = TenantId::new("tenant-netavark-status-fence").expect("tenant should parse");
+        let sandbox_id = SandboxId::new("netavark-status-fence");
+        let layout = OciNetworkLayout::new(temp_dir.path(), &tenant_id, &sandbox_id);
+        layout
+            .ensure_directories()
+            .expect("network layout should exist");
+        let config = OciNetworkConfig {
+            netavark_path: "/usr/bin/true".into(),
+            ..OciNetworkConfig::default()
+        };
+        let assigned = allocate_container_ips(&layout, &config, &sandbox_id)
+            .expect("placement should reserve IPAM before provider cleanup");
+        setup_container_network(
+            &layout,
+            &config,
+            &sandbox_id,
+            "netavark-status-fence",
+            "netavark-status-fence",
+            &[],
+            None,
+        )
+        .expect("fixture setup should publish Ready provider authority");
+        fs::remove_file(&layout.status_path).expect("setup status should remove");
+        fs::create_dir(&layout.status_path)
+            .expect("a directory at the status path should make file removal fail");
+
+        let error = teardown_container_network(
+            &layout,
+            &config,
+            &sandbox_id,
+            "netavark-status-fence",
+            "netavark-status-fence",
+            &[],
+            None,
+        )
+        .expect_err("status removal failure must keep projection completion fenced");
+        assert!(
+            error
+                .to_string()
+                .contains("failed to remove Netavark status projection"),
+            "cleanup must name the failed observed-projection removal: {error}"
+        );
+        assert_eq!(
+            load_container_ips(&layout, &sandbox_id).expect("live IPAM must remain fenced"),
+            assigned,
+            "projection failure must not permit terminal IPAM release"
+        );
+
+        fs::remove_dir(&layout.status_path).expect("test status directory should remove");
+        teardown_container_network(
+            &layout,
+            &config,
+            &sandbox_id,
+            "netavark-status-fence",
+            "netavark-status-fence",
+            &[],
+            None,
+        )
+        .expect("retry should complete teardown after projection removal is possible");
+        deallocate_container_ips_after_confirmed_detach(
+            &layout,
+            &sandbox_id,
+            &config.reservation_claim,
+        )
+        .expect("completed teardown may publish exact terminal IPAM evidence");
+        teardown_container_network(
+            &layout,
+            &config,
+            &sandbox_id,
+            "netavark-status-fence",
+            "netavark-status-fence",
+            &[],
+            None,
+        )
+        .expect("terminal replay should remain idempotent only while status stays absent");
+
+        fs::write(&layout.status_path, b"replacement-status")
+            .expect("a conflicting replacement status should create");
+        let error = teardown_container_network(
+            &layout,
+            &config,
+            &sandbox_id,
+            "netavark-status-fence",
+            "netavark-status-fence",
+            &[],
+            None,
+        )
+        .expect_err("terminal replay must reject a conflicting status projection");
+        assert!(
+            error
+                .to_string()
+                .contains("terminal OCI IPAM authority conflicts"),
+            "terminal cleanup must name the conflicting observed projection: {error}"
+        );
+    }
+
+    #[test]
+    fn netns_metadata_error_cannot_confirm_netavark_detach() {
+        let temp_dir = tempdir().expect("temp dir should create");
+        let tenant_id =
+            TenantId::new("tenant-netavark-netns-observation").expect("tenant should parse");
+        let sandbox_id = SandboxId::new("netavark-netns-observation");
+        let layout = OciNetworkLayout::new(temp_dir.path(), &tenant_id, &sandbox_id);
+        layout
+            .ensure_directories()
+            .expect("network layout should exist");
+        let config = OciNetworkConfig {
+            netavark_path: "/usr/bin/true".into(),
+            ..OciNetworkConfig::default()
+        };
+        let assigned = allocate_container_ips(&layout, &config, &sandbox_id)
+            .expect("placement should reserve IPAM before provider cleanup");
+        setup_container_network(
+            &layout,
+            &config,
+            &sandbox_id,
+            "netavark-netns-observation",
+            "netavark-netns-observation",
+            &[],
+            None,
+        )
+        .expect("fixture setup should publish Ready provider authority");
+        fs::write(&layout.status_path, b"provider-status-sentinel")
+            .expect("provider status should exist");
+        fs::remove_dir(&layout.netns_root).expect("empty netns root should remove");
+        fs::write(&layout.netns_root, b"not-a-directory")
+            .expect("a non-directory parent should make namespace observation fail");
+
+        let error = teardown_container_network(
+            &layout,
+            &config,
+            &sandbox_id,
+            "netavark-netns-observation",
+            "netavark-netns-observation",
+            &[],
+            None,
+        )
+        .expect_err("namespace metadata failure must keep provider detach unconfirmed");
+        assert!(
+            error
+                .to_string()
+                .contains("failed to inspect persistent network namespace"),
+            "cleanup must distinguish observation failure from explicit absence: {error}"
+        );
+        assert_eq!(
+            fs::read(&layout.status_path).expect("provider status should remain"),
+            b"provider-status-sentinel",
+            "observation failure must not remove the provider status projection"
+        );
+        assert_eq!(
+            load_container_ips(&layout, &sandbox_id).expect("live IPAM must remain fenced"),
+            assigned,
+            "observation failure must not permit terminal IPAM release"
+        );
+    }
+
+    #[test]
+    fn teardown_rejects_same_ip_from_different_stable_segment_before_provider_effect() {
+        let temp_dir = tempdir().expect("temp dir should create");
+        let tenant_id =
+            TenantId::new("tenant-netavark-teardown-fence").expect("tenant should parse");
+        let sandbox_id = SandboxId::new("netavark-teardown-fence");
+        let layout = OciNetworkLayout::new(temp_dir.path(), &tenant_id, &sandbox_id);
+        layout
+            .ensure_directories()
+            .expect("network layout should exist");
+        let config = OciNetworkConfig::default();
+        let assigned = allocate_container_ips(&layout, &config, &sandbox_id)
+            .expect("placement should reserve exact stable-segment IPAM");
+        fs::write(&layout.netns_path, b"netns").expect("netns marker should exist");
+        fs::write(&layout.status_path, b"provider-status-sentinel")
+            .expect("provider status should exist");
+        let authority_before =
+            load_container_ips(&layout, &sandbox_id).expect("IPAM should inspect");
+        let mut stale = config.clone();
+        stale.segment_id = NetworkSegmentId::generate().as_str().to_owned();
+        stale.netavark_path = temp_dir.path().join("must-not-run-netavark-teardown");
+
+        let error = teardown_container_network(
+            &layout,
+            &stale,
+            &sandbox_id,
+            "netavark-teardown-fence",
+            "netavark-teardown-fence",
+            &[],
+            None,
+        )
+        .expect_err("stable segment mismatch must fail before provider teardown");
+        let message = error.to_string();
+        assert!(
+            message.contains(&config.segment_id)
+                && message.contains(&stale.segment_id)
+                && message.contains("refusing to remap"),
+            "teardown must identify both stable segments: {message}"
+        );
+        assert!(
+            !message.contains("failed to run netavark teardown"),
+            "stable identity rejection must precede the provider process: {message}"
+        );
+        assert_eq!(
+            fs::read(&layout.status_path).expect("status should remain"),
+            b"provider-status-sentinel"
+        );
+        assert_eq!(
+            load_container_ips(&layout, &sandbox_id).expect("IPAM should remain"),
+            authority_before,
+            "failed stale teardown must not mutate durable IPAM"
+        );
+        assert_eq!(assigned, authority_before);
+    }
+
+    #[test]
+    fn stale_generation_setup_and_teardown_fail_before_provider_or_projection_effects() {
+        let temp_dir = tempdir().expect("temp dir should create");
+        let tenant_id =
+            TenantId::new("tenant-netavark-generation-fence").expect("tenant should parse");
+        let sandbox_id = SandboxId::new("netavark-generation-fence");
+        let layout = OciNetworkLayout::new(temp_dir.path(), &tenant_id, &sandbox_id);
+        layout
+            .ensure_directories()
+            .expect("network layout should exist");
+        let stale = OciNetworkConfig::default();
+        allocate_container_ips(&layout, &stale, &sandbox_id)
+            .expect("first generation should reserve IPAM");
+        deallocate_container_ips_after_confirmed_detach(
+            &layout,
+            &sandbox_id,
+            &stale.reservation_claim,
+        )
+        .expect("first generation should release exact IPAM");
+        let mut current = stale.clone();
+        current.reservation_claim =
+            crate::backends::oci::port_lease::new_launch_reservation_claim()
+                .expect("replacement claim should validate");
+        allocate_container_ips(&layout, &current, &sandbox_id)
+            .expect("replacement generation should reserve the same attachment");
+
+        fs::write(&layout.netns_path, b"replacement-netns")
+            .expect("replacement netns marker should exist");
+        fs::write(&layout.status_path, b"replacement-status")
+            .expect("replacement status should exist");
+        let authority_path =
+            nimbus_network::LocalNetworkStateStore::authority_path_for(&layout.state_root);
+        let authority_before =
+            fs::read(&authority_path).expect("replacement authority should be durable");
+        let mut stale_provider = stale.clone();
+        stale_provider.netavark_path = temp_dir.path().join("must-not-run-stale-netavark");
+
+        for error in [
+            setup_container_network(
+                &layout,
+                &stale_provider,
+                &sandbox_id,
+                "stale-generation",
+                "stale-generation",
+                &[],
+                None,
+            )
+            .expect_err("stale setup must fail before Netavark"),
+            teardown_container_network(
+                &layout,
+                &stale_provider,
+                &sandbox_id,
+                "stale-generation",
+                "stale-generation",
+                &[],
+                None,
+            )
+            .expect_err("stale teardown must fail before Netavark"),
+        ] {
+            let message = error.to_string();
+            assert!(
+                message.contains("different launch coordinator"),
+                "stale provider work must name the generation fence: {message}"
+            );
+            assert!(
+                !message.contains("failed to run netavark"),
+                "generation rejection must precede the provider process: {message}"
+            );
+        }
+        assert_eq!(
+            fs::read(&layout.netns_path).expect("replacement netns should remain"),
+            b"replacement-netns"
+        );
+        assert_eq!(
+            fs::read(&layout.status_path).expect("replacement status should remain"),
+            b"replacement-status"
+        );
+        assert_eq!(
+            fs::read(&authority_path).expect("authority should remain readable"),
+            authority_before,
+            "stale provider work must not rewrite network authority"
+        );
+
+        fs::remove_file(&layout.netns_path).expect("test should model absent old namespace");
+        teardown_container_network(
+            &layout,
+            &stale_provider,
+            &sandbox_id,
+            "stale-generation",
+            "stale-generation",
+            &[],
+            None,
+        )
+        .expect_err("stale no-netns teardown must authenticate before projection removal");
+        assert_eq!(
+            fs::read(&layout.status_path).expect("replacement status should remain"),
+            b"replacement-status",
+            "the no-netns fast path must not delete a replacement projection"
+        );
+
+        authenticate_container_network_generation(&layout, &current, &sandbox_id)
+            .expect("the exact replacement generation should authenticate");
+        let conflict = teardown_container_network(
+            &layout,
+            &current,
+            &sandbox_id,
+            "current-generation",
+            "current-generation",
+            &[],
+            None,
+        )
+        .expect_err("Reserved no-effect authority must reject a conflicting status projection");
+        assert!(
+            conflict.to_string().contains("no-effect")
+                && conflict.to_string().contains("status projection"),
+            "the exact generation must still fail closed on contradictory observed state: \
+             {conflict}"
+        );
+        assert_eq!(
+            fs::read(&layout.status_path).expect("conflicting status should remain"),
+            b"replacement-status",
+            "no-effect authority must not delete an unowned projection"
+        );
+        fs::remove_file(&layout.status_path)
+            .expect("the fixture should explicitly reconcile contradictory observed state");
+        teardown_container_network(
+            &layout,
+            &current,
+            &sandbox_id,
+            "current-generation",
+            "current-generation",
+            &[],
+            None,
+        )
+        .expect("exact Reserved generation should converge after status reconciliation");
+        assert!(
+            !layout.status_path.exists(),
+            "reconciled no-effect teardown must preserve status absence"
+        );
+    }
+
+    #[test]
+    fn netavark_setup_requires_pre_reserved_ipam_without_creating_it() {
+        let temp_dir = tempdir().expect("temp dir should create");
+        let tenant_id = TenantId::new("tenant-netavark-no-ipam").expect("tenant should parse");
+        let sandbox_id = SandboxId::new("netavark-no-ipam");
+        let layout = OciNetworkLayout::new(temp_dir.path(), &tenant_id, &sandbox_id);
+        layout
+            .ensure_directories()
+            .expect("network layout should exist");
+        let config = OciNetworkConfig::default();
+        let store = nimbus_network::LocalNetworkStateStore::open(&layout.state_root)
+            .expect("network authority should open");
+        let authority_path = store.authority_path().to_path_buf();
+        let before = std::fs::read(&authority_path).ok();
+
+        let error = setup_container_network(
+            &layout,
+            &config,
+            &sandbox_id,
+            "netavark-no-ipam",
+            "netavark-no-ipam",
+            &[],
+            None,
+        )
+        .expect_err("provider setup must not allocate IPAM on demand");
+        assert!(
+            error
+                .to_string()
+                .contains("failed to find allocated container IPs"),
+            "missing placement authority must fail before Netavark: {error}"
+        );
+        assert_eq!(
+            std::fs::read(&authority_path).ok(),
+            before,
+            "failed setup observation must not create or rewrite an IPAM partition"
+        );
+        assert!(
+            !layout.status_path.exists(),
+            "provider status must remain absent when IPAM was never reserved"
+        );
     }
 
     #[test]
@@ -651,7 +1197,12 @@ mod tests {
             .expect("allocation should succeed");
         assert_eq!(assigned.len(), 1);
 
-        deallocate_container_ips(&layout, &sandbox_id).expect("deallocation should succeed");
+        deallocate_container_ips_after_confirmed_detach(
+            &layout,
+            &sandbox_id,
+            &config.reservation_claim,
+        )
+        .expect("deallocation should succeed");
         assert!(
             load_container_ips(&layout, &sandbox_id).is_err(),
             "removed allocation should no longer load"

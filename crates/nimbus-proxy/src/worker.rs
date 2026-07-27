@@ -218,21 +218,32 @@ pub struct WorkloadPep {
     audit_healthy: Arc<AtomicBool>,
 }
 
-impl WorkloadPep {
-    pub fn start(config: WorkloadPepConfig) -> Result<Self> {
+/// Bound but inert PEP listener.
+///
+/// The socket is held so a control-plane owner can durably adopt and activate
+/// its lease before any accept loop starts.
+pub struct PreparedWorkloadPep {
+    local_addr: SocketAddr,
+    listener: TcpListener,
+    config: WorkloadPepConfig,
+}
+
+impl PreparedWorkloadPep {
+    /// Validate configuration, bind the listener, and leave it inert.
+    ///
+    /// The returned socket is retained but no accept loop runs until
+    /// [`Self::start`].
+    pub fn prepare(config: WorkloadPepConfig) -> Result<Self> {
         if config.max_connections == 0 {
             return Err(EgressProxyError::OperationFailed {
                 message: "egress proxy max_connections must be greater than 0".to_owned(),
             });
         }
-        let listener = TcpListener::bind(config.bind_addr).map_err(|error| {
-            EgressProxyError::OperationFailed {
-                message: format!(
-                    "failed to bind egress proxy on {}: {error}",
-                    config.bind_addr
-                ),
-            }
-        })?;
+        let listener =
+            TcpListener::bind(config.bind_addr).map_err(|error| EgressProxyError::BindFailed {
+                address: config.bind_addr,
+                kind: error.kind(),
+            })?;
         let local_addr =
             listener
                 .local_addr()
@@ -245,6 +256,28 @@ impl WorkloadPep {
                 message: format!("failed to configure egress proxy listener: {error}"),
             })?;
 
+        Ok(Self {
+            local_addr,
+            listener,
+            config,
+        })
+    }
+
+    /// Return the concrete address held by the prepared listener.
+    pub fn local_addr(&self) -> SocketAddr {
+        self.local_addr
+    }
+
+    /// Start serving on the already-bound listener.
+    ///
+    /// This is infallible because configuration and socket preparation
+    /// completed before the durable control-plane activation boundary.
+    pub fn start(self) -> WorkloadPep {
+        let Self {
+            local_addr,
+            listener,
+            config,
+        } = self;
         let policy_state = Arc::new(RwLock::new({
             let mut state = config
                 .policy
@@ -288,14 +321,20 @@ impl WorkloadPep {
         };
         substrate.handle().spawn(worker.run(shutdown_rx, ack_tx));
 
-        Ok(Self {
+        WorkloadPep {
             local_addr,
             shutdown,
             shutdown_ack: Some(ack_rx),
             _substrate: substrate,
             policy_state,
             audit_healthy,
-        })
+        }
+    }
+}
+
+impl WorkloadPep {
+    pub fn start(config: WorkloadPepConfig) -> Result<Self> {
+        Ok(PreparedWorkloadPep::prepare(config)?.start())
     }
 
     pub fn local_addr(&self) -> SocketAddr {
@@ -331,14 +370,46 @@ impl WorkloadPep {
             })?;
         self.reload_policy(compiled)
     }
+
+    /// Stop accepting, abort in-flight work, and wait for the worker to
+    /// confirm that it dropped the listener.
+    ///
+    /// Durable composition owners must use this explicit result before
+    /// deleting published artifacts or releasing port authority. [`Drop`]
+    /// remains a bounded best-effort safety net, but its ignored result is not
+    /// proof that a provider effect stopped.
+    pub fn shutdown(&mut self) -> Result<()> {
+        self.shutdown_and_wait()
+    }
+
+    fn shutdown_and_wait(&mut self) -> Result<()> {
+        let _ = self.shutdown.send(true);
+        let Some(shutdown_ack) = self.shutdown_ack.as_ref() else {
+            return Ok(());
+        };
+        match shutdown_ack.recv_timeout(SHUTDOWN_ACK_TIMEOUT) {
+            Ok(()) => {
+                self.shutdown_ack = None;
+                Ok(())
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => Err(EgressProxyError::OperationFailed {
+                message: "egress proxy worker disappeared before explicit listener shutdown \
+                              acknowledgement"
+                    .to_owned(),
+            }),
+            Err(mpsc::RecvTimeoutError::Timeout) => Err(EgressProxyError::OperationFailed {
+                message: format!(
+                    "egress proxy worker did not confirm listener shutdown within {:?}",
+                    SHUTDOWN_ACK_TIMEOUT
+                ),
+            }),
+        }
+    }
 }
 
 impl Drop for WorkloadPep {
     fn drop(&mut self) {
-        let _ = self.shutdown.send(true);
-        if let Some(shutdown_ack) = self.shutdown_ack.take() {
-            let _ = shutdown_ack.recv_timeout(SHUTDOWN_ACK_TIMEOUT);
-        }
+        let _ = self.shutdown_and_wait();
     }
 }
 
@@ -1383,4 +1454,30 @@ fn render_pingora_downstream_request(
     let mut bytes = rendered.into_bytes();
     bytes.extend_from_slice(&buffer[parsed.body_offset..]);
     bytes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disconnected_shutdown_channel_is_not_provider_absence_evidence() {
+        let mut pep = WorkloadPep::start(WorkloadPepConfig::without_active_policy())
+            .expect("test PEP should start");
+        let (acknowledgement, disconnected) = mpsc::channel();
+        drop(acknowledgement);
+        pep.shutdown_ack = Some(disconnected);
+
+        for attempt in 1..=2 {
+            let error = pep
+                .shutdown()
+                .expect_err("channel loss must never manufacture provider acknowledgement");
+            assert!(
+                error
+                    .to_string()
+                    .contains("disappeared before explicit listener shutdown acknowledgement"),
+                "attempt {attempt} must retain the exact fail-closed diagnostic: {error}"
+            );
+        }
+    }
 }

@@ -8,15 +8,15 @@
 
 use nimbus_core::TenantId;
 #[cfg(test)]
-use nimbus_network::NetworkLeaseEpoch;
-use nimbus_network::NetworkSegmentGrowth;
+use nimbus_network::{NetworkLeaseEpoch, NetworkProviderHandle, NetworkProviderId};
+use nimbus_network::{NetworkReservationClaim, NetworkSegmentGrowth};
 
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
 
 use super::{
     OciNetworkConfig, OciNetworkLayout, OciSegmentAllocator, OciSegmentRealization,
-    ipam::allocate_container_ips_on_first_available,
+    default_network_attachment_id, ipam::allocate_container_ips_on_first_available,
 };
 
 /// Reserve and return the network config of the block bridge that will host
@@ -35,57 +35,266 @@ pub(crate) fn place_sandbox_on_block(
     tenant: &TenantId,
     layout: &OciNetworkLayout,
     sandbox_id: &SandboxId,
-    build_config: impl Fn(&OciSegmentRealization) -> OciNetworkConfig,
+    reservation_claim: &NetworkReservationClaim,
+    build_config: impl Fn(&OciSegmentRealization, &NetworkReservationClaim) -> OciNetworkConfig,
 ) -> Result<OciNetworkConfig> {
-    loop {
-        let segments = allocator.segments_for(tenant)?;
-        let observed_block_count = segments.len();
-        let configs = segments.iter().map(&build_config).collect::<Vec<_>>();
-        match allocate_container_ips_on_first_available(layout, &configs, sandbox_id) {
-            Ok(allocation) => {
-                return configs.into_iter().nth(allocation.block_index).ok_or_else(|| {
-                    SandboxError::OperationFailed {
-                        message: format!(
-                            "OCI IPAM selected missing block {} from {observed_block_count} observed blocks",
-                            allocation.block_index
-                        ),
-                    }
+    let attachment_id = default_network_attachment_id(sandbox_id);
+    let placement = (|| {
+        allocator.reserve_attachment_for_coordinator(tenant, &attachment_id, reservation_claim)?;
+        loop {
+            let segments = allocator.segments_for(tenant)?;
+            let observed_block_count = segments.len();
+            let configs = segments
+                .iter()
+                .map(|segment| build_config(segment, reservation_claim))
+                .collect::<Vec<_>>();
+            if configs
+                .iter()
+                .any(|config| &config.reservation_claim != reservation_claim)
+            {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "OCI placement config reservation claim diverged from the authoritative \
+                         launch coordinator for sandbox {sandbox_id} before IPAM"
+                    ),
                 });
             }
-            // Every observed block is full. Growth is allowed only if that
-            // ordered observation is still current under the segment lock.
-            Err(SandboxError::NetworkSubnetExhausted { .. }) => {
-                match allocator.grow_block_if_current(tenant, &segments)? {
-                    NetworkSegmentGrowth::Grown(_) | NetworkSegmentGrowth::ObservationStale => {}
+            match allocate_container_ips_on_first_available(
+                layout,
+                &configs,
+                sandbox_id,
+                reservation_claim,
+            ) {
+                Ok(allocation) => {
+                    let selected = configs.into_iter().nth(allocation.block_index).ok_or_else(
+                        || SandboxError::OperationFailed {
+                            message: format!(
+                                "OCI IPAM selected missing block {} from {observed_block_count} observed blocks",
+                                allocation.block_index
+                            ),
+                        },
+                    )?;
+                    let bound = allocator.bind_reserved_attachment_to_segment(
+                        tenant,
+                        &attachment_id,
+                        &allocation.segment_id,
+                        reservation_claim,
+                    )?;
+                    if bound.segment_id() != &allocation.segment_id
+                        || selected.segment_id != allocation.segment_id.as_str()
+                    {
+                        return Err(SandboxError::OperationFailed {
+                            message: format!(
+                                "OCI placement selected segment {} but allocator/config evidence diverged",
+                                allocation.segment_id
+                            ),
+                        });
+                    }
+                    return Ok(selected);
                 }
+                // Every observed block is full. Growth is allowed only if that
+                // ordered observation is still current under the segment lock.
+                Err(SandboxError::NetworkSubnetExhausted { .. }) => {
+                    match allocator.grow_block_if_current(tenant, &segments)? {
+                        NetworkSegmentGrowth::Grown(_) | NetworkSegmentGrowth::ObservationStale => {
+                        }
+                    }
+                }
+                Err(error) => return Err(error),
             }
-            Err(error) => return Err(error),
         }
-    }
+    })();
+    placement.map_err(|error| {
+        super::reaper::compensate_reserved_network_launch_without_effect(
+            allocator,
+            layout,
+            tenant,
+            sandbox_id,
+            reservation_claim,
+            error,
+        )
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backends::oci::network::SingleNodeSegmentAllocator;
+    use crate::backends::oci::network::{
+        OciSegmentAllocator, RecordingSegmentAllocator, SegmentAllocatorOperation,
+        SingleNodeSegmentAllocator,
+    };
     use nimbus_network::NetworkSegmentAllocator;
     use proptest::prelude::*;
     use std::collections::BTreeSet;
-    use std::sync::{Arc, Barrier};
+    use std::sync::{
+        Arc, Barrier,
+        atomic::{AtomicUsize, Ordering},
+    };
     use tempfile::tempdir;
 
     fn tenant(id: &str) -> TenantId {
         TenantId::new(id).expect("tenant id should parse")
     }
 
-    fn config_for_segment(segment: &OciSegmentRealization) -> OciNetworkConfig {
+    fn config_for_segment(
+        segment: &OciSegmentRealization,
+        reservation_claim: &NetworkReservationClaim,
+    ) -> OciNetworkConfig {
         OciNetworkConfig {
             network_name: segment.network_name().to_owned(),
             network_interface: segment.network_interface().to_owned(),
             network_subnet: segment.cidr().to_string(),
+            segment_id: segment.segment_id().as_str().to_owned(),
+            reservation_claim: reservation_claim.clone(),
             network_id: segment.network_id().as_str().to_owned(),
             ..OciNetworkConfig::default()
         }
+    }
+
+    fn reservation_claim(label: &str) -> NetworkReservationClaim {
+        let provider = NetworkProviderId::for_registration_key(
+            "nimbus-sandbox.network-launch-coordinator.test",
+        );
+        NetworkReservationClaim::new(
+            NetworkProviderHandle::new(provider, format!("attempt:{label}"))
+                .expect("fixture claim should validate"),
+        )
+    }
+
+    fn place_sandbox_on_block(
+        allocator: &OciSegmentAllocator,
+        tenant: &TenantId,
+        layout: &OciNetworkLayout,
+        sandbox_id: &SandboxId,
+        build_config: impl Fn(&OciSegmentRealization, &NetworkReservationClaim) -> OciNetworkConfig,
+    ) -> Result<OciNetworkConfig> {
+        super::place_sandbox_on_block(
+            allocator,
+            tenant,
+            layout,
+            sandbox_id,
+            &reservation_claim(sandbox_id.as_str()),
+            build_config,
+        )
+    }
+
+    #[test]
+    fn initial_attachment_reservation_ack_loss_enters_exact_compensation() {
+        let dir = tempdir().expect("temp dir should create");
+        let tenant = tenant("tenant-reservation-ack-loss");
+        let sandbox_id = SandboxId::new("reservation-ack-loss");
+        let claim = reservation_claim("reservation-ack-loss");
+        let expected_claim = claim.clone();
+        let recorder = Arc::new(
+            RecordingSegmentAllocator::new(tenant.clone(), "10.83.0.0/24", 83)
+                .with_reserve_attachment_observer(move |observed| {
+                    assert_eq!(observed, &expected_claim);
+                    Err(SandboxError::OperationFailed {
+                        message: "injected attachment reservation acknowledgement loss".to_owned(),
+                    })
+                }),
+        );
+        let allocator: Arc<OciSegmentAllocator> = recorder.clone();
+        let layout = OciNetworkLayout::new(dir.path(), &tenant, &sandbox_id);
+        layout.ensure_directories().expect("layout should exist");
+        let build_count = Arc::new(AtomicUsize::new(0));
+        let build_count_for_call = Arc::clone(&build_count);
+
+        let error = super::place_sandbox_on_block(
+            allocator.as_ref(),
+            &tenant,
+            &layout,
+            &sandbox_id,
+            &claim,
+            move |segment, reservation_claim| {
+                build_count_for_call.fetch_add(1, Ordering::SeqCst);
+                config_for_segment(segment, reservation_claim)
+            },
+        )
+        .expect_err("ambiguous initial reservation must enter exact compensation");
+
+        assert!(
+            error
+                .to_string()
+                .contains("injected attachment reservation acknowledgement loss"),
+            "the initial reservation failure must remain primary: {error}"
+        );
+        assert_eq!(
+            build_count.load(Ordering::SeqCst),
+            0,
+            "placement/config construction must not start after reservation failure"
+        );
+        let attachment = default_network_attachment_id(&sandbox_id);
+        let operations = recorder.operations();
+        assert_eq!(
+            operations.len(),
+            4,
+            "exact compensation trace: {operations:?}"
+        );
+        assert_eq!(
+            operations[0],
+            SegmentAllocatorOperation::ReserveAttachment(tenant.clone(), attachment.clone(),)
+        );
+        assert_eq!(
+            operations[1],
+            SegmentAllocatorOperation::ReleaseReservedAttachment(
+                tenant.clone(),
+                attachment.clone(),
+            )
+        );
+        assert_eq!(
+            operations[2],
+            SegmentAllocatorOperation::FinalizeReservedAttachment(tenant.clone(), attachment,)
+        );
+        assert!(
+            matches!(
+                &operations[3],
+                SegmentAllocatorOperation::FinalizeRelease(final_tenant, _)
+                    if final_tenant == &tenant
+            ),
+            "exact cleanup must finalize the coordinator-owned allocation: {operations:?}"
+        );
+    }
+
+    #[test]
+    fn placement_rejects_a_config_with_foreign_reservation_authority_before_ipam() {
+        let dir = tempdir().expect("temp dir should create");
+        let tenant = tenant("tenant-foreign-config-claim");
+        let sandbox_id = SandboxId::new("foreign-config-claim");
+        let claim = reservation_claim("authoritative");
+        let foreign_claim = reservation_claim("foreign");
+        let allocator = SingleNodeSegmentAllocator::new(
+            dir.path(),
+            Some(super::super::segment::InstalledSuperNet {
+                cidr: nimbus_core::net::Cidr::parse("10.91.0.0/24")
+                    .expect("super-net should parse"),
+                epoch: NetworkLeaseEpoch::new(1),
+            }),
+            30,
+        )
+        .expect("local network store should open");
+        let layout = OciNetworkLayout::new(dir.path(), &tenant, &sandbox_id);
+        layout.ensure_directories().expect("layout should exist");
+
+        let error = super::place_sandbox_on_block(
+            &allocator,
+            &tenant,
+            &layout,
+            &sandbox_id,
+            &claim,
+            move |segment, _| config_for_segment(segment, &foreign_claim),
+        )
+        .expect_err("foreign config authority must fail before IPAM mutation");
+
+        assert!(
+            error.to_string().contains("reservation claim")
+                && error.to_string().contains("diverged"),
+            "rejection must name the duplicated authority: {error}"
+        );
+        assert!(
+            super::super::ipam::load_container_ips(&layout, &sandbox_id).is_err(),
+            "foreign config authority must not leave an IPAM reservation"
+        );
     }
 
     /// Placement fills a tenant's first block to its `/24` limit, then grows onto
@@ -134,6 +343,32 @@ mod tests {
         .expect("place sb-2 grows a block");
         assert_eq!(c2.network_subnet, "10.7.0.4/30");
         assert_ne!(c1.network_interface, c2.network_interface);
+
+        let sb2 = SandboxId::new("sb-2");
+        let selected = super::super::ipam::allocate_container_ips_on_first_available(
+            &sb2_layout,
+            &[c1.clone(), c2.clone()],
+            &sb2,
+            &reservation_claim(sb2.as_str()),
+        )
+        .expect("IPAM replay should preserve the exact selected block");
+        assert_eq!(
+            selected.segment_id.as_str(),
+            c2.segment_id,
+            "IPAM must persist stable segment identity independently of the assigned IP"
+        );
+        let adopted = allocator
+            .adopt_reserved_attachment(
+                &t,
+                &default_network_attachment_id(&sb2),
+                &reservation_claim(sb2.as_str()),
+            )
+            .expect("exact placement should be adoptable");
+        assert_eq!(
+            adopted.segment_id().as_str(),
+            c2.segment_id,
+            "adoption must return the selected secondary segment, never the primary"
+        );
     }
 
     #[test]
@@ -164,8 +399,12 @@ mod tests {
             place_sandbox_on_block(&allocator, &t, &sb2_layout, &sb2, config_for_segment)
                 .expect("sb-2 should grow the first secondary /30");
         assert_eq!(secondary.network_subnet, "10.7.0.4/30");
-        super::super::ipam::deallocate_container_ips(&sb2_layout, &sb2)
-            .expect("free the secondary block's only container slot");
+        super::super::ipam::deallocate_container_ips_after_confirmed_detach(
+            &sb2_layout,
+            &sb2,
+            &secondary.reservation_claim,
+        )
+        .expect("free the secondary block's only container slot");
 
         let sb3 = SandboxId::new("sb-3");
         let sb3_layout = OciNetworkLayout::new(state_root, &t, &sb3);
@@ -286,9 +525,10 @@ mod tests {
 
             let free_index = free_seed % block_count;
             let expected_subnet = placements[free_index].2.network_subnet.clone();
-            super::super::ipam::deallocate_container_ips(
+            super::super::ipam::deallocate_container_ips_after_confirmed_detach(
                 &placements[free_index].1,
                 &placements[free_index].0,
+                &placements[free_index].2.reservation_claim,
             )
             .expect("selected block should deallocate");
 

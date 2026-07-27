@@ -1,3 +1,13 @@
+mod endpoint_projection;
+mod explicit_stop;
+mod generation_fencing;
+mod launch_compensation;
+mod lifecycle_locking;
+mod manifest_durability;
+mod manifest_schema;
+mod natural_exit;
+mod provider_failure_recovery;
+mod startup_fencing;
 mod support;
 use support::*;
 
@@ -5,8 +15,10 @@ use std::sync::Arc;
 
 use crate::backends::oci::network::{
     OciSegmentAllocator, RecordingSegmentAllocator, SegmentAllocatorOperation,
+    allocate_container_ips, default_network_attachment_id,
 };
 use nimbus_egress::{EGRESS_CA_BUNDLE_ENV, EGRESS_NODE_EXTRA_CA_CERTS_ENV, EGRESS_PROXY_URL_ENV};
+use nimbus_network::{LocalPortLeaseAuthority, NetworkSegmentAllocator};
 
 fn env_from_config(config: &serde_json::Value) -> Vec<&str> {
     config["process"]["env"]
@@ -34,6 +46,7 @@ fn execute_launch_denies_when_egress_pep_is_not_ready() {
         temp_dir.path().to_path_buf(),
     ));
     let id = SandboxId::new("kme4-not-ready");
+    let tenant = TenantId::new("tenant-kme4-not-ready").expect("tenant id should be valid");
     let netns_path = temp_dir.path().join("netns-installed");
     fs::write(&netns_path, b"netns").expect("netns marker should write");
 
@@ -43,11 +56,11 @@ fn execute_launch_denies_when_egress_pep_is_not_ready() {
         .expect("a policy-less PEP should still bind and start");
     backend
         .egress_proxies
-        .insert_running_for_test(&id, policyless)
+        .insert_running_for_test(&tenant, &id, policyless)
         .expect("test PEP should register");
     let readiness = backend
         .egress_proxies
-        .readiness(&id)
+        .readiness(&tenant, &id)
         .expect("readiness should resolve")
         .expect("a PEP is registered");
     assert!(
@@ -56,7 +69,7 @@ fn execute_launch_denies_when_egress_pep_is_not_ready() {
     );
 
     let error = backend
-        .ensure_execute_egress_preconditions(&id, &netns_path)
+        .ensure_execute_egress_preconditions(&tenant, &id, &netns_path)
         .expect_err("a not-ready PEP must deny the launch fail-closed");
     assert!(
         error.to_string().contains("not ready")
@@ -86,7 +99,7 @@ fn execute_launch_permits_when_netns_installed_and_pep_ready() {
         .expect("a ready PEP should start with a compiled policy");
     let readiness = backend
         .egress_proxies
-        .readiness(&id)
+        .readiness(&tenant, &id)
         .expect("readiness should resolve")
         .expect("a PEP is registered");
     assert!(
@@ -95,7 +108,7 @@ fn execute_launch_permits_when_netns_installed_and_pep_ready() {
     );
 
     backend
-        .ensure_execute_egress_preconditions(&id, &netns_path)
+        .ensure_execute_egress_preconditions(&tenant, &id, &netns_path)
         .expect("all preconditions satisfied must permit the launch");
 }
 
@@ -138,6 +151,7 @@ fn nnc0_6_krun_rejects_netns_path_without_complete_attachment_evidence() {
         .expect("ready PEP isolates the missing attachment-evidence condition");
 
     let readiness = backend.ensure_execute_egress_preconditions(
+        &manifest.spec.tenant_id,
         &manifest.handle.id,
         &manifest.network_layout.netns_path,
     );
@@ -166,7 +180,7 @@ fn execute_launch_denies_when_network_namespace_is_not_installed() {
         .expect("a ready PEP should start");
 
     let error = backend
-        .ensure_execute_egress_preconditions(&id, &missing_netns)
+        .ensure_execute_egress_preconditions(&tenant, &id, &missing_netns)
         .expect_err("a missing netns must deny the launch fail-closed");
     assert!(
         error.to_string().contains("network namespace")
@@ -184,11 +198,12 @@ fn execute_launch_denies_when_egress_pep_is_absent() {
         temp_dir.path().to_path_buf(),
     ));
     let id = SandboxId::new("kme4-no-pep");
+    let tenant = TenantId::new("tenant-kme4-no-pep").expect("tenant id should be valid");
     let netns_path = temp_dir.path().join("netns-installed");
     fs::write(&netns_path, b"netns").expect("netns marker should write");
 
     let error = backend
-        .ensure_execute_egress_preconditions(&id, &netns_path)
+        .ensure_execute_egress_preconditions(&tenant, &id, &netns_path)
         .expect_err("an absent PEP must deny the launch fail-closed");
     assert!(
         error
@@ -777,7 +792,18 @@ fn plan_start_with_launch_defaults_preserves_explicit_operator_overrides() {
         PathBuf::from("/workspace")
     );
     assert!(!launch_plan.manifest.spec.process.terminal);
-    assert_eq!(launch_plan.manifest.spec.port_bindings.len(), 1);
+    assert_eq!(
+        launch_plan.manifest.spec.port_bindings,
+        vec![
+            SandboxPortBinding::tcp("http", 18080, 8080),
+            SandboxPortBinding::tcp("tcp-8443", 15000, 8443),
+        ],
+        "the explicit mapping wins for 8080 while an inert preview is rendered for the remaining image port"
+    );
+    assert!(
+        launch_plan.manifest.port_leases.is_empty(),
+        "plan-only rendering must not claim durable host-port authority"
+    );
     assert_eq!(
         launch_plan.manifest.image_metadata.healthcheck,
         Some(ImageHealthcheck {
@@ -879,7 +905,7 @@ fn oci_image_root_plan_only_skips_krun_vm_config_prelude_for_materialized_rootfs
 }
 
 #[test]
-fn oci_image_root_plan_only_auto_assigns_exposed_ports_and_reuses_released_ports() {
+fn oci_image_root_plan_only_previews_ports_without_reserving_them() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let image_reference = sample_registry_image_reference();
 
@@ -912,7 +938,8 @@ fn oci_image_root_plan_only_auto_assigns_exposed_ports_and_reuses_released_ports
     assert_eq!(second_inspected.published_endpoints.len(), 1);
     assert_eq!(
         second_inspected.published_endpoints[0].address.port(),
-        15001
+        15000,
+        "inert plan-only previews must not treat another manifest as allocation authority"
     );
 
     block_on(backend.stop(&first.id)).expect("stopping the first sandbox should succeed");
@@ -937,7 +964,96 @@ fn oci_image_root_plan_only_auto_assigns_exposed_ports_and_reuses_released_ports
 }
 
 #[test]
-fn oci_image_root_plan_only_rejects_same_tenant_port_quota_exhaustion() {
+fn plan_only_range_exhaustion_creates_no_durable_segment_allocation() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let mut config = KrunSandboxBackendConfig::plan_only(
+        temp_dir.path().join("bundles"),
+        temp_dir.path().join("state"),
+    );
+    config.published_port_range = 15000..=15000;
+    let backend = KrunSandboxBackend::new(config);
+    let spec = sample_spec().with_port_binding(SandboxPortBinding::tcp("explicit", 15000, 9090));
+
+    let error = backend
+        .plan_start_with_id(
+            &spec,
+            &SandboxId::new("plan-only-range-exhaustion"),
+            Some(&sample_launch_defaults()),
+            None,
+        )
+        .expect_err("the image-derived ports must not fit in the exhausted preview range");
+    assert!(
+        error.to_string().contains("published port range")
+            && error.to_string().contains("exhausted"),
+        "the original preview failure must remain primary: {error}"
+    );
+
+    let segments = backend
+        .segment_allocator
+        .inspect_segments(&spec.tenant_id)
+        .expect("segment authority should inspect")
+        .unwrap_or_default();
+    assert!(
+        segments.is_empty(),
+        "authority-free plan preview must fail before creating a segment allocation: {segments:?}"
+    );
+}
+
+#[test]
+fn successful_plan_only_previews_do_not_consume_the_node_segment_pool() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let mut config = KrunSandboxBackendConfig::plan_only(
+        temp_dir.path().join("bundles"),
+        temp_dir.path().join("state"),
+    );
+    config.node_network_supernet = "10.252.0.0/30".to_owned();
+    config.node_tenant_subnet_prefix = 30;
+    let backend = KrunSandboxBackend::new(config);
+
+    for (tenant, sandbox) in [("preview-a", "app-a"), ("preview-b", "app-b")] {
+        let spec = sample_spec_for_tenant(tenant, sandbox);
+        backend
+            .plan_start_with_id(&spec, &SandboxId::new(sandbox), None, None)
+            .expect("an authority-free preview must not exhaust the one-slot node pool");
+        assert!(
+            backend
+                .segment_allocator
+                .inspect_segments(&spec.tenant_id)
+                .expect("preview segment authority should inspect")
+                .unwrap_or_default()
+                .is_empty(),
+            "a successful preview must not create attachment-less segment authority"
+        );
+    }
+}
+
+#[test]
+fn execute_manifest_without_attachment_config_fails_before_network_effects() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::under_root(
+        temp_dir.path().to_path_buf(),
+    ));
+    let mut manifest = sample_manifest(
+        sample_spec_for_tenant("missing-network-authority", "app"),
+        KrunStartMode::Execute,
+    );
+    manifest.network_config = None;
+
+    let error = backend
+        .configure_network(&manifest)
+        .expect_err("missing attachment config must fail before Netavark");
+    assert!(
+        error.to_string().contains("no reserved network attachment"),
+        "the failure must name the missing attachment authority: {error}"
+    );
+    assert!(
+        !manifest.network_layout.netns_path.exists(),
+        "a manifest without attachment authority must not create a network namespace"
+    );
+}
+
+#[test]
+fn oci_image_root_plan_only_does_not_charge_manifest_only_port_previews() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let image_reference = sample_registry_image_reference();
 
@@ -948,24 +1064,29 @@ fn oci_image_root_plan_only_rejects_same_tenant_port_quota_exhaustion() {
     config.use_buildah_unshare = false;
     config.published_port_range = 15000..=15005;
     config.max_published_ports_per_tenant = Some(1);
+    let state_root = config.state_root.clone();
 
     let backend = KrunSandboxBackend::new(config);
 
     let mut first_spec = sparse_image_spec("first");
     first_spec.root = SandboxRootSpec::oci_image_reference(image_reference.clone());
-    block_on(backend.start(first_spec))
-        .expect("first image-backed service should consume the single tenant port");
+    block_on(backend.start(first_spec)).expect("first image-backed service plan should render");
 
     let mut second_spec = sparse_image_spec("second");
     second_spec.root = SandboxRootSpec::oci_image_reference(image_reference);
-    let error = block_on(backend.start(second_spec))
-        .expect_err("second same-tenant image-backed service should exceed the port quota");
-
+    let second = block_on(backend.start(second_spec))
+        .expect("a manifest-only preview must not consume durable tenant quota");
     assert!(
-        error.to_string().contains("published port quota exceeded")
-            && error.to_string().contains("tenant")
-            && error.to_string().contains("limit 1"),
-        "expected tenant port quota error, got: {error}"
+        !second.published_endpoints.is_empty(),
+        "the second plan should still render its image-derived endpoint"
+    );
+    let durable = LocalPortLeaseAuthority::open(&state_root)
+        .expect("durable port authority should open")
+        .list()
+        .expect("durable port authority should list");
+    assert!(
+        durable.is_empty(),
+        "manifest-only previews must not be charged as durable tenant-published leases: {durable:?}"
     );
 }
 
@@ -1214,7 +1335,11 @@ fn detect_runtime_status_marks_stale_pidfiles_as_failed() {
         .expect("plan should lower")
         .manifest;
     let state_stub = temp_dir.path().join("krun-state");
-    fs::write(&state_stub, "#!/bin/sh\nexit 1\n").expect("state stub should write");
+    fs::write(
+        &state_stub,
+        "#!/bin/sh\nprintf '%s\\n' 'container `db-01` does not exist: open `/run/crun/db-01/status`: No such file or directory' >&2\nexit 1\n",
+    )
+    .expect("state stub should write");
     let mut permissions = fs::metadata(&state_stub)
         .expect("state stub metadata should resolve")
         .permissions();
@@ -1285,81 +1410,6 @@ fn restart_backoff_delay_grows_and_caps() {
     assert_eq!(restart_backoff_delay(12), Duration::from_secs(60));
 }
 
-/// NNC0.6a fail-before baseline for NNCF20. The barrier is inside the actual
-/// krun provider-launch entry selected by inspect restart policy. Withdrawal
-/// persists while inspection holds a stale manifest; release proves inspection
-/// still performs and republishes the restart side effect.
-#[test]
-#[ignore = "NNC0.6a expected red until NNC5.6/NNC6.4a make inspect side-effect-free and fence restart"]
-fn nnc0_6a_krun_inspect_must_not_restart_after_withdrawal() {
-    let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let restart_probe = RestartLaunchTestProbe::new(Duration::from_secs(1));
-    let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::under_root(
-        temp_dir.path().to_path_buf(),
-    ))
-    .with_restart_launch_test_probe(restart_probe.clone());
-    let sandbox_id = SandboxId::new("nnc0-6a-krun");
-    let mut manifest = backend
-        .plan_start_with_id(
-            &sample_spec_for_tenant("tenant-nnc0-6a", "restart-race")
-                .with_restart_policy(SandboxRestartPolicy::OnFailure { max_restarts: 1 }),
-            &sandbox_id,
-            None,
-            None,
-        )
-        .expect("execute manifest should plan")
-        .manifest;
-    manifest.conmon_launch.delete_command = CommandSpec::new("/usr/bin/true");
-    manifest.next_restart_at_millis = Some(0);
-    fs::write(&manifest.conmon_layout.exit_status_file, "42\n")
-        .expect("failed exit should persist");
-    backend
-        .write_manifest(&manifest)
-        .expect("restart-eligible manifest should persist");
-
-    let inspect_backend = backend.clone();
-    let inspect_id = sandbox_id.clone();
-    let inspect_thread = thread::spawn(move || inspect_backend.inspect_sync(&inspect_id));
-    if !restart_probe.wait_until_entered() {
-        let inspect_result = inspect_thread
-            .join()
-            .expect("inspect thread should join after a missing barrier");
-        panic!(
-            "inspect must reach the provider-launch barrier through restart policy; \
-             inspect completed instead with {inspect_result:?}"
-        );
-    }
-
-    let mut withdrawn = manifest;
-    withdrawn.shutdown_requested = true;
-    withdrawn.next_restart_at_millis = None;
-    withdrawn.status = SandboxStatus::Stopped;
-    withdrawn.handle.status = SandboxStatus::Stopped;
-    withdrawn.handle.published_endpoints.clear();
-    backend
-        .write_manifest(&withdrawn)
-        .expect("coordinator withdrawal should persist before launch release");
-
-    restart_probe.release();
-    let inspected = inspect_thread
-        .join()
-        .expect("inspect thread should join")
-        .expect("current inspect restart should complete through the test provider")
-        .expect("manifest should remain inspectable");
-    assert_eq!(
-        inspected.status,
-        SandboxStatus::Starting,
-        "precondition: stale inspection currently reactivates the withdrawn manifest"
-    );
-
-    assert_eq!(
-        restart_probe.effect_count(),
-        0,
-        "NNCF20: inspect must be side-effect-free; a withdrawal/fence persisted before \
-         release must veto the stale krun restart provider effect"
-    );
-}
-
 #[test]
 fn manifest_deserialization_defaults_restart_fields_for_pre_restart_manifests() {
     let manifest: KrunSandboxManifest = serde_json::from_value(json!({
@@ -1422,6 +1472,17 @@ fn manifest_deserialization_defaults_restart_fields_for_pre_restart_manifests() 
             "container_network_dir": "/tmp/state/tenants/tenant/networks/containers/sandbox-01",
             "netns_path": "/tmp/state/tenants/tenant/networks/netns/sandbox-01",
             "status_path": "/tmp/state/tenants/tenant/networks/containers/sandbox-01/status.json",
+        },
+        "port_leases": [],
+        "launch_authority": {
+            "phase": "provider_owned"
+        },
+        "creator_handoff": {
+            "phase": "runtime_observed",
+            "attempt_id": "fixture-attempt"
+        },
+        "provider_failure_cleanup": {
+            "phase": "inactive"
         },
         "egress_proxy": null,
         "conmon_launch": {
@@ -1528,7 +1589,47 @@ fn krun_backend_consumes_the_injected_portable_segment_allocator() {
 }
 
 #[test]
-fn plan_only_stop_uses_quarantine_release_finalize_order() {
+fn startup_network_reconciliation_failure_blocks_new_krun_planning() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let config = KrunSandboxBackendConfig::under_root(temp_dir.path());
+    let corrupt_owner = SandboxId::new("corrupt-krun-startup-owner");
+    let spec = sample_spec();
+    let corrupt_manifest_path =
+        crate::artifact_paths::manifest_path(&config.state_root, &spec.tenant_id, &corrupt_owner);
+    fs::create_dir_all(
+        corrupt_manifest_path
+            .parent()
+            .expect("corrupt manifest parent"),
+    )
+    .expect("corrupt manifest parent should create");
+    fs::write(&corrupt_manifest_path, b"{").expect("corrupt manifest should be installed");
+    let backend = KrunSandboxBackend::new(config);
+
+    let error = backend
+        .plan_start_with_id(
+            &spec,
+            &SandboxId::new("new-krun-work-must-remain-fenced"),
+            None,
+            None,
+        )
+        .expect_err("new work must fail closed after startup reconciliation fails");
+    assert!(
+        error
+            .to_string()
+            .contains("refuses new network work because startup reconciliation did not complete")
+            && error.to_string().contains("failed to parse manifest"),
+        "admission must preserve the exact observable startup failure: {error}"
+    );
+    assert_eq!(
+        crate::artifact_paths::all_manifest_paths(&backend.config.state_root)
+            .expect("manifest paths should inspect"),
+        [corrupt_manifest_path],
+        "rejected planning must not create a second launch authority"
+    );
+}
+
+#[test]
+fn plan_only_stop_does_not_invent_attachment_cleanup_authority() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let spec = sample_spec_for_tenant("krun-stop-order", "api");
     let recorder = Arc::new(RecordingSegmentAllocator::new(
@@ -1547,22 +1648,101 @@ fn plan_only_stop_uses_quarantine_release_finalize_order() {
 
     let handle =
         block_on(backend.start(spec.clone())).expect("plan-only krun start should succeed");
-    block_on(backend.stop(&handle.id)).expect("plan-only krun stop should release its network");
+    let before_stop = recorder.operations();
+    block_on(backend.stop(&handle.id)).expect("plan-only krun stop should clean local artifacts");
 
-    let attachment = crate::backends::oci::network::default_network_attachment_id(&handle.id);
-    let operations = recorder.operations();
-    let expected_tail = [
-        SegmentAllocatorOperation::Quarantine(spec.tenant_id.clone(), attachment.clone()),
-        SegmentAllocatorOperation::Release(spec.tenant_id.clone(), attachment),
-        SegmentAllocatorOperation::FinalizeRelease(
-            spec.tenant_id,
-            vec!["netsegment_01ARZ3NDEKTSV4RRFFQ69G5FAV".to_owned()],
-        ),
-    ];
     assert_eq!(
-        operations.get(operations.len().saturating_sub(expected_tail.len())..),
-        Some(expected_tail.as_slice()),
-        "plan-only teardown must obey the same durable quarantine and identity-fenced finalization order"
+        recorder.operations(),
+        before_stop,
+        "an authority-free plan-only preview must not fabricate an attachment hold in order to clean it"
+    );
+}
+
+#[test]
+fn restart_network_teardown_retains_exact_segment_hold() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let spec = sample_spec_for_tenant("krun-restart-hold", "api");
+    let recorder = Arc::new(RecordingSegmentAllocator::new(
+        spec.tenant_id.clone(),
+        "10.76.0.0/24",
+        76,
+    ));
+    let injected: Arc<OciSegmentAllocator> = recorder.clone();
+    let backend = KrunSandboxBackend::with_segment_allocator(
+        KrunSandboxBackendConfig::plan_only(
+            temp_dir.path().join("bundles"),
+            temp_dir.path().join("state"),
+        ),
+        injected,
+    );
+    let handle =
+        block_on(backend.start(spec)).expect("plan-only krun start should render the manifest");
+    let mut manifest = backend
+        .read_manifest(&handle.id)
+        .expect("manifest read should succeed")
+        .expect("planned manifest should exist");
+    manifest.network_config = Some(
+        backend
+            .network_config(&manifest.spec.tenant_id)
+            .expect("execute-shaped network config should resolve"),
+    );
+    allocate_container_ips(
+        &manifest.network_layout,
+        manifest
+            .network_config
+            .as_ref()
+            .expect("execute-shaped config should remain"),
+        &manifest.handle.id,
+    )
+    .expect("execute-shaped fixture should persist its generation-fenced IPAM");
+    recorder
+        .acquire(
+            &manifest.spec.tenant_id,
+            &default_network_attachment_id(&manifest.handle.id),
+        )
+        .expect("execute-shaped fixture should acquire its exact segment hold");
+    manifest.launch_authority = KrunLaunchAuthority::ProviderOwned;
+    let before_restart = recorder.operations().len();
+
+    backend
+        .release_network_artifacts(
+            &manifest,
+            super::lifecycle::NetworkArtifactTeardownMode::Restart,
+        )
+        .expect("restart teardown should remove only provider artifacts");
+
+    assert_eq!(
+        &recorder.operations()[before_restart..],
+        [],
+        "restart teardown must retain the exact segment hold while the persisted network config will be reused"
+    );
+    backend
+        .release_network_artifacts(
+            &manifest,
+            super::lifecycle::NetworkArtifactTeardownMode::Final,
+        )
+        .expect("final teardown should quarantine and release the retained hold");
+    assert_eq!(
+        &recorder.operations()[before_restart..],
+        [
+            SegmentAllocatorOperation::Quarantine(
+                manifest.spec.tenant_id.clone(),
+                default_network_attachment_id(&manifest.handle.id),
+            ),
+            SegmentAllocatorOperation::Quarantine(
+                manifest.spec.tenant_id.clone(),
+                default_network_attachment_id(&manifest.handle.id),
+            ),
+            SegmentAllocatorOperation::Release(
+                manifest.spec.tenant_id.clone(),
+                default_network_attachment_id(&manifest.handle.id),
+            ),
+            SegmentAllocatorOperation::FinalizeRelease(
+                manifest.spec.tenant_id.clone(),
+                vec!["netsegment_01ARZ3NDEKTSV4RRFFQ69G5FAV".to_owned()],
+            ),
+        ],
+        "final teardown must release the exact hold that restart preserved"
     );
 }
 
@@ -1574,21 +1754,36 @@ fn execute_egress_proxy_binds_bridge_gateway_after_published_ports() {
     let backend = KrunSandboxBackend::new(config);
 
     let spec = sample_spec().with_port_binding(SandboxPortBinding::tcp("extra", 15000, 8080));
+    let sandbox_id = SandboxId::new("egress-port-order");
+    let reservation_claim = crate::backends::oci::port_lease::new_launch_reservation_claim()
+        .expect("published binding launch claim should mint");
+    backend
+        .port_manager()
+        .reserve_launch_ports_for_sandbox(
+            crate::backends::oci::port_manager::SandboxLaunchPortPlan::new(
+                &spec.tenant_id,
+                &sandbox_id,
+                &spec.port_bindings,
+                &[],
+            ),
+            &reservation_claim,
+        )
+        .expect("published binding should reserve before egress");
     let network_config = backend
         .network_config(&spec.tenant_id)
         .expect("primary network config resolves");
     let proxy = backend
-        .allocate_egress_proxy(&network_config, &spec)
+        .allocate_egress_proxy(&network_config, &sandbox_id, &spec)
         .expect("execute launches should assign a bridge-reachable egress proxy");
 
     assert_eq!(
         proxy
             .bind_addr()
             .expect("egress proxy bind address should resolve"),
-        "10.0.0.1:15001"
+        "10.0.0.1:15000"
             .parse()
             .expect("bridge gateway socket address should parse"),
-        "the egress PEP must bind on the bridge gateway and skip already-published host ports"
+        "loopback publication and bridge-gateway PEP may share one numeric port"
     );
 }
 

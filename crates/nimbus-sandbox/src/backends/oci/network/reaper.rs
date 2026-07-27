@@ -13,13 +13,16 @@ use std::path::Path;
 
 use nimbus_core::TenantId;
 use nimbus_network::{
-    NetworkSegmentFinalizeOutcome, NetworkSegmentQuarantineOutcome, NetworkSegmentReleaseOutcome,
+    NetworkReservationClaim, NetworkSegmentFinalizeOutcome, NetworkSegmentQuarantineOutcome,
+    NetworkSegmentReleaseOutcome,
 };
 
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
 
-use super::{OciSegmentAllocator, OciSegmentRealization, default_network_attachment_id};
+use super::{
+    OciNetworkLayout, OciSegmentAllocator, OciSegmentRealization, default_network_attachment_id,
+};
 
 /// Remove a tenant block-bridge interface by name once its last attachment has
 /// drained (netavark won't auto-GC it). Idempotent / best-effort: a bridge that
@@ -36,8 +39,13 @@ pub(crate) fn quarantine_network_segment_hold(
     allocator: &OciSegmentAllocator,
     tenant_id: &TenantId,
     sandbox_id: &SandboxId,
+    adoption_receipt: &NetworkReservationClaim,
 ) -> Result<NetworkSegmentQuarantineOutcome> {
-    allocator.quarantine(tenant_id, &default_network_attachment_id(sandbox_id))
+    allocator.quarantine(
+        tenant_id,
+        &default_network_attachment_id(sandbox_id),
+        Some(adoption_receipt),
+    )
 }
 
 /// Drop one quarantined sandbox hold after provider/netns deletion, reap every
@@ -47,26 +55,234 @@ pub(crate) fn release_network_segment_hold(
     allocator: &OciSegmentAllocator,
     tenant_id: &TenantId,
     sandbox_id: &SandboxId,
+    adoption_receipt: &NetworkReservationClaim,
 ) -> Vec<SandboxError> {
-    release_network_segment_hold_with(allocator, tenant_id, sandbox_id, |segment| {
-        reap_bridge_interface(segment.network_interface())
-    })
+    release_network_segment_hold_with(
+        allocator,
+        tenant_id,
+        sandbox_id,
+        Some(adoption_receipt),
+        |segment| reap_bridge_interface(segment.network_interface()),
+    )
+}
+
+/// Compensate one claim-authenticated launch before any provider effect.
+///
+/// The separate durable partitions form a reverse-order safe-leak saga:
+/// callers must release the complete port batch first, then this function
+/// first claim-authenticates the attachment into cleanup-pending authority,
+/// then removes IPAM, and finally identity-fenced allocation authority. If
+/// IPAM deletion or finalization fails, the exact cleanup claim remains fenced
+/// for reconciliation.
+pub(crate) fn compensate_reserved_network_launch_without_effect(
+    allocator: &OciSegmentAllocator,
+    layout: &OciNetworkLayout,
+    tenant_id: &TenantId,
+    sandbox_id: &SandboxId,
+    reservation_claim: &NetworkReservationClaim,
+    planning_error: SandboxError,
+) -> SandboxError {
+    let errors = release_reserved_network_launch_without_effect(
+        allocator,
+        layout,
+        tenant_id,
+        sandbox_id,
+        reservation_claim,
+    );
+    if errors.is_empty() {
+        planning_error
+    } else {
+        SandboxError::OperationFailed {
+            message: format!(
+                "sandbox launch planning failed: {planning_error}; \
+                 claimed network launch compensation also failed: {}",
+                errors
+                    .into_iter()
+                    .map(|error| error.to_string())
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            ),
+        }
+    }
+}
+
+/// Continue launch compensation only after complete port compensation succeeds.
+///
+/// A failed or ambiguous port release retains IPAM and segment authority as a
+/// deliberate safe leak; releasing later resources would let another launch
+/// reuse connectivity beneath still-fenced listeners.
+pub(crate) fn compensate_reserved_network_launch_after_ports(
+    allocator: &OciSegmentAllocator,
+    layout: &OciNetworkLayout,
+    tenant_id: &TenantId,
+    sandbox_id: &SandboxId,
+    reservation_claim: &NetworkReservationClaim,
+    planning_error: SandboxError,
+    port_compensation: Result<()>,
+) -> SandboxError {
+    match release_reserved_network_launch_after_ports(
+        allocator,
+        layout,
+        tenant_id,
+        sandbox_id,
+        reservation_claim,
+        port_compensation,
+    ) {
+        Ok(()) => planning_error,
+        Err(compensation_error) => SandboxError::OperationFailed {
+            message: format!(
+                "sandbox launch planning failed: {planning_error}; \
+                 claimed network launch compensation also failed: {compensation_error}"
+            ),
+        },
+    }
+}
+
+/// Release a never-realized launch in reverse reservation order.
+///
+/// The caller supplies the complete port compensation result. A failure stops
+/// before IPAM or segment mutation and explicitly records that those later
+/// resources remain fenced.
+pub(crate) fn release_reserved_network_launch_after_ports(
+    allocator: &OciSegmentAllocator,
+    layout: &OciNetworkLayout,
+    tenant_id: &TenantId,
+    sandbox_id: &SandboxId,
+    reservation_claim: &NetworkReservationClaim,
+    port_compensation: Result<()>,
+) -> Result<()> {
+    if let Err(error) = port_compensation {
+        return Err(SandboxError::OperationFailed {
+            message: format!(
+                "never-bound port reservation compensation failed: {error}; \
+                 IPAM and segment reservation remain fenced"
+            ),
+        });
+    }
+    let errors = release_reserved_network_launch_without_effect(
+        allocator,
+        layout,
+        tenant_id,
+        sandbox_id,
+        reservation_claim,
+    );
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(SandboxError::OperationFailed {
+            message: errors
+                .into_iter()
+                .map(|error| error.to_string())
+                .collect::<Vec<_>>()
+                .join("; "),
+        })
+    }
+}
+
+fn release_reserved_network_launch_without_effect(
+    allocator: &OciSegmentAllocator,
+    layout: &OciNetworkLayout,
+    tenant_id: &TenantId,
+    sandbox_id: &SandboxId,
+    reservation_claim: &NetworkReservationClaim,
+) -> Vec<SandboxError> {
+    match allocator.release_reserved_attachment_without_effect(
+        tenant_id,
+        &default_network_attachment_id(sandbox_id),
+        reservation_claim,
+    ) {
+        Ok(
+            NetworkSegmentReleaseOutcome::AttachmentCleanupPending
+            | NetworkSegmentReleaseOutcome::CleanupPending(_),
+        ) => {}
+        Ok(NetworkSegmentReleaseOutcome::StillLive) => {
+            return vec![SandboxError::OperationFailed {
+                message: "never-realized attachment release skipped its durable IPAM cleanup fence"
+                    .to_owned(),
+            }];
+        }
+        Ok(NetworkSegmentReleaseOutcome::AlreadyReleased) => {
+            return super::ipam::retire_terminal_container_ipam_release(
+                layout,
+                sandbox_id,
+                reservation_claim,
+            )
+            .err()
+            .into_iter()
+            .collect();
+        }
+        Err(error) => return vec![error],
+    };
+    if let Err(error) =
+        super::ipam::deallocate_container_ips_for_claim(layout, sandbox_id, reservation_claim)
+    {
+        return vec![error];
+    }
+    let cleanup = match allocator.finalize_reserved_attachment_without_effect(
+        tenant_id,
+        &default_network_attachment_id(sandbox_id),
+        reservation_claim,
+    ) {
+        Ok(NetworkSegmentReleaseOutcome::CleanupPending(cleanup)) => cleanup,
+        Ok(
+            NetworkSegmentReleaseOutcome::StillLive | NetworkSegmentReleaseOutcome::AlreadyReleased,
+        ) => {
+            return super::ipam::retire_terminal_container_ipam_release(
+                layout,
+                sandbox_id,
+                reservation_claim,
+            )
+            .err()
+            .into_iter()
+            .collect();
+        }
+        Ok(NetworkSegmentReleaseOutcome::AttachmentCleanupPending) => {
+            return vec![SandboxError::OperationFailed {
+                message:
+                    "never-realized attachment remained cleanup-pending after IPAM confirmation"
+                        .to_owned(),
+            }];
+        }
+        Err(error) => return vec![error],
+    };
+    match allocator.finalize_release(&cleanup) {
+        Ok(
+            NetworkSegmentFinalizeOutcome::Released
+            | NetworkSegmentFinalizeOutcome::AlreadyReleased,
+        ) => super::ipam::retire_terminal_container_ipam_release(
+            layout,
+            sandbox_id,
+            reservation_claim,
+        )
+        .err()
+        .into_iter()
+        .collect(),
+        Err(error) => vec![error],
+    }
 }
 
 fn release_network_segment_hold_with(
     allocator: &OciSegmentAllocator,
     tenant_id: &TenantId,
     sandbox_id: &SandboxId,
+    adoption_receipt: Option<&NetworkReservationClaim>,
     mut reap: impl FnMut(&OciSegmentRealization) -> Result<()>,
 ) -> Vec<SandboxError> {
     let attachment_id = default_network_attachment_id(sandbox_id);
-    if let Err(error) = allocator.quarantine(tenant_id, &attachment_id) {
+    if let Err(error) = allocator.quarantine(tenant_id, &attachment_id, adoption_receipt) {
         return vec![error];
     }
-    let cleanup = match allocator.release(tenant_id, &attachment_id) {
+    let cleanup = match allocator.release(tenant_id, &attachment_id, adoption_receipt) {
         Ok(NetworkSegmentReleaseOutcome::CleanupPending(cleanup)) => cleanup,
         Ok(NetworkSegmentReleaseOutcome::StillLive) => return Vec::new(),
         Ok(NetworkSegmentReleaseOutcome::AlreadyReleased) => return Vec::new(),
+        Ok(NetworkSegmentReleaseOutcome::AttachmentCleanupPending) => {
+            return vec![SandboxError::OperationFailed {
+                message:
+                    "generic segment release encountered exact reservation IPAM cleanup authority"
+                        .to_owned(),
+            }];
+        }
         Err(error) => return vec![error],
     };
     let errors: Vec<SandboxError> = cleanup
@@ -197,10 +413,14 @@ fn delete_bridge(_interface: &str) -> Result<()> {
 mod tests {
     use std::collections::BTreeMap;
 
+    use super::super::OciNetworkConfig;
     use super::*;
     use crate::backends::oci::network::SingleNodeSegmentAllocator;
     use nimbus_core::TenantId;
-    use nimbus_network::NetworkSegmentAllocator;
+    use nimbus_network::{
+        LocalNetworkStateStore, NetworkProviderHandle, NetworkProviderId, NetworkReservationClaim,
+        NetworkSegmentAllocator,
+    };
     use tempfile::tempdir;
 
     use crate::instance::SandboxId;
@@ -248,8 +468,210 @@ mod tests {
             .exists()
     }
 
+    fn reservation_claim(attempt: &str) -> NetworkReservationClaim {
+        let provider = NetworkProviderId::for_registration_key(
+            "nimbus-sandbox.network-launch-coordinator.test",
+        );
+        NetworkReservationClaim::new(
+            NetworkProviderHandle::new(provider, format!("attempt:{attempt}"))
+                .expect("claim fixture should validate"),
+        )
+    }
+
     fn allocator_has_hold(root: &Path, tenant: &str, sandbox: &str) -> bool {
         SingleNodeSegmentAllocator::single_node_default(root).has_hold(tenant, sandbox)
+    }
+
+    #[test]
+    fn exact_pre_effect_compensation_removes_ipam_before_segment_authority() {
+        let dir = tempdir().expect("state root");
+        let tenant = TenantId::new("tenant-exact-compensation").expect("tenant fixture");
+        let sandbox = SandboxId::new("sandbox-exact-compensation");
+        let layout = OciNetworkLayout::new(dir.path(), &tenant, &sandbox);
+        layout
+            .ensure_directories()
+            .expect("layout should initialize");
+        let allocator = SingleNodeSegmentAllocator::single_node_default(dir.path());
+        let claim = reservation_claim("exact-compensation");
+        super::super::placement::place_sandbox_on_block(
+            &allocator,
+            &tenant,
+            &layout,
+            &sandbox,
+            &claim,
+            |segment, reservation_claim| OciNetworkConfig {
+                network_name: segment.network_name().to_owned(),
+                network_interface: segment.network_interface().to_owned(),
+                network_subnet: segment.cidr().to_string(),
+                segment_id: segment.segment_id().as_str().to_owned(),
+                reservation_claim: reservation_claim.clone(),
+                network_id: segment.network_id().as_str().to_owned(),
+                ..OciNetworkConfig::default()
+            },
+        )
+        .expect("placement should reserve attachment and IPAM");
+        assert!(
+            super::super::ipam::load_container_ips(&layout, &sandbox).is_ok(),
+            "placement must create durable IPAM before port reservation"
+        );
+
+        release_reserved_network_launch_after_ports(
+            &allocator,
+            &layout,
+            &tenant,
+            &sandbox,
+            &claim,
+            Ok(()),
+        )
+        .expect("exact compensation should complete");
+
+        assert!(
+            super::super::ipam::load_container_ips(&layout, &sandbox).is_err(),
+            "IPAM must be gone before segment authority is reusable"
+        );
+        assert!(
+            allocator
+                .inspect_segments(&tenant)
+                .expect("segment authority should inspect")
+                .is_none(),
+            "last exact hold should finalize the tenant segment"
+        );
+    }
+
+    #[test]
+    fn exact_pre_effect_compensation_removes_ipam_while_sibling_hold_remains() {
+        let dir = tempdir().expect("state root");
+        let tenant = TenantId::new("tenant-sibling-compensation").expect("tenant fixture");
+        let cancelled = SandboxId::new("sandbox-cancelled");
+        let sibling = SandboxId::new("sandbox-sibling");
+        let cancelled_layout = OciNetworkLayout::new(dir.path(), &tenant, &cancelled);
+        let sibling_layout = OciNetworkLayout::new(dir.path(), &tenant, &sibling);
+        cancelled_layout
+            .ensure_directories()
+            .expect("cancelled layout should initialize");
+        sibling_layout
+            .ensure_directories()
+            .expect("sibling layout should initialize");
+        let allocator = SingleNodeSegmentAllocator::single_node_default(dir.path());
+        let cancelled_claim = reservation_claim("cancelled");
+        let sibling_claim = reservation_claim("sibling");
+        for (layout, sandbox, claim) in [
+            (&cancelled_layout, &cancelled, &cancelled_claim),
+            (&sibling_layout, &sibling, &sibling_claim),
+        ] {
+            super::super::placement::place_sandbox_on_block(
+                &allocator,
+                &tenant,
+                layout,
+                sandbox,
+                claim,
+                |segment, reservation_claim| OciNetworkConfig {
+                    network_name: segment.network_name().to_owned(),
+                    network_interface: segment.network_interface().to_owned(),
+                    network_subnet: segment.cidr().to_string(),
+                    segment_id: segment.segment_id().as_str().to_owned(),
+                    reservation_claim: reservation_claim.clone(),
+                    network_id: segment.network_id().as_str().to_owned(),
+                    ..OciNetworkConfig::default()
+                },
+            )
+            .expect("placement should reserve attachment and IPAM");
+        }
+
+        release_reserved_network_launch_after_ports(
+            &allocator,
+            &cancelled_layout,
+            &tenant,
+            &cancelled,
+            &cancelled_claim,
+            Ok(()),
+        )
+        .expect("exact compensation should remove only the cancelled launch");
+
+        assert!(
+            super::super::ipam::load_container_ips(&cancelled_layout, &cancelled).is_err(),
+            "the cancelled launch must not leak IPAM merely because a sibling retains the segment"
+        );
+        assert!(
+            super::super::ipam::load_container_ips(&sibling_layout, &sibling).is_ok(),
+            "the live sibling's IPAM allocation must remain intact"
+        );
+        assert!(
+            !allocator.has_hold(tenant.as_str(), cancelled.as_str()),
+            "the exact cancelled attachment must be released"
+        );
+        assert!(
+            allocator.has_hold(tenant.as_str(), sibling.as_str()),
+            "the sibling attachment must continue to hold the tenant segment"
+        );
+        assert!(
+            allocator
+                .inspect_segments(&tenant)
+                .expect("segment authority should inspect")
+                .is_some(),
+            "a sibling attachment must keep the tenant segment live"
+        );
+    }
+
+    #[test]
+    fn foreign_pre_effect_claim_preserves_ipam_and_segment_authority_byte_for_byte() {
+        let dir = tempdir().expect("state root");
+        let tenant = TenantId::new("tenant-foreign-compensation").expect("tenant fixture");
+        let sandbox = SandboxId::new("sandbox-foreign-compensation");
+        let layout = OciNetworkLayout::new(dir.path(), &tenant, &sandbox);
+        layout
+            .ensure_directories()
+            .expect("layout should initialize");
+        let allocator = SingleNodeSegmentAllocator::single_node_default(dir.path());
+        let winner = reservation_claim("winner");
+        super::super::placement::place_sandbox_on_block(
+            &allocator,
+            &tenant,
+            &layout,
+            &sandbox,
+            &winner,
+            |segment, reservation_claim| OciNetworkConfig {
+                network_name: segment.network_name().to_owned(),
+                network_interface: segment.network_interface().to_owned(),
+                network_subnet: segment.cidr().to_string(),
+                segment_id: segment.segment_id().as_str().to_owned(),
+                reservation_claim: reservation_claim.clone(),
+                network_id: segment.network_id().as_str().to_owned(),
+                ..OciNetworkConfig::default()
+            },
+        )
+        .expect("winner should reserve attachment and IPAM");
+        let authority_path = LocalNetworkStateStore::authority_path_for(dir.path());
+        let before = std::fs::read(&authority_path).expect("authority should be durable");
+
+        let error = release_reserved_network_launch_after_ports(
+            &allocator,
+            &layout,
+            &tenant,
+            &sandbox,
+            &reservation_claim("foreign"),
+            Ok(()),
+        )
+        .expect_err("a foreign coordinator must not compensate the winner");
+        assert!(
+            error
+                .to_string()
+                .contains("different launch reservation coordinator"),
+            "claim rejection should remain explicit: {error}"
+        );
+        assert_eq!(
+            std::fs::read(&authority_path).expect("rejected authority should remain readable"),
+            before,
+            "claim authentication must precede every IPAM or segment mutation"
+        );
+        assert!(
+            super::super::ipam::load_container_ips(&layout, &sandbox).is_ok(),
+            "the winning coordinator's IPAM evidence must remain intact"
+        );
+        assert!(
+            allocator.has_hold(tenant.as_str(), sandbox.as_str()),
+            "the winning coordinator's reserved attachment must remain intact"
+        );
     }
 
     #[test]
@@ -635,6 +1057,7 @@ mod tests {
             &allocator,
             &original_tenant,
             &original_sandbox,
+            None,
             |segment| {
                 surviving_bridges.push(segment.network_interface().to_owned());
                 Err(SandboxError::OperationFailed {
@@ -671,6 +1094,7 @@ mod tests {
             &allocator,
             &original_tenant,
             &original_sandbox,
+            None,
             |segment| {
                 successful_reaps += 1;
                 assert_eq!(segment.segment_id(), original.segment_id());
@@ -697,6 +1121,7 @@ mod tests {
             &allocator,
             &original_tenant,
             &original_sandbox,
+            None,
             |_| {
                 successful_reaps += 1;
                 Ok(())

@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 
+use nimbus_network::{NetworkProviderHandle, NetworkReservationClaim};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize)]
@@ -70,7 +71,66 @@ pub(super) struct NetavarkErrorResponse {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub(super) struct IpamState {
-    pub(super) allocations: BTreeMap<String, Vec<String>>,
+    pub(super) allocations: BTreeMap<String, IpamAllocation>,
+    /// Last terminal generation for an attachment whose provider detach was
+    /// confirmed.
+    ///
+    /// The tombstone is overwritten atomically by the next live allocation.
+    /// Retaining it closes the otherwise unauthenticated gap between final
+    /// IPAM release and idempotent cleanup replay.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(super) released_allocations: BTreeMap<String, IpamAllocation>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) last_assigned_ip: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct IpamAllocation {
+    pub(super) segment_id: String,
+    pub(super) reservation_claim: NetworkReservationClaim,
+    pub(super) ips: Vec<String>,
+    pub(super) provider_operation: NetavarkProviderOperation,
+}
+
+/// Durable Netavark effect ownership for one exact IPAM generation.
+///
+/// Pending attempts are authority, not observed status. They deliberately
+/// survive process death so a successor cannot rerun an ambiguous effect or
+/// replace the attachment before evidence-aware reconciliation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "phase", rename_all = "snake_case")]
+pub(super) enum NetavarkProviderOperation {
+    /// No Netavark effect has begun for this IPAM generation.
+    Reserved,
+    /// Setup may be in flight or may have completed without acknowledgement.
+    Provisioning {
+        operation_attempt: NetworkProviderHandle,
+    },
+    /// Setup and its observed status projection completed.
+    Ready {
+        setup_attempt: NetworkProviderHandle,
+    },
+    /// Teardown may be in flight or may have completed without acknowledgement.
+    Deleting {
+        operation_attempt: NetworkProviderHandle,
+    },
+    /// Provider absence is confirmed, but removal of observed status is pending.
+    DetachedProjectionPending {
+        operation_attempt: NetworkProviderHandle,
+    },
+    /// Provider absence and observed-status removal are both confirmed.
+    Detached,
+}
+
+impl NetavarkProviderOperation {
+    pub(super) const fn label(&self) -> &'static str {
+        match self {
+            Self::Reserved => "reserved",
+            Self::Provisioning { .. } => "provisioning",
+            Self::Ready { .. } => "ready",
+            Self::Deleting { .. } => "deleting",
+            Self::DetachedProjectionPending { .. } => "detached_projection_pending",
+            Self::Detached => "detached",
+        }
+    }
 }

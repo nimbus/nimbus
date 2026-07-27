@@ -2,6 +2,7 @@ use std::error::Error as StdError;
 use std::fmt::{self, Display, Formatter};
 use std::str::FromStr;
 
+use nimbus_core::TenantId;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use ulid::Ulid;
@@ -65,6 +66,23 @@ impl StdError for NetworkResourceIdParseError {}
 
 fn generate_stable_id(prefix: &'static str) -> String {
     format!("{prefix}_{}", Ulid::new())
+}
+
+fn derive_stable_id(prefix: &'static str, domain: &'static [u8], components: &[&str]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(domain);
+    for component in components {
+        hasher.update(
+            u64::try_from(component.len())
+                .expect("a Rust string length always fits u64 on supported targets")
+                .to_be_bytes(),
+        );
+        hasher.update(component.as_bytes());
+    }
+    let digest = hasher.finalize();
+    let mut payload = [0_u8; 16];
+    payload.copy_from_slice(&digest[..16]);
+    format!("{prefix}_{}", Ulid::from(u128::from_be_bytes(payload)))
 }
 
 fn parse_stable_id(
@@ -196,23 +214,10 @@ impl NetworkAttachmentId {
     /// selecting another attachment name necessarily produces a different
     /// identity. The source strings are not retained in the ID.
     pub fn for_workload_attachment(workload_incarnation_key: &str, attachment_name: &str) -> Self {
-        let mut hasher = Sha256::new();
-        hasher.update(b"nimbus.network.attachment.v1");
-        for component in [workload_incarnation_key, attachment_name] {
-            hasher.update(
-                u64::try_from(component.len())
-                    .expect("a Rust string length always fits u64 on supported targets")
-                    .to_be_bytes(),
-            );
-            hasher.update(component.as_bytes());
-        }
-        let digest = hasher.finalize();
-        let mut payload = [0_u8; 16];
-        payload.copy_from_slice(&digest[..16]);
-        Self(format!(
-            "{}_{}",
+        Self(derive_stable_id(
             Self::PREFIX,
-            Ulid::from(u128::from_be_bytes(payload))
+            b"nimbus.network.attachment.v1",
+            &[workload_incarnation_key, attachment_name],
         ))
     }
 }
@@ -235,6 +240,39 @@ define_stable_resource_id!(
     ListenerId,
     "netlistener"
 );
+
+impl ListenerId {
+    /// Derive one named listener identity for a workload incarnation.
+    ///
+    /// The identity is independent of an allocated port or observed IP address.
+    /// A different workload incarnation or listener name cannot inherit the
+    /// previous listener's authority.
+    pub fn for_workload_listener(workload_incarnation_key: &str, listener_name: &str) -> Self {
+        Self(derive_stable_id(
+            Self::PREFIX,
+            b"nimbus.network.listener.v1",
+            &[workload_incarnation_key, listener_name],
+        ))
+    }
+
+    /// Derive a tenant-scoped listener identity for a workload incarnation.
+    ///
+    /// Sandbox IDs may be unique only inside one tenant namespace. Including
+    /// the validated tenant identity prevents equal tenant-local workload and
+    /// listener names from aliasing host-global listener authority.
+    pub fn for_tenant_workload_listener(
+        tenant_id: &TenantId,
+        workload_incarnation_key: &str,
+        listener_name: &str,
+    ) -> Self {
+        Self(derive_stable_id(
+            Self::PREFIX,
+            b"nimbus.network.tenant-workload-listener.v1",
+            &[tenant_id.as_str(), workload_incarnation_key, listener_name],
+        ))
+    }
+}
+
 define_stable_resource_id!(
     /// Stable identity of an admitted ingress route.
     IngressRouteId,
@@ -245,11 +283,39 @@ define_stable_resource_id!(
     PortLeaseId,
     "netportlease"
 );
+
+impl PortLeaseId {
+    /// Derive the stable reservation identity owned by one listener.
+    ///
+    /// Numeric ports and addresses are deliberately absent from the identity.
+    pub fn for_listener(listener_id: &ListenerId) -> Self {
+        Self(derive_stable_id(
+            Self::PREFIX,
+            b"nimbus.network.port-lease.v1",
+            &[listener_id.as_str()],
+        ))
+    }
+}
+
 define_stable_resource_id!(
     /// Stable identity of one registered network capability provider.
     NetworkProviderId,
     "netprovider"
 );
+
+impl NetworkProviderId {
+    /// Derive a stable provider-registration identity from a composition key.
+    ///
+    /// The key names an implementation registration, never a provider handle,
+    /// address, or allocated resource.
+    pub fn for_registration_key(registration_key: &str) -> Self {
+        Self(derive_stable_id(
+            Self::PREFIX,
+            b"nimbus.network.provider.v1",
+            &[registration_key],
+        ))
+    }
+}
 
 /// Monotonic desired generation within a [`NetworkPlanId`].
 ///
@@ -578,6 +644,55 @@ mod tests {
             NetworkAttachmentId::for_workload_attachment("a", "bc"),
             "length framing must prevent component-boundary ambiguity"
         );
+    }
+
+    #[test]
+    fn listener_lease_and_provider_derivations_are_stable_and_address_free() {
+        let listener = ListenerId::for_workload_listener("sandbox-incarnation-a", "published:http");
+        let replay = ListenerId::for_workload_listener("sandbox-incarnation-a", "published:http");
+        let another_listener =
+            ListenerId::for_workload_listener("sandbox-incarnation-a", "egress-pep");
+        let replacement =
+            ListenerId::for_workload_listener("sandbox-incarnation-b", "published:http");
+        let tenant_a = TenantId::new("tenant-a").expect("tenant should validate");
+        let tenant_b = TenantId::new("tenant-b").expect("tenant should validate");
+        let tenant_listener = ListenerId::for_tenant_workload_listener(
+            &tenant_a,
+            "sandbox-incarnation-a",
+            "published:http",
+        );
+        let other_tenant_listener = ListenerId::for_tenant_workload_listener(
+            &tenant_b,
+            "sandbox-incarnation-a",
+            "published:http",
+        );
+
+        assert_eq!(listener, replay);
+        assert_ne!(listener, another_listener);
+        assert_ne!(listener, replacement);
+        assert_ne!(tenant_listener, other_tenant_listener);
+        assert_ne!(
+            tenant_listener, listener,
+            "tenant-scoped and node-global listener domains must never alias"
+        );
+        let lease = PortLeaseId::for_listener(&listener);
+        assert_eq!(lease, PortLeaseId::for_listener(&replay));
+        assert_ne!(
+            PortLeaseId::for_listener(&listener),
+            PortLeaseId::for_listener(&another_listener)
+        );
+        assert_eq!(
+            NetworkProviderId::for_registration_key("nimbus-sandbox.machine-port-proxy"),
+            NetworkProviderId::for_registration_key("nimbus-sandbox.machine-port-proxy")
+        );
+        assert_ne!(
+            NetworkProviderId::for_registration_key("nimbus-sandbox.machine-port-proxy"),
+            NetworkProviderId::for_registration_key("nimbus-sandbox.netavark")
+        );
+        for identity in [listener.as_str(), lease.as_str()] {
+            assert!(!identity.contains("127.0.0.1"));
+            assert!(!identity.contains("8080"));
+        }
     }
 
     #[test]

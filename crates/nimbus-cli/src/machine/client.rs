@@ -862,14 +862,22 @@ mod tests {
         let _ = wait_for_health(&client);
 
         let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
-        let sandbox_id = SandboxId::new("db-01aaa");
-        let container_dir = write_container_manifest(
-            manifest_state_root.as_path(),
-            sandbox_id.as_str(),
-            tenant_id.as_str(),
-            "db",
-            SandboxStatus::Ready,
-        );
+        let started = client
+            .start_service_sandbox_from_image(image_spec(
+                &tenant_id,
+                "db",
+                "docker://busybox:latest",
+            ))
+            .expect("fixture sandbox should start through the machine API");
+        let sandbox_id = started.id;
+        let container_dir = manifest_state_root
+            .join("tenants")
+            .join(tenant_id.as_str())
+            .join("sandboxes")
+            .join(sandbox_id.as_str())
+            .join("state")
+            .join("containers")
+            .join(sandbox_id.as_str());
         fs::write(container_dir.join("ctr.log"), "guest log line\n")
             .expect("guest ctr.log should write");
         fs::write(container_dir.join("pidfile"), "2002\n").expect("pidfile should write");
@@ -913,10 +921,6 @@ mod tests {
     async fn client_encodes_current_service_lookup_query_values() {
         let temp_dir = short_socket_tempdir();
         let control_data_dir = temp_dir.path().join("control");
-        let manifest_state_root = control_data_dir
-            .join("service-sandboxes")
-            .join("container")
-            .join("state");
         let socket_path = temp_dir.path().join("nimbus.sock");
         let listener = bind_direct_listener(&socket_path).expect("listener should bind");
         let mut backend_config = ContainerSandboxBackendConfig::under_root(
@@ -943,22 +947,21 @@ mod tests {
         let _ = wait_for_health(&client);
 
         let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
-        let sandbox_id = SandboxId::new("db-special-01aaa");
         let service_name = "db & cache=1/path";
-        write_container_manifest(
-            manifest_state_root.as_path(),
-            sandbox_id.as_str(),
-            tenant_id.as_str(),
-            service_name,
-            SandboxStatus::Ready,
-        );
+        let started = client
+            .start_service_sandbox_from_image(image_spec(
+                &tenant_id,
+                service_name,
+                "docker://busybox:latest",
+            ))
+            .expect("fixture sandbox should start through the machine API");
 
         let current = client
             .inspect_current_service_sandbox(&tenant_id, service_name)
             .expect("encoded current sandbox lookup should succeed")
             .details
             .expect("encoded current sandbox should resolve");
-        assert_eq!(current.summary.sandbox_id, sandbox_id);
+        assert_eq!(current.summary.sandbox_id, started.id);
         assert_eq!(current.summary.service_name, service_name);
 
         let _ = shutdown_tx.send(());
@@ -1451,132 +1454,6 @@ mod tests {
             .prefix("nimbus-mac-")
             .tempdir_in("/tmp")
             .expect("short temp dir should exist")
-    }
-
-    fn write_container_manifest(
-        state_root: &Path,
-        sandbox_id: &str,
-        tenant_id: &str,
-        service_name: &str,
-        status: SandboxStatus,
-    ) -> std::path::PathBuf {
-        let sandbox_state_root = state_root
-            .join("tenants")
-            .join(tenant_id)
-            .join("sandboxes")
-            .join(sandbox_id)
-            .join("state");
-        let container_dir = sandbox_state_root.join("containers").join(sandbox_id);
-        let exit_dir = state_root.join("exits");
-        let persist_dir = state_root.join("persist").join(sandbox_id);
-        let bundle_dir = state_root.join("bundles").join(sandbox_id);
-        let network_root = state_root.join("networks");
-        let run_root = network_root.join("run");
-        let netns_root = network_root.join("netns");
-        let container_network_dir = network_root.join("containers").join(sandbox_id);
-        fs::create_dir_all(&container_dir).expect("container manifest directory should exist");
-        fs::create_dir_all(&exit_dir).expect("exit directory should exist");
-        fs::create_dir_all(&persist_dir).expect("persist directory should exist");
-        fs::create_dir_all(&bundle_dir).expect("bundle directory should exist");
-        fs::create_dir_all(&run_root).expect("network run directory should exist");
-        fs::create_dir_all(&netns_root).expect("network netns directory should exist");
-        fs::create_dir_all(&container_network_dir)
-            .expect("container network directory should exist");
-        let handle = SandboxHandle::new(
-            nimbus::TenantId::new(tenant_id).expect("tenant id should parse"),
-            SandboxId::new(sandbox_id),
-            service_name,
-            SandboxBackendKind::Container,
-            status,
-            vec![PublishedEndpoint::new(
-                "http",
-                EndpointProtocol::Tcp,
-                SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 18080),
-            )],
-        );
-        let manifest = serde_json::json!({
-            "handle": handle,
-            "spec": {
-                "tenant_id": tenant_id,
-                "owner": {
-                    "kind": "service",
-                    "name": service_name
-                },
-                "backend": "container",
-                "root": {
-                    "kind": "rootfs",
-                    "rootfs": "/tmp/rootfs",
-                    "readonly": true
-                },
-                "process": {
-                    "args": ["/bin/server"],
-                    "env": ["PATH=/usr/bin"],
-                    "cwd": "/",
-                    "terminal": false
-                },
-                "resources": nimbus::SandboxResourceLimits::default(),
-                "lifecycle": {
-                    "restart_policy": "never"
-                },
-                "port_bindings": [SandboxPortBinding::tcp("http", 18080, 8080)]
-            },
-            "image_metadata": {},
-            "launch_artifact": null,
-            "bundle_layout": {
-                "bundle_dir": bundle_dir,
-                "config_path": bundle_dir.join("config.json")
-            },
-            "conmon_layout": {
-                "state_root": state_root,
-                "container_state_dir": container_dir,
-                "exit_dir": exit_dir,
-                "persist_dir": persist_dir,
-                "ctr_log": container_dir.join("ctr.log"),
-                "oci_log": container_dir.join("oci.log"),
-                "pidfile": container_dir.join("pidfile"),
-                "conmon_pidfile": container_dir.join("conmon.pid"),
-                "exit_status_file": exit_dir.join(sandbox_id),
-                "manifest_path": container_dir.join("manifest.json")
-            },
-            "network_layout": {
-                "network_root": network_root,
-                "run_root": run_root,
-                "netns_root": netns_root,
-                "container_network_dir": container_network_dir,
-                "netns_path": netns_root.join(sandbox_id),
-                "status_path": container_network_dir.join("status.json"),
-                "ipam_state_path": run_root.join("ipam-state.json"),
-                "ipam_lock_path": run_root.join("ipam.lock")
-            },
-            "conmon_launch": {
-                "create_command": {
-                    "program": "/bin/true",
-                    "args": []
-                },
-                "state_command": {
-                    "program": "/bin/true",
-                    "args": []
-                },
-                "start_command": {
-                    "program": "/bin/true",
-                    "args": []
-                },
-                "delete_command": {
-                    "program": "/bin/true",
-                    "args": []
-                }
-            },
-            "last_exit_code": null,
-            "start_mode": "plan_only",
-            "shutdown_requested": matches!(status, SandboxStatus::Stopped),
-            "status": status
-        });
-        fs::write(
-            container_dir.join("manifest.json"),
-            serde_json::to_vec_pretty(&manifest).expect("manifest should serialize"),
-        )
-        .expect("manifest should write");
-        container_dir
     }
 
     #[derive(Default)]

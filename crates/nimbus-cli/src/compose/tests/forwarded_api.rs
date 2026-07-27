@@ -440,16 +440,27 @@ services:
     }));
     let client = MachineApiClient::new(socket_path);
     wait_for_machine_api_health(&client);
-    let container_dir = write_container_machine_manifest(
-        &machine_control_data_dir
-            .join("service-sandboxes")
-            .join("container")
-            .join("state"),
-        "db-01aaa",
-        context.control_plane.local_tenant_id.as_str(),
-        "db",
-        SandboxStatus::Ready,
+    let fixture_spec = SandboxSpec::new(
+        context.control_plane.local_tenant_id.clone(),
+        SandboxOwnerSpec::service("db"),
+        SandboxBackendKind::Container,
+        SandboxRootSpec::oci_image_reference("docker://busybox:latest"),
+        SandboxProcessSpec::new(["sleep", "60"]),
     );
+    let fixture_handle = client
+        .start_service_sandbox_from_image(fixture_spec)
+        .expect("fixture sandbox should start through the machine API");
+    let container_dir = machine_control_data_dir
+        .join("service-sandboxes")
+        .join("container")
+        .join("state")
+        .join("tenants")
+        .join(context.control_plane.local_tenant_id.as_str())
+        .join("sandboxes")
+        .join(fixture_handle.id.as_str())
+        .join("state")
+        .join("containers")
+        .join(fixture_handle.id.as_str());
     fs::write(container_dir.join("ctr.log"), "guest log line\n")
         .expect("guest ctr.log should write");
     fs::write(container_dir.join("pidfile"), "2002\n").expect("pidfile should write");
@@ -545,7 +556,10 @@ services:
         "{rendered_down}"
     );
     assert!(
-        rendered_down.contains("db: stopped (sandbox db-01aaa, status stopped)"),
+        rendered_down.contains(&format!(
+            "db: stopped (sandbox {}, status stopped)",
+            fixture_handle.id
+        )),
         "{rendered_down}"
     );
 

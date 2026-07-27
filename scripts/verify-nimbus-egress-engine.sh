@@ -219,14 +219,15 @@ check_ee1_engine() {
     "nimbus-proxy has no nimbus-sandbox dependency (no crate cycle)"
 
   # Reachability lint, mirrored from outside the crate: within nimbus-proxy,
-  # only engine.rs (definition), lib.rs (export), and the cfg(test)-only
-  # src/tests/ subtree may name EgressEngine or WorkloadId. A plain
+  # only engine.rs (definition), lib.rs (export), the exact cfg(test)-only
+  # engine/tests.rs child, and the src/tests/ subtree may name EgressEngine or
+  # WorkloadId. A plain
   # "no Map<SandboxId,...>" grep is vacuous (nimbus-proxy has no SandboxId);
   # scanning for the engine's own key/type names is the non-vacuous form.
   local reach_violations
   reach_violations="$(grep -rlE 'EgressEngine|WorkloadId' crates/nimbus-proxy/src \
     --include='*.rs' 2>/dev/null \
-    | grep -vE '^crates/nimbus-proxy/src/(engine|lib)\.rs$|^crates/nimbus-proxy/src/tests/' || true)"
+    | grep -vE '^crates/nimbus-proxy/src/(engine|lib)\.rs$|^crates/nimbus-proxy/src/engine/tests\.rs$|^crates/nimbus-proxy/src/tests/' || true)"
   if [ -z "${reach_violations}" ]; then
     pass EE1 "workload map unreachable from request-path modules (reachability lint)"
   else

@@ -35,9 +35,9 @@ use std::sync::Arc;
 use nimbus_core::TenantId;
 use nimbus_core::net::Cidr;
 use nimbus_network::{
-    NetworkAttachmentId, NetworkLeaseEpoch, NetworkSegmentAllocator, NetworkSegmentCleanup,
-    NetworkSegmentFinalizeOutcome, NetworkSegmentGrowth, NetworkSegmentQuarantineOutcome,
-    NetworkSegmentReleaseOutcome,
+    NetworkAttachmentId, NetworkLeaseEpoch, NetworkReservationClaim, NetworkSegmentAllocator,
+    NetworkSegmentCleanup, NetworkSegmentFinalizeOutcome, NetworkSegmentGrowth,
+    NetworkSegmentQuarantineOutcome, NetworkSegmentReleaseOutcome,
 };
 
 use crate::error::{Result, SandboxError};
@@ -172,6 +172,76 @@ impl NetworkSegmentAllocator for ClusterSegmentAllocator {
         }
     }
 
+    fn reserve_attachment_for_coordinator(
+        &self,
+        tenant: &TenantId,
+        attachment_id: &NetworkAttachmentId,
+        reservation_claim: &NetworkReservationClaim,
+    ) -> Result<()> {
+        self.live_inner()?.reserve_attachment_for_coordinator(
+            tenant,
+            attachment_id,
+            reservation_claim,
+        )
+    }
+
+    fn bind_reserved_attachment_to_segment(
+        &self,
+        tenant: &TenantId,
+        attachment_id: &NetworkAttachmentId,
+        segment_id: &nimbus_network::NetworkSegmentId,
+        reservation_claim: &NetworkReservationClaim,
+    ) -> Result<OciSegmentRealization> {
+        self.live_inner()?.bind_reserved_attachment_to_segment(
+            tenant,
+            attachment_id,
+            segment_id,
+            reservation_claim,
+        )
+    }
+
+    fn adopt_reserved_attachment(
+        &self,
+        tenant: &TenantId,
+        attachment_id: &NetworkAttachmentId,
+        reservation_claim: &NetworkReservationClaim,
+    ) -> Result<OciSegmentRealization> {
+        self.live_inner()?
+            .adopt_reserved_attachment(tenant, attachment_id, reservation_claim)
+    }
+
+    fn release_reserved_attachment_without_effect(
+        &self,
+        tenant: &TenantId,
+        attachment_id: &NetworkAttachmentId,
+        reservation_claim: &NetworkReservationClaim,
+    ) -> Result<NetworkSegmentReleaseOutcome<OciSegmentRealization>> {
+        match self.cleanup_inner()? {
+            Some(cleanup) => cleanup.release_reserved_attachment_without_effect(
+                tenant,
+                attachment_id,
+                reservation_claim,
+            ),
+            None => Ok(NetworkSegmentReleaseOutcome::AlreadyReleased),
+        }
+    }
+
+    fn finalize_reserved_attachment_without_effect(
+        &self,
+        tenant: &TenantId,
+        attachment_id: &NetworkAttachmentId,
+        reservation_claim: &NetworkReservationClaim,
+    ) -> Result<NetworkSegmentReleaseOutcome<OciSegmentRealization>> {
+        match self.cleanup_inner()? {
+            Some(cleanup) => cleanup.finalize_reserved_attachment_without_effect(
+                tenant,
+                attachment_id,
+                reservation_claim,
+            ),
+            None => Ok(NetworkSegmentReleaseOutcome::AlreadyReleased),
+        }
+    }
+
     fn acquire(
         &self,
         tenant: &TenantId,
@@ -184,9 +254,10 @@ impl NetworkSegmentAllocator for ClusterSegmentAllocator {
         &self,
         tenant: &TenantId,
         attachment_id: &NetworkAttachmentId,
+        expected_adoption_receipt: Option<&NetworkReservationClaim>,
     ) -> Result<NetworkSegmentQuarantineOutcome> {
         match self.cleanup_inner()? {
-            Some(cleanup) => cleanup.quarantine(tenant, attachment_id),
+            Some(cleanup) => cleanup.quarantine(tenant, attachment_id, expected_adoption_receipt),
             None => Ok(NetworkSegmentQuarantineOutcome::AlreadyReleased),
         }
     }
@@ -195,9 +266,10 @@ impl NetworkSegmentAllocator for ClusterSegmentAllocator {
         &self,
         tenant: &TenantId,
         attachment_id: &NetworkAttachmentId,
+        expected_adoption_receipt: Option<&NetworkReservationClaim>,
     ) -> Result<NetworkSegmentReleaseOutcome<OciSegmentRealization>> {
         match self.cleanup_inner()? {
-            Some(cleanup) => cleanup.release(tenant, attachment_id),
+            Some(cleanup) => cleanup.release(tenant, attachment_id, expected_adoption_receipt),
             None => Ok(NetworkSegmentReleaseOutcome::AlreadyReleased),
         }
     }
@@ -273,7 +345,7 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::*;
-    use nimbus_network::LocalNetworkStateStore;
+    use nimbus_network::{LocalNetworkStateStore, NetworkProviderHandle, NetworkProviderId};
     use tempfile::tempdir;
 
     fn tenant(id: &str) -> TenantId {
@@ -282,6 +354,16 @@ mod tests {
 
     fn attachment(id: &str) -> NetworkAttachmentId {
         NetworkAttachmentId::for_workload_attachment(id, super::super::DEFAULT_ATTACHMENT_NAME)
+    }
+
+    fn reservation_claim(attempt: &str) -> NetworkReservationClaim {
+        let provider = NetworkProviderId::for_registration_key(
+            "nimbus-sandbox.network-launch-coordinator.test",
+        );
+        NetworkReservationClaim::new(
+            NetworkProviderHandle::new(provider, format!("attempt:{attempt}"))
+                .expect("claim fixture should validate"),
+        )
     }
 
     fn lease(super_net: &str, epoch: NetworkLeaseEpoch, expires_at_millis: u64) -> SuperNetLease {
@@ -515,7 +597,7 @@ mod tests {
 
         assert_eq!(
             allocator
-                .quarantine(&original_tenant, &original_attachment)
+                .quarantine(&original_tenant, &original_attachment, None)
                 .expect("expiry must retain durable quarantine authority"),
             NetworkSegmentQuarantineOutcome::CleanupPending
         );
@@ -555,7 +637,7 @@ mod tests {
         );
 
         let NetworkSegmentReleaseOutcome::CleanupPending(cleanup) = restarted
-            .release(&original_tenant, &original_attachment)
+            .release(&original_tenant, &original_attachment, None)
             .expect("confirmed detach must release the durable old hold")
         else {
             panic!("the last durable old hold must enter allocation cleanup");
@@ -581,13 +663,13 @@ mod tests {
         );
         assert_eq!(
             restarted
-                .quarantine(&original_tenant, &original_attachment)
+                .quarantine(&original_tenant, &original_attachment, None)
                 .expect("repeated quarantine must be idempotent"),
             NetworkSegmentQuarantineOutcome::AlreadyReleased
         );
         assert_eq!(
             restarted
-                .release(&original_tenant, &original_attachment)
+                .release(&original_tenant, &original_attachment, None)
                 .expect("repeated hold release must be idempotent"),
             NetworkSegmentReleaseOutcome::AlreadyReleased
         );
@@ -600,6 +682,56 @@ mod tests {
         assert!(
             no_lease_create_error.to_string().contains("not committed"),
             "new creation must remain fenced without a committed lease: {no_lease_create_error}"
+        );
+    }
+
+    #[test]
+    fn expired_lease_fences_claim_adoption_but_retains_exact_compensation() {
+        let dir = tempdir().expect("state root");
+        let provider = Arc::new(MutableClockLeaseProvider {
+            lease: Mutex::new(Some(lease(
+                "10.30.0.0/16",
+                NetworkLeaseEpoch::new(11),
+                5_000,
+            ))),
+            now: AtomicU64::new(0),
+        });
+        let allocator = ClusterSegmentAllocator::new(dir.path(), 24, provider.clone());
+        let tenant = tenant("tenant-claimed-expiry");
+        let attachment = attachment("sandbox-claimed-expiry");
+        let claim = reservation_claim("cluster-expiry");
+        allocator
+            .reserve_attachment_for_coordinator(&tenant, &attachment, &claim)
+            .expect("live lease should permit claimed reservation");
+
+        provider.now.store(5_000, Ordering::SeqCst);
+        let adoption_error = allocator
+            .adopt_reserved_attachment(&tenant, &attachment, &claim)
+            .expect_err("expired create authority must fence hold adoption");
+        assert!(
+            adoption_error.to_string().contains("expired"),
+            "adoption must fail at the live-lease boundary: {adoption_error}"
+        );
+
+        assert_eq!(
+            allocator
+                .release_reserved_attachment_without_effect(&tenant, &attachment, &claim)
+                .expect("durable exact compensation must fence IPAM through lease expiry"),
+            NetworkSegmentReleaseOutcome::AttachmentCleanupPending
+        );
+        let cleanup = match allocator
+            .finalize_reserved_attachment_without_effect(&tenant, &attachment, &claim)
+            .expect("durable IPAM confirmation must survive lease expiry")
+        {
+            NetworkSegmentReleaseOutcome::CleanupPending(cleanup) => cleanup,
+            outcome => panic!("last claimed finalization should return cleanup, got {outcome:?}"),
+        };
+        assert_eq!(cleanup.lease_epoch(), NetworkLeaseEpoch::new(11));
+        assert_eq!(
+            allocator
+                .finalize_release(&cleanup)
+                .expect("durable exact cleanup should finalize"),
+            NetworkSegmentFinalizeOutcome::Released
         );
     }
 }

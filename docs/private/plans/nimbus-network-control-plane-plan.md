@@ -1,6 +1,6 @@
 # Nimbus Network Control Plane Plan
 
-Status: `active; NNC3.3 complete; NNC3.4 sandbox/PEP/machine port migration in progress`
+Status: `active; NNC3.4 complete; NNC3.5 server listener migration in progress`
 
 Owner: this plan is the sole implementation control plane for the
 transport-free `nimbus-network` crate and the connectivity-resource lifecycle
@@ -36,20 +36,20 @@ ledger transition.
 
 | Field | Current value |
 | --- | --- |
-| Plan status | `active; NNC3.3 complete; NNC3.4 sandbox/PEP/machine port migration in progress` |
+| Plan status | `active; NNC3.4 complete; NNC3.5 server listener migration in progress` |
 | Current band | `NNC3 — cross-process host-global PortLease` |
-| Current item | `NNC3.4 — migrate sandbox endpoint, PEP listener reservation, and OCI MachinePortProxy` |
-| Last completed item | `NNC3.3 — provider bind/adoption and pre-bound socket adoption` |
-| Next action | Reconcile the NNC0.1 bind census and NNC0.2 sandbox/PEP collision baseline with the current sandbox endpoint, PEP listener, and OCI `MachinePortProxy` call graphs; write the shared-lease fail-before before migrating those three production authorities. |
+| Current item | `NNC3.5 — migrate server main and sibling wire listeners` |
+| Last completed item | `NNC3.4 — sandbox endpoint, PEP listener reservation, and OCI MachinePortProxy migration` |
+| Next action | Begin NNC3.5 with a read-only census and call graph for server main and sibling wire listeners, preserve their byte-level protocol/guard behavior as fail-before fixtures, then migrate only those listeners to shared lease/adoption authority. Do not pull standalone `nimbus-kv`, machine SSH/forwarding, CLI dev/start decisions, producer-wide restart convergence, or old-authority deletion across their NNC3.6-NNC3.9 dependency gates. Fresh-process recovery for container creator `RuntimeObserved`, krun creator `Pending`, attachment `Adopting`/adopted-before-spawn, runner `EffectsStarted`, PEP/machine bind claims, and Netavark `Provisioning`/`Deleting`, plus inspect-triggered restart convergence, remain explicit NNC3.8/NNC5/NNC6 proof obligations; NNC3.4 proves exact retention/fencing, not authenticated fresh-process reconciliation. |
 | Owner branch | `codex/nimbus-network-architecture-audit` |
 | Owner worktree | `/Users/jack/src/github.com/nimbus/nimbus-network-architecture-audit` |
 | Audit base | Original architecture audit: `b69007a78a220847812370d9418049f1253f0384`. |
 | Execution base | Rebased without conflicts onto `origin/main` at `9c2d4f150c60f43dfdc0a3f1ec6550942e26ab8f` after NNC0.0. |
-| Last checkpoint commit | `deb1df57f1e51c155bcee24ef8ce0aaeb30e70bc` — NNC3.2 completion and NNC3.3 activation checkpoint. |
-| Audit dirty state | NNC3.3 owns the provider bind/adoption evidence contract, real external-binder and pre-bound socket tests, this NNC3.4 activation transition, and `docs/private/plans/proof/nimbus-network-control-plane/nnc3.3-provider-bind-adoption.md`. The owner worktree was clean at `deb1df57f1e51c155bcee24ef8ce0aaeb30e70bc` before NNC3.3; no unrelated paths are dirty. |
+| Last checkpoint commit | `4c63c5ba963b1b310b8efdd692a6f2ea019e7df3` — NNC3.3 completion and NNC3.4 activation; NNC3.4 completion is the current commit containing this recovery header, whose hash cannot self-reference its own tree. |
+| Audit dirty state | The current commit is the reviewed 117-path NNC3.4 completion checkpoint. It contains only the owned sandbox endpoint, PEP, OCI MachinePortProxy, shared lease, focused CLI fixture, verifier, routing index, plan, and proof paths accumulated from the clean NNC3.3 checkpoint; no unrelated path was admitted. On resume, require a clean owner worktree before beginning NNC3.5 and inspect any difference instead of resetting it. Historical frozen mirrors and fail-before scratches remain evidence only and are not implementation worktrees. |
 | Execution mode | Autonomous implementation goal active; commit each completed item with its ledger/evidence checkpoint; no push or PR without separate authority. Per owner direction on 2026-07-24, all future structured autoreviews use `gpt-5.6-sol` at `xhigh` reasoning with fast mode explicitly enabled; do not use Claude Opus 4.8. |
-| Last verification | NNC3.3 records concrete bound endpoints, truthful bind attempts including provider-assigned port zero, binding provenance, redacted provider handles, and durable failed-bind evidence without importing socket effects. A separate OS process wins the exact loopback port, the real competing bind reports `AddrInUse`, failure survives restart, and activation remains impossible. A real pre-bound listener adopts exact lease/address/provenance, survives authority restart and withdrawal, keeps serving under external ownership, and remains fenced against replacement. Network tests are 86/86; binding-process parents are 3/0/1 and existing lease-process parents are 3/0/1. Format, strict Clippy, rustdoc, exact core-only metadata/effect scans, verifier self-test 16/16 and aggregate 14/1 only at expected later NNCV005, docs 108 pages, and site 17/17 gates pass. The first Sol/xhigh/fast review found three accepted P2 defects; all were fixed, and the complete 109,628-byte rerun is clean at `patch is correct (0.88)`. Exact evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc3.3-provider-bind-adoption.md`. |
-| Blocking decision | None. NNC3.4 may migrate only the named sandbox endpoint, PEP listener, and OCI `MachinePortProxy` authorities; server, KV, CLI, machine SSH, cleanup-pending, and old-authority deletion remain owned by their later NNC3 items. |
+| Last verification | The final structured review ran actual GPT-5.6 Sol/xhigh/fast with no fallback against exact scanner-safe Pass-68 commit `b8b42ff922304f72a54d88bb7d9537188ab533ed`; `/tmp/nnc34-pass68-final-review.json` records fourteen findings. Five direct NNC3.4 defects were reproduced and corrected: predecision egress reload fencing, runtime-state identity authentication, fallible exit-receipt inspection, trust-anchor removal fencing, and placement-claim authentication before IPAM. Five fresh-process recovery findings remain safely fenced and route to NNC3.8/NNC5; the test-only loopback-port and explicitly justified IPAM-owner findings were rejected; stale evidence and closeout findings were satisfied procedurally. Per owner direction, this is the final review campaign: the accepted corrections are closed by five expected-red proofs, focused regressions, full sandbox 627/627 with 9 expected skips, affected crates 968/968 with 14 expected skips, and the exact written NNC3.4 criterion matrix 3/3. The frozen CLI candidate remains 856/856 with 2 expected skips; post-review corrections touch only sandbox-owned paths. Affected all-target/all-feature check, strict no-dependency Clippy, warning-denied rustdoc, format, and diff checks pass; warnings are unchanged vendored Brotli diagnostics. Verifier Bash/ShellCheck and 16/16 fail-closed self-tests pass; live shape is the expected 14/1 solely at later-owned NNCV005. Docs pass at 108 link-clean pages and 17/17 site conditions. Exact evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc3.4-sandbox-pep-machine-port-migration.md`. |
+| Blocking decision | No blocker. NNC3.4 is complete and NNC3.5 is active. Server main and sibling wire listeners are the only newly executable migration scope; KV, machine SSH/forwarding, CLI dev/start decisions, fresh-process cleanup-pending convergence, and old-authority deletion remain owned by their later NNC3 items. |
 
 Recovery protocol:
 
@@ -494,6 +494,14 @@ and digest is idempotent; the same generation with different desired content
 fails closed. This prevents equal-generation divergence and ABA-like stale
 callbacks.
 
+During NNC3.4, container and krun generation/epoch values remain fixed at
+`1`, but every public start mints a fresh ULID-backed sandbox ID and that
+tenant-qualified ID is the workload-incarnation fence. Reusing the same
+internal sandbox ID means the same incarnation, whose terminal resurrection is
+rejected; it is not an authority to create a second lifetime. NNC6 replaces
+this transitional source with durable saga generation/CAS. An IP address,
+port, PID, or provider handle never substitutes for incarnation identity.
+
 ### Portable segment versus provider realization
 
 ```text
@@ -549,27 +557,289 @@ required semantics are detectable and unsupported, startup fails closed before
 reading or allocating resources; an operator override cannot silently weaken
 the contract.
 
-Modularity exception: `nimbus-network/src/state_store.rs` and the sandbox
-allocator's `oci/network/segment.rs` are currently in the repository's
-1,500–1,999-line explicit-justification band. Each remains a deep,
-concept-owned module rather than a composition root: the former keeps the
-single lock/envelope/durable-replacement/filesystem contract beside its
-private crash-cut tests; the latter keeps one segment-allocation state machine
-beside the invariant, fencing, restart, and contention tests that inspect its
-private authority. Provider effects, port allocation, orchestration, and
-unrelated helpers may not extend either file. Before either reaches 2,000
-lines, its concept-local test module must move intact to a child test file;
-production logic must not be split mechanically across generic helpers.
+Modularity exception: `nimbus-network/src/state_store.rs` remains in the
+repository's 1,500–1,999-line explicit-justification band at 1,954 lines. It is a deep,
+concept-owned module rather than a composition root: the single
+lock/envelope/durable-replacement/filesystem contract stays beside its private
+crash-cut tests. Provider effects, allocation policy, orchestration, and
+unrelated helpers may not extend it. No further inline growth is permitted:
+the next concept-local test change must move the intact test module to a child
+before this owner reaches 2,000 lines.
 
-NNC3.3 also places `nimbus-network/src/port_lease.rs` at 1,610 lines. It remains
-one concept-owned lifecycle authority: reserve/adopt/fail/activate/withdraw/
-release transitions, store transaction integration, public lifecycle errors,
-and private corruption/transition tests. Portable request/overlap and concrete
-bind-evidence vocabulary already live in the concept-owned `request.rs` and
-`binding.rs` children; no socket/provider effect or unrelated listener logic
-may enter the parent. Before the parent reaches 2,000 lines, move its private
-test module intact to `port_lease/tests.rs` rather than splitting lifecycle
-logic across generic helpers.
+NNC3.4 reduced the sandbox allocator's `oci/network/segment.rs` production
+owner to 1,268 lines. Its complete private matrix moved intact to the
+1,194-line `segment/tests.rs` child, while attempt-scoped attachment
+reservation, adoption, exact compensation, and exact finalization retry form
+the 891-line
+`segment/reservation.rs` concept owner. The parent still owns the one durable
+segment state machine and invariant validation; the children do not create a
+second store, lock, or allocation authority.
+
+NNC3.4 keeps `nimbus-network/src/port_lease.rs` as one concept-owned lifecycle
+authority: claim/reserve/adopt/fail/activate/withdraw/release transitions,
+store transaction integration, and atomic caller-supplied tenant publication
+limits. The production parent is 1,918 lines, deliberately in the
+1,500–1,999 explicit-justification band: quota must share the same store
+transaction as reservation. Named transition vocabulary and operation-local
+diagnostics live in the 138-line concept-owned
+`port_lease/operation.rs` child. The complete confirmed-stop receipt state
+machine moved intact to the 214-line `port_lease/rebind.rs` child when the
+parent crossed 2,000 lines; it still invokes the parent's one store
+transaction and does not own a second authority. The private
+corruption/transition matrix remains in the 1,977-line
+`port_lease/tests.rs` owner; exact durable bind-claim requirements and atomic
+tenant-publication quota behavior moved intact to 40- and 151-line
+concept-owned children. Exact adopted-attempt activation and atomic Active
+batch replay live in the 137-line `port_lease/tests/adopted_replay.rs` child.
+Portable
+request/overlap and concrete bind-evidence vocabulary remain in the
+concept-owned `request.rs` and `binding.rs` children. No child owns a second
+store or transition authority, and no socket/provider effect, policy decision,
+or unrelated listener logic may enter the parent. Further growth must extract
+an intact concept-owned lifecycle sub-state before crossing 2,000 lines, never
+mechanically split the authority across generic helpers.
+
+NNC3.4 keeps the production
+`nimbus-sandbox/src/backends/oci/port_manager.rs` composition root at 1,434
+lines after adding exact launch/restart-batch lifecycle classification plus one
+claim-before-Netavark/atomic-adoption adapter seam. The 349-line
+`oci/port_manager/batch_state.rs` child owns provider-batch classification and
+restart-retained release without creating another store or effect authority.
+Its intact private behavioral matrix is 1,875 lines and remains in the concept-owned
+`oci/port_manager/tests.rs` child. The test child is deliberately in the
+1,500–1,999 explicit-justification band: its exact initial/restart,
+Netavark/MachinePortProxy, quota, cross-tenant, and mixed terminal-batch cases
+all inspect the same private adapter state machine. It may receive no
+production logic or generic fixtures; before 2,000 lines, the next coherent
+provider-specific group must move intact to a concept-owned child. The
+MachinePortProxy batch group already moved intact to the 342-line
+`oci/port_manager/tests/machine_cleanup.rs` child after adding exact
+terminal-provider and uniform-coordinator proofs; the 138-line
+`oci/port_manager/tests/batch_classification.rs` child owns one-snapshot
+reservation-coordinator, exact terminal, and no-effect batch classification. The
+production parent remains below the threshold and is one focused adapter for
+translating sandbox publication and PEP intent into atomic network lease
+batches, authenticating returned authority, and passing an upper-layer quota
+decision into the same reservation transaction. Pass 36 added one shared
+provider-batch preflight rather than duplicating Netavark and MachinePortProxy
+claim interpretation. Provider effects, quota policy choice, and workload
+orchestration remain in their existing owners.
+
+NNC3.4 keeps `nimbus-sandbox/src/backends/oci/network/ipam.rs` at 1,743 lines
+as a deliberate deep-module exception. Its first 1,249 lines own one
+tenant-scoped IPAM allocation plus Netavark provider-operation state machine,
+including the single store transaction boundary, exact
+generation/attempt-capability checks, and release/replacement exclusion while
+an effect is ambiguous. Its remaining private tests exercise that same state
+machine and introduce no second store, provider runner, or allocation
+authority. Provider command execution remains in the 443-line
+`network/netavark.rs`; the 369-line `network/netavark/tests.rs` child owns the
+cross-thread effect-boundary and projection-only retry proofs. Unrelated
+allocation policy or provider effects may not extend `ipam.rs`; before 2,000
+lines, its intact private test module must move to a concept-owned
+`ipam/tests.rs` child.
+
+NNC3.4 keeps
+`nimbus-sandbox/src/backends/container/runtime.rs` as a 1,460-line production
+composition root. Required manifest schema, exact terminal-network-finality
+predicate, and authenticated existing-workload publication remain in the 374-line
+`runtime/manifest.rs` concept child; its
+370-line `manifest/publication.rs` child owns the single fixed-stage,
+per-sandbox OS-lock, file-sync/rename/parent-sync, exact legacy-stage
+reconciliation, trusted ancestor creation/sync, and bounded ambiguity
+protocol. The 95-line
+`runtime/provider_context.rs` child authenticates canonical state-root,
+tenant-qualified layout, and launch-time provider context before existing
+effects; it owns neither a store nor an effect. The 1,963-line
+`runtime/runner.rs` is a deliberate deep-module exception: it
+retains one execution-handoff state machine, its allowlisted immutable
+execution-identity projection, and bounded
+ownership/publication/provider-cleanup convergence with primary-error
+preservation.
+Separating those mutually authenticating phases would create a second
+lifecycle interpretation surface; no provider implementation, unrelated
+orchestration, or generic fixture may enter it. No further inline growth is
+permitted: before any additional runner change, one complete identity or
+cleanup phase and its proofs must move intact to a concept-owned child. Its
+96-line test-only `runtime/runner/test_probe.rs` child observes the real
+lifecycle-lock contention branch without adding production coordination.
+The shared 90-line `runtime/effect_fence.rs` child bounds pre-provider durable
+phase convergence at four attempts and diagnoses the exact persisted phase.
+The 220-line `runtime/direct_execution.rs` and runner both consume that helper;
+neither owns a second phase store or provider effect.
+
+The 1,010-line `backends/conmon/creator.rs` deep module owns the shared,
+provider-free creator-process state machine: bounded process-group
+cancellation, exact conmon PID-receipt validation, runtime-observed reap, and
+fail-closed escaped-process ambiguity. Transient cancellation-acknowledgement
+loss retains the dead receipt until creator containment is confirmed so a
+bounded retry preserves recoverability. The 151-line `runtime/creator.rs` is
+the container manifest adapter. A definitely unspawned attempt whose `Pending`
+publication fails must durably publish `Quiesced`, or confirm that exact
+post-rename result by readback, before compensation proceeds; its three
+ambiguity proofs live in the 167-line
+`runtime/tests/creator_persistence.rs` concept child. Container and krun refuse
+provider/network cleanup for a truly pending spawned attempt until the shared
+owner proves `Quiesced` or `RuntimeObserved`; fresh-process recovery of that
+attempt identity remains an explicit NNC3.8 consumer, and neither backend
+duplicates process authority.
+
+The 1,937-line `runtime/launch_cleanup.rs` test matrix remains a deliberate
+1,500–1,999 exception: its owner-death, cancellation, Netavark ambiguity,
+direct terminal-persistence, post-wait/explicit-stop serialization, staging
+fault, and ordered-compensation cases inspect one private lifecycle state
+machine. It may receive no production logic or generic fixtures. The intact
+runner finalization/effect-fence/reload-serialization group lives in the 1,343-line
+`runtime/tests/runner_reliability.rs` concept child. Terminal callback,
+shutdown-monotonicity, Failed cleanup, and stopped-outcome preservation proofs
+live in the 356-line `runtime/tests/status_callbacks.rs` child. Provider cleanup,
+including the creator-pending release fence, restart-retained machine receipt
+convergence, exact persisted-provider drift, substituted-context fail-before
+behavior, fresh/restart partial-start cleanup, and bounded blocking forwarder
+observation lives in the 1,429-line
+`runtime/tests/provider_cleanup.rs` child plus its 271-line
+`provider_cleanup/startup_fencing.rs` and 250-line
+`provider_cleanup/forwarder_observer.rs` concept children. The 577-line
+`runtime/tests/manifest_durability.rs` child owns the one fixed stage path,
+explicit rejection of retired unique-stage compatibility grammar,
+startup/next-write crash convergence, complete first-publication ancestor
+sync, read-side-effect, lock-contention, and pre-materialization/reload
+readiness proofs. Provider-backed cleanup remains in
+the 362-line `runtime/execution_cleanup.rs` owner. No child introduces another
+manifest path, lifecycle decision authority, or persistence loop.
+
+NNC3.4 keeps the already-separated krun behavior matrix at
+`nimbus-sandbox/src/backends/krun/vm/tests.rs` at 1,974 lines. The restart,
+PlanOnly, and startup-reconciliation authority proofs keep that coherent
+matrix below the hard threshold. This is an explicit test-band exception because
+the remaining cases inspect one private VM lifecycle state machine; it may
+receive no production logic or generic fixture. Its next line of growth must
+move one intact lifecycle group to a concept-owned child before editing.
+The first-publication durability proofs live in the 143-line
+`tests/manifest_durability.rs` child. The Ready-only
+desired/durable/observed endpoint projection proof lives in the
+91-line `tests/endpoint_projection.rs` child. The manifest wire-contract proofs live in the 70-line
+`tests/manifest_schema.rs` child. Provider-failure recovery and its
+effect-boundary crash cuts live in the 422-line
+`tests/provider_failure_recovery.rs` child. The launch-compensation proofs moved intact
+to the 1,397-line concept-owned
+`tests/launch_compensation.rs` child when the parent crossed the 2,000-line
+hard threshold. Its restart absence-before-network/provider-effect cases live
+in the 222-line `tests/launch_compensation/restart_fencing.rs` child so the
+parent gains only one concept-owned declaration. The two natural-exit
+final-convergence proofs moved intact to
+the 201-line `tests/natural_exit.rs` child when Pass-30 corrections crossed the
+threshold again. Explicit-stop convergence and lifecycle-lock serialization
+live in 519- and 353-line concept-owned children. Production planning,
+lifecycle, state, and start logic remain in their respective ownership files,
+and shared fixtures remain in `tests/support.rs`. The restart teardown proof
+remains in the coherent VM lifecycle behavior matrix; no production
+switchboard or reusable helper may be added to the test parent. The 217-line
+`tests/startup_fencing.rs` child proves retained startup failure still fences
+relaunch while exact stop and non-restarting terminal cleanup remain available;
+restart-eligible inspection is byte-for-byte read-only.
+`krun/vm/lifecycle.rs` is 1,761 lines, a deliberate 1,500–1,999 exception. It
+is the one krun provider-lifecycle state machine: runtime-stop observation,
+Netavark detach, exact restart-claim compensation, namespace removal,
+attachment finalization, acknowledged terminal manifest publication, and
+separately retryable terminal IPAM retirement must preserve one
+ordered error accumulator and one `detach_confirmed` fence. Splitting twenty
+lines mechanically would obscure that ordering. Its provider-failure
+sub-state durably checkpoints exact runtime absence, network release, artifact
+release, and terminal publication so `stop_sync` can resume without a PID;
+keeping those transitions beside the ordinary teardown predicates prevents a
+second effect authority. New planning, provider
+implementation, reusable fixtures, or unrelated status logic may not enter
+it; further lifecycle growth must extract one complete phase with its
+invariant-preserving inputs and tests. Pass 57 moved first-manifest
+serialization, no-replace publication, ambiguity readback, and full trusted
+ancestor durability into the 130-line `vm/manifest_publication.rs` concept
+owner. Container and krun publication share only the 188-line
+`oci/durable_directory.rs` validation/create/fsync algorithm; neither
+duplicates provider, manifest, or lifecycle authority. The PEP
+migration did not take a similar production exception: `oci/egress.rs` is a
+1,464-line production module after moving its private behavior matrix to the
+1,938-line concept-owned `oci/egress/tests.rs`, its
+intact registration-failure lifecycle group to the 248-line
+`oci/egress/tests/registration_failure.rs` child, and its retryable
+stop/restart state machine to the 432-line `oci/egress/cleanup.rs` concept
+owner. The 786-line `oci/egress/tests/post_activation_cleanup.rs` child owns
+the exact post-activation acknowledgement-loss, anchor-failure, restart, and
+fresh-registry fencing proofs. The test parent is explicitly in the
+1,500–1,999 band because the restart/fresh-launch capability, claim,
+trust-anchor exclusivity, and stopping-tombstone proofs inspect one private
+registry lifecycle. Registration commit/compensation proofs moved as one
+coherent group before the parent crossed 2,000 lines; future growth must follow
+the same concept-owned rule. The machine-port listener effect is now a focused
+1,038-line `oci/network/proxy.rs` production module whose bounded connection set
+owns admission,
+completed-worker reaping, checked polling setup, sticky provider-stop failure,
+unwind-safe tracked-worker drain, provider-error classification,
+connection-local availability, and lossless retryable stream forwarding. Its
+intact 1,456-line private provider matrix moved to the concept-owned
+`oci/network/proxy/tests.rs` child when the combined file crossed the hard
+threshold. No provider, allocation, policy, or orchestration authority moved or
+was duplicated. The container runtime composition root is 1,460 lines after
+its complete machine-listener registration, activation, publication,
+withdrawal, and stop state machine moved to the 1,067-line
+`runtime/machine_ports.rs` concept owner. The attempt-scoped network launch
+saga, pre-effect/artifact cleanup, and provider-backed ordered teardown are
+separate 151-, 162-, and 362-line concept children. Runner execution ownership
+lives in the 1,963-line `runtime/runner.rs` concept owner, where a bounded
+advisory OS lock, fingerprinted durable Execute/Cancel decision, owner-loss
+replay, bounded phase publication, and PlanOnly status/inspect fencing form one
+handoff state machine. Cleanup and exclusive-ownership proofs live across the
+explicitly justified 1,937-line `runtime/launch_cleanup.rs` child and the
+1,343-line concept-owned runner reliability child described above. The
+direct-execution, shared effect-fence, creator-handoff, and test-only lock-probe
+children keep new coordination and proof logic out of the composition root.
+
+`nimbus-proxy/src/engine.rs` is a 1,505-line deliberate lifecycle-owner
+exception. Its process-local preparation, running, stopping, quarantine, and
+retirement states share one exact per-workload registry authority; commit
+failure must remain beside that state machine because explicit and implicit
+retention consume the same unforgeable preparation slot. Private behavior
+proofs already live in the 1,427-line `engine/tests.rs` child. No forwarding,
+policy, socket implementation, or sandbox cleanup enters this owner; before
+further growth, one complete fairness or wait-budget concept must move intact
+to a named child without duplicating registry authority.
+
+The test-only container lifecycle matrix is 1,945 lines and remains
+deliberately in the 1,500–1,999 explicit-justification band: its private
+restart/final teardown ordering, identity-substitution rejection,
+ambiguous-unexpose retry, activation-acknowledgement-loss, and tombstone
+concurrency proofs form one coherent behavior suite. It may not receive
+production logic or generic fixtures. Its provider-cleanup group is already a
+concept-owned child; explicit-absence projection behavior lives in the 71-line
+`runtime/tests/absent_runtime_projection.rs` child, leaving only its module
+declaration in the parent. Future growth must move another intact lifecycle
+group before the parent reaches 2,000 lines.
+
+The test-only container planning matrix is a 1,620-line concept-owned child.
+Its claim-first PlanOnly/Execute, allocator substitution, atomic port
+reservation, compensation, and manifest-shape proofs all exercise the private
+planning seam and introduce no production authority or generic fixture. It may
+receive no production logic; the next coherent proof group must move intact to
+a named child before this matrix reaches 2,000 lines.
+
+`nimbus-cli/src/machine/client.rs` is 1,528 lines and remains a deliberate
+protocol-adapter exception for this item. Its production half owns one Unix
+socket request/response codec and typed machine API client; its private tests
+exercise that same wire contract. NNC3.4 removed hand-authored private
+container manifests from those tests and now seeds through the public machine
+API, but added no port or lifecycle authority. The next test growth must move
+the intact test module to a concept-owned child so the adapter does not become
+a switchboard.
+
+The NNC3.4 proof artifact is also an explicit documentation-band exception:
+`docs/private/plans/proof/nimbus-network-control-plane/nnc3.4-sandbox-pep-machine-port-migration.md`
+is the item-scoped, compaction-safe chronology for fail-before/after evidence,
+exact candidate hashes, structured-review dispositions, verification counts,
+and recovery checkpoints. Splitting that chronology before the item commit
+would create competing status authority and weaken exact recovery. It may
+receive only NNC3.4 evidence and closeout corrections, must remain below 2,000
+lines, and is frozen when NNC3.4 commits. Later items use their own proof
+artifacts.
 
 ### Durable workload/network saga handoff
 
@@ -901,7 +1171,7 @@ Dependencies: NNC1, NNC2 durable-store contract.
 | NNC3.7 | Migrate machine SSH/forwarding listeners. | Probe-then-drop allocator is deleted and machine/server conflict proof passes. |
 | NNC3.7a | Migrate CLI dev conventional/ephemeral resolver and start-adapter availability decisions. | No production CLI probe/drop result becomes desired port authority; conventional conflict and ephemeral adoption use the shared lease/provider-bind contract without behavior drift. |
 | NNC3.7b | Close the source-derived bind/allocation census. | Every baseline production site is migrated or explicitly adopted; test-only and command-local ephemeral exemptions are narrow, named, and mechanically classified. |
-| NNC3.8 | Prove restart and cleanup-pending semantics. | The NNC0 crash-cut harness proves active leases survive restart; ambiguous unbind prevents reuse; abandoned never-bound reservations follow one explicit fenced rule. |
+| NNC3.8 | Prove restart and cleanup-pending semantics after every NNC3 producer is migrated. | The NNC0 crash-cut harness proves active leases survive a genuinely fresh-process restart; lifetime generation locks and sandbox-owned effect receipts distinguish a live owner from owner death before provider cleanup; ambiguous unbind prevents reuse; machine-forwarder withdrawal persists an exact lease/binding plus provider-instance generation and accepts only typed `Withdrawn` or authenticated `ExactAlreadyAbsent` evidence—generic HTTP status, EOF, timeout, connection refusal, and text are `Ambiguous`; egress reload persists desired/attempt generation so provider acknowledgement before manifest persistence reconciles by exact inspection rather than rollback or inference; abandoned never-bound reservations follow one explicit fenced rule; pending creator attempts authenticate exact process birth/containment before `Quiesced` or `RuntimeObserved`; container runner `EffectsStarted` authenticates the exact handoff/effect receipts before promotion or cleanup; krun `Reserved`/`Adopting` observes the claim-fenced allocator outcome and releases or promotes idempotently; Netavark `Provisioning`/`Deleting` inspects exact provider-generation evidence before completing, compensating, or retrying; no provider terminal observation becomes `Stopped`/`Failed` before every retained launch authority is `Released`. |
 | NNC3.9 | Delete all old production port allocators and probe/drop decision paths. | Static verifier and source scan show one authority and reject every unclassified production TCP/UDP bind or availability probe; named test-only `127.0.0.1:0` fixtures remain allowed. |
 
 Band gate: every Nimbus-owned production listener on one node is either backed
@@ -1310,8 +1580,8 @@ checkpoint.
 | NNC3.1 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc3.1-atomic-port-lease-lifecycle.md`; exact-only reserve/adopt/activate/withdraw/release transitions share the NNC2 crash-safe store/lock, retain all non-terminal fences, reject stale/divergent requests and checksum-valid semantic corruption without mutation, and perform no provider effect. Thread and real-process contenders each race through activation but produce exactly one durable `Active` lease. Network 69/0/0 and process parent 1/0/1 pass; check/strict Clippy/rustdoc/format/diff, exact core-only dependency, verifier 16/16 self-test and 14/1 expected red pass. NNCV008 now resolves the Recovery Header checkpoint after catching and correcting a nonexistent full hash. |
 | NNC3.2 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc3.2-port-conflict-model.md`; portable TCP/UDP, realm, address/family, exposure, exact/range/provider-assigned types feed one atomic conflict authority; unknown host semantics fail closed; range selects one lowest-free slot; provider assignment fences only at atomic adoption. Generated proofs cover 2,304 ordered binding pairs plus 18 named matrix cases; network 79/0/0 and three process parents 3/0/1 pass; check/strict Clippy/rustdoc/format/diff, exact core-only dependency, verifier 16/16 self-test and 14/1 expected-red, docs gates, and clean Opus 4.8/max review at 0.8 pass. |
 | NNC3.3 | `done` | `docs/private/plans/proof/nimbus-network-control-plane/nnc3.3-provider-bind-adoption.md`; portable binding evidence names the exact bound endpoint and ownership provenance, while failed attempts truthfully preserve provider-assigned port zero and a redacted attempt handle. Selected-port/failure relationships fail closed even for checksum-valid range/provider-assigned corruption. A separate external binder chooses and retains the real port before the lease request, produces `AddrInUse` evidence that survives restart, and cannot activate; a real inherited listener adopts exact stable identity/address/provenance, remains externally owned and serving after withdrawal, and retains the host-port fence. Network 86/0/0, new binding parents 3/0/1, existing lease parents 3/0/1, strict Clippy/rustdoc/format/diff, exact core-only dependency/effect scans, verifier 16/16 self-test and 14/1 expected red, docs 108 pages/site 17/17, and clean final Sol/xhigh/fast review at 0.88 pass. |
-| NNC3.4 | `in_progress` | Owned paths: this plan/README activation transition only; record the exact sandbox/PEP/machine source and proof paths after loading their call graphs and before the first NNC3.4 source edit. Next: load the NNC0.1 production bind census, NNC0.2 sandbox/PEP collision proof, sandbox endpoint/PEP/OCI `MachinePortProxy` call graphs, and write the shared-lease fail-before before changing those three owners. Last green/checkpoint remains `deb1df57f1e51c155bcee24ef8ce0aaeb30e70bc` until the NNC3.3 completion commit. Blocker: none. |
-| NNC3.5 | `todo` | — |
+| NNC3.4 | `done` | Final evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc3.4-sandbox-pep-machine-port-migration.md`. The final actual-Sol/xhigh/fast review produced fourteen fully dispositioned findings; five direct defects have expected-red proof and corrected behavioral coverage, five recovery findings remain fenced under NNC3.8/NNC5, two findings are rejected by the explicit test-only/deep-owner contracts, and two procedural findings are satisfied. The named acceptance matrix passes 3/3; sandbox passes 627/627 with 9 expected skips; affected crates pass 968/968 with 14 expected skips; frozen CLI passes 856/856 with 2 expected skips. Check, strict Clippy, warning-denied rustdoc, format/diff, verifier 16/16 self-tests plus expected live 14/1 solely NNCV005, docs 108 pages, and site 17/17 pass. One reviewed 117-path item commit closes the migration; no push or PR. |
+| NNC3.5 | `in_progress` | Owned paths: none; this checkpoint activates read-only preparation only. Last green: NNC3.4 acceptance 3/3, sandbox 627/627, affected crates 968/968, frozen CLI 856/856, and all quality/static/docs gates. Next: inventory server main/sibling wire bind sites and preserve byte-level guard/protocol behavior as fail-before tests before changing listener authority. Blocker: none. |
 | NNC3.6 | `todo` | — |
 | NNC3.7 | `todo` | — |
 | NNC3.7a | `todo` | — |

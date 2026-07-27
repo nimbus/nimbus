@@ -3,8 +3,9 @@
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs;
-use std::io::Write;
+use std::io::{self, Write};
 use std::net::Ipv4Addr;
+use std::path::Path;
 
 use serde_json::Value;
 
@@ -19,13 +20,41 @@ use super::dto::{
 };
 use super::forwarding::OciMachinePortForwarderConfig;
 use super::ipam::{
-    allocate_container_ips, deallocate_container_ips, load_container_ips,
+    NetavarkSetupClaim, NetavarkTeardownPlan,
+    authenticate_container_network_generation_for_cleanup as authenticate_ipam_generation_for_cleanup,
+    begin_netavark_setup, begin_netavark_teardown, complete_netavark_setup,
+    complete_netavark_teardown, confirm_netavark_provider_detached, load_container_ips_for_segment,
     parse_ipv4_subnet_and_gateway,
 };
 use super::layout::{OciNetworkConfig, OciNetworkLayout};
 use super::{
     DEFAULT_CONTAINER_INTERFACE_NAME, NETAVARK_OPTION_ISOLATE, NETAVARK_OPTION_NO_DEFAULT_ROUTE,
 };
+
+#[cfg(test)]
+#[path = "netavark/tests.rs"]
+mod tests;
+
+/// Authenticate the immutable attachment generation before any provider,
+/// namespace, status-projection, port, or segment mutation.
+pub(crate) fn authenticate_container_network_generation(
+    layout: &OciNetworkLayout,
+    config: &OciNetworkConfig,
+    sandbox_id: &SandboxId,
+) -> Result<()> {
+    load_container_ips_for_segment(layout, config, sandbox_id).map(drop)
+}
+
+/// Authenticate cleanup against either the exact live allocation or its
+/// terminal tombstone. A terminal witness authorizes idempotent continuation
+/// of the owning cleanup saga but never provider setup.
+pub(crate) fn authenticate_container_network_generation_for_cleanup(
+    layout: &OciNetworkLayout,
+    config: &OciNetworkConfig,
+    sandbox_id: &SandboxId,
+) -> Result<()> {
+    authenticate_ipam_generation_for_cleanup(layout, config, sandbox_id).map(drop)
+}
 
 pub(crate) fn setup_container_network(
     layout: &OciNetworkLayout,
@@ -36,32 +65,58 @@ pub(crate) fn setup_container_network(
     port_bindings: &[SandboxPortBinding],
     machine_port_forwarder: Option<&OciMachinePortForwarderConfig>,
 ) -> Result<Vec<Ipv4Addr>> {
-    let assigned_ips = allocate_container_ips(layout, config, sandbox_id)?;
-    let netavark_port_bindings = netavark_port_bindings(port_bindings, machine_port_forwarder);
-    let response = run_netavark(
-        "setup",
-        layout,
-        config,
-        sandbox_id,
-        sandbox_name,
-        hostname,
-        &assigned_ips,
-        netavark_port_bindings,
-        machine_port_forwarder.is_some(),
-    )
-    .inspect_err(|_| {
-        let _ = deallocate_container_ips(layout, sandbox_id);
-    })?;
-    let rendered =
-        serde_json::to_vec_pretty(&response).map_err(|error| SandboxError::OperationFailed {
-            message: format!("failed to serialize netavark status response: {error}"),
+    setup_container_network_with_runner(layout, config, sandbox_id, |action, assigned_ips| {
+        run_netavark(
+            action,
+            layout,
+            config,
+            sandbox_id,
+            sandbox_name,
+            hostname,
+            assigned_ips,
+            netavark_port_bindings(port_bindings, machine_port_forwarder),
+            machine_port_forwarder.is_some(),
+        )
+    })
+}
+
+fn setup_container_network_with_runner(
+    layout: &OciNetworkLayout,
+    config: &OciNetworkConfig,
+    sandbox_id: &SandboxId,
+    mut runner: impl FnMut(&str, &[Ipv4Addr]) -> Result<Value>,
+) -> Result<Vec<Ipv4Addr>> {
+    let (assigned_ips, setup_claim) = begin_netavark_setup(layout, config, sandbox_id)?;
+    let setup = (|| {
+        let response = runner("setup", &assigned_ips)?;
+        let rendered = serde_json::to_vec_pretty(&response).map_err(|error| {
+            SandboxError::OperationFailed {
+                message: format!("failed to serialize netavark status response: {error}"),
+            }
         })?;
-    fs::write(&layout.status_path, rendered).map_err(|error| SandboxError::OperationFailed {
-        message: format!(
-            "failed to write netavark status {}: {error}",
-            layout.status_path.display()
-        ),
-    })?;
+        fs::write(&layout.status_path, rendered).map_err(|error| {
+            SandboxError::OperationFailed {
+                message: format!(
+                    "failed to write netavark status {}: {error}",
+                    layout.status_path.display()
+                ),
+            }
+        })?;
+        complete_netavark_setup(layout, &setup_claim)
+    })();
+    if let Err(primary) = setup {
+        let cleanup =
+            compensate_failed_setup(layout, config, sandbox_id, &setup_claim, &mut runner).err();
+        return Err(match cleanup {
+            None => primary,
+            Some(cleanup) => SandboxError::OperationFailed {
+                message: format!(
+                    "Netavark setup failed: {primary}; same-attempt detach compensation also \
+                     failed and provider authority remains fenced: {cleanup}"
+                ),
+            },
+        });
+    }
     Ok(assigned_ips)
 }
 
@@ -74,27 +129,112 @@ pub(crate) fn teardown_container_network(
     port_bindings: &[SandboxPortBinding],
     machine_port_forwarder: Option<&OciMachinePortForwarderConfig>,
 ) -> Result<()> {
-    if !layout.netns_path.exists() {
-        let _ = fs::remove_file(&layout.status_path);
-        let _ = deallocate_container_ips(layout, sandbox_id);
-        return Ok(());
+    teardown_container_network_with_runner(layout, config, sandbox_id, |action, assigned_ips| {
+        run_netavark(
+            action,
+            layout,
+            config,
+            sandbox_id,
+            sandbox_name,
+            hostname,
+            assigned_ips,
+            netavark_port_bindings(port_bindings, machine_port_forwarder),
+            machine_port_forwarder.is_some(),
+        )
+    })
+}
+
+fn teardown_container_network_with_runner(
+    layout: &OciNetworkLayout,
+    config: &OciNetworkConfig,
+    sandbox_id: &SandboxId,
+    mut runner: impl FnMut(&str, &[Ipv4Addr]) -> Result<Value>,
+) -> Result<()> {
+    let plan = begin_netavark_teardown(layout, config, sandbox_id, None)?;
+    execute_teardown_plan(layout, plan, &mut runner)
+}
+
+fn compensate_failed_setup(
+    layout: &OciNetworkLayout,
+    config: &OciNetworkConfig,
+    sandbox_id: &SandboxId,
+    setup_claim: &NetavarkSetupClaim,
+    runner: &mut impl FnMut(&str, &[Ipv4Addr]) -> Result<Value>,
+) -> Result<()> {
+    let plan = begin_netavark_teardown(layout, config, sandbox_id, Some(setup_claim))?;
+    execute_teardown_plan(layout, plan, runner)
+}
+
+fn execute_teardown_plan(
+    layout: &OciNetworkLayout,
+    plan: NetavarkTeardownPlan,
+    runner: &mut impl FnMut(&str, &[Ipv4Addr]) -> Result<Value>,
+) -> Result<()> {
+    let claim = match plan {
+        NetavarkTeardownPlan::AlreadyDetached => {
+            require_netavark_status_absent(&layout.status_path)?;
+            return Ok(());
+        }
+        NetavarkTeardownPlan::RemoveProjection { claim } => claim,
+        NetavarkTeardownPlan::Run {
+            assigned_ips,
+            claim,
+        } => {
+            match fs::symlink_metadata(&layout.netns_path) {
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(SandboxError::OperationFailed {
+                        message: format!(
+                            "failed to inspect persistent network namespace {} before confirming \
+                             detach: {error}",
+                            layout.netns_path.display()
+                        ),
+                    });
+                }
+                Ok(_) => {
+                    let _ = runner("teardown", &assigned_ips)?;
+                }
+            }
+            confirm_netavark_provider_detached(layout, &claim)?;
+            claim
+        }
+    };
+    remove_netavark_status(&layout.status_path)?;
+    complete_netavark_teardown(layout, &claim)
+}
+
+fn remove_netavark_status(path: &Path) -> Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(SandboxError::OperationFailed {
+            message: format!(
+                "failed to remove Netavark status projection {} after provider absence was \
+                 recorded: {error}",
+                path.display()
+            ),
+        }),
     }
-    let assigned_ips = load_container_ips(layout, sandbox_id)?;
-    let netavark_port_bindings = netavark_port_bindings(port_bindings, machine_port_forwarder);
-    let _ = run_netavark(
-        "teardown",
-        layout,
-        config,
-        sandbox_id,
-        sandbox_name,
-        hostname,
-        &assigned_ips,
-        netavark_port_bindings,
-        machine_port_forwarder.is_some(),
-    )?;
-    let _ = fs::remove_file(&layout.status_path);
-    let _ = deallocate_container_ips(layout, sandbox_id);
-    Ok(())
+}
+
+fn require_netavark_status_absent(path: &Path) -> Result<()> {
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(SandboxError::OperationFailed {
+            message: format!(
+                "failed to verify durable no-effect or terminal Netavark status projection \
+                 absence at {}: {error}",
+                path.display()
+            ),
+        }),
+        Ok(_) => Err(SandboxError::OperationFailed {
+            message: format!(
+                "durable no-effect or terminal OCI IPAM authority conflicts with an existing \
+                 Netavark status projection at {}; refusing to report cleanup success",
+                path.display()
+            ),
+        }),
+    }
 }
 
 // This param cluster (layout, config, sandbox_id, sandbox_name, hostname, ...)

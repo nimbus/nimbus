@@ -1,31 +1,211 @@
-use super::readiness::{running_status, synchronize_handle_status, visible_published_endpoints};
+use super::readiness::{running_status, synchronize_handle_status};
 use super::start::{ensure_guest_user_helper_available, hostname_for};
 use super::*;
+use crate::backends::conmon::creator::OwnedConmonCreator;
+use crate::backends::conmon::lifecycle::{DetectedRuntimeStatus, RuntimeStateObservation};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum NetworkArtifactTeardownMode {
+    Restart,
+    Final,
+}
+
+const KRUN_LIFECYCLE_LOCK_FILE: &str = ".nimbus-krun-lifecycle.lock";
+const KRUN_LIFECYCLE_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
+const KRUN_LIFECYCLE_LOCK_RETRY: Duration = Duration::from_millis(25);
+
+fn combine_krun_creator_failure(
+    primary: SandboxError,
+    quiescence: Option<SandboxError>,
+    persistence: Option<SandboxError>,
+) -> SandboxError {
+    let mut secondary = Vec::new();
+    if let Some(error) = quiescence {
+        secondary.push(format!("creator quiescence failed: {error}"));
+    }
+    if let Some(error) = persistence {
+        secondary.push(format!("creator handoff persistence failed: {error}"));
+    }
+    if secondary.is_empty() {
+        primary
+    } else {
+        SandboxError::OperationFailed {
+            message: format!("{primary}; {}", secondary.join("; ")),
+        }
+    }
+}
+
+#[cfg(test)]
+#[derive(Clone)]
+pub(super) struct KrunLifecycleLockTestProbe {
+    shared: Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+    timeout: Duration,
+}
+
+#[cfg(test)]
+impl KrunLifecycleLockTestProbe {
+    pub(super) fn new(timeout: Duration) -> Self {
+        Self {
+            shared: Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new())),
+            timeout,
+        }
+    }
+
+    fn record_contended(&self) -> Result<()> {
+        let (lock, changed) = &*self.shared;
+        let mut contended = lock.lock().map_err(|_| SandboxError::OperationFailed {
+            message: "krun lifecycle-lock test probe was poisoned".to_owned(),
+        })?;
+        *contended = true;
+        changed.notify_all();
+        Ok(())
+    }
+
+    pub(super) fn wait_until_contended(&self) -> bool {
+        let (lock, changed) = &*self.shared;
+        let contended = lock
+            .lock()
+            .expect("krun lifecycle-lock test probe should not be poisoned");
+        let (contended, _) = changed
+            .wait_timeout_while(contended, self.timeout, |contended| !*contended)
+            .expect("krun lifecycle-lock test probe wait should not be poisoned");
+        *contended
+    }
+}
+
+pub(super) struct KrunLifecycleGuard {
+    _lock: std::fs::File,
+}
+
+impl NetworkArtifactTeardownMode {
+    fn releases_authority(self) -> bool {
+        self == Self::Final
+    }
+}
 
 impl KrunSandboxBackend {
     pub(super) fn inspect_sync(&self, id: &SandboxId) -> Result<Option<SandboxHandle>> {
+        let Some(observed) = self.read_manifest(id)? else {
+            return Ok(None);
+        };
+        let _lifecycle = self.lock_launch_lifecycle(&observed)?;
         let Some(mut manifest) = self.read_manifest(id)? else {
             return Ok(None);
         };
 
-        manifest.status = match self.config.start_mode {
+        if self.config.start_mode == KrunStartMode::Execute
+            && manifest.shutdown_requested
+            && manifest.status == SandboxStatus::Stopping
+            && manifest.launch_authority != KrunLaunchAuthority::Released
+        {
+            // NNC3.4 deliberately leaves recovery of nonterminal launch
+            // authority to NNC3.8. Inspection is only an observed projection:
+            // it must not manufacture terminal status while exact provider or
+            // reservation cleanup is still fenced.
+            return Ok(Some(manifest.handle));
+        }
+
+        if self.startup_network_reconciliation_error.is_some() {
+            if self.config.start_mode == KrunStartMode::PlanOnly
+                || !manifest.conmon_layout.exit_status_file.exists()
+            {
+                return Ok(Some(manifest.handle));
+            }
+            let exit_code = read_exit_code(&manifest.conmon_layout.exit_status_file)?;
+            if !manifest.shutdown_requested
+                && restart_policy_allows_restart(
+                    manifest.spec.lifecycle.restart_policy,
+                    exit_code,
+                    manifest.restart_count,
+                )
+            {
+                // A retained startup failure fences provider relaunch, not
+                // observation or exact final cleanup of an existing workload.
+                return Ok(Some(manifest.handle));
+            }
+        }
+        let restarted = self.config.start_mode == KrunStartMode::Execute
+            && self.maybe_restart_after_exit(&mut manifest)?;
+        let runtime_observation = match self.config.start_mode {
+            KrunStartMode::PlanOnly => None,
+            KrunStartMode::Execute if restarted => None,
+            KrunStartMode::Execute => Some(self.observe_runtime_status(&manifest)?),
+        };
+        let terminal_status = match self.config.start_mode {
             KrunStartMode::PlanOnly => manifest.status,
+            KrunStartMode::Execute if restarted => manifest.status,
             KrunStartMode::Execute => {
-                if self.maybe_restart_after_exit(&mut manifest)? {
-                    manifest.status
-                } else {
-                    self.detect_runtime_status(&manifest)?
-                }
+                runtime_observation
+                    .expect("execute observation is present when restart did not occur")
+                    .status
             }
         };
-        manifest.handle.status = manifest.status;
-        manifest.handle.published_endpoints =
-            visible_published_endpoints(manifest.start_mode, &manifest.spec, manifest.status);
-        self.write_manifest(&manifest)?;
+        if self.config.start_mode == KrunStartMode::Execute
+            && !restarted
+            && !manifest.shutdown_requested
+            && !manifest.conmon_layout.exit_status_file.exists()
+            && runtime_observation.is_some_and(|observation| observation.explicitly_absent)
+            && matches!(
+                manifest.launch_authority,
+                KrunLaunchAuthority::Adopted { .. } | KrunLaunchAuthority::ProviderOwned
+            )
+        {
+            // Provider absence without an exit receipt does not prove whether
+            // restart or final cleanup is desired. Withdraw the observed
+            // projection and retain exact authority for NNC3.8 reconciliation.
+            synchronize_handle_status(&mut manifest, SandboxStatus::Stopping);
+            self.write_manifest(&manifest)?;
+            return Ok(Some(manifest.handle));
+        }
+        if self.config.start_mode == KrunStartMode::Execute
+            && !restarted
+            && !manifest.shutdown_requested
+            && manifest.conmon_layout.exit_status_file.exists()
+        {
+            self.finalize_natural_exit(&mut manifest, terminal_status)?;
+        } else {
+            synchronize_handle_status(&mut manifest, terminal_status);
+        }
+        self.persist_effect_barrier(&manifest, "krun observed-state publication")?;
         Ok(Some(manifest.handle))
     }
 
+    /// Converge provider and durable network authority before publishing a
+    /// naturally exited VMM as terminal. A cleanup failure leaves a durable
+    /// `Stopping` checkpoint so the exact tenant/workload authority can retry.
+    fn finalize_natural_exit(
+        &self,
+        manifest: &mut KrunSandboxManifest,
+        terminal_status: SandboxStatus,
+    ) -> Result<()> {
+        manifest.last_exit_code = Some(read_exit_code(&manifest.conmon_layout.exit_status_file)?);
+        manifest.next_restart_at_millis = None;
+        if manifest.launch_authority == KrunLaunchAuthority::Released {
+            // A prior inspection may have durably published terminal authority
+            // before post-publication IPAM witness retirement succeeded. Do not
+            // replay provider cleanup from Released; republish the exact
+            // terminal projection so the outer effect barrier can idempotently
+            // retry witness retirement.
+            synchronize_handle_status(manifest, terminal_status);
+            return Ok(());
+        }
+        synchronize_handle_status(manifest, SandboxStatus::Stopping);
+        self.persist_effect_barrier(manifest, "natural-exit cleanup intent")?;
+        self.release_network_artifacts(manifest, NetworkArtifactTeardownMode::Final)?;
+        self.cleanup_manifest_launch_artifacts(manifest)?;
+        manifest.launch_artifact = None;
+        manifest.launch_authority = KrunLaunchAuthority::Released;
+        synchronize_handle_status(manifest, terminal_status);
+        Ok(())
+    }
+
     pub(super) fn stop_sync(&self, id: &SandboxId) -> Result<()> {
+        let Some(observed) = self.read_manifest(id)? else {
+            return Err(SandboxError::NotFound {
+                sandbox_id: id.as_str().to_owned(),
+            });
+        };
+        let _lifecycle = self.lock_launch_lifecycle(&observed)?;
         let Some(mut manifest) = self.read_manifest(id)? else {
             return Err(SandboxError::NotFound {
                 sandbox_id: id.as_str().to_owned(),
@@ -38,35 +218,276 @@ impl KrunSandboxBackend {
                 manifest.last_exit_code = Some(0);
                 manifest.status = SandboxStatus::Stopped;
                 manifest.handle.status = SandboxStatus::Stopped;
-                self.release_network_artifacts(&manifest)?;
                 self.cleanup_manifest_launch_artifacts(&manifest)?;
                 manifest.launch_artifact = None;
                 self.write_manifest(&manifest)
             }
-            KrunStartMode::Execute => self.execute_stop(&mut manifest),
+            KrunStartMode::Execute => {
+                if manifest.provider_failure_cleanup.is_active() {
+                    return self.resume_provider_failure_cleanup(&mut manifest);
+                }
+                match &manifest.launch_authority {
+                    KrunLaunchAuthority::Reserved { .. } => {
+                        self.stop_reserved_launch(&mut manifest)
+                    }
+                    KrunLaunchAuthority::Adopting { .. } => {
+                        manifest.shutdown_requested = true;
+                        manifest.next_restart_at_millis = None;
+                        synchronize_handle_status(&mut manifest, SandboxStatus::Stopping);
+                        self.persist_effect_barrier(&manifest, "adopting krun stop intent")?;
+                        Err(SandboxError::OperationFailed {
+                            message: format!(
+                                "krun workload {} has attachment adoption in flight; explicit stop \
+                                 intent is durable and exact authority remains fenced until adoption \
+                                 reconciliation",
+                                manifest.handle.id
+                            ),
+                        })
+                    }
+                    KrunLaunchAuthority::Adopted { .. } | KrunLaunchAuthority::ProviderOwned => {
+                        self.execute_stop(&mut manifest)
+                    }
+                    KrunLaunchAuthority::Released => {
+                        manifest.shutdown_requested = true;
+                        manifest.next_restart_at_millis = None;
+                        let terminal_status = if manifest.status == SandboxStatus::Failed {
+                            SandboxStatus::Failed
+                        } else {
+                            SandboxStatus::Stopped
+                        };
+                        synchronize_handle_status(&mut manifest, terminal_status);
+                        self.persist_effect_barrier(&manifest, "released krun stop completion")
+                    }
+                    KrunLaunchAuthority::PlanOnly => Err(SandboxError::OperationFailed {
+                        message: format!(
+                            "execute-mode krun workload {} carries plan-only launch authority",
+                            manifest.handle.id
+                        ),
+                    }),
+                }
+            }
         }
     }
 
+    fn stop_reserved_launch(&self, manifest: &mut KrunSandboxManifest) -> Result<()> {
+        manifest.shutdown_requested = true;
+        manifest.next_restart_at_millis = None;
+        synchronize_handle_status(manifest, SandboxStatus::Stopping);
+        self.persist_effect_barrier(manifest, "reserved krun stop intent")?;
+        self.release_reserved_launch(manifest)?;
+        self.cleanup_manifest_launch_artifacts(manifest)?;
+        manifest.launch_artifact = None;
+        manifest.launch_authority = KrunLaunchAuthority::Released;
+        synchronize_handle_status(manifest, SandboxStatus::Stopped);
+        self.persist_effect_barrier(manifest, "reserved krun stop completion")
+    }
+
     pub(super) fn execute_start(&self, launch_plan: &KrunStartPlan) -> Result<SandboxHandle> {
-        ensure_linux_host("krun")?;
+        let preflight = ensure_linux_host("krun")
+            .and_then(|()| ensure_guest_user_helper_available(&self.config, &launch_plan.manifest));
+        self.execute_start_after_preflight(launch_plan, preflight)
+    }
+
+    pub(super) fn execute_start_after_preflight(
+        &self,
+        launch_plan: &KrunStartPlan,
+        preflight: Result<()>,
+    ) -> Result<SandboxHandle> {
         let mut manifest = launch_plan.manifest.clone();
+        let _lifecycle = self.lock_launch_lifecycle(&manifest)?;
+        self.require_current_launch_plan(&manifest)?;
+        if let Err(error) = preflight {
+            return Err(self.persist_unstarted_launch_failure(&mut manifest, error));
+        }
         self.launch_manifest(&mut manifest, true)?;
         Ok(manifest.handle)
     }
 
-    fn execute_stop(&self, manifest: &mut KrunSandboxManifest) -> Result<()> {
-        if manifest.conmon_layout.exit_status_file.exists() {
-            manifest.shutdown_requested = true;
-            manifest.next_restart_at_millis = None;
-            manifest.last_exit_code =
-                Some(read_exit_code(&manifest.conmon_layout.exit_status_file)?);
-            synchronize_handle_status(manifest, SandboxStatus::Stopped);
-            self.release_network_artifacts(manifest)?;
-            return self.write_manifest(manifest);
-        }
+    pub(super) fn lock_launch_lifecycle(
+        &self,
+        manifest: &KrunSandboxManifest,
+    ) -> Result<KrunLifecycleGuard> {
+        self.lock_launch_lifecycle_dir(&manifest.conmon_layout.container_state_dir)
+    }
 
+    pub(super) fn lock_launch_lifecycle_for(
+        &self,
+        tenant: &nimbus_core::TenantId,
+        sandbox_id: &SandboxId,
+    ) -> Result<KrunLifecycleGuard> {
+        let layout = OciConmonLayout::new_for_tenant(&self.config.state_root, tenant, sandbox_id);
+        self.lock_launch_lifecycle_dir(&layout.container_state_dir)
+    }
+
+    fn lock_launch_lifecycle_dir(
+        &self,
+        container_state_dir: &std::path::Path,
+    ) -> Result<KrunLifecycleGuard> {
+        std::fs::create_dir_all(container_state_dir).map_err(|error| {
+            SandboxError::OperationFailed {
+                message: format!(
+                    "failed to create krun lifecycle lock directory {}: {error}",
+                    container_state_dir.display()
+                ),
+            }
+        })?;
+        let lock_path = container_state_dir.join(KRUN_LIFECYCLE_LOCK_FILE);
+        let lock = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock_path)
+            .map_err(|error| SandboxError::OperationFailed {
+                message: format!(
+                    "failed to open krun lifecycle lock {}: {error}",
+                    lock_path.display()
+                ),
+            })?;
+        let deadline = std::time::Instant::now() + KRUN_LIFECYCLE_LOCK_TIMEOUT;
+        loop {
+            match FileExt::try_lock_exclusive(&lock) {
+                Ok(()) => return Ok(KrunLifecycleGuard { _lock: lock }),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    #[cfg(test)]
+                    if let Some(probe) = self.lifecycle_lock_test_probe.as_ref() {
+                        probe.record_contended()?;
+                    }
+                    if std::time::Instant::now() >= deadline {
+                        return Err(SandboxError::OperationFailed {
+                            message: format!(
+                                "timed out acquiring krun lifecycle lock {}; launch remains fenced",
+                                lock_path.display()
+                            ),
+                        });
+                    }
+                    std::thread::sleep(KRUN_LIFECYCLE_LOCK_RETRY);
+                }
+                Err(error) => {
+                    return Err(SandboxError::OperationFailed {
+                        message: format!(
+                            "failed to acquire krun lifecycle lock {}: {error}",
+                            lock_path.display()
+                        ),
+                    });
+                }
+            }
+        }
+    }
+
+    pub(super) fn require_current_launch_plan(
+        &self,
+        candidate: &KrunSandboxManifest,
+    ) -> Result<()> {
+        let persisted = self.read_manifest(&candidate.handle.id)?.ok_or_else(|| {
+            SandboxError::OperationFailed {
+                message: format!(
+                    "krun launch {} has no durable manifest; refusing provider effects",
+                    candidate.handle.id
+                ),
+            }
+        })?;
+        if persisted == *candidate
+            && matches!(
+                persisted.launch_authority,
+                KrunLaunchAuthority::Reserved { .. }
+            )
+        {
+            return Ok(());
+        }
+        Err(SandboxError::OperationFailed {
+            message: format!(
+                "krun launch {} no longer owns the durable reserved launch plan; \
+                 refusing stale provider execution or compensation",
+                candidate.handle.id
+            ),
+        })
+    }
+
+    pub(super) fn persist_unstarted_launch_failure(
+        &self,
+        manifest: &mut KrunSandboxManifest,
+        primary: SandboxError,
+    ) -> SandboxError {
         manifest.shutdown_requested = true;
         manifest.next_restart_at_millis = None;
+        manifest.last_exit_code = None;
+        synchronize_handle_status(manifest, SandboxStatus::Stopping);
+        if let Err(barrier) =
+            self.persist_effect_barrier(manifest, "krun pre-effect cleanup intent")
+        {
+            return SandboxError::OperationFailed {
+                message: format!(
+                    "krun launch failed: {primary}; cleanup remains fenced because its durable \
+                     intent could not be confirmed: {barrier}"
+                ),
+            };
+        }
+        let mut secondary = Vec::new();
+
+        let artifact_released = match self.cleanup_manifest_launch_artifacts(manifest) {
+            Ok(()) => {
+                manifest.launch_artifact = None;
+                true
+            }
+            Err(error) => {
+                secondary.push(format!("krun launch artifact compensation failed: {error}"));
+                false
+            }
+        };
+        let network_released = if artifact_released {
+            match self.release_reserved_launch(manifest) {
+                Ok(()) => true,
+                Err(error) => {
+                    secondary.push(format!(
+                        "exact krun launch reservation compensation failed: {error}"
+                    ));
+                    false
+                }
+            }
+        } else {
+            false
+        };
+        if network_released && artifact_released {
+            manifest.launch_authority = KrunLaunchAuthority::Released;
+            synchronize_handle_status(manifest, SandboxStatus::Failed);
+        }
+        if let Err(error) =
+            self.persist_effect_barrier(manifest, "unstarted krun launch compensation result")
+        {
+            secondary.push(format!(
+                "failed to persist krun launch compensation result: {error}"
+            ));
+        }
+        if secondary.is_empty() {
+            primary
+        } else {
+            SandboxError::OperationFailed {
+                message: format!(
+                    "krun launch failed: {primary}; compensation also failed: {}",
+                    secondary.join("; ")
+                ),
+            }
+        }
+    }
+
+    fn execute_stop(&self, manifest: &mut KrunSandboxManifest) -> Result<()> {
+        manifest.shutdown_requested = true;
+        manifest.next_restart_at_millis = None;
+        synchronize_handle_status(manifest, SandboxStatus::Stopping);
+        self.persist_effect_barrier(manifest, "explicit krun stop intent")?;
+
+        if manifest.conmon_layout.exit_status_file.exists() {
+            manifest.last_exit_code =
+                Some(read_exit_code(&manifest.conmon_layout.exit_status_file)?);
+            self.release_network_artifacts(manifest, NetworkArtifactTeardownMode::Final)?;
+            self.cleanup_manifest_launch_artifacts(manifest)?;
+            manifest.launch_artifact = None;
+            manifest.launch_authority = KrunLaunchAuthority::Released;
+            synchronize_handle_status(manifest, SandboxStatus::Stopped);
+            return self.persist_effect_barrier(manifest, "explicit krun stop completion");
+        }
+
         let pid = read_pid(&manifest.conmon_layout.pidfile)?;
         let stop_signal = configured_stop_signal(manifest.image_metadata.stop_signal.as_deref());
         signal_process(&stop_signal, pid)?;
@@ -84,13 +505,20 @@ impl KrunSandboxBackend {
         }
 
         manifest.last_exit_code = Some(read_exit_code(&manifest.conmon_layout.exit_status_file)?);
-        synchronize_handle_status(manifest, SandboxStatus::Stopped);
-        self.release_network_artifacts(manifest)?;
+        self.release_network_artifacts(manifest, NetworkArtifactTeardownMode::Final)?;
         self.cleanup_manifest_launch_artifacts(manifest)?;
         manifest.launch_artifact = None;
-        self.write_manifest(manifest)
+        manifest.launch_authority = KrunLaunchAuthority::Released;
+        synchronize_handle_status(manifest, SandboxStatus::Stopped);
+        self.persist_effect_barrier(manifest, "explicit krun stop completion")
     }
 
+    #[cfg(test)]
+    pub(super) fn execute_stop_for_test(&self, manifest: &mut KrunSandboxManifest) -> Result<()> {
+        self.execute_stop(manifest)
+    }
+
+    #[cfg(test)]
     pub(super) fn detect_runtime_status(
         &self,
         manifest: &KrunSandboxManifest,
@@ -99,6 +527,24 @@ impl KrunSandboxBackend {
             RuntimeStatusProbe {
                 exit_status_file: &manifest.conmon_layout.exit_status_file,
                 state_command: &manifest.conmon_launch.state_command,
+                runtime_id: manifest.handle.id.as_str(),
+                pidfile: &manifest.conmon_layout.pidfile,
+                shutdown_requested: manifest.shutdown_requested,
+                current_status: manifest.status,
+            },
+            || Ok(running_status(manifest)),
+        )
+    }
+
+    fn observe_runtime_status(
+        &self,
+        manifest: &KrunSandboxManifest,
+    ) -> Result<DetectedRuntimeStatus> {
+        crate::backends::conmon::lifecycle::observe_runtime_status(
+            RuntimeStatusProbe {
+                exit_status_file: &manifest.conmon_layout.exit_status_file,
+                state_command: &manifest.conmon_launch.state_command,
+                runtime_id: manifest.handle.id.as_str(),
                 pidfile: &manifest.conmon_layout.pidfile,
                 shutdown_requested: manifest.shutdown_requested,
                 current_status: manifest.status,
@@ -138,79 +584,410 @@ impl KrunSandboxBackend {
         Ok(true)
     }
 
-    fn launch_manifest(
+    pub(super) fn launch_manifest(
         &self,
         manifest: &mut KrunSandboxManifest,
         clear_last_exit_code: bool,
     ) -> Result<()> {
+        self.ensure_startup_network_reconciliation_ready()?;
+        let reservation_claim = if clear_last_exit_code {
+            Some(manifest.require_reserved_claim()?.clone())
+        } else {
+            if !matches!(
+                manifest.launch_authority,
+                KrunLaunchAuthority::ProviderOwned
+            ) {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "krun restart for {} requires provider-owned launch authority, got {:?}",
+                        manifest.handle.id, manifest.launch_authority
+                    ),
+                });
+            }
+            None
+        };
+        if let Some(reservation_claim) = reservation_claim.as_ref() {
+            let mut launch_batch = manifest.port_leases.clone();
+            if let Some(egress_proxy) = manifest.egress_proxy.as_ref() {
+                launch_batch.push(egress_proxy.port_lease.clone());
+            }
+            if let Err(error) = self
+                .port_manager()
+                .require_never_bound_launch_batch(&launch_batch, reservation_claim)
+            {
+                return Err(self.persist_unstarted_launch_failure(manifest, error));
+            }
+            if matches!(
+                manifest.launch_authority,
+                KrunLaunchAuthority::Reserved { .. }
+            ) {
+                manifest.mark_adopting()?;
+                if let Err(error) =
+                    self.persist_effect_barrier(manifest, "krun attachment-adoption intent")
+                {
+                    return Err(self.persist_unstarted_launch_failure(manifest, error));
+                }
+            }
+            if let Err(error) = self.segment_allocator.adopt_reserved_attachment(
+                &manifest.spec.tenant_id,
+                &default_network_attachment_id(&manifest.handle.id),
+                reservation_claim,
+            ) {
+                return Err(self.persist_unstarted_launch_failure(manifest, error));
+            }
+            manifest.mark_adopted()?;
+            if let Err(error) =
+                self.persist_effect_barrier(manifest, "krun adopted attachment authority")
+            {
+                return Err(self.persist_provider_launch_failure(manifest, error));
+            }
+        }
+
         #[cfg(test)]
         if let Some(probe) = self.restart_launch_test_probe.as_ref() {
+            if clear_last_exit_code {
+                return Err(SandboxError::OperationFailed {
+                    message:
+                        "restart launch test probe cannot substitute for initial provider adoption"
+                            .to_owned(),
+                });
+            }
             probe.intercept_provider_launch()?;
             manifest.shutdown_requested = false;
             manifest.next_restart_at_millis = None;
-            if clear_last_exit_code {
-                manifest.last_exit_code = None;
-            }
             synchronize_handle_status(manifest, SandboxStatus::Starting);
             return self.write_manifest(manifest);
         }
 
-        ensure_linux_host("krun")?;
-        ensure_guest_user_helper_available(&self.config, manifest)?;
-        // Stand up the deny-by-default network namespace (deny chain + inbound
-        // published-port DNAT) and start the egress PEP on the bridge gateway
-        // BEFORE crun launches the VMM into the namespace. Under libkrun TSI the
-        // guest's outbound sockets are issued by this host VMM process, so the
-        // VMM must only ever run once the namespace's sole outbound path is the
-        // policy-enforcing proxy — there is no open-egress window.
-        self.configure_network(manifest)?;
-        if let Err(error) = self.launch_into_network(manifest, clear_last_exit_code) {
-            // Fail-closed: never leave a namespace or a running VMM whose egress
-            // is not enforced. Tear the VMM and the netns back down on any error.
-            // The original launch `error` stays the returned error (priority
-            // unchanged); teardown failures are security-relevant (a leaked netns
-            // or running VMM whose egress would no longer be gated), so they are
-            // surfaced at warn rather than discarded silently.
-            if let Err(teardown_error) =
-                run_status_best_effort(&manifest.conmon_launch.delete_command)
-            {
-                tracing::warn!(
-                    sandbox_id = %manifest.handle.id,
-                    error = %teardown_error,
-                    "failed to delete krun VMM during fail-closed launch teardown"
-                );
-            }
-            if let Err(teardown_error) = self.release_network_artifacts(manifest) {
-                tracing::warn!(
-                    sandbox_id = %manifest.handle.id,
-                    error = %teardown_error,
-                    "failed to release krun network artifacts during fail-closed launch teardown"
-                );
-            }
-            return Err(error);
+        let provider_launch = ensure_linux_host("krun")
+            .and_then(|()| ensure_guest_user_helper_available(&self.config, manifest))
+            .and_then(|()| self.configure_network(manifest))
+            .and_then(|()| {
+                self.launch_into_network(manifest, clear_last_exit_code, reservation_claim.as_ref())
+            });
+        if let Err(error) = provider_launch {
+            return Err(self.persist_provider_launch_failure(manifest, error));
         }
         Ok(())
+    }
+
+    pub(super) fn persist_provider_launch_failure(
+        &self,
+        manifest: &mut KrunSandboxManifest,
+        primary: SandboxError,
+    ) -> SandboxError {
+        if !manifest.permits_provider_teardown() {
+            return SandboxError::OperationFailed {
+                message: format!(
+                    "krun launch failed: {primary}; broad cleanup rejected because launch authority \
+                     is {:?}",
+                    manifest.launch_authority
+                ),
+            };
+        }
+        if !manifest.creator_handoff.authorizes_provider_cleanup() {
+            return SandboxError::OperationFailed {
+                message: format!(
+                    "krun launch failed: {primary}; broad cleanup rejected because creator \
+                     handoff {:?} may still materialize provider effects",
+                    manifest.creator_handoff
+                ),
+            };
+        }
+
+        manifest.shutdown_requested = true;
+        manifest.next_restart_at_millis = None;
+        synchronize_handle_status(manifest, SandboxStatus::Stopping);
+        if !manifest.provider_failure_cleanup.is_active() {
+            manifest.provider_failure_cleanup = KrunProviderFailureCleanupState::Requested;
+            if let Err(barrier) =
+                self.persist_effect_barrier(manifest, "provider-owned krun cleanup intent")
+            {
+                return SandboxError::OperationFailed {
+                    message: format!(
+                        "krun launch failed: {primary}; provider cleanup remains fenced because its \
+                         durable intent could not be confirmed: {barrier}"
+                    ),
+                };
+            }
+        }
+        match self.resume_provider_failure_cleanup(manifest) {
+            Ok(()) => primary,
+            Err(cleanup) => SandboxError::OperationFailed {
+                message: format!("krun launch failed: {primary}; cleanup also failed: {cleanup}"),
+            },
+        }
+    }
+
+    fn resume_provider_failure_cleanup(&self, manifest: &mut KrunSandboxManifest) -> Result<()> {
+        if !manifest.provider_failure_cleanup.is_active() {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "krun workload {} has no active provider-failure cleanup to resume",
+                    manifest.handle.id
+                ),
+            });
+        }
+        if !manifest.permits_provider_teardown() {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "krun workload {} cannot resume provider-failure cleanup from launch authority \
+                     {:?}",
+                    manifest.handle.id, manifest.launch_authority
+                ),
+            });
+        }
+        if !manifest.creator_handoff.authorizes_provider_cleanup() {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "krun workload {} cannot resume provider-failure cleanup while creator handoff \
+                     {:?} may still materialize provider effects",
+                    manifest.handle.id, manifest.creator_handoff
+                ),
+            });
+        }
+
+        loop {
+            match manifest.provider_failure_cleanup.clone() {
+                KrunProviderFailureCleanupState::Inactive => {
+                    unreachable!("active provider-failure cleanup cannot become inactive mid-loop")
+                }
+                KrunProviderFailureCleanupState::Requested => {
+                    let proof = self.provider_failure_runtime_absence_proof(manifest)?;
+                    manifest.provider_failure_cleanup =
+                        KrunProviderFailureCleanupState::RuntimeAbsent { proof };
+                    self.persist_effect_barrier(
+                        manifest,
+                        "provider-failure runtime-absence checkpoint",
+                    )?;
+                }
+                KrunProviderFailureCleanupState::RuntimeAbsent { proof } => {
+                    self.validate_provider_failure_runtime_absence_proof(manifest, &proof)?;
+                    self.release_network_artifacts(manifest, NetworkArtifactTeardownMode::Final)?;
+                    manifest.provider_failure_cleanup =
+                        KrunProviderFailureCleanupState::NetworkReleased {
+                            runtime_absence: proof,
+                        };
+                    self.persist_effect_barrier(
+                        manifest,
+                        "provider-failure network-release checkpoint",
+                    )?;
+                }
+                KrunProviderFailureCleanupState::NetworkReleased { runtime_absence } => {
+                    self.validate_provider_failure_runtime_absence_proof(
+                        manifest,
+                        &runtime_absence,
+                    )?;
+                    self.cleanup_manifest_launch_artifacts(manifest)?;
+                    manifest.launch_artifact = None;
+                    manifest.provider_failure_cleanup =
+                        KrunProviderFailureCleanupState::ArtifactsReleased { runtime_absence };
+                    self.persist_effect_barrier(
+                        manifest,
+                        "provider-failure artifact-release checkpoint",
+                    )?;
+                }
+                KrunProviderFailureCleanupState::ArtifactsReleased { runtime_absence } => {
+                    self.validate_provider_failure_runtime_absence_proof(
+                        manifest,
+                        &runtime_absence,
+                    )?;
+                    manifest.launch_authority = KrunLaunchAuthority::Released;
+                    manifest.provider_failure_cleanup = KrunProviderFailureCleanupState::Inactive;
+                    synchronize_handle_status(manifest, SandboxStatus::Failed);
+                    self.persist_effect_barrier(manifest, "provider-owned krun cleanup result")?;
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    fn provider_failure_runtime_absence_proof(
+        &self,
+        manifest: &KrunSandboxManifest,
+    ) -> Result<KrunRuntimeAbsenceProof> {
+        match &manifest.creator_handoff {
+            KrunCreatorHandoffState::NotSpawned
+                if matches!(
+                    manifest.launch_authority,
+                    KrunLaunchAuthority::Adopted { .. }
+                ) =>
+            {
+                Ok(KrunRuntimeAbsenceProof::NeverSpawned)
+            }
+            KrunCreatorHandoffState::NotSpawned => Err(SandboxError::OperationFailed {
+                message: format!(
+                    "krun workload {} carries NotSpawned creator authority with incompatible launch \
+                     authority {:?}; refusing to infer runtime absence",
+                    manifest.handle.id, manifest.launch_authority
+                ),
+            }),
+            KrunCreatorHandoffState::Pending { .. } => Err(SandboxError::OperationFailed {
+                message: format!(
+                    "krun workload {} cannot prove runtime absence while creator handoff {:?} may \
+                     still materialize provider effects",
+                    manifest.handle.id, manifest.creator_handoff
+                ),
+            }),
+            KrunCreatorHandoffState::Quiesced { attempt_id }
+            | KrunCreatorHandoffState::RuntimeObserved { attempt_id } => {
+                let attempt_id = attempt_id.clone();
+                self.delete_runtime_and_confirm_absent(manifest)?;
+                Ok(KrunRuntimeAbsenceProof::ObservedAbsent { attempt_id })
+            }
+        }
+    }
+
+    fn validate_provider_failure_runtime_absence_proof(
+        &self,
+        manifest: &KrunSandboxManifest,
+        proof: &KrunRuntimeAbsenceProof,
+    ) -> Result<()> {
+        let valid = match (proof, &manifest.creator_handoff) {
+            (KrunRuntimeAbsenceProof::NeverSpawned, KrunCreatorHandoffState::NotSpawned) => {
+                matches!(
+                    manifest.launch_authority,
+                    KrunLaunchAuthority::Adopted { .. }
+                )
+            }
+            (
+                KrunRuntimeAbsenceProof::ObservedAbsent {
+                    attempt_id: proof_attempt_id,
+                },
+                KrunCreatorHandoffState::Quiesced {
+                    attempt_id: creator_attempt_id,
+                }
+                | KrunCreatorHandoffState::RuntimeObserved {
+                    attempt_id: creator_attempt_id,
+                },
+            ) => proof_attempt_id == creator_attempt_id,
+            _ => false,
+        };
+        if valid {
+            return Ok(());
+        }
+
+        Err(SandboxError::OperationFailed {
+            message: format!(
+                "krun workload {} carries provider-failure runtime-absence proof {:?} that is \
+                 incompatible with creator handoff {:?} and launch authority {:?}; refusing to \
+                 release provider effects",
+                manifest.handle.id, proof, manifest.creator_handoff, manifest.launch_authority
+            ),
+        })
+    }
+
+    fn delete_runtime_and_confirm_absent(&self, manifest: &KrunSandboxManifest) -> Result<()> {
+        let delete_error = run_status_best_effort(&manifest.conmon_launch.delete_command).err();
+        match runtime_state(
+            &manifest.conmon_launch.state_command,
+            manifest.handle.id.as_str(),
+        ) {
+            Ok(RuntimeStateObservation::ExplicitlyAbsent) => Ok(()),
+            Ok(RuntimeStateObservation::Present(status)) => Err(SandboxError::OperationFailed {
+                message: format!(
+                    "krun runtime {} remains {status:?} after delete attempt{}",
+                    manifest.handle.id,
+                    delete_error
+                        .as_ref()
+                        .map(|error| format!(" ({error})"))
+                        .unwrap_or_default()
+                ),
+            }),
+            Err(observe_error) => Err(SandboxError::OperationFailed {
+                message: format!(
+                    "cannot confirm krun runtime {} absence after delete attempt: \
+                     {observe_error}{}",
+                    manifest.handle.id,
+                    delete_error
+                        .as_ref()
+                        .map(|error| format!("; delete diagnostic: {error}"))
+                        .unwrap_or_default()
+                ),
+            }),
+        }
     }
 
     fn launch_into_network(
         &self,
         manifest: &mut KrunSandboxManifest,
         clear_last_exit_code: bool,
+        reservation_claim: Option<&nimbus_network::NetworkReservationClaim>,
     ) -> Result<()> {
-        self.ensure_egress_proxy_running(manifest)?;
+        self.ensure_egress_proxy_running_with_release_authority(
+            manifest,
+            match reservation_claim {
+                Some(claim) => {
+                    crate::backends::oci::egress::PepPreAdoptionReleaseAuthority::FreshLaunch(claim)
+                }
+                None => crate::backends::oci::egress::PepPreAdoptionReleaseAuthority::Retain,
+            },
+        )?;
         // Fail-closed readiness gate: the last checkpoint before crun spawns the
         // VMM into the namespace. Permit only when the platform supports
         // enforcement (Linux), the deny-by-default netns is installed, and the
         // per-sandbox egress PEP is running with an active policy generation. Any
         // not-ready precondition returns Err here, which `launch_manifest`
         // converts into a full netns/VMM teardown — no path reaches
-        // `spawn_background` with an unenforced egress.
+        // the owned creator with unenforced egress.
         self.ensure_execute_egress_enforced(manifest)?;
-        spawn_background(&manifest.conmon_launch.create_command)?;
+        let attempt_id = Ulid::new().to_string().to_ascii_lowercase();
+        manifest.creator_handoff = KrunCreatorHandoffState::Pending {
+            attempt_id: attempt_id.clone(),
+        };
+        self.persist_effect_barrier(manifest, "krun creator-attempt intent")?;
+        let mut creator = match OwnedConmonCreator::spawn_with_pid_receipt(
+            &manifest.conmon_launch.create_command,
+            &manifest.conmon_layout.conmon_pidfile,
+        ) {
+            Ok(creator) => creator,
+            Err(error) => {
+                let persistence = self
+                    .persist_krun_creator_quiescence(manifest, &attempt_id)
+                    .err();
+                return Err(match persistence {
+                    Some(persistence) => SandboxError::OperationFailed {
+                        message: format!(
+                            "{error}; failed to publish quiesced creator attempt: {persistence}"
+                        ),
+                    },
+                    None => error,
+                });
+            }
+        };
         let runtime_state = wait_for_runtime_state(
             &manifest.conmon_launch.state_command,
+            manifest.handle.id.as_str(),
             self.config.start_timeout,
-        )?;
+        );
+        let runtime_state = match runtime_state {
+            Ok(runtime_state) => runtime_state,
+            Err(error) => {
+                let quiescence = creator.cancel_and_confirm_quiesced();
+                let persistence = quiescence.as_ref().ok().and_then(|()| {
+                    self.persist_krun_creator_quiescence(manifest, &attempt_id)
+                        .err()
+                });
+                return Err(combine_krun_creator_failure(
+                    error,
+                    quiescence.err(),
+                    persistence,
+                ));
+            }
+        };
+        if let Err(error) = creator.reap_after_runtime_observed(self.config.start_timeout) {
+            let quiescence = creator.cancel_and_confirm_quiesced();
+            let persistence = quiescence.as_ref().ok().and_then(|()| {
+                self.persist_krun_creator_quiescence(manifest, &attempt_id)
+                    .err()
+            });
+            return Err(combine_krun_creator_failure(
+                error,
+                quiescence.err(),
+                persistence,
+            ));
+        }
+        manifest.creator_handoff = KrunCreatorHandoffState::RuntimeObserved { attempt_id };
         if runtime_state != "running" {
             run_status_checked(&manifest.conmon_launch.start_command)?;
         }
@@ -219,9 +996,32 @@ impl KrunSandboxBackend {
         manifest.next_restart_at_millis = None;
         if clear_last_exit_code {
             manifest.last_exit_code = None;
+            manifest.launch_authority = KrunLaunchAuthority::ProviderOwned;
         }
         synchronize_handle_status(manifest, SandboxStatus::Starting);
-        self.write_manifest(manifest)
+        self.persist_effect_barrier(manifest, "krun provider launch result")
+    }
+
+    fn persist_krun_creator_quiescence(
+        &self,
+        manifest: &mut KrunSandboxManifest,
+        attempt_id: &str,
+    ) -> Result<()> {
+        manifest.creator_handoff = KrunCreatorHandoffState::Quiesced {
+            attempt_id: attempt_id.to_owned(),
+        };
+        if let Err(error) = self.persist_effect_barrier(manifest, "krun creator quiescence result")
+        {
+            // Preserve the conservative in-memory authority consumed by the
+            // immediately following cleanup path. Durable readback may already
+            // contain `Quiesced`, but only an acknowledged publication can
+            // authorize this call to release provider effects.
+            manifest.creator_handoff = KrunCreatorHandoffState::Pending {
+                attempt_id: attempt_id.to_owned(),
+            };
+            return Err(error);
+        }
+        Ok(())
     }
 
     /// Stand up the sandbox's deny-by-default network namespace: create the
@@ -231,14 +1031,40 @@ impl KrunSandboxBackend {
     /// down so the VMM is never launched into an unconfigured or unpinned netns.
     /// Reuses the container backend's shared netns free-functions; no
     /// netns/netavark/IPAM logic is forked here.
-    fn configure_network(&self, manifest: &KrunSandboxManifest) -> Result<()> {
+    pub(super) fn configure_network(&self, manifest: &KrunSandboxManifest) -> Result<()> {
+        // Validate attachment authority before any provider or filesystem
+        // effect. PlanOnly manifests carry `None` and can never reach Netavark.
+        let network_config = manifest.require_network_config()?.clone();
+        authenticate_container_network_generation(
+            &manifest.network_layout,
+            &network_config,
+            &manifest.handle.id,
+        )?;
         // One-shot: drop the legacy shared nimbus0 bridge before the first
         // per-tenant setup (pre-launch migration, breaking).
         purge_legacy_nimbus0_once(&self.config.state_root.join("networks"))?;
-        // Reuse the config resolved + persisted at manifest-prepare; never re-assign
-        // it (audit M1 / MTN4) so setup and teardown agree on the bridge.
-        let network_config = manifest.network_config.clone();
+        let port_manager = self.port_manager();
+        port_manager.require_binding_leases(
+            &manifest.spec.tenant_id,
+            &manifest.handle.id,
+            &manifest.spec.port_bindings,
+            &manifest.port_leases,
+        )?;
+        // Reuse the config resolved + persisted at manifest-prepare; never
+        // reassign it so setup and teardown agree on the bridge.
         create_persistent_network_namespace(&manifest.network_layout.netns_path)?;
+        let netavark_claims = match port_manager.claim_netavark_bindings(
+            &manifest.spec.tenant_id,
+            &manifest.handle.id,
+            &manifest.spec.port_bindings,
+            &manifest.port_leases,
+        ) {
+            Ok(claims) => claims,
+            Err(error) => {
+                let _ = remove_persistent_network_namespace(&manifest.network_layout.netns_path);
+                return Err(error);
+            }
+        };
         if let Err(error) = setup_container_network(
             &manifest.network_layout,
             &network_config,
@@ -248,8 +1074,16 @@ impl KrunSandboxBackend {
             &manifest.spec.port_bindings,
             None,
         ) {
-            let _ = remove_persistent_network_namespace(&manifest.network_layout.netns_path);
-            return Err(error);
+            return Err(self.failed_network_configuration(manifest, &network_config, error));
+        }
+        if let Err(error) = port_manager.activate_netavark_bindings(
+            &manifest.spec.tenant_id,
+            &manifest.handle.id,
+            &manifest.spec.port_bindings,
+            &manifest.port_leases,
+            &netavark_claims,
+        ) {
+            return Err(self.failed_network_configuration(manifest, &network_config, error));
         }
         // Pin the netns so the ONLY reachable egress is this sandbox's own PEP.
         // The netavark deny is route-based, but the shared bridge gateway is
@@ -263,17 +1097,7 @@ impl KrunSandboxBackend {
         if let Some(proxy) = manifest.egress_proxy.as_ref()
             && let Err(error) = pin_netns_egress_to_own_proxy(&manifest.network_layout, proxy)
         {
-            let _ = teardown_container_network(
-                &manifest.network_layout,
-                &network_config,
-                &manifest.handle.id,
-                manifest.spec.display_name(),
-                &hostname_for(&manifest.spec),
-                &manifest.spec.port_bindings,
-                None,
-            );
-            let _ = remove_persistent_network_namespace(&manifest.network_layout.netns_path);
-            return Err(error);
+            return Err(self.failed_network_configuration(manifest, &network_config, error));
         }
         // Take the tenant's refcount hold now the netns is up and pinned; the
         // reaper frees the index + bridge when the last hold releases.
@@ -282,6 +1106,38 @@ impl KrunSandboxBackend {
             &default_network_attachment_id(&manifest.handle.id),
         )?;
         Ok(())
+    }
+
+    /// Preserve the namespace retry handle until Netavark detach is confirmed.
+    ///
+    /// Exact claim reconciliation and namespace removal remain in
+    /// `release_network_artifacts`, which can durably order them with the rest
+    /// of the launch authority. Crashing between this detach attempt and outer
+    /// compensation therefore retains conservative evidence instead of
+    /// manufacturing provider absence.
+    pub(super) fn failed_network_configuration(
+        &self,
+        manifest: &KrunSandboxManifest,
+        network_config: &OciNetworkConfig,
+        primary: SandboxError,
+    ) -> SandboxError {
+        match teardown_container_network(
+            &manifest.network_layout,
+            network_config,
+            &manifest.handle.id,
+            manifest.spec.display_name(),
+            &hostname_for(&manifest.spec),
+            &manifest.spec.port_bindings,
+            None,
+        ) {
+            Ok(()) => primary,
+            Err(teardown) => SandboxError::OperationFailed {
+                message: format!(
+                    "krun network configuration failed: {primary}; confirmed-detach \
+                     compensation also failed while the namespace remains fenced: {teardown}"
+                ),
+            },
+        }
     }
 
     /// Fail-closed readiness gate evaluated immediately before the VMM launches.
@@ -307,6 +1163,7 @@ impl KrunSandboxBackend {
         // /dev/kvm. Deny on every non-Linux build.
         ensure_linux_host("krun")?;
         self.ensure_execute_egress_preconditions(
+            &manifest.spec.tenant_id,
             &manifest.handle.id,
             &manifest.network_layout.netns_path,
         )
@@ -319,22 +1176,18 @@ impl KrunSandboxBackend {
     /// matrix is unit-testable without a Linux host or `/dev/kvm`.
     pub(super) fn ensure_execute_egress_preconditions(
         &self,
+        tenant_id: &nimbus_core::TenantId,
         id: &SandboxId,
         netns_path: &Path,
     ) -> Result<()> {
         // (1) The deny-by-default network namespace must already be installed.
         //
-        // `netns_path.exists()` is a sufficient proxy for "the deny chain is
-        // installed" because `configure_network` is atomic with respect to this
-        // file: it first creates the persistent netns, then runs the netavark
-        // setup (no-default-route deny chain + inbound published-port DNAT), and
-        // on ANY netavark failure it removes the netns again
-        // (`remove_persistent_network_namespace`). So the netns path only
-        // persists once the full deny-chain setup has succeeded; a half-built,
-        // open-egress netns never survives to be observed here. Do NOT weaken
-        // `configure_network` to "create the netns, then configure it" without
-        // also gating on a netavark status artifact here — otherwise an
-        // unconfigured (open-egress) netns could satisfy this check.
+        // Reaching this gate proves `configure_network` returned success after
+        // Netavark setup and egress pinning; failed setup returns before this
+        // call and deliberately retains the namespace as conservative retry
+        // evidence when detach is ambiguous. Path existence is therefore only
+        // consumed inside this success-only control-flow edge, never as
+        // standalone proof that an arbitrary persisted namespace is enforced.
         if !netns_path.exists() {
             return Err(SandboxError::OperationFailed {
                 message: format!(
@@ -344,7 +1197,7 @@ impl KrunSandboxBackend {
             });
         }
         // (2) The per-sandbox egress PEP must be running AND ready.
-        match self.egress_proxies.readiness(id)? {
+        match self.egress_proxies.readiness(tenant_id, id)? {
             None => Err(SandboxError::OperationFailed {
                 message: format!(
                     "krun sandbox {id} denied launch: no egress policy-enforcement proxy is running for the deny-by-default namespace"
@@ -361,51 +1214,201 @@ impl KrunSandboxBackend {
         }
     }
 
-    /// Start the host-side egress PEP for this sandbox on the bridge gateway
-    /// bind address. Fail-closed: a missing assignment or a proxy start error
-    /// returns `Err`, which the launch path treats as deny.
-    fn ensure_egress_proxy_running(&self, manifest: &KrunSandboxManifest) -> Result<()> {
-        crate::backends::oci::egress::ensure_egress_proxy_running(
+    fn ensure_egress_proxy_running_with_release_authority(
+        &self,
+        manifest: &KrunSandboxManifest,
+        release_authority: crate::backends::oci::egress::PepPreAdoptionReleaseAuthority<'_>,
+    ) -> Result<()> {
+        crate::backends::oci::egress::ensure_egress_proxy_running_with_release_authority(
             &self.egress_proxies,
             &manifest.spec.tenant_id,
             &manifest.handle.id,
             manifest.egress_proxy.as_ref(),
             &manifest.spec.egress,
+            release_authority,
         )
     }
 
     /// Stop the egress PEP, tear the sandbox network down, and remove the netns,
     /// reusing the container backend's shared teardown free-functions plus the
-    /// shared `EgressProxyRegistry::stop`. Errors are collected so a single
-    /// failing step never short-circuits the rest of the cleanup.
-    fn release_network_artifacts(&self, manifest: &KrunSandboxManifest) -> Result<()> {
+    /// shared `EgressProxyRegistry::stop_with_assignment`. Errors are collected
+    /// so a single failing step never short-circuits the rest of the cleanup.
+    pub(super) fn release_network_artifacts(
+        &self,
+        manifest: &KrunSandboxManifest,
+        mode: NetworkArtifactTeardownMode,
+    ) -> Result<()> {
+        if !manifest.permits_provider_teardown() {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "krun workload {} cannot run provider teardown from launch authority {:?}",
+                    manifest.handle.id, manifest.launch_authority
+                ),
+            });
+        }
+        if !manifest.creator_handoff.authorizes_provider_cleanup() {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "krun workload {} cannot release provider or network authority while creator \
+                     handoff {:?} may still materialize effects",
+                    manifest.handle.id, manifest.creator_handoff
+                ),
+            });
+        }
+        let network_config = manifest.require_network_config()?;
+        authenticate_container_network_generation_for_cleanup(
+            &manifest.network_layout,
+            network_config,
+            &manifest.handle.id,
+        )?;
         let mut errors = Vec::new();
         let mut detach_confirmed = true;
-        if let Err(error) = quarantine_network_segment_hold(
-            self.segment_allocator.as_ref(),
-            &manifest.spec.tenant_id,
-            &manifest.handle.id,
-        ) {
+        let port_manager = self.port_manager();
+        let launch_claim = manifest.reservation_claim();
+        let restart_published_bindings = if mode == NetworkArtifactTeardownMode::Restart
+            && manifest.start_mode == KrunStartMode::Execute
+        {
+            port_manager.expected_netavark_bindings(
+                &manifest.spec.tenant_id,
+                &manifest.handle.id,
+                &manifest.spec.port_bindings,
+                &manifest.port_leases,
+            )
+        } else {
+            Ok(Vec::new())
+        };
+        let published_batch_state = if mode.releases_authority() {
+            port_manager.classify_netavark_cleanup_batch(
+                &manifest.spec.tenant_id,
+                &manifest.handle.id,
+                &manifest.spec.port_bindings,
+                &manifest.port_leases,
+                launch_claim,
+            )
+        } else {
+            Ok(LaunchPortBatchState::ProviderOwned)
+        };
+        let pep_requests = manifest
+            .egress_proxy
+            .as_ref()
+            .map(|assignment| vec![assignment.port_lease.clone()])
+            .unwrap_or_default();
+        let pep_batch_state = if mode.releases_authority()
+            && let Some(claim) = launch_claim
+        {
+            port_manager.classify_launch_port_batch(&pep_requests, claim)
+        } else {
+            Ok(LaunchPortBatchState::ProviderOwned)
+        };
+        if let Err(error) = &published_batch_state {
             detach_confirmed = false;
             errors.push(error.to_string());
         }
-        if let Err(error) = self.egress_proxies.stop(&manifest.handle.id) {
+        if let Err(error) = &restart_published_bindings {
             detach_confirmed = false;
             errors.push(error.to_string());
         }
-        if let Err(error) = teardown_container_network(
-            &manifest.network_layout,
-            &manifest.network_config,
-            &manifest.handle.id,
-            manifest.spec.display_name(),
-            &hostname_for(&manifest.spec),
-            &manifest.spec.port_bindings,
-            None,
-        ) {
+        if let Err(error) = &pep_batch_state {
             detach_confirmed = false;
             errors.push(error.to_string());
         }
-        if let Err(error) = remove_persistent_network_namespace(&manifest.network_layout.netns_path)
+        if mode.releases_authority()
+            && let Err(error) = quarantine_network_segment_hold(
+                self.segment_allocator.as_ref(),
+                &manifest.spec.tenant_id,
+                &manifest.handle.id,
+                &network_config.reservation_claim,
+            )
+        {
+            detach_confirmed = false;
+            errors.push(error.to_string());
+        }
+        if mode.releases_authority()
+            && manifest.start_mode == KrunStartMode::Execute
+            && matches!(
+                &published_batch_state,
+                Ok(LaunchPortBatchState::ProviderOwned)
+            )
+            && let Err(error) = port_manager.withdraw_bindings(
+                &manifest.spec.tenant_id,
+                &manifest.handle.id,
+                &manifest.spec.port_bindings,
+                &manifest.port_leases,
+            )
+        {
+            detach_confirmed = false;
+            errors.push(error.to_string());
+        }
+        if matches!(&pep_batch_state, Ok(LaunchPortBatchState::ProviderOwned)) {
+            let stop_pep = if mode.releases_authority() {
+                self.egress_proxies.stop_with_assignment(
+                    &manifest.spec.tenant_id,
+                    &manifest.handle.id,
+                    manifest.egress_proxy.as_ref(),
+                )
+            } else {
+                self.egress_proxies.stop_for_restart(
+                    &manifest.spec.tenant_id,
+                    &manifest.handle.id,
+                    manifest.egress_proxy.as_ref(),
+                )
+            };
+            if let Err(error) = stop_pep {
+                detach_confirmed = false;
+                errors.push(error.to_string());
+            }
+        }
+        let netavark_detach_confirmed =
+            match manifest
+                .require_network_config()
+                .and_then(|network_config| {
+                    teardown_container_network(
+                        &manifest.network_layout,
+                        network_config,
+                        &manifest.handle.id,
+                        manifest.spec.display_name(),
+                        &hostname_for(&manifest.spec),
+                        &manifest.spec.port_bindings,
+                        None,
+                    )
+                }) {
+                Ok(()) => true,
+                Err(error) => {
+                    detach_confirmed = false;
+                    errors.push(error.to_string());
+                    false
+                }
+            };
+        if netavark_detach_confirmed
+            && mode == NetworkArtifactTeardownMode::Restart
+            && manifest.start_mode == KrunStartMode::Execute
+            && let Ok(expected_bindings) = &restart_published_bindings
+            && let Err(error) = port_manager
+                .prepare_netavark_bindings_for_rebind(&manifest.port_leases, expected_bindings)
+        {
+            detach_confirmed = false;
+            errors.push(error.to_string());
+        }
+        if netavark_detach_confirmed
+            && mode.releases_authority()
+            && manifest.start_mode == KrunStartMode::Execute
+            && let Ok(LaunchPortBatchState::NetavarkClaimed(claims)) = &published_batch_state
+            && let Err(error) = port_manager.abandon_netavark_bind_claims_without_effect(
+                &manifest.spec.tenant_id,
+                &manifest.handle.id,
+                &manifest.spec.port_bindings,
+                &manifest.port_leases,
+                claims,
+                launch_claim,
+            )
+        {
+            detach_confirmed = false;
+            errors.push(error.to_string());
+        }
+        if netavark_detach_confirmed
+            && detach_confirmed
+            && let Err(error) =
+                remove_persistent_network_namespace(&manifest.network_layout.netns_path)
         {
             detach_confirmed = false;
             errors.push(error.to_string());
@@ -414,15 +1417,99 @@ impl KrunSandboxBackend {
         // deletion are confirmed. A failed bridge cleanup leaves the allocation
         // cleanup-pending and unavailable.
         if detach_confirmed {
-            errors.extend(
-                release_network_segment_hold(
-                    self.segment_allocator.as_ref(),
-                    &manifest.spec.tenant_id,
-                    &manifest.handle.id,
-                )
-                .into_iter()
-                .map(|error| error.to_string()),
-            );
+            if mode.releases_authority() && manifest.start_mode == KrunStartMode::Execute {
+                match published_batch_state {
+                    Ok(LaunchPortBatchState::NeverBound) => {
+                        if let Some(claim) = launch_claim
+                            && let Err(error) = port_manager
+                                .release_never_bound_requests(&manifest.port_leases, claim)
+                        {
+                            detach_confirmed = false;
+                            errors.push(error.to_string());
+                        }
+                    }
+                    Ok(LaunchPortBatchState::NetavarkClaimed(_)) => {
+                        let release = launch_claim.map_or_else(
+                            || {
+                                port_manager.release_restart_retained_bindings(
+                                    &manifest.spec.tenant_id,
+                                    &manifest.handle.id,
+                                    &manifest.spec.port_bindings,
+                                    &manifest.port_leases,
+                                )
+                            },
+                            |claim| {
+                                port_manager
+                                    .release_never_bound_requests(&manifest.port_leases, claim)
+                            },
+                        );
+                        if let Err(error) = release {
+                            detach_confirmed = false;
+                            errors.push(error.to_string());
+                        }
+                    }
+                    Ok(LaunchPortBatchState::RestartRetained) => {
+                        if let Err(error) = port_manager.release_restart_retained_bindings(
+                            &manifest.spec.tenant_id,
+                            &manifest.handle.id,
+                            &manifest.spec.port_bindings,
+                            &manifest.port_leases,
+                        ) {
+                            detach_confirmed = false;
+                            errors.push(error.to_string());
+                        }
+                    }
+                    Ok(LaunchPortBatchState::ProviderOwned) => {
+                        if let Err(error) = port_manager.release_bindings(
+                            &manifest.spec.tenant_id,
+                            &manifest.handle.id,
+                            &manifest.spec.port_bindings,
+                            &manifest.port_leases,
+                        ) {
+                            detach_confirmed = false;
+                            errors.push(error.to_string());
+                        }
+                    }
+                    Ok(LaunchPortBatchState::TerminalNoEffect) => {
+                        // Every exact lease already carries terminal proof that
+                        // no provider effect remains. Cleanup replay has no port
+                        // mutation left to perform.
+                    }
+                    Err(_) => {}
+                }
+                if detach_confirmed
+                    && matches!(&pep_batch_state, Ok(LaunchPortBatchState::NeverBound))
+                    && let Some(claim) = launch_claim
+                    && let Err(error) =
+                        port_manager.release_never_bound_requests(&pep_requests, claim)
+                {
+                    detach_confirmed = false;
+                    errors.push(error.to_string());
+                }
+                if detach_confirmed
+                    && let Ok(network_config) = manifest.require_network_config()
+                    && let Err(error) = deallocate_container_ips_after_confirmed_detach(
+                        &manifest.network_layout,
+                        &manifest.handle.id,
+                        &network_config.reservation_claim,
+                    )
+                {
+                    detach_confirmed = false;
+                    errors.push(error.to_string());
+                }
+            }
+            if mode.releases_authority() && detach_confirmed {
+                errors.extend(
+                    release_network_segment_hold(
+                        self.segment_allocator.as_ref(),
+                        &manifest.spec.tenant_id,
+                        &manifest.handle.id,
+                        &network_config.reservation_claim,
+                    )
+                    .into_iter()
+                    .map(|error| error.to_string()),
+                );
+            }
         }
         if errors.is_empty() {
             Ok(())
@@ -437,12 +1524,21 @@ impl KrunSandboxBackend {
         }
     }
 
-    fn reset_runtime_for_restart(&self, manifest: &KrunSandboxManifest) -> Result<()> {
-        self.release_network_artifacts(manifest)?;
-        run_status_checked(&manifest.conmon_launch.delete_command)?;
-        remove_if_exists(&manifest.conmon_layout.exit_status_file)?;
+    pub(super) fn reset_runtime_for_restart(&self, manifest: &KrunSandboxManifest) -> Result<()> {
+        self.delete_runtime_and_confirm_absent(manifest)
+            .map_err(|error| SandboxError::OperationFailed {
+                message: format!(
+                    "failed to reset krun sandbox {} for restart before provider detach: {error}",
+                    manifest.handle.id
+                ),
+            })?;
+        self.release_network_artifacts(manifest, NetworkArtifactTeardownMode::Restart)?;
         remove_if_exists(&manifest.conmon_layout.pidfile)?;
         remove_if_exists(&manifest.conmon_layout.conmon_pidfile)?;
+        // The exit receipt is the durable restart checkpoint. Consume it only
+        // after runtime absence and every other stale artifact are confirmed,
+        // so a same-process retry cannot lose restart eligibility.
+        remove_if_exists(&manifest.conmon_layout.exit_status_file)?;
         Ok(())
     }
 
@@ -480,7 +1576,95 @@ impl KrunSandboxBackend {
         Ok(Some(manifest))
     }
 
+    pub(super) fn persist_effect_barrier(
+        &self,
+        manifest: &KrunSandboxManifest,
+        operation: &str,
+    ) -> Result<()> {
+        #[cfg(test)]
+        let write = match self
+            .effect_barrier_test_probe
+            .as_ref()
+            .and_then(|probe| probe.claim(operation))
+        {
+            Some(KrunEffectBarrierFailureStage::BeforeWrite) => {
+                Err(SandboxError::OperationFailed {
+                    message: format!("injected {operation} failure before manifest publication"),
+                })
+            }
+            Some(KrunEffectBarrierFailureStage::AfterRenameBeforeParentSync) => self
+                .write_manifest_with_post_rename_hook(manifest, || {
+                    Err(SandboxError::OperationFailed {
+                        message: format!(
+                            "injected {operation} acknowledgement loss after manifest rename and \
+                             before parent-directory sync"
+                        ),
+                    })
+                }),
+            None => self.write_manifest(manifest),
+        };
+        #[cfg(not(test))]
+        let write = self.write_manifest(manifest);
+
+        let publication = match write {
+            Ok(()) => Ok(()),
+            Err(primary) => match self.read_manifest(&manifest.handle.id) {
+                Ok(Some(observed)) if observed == *manifest => self
+                    .sync_manifest_parent(manifest)
+                    .map_err(|retry| SandboxError::OperationFailed {
+                        message: format!(
+                            "{operation} became observable for {} but durability remains \
+                             ambiguous: {primary}; parent-directory sync retry failed: {retry}",
+                            manifest.handle.id
+                        ),
+                    }),
+                Ok(Some(_)) => Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "{operation} was not durably observable for {} after write failure: \
+                         {primary}; refusing subsequent effects",
+                        manifest.handle.id
+                    ),
+                }),
+                Ok(None) => Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "{operation} lost the durable manifest for {} after write failure: \
+                         {primary}; refusing subsequent effects",
+                        manifest.handle.id
+                    ),
+                }),
+                Err(observe) => Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "{operation} could not be confirmed for {} after write failure: \
+                         {primary}; readback failed: {observe}; refusing subsequent effects",
+                        manifest.handle.id
+                    ),
+                }),
+            },
+        };
+        publication?;
+        self.retire_terminal_ipam_after_publication(manifest, operation)
+    }
+
+    pub(super) fn sync_manifest_parent(&self, manifest: &KrunSandboxManifest) -> Result<()> {
+        std::fs::File::open(&manifest.conmon_layout.container_state_dir)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| SandboxError::OperationFailed {
+                message: format!(
+                    "failed to sync krun manifest directory {}: {error}",
+                    manifest.conmon_layout.container_state_dir.display()
+                ),
+            })
+    }
+
     pub(super) fn write_manifest(&self, manifest: &KrunSandboxManifest) -> Result<()> {
+        self.write_manifest_with_post_rename_hook(manifest, || Ok(()))
+    }
+
+    fn write_manifest_with_post_rename_hook(
+        &self,
+        manifest: &KrunSandboxManifest,
+        after_rename: impl FnOnce() -> Result<()>,
+    ) -> Result<()> {
         std::fs::create_dir_all(&manifest.conmon_layout.container_state_dir).map_err(|error| {
             SandboxError::OperationFailed {
                 message: format!(
@@ -489,17 +1673,89 @@ impl KrunSandboxBackend {
                 ),
             }
         })?;
-        let rendered =
+        let mut rendered =
             serde_json::to_vec_pretty(manifest).map_err(|error| SandboxError::OperationFailed {
                 message: format!("failed to serialize sandbox manifest: {error}"),
             })?;
-        std::fs::write(&manifest.conmon_layout.manifest_path, rendered).map_err(|error| {
-            SandboxError::OperationFailed {
-                message: format!(
-                    "failed to write sandbox manifest {}: {error}",
-                    manifest.conmon_layout.manifest_path.display()
-                ),
-            }
+        rendered.push(b'\n');
+        let staged_path = manifest.conmon_layout.container_state_dir.join(format!(
+            ".nimbus-krun-manifest.{}.stage",
+            Ulid::new().to_string().to_ascii_lowercase()
+        ));
+        let publish = (|| -> Result<()> {
+            let mut staged = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&staged_path)
+                .map_err(|error| SandboxError::OperationFailed {
+                    message: format!(
+                        "failed to create staged krun manifest {}: {error}",
+                        staged_path.display()
+                    ),
+                })?;
+            staged
+                .write_all(&rendered)
+                .and_then(|()| staged.sync_all())
+                .map_err(|error| SandboxError::OperationFailed {
+                    message: format!(
+                        "failed to durably stage krun manifest {}: {error}",
+                        staged_path.display()
+                    ),
+                })?;
+            std::fs::rename(&staged_path, &manifest.conmon_layout.manifest_path).map_err(
+                |error| SandboxError::OperationFailed {
+                    message: format!(
+                        "failed to atomically publish krun manifest {}: {error}",
+                        manifest.conmon_layout.manifest_path.display()
+                    ),
+                },
+            )?;
+            after_rename()?;
+            std::fs::File::open(&manifest.conmon_layout.container_state_dir)
+                .and_then(|directory| directory.sync_all())
+                .map_err(|error| SandboxError::OperationFailed {
+                    message: format!(
+                        "failed to durably publish krun manifest {}: {error}",
+                        manifest.conmon_layout.manifest_path.display()
+                    ),
+                })
+        })();
+        if publish.is_err() {
+            let _ = std::fs::remove_file(&staged_path);
+        }
+        publish.map_err(|error| SandboxError::OperationFailed {
+            message: format!(
+                "krun manifest write failed for {}: {error}",
+                manifest.handle.id
+            ),
         })
+    }
+
+    fn retire_terminal_ipam_after_publication(
+        &self,
+        manifest: &KrunSandboxManifest,
+        operation: &str,
+    ) -> Result<()> {
+        if matches!(
+            manifest.status,
+            SandboxStatus::Stopped | SandboxStatus::Failed
+        ) && manifest.launch_artifact.is_none()
+            && manifest.launch_authority == KrunLaunchAuthority::Released
+            && let Some(network_config) = manifest.network_config.as_ref()
+        {
+            retire_terminal_container_ipam_release(
+                &manifest.network_layout,
+                &manifest.handle.id,
+                &network_config.reservation_claim,
+            )
+            .map_err(|error| SandboxError::OperationFailed {
+                message: format!(
+                    "{operation} manifest for {} is durable, but exact IPAM witness retirement \
+                     remains pending: {error}",
+                    manifest.handle.id
+                ),
+            })?;
+        }
+        Ok(())
     }
 }

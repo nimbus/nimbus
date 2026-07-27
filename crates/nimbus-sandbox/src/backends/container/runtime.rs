@@ -1,11 +1,17 @@
-use std::collections::HashMap;
-use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+mod artifact_cleanup;
 mod config;
+mod creator;
+mod direct_execution;
+mod effect_fence;
+mod execution_cleanup;
 mod launch;
+mod machine_ports;
 mod manifest;
+mod network_launch;
+mod provider_context;
 mod restart;
 mod runner;
 mod status;
@@ -19,28 +25,29 @@ use crate::backends::conmon::lifecycle::RestartLaunchTestProbe;
 use crate::backends::conmon::lifecycle::{
     RuntimeStatusProbe, configured_stop_signal, configured_stop_timeout,
     detect_runtime_status as detect_conmon_runtime_status, ensure_linux_host, read_exit_code,
-    read_pid, remove_if_exists, run_status_best_effort, run_status_checked, signal_process,
-    spawn_background, wait_for_path, wait_for_runtime_state,
+    read_pid, run_status_checked, signal_process, wait_for_path,
 };
-use crate::backends::oci::buildah::{BuildahCli, OciImageLaunchDefaults};
+use crate::backends::oci::buildah::OciImageLaunchDefaults;
 use crate::backends::oci::builder::OciDockerfileBuilder;
 use crate::backends::oci::conmon::{OciConmonConfig, OciConmonLayout, build_launch_plan};
 use crate::backends::oci::egress::{
-    EgressProxyAssignment, EgressProxyRegistry, allocate_egress_proxy as allocate_oci_egress_proxy,
-    egress_decision_log_root, egress_trust_anchor_mount, egress_trust_anchor_root,
+    EgressProxyAssignment, EgressProxyRegistry, PepPreAdoptionReleaseAuthority,
+    egress_decision_log_root, egress_listener_reservation, egress_proxy_assignment,
+    egress_trust_anchor_mount, egress_trust_anchor_root,
     ensure_egress_proxy_running as ensure_oci_egress_proxy_running,
+    ensure_egress_proxy_running_with_release_authority,
 };
 use crate::backends::oci::materializer::{OciImageMaterializer, PreparedMaterializedImageLaunch};
 use crate::backends::oci::network::{
-    ConfiguredSegmentAllocator, MachinePortProxy, OciNetworkConfig, OciNetworkDirectEgress,
-    OciNetworkLayout, OciSegmentAllocator, OciSegmentRealization,
-    create_persistent_network_namespace, default_network_attachment_id, expose_machine_ports,
-    pin_netns_egress_to_own_proxy, place_sandbox_on_block, purge_legacy_nimbus0_once,
-    quarantine_network_segment_hold, reconcile_network_segment_orphans,
-    release_network_segment_hold, remove_persistent_network_namespace, setup_container_network,
-    start_machine_port_proxies, teardown_container_network, unexpose_machine_ports,
+    ConfiguredSegmentAllocator, MachinePortPreparationReleaseAuthority, OciNetworkLayout,
+    OciSegmentAllocator, authenticate_container_network_generation,
+    authenticate_container_network_generation_for_cleanup, create_persistent_network_namespace,
+    default_network_attachment_id, expose_machine_ports, pin_netns_egress_to_own_proxy,
+    purge_legacy_nimbus0_once, reconcile_startup_network_state,
+    remove_persistent_network_namespace, setup_container_network, teardown_container_network,
 };
-use crate::backends::oci::port_manager::PortManager;
+use crate::backends::oci::port_lease::new_launch_reservation_claim;
+use crate::backends::oci::port_manager::{ReservedLaunchPorts, SandboxLaunchPortPlan};
 use crate::backends::oci::resource_quota::ResourceQuotaManager;
 use crate::error::{Result, SandboxError};
 use crate::instance::{SandboxHandle, SandboxId, SandboxStatus};
@@ -49,12 +56,18 @@ use nimbus_egress::EgressPolicy;
 
 pub use config::{ContainerSandboxBackendConfig, ContainerStartMode};
 use launch::{hostname_for, next_sandbox_id, resolve_start_spec};
+use machine_ports::MachinePortProxyRegistry;
+#[cfg(test)]
+use machine_ports::{MachinePortProxyEntry, MachinePortProxyRegistration};
 use manifest::{
-    ContainerLaunchArtifact, ContainerRunnerExecutionConfig, ContainerSandboxManifest,
-    ContainerStartPlan,
+    ContainerCreatorHandoffState, ContainerLaunchArtifact, ContainerLifecycleCoordinator,
+    ContainerRunnerExecutionConfig, ContainerSandboxManifest, ContainerStartPlan,
+    reconcile_startup_manifest_publications,
 };
 use restart::{ContainerRestartDecision, mark_restart_decision_after_exit};
 use runner::RUNNER_MANIFEST_POINTER_FILE;
+#[cfg(test)]
+use runner::RunnerLifecycleLockTestProbe;
 pub use runner::run_prepared_container_service_workload;
 use status::{running_status, synchronize_handle_status, visible_published_endpoints};
 
@@ -63,15 +76,57 @@ pub struct ContainerSandboxBackend {
     config: ContainerSandboxBackendConfig,
     segment_allocator: Arc<OciSegmentAllocator>,
     egress_proxies: EgressProxyRegistry,
-    machine_port_proxies: Arc<Mutex<HashMap<SandboxId, Vec<MachinePortProxy>>>>,
+    machine_port_proxies: Arc<Mutex<MachinePortProxyRegistry>>,
+    startup_reconciliation_error: Option<Arc<str>>,
     #[cfg(test)]
     restart_launch_test_probe: Option<RestartLaunchTestProbe>,
+    #[cfg(test)]
+    runner_handoff_failure: Option<RunnerHandoffFailure>,
+    #[cfg(test)]
+    runner_lifecycle_lock_test_probe: Option<RunnerLifecycleLockTestProbe>,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RunnerHandoffFailure {
+    Manifest,
+    Pointer,
+    PointerAfterExecuteDecision,
+    DirectEffectFencePersistence,
+    DirectEffectFenceAcknowledgementLoss,
+    DirectAfterEffectFence,
+    DirectTerminalManifest,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreparedContainerServiceWorkload {
     pub handle: SandboxHandle,
     pub bundle_dir: PathBuf,
+}
+
+fn combine_launch_failure(
+    primary: SandboxError,
+    cleanup: Option<SandboxError>,
+    persistence: Option<SandboxError>,
+) -> SandboxError {
+    match (cleanup, persistence) {
+        (None, None) => primary,
+        (Some(cleanup), None) => SandboxError::OperationFailed {
+            message: format!("container launch failed: {primary}; cleanup also failed: {cleanup}"),
+        },
+        (None, Some(persistence)) => SandboxError::OperationFailed {
+            message: format!(
+                "container launch failed: {primary}; compensated-manifest persistence also failed: \
+                 {persistence}"
+            ),
+        },
+        (Some(cleanup), Some(persistence)) => SandboxError::OperationFailed {
+            message: format!(
+                "container launch failed: {primary}; cleanup also failed: {cleanup}; \
+                 compensated-manifest persistence also failed: {persistence}"
+            ),
+        },
+    }
 }
 
 impl ContainerSandboxBackend {
@@ -89,21 +144,49 @@ impl ContainerSandboxBackend {
         config: ContainerSandboxBackendConfig,
         segment_allocator: Arc<OciSegmentAllocator>,
     ) -> Self {
-        // Startup orphan GC: reclaim segment holds whose sandbox netns is gone
-        // (best-effort; a fresh node with no persisted state is a no-op).
-        let _ = reconcile_network_segment_orphans(&config.state_root, segment_allocator.as_ref());
-        let egress_proxies = EgressProxyRegistry::with_roots(
+        let startup_reconciliation_error =
+            reconcile_startup_manifest_publications(&config.state_root)
+                .and_then(|()| {
+                    reconcile_startup_network_state(&config.state_root, segment_allocator.as_ref())
+                })
+                .err()
+                .map(|error| Arc::<str>::from(error.to_string()));
+        let egress_proxies = EgressProxyRegistry::with_roots_and_network_state(
             egress_decision_log_root(&config.state_root),
             egress_trust_anchor_root(&config.state_root),
+            &config.state_root,
         );
         Self {
             config,
             segment_allocator,
             egress_proxies,
-            machine_port_proxies: Arc::new(Mutex::new(HashMap::new())),
+            machine_port_proxies: Arc::new(Mutex::new(MachinePortProxyRegistry::new())),
+            startup_reconciliation_error,
             #[cfg(test)]
             restart_launch_test_probe: None,
+            #[cfg(test)]
+            runner_handoff_failure: None,
+            #[cfg(test)]
+            runner_lifecycle_lock_test_probe: None,
         }
+    }
+
+    fn ensure_startup_reconciliation_ready(&self) -> Result<()> {
+        if let Some(error) = self.startup_reconciliation_error.as_ref() {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "container backend refuses new durable work because startup reconciliation \
+                     did not complete: {error}"
+                ),
+            });
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn with_runner_handoff_failure(mut self, failure: RunnerHandoffFailure) -> Self {
+        self.runner_handoff_failure = Some(failure);
+        self
     }
 
     #[cfg(test)]
@@ -112,11 +195,20 @@ impl ContainerSandboxBackend {
         self
     }
 
+    #[cfg(test)]
+    fn with_runner_lifecycle_lock_test_probe(
+        mut self,
+        probe: RunnerLifecycleLockTestProbe,
+    ) -> Self {
+        self.runner_lifecycle_lock_test_probe = Some(probe);
+        self
+    }
+
     pub fn reload_egress_policy(&self, id: &SandboxId, egress: EgressPolicy) -> Result<()> {
         let compiled = egress
             .compile()
             .map_err(|message| SandboxError::InvalidSpec { message })?;
-        let Some(mut manifest) = self.read_manifest(id)? else {
+        let Some(manifest) = self.read_manifest(id)? else {
             return Err(SandboxError::NotFound {
                 sandbox_id: id.as_str().to_owned(),
             });
@@ -126,9 +218,29 @@ impl ContainerSandboxBackend {
                 message: "container egress live reload requires execute-mode sandbox".to_owned(),
             });
         }
+        self.ensure_startup_reconciliation_ready()?;
+        let (_lifecycle, mut manifest) =
+            runner::lock_current_execute_lifecycle_for_backend(self, &manifest)?;
+        if let Some(phase) = runner::execute_handoff_phase(&manifest)? {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "container egress live reload for {id} requires published lifecycle \
+                     ownership; runner handoff remains in {phase:?}"
+                ),
+            });
+        }
+        if manifest.launch_reservation_claim.is_some() {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "container egress live reload for {id} requires published lifecycle \
+                     ownership; the launch reservation remains before provider effects"
+                ),
+            });
+        }
         manifest.spec.egress = compiled.policy().clone();
         self.ensure_egress_proxy_running(&manifest)?;
-        self.egress_proxies.reload(id, compiled)?;
+        self.egress_proxies
+            .reload(&manifest.spec.tenant_id, id, compiled)?;
         self.write_manifest(&manifest)
     }
 
@@ -147,68 +259,10 @@ impl ContainerSandboxBackend {
         Ok(())
     }
 
-    fn port_manager(&self) -> PortManager {
-        PortManager::new(
-            &self.config.state_root,
-            self.config.published_port_range.clone(),
-        )
-        .with_max_ports_per_tenant(self.config.max_published_ports_per_tenant)
-    }
-
     fn resource_quota_manager(&self) -> ResourceQuotaManager {
         ResourceQuotaManager::new(
             self.config.state_root.clone(),
             self.config.resource_quota_policy.clone(),
-        )
-    }
-
-    /// Build the OCI network config for a specific resolved block segment — the
-    /// bridge identity + `/24` subnet + DNS-off + deny-egress policy. Shared by the
-    /// primary-block `network_config` and block-aware `place_sandbox_config` (MTN6).
-    fn config_from_segment(&self, segment: &OciSegmentRealization) -> OciNetworkConfig {
-        OciNetworkConfig {
-            netavark_path: self.config.netavark_path.clone(),
-            aardvark_dns_path: self.config.aardvark_dns_path.clone(),
-            network_name: segment.network_name().to_owned(),
-            network_interface: segment.network_interface().to_owned(),
-            network_subnet: segment.cidr().to_string(),
-            direct_egress: OciNetworkDirectEgress::Deny,
-            // DNS-off on both backends (MTN5, owner-ratified): under the H1 pin
-            // the guest can't reach gateway:53 anyway, so an in-subnet aardvark is
-            // running-but-unreachable dead weight AND a cross-tenant DNS-leak
-            // surface on index reuse. Names resolve host-side through the egress
-            // PEP (the KME5 posture) — identical to the krun backend.
-            enable_dns: false,
-            network_id: segment.network_id().as_str().to_owned(),
-        }
-    }
-
-    fn network_config(&self, tenant: &nimbus_core::TenantId) -> Result<OciNetworkConfig> {
-        // Per-tenant PRIMARY block: distinct subnet + bridge identity carved from
-        // the node super-net, so two tenants never collide on one bridge (M1).
-        let segment = self.segment_allocator.segment_for(tenant)?;
-        Ok(self.config_from_segment(&segment))
-    }
-
-    /// Block-aware placement (MTN6): resolve the network config for the block
-    /// bridge that will host `sandbox_id`, reserving its IP. Tries the tenant's
-    /// blocks in order and, when a block's `/24` is exhausted, grows a new sibling
-    /// block bridge (a CREATE — netavark has no live subnet-add) and places there.
-    /// Fail-closed when the node super-net is exhausted. `allocate_container_ips`
-    /// is idempotent per sandbox, so `setup_container_network` later reuses the
-    /// reserved IP on the placed block.
-    fn place_sandbox_config(
-        &self,
-        tenant: &nimbus_core::TenantId,
-        layout: &OciNetworkLayout,
-        sandbox_id: &SandboxId,
-    ) -> Result<OciNetworkConfig> {
-        place_sandbox_on_block(
-            self.segment_allocator.as_ref(),
-            tenant,
-            layout,
-            sandbox_id,
-            |segment| self.config_from_segment(segment),
         )
     }
 
@@ -235,11 +289,87 @@ impl ContainerSandboxBackend {
             });
         }
         let mut launch_plan = self.plan_start(&spec)?;
-        self.attach_runner_owned_egress_proxy(&mut launch_plan)?;
-        self.write_runner_manifest_pointer(&launch_plan.manifest)?;
+        launch_plan.manifest.assign_prepared_service_runner()?;
+        if let Err(error) = self.attach_runner_owned_egress_proxy(&mut launch_plan) {
+            return Err(self.compensate_prepared_runner_failure(&mut launch_plan.manifest, error));
+        }
         let bundle_dir = launch_plan.manifest.bundle_layout.bundle_dir.clone();
-        let handle = self.finish_start(launch_plan)?;
+        // The manifest is the durable handoff barrier. Publish the pointer only
+        // after the exact claim-bearing plan can be reopened by the runner.
+        #[cfg(test)]
+        let manifest_write = if self
+            .runner_handoff_failure
+            .is_some_and(|failure| matches!(failure, RunnerHandoffFailure::Manifest))
+        {
+            Err(SandboxError::OperationFailed {
+                message: "injected runner manifest handoff failure".to_owned(),
+            })
+        } else {
+            self.write_manifest(&launch_plan.manifest)
+        };
+        #[cfg(not(test))]
+        let manifest_write = self.write_manifest(&launch_plan.manifest);
+        if let Err(error) = manifest_write {
+            return Err(self.compensate_prepared_runner_failure(&mut launch_plan.manifest, error));
+        }
+        #[cfg(test)]
+        let pointer_write = match self.runner_handoff_failure {
+            Some(RunnerHandoffFailure::Pointer) => Err(SandboxError::OperationFailed {
+                message: "injected runner pointer handoff failure".to_owned(),
+            }),
+            Some(RunnerHandoffFailure::PointerAfterExecuteDecision) => {
+                self.write_runner_manifest_pointer(&launch_plan.manifest)?;
+                runner::claim_runner_execution_for_test(&launch_plan.manifest)?;
+                Err(SandboxError::OperationFailed {
+                    message: "injected runner pointer acknowledgement failure after Execute"
+                        .to_owned(),
+                })
+            }
+            Some(
+                RunnerHandoffFailure::Manifest
+                | RunnerHandoffFailure::DirectEffectFencePersistence
+                | RunnerHandoffFailure::DirectEffectFenceAcknowledgementLoss
+                | RunnerHandoffFailure::DirectAfterEffectFence
+                | RunnerHandoffFailure::DirectTerminalManifest,
+            )
+            | None => self.write_runner_manifest_pointer(&launch_plan.manifest),
+        };
+        #[cfg(not(test))]
+        let pointer_write = self.write_runner_manifest_pointer(&launch_plan.manifest);
+        if let Err(error) = pointer_write {
+            let _handoff = match runner::lock_plan_only_status_update(&launch_plan.manifest, true) {
+                Ok(handoff) => handoff,
+                Err(fence) => {
+                    return Err(combine_launch_failure(error, Some(fence), None));
+                }
+            };
+            return Err(self.compensate_prepared_runner_failure(&mut launch_plan.manifest, error));
+        }
+        let handle = launch_plan.manifest.handle.clone();
         Ok(PreparedContainerServiceWorkload { handle, bundle_dir })
+    }
+
+    fn compensate_prepared_runner_failure(
+        &self,
+        manifest: &mut ContainerSandboxManifest,
+        primary: SandboxError,
+    ) -> SandboxError {
+        let cleanup = self.release_plan_only_execution_artifacts(manifest).err();
+        manifest.shutdown_requested = true;
+        if cleanup.is_none() {
+            manifest.last_exit_code = Some(0);
+        }
+        manifest.next_restart_at_millis = None;
+        synchronize_handle_status(
+            manifest,
+            if cleanup.is_none() {
+                SandboxStatus::Stopped
+            } else {
+                SandboxStatus::Stopping
+            },
+        );
+        let persistence = self.write_manifest(manifest).err();
+        combine_launch_failure(primary, cleanup, persistence)
     }
 
     pub fn mark_plan_only_service_workload_stopped(
@@ -271,39 +401,161 @@ impl ContainerSandboxBackend {
         let Some(mut manifest) = self.read_manifest(id)? else {
             return Ok(None);
         };
-        synchronize_handle_status(&mut manifest, status);
-        if status == SandboxStatus::Stopped {
-            manifest.next_restart_at_millis = None;
-            self.cleanup_manifest_launch_artifacts(&manifest)?;
-            manifest.launch_artifact = None;
+        if manifest.lifecycle_coordinator != ContainerLifecycleCoordinator::PreparedServiceRunner {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "container service workload status refresh requires the \
+                     PreparedServiceRunner lifecycle coordinator; workload {id} is owned by {:?}",
+                    manifest.lifecycle_coordinator
+                ),
+            });
         }
-        self.write_manifest(&manifest)?;
+        let _execute_handoff = if manifest.start_mode == ContainerStartMode::Execute {
+            let (handoff, current) =
+                runner::lock_current_execute_lifecycle_for_backend(self, &manifest)?;
+            manifest = current;
+            Some(handoff)
+        } else {
+            None
+        };
+        if manifest.start_mode == ContainerStartMode::Execute
+            && let Some(phase) = runner::execute_handoff_phase(&manifest)?
+        {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "container workload {id} is owned by runner handoff phase {phase:?}; \
+                     external status mutation remains fenced"
+                ),
+            });
+        }
+        let terminal_callback = matches!(status, SandboxStatus::Stopped | SandboxStatus::Failed);
+        let terminal_finality = manifest.has_terminal_network_finality();
+        if terminal_finality {
+            self.reconcile_terminal_ipam_retirement(&manifest)?;
+            return Ok(Some(manifest.handle));
+        }
+        if manifest.shutdown_requested && !terminal_callback {
+            return Ok(Some(manifest.handle));
+        }
+        let _handoff = (manifest.start_mode == ContainerStartMode::PlanOnly)
+            .then(|| runner::lock_plan_only_status_update(&manifest, terminal_callback))
+            .transpose()?;
+        let status = if terminal_callback {
+            let prior_failure = manifest.status == SandboxStatus::Failed
+                || manifest.last_exit_code.is_some_and(|exit| exit != 0);
+            let terminal_status = if status == SandboxStatus::Failed || prior_failure {
+                SandboxStatus::Failed
+            } else {
+                SandboxStatus::Stopped
+            };
+            manifest.shutdown_requested = true;
+            manifest.last_exit_code = match terminal_status {
+                SandboxStatus::Stopped => Some(0),
+                SandboxStatus::Failed => manifest.last_exit_code.filter(|exit| *exit != 0),
+                _ => unreachable!("terminal callback status is normalized above"),
+            };
+            manifest.next_restart_at_millis = None;
+            match manifest.start_mode {
+                ContainerStartMode::PlanOnly => {
+                    self.release_plan_only_execution_artifacts(&mut manifest)?;
+                }
+                ContainerStartMode::Execute => {
+                    self.release_execution_artifacts(&mut manifest)?;
+                }
+            }
+            terminal_status
+        } else {
+            status
+        };
+        synchronize_handle_status(&mut manifest, status);
+        self.write_existing_workload_manifest(&manifest)?;
         Ok(Some(manifest.handle))
     }
 
-    fn attach_runner_owned_egress_proxy(&self, launch_plan: &mut ContainerStartPlan) -> Result<()> {
+    fn attach_runner_owned_egress_proxy(
+        &self,
+        launch_plan: &mut ContainerStartPlan,
+    ) -> Result<ReservedLaunchPorts> {
         if launch_plan.manifest.egress_proxy.is_some() {
-            return Ok(());
+            return Err(SandboxError::OperationFailed {
+                message: "runner launch already owns an egress proxy reservation".to_owned(),
+            });
         }
-        let egress_proxy = self.allocate_egress_proxy(
-            &launch_plan.manifest.network_config,
-            &launch_plan.manifest.spec,
+        let manager = self.port_manager();
+        let reallocatable = manager.validate_plan_binding_provenance(
+            &launch_plan.manifest.requested_port_bindings,
+            &launch_plan.manifest.spec.port_bindings,
+            &launch_plan.manifest.image_metadata.exposed_ports,
         )?;
-        write_bundle_config(
-            &launch_plan.manifest.bundle_layout,
-            &hostname_for(&launch_plan.manifest.spec),
-            &launch_plan.manifest.spec,
-            launch_plan.manifest.image_metadata.user.as_deref(),
-            Some(launch_plan.manifest.network_layout.netns_path.as_path()),
-            &container_bundle_options(
-                &self.config.state_root,
-                &launch_plan.manifest.spec,
+        let reservation_claim = self.begin_launch_reservation(&mut launch_plan.manifest)?;
+        let network_config = self.place_sandbox_config(
+            &launch_plan.manifest.spec.tenant_id,
+            &launch_plan.manifest.network_layout,
+            &launch_plan.manifest.handle.id,
+            &reservation_claim,
+        )?;
+        launch_plan.manifest.network_config = Some(network_config.clone());
+        let internal_listener = egress_listener_reservation(&network_config)?;
+        let reservations = manager.reserve_launch_ports_for_sandbox(
+            SandboxLaunchPortPlan::new(
+                &launch_plan.manifest.spec.tenant_id,
                 &launch_plan.manifest.handle.id,
-                Some(&egress_proxy),
-            )?,
+                &launch_plan.manifest.spec.port_bindings,
+                &[],
+            )
+            .with_reallocatable_listener_names(&reallocatable)
+            .with_internal_listener(internal_listener),
+            &reservation_claim,
         )?;
-        launch_plan.manifest.egress_proxy = Some(egress_proxy);
-        Ok(())
+        let update_result = (|| {
+            let internal = reservations.internal_listener.clone().ok_or_else(|| {
+                SandboxError::OperationFailed {
+                    message: "runner launch reservation omitted the required egress listener"
+                        .to_owned(),
+                }
+            })?;
+            let egress_proxy = egress_proxy_assignment(&network_config, internal)?;
+            launch_plan.manifest.spec.port_bindings = reservations.published_bindings.clone();
+            launch_plan.manifest.port_leases = reservations.published_leases.clone();
+            launch_plan.manifest.launch_reservation_claim =
+                Some(reservations.reservation_claim.clone());
+            launch_plan.manifest.egress_proxy = Some(egress_proxy.clone());
+            let status = launch_plan.manifest.status;
+            synchronize_handle_status(&mut launch_plan.manifest, status);
+            write_bundle_config(
+                &launch_plan.manifest.bundle_layout,
+                &hostname_for(&launch_plan.manifest.spec),
+                &launch_plan.manifest.spec,
+                launch_plan.manifest.image_metadata.user.as_deref(),
+                Some(launch_plan.manifest.network_layout.netns_path.as_path()),
+                &container_bundle_options(
+                    &self.config.state_root,
+                    &launch_plan.manifest.spec,
+                    &launch_plan.manifest.handle.id,
+                    Some(&egress_proxy),
+                )?,
+            )?;
+            self.write_manifest(&launch_plan.manifest)
+        })();
+        update_result.map(|()| reservations)
+    }
+
+    fn begin_launch_reservation(
+        &self,
+        manifest: &mut ContainerSandboxManifest,
+    ) -> Result<nimbus_network::NetworkReservationClaim> {
+        if manifest.launch_reservation_claim.is_some() {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "container launch {} already carries a reservation coordinator",
+                    manifest.handle.id
+                ),
+            });
+        }
+        let reservation_claim = new_launch_reservation_claim()?;
+        manifest.launch_reservation_claim = Some(reservation_claim.clone());
+        self.write_manifest(manifest)?;
+        Ok(reservation_claim)
     }
 
     fn write_runner_manifest_pointer(&self, manifest: &ContainerSandboxManifest) -> Result<()> {
@@ -334,9 +586,7 @@ impl ContainerSandboxBackend {
                 self.write_manifest(&manifest)?;
                 Ok(manifest.handle)
             }
-            ContainerStartMode::Execute => self.execute_start(&manifest).inspect_err(|_| {
-                let _ = self.cleanup_manifest_launch_artifacts(&manifest);
-            }),
+            ContainerStartMode::Execute => self.execute_direct_start(&mut manifest),
         }
     }
 
@@ -344,23 +594,102 @@ impl ContainerSandboxBackend {
         let Some(mut manifest) = self.read_manifest(id)? else {
             return Ok(None);
         };
-        let restarted = self.config.start_mode == ContainerStartMode::Execute
+        let _execute_lifecycle = if manifest.start_mode == ContainerStartMode::Execute {
+            let (lifecycle, current) =
+                runner::lock_current_execute_lifecycle_for_backend(self, &manifest)?;
+            manifest = current;
+            Some(lifecycle)
+        } else {
+            None
+        };
+        if manifest.start_mode == ContainerStartMode::Execute {
+            if let Some(phase) = runner::execute_handoff_phase(&manifest)? {
+                let status = match phase {
+                    runner::RunnerHandoffPhase::ClaimedBeforeEffects => manifest.status,
+                    runner::RunnerHandoffPhase::EffectsStarted => {
+                        self.detect_runtime_status(&manifest)?
+                    }
+                    runner::RunnerHandoffPhase::LifecyclePublished => {
+                        self.detect_runtime_status(&manifest)?
+                    }
+                    runner::RunnerHandoffPhase::Cancelled => {
+                        return Err(SandboxError::OperationFailed {
+                            message: format!(
+                                "Execute manifest {id} contradicts a cancelled runner handoff"
+                            ),
+                        });
+                    }
+                };
+                synchronize_handle_status(&mut manifest, status);
+                return Ok(Some(manifest.handle));
+            }
+            if manifest.launch_reservation_claim.is_some() {
+                // A direct start publishes its Execute manifest before the
+                // effect decision. No decision plus a live launch claim is the
+                // durable no-effect crash cut; inspection must remain read-only.
+                let status = manifest.status;
+                synchronize_handle_status(&mut manifest, status);
+                return Ok(Some(manifest.handle));
+            }
+        }
+        let plan_only_inspection = (manifest.start_mode == ContainerStartMode::PlanOnly
+            && manifest.lifecycle_coordinator
+                == ContainerLifecycleCoordinator::PreparedServiceRunner)
+            .then(|| runner::lock_plan_only_inspection(&manifest))
+            .transpose()?;
+        if plan_only_inspection
+            .as_ref()
+            .is_some_and(runner::PlanOnlyInspection::is_durably_cancelled)
+        {
+            return Ok(Some(manifest.handle));
+        }
+        if self.startup_reconciliation_error.is_some() {
+            if manifest.start_mode == ContainerStartMode::PlanOnly
+                || !crate::backends::conmon::lifecycle::inspect_runtime_artifact_presence(
+                    &manifest.conmon_layout.exit_status_file,
+                    "exit-status receipt",
+                )?
+            {
+                return Ok(Some(manifest.handle));
+            }
+            let exit_code = read_exit_code(&manifest.conmon_layout.exit_status_file)?;
+            if !manifest.shutdown_requested
+                && crate::backends::conmon::lifecycle::restart_policy_allows_restart(
+                    manifest.spec.lifecycle.restart_policy,
+                    exit_code,
+                    manifest.restart_count,
+                )
+            {
+                // Startup reconciliation may fence provider launch without
+                // disabling observation or exact cleanup. Preserve the
+                // durable projection and authority until a freshly reconciled
+                // backend may make the restart decision.
+                return Ok(Some(manifest.handle));
+            }
+        }
+        let restarted = manifest.start_mode == ContainerStartMode::Execute
             && self.maybe_restart_after_exit(&mut manifest)?;
-        let status = match self.config.start_mode {
+        let status = match manifest.start_mode {
             ContainerStartMode::PlanOnly => manifest.status,
             ContainerStartMode::Execute if restarted => manifest.status,
             ContainerStartMode::Execute => self.detect_runtime_status(&manifest)?,
         };
-        if self.config.start_mode == ContainerStartMode::Execute
+        if manifest.start_mode == ContainerStartMode::Execute
             && !restarted
             && manifest.conmon_layout.exit_status_file.exists()
         {
             manifest.last_exit_code =
                 Some(read_exit_code(&manifest.conmon_layout.exit_status_file)?);
-            let _ = self.release_execution_artifacts(&mut manifest);
+            // A natural exit that is not being restarted has become the
+            // winning terminal lifecycle decision. Record that decision
+            // before cleanup so the exact finality predicate can retire
+            // provider/IPAM retry evidence with the terminal manifest.
+            manifest.shutdown_requested = true;
+            manifest.next_restart_at_millis = None;
+            self.release_execution_artifacts(&mut manifest)?;
         }
         synchronize_handle_status(&mut manifest, status);
-        self.write_manifest(&manifest)?;
+        self.write_existing_workload_manifest(&manifest)?;
         Ok(Some(manifest.handle))
     }
 
@@ -370,21 +699,82 @@ impl ContainerSandboxBackend {
                 sandbox_id: id.as_str().to_owned(),
             });
         };
-
-        match self.config.start_mode {
-            ContainerStartMode::PlanOnly => {
+        let execute_handoff = if manifest.start_mode == ContainerStartMode::Execute {
+            let (handoff, current) =
+                runner::lock_current_execute_lifecycle_for_backend(self, &manifest)?;
+            manifest = current;
+            Some(handoff)
+        } else {
+            None
+        };
+        if manifest.start_mode == ContainerStartMode::Execute {
+            if let Some(phase) = runner::execute_handoff_phase(&manifest)? {
+                if phase == runner::RunnerHandoffPhase::ClaimedBeforeEffects {
+                    let cleanup_complete = manifest.status == SandboxStatus::Stopped
+                        && manifest.has_terminal_network_finality();
+                    if !cleanup_complete {
+                        self.release_unstarted_launch_artifacts(&mut manifest)?;
+                        manifest.shutdown_requested = true;
+                        manifest.last_exit_code = Some(0);
+                        manifest.next_restart_at_millis = None;
+                        synchronize_handle_status(&mut manifest, SandboxStatus::Stopped);
+                        self.write_existing_workload_manifest(&manifest)?;
+                    }
+                    runner::publish_runner_lifecycle_ownership(
+                        &manifest,
+                        execute_handoff
+                            .as_ref()
+                            .expect("execute manifest must own its lifecycle lock"),
+                    )?;
+                    return Ok(());
+                }
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "container workload {id} is owned by runner handoff phase {phase:?}; \
+                         external teardown remains fenced"
+                    ),
+                });
+            }
+            if manifest.has_terminal_network_finality() {
+                self.reconcile_terminal_ipam_retirement(&manifest)?;
+                return Ok(());
+            }
+            if manifest.launch_reservation_claim.is_some() {
+                self.release_unstarted_launch_artifacts(&mut manifest)?;
                 manifest.shutdown_requested = true;
                 manifest.last_exit_code = Some(0);
                 manifest.next_restart_at_millis = None;
                 synchronize_handle_status(&mut manifest, SandboxStatus::Stopped);
-                self.release_execution_artifacts(&mut manifest)?;
-                self.write_manifest(&manifest)
+                return self.write_existing_workload_manifest(&manifest);
+            }
+        } else if manifest.has_terminal_network_finality() {
+            self.reconcile_terminal_ipam_retirement(&manifest)?;
+            return Ok(());
+        }
+
+        match manifest.start_mode {
+            ContainerStartMode::PlanOnly => {
+                if manifest.has_terminal_network_finality() {
+                    self.reconcile_terminal_ipam_retirement(&manifest)?;
+                    return Ok(());
+                }
+                let _handoff = (manifest.lifecycle_coordinator
+                    == ContainerLifecycleCoordinator::PreparedServiceRunner)
+                    .then(|| runner::lock_plan_only_status_update(&manifest, true))
+                    .transpose()?;
+                manifest.shutdown_requested = true;
+                manifest.last_exit_code = Some(0);
+                manifest.next_restart_at_millis = None;
+                synchronize_handle_status(&mut manifest, SandboxStatus::Stopped);
+                self.release_plan_only_execution_artifacts(&mut manifest)?;
+                self.write_existing_workload_manifest(&manifest)
             }
             ContainerStartMode::Execute => self.execute_stop(&mut manifest),
         }
     }
 
     pub(crate) fn plan_start(&self, spec: &SandboxSpec) -> Result<ContainerStartPlan> {
+        self.ensure_startup_reconciliation_ready()?;
         let sandbox_id = next_sandbox_id(spec.display_name());
         match &spec.root {
             SandboxRootSpec::Rootfs(_) => self.plan_start_with_id(spec, &sandbox_id, None, None),
@@ -418,6 +808,7 @@ impl ContainerSandboxBackend {
         launch_defaults: Option<&OciImageLaunchDefaults>,
         launch_artifact: Option<ContainerLaunchArtifact>,
     ) -> Result<ContainerStartPlan> {
+        self.ensure_startup_reconciliation_ready()?;
         if spec.backend != SandboxBackendKind::Container {
             return Err(SandboxError::InvalidSpec {
                 message: format!(
@@ -431,50 +822,30 @@ impl ContainerSandboxBackend {
         let mut resolved_spec = resolved_launch.spec.clone();
         self.resource_quota_manager()
             .ensure_launch_quota(&resolved_spec)?;
-        resolved_spec.port_bindings.extend(
-            self.port_manager().allocate_missing_bindings_for_tenant(
+        let manager = self.port_manager();
+        let requested_port_bindings = resolved_spec.port_bindings.clone();
+        if self.config.start_mode == ContainerStartMode::PlanOnly {
+            // Preview is a pure admission/rendering step. Run it before
+            // resolving the tenant segment so a rejected plan cannot create a
+            // durable allocation for a workload that acquired no attachment.
+            let auto_bindings = manager.preview_bindings_for_sandbox(
                 &resolved_spec.tenant_id,
                 &resolved_spec.port_bindings,
                 &resolved_launch.image_metadata.exposed_ports,
-            )?,
-        );
+            )?;
+            resolved_spec.port_bindings.extend(auto_bindings);
+        }
         let network_layout = OciNetworkLayout::new(
             &self.config.state_root,
             &resolved_spec.tenant_id,
             sandbox_id,
         );
         network_layout.ensure_directories()?;
-        // Block-aware placement (MTN6): reserve the block bridge that will host
-        // this sandbox — growing a new sibling block when the current /24s are
-        // full — so the PEP + bridge below key on the PLACED block. Plan-only
-        // previews use the primary block without reserving an IP.
-        let network_config = if self.config.start_mode == ContainerStartMode::Execute {
-            self.place_sandbox_config(&resolved_spec.tenant_id, &network_layout, sandbox_id)?
-        } else {
-            self.network_config(&resolved_spec.tenant_id)?
-        };
-        let egress_proxy = (self.config.start_mode == ContainerStartMode::Execute)
-            .then(|| self.allocate_egress_proxy(&network_config, &resolved_spec))
-            .transpose()?;
         let bundle_layout = ContainerBundleLayout::new(crate::artifact_paths::bundle_dir(
             &self.config.bundle_root,
             &resolved_launch.spec.tenant_id,
             sandbox_id,
         ));
-        write_bundle_config(
-            &bundle_layout,
-            &hostname_for(&resolved_spec),
-            &resolved_spec,
-            resolved_launch.image_metadata.user.as_deref(),
-            Some(network_layout.netns_path.as_path()),
-            &container_bundle_options(
-                &self.config.state_root,
-                &resolved_spec,
-                sandbox_id,
-                egress_proxy.as_ref(),
-            )?,
-        )?;
-
         let conmon_layout = OciConmonLayout::new_for_tenant(
             &self.config.state_root,
             &resolved_launch.spec.tenant_id,
@@ -488,7 +859,6 @@ impl ContainerSandboxBackend {
                     self.config.state_root.display()
                 ),
             })?;
-
         let conmon_launch = build_launch_plan(
             &OciConmonConfig {
                 conmon_path: self.config.conmon_path.clone(),
@@ -510,7 +880,6 @@ impl ContainerSandboxBackend {
                 .and_then(ContainerLaunchArtifact::mount_session_name),
             &[],
         );
-
         let handle = SandboxHandle::new(
             resolved_spec.tenant_id.clone(),
             sandbox_id.clone(),
@@ -523,11 +892,7 @@ impl ContainerSandboxBackend {
                 SandboxStatus::Starting,
             ),
         );
-
-        // network_config was resolved by block-aware placement above and is
-        // persisted so setup + teardown reuse the identical placed block bridge
-        // without ever re-assigning (MTN4/MTN6).
-        Ok(ContainerStartPlan {
+        let mut plan = ContainerStartPlan {
             manifest: ContainerSandboxManifest {
                 handle,
                 spec: resolved_spec,
@@ -536,27 +901,110 @@ impl ContainerSandboxBackend {
                 bundle_layout,
                 conmon_layout,
                 network_layout,
-                network_config,
-                egress_proxy,
+                network_config: None,
+                network_cleanup_complete: false,
+                creator_handoff: ContainerCreatorHandoffState::NotSpawned,
+                requested_port_bindings,
+                port_leases: Vec::new(),
+                launch_reservation_claim: None,
+                egress_proxy: None,
                 conmon_launch,
                 runner_config: ContainerRunnerExecutionConfig::from_backend_config(&self.config),
                 last_exit_code: None,
                 restart_count: 0,
                 next_restart_at_millis: None,
+                lifecycle_coordinator: ContainerLifecycleCoordinator::DirectBackend,
                 start_mode: self.config.start_mode,
                 shutdown_requested: false,
                 status: SandboxStatus::Starting,
             },
-        })
-    }
+        };
 
-    fn execute_start(&self, manifest: &ContainerSandboxManifest) -> Result<SandboxHandle> {
-        let mut manifest = manifest.clone();
-        if let Err(error) = self.launch_manifest(&mut manifest, true) {
-            let _ = self.release_execution_artifacts(&mut manifest);
-            return Err(error);
+        if self.config.start_mode == ContainerStartMode::Execute {
+            let reservation_claim = match self.begin_launch_reservation(&mut plan.manifest) {
+                Ok(claim) => claim,
+                Err(error) => {
+                    let cleanup = self
+                        .release_unstarted_launch_artifacts(&mut plan.manifest)
+                        .err();
+                    return Err(self.persist_failed_initial_launch(
+                        &mut plan.manifest,
+                        error,
+                        cleanup,
+                    ));
+                }
+            };
+            let planning_result = (|| -> Result<()> {
+                // Block-aware placement (MTN6) starts only after the exact
+                // coordinator claim is durable in the canonical manifest.
+                let network_config = self.place_sandbox_config(
+                    &plan.manifest.spec.tenant_id,
+                    &plan.manifest.network_layout,
+                    sandbox_id,
+                    &reservation_claim,
+                )?;
+                let internal_listener = egress_listener_reservation(&network_config)?;
+                let reservations = manager.reserve_launch_ports_for_sandbox(
+                    SandboxLaunchPortPlan::new(
+                        &plan.manifest.spec.tenant_id,
+                        sandbox_id,
+                        &plan.manifest.spec.port_bindings,
+                        &plan.manifest.image_metadata.exposed_ports,
+                    )
+                    .with_internal_listener(internal_listener),
+                    &reservation_claim,
+                )?;
+                let internal = reservations.internal_listener.clone().ok_or_else(|| {
+                    SandboxError::OperationFailed {
+                        message:
+                            "container launch reservation omitted the required egress listener"
+                                .to_owned(),
+                    }
+                })?;
+                let egress_proxy = egress_proxy_assignment(&network_config, internal)?;
+                plan.manifest.spec.port_bindings = reservations.published_bindings;
+                plan.manifest.port_leases = reservations.published_leases;
+                plan.manifest.network_config = Some(network_config);
+                plan.manifest.egress_proxy = Some(egress_proxy);
+                let status = plan.manifest.status;
+                synchronize_handle_status(&mut plan.manifest, status);
+                write_bundle_config(
+                    &plan.manifest.bundle_layout,
+                    &hostname_for(&plan.manifest.spec),
+                    &plan.manifest.spec,
+                    plan.manifest.image_metadata.user.as_deref(),
+                    Some(plan.manifest.network_layout.netns_path.as_path()),
+                    &container_bundle_options(
+                        &self.config.state_root,
+                        &plan.manifest.spec,
+                        sandbox_id,
+                        plan.manifest.egress_proxy.as_ref(),
+                    )?,
+                )?;
+                self.write_manifest(&plan.manifest)
+            })();
+            if let Err(error) = planning_result {
+                let cleanup = self
+                    .release_unstarted_launch_artifacts(&mut plan.manifest)
+                    .err();
+                return Err(self.persist_failed_initial_launch(&mut plan.manifest, error, cleanup));
+            }
+        } else {
+            write_bundle_config(
+                &plan.manifest.bundle_layout,
+                &hostname_for(&plan.manifest.spec),
+                &plan.manifest.spec,
+                plan.manifest.image_metadata.user.as_deref(),
+                Some(plan.manifest.network_layout.netns_path.as_path()),
+                &container_bundle_options(
+                    &self.config.state_root,
+                    &plan.manifest.spec,
+                    sandbox_id,
+                    None,
+                )?,
+            )?;
         }
-        Ok(manifest.handle)
+        Ok(plan)
     }
 
     fn maybe_restart_after_exit(&self, manifest: &mut ContainerSandboxManifest) -> Result<bool> {
@@ -576,26 +1024,85 @@ impl ContainerSandboxBackend {
         manifest: &mut ContainerSandboxManifest,
         clear_last_exit_code: bool,
     ) -> Result<()> {
+        self.ensure_startup_reconciliation_ready()?;
+        manifest.network_cleanup_complete = false;
+        let reservation_claim = if clear_last_exit_code {
+            Some(
+                manifest
+                    .launch_reservation_claim
+                    .as_ref()
+                    .ok_or_else(|| SandboxError::OperationFailed {
+                        message: format!(
+                            "initial container launch for {} lacks never-bound reservation authority",
+                            manifest.handle.id
+                        ),
+                    })?
+                    .clone(),
+            )
+        } else {
+            None
+        };
+        if let Some(reservation_claim) = reservation_claim.as_ref() {
+            let mut launch_batch = manifest.port_leases.clone();
+            if let Some(egress_proxy) = manifest.egress_proxy.as_ref() {
+                launch_batch.push(egress_proxy.port_lease.clone());
+            }
+            if let Err(error) = self
+                .port_manager_for_manifest(manifest)?
+                .require_never_bound_launch_batch(&launch_batch, reservation_claim)
+            {
+                return Err(self.compensate_reserved_launch(
+                    &manifest.network_layout,
+                    &manifest.spec.tenant_id,
+                    &manifest.handle.id,
+                    reservation_claim,
+                    error,
+                ));
+            }
+            if let Err(error) = self.segment_allocator.adopt_reserved_attachment(
+                &manifest.spec.tenant_id,
+                &default_network_attachment_id(&manifest.handle.id),
+                reservation_claim,
+            ) {
+                return Err(self.compensate_reserved_launch(
+                    &manifest.network_layout,
+                    &manifest.spec.tenant_id,
+                    &manifest.handle.id,
+                    reservation_claim,
+                    error,
+                ));
+            }
+        }
+
         #[cfg(test)]
         if let Some(probe) = self.restart_launch_test_probe.as_ref() {
+            if clear_last_exit_code {
+                return Err(SandboxError::OperationFailed {
+                    message:
+                        "restart launch test probe cannot substitute for initial provider adoption"
+                            .to_owned(),
+                });
+            }
             probe.intercept_provider_launch()?;
             manifest.shutdown_requested = false;
             manifest.next_restart_at_millis = None;
-            if clear_last_exit_code {
-                manifest.last_exit_code = None;
-            }
             synchronize_handle_status(manifest, SandboxStatus::Starting);
             return self.write_manifest(manifest);
         }
 
-        ensure_linux_host("container")?;
-        self.configure_network(manifest)?;
-        self.ensure_egress_proxy_running(manifest)?;
-        spawn_background(&manifest.conmon_launch.create_command)?;
-        let runtime_state = wait_for_runtime_state(
-            &manifest.conmon_launch.state_command,
-            self.config.start_timeout,
+        let listener_release_authority = match reservation_claim.as_ref() {
+            Some(claim) => MachinePortPreparationReleaseAuthority::FreshLaunch(claim),
+            None => MachinePortPreparationReleaseAuthority::Retain,
+        };
+        self.configure_network(manifest, listener_release_authority)?;
+        self.ensure_egress_proxy_running_with_release_authority(
+            manifest,
+            match reservation_claim.as_ref() {
+                Some(claim) => PepPreAdoptionReleaseAuthority::FreshLaunch(claim),
+                None => PepPreAdoptionReleaseAuthority::Retain,
+            },
         )?;
+        let runtime_state = self.spawn_creator_and_wait_for_runtime(manifest)?;
         if runtime_state != "running" {
             run_status_checked(&manifest.conmon_launch.start_command)?;
         }
@@ -604,54 +1111,10 @@ impl ContainerSandboxBackend {
         manifest.next_restart_at_millis = None;
         if clear_last_exit_code {
             manifest.last_exit_code = None;
+            manifest.launch_reservation_claim = None;
         }
         synchronize_handle_status(manifest, SandboxStatus::Starting);
         self.write_manifest(manifest)
-    }
-
-    fn reset_runtime_for_restart(&self, manifest: &ContainerSandboxManifest) -> Result<()> {
-        let mut errors = Vec::new();
-        if let Err(error) = self.stop_egress_proxy(&manifest.handle.id) {
-            errors.push(error.to_string());
-        }
-        if let Err(error) = self.stop_machine_port_proxies(&manifest.handle.id) {
-            errors.push(error.to_string());
-        }
-        if let Err(error) = run_status_checked(&manifest.conmon_launch.delete_command) {
-            errors.push(error.to_string());
-        }
-        if let Err(error) = teardown_container_network(
-            &manifest.network_layout,
-            &manifest.network_config,
-            &manifest.handle.id,
-            manifest.spec.display_name(),
-            &hostname_for(&manifest.spec),
-            &manifest.spec.port_bindings,
-            self.config.machine_port_forwarder.as_ref(),
-        ) {
-            errors.push(error.to_string());
-        }
-        if let Err(error) = remove_persistent_network_namespace(&manifest.network_layout.netns_path)
-        {
-            errors.push(error.to_string());
-        }
-        if let Some(forwarder) = self.config.machine_port_forwarder.as_ref() {
-            let _ = unexpose_machine_ports(forwarder, &manifest.spec.port_bindings);
-        }
-        remove_if_exists(&manifest.conmon_layout.exit_status_file)?;
-        remove_if_exists(&manifest.conmon_layout.pidfile)?;
-        remove_if_exists(&manifest.conmon_layout.conmon_pidfile)?;
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(SandboxError::OperationFailed {
-                message: format!(
-                    "failed to reset container sandbox {} for restart: {}",
-                    manifest.handle.id,
-                    errors.join("; ")
-                ),
-            })
-        }
     }
 
     fn execute_stop(&self, manifest: &mut ContainerSandboxManifest) -> Result<()> {
@@ -661,7 +1124,7 @@ impl ContainerSandboxBackend {
                 Some(read_exit_code(&manifest.conmon_layout.exit_status_file)?);
             synchronize_handle_status(manifest, SandboxStatus::Stopped);
             self.release_execution_artifacts(manifest)?;
-            return self.write_manifest(manifest);
+            return self.write_existing_workload_manifest(manifest);
         }
 
         manifest.shutdown_requested = true;
@@ -684,7 +1147,7 @@ impl ContainerSandboxBackend {
         manifest.last_exit_code = Some(read_exit_code(&manifest.conmon_layout.exit_status_file)?);
         synchronize_handle_status(manifest, SandboxStatus::Stopped);
         self.release_execution_artifacts(manifest)?;
-        self.write_manifest(manifest)
+        self.write_existing_workload_manifest(manifest)
     }
 
     fn detect_runtime_status(&self, manifest: &ContainerSandboxManifest) -> Result<SandboxStatus> {
@@ -692,6 +1155,7 @@ impl ContainerSandboxBackend {
             RuntimeStatusProbe {
                 exit_status_file: &manifest.conmon_layout.exit_status_file,
                 state_command: &manifest.conmon_launch.state_command,
+                runtime_id: manifest.handle.id.as_str(),
                 pidfile: &manifest.conmon_layout.pidfile,
                 shutdown_requested: manifest.shutdown_requested,
                 current_status: manifest.status,
@@ -759,55 +1223,76 @@ impl ContainerSandboxBackend {
         }
     }
 
-    fn cleanup_manifest_launch_artifacts(&self, manifest: &ContainerSandboxManifest) -> Result<()> {
-        let Some(artifact) = manifest.launch_artifact.as_ref() else {
-            return Ok(());
-        };
-        match artifact {
-            ContainerLaunchArtifact::MountedRootfs(session) => {
-                BuildahCli::new(&self.config.buildah_path)
-                    .with_unshare(self.config.use_buildah_unshare)
-                    .cleanup_rootfs_session(&session.session_name)
-            }
-            ContainerLaunchArtifact::Rootfs(rootfs) => {
-                if !rootfs.rootfs_path.exists() {
-                    return Ok(());
-                }
-                std::fs::remove_dir_all(&rootfs.rootfs_path).map_err(|error| {
-                    SandboxError::OperationFailed {
-                        message: format!(
-                            "failed to remove materialized rootfs {}: {error}",
-                            rootfs.rootfs_path.display()
-                        ),
-                    }
-                })
-            }
-        }
-    }
-
-    fn configure_network(&self, manifest: &ContainerSandboxManifest) -> Result<()> {
-        // One-shot: drop the legacy shared nimbus0 bridge before the first
-        // per-tenant setup (pre-launch migration, breaking).
-        purge_legacy_nimbus0_once(&self.config.state_root.join("networks"))?;
-        // Reuse the config resolved + persisted at manifest-prepare; never re-assign
-        // it (audit M1 / MTN4) so setup and teardown agree on the bridge.
-        let network_config = manifest.network_config.clone();
-        create_persistent_network_namespace(&manifest.network_layout.netns_path)?;
-        let assigned_ips = match setup_container_network(
+    fn configure_network(
+        &self,
+        manifest: &ContainerSandboxManifest,
+        listener_release_authority: MachinePortPreparationReleaseAuthority<'_>,
+    ) -> Result<()> {
+        // Validate attachment authority before any provider or filesystem
+        // effect. PlanOnly manifests carry `None` and can never reach Netavark.
+        let network_config = manifest.require_network_config()?.clone();
+        authenticate_container_network_generation(
             &manifest.network_layout,
             &network_config,
             &manifest.handle.id,
-            manifest.spec.display_name(),
-            &hostname_for(&manifest.spec),
+        )?;
+        self.validate_manifest_execution_context(manifest)?;
+        let runner_config = &manifest.runner_config;
+        // One-shot: drop the legacy shared nimbus0 bridge before the first
+        // per-tenant setup (pre-launch migration, breaking).
+        purge_legacy_nimbus0_once(&runner_config.state_root.join("networks"))?;
+        let port_manager = self.port_manager_for_manifest(manifest)?;
+        port_manager.require_binding_leases(
+            &manifest.spec.tenant_id,
+            &manifest.handle.id,
             &manifest.spec.port_bindings,
-            self.config.machine_port_forwarder.as_ref(),
-        ) {
-            Ok(assigned_ips) => assigned_ips,
-            Err(error) => {
-                let _ = remove_persistent_network_namespace(&manifest.network_layout.netns_path);
-                return Err(error);
+            &manifest.port_leases,
+        )?;
+        // Reuse the config resolved + persisted at manifest-prepare; never
+        // reassign it so setup and teardown agree on the bridge.
+        create_persistent_network_namespace(&manifest.network_layout.netns_path)?;
+        let netavark_claims = if runner_config.machine_port_forwarder.is_none() {
+            match port_manager.claim_netavark_bindings(
+                &manifest.spec.tenant_id,
+                &manifest.handle.id,
+                &manifest.spec.port_bindings,
+                &manifest.port_leases,
+            ) {
+                Ok(claims) => Some(claims),
+                Err(error) => {
+                    let _ =
+                        remove_persistent_network_namespace(&manifest.network_layout.netns_path);
+                    return Err(error);
+                }
             }
+        } else {
+            None
         };
+        let assigned_ips = self.complete_network_setup(
+            manifest,
+            &network_config,
+            runner_config.machine_port_forwarder.as_ref(),
+            setup_container_network(
+                &manifest.network_layout,
+                &network_config,
+                &manifest.handle.id,
+                manifest.spec.display_name(),
+                &hostname_for(&manifest.spec),
+                &manifest.spec.port_bindings,
+                runner_config.machine_port_forwarder.as_ref(),
+            ),
+        )?;
+        if let Some(claims) = netavark_claims.as_deref()
+            && let Err(error) = port_manager.activate_netavark_bindings(
+                &manifest.spec.tenant_id,
+                &manifest.handle.id,
+                &manifest.spec.port_bindings,
+                &manifest.port_leases,
+                claims,
+            )
+        {
+            return Err(self.failed_network_configuration(manifest, &network_config, None, error));
+        }
         // Pin the netns so the ONLY reachable egress is this sandbox's own PEP.
         // The netavark deny is route-based, but the shared bridge gateway is
         // on-link and every sibling sandbox's PEP listens on it at a distinct
@@ -818,50 +1303,28 @@ impl ContainerSandboxBackend {
         if let Some(proxy) = manifest.egress_proxy.as_ref()
             && let Err(error) = pin_netns_egress_to_own_proxy(&manifest.network_layout, proxy)
         {
-            let _ = teardown_container_network(
-                &manifest.network_layout,
+            return Err(self.failed_network_configuration(
+                manifest,
                 &network_config,
-                &manifest.handle.id,
-                manifest.spec.display_name(),
-                &hostname_for(&manifest.spec),
-                &manifest.spec.port_bindings,
-                self.config.machine_port_forwarder.as_ref(),
-            );
-            let _ = remove_persistent_network_namespace(&manifest.network_layout.netns_path);
-            return Err(error);
+                runner_config.machine_port_forwarder.as_ref(),
+                error,
+            ));
         }
-        if let Some(forwarder) = self.config.machine_port_forwarder.as_ref() {
-            if let Err(error) = self.ensure_machine_port_proxies_running(
+        if let Some(forwarder) = runner_config.machine_port_forwarder.as_ref()
+            && let Err(error) = self.ensure_machine_port_proxies_running_with_publication(
                 &manifest.handle.id,
                 &assigned_ips,
                 manifest,
-            ) {
-                let _ = teardown_container_network(
-                    &manifest.network_layout,
-                    &network_config,
-                    &manifest.handle.id,
-                    manifest.spec.display_name(),
-                    &hostname_for(&manifest.spec),
-                    &manifest.spec.port_bindings,
-                    self.config.machine_port_forwarder.as_ref(),
-                );
-                let _ = remove_persistent_network_namespace(&manifest.network_layout.netns_path);
-                return Err(error);
-            }
-            if let Err(error) = expose_machine_ports(forwarder, &manifest.spec.port_bindings) {
-                let _ = self.stop_machine_port_proxies(&manifest.handle.id);
-                let _ = teardown_container_network(
-                    &manifest.network_layout,
-                    &network_config,
-                    &manifest.handle.id,
-                    manifest.spec.display_name(),
-                    &hostname_for(&manifest.spec),
-                    &manifest.spec.port_bindings,
-                    self.config.machine_port_forwarder.as_ref(),
-                );
-                let _ = remove_persistent_network_namespace(&manifest.network_layout.netns_path);
-                return Err(error);
-            }
+                listener_release_authority,
+                || expose_machine_ports(forwarder, &manifest.spec.port_bindings),
+            )
+        {
+            return Err(self.failed_network_configuration(
+                manifest,
+                &network_config,
+                runner_config.machine_port_forwarder.as_ref(),
+                error,
+            ));
         }
         // Take the tenant's refcount hold now the netns is up and pinned; the
         // reaper frees the index + bridge when the last hold releases.
@@ -870,18 +1333,6 @@ impl ContainerSandboxBackend {
             &default_network_attachment_id(&manifest.handle.id),
         )?;
         Ok(())
-    }
-
-    /// Bind the sandbox's egress PEP on the gateway of its PLACED block bridge
-    /// (`network_config`), so a sandbox on a grown block reaches its own on-link
-    /// PEP (a non-primary block's PEP on the primary gateway would be
-    /// isolate-dropped — MTN6).
-    fn allocate_egress_proxy(
-        &self,
-        network_config: &OciNetworkConfig,
-        spec: &SandboxSpec,
-    ) -> Result<EgressProxyAssignment> {
-        allocate_oci_egress_proxy(network_config, &self.port_manager(), &spec.port_bindings)
     }
 
     fn ensure_egress_proxy_running(&self, manifest: &ContainerSandboxManifest) -> Result<()> {
@@ -894,169 +1345,19 @@ impl ContainerSandboxBackend {
         )
     }
 
-    fn ensure_machine_port_proxies_running(
+    fn ensure_egress_proxy_running_with_release_authority(
         &self,
-        id: &SandboxId,
-        assigned_ips: &[Ipv4Addr],
         manifest: &ContainerSandboxManifest,
+        release_authority: PepPreAdoptionReleaseAuthority<'_>,
     ) -> Result<()> {
-        let mut proxies =
-            self.machine_port_proxies
-                .lock()
-                .map_err(|_| SandboxError::OperationFailed {
-                    message: "container machine port proxy registry lock is poisoned".to_owned(),
-                })?;
-        if proxies.contains_key(id) {
-            return Ok(());
-        }
-        proxies.insert(
-            id.clone(),
-            start_machine_port_proxies(assigned_ips, &manifest.spec.port_bindings)?,
-        );
-        Ok(())
-    }
-
-    fn release_execution_artifacts(&self, manifest: &mut ContainerSandboxManifest) -> Result<()> {
-        let mut errors = Vec::new();
-        let mut detach_confirmed = true;
-        if let Err(error) = quarantine_network_segment_hold(
-            self.segment_allocator.as_ref(),
+        ensure_egress_proxy_running_with_release_authority(
+            &self.egress_proxies,
             &manifest.spec.tenant_id,
             &manifest.handle.id,
-        ) {
-            detach_confirmed = false;
-            errors.push(error.to_string());
-        }
-        if let Err(error) = self.stop_egress_proxy(&manifest.handle.id) {
-            detach_confirmed = false;
-            errors.push(error.to_string());
-        }
-        if let Err(error) = self.stop_machine_port_proxies(&manifest.handle.id) {
-            detach_confirmed = false;
-            errors.push(error.to_string());
-        }
-        let _ = run_status_best_effort(&manifest.conmon_launch.delete_command);
-        if let Err(error) = teardown_container_network(
-            &manifest.network_layout,
-            &manifest.network_config,
-            &manifest.handle.id,
-            manifest.spec.display_name(),
-            &hostname_for(&manifest.spec),
-            &manifest.spec.port_bindings,
-            self.config.machine_port_forwarder.as_ref(),
-        ) {
-            detach_confirmed = false;
-            errors.push(error.to_string());
-        }
-        if let Err(error) = remove_persistent_network_namespace(&manifest.network_layout.netns_path)
-        {
-            detach_confirmed = false;
-            errors.push(error.to_string());
-        }
-        // Final teardown (not restart): release the quarantined hold only after
-        // provider and persistent-netns deletion are confirmed. On the last
-        // hold, bridge cleanup must also succeed before allocation finalization.
-        if detach_confirmed {
-            errors.extend(
-                release_network_segment_hold(
-                    self.segment_allocator.as_ref(),
-                    &manifest.spec.tenant_id,
-                    &manifest.handle.id,
-                )
-                .into_iter()
-                .map(|error| error.to_string()),
-            );
-        }
-        if let Some(forwarder) = self.config.machine_port_forwarder.as_ref() {
-            let _ = unexpose_machine_ports(forwarder, &manifest.spec.port_bindings);
-        }
-        if let Err(error) = self.cleanup_manifest_launch_artifacts(manifest) {
-            errors.push(error.to_string());
-        }
-        manifest.launch_artifact = None;
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(SandboxError::OperationFailed {
-                message: format!(
-                    "failed to clean up container sandbox {}: {}",
-                    manifest.handle.id,
-                    errors.join("; ")
-                ),
-            })
-        }
-    }
-
-    fn stop_egress_proxy(&self, id: &SandboxId) -> Result<()> {
-        self.egress_proxies.stop(id)
-    }
-
-    fn stop_machine_port_proxies(&self, id: &SandboxId) -> Result<()> {
-        let mut proxies =
-            self.machine_port_proxies
-                .lock()
-                .map_err(|_| SandboxError::OperationFailed {
-                    message: "container machine port proxy registry lock is poisoned".to_owned(),
-                })?;
-        proxies.remove(id);
-        Ok(())
-    }
-
-    fn read_manifest(&self, id: &SandboxId) -> Result<Option<ContainerSandboxManifest>> {
-        let Some(manifest_path) =
-            crate::artifact_paths::manifest_path_for_sandbox_id(&self.config.state_root, id)
-                .map_err(|error| SandboxError::OperationFailed {
-                    message: format!(
-                        "failed to find container sandbox manifest for {} under {}: {error}",
-                        id,
-                        self.config.state_root.display()
-                    ),
-                })?
-        else {
-            return Ok(None);
-        };
-        if !manifest_path.exists() {
-            return Ok(None);
-        }
-
-        let contents =
-            std::fs::read(&manifest_path).map_err(|error| SandboxError::OperationFailed {
-                message: format!(
-                    "failed to read sandbox manifest {}: {error}",
-                    manifest_path.display()
-                ),
-            })?;
-        let manifest =
-            serde_json::from_slice(&contents).map_err(|error| SandboxError::OperationFailed {
-                message: format!(
-                    "failed to parse sandbox manifest {}: {error}",
-                    manifest_path.display()
-                ),
-            })?;
-        Ok(Some(manifest))
-    }
-
-    fn write_manifest(&self, manifest: &ContainerSandboxManifest) -> Result<()> {
-        std::fs::create_dir_all(&manifest.conmon_layout.container_state_dir).map_err(|error| {
-            SandboxError::OperationFailed {
-                message: format!(
-                    "failed to create manifest directory {}: {error}",
-                    manifest.conmon_layout.container_state_dir.display()
-                ),
-            }
-        })?;
-        let rendered =
-            serde_json::to_vec_pretty(manifest).map_err(|error| SandboxError::OperationFailed {
-                message: format!("failed to serialize sandbox manifest: {error}"),
-            })?;
-        std::fs::write(&manifest.conmon_layout.manifest_path, rendered).map_err(|error| {
-            SandboxError::OperationFailed {
-                message: format!(
-                    "failed to write sandbox manifest {}: {error}",
-                    manifest.conmon_layout.manifest_path.display()
-                ),
-            }
-        })
+            manifest.egress_proxy.as_ref(),
+            &manifest.spec.egress,
+            release_authority,
+        )
     }
 }
 

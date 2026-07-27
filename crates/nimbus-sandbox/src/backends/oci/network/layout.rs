@@ -5,16 +5,21 @@ use std::net::Ipv4Addr;
 use std::path::PathBuf;
 
 use nimbus_core::TenantId;
+use nimbus_network::NetworkReservationClaim;
+#[cfg(test)]
+use nimbus_network::NetworkSegmentId;
 use serde::{Deserialize, Serialize};
 
 use crate::artifact_paths;
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
 
+use super::DEFAULT_NETWORK_ID;
 use super::ipam::{parse_ipv4_address, parse_ipv4_subnet_and_gateway};
+#[cfg(test)]
 use super::{
-    DEFAULT_AARDVARK_DNS_BINARY, DEFAULT_NETAVARK_BINARY, DEFAULT_NETWORK_ID,
-    DEFAULT_NETWORK_INTERFACE, DEFAULT_NETWORK_NAME, DEFAULT_NETWORK_SUBNET,
+    DEFAULT_AARDVARK_DNS_BINARY, DEFAULT_NETAVARK_BINARY, DEFAULT_NETWORK_INTERFACE,
+    DEFAULT_NETWORK_NAME, DEFAULT_NETWORK_SUBNET,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,6 +82,18 @@ pub(crate) struct OciNetworkConfig {
     pub network_name: String,
     pub network_interface: String,
     pub network_subnet: String,
+    /// Stable control-plane segment identity selected for this attachment.
+    ///
+    /// This is distinct from `network_id`, which is only Netavark's
+    /// provider-local network handle.
+    pub segment_id: String,
+    /// Immutable attachment-generation witness for provider operations.
+    ///
+    /// This is comparison evidence, not generic cleanup authority. It remains
+    /// in the per-attachment manifest after provider adoption so stale setup,
+    /// teardown, projection, and confirmed-detach work cannot target a
+    /// replacement generation that reuses the same sandbox and segment IDs.
+    pub reservation_claim: NetworkReservationClaim,
     pub direct_egress: OciNetworkDirectEgress,
     /// Whether netavark starts the in-subnet aardvark-dns stub bound to the
     /// bridge gateway `:53`. The container backend leaves this on so workloads
@@ -102,6 +119,7 @@ pub(super) fn default_network_id() -> String {
     DEFAULT_NETWORK_ID.to_owned()
 }
 
+#[cfg(test)]
 impl Default for OciNetworkConfig {
     fn default() -> Self {
         Self {
@@ -110,6 +128,9 @@ impl Default for OciNetworkConfig {
             network_name: DEFAULT_NETWORK_NAME.to_owned(),
             network_interface: DEFAULT_NETWORK_INTERFACE.to_owned(),
             network_subnet: DEFAULT_NETWORK_SUBNET.to_owned(),
+            segment_id: NetworkSegmentId::generate().as_str().to_owned(),
+            reservation_claim: crate::backends::oci::port_lease::new_launch_reservation_claim()
+                .expect("test network config claim should validate"),
             direct_egress: OciNetworkDirectEgress::Deny,
             enable_dns: default_enable_dns(),
             network_id: default_network_id(),
@@ -140,4 +161,60 @@ impl OciNetworkDirectEgress {
 pub(crate) fn bridge_gateway_addr(config: &OciNetworkConfig) -> Result<Ipv4Addr> {
     let (_, gateway) = parse_ipv4_subnet_and_gateway(&config.network_subnet)?;
     parse_ipv4_address(&gateway)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn network_config_rejects_a_missing_stable_segment_identity() {
+        let config = OciNetworkConfig::default();
+        let mut value = serde_json::to_value(&config).expect("network config should serialize");
+        value
+            .as_object_mut()
+            .expect("serialized config should be an object")
+            .remove("segment_id");
+
+        let error = serde_json::from_value::<OciNetworkConfig>(value)
+            .expect_err("missing segment identity must fail closed");
+        assert!(
+            error.to_string().contains("segment_id"),
+            "deserialization failure must name the required identity: {error}"
+        );
+    }
+
+    #[test]
+    fn network_config_rejects_a_missing_attachment_generation_witness() {
+        let config = OciNetworkConfig::default();
+        let mut value = serde_json::to_value(&config).expect("network config should serialize");
+        value
+            .as_object_mut()
+            .expect("serialized config should be an object")
+            .remove("reservation_claim");
+
+        let error = serde_json::from_value::<OciNetworkConfig>(value)
+            .expect_err("missing attachment generation must fail closed");
+        assert!(
+            error.to_string().contains("reservation_claim"),
+            "deserialization failure must name the required generation witness: {error}"
+        );
+    }
+
+    #[test]
+    fn test_defaults_generate_distinct_valid_segment_identities() {
+        let first = OciNetworkConfig::default()
+            .segment_id
+            .parse::<NetworkSegmentId>()
+            .expect("first test identity should validate");
+        let second = OciNetworkConfig::default()
+            .segment_id
+            .parse::<NetworkSegmentId>()
+            .expect("second test identity should validate");
+
+        assert_ne!(
+            first, second,
+            "test defaults must not collapse unrelated attachments onto a shared identity"
+        );
+    }
 }

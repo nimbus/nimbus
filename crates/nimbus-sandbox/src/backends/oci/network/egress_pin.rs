@@ -131,10 +131,7 @@ mod tests {
     use super::*;
 
     fn assignment(host: &str, port: u16) -> EgressProxyAssignment {
-        EgressProxyAssignment {
-            host: host.to_owned(),
-            port,
-        }
+        EgressProxyAssignment::for_test(host, port)
     }
 
     #[test]

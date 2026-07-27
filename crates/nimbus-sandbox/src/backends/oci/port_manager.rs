@@ -1,23 +1,156 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::io;
+use std::net::{Ipv4Addr, SocketAddr};
+use std::num::NonZeroU16;
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
 
 use nimbus_core::TenantId;
-use serde::Deserialize;
+use nimbus_network::{
+    LocalPortLeaseAuthority, NetworkReservationClaim, PortBindClaim, PortBindRealm, PortBindTarget,
+    PortBindingSpec, PortExposure, PortLeaseAccounting, PortLeasePhase, PortLeaseRecord,
+    PortLeaseRequest, PortProtocol, PortPublicationIntent, PortRequestMode,
+};
 
 use super::buildah::{OciExposedPort, OciExposedPortProtocol};
-use crate::artifact_paths;
+use super::port_lease::{
+    ExpectedListenerAuthority, OciPortLeaseIntent, OciPortProvider,
+    abandon_bind_attempts_without_effect, adopt_claimed_and_activate_batch, claim_bind_attempts,
+    port_lease_request, prepare_rebind_batch_after_confirmed_stop, provider_binding,
+    published_scope, record_bind_failure, release, release_batch_after_confirmed_stop,
+    release_reserved_batch_without_effect, require_active_provider_binding,
+    require_current_bind_authority, require_current_listener_authority, require_listener_authority,
+    reserve_batch, reserve_batch_with_tenant_limit, verify_reserved_batch_for_coordinator,
+    withdraw,
+};
+#[cfg(test)]
+use super::port_lease::{new_launch_reservation_claim, reserve};
 use crate::error::{Result, SandboxError};
-use crate::instance::SandboxStatus;
+use crate::instance::SandboxId;
 use crate::spec::SandboxPortBinding;
 
+mod batch_state;
+
 pub(crate) const DEFAULT_MAX_PORTS_PER_TENANT: usize = 128;
+
+pub(crate) fn machine_port_proxy_guest_listener_addr(binding: &SandboxPortBinding) -> SocketAddr {
+    SocketAddr::from((Ipv4Addr::UNSPECIFIED, binding.host_port))
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct PortManager {
     range: RangeInclusive<u16>,
     state_root: PathBuf,
     max_ports_per_tenant: Option<usize>,
+    published_listener_provider: PublishedListenerProvider,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PublishedListenerProvider {
+    Netavark,
+    MachinePortProxy,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum LaunchPortBatchState {
+    NeverBound,
+    NetavarkClaimed(Vec<PortBindClaim>),
+    RestartRetained,
+    /// Every exact member is terminal proof that no provider effect remains.
+    TerminalNoEffect,
+    ProviderOwned,
+}
+
+fn terminal_failed_has_no_effect(
+    record: &PortLeaseRecord,
+    expected_provider: OciPortProvider,
+) -> bool {
+    record.phase() == PortLeasePhase::Failed
+        && record.reservation_claim().is_some()
+        && record.bind_claim().is_none()
+        && record.binding().is_none()
+        && record.confirmed_stopped_binding().is_none()
+        && record.failure().is_some_and(|failure| {
+            failure.provider_attempt().provider_id() == &expected_provider.provider_id()
+        })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct InternalListenerReservation {
+    listener_name: String,
+    target: PortBindTarget,
+    exposure: PortExposure,
+}
+
+impl InternalListenerReservation {
+    pub(crate) fn new(
+        listener_name: impl Into<String>,
+        target: PortBindTarget,
+        exposure: PortExposure,
+    ) -> Self {
+        Self {
+            listener_name: listener_name.into(),
+            target,
+            exposure,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ReservedInternalListener {
+    pub(crate) port: u16,
+    pub(crate) lease: PortLeaseRequest,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ReservedLaunchPorts {
+    pub(crate) published_bindings: Vec<SandboxPortBinding>,
+    pub(crate) published_leases: Vec<PortLeaseRequest>,
+    pub(crate) internal_listener: Option<ReservedInternalListener>,
+    pub(crate) reservation_claim: NetworkReservationClaim,
+}
+
+pub(crate) struct SandboxLaunchPortPlan<'a> {
+    tenant_id: &'a TenantId,
+    sandbox_id: &'a SandboxId,
+    existing_bindings: &'a [SandboxPortBinding],
+    exposed_ports: &'a [OciExposedPort],
+    reallocatable_listener_names: Option<&'a BTreeSet<String>>,
+    internal_listener: Option<InternalListenerReservation>,
+}
+
+impl<'a> SandboxLaunchPortPlan<'a> {
+    pub(crate) fn new(
+        tenant_id: &'a TenantId,
+        sandbox_id: &'a SandboxId,
+        existing_bindings: &'a [SandboxPortBinding],
+        exposed_ports: &'a [OciExposedPort],
+    ) -> Self {
+        Self {
+            tenant_id,
+            sandbox_id,
+            existing_bindings,
+            exposed_ports,
+            reallocatable_listener_names: None,
+            internal_listener: None,
+        }
+    }
+
+    pub(crate) fn with_reallocatable_listener_names(
+        mut self,
+        listener_names: &'a BTreeSet<String>,
+    ) -> Self {
+        self.reallocatable_listener_names = Some(listener_names);
+        self
+    }
+
+    pub(crate) fn with_internal_listener(
+        mut self,
+        internal_listener: InternalListenerReservation,
+    ) -> Self {
+        self.internal_listener = Some(internal_listener);
+        self
+    }
 }
 
 impl PortManager {
@@ -26,7 +159,19 @@ impl PortManager {
             range,
             state_root: state_root.into(),
             max_ports_per_tenant: None,
+            published_listener_provider: PublishedListenerProvider::Netavark,
         }
+    }
+
+    /// Model published listeners by the socket this process actually binds.
+    ///
+    /// The machine forwarder retains `SandboxPortBinding::host_address` as its
+    /// external desired exposure, while the guest-side proxy binds an IPv4
+    /// wildcard listener. The durable conflict target must describe that real
+    /// wildcard effect so a specific-address lease cannot overlap it.
+    pub(crate) fn with_machine_port_proxy_bindings(mut self) -> Self {
+        self.published_listener_provider = PublishedListenerProvider::MachinePortProxy;
+        self
     }
 
     pub(crate) fn with_max_ports_per_tenant(mut self, max_ports_per_tenant: Option<usize>) -> Self {
@@ -34,127 +179,1185 @@ impl PortManager {
         self
     }
 
-    pub(crate) fn allocate_missing_bindings_for_tenant(
+    /// Atomically reserve every published endpoint and optional internal
+    /// listener needed by one sandbox launch.
+    ///
+    /// `reallocatable_listener_names` identifies authority-free plan previews:
+    /// their rendered numbers are replaced by range-selected durable ports.
+    /// All other existing bindings remain exact operator requests.
+    pub(crate) fn reserve_launch_ports_for_sandbox(
+        &self,
+        plan: SandboxLaunchPortPlan<'_>,
+        reservation_claim: &NetworkReservationClaim,
+    ) -> Result<ReservedLaunchPorts> {
+        let SandboxLaunchPortPlan {
+            tenant_id,
+            sandbox_id,
+            existing_bindings,
+            exposed_ports,
+            reallocatable_listener_names,
+            internal_listener,
+        } = plan;
+        let unmapped_tcp_guest_ports = unmapped_tcp_guest_ports(existing_bindings, exposed_ports);
+
+        let request_count = existing_bindings
+            .len()
+            .saturating_add(unmapped_tcp_guest_ports.len())
+            .saturating_add(usize::from(internal_listener.is_some()));
+        let mut requests = Vec::with_capacity(request_count);
+        let mut published_bindings =
+            Vec::with_capacity(existing_bindings.len() + unmapped_tcp_guest_ports.len());
+        for binding in existing_bindings {
+            let host_port =
+                NonZeroU16::new(binding.host_port).ok_or_else(|| SandboxError::InvalidSpec {
+                    message: format!(
+                        "sandbox port binding {:?} must use a non-zero host port",
+                        binding.name
+                    ),
+                })?;
+            let stable_listener_name = published_listener_name(binding);
+            let port = if reallocatable_listener_names
+                .is_some_and(|names| names.contains(&stable_listener_name))
+            {
+                self.range_request_mode()?
+            } else {
+                PortRequestMode::Exact(host_port)
+            };
+            let (target, _, exposure) = self.published_binding_scope(binding)?;
+            requests.push(port_lease_request(
+                tenant_id,
+                sandbox_id,
+                &stable_listener_name,
+                OciPortLeaseIntent::tenant_published(target, binding.host_address, exposure),
+                port,
+            ));
+            published_bindings.push(binding.clone());
+        }
+        for guest_port in &unmapped_tcp_guest_ports {
+            let name = auto_binding_name(*guest_port);
+            let binding = SandboxPortBinding::tcp(name.clone(), *self.range.start(), *guest_port);
+            let (target, _, exposure) = self.published_binding_scope(&binding)?;
+            requests.push(port_lease_request(
+                tenant_id,
+                sandbox_id,
+                &listener_name(name.as_str(), *guest_port),
+                OciPortLeaseIntent::tenant_published(target, binding.host_address, exposure),
+                self.range_request_mode()?,
+            ));
+            published_bindings.push(binding);
+        }
+        if let Some(internal) = &internal_listener {
+            requests.push(port_lease_request(
+                tenant_id,
+                sandbox_id,
+                &internal.listener_name,
+                OciPortLeaseIntent::host_internal(internal.target.clone(), internal.exposure),
+                self.range_request_mode()?,
+            ));
+        }
+
+        let reserved_batch = match self.max_ports_per_tenant {
+            Some(maximum) => reserve_batch_with_tenant_limit(
+                &self.state_root,
+                requests,
+                tenant_id,
+                maximum,
+                reservation_claim,
+            )?,
+            None => reserve_batch(&self.state_root, requests, reservation_claim)?,
+        };
+        let (reserved, reservation_claim) = reserved_batch.into_parts();
+        let reserved_requests = reserved
+            .iter()
+            .map(|(request, _)| request.clone())
+            .collect::<Vec<_>>();
+        if reserved.len() != request_count {
+            let projection_error = SandboxError::OperationFailed {
+                message: format!(
+                    "sandbox port authority returned {} reservations for {request_count} requests",
+                    reserved.len()
+                ),
+            };
+            return Err(self.compensate_failed_never_bound_requests(
+                &reserved_requests,
+                &reservation_claim,
+                projection_error,
+                "sandbox reservation projection",
+            ));
+        }
+        let published_count = published_bindings.len();
+        let mut published_leases = Vec::with_capacity(published_count);
+        let mut internal_reserved = None;
+        for (index, (request, selected)) in reserved.into_iter().enumerate() {
+            if let Some(binding) = published_bindings.get_mut(index) {
+                let stable_listener_name = published_listener_name(binding);
+                let is_reallocatable = index >= existing_bindings.len()
+                    || reallocatable_listener_names
+                        .is_some_and(|names| names.contains(&stable_listener_name));
+                if !is_reallocatable && selected.get() != binding.host_port {
+                    let projection_error = SandboxError::OperationFailed {
+                        message: format!(
+                            "sandbox port lease {} selected {} for explicit binding {}",
+                            request.lease_id(),
+                            selected,
+                            binding.host_port
+                        ),
+                    };
+                    return Err(self.compensate_failed_never_bound_requests(
+                        &reserved_requests,
+                        &reservation_claim,
+                        projection_error,
+                        "sandbox reservation projection",
+                    ));
+                }
+                binding.host_port = selected.get();
+                published_leases.push(request);
+            } else {
+                if index != published_count {
+                    let projection_error = SandboxError::OperationFailed {
+                        message: format!(
+                            "sandbox port authority projected internal listener at index {index}, \
+                             expected {published_count}"
+                        ),
+                    };
+                    return Err(self.compensate_failed_never_bound_requests(
+                        &reserved_requests,
+                        &reservation_claim,
+                        projection_error,
+                        "sandbox reservation projection",
+                    ));
+                }
+                internal_reserved = Some(ReservedInternalListener {
+                    port: selected.get(),
+                    lease: request,
+                });
+            }
+        }
+        Ok(ReservedLaunchPorts {
+            published_bindings,
+            published_leases,
+            internal_listener: internal_reserved,
+            reservation_claim,
+        })
+    }
+
+    /// Compensate an exact request set retained in a launch manifest.
+    pub(crate) fn release_never_bound_requests(
+        &self,
+        requests: &[PortLeaseRequest],
+        reservation_claim: &NetworkReservationClaim,
+    ) -> Result<()> {
+        release_reserved_batch_without_effect(&self.state_root, requests, reservation_claim)?;
+        Ok(())
+    }
+
+    /// Release every still-reserved port owned by one launch claim.
+    ///
+    /// This recovery form is used when request projection itself failed before
+    /// a complete batch could be returned to the caller. The list is only a
+    /// selector: the subsequent batch transition atomically revalidates exact
+    /// claim ownership and `Reserved` phase before releasing anything.
+    pub(crate) fn release_never_bound_launch_claim(
+        &self,
+        reservation_claim: &NetworkReservationClaim,
+    ) -> Result<()> {
+        let authority = LocalPortLeaseAuthority::open(&self.state_root).map_err(|error| {
+            SandboxError::OperationFailed {
+                message: format!("failed to open port reservation authority: {error}"),
+            }
+        })?;
+        let requests = authority
+            .list()
+            .map_err(|error| SandboxError::OperationFailed {
+                message: format!("failed to list launch port reservations: {error}"),
+            })?
+            .into_iter()
+            .filter(|record| record.reservation_claim() == Some(reservation_claim))
+            .map(|record| record.request().clone())
+            .collect::<Vec<_>>();
+        if requests.is_empty() {
+            return Ok(());
+        }
+        self.release_never_bound_requests(&requests, reservation_claim)
+    }
+
+    /// Prove that an initial-launch coordinator still owns every reservation.
+    pub(crate) fn require_never_bound_launch_batch(
+        &self,
+        requests: &[PortLeaseRequest],
+        reservation_claim: &NetworkReservationClaim,
+    ) -> Result<()> {
+        verify_reserved_batch_for_coordinator(&self.state_root, requests, reservation_claim)?;
+        Ok(())
+    }
+
+    /// Classify one launch-owned request group without changing authority.
+    ///
+    /// A group is `NeverBound` when every member remains exact no-effect
+    /// authority owned by the supplied launch claim. That includes a clean
+    /// `Reserved` member, a terminal bind failure from the same coordinator,
+    /// and an already-released identical compensation replay. A uniformly
+    /// adopted group is provider-owned cleanup input. Claimless failures and
+    /// mixed ownership fail closed.
+    pub(crate) fn classify_launch_port_batch(
+        &self,
+        requests: &[PortLeaseRequest],
+        reservation_claim: &NetworkReservationClaim,
+    ) -> Result<LaunchPortBatchState> {
+        let records = self.port_lease_records_snapshot(requests, "launch")?;
+        let mut coordinator_no_effect = 0usize;
+        let mut netavark_claims = Vec::new();
+        let mut provider_owned = 0usize;
+        for (request, record) in requests.iter().zip(records) {
+            if record.reservation_claim() == Some(reservation_claim) {
+                let clean_coordinator_record = record.bind_claim().is_none()
+                    && record.binding().is_none()
+                    && record.confirmed_stopped_binding().is_none()
+                    && match record.phase() {
+                        PortLeasePhase::Reserved => record.failure().is_none(),
+                        PortLeasePhase::Failed => record.failure().is_some(),
+                        PortLeasePhase::Released => record.failure().is_none(),
+                        _ => false,
+                    };
+                if clean_coordinator_record {
+                    coordinator_no_effect += 1;
+                    continue;
+                }
+                if record.phase() == PortLeasePhase::Reserved
+                    && record.binding().is_none()
+                    && record.failure().is_none()
+                    && record.confirmed_stopped_binding().is_none()
+                {
+                    match record.bind_claim() {
+                        Some(claim)
+                            if claim.provider_attempt().provider_id()
+                                == &OciPortProvider::Netavark.provider_id() =>
+                        {
+                            netavark_claims.push(claim.clone());
+                            continue;
+                        }
+                        Some(_) => {
+                            return Err(SandboxError::OperationFailed {
+                                message: format!(
+                                    "launch port lease {} retains a non-Netavark provider claim \
+                                     under the launch coordinator",
+                                    request.lease_id()
+                                ),
+                            });
+                        }
+                        None => unreachable!(
+                            "a clean coordinator-owned reservation was classified above"
+                        ),
+                    }
+                }
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "launch port lease {} carries ambiguous coordinator-owned lifecycle \
+                         evidence",
+                        request.lease_id()
+                    ),
+                });
+            }
+            if record.reservation_claim().is_some() {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "launch port lease {} belongs to a different or ambiguous reservation coordinator",
+                        request.lease_id()
+                    ),
+                });
+            }
+            if record.phase() == PortLeasePhase::Failed {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "launch port lease {} has claimless failed provider evidence; retaining \
+                         every fence for reconciliation",
+                        request.lease_id()
+                    ),
+                });
+            }
+            provider_owned += 1;
+        }
+        match (coordinator_no_effect, netavark_claims.len(), provider_owned) {
+            (owned, 0, 0) if owned == requests.len() => Ok(LaunchPortBatchState::NeverBound),
+            (0, claimed, 0) if claimed == requests.len() => {
+                Ok(LaunchPortBatchState::NetavarkClaimed(netavark_claims))
+            }
+            (0, 0, owned) if owned == requests.len() => Ok(LaunchPortBatchState::ProviderOwned),
+            _ => Err(SandboxError::OperationFailed {
+                message:
+                    "launch port batch mixes coordinator-owned no-effect, Netavark-claimed, or \
+                     provider-owned lifecycle states; retaining every fence for reconciliation"
+                        .to_owned(),
+            }),
+        }
+    }
+
+    /// Read one exact request group from one durable authority snapshot.
+    ///
+    /// Classifiers must not synthesize a lifecycle decision from records read
+    /// across multiple independently locked store generations.
+    fn port_lease_records_snapshot(
+        &self,
+        requests: &[PortLeaseRequest],
+        provider_name: &str,
+    ) -> Result<Vec<PortLeaseRecord>> {
+        let authority = LocalPortLeaseAuthority::open(&self.state_root).map_err(|error| {
+            SandboxError::OperationFailed {
+                message: format!("failed to open {provider_name} port authority: {error}"),
+            }
+        })?;
+        let records = authority
+            .list()
+            .map_err(|error| SandboxError::OperationFailed {
+                message: format!("failed to inspect {provider_name} port authority: {error}"),
+            })?;
+        let records = records
+            .into_iter()
+            .map(|record| (record.request().lease_id().clone(), record))
+            .collect::<BTreeMap<_, _>>();
+        requests
+            .iter()
+            .map(|request| {
+                let record = records.get(request.lease_id()).ok_or_else(|| {
+                    SandboxError::OperationFailed {
+                        message: format!(
+                            "{provider_name} port lease {} does not exist",
+                            request.lease_id()
+                        ),
+                    }
+                })?;
+                if record.request() != request {
+                    return Err(SandboxError::OperationFailed {
+                        message: format!(
+                            "{provider_name} port lease {} does not match its durable identity and \
+                             fence",
+                            request.lease_id()
+                        ),
+                    });
+                }
+                Ok(record.clone())
+            })
+            .collect()
+    }
+
+    /// Preserve a provider-preparation failure together with failed durable
+    /// compensation for an authenticated request set that never reached
+    /// adoption.
+    pub(crate) fn compensate_failed_never_bound_requests(
+        &self,
+        requests: &[PortLeaseRequest],
+        reservation_claim: &NetworkReservationClaim,
+        provider_error: SandboxError,
+        operation: &str,
+    ) -> SandboxError {
+        match self.release_never_bound_requests(requests, reservation_claim) {
+            Ok(()) => provider_error,
+            Err(compensation_error) => SandboxError::OperationFailed {
+                message: format!(
+                    "{operation} failed: {provider_error}; \
+                     never-bound port reservation compensation also failed: {compensation_error}"
+                ),
+            },
+        }
+    }
+
+    /// Produce inert plan-only bindings without claiming production authority.
+    ///
+    /// This exists only for plan rendering. Execute-mode callers must use
+    /// [`Self::reserve_launch_ports_for_sandbox`].
+    pub(crate) fn preview_bindings_for_sandbox(
         &self,
         tenant_id: &TenantId,
         existing_bindings: &[SandboxPortBinding],
         exposed_ports: &[OciExposedPort],
     ) -> Result<Vec<SandboxPortBinding>> {
-        let mut used_host_ports = self.read_used_host_ports()?;
-        used_host_ports.extend(existing_bindings.iter().map(|binding| binding.host_port));
-
-        let mut mapped_guest_ports: BTreeSet<u16> = existing_bindings
-            .iter()
-            .map(|binding| binding.guest_port)
-            .collect();
-        let mut unmapped_tcp_guest_ports = Vec::new();
-
-        for exposed_port in exposed_ports {
-            if exposed_port.protocol != OciExposedPortProtocol::Tcp {
-                continue;
-            }
-            if !mapped_guest_ports.insert(exposed_port.port) {
-                continue;
-            }
-            unmapped_tcp_guest_ports.push(exposed_port.port);
-        }
-
-        self.ensure_tenant_port_quota(
+        let unmapped_count = unmapped_tcp_guest_ports(existing_bindings, exposed_ports).len();
+        self.ensure_preview_tenant_port_quota(
             tenant_id,
-            existing_bindings
-                .len()
-                .saturating_add(unmapped_tcp_guest_ports.len()),
+            existing_bindings.len().saturating_add(unmapped_count),
         )?;
-
-        let mut allocated = Vec::new();
-        for guest_port in unmapped_tcp_guest_ports {
-            let host_port = self.next_available_host_port(&used_host_ports)?;
-            used_host_ports.insert(host_port);
-            allocated.push(SandboxPortBinding::tcp(
-                auto_binding_name(guest_port),
-                host_port,
-                guest_port,
-            ));
-        }
-
-        Ok(allocated)
+        self.preview_missing_bindings(existing_bindings, exposed_ports)
     }
 
-    pub(crate) fn allocate_internal_host_port(
+    /// Produce the deterministic, authority-free rendering for missing ports.
+    ///
+    /// Callers that represent a sandbox launch must use
+    /// [`Self::preview_bindings_for_sandbox`] so the rendered launch is checked
+    /// against current durable tenant usage. A preview never creates usage:
+    /// execute-mode reservation is the sole atomic quota/allocation authority.
+    pub(crate) fn preview_missing_bindings(
         &self,
         existing_bindings: &[SandboxPortBinding],
-    ) -> Result<u16> {
-        let mut used_host_ports = self.read_used_host_ports()?;
-        used_host_ports.extend(existing_bindings.iter().map(|binding| binding.host_port));
-        self.next_available_host_port(&used_host_ports)
-    }
-
-    fn next_available_host_port(&self, used_host_ports: &BTreeSet<u16>) -> Result<u16> {
-        self.range
-            .clone()
-            .find(|port| !used_host_ports.contains(port))
-            .ok_or_else(|| SandboxError::OperationFailed {
-                message: format!(
-                    "published port range {}-{} is exhausted",
-                    self.range.start(),
-                    self.range.end()
-                ),
+        exposed_ports: &[OciExposedPort],
+    ) -> Result<Vec<SandboxPortBinding>> {
+        // Plan rendering and execute reservation must validate the same range.
+        // In particular, never emit port zero into a preview that the durable
+        // authority will deterministically reject during handoff.
+        self.range_request_mode()?;
+        let mut occupied_bindings = existing_bindings.to_vec();
+        unmapped_tcp_guest_ports(existing_bindings, exposed_ports)
+            .into_iter()
+            .map(|guest_port| {
+                let binding = self.next_preview_binding(&occupied_bindings, guest_port)?;
+                occupied_bindings.push(binding.clone());
+                Ok(binding)
             })
+            .collect()
     }
 
-    fn read_used_host_ports(&self) -> Result<BTreeSet<u16>> {
-        let mut used_host_ports = BTreeSet::new();
-        for manifest_path in
-            artifact_paths::all_manifest_paths(&self.state_root).map_err(|error| {
-                SandboxError::OperationFailed {
-                    message: format!(
-                        "failed to read port-manager tenant state directory {}: {error}",
-                        self.state_root.display()
-                    ),
-                }
-            })?
+    /// Authenticate the plan-rendered binding list against its canonical
+    /// operator and image inputs before the runner converts previews into
+    /// durable range requests.
+    pub(crate) fn validate_plan_binding_provenance(
+        &self,
+        requested_bindings: &[SandboxPortBinding],
+        rendered_bindings: &[SandboxPortBinding],
+        exposed_ports: &[OciExposedPort],
+    ) -> Result<BTreeSet<String>> {
+        let automatic_guest_ports = unmapped_tcp_guest_ports(requested_bindings, exposed_ports);
+        let expected_len = requested_bindings
+            .len()
+            .saturating_add(automatic_guest_ports.len());
+        if rendered_bindings.len() != expected_len
+            || !rendered_bindings.starts_with(requested_bindings)
         {
-            let contents =
-                std::fs::read(&manifest_path).map_err(|error| SandboxError::OperationFailed {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "container runner port binding provenance mismatch: {} canonical operator \
+                     bindings and {} image-derived bindings do not match {} rendered bindings",
+                    requested_bindings.len(),
+                    automatic_guest_ports.len(),
+                    rendered_bindings.len()
+                ),
+            });
+        }
+
+        let automatic_bindings = &rendered_bindings[requested_bindings.len()..];
+        for (binding, guest_port) in automatic_bindings.iter().zip(&automatic_guest_ports) {
+            let expected = SandboxPortBinding::tcp(
+                auto_binding_name(*guest_port),
+                binding.host_port,
+                *guest_port,
+            );
+            if binding.host_port == 0 || binding != &expected {
+                return Err(SandboxError::OperationFailed {
                     message: format!(
-                        "failed to read sandbox manifest {}: {error}",
-                        manifest_path.display()
+                        "container runner port binding provenance mismatch: image-derived TCP \
+                         guest port {guest_port} has non-canonical rendered binding {binding:?}"
+                    ),
+                });
+            }
+        }
+
+        Ok(automatic_bindings
+            .iter()
+            .map(published_listener_name)
+            .collect())
+    }
+
+    /// Atomically reserve one internal host-side listener such as an egress PEP.
+    #[cfg(test)]
+    pub(crate) fn reserve_internal_listener(
+        &self,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        listener_name: &str,
+        target: PortBindTarget,
+        exposure: PortExposure,
+    ) -> Result<(u16, PortLeaseRequest)> {
+        let request = port_lease_request(
+            tenant_id,
+            sandbox_id,
+            listener_name,
+            OciPortLeaseIntent::host_internal(target, exposure),
+            self.range_request_mode()?,
+        );
+        let authority = LocalPortLeaseAuthority::open(&self.state_root).map_err(|error| {
+            SandboxError::OperationFailed {
+                message: format!("failed to open port reservation authority: {error}"),
+            }
+        })?;
+        let record =
+            authority
+                .reserve(request.clone())
+                .map_err(|error| SandboxError::OperationFailed {
+                    message: format!("failed to reserve internal listener authority: {error}"),
+                })?;
+        let port = record
+            .reserved_port()
+            .ok_or_else(|| SandboxError::OperationFailed {
+                message: "internal listener reservation did not select a port".to_owned(),
+            })?
+            .get();
+        Ok((port, request))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reserve_internal_listener_for_coordinator(
+        &self,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        listener_name: &str,
+        target: PortBindTarget,
+        exposure: PortExposure,
+    ) -> Result<(u16, PortLeaseRequest, NetworkReservationClaim)> {
+        let request = port_lease_request(
+            tenant_id,
+            sandbox_id,
+            listener_name,
+            OciPortLeaseIntent::host_internal(target, exposure),
+            self.range_request_mode()?,
+        );
+        let (request, selected, reservation_claim) = reserve(&self.state_root, request)?;
+        Ok((selected.get(), request, reservation_claim))
+    }
+
+    pub(crate) fn reservation_claim_for_requests(
+        &self,
+        requests: &[PortLeaseRequest],
+    ) -> Result<Option<NetworkReservationClaim>> {
+        self.reservation_claim_for_requests_with_observer(requests, |_| {})
+    }
+
+    fn reservation_claim_for_requests_with_observer(
+        &self,
+        requests: &[PortLeaseRequest],
+        mut after_record: impl FnMut(usize),
+    ) -> Result<Option<NetworkReservationClaim>> {
+        let records = self.port_lease_records_snapshot(requests, "reservation claim")?;
+        let mut expected: Option<Option<NetworkReservationClaim>> = None;
+        for (index, (_request, record)) in requests.iter().zip(records).enumerate() {
+            let current = record.reservation_claim().cloned();
+            after_record(index);
+            match expected.as_ref() {
+                None => expected = Some(current),
+                Some(expected) if expected == &current => {}
+                Some(_) => {
+                    return Err(SandboxError::OperationFailed {
+                        message: "port request batch does not share one reservation coordinator"
+                            .to_owned(),
+                    });
+                }
+            }
+        }
+        Ok(expected.flatten())
+    }
+
+    pub(crate) fn require_binding_leases(
+        &self,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+    ) -> Result<()> {
+        if bindings.len() != leases.len() {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "sandbox has {} published bindings but {} durable port leases",
+                    bindings.len(),
+                    leases.len()
+                ),
+            });
+        }
+        for (binding, request) in bindings.iter().zip(leases) {
+            let expected_port =
+                NonZeroU16::new(binding.host_port).ok_or_else(|| SandboxError::InvalidSpec {
+                    message: format!(
+                        "sandbox port binding {:?} must use a non-zero host port",
+                        binding.name
                     ),
                 })?;
-            let manifest: PortLeaseManifest =
-                serde_json::from_slice(&contents).map_err(|error| {
-                    SandboxError::OperationFailed {
+            let (target, publication, exposure) = self.published_binding_scope(binding)?;
+            require_current_listener_authority(
+                &self.state_root,
+                ExpectedListenerAuthority::published(
+                    tenant_id,
+                    sandbox_id,
+                    listener_name(binding.name.as_str(), binding.guest_port),
+                    target,
+                    publication,
+                    exposure,
+                    expected_port,
+                ),
+                request,
+            )?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn activate_netavark_bindings(
+        &self,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+        claims: &[PortBindClaim],
+    ) -> Result<()> {
+        self.require_published_listener_provider(PublishedListenerProvider::Netavark)?;
+        self.require_binding_leases(tenant_id, sandbox_id, bindings, leases)?;
+        if leases.len() != claims.len() {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "sandbox has {} Netavark listener leases but {} durable bind claims",
+                    leases.len(),
+                    claims.len()
+                ),
+            });
+        }
+        for request in leases {
+            require_current_bind_authority(&self.state_root, request)?;
+        }
+        let reservation_claim = self.reservation_claim_for_requests(leases)?;
+        let actual_addrs = bindings
+            .iter()
+            .map(SandboxPortBinding::host_socket_addr)
+            .collect::<Vec<_>>();
+        adopt_claimed_and_activate_batch(
+            &self.state_root,
+            leases,
+            claims,
+            &actual_addrs,
+            OciPortProvider::Netavark,
+            reservation_claim.as_ref(),
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn claim_netavark_bindings(
+        &self,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+    ) -> Result<Vec<PortBindClaim>> {
+        self.require_published_listener_provider(PublishedListenerProvider::Netavark)?;
+        self.require_binding_leases(tenant_id, sandbox_id, bindings, leases)?;
+        let reservation_claim = self.reservation_claim_for_requests(leases)?;
+        claim_bind_attempts(
+            &self.state_root,
+            leases,
+            OciPortProvider::Netavark,
+            reservation_claim.as_ref(),
+        )
+    }
+
+    /// Abandon one exact Netavark claim batch after provider detach is confirmed.
+    pub(crate) fn abandon_netavark_bind_claims_without_effect(
+        &self,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+        claims: &[PortBindClaim],
+        reservation_claim: Option<&NetworkReservationClaim>,
+    ) -> Result<()> {
+        self.require_published_bind_claim_batch(
+            PublishedListenerProvider::Netavark,
+            OciPortProvider::Netavark,
+            leases,
+            claims,
+        )?;
+        self.require_binding_lease_identities(tenant_id, sandbox_id, bindings, leases)?;
+        abandon_bind_attempts_without_effect(&self.state_root, leases, claims, reservation_claim)?;
+        Ok(())
+    }
+
+    pub(crate) fn expected_netavark_bindings(
+        &self,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+    ) -> Result<Vec<nimbus_network::PortLeaseBinding>> {
+        self.require_published_listener_provider(PublishedListenerProvider::Netavark)?;
+        self.require_binding_lease_identities(tenant_id, sandbox_id, bindings, leases)?;
+        bindings
+            .iter()
+            .zip(leases)
+            .map(|(binding, request)| {
+                provider_binding(
+                    request,
+                    binding.host_socket_addr(),
+                    OciPortProvider::Netavark,
+                )
+            })
+            .collect()
+    }
+
+    pub(crate) fn prepare_netavark_bindings_for_rebind(
+        &self,
+        leases: &[PortLeaseRequest],
+        expected_bindings: &[nimbus_network::PortLeaseBinding],
+    ) -> Result<()> {
+        self.require_published_listener_provider(PublishedListenerProvider::Netavark)?;
+        prepare_rebind_batch_after_confirmed_stop(&self.state_root, leases, expected_bindings)?;
+        Ok(())
+    }
+
+    fn require_binding_lease_identities(
+        &self,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+    ) -> Result<()> {
+        self.binding_lease_records(tenant_id, sandbox_id, bindings, leases)?;
+        Ok(())
+    }
+
+    pub(crate) fn activate_machine_bindings(
+        &self,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+        claims: &[PortBindClaim],
+    ) -> Result<Vec<nimbus_network::PortLeaseBinding>> {
+        self.require_published_listener_provider(PublishedListenerProvider::MachinePortProxy)?;
+        self.require_binding_leases(tenant_id, sandbox_id, bindings, leases)?;
+        if leases.len() != claims.len() {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "sandbox has {} machine listener leases but {} durable bind claims",
+                    leases.len(),
+                    claims.len()
+                ),
+            });
+        }
+        for request in leases {
+            require_current_bind_authority(&self.state_root, request)?;
+        }
+        let reservation_claim = self.reservation_claim_for_requests(leases)?;
+        let actual_addrs = bindings
+            .iter()
+            .map(machine_port_proxy_guest_listener_addr)
+            .collect::<Vec<_>>();
+        adopt_claimed_and_activate_batch(
+            &self.state_root,
+            leases,
+            claims,
+            &actual_addrs,
+            OciPortProvider::MachinePortProxy,
+            reservation_claim.as_ref(),
+        )?
+        .into_iter()
+        .map(|record| {
+            record
+                .binding()
+                .cloned()
+                .ok_or_else(|| SandboxError::OperationFailed {
+                    message: format!(
+                        "activated machine port lease {} lost exact provider binding evidence",
+                        record.request().lease_id()
+                    ),
+                })
+        })
+        .collect()
+    }
+
+    pub(crate) fn claim_machine_bindings(
+        &self,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+    ) -> Result<Vec<PortBindClaim>> {
+        self.require_published_listener_provider(PublishedListenerProvider::MachinePortProxy)?;
+        self.require_binding_leases(tenant_id, sandbox_id, bindings, leases)?;
+        let reservation_claim = self.reservation_claim_for_requests(leases)?;
+        claim_bind_attempts(
+            &self.state_root,
+            leases,
+            OciPortProvider::MachinePortProxy,
+            reservation_claim.as_ref(),
+        )
+    }
+
+    pub(crate) fn abandon_machine_bind_claims_without_effect(
+        &self,
+        leases: &[PortLeaseRequest],
+        claims: &[PortBindClaim],
+    ) -> Result<()> {
+        self.require_published_bind_claim_batch(
+            PublishedListenerProvider::MachinePortProxy,
+            OciPortProvider::MachinePortProxy,
+            leases,
+            claims,
+        )?;
+        let reservation_claim = self.reservation_claim_for_requests(leases)?;
+        abandon_bind_attempts_without_effect(
+            &self.state_root,
+            leases,
+            claims,
+            reservation_claim.as_ref(),
+        )?;
+        Ok(())
+    }
+
+    fn require_published_bind_claim_batch(
+        &self,
+        expected_manager: PublishedListenerProvider,
+        expected_provider: OciPortProvider,
+        leases: &[PortLeaseRequest],
+        claims: &[PortBindClaim],
+    ) -> Result<()> {
+        self.require_published_listener_provider(expected_manager)?;
+        if leases.len() != claims.len() {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "sandbox has {} {expected_manager:?} listener leases but {} durable bind claims",
+                    leases.len(),
+                    claims.len()
+                ),
+            });
+        }
+        let expected_provider_id = expected_provider.provider_id();
+        if let Some(foreign) = claims
+            .iter()
+            .find(|claim| claim.provider_attempt().provider_id() != &expected_provider_id)
+        {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "cannot abandon {expected_manager:?} claim from provider {}",
+                    foreign.provider_attempt().provider_id()
+                ),
+            });
+        }
+        Ok(())
+    }
+
+    pub(crate) fn require_active_machine_bindings(
+        &self,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+    ) -> Result<Vec<nimbus_network::PortLeaseBinding>> {
+        self.require_published_listener_provider(PublishedListenerProvider::MachinePortProxy)?;
+        self.require_binding_lease_identities(tenant_id, sandbox_id, bindings, leases)?;
+        bindings
+            .iter()
+            .zip(leases)
+            .map(|(binding, request)| {
+                require_active_provider_binding(
+                    &self.state_root,
+                    request,
+                    machine_port_proxy_guest_listener_addr(binding),
+                    OciPortProvider::MachinePortProxy,
+                )?
+                .binding()
+                .cloned()
+                .ok_or_else(|| SandboxError::OperationFailed {
+                    message: format!(
+                        "active machine port lease {} lost exact provider binding evidence",
+                        request.lease_id()
+                    ),
+                })
+            })
+            .collect()
+    }
+
+    pub(crate) fn require_releasable_machine_bindings(
+        &self,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+    ) -> Result<Vec<nimbus_network::PortLeaseBinding>> {
+        self.require_published_listener_provider(PublishedListenerProvider::MachinePortProxy)?;
+        self.require_binding_lease_identities(tenant_id, sandbox_id, bindings, leases)?;
+        bindings
+            .iter()
+            .zip(leases)
+            .map(|(binding, request)| {
+                crate::backends::oci::port_lease::require_releasable_provider_binding(
+                    &self.state_root,
+                    request,
+                    machine_port_proxy_guest_listener_addr(binding),
+                    OciPortProvider::MachinePortProxy,
+                )?
+                .binding()
+                .cloned()
+                .ok_or_else(|| SandboxError::OperationFailed {
+                    message: format!(
+                        "releasable machine port lease {} lost exact provider binding evidence",
+                        request.lease_id()
+                    ),
+                })
+            })
+            .collect()
+    }
+
+    pub(crate) fn prepare_machine_bindings_for_rebind(
+        &self,
+        leases: &[PortLeaseRequest],
+        expected_bindings: &[nimbus_network::PortLeaseBinding],
+    ) -> Result<()> {
+        self.require_published_listener_provider(PublishedListenerProvider::MachinePortProxy)?;
+        prepare_rebind_batch_after_confirmed_stop(&self.state_root, leases, expected_bindings)?;
+        Ok(())
+    }
+
+    /// Return whether every exact machine listener is durably terminal with no
+    /// live effect that this process must stop.
+    ///
+    /// `Failed` requires the exact adapter provider and a retained reservation
+    /// coordinator because bind-failure recording is no-effect evidence.
+    /// `Released` requires exact historical provider evidence when present.
+    /// A mixed terminal batch must share one coordinator. Every other shape
+    /// retains ambiguity or live authority.
+    pub(crate) fn machine_bindings_are_terminal_without_effect(
+        &self,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+    ) -> Result<bool> {
+        Ok(
+            self.classify_machine_cleanup_batch(tenant_id, sandbox_id, bindings, leases)?
+                == LaunchPortBatchState::TerminalNoEffect,
+        )
+    }
+
+    pub(crate) fn record_machine_proxy_bind_failure(
+        &self,
+        request: &PortLeaseRequest,
+        claim: &PortBindClaim,
+        attempted_addr: std::net::SocketAddr,
+        error_kind: io::ErrorKind,
+    ) -> Result<()> {
+        self.require_published_listener_provider(PublishedListenerProvider::MachinePortProxy)?;
+        let reservation_claim =
+            self.reservation_claim_for_requests(std::slice::from_ref(request))?;
+        record_bind_failure(
+            &self.state_root,
+            request,
+            claim,
+            attempted_addr,
+            OciPortProvider::MachinePortProxy,
+            error_kind,
+            reservation_claim.as_ref(),
+        )?;
+        Ok(())
+    }
+
+    fn binding_lease_records(
+        &self,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+    ) -> Result<Vec<PortLeaseRecord>> {
+        if bindings.len() != leases.len() {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "sandbox has {} published bindings but {} durable port leases",
+                    bindings.len(),
+                    leases.len()
+                ),
+            });
+        }
+        bindings
+            .iter()
+            .zip(leases)
+            .map(|(binding, request)| {
+                let expected_port = NonZeroU16::new(binding.host_port).ok_or_else(|| {
+                    SandboxError::InvalidSpec {
                         message: format!(
-                            "failed to parse sandbox manifest {} for port leasing: {error}",
-                            manifest_path.display()
+                            "sandbox port binding {:?} must use a non-zero host port",
+                            binding.name
                         ),
                     }
                 })?;
-
-            if !manifest.status.reserves_ports() {
-                continue;
-            }
-
-            used_host_ports.extend(
-                manifest
-                    .spec
-                    .port_bindings
-                    .into_iter()
-                    .map(|binding| binding.host_port),
-            );
-            if let Some(egress_proxy) = manifest.egress_proxy {
-                used_host_ports.insert(egress_proxy.port);
-            }
-        }
-
-        Ok(used_host_ports)
+                let (target, publication, exposure) = self.published_binding_scope(binding)?;
+                require_listener_authority(
+                    &self.state_root,
+                    ExpectedListenerAuthority::published(
+                        tenant_id,
+                        sandbox_id,
+                        listener_name(binding.name.as_str(), binding.guest_port),
+                        target,
+                        publication,
+                        exposure,
+                        expected_port,
+                    ),
+                    request,
+                )
+            })
+            .collect()
     }
 
-    fn ensure_tenant_port_quota(&self, tenant_id: &TenantId, launch_ports: usize) -> Result<()> {
+    fn published_binding_scope(
+        &self,
+        binding: &SandboxPortBinding,
+    ) -> Result<(PortBindTarget, PortPublicationIntent, PortExposure)> {
+        let (external_target, exposure) = published_scope(binding.host_address)?;
+        let target = match self.published_listener_provider {
+            PublishedListenerProvider::Netavark => external_target,
+            PublishedListenerProvider::MachinePortProxy => PortBindTarget::ipv4_wildcard(),
+        };
+        let publication = PortPublicationIntent::host(binding.host_address);
+        Ok((target, publication, exposure))
+    }
+
+    fn require_published_listener_provider(
+        &self,
+        expected: PublishedListenerProvider,
+    ) -> Result<()> {
+        if self.published_listener_provider == expected {
+            return Ok(());
+        }
+        Err(SandboxError::OperationFailed {
+            message: format!(
+                "published listener authority is configured for {:?}, not {:?}",
+                self.published_listener_provider, expected
+            ),
+        })
+    }
+
+    pub(crate) fn withdraw_bindings(
+        &self,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+    ) -> Result<()> {
+        let authenticated = self.binding_lease_records(tenant_id, sandbox_id, bindings, leases)?;
+        let mut errors = Vec::new();
+        for ((binding, request), record) in bindings.iter().zip(leases).zip(authenticated) {
+            if matches!(
+                record.phase(),
+                PortLeasePhase::Withdrawing | PortLeasePhase::Released | PortLeasePhase::Failed
+            ) {
+                continue;
+            }
+            if let Err(error) = withdraw(&self.state_root, request) {
+                errors.push(format!(
+                    "listener {:?} lease {} at {}:{} withdrawal was blocked: {error}",
+                    binding.name,
+                    request.lease_id(),
+                    binding.host_address,
+                    binding.host_port
+                ));
+            }
+        }
+        if !errors.is_empty() {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "port withdrawal for tenant {tenant_id} sandbox {sandbox_id} was incomplete: \
+                     {}",
+                    errors.join("; ")
+                ),
+            });
+        }
+        Ok(())
+    }
+
+    pub(crate) fn release_bindings(
+        &self,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+    ) -> Result<()> {
+        let authenticated = self.binding_lease_records(tenant_id, sandbox_id, bindings, leases)?;
+        let mut errors = Vec::new();
+        for ((binding, request), record) in bindings.iter().zip(leases).zip(authenticated) {
+            if matches!(
+                record.phase(),
+                PortLeasePhase::Released | PortLeasePhase::Failed
+            ) {
+                continue;
+            }
+            if let Err(error) = release(&self.state_root, request) {
+                errors.push(format!(
+                    "listener {:?} lease {} at {}:{} release was blocked: {error}",
+                    binding.name,
+                    request.lease_id(),
+                    binding.host_address,
+                    binding.host_port
+                ));
+            }
+        }
+        if !errors.is_empty() {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "port release for tenant {tenant_id} sandbox {sandbox_id} was incomplete: {}",
+                    errors.join("; ")
+                ),
+            });
+        }
+        Ok(())
+    }
+
+    fn next_preview_binding(
+        &self,
+        occupied_bindings: &[SandboxPortBinding],
+        guest_port: u16,
+    ) -> Result<SandboxPortBinding> {
+        for host_port in self.range.clone() {
+            let candidate =
+                SandboxPortBinding::tcp(auto_binding_name(guest_port), host_port, guest_port);
+            let candidate_spec = self.preview_binding_spec(&candidate)?;
+            let overlaps = occupied_bindings
+                .iter()
+                .filter(|existing| existing.host_port == host_port)
+                .map(|existing| self.preview_binding_spec(existing))
+                .collect::<Result<Vec<_>>>()?
+                .iter()
+                .any(|existing| candidate_spec.overlaps(existing));
+            if !overlaps {
+                return Ok(candidate);
+            }
+        }
+        Err(SandboxError::OperationFailed {
+            message: format!(
+                "published port range {}-{} is exhausted",
+                self.range.start(),
+                self.range.end()
+            ),
+        })
+    }
+
+    fn preview_binding_spec(&self, binding: &SandboxPortBinding) -> Result<PortBindingSpec> {
+        let port = NonZeroU16::new(binding.host_port).ok_or_else(|| SandboxError::InvalidSpec {
+            message: format!(
+                "sandbox port binding {:?} must use a non-zero host port",
+                binding.name
+            ),
+        })?;
+        let (target, _, exposure) = self.published_binding_scope(binding)?;
+        Ok(PortBindingSpec::new(
+            PortProtocol::Tcp,
+            PortBindRealm::Host,
+            target,
+            exposure,
+            PortRequestMode::Exact(port),
+        ))
+    }
+
+    fn range_request_mode(&self) -> Result<PortRequestMode> {
+        let start =
+            NonZeroU16::new(*self.range.start()).ok_or_else(|| SandboxError::InvalidSpec {
+                message: "published port range must start above zero".to_owned(),
+            })?;
+        let end = NonZeroU16::new(*self.range.end()).ok_or_else(|| SandboxError::InvalidSpec {
+            message: "published port range must end above zero".to_owned(),
+        })?;
+        PortRequestMode::range(start, end).map_err(|error| SandboxError::InvalidSpec {
+            message: format!("invalid published port range: {error}"),
+        })
+    }
+
+    fn ensure_preview_tenant_port_quota(
+        &self,
+        tenant_id: &TenantId,
+        launch_ports: usize,
+    ) -> Result<()> {
         let Some(max_ports_per_tenant) = self.max_ports_per_tenant else {
             return Ok(());
         };
-        let active_ports = self.read_reserved_port_count_for_tenant(tenant_id)?;
+        let active_ports = self.read_published_lease_count_for_tenant(tenant_id)?;
         let requested_ports = active_ports.saturating_add(launch_ports);
         if requested_ports <= max_ports_per_tenant {
             return Ok(());
@@ -166,744 +1369,66 @@ impl PortManager {
         })
     }
 
-    fn read_reserved_port_count_for_tenant(&self, tenant_id: &TenantId) -> Result<usize> {
-        let mut reserved_ports = 0usize;
-        for manifest_path in artifact_paths::manifest_paths_for_tenant(&self.state_root, tenant_id)
+    fn read_published_lease_count_for_tenant(&self, tenant_id: &TenantId) -> Result<usize> {
+        let authority = LocalPortLeaseAuthority::open(&self.state_root).map_err(|error| {
+            SandboxError::OperationFailed {
+                message: format!(
+                    "failed to inspect durable tenant port usage at {} for tenant {tenant_id}: \
+                     {error}",
+                    self.state_root.display()
+                ),
+            }
+        })?;
+        Ok(authority
+            .list()
             .map_err(|error| SandboxError::OperationFailed {
                 message: format!(
-                    "failed to read port-manager tenant state directory {} for tenant {tenant_id}: {error}",
+                    "failed to list durable tenant port usage at {} for tenant {tenant_id}: \
+                     {error}",
                     self.state_root.display()
                 ),
             })?
-        {
-            let contents =
-                std::fs::read(&manifest_path).map_err(|error| SandboxError::OperationFailed {
-                    message: format!(
-                        "failed to read sandbox manifest {}: {error}",
-                        manifest_path.display()
-                    ),
-                })?;
-            let manifest: PortLeaseManifest =
-                serde_json::from_slice(&contents).map_err(|error| {
-                    SandboxError::OperationFailed {
-                        message: format!(
-                            "failed to parse sandbox manifest {} for tenant port quota: {error}",
-                            manifest_path.display()
-                        ),
-                    }
-                })?;
-
-            if manifest.status.reserves_ports() {
-                reserved_ports =
-                    reserved_ports.saturating_add(manifest.spec.port_bindings.len());
-            }
-        }
-        Ok(reserved_ports)
+            .into_iter()
+            .filter(|record| {
+                !record.phase().is_terminal()
+                    && record.request().accounting() == PortLeaseAccounting::TenantPublished
+                    && record.request().tenant_id() == Some(tenant_id)
+            })
+            .count())
     }
+}
+
+fn unmapped_tcp_guest_ports(
+    existing_bindings: &[SandboxPortBinding],
+    exposed_ports: &[OciExposedPort],
+) -> Vec<u16> {
+    let mut mapped_guest_ports: BTreeSet<u16> = existing_bindings
+        .iter()
+        .map(|binding| binding.guest_port)
+        .collect();
+    exposed_ports
+        .iter()
+        .filter(|exposed_port| exposed_port.protocol == OciExposedPortProtocol::Tcp)
+        .filter_map(|exposed_port| {
+            mapped_guest_ports
+                .insert(exposed_port.port)
+                .then_some(exposed_port.port)
+        })
+        .collect()
 }
 
 fn auto_binding_name(guest_port: u16) -> String {
     format!("tcp-{guest_port}")
 }
 
-#[derive(Debug, Deserialize)]
-struct PortLeaseManifest {
-    status: SandboxStatus,
-    spec: PortLeaseSpec,
-    egress_proxy: Option<PortLeaseEgressProxy>,
+fn listener_name(binding_name: &str, guest_port: u16) -> String {
+    format!("published:{binding_name}:{guest_port}")
 }
 
-#[derive(Debug, Deserialize)]
-struct PortLeaseSpec {
-    port_bindings: Vec<SandboxPortBinding>,
-}
-
-#[derive(Debug, Deserialize)]
-struct PortLeaseEgressProxy {
-    port: u16,
-}
-
-impl SandboxStatus {
-    fn reserves_ports(self) -> bool {
-        matches!(
-            self,
-            Self::Starting | Self::Ready | Self::NotReady | Self::Stopping
-        )
-    }
+pub(crate) fn published_listener_name(binding: &SandboxPortBinding) -> String {
+    listener_name(binding.name.as_str(), binding.guest_port)
 }
 
 #[cfg(test)]
-mod tests {
-    use std::fs::{self, OpenOptions};
-    use std::io::{BufRead as _, Read as _, Write as _};
-    use std::process::{Child, ChildStdin, Command, Stdio};
-    use std::sync::{Arc, Mutex, mpsc};
-    use std::thread::JoinHandle;
-    use std::time::Duration;
-
-    use serde_json::json;
-    use tempfile::TempDir;
-
-    use super::PortManager;
-    use crate::artifact_paths;
-    use crate::backends::oci::buildah::{OciExposedPort, OciExposedPortProtocol};
-    use crate::instance::{SandboxId, SandboxStatus};
-    use crate::spec::SandboxPortBinding;
-    use nimbus_core::TenantId;
-
-    const ALLOCATOR_CHILD_TEST: &str =
-        "backends::oci::port_manager::tests::sandbox_and_pep_allocator_child";
-    const ALLOCATOR_KIND_ENV: &str = "NIMBUS_PORT_MANAGER_ALLOCATOR_KIND";
-    const ALLOCATOR_ROLE_ENV: &str = "NIMBUS_PORT_MANAGER_ALLOCATOR_ROLE";
-    const ALLOCATOR_STATE_ROOT_ENV: &str = "NIMBUS_PORT_MANAGER_ALLOCATOR_STATE_ROOT";
-    const ALLOCATOR_PROTOCOL_PREFIX: &str = "NIMBUS_PORT_MANAGER_ALLOCATOR/1\t";
-    const CHARACTERIZATION_PORT_MIN: u16 = 41_337;
-    const CHARACTERIZATION_PORT_MAX: u16 = 41_338;
-
-    #[test]
-    #[ignore = "NNC0.2 expected red until sandbox and PEP share host-port lease authority"]
-    fn two_real_allocator_processes_expose_sandbox_pep_port_collision() {
-        let state_root = TempDir::new().expect("shared state root should exist");
-        let mut sandbox = AllocatorProcess::spawn("sandbox", "sandbox", state_root.path())
-            .expect("sandbox child");
-        let mut pep = AllocatorProcess::spawn("pep", "pep", state_root.path()).expect("PEP child");
-        assert_ne!(
-            sandbox.process_id(),
-            pep.process_id(),
-            "the allocators must execute in distinct OS processes"
-        );
-
-        sandbox
-            .wait_ready(Duration::from_secs(5))
-            .expect("sandbox allocator should reach the release barrier");
-        pep.wait_ready(Duration::from_secs(5))
-            .expect("PEP allocator should reach the release barrier");
-        sandbox.release().expect("sandbox child should release");
-        pep.release().expect("PEP child should release");
-        let sandbox_reported = sandbox
-            .wait_selected(Duration::from_secs(5))
-            .expect("sandbox allocator should report its selected port");
-        let pep_reported = pep
-            .wait_selected(Duration::from_secs(5))
-            .expect("PEP allocator should report its selected port");
-
-        let sandbox_port = read_characterized_port(state_root.path(), "sandbox");
-        let pep_port = read_characterized_port(state_root.path(), "pep");
-        assert_eq!(sandbox_port, sandbox_reported);
-        assert_eq!(pep_port, pep_reported);
-        assert!((CHARACTERIZATION_PORT_MIN..=CHARACTERIZATION_PORT_MAX).contains(&sandbox_port));
-        assert!((CHARACTERIZATION_PORT_MIN..=CHARACTERIZATION_PORT_MAX).contains(&pep_port));
-        assert_ne!(
-            sandbox_port, pep_port,
-            "sandbox and PEP allocations must hold distinct host-port leases"
-        );
-    }
-
-    #[test]
-    #[ignore = "spawned only by the sandbox/PEP contention characterization"]
-    fn sandbox_and_pep_allocator_child() {
-        let state_root = std::env::var_os(ALLOCATOR_STATE_ROOT_ENV)
-            .map(std::path::PathBuf::from)
-            .expect("allocator child state root should be set");
-        let role = std::env::var(ALLOCATOR_ROLE_ENV).expect("allocator child role should be set");
-        emit_allocator_checkpoint("ready");
-        let mut command = String::new();
-        std::io::stdin()
-            .read_line(&mut command)
-            .expect("allocator child should read its release command");
-        assert_eq!(
-            command.trim_end(),
-            format!("{ALLOCATOR_PROTOCOL_PREFIX}release")
-        );
-
-        let manager = PortManager::new(
-            &state_root,
-            CHARACTERIZATION_PORT_MIN..=CHARACTERIZATION_PORT_MAX,
-        );
-        let allocated_port = match std::env::var(ALLOCATOR_KIND_ENV).as_deref() {
-            Ok("sandbox") => {
-                manager
-                    .allocate_missing_bindings_for_tenant(
-                        &tenant_id("contention-tenant"),
-                        &[],
-                        &[tcp_exposed_port(8080)],
-                    )
-                    .expect("sandbox allocator should select its only configured port")
-                    .into_iter()
-                    .next()
-                    .expect("sandbox allocation should return one binding")
-                    .host_port
-            }
-            Ok("pep") => manager
-                .allocate_internal_host_port(&[])
-                .expect("PEP allocator should select its only configured port"),
-            Ok(other) => panic!("unknown allocator kind {other:?}"),
-            Err(error) => {
-                panic!("missing allocator kind in {ALLOCATOR_KIND_ENV}: {error}");
-            }
-        };
-        persist_characterized_port(&state_root, &role, allocated_port)
-            .expect("child should persist its selected port");
-        emit_allocator_checkpoint(&format!("selected:{allocated_port}"));
-    }
-
-    #[test]
-    fn allocate_missing_bindings_uses_range_and_skips_existing_guest_ports() {
-        let temp_dir = TempDir::new().expect("temporary directory should exist");
-        let tenant_id = tenant_id("tenant-a");
-        let manager = PortManager::new(temp_dir.path(), 15000..=15005);
-        let existing = vec![SandboxPortBinding::tcp("http", 18080, 8080)];
-        let exposed = vec![
-            tcp_exposed_port(8080),
-            tcp_exposed_port(5432),
-            udp_exposed_port(5353),
-        ];
-
-        let allocated = manager
-            .allocate_missing_bindings_for_tenant(&tenant_id, &existing, &exposed)
-            .expect("port allocation should succeed");
-
-        assert_eq!(
-            allocated,
-            vec![SandboxPortBinding::tcp("tcp-5432", 15000, 5432)]
-        );
-    }
-
-    #[test]
-    fn allocate_missing_bindings_ignores_stopped_manifests_and_reserves_active_ones() {
-        let temp_dir = TempDir::new().expect("temporary directory should exist");
-        let tenant_id = tenant_id("tenant-a");
-        write_manifest(
-            temp_dir.path(),
-            &tenant_id,
-            "active",
-            SandboxStatus::Ready,
-            &[(15000, 5432)],
-        );
-        write_manifest(
-            temp_dir.path(),
-            &tenant_id,
-            "stopped",
-            SandboxStatus::Stopped,
-            &[(15001, 5432)],
-        );
-
-        let manager = PortManager::new(temp_dir.path(), 15000..=15002);
-        let allocated = manager
-            .allocate_missing_bindings_for_tenant(
-                &tenant_id,
-                &[],
-                &[tcp_exposed_port(8080), tcp_exposed_port(8443)],
-            )
-            .expect("port allocation should succeed");
-
-        assert_eq!(
-            allocated,
-            vec![
-                SandboxPortBinding::tcp("tcp-8080", 15001, 8080),
-                SandboxPortBinding::tcp("tcp-8443", 15002, 8443),
-            ]
-        );
-    }
-
-    #[test]
-    fn allocate_missing_bindings_keeps_not_ready_ports_reserved() {
-        let temp_dir = TempDir::new().expect("temporary directory should exist");
-        let tenant_id = tenant_id("tenant-a");
-        write_manifest(
-            temp_dir.path(),
-            &tenant_id,
-            "not-ready",
-            SandboxStatus::NotReady,
-            &[(15000, 5432)],
-        );
-
-        let manager = PortManager::new(temp_dir.path(), 15000..=15001);
-        let allocated = manager
-            .allocate_missing_bindings_for_tenant(&tenant_id, &[], &[tcp_exposed_port(8080)])
-            .expect("port allocation should succeed");
-
-        assert_eq!(
-            allocated,
-            vec![SandboxPortBinding::tcp("tcp-8080", 15001, 8080)]
-        );
-    }
-
-    #[test]
-    fn allocate_internal_host_port_skips_active_egress_proxy_leases() {
-        let temp_dir = TempDir::new().expect("temporary directory should exist");
-        let tenant_id = tenant_id("tenant-a");
-        write_manifest_with_egress_proxy(
-            temp_dir.path(),
-            &tenant_id,
-            "active",
-            SandboxStatus::Ready,
-            15000,
-        );
-
-        let manager = PortManager::new(temp_dir.path(), 15000..=15001);
-        let allocated = manager
-            .allocate_internal_host_port(&[])
-            .expect("internal port allocation should skip active proxy leases");
-
-        assert_eq!(allocated, 15001);
-    }
-
-    #[test]
-    fn allocate_internal_host_port_ignores_stopped_egress_proxy_leases() {
-        let temp_dir = TempDir::new().expect("temporary directory should exist");
-        let tenant_id = tenant_id("tenant-a");
-        write_manifest_with_egress_proxy(
-            temp_dir.path(),
-            &tenant_id,
-            "stopped",
-            SandboxStatus::Stopped,
-            15000,
-        );
-
-        let manager = PortManager::new(temp_dir.path(), 15000..=15001);
-        let allocated = manager
-            .allocate_internal_host_port(&[])
-            .expect("stopped proxy lease should not reserve a host port");
-
-        assert_eq!(allocated, 15000);
-    }
-
-    #[test]
-    fn tenant_port_quota_rejects_explicit_bindings_that_exceed_same_tenant_limit() {
-        let temp_dir = TempDir::new().expect("temporary directory should exist");
-        let tenant_id = tenant_id("tenant-a");
-        write_manifest(
-            temp_dir.path(),
-            &tenant_id,
-            "active",
-            SandboxStatus::Ready,
-            &[(15000, 5432)],
-        );
-
-        let manager =
-            PortManager::new(temp_dir.path(), 15000..=15002).with_max_ports_per_tenant(Some(1));
-        let existing = vec![SandboxPortBinding::tcp("http", 18080, 8080)];
-        let error = manager
-            .allocate_missing_bindings_for_tenant(&tenant_id, &existing, &[])
-            .expect_err("explicit bindings should still count against the tenant port quota");
-
-        assert!(
-            error.to_string().contains("published port quota exceeded")
-                && error.to_string().contains("tenant-a")
-                && error.to_string().contains("limit 1"),
-            "expected tenant quota error, got: {error}"
-        );
-    }
-
-    #[test]
-    fn tenant_port_quota_counts_only_same_tenant_but_reserves_host_ports_globally() {
-        let temp_dir = TempDir::new().expect("temporary directory should exist");
-        let tenant_a = tenant_id("tenant-a");
-        let tenant_b = tenant_id("tenant-b");
-        write_manifest(
-            temp_dir.path(),
-            &tenant_a,
-            "active-a",
-            SandboxStatus::Ready,
-            &[(15000, 5432)],
-        );
-        write_manifest(
-            temp_dir.path(),
-            &tenant_b,
-            "active-b",
-            SandboxStatus::Ready,
-            &[(15001, 6379)],
-        );
-
-        let manager =
-            PortManager::new(temp_dir.path(), 15000..=15002).with_max_ports_per_tenant(Some(2));
-        let allocated = manager
-            .allocate_missing_bindings_for_tenant(&tenant_a, &[], &[tcp_exposed_port(8080)])
-            .expect("other tenant leases should not consume tenant-a quota");
-
-        assert_eq!(
-            allocated,
-            vec![SandboxPortBinding::tcp("tcp-8080", 15002, 8080)],
-            "other tenant leases should still reserve host ports globally"
-        );
-    }
-
-    #[test]
-    #[ignore = "NNC0.9 explicit allocation-scale characterization"]
-    fn manifest_scan_port_allocation_scale_baseline() {
-        const HOST_PORT_BASE: u16 = 20_000;
-        const SAMPLE_COUNT: usize = 21;
-
-        for manifest_count in [0usize, 64, 256, 1_024] {
-            let temp_dir = TempDir::new().expect("temporary directory should exist");
-            let tenant_id = tenant_id("nnc0-9-port-baseline");
-            for index in 0..manifest_count {
-                let offset = u16::try_from(index).expect("baseline manifest count fits u16");
-                write_manifest(
-                    temp_dir.path(),
-                    &tenant_id,
-                    &format!("baseline-{index:04}"),
-                    SandboxStatus::Ready,
-                    &[(HOST_PORT_BASE + offset, 10_000 + offset)],
-                );
-            }
-
-            let manager = PortManager::new(temp_dir.path(), HOST_PORT_BASE..=40_000);
-            let expected = HOST_PORT_BASE
-                + u16::try_from(manifest_count).expect("baseline manifest count fits u16");
-            let mut samples_ns = Vec::with_capacity(SAMPLE_COUNT);
-            for _ in 0..SAMPLE_COUNT {
-                let started = std::time::Instant::now();
-                let selected = manager
-                    .allocate_internal_host_port(&[])
-                    .expect("baseline allocation should select the first unreserved port");
-                samples_ns.push(started.elapsed().as_nanos());
-                assert_eq!(
-                    selected, expected,
-                    "manifest scanning must reserve every active host port"
-                );
-            }
-            samples_ns.sort_unstable();
-            let p95_index = (SAMPLE_COUNT * 95).div_ceil(100) - 1;
-
-            println!(
-                "NNC0.9 port-allocation-baseline manifests={manifest_count} samples={SAMPLE_COUNT} median_ns={} p95_ns={} selected_port={expected}",
-                samples_ns[SAMPLE_COUNT / 2],
-                samples_ns[p95_index]
-            );
-        }
-    }
-
-    fn write_manifest(
-        state_root: &std::path::Path,
-        tenant_id: &TenantId,
-        sandbox_id: &str,
-        status: SandboxStatus,
-        host_guest_ports: &[(u16, u16)],
-    ) {
-        let sandbox_id = SandboxId::new(sandbox_id);
-        let manifest_path = artifact_paths::manifest_path(state_root, tenant_id, &sandbox_id);
-        let container_dir = manifest_path
-            .parent()
-            .expect("manifest path should have a parent directory");
-        fs::create_dir_all(container_dir).expect("container manifest directory should exist");
-        let manifest = json!({
-            "status": status,
-            "spec": {
-                "port_bindings": host_guest_ports
-                    .iter()
-                    .map(|(host_port, guest_port)| json!({
-                        "name": format!("tcp-{guest_port}"),
-                        "protocol": "tcp",
-                        "host_address": "127.0.0.1",
-                        "host_port": host_port,
-                        "guest_port": guest_port,
-                    }))
-                    .collect::<Vec<_>>(),
-            },
-        });
-        fs::write(
-            manifest_path,
-            serde_json::to_vec_pretty(&manifest).expect("manifest JSON should serialize"),
-        )
-        .expect("manifest JSON should be written");
-    }
-
-    fn write_manifest_with_egress_proxy(
-        state_root: &std::path::Path,
-        tenant_id: &TenantId,
-        sandbox_id: &str,
-        status: SandboxStatus,
-        egress_proxy_port: u16,
-    ) {
-        let sandbox_id = SandboxId::new(sandbox_id);
-        let manifest_path = artifact_paths::manifest_path(state_root, tenant_id, &sandbox_id);
-        let container_dir = manifest_path
-            .parent()
-            .expect("manifest path should have a parent directory");
-        fs::create_dir_all(container_dir).expect("container manifest directory should exist");
-        let manifest = json!({
-            "status": status,
-            "egress_proxy": {
-                "host": "10.89.0.1",
-                "port": egress_proxy_port,
-            },
-            "spec": {
-                "port_bindings": [],
-            },
-        });
-        fs::write(
-            manifest_path,
-            serde_json::to_vec_pretty(&manifest).expect("manifest JSON should serialize"),
-        )
-        .expect("manifest JSON should be written");
-    }
-
-    fn tenant_id(value: &str) -> TenantId {
-        TenantId::new(value).expect("tenant id should parse")
-    }
-
-    fn tcp_exposed_port(port: u16) -> OciExposedPort {
-        OciExposedPort {
-            port,
-            protocol: OciExposedPortProtocol::Tcp,
-            raw: format!("{port}/tcp"),
-        }
-    }
-
-    fn udp_exposed_port(port: u16) -> OciExposedPort {
-        OciExposedPort {
-            port,
-            protocol: OciExposedPortProtocol::Udp,
-            raw: format!("{port}/udp"),
-        }
-    }
-
-    fn persist_characterized_port(
-        state_root: &std::path::Path,
-        role: &str,
-        port: u16,
-    ) -> Result<(), String> {
-        let path = state_root.join(format!("{role}.selected-port"));
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-            .map_err(|error| format!("failed to create {}: {error}", path.display()))?;
-        writeln!(file, "{port}")
-            .and_then(|()| file.sync_all())
-            .map_err(|error| format!("failed to persist {}: {error}", path.display()))
-    }
-
-    fn read_characterized_port(state_root: &std::path::Path, role: &str) -> u16 {
-        let path = state_root.join(format!("{role}.selected-port"));
-        fs::read_to_string(&path)
-            .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()))
-            .trim()
-            .parse()
-            .unwrap_or_else(|error| panic!("failed to parse {}: {error}", path.display()))
-    }
-
-    fn emit_allocator_checkpoint(checkpoint: &str) {
-        let mut stdout = std::io::stdout().lock();
-        writeln!(stdout, "{ALLOCATOR_PROTOCOL_PREFIX}{checkpoint}")
-            .and_then(|()| stdout.flush())
-            .expect("allocator child checkpoint should flush");
-    }
-
-    #[derive(Debug)]
-    enum AllocatorEvent {
-        Ready,
-        Selected(u16),
-        ProtocolError(String),
-        Eof,
-    }
-
-    struct AllocatorProcess {
-        role: String,
-        child: Child,
-        stdin: Option<ChildStdin>,
-        events: mpsc::Receiver<AllocatorEvent>,
-        stdout: Arc<Mutex<String>>,
-        stderr: Arc<Mutex<String>>,
-        stdout_reader: Option<JoinHandle<()>>,
-        stderr_reader: Option<JoinHandle<()>>,
-    }
-
-    impl AllocatorProcess {
-        fn spawn(
-            role: &str,
-            allocator_kind: &str,
-            state_root: &std::path::Path,
-        ) -> Result<Self, String> {
-            let mut child = Command::new(
-                std::env::current_exe()
-                    .map_err(|error| format!("failed to resolve sandbox test binary: {error}"))?,
-            )
-            .arg("--exact")
-            .arg(ALLOCATOR_CHILD_TEST)
-            .arg("--ignored")
-            .arg("--nocapture")
-            .env(ALLOCATOR_KIND_ENV, allocator_kind)
-            .env(ALLOCATOR_ROLE_ENV, role)
-            .env(ALLOCATOR_STATE_ROOT_ENV, state_root)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|error| format!("failed to spawn allocator role {role:?}: {error}"))?;
-            let stdin = child
-                .stdin
-                .take()
-                .expect("piped allocator stdin should be present");
-            let stdout = child
-                .stdout
-                .take()
-                .expect("piped allocator stdout should be present");
-            let stderr = child
-                .stderr
-                .take()
-                .expect("piped allocator stderr should be present");
-
-            let stdout_capture = Arc::new(Mutex::new(String::new()));
-            let stdout_target = Arc::clone(&stdout_capture);
-            let (event_tx, events) = mpsc::sync_channel(4);
-            let stdout_reader = std::thread::spawn(move || {
-                let mut reader = std::io::BufReader::new(stdout);
-                loop {
-                    let mut line = String::new();
-                    match reader.read_line(&mut line) {
-                        Ok(0) => {
-                            let _ = event_tx.send(AllocatorEvent::Eof);
-                            return;
-                        }
-                        Ok(_) => {
-                            stdout_target
-                                .lock()
-                                .expect("allocator stdout lock should not be poisoned")
-                                .push_str(&line);
-                            let Some(value) =
-                                line.trim_end().strip_prefix(ALLOCATOR_PROTOCOL_PREFIX)
-                            else {
-                                continue;
-                            };
-                            let event = match value {
-                                "ready" => AllocatorEvent::Ready,
-                                selected if selected.starts_with("selected:") => selected
-                                    .trim_start_matches("selected:")
-                                    .parse::<u16>()
-                                    .map(AllocatorEvent::Selected)
-                                    .unwrap_or_else(|error| {
-                                        AllocatorEvent::ProtocolError(format!(
-                                            "invalid selected port {selected:?}: {error}"
-                                        ))
-                                    }),
-                                other => AllocatorEvent::ProtocolError(format!(
-                                    "unknown allocator checkpoint {other:?}"
-                                )),
-                            };
-                            if event_tx.send(event).is_err() {
-                                return;
-                            }
-                        }
-                        Err(error) => {
-                            let _ = event_tx.send(AllocatorEvent::ProtocolError(format!(
-                                "allocator stdout read failed: {error}"
-                            )));
-                            return;
-                        }
-                    }
-                }
-            });
-
-            let stderr_capture = Arc::new(Mutex::new(String::new()));
-            let stderr_target = Arc::clone(&stderr_capture);
-            let stderr_reader = std::thread::spawn(move || {
-                let mut reader = std::io::BufReader::new(stderr);
-                let mut captured = String::new();
-                if let Err(error) = reader.read_to_string(&mut captured) {
-                    captured.push_str(&format!("\n<stderr read failed: {error}>"));
-                }
-                *stderr_target
-                    .lock()
-                    .expect("allocator stderr lock should not be poisoned") = captured;
-            });
-
-            Ok(Self {
-                role: role.to_owned(),
-                child,
-                stdin: Some(stdin),
-                events,
-                stdout: stdout_capture,
-                stderr: stderr_capture,
-                stdout_reader: Some(stdout_reader),
-                stderr_reader: Some(stderr_reader),
-            })
-        }
-
-        fn process_id(&self) -> u32 {
-            self.child.id()
-        }
-
-        fn wait_ready(&mut self, timeout: Duration) -> Result<(), String> {
-            match self.receive(timeout, "ready")? {
-                AllocatorEvent::Ready => Ok(()),
-                event => Err(self.unexpected("ready", &event)),
-            }
-        }
-
-        fn release(&mut self) -> Result<(), String> {
-            let stdin = self
-                .stdin
-                .as_mut()
-                .ok_or_else(|| format!("allocator role {:?} stdin is closed", self.role))?;
-            writeln!(stdin, "{ALLOCATOR_PROTOCOL_PREFIX}release")
-                .and_then(|()| stdin.flush())
-                .map_err(|error| {
-                    format!("failed to release allocator role {:?}: {error}", self.role)
-                })
-        }
-
-        fn wait_selected(&mut self, timeout: Duration) -> Result<u16, String> {
-            match self.receive(timeout, "selected port")? {
-                AllocatorEvent::Selected(port) => Ok(port),
-                event => Err(self.unexpected("selected port", &event)),
-            }
-        }
-
-        fn receive(&mut self, timeout: Duration, expected: &str) -> Result<AllocatorEvent, String> {
-            match self.events.recv_timeout(timeout) {
-                Ok(event) => Ok(event),
-                Err(error) => {
-                    let role = self.role.clone();
-                    let diagnostic = self.diagnostic();
-                    Err(format!(
-                        "allocator role {role:?} did not reach {expected:?} within {timeout:?}: {error}; {diagnostic}"
-                    ))
-                }
-            }
-        }
-
-        fn unexpected(&mut self, expected: &str, event: &AllocatorEvent) -> String {
-            let event = match event {
-                AllocatorEvent::ProtocolError(message) => message.clone(),
-                other => format!("{other:?}"),
-            };
-            let role = self.role.clone();
-            let diagnostic = self.diagnostic();
-            format!("allocator role {role:?} reached {event}; expected {expected}; {diagnostic}")
-        }
-
-        fn diagnostic(&mut self) -> String {
-            let status = self
-                .child
-                .try_wait()
-                .map(|status| format!("{status:?}"))
-                .unwrap_or_else(|error| format!("<status error: {error}>"));
-            let stdout = self
-                .stdout
-                .lock()
-                .expect("allocator stdout lock should not be poisoned");
-            let stderr = self
-                .stderr
-                .lock()
-                .expect("allocator stderr lock should not be poisoned");
-            format!("status={status}; stdout={stdout:?}; stderr={stderr:?}")
-        }
-    }
-
-    impl Drop for AllocatorProcess {
-        fn drop(&mut self) {
-            drop(self.stdin.take());
-            let _ = self.child.kill();
-            let _ = self.child.wait();
-            if let Some(reader) = self.stdout_reader.take() {
-                let _ = reader.join();
-            }
-            if let Some(reader) = self.stderr_reader.take() {
-                let _ = reader.join();
-            }
-        }
-    }
-}
+#[path = "port_manager/tests.rs"]
+mod tests;

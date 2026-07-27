@@ -220,3 +220,58 @@ fn egress_proxy_rejects_zero_connection_limit() {
         "error should identify the invalid connection limit: {error}"
     );
 }
+
+#[test]
+fn prepared_pep_holds_the_socket_but_serves_only_after_start() {
+    let prepared = PreparedWorkloadPep::prepare(
+        WorkloadPepConfig::new(CompiledEgressPolicy::deny_all())
+            .with_timeouts(Duration::from_secs(1), Duration::from_secs(1)),
+    )
+    .expect("PEP preparation should bind an inert listener");
+    let address = prepared.local_addr();
+
+    let duplicate_bind =
+        TcpListener::bind(address).expect_err("the prepared PEP must retain exclusive socket hold");
+    assert_eq!(
+        duplicate_bind.kind(),
+        io::ErrorKind::AddrInUse,
+        "the provider effect must exist before durable activation"
+    );
+
+    let mut client = TcpStream::connect(address).expect("kernel backlog should accept a connect");
+    client
+        .set_read_timeout(Some(Duration::from_millis(100)))
+        .expect("read timeout should set");
+    client
+        .write_all(b"GET http://denied.test/ HTTP/1.1\r\nHost: denied.test\r\n\r\n")
+        .expect("request should enter the kernel backlog");
+    let mut byte = [0_u8; 1];
+    let before_start = client
+        .read(&mut byte)
+        .expect_err("an inert prepared listener must not accept or serve requests");
+    assert!(
+        matches!(
+            before_start.kind(),
+            io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+        ),
+        "before start the client should observe only a bounded read timeout, got {before_start}"
+    );
+
+    let mut proxy = prepared.start();
+    client
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .expect("read timeout should expand after start");
+    let mut response = String::new();
+    client
+        .read_to_string(&mut response)
+        .expect("the started PEP should drain and serve the queued request");
+    assert!(
+        response.starts_with("HTTP/1.1 403 Forbidden"),
+        "the started deny-all PEP should serve the queued request, got: {response}"
+    );
+    proxy
+        .shutdown()
+        .expect("explicit shutdown must confirm listener and connection teardown");
+    TcpListener::bind(address)
+        .expect("confirmed proxy shutdown must make the listener address immediately reusable");
+}

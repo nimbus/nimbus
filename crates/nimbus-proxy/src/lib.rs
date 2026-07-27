@@ -34,7 +34,10 @@ pub use decision_log::{
     DurableDecisionSink, EgressDecisionLog,
 };
 pub use dns::{DnsCacheConfig, DnsResolution};
-pub use engine::{EgressEngine, RegistrationSlot};
+pub use engine::{
+    EgressEngine, RegisteredLifecyclePhase, RegistrationCommitFailure, RegistrationDecision,
+    RegistrationSlot, RetainedFailedRegistration, StopHandle,
+};
 pub use error::{EgressProxyError, Result};
 pub use fairness::{
     FairnessRegistry, TaskTimeSpan, TenantFairness, TenantLease, TenantTaskTimeAccounting,
@@ -49,7 +52,7 @@ pub use pool::{
 pub use redaction::redact_egress_decision_log_value;
 pub use substrate::ProxySubstrate;
 pub use tls_authority::WorkloadPepTlsAuthority;
-pub use worker::{WorkloadPep, WorkloadPepConfig};
+pub use worker::{PreparedWorkloadPep, WorkloadPep, WorkloadPepConfig};
 
 pub(crate) const MAX_HTTP_HEADER_BYTES: usize = 16 * 1024;
 pub(crate) const DEFAULT_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);

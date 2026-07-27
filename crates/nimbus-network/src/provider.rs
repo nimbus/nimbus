@@ -75,6 +75,41 @@ impl Display for NetworkProviderHandle {
     }
 }
 
+/// Exclusive durable compensation authority for one network launch reservation.
+///
+/// Exact resource identity is idempotent only for the coordinator carrying
+/// this attempt-unique claim. The claim does not authorize provider effects;
+/// it prevents another coordinator from treating shared `Reserved` state as
+/// authority it may adopt or compensate across attachment and port resources.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NetworkReservationClaim {
+    coordinator_attempt: NetworkProviderHandle,
+}
+
+impl NetworkReservationClaim {
+    /// Wrap one attempt-unique, coordinator-scoped opaque identity.
+    pub fn new(coordinator_attempt: NetworkProviderHandle) -> Self {
+        Self {
+            coordinator_attempt,
+        }
+    }
+
+    /// Opaque attempt identity interpreted only by the coordinating adapter.
+    pub fn coordinator_attempt(&self) -> &NetworkProviderHandle {
+        &self.coordinator_attempt
+    }
+}
+
+impl fmt::Debug for NetworkReservationClaim {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("NetworkReservationClaim")
+            .field("coordinator_attempt", &self.coordinator_attempt)
+            .finish()
+    }
+}
+
 /// Stable validation failure for an opaque provider handle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NetworkProviderHandleError {
@@ -160,6 +195,23 @@ mod tests {
             serde_json::from_str::<NetworkProviderHandle>(&json)
                 .expect("handle should deserialize"),
             handle
+        );
+
+        let claim = NetworkReservationClaim::new(handle);
+        assert!(
+            !format!("{claim:?}").contains("secret/provider/handle"),
+            "shared attachment/port claim diagnostics must retain handle redaction"
+        );
+        let claim_json =
+            serde_json::to_string(&claim).expect("claim should serialize as durable authority");
+        assert!(
+            claim_json.contains("secret/provider/handle"),
+            "durable claim wire must retain the opaque coordinator identity"
+        );
+        assert_eq!(
+            serde_json::from_str::<NetworkReservationClaim>(&claim_json)
+                .expect("claim should deserialize"),
+            claim
         );
     }
 

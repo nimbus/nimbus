@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use ulid::Ulid;
@@ -14,26 +15,26 @@ use super::bundle::{KrunBundleLayout, KrunBundleMount, KrunBundleOptions, write_
 use crate::backend::{SandboxBackend, SandboxBackendKind, SandboxFuture};
 #[cfg(test)]
 use crate::backends::conmon::lifecycle::RestartLaunchTestProbe;
+#[cfg(test)]
+use crate::backends::conmon::lifecycle::detect_runtime_status as detect_conmon_runtime_status;
 use crate::backends::conmon::lifecycle::{
-    RuntimeStatusProbe, configured_stop_signal, configured_stop_timeout,
-    detect_runtime_status as detect_conmon_runtime_status, ensure_linux_host, read_exit_code,
-    read_pid, remove_if_exists, restart_backoff_delay, restart_policy_allows_restart,
-    run_status_best_effort, run_status_checked, signal_process, spawn_background, wait_for_path,
-    wait_for_runtime_state,
+    RuntimeStatusProbe, configured_stop_signal, configured_stop_timeout, ensure_linux_host,
+    read_exit_code, read_pid, remove_if_exists, restart_backoff_delay,
+    restart_policy_allows_restart, run_status_best_effort, run_status_checked, runtime_state,
+    signal_process, wait_for_path, wait_for_runtime_state,
 };
 use crate::backends::conmon::spec_resolve::{
     merge_env_overrides, resolve_process_spec, resolve_root_spec, slugify,
 };
-use crate::backends::oci::buildah::{
-    BuildahCli, ImageHealthcheck, MountedRootfsSession, OciExposedPort, OciImageLaunchDefaults,
-};
+use crate::backends::oci::buildah::{ImageHealthcheck, OciExposedPort, OciImageLaunchDefaults};
 use crate::backends::oci::builder::OciDockerfileBuilder;
 use crate::backends::oci::conmon::{
     OciConmonConfig, OciConmonLaunchPlan, OciConmonLayout, build_launch_plan,
 };
 use crate::backends::oci::egress::{
     EgressProxyAssignment, EgressProxyRegistry, egress_decision_log_root,
-    egress_trust_anchor_mount, egress_trust_anchor_root,
+    egress_listener_reservation, egress_proxy_assignment, egress_trust_anchor_mount,
+    egress_trust_anchor_root,
 };
 use crate::backends::oci::materializer::{
     MaterializedImageRootfs, OciImageMaterializer, PreparedMaterializedImageLaunch,
@@ -42,13 +43,18 @@ use crate::backends::oci::network::{
     ConfiguredSegmentAllocator, DEFAULT_AARDVARK_DNS_BINARY, DEFAULT_NETAVARK_BINARY,
     DEFAULT_NETWORK_INTERFACE, DEFAULT_NETWORK_NAME, DEFAULT_NETWORK_SUBNET, DEFAULT_TENANT_PREFIX,
     OciNetworkConfig, OciNetworkDirectEgress, OciNetworkLayout, OciSegmentAllocator,
-    OciSegmentRealization, create_persistent_network_namespace, default_network_attachment_id,
+    OciSegmentRealization, authenticate_container_network_generation,
+    authenticate_container_network_generation_for_cleanup, create_persistent_network_namespace,
+    deallocate_container_ips_after_confirmed_detach, default_network_attachment_id,
     pin_netns_egress_to_own_proxy, place_sandbox_on_block, purge_legacy_nimbus0_once,
-    quarantine_network_segment_hold, reconcile_network_segment_orphans,
-    release_network_segment_hold, remove_persistent_network_namespace, setup_container_network,
-    teardown_container_network,
+    quarantine_network_segment_hold, reconcile_startup_network_state, release_network_segment_hold,
+    release_reserved_network_launch_after_ports, remove_persistent_network_namespace,
+    retire_terminal_container_ipam_release, setup_container_network, teardown_container_network,
 };
-use crate::backends::oci::port_manager::{DEFAULT_MAX_PORTS_PER_TENANT, PortManager};
+use crate::backends::oci::port_lease::new_launch_reservation_claim;
+use crate::backends::oci::port_manager::{
+    DEFAULT_MAX_PORTS_PER_TENANT, LaunchPortBatchState, PortManager, SandboxLaunchPortPlan,
+};
 use crate::backends::oci::resource_quota::ResourceQuotaManager;
 use crate::error::{Result, SandboxError};
 use crate::instance::{SandboxHandle, SandboxId, SandboxStatus};
@@ -56,12 +62,15 @@ use crate::spec::{
     SandboxOciImageSource, SandboxResourceQuotaPolicy, SandboxRootSpec, SandboxRootfsSpec,
     SandboxSpec, resolve_process_without_image_defaults,
 };
-use nimbus_network::{EndpointProtocol, PublishedEndpoint};
+use nimbus_network::{EndpointProtocol, NetworkReservationClaim, PublishedEndpoint};
 
 mod lifecycle;
+mod manifest_publication;
 mod readiness;
 mod start;
 
+#[cfg(test)]
+use self::lifecycle::KrunLifecycleLockTestProbe;
 #[cfg(test)]
 use self::readiness::{
     probe_target_ready, readiness_probe_target, running_status, visible_published_endpoints,
@@ -181,8 +190,53 @@ pub struct KrunSandboxBackend {
     config: KrunSandboxBackendConfig,
     segment_allocator: Arc<OciSegmentAllocator>,
     egress_proxies: EgressProxyRegistry,
+    startup_network_reconciliation_error: Option<Arc<str>>,
     #[cfg(test)]
     restart_launch_test_probe: Option<RestartLaunchTestProbe>,
+    #[cfg(test)]
+    lifecycle_lock_test_probe: Option<KrunLifecycleLockTestProbe>,
+    #[cfg(test)]
+    effect_barrier_test_probe: Option<KrunEffectBarrierTestProbe>,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum KrunEffectBarrierFailureStage {
+    BeforeWrite,
+    AfterRenameBeforeParentSync,
+}
+
+#[cfg(test)]
+#[derive(Clone)]
+struct KrunEffectBarrierTestProbe {
+    operation: Arc<str>,
+    stage: KrunEffectBarrierFailureStage,
+    fired: Arc<std::sync::atomic::AtomicBool>,
+}
+
+#[cfg(test)]
+impl KrunEffectBarrierTestProbe {
+    fn once(operation: impl Into<Arc<str>>, stage: KrunEffectBarrierFailureStage) -> Self {
+        Self {
+            operation: operation.into(),
+            stage,
+            fired: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+
+    fn claim(&self, operation: &str) -> Option<KrunEffectBarrierFailureStage> {
+        (self.operation.as_ref() == operation
+            && self
+                .fired
+                .compare_exchange(
+                    false,
+                    true,
+                    std::sync::atomic::Ordering::SeqCst,
+                    std::sync::atomic::Ordering::SeqCst,
+                )
+                .is_ok())
+        .then_some(self.stage)
+    }
 }
 
 impl KrunSandboxBackend {
@@ -200,20 +254,39 @@ impl KrunSandboxBackend {
         config: KrunSandboxBackendConfig,
         segment_allocator: Arc<OciSegmentAllocator>,
     ) -> Self {
-        // Startup orphan GC: reclaim segment holds whose sandbox netns is gone
-        // (best-effort; a fresh node with no persisted state is a no-op).
-        let _ = reconcile_network_segment_orphans(&config.state_root, segment_allocator.as_ref());
-        let egress_proxies = EgressProxyRegistry::with_roots(
+        let startup_network_reconciliation_error =
+            reconcile_startup_network_state(&config.state_root, segment_allocator.as_ref())
+                .err()
+                .map(|error| Arc::<str>::from(error.to_string()));
+        let egress_proxies = EgressProxyRegistry::with_roots_and_network_state(
             egress_decision_log_root(&config.state_root),
             egress_trust_anchor_root(&config.state_root),
+            &config.state_root,
         );
         Self {
             config,
             segment_allocator,
             egress_proxies,
+            startup_network_reconciliation_error,
             #[cfg(test)]
             restart_launch_test_probe: None,
+            #[cfg(test)]
+            lifecycle_lock_test_probe: None,
+            #[cfg(test)]
+            effect_barrier_test_probe: None,
         }
+    }
+
+    fn ensure_startup_network_reconciliation_ready(&self) -> Result<()> {
+        if let Some(error) = self.startup_network_reconciliation_error.as_ref() {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "krun backend refuses new network work because startup reconciliation did not \
+                     complete: {error}"
+                ),
+            });
+        }
+        Ok(())
     }
 
     #[cfg(test)]
@@ -222,16 +295,34 @@ impl KrunSandboxBackend {
         self
     }
 
+    #[cfg(test)]
+    fn with_lifecycle_lock_test_probe(mut self, probe: KrunLifecycleLockTestProbe) -> Self {
+        self.lifecycle_lock_test_probe = Some(probe);
+        self
+    }
+
+    #[cfg(test)]
+    fn with_effect_barrier_test_probe(mut self, probe: KrunEffectBarrierTestProbe) -> Self {
+        self.effect_barrier_test_probe = Some(probe);
+        self
+    }
+
     /// Build the OCI network config for a specific resolved block segment. Shared
     /// by the primary-block `network_config` and block-aware `place_sandbox_config`
     /// (MTN6).
-    fn config_from_segment(&self, segment: &OciSegmentRealization) -> OciNetworkConfig {
+    fn config_from_segment(
+        &self,
+        segment: &OciSegmentRealization,
+        reservation_claim: &NetworkReservationClaim,
+    ) -> OciNetworkConfig {
         OciNetworkConfig {
             netavark_path: self.config.netavark_path.clone(),
             aardvark_dns_path: self.config.aardvark_dns_path.clone(),
             network_name: segment.network_name().to_owned(),
             network_interface: segment.network_interface().to_owned(),
             network_subnet: segment.cidr().to_string(),
+            segment_id: segment.segment_id().as_str().to_owned(),
+            reservation_claim: reservation_claim.clone(),
             direct_egress: OciNetworkDirectEgress::Deny,
             // The deny-by-default microVM guest resolves names through the host
             // PEP (`HTTP_PROXY`), never a local resolver, so netavark must not
@@ -242,10 +333,12 @@ impl KrunSandboxBackend {
         }
     }
 
+    #[cfg(test)]
     fn network_config(&self, tenant: &nimbus_core::TenantId) -> Result<OciNetworkConfig> {
         // Per-tenant PRIMARY block: distinct subnet + bridge identity (audit M1).
         let segment = self.segment_allocator.segment_for(tenant)?;
-        Ok(self.config_from_segment(&segment))
+        let reservation_claim = crate::backends::oci::port_lease::new_launch_reservation_claim()?;
+        Ok(self.config_from_segment(&segment, &reservation_claim))
     }
 
     /// Block-aware placement (MTN6): resolve + reserve the block bridge that will
@@ -256,13 +349,28 @@ impl KrunSandboxBackend {
         tenant: &nimbus_core::TenantId,
         layout: &OciNetworkLayout,
         sandbox_id: &SandboxId,
+        reservation_claim: &NetworkReservationClaim,
     ) -> Result<OciNetworkConfig> {
         place_sandbox_on_block(
             self.segment_allocator.as_ref(),
             tenant,
             layout,
             sandbox_id,
-            |segment| self.config_from_segment(segment),
+            reservation_claim,
+            |segment, claim| self.config_from_segment(segment, claim),
+        )
+    }
+
+    fn release_reserved_launch(&self, manifest: &KrunSandboxManifest) -> Result<()> {
+        let reservation_claim = manifest.require_reserved_claim()?;
+        let manager = self.port_manager();
+        release_reserved_network_launch_after_ports(
+            self.segment_allocator.as_ref(),
+            &manifest.network_layout,
+            &manifest.spec.tenant_id,
+            &manifest.handle.id,
+            reservation_claim,
+            manager.release_never_bound_launch_claim(reservation_claim),
         )
     }
 
@@ -288,8 +396,21 @@ impl KrunSandboxBackend {
 
     fn finish_start(&self, launch_plan: KrunStartPlan) -> Result<SandboxHandle> {
         let mut manifest = launch_plan.manifest;
-        self.materialize_auto_port_bindings(&mut manifest)?;
-        self.materialize_krun_vm_config(&manifest)?;
+        let materialization_lifecycle = (self.config.start_mode == KrunStartMode::Execute)
+            .then(|| self.lock_launch_lifecycle(&manifest))
+            .transpose()?;
+        if materialization_lifecycle.is_some() {
+            self.require_current_launch_plan(&manifest)?;
+        }
+        if let Err(error) = self.materialize_krun_vm_config(&manifest) {
+            return match self.config.start_mode {
+                KrunStartMode::PlanOnly => Err(error),
+                KrunStartMode::Execute => {
+                    Err(self.persist_unstarted_launch_failure(&mut manifest, error))
+                }
+            };
+        }
+        drop(materialization_lifecycle);
         let launch_plan = KrunStartPlan { manifest };
 
         match self.config.start_mode {
@@ -300,9 +421,7 @@ impl KrunSandboxBackend {
                 self.write_manifest(&manifest)?;
                 Ok(manifest.handle)
             }
-            KrunStartMode::Execute => self.execute_start(&launch_plan).inspect_err(|_| {
-                let _ = self.cleanup_manifest_launch_artifacts(&launch_plan.manifest);
-            }),
+            KrunStartMode::Execute => self.execute_start(&launch_plan),
         }
     }
 
@@ -356,11 +475,28 @@ struct KrunSandboxManifest {
     bundle_layout: KrunBundleLayout,
     conmon_layout: OciConmonLayout,
     network_layout: OciNetworkLayout,
-    /// The tenant's resolved per-tenant network config, assigned once at
-    /// manifest-prepare so setup and teardown reuse the identical bridge without
-    /// re-assigning (audit M1 / MTN4 reaper).
-    #[serde(default)]
-    network_config: OciNetworkConfig,
+    /// Exact placed network config for a launch that owns an attachment.
+    ///
+    /// `None` is the authority-free PlanOnly state. Execute preparation must
+    /// reserve an attachment before setting `Some`, after which setup and
+    /// teardown reuse the identical bridge without reassigning.
+    network_config: Option<OciNetworkConfig>,
+    port_leases: Vec<nimbus_network::PortLeaseRequest>,
+    /// Durable authority phase separating exact pre-effect compensation from
+    /// authenticated provider-owned teardown.
+    launch_authority: KrunLaunchAuthority,
+    /// Exact asynchronous creator-attempt state.
+    ///
+    /// Runtime absence cannot authorize provider or network cleanup while this
+    /// remains `Pending`: the creator may still materialize the runtime.
+    creator_handoff: KrunCreatorHandoffState,
+    /// Durable progress for compensation after provider launch has failed.
+    ///
+    /// This state is deliberately separate from observed runtime status and
+    /// from `launch_authority`: it records which cleanup effects have been
+    /// confirmed so a fresh process can resume without falling back to the
+    /// ordinary PID-driven stop path.
+    provider_failure_cleanup: KrunProviderFailureCleanupState,
     egress_proxy: Option<EgressProxyAssignment>,
     conmon_launch: OciConmonLaunchPlan,
     last_exit_code: Option<i32>,
@@ -371,6 +507,131 @@ struct KrunSandboxManifest {
     start_mode: KrunStartMode,
     shutdown_requested: bool,
     status: SandboxStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "phase", rename_all = "snake_case", deny_unknown_fields)]
+enum KrunLaunchAuthority {
+    PlanOnly,
+    Reserved {
+        reservation_claim: NetworkReservationClaim,
+    },
+    Adopting {
+        reservation_claim: NetworkReservationClaim,
+    },
+    Adopted {
+        reservation_claim: NetworkReservationClaim,
+    },
+    ProviderOwned,
+    Released,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "phase", rename_all = "snake_case", deny_unknown_fields)]
+enum KrunCreatorHandoffState {
+    NotSpawned,
+    Pending { attempt_id: String },
+    Quiesced { attempt_id: String },
+    RuntimeObserved { attempt_id: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "phase", rename_all = "snake_case", deny_unknown_fields)]
+enum KrunProviderFailureCleanupState {
+    Inactive,
+    Requested,
+    RuntimeAbsent {
+        proof: KrunRuntimeAbsenceProof,
+    },
+    NetworkReleased {
+        runtime_absence: KrunRuntimeAbsenceProof,
+    },
+    ArtifactsReleased {
+        runtime_absence: KrunRuntimeAbsenceProof,
+    },
+}
+
+impl KrunProviderFailureCleanupState {
+    fn is_active(&self) -> bool {
+        !matches!(self, Self::Inactive)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum KrunRuntimeAbsenceProof {
+    NeverSpawned,
+    ObservedAbsent { attempt_id: String },
+}
+
+impl KrunCreatorHandoffState {
+    fn authorizes_provider_cleanup(&self) -> bool {
+        matches!(
+            self,
+            Self::NotSpawned | Self::Quiesced { .. } | Self::RuntimeObserved { .. }
+        )
+    }
+}
+
+impl KrunSandboxManifest {
+    fn require_network_config(&self) -> Result<&OciNetworkConfig> {
+        self.network_config
+            .as_ref()
+            .ok_or_else(|| SandboxError::OperationFailed {
+                message: format!(
+                    "krun workload {} has no reserved network attachment configuration",
+                    self.handle.id
+                ),
+            })
+    }
+
+    fn reservation_claim(&self) -> Option<&NetworkReservationClaim> {
+        match &self.launch_authority {
+            KrunLaunchAuthority::Reserved { reservation_claim }
+            | KrunLaunchAuthority::Adopting { reservation_claim }
+            | KrunLaunchAuthority::Adopted { reservation_claim } => Some(reservation_claim),
+            KrunLaunchAuthority::PlanOnly
+            | KrunLaunchAuthority::ProviderOwned
+            | KrunLaunchAuthority::Released => None,
+        }
+    }
+
+    fn require_reserved_claim(&self) -> Result<&NetworkReservationClaim> {
+        match &self.launch_authority {
+            KrunLaunchAuthority::Reserved { reservation_claim }
+            | KrunLaunchAuthority::Adopting { reservation_claim } => Ok(reservation_claim),
+            phase => Err(SandboxError::OperationFailed {
+                message: format!(
+                    "krun workload {} requires reserved launch authority before provider adoption, \
+                     got {phase:?}",
+                    self.handle.id
+                ),
+            }),
+        }
+    }
+
+    fn mark_adopted(&mut self) -> Result<NetworkReservationClaim> {
+        let claim = self.require_reserved_claim()?.clone();
+        self.launch_authority = KrunLaunchAuthority::Adopted {
+            reservation_claim: claim.clone(),
+        };
+        Ok(claim)
+    }
+
+    fn mark_adopting(&mut self) -> Result<NetworkReservationClaim> {
+        let claim = self.require_reserved_claim()?.clone();
+        self.launch_authority = KrunLaunchAuthority::Adopting {
+            reservation_claim: claim.clone(),
+        };
+        Ok(claim)
+    }
+
+    fn permits_provider_teardown(&self) -> bool {
+        matches!(
+            self.launch_authority,
+            KrunLaunchAuthority::Adopted { .. } | KrunLaunchAuthority::ProviderOwned
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -403,21 +664,7 @@ struct GuestUserIds {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 enum KrunLaunchArtifact {
-    MountedRootfs(MountedRootfsSession),
     Rootfs(MaterializedImageRootfs),
-}
-
-impl KrunLaunchArtifact {
-    fn mount_session_name(&self) -> Option<&str> {
-        match self {
-            Self::MountedRootfs(session) => Some(session.session_name.as_str()),
-            Self::Rootfs(_) => None,
-        }
-    }
-
-    fn uses_mount_session_unshare(&self) -> bool {
-        matches!(self, Self::MountedRootfs(_))
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

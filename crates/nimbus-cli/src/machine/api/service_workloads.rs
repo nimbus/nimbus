@@ -126,8 +126,14 @@ where
                 &prepared.handle.id,
                 sandbox_status_from_node_phase(status),
             )
-            .await?;
-            Ok(handle_with_node_phase(prepared.handle, Some(status)))
+            .await?
+            .ok_or_else(|| MachineApiHttpError {
+                status: StatusCode::NOT_FOUND,
+                message: format!(
+                    "prepared service workload disappeared before status publication: {}",
+                    prepared.handle.id
+                ),
+            })
         })
     }
 
@@ -160,19 +166,17 @@ where
                 details.summary.status,
                 details.summary.published_endpoints,
             );
-            match status {
+            let canonical = match status {
                 Some(phase) => {
                     self.refresh_plan_only_manifest_status(
                         &handle.id,
                         sandbox_status_from_node_phase(phase),
                     )
-                    .await?;
+                    .await?
                 }
-                None => {
-                    self.mark_plan_only_manifest_stopped(&handle.id).await?;
-                }
-            }
-            Ok(Some(handle_with_node_phase(handle, status)))
+                None => self.mark_plan_only_manifest_stopped(&handle.id).await?,
+            };
+            Ok(canonical)
         })
     }
 
@@ -282,22 +286,20 @@ where
     async fn mark_plan_only_manifest_stopped(
         &self,
         id: &SandboxId,
-    ) -> Result<(), MachineApiHttpError> {
+    ) -> Result<Option<SandboxHandle>, MachineApiHttpError> {
         self.bundle_materializer
             .mark_plan_only_service_workload_stopped(id)
-            .map_err(sandbox_error_to_http_error)?;
-        Ok(())
+            .map_err(sandbox_error_to_http_error)
     }
 
     async fn refresh_plan_only_manifest_status(
         &self,
         id: &SandboxId,
         status: SandboxStatus,
-    ) -> Result<(), MachineApiHttpError> {
+    ) -> Result<Option<SandboxHandle>, MachineApiHttpError> {
         self.bundle_materializer
             .refresh_plan_only_service_workload_status(id, status)
-            .map_err(sandbox_error_to_http_error)?;
-        Ok(())
+            .map_err(sandbox_error_to_http_error)
     }
 
     async fn inspect_node_status(
@@ -388,16 +390,6 @@ fn bundle_dir_from_manifest_path(manifest_path: &Path) -> Result<PathBuf, Machin
             ),
         })?;
     Ok(sandbox_root.join("bundle"))
-}
-
-fn handle_with_node_phase(
-    mut handle: SandboxHandle,
-    phase: Option<TenantWorkloadPhase>,
-) -> SandboxHandle {
-    handle.status = phase
-        .map(sandbox_status_from_node_phase)
-        .unwrap_or(SandboxStatus::Stopped);
-    handle
 }
 
 fn sandbox_status_from_node_phase(phase: TenantWorkloadPhase) -> SandboxStatus {
@@ -517,6 +509,10 @@ mod tests {
 
         fn mark_workload_missing(&self) {
             *self.workload_missing.lock().expect("missing lock") = true;
+        }
+
+        fn mark_workload_present(&self) {
+            *self.workload_missing.lock().expect("missing lock") = false;
         }
 
         fn workload_missing(&self) -> bool {
@@ -742,6 +738,30 @@ mod tests {
             .summary;
         assert_eq!(summary.status, SandboxStatus::Stopped);
 
+        backend.mark_workload_present();
+        let stale_ready = service
+            .inspect(&handle.id)
+            .await
+            .expect("stale node readiness should remain an observation")
+            .expect("terminal container manifest should remain present");
+        assert_eq!(
+            stale_ready.status,
+            SandboxStatus::Stopped,
+            "the machine API must return the canonical terminal callback result"
+        );
+        let summary = service
+            .state_view
+            .inspect(&handle.id)
+            .expect("state view should reload")
+            .expect("terminal manifest should remain present")
+            .summary;
+        assert_eq!(
+            summary.status,
+            SandboxStatus::Stopped,
+            "stale node readiness must not resurrect durable container state"
+        );
+
+        backend.mark_workload_missing();
         service
             .stop(&handle.id)
             .await

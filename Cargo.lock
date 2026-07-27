@@ -7156,6 +7156,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "flate2",
+ "fs2",
  "futures",
  "libc",
  "nimbus-blob",

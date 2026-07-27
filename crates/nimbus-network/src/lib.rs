@@ -30,14 +30,15 @@ pub use plan::{
 };
 pub use port_lease::{
     LocalPortLeaseAuthority, PortAddressFamily, PortBindAttempt, PortBindAttemptError,
-    PortBindFailure, PortBindFailureKind, PortBindRealm, PortBindRealmError,
+    PortBindClaim, PortBindFailure, PortBindFailureKind, PortBindRealm, PortBindRealmError,
     PortBindRealmErrorKind, PortBindTarget, PortBindTargetError, PortBindingMismatch,
     PortBindingProvenance, PortBindingSpec, PortBoundEndpoint, PortBoundEndpointError,
-    PortExposure, PortIpv6Overlap, PortIsolatedRealm, PortLeaseBinding, PortLeaseError,
-    PortLeaseFenceMismatch, PortLeaseOperation, PortLeasePhase, PortLeaseRecord, PortLeaseRequest,
-    PortProtocol, PortRange, PortRangeError, PortRequestMode,
+    PortExposure, PortIpv6Overlap, PortIsolatedRealm, PortLeaseAccounting, PortLeaseBinding,
+    PortLeaseError, PortLeaseFence, PortLeaseFenceMismatch, PortLeaseOperation, PortLeasePhase,
+    PortLeaseRecord, PortLeaseRequest, PortProtocol, PortPublicationIntent, PortRange,
+    PortRangeError, PortRequestMode, TenantPublishedPortLimit,
 };
-pub use provider::{NetworkProviderHandle, NetworkProviderHandleError};
+pub use provider::{NetworkProviderHandle, NetworkProviderHandleError, NetworkReservationClaim};
 pub use segment::{
     AllocatedSegment, NetworkSegmentAllocator, NetworkSegmentCleanup,
     NetworkSegmentFinalizeOutcome, NetworkSegmentGrowth, NetworkSegmentQuarantineOutcome,

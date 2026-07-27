@@ -20,11 +20,14 @@ pub(super) use nimbus_proxy::{WorkloadPep, WorkloadPepConfig};
 
 pub(super) use super::super::{
     GUEST_USER_GID_ENV, GUEST_USER_HELPER_GUEST_PATH, GUEST_USER_UID_ENV, GuestUserIds,
-    KrunImageMetadata, KrunSandboxBackend, KrunSandboxBackendConfig, KrunSandboxManifest,
-    KrunStartMode, ReadinessProbeTarget, configured_stop_signal, configured_stop_timeout,
-    desired_krun_vm_config, krun_vm_config_path, parse_guest_user, probe_target_ready,
-    readiness_probe_target, restart_backoff_delay, restart_policy_allows_restart, running_status,
-    slugify, visible_published_endpoints,
+    KrunCreatorHandoffState, KrunEffectBarrierFailureStage, KrunEffectBarrierTestProbe,
+    KrunImageMetadata, KrunLaunchAuthority, KrunLifecycleLockTestProbe,
+    KrunProviderFailureCleanupState, KrunRuntimeAbsenceProof, KrunSandboxBackend,
+    KrunSandboxBackendConfig, KrunSandboxManifest, KrunStartMode, KrunStartPlan,
+    ReadinessProbeTarget, configured_stop_signal, configured_stop_timeout, desired_krun_vm_config,
+    krun_vm_config_path, parse_guest_user, probe_target_ready, readiness_probe_target,
+    restart_backoff_delay, restart_policy_allows_restart, running_status, slugify,
+    visible_published_endpoints,
 };
 pub(super) use crate::backend::{SandboxBackend, SandboxBackendKind};
 pub(super) use crate::backends::conmon::lifecycle::RestartLaunchTestProbe;
@@ -32,6 +35,9 @@ pub(super) use crate::backends::oci::buildah::{
     ImageHealthcheck, OciExposedPort, OciExposedPortProtocol, OciImageLaunchDefaults,
 };
 pub(super) use crate::backends::oci::command::CommandSpec;
+pub(super) use crate::backends::oci::materializer::{
+    MaterializedImageRootfs, PreparedMaterializedImageLaunch,
+};
 pub(super) use crate::instance::{SandboxId, SandboxStatus};
 pub(super) use crate::spec::{
     SandboxMountSpec, SandboxOciBuildSpec, SandboxOciImageSource, SandboxOwnerSpec,
@@ -191,7 +197,19 @@ pub(super) fn sample_manifest(spec: SandboxSpec, start_mode: KrunStartMode) -> K
             &crate::instance::SandboxId::new("sandbox-01"),
         ),
         network_layout,
-        network_config: Default::default(),
+        network_config: (start_mode == KrunStartMode::Execute).then(Default::default),
+        port_leases: Vec::new(),
+        launch_authority: match start_mode {
+            KrunStartMode::PlanOnly => KrunLaunchAuthority::PlanOnly,
+            KrunStartMode::Execute => KrunLaunchAuthority::ProviderOwned,
+        },
+        creator_handoff: match start_mode {
+            KrunStartMode::PlanOnly => KrunCreatorHandoffState::NotSpawned,
+            KrunStartMode::Execute => KrunCreatorHandoffState::RuntimeObserved {
+                attempt_id: "test-runtime-observed".to_owned(),
+            },
+        },
+        provider_failure_cleanup: KrunProviderFailureCleanupState::Inactive,
         egress_proxy: None,
         conmon_launch: super::super::OciConmonLaunchPlan {
             create_command: CommandSpec::new("/bin/true"),
