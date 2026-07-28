@@ -17,7 +17,7 @@ No SWT0.2 baseline was frozen or run.
 ## Deterministic queued-batch evidence
 
 Test:
-`tests::sqlite_foundation::journal::sqlite_queued_batch_fail_before_observes_repeated_write_work`
+`tests::sqlite_foundation::journal::observability::sqlite_queued_batch_fail_before_observes_repeated_write_work`
 
 The test resets a path-scoped, mutex-protected counter set immediately before
 the current queued append/apply pair. A one-record schemaless insert records:
