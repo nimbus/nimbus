@@ -63,6 +63,10 @@ name = "concurrent-write-throughput"
 harness = false
 
 [[bench]]
+name = "sqlite-write-overhead"
+harness = false
+
+[[bench]]
 name = "postgres-provider-benchmarks"
 harness = false
 
