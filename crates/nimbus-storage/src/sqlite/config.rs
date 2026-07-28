@@ -117,7 +117,7 @@ pub(super) fn observe_sqlite_writer_open(path: &Path) {
 }
 
 #[cfg(test)]
-pub(super) fn observe_sqlite_uncached_statement(path: &Path, concept: SqliteWriteStatementConcept) {
+pub(super) fn observe_sqlite_statement_prepare(path: &Path, concept: SqliteWriteStatementConcept) {
     let mut observation = lock_sqlite_write_test_observation();
     if observation.target_path.as_deref() != Some(path) {
         return;
@@ -125,8 +125,23 @@ pub(super) fn observe_sqlite_uncached_statement(path: &Path, concept: SqliteWrit
     let index = concept as usize;
     observation.snapshot.statement_prepares[index] =
         observation.snapshot.statement_prepares[index].saturating_add(1);
+}
+
+#[cfg(test)]
+pub(super) fn observe_sqlite_statement_execute(path: &Path, concept: SqliteWriteStatementConcept) {
+    let mut observation = lock_sqlite_write_test_observation();
+    if observation.target_path.as_deref() != Some(path) {
+        return;
+    }
+    let index = concept as usize;
     observation.snapshot.statement_executes[index] =
         observation.snapshot.statement_executes[index].saturating_add(1);
+}
+
+#[cfg(test)]
+pub(super) fn observe_sqlite_uncached_statement(path: &Path, concept: SqliteWriteStatementConcept) {
+    observe_sqlite_statement_prepare(path, concept);
+    observe_sqlite_statement_execute(path, concept);
 }
 
 #[cfg(test)]

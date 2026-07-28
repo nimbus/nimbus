@@ -323,13 +323,22 @@ fn sqlite_queued_batch_fail_before_observes_repeated_write_work() {
         (SqliteWriteStatementConcept::NextSequenceWrite, 1),
         (SqliteWriteStatementConcept::AppliedSequenceRead, 1),
         (SqliteWriteStatementConcept::AppliedSequenceWrite, 1),
+        (SqliteWriteStatementConcept::DurableRecordRead, 0),
         (SqliteWriteStatementConcept::DocumentVersionFormatRead, 1),
         (SqliteWriteStatementConcept::DocumentVersionFormatWrite, 1),
         (SqliteWriteStatementConcept::DocumentVersionInsert, 1),
         (SqliteWriteStatementConcept::IndexSchemaRead, 1),
+        (SqliteWriteStatementConcept::IndexVersionFormatRead, 0),
+        (SqliteWriteStatementConcept::IndexVersionFormatWrite, 0),
+        (SqliteWriteStatementConcept::IndexVersionClose, 0),
+        (SqliteWriteStatementConcept::IndexVersionOpen, 0),
         (SqliteWriteStatementConcept::TableIdentityCheck, 1),
         (SqliteWriteStatementConcept::DocumentPreimageRead, 1),
         (SqliteWriteStatementConcept::LiveDocumentInsert, 1),
+        (SqliteWriteStatementConcept::LiveDocumentUpdate, 0),
+        (SqliteWriteStatementConcept::LiveDocumentDelete, 0),
+        (SqliteWriteStatementConcept::ResourceBindingUpsert, 0),
+        (SqliteWriteStatementConcept::ResourceBindingDelete, 0),
     ];
     for (concept, expected) in expected_statement_counts {
         assert_eq!(
@@ -350,6 +359,112 @@ fn sqlite_queued_batch_fail_before_observes_repeated_write_work() {
         Default::default(),
         "write counters must be resettable"
     );
+
+    let indexed_store = SqliteTenantStore::open(dir.path().join("indexed.sqlite3"))
+        .expect("indexed sqlite tenant store should open");
+    let schema = ranked_tasks_schema();
+    indexed_store
+        .replace_table_schema(&schema)
+        .expect("indexed schema should persist");
+    let table_id = sqlite_active_table_id(&indexed_store, &schema.table);
+    let inserted = ranked_document(&schema.table, "v1", 1);
+    let mut updated = inserted.clone();
+    updated.fields.insert("title".to_string(), json!("v2"));
+    updated.fields.insert("rank".to_string(), json!(2));
+    updated.update_time = Timestamp(updated.update_time.0.saturating_add(1));
+    let first_sequence = indexed_store
+        .journal_progress()
+        .expect("indexed journal progress should load")
+        .durable_head
+        .0
+        .saturating_add(1);
+    let indexed_records = vec![
+        sqlite_durable_write_record(
+            SequenceNumber(first_sequence),
+            Timestamp(200),
+            &schema.table,
+            &table_id,
+            WriteOpType::Insert,
+            inserted.id.clone(),
+            None,
+            Some(inserted.clone()),
+        ),
+        sqlite_durable_write_record(
+            SequenceNumber(first_sequence.saturating_add(1)),
+            Timestamp(201),
+            &schema.table,
+            &table_id,
+            WriteOpType::Update,
+            inserted.id.clone(),
+            Some(inserted.clone()),
+            Some(updated.clone()),
+        ),
+        sqlite_durable_write_record(
+            SequenceNumber(first_sequence.saturating_add(2)),
+            Timestamp(202),
+            &schema.table,
+            &table_id,
+            WriteOpType::Delete,
+            inserted.id,
+            Some(updated),
+            None,
+        ),
+    ];
+
+    indexed_store.reset_write_test_observation();
+    indexed_store
+        .append_durable_records_batch(&indexed_records)
+        .expect("indexed durable append should succeed");
+    indexed_store
+        .apply_durable_records_batch(&indexed_records)
+        .expect("indexed durable apply should succeed");
+    let indexed_observation = indexed_store.write_test_observation();
+
+    assert_eq!(indexed_observation.writer_opens, 2);
+    assert_eq!(indexed_observation.format_checks, 3);
+    assert_eq!(indexed_observation.schema_checks, 3);
+    assert_eq!(indexed_observation.table_identity_checks, 3);
+    assert_eq!(
+        indexed_observation.current_document_encodes, 4,
+        "insert and update each encode version and live projections"
+    );
+    let indexed_statement_counts = [
+        (SqliteWriteStatementConcept::JournalNextSequenceRead, 1),
+        (SqliteWriteStatementConcept::JournalInsert, 3),
+        (SqliteWriteStatementConcept::NextSequenceWrite, 1),
+        (SqliteWriteStatementConcept::AppliedSequenceRead, 1),
+        (SqliteWriteStatementConcept::AppliedSequenceWrite, 1),
+        (SqliteWriteStatementConcept::DurableRecordRead, 0),
+        (SqliteWriteStatementConcept::DocumentVersionFormatRead, 3),
+        (SqliteWriteStatementConcept::DocumentVersionFormatWrite, 1),
+        (SqliteWriteStatementConcept::DocumentVersionInsert, 3),
+        (SqliteWriteStatementConcept::IndexSchemaRead, 3),
+        (SqliteWriteStatementConcept::IndexVersionFormatRead, 3),
+        (SqliteWriteStatementConcept::IndexVersionFormatWrite, 1),
+        (SqliteWriteStatementConcept::IndexVersionClose, 2),
+        (SqliteWriteStatementConcept::IndexVersionOpen, 2),
+        (SqliteWriteStatementConcept::TableIdentityCheck, 3),
+        (SqliteWriteStatementConcept::DocumentPreimageRead, 3),
+        (SqliteWriteStatementConcept::LiveDocumentInsert, 1),
+        (SqliteWriteStatementConcept::LiveDocumentUpdate, 1),
+        (SqliteWriteStatementConcept::LiveDocumentDelete, 1),
+        (SqliteWriteStatementConcept::ResourceBindingUpsert, 0),
+        (SqliteWriteStatementConcept::ResourceBindingDelete, 1),
+    ];
+    for (concept, expected) in indexed_statement_counts {
+        assert_eq!(
+            indexed_observation.statement_prepares(concept),
+            expected,
+            "unexpected indexed prepare count for {concept:?}"
+        );
+        assert_eq!(
+            indexed_observation.statement_executes(concept),
+            expected,
+            "unexpected indexed execute count for {concept:?}"
+        );
+    }
+    indexed_store.reset_write_test_observation();
+    assert_eq!(indexed_store.write_test_observation(), Default::default());
 }
 
 #[test]
