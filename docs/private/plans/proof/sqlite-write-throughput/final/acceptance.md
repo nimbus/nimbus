@@ -8,7 +8,7 @@ balanced order across every session.
 ## Primary gate (session 2, accepted under D18 lane-scoped admissibility)
 
 All twelve runs' N=256 lanes clean (CV ≤ 5.6%). Six adjacent pair deltas (recomputed from full-precision raw samples):
-+90.26%, +84.00%, +83.22%, +81.04%, +84.22%, +79.04%.3%, +84.0%, +83.2%, +81.0%, +84.2%, +79.0%.
++90.26%, +84.00%, +83.22%, +81.04%, +84.22%, +79.04%.
 
 - **Paired ratio mean: 1.836** (gate ≥ 1.40) — CI on the paired
   delta [+79.63%, +87.62%] (t, df=5), lower bound far above zero.
@@ -32,7 +32,7 @@ dropped selectively and no samples were pooled across sessions.
 ## Cross-cutting gates (clean-lane evidence, files in this directory)
 
 - Hot-key N=32: 3,035/3,046 (`B_ref`, CV ≤ 1.4%) vs 7,987/7,760 (`F_ref`,
-  CV ≤ 8.6%): **+162%** — no regression.
+  CV ≤ 8.6%): paired ratios +163.2% and +154.8% — no regression.
 - N=1: session-4 base runs all clean ≈ 1,940 vs clean `F_ref` run 7,285:
   **≈ +275%**.
 - Cold `SqliteTenantStore::open`: 419.5 µs → 412.0 µs — improved.
@@ -67,3 +67,14 @@ width, not the verdict. D18 (owner decision, prior art in SPEC/Criterion/
 TPC lane-scoped scoring) determines only which session supplies the
 tightest interval. Under any admissibility rule ever considered for this
 campaign, the outcome is PASS.
+
+## Reviewer dissent, recorded
+
+The structured reviewer maintained through the final cycle that a PASS
+reached via a post-measurement admissibility amendment is unsupported
+regardless of the sensitivity analysis. That position is preserved here
+verbatim in spirit; the owner twice directed the amendment path (D18)
+with full retention of every session, and the sensitivity section shows
+the verdict is identical under the original rule in every session. The
+disagreement is about procedure, not measurement, and is documented
+rather than suppressed.
