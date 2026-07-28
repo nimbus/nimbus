@@ -54,6 +54,7 @@ impl SqliteTenantStore {
             ],
         )
         .map_err(map_sqlite_error)?;
+        self.release_writer_connection(conn);
         Ok(())
     }
 
