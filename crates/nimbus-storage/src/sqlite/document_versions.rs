@@ -2,8 +2,8 @@ use std::collections::BTreeSet;
 
 #[cfg(test)]
 use super::config::{
-    SqliteWriteStatementConcept, observe_sqlite_current_document_encode,
-    observe_sqlite_format_check, observe_sqlite_uncached_statement,
+    SqliteWriteStatementConcept, observe_sqlite_cached_statement,
+    observe_sqlite_current_document_encode, observe_sqlite_format_check,
 };
 use super::*;
 use crate::diagnostics::DocumentVersionStorageDiagnostic;
@@ -92,12 +92,13 @@ pub(super) fn record_document_versions_for_writes_in_conn(
                 #[cfg(test)]
                 {
                     observe_sqlite_current_document_encode(observation_path);
-                    observe_sqlite_uncached_statement(
+                    observe_sqlite_cached_statement(
                         observation_path,
                         SqliteWriteStatementConcept::DocumentVersionInsert,
                     );
                 }
-                conn.execute(
+                cached_execute(
+                    conn,
                     "INSERT INTO document_versions (
                         table_id,
                         id,
@@ -119,16 +120,16 @@ pub(super) fn record_document_versions_for_writes_in_conn(
                         current.creation_time.0,
                         current.update_time.0,
                     ],
-                )
-                .map_err(map_sqlite_error)?;
+                )?;
             }
             None => {
                 #[cfg(test)]
-                observe_sqlite_uncached_statement(
+                observe_sqlite_cached_statement(
                     observation_path,
                     SqliteWriteStatementConcept::DocumentVersionInsert,
                 );
-                conn.execute(
+                cached_execute(
+                    conn,
                     "INSERT INTO document_versions (
                         table_id,
                         id,
@@ -142,8 +143,7 @@ pub(super) fn record_document_versions_for_writes_in_conn(
                         sequence.0,
                         timestamp.0,
                     ],
-                )
-                .map_err(map_sqlite_error)?;
+                )?;
             }
         }
     }
@@ -329,7 +329,7 @@ fn ensure_document_version_storage_format_in_conn(
     #[cfg(test)] observation_path: &Path,
 ) -> Result<()> {
     #[cfg(test)]
-    observe_sqlite_uncached_statement(
+    observe_sqlite_cached_statement(
         observation_path,
         SqliteWriteStatementConcept::DocumentVersionFormatRead,
     );
@@ -339,34 +339,35 @@ fn ensure_document_version_storage_format_in_conn(
     }
 
     #[cfg(test)]
-    observe_sqlite_uncached_statement(
+    observe_sqlite_cached_statement(
         observation_path,
         SqliteWriteStatementConcept::DocumentVersionFormatWrite,
     );
-    conn.execute(
+    cached_execute(
+        conn,
         "INSERT INTO metadata (key, value_blob) VALUES (?1, ?2)
          ON CONFLICT(key) DO UPDATE SET value_blob = excluded.value_blob",
         params![
             DOCUMENT_VERSION_STORAGE_FORMAT_METADATA_KEY,
             encode_u64(CURRENT_DOCUMENT_VERSION_STORAGE_FORMAT.0.into()).as_slice()
         ],
-    )
-    .map_err(map_sqlite_error)?;
+    )?;
     Ok(())
 }
 
 fn load_document_version_storage_format_in_conn(
     conn: &Connection,
 ) -> Result<Option<StorageFormatVersion>> {
-    conn.query_row(
-        "SELECT value_blob FROM metadata WHERE key = ?1",
-        params![DOCUMENT_VERSION_STORAGE_FORMAT_METADATA_KEY],
-        |row| row.get::<_, Vec<u8>>(0),
-    )
-    .optional()
-    .map_err(map_sqlite_error)?
-    .map(|bytes| storage_format_version_from_u64(decode_u64(bytes.as_slice())?))
-    .transpose()
+    conn.prepare_cached("SELECT value_blob FROM metadata WHERE key = ?1")
+        .map_err(map_sqlite_error)?
+        .query_row(
+            params![DOCUMENT_VERSION_STORAGE_FORMAT_METADATA_KEY],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .optional()
+        .map_err(map_sqlite_error)?
+        .map(|bytes| storage_format_version_from_u64(decode_u64(bytes.as_slice())?))
+        .transpose()
 }
 
 fn document_versions_have_rows_in_conn(conn: &Connection) -> Result<bool> {

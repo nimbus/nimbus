@@ -82,25 +82,39 @@ pub(super) fn load_document_from_conn(
     let Some(table_id) = resolve_table_id_in_conn(conn, table)? else {
         return Ok(None);
     };
-    conn.query_row(
+    conn.prepare_cached(
         "SELECT creation_time, update_time, data_json, typed_fields_json
          FROM documents
          WHERE table_id = ?1 AND id = ?2",
-        params![table_id.as_str(), id.to_string()],
-        |row| {
-            Ok(row_to_document(
-                table,
-                id,
-                row.get(0)?,
-                row.get(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-            ))
-        },
     )
+    .map_err(map_sqlite_error)?
+    .query_row(params![table_id.as_str(), id.to_string()], |row| {
+        Ok(row_to_document(
+            table,
+            id,
+            row.get(0)?,
+            row.get(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+        ))
+    })
     .optional()
     .map_err(map_sqlite_error)?
     .transpose()
+}
+
+/// Executes a fixed-text write statement through the connection's
+/// prepared-statement cache. Identical SQL text and bind order to the direct
+/// `Connection::execute` it replaces; only statement parsing is amortized.
+pub(super) fn cached_execute<P: rusqlite::Params>(
+    conn: &Connection,
+    sql: &str,
+    params: P,
+) -> Result<usize> {
+    conn.prepare_cached(sql)
+        .map_err(map_sqlite_error)?
+        .execute(params)
+        .map_err(map_sqlite_error)
 }
 
 pub(super) fn load_document_by_table_id_from_conn(
@@ -109,22 +123,22 @@ pub(super) fn load_document_by_table_id_from_conn(
     table_id: &TableId,
     id: &DocumentId,
 ) -> Result<Option<Document>> {
-    conn.query_row(
+    conn.prepare_cached(
         "SELECT creation_time, update_time, data_json, typed_fields_json
          FROM documents
          WHERE table_id = ?1 AND id = ?2",
-        params![table_id.as_str(), id.to_string()],
-        |row| {
-            Ok(row_to_document(
-                table,
-                id,
-                row.get(0)?,
-                row.get(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-            ))
-        },
     )
+    .map_err(map_sqlite_error)?
+    .query_row(params![table_id.as_str(), id.to_string()], |row| {
+        Ok(row_to_document(
+            table,
+            id,
+            row.get(0)?,
+            row.get(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+        ))
+    })
     .optional()
     .map_err(map_sqlite_error)?
     .transpose()
@@ -135,13 +149,15 @@ pub(super) fn resolve_table_id_in_conn(
     table: &TableName,
 ) -> Result<Option<TableId>> {
     let Some((table_id, state)) = conn
-        .query_row(
+        .prepare_cached(
             "SELECT table_id, state
          FROM table_catalog
          WHERE namespace = ?1 AND table_name = ?2",
-            params![DEFAULT_TABLE_NAMESPACE, table.as_str()],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
+        .map_err(map_sqlite_error)?
+        .query_row(params![DEFAULT_TABLE_NAMESPACE, table.as_str()], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
         .optional()
         .map_err(map_sqlite_error)?
     else {
@@ -329,13 +345,15 @@ fn catalog_identity_row_in_conn(
     namespace: &str,
     table: &TableName,
 ) -> Result<Option<(TableId, TableState)>> {
-    conn.query_row(
+    conn.prepare_cached(
         "SELECT table_id, state
          FROM table_catalog
          WHERE namespace = ?1 AND table_name = ?2",
-        params![namespace, table.as_str()],
-        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
     )
+    .map_err(map_sqlite_error)?
+    .query_row(params![namespace, table.as_str()], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })
     .optional()
     .map_err(map_sqlite_error)?
     .map(|(table_id, state)| {

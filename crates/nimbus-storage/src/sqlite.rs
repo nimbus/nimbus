@@ -44,7 +44,7 @@ mod trigger_invocations;
 mod write;
 
 use self::backend::{
-    decode_u64, deserialize_json, encode_u64, ensure_table_id_in_conn,
+    cached_execute, decode_u64, deserialize_json, encode_u64, ensure_table_id_in_conn,
     ensure_table_identity_in_conn, expect_write_commit, load_document_by_table_id_from_conn,
     load_document_from_conn, map_sqlite_error, resolve_or_create_table_id_in_conn,
     resolve_table_id_in_conn, row_to_document, serialize_document_fields,

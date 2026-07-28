@@ -9,6 +9,7 @@ use serde_json::Value;
 #[cfg(test)]
 use std::path::Path;
 
+use super::backend::cached_execute;
 use crate::diagnostics::IndexVersionStorageDiagnostic;
 use crate::index::encoded_index_tuple_for_document;
 use crate::index::history_scan::{
@@ -24,7 +25,7 @@ use crate::{
 
 #[cfg(test)]
 use super::config::{
-    SqliteWriteStatementConcept, observe_sqlite_schema_check, observe_sqlite_uncached_statement,
+    SqliteWriteStatementConcept, observe_sqlite_cached_statement, observe_sqlite_schema_check,
 };
 use super::{
     SqliteReadSnapshot, SqliteTenantStore, decode_u64, encode_u64, load_table_schema_from_conn,
@@ -461,11 +462,12 @@ pub(super) fn record_index_versions_for_writes_in_conn(
     for mutation in mutations {
         if let Some(close_tuple) = mutation.close_tuple {
             #[cfg(test)]
-            observe_sqlite_uncached_statement(
+            observe_sqlite_cached_statement(
                 observation_path,
                 SqliteWriteStatementConcept::IndexVersionClose,
             );
-            conn.execute(
+            cached_execute(
+                conn,
                 "UPDATE index_versions
                  SET visible_until = ?5
                  WHERE table_id = ?1
@@ -480,16 +482,16 @@ pub(super) fn record_index_versions_for_writes_in_conn(
                     mutation.document_id.to_string(),
                     sequence_i64,
                 ],
-            )
-            .map_err(map_sqlite_error)?;
+            )?;
         }
         if let Some(open_tuple) = mutation.open_tuple {
             #[cfg(test)]
-            observe_sqlite_uncached_statement(
+            observe_sqlite_cached_statement(
                 observation_path,
                 SqliteWriteStatementConcept::IndexVersionOpen,
             );
-            conn.execute(
+            cached_execute(
+                conn,
                 "INSERT INTO index_versions (
                     table_id,
                     index_id,
@@ -505,8 +507,7 @@ pub(super) fn record_index_versions_for_writes_in_conn(
                     mutation.document_id.to_string(),
                     sequence_i64,
                 ],
-            )
-            .map_err(map_sqlite_error)?;
+            )?;
         }
     }
     Ok(())
@@ -545,7 +546,7 @@ fn index_version_mutations_for_writes(
         #[cfg(test)]
         {
             observe_sqlite_schema_check(observation_path);
-            observe_sqlite_uncached_statement(
+            observe_sqlite_cached_statement(
                 observation_path,
                 SqliteWriteStatementConcept::IndexSchemaRead,
             );
@@ -632,7 +633,7 @@ fn ensure_index_version_storage_format_in_conn(
     #[cfg(test)] observation_path: &Path,
 ) -> Result<()> {
     #[cfg(test)]
-    observe_sqlite_uncached_statement(
+    observe_sqlite_cached_statement(
         observation_path,
         SqliteWriteStatementConcept::IndexVersionFormatRead,
     );
@@ -642,34 +643,35 @@ fn ensure_index_version_storage_format_in_conn(
     }
 
     #[cfg(test)]
-    observe_sqlite_uncached_statement(
+    observe_sqlite_cached_statement(
         observation_path,
         SqliteWriteStatementConcept::IndexVersionFormatWrite,
     );
-    conn.execute(
+    cached_execute(
+        conn,
         "INSERT INTO metadata (key, value_blob) VALUES (?1, ?2)
          ON CONFLICT(key) DO UPDATE SET value_blob = excluded.value_blob",
         rusqlite::params![
             INDEX_VERSION_STORAGE_FORMAT_METADATA_KEY,
             encode_u64(CURRENT_INDEX_VERSION_STORAGE_FORMAT.0.into()).as_slice()
         ],
-    )
-    .map_err(map_sqlite_error)?;
+    )?;
     Ok(())
 }
 
 fn load_index_version_storage_format_in_conn(
     conn: &rusqlite::Connection,
 ) -> Result<Option<StorageFormatVersion>> {
-    conn.query_row(
-        "SELECT value_blob FROM metadata WHERE key = ?1",
-        rusqlite::params![INDEX_VERSION_STORAGE_FORMAT_METADATA_KEY],
-        |row| row.get::<_, Vec<u8>>(0),
-    )
-    .optional()
-    .map_err(map_sqlite_error)?
-    .map(|bytes| storage_format_version_from_u64(decode_u64(bytes.as_slice())?))
-    .transpose()
+    conn.prepare_cached("SELECT value_blob FROM metadata WHERE key = ?1")
+        .map_err(map_sqlite_error)?
+        .query_row(
+            rusqlite::params![INDEX_VERSION_STORAGE_FORMAT_METADATA_KEY],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .optional()
+        .map_err(map_sqlite_error)?
+        .map(|bytes| storage_format_version_from_u64(decode_u64(bytes.as_slice())?))
+        .transpose()
 }
 
 fn index_versions_have_rows_in_conn(conn: &rusqlite::Connection) -> Result<bool> {

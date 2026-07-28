@@ -161,38 +161,48 @@ fn sqlite_queued_batch_fail_before_observes_repeated_write_work() {
         indexed_observation.current_document_encodes, 4,
         "insert and update each encode version and live projections"
     );
+    // (concept, expected prepares, expected executes). Executes must stay
+    // byte-identical to the SWT0 fail-before census: statement caching may
+    // never change what runs. Prepares are the SWT1.1 bound: at most one
+    // first-use prepare per concept per writer connection (an upper bound on
+    // real parses, since several concepts share one SQL text and therefore
+    // one cache entry).
     let indexed_statement_counts = [
-        (SqliteWriteStatementConcept::JournalNextSequenceRead, 1),
-        (SqliteWriteStatementConcept::JournalInsert, 3),
-        (SqliteWriteStatementConcept::NextSequenceWrite, 1),
-        (SqliteWriteStatementConcept::AppliedSequenceRead, 1),
-        (SqliteWriteStatementConcept::AppliedSequenceWrite, 1),
-        (SqliteWriteStatementConcept::DurableRecordRead, 0),
-        (SqliteWriteStatementConcept::DocumentVersionFormatRead, 3),
-        (SqliteWriteStatementConcept::DocumentVersionFormatWrite, 1),
-        (SqliteWriteStatementConcept::DocumentVersionInsert, 3),
-        (SqliteWriteStatementConcept::IndexSchemaRead, 3),
-        (SqliteWriteStatementConcept::IndexVersionFormatRead, 3),
-        (SqliteWriteStatementConcept::IndexVersionFormatWrite, 1),
-        (SqliteWriteStatementConcept::IndexVersionClose, 2),
-        (SqliteWriteStatementConcept::IndexVersionOpen, 2),
-        (SqliteWriteStatementConcept::TableIdentityCheck, 3),
-        (SqliteWriteStatementConcept::DocumentPreimageRead, 3),
-        (SqliteWriteStatementConcept::LiveDocumentInsert, 1),
-        (SqliteWriteStatementConcept::LiveDocumentUpdate, 1),
-        (SqliteWriteStatementConcept::LiveDocumentDelete, 1),
-        (SqliteWriteStatementConcept::ResourceBindingUpsert, 0),
-        (SqliteWriteStatementConcept::ResourceBindingDelete, 1),
+        (SqliteWriteStatementConcept::JournalNextSequenceRead, 1, 1),
+        (SqliteWriteStatementConcept::JournalInsert, 1, 3),
+        (SqliteWriteStatementConcept::NextSequenceWrite, 1, 1),
+        (SqliteWriteStatementConcept::AppliedSequenceRead, 1, 1),
+        (SqliteWriteStatementConcept::AppliedSequenceWrite, 1, 1),
+        (SqliteWriteStatementConcept::DurableRecordRead, 0, 0),
+        (SqliteWriteStatementConcept::DocumentVersionFormatRead, 1, 3),
+        (
+            SqliteWriteStatementConcept::DocumentVersionFormatWrite,
+            1,
+            1,
+        ),
+        (SqliteWriteStatementConcept::DocumentVersionInsert, 1, 3),
+        (SqliteWriteStatementConcept::IndexSchemaRead, 1, 3),
+        (SqliteWriteStatementConcept::IndexVersionFormatRead, 1, 3),
+        (SqliteWriteStatementConcept::IndexVersionFormatWrite, 1, 1),
+        (SqliteWriteStatementConcept::IndexVersionClose, 1, 2),
+        (SqliteWriteStatementConcept::IndexVersionOpen, 1, 2),
+        (SqliteWriteStatementConcept::TableIdentityCheck, 1, 3),
+        (SqliteWriteStatementConcept::DocumentPreimageRead, 1, 3),
+        (SqliteWriteStatementConcept::LiveDocumentInsert, 1, 1),
+        (SqliteWriteStatementConcept::LiveDocumentUpdate, 1, 1),
+        (SqliteWriteStatementConcept::LiveDocumentDelete, 1, 1),
+        (SqliteWriteStatementConcept::ResourceBindingUpsert, 0, 0),
+        (SqliteWriteStatementConcept::ResourceBindingDelete, 1, 1),
     ];
-    for (concept, expected) in indexed_statement_counts {
+    for (concept, expected_prepares, expected_executes) in indexed_statement_counts {
         assert_eq!(
             indexed_observation.statement_prepares(concept),
-            expected,
+            expected_prepares,
             "unexpected indexed prepare count for {concept:?}"
         );
         assert_eq!(
             indexed_observation.statement_executes(concept),
-            expected,
+            expected_executes,
             "unexpected indexed execute count for {concept:?}"
         );
     }

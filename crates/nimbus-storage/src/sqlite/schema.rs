@@ -111,15 +111,13 @@ pub(super) fn load_table_schema_from_conn(
     conn: &Connection,
     table: &TableName,
 ) -> Result<Option<TableSchema>> {
-    conn.query_row(
-        "SELECT schema_json FROM schemas WHERE table_name = ?1",
-        params![table.as_str()],
-        |row| row.get::<_, String>(0),
-    )
-    .optional()
-    .map_err(map_sqlite_error)?
-    .map(|json| deserialize_json::<TableSchema>(json.as_str()))
-    .transpose()
+    conn.prepare_cached("SELECT schema_json FROM schemas WHERE table_name = ?1")
+        .map_err(map_sqlite_error)?
+        .query_row(params![table.as_str()], |row| row.get::<_, String>(0))
+        .optional()
+        .map_err(map_sqlite_error)?
+        .map(|json| deserialize_json::<TableSchema>(json.as_str()))
+        .transpose()
 }
 
 pub(super) fn create_sqlite_indexes_for_table_schema(
