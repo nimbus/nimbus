@@ -30,7 +30,7 @@ fn sqlite_queued_batch_fail_before_observes_repeated_write_work() {
     let observation = store.write_test_observation();
 
     assert_eq!(
-        observation.writer_opens, 2,
+        observation.writer_opens, 1,
         "queued append and apply currently open separate writers"
     );
     assert_eq!(
@@ -157,7 +157,9 @@ fn sqlite_queued_batch_fail_before_observes_repeated_write_work() {
         .expect("indexed durable apply should succeed");
     let indexed_observation = indexed_store.write_test_observation();
 
-    assert_eq!(indexed_observation.writer_opens, 2);
+    // Resident writer: the schema write before the observation window made
+    // the connection resident, so the observed batch pair opens nothing.
+    assert_eq!(indexed_observation.writer_opens, 0);
     // Batch-invariant hoisting: one format check per apply transaction, one
     // schema plan and one identity verification per distinct table key.
     assert_eq!(indexed_observation.format_checks, 1);
@@ -509,6 +511,152 @@ fn sqlite_batch_apply_context_checks_each_distinct_table_once() {
         observation.statement_executes(SqliteWriteStatementConcept::DocumentPreimageRead),
         4,
         "every write keeps its own preimage read"
+    );
+    store.reset_write_test_observation();
+}
+
+#[test]
+#[serial_test::serial(sqlite_write_observation)]
+fn sqlite_resident_writer_reuses_connection_across_batches() {
+    let dir = tempdir().expect("temporary directory should create");
+    let path = dir.path().join("tenant.sqlite3");
+    let store = SqliteTenantStore::open(&path).expect("sqlite tenant store should open");
+    store.reset_write_test_observation();
+    let table_id = TableId::new();
+    for sequence in 1..=3_u64 {
+        let document = sample_document("resident_tasks", &format!("doc-{sequence}"));
+        let table = document.table.clone();
+        let record = sqlite_durable_write_record(
+            SequenceNumber(sequence),
+            Timestamp(100 + sequence),
+            &table,
+            &table_id,
+            WriteOpType::Insert,
+            document.id.clone(),
+            None,
+            Some(document),
+        );
+        store
+            .append_durable_records_batch(std::slice::from_ref(&record))
+            .expect("resident append should succeed");
+        store
+            .apply_durable_records_batch(std::slice::from_ref(&record))
+            .expect("resident apply should succeed");
+    }
+    let observation = store.write_test_observation();
+    assert_eq!(
+        observation.writer_opens, 1,
+        "three queued batch pairs must share one physical writer connection"
+    );
+    let progress = store.journal_progress().expect("progress should load");
+    assert_eq!(progress.durable_head, SequenceNumber(3));
+    assert_eq!(progress.applied_head, SequenceNumber(3));
+    store.reset_write_test_observation();
+}
+
+struct FailNthFaultInjector {
+    target: crate::simulation::FaultPoint,
+    remaining: std::sync::Mutex<u32>,
+}
+
+impl crate::simulation::FaultInjector for FailNthFaultInjector {
+    fn check(&self, point: crate::simulation::FaultPoint) -> nimbus_core::Result<()> {
+        if point == self.target {
+            let mut remaining = self.remaining.lock().expect("fault counter lock");
+            if *remaining > 0 {
+                *remaining -= 1;
+                return Err(Error::Internal("injected storage fault".to_string()));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[test]
+#[serial_test::serial(sqlite_write_observation)]
+fn sqlite_resident_writer_reopens_after_write_error() {
+    let dir = tempdir().expect("temporary directory should create");
+    let path = dir.path().join("tenant.sqlite3");
+    let store = SqliteTenantStore::open_with_simulation(
+        &path,
+        std::sync::Arc::new(nimbus_core::SystemWallClock),
+        std::sync::Arc::new(FailNthFaultInjector {
+            target: crate::simulation::FaultPoint::StorageCommitBeforeVisibility,
+            remaining: std::sync::Mutex::new(1),
+        }),
+    )
+    .expect("sqlite tenant store should open with fault injector");
+    store.reset_write_test_observation();
+    let table_id = TableId::new();
+    let document = sample_document("poison_tasks", "doc-1");
+    let table = document.table.clone();
+    let record = sqlite_durable_write_record(
+        SequenceNumber(1),
+        Timestamp(100),
+        &table,
+        &table_id,
+        WriteOpType::Insert,
+        document.id.clone(),
+        None,
+        Some(document.clone()),
+    );
+    store
+        .append_durable_records_batch(std::slice::from_ref(&record))
+        .expect("append before injected fault should succeed");
+    store
+        .apply_durable_records_batch(std::slice::from_ref(&record))
+        .expect_err("first apply must fail on the injected fault");
+    store
+        .apply_durable_records_batch(std::slice::from_ref(&record))
+        .expect("retry after the injected fault should succeed");
+    let observation = store.write_test_observation();
+    assert_eq!(
+        observation.writer_opens, 2,
+        "an errored transaction must drop its connection so the retry reopens"
+    );
+    let progress = store.journal_progress().expect("progress should load");
+    assert_eq!(progress.applied_head, SequenceNumber(1));
+    assert_eq!(
+        store.scan_table(&table).expect("scan should succeed").len(),
+        1,
+        "the retried apply must land exactly once"
+    );
+    store.reset_write_test_observation();
+}
+
+#[test]
+#[serial_test::serial(sqlite_write_observation)]
+fn sqlite_resident_writer_reuses_encrypted_connection() {
+    let dir = tempdir().expect("temporary directory should create");
+    let path = dir.path().join("tenant.sqlite3");
+    let store = SqliteTenantStore::open_encrypted(&path, &[7u8; 32])
+        .expect("encrypted sqlite tenant store should open");
+    store.reset_write_test_observation();
+    let table_id = TableId::new();
+    for sequence in 1..=2_u64 {
+        let document = sample_document("secret_tasks", &format!("doc-{sequence}"));
+        let table = document.table.clone();
+        let record = sqlite_durable_write_record(
+            SequenceNumber(sequence),
+            Timestamp(100 + sequence),
+            &table,
+            &table_id,
+            WriteOpType::Insert,
+            document.id.clone(),
+            None,
+            Some(document),
+        );
+        store
+            .append_durable_records_batch(std::slice::from_ref(&record))
+            .expect("encrypted append should succeed");
+        store
+            .apply_durable_records_batch(std::slice::from_ref(&record))
+            .expect("encrypted apply should succeed");
+    }
+    assert_eq!(
+        store.write_test_observation().writer_opens,
+        1,
+        "the encrypted writer must key and verify once, then stay resident"
     );
     store.reset_write_test_observation();
 }

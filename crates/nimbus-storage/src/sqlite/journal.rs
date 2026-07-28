@@ -78,7 +78,7 @@ impl SqliteTenantStore {
         snapshot.validate()?;
         self.ensure_materialized_journal_restore_target_is_empty()?;
 
-        let conn = self.open_writer_connection()?;
+        let conn = self.acquire_writer_connection()?;
         conn.execute_batch("BEGIN IMMEDIATE")
             .map_err(map_sqlite_error)?;
         for identity in &snapshot.table_identities {
@@ -132,6 +132,7 @@ impl SqliteTenantStore {
         conn.execute_batch("COMMIT").map_err(map_sqlite_error)?;
         #[cfg(any(test, feature = "test-hooks"))]
         observe_sqlite_foreground_commit(&self.path, &conn, commit_started.elapsed());
+        self.release_writer_connection(conn);
         self.replace_cached_schema(snapshot.schema.clone())?;
         Ok(())
     }
@@ -232,7 +233,7 @@ impl SqliteTenantStore {
             return Ok(());
         }
 
-        let conn = self.open_writer_connection()?;
+        let conn = self.acquire_writer_connection()?;
         conn.execute_batch("BEGIN IMMEDIATE")
             .map_err(map_sqlite_error)?;
         #[cfg(test)]
@@ -267,6 +268,7 @@ impl SqliteTenantStore {
         conn.execute_batch("COMMIT").map_err(map_sqlite_error)?;
         #[cfg(any(test, feature = "test-hooks"))]
         observe_sqlite_foreground_commit(&self.path, &conn, commit_started.elapsed());
+        self.release_writer_connection(conn);
         self.fault_injector
             .check(FaultPoint::JournalFlushBeforeVisibility)?;
         Ok(())
@@ -290,7 +292,7 @@ impl SqliteTenantStore {
             return Ok(());
         }
 
-        let conn = self.open_writer_connection()?;
+        let conn = self.acquire_writer_connection()?;
         conn.execute_batch("BEGIN IMMEDIATE")
             .map_err(map_sqlite_error)?;
         #[cfg(test)]
@@ -351,6 +353,7 @@ impl SqliteTenantStore {
         conn.execute_batch("COMMIT").map_err(map_sqlite_error)?;
         #[cfg(any(test, feature = "test-hooks"))]
         observe_sqlite_foreground_commit(&self.path, &conn, commit_started.elapsed());
+        self.release_writer_connection(conn);
         if appended {
             self.fault_injector
                 .check(FaultPoint::JournalFlushBeforeVisibility)?;
@@ -364,7 +367,7 @@ impl SqliteTenantStore {
         }
 
         let schema_cache_dirty = records.iter().any(durable_record_changes_schema_cache);
-        let conn = self.open_writer_connection()?;
+        let conn = self.acquire_writer_connection()?;
         conn.execute_batch("BEGIN IMMEDIATE")
             .map_err(map_sqlite_error)?;
         #[cfg(test)]
@@ -429,6 +432,7 @@ impl SqliteTenantStore {
         if schema_cache_dirty {
             self.replace_cached_schema(load_schema_from_conn(&conn)?)?;
         }
+        self.release_writer_connection(conn);
         self.fault_injector
             .check(FaultPoint::StorageCommitAfterVisibilityBeforeReturn)?;
         Ok(())
