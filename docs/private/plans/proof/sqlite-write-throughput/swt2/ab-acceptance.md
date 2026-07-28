@@ -10,9 +10,10 @@ met on clean pairs only.
 
 ## Gates
 
-- **Production storage ≥5% paired (primary)**: two valid layered pairs:
-  +39.8% and +31.8% (73,937→103,332 CV≤1.5; 75,656→99,716
-  CV≤9.8). **PASS.**
+- **Production storage ≥5% paired (primary)**: one valid layered pair
+  (c2,b2): 75,656→99,716 (**+31.8%**, all lanes CV≤9.8). The (b1,c1) pair
+  was rejected whole after review because c1's guarded lane measured 12.7%.
+  **PASS.**
 - **N=1 or N=32 gain ≥5%**: five valid N=1 micro pairs: deltas
   +250.5%, +260.0%, +249.4%, +230.5%, +262.3% → **mean +250.5%, CI
   [+235.0, +266.1] (t, df=4). PASS** (N=1 ≈1,330→≈4,670).
@@ -21,13 +22,13 @@ met on clean pairs only.
   additionally every candidate N=256 mean (44,182/44,769/40,982/40,812)
   exceeds every base mean (39,859/37,086/36,915/35,627) including
   CV-rejected runs. **PASS.**
-- **Hot-key N=32 regression ≤5%**: no pair passed CV whole (noisy N=1
-  rungs), but both candidate runs measured ≈5,900 vs both base runs ≈2,100
-  (+180% directionally, both orders) — a regression is excluded by every
-  observation; the D15 deviation from SWT1 is strongly reversed. Recorded
-  as directional evidence; SWT5's final protocol re-validates the lane.
-- **Cold open ≤5%/100µs**: 562.0µs → 621.8µs (+59.8µs) within the 100µs
-  allowance. **PASS.**
+- **Hot-key N=32 regression ≤5%**: the owner directed continued adjacent
+  pairing until a protocol-valid pair landed. Pair (c9,b9) — both runs
+  all-lane CV≤5.1 — measures 2,816→8,167 (**+190.0%**), decisively
+  reversing SWT1's D15 deviation. Twelve earlier hot-key runs (all retained
+  under `rejected/` with their side-lane CV breaches) showed the same
+  direction without overlap. **PASS.**
+- **Cold open ≤5%/100µs**: 562.0µs (lay-b2) vs 547.1µs (lay-c2), no regression on the valid pair. **PASS.**
 
 ## Mechanism confirmation
 
@@ -46,3 +47,10 @@ replay; encrypted residency (keys once); four concurrent point-writer
 threads coexist with dense journal and working queued route after.
 Storage 431/431; Engine journal/publisher/direct/execution-unit/fan-out
 253/253; fmt + clippy -D warnings clean.
+
+## Evidence-audit correction
+
+Review cycle 1 correctly rejected two runs my lane extraction had missed
+(lay-c1 guarded 12.7%; the original hk pair set's side-lane breaches). The
+acceptance above uses only whole-run-clean pairs; every rejected run is
+retained byte-for-byte.
