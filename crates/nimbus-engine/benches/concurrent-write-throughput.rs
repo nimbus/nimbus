@@ -671,10 +671,14 @@ fn render_wal_checkpoint_observation_section(stats: &[RungStats]) -> String {
          rung's diagnostic as invalid and rerun.\n\n",
     );
     out.push_str(
-        "`automatic checkpoints` counts foreground commits whose post-COMMIT WAL \
-         frame count reached the connection's auto-checkpoint threshold. SQLite \
-         does not expose checkpoint-only COMMIT time, so `automatic COMMIT upper \
-         bound` includes all work in those COMMIT calls.\n\n",
+        "`automatic checkpoints` counts post-COMMIT samples whose WAL frame \
+         count reached the connection's auto-checkpoint threshold. Sampling runs \
+         after COMMIT releases the writer lock, so per-commit attribution relies \
+         on the per-tenant committer serializing writers, which holds for this \
+         benchmark's workloads; treat the columns as sampled aggregate WAL \
+         state. SQLite does not expose checkpoint-only COMMIT time, so \
+         `automatic COMMIT upper bound` includes all work in those COMMIT \
+         calls.\n\n",
     );
     out.push_str(
         "| N | foreground commits | automatic checkpoints | automatic COMMIT upper bound ms | WAL high-water frames | checkpointed high-water frames | auto threshold pages | NOOP probes | NOOP probe ms | NOOP probe share | probe errors | post-run PASSIVE busy/log/checkpointed | PASSIVE ms |\n",

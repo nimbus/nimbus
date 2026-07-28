@@ -229,3 +229,14 @@ passes `74 passed, 0 failed` under
 `NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1`;
 `cargo clippy -p nimbus-storage --all-targets -- -D warnings` is clean; and the
 Engine benchmark compiles in the bench profile.
+
+A second review pass accepted one further finding: post-COMMIT sampling runs
+after SQLite releases the writer lock, so per-commit attribution of the
+`automatic checkpoints` columns is not provable at the storage layer. The
+canonical benchmark workloads keep attribution sound in practice because the
+per-tenant committer serializes writers end-to-end and SQLite runs automatic
+checkpoints inside the committing connection's own COMMIT; concurrent
+non-committer writers (object manifests, replica reconciliation) could shift
+a sample onto an adjacent commit. The snapshot fields and the benchmark
+section now define these columns as sampled aggregate WAL state under that
+stated serialization assumption rather than exact per-commit attribution.

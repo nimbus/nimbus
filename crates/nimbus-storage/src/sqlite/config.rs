@@ -185,10 +185,22 @@ pub(super) fn observe_sqlite_current_document_encode(path: &Path) {
 pub struct SqliteWalCheckpointObservationSnapshot {
     pub foreground_commit_count: u64,
     pub foreground_commit_nanos: u64,
+    /// Post-COMMIT samples whose WAL frame count was at or beyond the
+    /// connection's automatic-checkpoint threshold.
+    ///
+    /// This is sampled WAL state, not proven per-commit attribution: the probe
+    /// runs after COMMIT releases the writer lock, so attribution to the
+    /// sampled commit is exact only while writers to this database are
+    /// externally serialized. Per-tenant Engine commits are serialized by the
+    /// tenant committer, which holds for the canonical benchmark workloads;
+    /// concurrent non-committer writers (object manifests, replica
+    /// reconciliation) can shift a sample onto an adjacent commit. Threshold
+    /// crossings observed by this path's own writers remain aggregate-accurate.
     pub automatic_checkpoint_count: u64,
-    /// Commit duration for commits that crossed the automatic-checkpoint
-    /// threshold. This is an upper bound because SQLite does not expose the
-    /// checkpoint-only portion of COMMIT.
+    /// Total commit duration for the sampled threshold-crossing commits. An
+    /// upper bound twice over: SQLite does not expose the checkpoint-only
+    /// portion of COMMIT, and attribution is sampled as described on
+    /// `automatic_checkpoint_count`.
     pub automatic_checkpoint_commit_upper_bound_nanos: u64,
     pub wal_high_water_frames: u64,
     pub checkpointed_high_water_frames: u64,
