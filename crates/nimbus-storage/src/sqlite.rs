@@ -50,6 +50,14 @@ use self::backend::{
     resolve_table_id_in_conn, row_to_document, serialize_document_fields,
     serialize_document_typed_fields, serialize_json, sql_value_from_json, table_has_entries,
 };
+#[cfg(test)]
+pub(crate) use self::config::SqliteWriteStatementConcept;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use self::config::{
+    SqlitePassiveCheckpointProbe, SqliteWalCheckpointObservationSnapshot,
+    disable_sqlite_wal_checkpoint_observation, probe_sqlite_passive_checkpoint,
+    reset_sqlite_wal_checkpoint_observation, sqlite_wal_checkpoint_observation_snapshot,
+};
 use self::journal::{
     append_commit_entry, next_sequence_in_conn, validate_durable_journal_stream_limit,
 };
@@ -275,6 +283,8 @@ pub struct SqliteReadSnapshot {
 
 pub struct SqliteWriteTransaction {
     conn: Option<Connection>,
+    #[cfg(any(test, feature = "test-hooks"))]
+    observation_path: PathBuf,
     clock: Arc<dyn WallClock>,
     fault_injector: Arc<dyn FaultInjector>,
     id_source: Arc<dyn IdSource>,
