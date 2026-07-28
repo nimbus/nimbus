@@ -137,6 +137,14 @@ extension-registry seam before the second concern edits `extensions.rs`.
   crash/replay and differential verification, and pinned external Elle
   evidence. FINAL recorded all readiness dimensions `PASS` and all closeout
   verdicts `SAFE`.
+- `sqlite-write-throughput-optimization-plan.md` - `active`. Sole owner for
+  benchmark-driven embedded SQLite write-path efficiency after the completed
+  parallel-prepare/serial-commit campaign. It preserves FULL/WAL and all three
+  Engine mutation routes while executing measured statement/invariant,
+  writer-residency, encoded-payload, and separately guarded forward-apply
+  opportunities against an exact layered rusqlite/SQLCipher ledger. The local
+  final gate is at least 30,000 durable logical CRUD mutations/s at N=256 with
+  lower 95% CI at least 28,000 and all correctness/resource gates passing.
 - `archive/clock-architecture-reliability-plan.md` - `complete, archived`
   (2026-07-21; independent Opus 4.8 review clean). Delivered canonical wall and
   monotonic clock seams, Engine-owned absolute scheduling, monotonic local

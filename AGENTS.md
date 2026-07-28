@@ -326,14 +326,22 @@ These are architecture invariants — do not violate them:
 
 ### Mutation path
 
-Every mutation — HTTP, WebSocket, scheduler, or V8 runtime — flows through an
-engine-owned commit path. There are exactly three, and all three are engine
-owned: the **queued journal path** (client mutations batched and committed in
-sequence order by the per-tenant committer), the **direct path**
-(`apply_mutation_with_mode*`), and the **execution-unit path**
-(`MutationExecutionUnit`, used by runtime mutations so one function
-invocation commits as a single transaction). There is no separate code path.
-Do not create one.
+Every client document mutation — including HTTP, WebSocket, and document
+writes performed by scheduled or V8 execution — flows through one of exactly
+three engine-owned commit paths: the **queued journal path** (client mutations
+batched and committed in sequence order by the per-tenant committer), the
+**direct path** (`apply_mutation_with_mode*`), and the **execution-unit path**
+(`MutationExecutionUnit`, used by runtime mutations so one function invocation
+commits as a single transaction). Do not create a fourth client document
+mutation path.
+
+That three-route invariant is not an inventory of every storage writer.
+Schema, scheduler, trigger, and point-in-time-restore work can use internal
+committer jobs. Object manifests use the raw `TenantPointWrite` seam on the
+read executor, and libSQL replica refresh reconciles the local replica cache
+through storage directly. Changes to SQLite writer ownership or concurrency
+must account for those non-client writers and must not assume that the three
+client routes are the only transactions that can open a writer.
 
 Name all three when auditing. A change that reasons about only
 `apply_mutation_with_mode*` will miss defects living in the other two — that
