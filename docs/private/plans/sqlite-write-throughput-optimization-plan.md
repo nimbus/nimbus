@@ -1,7 +1,7 @@
 # SQLite Write-Throughput Optimization Control Plane
 
-Status: `active — control-plane PR in progress; implementation is gated on
-that PR merging`
+Status: `active — draft control-plane PR #241 is open; implementation is
+gated on that PR merging`
 
 Owner: this plan, and no other plan
 
@@ -209,7 +209,7 @@ it; do not choose a different row.
 
 | Phase/task | Status | Branch / worktree | PR / commit | Measurement result | Correctness evidence | Proof | Next action |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| CTRL0 Research, exact harness, and control-plane PR | `in_progress` | `codex/sqlite-write-throughput-plan` / `nimbus-sqlite-write-throughput-plan` | PR pending / base `e47b64eac` | Engine baseline 21,433; clean layered planning reference: storage 38,810, guarded SQL 151,485; final hardened run rejected because production CV=10.3% | Benchmark compiles; deterministic fixture reaches durable/applied 768 and audits exact journal/version/catalog/metadata/live effects; rejected reports retained whole | `proof/sqlite-write-throughput/{environment,full-engine-baseline,layered-planning-reference,layered-review-reruns,layered-final-binary-rejected}.md` | review, push, open and merge plan PR; SWT0 captures hashed quiet-host base |
+| CTRL0 Research, exact harness, and control-plane PR | `in_progress` | `codex/sqlite-write-throughput-plan` / `nimbus-sqlite-write-throughput-plan` | draft PR #241 / branch head | Engine baseline 21,433; clean layered planning reference: storage 38,810, guarded SQL 151,485; final hardened run rejected because production CV=10.3% | Benchmark compiles; deterministic fixture reaches durable/applied 768 and audits exact journal/version/catalog/metadata/live effects; rejected reports retained whole | `proof/sqlite-write-throughput/{environment,full-engine-baseline,layered-planning-reference,layered-review-reruns,layered-final-binary-rejected}.md` | hosted CI/review, mark ready, merge; SWT0 captures hashed quiet-host base |
 | SWT0 Freeze same-session base, hot-key, resource, and fail-before diagnostics | `planned` | `codex/sqlite-write-throughput-p0-baseline` / `nimbus-sqlite-write-throughput-p0` | — | — | — | `proof/sqlite-write-throughput/swt0/` | start only after CTRL0 merges |
 | SWT1 Prepared statements + batch-invariant apply context | `planned` | `codex/sqlite-write-throughput-p1-batch-sql` / `nimbus-sqlite-write-throughput-p1` | — | target ≥5% paired N=256 gain; lower-layer delta lower CI >0 | queued/direct/unit parity + crash/replay + fail-before counters | `proof/sqlite-write-throughput/swt1/` | after SWT0 merge/cleanup |
 | SWT2 Resident embedded writer connection | `planned` | `codex/sqlite-write-throughput-p2-writer-residency` / `nimbus-sqlite-write-throughput-p2` | — | target ≥5% storage gain and N=1 or N=32 gain; no N=256 loss >2% | two queued commits retained; route/fault/reopen parity | `proof/sqlite-write-throughput/swt2/` | after SWT1 merge/cleanup |
