@@ -3,7 +3,7 @@ use super::config::observe_sqlite_foreground_commit;
 #[cfg(test)]
 use super::config::{
     SqliteWriteStatementConcept, observe_sqlite_cached_statement,
-    observe_sqlite_current_document_encode, observe_sqlite_table_identity_check,
+    observe_sqlite_current_document_encode,
 };
 use super::*;
 use crate::keys::{document_path_key, resource_locator_key};
@@ -373,6 +373,7 @@ impl SqliteTenantStore {
             SqliteWriteStatementConcept::AppliedSequenceRead,
         );
         let mut applied_head = applied_sequence_in_conn(&conn)?.0;
+        let mut apply_context = SqliteBatchApplyContext::new();
         for record in records {
             if record.sequence.0 <= applied_head {
                 #[cfg(test)]
@@ -403,6 +404,7 @@ impl SqliteTenantStore {
             apply_durable_record_in_conn(
                 &conn,
                 record,
+                &mut apply_context,
                 #[cfg(test)]
                 &self.path,
             )?;
@@ -569,11 +571,13 @@ pub(super) fn append_tenant_event_record(
     );
     crate::commit_log::ensure_applied_prefix_precedes(applied_sequence_in_conn(conn)?, sequence)?;
     let record = TenantEventRecord::from_events(sequence, timestamp, events)?;
+    let mut apply_context = SqliteBatchApplyContext::new();
     record_document_versions_for_events_in_conn(
         conn,
         record.sequence,
         record.timestamp,
         &record.events,
+        &mut apply_context,
         #[cfg(test)]
         observation_path,
     )?;
@@ -581,6 +585,7 @@ pub(super) fn append_tenant_event_record(
         conn,
         record.sequence,
         &record.events,
+        &mut apply_context,
         #[cfg(test)]
         observation_path,
     )?;
@@ -614,6 +619,7 @@ pub(super) fn append_tenant_event_record(
 pub(super) fn apply_durable_record_in_conn(
     conn: &Connection,
     record: &TenantEventRecord,
+    apply_context: &mut SqliteBatchApplyContext,
     #[cfg(test)] observation_path: &Path,
 ) -> Result<()> {
     if record.events.is_empty() {
@@ -625,6 +631,7 @@ pub(super) fn apply_durable_record_in_conn(
             record.sequence,
             record.timestamp,
             &record.writes,
+            apply_context,
             #[cfg(test)]
             observation_path,
         )?;
@@ -632,6 +639,7 @@ pub(super) fn apply_durable_record_in_conn(
             conn,
             record.sequence,
             &record.writes,
+            apply_context,
             #[cfg(test)]
             observation_path,
         )?;
@@ -639,6 +647,7 @@ pub(super) fn apply_durable_record_in_conn(
             conn,
             record.sequence,
             &record.writes,
+            apply_context,
             #[cfg(test)]
             observation_path,
         );
@@ -649,6 +658,7 @@ pub(super) fn apply_durable_record_in_conn(
         record.sequence,
         record.timestamp,
         &record.events,
+        apply_context,
         #[cfg(test)]
         observation_path,
     )?;
@@ -656,6 +666,7 @@ pub(super) fn apply_durable_record_in_conn(
         conn,
         record.sequence,
         &record.events,
+        apply_context,
         #[cfg(test)]
         observation_path,
     )?;
@@ -664,6 +675,7 @@ pub(super) fn apply_durable_record_in_conn(
             conn,
             record.sequence,
             event,
+            apply_context,
             #[cfg(test)]
             observation_path,
         )?;
@@ -675,6 +687,7 @@ fn apply_tenant_event_in_conn(
     conn: &Connection,
     sequence: SequenceNumber,
     event: &TenantEventKind,
+    apply_context: &mut SqliteBatchApplyContext,
     #[cfg(test)] observation_path: &Path,
 ) -> Result<()> {
     match event {
@@ -682,14 +695,29 @@ fn apply_tenant_event_in_conn(
             conn,
             sequence,
             writes,
+            apply_context,
             #[cfg(test)]
             observation_path,
         ),
-        TenantEventKind::SchemaChange { change } => apply_schema_change_in_conn(conn, change),
-        TenantEventKind::TableLifecycle { lifecycle } => {
-            apply_table_lifecycle_in_conn(conn, lifecycle)
+        TenantEventKind::SchemaChange { change } => {
+            apply_schema_change_in_conn(conn, change)?;
+            // Later records in this batch must observe the post-change
+            // schema, index plans, and catalog identities.
+            apply_context.invalidate_table_invariants();
+            Ok(())
         }
-        TenantEventKind::IndexLifecycle { .. } | TenantEventKind::Barrier { .. } => Ok(()),
+        TenantEventKind::TableLifecycle { lifecycle } => {
+            apply_table_lifecycle_in_conn(conn, lifecycle)?;
+            apply_context.invalidate_table_invariants();
+            Ok(())
+        }
+        TenantEventKind::IndexLifecycle { .. } => {
+            // Index lifecycle intervals are derived at read time; drop cached
+            // plans anyway so no stale maintained-index view survives.
+            apply_context.invalidate_table_invariants();
+            Ok(())
+        }
+        TenantEventKind::Barrier { .. } => Ok(()),
         TenantEventKind::ScheduledExecution { execution_id } => {
             let _ = begin_scheduled_execution_in_conn(conn, Some(execution_id))?;
             Ok(())
@@ -706,6 +734,7 @@ fn apply_document_writes_in_conn(
     conn: &Connection,
     sequence: SequenceNumber,
     writes: &[WriteOp],
+    apply_context: &mut SqliteBatchApplyContext,
     #[cfg(test)] observation_path: &Path,
 ) -> Result<()> {
     for write in writes {
@@ -713,6 +742,7 @@ fn apply_document_writes_in_conn(
             conn,
             sequence,
             write,
+            apply_context,
             #[cfg(test)]
             observation_path,
         )?;
@@ -724,19 +754,18 @@ fn apply_document_write_in_conn(
     conn: &Connection,
     sequence: SequenceNumber,
     write: &WriteOp,
+    apply_context: &mut SqliteBatchApplyContext,
     #[cfg(test)] observation_path: &Path,
 ) -> Result<()> {
-    #[cfg(test)]
-    {
-        observe_sqlite_table_identity_check(observation_path);
-        observe_sqlite_cached_statement(
-            observation_path,
-            SqliteWriteStatementConcept::TableIdentityCheck,
-        );
-    }
+    apply_context.ensure_table_identity(
+        conn,
+        &write.table,
+        &write.table_id,
+        #[cfg(test)]
+        observation_path,
+    )?;
     match (&write.previous, &write.current) {
         (None, Some(current)) => {
-            ensure_table_id_in_conn(conn, &write.table, &write.table_id)?;
             #[cfg(test)]
             observe_sqlite_cached_statement(
                 observation_path,
@@ -792,7 +821,6 @@ fn apply_document_write_in_conn(
             }
         }
         (Some(previous), Some(current)) => {
-            ensure_table_id_in_conn(conn, &write.table, &write.table_id)?;
             #[cfg(test)]
             observe_sqlite_cached_statement(
                 observation_path,
@@ -855,7 +883,6 @@ fn apply_document_write_in_conn(
             }
         }
         (Some(previous), None) => {
-            ensure_table_id_in_conn(conn, &write.table, &write.table_id)?;
             #[cfg(test)]
             observe_sqlite_cached_statement(
                 observation_path,

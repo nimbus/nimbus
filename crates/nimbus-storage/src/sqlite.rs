@@ -28,6 +28,7 @@ use crate::store::{
 use crate::{RetentionFloor, RetentionGcConfig, RetentionGcSummary};
 use nimbus_crypto::DataEncryptionKey;
 
+mod apply_context;
 mod backend;
 mod config;
 mod document_versions;
@@ -43,6 +44,7 @@ mod trigger_delivery;
 mod trigger_invocations;
 mod write;
 
+use self::apply_context::SqliteBatchApplyContext;
 use self::backend::{
     cached_execute, decode_u64, deserialize_json, encode_u64, ensure_table_id_in_conn,
     ensure_table_identity_in_conn, expect_write_commit, load_document_by_table_id_from_conn,

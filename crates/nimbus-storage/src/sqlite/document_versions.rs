@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 #[cfg(test)]
 use super::config::{
     SqliteWriteStatementConcept, observe_sqlite_cached_statement,
-    observe_sqlite_current_document_encode, observe_sqlite_format_check,
+    observe_sqlite_current_document_encode,
 };
 use super::*;
 use crate::diagnostics::DocumentVersionStorageDiagnostic;
@@ -51,6 +51,7 @@ pub(super) fn record_document_versions_for_events_in_conn(
     sequence: SequenceNumber,
     timestamp: Timestamp,
     events: &[TenantEventKind],
+    apply_context: &mut SqliteBatchApplyContext,
     #[cfg(test)] observation_path: &Path,
 ) -> Result<()> {
     for event in events {
@@ -60,6 +61,7 @@ pub(super) fn record_document_versions_for_events_in_conn(
                 sequence,
                 timestamp,
                 writes,
+                apply_context,
                 #[cfg(test)]
                 observation_path,
             )?;
@@ -73,15 +75,14 @@ pub(super) fn record_document_versions_for_writes_in_conn(
     sequence: SequenceNumber,
     timestamp: Timestamp,
     writes: &[WriteOp],
+    apply_context: &mut SqliteBatchApplyContext,
     #[cfg(test)] observation_path: &Path,
 ) -> Result<()> {
     if writes.is_empty() {
         return Ok(());
     }
 
-    #[cfg(test)]
-    observe_sqlite_format_check(observation_path);
-    ensure_document_version_storage_format_in_conn(
+    apply_context.ensure_document_format(
         conn,
         #[cfg(test)]
         observation_path,
@@ -324,7 +325,7 @@ fn validate_document_version_storage_format_in_conn(conn: &Connection) -> Result
     validate_document_version_storage_format_state(format_version, has_versions)
 }
 
-fn ensure_document_version_storage_format_in_conn(
+pub(super) fn ensure_document_version_storage_format_in_conn(
     conn: &Connection,
     #[cfg(test)] observation_path: &Path,
 ) -> Result<()> {

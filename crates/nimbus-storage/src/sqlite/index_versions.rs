@@ -23,14 +23,10 @@ use crate::{
     validate_index_version_storage_format,
 };
 
+use super::apply_context::SqliteBatchApplyContext;
 #[cfg(test)]
-use super::config::{
-    SqliteWriteStatementConcept, observe_sqlite_cached_statement, observe_sqlite_schema_check,
-};
-use super::{
-    SqliteReadSnapshot, SqliteTenantStore, decode_u64, encode_u64, load_table_schema_from_conn,
-    map_sqlite_error,
-};
+use super::config::{SqliteWriteStatementConcept, observe_sqlite_cached_statement};
+use super::{SqliteReadSnapshot, SqliteTenantStore, decode_u64, encode_u64, map_sqlite_error};
 
 #[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -417,6 +413,7 @@ pub(super) fn record_index_versions_for_events_in_conn(
     conn: &rusqlite::Connection,
     sequence: SequenceNumber,
     events: &[TenantEventKind],
+    apply_context: &mut SqliteBatchApplyContext,
     #[cfg(test)] observation_path: &Path,
 ) -> Result<()> {
     for event in events {
@@ -425,6 +422,7 @@ pub(super) fn record_index_versions_for_events_in_conn(
                 conn,
                 sequence,
                 writes,
+                apply_context,
                 #[cfg(test)]
                 observation_path,
             )?;
@@ -437,6 +435,7 @@ pub(super) fn record_index_versions_for_writes_in_conn(
     conn: &rusqlite::Connection,
     sequence: SequenceNumber,
     writes: &[WriteOp],
+    apply_context: &mut SqliteBatchApplyContext,
     #[cfg(test)] observation_path: &Path,
 ) -> Result<()> {
     if writes.is_empty() {
@@ -446,6 +445,7 @@ pub(super) fn record_index_versions_for_writes_in_conn(
     let mutations = index_version_mutations_for_writes(
         conn,
         writes,
+        apply_context,
         #[cfg(test)]
         observation_path,
     )?;
@@ -453,7 +453,7 @@ pub(super) fn record_index_versions_for_writes_in_conn(
         return Ok(());
     }
 
-    ensure_index_version_storage_format_in_conn(
+    apply_context.ensure_index_format(
         conn,
         #[cfg(test)]
         observation_path,
@@ -539,19 +539,18 @@ pub(super) fn prune_index_versions_before_in_conn(
 fn index_version_mutations_for_writes(
     conn: &rusqlite::Connection,
     writes: &[WriteOp],
+    apply_context: &mut SqliteBatchApplyContext,
     #[cfg(test)] observation_path: &Path,
 ) -> Result<Vec<IndexVersionMutation>> {
     let mut mutations = Vec::new();
     for write in writes {
-        #[cfg(test)]
-        {
-            observe_sqlite_schema_check(observation_path);
-            observe_sqlite_cached_statement(
-                observation_path,
-                SqliteWriteStatementConcept::IndexSchemaRead,
-            );
-        }
-        let Some(table_schema) = load_table_schema_from_conn(conn, &write.table)? else {
+        let Some(table_schema) = apply_context.table_schema(
+            conn,
+            &write.table,
+            #[cfg(test)]
+            observation_path,
+        )?
+        else {
             continue;
         };
         for index in table_schema.maintained_indexes() {
@@ -628,7 +627,7 @@ fn index_version_storage_diagnostic_in_conn(
     })
 }
 
-fn ensure_index_version_storage_format_in_conn(
+pub(super) fn ensure_index_version_storage_format_in_conn(
     conn: &rusqlite::Connection,
     #[cfg(test)] observation_path: &Path,
 ) -> Result<()> {
