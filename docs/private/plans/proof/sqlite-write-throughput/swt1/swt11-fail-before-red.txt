@@ -1,0 +1,6 @@
+    note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+────────────
+     Summary [   0.047s] 1 test run: 0 passed, 1 failed, 427 skipped
+        FAIL [   0.043s] (1/1) nimbus-storage tests::sqlite_foundation::journal::observability::sqlite_queued_batch_fail_before_observes_repeated_write_work
+error: test run failed

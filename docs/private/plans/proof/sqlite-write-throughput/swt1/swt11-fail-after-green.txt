@@ -1,0 +1,4 @@
+        PASS [   0.045s] (2/3) nimbus-storage tests::sqlite_foundation::journal::observability::sqlite_queued_batch_fail_before_observes_repeated_write_work
+        PASS [   0.824s] (3/3) nimbus-storage tests::sqlite_foundation::journal::observability::sqlite_wal_observation_separates_foreground_and_post_run_passive_work
+────────────
+     Summary [   0.826s] 3 tests run: 3 passed, 425 skipped
