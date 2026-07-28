@@ -7,11 +7,11 @@ balanced order across every session.
 
 ## Primary gate (session 2, accepted under D18 lane-scoped admissibility)
 
-All twelve runs' N=256 lanes clean (CV ≤ 5.6%). Six adjacent pair deltas:
-+90.3%, +84.0%, +83.2%, +81.0%, +84.2%, +79.0%.
+All twelve runs' N=256 lanes clean (CV ≤ 5.6%). Six adjacent pair deltas (recomputed from full-precision raw samples):
++90.26%, +84.00%, +83.22%, +81.04%, +84.22%, +79.04%.3%, +84.0%, +83.2%, +81.0%, +84.2%, +79.0%.
 
 - **Paired ratio mean: 1.836** (gate ≥ 1.40) — CI on the paired
-  delta [+79.6%, +87.6%] (t, df=5), lower bound far above zero.
+  delta [+79.63%, +87.62%] (t, df=5), lower bound far above zero.
 - **`F_ref` N=256 mean: 51,399** (gate ≥ 30,000); 95% CI
   [50,312, 52,485] — lower bound 50,312 vs the
   28,000 floor. Every `F_ref` run CV ≤ 4.0%.
@@ -48,3 +48,22 @@ Per the plan's standing limitation: closed-loop percentiles here are not
 SLA latency. The below-saturation open-loop companion remains the
 publication prerequisite for any service-latency claim; no such claim is
 made by this campaign.
+
+## Sensitivity analysis: verdict under the original whole-session rule
+
+The reviewer's central objection deserves a direct answer: does the PASS
+depend on the D18 amendment? No. Applying the ORIGINAL whole-run rule to
+each session separately (no pooling, no pair dropping):
+
+- Session 1 strictly-valid pairs (1,3): ratios 1.828, 1.850
+- Session 2 strictly-valid pairs (1,3,4): 1.903, 1.832, 1.810
+- Session 3 strictly-valid pairs (3,5): 1.822, 1.842
+- Session 4 strictly-valid pair (6): 1.862
+
+Every strictly-admissible pair in every session exceeds the 1.40 gate by
+29+ points; the corresponding `F_ref` runs all exceed both floors. What the
+original rule never produced is six clean pairs in ONE session — the CI
+width, not the verdict. D18 (owner decision, prior art in SPEC/Criterion/
+TPC lane-scoped scoring) determines only which session supplies the
+tightest interval. Under any admissibility rule ever considered for this
+campaign, the outcome is PASS.
