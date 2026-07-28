@@ -1,8 +1,9 @@
 //! Portable network capability requirements and provider evidence.
 //!
-//! This module compares one explicitly named provider report with one admitted
-//! requirement set. It does not discover providers, choose fallbacks, perform
-//! effects, or infer support from an implementation type.
+//! This module defines closed requirement and evidence dimensions. Exact
+//! source-owned role registration and selection live in the sibling capability
+//! registry. The test-only aggregate matcher below remains an oracle for the
+//! exhaustive dimension matrix; it is not a public selection authority.
 
 use std::collections::BTreeSet;
 use std::error::Error as StdError;
@@ -10,7 +11,10 @@ use std::fmt::{self, Display, Formatter};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{NetworkProviderId, PortBindRealm, PortExposure, PortProtocol};
+use crate::{PortBindRealm, PortExposure, PortProtocol};
+
+#[cfg(test)]
+use crate::NetworkProviderId;
 
 /// Party responsible for realizing a network attachment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -636,9 +640,10 @@ impl NetworkCapabilityRequirements {
 }
 
 /// Capability and sovereignty evidence from one explicitly named provider.
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct NetworkProviderCapabilities {
+struct NetworkProviderCapabilities {
     provider_id: NetworkProviderId,
     attachment: NetworkAttachmentCapabilitySet,
     endpoint: NetworkEndpointCapabilitySet,
@@ -648,6 +653,7 @@ pub struct NetworkProviderCapabilities {
     sovereignty: NetworkSovereigntyCapabilities,
 }
 
+#[cfg(test)]
 impl NetworkProviderCapabilities {
     /// Construct a report with every capability group supplied.
     pub fn new(
@@ -673,36 +679,6 @@ impl NetworkProviderCapabilities {
     /// Stable registration identity whose evidence is being evaluated.
     pub fn provider_id(&self) -> &NetworkProviderId {
         &self.provider_id
-    }
-
-    /// Attachment support.
-    pub fn attachment(&self) -> &NetworkAttachmentCapabilitySet {
-        &self.attachment
-    }
-
-    /// Endpoint support.
-    pub fn endpoint(&self) -> &NetworkEndpointCapabilitySet {
-        &self.endpoint
-    }
-
-    /// Ingress support.
-    pub fn ingress(&self) -> &NetworkIngressCapabilitySet {
-        &self.ingress
-    }
-
-    /// Forwarding support.
-    pub fn forwarding(&self) -> &NetworkForwardingCapabilitySet {
-        &self.forwarding
-    }
-
-    /// Durable lifecycle support.
-    pub fn lifecycle(&self) -> &NetworkLifecycleCapabilitySet {
-        &self.lifecycle
-    }
-
-    /// Sovereignty evidence.
-    pub fn sovereignty(&self) -> &NetworkSovereigntyCapabilities {
-        &self.sovereignty
     }
 
     /// Prove this provider satisfies an admitted requirement set.
@@ -977,14 +953,16 @@ impl Display for NetworkCapabilityMismatch {
 }
 
 /// Deterministic rejection of one explicitly named provider.
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct NetworkCapabilitySatisfactionError {
+struct NetworkCapabilitySatisfactionError {
     provider_id: NetworkProviderId,
     mismatches: Vec<NetworkCapabilityMismatch>,
     safe_alternatives: Vec<NetworkProviderId>,
 }
 
+#[cfg(test)]
 impl NetworkCapabilitySatisfactionError {
     /// Provider registration whose evidence was rejected.
     pub fn provider_id(&self) -> &NetworkProviderId {
@@ -1002,6 +980,7 @@ impl NetworkCapabilitySatisfactionError {
     }
 }
 
+#[cfg(test)]
 impl Display for NetworkCapabilitySatisfactionError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         write!(
@@ -1030,6 +1009,7 @@ impl Display for NetworkCapabilitySatisfactionError {
     }
 }
 
+#[cfg(test)]
 impl StdError for NetworkCapabilitySatisfactionError {}
 
 #[cfg(test)]

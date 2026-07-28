@@ -10,6 +10,7 @@ mod latency;
 mod license;
 mod listener_lease;
 mod local_server;
+mod network_capabilities;
 mod owned_tasks;
 mod protocol;
 mod router;

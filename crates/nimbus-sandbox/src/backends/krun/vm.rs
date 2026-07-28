@@ -13,6 +13,10 @@ use ulid::Ulid;
 
 use super::bundle::{KrunBundleLayout, KrunBundleMount, KrunBundleOptions, write_bundle_config};
 use crate::backend::{SandboxBackend, SandboxBackendKind, SandboxFuture};
+use crate::backends::capabilities::{
+    SandboxAttachmentRegistrationError, SandboxAttachmentRegistrationKind,
+    host_managed_attachment_registration,
+};
 #[cfg(test)]
 use crate::backends::conmon::lifecycle::RestartLaunchTestProbe;
 #[cfg(test)]
@@ -246,6 +250,24 @@ impl KrunEffectBarrierTestProbe {
 }
 
 impl KrunSandboxBackend {
+    /// Report conservative host-managed attachment evidence for this composition.
+    ///
+    /// This refuses configurations that cannot own the exact local Execute
+    /// composition and performs no provider effects or runtime readiness probes.
+    pub fn host_managed_attachment_registration(
+        &self,
+    ) -> std::result::Result<
+        nimbus_network::NetworkAttachmentProviderRegistration,
+        SandboxAttachmentRegistrationError,
+    > {
+        host_managed_attachment_registration(
+            SandboxAttachmentRegistrationKind::Krun,
+            self.config.start_mode == KrunStartMode::Execute,
+            false,
+            self.startup_network_reconciliation_error.as_ref(),
+        )
+    }
+
     pub fn new(config: KrunSandboxBackendConfig) -> Self {
         let segment_allocator: Arc<OciSegmentAllocator> =
             Arc::new(ConfiguredSegmentAllocator::new(

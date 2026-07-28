@@ -21,6 +21,10 @@ use super::bundle::{
     ContainerBundleLayout, ContainerBundleMount, ContainerBundleOptions, write_bundle_config,
 };
 use crate::backend::{SandboxBackend, SandboxBackendKind, SandboxFuture};
+use crate::backends::capabilities::{
+    SandboxAttachmentRegistrationError, SandboxAttachmentRegistrationKind,
+    host_managed_attachment_registration,
+};
 #[cfg(test)]
 use crate::backends::conmon::lifecycle::RestartLaunchTestProbe;
 use crate::backends::conmon::lifecycle::{
@@ -136,6 +140,24 @@ fn combine_launch_failure(
 }
 
 impl ContainerSandboxBackend {
+    /// Report conservative host-managed attachment evidence for this composition.
+    ///
+    /// This refuses configurations that cannot own the exact local Execute
+    /// composition and performs no provider effects or runtime readiness probes.
+    pub fn host_managed_attachment_registration(
+        &self,
+    ) -> std::result::Result<
+        nimbus_network::NetworkAttachmentProviderRegistration,
+        SandboxAttachmentRegistrationError,
+    > {
+        host_managed_attachment_registration(
+            SandboxAttachmentRegistrationKind::Container,
+            self.config.start_mode == ContainerStartMode::Execute,
+            self.config.machine_port_forwarder.is_some(),
+            self.startup_reconciliation_error.as_ref(),
+        )
+    }
+
     pub fn new(config: ContainerSandboxBackendConfig) -> Self {
         let segment_allocator: Arc<OciSegmentAllocator> =
             Arc::new(ConfiguredSegmentAllocator::new(

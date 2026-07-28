@@ -9,6 +9,7 @@
 //! inject provider capabilities without creating reverse dependencies.
 
 mod capability;
+mod capability_registry;
 mod endpoint;
 mod identity;
 mod plan;
@@ -22,13 +23,18 @@ mod status;
 pub use capability::{
     NetworkAddressFamily, NetworkAttachmentCapabilitySet, NetworkAttachmentMode,
     NetworkBindRealmKind, NetworkCapabilityDimension, NetworkCapabilityFactError,
-    NetworkCapabilityMismatch, NetworkCapabilityRequirements, NetworkCapabilitySatisfactionError,
-    NetworkControlPlaneLocality, NetworkEndpointCapabilitySet, NetworkExposure,
-    NetworkExternalDependency, NetworkForwardingCapabilitySet, NetworkForwardingFeature,
-    NetworkIngressCapabilitySet, NetworkIngressFeature, NetworkIsolationMode,
-    NetworkLifecycleCapabilitySet, NetworkLifecycleFeature, NetworkManagementMode,
-    NetworkPortAssignmentMode, NetworkProviderCapabilities, NetworkSovereigntyCapabilities,
-    NetworkSovereigntyRequirements,
+    NetworkCapabilityMismatch, NetworkCapabilityRequirements, NetworkControlPlaneLocality,
+    NetworkEndpointCapabilitySet, NetworkExposure, NetworkExternalDependency,
+    NetworkForwardingCapabilitySet, NetworkForwardingFeature, NetworkIngressCapabilitySet,
+    NetworkIngressFeature, NetworkIsolationMode, NetworkLifecycleCapabilitySet,
+    NetworkLifecycleFeature, NetworkManagementMode, NetworkPortAssignmentMode,
+    NetworkSovereigntyCapabilities, NetworkSovereigntyRequirements,
+};
+pub use capability_registry::{
+    NetworkAttachmentProviderRegistration, NetworkCapabilityBundle,
+    NetworkCapabilityProviderFailure, NetworkCapabilityRegistry, NetworkCapabilityRegistryError,
+    NetworkCapabilityRole, NetworkCapabilitySelection, NetworkCapabilitySelectionError,
+    NetworkIngressProviderRegistration,
 };
 pub use endpoint::{EndpointProtocol, PublishedEndpoint};
 pub use identity::{

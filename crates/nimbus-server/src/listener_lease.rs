@@ -26,7 +26,7 @@ use ulid::Ulid;
 
 const INITIAL_RESOURCE_GENERATION: NetworkResourceGeneration = NetworkResourceGeneration::new(1);
 const INITIAL_LEASE_EPOCH: NetworkLeaseEpoch = NetworkLeaseEpoch::new(1);
-const SERVER_LISTENER_PROVIDER_KEY: &str = "nimbus-server.tcp-listener";
+pub(crate) const SERVER_LISTENER_PROVIDER_KEY: &str = "nimbus-server.tcp-listener";
 const EXTERNAL_MAIN_LISTENER_OWNER: &str = "nimbus-server";
 const EXTERNAL_MAIN_LISTENER_NAME: &str = "main-http-external";
 

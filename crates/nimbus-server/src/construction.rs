@@ -55,6 +55,18 @@ impl ServeOptions {
         }
     }
 
+    /// Report the closed capability facts of Nimbus-owned local ingress.
+    ///
+    /// This value describes the existing composition only. Constructing it
+    /// performs no socket, TLS, certificate, or readiness effect.
+    pub fn nimbus_owned_local_ingress_registration(
+        &self,
+    ) -> nimbus_network::NetworkIngressProviderRegistration {
+        crate::network_capabilities::nimbus_owned_local_ingress_registration(
+            self.tls_config.is_some(),
+        )
+    }
+
     /// Use this node-local root for durable listener leases.
     ///
     /// The default is the engine data directory. Composition roots that share

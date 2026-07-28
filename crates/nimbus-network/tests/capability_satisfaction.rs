@@ -1,10 +1,12 @@
 use std::collections::BTreeSet;
 
 use nimbus_network::{
-    NetworkAttachmentCapabilitySet, NetworkAttachmentMode, NetworkCapabilityRequirements,
+    NetworkAddressFamily, NetworkAttachmentCapabilitySet, NetworkAttachmentMode,
+    NetworkAttachmentProviderRegistration, NetworkCapabilityBundle, NetworkCapabilityDimension,
+    NetworkCapabilityRegistry, NetworkCapabilityRequirements, NetworkCapabilityRole,
     NetworkControlPlaneLocality, NetworkEndpointCapabilitySet, NetworkForwardingCapabilitySet,
-    NetworkIngressCapabilitySet, NetworkLifecycleCapabilitySet, NetworkManagementMode, NetworkPlan,
-    NetworkPlanContentDigest, NetworkPlanId, NetworkProviderCapabilities, NetworkProviderId,
+    NetworkIngressCapabilitySet, NetworkIngressProviderRegistration, NetworkLifecycleCapabilitySet,
+    NetworkManagementMode, NetworkPlan, NetworkPlanContentDigest, NetworkPlanId, NetworkProviderId,
     NetworkResourceGeneration, NetworkSovereigntyCapabilities, NetworkSovereigntyRequirements,
 };
 
@@ -33,14 +35,30 @@ fn empty_requirements() -> NetworkCapabilityRequirements {
     )
 }
 
-fn host_provider() -> NetworkProviderCapabilities {
-    NetworkProviderCapabilities::new(
-        NetworkProviderId::for_registration_key("host"),
+fn attachment(
+    key: &str,
+    modes: impl IntoIterator<Item = NetworkAttachmentMode>,
+) -> NetworkAttachmentProviderRegistration {
+    NetworkAttachmentProviderRegistration::new(
+        NetworkProviderId::for_registration_key(key),
         NetworkAttachmentCapabilitySet::new(
             NetworkManagementMode::NimbusHostManaged,
-            BTreeSet::new(),
+            modes,
             BTreeSet::new(),
         ),
+        BTreeSet::<NetworkAddressFamily>::new(),
+        NetworkLifecycleCapabilitySet::new(BTreeSet::new()),
+        NetworkSovereigntyCapabilities::new(
+            NetworkControlPlaneLocality::LocalOnly,
+            BTreeSet::new(),
+            true,
+        ),
+    )
+}
+
+fn ingress(key: &str) -> NetworkIngressProviderRegistration {
+    NetworkIngressProviderRegistration::new(
+        NetworkProviderId::for_registration_key(key),
         NetworkEndpointCapabilitySet::new(
             BTreeSet::new(),
             BTreeSet::new(),
@@ -59,52 +77,68 @@ fn host_provider() -> NetworkProviderCapabilities {
     )
 }
 
+fn bundle(
+    attachment_key: &str,
+    modes: impl IntoIterator<Item = NetworkAttachmentMode>,
+    ingress_key: &str,
+) -> NetworkCapabilityBundle {
+    NetworkCapabilityBundle::new(attachment(attachment_key, modes), ingress(ingress_key))
+}
+
 #[test]
-fn explicitly_named_provider_satisfies_explicit_empty_feature_sets() {
-    host_provider()
-        .ensure_satisfied(&empty_requirements(), [])
+fn explicitly_named_composition_satisfies_explicit_empty_feature_sets() {
+    let bundle = bundle("host-attachment", [], "host-ingress");
+    let selection = bundle.selection();
+    let registry =
+        NetworkCapabilityRegistry::new([bundle]).expect("complete composition should register");
+
+    let selected = registry
+        .select_exact(&selection, &empty_requirements())
         .expect("matching explicit capability facts should satisfy");
+
+    assert_eq!(selected.selection(), selection);
 }
 
 #[test]
 fn missing_attachment_mode_fails_closed_without_selecting_an_alternative() {
-    let requirements = NetworkCapabilityRequirements::new(
+    let requested_bundle = bundle("host-attachment", [], "host-ingress");
+    let requested = requested_bundle.selection();
+    let alternative_bundle = bundle(
+        "isolated-attachment",
+        [NetworkAttachmentMode::IsolatedNamespace],
+        "isolated-ingress",
+    );
+    let safe_alternative = alternative_bundle.selection();
+    let registry = NetworkCapabilityRegistry::new([alternative_bundle, requested_bundle])
+        .expect("complete compositions should register");
+    let mut requirements = empty_requirements();
+    requirements = NetworkCapabilityRequirements::new(
         NetworkAttachmentCapabilitySet::new(
             NetworkManagementMode::NimbusHostManaged,
-            BTreeSet::from([NetworkAttachmentMode::IsolatedNamespace]),
+            [NetworkAttachmentMode::IsolatedNamespace],
             BTreeSet::new(),
         ),
-        NetworkEndpointCapabilitySet::new(
-            BTreeSet::new(),
-            BTreeSet::new(),
-            BTreeSet::new(),
-            BTreeSet::new(),
-            BTreeSet::new(),
-        ),
-        NetworkIngressCapabilitySet::new(BTreeSet::new()),
-        NetworkForwardingCapabilitySet::new(BTreeSet::new()),
-        NetworkLifecycleCapabilitySet::new(BTreeSet::new()),
-        NetworkSovereigntyRequirements::new(
-            NetworkControlPlaneLocality::ThirdParty,
-            BTreeSet::new(),
-            false,
-        ),
+        requirements.endpoint().clone(),
+        requirements.ingress().clone(),
+        requirements.forwarding().clone(),
+        requirements.lifecycle().clone(),
+        requirements.sovereignty().clone(),
     );
-    let safe_alternative = NetworkProviderId::for_registration_key("isolated");
 
-    let error = host_provider()
-        .ensure_satisfied(
-            &requirements,
-            [safe_alternative.clone(), safe_alternative.clone()],
-        )
+    let error = registry
+        .select_exact(&requested, &requirements)
         .expect_err("missing attachment support must fail closed");
 
-    assert_eq!(error.provider_id(), host_provider().provider_id());
+    assert_eq!(error.requested_selection(), &requested);
     assert_eq!(error.safe_alternatives(), &[safe_alternative]);
-    assert_eq!(error.mismatches().len(), 1);
+    assert_eq!(error.provider_failures().len(), 1);
     assert_eq!(
-        error.mismatches()[0].dimension().to_string(),
-        "attachment_mode"
+        error.provider_failures()[0].role(),
+        NetworkCapabilityRole::Attachment
+    );
+    assert_eq!(
+        error.provider_failures()[0].mismatches()[0].dimension(),
+        NetworkCapabilityDimension::AttachmentMode
     );
 }
 
