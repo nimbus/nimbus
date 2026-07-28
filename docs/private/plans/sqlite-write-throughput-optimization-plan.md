@@ -311,7 +311,7 @@ source/reference row. Add candidates and record rejections separately.
 | D3 | 2026-07-27 | Execute statement reuse and invariant hoisting together, with internal attribution counters | They share batch ownership and the clean replay-guarded planning ablation measures their combined safe mechanism |
 | D4 | 2026-07-27 | Reuse a connection without combining queued transactions | Connection churn is measured; append-before-apply is a crash/replay invariant |
 | D5 | 2026-07-27 | Reject checkpoint tuning absent new evidence | No fixed fixture reaches automatic checkpoint |
-| D6 | 2026-07-27 | Treat forward apply as worthwhile but give it a separate higher-proof phase | The planning reference's 11.5% guarded lower-layer delta is material; combined ablation needs attribution, and corruption/recovery risk forbids simply deleting the read |
+| D6 | 2026-07-27 | Treat forward apply as worthwhile but give it a separate higher-proof phase | 11.5% guarded lower-layer elapsed is material; combined ablation needs attribution, and corruption/recovery risk forbids simply deleting the read |
 | D7 | 2026-07-27 | Plan/harness PR merges before any implementation branch | Every candidate must consume one canonical protocol and ledger |
 | D8 | 2026-07-28 | Supersede D2's absolute-only gate with a same-session paired ≥40% gain over frozen source `B_ref`, plus 30k/28k floors | Identical production source measured 21,433 and 25,862 on different host states; rerunning `B_ref` contemporaneously prevents weather from deciding the ratio |
 | D9 | 2026-07-28 | Scope D5 to the layered fixture pending SWT0 Engine-scale counters | The 768-mutation fixture stays below autocheckpoint, while full-Engine rounds cross that WAL scale |
@@ -341,7 +341,8 @@ is removed.
 | Implementation cannot begin until CTRL0 merges | CTRL0 | plan/harness PR merged and worktree cleaned | open |
 | Final hashed layered binary has no quiet-host accepted report | SWT0 | same-session report and binary hashes recorded with every lane CV≤10% | open; planning reference is non-acceptance evidence |
 | Fresh hot-key/resource baseline not captured in exact SWT0 session | SWT0 | accepted CV≤10% reports under `swt0/` | open |
-| SWT3 authorization | plan owner via measured ledger | target remains unmet after SWT2 and encoded ceiling ≥3% | gated |
+| `B_ref` cannot be frozen before observability merges | SWT0 | SWT0.1 fail-before and Engine-scale WAL/checkpoint counter seams merged to `origin/main`, then the exact post-merge commit frozen per D13 | open |
+| SWT3 authorization | plan owner via measured ledger | relative-plus-absolute final target remains unmet after SWT2 and encoded ceiling ≥3% | gated |
 | SWT4 implementation authorization | SWT4.1 attribution and design review | isolated safe projected end-to-end gain ≥3%, conditional forward guard designed, recovery retains full validation | planned |
 
 ## Phase CTRL0 — Canonical Research And Plan PR
