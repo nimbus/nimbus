@@ -8,6 +8,7 @@
 //! `nimbus-core` is this crate's only workspace dependency. Upper-layer crates
 //! inject provider capabilities without creating reverse dependencies.
 
+mod capability;
 mod endpoint;
 mod identity;
 mod plan;
@@ -18,6 +19,17 @@ mod state;
 mod state_store;
 mod status;
 
+pub use capability::{
+    NetworkAddressFamily, NetworkAttachmentCapabilitySet, NetworkAttachmentMode,
+    NetworkBindRealmKind, NetworkCapabilityDimension, NetworkCapabilityFactError,
+    NetworkCapabilityMismatch, NetworkCapabilityRequirements, NetworkCapabilitySatisfactionError,
+    NetworkControlPlaneLocality, NetworkEndpointCapabilitySet, NetworkExposure,
+    NetworkExternalDependency, NetworkForwardingCapabilitySet, NetworkForwardingFeature,
+    NetworkIngressCapabilitySet, NetworkIngressFeature, NetworkIsolationMode,
+    NetworkLifecycleCapabilitySet, NetworkLifecycleFeature, NetworkManagementMode,
+    NetworkPortAssignmentMode, NetworkProviderCapabilities, NetworkSovereigntyCapabilities,
+    NetworkSovereigntyRequirements,
+};
 pub use endpoint::{EndpointProtocol, PublishedEndpoint};
 pub use identity::{
     IngressRouteId, ListenerId, NetworkAttachmentId, NetworkLeaseEpoch, NetworkPlanId,
@@ -25,8 +37,8 @@ pub use identity::{
     NetworkResourceIdParseErrorKind, NetworkSegmentId, PortLeaseId, PublishedEndpointId,
 };
 pub use plan::{
-    NetworkPlan, NetworkPlanDigest, NetworkPlanDigestParseError, NetworkPlanUpdate,
-    NetworkPlanUpdateError,
+    NetworkPlan, NetworkPlanContentDigest, NetworkPlanDigest, NetworkPlanDigestParseError,
+    NetworkPlanUpdate, NetworkPlanUpdateError,
 };
 pub use port_lease::{
     LocalPortLeaseAuthority, NetworkReservationLifetimeAttempt, NetworkReservationLifetimeGuard,

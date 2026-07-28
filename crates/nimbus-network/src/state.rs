@@ -573,6 +573,8 @@ impl TryFrom<DurableNetworkResourceStateWire> for DurableNetworkResourceState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::NetworkPlanContentDigest;
+    use crate::capability::test_requirements;
     use crate::{NetworkProviderHandle, NetworkProviderId};
 
     const PHASES: [NetworkResourcePhase; 11] = [
@@ -611,7 +613,8 @@ mod tests {
         NetworkPlan::new(
             plan_id("netplan_01ARZ3NDEKTSV4RRFFQ69G5FAV"),
             NetworkResourceGeneration::new(generation),
-            NetworkPlanDigest::sha256(content),
+            NetworkPlanContentDigest::sha256(content),
+            test_requirements(),
         )
     }
 
@@ -869,7 +872,7 @@ mod tests {
             ),
             (
                 NetworkResourceVersion {
-                    plan_digest: NetworkPlanDigest::sha256(b"different"),
+                    plan_digest: NetworkPlanDigest::from_bytes([0x42; 32]),
                     ..base.clone()
                 },
                 NetworkStateError::PlanDigestConflict {

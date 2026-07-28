@@ -469,8 +469,10 @@ impl TryFrom<NetworkStatusWire> for NetworkStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::capability::test_requirements;
     use crate::{
-        NetworkAttachmentId, NetworkPlan, NetworkPlanDigest, NetworkPlanId, NetworkResourceId,
+        NetworkAttachmentId, NetworkPlan, NetworkPlanContentDigest, NetworkPlanId,
+        NetworkResourceId,
     };
 
     fn plan_id(value: &str) -> NetworkPlanId {
@@ -488,7 +490,8 @@ mod tests {
         NetworkPlan::new(
             plan_id("netplan_01ARZ3NDEKTSV4RRFFQ69G5FAV"),
             NetworkResourceGeneration::new(generation),
-            NetworkPlanDigest::sha256(content),
+            NetworkPlanContentDigest::sha256(content),
+            test_requirements(),
         )
     }
 
@@ -563,7 +566,8 @@ mod tests {
                         &NetworkPlan::new(
                             plan_id("netplan_01ARZ3NDEKTSV4RRFFQ69G5FAW"),
                             NetworkResourceGeneration::new(7),
-                            NetworkPlanDigest::sha256(b"desired"),
+                            NetworkPlanContentDigest::sha256(b"desired"),
+                            test_requirements(),
                         ),
                         desired.resource_id().clone(),
                         NetworkLeaseEpoch::new(11),

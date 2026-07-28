@@ -5,96 +5,149 @@ use std::str::FromStr;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 
-use crate::{NetworkPlanId, NetworkResourceGeneration};
+use crate::{NetworkCapabilityRequirements, NetworkPlanId, NetworkResourceGeneration};
 
-/// Canonical SHA-256 digest of one compiled, provider-neutral plan generation.
+const PLAN_DIGEST_DOMAIN: &[u8] = b"nimbus.network.plan.digest.v1\0";
+
+/// SHA-256 digest of the upper-layer canonical resource-plan encoding.
 ///
-/// The compiler above this crate owns canonical encoding of admitted intent.
-/// This type pins the digest algorithm and wire form used to prevent
-/// equal-generation content divergence.
+/// This type is deliberately distinct from [`NetworkPlanDigest`]. A caller
+/// supplies only this content digest; [`NetworkPlan`] binds it to canonical
+/// capability requirements before exposing the final plan digest.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct NetworkPlanDigest([u8; 32]);
+pub struct NetworkPlanContentDigest([u8; 32]);
 
-impl NetworkPlanDigest {
-    /// Digest a canonical provider-neutral plan encoding with SHA-256.
+impl NetworkPlanContentDigest {
+    /// Digest the upper-layer canonical resource-plan encoding with SHA-256.
     pub fn sha256(canonical_plan: impl AsRef<[u8]>) -> Self {
         Self(Sha256::digest(canonical_plan.as_ref()).into())
     }
 
-    /// Construct from an already verified SHA-256 value.
+    /// Construct from an already verified content SHA-256 value.
     pub const fn from_bytes(bytes: [u8; 32]) -> Self {
         Self(bytes)
     }
 
-    /// Return the raw SHA-256 value.
+    /// Return the raw content SHA-256 value.
     pub const fn as_bytes(&self) -> &[u8; 32] {
         &self.0
     }
 }
 
-impl Display for NetworkPlanDigest {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-        for byte in self.0 {
-            write!(formatter, "{byte:02x}")?;
-        }
-        Ok(())
+/// Canonical SHA-256 digest of all provider-neutral desired plan content.
+///
+/// The digest is domain-separated and binds the upper-layer content digest to
+/// the canonical serialized capability requirements. It cannot be supplied to
+/// a [`NetworkPlan`] independently of those requirements.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct NetworkPlanDigest([u8; 32]);
+
+impl NetworkPlanDigest {
+    /// Bind one canonical content digest to canonical capability requirements.
+    pub fn for_content(
+        content_digest: NetworkPlanContentDigest,
+        requirements: &NetworkCapabilityRequirements,
+    ) -> Self {
+        // These closed value objects contain only enums, booleans, structs, and
+        // BTreeSets. Their serde field order and set order are deterministic,
+        // and the pinned digest test detects any future wire change.
+        let requirements = serde_json::to_vec(requirements)
+            .expect("closed network capability requirements always serialize");
+        let requirements_len = u64::try_from(requirements.len())
+            .expect("a serialized Rust value length fits u64 on supported targets");
+        let mut digest = Sha256::new();
+        digest.update(PLAN_DIGEST_DOMAIN);
+        digest.update(content_digest.as_bytes());
+        digest.update(requirements_len.to_be_bytes());
+        digest.update(requirements);
+        Self(digest.finalize().into())
+    }
+
+    /// Construct from an already verified complete-plan SHA-256 value.
+    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    /// Return the raw complete-plan SHA-256 value.
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
     }
 }
 
-impl fmt::Debug for NetworkPlanDigest {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_tuple("NetworkPlanDigest")
-            .field(&self.to_string())
-            .finish()
+fn parse_digest(value: &str) -> Result<[u8; 32], NetworkPlanDigestParseError> {
+    if value.len() != 64 {
+        return Err(NetworkPlanDigestParseError::WrongLength);
     }
-}
-
-impl FromStr for NetworkPlanDigest {
-    type Err = NetworkPlanDigestParseError;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        if value.len() != 64 {
-            return Err(NetworkPlanDigestParseError::WrongLength);
-        }
-        if value
-            .bytes()
-            .any(|byte| !byte.is_ascii_digit() && !(b'a'..=b'f').contains(&byte))
-        {
-            return Err(NetworkPlanDigestParseError::NonCanonicalHex);
-        }
-
-        let mut bytes = [0_u8; 32];
-        for (index, output) in bytes.iter_mut().enumerate() {
-            let offset = index * 2;
-            *output = u8::from_str_radix(&value[offset..offset + 2], 16)
-                .map_err(|_| NetworkPlanDigestParseError::NonCanonicalHex)?;
-        }
-        Ok(Self(bytes))
-    }
-}
-
-impl Serialize for NetworkPlanDigest {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
+    if value
+        .bytes()
+        .any(|byte| !byte.is_ascii_digit() && !(b'a'..=b'f').contains(&byte))
     {
-        serializer.serialize_str(&self.to_string())
+        return Err(NetworkPlanDigestParseError::NonCanonicalHex);
     }
+
+    let mut bytes = [0_u8; 32];
+    for (index, output) in bytes.iter_mut().enumerate() {
+        let offset = index * 2;
+        *output = u8::from_str_radix(&value[offset..offset + 2], 16)
+            .map_err(|_| NetworkPlanDigestParseError::NonCanonicalHex)?;
+    }
+    Ok(bytes)
 }
 
-impl<'de> Deserialize<'de> for NetworkPlanDigest {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        String::deserialize(deserializer)?
-            .parse()
-            .map_err(serde::de::Error::custom)
-    }
+macro_rules! impl_digest_wire {
+    ($type:ident) => {
+        impl Display for $type {
+            fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+                for byte in self.0 {
+                    write!(formatter, "{byte:02x}")?;
+                }
+                Ok(())
+            }
+        }
+
+        impl fmt::Debug for $type {
+            fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+                formatter
+                    .debug_tuple(stringify!($type))
+                    .field(&self.to_string())
+                    .finish()
+            }
+        }
+
+        impl FromStr for $type {
+            type Err = NetworkPlanDigestParseError;
+
+            fn from_str(value: &str) -> Result<Self, Self::Err> {
+                parse_digest(value).map(Self)
+            }
+        }
+
+        impl Serialize for $type {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: Serializer,
+            {
+                serializer.serialize_str(&self.to_string())
+            }
+        }
+
+        impl<'de> Deserialize<'de> for $type {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                String::deserialize(deserializer)?
+                    .parse()
+                    .map_err(serde::de::Error::custom)
+            }
+        }
+    };
 }
 
-/// Stable reason a serialized plan digest was rejected.
+impl_digest_wire!(NetworkPlanContentDigest);
+impl_digest_wire!(NetworkPlanDigest);
+
+/// Stable reason a serialized plan or content digest was rejected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NetworkPlanDigestParseError {
     /// SHA-256 text must contain exactly 64 characters.
@@ -120,28 +173,33 @@ impl StdError for NetworkPlanDigestParseError {}
 
 /// Desired-generation envelope for compiled provider-neutral connectivity.
 ///
-/// Resource and capability content is compiled above this low-dependency
-/// contract. Its canonical encoding is represented here by `digest`, so the
-/// same generation cannot be accepted with different desired content.
+/// Resource content is compiled above this low-dependency contract. Its
+/// distinct content digest and typed capability requirements are the complete
+/// desired state from which [`Self::digest`] is derived.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct NetworkPlan {
     plan_id: NetworkPlanId,
     generation: NetworkResourceGeneration,
-    digest: NetworkPlanDigest,
+    content_digest: NetworkPlanContentDigest,
+    requirements: NetworkCapabilityRequirements,
 }
 
 impl NetworkPlan {
     /// Construct a desired plan envelope from its stable identity, monotonic
-    /// generation, and canonical content digest.
+    /// generation, canonical resource-content digest, and admitted capability
+    /// requirements.
     pub fn new(
         plan_id: NetworkPlanId,
         generation: NetworkResourceGeneration,
-        digest: NetworkPlanDigest,
+        content_digest: NetworkPlanContentDigest,
+        requirements: NetworkCapabilityRequirements,
     ) -> Self {
         Self {
             plan_id,
             generation,
-            digest,
+            content_digest,
+            requirements,
         }
     }
 
@@ -155,9 +213,19 @@ impl NetworkPlan {
         self.generation
     }
 
-    /// Canonical digest of all desired content in this generation.
+    /// Upper-layer canonical resource-content digest.
+    pub const fn content_digest(&self) -> NetworkPlanContentDigest {
+        self.content_digest
+    }
+
+    /// Domain-separated digest of resource content plus requirements.
     pub fn digest(&self) -> NetworkPlanDigest {
-        self.digest
+        NetworkPlanDigest::for_content(self.content_digest, &self.requirements)
+    }
+
+    /// Provider-neutral capabilities required by this desired generation.
+    pub fn requirements(&self) -> &NetworkCapabilityRequirements {
+        &self.requirements
     }
 
     /// Decide whether another desired envelope is an idempotent replay or a
@@ -174,8 +242,11 @@ impl NetworkPlan {
                 current: self.generation,
                 candidate: candidate.generation,
             }),
-            std::cmp::Ordering::Equal if candidate.digest != self.digest => {
-                Err(NetworkPlanUpdateError::EqualGenerationDigestConflict {
+            std::cmp::Ordering::Equal
+                if candidate.content_digest != self.content_digest
+                    || candidate.requirements != self.requirements =>
+            {
+                Err(NetworkPlanUpdateError::EqualGenerationContentConflict {
                     generation: self.generation,
                 })
             }
@@ -188,13 +259,13 @@ impl NetworkPlan {
 /// Accepted relationship between a current and candidate desired plan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NetworkPlanUpdate {
-    /// Same identity, generation, and digest.
+    /// Same identity, generation, digest, and capability requirements.
     Idempotent,
     /// Same identity with a strictly newer generation.
     Advance,
 }
 
-/// Rejection from desired-plan generation/digest validation.
+/// Rejection from desired-plan generation and content validation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NetworkPlanUpdateError {
     /// The candidate belongs to another stable plan.
@@ -205,7 +276,7 @@ pub enum NetworkPlanUpdateError {
         candidate: NetworkResourceGeneration,
     },
     /// Equal generations carry different desired content.
-    EqualGenerationDigestConflict {
+    EqualGenerationContentConflict {
         generation: NetworkResourceGeneration,
     },
 }
@@ -222,7 +293,7 @@ impl Display for NetworkPlanUpdateError {
                 candidate.as_u64(),
                 current.as_u64()
             ),
-            Self::EqualGenerationDigestConflict { generation } => write!(
+            Self::EqualGenerationContentConflict { generation } => write!(
                 formatter,
                 "network plan generation {} has conflicting desired content",
                 generation.as_u64()
@@ -236,6 +307,8 @@ impl StdError for NetworkPlanUpdateError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::NetworkManagementMode;
+    use crate::capability::{test_requirements, test_requirements_with_management};
 
     fn plan_id(value: &str) -> NetworkPlanId {
         value.parse().expect("fixture plan id should parse")
@@ -245,28 +318,42 @@ mod tests {
         NetworkPlan::new(
             plan_id("netplan_01ARZ3NDEKTSV4RRFFQ69G5FAV"),
             NetworkResourceGeneration::new(generation),
-            NetworkPlanDigest::sha256(content),
+            NetworkPlanContentDigest::sha256(content),
+            test_requirements(),
         )
     }
 
     #[test]
     fn sha256_and_wire_form_are_pinned() {
-        let digest = NetworkPlanDigest::sha256(b"nimbus-network-plan-v1");
+        let content_digest = NetworkPlanContentDigest::sha256(b"nimbus-network-plan-v1");
 
         assert_eq!(
-            digest.to_string(),
+            content_digest.to_string(),
             "818c3d26850ef542623be2fdabbc9ddc4989d58117d08d0506f67b2c6e4757c5"
         );
         assert_eq!(
-            serde_json::to_string(&digest).expect("digest should serialize"),
+            serde_json::to_string(&content_digest).expect("content digest should serialize"),
             r#""818c3d26850ef542623be2fdabbc9ddc4989d58117d08d0506f67b2c6e4757c5""#
         );
         assert_eq!(
-            serde_json::from_str::<NetworkPlanDigest>(
+            serde_json::from_str::<NetworkPlanContentDigest>(
                 r#""818c3d26850ef542623be2fdabbc9ddc4989d58117d08d0506f67b2c6e4757c5""#
             )
-            .expect("digest should deserialize"),
-            digest
+            .expect("content digest should deserialize"),
+            content_digest
+        );
+
+        let plan_digest = NetworkPlanDigest::for_content(content_digest, &test_requirements());
+        assert_eq!(
+            plan_digest.to_string(),
+            "dd1314e61f5027ead64e890f99fd4c421defb60ae4edda124924e0b522f4fe60"
+        );
+        assert_eq!(
+            serde_json::from_str::<NetworkPlanDigest>(
+                &serde_json::to_string(&plan_digest).expect("plan digest should serialize")
+            )
+            .expect("plan digest should deserialize"),
+            plan_digest
         );
     }
 
@@ -309,7 +396,7 @@ mod tests {
         );
         assert_eq!(
             current.classify_update(&plan(7, b"desired-b")),
-            Err(NetworkPlanUpdateError::EqualGenerationDigestConflict {
+            Err(NetworkPlanUpdateError::EqualGenerationContentConflict {
                 generation: NetworkResourceGeneration::new(7),
             })
         );
@@ -321,12 +408,101 @@ mod tests {
         let candidate = NetworkPlan::new(
             plan_id("netplan_01ARZ3NDEKTSV4RRFFQ69G5FAW"),
             NetworkResourceGeneration::new(8),
-            NetworkPlanDigest::sha256(b"desired"),
+            NetworkPlanContentDigest::sha256(b"desired"),
+            test_requirements(),
         );
 
         assert_eq!(
             current.classify_update(&candidate),
             Err(NetworkPlanUpdateError::PlanIdentityMismatch)
+        );
+    }
+
+    #[test]
+    fn desired_update_rejects_equal_generation_requirement_divergence() {
+        let current = plan(7, b"desired");
+        let candidate = NetworkPlan::new(
+            current.plan_id().clone(),
+            current.generation(),
+            current.content_digest(),
+            test_requirements_with_management(NetworkManagementMode::ProviderManaged),
+        );
+
+        assert_eq!(
+            current.classify_update(&candidate),
+            Err(NetworkPlanUpdateError::EqualGenerationContentConflict {
+                generation: NetworkResourceGeneration::new(7),
+            })
+        );
+    }
+
+    #[test]
+    fn capability_requirements_are_bound_into_the_plan_digest() {
+        let current = plan(7, b"desired");
+        let changed_requirements = NetworkPlan::new(
+            current.plan_id().clone(),
+            NetworkResourceGeneration::new(8),
+            current.content_digest(),
+            test_requirements_with_management(NetworkManagementMode::ProviderManaged),
+        );
+
+        assert_ne!(
+            changed_requirements.digest(),
+            current.digest(),
+            "changing only capability requirements must change the canonical plan digest"
+        );
+    }
+
+    #[test]
+    fn plan_wire_requires_requirements_and_rejects_unknown_fields() {
+        let plan = plan(7, b"desired");
+        let wire = serde_json::to_value(&plan).expect("network plan should serialize");
+
+        assert_eq!(
+            serde_json::from_value::<NetworkPlan>(wire.clone())
+                .expect("network plan should round-trip"),
+            plan
+        );
+        assert_eq!(
+            wire.get("requirements"),
+            Some(
+                &serde_json::to_value(test_requirements())
+                    .expect("requirements fixture should serialize")
+            )
+        );
+        assert_eq!(
+            wire.get("content_digest"),
+            Some(
+                &serde_json::to_value(plan.content_digest())
+                    .expect("content digest should serialize")
+            )
+        );
+        assert!(
+            wire.get("digest").is_none(),
+            "the complete plan digest is derived and cannot diverge on the wire"
+        );
+
+        let mut missing_requirements = wire.clone();
+        missing_requirements
+            .as_object_mut()
+            .expect("plan wire should be an object")
+            .remove("requirements");
+        assert!(
+            serde_json::from_value::<NetworkPlan>(missing_requirements).is_err(),
+            "requirements are desired state and must never default"
+        );
+
+        let mut supplied_final_digest = wire;
+        supplied_final_digest
+            .as_object_mut()
+            .expect("plan wire should be an object")
+            .insert(
+                "digest".to_owned(),
+                serde_json::to_value(plan.digest()).expect("plan digest should serialize"),
+            );
+        assert!(
+            serde_json::from_value::<NetworkPlan>(supplied_final_digest).is_err(),
+            "wire callers cannot supply a final digest independently"
         );
     }
 }
