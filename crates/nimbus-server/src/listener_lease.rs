@@ -18,7 +18,8 @@ use nimbus_network::{
     NetworkProviderId, NetworkResourceGeneration, PortBindAttempt, PortBindClaim, PortBindFailure,
     PortBindFailureKind, PortBindRealm, PortBindTarget, PortBindingProvenance, PortBindingSpec,
     PortBoundEndpoint, PortExposure, PortIpv6Overlap, PortLeaseAccounting, PortLeaseBinding,
-    PortLeaseError, PortLeaseFence, PortLeaseRequest, PortProtocol, PortPublicationIntent,
+    PortLeaseEffectScope, PortLeaseError, PortLeaseFence, PortLeaseLifetimeGuard,
+    PortLeaseRecoveryAttempt, PortLeaseRequest, PortProtocol, PortPublicationIntent,
     PortRequestMode,
 };
 use ulid::Ulid;
@@ -26,6 +27,43 @@ use ulid::Ulid;
 const INITIAL_RESOURCE_GENERATION: NetworkResourceGeneration = NetworkResourceGeneration::new(1);
 const INITIAL_LEASE_EPOCH: NetworkLeaseEpoch = NetworkLeaseEpoch::new(1);
 const SERVER_LISTENER_PROVIDER_KEY: &str = "nimbus-server.tcp-listener";
+const EXTERNAL_MAIN_LISTENER_OWNER: &str = "nimbus-server";
+const EXTERNAL_MAIN_LISTENER_NAME: &str = "main-http-external";
+
+/// Stable provider context for one externally owned main-listener incarnation.
+///
+/// The caller that owns or inherits the socket must persist and replay this
+/// context with the descriptor. A local address is diagnostic only and cannot
+/// authenticate that a supplied descriptor is the same provider resource. A
+/// provider must mint a new opaque incarnation or strictly newer generation
+/// for every newly bound socket and must never reuse context from a closed
+/// socket for a rebound descriptor.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExternalServerListenerContext {
+    provider_handle: NetworkProviderHandle,
+    resource_generation: NetworkResourceGeneration,
+}
+
+impl ExternalServerListenerContext {
+    /// Construct context from a provider-stable opaque incarnation key.
+    ///
+    /// `provider_incarnation` identifies one exact socket incarnation, not an
+    /// address or logical listener name. `resource_generation` must advance
+    /// whenever that provider resource is replaced.
+    pub fn new(
+        provider_incarnation: impl Into<String>,
+        resource_generation: NetworkResourceGeneration,
+    ) -> io::Result<Self> {
+        Ok(Self {
+            provider_handle: NetworkProviderHandle::new(
+                NetworkProviderId::for_registration_key(SERVER_LISTENER_PROVIDER_KEY),
+                provider_incarnation,
+            )
+            .map_err(network_error)?,
+            resource_generation,
+        })
+    }
+}
 
 /// A kernel bind failure whose no-effect receipt is durable.
 #[derive(Debug)]
@@ -52,6 +90,7 @@ pub struct PreparedServerListener {
     attempt: PortBindAttempt,
     provenance: PortBindingProvenance,
     owner_incarnation: Arc<str>,
+    lifetime: PortLeaseLifetimeGuard,
 }
 
 impl PreparedServerListener {
@@ -69,12 +108,15 @@ impl PreparedServerListener {
             self.attempt.clone(),
             self.claim.provider_attempt().clone(),
         );
-        match self.authority.record_claimed_bind_failure_without_effect(
-            &self.request,
-            None,
-            &self.claim,
-            failure,
-        ) {
+        match self
+            .authority
+            .record_claimed_bind_failure_with_lifetime_without_effect(
+                &self.request,
+                None,
+                &self.claim,
+                failure,
+                &self.lifetime,
+            ) {
             Ok(_) => Ok(RecordedListenerBindFailure { error }),
             Err(record_error) => Err(io::Error::new(
                 error.kind(),
@@ -93,9 +135,12 @@ impl PreparedServerListener {
             Ok(binding) => binding,
             Err(error) => return Err(self.close_after_failed_adoption(listener, error)),
         };
-        if let Err(error) = self.authority.adopt_claimed_and_activate_batch(
-            &[(self.request.clone(), self.claim.clone(), binding.clone())],
+        if let Err(error) = self.authority.adopt_claimed_and_activate_with_lifetime(
+            &self.request,
             None,
+            &self.claim,
+            binding.clone(),
+            &self.lifetime,
         ) {
             return Err(self.close_after_failed_adoption(listener, network_error(error)));
         }
@@ -105,6 +150,7 @@ impl PreparedServerListener {
                 authority: self.authority,
                 request: self.request,
                 provenance: self.provenance,
+                lifetime: self.lifetime,
             },
             owner_incarnation: self.owner_incarnation,
         })
@@ -124,9 +170,12 @@ impl PreparedServerListener {
             Ok(binding) => binding,
             Err(error) => return Err(self.close_std_after_failed_adoption(listener, error)),
         };
-        if let Err(error) = self.authority.adopt_claimed_and_activate_batch(
-            &[(self.request.clone(), self.claim.clone(), binding)],
+        if let Err(error) = self.authority.adopt_claimed_and_activate_with_lifetime(
+            &self.request,
             None,
+            &self.claim,
+            binding,
+            &self.lifetime,
         ) {
             return Err(self.close_std_after_failed_adoption(listener, network_error(error)));
         }
@@ -136,6 +185,7 @@ impl PreparedServerListener {
                 authority: self.authority,
                 request: self.request,
                 provenance: self.provenance,
+                lifetime: self.lifetime,
             },
             owner_incarnation: self.owner_incarnation,
         })
@@ -204,7 +254,13 @@ impl PreparedServerListener {
     }
 
     fn abandon_after_confirmed_close(self) -> io::Result<()> {
-        settle_claim_without_effect(&self.authority, &self.request, self.claim, self.provenance)
+        settle_claim_without_effect(
+            &self.authority,
+            &self.request,
+            &self.claim,
+            self.provenance,
+            &self.lifetime,
+        )
     }
 }
 
@@ -329,16 +385,18 @@ pub(crate) struct ActiveServerListenerLease {
     authority: LocalPortLeaseAuthority,
     request: PortLeaseRequest,
     provenance: PortBindingProvenance,
+    lifetime: PortLeaseLifetimeGuard,
 }
 
 impl ActiveServerListenerLease {
     pub(crate) fn settle_after_confirmed_local_close(self) -> io::Result<()> {
+        debug_assert_eq!(self.lifetime.request(), &self.request);
         self.authority
             .withdraw(&self.request)
             .map_err(network_error)?;
         if self.provenance != PortBindingProvenance::ExternallyOwned {
             self.authority
-                .release(&self.request)
+                .release_with_lifetime(&self.request, &self.lifetime)
                 .map_err(network_error)?;
         }
         Ok(())
@@ -349,6 +407,7 @@ impl ActiveServerListenerLease {
 pub(crate) struct ServerListenerLeaseAuthority {
     state_root: PathBuf,
     incarnation: Arc<str>,
+    external_main_context: ExternalServerListenerContext,
     next_main_attempt: Arc<AtomicU64>,
 }
 
@@ -485,15 +544,30 @@ impl PreboundServerListeners {
 
 impl ServerListenerLeaseAuthority {
     pub(crate) fn new(state_root: impl Into<PathBuf>) -> Self {
+        let incarnation: Arc<str> = Arc::from(format!("server:{}", Ulid::new()));
+        let external_main_context = ExternalServerListenerContext::new(
+            format!("process-owned:{incarnation}"),
+            INITIAL_RESOURCE_GENERATION,
+        )
+        .expect("a generated server incarnation is valid provider context");
         Self {
             state_root: state_root.into(),
-            incarnation: Arc::from(format!("server:{}", Ulid::new())),
+            incarnation,
+            external_main_context,
             next_main_attempt: Arc::new(AtomicU64::new(1)),
         }
     }
 
     pub(crate) fn with_state_root(mut self, state_root: impl Into<PathBuf>) -> Self {
         self.state_root = state_root.into();
+        self
+    }
+
+    pub(crate) fn with_external_main_context(
+        mut self,
+        context: ExternalServerListenerContext,
+    ) -> Self {
+        self.external_main_context = context;
         self
     }
 
@@ -523,13 +597,104 @@ impl ServerListenerLeaseAuthority {
                 "an externally supplied server listener must report a non-zero port",
             ));
         }
-        let attempt = self.next_main_attempt.fetch_add(1, Ordering::Relaxed);
-        self.prepare(
-            &format!("main-http-external-{attempt}"),
-            addr,
-            PortBindingProvenance::ExternallyOwned,
-        )?
-        .adopt(listener)
+        let authority = LocalPortLeaseAuthority::open(&self.state_root).map_err(network_error)?;
+        authority
+            .reconcile_dead_process_bound_leases()
+            .map_err(network_error)?;
+        let request = self.external_main_request(addr)?;
+        let Some(existing) = authority
+            .inspect(request.lease_id())
+            .map_err(network_error)?
+        else {
+            return self
+                .prepare_request(
+                    authority,
+                    request,
+                    addr,
+                    PortBindingProvenance::ExternallyOwned,
+                )?
+                .adopt(listener);
+        };
+        if existing.request() != &request {
+            return Err(io::Error::new(
+                io::ErrorKind::AddrInUse,
+                format!(
+                    "external main listener identity {} is fenced by a different durable request",
+                    request.lease_id()
+                ),
+            ));
+        }
+        let expected_endpoint = PortBoundEndpoint::new(
+            PortProtocol::Tcp,
+            PortBindRealm::Host,
+            bind_target(addr.ip())?,
+            NonZeroU16::new(addr.port())
+                .expect("external main listener port was validated as non-zero"),
+        )
+        .map_err(network_error)?;
+        let binding = match existing.binding().cloned() {
+            Some(binding) => binding,
+            None => {
+                let claim = existing.bind_claim().ok_or_else(|| {
+                    io::Error::other(
+                        "external main listener recovery has neither adopted binding nor exact \
+                         provider bind claim",
+                    )
+                })?;
+                if claim.provider_attempt() != &self.external_main_context.provider_handle {
+                    return Err(io::Error::new(
+                        io::ErrorKind::AddrInUse,
+                        "supplied external main listener provider incarnation does not match its \
+                         durable bind claim",
+                    ));
+                }
+                PortLeaseBinding::new(
+                    expected_endpoint.clone(),
+                    PortBindingProvenance::ExternallyOwned,
+                    claim.provider_attempt().clone(),
+                )
+            }
+        };
+        if binding.provenance() != PortBindingProvenance::ExternallyOwned
+            || binding.endpoint() != &expected_endpoint
+            || binding.provider_handle() != &self.external_main_context.provider_handle
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::AddrInUse,
+                "supplied external main listener does not match its durable provider \
+                 incarnation, generation, and binding",
+            ));
+        }
+        let recovery = match authority
+            .recover_dead_lifetime(&request)
+            .map_err(network_error)?
+        {
+            PortLeaseRecoveryAttempt::LiveOwner(_) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::AddrInUse,
+                    "external main listener remains owned by a live server process",
+                ));
+            }
+            PortLeaseRecoveryAttempt::Acquired(recovery) => recovery,
+            PortLeaseRecoveryAttempt::Settled(_) => {
+                return Err(io::Error::other(
+                    "external main listener has terminal durable authority",
+                ));
+            }
+        };
+        let lifetime = authority
+            .reclaim_provider_managed_binding_after_owner_death(&request, &binding, recovery)
+            .map_err(network_error)?;
+        Ok(LeasedServerListener {
+            listener,
+            lease: ActiveServerListenerLease {
+                authority,
+                request,
+                provenance: PortBindingProvenance::ExternallyOwned,
+                lifetime,
+            },
+            owner_incarnation: Arc::clone(&self.incarnation),
+        })
     }
 
     pub(crate) fn prepare_sibling(
@@ -545,6 +710,16 @@ impl ServerListenerLeaseAuthority {
         )
     }
 
+    fn external_main_request(&self, requested_addr: SocketAddr) -> io::Result<PortLeaseRequest> {
+        listener_request(
+            EXTERNAL_MAIN_LISTENER_OWNER,
+            EXTERNAL_MAIN_LISTENER_NAME,
+            requested_addr,
+            PortBindingProvenance::ExternallyOwned,
+            self.external_main_context.resource_generation,
+        )
+    }
+
     fn prepare(
         &self,
         listener_name: &str,
@@ -552,28 +727,35 @@ impl ServerListenerLeaseAuthority {
         provenance: PortBindingProvenance,
     ) -> io::Result<PreparedServerListener> {
         let authority = LocalPortLeaseAuthority::open(&self.state_root).map_err(network_error)?;
-        let listener_id =
-            ListenerId::for_workload_listener(self.incarnation.as_ref(), listener_name);
-        let request = PortLeaseRequest::new(
-            nimbus_network::PortLeaseId::for_listener(&listener_id),
-            listener_id.into(),
-            None,
-            PortLeaseFence::new(INITIAL_RESOURCE_GENERATION, INITIAL_LEASE_EPOCH),
-            PortLeaseAccounting::HostInternal,
-            PortPublicationIntent::Unpublished,
-            PortBindingSpec::new(
-                PortProtocol::Tcp,
-                PortBindRealm::Host,
-                bind_target(requested_addr.ip())?,
-                exposure(requested_addr.ip()),
-                request_mode(requested_addr, provenance)?,
-            ),
-        );
-        let provider_attempt = NetworkProviderHandle::new(
-            NetworkProviderId::for_registration_key(SERVER_LISTENER_PROVIDER_KEY),
-            format!("bind-attempt:{}", Ulid::new()),
-        )
-        .map_err(network_error)?;
+        authority
+            .reconcile_dead_process_bound_leases()
+            .map_err(network_error)?;
+        let request = listener_request(
+            self.incarnation.as_ref(),
+            listener_name,
+            requested_addr,
+            provenance,
+            INITIAL_RESOURCE_GENERATION,
+        )?;
+        self.prepare_request(authority, request, requested_addr, provenance)
+    }
+
+    fn prepare_request(
+        &self,
+        authority: LocalPortLeaseAuthority,
+        request: PortLeaseRequest,
+        requested_addr: SocketAddr,
+        provenance: PortBindingProvenance,
+    ) -> io::Result<PreparedServerListener> {
+        let provider_attempt = if provenance == PortBindingProvenance::ExternallyOwned {
+            self.external_main_context.provider_handle.clone()
+        } else {
+            NetworkProviderHandle::new(
+                NetworkProviderId::for_registration_key(SERVER_LISTENER_PROVIDER_KEY),
+                format!("bind-attempt:{}", Ulid::new()),
+            )
+            .map_err(network_error)?
+        };
         let claim = PortBindClaim::new(provider_attempt);
         let attempt = PortBindAttempt::new(
             PortProtocol::Tcp,
@@ -582,18 +764,14 @@ impl ServerListenerLeaseAuthority {
             requested_addr.port(),
         )
         .map_err(network_error)?;
-        authority
-            .reserve(request.clone())
+        let reservation = authority
+            .reserve_and_claim_bind_with_lifetime(
+                request.clone(),
+                claim.clone(),
+                lifetime_scope(provenance),
+            )
             .map_err(reservation_error)?;
-        if let Err(claim_error) = authority.claim_bind(&request, None, claim.clone()) {
-            return match settle_claim_without_effect(&authority, &request, claim, provenance) {
-                Ok(()) => Err(network_error(claim_error)),
-                Err(cleanup_error) => Err(io::Error::other(format!(
-                    "{claim_error}; failed to settle the never-bound reservation after its bind \
-                     claim receipt failed: {cleanup_error}"
-                ))),
-            };
-        }
+        let (_, lifetime) = reservation.into_parts();
         Ok(PreparedServerListener {
             authority,
             request,
@@ -601,18 +779,45 @@ impl ServerListenerLeaseAuthority {
             attempt,
             provenance,
             owner_incarnation: Arc::clone(&self.incarnation),
+            lifetime,
         })
     }
+}
+
+fn listener_request(
+    identity_owner: &str,
+    listener_name: &str,
+    requested_addr: SocketAddr,
+    provenance: PortBindingProvenance,
+    resource_generation: NetworkResourceGeneration,
+) -> io::Result<PortLeaseRequest> {
+    let listener_id = ListenerId::for_workload_listener(identity_owner, listener_name);
+    Ok(PortLeaseRequest::new(
+        nimbus_network::PortLeaseId::for_listener(&listener_id),
+        listener_id.into(),
+        None,
+        PortLeaseFence::new(resource_generation, INITIAL_LEASE_EPOCH),
+        PortLeaseAccounting::HostInternal,
+        PortPublicationIntent::Unpublished,
+        PortBindingSpec::new(
+            PortProtocol::Tcp,
+            PortBindRealm::Host,
+            bind_target(requested_addr.ip())?,
+            exposure(requested_addr.ip()),
+            request_mode(requested_addr, provenance)?,
+        ),
+    ))
 }
 
 fn settle_claim_without_effect(
     authority: &LocalPortLeaseAuthority,
     request: &PortLeaseRequest,
-    claim: PortBindClaim,
+    claim: &PortBindClaim,
     provenance: PortBindingProvenance,
+    lifetime: &PortLeaseLifetimeGuard,
 ) -> io::Result<()> {
     authority
-        .abandon_bind_claims_without_effect(&[(request.clone(), claim)], None)
+        .abandon_bind_with_lifetime_without_effect(request, None, claim, lifetime)
         .map_err(network_error)?;
     authority.withdraw(request).map_err(network_error)?;
     if provenance != PortBindingProvenance::ExternallyOwned {
@@ -639,6 +844,14 @@ fn nimbus_owned_provenance(addr: SocketAddr) -> PortBindingProvenance {
         PortBindingProvenance::ProviderAssigned
     } else {
         PortBindingProvenance::NimbusOwned
+    }
+}
+
+fn lifetime_scope(provenance: PortBindingProvenance) -> PortLeaseEffectScope {
+    if provenance == PortBindingProvenance::ExternallyOwned {
+        PortLeaseEffectScope::ProviderManaged
+    } else {
+        PortLeaseEffectScope::ProcessBound
     }
 }
 
@@ -718,9 +931,17 @@ pub(crate) fn abandon_prepared_after_guard_failure(
 
 #[cfg(test)]
 mod tests {
-    use nimbus_network::{PortBindingProvenance, PortLeasePhase};
+    use nimbus_network::{PortBindingProvenance, PortLeaseEffectScope, PortLeasePhase};
 
     use super::*;
+
+    fn external_context(incarnation: &str, generation: u64) -> ExternalServerListenerContext {
+        ExternalServerListenerContext::new(
+            format!("test-external:{incarnation}"),
+            NetworkResourceGeneration::new(generation),
+        )
+        .expect("fixture external-listener context should validate")
+    }
 
     #[tokio::test]
     async fn provider_assigned_bind_is_claimed_before_effect_and_released_after_close() {
@@ -865,6 +1086,382 @@ mod tests {
                 .provenance(),
             PortBindingProvenance::ExternallyOwned
         );
+    }
+
+    #[tokio::test]
+    async fn dead_process_bound_listener_drop_reconciles_before_next_prepare() {
+        let state_root = tempfile::tempdir().expect("state root should be created");
+        let first_authority = ServerListenerLeaseAuthority::new(state_root.path());
+        let requested_addr = "127.0.0.1:0".parse().expect("fixture address should parse");
+        let first_prepared = first_authority
+            .prepare_main(requested_addr)
+            .expect("first listener should prepare");
+        let first_raw = tokio::net::TcpListener::bind(requested_addr)
+            .await
+            .expect("first listener should bind");
+        let actual_addr = first_raw
+            .local_addr()
+            .expect("bound address should resolve");
+        let first = first_prepared
+            .adopt(first_raw)
+            .expect("first listener should activate");
+        drop(first);
+
+        let retained = LocalPortLeaseAuthority::open(state_root.path())
+            .expect("port authority should reopen")
+            .list()
+            .expect("port records should list");
+        assert_eq!(retained.len(), 1);
+        assert_eq!(retained[0].phase(), PortLeasePhase::Active);
+        assert_eq!(
+            retained[0]
+                .active_lifetime()
+                .expect("dropped listener must retain lifetime evidence")
+                .effect_scope(),
+            PortLeaseEffectScope::ProcessBound
+        );
+
+        let second_prepared = ServerListenerLeaseAuthority::new(state_root.path())
+            .prepare_main(actual_addr)
+            .expect("fresh preparation should reconcile the dead process-bound owner");
+        let second_raw = tokio::net::TcpListener::bind(actual_addr)
+            .await
+            .expect("replacement listener should bind the released port");
+        let second = second_prepared
+            .adopt(second_raw)
+            .expect("replacement listener should activate");
+        let records = LocalPortLeaseAuthority::open(state_root.path())
+            .expect("port authority should reopen")
+            .list()
+            .expect("port records should list");
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| record.phase() == PortLeasePhase::Released)
+                .count(),
+            1
+        );
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| record.phase() == PortLeasePhase::Active)
+                .count(),
+            1
+        );
+        second
+            .close_and_settle()
+            .expect("replacement should close cleanly");
+    }
+
+    #[tokio::test]
+    async fn external_listener_drop_remains_provider_managed_and_fenced() {
+        let state_root = tempfile::tempdir().expect("state root should be created");
+        let raw = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("external owner should bind");
+        let actual_addr = raw.local_addr().expect("bound address should resolve");
+        let leased = ServerListenerLeaseAuthority::new(state_root.path())
+            .adopt_external_main(raw)
+            .expect("external listener should adopt");
+        drop(leased);
+
+        let error =
+            match ServerListenerLeaseAuthority::new(state_root.path()).prepare_main(actual_addr) {
+                Ok(_) => panic!("process death cannot release an external adoption"),
+                Err(error) => error,
+            };
+        assert_eq!(error.kind(), io::ErrorKind::AddrInUse);
+        let retained = LocalPortLeaseAuthority::open(state_root.path())
+            .expect("port authority should reopen")
+            .list()
+            .expect("port records should list");
+        assert_eq!(retained.len(), 1);
+        assert_eq!(retained[0].phase(), PortLeasePhase::Active);
+        assert_eq!(
+            retained[0]
+                .active_lifetime()
+                .expect("external adoption must retain lifetime evidence")
+                .effect_scope(),
+            PortLeaseEffectScope::ProviderManaged
+        );
+    }
+
+    #[tokio::test]
+    async fn fresh_authority_reclaims_the_same_surviving_external_listener() {
+        let state_root = tempfile::tempdir().expect("state root should be created");
+        let context = external_context("inherited-main", 1);
+        let external_owner =
+            std::net::TcpListener::bind("127.0.0.1:0").expect("external owner should bind");
+        external_owner
+            .set_nonblocking(true)
+            .expect("external listener should become nonblocking");
+        let inherited = external_owner
+            .try_clone()
+            .expect("fresh process fixture should inherit the same listener");
+        let addr = external_owner
+            .local_addr()
+            .expect("external address should resolve");
+        let first = ServerListenerLeaseAuthority::new(state_root.path())
+            .with_external_main_context(context.clone())
+            .adopt_external_main(
+                tokio::net::TcpListener::from_std(external_owner)
+                    .expect("first process should adopt its descriptor"),
+            )
+            .expect("first external owner should activate");
+        let first_lifetime = LocalPortLeaseAuthority::open(state_root.path())
+            .expect("port authority should reopen")
+            .list()
+            .expect("port records should list")[0]
+            .active_lifetime()
+            .expect("first external owner should carry a lifetime");
+        drop(first);
+
+        let second = ServerListenerLeaseAuthority::new(state_root.path())
+            .with_external_main_context(context)
+            .adopt_external_main(
+                tokio::net::TcpListener::from_std(inherited)
+                    .expect("fresh process should adopt the inherited descriptor"),
+            )
+            .expect("fresh authority should reclaim the exact surviving listener");
+        assert_eq!(second.local_addr().expect("listener should inspect"), addr);
+        let records = LocalPortLeaseAuthority::open(state_root.path())
+            .expect("port authority should reopen")
+            .list()
+            .expect("port records should list");
+        assert_eq!(records.len(), 1, "recovery must not fork listener identity");
+        assert_eq!(records[0].phase(), PortLeasePhase::Active);
+        assert!(
+            records[0]
+                .active_lifetime()
+                .expect("replacement owner should carry a lifetime")
+                .generation()
+                > first_lifetime.generation(),
+            "fresh ownership must fence the dead server generation"
+        );
+
+        second
+            .close_and_settle()
+            .expect("fresh external owner should withdraw cleanly");
+    }
+
+    #[tokio::test]
+    async fn rebound_same_address_external_listener_cannot_reclaim_prior_provider_incarnation() {
+        let state_root = tempfile::tempdir().expect("state root should be created");
+        let original_context = external_context("original-main", 1);
+        let original = std::net::TcpListener::bind("127.0.0.1:0")
+            .expect("original external owner should bind");
+        original
+            .set_nonblocking(true)
+            .expect("original listener should become nonblocking");
+        let addr = original
+            .local_addr()
+            .expect("original address should resolve");
+        let first = ServerListenerLeaseAuthority::new(state_root.path())
+            .with_external_main_context(original_context)
+            .adopt_external_main(
+                tokio::net::TcpListener::from_std(original)
+                    .expect("first process should adopt the original descriptor"),
+            )
+            .expect("original external owner should activate");
+        drop(first);
+
+        let rebound = std::net::TcpListener::bind(addr)
+            .expect("a newly created provider socket should rebind the released address");
+        rebound
+            .set_nonblocking(true)
+            .expect("rebound listener should become nonblocking");
+        let before = LocalPortLeaseAuthority::open(state_root.path())
+            .expect("portable authority should reopen")
+            .list()
+            .expect("port records should list");
+        let error = match ServerListenerLeaseAuthority::new(state_root.path())
+            .with_external_main_context(external_context("replacement-main", 1))
+            .adopt_external_main(
+                tokio::net::TcpListener::from_std(rebound)
+                    .expect("replacement listener should enter Tokio"),
+            ) {
+            Ok(_) => panic!("a new provider incarnation must not inherit old listener authority"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), io::ErrorKind::AddrInUse);
+        assert_eq!(
+            LocalPortLeaseAuthority::open(state_root.path())
+                .expect("portable authority should reopen")
+                .list()
+                .expect("port records should list"),
+            before,
+            "provider-incarnation substitution must not mutate durable authority"
+        );
+    }
+
+    #[tokio::test]
+    async fn external_listener_recovery_rejects_stale_provider_generation() {
+        let state_root = tempfile::tempdir().expect("state root should be created");
+        let original =
+            std::net::TcpListener::bind("127.0.0.1:0").expect("external owner should bind");
+        original
+            .set_nonblocking(true)
+            .expect("external listener should become nonblocking");
+        let inherited = original
+            .try_clone()
+            .expect("the fixture should inherit the exact same descriptor");
+        let first = ServerListenerLeaseAuthority::new(state_root.path())
+            .with_external_main_context(external_context("stable-main", 2))
+            .adopt_external_main(
+                tokio::net::TcpListener::from_std(original)
+                    .expect("first process should adopt the descriptor"),
+            )
+            .expect("current provider generation should activate");
+        drop(first);
+
+        let before = LocalPortLeaseAuthority::open(state_root.path())
+            .expect("portable authority should reopen")
+            .list()
+            .expect("port records should list");
+        let error = match ServerListenerLeaseAuthority::new(state_root.path())
+            .with_external_main_context(external_context("stable-main", 1))
+            .adopt_external_main(
+                tokio::net::TcpListener::from_std(inherited)
+                    .expect("stale contender should adopt its cloned descriptor"),
+            ) {
+            Ok(_) => panic!("a stale provider generation must not reclaim the descriptor"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), io::ErrorKind::AddrInUse);
+        assert_eq!(
+            LocalPortLeaseAuthority::open(state_root.path())
+                .expect("portable authority should reopen")
+                .list()
+                .expect("port records should list"),
+            before,
+            "stale-generation rejection must not mutate durable authority"
+        );
+    }
+
+    #[tokio::test]
+    async fn external_main_pre_adoption_crash_reclaims_supplied_descriptor() {
+        let state_root = tempfile::tempdir().expect("state root should be created");
+        let context = external_context("pre-adoption-main", 1);
+        let external =
+            std::net::TcpListener::bind("127.0.0.1:0").expect("external owner should bind");
+        external
+            .set_nonblocking(true)
+            .expect("external listener should become nonblocking");
+        let addr = external
+            .local_addr()
+            .expect("external address should resolve");
+        let first_authority = ServerListenerLeaseAuthority::new(state_root.path())
+            .with_external_main_context(context.clone());
+        let request = first_authority
+            .external_main_request(addr)
+            .expect("external request should build");
+        let prepared = first_authority
+            .prepare_request(
+                LocalPortLeaseAuthority::open(state_root.path())
+                    .expect("portable authority should open"),
+                request.clone(),
+                addr,
+                PortBindingProvenance::ExternallyOwned,
+            )
+            .expect("first process should durably claim before adoption");
+        let first_claim = prepared.claim.clone();
+        let first_lifetime = prepared.lifetime.lifetime();
+        drop(prepared);
+
+        let reclaimed = ServerListenerLeaseAuthority::new(state_root.path())
+            .with_external_main_context(context)
+            .adopt_external_main(
+                tokio::net::TcpListener::from_std(external)
+                    .expect("replacement should adopt the inherited descriptor"),
+            )
+            .expect("dead pre-adoption owner should be reclaimed");
+        assert_eq!(
+            reclaimed.local_addr().expect("listener should inspect"),
+            addr
+        );
+        let record = LocalPortLeaseAuthority::open(state_root.path())
+            .expect("portable authority should reopen")
+            .inspect(request.lease_id())
+            .expect("external request should inspect")
+            .expect("external request should remain");
+        assert_eq!(record.phase(), PortLeasePhase::Active);
+        assert_eq!(record.adoption_claim(), Some(&first_claim));
+        assert!(record.bind_claim().is_none());
+        assert_eq!(
+            record
+                .binding()
+                .expect("reclaimed request should carry binding")
+                .provider_handle(),
+            first_claim.provider_attempt()
+        );
+        assert!(
+            record
+                .active_lifetime()
+                .expect("replacement should own a lifetime")
+                .generation()
+                > first_lifetime.generation()
+        );
+
+        reclaimed
+            .close_and_settle()
+            .expect("external replacement should withdraw cleanly");
+    }
+
+    #[tokio::test]
+    async fn external_main_pre_adoption_live_owner_rejects_reclaim() {
+        let state_root = tempfile::tempdir().expect("state root should be created");
+        let context = external_context("live-pre-adoption-main", 1);
+        let external =
+            std::net::TcpListener::bind("127.0.0.1:0").expect("external owner should bind");
+        external
+            .set_nonblocking(true)
+            .expect("external listener should become nonblocking");
+        let inherited = external
+            .try_clone()
+            .expect("contender should receive the same descriptor");
+        let addr = external
+            .local_addr()
+            .expect("external address should resolve");
+        let first_authority = ServerListenerLeaseAuthority::new(state_root.path())
+            .with_external_main_context(context.clone());
+        let request = first_authority
+            .external_main_request(addr)
+            .expect("external request should build");
+        let prepared = first_authority
+            .prepare_request(
+                LocalPortLeaseAuthority::open(state_root.path())
+                    .expect("portable authority should open"),
+                request.clone(),
+                addr,
+                PortBindingProvenance::ExternallyOwned,
+            )
+            .expect("first process should retain its live pre-adoption claim");
+        let before = LocalPortLeaseAuthority::open(state_root.path())
+            .expect("portable authority should reopen")
+            .inspect(request.lease_id())
+            .expect("external request should inspect")
+            .expect("external request should remain");
+
+        let error = match ServerListenerLeaseAuthority::new(state_root.path())
+            .with_external_main_context(context)
+            .adopt_external_main(
+                tokio::net::TcpListener::from_std(inherited)
+                    .expect("contender should adopt its cloned descriptor"),
+            ) {
+            Ok(_) => panic!("a live pre-adoption owner must reject reclaim"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), io::ErrorKind::AddrInUse);
+        assert_eq!(
+            LocalPortLeaseAuthority::open(state_root.path())
+                .expect("portable authority should reopen")
+                .inspect(request.lease_id())
+                .expect("rejected request should inspect"),
+            Some(before),
+            "live-owner rejection must not mutate durable authority"
+        );
+        drop(prepared);
+        drop(external);
     }
 
     #[tokio::test]

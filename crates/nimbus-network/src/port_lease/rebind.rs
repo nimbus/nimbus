@@ -3,9 +3,9 @@
 use std::collections::BTreeMap;
 
 use super::{
-    LocalPortLeaseAuthority, PortLeaseBinding, PortLeaseError, PortLeaseOperation,
-    PortLeaseOperationError, PortLeasePhase, PortLeaseRecord, PortLeaseRequest, exact_record,
-    exact_record_mut,
+    LocalPortLeaseAuthority, PortLeaseBinding, PortLeaseError, PortLeaseLifetime,
+    PortLeaseLifetimeGuard, PortLeaseOperation, PortLeaseOperationError, PortLeasePhase,
+    PortLeaseRecord, PortLeaseRequest, exact_record, exact_record_mut,
 };
 use crate::PortLeaseId;
 
@@ -44,6 +44,72 @@ impl LocalPortLeaseAuthority {
         &self,
         bindings: &[(PortLeaseRequest, PortLeaseBinding)],
     ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
+        self.prepare_rebind_batch_after_confirmed_stop_inner(bindings, None)
+    }
+
+    /// Atomically retain an exact live-owner batch after confirmed stop.
+    ///
+    /// The non-cloneable guards authenticate the process generation whose
+    /// effects the adapter has stopped. This prevents an unrelated process
+    /// from clearing a still-live listener merely by reproducing its portable
+    /// binding evidence.
+    pub fn prepare_rebind_batch_after_confirmed_stop_with_lifetimes(
+        &self,
+        bindings: &[(PortLeaseRequest, PortLeaseBinding)],
+        lifetimes: &[PortLeaseLifetimeGuard],
+    ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
+        if bindings.len() != lifetimes.len() {
+            let lease_id = bindings
+                .first()
+                .map(|(request, _)| request.lease_id().clone())
+                .or_else(|| {
+                    lifetimes
+                        .first()
+                        .map(|lifetime| lifetime.request().lease_id().clone())
+                })
+                .ok_or_else(|| PortLeaseError::CorruptAuthority {
+                    reason: "empty confirmed-stop lifetime batch has divergent lengths".to_owned(),
+                })?;
+            return Err(PortLeaseError::LifetimeMismatch { lease_id });
+        }
+        let mut required = BTreeMap::new();
+        for lifetime in lifetimes {
+            if required
+                .insert(
+                    lifetime.request().lease_id().clone(),
+                    (lifetime.request(), lifetime.lifetime()),
+                )
+                .is_some()
+            {
+                return Err(PortLeaseError::IdentityConflict {
+                    lease_id: lifetime.request().lease_id().clone(),
+                });
+            }
+        }
+        for (request, _) in bindings {
+            let Some((guard_request, _)) = required.get(request.lease_id()) else {
+                return Err(PortLeaseError::LifetimeMismatch {
+                    lease_id: request.lease_id().clone(),
+                });
+            };
+            if *guard_request != request {
+                return Err(PortLeaseError::LifetimeMismatch {
+                    lease_id: request.lease_id().clone(),
+                });
+            }
+        }
+        let required = required
+            .into_iter()
+            .map(|(lease_id, (_, lifetime))| (lease_id, lifetime))
+            .collect();
+        self.prepare_rebind_batch_after_confirmed_stop_inner(bindings, Some(&required))
+    }
+
+    fn prepare_rebind_batch_after_confirmed_stop_inner(
+        &self,
+        bindings: &[(PortLeaseRequest, PortLeaseBinding)],
+        required_lifetimes: Option<&BTreeMap<PortLeaseId, PortLeaseLifetime>>,
+    ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
         self.transaction(|state| {
             let mut distinct =
                 BTreeMap::<PortLeaseId, (&PortLeaseRequest, &PortLeaseBinding)>::new();
@@ -71,22 +137,63 @@ impl LocalPortLeaseAuthority {
                 match record.phase {
                     PortLeasePhase::Active | PortLeasePhase::Withdrawing
                         if record.binding.as_ref() == Some(expected_binding)
-                            && record.bind_claim.is_none() => {}
+                            && record.bind_claim.is_none()
+                            && match required_lifetimes {
+                                Some(required) => {
+                                    record.active_lifetime
+                                        == required.get(request.lease_id()).copied()
+                                }
+                                None => record.active_lifetime.is_none(),
+                            } => {}
                     PortLeasePhase::Active | PortLeasePhase::Withdrawing => {
-                        return Err(PortLeaseOperationError::BindingConflict {
-                            lease_id: request.lease_id().clone(),
-                        });
+                        return Err(
+                            if record.binding.as_ref() == Some(expected_binding)
+                                && record.bind_claim.is_none()
+                                && (required_lifetimes.is_some()
+                                    || record.active_lifetime.is_some())
+                            {
+                                PortLeaseOperationError::LifetimeMismatch {
+                                    lease_id: request.lease_id().clone(),
+                                }
+                            } else {
+                                PortLeaseOperationError::BindingConflict {
+                                    lease_id: request.lease_id().clone(),
+                                }
+                            },
+                        );
                     }
                     PortLeasePhase::Reserved
                         if record.bind_claim.is_none()
                             && record.binding.is_none()
                             && record.failure.is_none()
                             && record.confirmed_stopped_binding.as_ref()
-                                == Some(expected_binding) => {}
+                                == Some(expected_binding)
+                            && record.active_lifetime.is_none()
+                            && required_lifetimes.is_none_or(|required| {
+                                required.get(request.lease_id()).is_some_and(|lifetime| {
+                                    record.last_lifetime_generation
+                                        == lifetime.generation().as_u64()
+                                })
+                            }) => {}
                     PortLeasePhase::Reserved => {
-                        return Err(PortLeaseOperationError::BindingConflict {
-                            lease_id: request.lease_id().clone(),
-                        });
+                        return Err(
+                            if record.bind_claim.is_none()
+                                && record.binding.is_none()
+                                && record.failure.is_none()
+                                && record.confirmed_stopped_binding.as_ref()
+                                    == Some(expected_binding)
+                                && (required_lifetimes.is_some()
+                                    || record.active_lifetime.is_some())
+                            {
+                                PortLeaseOperationError::LifetimeMismatch {
+                                    lease_id: request.lease_id().clone(),
+                                }
+                            } else {
+                                PortLeaseOperationError::BindingConflict {
+                                    lease_id: request.lease_id().clone(),
+                                }
+                            },
+                        );
                     }
                     phase => {
                         return Err(PortLeaseOperationError::InvalidTransition {
@@ -112,6 +219,7 @@ impl LocalPortLeaseAuthority {
                     record.adoption_claim = None;
                     record.confirmed_stopped_binding = Some(expected_binding.clone());
                     record.failure = None;
+                    record.active_lifetime = None;
                 }
             }
 

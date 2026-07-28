@@ -6,14 +6,16 @@ use std::path::PathBuf;
 
 use nimbus_network::{NetworkReservationClaim, PortLeaseRequest};
 use serde::{Deserialize, Serialize};
+use ulid::Ulid;
 
+use crate::backends::conmon::creator::{CreatorAttemptReceipt, CreatorQuiescenceProof};
 use crate::backends::container::bundle::ContainerBundleLayout;
 use crate::backends::oci::buildah::{ImageHealthcheck, MountedRootfsSession, OciExposedPort};
 use crate::backends::oci::conmon::{OciConmonLaunchPlan, OciConmonLayout};
-use crate::backends::oci::egress::EgressProxyAssignment;
+use crate::backends::oci::egress::{EgressPolicyReloadState, EgressProxyAssignment};
 use crate::backends::oci::materializer::MaterializedImageRootfs;
 use crate::backends::oci::network::{
-    OciMachinePortForwarderConfig, OciNetworkConfig, OciNetworkLayout,
+    OciMachinePortForwarderConfig, OciNetworkConfig, OciNetworkLayout, TerminalNetworkAuthoritySet,
 };
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
@@ -83,6 +85,43 @@ impl ContainerSandboxBackend {
         manifest: &ContainerSandboxManifest,
     ) -> Result<()> {
         self.validate_manifest_execution_context(manifest)?;
+        if matches!(
+            manifest.status,
+            SandboxStatus::Stopped | SandboxStatus::Failed
+        ) {
+            if !manifest.has_terminal_network_finality() {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "refusing terminal container manifest publication for {} while local \
+                         launch or cleanup authority remains: shutdown_requested={}, \
+                         status={:?}, handle_status={:?}, network_cleanup_complete={}, \
+                         launch_reservation_claim_present={}, launch_artifact_present={}, \
+                         next_restart_at_millis={:?}",
+                        manifest.handle.id,
+                        manifest.shutdown_requested,
+                        manifest.status,
+                        manifest.handle.status,
+                        manifest.network_cleanup_complete,
+                        manifest.launch_reservation_claim.is_some(),
+                        manifest.launch_artifact.is_some(),
+                        manifest.next_restart_at_millis,
+                    ),
+                });
+            }
+            TerminalNetworkAuthoritySet::new(
+                self.segment_allocator.as_ref(),
+                &manifest.spec.tenant_id,
+                &manifest.handle.id,
+                &manifest.network_layout,
+                manifest.network_config.as_ref(),
+                &manifest.port_leases,
+                manifest
+                    .egress_proxy
+                    .as_ref()
+                    .map(|assignment| &assignment.port_lease),
+            )
+            .require_released()?;
+        }
         let mut rendered =
             serde_json::to_vec_pretty(manifest).map_err(|error| SandboxError::OperationFailed {
                 message: format!("failed to serialize sandbox manifest: {error}"),
@@ -161,6 +200,15 @@ pub(super) struct ContainerSandboxManifest {
     /// absence alone cannot release network authority while a creator might
     /// still materialize it.
     pub(super) creator_handoff: ContainerCreatorHandoffState,
+    /// Exact generation of the durable Execute handoff that owns provider
+    /// effects for this manifest.
+    ///
+    /// PlanOnly manifests carry `None`. The winning Execute decision mints and
+    /// publishes this identity before `EffectsStarted`, so a substituted
+    /// decision record cannot authenticate the manifest merely by recomputing
+    /// its other fingerprints.
+    #[serde(deserialize_with = "crate::backends::oci::deserialize_required_option")]
+    pub(super) runner_handoff_id: Option<RunnerHandoffId>,
     /// Canonical operator-requested bindings before image-exposed plan previews
     /// are appended. The runner recomputes the exact automatic suffix from this
     /// input and `image_metadata` before it may reserve any listener.
@@ -172,6 +220,13 @@ pub(super) struct ContainerSandboxManifest {
     #[serde(deserialize_with = "crate::backends::oci::deserialize_required_option")]
     pub(super) launch_reservation_claim: Option<NetworkReservationClaim>,
     pub(super) egress_proxy: Option<EgressProxyAssignment>,
+    /// Monotonic desired policy and provider-attempt generations.
+    ///
+    /// `Applying` is published before the live PEP is touched and becomes
+    /// `Stable` only after exact provider inspection authenticates the same
+    /// attempt. It therefore survives acknowledgement loss without treating
+    /// the return path as durable truth.
+    pub(super) egress_policy_reload: EgressPolicyReloadState,
     pub(super) conmon_launch: OciConmonLaunchPlan,
     pub(super) runner_config: ContainerRunnerExecutionConfig,
     pub(super) last_exit_code: Option<i32>,
@@ -200,12 +255,45 @@ pub(super) enum ContainerLifecycleCoordinator {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub(super) struct RunnerHandoffId(String);
+
+impl RunnerHandoffId {
+    pub(super) fn mint() -> Self {
+        Self(Ulid::new().to_string().to_ascii_lowercase())
+    }
+}
+
+impl TryFrom<String> for RunnerHandoffId {
+    type Error = String;
+
+    fn try_from(value: String) -> std::result::Result<Self, Self::Error> {
+        let parsed = Ulid::from_string(&value)
+            .map_err(|error| format!("runner handoff ID must be a valid ULID: {error}"))?;
+        let canonical = parsed.to_string().to_ascii_lowercase();
+        if value != canonical {
+            return Err(format!(
+                "runner handoff ID must use canonical lowercase ULID form {canonical}"
+            ));
+        }
+        Ok(Self(value))
+    }
+}
+
+impl From<RunnerHandoffId> for String {
+    fn from(value: RunnerHandoffId) -> Self {
+        value.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "phase")]
 pub(super) enum ContainerCreatorHandoffState {
     NotSpawned,
-    Pending { attempt_id: String },
-    Quiesced { attempt_id: String },
-    RuntimeObserved { attempt_id: String },
+    SpawnIntent { attempt_id: String },
+    Pending { receipt: CreatorAttemptReceipt },
+    Quiesced { proof: CreatorQuiescenceProof },
+    RuntimeObserved { receipt: CreatorAttemptReceipt },
 }
 
 impl ContainerCreatorHandoffState {

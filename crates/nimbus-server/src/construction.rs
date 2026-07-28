@@ -16,9 +16,10 @@ use crate::adapters::s3::S3Config;
 use crate::adapters::wire::WireProtocolAdapter;
 use crate::license::LicenseState;
 use crate::listener_lease::{
-    ActiveServerListenerLease, LeasedServerListener, PreboundServerListener,
-    PreboundServerListeners, PreparedServerListener, RecordedListenerBindFailure,
-    ServerListenerLeaseAuthority, abandon_prepared_after_guard_failure,
+    ActiveServerListenerLease, ExternalServerListenerContext, LeasedServerListener,
+    PreboundServerListener, PreboundServerListeners, PreparedServerListener,
+    RecordedListenerBindFailure, ServerListenerLeaseAuthority,
+    abandon_prepared_after_guard_failure,
 };
 use crate::local_server::LocalServerSecurityState;
 use crate::machine_lifecycle::MachineLifecycleManager;
@@ -60,6 +61,20 @@ impl ServeOptions {
     /// one host-global network authority with other providers may override it.
     pub fn with_network_state_root(mut self, state_root: impl Into<std::path::PathBuf>) -> Self {
         self.listener_leases = self.listener_leases.with_state_root(state_root);
+        self
+    }
+
+    /// Authenticate one externally owned main-listener provider incarnation.
+    ///
+    /// Embedders that inherit a socket across process restarts must persist
+    /// and replay the same context with that exact descriptor. Omitting this
+    /// option remains safe but makes a new [`ServeOptions`] incarnation
+    /// ineligible to reclaim earlier external-listener authority.
+    pub fn with_external_main_listener_context(
+        mut self,
+        context: ExternalServerListenerContext,
+    ) -> Self {
+        self.listener_leases = self.listener_leases.with_external_main_context(context);
         self
     }
 

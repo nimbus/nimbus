@@ -12,11 +12,16 @@ use nimbus_network::{
     PortLeasePhase,
 };
 use nimbus_testing::{
-    ContentionOutcome, ProcessRoleSpec, TwoProcessContentionHarness, run_contention_child,
+    ContentionOutcome, ProcessRoleSpec, SubprocessCrashCutHarness, TwoProcessContentionHarness,
+    run_contention_child, run_crash_cut_child, run_crash_recovery_child,
 };
 
 const CHILD_TEST: &str = "nnc3_6_kv_listener_child";
 const CHILD_ADDR_ENV: &str = "NIMBUS_NNC3_6_KV_ADDR";
+const RECOVERY_CHILD_TEST: &str = "nnc3_8_kv_listener_recovery_child";
+const RECOVERY_MODE_ENV: &str = "NIMBUS_NNC3_8_KV_MODE";
+const KV_ACTIVE_BOUNDARY: &str = "network.kv-listener.active-process-owner";
+const KV_RECOVERY_OBSERVATION: &str = "old-released:replacement-active";
 
 fn credentials() -> CredentialRegistry {
     CredentialRegistry::single_dev(TenantId::new("tenant-a").unwrap(), "secret")
@@ -64,6 +69,20 @@ fn two_standalone_kv_processes_contend_in_one_authority() {
         records[0].reserved_port().map(NonZeroU16::get),
         Some(addr.port())
     );
+}
+
+#[test]
+fn fresh_process_kv_reconciles_dead_listener_before_exact_rebind() {
+    let root = tempfile::tempdir().expect("state root should exist");
+    SubprocessCrashCutHarness::new(Duration::from_secs(10))
+        .run(
+            root.path(),
+            KV_ACTIVE_BOUNDARY,
+            KV_RECOVERY_OBSERVATION,
+            recovery_child("crash-kv-owner", "crash-active"),
+            recovery_child("fresh-kv-owner", "recover-active"),
+        )
+        .unwrap_or_else(|error| panic!("fresh-process KV recovery failed: {error}"));
 }
 
 #[tokio::test]
@@ -183,7 +202,7 @@ async fn provider_assigned_bind_activates_exact_kernel_port_and_releases_on_conf
 }
 
 #[tokio::test]
-async fn ambiguous_listener_drop_retains_active_fence_for_reconciliation() {
+async fn dead_process_bound_listener_drop_reconciles_before_reuse() {
     let root = tempfile::tempdir().expect("state root should exist");
     let requested = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
     let owner_config = config(root.path(), requested, "ambiguous-owner");
@@ -203,20 +222,49 @@ async fn ambiguous_listener_drop_retains_active_fence_for_reconciliation() {
     assert_eq!(
         records[0].phase(),
         PortLeasePhase::Active,
-        "ordinary Drop is ambiguous and must retain the durable fence for NNC3.8"
+        "ordinary Drop must retain authority until explicit lifetime reconciliation"
+    );
+    assert!(
+        records[0].active_lifetime().is_some(),
+        "the retained record must carry exact process-lifetime evidence"
     );
 
     let kernel_probe = tokio::net::TcpListener::bind(actual)
         .await
         .expect("dropping the wrapper should close Nimbus's local descriptor");
-    let contender_config = config(root.path(), actual, "ambiguous-contender");
-    assert!(matches!(
-        bind_listener(&contender_config).await,
-        Err(KvError::Network(
-            nimbus_network::PortLeaseError::PortConflict { .. }
-        ))
-    ));
     drop(kernel_probe);
+    let contender_config = config(root.path(), actual, "ambiguous-contender");
+    let contender = bind_listener(&contender_config)
+        .await
+        .expect("fresh preparation should reconcile the dead process-bound owner");
+    let records = LocalPortLeaseAuthority::open(root.path())
+        .expect("authority should reopen")
+        .list()
+        .expect("records should list");
+    assert_eq!(records.len(), 2);
+    assert_eq!(
+        records
+            .iter()
+            .find(|record| {
+                record.request().owner_id() == &owner_id(root.path(), "ambiguous-owner")
+            })
+            .expect("dead owner record should remain auditable")
+            .phase(),
+        PortLeasePhase::Released
+    );
+    assert_eq!(
+        records
+            .iter()
+            .find(|record| {
+                record.request().owner_id() == &owner_id(root.path(), "ambiguous-contender")
+            })
+            .expect("replacement owner record should exist")
+            .phase(),
+        PortLeasePhase::Active
+    );
+    contender
+        .close_and_settle()
+        .expect("replacement should close cleanly");
 }
 
 #[tokio::test]
@@ -360,6 +408,85 @@ fn nnc3_6_kv_listener_child() {
     .unwrap_or_else(|error| panic!("KV listener child failed: {error}"));
 }
 
+#[test]
+#[ignore = "spawned only by the NNC3.8 KV crash/recovery parent"]
+fn nnc3_8_kv_listener_recovery_child() {
+    let mode = std::env::var(RECOVERY_MODE_ENV).expect("recovery mode should be set");
+    match mode.as_str() {
+        "crash-active" => run_crash_cut_child(|context| {
+            let requested = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
+            let config = config(context.state_root(), requested, "crash-kv-incarnation");
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|error| format!("crash child runtime failed: {error}"))?;
+            let listener = runtime
+                .block_on(bind_listener(&config))
+                .map_err(|error| format!("crash child KV bind failed: {error}"))?;
+            let records = LocalPortLeaseAuthority::open(context.state_root())
+                .map_err(|error| format!("crash authority reopen failed: {error}"))?
+                .list()
+                .map_err(|error| format!("crash authority list failed: {error}"))?;
+            if records.len() != 1
+                || records[0].phase() != PortLeasePhase::Active
+                || records[0].active_lifetime().is_none()
+            {
+                return Err(format!(
+                    "crash owner must hold one Active lifetime-fenced lease, got {records:?}"
+                ));
+            }
+            context.reach_boundary(KV_ACTIVE_BOUNDARY)?;
+            drop(listener);
+            Err("crash child resumed after the parent kill boundary".to_owned())
+        })
+        .unwrap_or_else(|error| panic!("KV crash child failed: {error}")),
+        "recover-active" => run_crash_recovery_child(|context| {
+            let authority = LocalPortLeaseAuthority::open(context.state_root())
+                .map_err(|error| format!("recovery authority reopen failed: {error}"))?;
+            let old = authority
+                .list()
+                .map_err(|error| format!("recovery authority list failed: {error}"))?
+                .into_iter()
+                .find(|record| record.phase() == PortLeasePhase::Active)
+                .ok_or_else(|| "recovery child found no Active crash-owned lease".to_owned())?;
+            let port = old
+                .reserved_port()
+                .ok_or_else(|| "crash-owned KV lease omitted its concrete port".to_owned())?;
+            let requested = SocketAddr::from((Ipv4Addr::LOCALHOST, port.get()));
+            let config = config(context.state_root(), requested, "fresh-kv-incarnation");
+            let replacement_owner = NetworkResourceId::from(config.listener.listener_id().clone());
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|error| format!("recovery child runtime failed: {error}"))?;
+            let replacement = runtime
+                .block_on(bind_listener(&config))
+                .map_err(|error| format!("fresh-process exact KV rebind failed: {error}"))?;
+            let records = authority
+                .list()
+                .map_err(|error| format!("recovery authority relist failed: {error}"))?;
+            if records
+                .iter()
+                .find(|record| record.request().lease_id() == old.request().lease_id())
+                .is_none_or(|record| record.phase() != PortLeasePhase::Released)
+            {
+                return Err("old crash-owned lease did not reach Released".to_owned());
+            }
+            if !records.iter().any(|record| {
+                record.phase() == PortLeasePhase::Active
+                    && record.request().owner_id() == &replacement_owner
+                    && record.reserved_port() == Some(port)
+            }) {
+                return Err("replacement KV listener did not own the exact Active port".to_owned());
+            }
+            std::mem::forget(replacement);
+            Ok(KV_RECOVERY_OBSERVATION.to_owned())
+        })
+        .unwrap_or_else(|error| panic!("KV recovery child failed: {error}")),
+        other => panic!("unknown KV recovery mode {other:?}"),
+    }
+}
+
 fn child(role: &str, addr: SocketAddr) -> ProcessRoleSpec {
     ProcessRoleSpec::new(
         role,
@@ -370,6 +497,18 @@ fn child(role: &str, addr: SocketAddr) -> ProcessRoleSpec {
     .arg("--ignored")
     .arg("--nocapture")
     .env(CHILD_ADDR_ENV, addr.to_string())
+}
+
+fn recovery_child(role: &str, mode: &str) -> ProcessRoleSpec {
+    ProcessRoleSpec::new(
+        role,
+        std::env::current_exe().expect("current test executable should resolve"),
+    )
+    .arg("--exact")
+    .arg(RECOVERY_CHILD_TEST)
+    .arg("--ignored")
+    .arg("--nocapture")
+    .env(RECOVERY_MODE_ENV, mode)
 }
 
 fn owner_id(root: &std::path::Path, role: &str) -> NetworkResourceId {

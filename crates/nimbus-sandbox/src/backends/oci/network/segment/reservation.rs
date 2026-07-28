@@ -2,7 +2,8 @@
 
 use nimbus_core::TenantId;
 use nimbus_network::{
-    NetworkAttachmentId, NetworkReservationClaim, NetworkSegmentId, NetworkSegmentReleaseOutcome,
+    NetworkAttachmentId, NetworkAttachmentReservationState, NetworkReservationClaim,
+    NetworkSegmentId, NetworkSegmentReleaseOutcome,
 };
 
 use crate::error::{Result, SandboxError};
@@ -10,6 +11,66 @@ use crate::error::{Result, SandboxError};
 use super::{OciSegmentRealization, SegmentAttachmentState, SingleNodeSegmentAllocator};
 
 impl SingleNodeSegmentAllocator {
+    pub(super) fn inspect_attachment_reservation_inner(
+        &self,
+        tenant: &TenantId,
+        attachment_id: &NetworkAttachmentId,
+        reservation_claim: &NetworkReservationClaim,
+    ) -> Result<NetworkAttachmentReservationState> {
+        let supernet = self.installed()?.clone();
+        let Some(state) = self.read_state()? else {
+            return Ok(NetworkAttachmentReservationState::Absent);
+        };
+        self.ensure_supernet_matches(&supernet, &state)?;
+        let Some(entry) = state.tenants.get(tenant.as_str()) else {
+            return Ok(NetworkAttachmentReservationState::Absent);
+        };
+        if entry.attachments.is_empty() && entry.allocation_cleanup_pending {
+            return match entry.pending_reservation_cleanup_claim.as_ref() {
+                Some(existing) if existing == reservation_claim => {
+                    Ok(NetworkAttachmentReservationState::ReservationCleanupPending)
+                }
+                Some(_) => Err(reservation_claim_conflict(attachment_id)),
+                None => Ok(NetworkAttachmentReservationState::Absent),
+            };
+        }
+        let Some(attachment) = entry.attachments.get(attachment_id.as_str()) else {
+            return Ok(NetworkAttachmentReservationState::Absent);
+        };
+        match attachment {
+            SegmentAttachmentState::UnplacedReserved {
+                reservation_claim: existing,
+            }
+            | SegmentAttachmentState::Reserved {
+                reservation_claim: existing,
+                ..
+            } if existing == reservation_claim => Ok(NetworkAttachmentReservationState::Reserved),
+            SegmentAttachmentState::ReservationCleanupPending {
+                reservation_claim: existing,
+                ..
+            } if existing == reservation_claim => {
+                Ok(NetworkAttachmentReservationState::ReservationCleanupPending)
+            }
+            SegmentAttachmentState::Held {
+                adoption_receipt: Some(existing),
+                ..
+            } if existing == reservation_claim => Ok(NetworkAttachmentReservationState::Adopted),
+            SegmentAttachmentState::CleanupPending {
+                adoption_receipt: Some(existing),
+                ..
+            } if existing == reservation_claim => {
+                Ok(NetworkAttachmentReservationState::ProviderCleanupPending)
+            }
+            SegmentAttachmentState::UnplacedReserved { .. }
+            | SegmentAttachmentState::Reserved { .. }
+            | SegmentAttachmentState::ReservationCleanupPending { .. }
+            | SegmentAttachmentState::Held { .. }
+            | SegmentAttachmentState::CleanupPending { .. } => {
+                Err(reservation_claim_conflict(attachment_id))
+            }
+        }
+    }
+
     pub(super) fn reserve_attachment_for_coordinator_inner(
         &self,
         tenant: &TenantId,
@@ -558,6 +619,62 @@ mod tests {
                 .inspect_segments(&tenant)
                 .expect("released tenant should inspect")
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn reservation_inspection_is_claim_authenticated_read_only_and_phase_exact() {
+        let root = tempdir().expect("state root");
+        let allocator = SingleNodeSegmentAllocator::single_node_default(root.path());
+        let tenant = tenant();
+        let attachment = attachment("observed-workload");
+        let owner = claim("observed-owner");
+        let foreign = claim("foreign-observer");
+
+        assert_eq!(
+            allocator
+                .inspect_attachment_reservation(&tenant, &attachment, &owner)
+                .expect("missing authority should inspect"),
+            NetworkAttachmentReservationState::Absent
+        );
+        reserve_primary(&allocator, &tenant, &attachment, &owner);
+        let reserved_bytes =
+            fs::read(allocator.state_path()).expect("reserved authority should read");
+        assert_eq!(
+            allocator
+                .inspect_attachment_reservation(&tenant, &attachment, &owner)
+                .expect("exact reservation should inspect"),
+            NetworkAttachmentReservationState::Reserved
+        );
+        assert!(
+            allocator
+                .inspect_attachment_reservation(&tenant, &attachment, &foreign)
+                .is_err(),
+            "a foreign claim must not learn or classify another coordinator's authority"
+        );
+        assert_eq!(
+            fs::read(allocator.state_path()).expect("reserved authority should re-read"),
+            reserved_bytes,
+            "inspection and foreign rejection must not mutate allocation authority"
+        );
+
+        allocator
+            .adopt_reserved_attachment(&tenant, &attachment, &owner)
+            .expect("exact reservation should adopt");
+        assert_eq!(
+            allocator
+                .inspect_attachment_reservation(&tenant, &attachment, &owner)
+                .expect("adoption receipt should inspect"),
+            NetworkAttachmentReservationState::Adopted
+        );
+        allocator
+            .quarantine(&tenant, &attachment, Some(&owner))
+            .expect("adopted hold should quarantine");
+        assert_eq!(
+            allocator
+                .inspect_attachment_reservation(&tenant, &attachment, &owner)
+                .expect("provider cleanup fence should inspect"),
+            NetworkAttachmentReservationState::ProviderCleanupPending
         );
     }
 

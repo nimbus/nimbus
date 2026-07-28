@@ -5,7 +5,7 @@ use std::net::Ipv4Addr;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use nimbus_core::TenantId;
-use nimbus_network::{PortLeaseBinding, PortLeaseRequest};
+use nimbus_network::{PortLeaseBinding, PortLeaseRecoveryGuard, PortLeaseRequest};
 
 #[cfg(test)]
 use crate::backends::oci::network::panicking_machine_port_proxy_for_test;
@@ -15,6 +15,7 @@ use crate::backends::oci::network::{
     prepare_machine_port_proxies_with_release_authority, start_machine_port_proxies_with_recovery,
     unexpose_machine_ports,
 };
+use crate::backends::oci::port_lease::OciPortBindLifetimeBatch;
 use crate::backends::oci::port_manager::PortManager;
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
@@ -29,7 +30,13 @@ pub(super) struct MachinePortProxyRegistration {
     pub(super) port_leases: Vec<PortLeaseRequest>,
     pub(super) routes: Vec<MachinePortProxyRoute>,
     pub(super) proxies: Vec<MachinePortProxy>,
+    pub(super) lease_authority: Option<MachinePortProxyLeaseAuthority>,
     pub(super) publication_may_exist: bool,
+}
+
+pub(super) enum MachinePortProxyLeaseAuthority {
+    Live(OciPortBindLifetimeBatch),
+    Recovered(Vec<PortLeaseRecoveryGuard>),
 }
 
 pub(super) enum MachinePortProxyEntry {
@@ -252,11 +259,24 @@ impl ContainerSandboxBackend {
                     ),
                 });
             }
-            manager.require_active_machine_bindings(
+            let live_authority = match registration.lease_authority.as_ref() {
+                Some(MachinePortProxyLeaseAuthority::Live(authority)) => authority,
+                Some(MachinePortProxyLeaseAuthority::Recovered(_)) | None => {
+                    return Err(SandboxError::OperationFailed {
+                        message: format!(
+                            "container machine port proxy registry for tenant {} sandbox {id} \
+                             lacks its exact live process lifetime",
+                            manifest.spec.tenant_id
+                        ),
+                    });
+                }
+            };
+            manager.require_active_machine_bindings_with_lifetimes(
                 &manifest.spec.tenant_id,
                 &manifest.handle.id,
                 &manifest.spec.port_bindings,
                 &manifest.port_leases,
+                live_authority,
             )?;
             after_active_validation
                 .take()
@@ -290,18 +310,14 @@ impl ContainerSandboxBackend {
             &manager,
             release_authority,
         )?;
-        let bind_claims = prepared
-            .iter()
-            .map(|proxy| proxy.bind_claim().clone())
-            .collect::<Vec<_>>();
         let activation_result = before_activation()
             .and_then(|()| {
-                manager.activate_machine_bindings(
+                manager.activate_machine_bindings_with_lifetimes(
                     &manifest.spec.tenant_id,
                     &manifest.handle.id,
                     &manifest.spec.port_bindings,
                     &manifest.port_leases,
-                    &bind_claims,
+                    prepared.bind_authority(),
                 )
             })
             .and_then(|bindings| {
@@ -314,10 +330,13 @@ impl ContainerSandboxBackend {
                 // Provider absence must precede durable claim compensation.
                 // `prepared` owns every inert socket and no accept worker or
                 // external publication has started yet.
-                drop(prepared);
+                let (prepared_proxies, bind_authority) = prepared.into_parts();
+                drop(prepared_proxies);
                 let compensation_result = match manager
-                    .abandon_machine_bind_claims_without_effect(&manifest.port_leases, &bind_claims)
-                {
+                    .abandon_machine_bind_claims_with_lifetimes_without_effect(
+                        &manifest.port_leases,
+                        &bind_authority,
+                    ) {
                     Ok(()) => Ok(()),
                     Err(abandon_error) => {
                         // A store acknowledgement can be lost after the atomic
@@ -331,9 +350,10 @@ impl ContainerSandboxBackend {
                             &manifest.port_leases,
                         ) {
                             Ok(active_bindings) => manager
-                                .prepare_machine_bindings_for_rebind(
+                                .prepare_machine_bindings_for_rebind_with_lifetimes(
                                     &manifest.port_leases,
                                     &active_bindings,
+                                    &bind_authority,
                                 )
                                 .map_err(|rebind_error| {
                                     format!(
@@ -362,7 +382,7 @@ impl ContainerSandboxBackend {
         after_active_validation
             .take()
             .expect("validation observer runs exactly once")();
-        let running = match start_machine_port_proxies_with_recovery(
+        let (running, bind_authority) = match start_machine_port_proxies_with_recovery(
             &manifest.spec.tenant_id,
             &manifest.handle.id,
             &manifest.spec.port_bindings,
@@ -370,9 +390,9 @@ impl ContainerSandboxBackend {
             &manager,
             prepared,
         ) {
-            Ok(running) => running,
+            Ok(running) => running.into_parts(),
             Err(failure) => {
-                let (start_error, running) = failure.into_parts();
+                let (start_error, running, bind_authority) = failure.into_parts();
                 let disposition = partial_start_cleanup_disposition(release_authority);
                 let state = Arc::new(Mutex::new(MachinePortProxyCleanupState {
                     disposition,
@@ -382,6 +402,7 @@ impl ContainerSandboxBackend {
                         port_leases: manifest.port_leases.clone(),
                         routes,
                         proxies: running,
+                        lease_authority: Some(MachinePortProxyLeaseAuthority::Live(bind_authority)),
                         publication_may_exist: false,
                     },
                     expected_bindings,
@@ -417,6 +438,7 @@ impl ContainerSandboxBackend {
                 port_leases: manifest.port_leases.clone(),
                 routes,
                 proxies: running,
+                lease_authority: Some(MachinePortProxyLeaseAuthority::Live(bind_authority)),
                 publication_may_exist: true,
             }),
         );
@@ -586,7 +608,7 @@ impl ContainerSandboxBackend {
         before_registry_lock();
         let state = {
             let mut registrations = self.lock_machine_port_proxy_registry()?;
-            match registrations.get(&key) {
+            let recovered = match registrations.get(&key) {
                 None => {
                     if expected_port_leases.is_empty()
                         || port_manager.machine_bindings_are_terminal_without_effect(
@@ -608,14 +630,12 @@ impl ContainerSandboxBackend {
                     {
                         return Ok(None);
                     }
-                    return Err(SandboxError::OperationFailed {
-                        message: format!(
-                            "cannot confirm machine port proxy stop for tenant {tenant_id} \
-                             sandbox {id}: this process has no registry entry for the expected \
-                             listener generation; durable port authority remains fenced for \
-                             reconciliation"
-                        ),
-                    });
+                    Some(port_manager.recover_machine_bindings_after_owner_death(
+                        tenant_id,
+                        id,
+                        expected_port_bindings,
+                        expected_port_leases,
+                    )?)
                 }
                 Some(MachinePortProxyEntry::Running(registration)) => {
                     if registration.port_bindings != expected_port_bindings
@@ -629,6 +649,7 @@ impl ContainerSandboxBackend {
                             ),
                         });
                     }
+                    None
                 }
                 Some(MachinePortProxyEntry::Stopping(state)) => {
                     let state = Arc::clone(state);
@@ -645,44 +666,69 @@ impl ContainerSandboxBackend {
                     self.stop_machine_port_proxy_provider(&cleanup)?;
                     return Ok(Some(cleanup));
                 }
-            }
+            };
 
-            let expected_bindings = if expected_port_leases.is_empty() {
-                Vec::new()
+            let state = if let Some((expected_bindings, recoveries)) = recovered {
+                Arc::new(Mutex::new(MachinePortProxyCleanupState {
+                    disposition,
+                    port_manager,
+                    registration: MachinePortProxyRegistration {
+                        port_bindings: expected_port_bindings.to_vec(),
+                        port_leases: expected_port_leases.to_vec(),
+                        routes: Vec::new(),
+                        proxies: Vec::new(),
+                        lease_authority: Some(MachinePortProxyLeaseAuthority::Recovered(
+                            recoveries,
+                        )),
+                        publication_may_exist: true,
+                    },
+                    expected_bindings,
+                    // CleanupPending already fences new use. Process death
+                    // proves the local proxy listener absent, but never proves
+                    // the provider-managed external publication absent.
+                    withdraw_complete: true,
+                    provider_stopped: true,
+                    publication_withdrawn: vec![false; expected_port_bindings.len()],
+                    durable_transition_complete: false,
+                }))
             } else {
-                match disposition {
-                    MachinePortProxyCleanupDisposition::Restart => port_manager
-                        .require_active_machine_bindings(
-                            tenant_id,
-                            id,
-                            expected_port_bindings,
-                            expected_port_leases,
-                        )?,
-                    MachinePortProxyCleanupDisposition::Release => port_manager
-                        .require_releasable_machine_bindings(
-                            tenant_id,
-                            id,
-                            expected_port_bindings,
-                            expected_port_leases,
-                        )?,
-                }
+                let expected_bindings = if expected_port_leases.is_empty() {
+                    Vec::new()
+                } else {
+                    match disposition {
+                        MachinePortProxyCleanupDisposition::Restart => port_manager
+                            .require_active_machine_bindings(
+                                tenant_id,
+                                id,
+                                expected_port_bindings,
+                                expected_port_leases,
+                            )?,
+                        MachinePortProxyCleanupDisposition::Release => port_manager
+                            .require_releasable_machine_bindings(
+                                tenant_id,
+                                id,
+                                expected_port_bindings,
+                                expected_port_leases,
+                            )?,
+                    }
+                };
+                let Some(MachinePortProxyEntry::Running(registration)) = registrations.remove(&key)
+                else {
+                    unreachable!("running registration was validated under the same lock");
+                };
+                let publication_withdrawn =
+                    vec![!registration.publication_may_exist; registration.port_bindings.len()];
+                Arc::new(Mutex::new(MachinePortProxyCleanupState {
+                    disposition,
+                    port_manager,
+                    registration,
+                    expected_bindings,
+                    withdraw_complete: disposition == MachinePortProxyCleanupDisposition::Restart,
+                    provider_stopped: false,
+                    publication_withdrawn,
+                    durable_transition_complete: false,
+                }))
             };
-            let Some(MachinePortProxyEntry::Running(registration)) = registrations.remove(&key)
-            else {
-                unreachable!("running registration was validated under the same lock");
-            };
-            let publication_withdrawn =
-                vec![!registration.publication_may_exist; registration.port_bindings.len()];
-            let state = Arc::new(Mutex::new(MachinePortProxyCleanupState {
-                disposition,
-                port_manager,
-                registration,
-                expected_bindings,
-                withdraw_complete: disposition == MachinePortProxyCleanupDisposition::Restart,
-                provider_stopped: false,
-                publication_withdrawn,
-                durable_transition_complete: false,
-            }));
             registrations.insert(
                 key.clone(),
                 MachinePortProxyEntry::Stopping(Arc::clone(&state)),
@@ -814,7 +860,7 @@ impl ContainerSandboxBackend {
     }
 
     #[cfg(test)]
-    fn confirm_machine_port_proxy_publication_absent(
+    pub(super) fn confirm_machine_port_proxy_publication_absent(
         &self,
         cleanup: &MachinePortProxyCleanup,
     ) -> Result<()> {
@@ -853,22 +899,56 @@ impl ContainerSandboxBackend {
             }
             if !state.durable_transition_complete {
                 let port_manager = state.port_manager.clone();
-                match state.disposition {
-                    MachinePortProxyCleanupDisposition::Restart => {
-                        if !state.registration.port_leases.is_empty() {
-                            port_manager.prepare_machine_bindings_for_rebind(
+                if !state.registration.port_leases.is_empty() {
+                    let authority =
+                        state.registration.lease_authority.as_ref().ok_or_else(|| {
+                            SandboxError::OperationFailed {
+                                message: format!(
+                                    "machine port proxy cleanup for tenant {} sandbox {} lost its \
+                                     exact lease-lifetime authority",
+                                    cleanup.key.0, cleanup.key.1
+                                ),
+                            }
+                        })?;
+                    match (state.disposition, authority) {
+                        (
+                            MachinePortProxyCleanupDisposition::Restart,
+                            MachinePortProxyLeaseAuthority::Live(lifetimes),
+                        ) => {
+                            port_manager.prepare_machine_bindings_for_rebind_with_lifetimes(
                                 &state.registration.port_leases,
                                 &state.expected_bindings,
+                                lifetimes,
                             )?;
                         }
-                    }
-                    MachinePortProxyCleanupDisposition::Release => {
-                        if !state.registration.port_leases.is_empty() {
-                            port_manager.release_bindings(
-                                &cleanup.key.0,
-                                &cleanup.key.1,
-                                &state.registration.port_bindings,
+                        (
+                            MachinePortProxyCleanupDisposition::Release,
+                            MachinePortProxyLeaseAuthority::Live(lifetimes),
+                        ) => {
+                            port_manager
+                                .release_machine_bindings_after_confirmed_stop_with_lifetimes(
+                                    &state.registration.port_leases,
+                                    &state.expected_bindings,
+                                    lifetimes,
+                                )?;
+                        }
+                        (
+                            MachinePortProxyCleanupDisposition::Restart,
+                            MachinePortProxyLeaseAuthority::Recovered(recoveries),
+                        ) => {
+                            port_manager.prepare_recovered_machine_bindings_for_rebind(
                                 &state.registration.port_leases,
+                                &state.expected_bindings,
+                                recoveries,
+                            )?;
+                        }
+                        (
+                            MachinePortProxyCleanupDisposition::Release,
+                            MachinePortProxyLeaseAuthority::Recovered(recoveries),
+                        ) => {
+                            port_manager.release_recovered_machine_bindings(
+                                &state.registration.port_leases,
+                                recoveries,
                             )?;
                         }
                     }

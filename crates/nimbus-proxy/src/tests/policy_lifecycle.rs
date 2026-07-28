@@ -102,13 +102,19 @@ fn egress_proxy_reload_updates_policy_without_restart() {
     );
 
     proxy
-        .reload_policy(allow_policy([EgressRule::new(
-            "first",
-            EgressProtocol::Http,
-            "first.test",
-            first.addr.port(),
+        .reload_policy_for_attempt(
+            allow_policy([EgressRule::new(
+                "first",
+                EgressProtocol::Http,
+                "first.test",
+                first.addr.port(),
+            )
+            .allow_internal_ips(true)]),
+            PolicyReloadAttempt::new(
+                std::num::NonZeroU64::new(2).expect("desired generation is nonzero"),
+                std::num::NonZeroU64::new(1).expect("attempt generation is nonzero"),
+            ),
         )
-        .allow_internal_ips(true)]))
         .expect("proxy policy reload should succeed");
     let allowed = proxy_request(
         proxy.local_addr(),
@@ -123,13 +129,19 @@ fn egress_proxy_reload_updates_policy_without_restart() {
     );
 
     proxy
-        .reload_policy(allow_policy([EgressRule::new(
-            "second",
-            EgressProtocol::Http,
-            "second.test",
-            second.addr.port(),
+        .reload_policy_for_attempt(
+            allow_policy([EgressRule::new(
+                "second",
+                EgressProtocol::Http,
+                "second.test",
+                second.addr.port(),
+            )
+            .allow_internal_ips(true)]),
+            PolicyReloadAttempt::new(
+                std::num::NonZeroU64::new(3).expect("desired generation is nonzero"),
+                std::num::NonZeroU64::new(2).expect("attempt generation is nonzero"),
+            ),
         )
-        .allow_internal_ips(true)]))
         .expect("second proxy policy reload should succeed");
     let old_target = proxy_request(
         proxy.local_addr(),
@@ -169,13 +181,11 @@ fn egress_proxy_invalid_reload_preserves_last_known_good_generation() {
     assert_eq!(initial.policy_generation, Some(PolicyGeneration::initial()));
 
     let invalid = EgressPolicy::new([EgressRule::new("wildcard", EgressProtocol::Http, "*", 80)]);
-    let error = proxy
-        .reload_uncompiled_policy(invalid)
+    let error = invalid
+        .compile()
         .expect_err("invalid reload should fail closed");
     assert!(
-        error
-            .to_string()
-            .contains("invalid egress proxy policy reload"),
+        error.contains("wildcard"),
         "reload error should explain invalid policy: {error}"
     );
     let after_error = proxy.readiness().expect("readiness should remain readable");

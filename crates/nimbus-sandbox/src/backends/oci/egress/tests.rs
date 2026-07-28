@@ -730,8 +730,8 @@ fn overlapping_restart_claim_rejection_preserves_the_live_pep_trust_anchor() {
     assert!(
         error
             .to_string()
-            .contains("cannot claim provider bind attempt")
-            && error.to_string().contains("phase Active"),
+            .contains("remains owned by live process lifetime")
+            && error.to_string().contains("ProcessBound"),
         "the overlapping restart must stop before a second provider bind: {error}"
     );
     assert_eq!(
@@ -836,7 +836,7 @@ fn same_request_pep_replay_cannot_terminalize_the_claimed_attempt() {
     assert!(
         error
             .to_string()
-            .contains("different in-flight provider bind attempt"),
+            .contains("still has a live process-lifetime owner"),
         "the losing replay must report claim contention without binding: {error}"
     );
 

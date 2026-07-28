@@ -1,5 +1,9 @@
 pub(super) use super::*;
 
+#[path = "tests/creator_recovery.rs"]
+mod creator_recovery;
+#[path = "tests/egress_reload_recovery.rs"]
+mod egress_reload_recovery;
 #[path = "lifecycle.rs"]
 mod lifecycle;
 #[path = "tests/manifest_durability.rs"]

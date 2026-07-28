@@ -32,6 +32,9 @@ use super::{
 };
 
 #[cfg(test)]
+#[path = "netavark/recovery_tests.rs"]
+mod recovery_tests;
+#[cfg(test)]
 #[path = "netavark/tests.rs"]
 mod tests;
 
@@ -41,8 +44,8 @@ pub(crate) fn authenticate_container_network_generation(
     layout: &OciNetworkLayout,
     config: &OciNetworkConfig,
     sandbox_id: &SandboxId,
-) -> Result<()> {
-    load_container_ips_for_segment(layout, config, sandbox_id).map(drop)
+) -> Result<Vec<Ipv4Addr>> {
+    load_container_ips_for_segment(layout, config, sandbox_id)
 }
 
 /// Authenticate cleanup against either the exact live allocation or its

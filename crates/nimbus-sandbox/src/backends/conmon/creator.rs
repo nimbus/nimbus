@@ -5,10 +5,15 @@
 //! contains its process group, and authenticates the separate conmon PID
 //! receipt before it acknowledges quiescence.
 
+use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
+#[cfg(unix)]
+use std::io::Write as _;
+#[cfg(unix)]
+use std::os::fd::{AsRawFd as _, FromRawFd as _};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt as _;
 
@@ -17,6 +22,17 @@ use crate::backends::oci::command::CommandSpec;
 use crate::backends::poll::poll_until_deadline;
 use crate::error::{Result, SandboxError};
 use crate::process::pid_is_alive;
+
+#[path = "creator/attempt_annotation.rs"]
+mod attempt_annotation;
+#[path = "creator/recovery.rs"]
+mod recovery;
+
+pub(crate) use attempt_annotation::publish_creator_attempt_annotation;
+pub(crate) use recovery::{
+    CreatorAttemptReceipt, CreatorContainmentObservation, CreatorQuiescenceProof,
+    confirm_dead_conmon_receipt, observe_creator_containment,
+};
 
 const CREATOR_QUIESCENCE_TIMEOUT: Duration = Duration::from_secs(2);
 const CREATOR_QUIESCENCE_POLL_INTERVAL: Duration = Duration::from_millis(10);
@@ -41,6 +57,11 @@ pub(crate) struct OwnedConmonCreator {
     conmon_pidfile: PathBuf,
     #[cfg(unix)]
     process_group: i32,
+    /// Parent half of the pre-effect launch gate. The wrapper process cannot
+    /// execute the real provider command until the adapter has durably
+    /// published this creator's birth receipt.
+    #[cfg(unix)]
+    launch_gate: Option<File>,
     /// Attempt-scoped proof that this exact creator's containment was reaped
     /// and its process group was observed absent. Once established, the
     /// retained numeric group ID must never be signalled again because the
@@ -58,26 +79,104 @@ impl OwnedConmonCreator {
         Self::spawn_with_pid_receipt(command, &receipt)
     }
 
+    /// Test-only immediate spawn used by the containment unit tests.
+    ///
+    /// Production creator orchestration must use
+    /// [`Self::spawn_gated_with_pid_receipt`].
+    #[cfg(test)]
     pub(crate) fn spawn_with_pid_receipt(
         command: &CommandSpec,
         conmon_pidfile: &Path,
     ) -> Result<Self> {
+        Self::spawn_impl(command, conmon_pidfile, false)
+    }
+
+    /// Spawn an owned wrapper whose provider effect remains launch-gated.
+    ///
+    /// The caller must capture and durably publish [`CreatorAttemptReceipt`],
+    /// then call [`Self::release_after_receipt_persisted`]. If the Nimbus
+    /// process exits first, pipe closure makes the wrapper exit without
+    /// executing the provider command.
+    pub(crate) fn spawn_gated_with_pid_receipt(
+        command: &CommandSpec,
+        conmon_pidfile: &Path,
+    ) -> Result<Self> {
+        Self::spawn_impl(command, conmon_pidfile, true)
+    }
+
+    fn spawn_impl(
+        command_spec: &CommandSpec,
+        conmon_pidfile: &Path,
+        launch_gated: bool,
+    ) -> Result<Self> {
         prepare_pid_receipt_for_new_attempt(conmon_pidfile)?;
-        let mut command = command.as_command();
+        #[cfg(not(unix))]
+        if launch_gated {
+            return Err(SandboxError::BackendUnavailable {
+                message: "owned conmon creator launch gating requires a Unix host".to_owned(),
+            });
+        }
+
+        #[cfg(unix)]
+        let (mut command, launch_gate) = if launch_gated {
+            let (gate_reader, gate_writer) = launch_gate_pipe()?;
+            let reader_fd = gate_reader.as_raw_fd();
+            let writer_fd = gate_writer.as_raw_fd();
+            let mut command = std::process::Command::new("/bin/sh");
+            command
+                .arg("-c")
+                .arg(
+                    "IFS= read -r gate <&9 || exit 125; \
+                     [ \"$gate\" = nimbus-start ] || exit 125; exec \"$@\"",
+                )
+                .arg("nimbus-launch-gate")
+                .arg(&command_spec.program)
+                .args(&command_spec.args);
+            // SAFETY: after fork and before exec this closure performs only
+            // async-signal-safe descriptor operations. The child closes its
+            // inherited writer, installs the reader at descriptor 9, and
+            // clears close-on-exec so the shell wrapper can block on it.
+            unsafe {
+                command.pre_exec(move || {
+                    if libc::close(writer_fd) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    if reader_fd != 9 && libc::dup2(reader_fd, 9) == -1 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    if reader_fd != 9 && libc::close(reader_fd) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    if libc::fcntl(9, libc::F_SETFD, 0) == -1 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+            (command, Some((gate_reader, gate_writer)))
+        } else {
+            (command_spec.as_command(), None)
+        };
+        #[cfg(not(unix))]
+        let mut command = command_spec.as_command();
         command
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         #[cfg(unix)]
         command.process_group(0);
-        let child = command
-            .spawn()
-            .map_err(|error| SandboxError::OperationFailed {
-                message: format!(
-                    "failed to spawn owned sandbox creator command {}: {error}",
-                    command.get_program().to_string_lossy()
-                ),
-            })?;
+        let child_result = command.spawn();
+        #[cfg(unix)]
+        let launch_gate = launch_gate.map(|(reader, writer)| {
+            drop(reader);
+            writer
+        });
+        let child = child_result.map_err(|error| SandboxError::OperationFailed {
+            message: format!(
+                "failed to spawn owned sandbox creator command {}: {error}",
+                command_spec.program.display()
+            ),
+        })?;
         #[cfg(unix)]
         let process_group =
             i32::try_from(child.id()).map_err(|_| SandboxError::OperationFailed {
@@ -91,15 +190,72 @@ impl OwnedConmonCreator {
             conmon_pidfile: conmon_pidfile.to_path_buf(),
             #[cfg(unix)]
             process_group,
+            #[cfg(unix)]
+            launch_gate,
             containment_phase: CreatorContainmentPhase::LeaderRetained,
             #[cfg(test)]
             inject_cancellation_ack_loss_once: false,
         })
     }
 
+    /// Release the exact creator only after its durable pending receipt exists.
+    pub(crate) fn release_after_receipt_persisted(&mut self) -> Result<()> {
+        #[cfg(unix)]
+        {
+            let gate = self
+                .launch_gate
+                .as_mut()
+                .ok_or_else(|| SandboxError::OperationFailed {
+                    message: "sandbox creator launch gate was already released or absent"
+                        .to_owned(),
+                })?;
+            gate.write_all(b"nimbus-start\n")
+                .map_err(|error| SandboxError::OperationFailed {
+                    message: format!(
+                        "failed to release sandbox creator after durable receipt publication: \
+                         {error}"
+                    ),
+                })?;
+            drop(self.launch_gate.take());
+            Ok(())
+        }
+        #[cfg(not(unix))]
+        {
+            Err(SandboxError::BackendUnavailable {
+                message: "owned conmon creator launch gating requires a Unix host".to_owned(),
+            })
+        }
+    }
+
+    /// Cancel a creator whose launch gate was never released.
+    ///
+    /// No conmon receipt is required: the wrapper could not execute the
+    /// provider command, so authenticated containment quiescence is exact
+    /// no-effect evidence for this attempt.
+    pub(crate) fn cancel_before_gate_release_and_confirm_quiesced(&mut self) -> Result<()> {
+        #[cfg(unix)]
+        if self.launch_gate.is_none() {
+            return Err(SandboxError::OperationFailed {
+                message: "cannot claim an unreleased creator gate after it was released".to_owned(),
+            });
+        }
+        self.cancel_containment_and_reap()
+    }
+
     #[cfg(test)]
     fn inject_cancellation_ack_loss_once(&mut self) {
         self.inject_cancellation_ack_loss_once = true;
+    }
+
+    /// Capture the stable OS birth and containment identity for this exact
+    /// retained child before its logical attempt is published as pending.
+    pub(crate) fn attempt_receipt(&self, attempt_id: &str) -> Result<CreatorAttemptReceipt> {
+        recovery::capture_creator_attempt(
+            attempt_id,
+            self.child.id(),
+            #[cfg(unix)]
+            self.process_group,
+        )
     }
 
     /// Cancel the exact creator containment, reap it, and authenticate the
@@ -127,11 +283,12 @@ impl OwnedConmonCreator {
                     "creator receipt {} names live PID {pid}; authority remains fenced",
                     conmon_pidfile.display()
                 )),
-                Ok(_) if containment_confirmed => {
-                    if let Err(error) = remove_if_exists(&conmon_pidfile) {
-                        errors.push(error.to_string());
-                    }
-                }
+                // Retain the dead receipt until the effect-owning adapter has
+                // durably published Quiesced. If that later publication loses
+                // acknowledgement, a fresh process still has exact provider
+                // evidence to authenticate before retrying. The next spawn
+                // removes a dead prior receipt before any new effect.
+                Ok(_) if containment_confirmed => {}
                 Ok(_) => {}
                 Err(error) => errors.push(error.to_string()),
             },
@@ -376,6 +533,39 @@ fn prepare_pid_receipt_for_new_attempt(conmon_pidfile: &Path) -> Result<()> {
 }
 
 #[cfg(unix)]
+fn launch_gate_pipe() -> Result<(File, File)> {
+    let mut descriptors = [-1; 2];
+    // SAFETY: `descriptors` has room for the two file descriptors populated
+    // by `pipe`. Both descriptors are immediately wrapped in `File` so every
+    // error path closes them.
+    if unsafe { libc::pipe(descriptors.as_mut_ptr()) } != 0 {
+        return Err(SandboxError::OperationFailed {
+            message: format!(
+                "failed to create sandbox creator launch gate: {}",
+                std::io::Error::last_os_error()
+            ),
+        });
+    }
+    // SAFETY: successful `pipe` returned two newly owned descriptors.
+    let reader = unsafe { File::from_raw_fd(descriptors[0]) };
+    // SAFETY: successful `pipe` returned two newly owned descriptors.
+    let writer = unsafe { File::from_raw_fd(descriptors[1]) };
+    for descriptor in [reader.as_raw_fd(), writer.as_raw_fd()] {
+        // Prevent accidental inheritance outside the deliberate descriptor-9
+        // child mapping installed by `pre_exec`.
+        if unsafe { libc::fcntl(descriptor, libc::F_SETFD, libc::FD_CLOEXEC) } == -1 {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "failed to secure sandbox creator launch-gate descriptor: {}",
+                    std::io::Error::last_os_error()
+                ),
+            });
+        }
+    }
+    Ok((reader, writer))
+}
+
+#[cfg(unix)]
 fn process_group_is_absent(process_group: i32) -> Result<bool> {
     // SAFETY: signal zero probes only the retained process-group identifier.
     if unsafe { libc::kill(-process_group, 0) } == 0 {
@@ -405,6 +595,10 @@ mod tests {
     use super::*;
     #[cfg(unix)]
     use crate::backends::conmon::lifecycle::wait_for_path;
+
+    const GATED_CRASH_CHILD_TEST: &str =
+        "backends::conmon::creator::tests::gated_creator_crash_child";
+    const GATED_CRASH_ROOT_ENV: &str = "NIMBUS_NNC38_GATED_CREATOR_CRASH_ROOT";
 
     #[cfg(unix)]
     struct EscapedTestProcess {
@@ -470,6 +664,86 @@ mod tests {
                 let _ = self.terminate_and_reap();
             }
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn creator_effect_waits_for_durable_receipt_release() {
+        let temp_dir = TempDir::new().expect("temporary directory should exist");
+        let effect = temp_dir.path().join("creator-effect");
+        let receipt = temp_dir.path().join("conmon.pid");
+        let mut creator = OwnedConmonCreator::spawn_gated_with_pid_receipt(
+            &CommandSpec::new("/bin/sh").args([
+                "-c".to_owned(),
+                format!("touch {}", shell_words::quote(&effect.to_string_lossy())),
+            ]),
+            &receipt,
+        )
+        .expect("launch-gated creator should spawn");
+        creator
+            .attempt_receipt("gated-release-attempt")
+            .expect("birth receipt should be capturable while the gate is closed");
+        assert!(
+            !wait_for_path(&effect, Duration::from_millis(100)),
+            "the provider command must not run before durable receipt publication"
+        );
+
+        creator
+            .release_after_receipt_persisted()
+            .expect("durable receipt publication should release the provider");
+        assert!(
+            wait_for_path(&effect, Duration::from_secs(2)),
+            "the provider command should run after the exact gate release"
+        );
+        creator
+            .reap_after_runtime_observed(Duration::from_secs(2))
+            .expect("released test creator should exit and reap");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn process_crash_before_receipt_publication_cannot_start_provider_effect() {
+        let temp_dir = TempDir::new().expect("temporary directory should exist");
+        let output = Command::new(std::env::current_exe().expect("test executable should resolve"))
+            .arg("--exact")
+            .arg(GATED_CRASH_CHILD_TEST)
+            .arg("--ignored")
+            .arg("--nocapture")
+            .env(GATED_CRASH_ROOT_ENV, temp_dir.path())
+            .output()
+            .expect("gated crash child should execute");
+        assert_eq!(
+            output.status.code(),
+            Some(77),
+            "child must exit at the intended pre-receipt crash boundary\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+        let effect = temp_dir.path().join("creator-effect");
+        assert!(
+            !wait_for_path(&effect, Duration::from_millis(250)),
+            "closing the parent gate on process death must make the wrapper exit without effect"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "spawned only by the launch-gate crash parent"]
+    fn gated_creator_crash_child() {
+        let root = PathBuf::from(
+            std::env::var(GATED_CRASH_ROOT_ENV).expect("launch-gate crash root should be provided"),
+        );
+        let effect = root.join("creator-effect");
+        let receipt = root.join("conmon.pid");
+        let _creator = OwnedConmonCreator::spawn_gated_with_pid_receipt(
+            &CommandSpec::new("/bin/sh").args([
+                "-c".to_owned(),
+                format!("touch {}", shell_words::quote(&effect.to_string_lossy())),
+            ]),
+            &receipt,
+        )
+        .expect("launch-gated crash child should spawn its wrapper");
+        std::process::exit(77);
     }
 
     #[cfg(unix)]
@@ -737,8 +1011,9 @@ mod tests {
             .cancel_and_confirm_quiesced()
             .expect("same-owner retry should confirm quiescence");
         assert!(
-            !receipt.exists(),
-            "successful bounded retry should consume the authenticated dead receipt"
+            receipt.exists(),
+            "successful bounded retry must retain the authenticated dead receipt until the \
+             adapter durably publishes quiescence"
         );
     }
 
@@ -791,8 +1066,8 @@ mod tests {
         );
         retry.expect("receipt-only retry should confirm quiescence");
         assert!(
-            !receipt.exists(),
-            "receipt-only retry should consume the authenticated dead receipt"
+            receipt.exists(),
+            "receipt-only retry must retain evidence until the adapter's durable checkpoint"
         );
     }
 

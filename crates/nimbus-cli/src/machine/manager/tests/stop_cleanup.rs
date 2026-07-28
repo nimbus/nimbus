@@ -76,6 +76,10 @@ fn stop_machine_uses_graceful_vmm_stop_before_cleaning_up_helpers() {
         rest_uri: format!("unix://{}", paths.vmm_endpoint_path.display()),
         ready_vsock_port: READY_VSOCK_PORT,
     });
+    // Launch owns the provider lifetime only until it hands the running
+    // machine back to its caller. Model that handoff before stop attempts
+    // dead-owner recovery.
+    drop(prepared);
 
     stop_machine(&paths, &config, &mut state).expect("machine stop should succeed");
     server.join().expect("endpoint server should finish");
@@ -159,6 +163,9 @@ fn ambiguous_gvproxy_stop_preserves_runtime_evidence_and_port_fence() {
         rest_uri: format!("unix://{}", paths.vmm_endpoint_path.display()),
         ready_vsock_port: READY_VSOCK_PORT,
     });
+    // The launch-side lifetime must be gone before stop can prove exclusive
+    // recovery authority for the provider generation.
+    drop(prepared);
 
     let error = stop_machine(&paths, &config, &mut state)
         .expect_err("missing exact gvproxy stop evidence must fail closed");
@@ -187,7 +194,11 @@ fn ambiguous_gvproxy_stop_preserves_runtime_evidence_and_port_fence() {
         ))
         .expect("machine SSH lease should inspect")
         .expect("machine SSH lease should remain durable");
-    assert_eq!(lease.phase(), nimbus_network::PortLeasePhase::Withdrawing);
+    assert_eq!(
+        lease.phase(),
+        nimbus_network::PortLeasePhase::CleanupPending,
+        "dead-owner recovery must quarantine the exact provider generation before stop"
+    );
     assert!(
         lease.binding().is_some(),
         "ambiguous stop must retain exact prior provider evidence"

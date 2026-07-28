@@ -26,8 +26,7 @@ fn execute_inspection_waits_for_lifecycle_owner_and_rejects_stale_manifest() {
         .expect("runner should claim execution");
     super::super::runner::mark_runner_effects_started(&manifest, &handoff)
         .expect("runner effect boundary should become durable");
-    super::super::runner::publish_runner_lifecycle_ownership(&manifest, &handoff)
-        .expect("ordinary lifecycle ownership should publish");
+    publish_present_runner_lifecycle(&manifest, &handoff);
     drop(handoff);
 
     let lifecycle = super::super::runner::lock_execute_lifecycle(&manifest)

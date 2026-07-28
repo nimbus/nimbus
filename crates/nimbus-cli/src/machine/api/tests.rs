@@ -24,6 +24,42 @@ use nimbus_sandbox::SandboxFuture;
 use serde_json::json;
 use tempfile::{Builder, TempDir};
 
+#[test]
+fn machine_forwarder_identity_is_stable_for_the_guest_lifecycle() {
+    let first = machine_port_forwarder_config(
+        "node-machine-alpha",
+        "11111111-2222-3333-4444-555555555555\n",
+    )
+    .expect("guest lifecycle should configure its gvproxy provider context");
+    let reconstructed =
+        machine_port_forwarder_config("node-machine-alpha", "11111111-2222-3333-4444-555555555555")
+            .expect("backend reconstruction should reuse the lifecycle context");
+    let other_lifecycle =
+        machine_port_forwarder_config("node-machine-alpha", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+            .expect("a different guest lifecycle should configure independently");
+
+    assert_eq!(first, reconstructed);
+    assert_ne!(
+        first.provider_instance(),
+        other_lifecycle.provider_instance(),
+        "provider identity belongs to the guest-machine lifecycle, not the fixed endpoint"
+    );
+    assert_eq!(
+        first.provider_generation(),
+        INITIAL_MACHINE_FORWARDER_GENERATION
+    );
+}
+
+#[test]
+fn machine_forwarder_rejects_an_empty_boot_identity() {
+    let error = machine_port_forwarder_config("node-machine-alpha", " \n")
+        .expect_err("an empty boot identity cannot fence a provider incarnation");
+    assert!(
+        error.to_string().contains("guest boot identity is empty"),
+        "{error}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn machine_api_serves_health_and_capabilities_over_unix_socket() {
     let temp_dir = short_socket_tempdir();
@@ -175,11 +211,16 @@ fn capability_response_reports_machine_port_forwarder_blocker_when_unreachable()
                 ),
             )),
         )),
-        machine_port_forwarder: Some(OciMachinePortForwarderConfig {
-            host: "127.0.0.1".to_owned(),
-            port: 9,
-            path_prefix: "/services/forwarder".to_owned(),
-        }),
+        machine_port_forwarder: Some(
+            OciMachinePortForwarderConfig::for_provider_instance(
+                "127.0.0.1",
+                9,
+                "/services/forwarder",
+                "unreachable-test-forwarder",
+                nimbus_network::NetworkResourceGeneration::new(1),
+            )
+            .expect("test machine-forwarder identity should validate"),
+        ),
     };
 
     let capabilities = machine_api_capability_response(&state);

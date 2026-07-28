@@ -64,6 +64,7 @@ fn failed_anchor_removal_cannot_publish_clean_rebind_evidence() {
             &trust_anchor_path,
             &port_lease,
             &bind_claim,
+            None,
             PepPreAdoptionReleaseAuthority::Retain,
         ),
         SandboxError::OperationFailed {
@@ -156,6 +157,7 @@ fn registration_commit_failure_compensates_activated_provider_and_publication() 
         trust_anchor_path: Some(trust_anchor_path.clone()),
         tenant_lease: registry.engine.fairness().checkout(&tenant),
         port_lease: Some(port_lease.clone()),
+        lifetime: None,
         cleanup: None,
     };
     let workload_id =
@@ -274,6 +276,7 @@ fn registration_commit_compensation_failure_retains_retryable_tombstone() {
         trust_anchor_path: Some(trust_anchor_path.clone()),
         tenant_lease: registry.engine.fairness().checkout(&tenant),
         port_lease: Some(port_lease),
+        lifetime: None,
         cleanup: None,
     };
     let workload_id =

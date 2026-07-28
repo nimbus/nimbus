@@ -57,6 +57,18 @@ fn terminal_manifest_write_failure_preserves_replayable_stopping_checkpoint() {
     terminal.launch_authority = KrunLaunchAuthority::Released;
     terminal.status = SandboxStatus::Stopped;
     terminal.handle.status = SandboxStatus::Stopped;
+    terminal.shutdown_requested = false;
+    let false_terminal_error = backend
+        .write_manifest(&terminal)
+        .expect_err("terminal publication without durable shutdown intent must fail closed");
+    assert!(
+        false_terminal_error
+            .to_string()
+            .contains("shutdown_requested=false"),
+        "terminal rejection must identify the incomplete cleanup authority: \
+         {false_terminal_error}"
+    );
+    terminal.shutdown_requested = true;
     let error = failing
         .persist_effect_barrier(&terminal, "explicit krun stop completion")
         .expect_err("pre-publication failure must retain the stopping checkpoint");
@@ -86,6 +98,127 @@ fn terminal_manifest_write_failure_preserves_replayable_stopping_checkpoint() {
             .expect("replayed terminal manifest bytes should read"),
         once,
         "terminal publication replay must be byte-identical"
+    );
+}
+
+#[test]
+fn terminal_projection_rejects_every_retained_krun_launch_authority() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::under_root(
+        temp_dir.path().to_path_buf(),
+    ));
+    let sandbox_id = SandboxId::new("krun-terminal-authority-matrix");
+    let stopping = terminal_publication_fixture(&backend, &sandbox_id);
+    backend
+        .write_manifest(&stopping)
+        .expect("nonterminal checkpoint should persist");
+    let checkpoint = fs::read(&stopping.conmon_layout.manifest_path)
+        .expect("nonterminal checkpoint bytes should read");
+    let claim = crate::backends::oci::port_lease::new_launch_reservation_claim()
+        .expect("matrix claim should validate");
+    let retained = [
+        KrunLaunchAuthority::Reserved {
+            reservation_claim: claim.clone(),
+        },
+        KrunLaunchAuthority::Adopting {
+            reservation_claim: claim.clone(),
+        },
+        KrunLaunchAuthority::Adopted {
+            reservation_claim: claim,
+        },
+        KrunLaunchAuthority::ProviderOwned,
+    ];
+
+    for launch_authority in retained {
+        let mut terminal = stopping.clone();
+        terminal.launch_authority = launch_authority.clone();
+        terminal.status = SandboxStatus::Stopped;
+        terminal.handle.status = SandboxStatus::Stopped;
+        let error = backend
+            .write_manifest(&terminal)
+            .expect_err("retained launch authority must veto terminal projection");
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("launch_authority={launch_authority:?}")),
+            "diagnostic must name the retained launch authority: {error}"
+        );
+        assert_eq!(
+            fs::read(&terminal.conmon_layout.manifest_path)
+                .expect("rejected publication must preserve prior bytes"),
+            checkpoint,
+            "terminal projection must remain nonterminal for {launch_authority:?}"
+        );
+    }
+
+    let mut terminal = stopping.clone();
+    terminal.launch_authority = KrunLaunchAuthority::Released;
+    terminal.provider_failure_cleanup = KrunProviderFailureCleanupState::Requested;
+    terminal.status = SandboxStatus::Failed;
+    terminal.handle.status = SandboxStatus::Failed;
+    let error = backend
+        .write_manifest(&terminal)
+        .expect_err("active provider-failure cleanup must veto terminal projection");
+    assert!(
+        error
+            .to_string()
+            .contains("provider_failure_cleanup=Requested"),
+        "diagnostic must name active provider-failure cleanup: {error}"
+    );
+    assert_eq!(
+        fs::read(&terminal.conmon_layout.manifest_path)
+            .expect("rejected cleanup publication must preserve prior bytes"),
+        checkpoint
+    );
+
+    terminal.provider_failure_cleanup = KrunProviderFailureCleanupState::Inactive;
+    terminal.creator_handoff = KrunCreatorHandoffState::Pending {
+        receipt: crate::backends::conmon::creator::CreatorAttemptReceipt::for_test(
+            "terminal-authority-matrix",
+        ),
+    };
+    let error = backend
+        .write_manifest(&terminal)
+        .expect_err("pending creator authority must veto terminal projection");
+    assert!(
+        error.to_string().contains("creator_handoff=Pending"),
+        "diagnostic must name pending creator authority: {error}"
+    );
+    assert_eq!(
+        fs::read(&terminal.conmon_layout.manifest_path)
+            .expect("rejected creator publication must preserve prior bytes"),
+        checkpoint
+    );
+
+    terminal.creator_handoff = KrunCreatorHandoffState::Quiesced {
+        proof: crate::backends::conmon::creator::CreatorQuiescenceProof::never_spawned(
+            "terminal-authority-matrix",
+        ),
+    };
+    terminal.next_restart_at_millis = Some(1);
+    let error = backend
+        .write_manifest(&terminal)
+        .expect_err("retained restart authority must veto terminal projection");
+    assert!(
+        error.to_string().contains("next_restart_at_millis=Some(1)"),
+        "diagnostic must name retained restart authority: {error}"
+    );
+    assert_eq!(
+        fs::read(&terminal.conmon_layout.manifest_path)
+            .expect("rejected restart publication must preserve prior bytes"),
+        checkpoint
+    );
+
+    terminal.next_restart_at_millis = None;
+    backend
+        .write_manifest(&terminal)
+        .expect("fully released terminal authority should publish");
+    assert_eq!(
+        backend
+            .read_manifest(&sandbox_id)
+            .expect("terminal manifest should inspect")
+            .expect("terminal manifest should remain durable"),
+        terminal
     );
 }
 
@@ -125,7 +258,7 @@ fn terminal_manifest_acknowledgement_loss_is_inspected_and_confirmed() {
 fn terminal_ipam_retirement_failure_is_not_manifest_acknowledgement_loss() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let config = KrunSandboxBackendConfig::under_root(temp_dir.path().to_path_buf());
-    let backend = KrunSandboxBackend::new(config);
+    let backend = KrunSandboxBackend::new(config.clone());
     let sandbox_id = SandboxId::new("krun-terminal-ipam-retirement-failure");
     let mut terminal = terminal_publication_fixture(&backend, &sandbox_id);
     let network_config = OciNetworkConfig::default();
@@ -146,17 +279,9 @@ fn terminal_ipam_retirement_failure_is_not_manifest_acknowledgement_loss() {
     terminal.status = SandboxStatus::Stopped;
     terminal.handle.status = SandboxStatus::Stopped;
 
-    let authority_path =
-        nimbus_network::LocalNetworkStateStore::authority_path_for(&backend.config.state_root);
-    let saved_authority = authority_path.with_extension("saved-for-retirement-failure");
-    std::fs::rename(&authority_path, &saved_authority)
-        .expect("authority should move behind deterministic fault");
-    std::fs::create_dir(&authority_path)
-        .expect("directory should force terminal authority read failure");
-    let result = backend.persist_effect_barrier(&terminal, "explicit krun stop completion");
-    std::fs::remove_dir(&authority_path).expect("fault directory should remove");
-    std::fs::rename(&saved_authority, &authority_path)
-        .expect("authority should restore after deterministic fault");
+    let failing = KrunSandboxBackend::new(config)
+        .with_terminal_ipam_retirement_failure("injected exact retirement failure");
+    let result = failing.persist_effect_barrier(&terminal, "explicit krun stop completion");
 
     let error = result.expect_err(
         "post-publication IPAM retirement failure must not be recovered as manifest ack loss",
@@ -169,7 +294,7 @@ fn terminal_ipam_retirement_failure_is_not_manifest_acknowledgement_loss() {
         "diagnostic must distinguish durable manifest publication from pending retirement: {error}"
     );
     assert_eq!(
-        backend
+        failing
             .read_manifest(&sandbox_id)
             .expect("terminal manifest should inspect")
             .expect("terminal manifest should remain durable"),
@@ -177,18 +302,20 @@ fn terminal_ipam_retirement_failure_is_not_manifest_acknowledgement_loss() {
         "terminal desired state should remain durable while witness retirement retries"
     );
     assert_eq!(
-        reconcile_terminal_container_ipam_releases(&backend.config.state_root)
+        reconcile_terminal_container_ipam_releases(&failing.config.state_root)
             .expect("fresh-process reconciliation should retire the exact witness"),
         1
     );
     assert_eq!(
-        reconcile_terminal_container_ipam_releases(&backend.config.state_root)
+        reconcile_terminal_container_ipam_releases(&failing.config.state_root)
             .expect("terminal reconciliation replay should be idempotent"),
         0
     );
-    backend
-        .persist_effect_barrier(&terminal, "explicit krun stop completion")
-        .expect("terminal publication retry should tolerate an already-retired witness");
+    KrunSandboxBackend::new(KrunSandboxBackendConfig::under_root(
+        temp_dir.path().to_path_buf(),
+    ))
+    .persist_effect_barrier(&terminal, "explicit krun stop completion")
+    .expect("terminal publication retry should tolerate an already-retired witness");
 }
 
 #[test]
@@ -224,7 +351,9 @@ fn pending_creator_fences_provider_and_network_cleanup() {
         reservation_claim: claim,
     };
     manifest.creator_handoff = KrunCreatorHandoffState::Pending {
-        attempt_id: "pending-test-attempt".to_owned(),
+        receipt: crate::backends::conmon::creator::CreatorAttemptReceipt::for_test(
+            "pending-test-attempt",
+        ),
     };
     backend
         .write_manifest(&manifest)
@@ -328,7 +457,7 @@ fn reserved_stop_releases_only_the_exact_unstarted_launch_batch() {
 }
 
 #[test]
-fn adopting_stop_persists_intent_without_guessing_attachment_outcome() {
+fn adopting_stop_releases_exactly_when_allocator_still_proves_reserved() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::under_root(
         temp_dir.path().to_path_buf(),
@@ -353,27 +482,105 @@ fn adopting_stop_persists_intent_without_guessing_attachment_outcome() {
         .write_manifest(&manifest)
         .expect("adopting crash-cut fixture should persist");
 
-    let error = backend
+    backend
         .stop_sync(&manifest.handle.id)
-        .expect_err("stop must not guess whether adoption took effect");
-    assert!(
-        error.to_string().contains("stop intent is durable")
-            && error.to_string().contains("adoption reconciliation"),
-        "the fenced stop must explain its durable outcome: {error}"
-    );
-    let fenced = backend
+        .expect("exact pre-adoption allocator evidence must authorize compensation");
+    let stopped = backend
         .read_manifest(&manifest.handle.id)
-        .expect("fenced manifest should inspect")
-        .expect("fenced manifest should remain durable");
-    assert!(fenced.shutdown_requested);
-    assert_eq!(fenced.status, SandboxStatus::Stopping);
-    assert_eq!(fenced.handle.status, SandboxStatus::Stopping);
+        .expect("stopped manifest should inspect")
+        .expect("stopped manifest should remain durable");
+    assert!(stopped.shutdown_requested);
+    assert_eq!(stopped.status, SandboxStatus::Stopped);
+    assert_eq!(stopped.handle.status, SandboxStatus::Stopped);
     assert_eq!(
-        fenced.launch_authority,
-        KrunLaunchAuthority::Adopting {
-            reservation_claim: claim,
-        },
-        "stop must retain the exact adoption receipt for NNC3.8 reconciliation"
+        stopped.launch_authority,
+        KrunLaunchAuthority::Released,
+        "the exact reserved outcome must converge to one terminal release"
+    );
+    assert!(
+        backend
+            .segment_allocator
+            .inspect_segments(&manifest.spec.tenant_id)
+            .expect("segment authority should inspect")
+            .unwrap_or_default()
+            .is_empty(),
+        "pre-adoption compensation must remove only the exact reserved attachment"
+    );
+    backend
+        .stop_sync(&manifest.handle.id)
+        .expect("terminal release must replay idempotently");
+}
+
+#[test]
+fn adopting_stop_promotes_exact_allocator_adoption_before_cleanup() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let config = KrunSandboxBackendConfig::under_root(temp_dir.path().to_path_buf());
+    let backend = KrunSandboxBackend::new(config.clone());
+    let mut manifest = backend
+        .plan_start_with_id(
+            &sample_spec_for_tenant("krun-adopted-recovery", "api"),
+            &SandboxId::new("krun-adopted-recovery"),
+            None,
+            None,
+        )
+        .expect("execute planning should reserve exact launch authority")
+        .manifest;
+    let claim = manifest
+        .require_reserved_claim()
+        .expect("reserved launch should retain its coordinator")
+        .clone();
+    backend
+        .segment_allocator
+        .adopt_reserved_attachment(
+            &manifest.spec.tenant_id,
+            &default_network_attachment_id(&manifest.handle.id),
+            &claim,
+        )
+        .expect("fixture should commit allocator adoption before manifest acknowledgement");
+    manifest.launch_authority = KrunLaunchAuthority::Adopting {
+        reservation_claim: claim.clone(),
+    };
+    backend
+        .write_manifest(&manifest)
+        .expect("adopting crash-cut fixture should persist");
+    assert_eq!(
+        backend
+            .segment_allocator
+            .inspect_attachment_reservation(
+                &manifest.spec.tenant_id,
+                &default_network_attachment_id(&manifest.handle.id),
+                &claim,
+            )
+            .expect("exact allocator state should inspect"),
+        nimbus_network::NetworkAttachmentReservationState::Adopted
+    );
+
+    let recovery = KrunSandboxBackend::new(config);
+    recovery
+        .stop_sync(&manifest.handle.id)
+        .expect("fresh owner should promote exact adoption before cleanup");
+    let released = recovery
+        .read_manifest(&manifest.handle.id)
+        .expect("released manifest should inspect")
+        .expect("released manifest should remain durable");
+    assert!(released.shutdown_requested);
+    assert_eq!(released.status, SandboxStatus::Failed);
+    assert_eq!(released.handle.status, SandboxStatus::Failed);
+    assert_eq!(released.launch_authority, KrunLaunchAuthority::Released);
+    assert_eq!(
+        released.provider_failure_cleanup,
+        KrunProviderFailureCleanupState::Inactive
+    );
+    let once =
+        fs::read(&released.conmon_layout.manifest_path).expect("released manifest should read");
+    recovery
+        .stop_sync(&manifest.handle.id)
+        .expect("promoted cleanup must replay idempotently");
+    assert_eq!(
+        fs::read(&released.conmon_layout.manifest_path)
+            .expect("replayed released manifest should read"),
+        once,
+        "terminal replay must not reconstruct never-realized compensation"
     );
 }
 

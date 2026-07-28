@@ -388,7 +388,13 @@ fn plan_only_service_workload_prepares_runner_manifest_pointer_and_proxy_env() {
     config.use_buildah_unshare = true;
     config.netavark_path = "/usr/libexec/podman/netavark".into();
     config.aardvark_dns_path = "/usr/libexec/podman/aardvark-dns".into();
-    config.machine_port_forwarder = Some(OciMachinePortForwarderConfig::gvproxy_default());
+    config.machine_port_forwarder = Some(
+        OciMachinePortForwarderConfig::gvproxy_for_provider_instance(
+            "planning-test-gvproxy",
+            nimbus_network::NetworkResourceGeneration::new(1),
+        )
+        .expect("planning fixture gvproxy identity should validate"),
+    );
     let backend = ContainerSandboxBackend::new(config);
 
     let prepared = backend

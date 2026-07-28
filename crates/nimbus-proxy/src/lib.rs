@@ -44,7 +44,10 @@ pub use fairness::{
 };
 pub use fanout::{fan_out_decision_loggers, tenant_decision_counter_sink};
 pub use phase::{EgressProxyRequestPhase, REQUEST_PHASE_ORDER};
-pub use policy_state::{PolicyGeneration, WorkloadPepReadiness};
+pub use policy_state::{
+    PolicyGeneration, PolicyReloadAttempt, PolicyReloadObservation, PolicyReloadReceipt,
+    WorkloadPepReadiness,
+};
 pub use pool::{
     EgressProxyCredentialDlpMode, EgressProxyPoolIdentity, EgressProxyPoolKey,
     EgressProxySubstrate, TlsVerificationMode,

@@ -612,30 +612,30 @@ fn released_lease_replay_does_not_repeat_withdraw_after_checkpoint_loss() {
         &EgressPolicy::deny_all(),
     )
     .expect("PEP should activate before cleanup");
-    replace_anchor_with_nonempty_directory(&trust_anchor_path);
 
+    crate::backends::oci::egress::cleanup::set_post_durable_transition_fault(|| {
+        Err(SandboxError::OperationFailed {
+            message: "injected durable-transition acknowledgement loss".to_owned(),
+        })
+    });
     registry
         .stop_with_assignment(&tenant, &id, Some(&assignment))
-        .expect_err("anchor failure must retain the cleanup checkpoint");
+        .expect_err("post-transition acknowledgement loss must retain the cleanup checkpoint");
     let authority = nimbus_network::LocalPortLeaseAuthority::open(state_root.path())
         .expect("authority should reopen");
-    let withdrawing = authority
+    let released = authority
         .inspect(port_lease.lease_id())
         .expect("lease should inspect")
         .expect("lease should remain durable");
-    assert_eq!(withdrawing.phase(), PortLeasePhase::Withdrawing);
-
-    crate::backends::oci::port_lease::release(state_root.path(), &port_lease)
-        .expect("simulated durable release should succeed before checkpoint acknowledgement");
     assert_eq!(
-        authority
-            .inspect(port_lease.lease_id())
-            .expect("lease should inspect")
-            .expect("released receipt should remain durable")
-            .phase(),
-        PortLeasePhase::Released
+        released.phase(),
+        PortLeasePhase::Released,
+        "the exact live-owner release must commit before the injected acknowledgement loss"
     );
-    clear_anchor_blocker(&trust_anchor_path);
+    assert!(
+        !trust_anchor_path.exists(),
+        "provider and trust-anchor cleanup precede the durable lease transition"
+    );
 
     let withdraw_attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let observed_attempts = std::sync::Arc::clone(&withdraw_attempts);
@@ -746,9 +746,11 @@ fn restart_rejects_failed_lease_without_process_local_provider() {
         state_root.path(),
         &port_lease,
         &bind_claim,
-        (Ipv4Addr::LOCALHOST, port).into(),
-        crate::backends::oci::port_lease::OciPortProvider::EgressPep,
-        std::io::ErrorKind::AddrInUse,
+        crate::backends::oci::port_lease::OciConfirmedBindFailure::new(
+            (Ipv4Addr::LOCALHOST, port).into(),
+            crate::backends::oci::port_lease::OciPortProvider::EgressPep,
+            std::io::ErrorKind::AddrInUse,
+        ),
         Some(&reservation_claim),
     )
     .expect("confirmed no-effect bind failure should persist");

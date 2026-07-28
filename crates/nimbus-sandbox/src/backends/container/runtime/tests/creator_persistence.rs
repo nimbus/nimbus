@@ -2,6 +2,8 @@
 
 use std::cell::{Cell, RefCell};
 
+use crate::backends::conmon::creator::CreatorQuiescenceProof;
+
 use super::*;
 
 fn creator_persistence_fixture(
@@ -55,8 +57,9 @@ fn creator_pending_precommit_failure_durably_quiesces_before_cleanup() {
     assert_eq!(persist_calls.get(), 2);
     assert!(matches!(
         manifest.creator_handoff,
-        ContainerCreatorHandoffState::Quiesced { ref attempt_id }
-            if attempt_id == "creator-precommit-attempt"
+        ContainerCreatorHandoffState::Quiesced {
+            proof: CreatorQuiescenceProof::NeverSpawned { ref attempt_id },
+        } if attempt_id == "creator-precommit-attempt"
     ));
     assert_eq!(
         durable.borrow().as_ref(),
@@ -112,8 +115,9 @@ fn creator_pending_rename_ack_loss_confirms_quiesced_readback_without_spawning()
     );
     assert!(matches!(
         manifest.creator_handoff,
-        ContainerCreatorHandoffState::Quiesced { ref attempt_id }
-            if attempt_id == "creator-ack-loss-attempt"
+        ContainerCreatorHandoffState::Quiesced {
+            proof: CreatorQuiescenceProof::NeverSpawned { ref attempt_id },
+        } if attempt_id == "creator-ack-loss-attempt"
     ));
     assert!(manifest.creator_handoff.authorizes_runtime_cleanup());
 }
@@ -157,11 +161,40 @@ fn creator_quiescence_failure_retains_exact_pending_fence() {
     );
     assert!(matches!(
         manifest.creator_handoff,
-        ContainerCreatorHandoffState::Pending { ref attempt_id }
+        ContainerCreatorHandoffState::SpawnIntent { ref attempt_id }
             if attempt_id == "creator-fenced-attempt"
     ));
     assert!(
         !manifest.creator_handoff.authorizes_runtime_cleanup(),
         "cleanup must remain fenced when the durable state still says Pending"
+    );
+}
+
+#[test]
+fn pending_creator_manifest_persists_exact_birth_and_containment_receipt() {
+    let state = ContainerCreatorHandoffState::Pending {
+        receipt: crate::backends::conmon::creator::CreatorAttemptReceipt::for_test(
+            "creator-birth-receipt-attempt",
+        ),
+    };
+    let encoded = serde_json::to_value(state).expect("creator handoff should serialize");
+
+    assert!(
+        encoded
+            .get("receipt")
+            .and_then(|receipt| receipt.get("process"))
+            .and_then(|process| process.get("birth"))
+            .is_some(),
+        "a pending creator must durably identify its exact OS process birth before provider \
+         effects can race owner death; current state was {encoded}"
+    );
+    assert!(
+        encoded
+            .get("receipt")
+            .and_then(|receipt| receipt.get("process"))
+            .and_then(|process| process.get("process_group"))
+            .is_some(),
+        "a pending creator must durably identify its containment group; current state was \
+         {encoded}"
     );
 }

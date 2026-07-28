@@ -3,9 +3,10 @@ use std::sync::{Arc, Mutex};
 
 use nimbus_core::{Cidr, TenantId};
 use nimbus_network::{
-    AllocatedSegment, NetworkAttachmentId, NetworkLeaseEpoch, NetworkReservationClaim,
-    NetworkSegmentAllocator, NetworkSegmentCleanup, NetworkSegmentFinalizeOutcome,
-    NetworkSegmentGrowth, NetworkSegmentQuarantineOutcome, NetworkSegmentReleaseOutcome,
+    AllocatedSegment, NetworkAttachmentId, NetworkAttachmentReservationState, NetworkLeaseEpoch,
+    NetworkReservationClaim, NetworkSegmentAllocator, NetworkSegmentCleanup,
+    NetworkSegmentFinalizeOutcome, NetworkSegmentGrowth, NetworkSegmentQuarantineOutcome,
+    NetworkSegmentReleaseOutcome,
 };
 
 use crate::error::SandboxError;
@@ -22,6 +23,7 @@ pub(crate) enum SegmentAllocatorOperation {
     SegmentFor(TenantId),
     SegmentsFor(TenantId),
     InspectSegments(TenantId),
+    InspectAttachment(TenantId, NetworkAttachmentId),
     ReserveAttachment(TenantId, NetworkAttachmentId),
     BindAttachment(TenantId, NetworkAttachmentId, String),
     AdoptAttachment(TenantId, NetworkAttachmentId),
@@ -35,6 +37,12 @@ pub(crate) enum SegmentAllocatorOperation {
     Reconcile(BTreeSet<(TenantId, NetworkAttachmentId)>),
 }
 
+#[derive(Clone)]
+struct RecordingAttachmentReservation {
+    claim: NetworkReservationClaim,
+    state: NetworkAttachmentReservationState,
+}
+
 /// Behavior-recording substitute for proving OCI backends consume only the
 /// portable allocator capability.
 pub(crate) struct RecordingSegmentAllocator {
@@ -45,6 +53,7 @@ pub(crate) struct RecordingSegmentAllocator {
     finalize_release_failure: Arc<Mutex<Option<String>>>,
     reserve_attachment_observer: Option<Arc<ReserveAttachmentObserver>>,
     adopt_attachment_observer: Option<Arc<AdoptAttachmentObserver>>,
+    attachment_reservation: Arc<Mutex<Option<RecordingAttachmentReservation>>>,
 }
 
 impl RecordingSegmentAllocator {
@@ -65,6 +74,7 @@ impl RecordingSegmentAllocator {
             finalize_release_failure: Arc::new(Mutex::new(None)),
             reserve_attachment_observer: None,
             adopt_attachment_observer: None,
+            attachment_reservation: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -123,6 +133,50 @@ impl RecordingSegmentAllocator {
             .expect("recording allocator lock should not be poisoned")
             .push(operation);
     }
+
+    fn set_attachment_reservation(
+        &self,
+        claim: &NetworkReservationClaim,
+        state: NetworkAttachmentReservationState,
+    ) -> Result<(), SandboxError> {
+        let mut current = self
+            .attachment_reservation
+            .lock()
+            .expect("recording allocator reservation lock should not be poisoned");
+        if current
+            .as_ref()
+            .is_some_and(|existing| existing.claim != *claim)
+        {
+            return Err(SandboxError::OperationFailed {
+                message: "recording attachment belongs to another reservation claim".to_owned(),
+            });
+        }
+        *current = Some(RecordingAttachmentReservation {
+            claim: claim.clone(),
+            state,
+        });
+        Ok(())
+    }
+
+    fn clear_attachment_reservation(
+        &self,
+        claim: &NetworkReservationClaim,
+    ) -> Result<(), SandboxError> {
+        let mut current = self
+            .attachment_reservation
+            .lock()
+            .expect("recording allocator reservation lock should not be poisoned");
+        match current.as_ref() {
+            Some(existing) if existing.claim == *claim => *current = None,
+            Some(_) => {
+                return Err(SandboxError::OperationFailed {
+                    message: "recording attachment belongs to another reservation claim".to_owned(),
+                });
+            }
+            None => {}
+        }
+        Ok(())
+    }
 }
 
 impl NetworkSegmentAllocator for RecordingSegmentAllocator {
@@ -147,6 +201,29 @@ impl NetworkSegmentAllocator for RecordingSegmentAllocator {
         Ok(Some(vec![self.segment.clone()]))
     }
 
+    fn inspect_attachment_reservation(
+        &self,
+        tenant: &TenantId,
+        attachment_id: &NetworkAttachmentId,
+        reservation_claim: &NetworkReservationClaim,
+    ) -> Result<NetworkAttachmentReservationState, Self::Error> {
+        self.record(SegmentAllocatorOperation::InspectAttachment(
+            tenant.clone(),
+            attachment_id.clone(),
+        ));
+        let current = self
+            .attachment_reservation
+            .lock()
+            .expect("recording allocator reservation lock should not be poisoned");
+        match current.as_ref() {
+            Some(existing) if existing.claim == *reservation_claim => Ok(existing.state),
+            Some(_) => Err(SandboxError::OperationFailed {
+                message: "recording attachment belongs to another reservation claim".to_owned(),
+            }),
+            None => Ok(NetworkAttachmentReservationState::Absent),
+        }
+    }
+
     fn reserve_attachment_for_coordinator(
         &self,
         tenant: &TenantId,
@@ -160,6 +237,10 @@ impl NetworkSegmentAllocator for RecordingSegmentAllocator {
         if let Some(observer) = self.reserve_attachment_observer.as_ref() {
             observer(reservation_claim)?;
         }
+        self.set_attachment_reservation(
+            reservation_claim,
+            NetworkAttachmentReservationState::Reserved,
+        )?;
         Ok(())
     }
 
@@ -187,6 +268,10 @@ impl NetworkSegmentAllocator for RecordingSegmentAllocator {
         if let Some(observer) = self.adopt_attachment_observer.as_ref() {
             observer(reservation_claim)?;
         }
+        self.set_attachment_reservation(
+            reservation_claim,
+            NetworkAttachmentReservationState::Adopted,
+        )?;
         self.record(SegmentAllocatorOperation::AdoptAttachment(
             tenant.clone(),
             attachment_id.clone(),
@@ -198,7 +283,7 @@ impl NetworkSegmentAllocator for RecordingSegmentAllocator {
         &self,
         tenant: &TenantId,
         attachment_id: &NetworkAttachmentId,
-        _reservation_claim: &NetworkReservationClaim,
+        reservation_claim: &NetworkReservationClaim,
     ) -> Result<NetworkSegmentReleaseOutcome<Self::Segment>, Self::Error> {
         self.record(SegmentAllocatorOperation::ReleaseReservedAttachment(
             tenant.clone(),
@@ -209,6 +294,10 @@ impl NetworkSegmentAllocator for RecordingSegmentAllocator {
                 message: message.clone(),
             });
         }
+        self.set_attachment_reservation(
+            reservation_claim,
+            NetworkAttachmentReservationState::ReservationCleanupPending,
+        )?;
         Ok(NetworkSegmentReleaseOutcome::CleanupPending(
             NetworkSegmentCleanup::new(
                 tenant.clone(),
@@ -223,12 +312,28 @@ impl NetworkSegmentAllocator for RecordingSegmentAllocator {
         &self,
         tenant: &TenantId,
         attachment_id: &NetworkAttachmentId,
-        _reservation_claim: &NetworkReservationClaim,
+        reservation_claim: &NetworkReservationClaim,
     ) -> Result<NetworkSegmentReleaseOutcome<Self::Segment>, Self::Error> {
         self.record(SegmentAllocatorOperation::FinalizeReservedAttachment(
             tenant.clone(),
             attachment_id.clone(),
         ));
+        {
+            let mut current = self
+                .attachment_reservation
+                .lock()
+                .expect("recording allocator reservation lock should not be poisoned");
+            match current.as_ref() {
+                Some(existing) if existing.claim == *reservation_claim => *current = None,
+                Some(_) => {
+                    return Err(SandboxError::OperationFailed {
+                        message: "recording attachment belongs to another reservation claim"
+                            .to_owned(),
+                    });
+                }
+                None => {}
+            }
+        }
         Ok(NetworkSegmentReleaseOutcome::CleanupPending(
             NetworkSegmentCleanup::new(
                 tenant.clone(),
@@ -255,7 +360,7 @@ impl NetworkSegmentAllocator for RecordingSegmentAllocator {
         &self,
         tenant: &TenantId,
         attachment_id: &NetworkAttachmentId,
-        _expected_adoption_receipt: Option<&NetworkReservationClaim>,
+        expected_adoption_receipt: Option<&NetworkReservationClaim>,
     ) -> Result<NetworkSegmentQuarantineOutcome, Self::Error> {
         self.record(SegmentAllocatorOperation::Quarantine(
             tenant.clone(),
@@ -266,6 +371,12 @@ impl NetworkSegmentAllocator for RecordingSegmentAllocator {
                 message: message.clone(),
             });
         }
+        if let Some(claim) = expected_adoption_receipt {
+            self.set_attachment_reservation(
+                claim,
+                NetworkAttachmentReservationState::ProviderCleanupPending,
+            )?;
+        }
         Ok(NetworkSegmentQuarantineOutcome::CleanupPending)
     }
 
@@ -273,12 +384,15 @@ impl NetworkSegmentAllocator for RecordingSegmentAllocator {
         &self,
         tenant: &TenantId,
         attachment_id: &NetworkAttachmentId,
-        _expected_adoption_receipt: Option<&NetworkReservationClaim>,
+        expected_adoption_receipt: Option<&NetworkReservationClaim>,
     ) -> Result<NetworkSegmentReleaseOutcome<Self::Segment>, Self::Error> {
         self.record(SegmentAllocatorOperation::Release(
             tenant.clone(),
             attachment_id.clone(),
         ));
+        if let Some(claim) = expected_adoption_receipt {
+            self.clear_attachment_reservation(claim)?;
+        }
         Ok(NetworkSegmentReleaseOutcome::CleanupPending(
             NetworkSegmentCleanup::new(
                 tenant.clone(),

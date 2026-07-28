@@ -25,7 +25,21 @@ impl PortManager {
         self.require_published_listener_provider(PublishedListenerProvider::Netavark)?;
         self.binding_lease_records(tenant_id, sandbox_id, bindings, leases)?;
         if let Some(reservation_claim) = reservation_claim {
-            return self.classify_launch_port_batch(leases, reservation_claim);
+            let records =
+                self.port_lease_records_snapshot(leases, "Netavark launch cleanup recovery")?;
+            let recovering_claim_batch = !records.is_empty()
+                && records.iter().all(|record| {
+                    record.phase() == PortLeasePhase::CleanupPending
+                        && record.reservation_claim() == Some(reservation_claim)
+                        && record.bind_claim().is_some_and(|claim| {
+                            claim.provider_attempt().provider_id()
+                                == &OciPortProvider::Netavark.provider_id()
+                        })
+                        && record.active_lifetime().is_some()
+                });
+            if !recovering_claim_batch {
+                return self.classify_launch_port_batch(leases, reservation_claim);
+            }
         }
         if leases.is_empty() {
             return Ok(LaunchPortBatchState::TerminalNoEffect);
@@ -68,6 +82,21 @@ impl PortManager {
                 }
                 continue;
             }
+            if record.phase() == PortLeasePhase::CleanupPending
+                && record.reservation_claim() == reservation_claim
+                && record.binding().is_none()
+                && record.failure().is_none()
+                && record.active_lifetime().is_some()
+                && record
+                    .confirmed_stopped_binding()
+                    .is_none_or(|binding| binding == &expected_binding)
+                && let Some(claim) = record.bind_claim()
+                && claim.provider_attempt().provider_id()
+                    == &OciPortProvider::Netavark.provider_id()
+            {
+                netavark_claims.push(claim.clone());
+                continue;
+            }
 
             if record.phase() == PortLeasePhase::Released
                 && record.bind_claim().is_none()
@@ -88,13 +117,16 @@ impl PortManager {
             }
 
             let terminal_failed = terminal_failed_has_no_effect(&record, OciPortProvider::Netavark);
-            let live_provider_owned = record.reservation_claim().is_none()
+            let is_provider_owned = record.reservation_claim().is_none()
                 && record.bind_claim().is_none()
                 && record.confirmed_stopped_binding().is_none()
                 && matches!(
                     record.phase(),
-                    PortLeasePhase::Active | PortLeasePhase::Withdrawing
+                    PortLeasePhase::Active
+                        | PortLeasePhase::Withdrawing
+                        | PortLeasePhase::CleanupPending
                 )
+                && record.active_lifetime().is_some()
                 && record
                     .binding()
                     .is_some_and(|binding| binding == &expected_binding);
@@ -108,7 +140,7 @@ impl PortManager {
                 terminal_no_effect += 1;
                 continue;
             }
-            if live_provider_owned {
+            if is_provider_owned {
                 provider_owned += 1;
                 continue;
             }

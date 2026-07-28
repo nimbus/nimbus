@@ -28,7 +28,7 @@ pub(super) fn stop_machine(
         return Ok(());
     }
 
-    let host_network_runtime = if config.provider.uses_provider_networking() {
+    let host_network_cleanup = if config.provider.uses_provider_networking() {
         None
     } else {
         let runtime = state.runtime.as_ref().ok_or_else(|| {
@@ -37,8 +37,7 @@ pub(super) fn stop_machine(
                 config.name
             ))
         })?;
-        withdraw_machine_ssh_port(&config.roots, runtime)?;
-        Some(runtime.clone())
+        withdraw_machine_ssh_port(&config.roots, runtime)?
     };
 
     let mut stop_errors = Vec::new();
@@ -75,8 +74,8 @@ pub(super) fn stop_machine(
         }
     }
     if gvproxy_stop_confirmed
-        && let Some(runtime) = host_network_runtime.as_ref()
-        && let Err(error) = retain_machine_ssh_port_after_confirmed_stop(&config.roots, runtime)
+        && let Some(cleanup) = host_network_cleanup
+        && let Err(error) = retain_machine_ssh_port_after_confirmed_stop(cleanup)
     {
         stop_errors.push(error.to_string());
     }

@@ -20,6 +20,7 @@ use nimbus::{
     Error, SandboxBackendKind, SandboxError, SandboxOciImageSource, SandboxRootSpec, SandboxSpec,
     SandboxStatus, TenantId,
 };
+use nimbus_network::NetworkResourceGeneration;
 use nimbus_node::{NodeAgent, SystemdTransientUnitBackend};
 use nimbus_sandbox::backends::container::{
     ContainerSandboxBackend, ContainerSandboxBackendConfig, ContainerSandboxStateView,
@@ -77,6 +78,9 @@ pub(crate) use self::service_workloads::{GuestNodeWorkloadService, MachineApiNod
 const MACHINE_API_OPERATION_BLOCKER: &str =
     "guest machine API does not yet expose service lifecycle operations";
 const MACHINE_PORT_FORWARDER_TIMEOUT: Duration = Duration::from_millis(200);
+const MACHINE_BOOT_ID_PATH: &str = "/proc/sys/kernel/random/boot_id";
+const INITIAL_MACHINE_FORWARDER_GENERATION: NetworkResourceGeneration =
+    NetworkResourceGeneration::new(1);
 
 #[derive(Clone)]
 pub(crate) struct MachineApiState {
@@ -136,8 +140,14 @@ pub(super) async fn run_machine_api_command(
         binary_lookup_path.as_deref(),
         &helper_binary_dirs,
     );
-    container_config.machine_port_forwarder =
-        Some(OciMachinePortForwarderConfig::gvproxy_default());
+    let machine_boot_id = std::fs::read_to_string(MACHINE_BOOT_ID_PATH).map_err(|error| {
+        Error::Internal(format!(
+            "failed to read guest boot identity from {MACHINE_BOOT_ID_PATH}: {error}"
+        ))
+    })?;
+    let machine_port_forwarder =
+        machine_port_forwarder_config(&command.guest_node_id, &machine_boot_id)?;
+    container_config.machine_port_forwarder = Some(machine_port_forwarder.clone());
     let bundle_materializer = Arc::new(ContainerSandboxBackend::new(container_config));
     let node_id = NodeIdentity::new(&command.guest_node_id).map_err(|error| {
         Error::Internal(format!(
@@ -170,9 +180,31 @@ pub(super) async fn run_machine_api_command(
         listen_mode,
         binary_lookup_path,
         helper_binary_dirs,
-        machine_port_forwarder: Some(OciMachinePortForwarderConfig::gvproxy_default()),
+        machine_port_forwarder: Some(machine_port_forwarder),
     };
     serve_machine_api(listener, state, std::future::pending()).await
+}
+
+fn machine_port_forwarder_config(
+    guest_node_id: &str,
+    machine_boot_id: &str,
+) -> Result<OciMachinePortForwarderConfig, Error> {
+    let machine_boot_id = machine_boot_id.trim();
+    if machine_boot_id.is_empty() {
+        return Err(Error::Internal(
+            "guest boot identity is empty; gvproxy provider identity cannot be fenced".to_owned(),
+        ));
+    }
+    OciMachinePortForwarderConfig::gvproxy_for_provider_instance(
+        format!("machine:{guest_node_id}:boot:{machine_boot_id}:gvproxy"),
+        INITIAL_MACHINE_FORWARDER_GENERATION,
+    )
+    .map_err(|error| {
+        Error::Internal(format!(
+            "failed to build lifecycle-owned machine forwarder identity for guest node \
+             {guest_node_id}: {error}"
+        ))
+    })
 }
 
 pub(crate) async fn serve_machine_api<F>(

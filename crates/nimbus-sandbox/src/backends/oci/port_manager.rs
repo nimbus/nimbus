@@ -7,29 +7,43 @@ use std::path::PathBuf;
 
 use nimbus_core::TenantId;
 use nimbus_network::{
-    LocalPortLeaseAuthority, NetworkReservationClaim, PortBindClaim, PortBindRealm, PortBindTarget,
-    PortBindingSpec, PortExposure, PortLeaseAccounting, PortLeasePhase, PortLeaseRecord,
-    PortLeaseRequest, PortProtocol, PortPublicationIntent, PortRequestMode,
+    LocalPortLeaseAuthority, NetworkReservationClaim, NetworkReservationLifetimeGuard,
+    PortBindClaim, PortBindRealm, PortBindTarget, PortBindingSpec, PortExposure,
+    PortLeaseAccounting, PortLeaseBinding, PortLeaseEffectScope, PortLeasePhase, PortLeaseRecord,
+    PortLeaseRecoveryGuard, PortLeaseRequest, PortProtocol, PortPublicationIntent, PortRequestMode,
 };
 
 use super::buildah::{OciExposedPort, OciExposedPortProtocol};
 use super::port_lease::{
-    ExpectedListenerAuthority, OciPortLeaseIntent, OciPortProvider,
-    abandon_bind_attempts_without_effect, adopt_claimed_and_activate_batch, claim_bind_attempts,
-    port_lease_request, prepare_rebind_batch_after_confirmed_stop, provider_binding,
-    published_scope, record_bind_failure, release, release_batch_after_confirmed_stop,
-    release_reserved_batch_without_effect, require_active_provider_binding,
-    require_current_bind_authority, require_current_listener_authority, require_listener_authority,
-    reserve_batch, reserve_batch_with_tenant_limit, verify_reserved_batch_for_coordinator,
-    withdraw,
+    ExpectedListenerAuthority, OciConfirmedBindFailure, OciPortBindLifetimeBatch,
+    OciPortLeaseIntent, OciPortProvider, abandon_bind_attempts_with_lifetimes_without_effect,
+    adopt_claimed_and_activate_batch_with_lifetimes, claim_bind_attempts_with_lifetimes,
+    port_lease_request, prepare_provider_managed_batch_after_confirmed_stop,
+    prepare_provider_managed_claim_batch_after_confirmed_stop,
+    prepare_rebind_batch_after_confirmed_stop_with_lifetimes, provider_binding, published_scope,
+    record_bind_failure_with_lifetime, recover_provider_managed_batch_after_owner_death,
+    release_batch_after_confirmed_stop, release_provider_managed_batch_after_confirmed_stop,
+    release_provider_managed_batch_after_confirmed_stop_with_lifetimes,
+    release_reserved_batch_with_lifetime_without_effect, release_reserved_batch_without_effect,
+    require_active_provider_binding, require_current_bind_authority,
+    require_current_listener_authority, require_listener_authority,
+    require_provider_recovery_binding, reserve_batch, reserve_batch_with_tenant_limit,
+    verify_reserved_batch_for_coordinator, withdraw,
 };
 #[cfg(test)]
-use super::port_lease::{new_launch_reservation_claim, reserve};
+use super::port_lease::{
+    abandon_bind_attempts_without_effect, adopt_claimed_and_activate_batch, claim_bind_attempts,
+    new_launch_reservation_claim, prepare_rebind_batch_after_confirmed_stop, record_bind_failure,
+    release, reserve,
+};
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
 use crate::spec::SandboxPortBinding;
 
 mod batch_state;
+mod netavark_lifetime;
+
+pub(crate) use netavark_lifetime::NetavarkPortLifetimeRegistry;
 
 pub(crate) const DEFAULT_MAX_PORTS_PER_TENANT: usize = 128;
 
@@ -102,12 +116,52 @@ pub(crate) struct ReservedInternalListener {
     pub(crate) lease: PortLeaseRequest,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ReservedLaunchPorts {
     pub(crate) published_bindings: Vec<SandboxPortBinding>,
     pub(crate) published_leases: Vec<PortLeaseRequest>,
     pub(crate) internal_listener: Option<ReservedInternalListener>,
     pub(crate) reservation_claim: NetworkReservationClaim,
+    publication_lifetime: Option<NetworkReservationLifetimeGuard>,
+}
+
+impl std::fmt::Debug for ReservedLaunchPorts {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ReservedLaunchPorts")
+            .field("published_bindings", &self.published_bindings)
+            .field("published_leases", &self.published_leases)
+            .field("internal_listener", &self.internal_listener)
+            .field("reservation_claim", &self.reservation_claim)
+            .field(
+                "publication_lifetime",
+                &self.publication_lifetime.as_ref().map(|_| "<held>"),
+            )
+            .finish()
+    }
+}
+
+impl ReservedLaunchPorts {
+    /// End the vulnerable reservation-to-manifest interval only after the
+    /// canonical request set has been durably published.
+    pub(crate) fn confirm_manifest_published(&mut self) -> Result<()> {
+        self.publication_lifetime
+            .take()
+            .ok_or_else(|| SandboxError::OperationFailed {
+                message: format!(
+                    "sandbox launch reservation for provider {} was already published",
+                    self.reservation_claim.coordinator_attempt().provider_id()
+                ),
+            })?;
+        Ok(())
+    }
+
+    fn all_requests(&self) -> Vec<PortLeaseRequest> {
+        let mut requests = self.published_leases.clone();
+        if let Some(internal_listener) = &self.internal_listener {
+            requests.push(internal_listener.lease.clone());
+        }
+        requests
+    }
 }
 
 pub(crate) struct SandboxLaunchPortPlan<'a> {
@@ -266,7 +320,7 @@ impl PortManager {
             )?,
             None => reserve_batch(&self.state_root, requests, reservation_claim)?,
         };
-        let (reserved, reservation_claim) = reserved_batch.into_parts();
+        let (reserved, reservation_claim, publication_lifetime) = reserved_batch.into_parts();
         let reserved_requests = reserved
             .iter()
             .map(|(request, _)| request.clone())
@@ -278,9 +332,9 @@ impl PortManager {
                     reserved.len()
                 ),
             };
-            return Err(self.compensate_failed_never_bound_requests(
+            return Err(self.compensate_failed_never_bound_requests_with_lifetime(
                 &reserved_requests,
-                &reservation_claim,
+                &publication_lifetime,
                 projection_error,
                 "sandbox reservation projection",
             ));
@@ -303,9 +357,9 @@ impl PortManager {
                             binding.host_port
                         ),
                     };
-                    return Err(self.compensate_failed_never_bound_requests(
+                    return Err(self.compensate_failed_never_bound_requests_with_lifetime(
                         &reserved_requests,
-                        &reservation_claim,
+                        &publication_lifetime,
                         projection_error,
                         "sandbox reservation projection",
                     ));
@@ -320,9 +374,9 @@ impl PortManager {
                              expected {published_count}"
                         ),
                     };
-                    return Err(self.compensate_failed_never_bound_requests(
+                    return Err(self.compensate_failed_never_bound_requests_with_lifetime(
                         &reserved_requests,
-                        &reservation_claim,
+                        &publication_lifetime,
                         projection_error,
                         "sandbox reservation projection",
                     ));
@@ -338,6 +392,7 @@ impl PortManager {
             published_leases,
             internal_listener: internal_reserved,
             reservation_claim,
+            publication_lifetime: Some(publication_lifetime),
         })
     }
 
@@ -348,6 +403,41 @@ impl PortManager {
         reservation_claim: &NetworkReservationClaim,
     ) -> Result<()> {
         release_reserved_batch_without_effect(&self.state_root, requests, reservation_claim)?;
+        Ok(())
+    }
+
+    /// Compensate an unpublished launch while its original coordinator
+    /// lifetime is still held by the caller.
+    ///
+    /// The caller must retain `reservations` until every later IPAM and segment
+    /// compensation step has completed. This method deliberately borrows the
+    /// non-cloneable lifetime instead of consuming it so no fresh coordinator
+    /// can enter between durable cleanup intent and the complete reverse-order
+    /// network compensation.
+    pub(crate) fn release_unpublished_launch_ports(
+        &self,
+        reservations: &ReservedLaunchPorts,
+        reservation_claim: &NetworkReservationClaim,
+    ) -> Result<()> {
+        if &reservations.reservation_claim != reservation_claim {
+            return Err(SandboxError::OperationFailed {
+                message: "unpublished launch port compensation carries a different reservation \
+                          coordinator"
+                    .to_owned(),
+            });
+        }
+        let publication_lifetime = reservations.publication_lifetime.as_ref().ok_or_else(|| {
+            SandboxError::OperationFailed {
+                message: "unpublished launch port compensation no longer owns its original \
+                              reservation lifetime"
+                    .to_owned(),
+            }
+        })?;
+        release_reserved_batch_with_lifetime_without_effect(
+            &self.state_root,
+            &reservations.all_requests(),
+            publication_lifetime,
+        )?;
         Ok(())
     }
 
@@ -423,8 +513,10 @@ impl PortManager {
                     coordinator_no_effect += 1;
                     continue;
                 }
-                if record.phase() == PortLeasePhase::Reserved
-                    && record.binding().is_none()
+                if matches!(
+                    record.phase(),
+                    PortLeasePhase::Reserved | PortLeasePhase::CleanupPending
+                ) && record.binding().is_none()
                     && record.failure().is_none()
                     && record.confirmed_stopped_binding().is_none()
                 {
@@ -556,6 +648,28 @@ impl PortManager {
                 message: format!(
                     "{operation} failed: {provider_error}; \
                      never-bound port reservation compensation also failed: {compensation_error}"
+                ),
+            },
+        }
+    }
+
+    fn compensate_failed_never_bound_requests_with_lifetime(
+        &self,
+        requests: &[PortLeaseRequest],
+        publication_lifetime: &NetworkReservationLifetimeGuard,
+        provider_error: SandboxError,
+        operation: &str,
+    ) -> SandboxError {
+        match release_reserved_batch_with_lifetime_without_effect(
+            &self.state_root,
+            requests,
+            publication_lifetime,
+        ) {
+            Ok(_) => provider_error,
+            Err(compensation_error) => SandboxError::OperationFailed {
+                message: format!(
+                    "{operation} failed: {provider_error}; live-coordinator never-bound port \
+                     reservation compensation also failed: {compensation_error}"
                 ),
             },
         }
@@ -785,6 +899,7 @@ impl PortManager {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn activate_netavark_bindings(
         &self,
         tenant_id: &TenantId,
@@ -823,6 +938,33 @@ impl PortManager {
         Ok(())
     }
 
+    pub(crate) fn activate_netavark_bindings_with_lifetimes(
+        &self,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+        batch: &OciPortBindLifetimeBatch,
+    ) -> Result<()> {
+        self.require_published_listener_provider(PublishedListenerProvider::Netavark)?;
+        self.require_binding_leases(tenant_id, sandbox_id, bindings, leases)?;
+        let reservation_claim = self.reservation_claim_for_requests(leases)?;
+        let actual_addrs = bindings
+            .iter()
+            .map(SandboxPortBinding::host_socket_addr)
+            .collect::<Vec<_>>();
+        adopt_claimed_and_activate_batch_with_lifetimes(
+            &self.state_root,
+            leases,
+            batch,
+            &actual_addrs,
+            OciPortProvider::Netavark,
+            reservation_claim.as_ref(),
+        )?;
+        Ok(())
+    }
+
+    #[cfg(test)]
     pub(crate) fn claim_netavark_bindings(
         &self,
         tenant_id: &TenantId,
@@ -841,7 +983,27 @@ impl PortManager {
         )
     }
 
+    pub(crate) fn claim_netavark_bindings_with_lifetimes(
+        &self,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+    ) -> Result<OciPortBindLifetimeBatch> {
+        self.require_published_listener_provider(PublishedListenerProvider::Netavark)?;
+        self.require_binding_leases(tenant_id, sandbox_id, bindings, leases)?;
+        let reservation_claim = self.reservation_claim_for_requests(leases)?;
+        claim_bind_attempts_with_lifetimes(
+            &self.state_root,
+            leases,
+            OciPortProvider::Netavark,
+            reservation_claim.as_ref(),
+            PortLeaseEffectScope::ProviderManaged,
+        )
+    }
+
     /// Abandon one exact Netavark claim batch after provider detach is confirmed.
+    #[cfg(test)]
     pub(crate) fn abandon_netavark_bind_claims_without_effect(
         &self,
         tenant_id: &TenantId,
@@ -859,6 +1021,31 @@ impl PortManager {
         )?;
         self.require_binding_lease_identities(tenant_id, sandbox_id, bindings, leases)?;
         abandon_bind_attempts_without_effect(&self.state_root, leases, claims, reservation_claim)?;
+        Ok(())
+    }
+
+    pub(crate) fn abandon_netavark_bind_claims_with_lifetimes_without_effect(
+        &self,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+        batch: &OciPortBindLifetimeBatch,
+        reservation_claim: Option<&NetworkReservationClaim>,
+    ) -> Result<()> {
+        self.require_published_bind_claim_batch(
+            PublishedListenerProvider::Netavark,
+            OciPortProvider::Netavark,
+            leases,
+            batch.claims(),
+        )?;
+        self.require_binding_lease_identities(tenant_id, sandbox_id, bindings, leases)?;
+        abandon_bind_attempts_with_lifetimes_without_effect(
+            &self.state_root,
+            leases,
+            batch,
+            reservation_claim,
+        )?;
         Ok(())
     }
 
@@ -884,6 +1071,7 @@ impl PortManager {
             .collect()
     }
 
+    #[cfg(test)]
     pub(crate) fn prepare_netavark_bindings_for_rebind(
         &self,
         leases: &[PortLeaseRequest],
@@ -891,6 +1079,130 @@ impl PortManager {
     ) -> Result<()> {
         self.require_published_listener_provider(PublishedListenerProvider::Netavark)?;
         prepare_rebind_batch_after_confirmed_stop(&self.state_root, leases, expected_bindings)?;
+        Ok(())
+    }
+
+    pub(crate) fn prepare_netavark_bindings_for_rebind_with_lifetimes(
+        &self,
+        leases: &[PortLeaseRequest],
+        expected_bindings: &[PortLeaseBinding],
+        batch: &OciPortBindLifetimeBatch,
+    ) -> Result<()> {
+        self.require_published_listener_provider(PublishedListenerProvider::Netavark)?;
+        prepare_rebind_batch_after_confirmed_stop_with_lifetimes(
+            &self.state_root,
+            leases,
+            expected_bindings,
+            batch.lifetimes(),
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn release_netavark_bindings_after_confirmed_stop_with_lifetimes(
+        &self,
+        leases: &[PortLeaseRequest],
+        expected_bindings: &[PortLeaseBinding],
+        batch: &OciPortBindLifetimeBatch,
+    ) -> Result<()> {
+        self.require_published_listener_provider(PublishedListenerProvider::Netavark)?;
+        release_provider_managed_batch_after_confirmed_stop_with_lifetimes(
+            &self.state_root,
+            leases,
+            expected_bindings,
+            batch.lifetimes(),
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn recover_netavark_bindings_after_owner_death(
+        &self,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+    ) -> Result<(Vec<PortLeaseBinding>, Vec<PortLeaseRecoveryGuard>)> {
+        self.require_published_listener_provider(PublishedListenerProvider::Netavark)?;
+        self.require_binding_lease_identities(tenant_id, sandbox_id, bindings, leases)?;
+        let expected = bindings
+            .iter()
+            .zip(leases)
+            .map(|(binding, request)| {
+                require_provider_recovery_binding(
+                    &self.state_root,
+                    request,
+                    binding.host_socket_addr(),
+                    OciPortProvider::Netavark,
+                )?
+                .binding()
+                .cloned()
+                .ok_or_else(|| SandboxError::OperationFailed {
+                    message: format!(
+                        "recoverable Netavark port lease {} lost exact provider binding evidence",
+                        request.lease_id()
+                    ),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let recoveries =
+            recover_provider_managed_batch_after_owner_death(&self.state_root, leases)?;
+        Ok((expected, recoveries))
+    }
+
+    pub(crate) fn recover_netavark_claims_after_owner_death(
+        &self,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+        claims: &[PortBindClaim],
+    ) -> Result<Vec<PortLeaseRecoveryGuard>> {
+        self.require_published_bind_claim_batch(
+            PublishedListenerProvider::Netavark,
+            OciPortProvider::Netavark,
+            leases,
+            claims,
+        )?;
+        self.require_binding_lease_identities(tenant_id, sandbox_id, bindings, leases)?;
+        recover_provider_managed_batch_after_owner_death(&self.state_root, leases)
+    }
+
+    pub(crate) fn prepare_recovered_netavark_bindings_for_rebind(
+        &self,
+        leases: &[PortLeaseRequest],
+        expected_bindings: &[PortLeaseBinding],
+        recoveries: &[PortLeaseRecoveryGuard],
+    ) -> Result<()> {
+        self.require_published_listener_provider(PublishedListenerProvider::Netavark)?;
+        prepare_provider_managed_batch_after_confirmed_stop(
+            &self.state_root,
+            leases,
+            expected_bindings,
+            recoveries,
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn prepare_recovered_netavark_claims_for_rebind(
+        &self,
+        leases: &[PortLeaseRequest],
+        recoveries: &[PortLeaseRecoveryGuard],
+    ) -> Result<()> {
+        self.require_published_listener_provider(PublishedListenerProvider::Netavark)?;
+        prepare_provider_managed_claim_batch_after_confirmed_stop(
+            &self.state_root,
+            leases,
+            recoveries,
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn release_recovered_netavark_bindings(
+        &self,
+        leases: &[PortLeaseRequest],
+        recoveries: &[PortLeaseRecoveryGuard],
+    ) -> Result<()> {
+        self.require_published_listener_provider(PublishedListenerProvider::Netavark)?;
+        release_provider_managed_batch_after_confirmed_stop(&self.state_root, leases, recoveries)?;
         Ok(())
     }
 
@@ -905,6 +1217,7 @@ impl PortManager {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn activate_machine_bindings(
         &self,
         tenant_id: &TenantId,
@@ -955,6 +1268,48 @@ impl PortManager {
         .collect()
     }
 
+    pub(crate) fn activate_machine_bindings_with_lifetimes(
+        &self,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+        batch: &OciPortBindLifetimeBatch,
+    ) -> Result<Vec<PortLeaseBinding>> {
+        self.require_published_listener_provider(PublishedListenerProvider::MachinePortProxy)?;
+        self.require_binding_leases(tenant_id, sandbox_id, bindings, leases)?;
+        for request in leases {
+            require_current_bind_authority(&self.state_root, request)?;
+        }
+        let reservation_claim = self.reservation_claim_for_requests(leases)?;
+        let actual_addrs = bindings
+            .iter()
+            .map(machine_port_proxy_guest_listener_addr)
+            .collect::<Vec<_>>();
+        adopt_claimed_and_activate_batch_with_lifetimes(
+            &self.state_root,
+            leases,
+            batch,
+            &actual_addrs,
+            OciPortProvider::MachinePortProxy,
+            reservation_claim.as_ref(),
+        )?
+        .into_iter()
+        .map(|record| {
+            record
+                .binding()
+                .cloned()
+                .ok_or_else(|| SandboxError::OperationFailed {
+                    message: format!(
+                        "activated machine port lease {} lost exact provider binding evidence",
+                        record.request().lease_id()
+                    ),
+                })
+        })
+        .collect()
+    }
+
+    #[cfg(test)]
     pub(crate) fn claim_machine_bindings(
         &self,
         tenant_id: &TenantId,
@@ -973,6 +1328,26 @@ impl PortManager {
         )
     }
 
+    pub(crate) fn claim_machine_bindings_with_lifetimes(
+        &self,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+    ) -> Result<OciPortBindLifetimeBatch> {
+        self.require_published_listener_provider(PublishedListenerProvider::MachinePortProxy)?;
+        self.require_binding_leases(tenant_id, sandbox_id, bindings, leases)?;
+        let reservation_claim = self.reservation_claim_for_requests(leases)?;
+        claim_bind_attempts_with_lifetimes(
+            &self.state_root,
+            leases,
+            OciPortProvider::MachinePortProxy,
+            reservation_claim.as_ref(),
+            PortLeaseEffectScope::ProviderManaged,
+        )
+    }
+
+    #[cfg(test)]
     pub(crate) fn abandon_machine_bind_claims_without_effect(
         &self,
         leases: &[PortLeaseRequest],
@@ -989,6 +1364,27 @@ impl PortManager {
             &self.state_root,
             leases,
             claims,
+            reservation_claim.as_ref(),
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn abandon_machine_bind_claims_with_lifetimes_without_effect(
+        &self,
+        leases: &[PortLeaseRequest],
+        batch: &OciPortBindLifetimeBatch,
+    ) -> Result<()> {
+        self.require_published_bind_claim_batch(
+            PublishedListenerProvider::MachinePortProxy,
+            OciPortProvider::MachinePortProxy,
+            leases,
+            batch.claims(),
+        )?;
+        let reservation_claim = self.reservation_claim_for_requests(leases)?;
+        abandon_bind_attempts_with_lifetimes_without_effect(
+            &self.state_root,
+            leases,
+            batch,
             reservation_claim.as_ref(),
         )?;
         Ok(())
@@ -1057,6 +1453,49 @@ impl PortManager {
             .collect()
     }
 
+    pub(crate) fn require_active_machine_bindings_with_lifetimes(
+        &self,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+        batch: &OciPortBindLifetimeBatch,
+    ) -> Result<Vec<PortLeaseBinding>> {
+        if leases.len() != batch.lifetimes().len() || leases.len() != batch.claims().len() {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "sandbox has {} machine listener leases but {} live process lifetimes and {} \
+                     bind claims",
+                    leases.len(),
+                    batch.lifetimes().len(),
+                    batch.claims().len()
+                ),
+            });
+        }
+        let active =
+            self.require_active_machine_bindings(tenant_id, sandbox_id, bindings, leases)?;
+        for ((request, binding), lifetime) in leases.iter().zip(bindings).zip(batch.lifetimes()) {
+            let record = require_active_provider_binding(
+                &self.state_root,
+                request,
+                machine_port_proxy_guest_listener_addr(binding),
+                OciPortProvider::MachinePortProxy,
+            )?;
+            if lifetime.request() != request
+                || record.active_lifetime() != Some(lifetime.lifetime())
+            {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "sandbox machine port lease {} is not owned by the retained live process \
+                         lifetime",
+                        request.lease_id()
+                    ),
+                });
+            }
+        }
+        Ok(active)
+    }
+
     pub(crate) fn require_releasable_machine_bindings(
         &self,
         tenant_id: &TenantId,
@@ -1088,6 +1527,7 @@ impl PortManager {
             .collect()
     }
 
+    #[cfg(test)]
     pub(crate) fn prepare_machine_bindings_for_rebind(
         &self,
         leases: &[PortLeaseRequest],
@@ -1095,6 +1535,98 @@ impl PortManager {
     ) -> Result<()> {
         self.require_published_listener_provider(PublishedListenerProvider::MachinePortProxy)?;
         prepare_rebind_batch_after_confirmed_stop(&self.state_root, leases, expected_bindings)?;
+        Ok(())
+    }
+
+    pub(crate) fn prepare_machine_bindings_for_rebind_with_lifetimes(
+        &self,
+        leases: &[PortLeaseRequest],
+        expected_bindings: &[PortLeaseBinding],
+        batch: &OciPortBindLifetimeBatch,
+    ) -> Result<()> {
+        self.require_published_listener_provider(PublishedListenerProvider::MachinePortProxy)?;
+        prepare_rebind_batch_after_confirmed_stop_with_lifetimes(
+            &self.state_root,
+            leases,
+            expected_bindings,
+            batch.lifetimes(),
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn release_machine_bindings_after_confirmed_stop_with_lifetimes(
+        &self,
+        leases: &[PortLeaseRequest],
+        expected_bindings: &[PortLeaseBinding],
+        batch: &OciPortBindLifetimeBatch,
+    ) -> Result<()> {
+        self.require_published_listener_provider(PublishedListenerProvider::MachinePortProxy)?;
+        release_provider_managed_batch_after_confirmed_stop_with_lifetimes(
+            &self.state_root,
+            leases,
+            expected_bindings,
+            batch.lifetimes(),
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn recover_machine_bindings_after_owner_death(
+        &self,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+    ) -> Result<(Vec<PortLeaseBinding>, Vec<PortLeaseRecoveryGuard>)> {
+        self.require_published_listener_provider(PublishedListenerProvider::MachinePortProxy)?;
+        self.require_binding_lease_identities(tenant_id, sandbox_id, bindings, leases)?;
+        let expected = bindings
+            .iter()
+            .zip(leases)
+            .map(|(binding, request)| {
+                require_provider_recovery_binding(
+                    &self.state_root,
+                    request,
+                    machine_port_proxy_guest_listener_addr(binding),
+                    OciPortProvider::MachinePortProxy,
+                )?
+                .binding()
+                .cloned()
+                .ok_or_else(|| SandboxError::OperationFailed {
+                    message: format!(
+                        "recoverable machine port lease {} lost exact provider binding evidence",
+                        request.lease_id()
+                    ),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let recoveries =
+            recover_provider_managed_batch_after_owner_death(&self.state_root, leases)?;
+        Ok((expected, recoveries))
+    }
+
+    pub(crate) fn prepare_recovered_machine_bindings_for_rebind(
+        &self,
+        leases: &[PortLeaseRequest],
+        expected_bindings: &[PortLeaseBinding],
+        recoveries: &[PortLeaseRecoveryGuard],
+    ) -> Result<()> {
+        self.require_published_listener_provider(PublishedListenerProvider::MachinePortProxy)?;
+        prepare_provider_managed_batch_after_confirmed_stop(
+            &self.state_root,
+            leases,
+            expected_bindings,
+            recoveries,
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn release_recovered_machine_bindings(
+        &self,
+        leases: &[PortLeaseRequest],
+        recoveries: &[PortLeaseRecoveryGuard],
+    ) -> Result<()> {
+        self.require_published_listener_provider(PublishedListenerProvider::MachinePortProxy)?;
+        release_provider_managed_batch_after_confirmed_stop(&self.state_root, leases, recoveries)?;
         Ok(())
     }
 
@@ -1119,6 +1651,7 @@ impl PortManager {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn record_machine_proxy_bind_failure(
         &self,
         request: &PortLeaseRequest,
@@ -1133,10 +1666,38 @@ impl PortManager {
             &self.state_root,
             request,
             claim,
-            attempted_addr,
-            OciPortProvider::MachinePortProxy,
-            error_kind,
+            OciConfirmedBindFailure::new(
+                attempted_addr,
+                OciPortProvider::MachinePortProxy,
+                error_kind,
+            ),
             reservation_claim.as_ref(),
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn record_machine_proxy_bind_failure_with_lifetime(
+        &self,
+        request: &PortLeaseRequest,
+        claim: &PortBindClaim,
+        attempted_addr: SocketAddr,
+        error_kind: io::ErrorKind,
+        lifetime: &nimbus_network::PortLeaseLifetimeGuard,
+    ) -> Result<()> {
+        self.require_published_listener_provider(PublishedListenerProvider::MachinePortProxy)?;
+        let reservation_claim =
+            self.reservation_claim_for_requests(std::slice::from_ref(request))?;
+        record_bind_failure_with_lifetime(
+            &self.state_root,
+            request,
+            claim,
+            OciConfirmedBindFailure::new(
+                attempted_addr,
+                OciPortProvider::MachinePortProxy,
+                error_kind,
+            ),
+            reservation_claim.as_ref(),
+            lifetime,
         )?;
         Ok(())
     }
@@ -1253,6 +1814,7 @@ impl PortManager {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn release_bindings(
         &self,
         tenant_id: &TenantId,

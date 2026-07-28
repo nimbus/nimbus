@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use nimbus_network::{NetworkProviderHandle, NetworkReservationClaim};
+use nimbus_network::{NetworkProviderHandle, NetworkReservationClaim, NetworkResourceGeneration};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize)]
@@ -58,6 +58,10 @@ pub(super) struct NetavarkSubnet {
 
 #[derive(Debug, Serialize)]
 pub(super) struct MachinePortForwardRequest {
+    /// Exact provider incarnation configured by the gvproxy lifecycle owner.
+    pub(super) provider_instance: NetworkProviderHandle,
+    /// Monotonic generation of that provider incarnation.
+    pub(super) provider_generation: NetworkResourceGeneration,
     pub(super) local: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) remote: Option<String>,
@@ -112,10 +116,14 @@ pub(super) enum NetavarkProviderOperation {
     },
     /// Teardown may be in flight or may have completed without acknowledgement.
     Deleting {
+        /// Exact setup generation whose provider effects are being removed.
+        setup_attempt: NetworkProviderHandle,
         operation_attempt: NetworkProviderHandle,
     },
     /// Provider absence is confirmed, but removal of observed status is pending.
     DetachedProjectionPending {
+        /// Exact setup generation whose provider effects were removed.
+        setup_attempt: NetworkProviderHandle,
         operation_attempt: NetworkProviderHandle,
     },
     /// Provider absence and observed-status removal are both confirmed.

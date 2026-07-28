@@ -21,7 +21,7 @@ use crate::backends::conmon::lifecycle::{
     RuntimeStatusProbe, configured_stop_signal, configured_stop_timeout, ensure_linux_host,
     read_exit_code, read_pid, remove_if_exists, restart_backoff_delay,
     restart_policy_allows_restart, run_status_best_effort, run_status_checked, runtime_state,
-    signal_process, wait_for_path, wait_for_runtime_state,
+    signal_process, wait_for_path,
 };
 use crate::backends::conmon::spec_resolve::{
     merge_env_overrides, resolve_process_spec, resolve_root_spec, slugify,
@@ -43,7 +43,7 @@ use crate::backends::oci::network::{
     ConfiguredSegmentAllocator, DEFAULT_AARDVARK_DNS_BINARY, DEFAULT_NETAVARK_BINARY,
     DEFAULT_NETWORK_INTERFACE, DEFAULT_NETWORK_NAME, DEFAULT_NETWORK_SUBNET, DEFAULT_TENANT_PREFIX,
     OciNetworkConfig, OciNetworkDirectEgress, OciNetworkLayout, OciSegmentAllocator,
-    OciSegmentRealization, authenticate_container_network_generation,
+    OciSegmentRealization, TerminalNetworkAuthoritySet, authenticate_container_network_generation,
     authenticate_container_network_generation_for_cleanup, create_persistent_network_namespace,
     deallocate_container_ips_after_confirmed_detach, default_network_attachment_id,
     pin_netns_egress_to_own_proxy, place_sandbox_on_block, purge_legacy_nimbus0_once,
@@ -53,7 +53,8 @@ use crate::backends::oci::network::{
 };
 use crate::backends::oci::port_lease::new_launch_reservation_claim;
 use crate::backends::oci::port_manager::{
-    DEFAULT_MAX_PORTS_PER_TENANT, LaunchPortBatchState, PortManager, SandboxLaunchPortPlan,
+    DEFAULT_MAX_PORTS_PER_TENANT, LaunchPortBatchState, NetavarkPortLifetimeRegistry, PortManager,
+    ReservedLaunchPorts, SandboxLaunchPortPlan,
 };
 use crate::backends::oci::resource_quota::ResourceQuotaManager;
 use crate::error::{Result, SandboxError};
@@ -64,6 +65,8 @@ use crate::spec::{
 };
 use nimbus_network::{EndpointProtocol, NetworkReservationClaim, PublishedEndpoint};
 
+mod attachment_recovery;
+mod creator;
 mod lifecycle;
 mod manifest_publication;
 mod readiness;
@@ -190,6 +193,7 @@ pub struct KrunSandboxBackend {
     config: KrunSandboxBackendConfig,
     segment_allocator: Arc<OciSegmentAllocator>,
     egress_proxies: EgressProxyRegistry,
+    netavark_port_lifetimes: NetavarkPortLifetimeRegistry,
     startup_network_reconciliation_error: Option<Arc<str>>,
     #[cfg(test)]
     restart_launch_test_probe: Option<RestartLaunchTestProbe>,
@@ -197,6 +201,8 @@ pub struct KrunSandboxBackend {
     lifecycle_lock_test_probe: Option<KrunLifecycleLockTestProbe>,
     #[cfg(test)]
     effect_barrier_test_probe: Option<KrunEffectBarrierTestProbe>,
+    #[cfg(test)]
+    terminal_ipam_retirement_failure: Option<Arc<str>>,
 }
 
 #[cfg(test)]
@@ -267,6 +273,7 @@ impl KrunSandboxBackend {
             config,
             segment_allocator,
             egress_proxies,
+            netavark_port_lifetimes: NetavarkPortLifetimeRegistry::default(),
             startup_network_reconciliation_error,
             #[cfg(test)]
             restart_launch_test_probe: None,
@@ -274,6 +281,8 @@ impl KrunSandboxBackend {
             lifecycle_lock_test_probe: None,
             #[cfg(test)]
             effect_barrier_test_probe: None,
+            #[cfg(test)]
+            terminal_ipam_retirement_failure: None,
         }
     }
 
@@ -304,6 +313,12 @@ impl KrunSandboxBackend {
     #[cfg(test)]
     fn with_effect_barrier_test_probe(mut self, probe: KrunEffectBarrierTestProbe) -> Self {
         self.effect_barrier_test_probe = Some(probe);
+        self
+    }
+
+    #[cfg(test)]
+    fn with_terminal_ipam_retirement_failure(mut self, message: impl Into<Arc<str>>) -> Self {
+        self.terminal_ipam_retirement_failure = Some(message.into());
         self
     }
 
@@ -371,6 +386,23 @@ impl KrunSandboxBackend {
             &manifest.handle.id,
             reservation_claim,
             manager.release_never_bound_launch_claim(reservation_claim),
+        )
+    }
+
+    fn release_unpublished_reserved_launch(
+        &self,
+        manifest: &KrunSandboxManifest,
+        reservations: &ReservedLaunchPorts,
+    ) -> Result<()> {
+        let reservation_claim = manifest.require_reserved_claim()?;
+        let manager = self.port_manager();
+        release_reserved_network_launch_after_ports(
+            self.segment_allocator.as_ref(),
+            &manifest.network_layout,
+            &manifest.spec.tenant_id,
+            &manifest.handle.id,
+            reservation_claim,
+            manager.release_unpublished_launch_ports(reservations, reservation_claim),
         )
     }
 
@@ -530,9 +562,18 @@ enum KrunLaunchAuthority {
 #[serde(tag = "phase", rename_all = "snake_case", deny_unknown_fields)]
 enum KrunCreatorHandoffState {
     NotSpawned,
-    Pending { attempt_id: String },
-    Quiesced { attempt_id: String },
-    RuntimeObserved { attempt_id: String },
+    SpawnIntent {
+        attempt_id: String,
+    },
+    Pending {
+        receipt: crate::backends::conmon::creator::CreatorAttemptReceipt,
+    },
+    Quiesced {
+        proof: crate::backends::conmon::creator::CreatorQuiescenceProof,
+    },
+    RuntimeObserved {
+        receipt: crate::backends::conmon::creator::CreatorAttemptReceipt,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -574,6 +615,26 @@ impl KrunCreatorHandoffState {
 }
 
 impl KrunSandboxManifest {
+    fn has_terminal_network_finality(&self) -> bool {
+        let launch_authority_released = match self.start_mode {
+            KrunStartMode::PlanOnly => {
+                self.launch_authority == KrunLaunchAuthority::PlanOnly
+                    && self.network_config.is_none()
+                    && self.port_leases.is_empty()
+                    && self.egress_proxy.is_none()
+            }
+            KrunStartMode::Execute => self.launch_authority == KrunLaunchAuthority::Released,
+        };
+        matches!(self.status, SandboxStatus::Stopped | SandboxStatus::Failed)
+            && self.shutdown_requested
+            && self.handle.status == self.status
+            && self.launch_artifact.is_none()
+            && !self.provider_failure_cleanup.is_active()
+            && self.creator_handoff.authorizes_provider_cleanup()
+            && self.next_restart_at_millis.is_none()
+            && launch_authority_released
+    }
+
     fn require_network_config(&self) -> Result<&OciNetworkConfig> {
         self.network_config
             .as_ref()

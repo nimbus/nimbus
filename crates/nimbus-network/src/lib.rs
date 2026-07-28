@@ -29,20 +29,23 @@ pub use plan::{
     NetworkPlanUpdateError,
 };
 pub use port_lease::{
-    LocalPortLeaseAuthority, PortAddressFamily, PortBindAttempt, PortBindAttemptError,
-    PortBindClaim, PortBindFailure, PortBindFailureKind, PortBindRealm, PortBindRealmError,
-    PortBindRealmErrorKind, PortBindTarget, PortBindTargetError, PortBindingMismatch,
-    PortBindingProvenance, PortBindingSpec, PortBoundEndpoint, PortBoundEndpointError,
-    PortExposure, PortIpv6Overlap, PortIsolatedRealm, PortLeaseAccounting, PortLeaseBinding,
-    PortLeaseError, PortLeaseFence, PortLeaseFenceMismatch, PortLeaseOperation, PortLeasePhase,
-    PortLeaseRecord, PortLeaseRequest, PortProtocol, PortPublicationIntent, PortRange,
+    LocalPortLeaseAuthority, NetworkReservationLifetimeAttempt, NetworkReservationLifetimeGuard,
+    PortAddressFamily, PortBindAttempt, PortBindAttemptError, PortBindClaim, PortBindFailure,
+    PortBindFailureKind, PortBindRealm, PortBindRealmError, PortBindRealmErrorKind, PortBindTarget,
+    PortBindTargetError, PortBindingMismatch, PortBindingProvenance, PortBindingSpec,
+    PortBoundEndpoint, PortBoundEndpointError, PortExposure, PortIpv6Overlap, PortIsolatedRealm,
+    PortLeaseAccounting, PortLeaseBinding, PortLeaseEffectScope, PortLeaseError, PortLeaseFence,
+    PortLeaseFenceMismatch, PortLeaseLifetime, PortLeaseLifetimeGeneration, PortLeaseLifetimeGuard,
+    PortLeaseLifetimeReconciliation, PortLeaseOperation, PortLeasePhase, PortLeaseRecord,
+    PortLeaseRecoveryAttempt, PortLeaseRecoveryGuard, PortLeaseRequest,
+    PortLeaseReservationWithLifetime, PortProtocol, PortPublicationIntent, PortRange,
     PortRangeError, PortRequestMode, TenantPublishedPortLimit,
 };
 pub use provider::{NetworkProviderHandle, NetworkProviderHandleError, NetworkReservationClaim};
 pub use segment::{
-    AllocatedSegment, NetworkSegmentAllocator, NetworkSegmentCleanup,
-    NetworkSegmentFinalizeOutcome, NetworkSegmentGrowth, NetworkSegmentQuarantineOutcome,
-    NetworkSegmentReleaseOutcome,
+    AllocatedSegment, NetworkAttachmentReservationState, NetworkSegmentAllocator,
+    NetworkSegmentCleanup, NetworkSegmentFinalizeOutcome, NetworkSegmentGrowth,
+    NetworkSegmentQuarantineOutcome, NetworkSegmentReleaseOutcome,
 };
 pub use state::{
     DurableNetworkResourceState, NetworkResourceId, NetworkResourcePhase, NetworkResourceVersion,

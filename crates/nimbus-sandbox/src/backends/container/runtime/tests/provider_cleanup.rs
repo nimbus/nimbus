@@ -9,9 +9,14 @@ mod netavark_restart;
 #[path = "provider_cleanup/startup_fencing.rs"]
 mod startup_fencing;
 
+use crate::backends::oci::network::OciMachinePortForwarderConfig;
 use forwarder_observer::ForwarderObserver;
 
-fn assert_machine_unexpose_request(request: &[u8], binding: &SandboxPortBinding) {
+fn assert_machine_unexpose_request(
+    request: &[u8],
+    binding: &SandboxPortBinding,
+    forwarder: &OciMachinePortForwarderConfig,
+) {
     let header_end = request
         .windows(4)
         .position(|window| window == b"\r\n\r\n")
@@ -28,6 +33,8 @@ fn assert_machine_unexpose_request(request: &[u8], binding: &SandboxPortBinding)
     assert_eq!(
         body,
         serde_json::json!({
+            "provider_instance": forwarder.provider_instance(),
+            "provider_generation": forwarder.provider_generation(),
             "local": format!("{}:{}", binding.host_address, binding.host_port),
             "protocol": "tcp",
         }),
@@ -385,14 +392,31 @@ fn terminal_cleanup_uses_manifest_machine_forwarder_after_backend_config_drift()
         "fixture must activate every published and PEP binding before teardown"
     );
     backend.config.machine_port_forwarder = Some(sample_forwarder(drift_forwarder_port));
-    let launch_observer = ForwarderObserver::spawn(launch_listener, vec![true], 1);
+    let launch_observer = ForwarderObserver::spawn_authenticated(
+        launch_listener,
+        manifest
+            .runner_config
+            .machine_port_forwarder
+            .as_ref()
+            .expect("launch-time forwarder should remain persisted"),
+        vec![true],
+        1,
+    );
     let drift_observer = ForwarderObserver::spawn(drift_listener, Vec::new(), 0);
 
     backend
         .release_execution_artifacts(&mut manifest)
         .expect("teardown must use the persisted launch-time machine forwarder");
     let launch_requests = launch_observer.finish_exact();
-    assert_machine_unexpose_request(&launch_requests[0], &manifest.spec.port_bindings[0]);
+    assert_machine_unexpose_request(
+        &launch_requests[0],
+        &manifest.spec.port_bindings[0],
+        manifest
+            .runner_config
+            .machine_port_forwarder
+            .as_ref()
+            .expect("launch-time forwarder should remain persisted"),
+    );
     let drift_requests = drift_observer.finish_exact();
     assert!(
         drift_requests.is_empty(),
@@ -471,8 +495,8 @@ fn terminal_netavark_cleanup_ignores_current_machine_forwarder() {
         )
         .expect("fixture PEP should own exact listener evidence");
     let port_manager = backend.port_manager();
-    let claims = port_manager
-        .claim_netavark_bindings(
+    let lifetimes = port_manager
+        .claim_netavark_bindings_with_lifetimes(
             &manifest.spec.tenant_id,
             &manifest.handle.id,
             &manifest.spec.port_bindings,
@@ -480,14 +504,19 @@ fn terminal_netavark_cleanup_ignores_current_machine_forwarder() {
         )
         .expect("fixture should claim the exact Netavark publication batch");
     port_manager
-        .activate_netavark_bindings(
+        .activate_netavark_bindings_with_lifetimes(
             &manifest.spec.tenant_id,
             &manifest.handle.id,
             &manifest.spec.port_bindings,
             &manifest.port_leases,
-            &claims,
+            &lifetimes,
         )
         .expect("fixture should activate the exact Netavark publication batch");
+    backend
+        .netavark_port_lifetimes
+        .insert(&manifest.spec.tenant_id, &manifest.handle.id, lifetimes)
+        .map_err(|(error, _batch)| error)
+        .expect("fixture should retain the exact live Netavark lifetimes");
     let bindings_before =
         manifest_port_lease_records(&manifest.runner_config.state_root, &manifest)
             .into_iter()
@@ -707,7 +736,9 @@ fn pending_creator_retains_network_authority_despite_runtime_absence() {
         .manifest;
     mark_runtime_absent_for_cleanup(&mut manifest);
     manifest.creator_handoff = ContainerCreatorHandoffState::Pending {
-        attempt_id: "creator-attempt-pending".to_owned(),
+        receipt: crate::backends::conmon::creator::CreatorAttemptReceipt::for_test(
+            "creator-attempt-pending",
+        ),
     };
     let launch_claim = manifest
         .launch_reservation_claim
@@ -776,7 +807,8 @@ fn machine_forwarder_unexpose_failure_keeps_port_lease_fenced() {
         egress_proxy_port = unused_loopback_port();
     }
     config.published_port_range = egress_proxy_port..=egress_proxy_port;
-    config.machine_port_forwarder = Some(sample_forwarder(port));
+    let forwarder = sample_forwarder(port);
+    config.machine_port_forwarder = Some(forwarder.clone());
     let backend = ContainerSandboxBackend::new(config);
     let mut manifest = backend
         .plan_start_with_id(
@@ -836,19 +868,21 @@ fn machine_forwarder_unexpose_failure_keeps_port_lease_fenced() {
 
     let retry_listener =
         TcpListener::bind((Ipv4Addr::LOCALHOST, port)).expect("retry listener should bind");
-    let retry_server = thread::spawn(move || {
-        let (mut stream, _) = retry_listener
-            .accept()
-            .expect("retry connection should arrive");
-        read_complete_http_request(&mut stream);
-        stream
-            .write_all(b"HTTP/1.0 200 OK\r\nContent-Length: 0\r\n\r\n")
-            .expect("retry response should write");
-    });
+    let retry_observer =
+        ForwarderObserver::spawn_authenticated(retry_listener, &forwarder, vec![true], 1);
     backend
         .release_execution_artifacts(&mut manifest)
         .expect("a later successful unexpose must resume the retained exact stop evidence");
-    retry_server.join().expect("retry server should join");
+    let retry_requests = retry_observer.finish_exact();
+    assert_machine_unexpose_request(
+        &retry_requests[0],
+        &manifest.spec.port_bindings[0],
+        manifest
+            .runner_config
+            .machine_port_forwarder
+            .as_ref()
+            .expect("machine forwarder should remain persisted"),
+    );
 
     let released = authority
         .inspect(manifest.port_leases[0].lease_id())
@@ -923,7 +957,16 @@ fn machine_forwarder_unexpose_attempts_every_binding_and_retries_only_failures()
         .ensure_machine_port_proxies_running(&manifest.handle.id, &[Ipv4Addr::LOCALHOST], &manifest)
         .expect("fixture should start both exact machine listeners");
 
-    let first_pass_observer = ForwarderObserver::spawn(listener, vec![false, true], 2);
+    let first_pass_observer = ForwarderObserver::spawn_authenticated(
+        listener,
+        manifest
+            .runner_config
+            .machine_port_forwarder
+            .as_ref()
+            .expect("machine forwarder should remain persisted"),
+        vec![false, true],
+        2,
+    );
     let error = backend
         .release_execution_artifacts(&mut manifest)
         .expect_err("one failed publication withdrawal must keep cleanup pending");
@@ -933,8 +976,21 @@ fn machine_forwarder_unexpose_attempts_every_binding_and_retries_only_failures()
         2,
         "one binding failure must not prevent withdrawal of later bindings"
     );
-    assert_machine_unexpose_request(&first_pass_requests[0], &manifest.spec.port_bindings[0]);
-    assert_machine_unexpose_request(&first_pass_requests[1], &manifest.spec.port_bindings[1]);
+    let manifest_forwarder = manifest
+        .runner_config
+        .machine_port_forwarder
+        .clone()
+        .expect("machine forwarder should remain persisted");
+    assert_machine_unexpose_request(
+        &first_pass_requests[0],
+        &manifest.spec.port_bindings[0],
+        &manifest_forwarder,
+    );
+    assert_machine_unexpose_request(
+        &first_pass_requests[1],
+        &manifest.spec.port_bindings[1],
+        &manifest_forwarder,
+    );
     assert!(
         error.to_string().contains(&first_port.to_string())
             && !error.to_string().contains(&second_port.to_string()),
@@ -943,7 +999,16 @@ fn machine_forwarder_unexpose_attempts_every_binding_and_retries_only_failures()
 
     let retry_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, forwarder_port))
         .expect("retry forwarder should bind");
-    let retry_observer = ForwarderObserver::spawn(retry_listener, vec![true], 1);
+    let retry_observer = ForwarderObserver::spawn_authenticated(
+        retry_listener,
+        manifest
+            .runner_config
+            .machine_port_forwarder
+            .as_ref()
+            .expect("machine forwarder should remain persisted"),
+        vec![true],
+        1,
+    );
     backend
         .release_execution_artifacts(&mut manifest)
         .expect("retry should withdraw only the still-pending binding and converge");
@@ -953,7 +1018,11 @@ fn machine_forwarder_unexpose_attempts_every_binding_and_retries_only_failures()
         1,
         "successful first-pass withdrawals must not be replayed"
     );
-    assert_machine_unexpose_request(&retry_requests[0], &manifest.spec.port_bindings[0]);
+    assert_machine_unexpose_request(
+        &retry_requests[0],
+        &manifest.spec.port_bindings[0],
+        &manifest_forwarder,
+    );
     assert_manifest_port_leases_released(&manifest.runner_config.state_root, &manifest);
 }
 

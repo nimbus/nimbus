@@ -35,12 +35,16 @@ fn reserve_machine_proxy_test_launch(
 ) -> ReservedLaunchPorts {
     let reservation_claim =
         new_launch_reservation_claim().expect("machine proxy test claim should mint");
-    manager
+    let mut reserved = manager
         .reserve_launch_ports_for_sandbox(
             SandboxLaunchPortPlan::new(tenant, sandbox_id, bindings, &[]),
             &reservation_claim,
         )
-        .expect("machine proxy test launch should reserve through the production API")
+        .expect("machine proxy test launch should reserve through the production API");
+    reserved
+        .confirm_manifest_published()
+        .expect("fixture should publish its complete request set");
+    reserved
 }
 
 fn assert_listener_remains_unreached(
@@ -1029,23 +1033,25 @@ fn retained_machine_proxy_bind_failure_returns_to_reserved_and_retries() {
         &manager,
     )
     .expect("initial provider should bind");
-    let bind_claims = prepared
-        .iter()
-        .map(|proxy| proxy.bind_claim().clone())
-        .collect::<Vec<_>>();
     let active_bindings = manager
-        .activate_machine_bindings(
+        .activate_machine_bindings_with_lifetimes(
             &tenant,
             &sandbox_id,
             std::slice::from_ref(&binding),
             &reservations.published_leases,
-            &bind_claims,
+            prepared.bind_authority(),
         )
         .expect("initial provider should adopt and activate");
-    drop(prepared);
+    let (prepared_sockets, bind_authority) = prepared.into_parts();
+    drop(prepared_sockets);
     manager
-        .prepare_machine_bindings_for_rebind(&reservations.published_leases, &active_bindings)
+        .prepare_machine_bindings_for_rebind_with_lifetimes(
+            &reservations.published_leases,
+            &active_bindings,
+            &bind_authority,
+        )
         .expect("confirmed provider absence should return the exact lease to Reserved");
+    drop(bind_authority);
 
     let blocker = TcpListener::bind((Ipv4Addr::UNSPECIFIED, port))
         .expect("external conflict should occupy the restart endpoint");
@@ -1094,17 +1100,13 @@ fn retained_machine_proxy_bind_failure_returns_to_reserved_and_retries() {
         MachinePortPreparationReleaseAuthority::Retain,
     )
     .expect("the retained request should bind after the conflict clears");
-    let retry_claims = prepared
-        .iter()
-        .map(|proxy| proxy.bind_claim().clone())
-        .collect::<Vec<_>>();
-    manager
-        .activate_machine_bindings(
+    let active_bindings = manager
+        .activate_machine_bindings_with_lifetimes(
             &tenant,
             &sandbox_id,
             std::slice::from_ref(&binding),
             &reservations.published_leases,
-            &retry_claims,
+            prepared.bind_authority(),
         )
         .expect("the retry should adopt and activate");
     assert_eq!(
@@ -1116,7 +1118,8 @@ fn retained_machine_proxy_bind_failure_returns_to_reserved_and_retries() {
             .phase(),
         PortLeasePhase::Active
     );
-    drop(prepared);
+    let (prepared_sockets, bind_authority) = prepared.into_parts();
+    drop(prepared_sockets);
     manager
         .withdraw_bindings(
             &tenant,
@@ -1126,11 +1129,10 @@ fn retained_machine_proxy_bind_failure_returns_to_reserved_and_retries() {
         )
         .expect("retry authority should withdraw after the held listener closes");
     manager
-        .release_bindings(
-            &tenant,
-            &sandbox_id,
-            std::slice::from_ref(&binding),
+        .release_machine_bindings_after_confirmed_stop_with_lifetimes(
             &reservations.published_leases,
+            &active_bindings,
+            &bind_authority,
         )
         .expect("confirmed provider absence should release retry authority");
 }
@@ -1192,10 +1194,8 @@ fn same_request_machine_replay_cannot_fail_or_release_held_batch() {
         Err(error) => error,
     };
     assert!(
-        error
-            .to_string()
-            .contains("different in-flight provider bind attempt"),
-        "the replay must lose at durable claim acquisition before binding: {error}"
+        error.to_string().contains("live process-lifetime owner"),
+        "the replay must lose at the live lifetime fence before binding: {error}"
     );
 
     let authority = LocalPortLeaseAuthority::open(state.path()).expect("authority should reopen");
@@ -1210,17 +1210,13 @@ fn same_request_machine_replay_cannot_fail_or_release_held_batch() {
         assert_eq!(record.binding(), None);
     }
 
-    let bind_claims = prepared
-        .iter()
-        .map(|proxy| proxy.bind_claim().clone())
-        .collect::<Vec<_>>();
-    manager
-        .activate_machine_bindings(
+    let active_bindings = manager
+        .activate_machine_bindings_with_lifetimes(
             &tenant,
             &sandbox_id,
             &bindings,
             &reservations.published_leases,
-            &bind_claims,
+            prepared.bind_authority(),
         )
         .expect("the exact claimant should adopt and activate both listeners");
     let proxies = start_machine_port_proxies(
@@ -1240,15 +1236,15 @@ fn same_request_machine_replay_cannot_fail_or_release_held_batch() {
             &reservations.published_leases,
         )
         .expect("exact active listeners should withdraw");
-    for mut proxy in proxies {
+    let (mut proxies, bind_authority) = proxies.into_parts();
+    for proxy in &mut proxies {
         proxy.shutdown().expect("machine proxy should stop");
     }
     manager
-        .release_bindings(
-            &tenant,
-            &sandbox_id,
-            &bindings,
+        .release_machine_bindings_after_confirmed_stop_with_lifetimes(
             &reservations.published_leases,
+            &active_bindings,
+            &bind_authority,
         )
         .expect("confirmed stopped listeners should release");
 }
@@ -1403,17 +1399,13 @@ fn prepared_machine_proxy_is_inert_until_exact_lease_is_active() {
         &manager,
     )
     .expect("the dropped inert socket should be preparable again");
-    let bind_claims = prepared
-        .iter()
-        .map(|proxy| proxy.bind_claim().clone())
-        .collect::<Vec<_>>();
     manager
-        .activate_machine_bindings(
+        .activate_machine_bindings_with_lifetimes(
             &tenant,
             &sandbox_id,
             std::slice::from_ref(&binding),
             &reservations.published_leases,
-            &bind_claims,
+            prepared.bind_authority(),
         )
         .expect("the held provider socket should be adopted and activated");
     let proxies = start_machine_port_proxies(
@@ -1448,7 +1440,8 @@ fn prepared_machine_proxy_is_inert_until_exact_lease_is_active() {
         .expect("activated proxy should forward the queued request");
     assert_eq!(&request, b"ping");
     drop(client);
-    for mut proxy in proxies {
+    let (mut proxies, _bind_authority) = proxies.into_parts();
+    for proxy in &mut proxies {
         proxy
             .shutdown()
             .expect("explicit shutdown should drain every tracked connection");

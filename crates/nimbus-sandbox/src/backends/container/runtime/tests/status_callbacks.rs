@@ -90,8 +90,7 @@ fn delayed_ready_callback_preserves_published_terminal_execute_bytes() {
         .expect("runner should claim execution");
     super::super::runner::mark_runner_effects_started(&manifest, &handoff)
         .expect("effect boundary should become durable");
-    super::super::runner::publish_runner_lifecycle_ownership(&manifest, &handoff)
-        .expect("ordinary lifecycle ownership should publish");
+    publish_present_runner_lifecycle(&manifest, &handoff);
     drop(handoff);
 
     manifest.shutdown_requested = true;
@@ -148,8 +147,7 @@ fn delayed_ready_callback_preserves_cleanup_pending_execute_bytes() {
         .expect("runner should claim execution");
     super::super::runner::mark_runner_effects_started(&manifest, &handoff)
         .expect("effect boundary should become durable");
-    super::super::runner::publish_runner_lifecycle_ownership(&manifest, &handoff)
-        .expect("ordinary lifecycle ownership should publish");
+    publish_present_runner_lifecycle(&manifest, &handoff);
     drop(handoff);
 
     manifest.shutdown_requested = true;
@@ -205,8 +203,7 @@ fn execute_status_callback_rejects_a_manifest_changed_while_waiting_for_lifecycl
         .expect("runner should claim execution");
     super::super::runner::mark_runner_effects_started(&manifest, &handoff)
         .expect("effect boundary should become durable");
-    super::super::runner::publish_runner_lifecycle_ownership(&manifest, &handoff)
-        .expect("ordinary lifecycle ownership should publish");
+    publish_present_runner_lifecycle(&manifest, &handoff);
     drop(handoff);
 
     let lifecycle = super::super::runner::lock_execute_lifecycle(&manifest)
@@ -339,8 +336,7 @@ fn stopped_retry_preserves_nonzero_execute_outcome_as_failed() {
     backend
         .write_manifest(&manifest)
         .expect("post-adoption runner manifest should be durable");
-    super::super::runner::publish_runner_lifecycle_ownership(&manifest, &handoff)
-        .expect("ordinary lifecycle ownership should publish");
+    publish_present_runner_lifecycle(&manifest, &handoff);
     drop(handoff);
 
     manifest.shutdown_requested = true;

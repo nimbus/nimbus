@@ -13,6 +13,7 @@ use crate::backends::oci::network::{
     OciSegmentRealization, compensate_reserved_network_launch_after_ports, place_sandbox_on_block,
     release_reserved_network_launch_after_ports,
 };
+use crate::backends::oci::port_lease::OciPortBindLifetimeBatch;
 
 impl ContainerSandboxBackend {
     /// Build the OCI network config for a specific resolved block segment.
@@ -130,8 +131,89 @@ impl ContainerSandboxBackend {
         }
     }
 
+    /// Compensate a failed Netavark launch while retaining exact live-owner
+    /// authority until provider detach is acknowledged.
+    pub(super) fn failed_netavark_configuration(
+        &self,
+        manifest: &ContainerSandboxManifest,
+        network_config: &OciNetworkConfig,
+        batch: OciPortBindLifetimeBatch,
+        primary: SandboxError,
+    ) -> SandboxError {
+        let cleanup = teardown_container_network(
+            &manifest.network_layout,
+            network_config,
+            &manifest.handle.id,
+            manifest.spec.display_name(),
+            &hostname_for(&manifest.spec),
+            &manifest.spec.port_bindings,
+            None,
+        )
+        .and_then(|()| remove_persistent_network_namespace(&manifest.network_layout.netns_path));
+        if let Err(cleanup) = cleanup {
+            return SandboxError::OperationFailed {
+                message: format!(
+                    "container network configuration failed: {primary}; exact-generation \
+                     detach compensation also failed while the lifetime-fenced namespace remains \
+                     recoverable: {cleanup}"
+                ),
+            };
+        }
+
+        let manager = match self.port_manager_for_manifest(manifest) {
+            Ok(manager) => manager,
+            Err(cleanup) => {
+                return SandboxError::OperationFailed {
+                    message: format!(
+                        "container network configuration failed: {primary}; detached Netavark \
+                         port-lifetime compensation could not open authority: {cleanup}"
+                    ),
+                };
+            }
+        };
+        let compensation = manager
+            .abandon_netavark_bind_claims_with_lifetimes_without_effect(
+                &manifest.spec.tenant_id,
+                &manifest.handle.id,
+                &manifest.spec.port_bindings,
+                &manifest.port_leases,
+                &batch,
+                manifest.launch_reservation_claim.as_ref(),
+            )
+            .or_else(|abandon_error| {
+                let expected = manager.expected_netavark_bindings(
+                    &manifest.spec.tenant_id,
+                    &manifest.handle.id,
+                    &manifest.spec.port_bindings,
+                    &manifest.port_leases,
+                )?;
+                manager
+                    .prepare_netavark_bindings_for_rebind_with_lifetimes(
+                        &manifest.port_leases,
+                        &expected,
+                        &batch,
+                    )
+                    .map_err(|rebind_error| SandboxError::OperationFailed {
+                        message: format!(
+                            "Netavark claim abandonment failed: {abandon_error}; exact Active \
+                             lifetime compensation also failed: {rebind_error}"
+                        ),
+                    })
+            });
+        match compensation {
+            Ok(()) => primary,
+            Err(cleanup) => SandboxError::OperationFailed {
+                message: format!(
+                    "container network configuration failed: {primary}; detached Netavark \
+                     port-lifetime compensation also failed: {cleanup}"
+                ),
+            },
+        }
+    }
+
     /// Route the provider setup boundary through the same exact-detach
     /// compensation used by every later network activation failure.
+    #[cfg(test)]
     pub(super) fn complete_network_setup(
         &self,
         manifest: &ContainerSandboxManifest,

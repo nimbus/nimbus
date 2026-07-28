@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::Component;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -18,6 +19,7 @@ use crate::spec::{SandboxRestartPolicy, SandboxSpec};
 
 const DEFAULT_RESTART_BACKOFF_INITIAL_MILLIS: u64 = 1_000;
 const DEFAULT_RESTART_BACKOFF_MAX_MILLIS: u64 = 60_000;
+pub(crate) const CREATOR_ATTEMPT_ANNOTATION: &str = "com.nimbus.creator-attempt";
 
 /// Test-only semantic barrier at the provider launch entry. It lets a
 /// concurrent test persist withdrawal after inspection has chosen restart but
@@ -301,7 +303,19 @@ pub(crate) fn runtime_state(
     command: &CommandSpec,
     expected_runtime_id: &str,
 ) -> Result<RuntimeStateObservation> {
-    match run_runtime_state_command(command, expected_runtime_id)? {
+    match run_runtime_state_command(command, expected_runtime_id, None)? {
+        RuntimeStateCommandOutcome::Observation(observation) => Ok(observation),
+        RuntimeStateCommandOutcome::AmbiguousCompletedFailure(error) => Err(error),
+    }
+}
+
+/// Observe runtime state only when it authenticates the exact creator attempt.
+pub(crate) fn runtime_state_for_creator_attempt(
+    command: &CommandSpec,
+    expected_runtime_id: &str,
+    expected_attempt_id: &str,
+) -> Result<RuntimeStateObservation> {
+    match run_runtime_state_command(command, expected_runtime_id, Some(expected_attempt_id))? {
         RuntimeStateCommandOutcome::Observation(observation) => Ok(observation),
         RuntimeStateCommandOutcome::AmbiguousCompletedFailure(error) => Err(error),
     }
@@ -310,6 +324,7 @@ pub(crate) fn runtime_state(
 fn run_runtime_state_command(
     command: &CommandSpec,
     expected_runtime_id: &str,
+    expected_attempt_id: Option<&str>,
 ) -> Result<RuntimeStateCommandOutcome> {
     let mut runtime_command = command.as_command();
     runtime_command.env("LC_ALL", "C");
@@ -351,6 +366,18 @@ fn run_runtime_state_command(
                 payload.id
             ),
         });
+    }
+    if let Some(expected_attempt_id) = expected_attempt_id {
+        let observed_attempt = payload.annotations.get(CREATOR_ATTEMPT_ANNOTATION);
+        if observed_attempt.map(String::as_str) != Some(expected_attempt_id) {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "runtime state response creator attempt {:?} does not match expected attempt \
+                     {expected_attempt_id:?} for runtime {expected_runtime_id:?}",
+                    observed_attempt
+                ),
+            });
+        }
     }
     Ok(RuntimeStateCommandOutcome::Observation(
         RuntimeStateObservation::Present(payload.status),
@@ -447,16 +474,41 @@ fn valid_runtime_id_component(runtime_id: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 
+#[cfg(test)]
 pub(crate) fn wait_for_runtime_state(
     command: &CommandSpec,
     expected_runtime_id: &str,
+    timeout: Duration,
+) -> Result<String> {
+    wait_for_runtime_state_inner(command, expected_runtime_id, None, timeout)
+}
+
+/// Wait for a created/running runtime belonging to the exact creator attempt.
+pub(crate) fn wait_for_runtime_state_for_creator_attempt(
+    command: &CommandSpec,
+    expected_runtime_id: &str,
+    expected_attempt_id: &str,
+    timeout: Duration,
+) -> Result<String> {
+    wait_for_runtime_state_inner(
+        command,
+        expected_runtime_id,
+        Some(expected_attempt_id),
+        timeout,
+    )
+}
+
+fn wait_for_runtime_state_inner(
+    command: &CommandSpec,
+    expected_runtime_id: &str,
+    expected_attempt_id: Option<&str>,
     timeout: Duration,
 ) -> Result<String> {
     let deadline = Instant::now() + timeout;
     let mut last_ambiguous_observation = None;
     let status = poll_until_deadline(Some(deadline), Duration::from_millis(200), || {
         Ok(
-            match run_runtime_state_command(command, expected_runtime_id)? {
+            match run_runtime_state_command(command, expected_runtime_id, expected_attempt_id)? {
                 RuntimeStateCommandOutcome::Observation(RuntimeStateObservation::Present(
                     status,
                 )) if status == "created" || status == "running" => Some(status),
@@ -558,6 +610,8 @@ pub(crate) fn remove_if_exists(path: &Path) -> Result<()> {
 struct RuntimeStatePayload {
     id: Option<String>,
     status: String,
+    #[serde(default)]
+    annotations: BTreeMap<String, String>,
 }
 
 #[cfg(test)]
@@ -666,6 +720,36 @@ mod tests {
                 error.to_string().contains("runtime identity")
                     && error.to_string().contains("fixture"),
                 "identity rejection must name the expected runtime: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn creator_runtime_state_requires_the_exact_attempt_annotation() {
+        let matching = CommandSpec::new("/bin/sh").args([
+            "-c",
+            "printf '%s\\n' '{\"id\":\"fixture\",\"status\":\"running\",\
+             \"annotations\":{\"com.nimbus.creator-attempt\":\"attempt-alpha\"}}'",
+        ]);
+        assert_eq!(
+            runtime_state_for_creator_attempt(&matching, "fixture", "attempt-alpha")
+                .expect("matching runtime and creator attempt should authenticate"),
+            RuntimeStateObservation::Present("running".to_owned())
+        );
+
+        for payload in [
+            "{\"id\":\"fixture\",\"status\":\"running\"}",
+            "{\"id\":\"fixture\",\"status\":\"running\",\"annotations\":{\
+             \"com.nimbus.creator-attempt\":\"attempt-stale\"}}",
+        ] {
+            let command =
+                CommandSpec::new("/bin/sh").args(["-c", &format!("printf '%s\\n' '{payload}'")]);
+            let error = runtime_state_for_creator_attempt(&command, "fixture", "attempt-alpha")
+                .expect_err("missing or stale creator attempt must fail closed");
+            assert!(
+                error.to_string().contains("creator attempt")
+                    && error.to_string().contains("attempt-alpha"),
+                "attempt rejection must name the expected identity: {error}"
             );
         }
     }

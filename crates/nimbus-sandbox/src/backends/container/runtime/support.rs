@@ -75,11 +75,14 @@ pub(super) fn sample_rootfs_artifact(rootfs_path: PathBuf) -> ContainerLaunchArt
 }
 
 pub(super) fn sample_forwarder(port: u16) -> OciMachinePortForwarderConfig {
-    OciMachinePortForwarderConfig {
-        host: "127.0.0.1".to_owned(),
+    OciMachinePortForwarderConfig::for_provider_instance(
+        "127.0.0.1",
         port,
-        path_prefix: "/services/forwarder".to_owned(),
-    }
+        "/services/forwarder",
+        format!("test-forwarder:{port}"),
+        nimbus_network::NetworkResourceGeneration::new(1),
+    )
+    .expect("test machine-forwarder identity should validate")
 }
 
 pub(super) fn sample_plan_only_backend(root: &std::path::Path) -> ContainerSandboxBackend {
@@ -91,7 +94,9 @@ pub(super) fn sample_plan_only_backend(root: &std::path::Path) -> ContainerSandb
 
 pub(super) fn mark_runtime_absent_for_cleanup(manifest: &mut ContainerSandboxManifest) {
     manifest.creator_handoff = ContainerCreatorHandoffState::Quiesced {
-        attempt_id: "test-confirmed-no-creator".to_owned(),
+        proof: crate::backends::conmon::creator::CreatorQuiescenceProof::never_spawned(
+            "test-confirmed-no-creator",
+        ),
     };
     manifest.conmon_launch.delete_command =
         crate::backends::oci::command::CommandSpec::new("/usr/bin/true");
@@ -104,6 +109,20 @@ pub(super) fn mark_runtime_absent_for_cleanup(manifest: &mut ContainerSandboxMan
                 manifest.handle.id
             ),
         ]);
+}
+
+pub(super) fn publish_present_runner_lifecycle(
+    manifest: &ContainerSandboxManifest,
+    handoff: &super::runner::RunnerHandoffGuard,
+) {
+    super::runner::record_runner_effect_outcome(
+        manifest,
+        super::runner::RunnerEffectOutcome::Present,
+        handoff,
+    )
+    .expect("runner fixture should publish its exact present-effect receipt");
+    super::runner::publish_runner_lifecycle_ownership(manifest, handoff)
+        .expect("ordinary lifecycle ownership should publish");
 }
 
 pub(super) fn sandbox_id() -> SandboxId {

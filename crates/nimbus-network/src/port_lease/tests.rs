@@ -1578,6 +1578,8 @@ fn write_corrupt_state(state_root: &Path, corruption: CorruptionFixture) {
                     binding: None,
                     confirmed_stopped_binding: None,
                     failure: None,
+                    last_lifetime_generation: 0,
+                    active_lifetime: None,
                 };
 
                 match corruption {
@@ -1731,6 +1733,8 @@ fn write_corrupt_state(state_root: &Path, corruption: CorruptionFixture) {
                             binding: None,
                             confirmed_stopped_binding: None,
                             failure: None,
+                            last_lifetime_generation: 0,
+                            active_lifetime: None,
                         };
                         state.leases.insert(first_request.lease_id().clone(), first);
                         state

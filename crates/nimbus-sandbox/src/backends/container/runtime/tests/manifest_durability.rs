@@ -3,6 +3,7 @@
 use std::fs::OpenOptions;
 use std::net::{Ipv4Addr, TcpListener};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use super::super::manifest::{
@@ -31,6 +32,32 @@ fn manifest_schema_requires_launch_execution_context() {
         .expect_err("missing launch-time execution context must fail closed");
     assert!(
         error.to_string().contains("runner_config"),
+        "the missing authority-bearing field must be explicit: {error}"
+    );
+    assert!(
+        backend
+            .read_manifest(&manifest.handle.id)
+            .expect("read-only inspection should remain available")
+            .is_none(),
+        "schema validation must not publish a manifest"
+    );
+}
+
+#[test]
+fn manifest_schema_requires_egress_reload_generations() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let (backend, manifest) = plan_only_manifest(temp_dir.path(), "required-egress-reload-state");
+    let mut serialized =
+        serde_json::to_value(&manifest).expect("container manifest should serialize");
+    serialized
+        .as_object_mut()
+        .expect("container manifest should be an object")
+        .remove("egress_policy_reload");
+
+    let error = serde_json::from_value::<ContainerSandboxManifest>(serialized)
+        .expect_err("missing egress reload generations must fail closed");
+    assert!(
+        error.to_string().contains("egress_policy_reload"),
         "the missing authority-bearing field must be explicit: {error}"
     );
     assert!(
@@ -547,6 +574,135 @@ fn direct_predecision_egress_reload_cannot_create_a_provider_effect() {
             .expect("canonical predecision bytes should remain readable"),
         before,
         "rejected reload must not mutate desired or durable state"
+    );
+}
+
+#[test]
+fn reload_acknowledgement_before_completion_persistence_retains_durable_desired_intent() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
+    config.node_network_supernet = "127.0.0.0/24".to_owned();
+    let proxy_port = unused_loopback_port();
+    config.published_port_range = proxy_port..=proxy_port;
+    let baseline = ContainerSandboxBackend::new(config.clone());
+    let mut manifest = baseline
+        .plan_start_with_id(
+            &sample_spec(),
+            &SandboxId::new("reload-ack-before-completion-persistence"),
+            None,
+            None,
+        )
+        .expect("execute manifest should lower")
+        .manifest;
+    baseline
+        .write_manifest(&manifest)
+        .expect("baseline manifest should publish");
+    baseline
+        .ensure_egress_proxy_running_with_release_authority(
+            &manifest,
+            PepPreAdoptionReleaseAuthority::FreshLaunch(
+                manifest
+                    .launch_reservation_claim
+                    .as_ref()
+                    .expect("execute plan should retain launch claim"),
+            ),
+        )
+        .expect("baseline PEP should start");
+    manifest.launch_reservation_claim = None;
+    baseline
+        .write_manifest(&manifest)
+        .expect("running manifest should publish post-launch authority");
+
+    let stage_path = manifest
+        .conmon_layout
+        .container_state_dir
+        .join(MANIFEST_PUBLICATION_STAGE_FILE);
+    let blocked_stage = stage_path.clone();
+    let inject_once = Arc::new(AtomicBool::new(true));
+    let observer_inject_once = Arc::clone(&inject_once);
+    let backend = baseline.with_post_egress_reload_ack_observer(move || {
+        if observer_inject_once.swap(false, Ordering::SeqCst) {
+            std::fs::create_dir(&blocked_stage)
+                .expect("post-acknowledgement stage blocker should create");
+        }
+    });
+    let desired = EgressPolicy::new([EgressRule::new(
+        "durable-reload-intent",
+        EgressProtocol::Https,
+        "example.com",
+        443,
+    )]);
+
+    let error = backend
+        .reload_egress_policy(&manifest.handle.id, desired.clone())
+        .expect_err("completion publication should fail after provider acknowledgement");
+    assert!(
+        error.to_string().contains("not a regular file"),
+        "the fault must occur at the exact completion-publication boundary: {error}"
+    );
+    std::fs::remove_dir(&stage_path).expect("stage blocker should remove");
+
+    let persisted = backend
+        .read_manifest(&manifest.handle.id)
+        .expect("durable manifest should inspect")
+        .expect("durable manifest should remain");
+    assert_eq!(
+        persisted.spec.egress, desired,
+        "provider acknowledgement must never be the sole copy of the desired reload"
+    );
+    assert_eq!(
+        persisted.egress_policy_reload.desired_generation().get(),
+        2,
+        "desired generation must advance in the pre-effect publication"
+    );
+    assert_eq!(
+        persisted.egress_policy_reload.latest_attempt_generation(),
+        1,
+        "the exact provider attempt generation must survive lost completion acknowledgement"
+    );
+    assert!(
+        persisted.egress_policy_reload.is_applying(),
+        "failed completion publication must retain an applying reconciliation fence"
+    );
+
+    let acknowledged = backend
+        .egress_proxies
+        .readiness(&manifest.spec.tenant_id, &manifest.handle.id)
+        .expect("acknowledged provider state should inspect")
+        .expect("running PEP should remain registered");
+    assert_eq!(
+        acknowledged
+            .policy_generation
+            .map(|generation| generation.get()),
+        Some(2),
+        "the first exact reload attempt should advance the process-local PEP generation once"
+    );
+
+    backend
+        .reload_egress_policy(&manifest.handle.id, desired.clone())
+        .expect("retry should inspect and complete the exact acknowledged attempt");
+    let completed = backend
+        .read_manifest(&manifest.handle.id)
+        .expect("completed manifest should inspect")
+        .expect("completed manifest should remain");
+    assert_eq!(completed.spec.egress, desired);
+    assert!(
+        !completed.egress_policy_reload.is_applying(),
+        "exact provider inspection must durably complete the applying attempt"
+    );
+    assert_eq!(
+        completed.egress_policy_reload.latest_attempt_generation(),
+        1,
+        "reconciling an acknowledged attempt must not mint another provider attempt"
+    );
+    let reconciled = backend
+        .egress_proxies
+        .readiness(&manifest.spec.tenant_id, &manifest.handle.id)
+        .expect("reconciled provider state should inspect")
+        .expect("running PEP should remain registered");
+    assert_eq!(
+        reconciled.policy_generation, acknowledged.policy_generation,
+        "inspect-before-retry must not apply an already exact provider attempt twice"
     );
 }
 

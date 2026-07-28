@@ -1,10 +1,13 @@
 //! Semantic machine-forwarder request observation for provider-cleanup tests.
 
+use std::collections::BTreeSet;
 use std::io::{Read as _, Write as _};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
+
+use crate::backends::oci::network::OciMachinePortForwarderConfig;
 
 const FORWARDER_OBSERVATION_TIMEOUT: Duration = Duration::from_secs(2);
 static NEXT_COMPLETION_ID: AtomicU64 = AtomicU64::new(1);
@@ -19,6 +22,29 @@ pub(super) struct ForwarderObserver {
 impl ForwarderObserver {
     pub(super) fn spawn(
         listener: TcpListener,
+        successful_responses: Vec<bool>,
+        expected_requests: usize,
+    ) -> Self {
+        Self::spawn_with_provider(listener, None, successful_responses, expected_requests)
+    }
+
+    pub(super) fn spawn_authenticated(
+        listener: TcpListener,
+        provider: &OciMachinePortForwarderConfig,
+        successful_responses: Vec<bool>,
+        expected_requests: usize,
+    ) -> Self {
+        Self::spawn_with_provider(
+            listener,
+            Some(provider.clone()),
+            successful_responses,
+            expected_requests,
+        )
+    }
+
+    fn spawn_with_provider(
+        listener: TcpListener,
+        provider: Option<OciMachinePortForwarderConfig>,
         successful_responses: Vec<bool>,
         expected_requests: usize,
     ) -> Self {
@@ -40,6 +66,7 @@ impl ForwarderObserver {
             observe_requests_until_completion(
                 listener,
                 &server_completion_request,
+                provider.as_ref(),
                 &successful_responses,
             )
         });
@@ -89,9 +116,11 @@ impl Drop for ForwarderObserver {
 fn observe_requests_until_completion(
     listener: TcpListener,
     completion_request: &[u8],
+    provider: Option<&OciMachinePortForwarderConfig>,
     successful_responses: &[bool],
 ) -> Result<Vec<Vec<u8>>, String> {
     let mut requests = Vec::new();
+    let mut retained_publications = BTreeSet::new();
     loop {
         let (mut stream, _) = listener
             .accept()
@@ -100,24 +129,86 @@ fn observe_requests_until_completion(
         if request == completion_request {
             return Ok(requests);
         }
+        if request
+            .split(|byte| *byte == b'\n')
+            .next()
+            .is_some_and(|line| line.windows(5).any(|window| window == b"/all "))
+        {
+            let body = serde_json::to_vec(
+                &retained_publications
+                    .iter()
+                    .map(|local| serde_json::json!({ "local": local }))
+                    .collect::<Vec<_>>(),
+            )
+            .map_err(|error| format!("inspection response encoding failed: {error}"))?;
+            let response = format!(
+                "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+                body.len()
+            );
+            stream
+                .write_all(response.as_bytes())
+                .and_then(|()| stream.write_all(&body))
+                .map_err(|error| format!("inspection response write failed: {error}"))?;
+            continue;
+        }
         let successful = successful_responses
             .get(requests.len())
             .copied()
             .unwrap_or(false);
+        let local = request_local(&request)?;
+        if let Some(local) = local.as_ref() {
+            if successful {
+                retained_publications.remove(local);
+            } else {
+                retained_publications.insert(local.clone());
+            }
+        }
         requests.push(request);
-        let response = if successful {
-            b"HTTP/1.0 200 OK\r\nContent-Length: 0\r\n\r\n".as_slice()
+        let response = if successful && let (Some(provider), Some(local)) = (provider, local) {
+            let body = serde_json::to_vec(&serde_json::json!({
+                "outcome": "withdrawn",
+                "provider_instance": provider.provider_instance(),
+                "provider_generation": provider.provider_generation(),
+                "local": local,
+                "protocol": "tcp",
+            }))
+            .map_err(|error| format!("typed withdrawal receipt encoding failed: {error}"))?;
+            let mut response = format!(
+                "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+                body.len()
+            )
+            .into_bytes();
+            response.extend_from_slice(&body);
+            response
+        } else if successful {
+            b"HTTP/1.0 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec()
         } else {
             b"HTTP/1.0 500 Internal Server Error\r\nContent-Length: 15\r\n\r\nproxy not found"
-                .as_slice()
+                .to_vec()
         };
         stream
             .set_write_timeout(Some(FORWARDER_OBSERVATION_TIMEOUT))
             .map_err(|error| format!("response write timeout failed: {error}"))?;
         stream
-            .write_all(response)
+            .write_all(&response)
             .map_err(|error| format!("response write failed: {error}"))?;
     }
+}
+
+fn request_local(request: &[u8]) -> Result<Option<String>, String> {
+    let Some(body_start) = request.windows(4).position(|window| window == b"\r\n\r\n") else {
+        return Ok(None);
+    };
+    let body = &request[body_start + 4..];
+    if body.is_empty() {
+        return Ok(None);
+    }
+    let value: serde_json::Value = serde_json::from_slice(body)
+        .map_err(|error| format!("forwarder request body was not JSON: {error}"))?;
+    Ok(value
+        .get("local")
+        .and_then(serde_json::Value::as_str)
+        .map(ToOwned::to_owned))
 }
 
 fn signal_completion(address: SocketAddr, completion_request: &[u8]) -> Result<(), String> {

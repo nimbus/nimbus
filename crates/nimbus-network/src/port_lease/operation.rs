@@ -44,6 +44,16 @@ pub enum PortLeaseOperation {
     RecordBindFailureWithoutEffect,
     /// Mark an adopted binding active.
     Activate,
+    /// Begin one process-lifetime generation before a provider effect.
+    BeginLifetime,
+    /// Retain an ambiguous effect under an exclusive recovery generation.
+    MarkCleanupPending,
+    /// Transfer an exact surviving provider-managed binding to a new owner.
+    ReclaimProviderManagedBinding,
+    /// Release a process-bound effect after its exact owner lifetime died.
+    ReleaseAfterOwnerDeath,
+    /// Retain a process-bound slot for rebind after its exact owner died.
+    PrepareRebindAfterOwnerDeath,
     /// Clear an exact stopped binding while retaining its numeric fence.
     PrepareRebindAfterConfirmedStop,
     /// Fence new use.
@@ -64,6 +74,11 @@ impl Display for PortLeaseOperation {
             Self::Adopt => "adopt",
             Self::RecordBindFailureWithoutEffect => "record bind failure without provider effect",
             Self::Activate => "activate",
+            Self::BeginLifetime => "begin process-lifetime generation",
+            Self::MarkCleanupPending => "mark cleanup pending",
+            Self::ReclaimProviderManagedBinding => "reclaim surviving provider-managed binding",
+            Self::ReleaseAfterOwnerDeath => "release after process-owner death",
+            Self::PrepareRebindAfterOwnerDeath => "prepare rebind after process-owner death",
             Self::PrepareRebindAfterConfirmedStop => "prepare rebind after confirmed provider stop",
             Self::Withdraw => "withdraw",
             Self::Release => "release",
@@ -128,6 +143,18 @@ pub(super) enum PortLeaseOperationError {
         lease_id: PortLeaseId,
     },
     ReservationClaimConflict {
+        lease_id: PortLeaseId,
+    },
+    LifetimeConflict {
+        lease_id: PortLeaseId,
+    },
+    LifetimeGenerationExhausted {
+        lease_id: PortLeaseId,
+    },
+    LifetimeMismatch {
+        lease_id: PortLeaseId,
+    },
+    LifetimeScopeMismatch {
         lease_id: PortLeaseId,
     },
     InvalidTransition {

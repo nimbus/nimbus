@@ -649,7 +649,7 @@ fn nearest_existing_ancestor(path: &Path) -> Result<PathBuf, NetworkStateStoreEr
     }
 }
 
-fn create_dir_all_owner_only(path: &Path) -> Result<(), NetworkStateStoreError> {
+pub(crate) fn create_dir_all_owner_only(path: &Path) -> Result<(), NetworkStateStoreError> {
     let mut missing = Vec::new();
     let mut candidate = path;
     while !candidate.exists() {
@@ -707,7 +707,10 @@ fn set_owner_directory_permissions(_path: &Path) -> Result<(), NetworkStateStore
     Ok(())
 }
 
-fn open_owner_file(path: &Path, create_new: bool) -> Result<File, NetworkStateStoreError> {
+pub(crate) fn open_owner_file(
+    path: &Path,
+    create_new: bool,
+) -> Result<File, NetworkStateStoreError> {
     let mut options = OpenOptions::new();
     options.read(true).write(true);
     if create_new {
@@ -853,7 +856,7 @@ fn replace_file(source: &Path, destination: &Path) -> io::Result<()> {
     }
 }
 
-fn is_lock_contended(source: &io::Error) -> bool {
+pub(crate) fn is_lock_contended(source: &io::Error) -> bool {
     source.kind() == io::ErrorKind::WouldBlock
         || matches!(
             source.raw_os_error(),

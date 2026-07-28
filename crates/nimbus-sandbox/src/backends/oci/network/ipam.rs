@@ -152,7 +152,20 @@ pub(super) struct NetavarkSetupClaim {
 pub(super) struct NetavarkTeardownClaim {
     attachment_id: NetworkAttachmentId,
     reservation_claim: NetworkReservationClaim,
+    setup_attempt: NetworkProviderHandle,
     operation_attempt: NetworkProviderHandle,
+}
+
+impl NetavarkTeardownClaim {
+    #[cfg(test)]
+    pub(super) fn setup_attempt(&self) -> &NetworkProviderHandle {
+        &self.setup_attempt
+    }
+
+    #[cfg(test)]
+    pub(super) fn operation_attempt(&self) -> &NetworkProviderHandle {
+        &self.operation_attempt
+    }
 }
 
 /// Provider work selected atomically from current IPAM authority.
@@ -355,6 +368,27 @@ pub(super) fn begin_netavark_setup(
     })
 }
 
+#[cfg(test)]
+pub(super) fn inspect_netavark_provider_operation(
+    layout: &OciNetworkLayout,
+    config: &OciNetworkConfig,
+    sandbox_id: &SandboxId,
+) -> Result<NetavarkProviderOperation> {
+    let attachment_id = default_network_attachment_id(sandbox_id);
+    let state = read_ipam_state(layout)?;
+    let allocation = state
+        .allocations
+        .get(attachment_id.as_str())
+        .ok_or_else(|| SandboxError::OperationFailed {
+            message: format!(
+                "failed to inspect live Netavark operation for attachment {}",
+                attachment_id.as_str()
+            ),
+        })?;
+    validate_ipam_generation(config, &attachment_id, allocation)?;
+    Ok(allocation.provider_operation.clone())
+}
+
 pub(super) fn complete_netavark_setup(
     layout: &OciNetworkLayout,
     claim: &NetavarkSetupClaim,
@@ -411,9 +445,8 @@ pub(super) fn begin_netavark_teardown(
         let assigned_ips = validate_ipam_generation(config, &attachment_id, allocation)?;
         match &allocation.provider_operation {
             NetavarkProviderOperation::Reserved => Ok(NetavarkTeardownPlan::AlreadyDetached),
-            NetavarkProviderOperation::Ready { .. } => {
-                if let (Some(setup_claim), NetavarkProviderOperation::Ready { setup_attempt }) =
-                    (setup_claim, &allocation.provider_operation)
+            NetavarkProviderOperation::Ready { setup_attempt } => {
+                if let Some(setup_claim) = setup_claim
                     && setup_attempt != &setup_claim.operation_attempt
                 {
                     return Err(netavark_claim_mismatch(
@@ -422,8 +455,10 @@ pub(super) fn begin_netavark_teardown(
                         &allocation.provider_operation,
                     ));
                 }
+                let setup_attempt = setup_attempt.clone();
                 let new_attempt = new_netavark_operation_attempt("teardown", &attachment_id)?;
                 allocation.provider_operation = NetavarkProviderOperation::Deleting {
+                    setup_attempt: setup_attempt.clone(),
                     operation_attempt: new_attempt.clone(),
                 };
                 Ok(NetavarkTeardownPlan::Run {
@@ -431,27 +466,25 @@ pub(super) fn begin_netavark_teardown(
                     claim: NetavarkTeardownClaim {
                         attachment_id: attachment_id.clone(),
                         reservation_claim: config.reservation_claim.clone(),
+                        setup_attempt,
                         operation_attempt: new_attempt.clone(),
                     },
                 })
             }
             NetavarkProviderOperation::Provisioning { operation_attempt } => {
-                let Some(setup_claim) = setup_claim else {
-                    return Err(netavark_operation_pending(
-                        &attachment_id,
-                        "teardown",
-                        &allocation.provider_operation,
-                    ));
-                };
-                if operation_attempt != &setup_claim.operation_attempt {
+                if let Some(setup_claim) = setup_claim
+                    && operation_attempt != &setup_claim.operation_attempt
+                {
                     return Err(netavark_claim_mismatch(
                         &attachment_id,
                         "setup compensation",
                         &allocation.provider_operation,
                     ));
                 }
+                let setup_attempt = operation_attempt.clone();
                 let new_attempt = new_netavark_operation_attempt("teardown", &attachment_id)?;
                 allocation.provider_operation = NetavarkProviderOperation::Deleting {
+                    setup_attempt: setup_attempt.clone(),
                     operation_attempt: new_attempt.clone(),
                 };
                 Ok(NetavarkTeardownPlan::Run {
@@ -459,20 +492,52 @@ pub(super) fn begin_netavark_teardown(
                     claim: NetavarkTeardownClaim {
                         attachment_id: attachment_id.clone(),
                         reservation_claim: config.reservation_claim.clone(),
+                        setup_attempt,
                         operation_attempt: new_attempt.clone(),
                     },
                 })
             }
-            NetavarkProviderOperation::Deleting { .. } => Err(netavark_operation_pending(
-                &attachment_id,
-                "teardown",
-                &allocation.provider_operation,
-            )),
-            NetavarkProviderOperation::DetachedProjectionPending { operation_attempt } => {
+            NetavarkProviderOperation::Deleting {
+                setup_attempt,
+                operation_attempt,
+            } => {
+                if let Some(setup_claim) = setup_claim
+                    && setup_attempt != &setup_claim.operation_attempt
+                {
+                    return Err(netavark_claim_mismatch(
+                        &attachment_id,
+                        "setup compensation",
+                        &allocation.provider_operation,
+                    ));
+                }
+                Ok(NetavarkTeardownPlan::Run {
+                    assigned_ips,
+                    claim: NetavarkTeardownClaim {
+                        attachment_id: attachment_id.clone(),
+                        reservation_claim: config.reservation_claim.clone(),
+                        setup_attempt: setup_attempt.clone(),
+                        operation_attempt: operation_attempt.clone(),
+                    },
+                })
+            }
+            NetavarkProviderOperation::DetachedProjectionPending {
+                setup_attempt,
+                operation_attempt,
+            } => {
+                if let Some(setup_claim) = setup_claim
+                    && setup_attempt != &setup_claim.operation_attempt
+                {
+                    return Err(netavark_claim_mismatch(
+                        &attachment_id,
+                        "setup compensation",
+                        &allocation.provider_operation,
+                    ));
+                }
                 Ok(NetavarkTeardownPlan::RemoveProjection {
                     claim: NetavarkTeardownClaim {
                         attachment_id: attachment_id.clone(),
                         reservation_claim: config.reservation_claim.clone(),
+                        setup_attempt: setup_attempt.clone(),
                         operation_attempt: operation_attempt.clone(),
                     },
                 })
@@ -489,17 +554,24 @@ pub(super) fn confirm_netavark_provider_detached(
     with_ipam_state(layout, |state| {
         let allocation = exact_live_allocation_for_teardown_claim(state, claim)?;
         match &allocation.provider_operation {
-            NetavarkProviderOperation::Deleting { operation_attempt }
-                if operation_attempt == &claim.operation_attempt =>
+            NetavarkProviderOperation::Deleting {
+                setup_attempt,
+                operation_attempt,
+            } if setup_attempt == &claim.setup_attempt
+                && operation_attempt == &claim.operation_attempt =>
             {
                 allocation.provider_operation =
                     NetavarkProviderOperation::DetachedProjectionPending {
+                        setup_attempt: claim.setup_attempt.clone(),
                         operation_attempt: claim.operation_attempt.clone(),
                     };
                 Ok(())
             }
-            NetavarkProviderOperation::DetachedProjectionPending { operation_attempt }
-                if operation_attempt == &claim.operation_attempt =>
+            NetavarkProviderOperation::DetachedProjectionPending {
+                setup_attempt,
+                operation_attempt,
+            } if setup_attempt == &claim.setup_attempt
+                && operation_attempt == &claim.operation_attempt =>
             {
                 Ok(())
             }
@@ -519,8 +591,11 @@ pub(super) fn complete_netavark_teardown(
     with_ipam_state(layout, |state| {
         let allocation = exact_live_allocation_for_teardown_claim(state, claim)?;
         match &allocation.provider_operation {
-            NetavarkProviderOperation::DetachedProjectionPending { operation_attempt }
-                if operation_attempt == &claim.operation_attempt =>
+            NetavarkProviderOperation::DetachedProjectionPending {
+                setup_attempt,
+                operation_attempt,
+            } if setup_attempt == &claim.setup_attempt
+                && operation_attempt == &claim.operation_attempt =>
             {
                 allocation.provider_operation = NetavarkProviderOperation::Detached;
                 Ok(())
@@ -559,6 +634,36 @@ pub(super) fn authenticate_container_network_generation_for_cleanup(
         })?;
     validate_ipam_generation(config, &attachment_id, released)?;
     Ok(None)
+}
+
+/// Read-only state of one exact IPAM generation at terminal publication time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ContainerIpamAuthorityState {
+    /// Exact addresses remain allocated and continue to fence connectivity.
+    Live,
+    /// The exact terminal generation remains as a retry/authentication witness.
+    Released,
+    /// Neither live authority nor a terminal witness remains.
+    Absent,
+}
+
+/// Inspect one exact IPAM generation without creating, deleting, or retiring it.
+pub(super) fn inspect_container_ipam_authority(
+    layout: &OciNetworkLayout,
+    config: &OciNetworkConfig,
+    sandbox_id: &SandboxId,
+) -> Result<ContainerIpamAuthorityState> {
+    let attachment_id = default_network_attachment_id(sandbox_id);
+    let state = read_ipam_state(layout)?;
+    if let Some(assigned) = state.allocations.get(attachment_id.as_str()) {
+        validate_ipam_generation(config, &attachment_id, assigned)?;
+        return Ok(ContainerIpamAuthorityState::Live);
+    }
+    if let Some(released) = state.released_allocations.get(attachment_id.as_str()) {
+        validate_ipam_generation(config, &attachment_id, released)?;
+        return Ok(ContainerIpamAuthorityState::Released);
+    }
+    Ok(ContainerIpamAuthorityState::Absent)
 }
 
 fn load_container_ips_for_segment_if_present(

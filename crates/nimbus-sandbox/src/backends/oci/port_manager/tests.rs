@@ -23,6 +23,8 @@ use nimbus_core::TenantId;
 mod batch_classification;
 #[path = "tests/machine_cleanup.rs"]
 mod machine_cleanup;
+#[path = "tests/netavark_lifetime_cleanup.rs"]
+mod netavark_lifetime_cleanup;
 #[path = "tests/teardown_progress.rs"]
 mod teardown_progress;
 
@@ -43,10 +45,53 @@ fn reserve_complete_launch(
     exposed_ports: &[OciExposedPort],
 ) -> crate::error::Result<ReservedLaunchPorts> {
     let reservation_claim = new_launch_reservation_claim()?;
-    manager.reserve_launch_ports_for_sandbox(
+    let mut reserved = manager.reserve_launch_ports_for_sandbox(
         SandboxLaunchPortPlan::new(tenant_id, sandbox_id, existing_bindings, exposed_ports),
         &reservation_claim,
-    )
+    )?;
+    reserved.confirm_manifest_published()?;
+    Ok(reserved)
+}
+
+#[test]
+fn launch_reservation_lifetime_spans_canonical_manifest_publication() {
+    let temp_dir = TempDir::new().expect("shared state root should exist");
+    let manager = PortManager::new(temp_dir.path(), 15_000..=15_000);
+    let tenant = tenant_id("tenant-publication-lifetime");
+    let sandbox = SandboxId::new("publication-lifetime");
+    let claim = new_launch_reservation_claim().expect("launch claim should mint");
+    let mut reserved = manager
+        .reserve_launch_ports_for_sandbox(
+            SandboxLaunchPortPlan::new(
+                &tenant,
+                &sandbox,
+                &[SandboxPortBinding::tcp("http", 15_000, 8080)],
+                &[],
+            ),
+            &claim,
+        )
+        .expect("launch should reserve under its publication lifetime");
+
+    let live_error = manager
+        .release_never_bound_launch_claim(&claim)
+        .expect_err("a live coordinator must fence claim-only recovery");
+    assert!(
+        live_error.to_string().contains("live process owner"),
+        "the rejection must identify the live publication lifetime: {live_error}"
+    );
+
+    reserved
+        .confirm_manifest_published()
+        .expect("durable canonical publication should end the vulnerable lifetime");
+    manager
+        .release_never_bound_launch_claim(&claim)
+        .expect("post-publication no-effect cleanup should authenticate and release");
+    let released = nimbus_network::LocalPortLeaseAuthority::open(temp_dir.path())
+        .expect("authority should reopen")
+        .inspect(reserved.published_leases[0].lease_id())
+        .expect("lease should inspect")
+        .expect("released evidence should remain durable");
+    assert_eq!(released.phase(), nimbus_network::PortLeasePhase::Released);
 }
 
 #[test]

@@ -8,16 +8,24 @@ use std::time::{Duration, Instant};
 
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use ulid::Ulid;
 
 use crate::backends::conmon::lifecycle::read_exit_code;
 use crate::backends::poll::poll_until_deadline;
 use crate::error::{Result, SandboxError};
 
 use super::config::ContainerStartMode;
-use super::manifest::{ContainerLifecycleCoordinator, ContainerSandboxManifest};
+use super::manifest::{ContainerLifecycleCoordinator, ContainerSandboxManifest, RunnerHandoffId};
 use super::{ContainerSandboxBackend, synchronize_handle_status, visible_published_endpoints};
+
+mod identity;
+use identity::{execution_identity_sha256, pre_effect_authority_sha256, prepared_manifest_sha256};
+mod recovery;
+#[cfg(test)]
+pub(super) use recovery::RUNNER_RESULT_ANCHOR_FILE;
+pub(in crate::backends::container::runtime) use recovery::{
+    RunnerEffectOutcome, reconcile_runner_effects_started, record_runner_effect_outcome,
+};
+use recovery::{RunnerEffectReceipt, validate_runner_effect_receipt};
 
 #[cfg(test)]
 mod test_probe;
@@ -32,7 +40,7 @@ pub(super) const RUNNER_HANDOFF_DECISION_FILE: &str = ".nimbus-runner-handoff-de
 const RUNNER_HANDOFF_LOCK_FILE: &str = ".nimbus-runner-handoff.lock";
 const RUNNER_HANDOFF_DECISION_STAGE_FILE: &str = ".nimbus-runner-handoff-decision.stage";
 const RUNNER_HANDOFF_PHASE_STAGE_FILE: &str = ".nimbus-runner-handoff-phase.stage";
-const RUNNER_HANDOFF_DECISION_VERSION: u32 = 5;
+const RUNNER_HANDOFF_DECISION_VERSION: u32 = 6;
 const RUNNER_HANDOFF_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 const RUNNER_HANDOFF_LOCK_RETRY: Duration = Duration::from_millis(10);
 const RUNNER_CLEANUP_RETRY_DELAY: Duration = Duration::from_millis(250);
@@ -86,10 +94,12 @@ struct RunnerHandoffDecisionRecord {
     sandbox_id: String,
     decision: RunnerHandoffDecision,
     phase: RunnerHandoffPhase,
-    decision_id: String,
+    decision_id: RunnerHandoffId,
     prepared_manifest_sha256: String,
     pre_effect_authority_sha256: String,
     execution_identity_sha256: String,
+    #[serde(deserialize_with = "crate::backends::oci::deserialize_required_option")]
+    effect_receipt: Option<RunnerEffectReceipt>,
 }
 
 #[derive(Debug)]
@@ -170,25 +180,49 @@ pub fn run_prepared_container_service_workload(bundle_dir: impl AsRef<Path>) -> 
     }
     validate_runner_authority_root(&manifest)?;
     let backend = ContainerSandboxBackend::new(manifest.runner_config.to_backend_config());
-    let handoff = persist_runner_execution_ownership(&backend, &mut manifest)?;
-    converge_runner_effects_started(&manifest, &handoff)?;
-    let launch_result = backend.execute_start(&mut manifest).map(drop);
-    let cleanup = launch_result
-        .as_ref()
-        .err()
-        .map(|failure| (failure.cleanup_state, failure.terminal_status));
-    let launch_result = launch_result.map_err(|failure| failure.error);
-    converge_runner_launch_result_with_fallible_cleanup(
-        &mut manifest,
-        launch_result,
-        |candidate| {
-            let (cleanup_state, terminal_status) =
-                cleanup.expect("launch failure must carry an exact cleanup state");
-            converge_initial_launch_cleanup(&backend, candidate, terminal_status, cleanup_state)
-        },
-        |candidate| publish_runner_lifecycle_ownership(candidate, &handoff),
-        wait_for_runner_ownership,
-    )?;
+    let acquisition = acquire_runner_execution_ownership(&backend, &mut manifest, true)?;
+    let (handoff, recovered_outcome) = match acquisition {
+        RunnerExecutionAcquisition::Fresh(handoff) => (handoff, None),
+        RunnerExecutionAcquisition::Recovered { handoff, outcome } => (handoff, Some(outcome)),
+    };
+    if recovered_outcome == Some(RunnerEffectOutcome::Absent) {
+        drop(handoff);
+        return Err(SandboxError::OperationFailed {
+            message: format!(
+                "container runner recovered an explicitly absent initial provider effect for {}; \
+                 cleanup converged without replaying launch",
+                manifest.handle.id
+            ),
+        });
+    }
+    if recovered_outcome.is_none() {
+        converge_runner_effects_started(&manifest, &handoff)?;
+        let launch_result = backend.execute_start(&mut manifest).map(drop);
+        let cleanup = launch_result
+            .as_ref()
+            .err()
+            .map(|failure| (failure.cleanup_state, failure.terminal_status));
+        let effect_outcome = if launch_result.is_ok() {
+            RunnerEffectOutcome::Present
+        } else {
+            RunnerEffectOutcome::Absent
+        };
+        let launch_result = launch_result.map_err(|failure| failure.error);
+        converge_runner_launch_result_with_fallible_cleanup(
+            &mut manifest,
+            launch_result,
+            |candidate| {
+                let (cleanup_state, terminal_status) =
+                    cleanup.expect("launch failure must carry an exact cleanup state");
+                converge_initial_launch_cleanup(&backend, candidate, terminal_status, cleanup_state)
+            },
+            |candidate| {
+                record_runner_effect_outcome(candidate, effect_outcome, &handoff)?;
+                publish_runner_lifecycle_ownership(candidate, &handoff)
+            },
+            wait_for_runner_ownership,
+        )?;
+    }
     let lifecycle_authority = PublishedRunnerLifecycleAuthority::capture(&manifest)?;
     // The durable LifecyclePublished phase prevents execution replay while
     // allowing ordinary stop/inspect operations to own the long-running
@@ -284,10 +318,32 @@ fn require_execute_handoff_source(
     })
 }
 
+#[cfg(test)]
 pub(super) fn persist_runner_execution_ownership(
     backend: &ContainerSandboxBackend,
     manifest: &mut ContainerSandboxManifest,
 ) -> Result<RunnerHandoffGuard> {
+    match acquire_runner_execution_ownership(backend, manifest, false)? {
+        RunnerExecutionAcquisition::Fresh(handoff) => Ok(handoff),
+        RunnerExecutionAcquisition::Recovered { .. } => {
+            unreachable!("test-facing ownership acquisition disables effect recovery")
+        }
+    }
+}
+
+enum RunnerExecutionAcquisition {
+    Fresh(RunnerHandoffGuard),
+    Recovered {
+        handoff: RunnerHandoffGuard,
+        outcome: RunnerEffectOutcome,
+    },
+}
+
+fn acquire_runner_execution_ownership(
+    backend: &ContainerSandboxBackend,
+    manifest: &mut ContainerSandboxManifest,
+    recover_effects_started: bool,
+) -> Result<RunnerExecutionAcquisition> {
     manifest.require_lifecycle_coordinator(
         ContainerLifecycleCoordinator::PreparedServiceRunner,
         "container runner",
@@ -329,6 +385,7 @@ pub(super) fn persist_runner_execution_ownership(
         }
     };
     let decision_path = runner_handoff_decision_path(&prepared);
+    let execute_handoff_id;
     if decision_path.exists() {
         let decision = read_runner_handoff_decision(&decision_path)?;
         if decision.decision == RunnerHandoffDecision::Cancel {
@@ -343,9 +400,14 @@ pub(super) fn persist_runner_execution_ownership(
             });
         }
         validate_runner_handoff_decision(&prepared, &decision)?;
+        execute_handoff_id = decision.decision_id.clone();
         match (decision.decision, decision.phase) {
             (RunnerHandoffDecision::Execute, RunnerHandoffPhase::ClaimedBeforeEffects) => {}
             (RunnerHandoffDecision::Execute, RunnerHandoffPhase::EffectsStarted) => {
+                if recover_effects_started {
+                    let outcome = reconcile_runner_effects_started(backend, manifest, &handoff)?;
+                    return Ok(RunnerExecutionAcquisition::Recovered { handoff, outcome });
+                }
                 return Err(SandboxError::OperationFailed {
                     message: format!(
                         "container runner effects may already exist for {}; inspect-before-retry \
@@ -380,12 +442,35 @@ pub(super) fn persist_runner_execution_ownership(
             ContainerLifecycleCoordinator::PreparedServiceRunner,
             "container runner",
         )?;
+        execute_handoff_id = read_runner_handoff_decision(&decision_path)?.decision_id;
     }
     if persisted.start_mode == ContainerStartMode::PlanOnly {
         *manifest = persisted;
-        persist_claimed_runner_execution_ownership(backend, manifest, &decision_path)?;
+        persist_claimed_runner_execution_ownership(
+            backend,
+            manifest,
+            &decision_path,
+            execute_handoff_id,
+        )?;
+    } else {
+        match manifest.runner_handoff_id.as_ref() {
+            Some(persisted) if persisted == &execute_handoff_id => {}
+            Some(_) => {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "container runner manifest {} carries a substituted handoff generation; \
+                         provider effects remain fenced",
+                        manifest.handle.id
+                    ),
+                });
+            }
+            None => {
+                manifest.runner_handoff_id = Some(execute_handoff_id);
+                backend.write_manifest(manifest)?;
+            }
+        }
     }
-    Ok(handoff)
+    Ok(RunnerExecutionAcquisition::Fresh(handoff))
 }
 
 /// Persist and exclusively fence an ordinary Execute start before effects.
@@ -397,7 +482,7 @@ pub(super) fn persist_runner_execution_ownership(
 /// provider inspection is required before retry.
 pub(super) fn persist_direct_execution_ownership(
     backend: &ContainerSandboxBackend,
-    manifest: &ContainerSandboxManifest,
+    manifest: &mut ContainerSandboxManifest,
 ) -> Result<RunnerHandoffGuard> {
     if manifest.start_mode != ContainerStartMode::Execute {
         return Err(SandboxError::InvalidSpec {
@@ -431,9 +516,11 @@ pub(super) fn persist_direct_execution_ownership(
 
     let prepared = prepared_projection(manifest);
     let decision_path = runner_handoff_decision_path(&prepared);
+    let execute_handoff_id;
     if decision_path.exists() {
         let decision = read_runner_handoff_decision(&decision_path)?;
         validate_runner_handoff_decision(&prepared, &decision)?;
+        execute_handoff_id = decision.decision_id.clone();
         match (decision.decision, decision.phase) {
             (RunnerHandoffDecision::Execute, RunnerHandoffPhase::ClaimedBeforeEffects) => {}
             (RunnerHandoffDecision::Execute, RunnerHandoffPhase::EffectsStarted) => {
@@ -471,6 +558,23 @@ pub(super) fn persist_direct_execution_ownership(
             ContainerLifecycleCoordinator::DirectBackend,
             "direct container execution",
         )?;
+        execute_handoff_id = read_runner_handoff_decision(&decision_path)?.decision_id;
+    }
+    match manifest.runner_handoff_id.as_ref() {
+        Some(persisted) if persisted == &execute_handoff_id => {}
+        Some(_) => {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "direct container manifest {} carries a substituted runner handoff \
+                     generation; provider effects remain fenced",
+                    manifest.handle.id
+                ),
+            });
+        }
+        None => {
+            manifest.runner_handoff_id = Some(execute_handoff_id);
+            backend.write_manifest(manifest)?;
+        }
     }
     Ok(handoff)
 }
@@ -521,7 +625,16 @@ pub(super) fn publish_runner_lifecycle_ownership(
         });
     }
     match decision.phase {
-        RunnerHandoffPhase::EffectsStarted => {}
+        RunnerHandoffPhase::EffectsStarted if decision.effect_receipt.is_some() => {}
+        RunnerHandoffPhase::EffectsStarted => {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "cannot publish container lifecycle ownership for {} before an exact \
+                     generation-bound effect receipt is durable",
+                    result_manifest.handle.id
+                ),
+            });
+        }
         RunnerHandoffPhase::ClaimedBeforeEffects
             if result_manifest.shutdown_requested
                 && result_manifest.status == crate::instance::SandboxStatus::Stopped => {}
@@ -594,12 +707,14 @@ fn persist_claimed_runner_execution_ownership(
     backend: &ContainerSandboxBackend,
     manifest: &mut ContainerSandboxManifest,
     decision_path: &Path,
+    execute_handoff_id: RunnerHandoffId,
 ) -> Result<()> {
     // `PlanOnly` describes the durable preview before this runner takes
     // execution ownership. The executed manifest must enter the ordinary
     // provider-backed lifecycle before launch so later inspect/stop paths
     // cannot mistake real effects for an effect-free preview.
     manifest.start_mode = ContainerStartMode::Execute;
+    manifest.runner_handoff_id = Some(execute_handoff_id);
     backend
         .write_manifest(manifest)
         .map_err(|error| SandboxError::OperationFailed {
@@ -717,10 +832,11 @@ fn claim_runner_handoff_decision_with_fault(
             RunnerHandoffDecision::Execute => RunnerHandoffPhase::ClaimedBeforeEffects,
             RunnerHandoffDecision::Cancel => RunnerHandoffPhase::Cancelled,
         },
-        decision_id: Ulid::new().to_string().to_ascii_lowercase(),
+        decision_id: RunnerHandoffId::mint(),
         prepared_manifest_sha256: prepared_manifest_sha256(manifest)?,
         pre_effect_authority_sha256: pre_effect_authority_sha256(manifest)?,
         execution_identity_sha256: execution_identity_sha256(manifest)?,
+        effect_receipt: None,
     };
     let mut rendered =
         serde_json::to_vec_pretty(&record).map_err(|error| SandboxError::OperationFailed {
@@ -1076,6 +1192,7 @@ fn validate_terminal_plan_only_cancellation(
         || persisted.phase != RunnerHandoffPhase::Cancelled
         || persisted.pre_effect_authority_sha256 != pre_effect_authority_sha256(manifest)?
         || persisted.execution_identity_sha256 != expected_execution_identity
+        || manifest.runner_handoff_id.is_some()
         || manifest.lifecycle_coordinator != ContainerLifecycleCoordinator::PreparedServiceRunner
         || manifest.start_mode != ContainerStartMode::PlanOnly
         || !manifest.shutdown_requested
@@ -1116,6 +1233,7 @@ fn validate_plan_only_cancellation_progress(
         || persisted.phase != RunnerHandoffPhase::Cancelled
         || persisted.pre_effect_authority_sha256 != pre_effect_authority_sha256(manifest)?
         || persisted.execution_identity_sha256 != execution_identity_sha256(manifest)?
+        || manifest.runner_handoff_id.is_some()
         || manifest.lifecycle_coordinator != ContainerLifecycleCoordinator::PreparedServiceRunner
         || manifest.start_mode != ContainerStartMode::PlanOnly
         || (!exact_prepared && !cleanup_progress)
@@ -1183,6 +1301,7 @@ fn validate_pre_effect_cleanup_completion(
         || persisted.phase != RunnerHandoffPhase::ClaimedBeforeEffects
         || persisted.pre_effect_authority_sha256 != expected_pre_effect_authority
         || persisted.execution_identity_sha256 != expected_execution_identity
+        || manifest.runner_handoff_id.as_ref() != Some(&persisted.decision_id)
         || manifest.status != crate::instance::SandboxStatus::Stopped
         || !manifest.has_terminal_network_finality()
         || !valid_no_effect_exit
@@ -1214,6 +1333,14 @@ fn validate_runner_handoff_decision(
                 | RunnerHandoffPhase::LifecyclePublished
         ) | (RunnerHandoffDecision::Cancel, RunnerHandoffPhase::Cancelled)
     );
+    let generation_matches = match persisted.decision {
+        RunnerHandoffDecision::Execute => match manifest.runner_handoff_id.as_ref() {
+            Some(generation) => generation == &persisted.decision_id,
+            None => persisted.phase == RunnerHandoffPhase::ClaimedBeforeEffects,
+        },
+        RunnerHandoffDecision::Cancel => manifest.runner_handoff_id.is_none(),
+    };
+    validate_runner_effect_receipt(manifest, persisted)?;
     if persisted.version != RUNNER_HANDOFF_DECISION_VERSION
         || persisted.tenant_id != manifest.spec.tenant_id.as_str()
         || persisted.sandbox_id != manifest.handle.id.as_str()
@@ -1224,12 +1351,13 @@ fn validate_runner_handoff_decision(
         ) && persisted.prepared_manifest_sha256 != expected_prepared_fingerprint)
         || (persisted.phase != RunnerHandoffPhase::LifecyclePublished
             && persisted.pre_effect_authority_sha256 != expected_pre_effect_authority)
+        || !generation_matches
         || !phase_matches_decision
     {
         return Err(SandboxError::OperationFailed {
             message: format!(
-                "durable container runner handoff decision does not match prepared workload {}; \
-                 execution and cancellation remain fenced",
+                "durable container runner handoff decision or generation does not match prepared \
+                 workload {}; execution and cancellation remain fenced",
                 manifest.handle.id
             ),
         });
@@ -1485,133 +1613,6 @@ pub(super) fn preserve_runner_primary_error(
     }
 }
 
-fn prepared_manifest_sha256(manifest: &ContainerSandboxManifest) -> Result<String> {
-    manifest_sha256(manifest, "prepared container runner")
-}
-
-#[derive(Serialize)]
-struct RunnerExecutionSpecIdentity<'a> {
-    tenant_id: &'a nimbus_core::TenantId,
-    owner: &'a crate::spec::SandboxOwnerSpec,
-    backend: &'a crate::backend::SandboxBackendKind,
-    root: &'a crate::spec::SandboxRootSpec,
-    process: &'a crate::spec::SandboxProcessSpec,
-    resources: &'a crate::spec::SandboxResourceLimits,
-    lifecycle: &'a crate::spec::SandboxLifecycleSpec,
-    port_bindings: &'a [crate::spec::SandboxPortBinding],
-    mounts: &'a [crate::spec::SandboxMountSpec],
-}
-
-/// Allowlisted immutable authority for one prepared runner execution.
-///
-/// Mutable desired state (`spec.egress`), observed endpoint/status projections,
-/// cleanup progress, and restart bookkeeping are intentionally absent.
-#[derive(Serialize)]
-struct RunnerExecutionIdentity<'a> {
-    version: u32,
-    handle_tenant_id: &'a nimbus_core::TenantId,
-    sandbox_id: &'a crate::instance::SandboxId,
-    sandbox_name: &'a str,
-    sandbox_backend: &'a crate::backend::SandboxBackendKind,
-    spec: RunnerExecutionSpecIdentity<'a>,
-    image_metadata: &'a super::manifest::ContainerImageMetadata,
-    bundle_layout: &'a crate::backends::container::bundle::ContainerBundleLayout,
-    conmon_layout: &'a crate::backends::oci::conmon::OciConmonLayout,
-    network_layout: &'a crate::backends::oci::network::OciNetworkLayout,
-    network_config: Option<&'a crate::backends::oci::network::OciNetworkConfig>,
-    requested_port_bindings: &'a [crate::spec::SandboxPortBinding],
-    port_leases: &'a [nimbus_network::PortLeaseRequest],
-    egress_proxy: Option<&'a crate::backends::oci::egress::EgressProxyAssignment>,
-    conmon_launch: &'a crate::backends::oci::conmon::OciConmonLaunchPlan,
-    runner_config: &'a super::manifest::ContainerRunnerExecutionConfig,
-    lifecycle_coordinator: ContainerLifecycleCoordinator,
-}
-
-#[derive(Serialize)]
-struct RunnerPreEffectAuthority<'a> {
-    version: u32,
-    execution: RunnerExecutionIdentity<'a>,
-    desired_egress: &'a nimbus_egress::EgressPolicy,
-}
-
-/// Hash the immutable execution authority that survives normal lifecycle
-/// progress after the effect fence. The full prepared-manifest hash still
-/// authenticates acquisition and cancellation.
-fn execution_identity_sha256(manifest: &ContainerSandboxManifest) -> Result<String> {
-    serialized_sha256(
-        &runner_execution_identity(manifest),
-        "container runner execution identity",
-    )
-}
-
-/// Hash authority that must remain immutable until the first provider effect.
-///
-/// Terminal no-effect cleanup legitimately changes status, artifact, and
-/// reservation fields, so its validator cannot compare the full prepared
-/// manifest. Desired egress is still immutable at this phase and is included
-/// here even though ordinary post-publication reloads intentionally exclude it
-/// from [`execution_identity_sha256`].
-fn pre_effect_authority_sha256(manifest: &ContainerSandboxManifest) -> Result<String> {
-    serialized_sha256(
-        &RunnerPreEffectAuthority {
-            version: 1,
-            execution: runner_execution_identity(manifest),
-            desired_egress: &manifest.spec.egress,
-        },
-        "container runner pre-effect authority",
-    )
-}
-
-fn runner_execution_identity(manifest: &ContainerSandboxManifest) -> RunnerExecutionIdentity<'_> {
-    RunnerExecutionIdentity {
-        version: 1,
-        handle_tenant_id: &manifest.handle.tenant_id,
-        sandbox_id: &manifest.handle.id,
-        sandbox_name: &manifest.handle.name,
-        sandbox_backend: &manifest.handle.backend,
-        spec: RunnerExecutionSpecIdentity {
-            tenant_id: &manifest.spec.tenant_id,
-            owner: &manifest.spec.owner,
-            backend: &manifest.spec.backend,
-            root: &manifest.spec.root,
-            process: &manifest.spec.process,
-            resources: &manifest.spec.resources,
-            lifecycle: &manifest.spec.lifecycle,
-            port_bindings: &manifest.spec.port_bindings,
-            mounts: &manifest.spec.mounts,
-        },
-        image_metadata: &manifest.image_metadata,
-        bundle_layout: &manifest.bundle_layout,
-        conmon_layout: &manifest.conmon_layout,
-        network_layout: &manifest.network_layout,
-        network_config: manifest.network_config.as_ref(),
-        requested_port_bindings: &manifest.requested_port_bindings,
-        port_leases: &manifest.port_leases,
-        egress_proxy: manifest.egress_proxy.as_ref(),
-        conmon_launch: &manifest.conmon_launch,
-        runner_config: &manifest.runner_config,
-        lifecycle_coordinator: manifest.lifecycle_coordinator,
-    }
-}
-
-fn manifest_sha256(manifest: &ContainerSandboxManifest, subject: &str) -> Result<String> {
-    serialized_sha256(manifest, subject)
-}
-
-fn serialized_sha256(value: &impl Serialize, subject: &str) -> Result<String> {
-    let rendered = serde_json::to_vec(value).map_err(|error| SandboxError::OperationFailed {
-        message: format!("failed to serialize {subject} fingerprint: {error}"),
-    })?;
-    let digest = Sha256::digest(rendered);
-    let mut encoded = String::with_capacity(digest.len() * 2);
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    for byte in digest {
-        encoded.push(HEX[usize::from(byte >> 4)] as char);
-        encoded.push(HEX[usize::from(byte & 0x0f)] as char);
-    }
-    Ok(encoded)
-}
-
 #[cfg(test)]
 pub(super) fn finalize_runner_exit(
     backend: &ContainerSandboxBackend,
@@ -1684,17 +1685,6 @@ fn finalize_published_runner_lifecycle_with(
     if manifest.has_terminal_network_finality() {
         return backend.reconcile_terminal_ipam_retirement(manifest);
     }
-    let (terminal_status, last_exit_code) = if matches!(
-        manifest.status,
-        crate::instance::SandboxStatus::Stopped | crate::instance::SandboxStatus::Failed
-    ) {
-        // A concurrently published terminal projection wins over the runner's
-        // later observation, but incomplete cleanup authority must still be
-        // reconciled before that projection becomes final.
-        (manifest.status, manifest.last_exit_code)
-    } else {
-        (terminal_status, last_exit_code)
-    };
     converge(backend, manifest, terminal_status, last_exit_code)
 }
 
@@ -1825,6 +1815,8 @@ pub(super) fn try_converge_runner_cleanup_with(
     mut cleanup: impl FnMut(&mut ContainerSandboxManifest) -> Result<()>,
     mut wait: impl FnMut(RunnerCleanupConvergenceStage, &SandboxError),
 ) -> Result<()> {
+    let (terminal_status, last_exit_code) =
+        authoritative_runner_cleanup_outcome(manifest, terminal_status, last_exit_code);
     manifest.shutdown_requested = true;
     manifest.last_exit_code = last_exit_code;
     manifest.next_restart_at_millis = None;
@@ -1878,6 +1870,23 @@ pub(super) fn try_converge_runner_cleanup_with(
     )?;
     *manifest = terminal;
     Ok(())
+}
+
+fn authoritative_runner_cleanup_outcome(
+    manifest: &ContainerSandboxManifest,
+    proposed_status: crate::instance::SandboxStatus,
+    proposed_exit_code: Option<i32>,
+) -> (crate::instance::SandboxStatus, Option<i32>) {
+    if !manifest.shutdown_requested || manifest.status != crate::instance::SandboxStatus::Stopping {
+        return (proposed_status, proposed_exit_code);
+    }
+
+    let durable_exit_code = manifest.last_exit_code;
+    let durable_status = match durable_exit_code {
+        Some(0) => crate::instance::SandboxStatus::Stopped,
+        Some(_) | None => crate::instance::SandboxStatus::Failed,
+    };
+    (durable_status, durable_exit_code)
 }
 
 fn converge_runner_cleanup_stage_with(

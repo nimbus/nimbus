@@ -66,20 +66,6 @@ impl ContainerSandboxBackend {
             network_config,
             &manifest.handle.id,
         )?;
-        let netavark_restart_bindings = if manifest.start_mode == ContainerStartMode::Execute
-            && manifest.runner_config.machine_port_forwarder.is_none()
-        {
-            let port_manager = self.port_manager_for_manifest(manifest)?;
-            let expected_bindings = port_manager.expected_netavark_bindings(
-                &manifest.spec.tenant_id,
-                &manifest.handle.id,
-                &manifest.spec.port_bindings,
-                &manifest.port_leases,
-            )?;
-            Some((port_manager, expected_bindings))
-        } else {
-            None
-        };
         delete_runtime_and_confirm_absent(
             &manifest.conmon_launch.delete_command,
             &manifest.conmon_launch.state_command,
@@ -92,6 +78,48 @@ impl ContainerSandboxBackend {
                 manifest.handle.id
             ),
         })?;
+        let netavark_cleanup = if manifest.start_mode == ContainerStartMode::Execute
+            && manifest.runner_config.machine_port_forwarder.is_none()
+        {
+            let port_manager = self.port_manager_for_manifest(manifest)?;
+            match port_manager.classify_netavark_cleanup_batch(
+                &manifest.spec.tenant_id,
+                &manifest.handle.id,
+                &manifest.spec.port_bindings,
+                &manifest.port_leases,
+                manifest.launch_reservation_claim.as_ref(),
+            )? {
+                crate::backends::oci::port_manager::LaunchPortBatchState::ProviderOwned => {
+                    let cleanup = port_manager.begin_netavark_cleanup(
+                        &self.netavark_port_lifetimes,
+                        &manifest.spec.tenant_id,
+                        &manifest.handle.id,
+                        &manifest.spec.port_bindings,
+                        &manifest.port_leases,
+                    )?;
+                    Some((port_manager, cleanup))
+                }
+                crate::backends::oci::port_manager::LaunchPortBatchState::RestartRetained
+                | crate::backends::oci::port_manager::LaunchPortBatchState::TerminalNoEffect => {
+                    None
+                }
+                crate::backends::oci::port_manager::LaunchPortBatchState::NeverBound
+                    if manifest.port_leases.is_empty() =>
+                {
+                    None
+                }
+                state => {
+                    return Err(SandboxError::OperationFailed {
+                        message: format!(
+                            "container restart cannot detach Netavark from published-listener \
+                             authority {state:?}"
+                        ),
+                    });
+                }
+            }
+        } else {
+            None
+        };
         let mut errors = Vec::new();
         if let Err(error) = self.egress_proxies.stop_for_restart(
             &manifest.spec.tenant_id,
@@ -113,7 +141,7 @@ impl ContainerSandboxBackend {
         } else {
             None
         };
-        let netavark_detach_confirmed = match teardown_container_network(
+        let mut netavark_detach_confirmed = match teardown_container_network(
             &manifest.network_layout,
             network_config,
             &manifest.handle.id,
@@ -131,15 +159,31 @@ impl ContainerSandboxBackend {
             }
         };
         if netavark_detach_confirmed
-            && let Some((port_manager, expected_bindings)) = &netavark_restart_bindings
-            && let Err(error) = port_manager
-                .prepare_netavark_bindings_for_rebind(&manifest.port_leases, expected_bindings)
+            && let Err(error) =
+                remove_persistent_network_namespace(&manifest.network_layout.netns_path)
         {
+            netavark_detach_confirmed = false;
             errors.push(error.to_string());
         }
         if netavark_detach_confirmed
-            && let Err(error) =
-                remove_persistent_network_namespace(&manifest.network_layout.netns_path)
+            && let Some((port_manager, cleanup)) = &netavark_cleanup
+            && let Err(error) = port_manager.complete_netavark_cleanup(
+                &manifest.port_leases,
+                cleanup.as_ref(),
+                false,
+            )
+        {
+            netavark_detach_confirmed = false;
+            errors.push(error.to_string());
+        }
+        if !netavark_detach_confirmed
+            && let Some((port_manager, cleanup)) = netavark_cleanup
+            && let Err(error) = port_manager.retain_ambiguous_netavark_cleanup(
+                &self.netavark_port_lifetimes,
+                &manifest.spec.tenant_id,
+                &manifest.handle.id,
+                cleanup,
+            )
         {
             errors.push(error.to_string());
         }

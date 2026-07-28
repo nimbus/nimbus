@@ -14,8 +14,8 @@ use nimbus_network::{
     NetworkProviderId, NetworkResourceGeneration, PortBindAttempt, PortBindClaim, PortBindFailure,
     PortBindFailureKind, PortBindRealm, PortBindTarget, PortBindingProvenance, PortBindingSpec,
     PortBoundEndpoint, PortExposure, PortIpv6Overlap, PortLeaseAccounting, PortLeaseBinding,
-    PortLeaseError, PortLeaseFence, PortLeaseId, PortLeaseRequest, PortProtocol,
-    PortPublicationIntent, PortRequestMode,
+    PortLeaseEffectScope, PortLeaseError, PortLeaseFence, PortLeaseId, PortLeaseLifetimeGuard,
+    PortLeaseRequest, PortProtocol, PortPublicationIntent, PortRequestMode,
 };
 use tokio::net::{TcpListener, TcpStream};
 use ulid::Ulid;
@@ -85,6 +85,7 @@ struct PreparedKvListener {
     claim: PortBindClaim,
     attempt: PortBindAttempt,
     provenance: PortBindingProvenance,
+    lifetime: PortLeaseLifetimeGuard,
 }
 
 impl PreparedKvListener {
@@ -123,23 +124,20 @@ impl PreparedKvListener {
         )
         .map_err(other_io)?;
         let authority = LocalPortLeaseAuthority::open(config.state_root())?;
-        authority.reserve(request.clone())?;
-        if let Err(primary) = authority.claim_bind(&request, None, claim.clone()) {
-            return match settle_claim_without_effect(&authority, &request, claim, provenance) {
-                Ok(()) => Err(primary.into()),
-                Err(cleanup) => Err(KvError::ListenerLifecycle {
-                    primary: Box::new(primary.into()),
-                    context: "failed to settle the never-bound reservation after its claim receipt failed",
-                    cleanup: Box::new(cleanup),
-                }),
-            };
-        }
+        authority.reconcile_dead_process_bound_leases()?;
+        let reservation = authority.reserve_and_claim_bind_with_lifetime(
+            request.clone(),
+            claim.clone(),
+            lifetime_scope(provenance),
+        )?;
+        let (_, lifetime) = reservation.into_parts();
         Ok(Self {
             authority,
             request,
             claim,
             attempt,
             provenance,
+            lifetime,
         })
     }
 
@@ -149,12 +147,15 @@ impl PreparedKvListener {
             self.attempt.clone(),
             self.claim.provider_attempt().clone(),
         );
-        match self.authority.record_claimed_bind_failure_without_effect(
-            &self.request,
-            None,
-            &self.claim,
-            failure,
-        ) {
+        match self
+            .authority
+            .record_claimed_bind_failure_with_lifetime_without_effect(
+                &self.request,
+                None,
+                &self.claim,
+                failure,
+                &self.lifetime,
+            ) {
             Ok(_) => error.into(),
             Err(cleanup) => KvError::ListenerLifecycle {
                 primary: Box::new(error.into()),
@@ -169,9 +170,12 @@ impl PreparedKvListener {
             Ok(binding) => binding,
             Err(primary) => return Err(self.close_after_failed_adoption(listener, primary)),
         };
-        if let Err(primary) = self.authority.adopt_claimed_and_activate_batch(
-            &[(self.request.clone(), self.claim.clone(), binding)],
+        if let Err(primary) = self.authority.adopt_claimed_and_activate_with_lifetime(
+            &self.request,
             None,
+            &self.claim,
+            binding,
+            &self.lifetime,
         ) {
             return Err(self.close_after_failed_adoption(listener, primary.into()));
         }
@@ -180,6 +184,7 @@ impl PreparedKvListener {
             authority: self.authority,
             request: self.request,
             provenance: self.provenance,
+            lifetime: self.lifetime,
         })
     }
 
@@ -206,8 +211,9 @@ impl PreparedKvListener {
         match settle_claim_without_effect(
             &self.authority,
             &self.request,
-            self.claim,
+            &self.claim,
             self.provenance,
+            &self.lifetime,
         ) {
             Ok(()) => primary,
             Err(cleanup) => KvError::ListenerLifecycle {
@@ -230,6 +236,7 @@ pub struct NimbusKvListener {
     authority: LocalPortLeaseAuthority,
     request: PortLeaseRequest,
     provenance: PortBindingProvenance,
+    lifetime: PortLeaseLifetimeGuard,
 }
 
 impl NimbusKvListener {
@@ -250,11 +257,13 @@ impl NimbusKvListener {
             authority,
             request,
             provenance,
+            lifetime,
         } = self;
         drop(listener);
+        debug_assert_eq!(lifetime.request(), &request);
         authority.withdraw(&request)?;
         if provenance != PortBindingProvenance::ExternallyOwned {
-            authority.release(&request)?;
+            authority.release_with_lifetime(&request, &lifetime)?;
         }
         Ok(())
     }
@@ -313,10 +322,11 @@ pub(crate) fn adopt(
 fn settle_claim_without_effect(
     authority: &LocalPortLeaseAuthority,
     request: &PortLeaseRequest,
-    claim: PortBindClaim,
+    claim: &PortBindClaim,
     provenance: PortBindingProvenance,
+    lifetime: &PortLeaseLifetimeGuard,
 ) -> Result<(), PortLeaseError> {
-    authority.abandon_bind_claims_without_effect(&[(request.clone(), claim)], None)?;
+    authority.abandon_bind_with_lifetime_without_effect(request, None, claim, lifetime)?;
     authority.withdraw(request)?;
     if provenance != PortBindingProvenance::ExternallyOwned {
         authority.release(request)?;
@@ -337,6 +347,14 @@ fn request_mode(
     }
     Ok(NonZeroU16::new(addr.port())
         .map_or(PortRequestMode::ProviderAssigned, PortRequestMode::Exact))
+}
+
+fn lifetime_scope(provenance: PortBindingProvenance) -> PortLeaseEffectScope {
+    if provenance == PortBindingProvenance::ExternallyOwned {
+        PortLeaseEffectScope::ProviderManaged
+    } else {
+        PortLeaseEffectScope::ProcessBound
+    }
 }
 
 fn bind_target(address: IpAddr) -> Result<PortBindTarget, KvError> {

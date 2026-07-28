@@ -9,6 +9,7 @@ use crate::instance::SandboxId;
 mod cluster;
 mod dto;
 mod egress_pin;
+mod finality;
 mod forwarding;
 mod ipam;
 mod layout;
@@ -23,6 +24,7 @@ mod segment;
 mod test_support;
 
 pub(crate) use egress_pin::pin_netns_egress_to_own_proxy;
+pub(crate) use finality::TerminalNetworkAuthoritySet;
 pub use forwarding::OciMachinePortForwarderConfig;
 pub(crate) use forwarding::{expose_machine_ports, unexpose_machine_ports};
 #[cfg(test)]
@@ -154,7 +156,7 @@ mod tests {
     use std::time::Duration;
 
     use nimbus_core::TenantId;
-    use nimbus_network::NetworkSegmentId;
+    use nimbus_network::{NetworkResourceGeneration, NetworkSegmentId};
     use tempfile::tempdir;
 
     use super::{
@@ -328,7 +330,11 @@ mod tests {
     #[test]
     fn netavark_port_bindings_are_omitted_when_machine_forwarding_is_enabled() {
         let bindings = vec![SandboxPortBinding::tcp("http", 18080, 8080)];
-        let forwarder = OciMachinePortForwarderConfig::gvproxy_default();
+        let forwarder = OciMachinePortForwarderConfig::gvproxy_for_provider_instance(
+            "network-test-gvproxy",
+            NetworkResourceGeneration::new(1),
+        )
+        .expect("test gvproxy lifecycle identity should validate");
 
         assert!(
             netavark_port_bindings(&bindings, Some(&forwarder)).is_empty(),
@@ -463,11 +469,33 @@ mod tests {
     }
 
     #[test]
-    fn machine_forwarder_default_matches_podman_shape() {
-        let config = OciMachinePortForwarderConfig::gvproxy_default();
+    fn machine_forwarder_requires_explicit_lifecycle_provider_context() {
+        let config = OciMachinePortForwarderConfig::gvproxy_for_provider_instance(
+            "machine-alpha-gvproxy",
+            NetworkResourceGeneration::new(7),
+        )
+        .expect("lifecycle-issued provider context should validate");
+        let reconstructed = OciMachinePortForwarderConfig::gvproxy_for_provider_instance(
+            "machine-alpha-gvproxy",
+            NetworkResourceGeneration::new(7),
+        )
+        .expect("same lifecycle-issued provider context should validate");
         assert_eq!(config.host, DEFAULT_MACHINE_FORWARDER_HOST);
         assert_eq!(config.port, DEFAULT_MACHINE_FORWARDER_PORT);
         assert_eq!(config.path_prefix, DEFAULT_MACHINE_FORWARDER_PATH);
+        assert_eq!(config.provider_generation().as_u64(), 7);
+        assert_eq!(
+            config.provider_instance(),
+            reconstructed.provider_instance(),
+            "backend construction must not mint identity for the shared gvproxy endpoint"
+        );
+        let durable = serde_json::to_vec(&config).expect("forwarder config should serialize");
+        assert_eq!(
+            serde_json::from_slice::<OciMachinePortForwarderConfig>(&durable)
+                .expect("forwarder config should deserialize"),
+            config,
+            "the manifest-carried config must preserve exact provider instance and generation"
+        );
     }
 
     #[test]
@@ -526,7 +554,7 @@ mod tests {
         let sandbox_id = SandboxId::new("machine-proxy-test");
         let reservation_claim = crate::backends::oci::port_lease::new_launch_reservation_claim()
             .expect("machine proxy test claim should mint");
-        let reservations = manager
+        let mut reservations = manager
             .reserve_launch_ports_for_sandbox(
                 crate::backends::oci::port_manager::SandboxLaunchPortPlan::new(
                     &tenant,
@@ -537,6 +565,9 @@ mod tests {
                 &reservation_claim,
             )
             .expect("machine port should reserve");
+        reservations
+            .confirm_manifest_published()
+            .expect("fixture should publish its exact launch request set");
         let prepared = prepare_machine_port_proxies(
             &tenant,
             &sandbox_id,
@@ -546,17 +577,13 @@ mod tests {
             &manager,
         )
         .expect("machine port proxy socket should prepare");
-        let bind_claims = prepared
-            .iter()
-            .map(|proxy| proxy.bind_claim().clone())
-            .collect::<Vec<_>>();
         manager
-            .activate_machine_bindings(
+            .activate_machine_bindings_with_lifetimes(
                 &tenant,
                 &sandbox_id,
                 std::slice::from_ref(&binding),
                 &reservations.published_leases,
-                &bind_claims,
+                prepared.bind_authority(),
             )
             .expect("machine port proxy binding should activate");
         let proxies = start_machine_port_proxies(
@@ -578,7 +605,8 @@ mod tests {
             .expect("client should read response");
 
         assert_eq!(&response, b"pong");
-        for mut proxy in proxies {
+        let (mut proxies, _bind_authority) = proxies.into_parts();
+        for proxy in &mut proxies {
             proxy
                 .shutdown()
                 .expect("machine port proxy should stop after draining connections");

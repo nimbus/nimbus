@@ -62,7 +62,9 @@ fn assert_restart_cleanup_is_fenced(
     .expect("fixture PEP should own its exact listener");
     manifest.launch_authority = KrunLaunchAuthority::ProviderOwned;
     manifest.creator_handoff = KrunCreatorHandoffState::RuntimeObserved {
-        attempt_id: "runtime-observed-fixture".to_owned(),
+        receipt: crate::backends::conmon::creator::CreatorAttemptReceipt::for_test(
+            "runtime-observed-fixture",
+        ),
     };
     let port_manager = backend.port_manager();
     let netavark_claims = port_manager

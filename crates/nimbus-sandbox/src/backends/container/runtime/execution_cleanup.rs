@@ -95,6 +95,8 @@ impl ContainerSandboxBackend {
             errors.push(error.to_string());
         }
         let mut machine_port_cleanup = None;
+        let mut netavark_port_cleanup = None;
+        let mut netavark_claim_recoveries = None;
         if manifest.start_mode == ContainerStartMode::Execute
             && matches!(
                 &published_batch_state,
@@ -109,14 +111,38 @@ impl ContainerSandboxBackend {
                         errors.push(error.to_string());
                     }
                 }
-            } else if let Err(error) = port_manager.withdraw_bindings(
+            } else {
+                match port_manager.begin_netavark_cleanup(
+                    &self.netavark_port_lifetimes,
+                    &manifest.spec.tenant_id,
+                    &manifest.handle.id,
+                    &manifest.spec.port_bindings,
+                    &manifest.port_leases,
+                ) {
+                    Ok(cleanup) => netavark_port_cleanup = cleanup,
+                    Err(error) => {
+                        detach_confirmed = false;
+                        errors.push(error.to_string());
+                    }
+                }
+            }
+        }
+        if manifest.start_mode == ContainerStartMode::Execute
+            && !machine_port_mode
+            && let Ok(LaunchPortBatchState::NetavarkClaimed(claims)) = &published_batch_state
+        {
+            match port_manager.recover_netavark_claims_after_owner_death(
                 &manifest.spec.tenant_id,
                 &manifest.handle.id,
                 &manifest.spec.port_bindings,
                 &manifest.port_leases,
+                claims,
             ) {
-                detach_confirmed = false;
-                errors.push(error.to_string());
+                Ok(recoveries) => netavark_claim_recoveries = Some(recoveries),
+                Err(error) => {
+                    detach_confirmed = false;
+                    errors.push(error.to_string());
+                }
             }
         }
         if manifest.start_mode == ContainerStartMode::Execute
@@ -132,6 +158,14 @@ impl ContainerSandboxBackend {
             errors.push(error.to_string());
         }
         if !detach_confirmed {
+            if let Err(error) = port_manager.retain_ambiguous_netavark_cleanup(
+                &self.netavark_port_lifetimes,
+                &manifest.spec.tenant_id,
+                &manifest.handle.id,
+                netavark_port_cleanup.take(),
+            ) {
+                errors.push(error.to_string());
+            }
             return Err(SandboxError::OperationFailed {
                 message: format!(
                     "failed to clean up container sandbox {} before provider detach: {}",
@@ -175,6 +209,44 @@ impl ContainerSandboxBackend {
             detach_confirmed = false;
             errors.push(error.to_string());
         }
+        if detach_confirmed
+            && manifest.start_mode == ContainerStartMode::Execute
+            && !machine_port_mode
+            && matches!(
+                &published_batch_state,
+                Ok(LaunchPortBatchState::ProviderOwned)
+            )
+        {
+            match port_manager.complete_netavark_cleanup(
+                &manifest.port_leases,
+                netavark_port_cleanup.as_ref(),
+                true,
+            ) {
+                Ok(()) => netavark_port_cleanup = None,
+                Err(error) => {
+                    detach_confirmed = false;
+                    errors.push(error.to_string());
+                }
+            }
+        }
+        if detach_confirmed
+            && let Some(recoveries) = netavark_claim_recoveries.take()
+            && let Err(error) =
+                port_manager.release_recovered_netavark_bindings(&manifest.port_leases, &recoveries)
+        {
+            detach_confirmed = false;
+            errors.push(error.to_string());
+        }
+        if !detach_confirmed
+            && let Err(error) = port_manager.retain_ambiguous_netavark_cleanup(
+                &self.netavark_port_lifetimes,
+                &manifest.spec.tenant_id,
+                &manifest.handle.id,
+                netavark_port_cleanup.take(),
+            )
+        {
+            errors.push(error.to_string());
+        }
         // Final teardown (not restart): release the quarantined hold only after
         // provider and persistent-netns deletion are confirmed. On the last
         // hold, bridge cleanup must also succeed before allocation finalization.
@@ -189,38 +261,9 @@ impl ContainerSandboxBackend {
                         errors.push(error.to_string());
                     }
                 }
-                Ok(LaunchPortBatchState::NetavarkClaimed(claims)) => {
-                    if let Err(error) = port_manager.abandon_netavark_bind_claims_without_effect(
-                        &manifest.spec.tenant_id,
-                        &manifest.handle.id,
-                        &manifest.spec.port_bindings,
-                        &manifest.port_leases,
-                        &claims,
-                        launch_claim.as_ref(),
-                    ) {
-                        detach_confirmed = false;
-                        errors.push(error.to_string());
-                    }
-                    if detach_confirmed {
-                        let release = launch_claim.as_ref().map_or_else(
-                            || {
-                                port_manager.release_restart_retained_bindings(
-                                    &manifest.spec.tenant_id,
-                                    &manifest.handle.id,
-                                    &manifest.spec.port_bindings,
-                                    &manifest.port_leases,
-                                )
-                            },
-                            |claim| {
-                                port_manager
-                                    .release_never_bound_requests(&manifest.port_leases, claim)
-                            },
-                        );
-                        if let Err(error) = release {
-                            detach_confirmed = false;
-                            errors.push(error.to_string());
-                        }
-                    }
+                Ok(LaunchPortBatchState::NetavarkClaimed(_)) => {
+                    // Dead-owner recovery plus the exact Netavark absence
+                    // receipt completed this terminal release above.
                 }
                 Ok(LaunchPortBatchState::RestartRetained) => {
                     let release = if machine_port_mode {
@@ -250,12 +293,9 @@ impl ContainerSandboxBackend {
                             self.complete_machine_port_proxy_cleanup(cleanup)
                         })
                     } else {
-                        port_manager.release_bindings(
-                            &manifest.spec.tenant_id,
-                            &manifest.handle.id,
-                            &manifest.spec.port_bindings,
-                            &manifest.port_leases,
-                        )
+                        // The lifetime-authenticated Netavark release completed
+                        // immediately after exact provider and netns absence.
+                        Ok(())
                     };
                     if let Err(error) = release_result {
                         detach_confirmed = false;

@@ -172,6 +172,20 @@ impl NetworkSegmentAllocator for ClusterSegmentAllocator {
         }
     }
 
+    fn inspect_attachment_reservation(
+        &self,
+        tenant: &TenantId,
+        attachment_id: &NetworkAttachmentId,
+        reservation_claim: &NetworkReservationClaim,
+    ) -> Result<nimbus_network::NetworkAttachmentReservationState> {
+        match self.cleanup_inner()? {
+            Some(cleanup) => {
+                cleanup.inspect_attachment_reservation(tenant, attachment_id, reservation_claim)
+            }
+            None => Ok(nimbus_network::NetworkAttachmentReservationState::Absent),
+        }
+    }
+
     fn reserve_attachment_for_coordinator(
         &self,
         tenant: &TenantId,

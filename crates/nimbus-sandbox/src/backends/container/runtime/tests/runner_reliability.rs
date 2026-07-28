@@ -33,8 +33,7 @@ fn runner_exit_finalization_waits_for_lifecycle_owner_and_preserves_terminal_sta
             .expect("runner should claim execution");
     super::super::runner::mark_runner_effects_started(&runner_manifest, &handoff)
         .expect("runner effect boundary should become durable");
-    super::super::runner::publish_runner_lifecycle_ownership(&runner_manifest, &handoff)
-        .expect("ordinary lifecycle ownership should publish");
+    publish_present_runner_lifecycle(&runner_manifest, &handoff);
     drop(handoff);
 
     let lifecycle = super::super::runner::lock_execute_lifecycle(&runner_manifest)
@@ -108,8 +107,7 @@ fn explicit_stop_rejects_a_manifest_changed_while_waiting_for_lifecycle_authorit
         .expect("runner should claim execution");
     super::super::runner::mark_runner_effects_started(&manifest, &handoff)
         .expect("runner effect boundary should become durable");
-    super::super::runner::publish_runner_lifecycle_ownership(&manifest, &handoff)
-        .expect("ordinary lifecycle ownership should publish");
+    publish_present_runner_lifecycle(&manifest, &handoff);
     drop(handoff);
 
     let lifecycle = super::super::runner::lock_execute_lifecycle(&manifest)
@@ -224,8 +222,7 @@ fn runner_wait_failure_preserves_an_explicit_stop_terminal_result() {
             .expect("runner should claim execution");
     super::super::runner::mark_runner_effects_started(&runner_manifest, &handoff)
         .expect("runner effect boundary should become durable");
-    super::super::runner::publish_runner_lifecycle_ownership(&runner_manifest, &handoff)
-        .expect("ordinary lifecycle ownership should publish");
+    publish_present_runner_lifecycle(&runner_manifest, &handoff);
     drop(handoff);
 
     let lifecycle = super::super::runner::lock_execute_lifecycle(&runner_manifest)
@@ -292,8 +289,7 @@ fn runner_finalization_rejects_changed_execution_identity_without_mutation() {
             .expect("runner should claim execution");
     super::super::runner::mark_runner_effects_started(&runner_manifest, &handoff)
         .expect("runner effect boundary should become durable");
-    super::super::runner::publish_runner_lifecycle_ownership(&runner_manifest, &handoff)
-        .expect("ordinary lifecycle ownership should publish");
+    publish_present_runner_lifecycle(&runner_manifest, &handoff);
     drop(handoff);
 
     let lifecycle = super::super::runner::lock_execute_lifecycle(&runner_manifest)
@@ -343,8 +339,7 @@ fn runner_exit_after_egress_reload_authenticates_immutable_identity_and_converge
             .expect("runner should claim execution");
     super::super::runner::mark_runner_effects_started(&runner_manifest, &handoff)
         .expect("runner effect boundary should become durable");
-    super::super::runner::publish_runner_lifecycle_ownership(&runner_manifest, &handoff)
-        .expect("ordinary lifecycle ownership should publish");
+    publish_present_runner_lifecycle(&runner_manifest, &handoff);
     drop(handoff);
 
     let mut reloaded = runner_manifest.clone();
@@ -434,8 +429,7 @@ fn egress_reload_waits_for_execute_lifecycle_lock_and_uses_current_manifest() {
     backend
         .write_manifest(&manifest)
         .expect("running manifest should publish post-launch authority");
-    super::super::runner::publish_runner_lifecycle_ownership(&manifest, &handoff)
-        .expect("ordinary lifecycle ownership should publish");
+    publish_present_runner_lifecycle(&manifest, &handoff);
     drop(handoff);
 
     let lifecycle = super::super::runner::lock_execute_lifecycle(&manifest)
@@ -485,7 +479,7 @@ fn egress_reload_waits_for_execute_lifecycle_lock_and_uses_current_manifest() {
 }
 
 #[test]
-fn runner_finalization_reconciles_terminal_projection_without_network_finality() {
+fn runner_cleanup_resume_preserves_winning_exit_receipt() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let backend = sample_plan_only_backend(temp_dir.path());
     let mut runner_manifest = backend
@@ -506,21 +500,20 @@ fn runner_finalization_reconciles_terminal_projection_without_network_finality()
             .expect("runner should claim execution");
     super::super::runner::mark_runner_effects_started(&runner_manifest, &handoff)
         .expect("runner effect boundary should become durable");
-    super::super::runner::publish_runner_lifecycle_ownership(&runner_manifest, &handoff)
-        .expect("ordinary lifecycle ownership should publish");
+    publish_present_runner_lifecycle(&runner_manifest, &handoff);
     drop(handoff);
 
-    let mut projected_terminal = runner_manifest.clone();
-    projected_terminal.shutdown_requested = true;
-    projected_terminal.last_exit_code = Some(41);
-    synchronize_handle_status(&mut projected_terminal, SandboxStatus::Stopped);
+    let mut cleanup_pending = runner_manifest.clone();
+    cleanup_pending.shutdown_requested = true;
+    cleanup_pending.last_exit_code = Some(41);
+    synchronize_handle_status(&mut cleanup_pending, SandboxStatus::Stopping);
     assert!(
-        !projected_terminal.has_terminal_network_finality(),
+        !cleanup_pending.has_terminal_network_finality(),
         "the crash cut must retain incomplete cleanup authority"
     );
     backend
-        .write_manifest(&projected_terminal)
-        .expect("terminal projection crash cut should persist");
+        .write_manifest(&cleanup_pending)
+        .expect("cleanup-pending crash cut should persist as nonterminal");
 
     let cleanup_called = Cell::new(false);
     super::super::runner::finalize_runner_exit_with_cleanup_for_test(
@@ -535,20 +528,20 @@ fn runner_finalization_reconciles_terminal_projection_without_network_finality()
             Ok(())
         },
     )
-    .expect("runner finalization should resume incomplete terminal cleanup");
+    .expect("runner finalization should resume incomplete nonterminal cleanup");
     assert!(
         cleanup_called.get(),
-        "terminal status without finality must not bypass the cleanup adapter"
+        "cleanup-pending status must not bypass the cleanup adapter"
     );
 
     let terminal = backend
-        .read_manifest(&projected_terminal.handle.id)
+        .read_manifest(&cleanup_pending.handle.id)
         .expect("terminal manifest should inspect")
         .expect("terminal manifest should remain durable");
     assert_eq!(
         (terminal.status, terminal.last_exit_code),
-        (SandboxStatus::Stopped, Some(41)),
-        "the winning terminal projection must survive later runner observation"
+        (SandboxStatus::Failed, Some(41)),
+        "cleanup resumption must preserve the first durable Stopping exit receipt"
     );
     assert!(
         terminal.network_cleanup_complete
@@ -556,6 +549,80 @@ fn runner_finalization_reconciles_terminal_projection_without_network_finality()
             && terminal.launch_artifact.is_none(),
         "terminal publication is complete only after every cleanup receipt converges"
     );
+}
+
+#[test]
+fn runner_cleanup_retry_preserves_immutable_exit_receipt_matrix() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let backend = sample_plan_only_backend(temp_dir.path());
+    let mut base = backend
+        .plan_start_with_id(
+            &sample_spec(),
+            &SandboxId::new("runner-immutable-exit-matrix"),
+            None,
+            None,
+        )
+        .expect("runner exit matrix should plan")
+        .manifest;
+    mark_prepared_service_runner(&mut base);
+    base.start_mode = ContainerStartMode::Execute;
+    base.shutdown_requested = true;
+    synchronize_handle_status(&mut base, SandboxStatus::Stopping);
+
+    let cases = [
+        (
+            "identical nonzero replay",
+            Some(41),
+            SandboxStatus::Failed,
+            Some(41),
+            SandboxStatus::Failed,
+            Some(41),
+        ),
+        (
+            "conflicting successful replay",
+            Some(41),
+            SandboxStatus::Stopped,
+            Some(0),
+            SandboxStatus::Failed,
+            Some(41),
+        ),
+        (
+            "conflicting failed replay",
+            Some(0),
+            SandboxStatus::Failed,
+            Some(41),
+            SandboxStatus::Stopped,
+            Some(0),
+        ),
+        (
+            "receipt-free failure replay",
+            None,
+            SandboxStatus::Stopped,
+            Some(0),
+            SandboxStatus::Failed,
+            None,
+        ),
+    ];
+    for (name, durable_exit, proposed_status, proposed_exit, expected_status, expected_exit) in
+        cases
+    {
+        let mut manifest = base.clone();
+        manifest.last_exit_code = durable_exit;
+        super::super::runner::try_converge_runner_cleanup_with(
+            &mut manifest,
+            proposed_status,
+            proposed_exit,
+            |_| Ok(()),
+            |_| Ok(()),
+            |stage, error| panic!("{name} unexpectedly waited at {stage:?}: {error}"),
+        )
+        .unwrap_or_else(|error| panic!("{name} should converge: {error}"));
+        assert_eq!(
+            (manifest.status, manifest.last_exit_code),
+            (expected_status, expected_exit),
+            "{name} must preserve the first durable Stopping outcome"
+        );
+    }
 }
 
 #[test]
@@ -1107,9 +1174,8 @@ fn runner_effect_fence_acknowledgement_loss_remains_fenced() {
         .stop_sync(&manifest.handle.id)
         .expect_err("external stop cannot release an EffectsStarted handoff");
     assert!(
-        stop_error
-            .to_string()
-            .contains("external teardown remains fenced"),
+        stop_error.to_string().contains("runtime state command")
+            && stop_error.to_string().contains("remain fenced"),
         "provider ambiguity must retain exact authority: {stop_error}"
     );
 }
@@ -1289,12 +1355,13 @@ fn direct_effect_fence_acknowledgement_loss_never_enters_provider() {
             && !persisted.network_layout.status_path.exists(),
         "provider effects must remain absent despite the durable ambiguity"
     );
+    let stop_error = backend
+        .stop_sync(&id)
+        .expect_err("ambiguous effect fence must reject external cleanup");
     assert!(
-        backend
-            .stop_sync(&id)
-            .expect_err("ambiguous effect fence must reject external cleanup")
-            .to_string()
-            .contains("external teardown remains fenced")
+        stop_error.to_string().contains("runtime state command")
+            && stop_error.to_string().contains("remain fenced"),
+        "unobservable provider absence must retain exact authority: {stop_error}"
     );
 }
 
@@ -1395,8 +1462,7 @@ fn nonzero_runner_exit_persists_failed_status_after_owned_cleanup() {
     backend
         .write_manifest(&manifest)
         .expect("post-adoption runner manifest should be durable");
-    super::super::runner::publish_runner_lifecycle_ownership(&manifest, &handoff)
-        .expect("runner fixture should publish ordinary lifecycle ownership");
+    publish_present_runner_lifecycle(&manifest, &handoff);
     drop(handoff);
 
     super::super::runner::finalize_runner_exit(&backend, &mut manifest, 23)

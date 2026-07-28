@@ -206,7 +206,9 @@ pub(super) fn sample_manifest(spec: SandboxSpec, start_mode: KrunStartMode) -> K
         creator_handoff: match start_mode {
             KrunStartMode::PlanOnly => KrunCreatorHandoffState::NotSpawned,
             KrunStartMode::Execute => KrunCreatorHandoffState::RuntimeObserved {
-                attempt_id: "test-runtime-observed".to_owned(),
+                receipt: crate::backends::conmon::creator::CreatorAttemptReceipt::for_test(
+                    "test-runtime-observed",
+                ),
             },
         },
         provider_failure_cleanup: KrunProviderFailureCleanupState::Inactive,

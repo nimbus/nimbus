@@ -100,6 +100,11 @@ impl ContainerSandboxBackend {
         let result = self.execute_start_after_preflight_with_cleanup(manifest, preflight);
         match result {
             Ok(handle) => {
+                runner::record_runner_effect_outcome(
+                    manifest,
+                    runner::RunnerEffectOutcome::Present,
+                    &handoff,
+                )?;
                 runner::converge_runner_lifecycle_ownership(manifest, &handoff)?;
                 Ok(handle)
             }
@@ -116,6 +121,50 @@ impl ContainerSandboxBackend {
                         "direct initial-launch cleanup did not converge",
                         cleanup,
                     ));
+                }
+                let phase = match runner::execute_handoff_phase(manifest) {
+                    Ok(phase) => phase,
+                    Err(ownership) => {
+                        return Err(runner::preserve_runner_primary_error(
+                            Some(primary),
+                            "direct effect-result classification did not converge",
+                            ownership,
+                        ));
+                    }
+                };
+                match phase {
+                    Some(runner::RunnerHandoffPhase::EffectsStarted) => {
+                        if let Err(receipt) = runner::record_runner_effect_outcome(
+                            manifest,
+                            runner::RunnerEffectOutcome::Absent,
+                            &handoff,
+                        ) {
+                            return Err(runner::preserve_runner_primary_error(
+                                Some(primary),
+                                "direct effect-result publication did not converge",
+                                receipt,
+                            ));
+                        }
+                    }
+                    Some(runner::RunnerHandoffPhase::ClaimedBeforeEffects) => {
+                        // Preflight failed before the effect fence. The durable
+                        // terminal cleanup manifest is the no-effect receipt;
+                        // publishing a provider-effect receipt here would
+                        // falsely claim that effects may have started.
+                    }
+                    unexpected => {
+                        return Err(runner::preserve_runner_primary_error(
+                            Some(primary),
+                            "direct effect-result classification did not converge",
+                            SandboxError::OperationFailed {
+                                message: format!(
+                                    "direct launch failure for {} reached unexpected runner \
+                                     handoff phase {unexpected:?}",
+                                    manifest.handle.id
+                                ),
+                            },
+                        ));
+                    }
                 }
                 if let Err(publication) =
                     runner::converge_runner_lifecycle_ownership(manifest, &handoff)

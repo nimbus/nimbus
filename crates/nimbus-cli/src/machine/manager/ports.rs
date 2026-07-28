@@ -15,8 +15,9 @@ use nimbus_network::{
     ListenerId, LocalPortLeaseAuthority, NetworkLeaseEpoch, NetworkProviderHandle,
     NetworkProviderId, NetworkResourceGeneration, PortBindClaim, PortBindRealm, PortBindTarget,
     PortBindingProvenance, PortBindingSpec, PortBoundEndpoint, PortExposure, PortLeaseAccounting,
-    PortLeaseBinding, PortLeaseFence, PortLeaseId, PortLeasePhase, PortLeaseRequest, PortProtocol,
-    PortPublicationIntent, PortRequestMode,
+    PortLeaseBinding, PortLeaseEffectScope, PortLeaseFence, PortLeaseId, PortLeaseLifetimeGuard,
+    PortLeasePhase, PortLeaseRecoveryAttempt, PortLeaseRecoveryGuard, PortLeaseRequest,
+    PortProtocol, PortPublicationIntent, PortRequestMode,
 };
 #[cfg(test)]
 use nimbus_network::{PortBindAttempt, PortBindFailure, PortBindFailureKind};
@@ -40,6 +41,7 @@ pub(super) struct PreparedMachineSshPortLease {
     authority: LocalPortLeaseAuthority,
     request: PortLeaseRequest,
     claim: PortBindClaim,
+    lifetime: PortLeaseLifetimeGuard,
     #[cfg(test)]
     attempt: PortBindAttempt,
     listener_id: ListenerId,
@@ -65,12 +67,22 @@ impl PreparedMachineSshPortLease {
         )
         .map_err(|error| network_error("failed to create the gvproxy SSH bind claim", error))?;
         let claim = PortBindClaim::new(provider_attempt);
-        let reserved = authority.reserve(request.clone()).map_err(|error| {
-            network_error(
-                &format!("failed to reserve a managed SSH port for machine '{machine_name}'"),
-                error,
+        let reservation = authority
+            .reserve_and_claim_bind_with_lifetime(
+                request.clone(),
+                claim.clone(),
+                PortLeaseEffectScope::ProviderManaged,
             )
-        })?;
+            .map_err(|error| {
+                network_error(
+                    &format!(
+                        "failed to reserve and claim a managed SSH port for machine \
+                         '{machine_name}'"
+                    ),
+                    error,
+                )
+            })?;
+        let (reserved, lifetime) = reservation.into_parts();
         let selected_port = match reserved.reserved_port() {
             Some(port) => port,
             None => {
@@ -78,8 +90,8 @@ impl PreparedMachineSshPortLease {
                     "machine SSH range lease {} reserved no concrete port",
                     request.lease_id()
                 ));
-                return Err(with_never_started_cleanup(
-                    &authority, &request, &claim, primary,
+                return Err(with_never_started_lifetime_cleanup(
+                    &authority, &request, &claim, &lifetime, primary,
                 ));
             }
         };
@@ -96,28 +108,17 @@ impl PreparedMachineSshPortLease {
             Err(error) => {
                 let primary =
                     network_error("failed to describe the gvproxy SSH bind attempt", error);
-                return Err(with_never_started_cleanup(
-                    &authority, &request, &claim, primary,
+                return Err(with_never_started_lifetime_cleanup(
+                    &authority, &request, &claim, &lifetime, primary,
                 ));
             }
         };
-        if let Err(error) = authority.claim_bind(&request, None, claim.clone()) {
-            let primary = network_error(
-                &format!(
-                    "failed to claim managed SSH port {} for machine '{machine_name}'",
-                    selected_port
-                ),
-                error,
-            );
-            return Err(with_never_started_cleanup(
-                &authority, &request, &claim, primary,
-            ));
-        }
 
         Ok(Self {
             authority,
             request,
             claim,
+            lifetime,
             #[cfg(test)]
             attempt,
             listener_id,
@@ -136,7 +137,32 @@ impl PreparedMachineSshPortLease {
     /// Settle a claim when every caller-owned step before gvproxy spawn proves
     /// that no provider process or listener could have been created.
     pub(super) fn abandon_before_provider_start(&self) -> Result<(), Error> {
-        settle_never_started_claim(&self.authority, &self.request, &self.claim)
+        self.authority
+            .abandon_bind_with_lifetime_without_effect(
+                &self.request,
+                None,
+                &self.claim,
+                &self.lifetime,
+            )
+            .map_err(|error| {
+                network_error(
+                    "failed to abandon the never-started gvproxy SSH bind claim",
+                    error,
+                )
+            })?;
+        self.authority.withdraw(&self.request).map_err(|error| {
+            network_error(
+                "failed to withdraw the never-started gvproxy SSH reservation",
+                error,
+            )
+        })?;
+        self.authority.release(&self.request).map_err(|error| {
+            network_error(
+                "failed to release the never-started gvproxy SSH reservation",
+                error,
+            )
+        })?;
+        Ok(())
     }
 
     /// Record a faithful provider bind failure after proving no gvproxy effect
@@ -149,11 +175,12 @@ impl PreparedMachineSshPortLease {
             self.claim.provider_attempt().clone(),
         );
         self.authority
-            .record_claimed_bind_failure_without_effect(
+            .record_claimed_bind_failure_with_lifetime_without_effect(
                 &self.request,
                 None,
                 &self.claim,
                 failure,
+                &self.lifetime,
             )
             .map_err(|record_error| {
                 Error::Internal(format!(
@@ -182,9 +209,12 @@ impl PreparedMachineSshPortLease {
             self.claim.provider_attempt().clone(),
         );
         self.authority
-            .adopt_claimed_and_activate_batch(
-                &[(self.request.clone(), self.claim.clone(), binding)],
+            .adopt_claimed_and_activate_with_lifetime(
+                &self.request,
                 None,
+                &self.claim,
+                binding,
+                &self.lifetime,
             )
             .map_err(|error| {
                 network_error(
@@ -199,29 +229,69 @@ impl PreparedMachineSshPortLease {
     }
 }
 
+/// Exclusive dead-owner authority retained across exact gvproxy stop.
+pub(super) struct MachineSshPortCleanup {
+    authority: LocalPortLeaseAuthority,
+    request: PortLeaseRequest,
+    binding: PortLeaseBinding,
+    recovery: PortLeaseRecoveryGuard,
+}
+
 /// Fence an active machine SSH listener before any provider stop effect.
 pub(super) fn withdraw_machine_ssh_port(
     roots: &MachineRootLayout,
     runtime: &MachineRuntimeState,
-) -> Result<(), Error> {
+) -> Result<Option<MachineSshPortCleanup>, Error> {
     let authority = open_authority(roots)?;
     let request = machine_ssh_request(&runtime.ssh_listener_id)?;
     let record = exact_record(&authority, &request)?;
     match record.phase() {
-        PortLeasePhase::Active | PortLeasePhase::Withdrawing => {
-            authority.withdraw(&request).map_err(|error| {
-                network_error(
-                    &format!(
-                        "failed to fence machine SSH listener {} before provider stop",
-                        request.lease_id()
-                    ),
-                    error,
+        PortLeasePhase::Active | PortLeasePhase::Withdrawing | PortLeasePhase::CleanupPending => {
+            let binding = record.binding().cloned().ok_or_else(|| {
+                unresolved_lifecycle_error(
+                    &request,
+                    record.phase(),
+                    "recover before provider stop without exact binding evidence",
                 )
             })?;
-            Ok(())
+            let recovery = match authority.recover_dead_lifetime(&request).map_err(|error| {
+                network_error("failed to inspect the gvproxy SSH lifetime", error)
+            })? {
+                PortLeaseRecoveryAttempt::Acquired(recovery) => recovery,
+                PortLeaseRecoveryAttempt::LiveOwner(_) => {
+                    return Err(Error::conflict(format!(
+                        "machine SSH listener {} remains owned by a live process lifetime",
+                        request.lease_id()
+                    )));
+                }
+                PortLeaseRecoveryAttempt::Settled(settled) => {
+                    return Err(unresolved_lifecycle_error(
+                        &request,
+                        settled.phase(),
+                        "recover a terminal provider generation",
+                    ));
+                }
+            };
+            authority
+                .mark_cleanup_pending_after_owner_death(&request, &recovery)
+                .map_err(|error| {
+                    network_error(
+                        &format!(
+                            "failed to quarantine machine SSH listener {} before provider stop",
+                            request.lease_id()
+                        ),
+                        error,
+                    )
+                })?;
+            Ok(Some(MachineSshPortCleanup {
+                authority,
+                request,
+                binding,
+                recovery,
+            }))
         }
-        PortLeasePhase::Reserved if record.confirmed_stopped_binding().is_some() => Ok(()),
-        PortLeasePhase::Released | PortLeasePhase::Failed => Ok(()),
+        PortLeasePhase::Reserved if record.confirmed_stopped_binding().is_some() => Ok(None),
+        PortLeasePhase::Released | PortLeasePhase::Failed => Ok(None),
         phase => Err(unresolved_lifecycle_error(
             &request,
             phase,
@@ -232,29 +302,19 @@ pub(super) fn withdraw_machine_ssh_port(
 
 /// Retain the exact selected port only after gvproxy absence is confirmed.
 pub(super) fn retain_machine_ssh_port_after_confirmed_stop(
-    roots: &MachineRootLayout,
-    runtime: &MachineRuntimeState,
+    cleanup: MachineSshPortCleanup,
 ) -> Result<(), Error> {
-    let authority = open_authority(roots)?;
-    let request = machine_ssh_request(&runtime.ssh_listener_id)?;
-    let record = exact_record(&authority, &request)?;
-    if record.phase() == PortLeasePhase::Reserved && record.confirmed_stopped_binding().is_some() {
-        return Ok(());
-    }
-    let binding = record.binding().cloned().ok_or_else(|| {
-        unresolved_lifecycle_error(
-            &request,
-            record.phase(),
-            "retain after confirmed provider stop without exact binding evidence",
+    cleanup
+        .authority
+        .prepare_rebind_provider_managed_batch_after_confirmed_stop(
+            &[(cleanup.request.clone(), cleanup.binding)],
+            std::slice::from_ref(&cleanup.recovery),
         )
-    })?;
-    authority
-        .prepare_rebind_after_confirmed_stop(&request, &binding)
         .map_err(|error| {
             network_error(
                 &format!(
                     "failed to retain machine SSH listener {} after confirmed provider stop",
-                    request.lease_id()
+                    cleanup.request.lease_id()
                 ),
                 error,
             )
@@ -404,9 +464,10 @@ fn settle_never_started_claim(
     authority: &LocalPortLeaseAuthority,
     request: &PortLeaseRequest,
     claim: &PortBindClaim,
+    lifetime: &PortLeaseLifetimeGuard,
 ) -> Result<(), Error> {
     authority
-        .abandon_bind_claims_without_effect(&[(request.clone(), claim.clone())], None)
+        .abandon_bind_with_lifetime_without_effect(request, None, claim, lifetime)
         .map_err(|error| {
             network_error(
                 "failed to abandon the never-started gvproxy SSH bind claim",
@@ -428,13 +489,14 @@ fn settle_never_started_claim(
     Ok(())
 }
 
-fn with_never_started_cleanup(
+fn with_never_started_lifetime_cleanup(
     authority: &LocalPortLeaseAuthority,
     request: &PortLeaseRequest,
     claim: &PortBindClaim,
+    lifetime: &PortLeaseLifetimeGuard,
     primary: Error,
 ) -> Error {
-    match settle_never_started_claim(authority, request, claim) {
+    match settle_never_started_claim(authority, request, claim, lifetime) {
         Ok(()) => primary,
         Err(cleanup) => Error::Internal(format!(
             "{primary}; failed to settle the never-started gvproxy SSH reservation: {cleanup}"

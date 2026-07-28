@@ -7,8 +7,6 @@
 //! handles and separate Nimbus processes cannot publish conflicting authority.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::error::Error as StdError;
-use std::fmt::{self, Display, Formatter};
 use std::num::NonZeroU16;
 use std::path::Path;
 
@@ -17,19 +15,27 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     LocalNetworkStateStore, NetworkLeaseEpoch, NetworkReservationClaim, NetworkResourceGeneration,
-    NetworkResourceId, NetworkStatePartition, NetworkStateStoreError, NetworkStateTransactionError,
-    PortLeaseId,
+    NetworkResourceId, NetworkStatePartition, PortLeaseId,
 };
 
 mod binding;
+mod error;
+mod lifetime;
 mod operation;
 mod rebind;
 mod request;
+mod reservation_lifetime;
 
 pub use binding::{
     PortBindAttempt, PortBindAttemptError, PortBindClaim, PortBindFailure, PortBindFailureKind,
     PortBindingMismatch, PortBindingProvenance, PortBoundEndpoint, PortBoundEndpointError,
     PortLeaseBinding,
+};
+pub use error::PortLeaseError;
+pub use lifetime::{
+    PortLeaseEffectScope, PortLeaseLifetime, PortLeaseLifetimeGeneration, PortLeaseLifetimeGuard,
+    PortLeaseLifetimeReconciliation, PortLeaseRecoveryAttempt, PortLeaseRecoveryGuard,
+    PortLeaseReservationWithLifetime,
 };
 use operation::PortLeaseOperationError;
 pub use operation::{PortLeaseFenceMismatch, PortLeaseOperation};
@@ -37,6 +43,9 @@ pub use request::{
     PortAddressFamily, PortBindRealm, PortBindRealmError, PortBindRealmErrorKind, PortBindTarget,
     PortBindTargetError, PortBindingSpec, PortExposure, PortIpv6Overlap, PortIsolatedRealm,
     PortProtocol, PortPublicationIntent, PortRange, PortRangeError, PortRequestMode,
+};
+pub use reservation_lifetime::{
+    NetworkReservationLifetimeAttempt, NetworkReservationLifetimeGuard,
 };
 
 /// Durable phase of one host-port lease generation.
@@ -233,6 +242,8 @@ pub struct PortLeaseRecord {
     binding: Option<PortLeaseBinding>,
     confirmed_stopped_binding: Option<PortLeaseBinding>,
     failure: Option<PortBindFailure>,
+    last_lifetime_generation: u64,
+    active_lifetime: Option<PortLeaseLifetime>,
 }
 
 impl PortLeaseRecord {
@@ -290,6 +301,19 @@ impl PortLeaseRecord {
     pub fn failure(&self) -> Option<&PortBindFailure> {
         self.failure.as_ref()
     }
+
+    /// Exact process-lifetime generation currently fencing effects.
+    pub const fn active_lifetime(&self) -> Option<PortLeaseLifetime> {
+        self.active_lifetime
+    }
+
+    /// Last process-lifetime generation ever admitted for this stable lease.
+    pub const fn last_lifetime_generation(&self) -> Option<PortLeaseLifetimeGeneration> {
+        match PortLeaseLifetimeGeneration::from_stored(self.last_lifetime_generation) {
+            Some(generation) => Some(generation),
+            None => None,
+        }
+    }
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -330,6 +354,8 @@ impl PortLeaseState {
             binding: None,
             confirmed_stopped_binding: None,
             failure: None,
+            last_lifetime_generation: 0,
+            active_lifetime: None,
         };
         self.leases.insert(request.lease_id.clone(), record.clone());
         Ok(record)
@@ -371,7 +397,9 @@ impl PortLeaseState {
             if record.bind_claim.is_some()
                 && !matches!(
                     record.phase,
-                    PortLeasePhase::Reserved | PortLeasePhase::Binding
+                    PortLeasePhase::Reserved
+                        | PortLeasePhase::Binding
+                        | PortLeasePhase::CleanupPending
                 )
             {
                 return Err(PortLeaseOperationError::CorruptAuthority {
@@ -407,7 +435,10 @@ impl PortLeaseState {
             if record.reservation_claim.is_some()
                 && !matches!(
                     record.phase,
-                    PortLeasePhase::Reserved | PortLeasePhase::Released | PortLeasePhase::Failed
+                    PortLeasePhase::Reserved
+                        | PortLeasePhase::CleanupPending
+                        | PortLeasePhase::Released
+                        | PortLeasePhase::Failed
                 )
             {
                 return Err(PortLeaseOperationError::CorruptAuthority {
@@ -426,12 +457,40 @@ impl PortLeaseState {
                     ),
                 });
             }
+            match record.active_lifetime {
+                Some(lifetime)
+                    if lifetime.generation().as_u64() == record.last_lifetime_generation
+                        && !record.phase.is_terminal() => {}
+                Some(_) => {
+                    return Err(PortLeaseOperationError::CorruptAuthority {
+                        reason: format!(
+                            "{:?} lease {lease_id} has an active lifetime inconsistent with its \
+                             monotonic generation",
+                            record.phase
+                        ),
+                    });
+                }
+                None => {}
+            }
             if let Some(confirmed_stopped_binding) = &record.confirmed_stopped_binding {
-                if record.phase != PortLeasePhase::Reserved {
+                if !matches!(
+                    record.phase,
+                    PortLeasePhase::Reserved | PortLeasePhase::CleanupPending
+                ) {
                     return Err(PortLeaseOperationError::CorruptAuthority {
                         reason: format!(
                             "{:?} lease {lease_id} retains confirmed stopped-binding evidence",
                             record.phase
+                        ),
+                    });
+                }
+                if record.phase == PortLeasePhase::CleanupPending
+                    && (record.bind_claim.is_none() || record.active_lifetime.is_none())
+                {
+                    return Err(PortLeaseOperationError::CorruptAuthority {
+                        reason: format!(
+                            "cleanup-pending restart lease {lease_id} lacks its exact bind claim \
+                             and lifetime"
                         ),
                     });
                 }
@@ -821,6 +880,32 @@ impl LocalPortLeaseAuthority {
         requests: &[PortLeaseRequest],
         reservation_claim: &NetworkReservationClaim,
     ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
+        let lifetime = match self.try_acquire_reservation_lifetime(reservation_claim)? {
+            NetworkReservationLifetimeAttempt::Acquired(lifetime) => lifetime,
+            NetworkReservationLifetimeAttempt::LiveOwner => {
+                return Err(PortLeaseError::ReservationLifetimeOwnerLive {
+                    provider_id: reservation_claim
+                        .coordinator_attempt()
+                        .provider_id()
+                        .clone(),
+                });
+            }
+        };
+        self.release_reserved_batch_without_effect_with_lifetime(requests, &lifetime)
+    }
+
+    /// Atomically release a still-never-bound batch owned by the caller's
+    /// exact live launch-reservation lifetime.
+    ///
+    /// Pre-publication coordinators use this while retaining the non-cloneable
+    /// guard. Fresh processes must acquire that same claim-derived lock first;
+    /// they cannot compensate a live owner's reservation.
+    pub fn release_reserved_batch_without_effect_with_lifetime(
+        &self,
+        requests: &[PortLeaseRequest],
+        lifetime: &NetworkReservationLifetimeGuard,
+    ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
+        let reservation_claim = lifetime.claim();
         self.transaction(|state| {
             for request in requests {
                 let record = exact_record(state, request)?;
@@ -853,6 +938,7 @@ impl LocalPortLeaseAuthority {
                 let record = exact_record_mut(state, request)?;
                 if record.phase == PortLeasePhase::Reserved {
                     record.phase = PortLeasePhase::Released;
+                    record.active_lifetime = None;
                 }
             }
             requests
@@ -903,6 +989,11 @@ impl LocalPortLeaseAuthority {
                 }
                 let record = exact_record(state, request)?;
                 require_reservation_claim(record, reservation_claim)?;
+                if record.active_lifetime.is_some() {
+                    return Err(PortLeaseOperationError::LifetimeMismatch {
+                        lease_id: request.lease_id().clone(),
+                    });
+                }
                 if record.phase != PortLeasePhase::Reserved {
                     return Err(PortLeaseOperationError::InvalidTransition {
                         lease_id: request.lease_id().clone(),
@@ -958,16 +1049,22 @@ impl LocalPortLeaseAuthority {
                 require_reservation_claim(record, reservation_claim)?;
                 match record.phase {
                     PortLeasePhase::Reserved
-                        if record
-                            .bind_claim
-                            .as_ref()
-                            .is_none_or(|current| current == claim) => {}
+                        if record.active_lifetime.is_none()
+                            && record
+                                .bind_claim
+                                .as_ref()
+                                .is_none_or(|current| current == claim) => {}
                     PortLeasePhase::Failed
-                        if record.failure.as_ref().is_some_and(|failure| {
-                            failure.provider_attempt() == claim.provider_attempt()
-                        }) => {}
+                        if record.active_lifetime.is_none()
+                            && record.failure.as_ref().is_some_and(|failure| {
+                                failure.provider_attempt() == claim.provider_attempt()
+                            }) => {}
                     phase => {
-                        return Err(if phase == PortLeasePhase::Reserved {
+                        return Err(if record.active_lifetime.is_some() {
+                            PortLeaseOperationError::LifetimeMismatch {
+                                lease_id: request.lease_id().clone(),
+                            }
+                        } else if phase == PortLeasePhase::Reserved {
                             PortLeaseOperationError::BindClaimConflict {
                                 lease_id: request.lease_id().clone(),
                             }
@@ -1020,6 +1117,15 @@ impl LocalPortLeaseAuthority {
         bindings: &[(PortLeaseRequest, PortBindClaim, PortLeaseBinding)],
         reservation_claim: Option<&NetworkReservationClaim>,
     ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
+        self.adopt_claimed_and_activate_batch_inner(bindings, reservation_claim, None)
+    }
+
+    fn adopt_claimed_and_activate_batch_inner(
+        &self,
+        bindings: &[(PortLeaseRequest, PortBindClaim, PortLeaseBinding)],
+        reservation_claim: Option<&NetworkReservationClaim>,
+        required_lifetimes: Option<&BTreeMap<PortLeaseId, PortLeaseLifetime>>,
+    ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
         self.transaction(|state| {
             let mut distinct = BTreeMap::<
                 PortLeaseId,
@@ -1037,6 +1143,21 @@ impl LocalPortLeaseAuthority {
                     });
                 }
                 let record = exact_record(state, request)?;
+                match required_lifetimes {
+                    Some(required)
+                        if record.active_lifetime != required.get(request.lease_id()).copied() =>
+                    {
+                        return Err(PortLeaseOperationError::LifetimeMismatch {
+                            lease_id: request.lease_id().clone(),
+                        });
+                    }
+                    None if record.active_lifetime.is_some() => {
+                        return Err(PortLeaseOperationError::LifetimeMismatch {
+                            lease_id: request.lease_id().clone(),
+                        });
+                    }
+                    _ => {}
+                }
                 if !binding.provider_registration_matches_claim(claim) {
                     return Err(PortLeaseOperationError::BindClaimConflict {
                         lease_id: request.lease_id().clone(),
@@ -1141,6 +1262,11 @@ impl LocalPortLeaseAuthority {
     ) -> Result<PortLeaseRecord, PortLeaseError> {
         self.transaction(|state| {
             let existing = exact_record(state, request)?;
+            if existing.active_lifetime.is_some() {
+                return Err(PortLeaseOperationError::LifetimeMismatch {
+                    lease_id: request.lease_id().clone(),
+                });
+            }
             if !binding.provider_registration_matches_claim(claim) {
                 return Err(PortLeaseOperationError::BindClaimConflict {
                     lease_id: request.lease_id().clone(),
@@ -1230,7 +1356,34 @@ impl LocalPortLeaseAuthority {
         claim: &PortBindClaim,
         failure: PortBindFailure,
     ) -> Result<PortLeaseRecord, PortLeaseError> {
-        self.record_bind_failure_with_claim(request, reservation_claim, claim, failure)
+        self.record_bind_failure_with_claim(request, reservation_claim, claim, failure, None)
+    }
+
+    /// Record a no-effect bind failure owned by the exact live lifetime.
+    ///
+    /// Lifetime-fenced adapters use this variant so another process cannot
+    /// terminally clear a still-live attempt. Exact replay remains idempotent
+    /// after the transition has cleared the active lifetime.
+    pub fn record_claimed_bind_failure_with_lifetime_without_effect(
+        &self,
+        request: &PortLeaseRequest,
+        reservation_claim: Option<&NetworkReservationClaim>,
+        claim: &PortBindClaim,
+        failure: PortBindFailure,
+        lifetime: &PortLeaseLifetimeGuard,
+    ) -> Result<PortLeaseRecord, PortLeaseError> {
+        if lifetime.request() != request {
+            return Err(PortLeaseError::LifetimeMismatch {
+                lease_id: request.lease_id().clone(),
+            });
+        }
+        self.record_bind_failure_with_claim(
+            request,
+            reservation_claim,
+            claim,
+            failure,
+            Some(lifetime.lifetime()),
+        )
     }
 
     fn record_bind_failure_with_claim(
@@ -1239,13 +1392,28 @@ impl LocalPortLeaseAuthority {
         reservation_claim: Option<&NetworkReservationClaim>,
         claim: &PortBindClaim,
         failure: PortBindFailure,
+        required_lifetime: Option<PortLeaseLifetime>,
     ) -> Result<PortLeaseRecord, PortLeaseError> {
         self.transaction(|state| {
             let existing = exact_record(state, request)?;
+            if required_lifetime.is_none() && existing.active_lifetime.is_some() {
+                return Err(PortLeaseOperationError::LifetimeMismatch {
+                    lease_id: request.lease_id().clone(),
+                });
+            }
             match existing.phase {
                 PortLeasePhase::Failed if existing.failure.as_ref() == Some(&failure) => {
                     require_reservation_claim(existing, reservation_claim)?;
                     if failure.provider_attempt() == claim.provider_attempt() {
+                        if let Some(lifetime) = required_lifetime
+                            && (existing.active_lifetime.is_some()
+                                || existing.last_lifetime_generation
+                                    != lifetime.generation().as_u64())
+                        {
+                            return Err(PortLeaseOperationError::LifetimeMismatch {
+                                lease_id: request.lease_id().clone(),
+                            });
+                        }
                         return Ok(existing.clone());
                     }
                     return Err(PortLeaseOperationError::BindClaimConflict {
@@ -1274,6 +1442,19 @@ impl LocalPortLeaseAuthority {
                     lease_id: request.lease_id().clone(),
                 });
             }
+            match required_lifetime {
+                Some(lifetime) if existing.active_lifetime != Some(lifetime) => {
+                    return Err(PortLeaseOperationError::LifetimeMismatch {
+                        lease_id: request.lease_id().clone(),
+                    });
+                }
+                None if existing.active_lifetime.is_some() => {
+                    return Err(PortLeaseOperationError::LifetimeMismatch {
+                        lease_id: request.lease_id().clone(),
+                    });
+                }
+                _ => {}
+            }
 
             if let Some(mismatch) = failure.mismatch(request.binding()) {
                 return Err(PortLeaseOperationError::BindingMismatch {
@@ -1296,6 +1477,7 @@ impl LocalPortLeaseAuthority {
             record.adoption_claim = None;
             record.confirmed_stopped_binding = None;
             record.failure = Some(failure);
+            record.active_lifetime = None;
             Ok(record.clone())
         })
     }
@@ -1308,6 +1490,11 @@ impl LocalPortLeaseAuthority {
     ) -> Result<PortLeaseRecord, PortLeaseError> {
         self.transaction(|state| {
             let record = exact_record_mut(state, request)?;
+            if record.active_lifetime.is_some() {
+                return Err(PortLeaseOperationError::LifetimeMismatch {
+                    lease_id: request.lease_id().clone(),
+                });
+            }
             match record.phase {
                 PortLeasePhase::Binding
                     if record.binding.is_some()
@@ -1381,6 +1568,11 @@ impl LocalPortLeaseAuthority {
         self.transaction(|state| {
             let record = exact_record_mut(state, request)?;
             match record.phase {
+                PortLeasePhase::Withdrawing if record.active_lifetime.is_some() => {
+                    return Err(PortLeaseOperationError::LifetimeMismatch {
+                        lease_id: request.lease_id.clone(),
+                    });
+                }
                 PortLeasePhase::Withdrawing => {
                     record.phase = PortLeasePhase::Released;
                     record.reservation_claim = None;
@@ -1608,308 +1800,6 @@ fn port_conflict(
         existing_lease_id: existing.request.lease_id.clone(),
         existing_owner_id: existing.request.owner_id.clone(),
         existing_phase: existing.phase,
-    }
-}
-
-/// Durable authority or lifecycle rejection.
-#[derive(Debug)]
-pub enum PortLeaseError {
-    /// The shared store could not be safely read or committed.
-    Store(NetworkStateStoreError),
-    /// The checksum-valid durable authority violates lease invariants.
-    CorruptAuthority { reason: String },
-    /// No durable lease has this stable identity.
-    NotFound { lease_id: PortLeaseId },
-    /// One lease ID was reused with different immutable reservation identity.
-    IdentityConflict { lease_id: PortLeaseId },
-    /// A tenant-published request omitted tenant attribution.
-    TenantAttributionRequired { lease_id: PortLeaseId },
-    /// Publication intent does not match the request's accounting class.
-    InvalidPublicationAccounting { lease_id: PortLeaseId },
-    /// A metered request fell outside the caller-supplied tenant decision.
-    TenantLimitScopeMismatch {
-        expected_tenant_id: TenantId,
-        request_lease_id: PortLeaseId,
-        actual_tenant_id: TenantId,
-    },
-    /// New published requests would exceed the atomic tenant limit.
-    TenantPublishedPortLimitExceeded {
-        tenant_id: TenantId,
-        current_live: usize,
-        additional: usize,
-        maximum: usize,
-    },
-    /// Another non-terminal lease already fences the requested host port.
-    PortConflict {
-        conflicting_port: NonZeroU16,
-        requested_lease_id: PortLeaseId,
-        requested_owner_id: NetworkResourceId,
-        existing_lease_id: PortLeaseId,
-        existing_owner_id: NetworkResourceId,
-        existing_phase: PortLeasePhase,
-    },
-    /// Every port in an overlapping requested range is fenced.
-    PortRangeExhausted {
-        requested_lease_id: PortLeaseId,
-        requested_owner_id: NetworkResourceId,
-        requested_range: PortRange,
-    },
-    /// A generation/epoch/owner request did not match durable authority.
-    StaleFence(Box<PortLeaseFenceMismatch>),
-    /// Concrete provider evidence does not satisfy the durable request.
-    BindingMismatch {
-        lease_id: PortLeaseId,
-        mismatch: PortBindingMismatch,
-    },
-    /// A second adoption supplied different provider evidence.
-    BindingConflict { lease_id: PortLeaseId },
-    /// A second failed-bind report supplied different provider evidence.
-    BindFailureConflict { lease_id: PortLeaseId },
-    /// Another attempt owns the durable pre-bind claim.
-    BindClaimConflict { lease_id: PortLeaseId },
-    /// Another coordinator owns never-bound compensation authority.
-    ReservationClaimConflict { lease_id: PortLeaseId },
-    /// The requested operation is not legal from the durable phase.
-    InvalidTransition {
-        lease_id: PortLeaseId,
-        phase: PortLeasePhase,
-        operation: PortLeaseOperation,
-    },
-}
-
-impl PortLeaseError {
-    fn from_transaction(error: NetworkStateTransactionError<PortLeaseOperationError>) -> Self {
-        match error {
-            NetworkStateTransactionError::Store(error) => Self::Store(error),
-            NetworkStateTransactionError::Operation(error) => error.into(),
-        }
-    }
-}
-
-impl From<PortLeaseOperationError> for PortLeaseError {
-    fn from(error: PortLeaseOperationError) -> Self {
-        match error {
-            PortLeaseOperationError::CorruptAuthority { reason } => {
-                Self::CorruptAuthority { reason }
-            }
-            PortLeaseOperationError::NotFound { lease_id } => Self::NotFound { lease_id },
-            PortLeaseOperationError::IdentityConflict { lease_id } => {
-                Self::IdentityConflict { lease_id }
-            }
-            PortLeaseOperationError::TenantAttributionRequired { lease_id } => {
-                Self::TenantAttributionRequired { lease_id }
-            }
-            PortLeaseOperationError::InvalidPublicationAccounting { lease_id } => {
-                Self::InvalidPublicationAccounting { lease_id }
-            }
-            PortLeaseOperationError::TenantLimitScopeMismatch {
-                expected_tenant_id,
-                request_lease_id,
-                actual_tenant_id,
-            } => Self::TenantLimitScopeMismatch {
-                expected_tenant_id,
-                request_lease_id,
-                actual_tenant_id,
-            },
-            PortLeaseOperationError::TenantPublishedPortLimitExceeded {
-                tenant_id,
-                current_live,
-                additional,
-                maximum,
-            } => Self::TenantPublishedPortLimitExceeded {
-                tenant_id,
-                current_live,
-                additional,
-                maximum,
-            },
-            PortLeaseOperationError::PortConflict {
-                conflicting_port,
-                requested_lease_id,
-                requested_owner_id,
-                existing_lease_id,
-                existing_owner_id,
-                existing_phase,
-            } => Self::PortConflict {
-                conflicting_port,
-                requested_lease_id,
-                requested_owner_id,
-                existing_lease_id,
-                existing_owner_id,
-                existing_phase,
-            },
-            PortLeaseOperationError::PortRangeExhausted {
-                requested_lease_id,
-                requested_owner_id,
-                requested_range,
-            } => Self::PortRangeExhausted {
-                requested_lease_id,
-                requested_owner_id,
-                requested_range,
-            },
-            PortLeaseOperationError::StaleFence(mismatch) => Self::StaleFence(mismatch),
-            PortLeaseOperationError::BindingMismatch { lease_id, mismatch } => {
-                Self::BindingMismatch { lease_id, mismatch }
-            }
-            PortLeaseOperationError::BindingConflict { lease_id } => {
-                Self::BindingConflict { lease_id }
-            }
-            PortLeaseOperationError::BindFailureConflict { lease_id } => {
-                Self::BindFailureConflict { lease_id }
-            }
-            PortLeaseOperationError::BindClaimConflict { lease_id } => {
-                Self::BindClaimConflict { lease_id }
-            }
-            PortLeaseOperationError::ReservationClaimConflict { lease_id } => {
-                Self::ReservationClaimConflict { lease_id }
-            }
-            PortLeaseOperationError::InvalidTransition {
-                lease_id,
-                phase,
-                operation,
-            } => Self::InvalidTransition {
-                lease_id,
-                phase,
-                operation,
-            },
-        }
-    }
-}
-
-impl Display for PortLeaseError {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Store(error) => Display::fmt(error, formatter),
-            Self::CorruptAuthority { reason } => {
-                write!(formatter, "port lease authority is corrupt: {reason}")
-            }
-            Self::NotFound { lease_id } => {
-                write!(formatter, "port lease {lease_id} does not exist")
-            }
-            Self::IdentityConflict { lease_id } => write!(
-                formatter,
-                "port lease {lease_id} was reused with different immutable reservation identity"
-            ),
-            Self::TenantAttributionRequired { lease_id } => write!(
-                formatter,
-                "tenant-published port lease {lease_id} requires tenant attribution"
-            ),
-            Self::InvalidPublicationAccounting { lease_id } => write!(
-                formatter,
-                "port lease {lease_id} publication intent does not match its accounting class"
-            ),
-            Self::TenantLimitScopeMismatch {
-                expected_tenant_id,
-                request_lease_id,
-                actual_tenant_id,
-            } => write!(
-                formatter,
-                "tenant-published port lease {request_lease_id} belongs to tenant \
-                 {actual_tenant_id}, outside the supplied limit for tenant {expected_tenant_id}"
-            ),
-            Self::TenantPublishedPortLimitExceeded {
-                tenant_id,
-                current_live,
-                additional,
-                maximum,
-            } => write!(
-                formatter,
-                "published port quota exceeded for tenant {tenant_id}: {current_live} live plus \
-                 {additional} new leases exceeds limit {maximum}"
-            ),
-            Self::PortConflict {
-                conflicting_port,
-                requested_lease_id,
-                requested_owner_id,
-                existing_lease_id,
-                existing_owner_id,
-                existing_phase,
-            } => write!(
-                formatter,
-                "port {} requested by lease {} owner {:?} conflicts with lease {} owner {:?} in \
-                 phase {:?}",
-                conflicting_port,
-                requested_lease_id,
-                requested_owner_id,
-                existing_lease_id,
-                existing_owner_id,
-                existing_phase
-            ),
-            Self::PortRangeExhausted {
-                requested_lease_id,
-                requested_owner_id,
-                requested_range,
-            } => write!(
-                formatter,
-                "port range {}..={} requested by lease {} owner {:?} has no free slot in its \
-                 overlap domain",
-                requested_range.start(),
-                requested_range.end(),
-                requested_lease_id,
-                requested_owner_id
-            ),
-            Self::StaleFence(mismatch) => write!(
-                formatter,
-                "port lease {} rejected stale or divergent fence: expected owner {:?} tenant {:?} \
-                 accounting {:?} publication {:?} binding {:?} generation {} epoch {}, candidate \
-                 owner {:?} tenant {:?} accounting {:?} publication {:?} binding {:?} generation \
-                 {} epoch {}",
-                mismatch.expected.lease_id,
-                mismatch.expected.owner_id,
-                mismatch.expected.tenant_id,
-                mismatch.expected.accounting,
-                mismatch.expected.publication,
-                mismatch.expected.binding,
-                mismatch.expected.generation.as_u64(),
-                mismatch.expected.lease_epoch.as_u64(),
-                mismatch.candidate.owner_id,
-                mismatch.candidate.tenant_id,
-                mismatch.candidate.accounting,
-                mismatch.candidate.publication,
-                mismatch.candidate.binding,
-                mismatch.candidate.generation.as_u64(),
-                mismatch.candidate.lease_epoch.as_u64()
-            ),
-            Self::BindingMismatch { lease_id, mismatch } => {
-                write!(
-                    formatter,
-                    "port lease {lease_id} rejected provider evidence: {mismatch}"
-                )
-            }
-            Self::BindingConflict { lease_id } => write!(
-                formatter,
-                "port lease {lease_id} already has different adopted provider evidence"
-            ),
-            Self::BindFailureConflict { lease_id } => write!(
-                formatter,
-                "port lease {lease_id} already has different failed-bind evidence"
-            ),
-            Self::BindClaimConflict { lease_id } => write!(
-                formatter,
-                "port lease {lease_id} is owned by a different in-flight provider bind attempt"
-            ),
-            Self::ReservationClaimConflict { lease_id } => write!(
-                formatter,
-                "port lease {lease_id} is owned by a different launch reservation coordinator"
-            ),
-            Self::InvalidTransition {
-                lease_id,
-                phase,
-                operation,
-            } => write!(
-                formatter,
-                "port lease {lease_id} cannot {operation} from phase {phase:?}"
-            ),
-        }
-    }
-}
-
-impl StdError for PortLeaseError {
-    fn source(&self) -> Option<&(dyn StdError + 'static)> {
-        match self {
-            Self::Store(error) => Some(error),
-            Self::BindingMismatch { mismatch, .. } => Some(mismatch),
-            _ => None,
-        }
     }
 }
 

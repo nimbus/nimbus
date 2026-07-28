@@ -154,6 +154,27 @@ pub enum NetworkSegmentFinalizeOutcome {
     AlreadyReleased,
 }
 
+/// Claim-authenticated, read-only observation of one attachment reservation.
+///
+/// This state says only what the portable allocator durably owns. It does not
+/// claim that a socket, namespace, route, VMM, or other provider effect exists.
+/// Effect-owning adapters combine it with their own exact provider evidence
+/// before retry, promotion, or cleanup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NetworkAttachmentReservationState {
+    /// No attachment authority matching the exact tenant, attachment, and
+    /// coordinator claim remains.
+    Absent,
+    /// The exact coordinator still owns never-realized compensation authority.
+    Reserved,
+    /// Exact never-realized cleanup has started and remains claim-fenced.
+    ReservationCleanupPending,
+    /// The exact coordinator reservation was adopted into an ordinary hold.
+    Adopted,
+    /// The adopted hold is quarantined pending provider cleanup.
+    ProviderCleanupPending,
+}
+
 /// Result of compare-and-swap-fenced segment growth.
 ///
 /// A placement coordinator first observes the tenant's complete ordered block
@@ -210,6 +231,18 @@ pub trait NetworkSegmentAllocator: Send + Sync {
         &self,
         tenant: &TenantId,
     ) -> Result<Option<Vec<Self::Segment>>, Self::Error>;
+
+    /// Inspect one exact coordinator reservation without mutating allocation.
+    ///
+    /// Implementations must authenticate the tenant, stable attachment ID, and
+    /// attempt-unique reservation claim. A foreign or unauthenticated hold
+    /// fails closed rather than being reported as absent.
+    fn inspect_attachment_reservation(
+        &self,
+        tenant: &TenantId,
+        attachment_id: &NetworkAttachmentId,
+        reservation_claim: &NetworkReservationClaim,
+    ) -> Result<NetworkAttachmentReservationState, Self::Error>;
 
     /// Durably reserve one unplaced attachment for an attempt-unique launch
     /// coordinator.
@@ -428,6 +461,15 @@ mod tests {
             _tenant: &TenantId,
         ) -> Result<Option<Vec<Self::Segment>>, Self::Error> {
             Ok(Some(vec![self.segment.clone()]))
+        }
+
+        fn inspect_attachment_reservation(
+            &self,
+            _tenant: &TenantId,
+            _attachment_id: &NetworkAttachmentId,
+            _reservation_claim: &NetworkReservationClaim,
+        ) -> Result<NetworkAttachmentReservationState, Self::Error> {
+            Ok(NetworkAttachmentReservationState::Reserved)
         }
 
         fn reserve_attachment_for_coordinator(

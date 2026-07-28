@@ -220,7 +220,11 @@ fn provider_failure_runtime_absence_checkpoint_replays_delete_and_inspect() {
     let (config, mut manifest) =
         persisted_not_spawned_provider_fixture(&temp_dir, "krun-runtime-checkpoint-replay");
     manifest.creator_handoff = KrunCreatorHandoffState::Quiesced {
-        attempt_id: "runtime-checkpoint-attempt".to_owned(),
+        proof: crate::backends::conmon::creator::CreatorQuiescenceProof::dead_contained(
+            crate::backends::conmon::creator::CreatorAttemptReceipt::for_test(
+                "runtime-checkpoint-attempt",
+            ),
+        ),
     };
     let delete_calls = temp_dir.path().join("runtime-delete-calls");
     let state_calls = temp_dir.path().join("runtime-state-calls");

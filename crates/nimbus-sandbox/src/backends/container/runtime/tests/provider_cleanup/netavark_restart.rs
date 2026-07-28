@@ -28,8 +28,8 @@ fn confirmed_netavark_restart_detach_prepares_published_leases_for_rebind() {
     let port_manager = backend
         .port_manager_for_manifest(&manifest)
         .expect("manifest provider context should authenticate");
-    let initial_claims = port_manager
-        .claim_netavark_bindings(
+    let initial_lifetimes = port_manager
+        .claim_netavark_bindings_with_lifetimes(
             &manifest.spec.tenant_id,
             &manifest.handle.id,
             &manifest.spec.port_bindings,
@@ -37,14 +37,23 @@ fn confirmed_netavark_restart_detach_prepares_published_leases_for_rebind() {
         )
         .expect("initial Netavark bind claims should persist");
     port_manager
-        .activate_netavark_bindings(
+        .activate_netavark_bindings_with_lifetimes(
             &manifest.spec.tenant_id,
             &manifest.handle.id,
             &manifest.spec.port_bindings,
             &manifest.port_leases,
-            &initial_claims,
+            &initial_lifetimes,
         )
         .expect("initial Netavark bindings should activate");
+    backend
+        .netavark_port_lifetimes
+        .insert(
+            &manifest.spec.tenant_id,
+            &manifest.handle.id,
+            initial_lifetimes,
+        )
+        .map_err(|(error, _batch)| error)
+        .expect("fixture should retain its exact live Netavark lifetimes");
     let authority = nimbus_network::LocalPortLeaseAuthority::open(&backend.config.state_root)
         .expect("port authority should reopen");
     assert_eq!(
@@ -85,8 +94,8 @@ fn confirmed_netavark_restart_detach_prepares_published_leases_for_rebind() {
         "the restart receipt may be consumed only after confirmed detach and durable rebind preparation"
     );
 
-    let restart_claims = port_manager
-        .claim_netavark_bindings(
+    let restart_lifetimes = port_manager
+        .claim_netavark_bindings_with_lifetimes(
             &manifest.spec.tenant_id,
             &manifest.handle.id,
             &manifest.spec.port_bindings,
@@ -94,7 +103,7 @@ fn confirmed_netavark_restart_detach_prepares_published_leases_for_rebind() {
         )
         .expect("the same published listener should be claimable for restart");
     assert_eq!(
-        restart_claims.len(),
+        restart_lifetimes.claims().len(),
         manifest.port_leases.len(),
         "restart must claim every retained listener exactly once"
     );
@@ -169,8 +178,8 @@ fn restart_cleanup_retains_network_and_listeners_until_runtime_absence_is_observ
     let port_manager = backend
         .port_manager_for_manifest(&manifest)
         .expect("manifest provider context should authenticate");
-    let netavark_claims = port_manager
-        .claim_netavark_bindings(
+    let netavark_lifetimes = port_manager
+        .claim_netavark_bindings_with_lifetimes(
             &manifest.spec.tenant_id,
             &manifest.handle.id,
             &manifest.spec.port_bindings,
@@ -190,14 +199,23 @@ fn restart_cleanup_retains_network_and_listeners_until_runtime_absence_is_observ
     )
     .expect("fixture should publish Ready Netavark authority");
     port_manager
-        .activate_netavark_bindings(
+        .activate_netavark_bindings_with_lifetimes(
             &manifest.spec.tenant_id,
             &manifest.handle.id,
             &manifest.spec.port_bindings,
             &manifest.port_leases,
-            &netavark_claims,
+            &netavark_lifetimes,
         )
         .expect("fixture should activate the published listener");
+    backend
+        .netavark_port_lifetimes
+        .insert(
+            &manifest.spec.tenant_id,
+            &manifest.handle.id,
+            netavark_lifetimes,
+        )
+        .map_err(|(error, _batch)| error)
+        .expect("fixture should retain its exact live Netavark lifetimes");
     manifest.launch_reservation_claim = None;
     manifest.conmon_launch.delete_command = CommandSpec::new("/usr/bin/true");
     manifest.conmon_launch.state_command = CommandSpec::new("/bin/sh").args([

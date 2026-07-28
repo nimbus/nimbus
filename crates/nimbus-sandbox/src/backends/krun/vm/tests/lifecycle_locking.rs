@@ -125,6 +125,7 @@ fn inspect_rereads_only_after_acquiring_the_krun_lifecycle_lock() {
         "inspection must reach the actual contended lifecycle-lock boundary"
     );
     let mut changed = manifest.clone();
+    changed.shutdown_requested = true;
     changed.status = SandboxStatus::Stopped;
     changed.handle.status = SandboxStatus::Stopped;
     backend

@@ -182,22 +182,22 @@ fn launch_plan_reuses_confirmed_stopped_managed_ssh_port() {
         .ssh_port_lease()
         .activate_exact_loopback()
         .expect("exact provider observation should activate");
-    super::super::ports::withdraw_machine_ssh_port(&config.roots, first.runtime())
-        .expect("stop must fence before provider teardown");
-    super::super::ports::retain_machine_ssh_port_after_confirmed_stop(
-        &config.roots,
-        first.runtime(),
-    )
-    .expect("confirmed stop should retain the selected port");
+    let first_runtime = first.runtime().clone();
+    drop(first);
+    let cleanup = super::super::ports::withdraw_machine_ssh_port(&config.roots, &first_runtime)
+        .expect("stop must fence before provider teardown")
+        .expect("dead provider owner should yield exact cleanup authority");
+    super::super::ports::retain_machine_ssh_port_after_confirmed_stop(cleanup)
+        .expect("confirmed stop should retain the selected port");
     let mut state = MachineStateRecord::initialized();
-    state.runtime = Some(first.runtime().clone());
+    state.runtime = Some(first_runtime.clone());
 
     let restarted =
         MachineLaunchPlan::build(&paths, &config, &state).expect("restart plan should build");
-    assert_eq!(restarted.runtime.ssh_port, first.runtime.ssh_port);
+    assert_eq!(restarted.runtime.ssh_port, first_runtime.ssh_port);
     assert_eq!(
         restarted.runtime.ssh_listener_id,
-        first.runtime.ssh_listener_id
+        first_runtime.ssh_listener_id
     );
 }
 
@@ -336,9 +336,11 @@ fn release_machine_ssh_port_releases_confirmed_stopped_authority() {
         rest_uri: "unix:///tmp/vmm.sock".to_owned(),
         ready_vsock_port: READY_VSOCK_PORT,
     };
-    super::super::ports::withdraw_machine_ssh_port(&roots, &runtime)
-        .expect("stop should fence the listener");
-    super::super::ports::retain_machine_ssh_port_after_confirmed_stop(&roots, &runtime)
+    drop(prepared);
+    let cleanup = super::super::ports::withdraw_machine_ssh_port(&roots, &runtime)
+        .expect("stop should fence the listener")
+        .expect("dead provider owner should yield exact cleanup authority");
+    super::super::ports::retain_machine_ssh_port_after_confirmed_stop(cleanup)
         .expect("confirmed stop should retain the lease");
     let mut state = MachineStateRecord::initialized();
     state.runtime = Some(runtime.clone());

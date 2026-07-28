@@ -101,6 +101,10 @@ async fn cli_adapters_serve_store_backed_by_default_and_opt_outs_disable() {
     let temp = tempfile::tempdir().expect("tempdir should build");
     let engine =
         Arc::new(nimbus::Engine::new(temp.path().join("engine")).expect("engine should build"));
+    let opted_out_engine = Arc::new(
+        nimbus::Engine::new(temp.path().join("engine-opted-out"))
+            .expect("opted-out engine should build"),
+    );
 
     // Reserve listener ports for the sibling adapter listeners.
     let reserve = |_| async {
@@ -141,7 +145,7 @@ async fn cli_adapters_serve_store_backed_by_default_and_opt_outs_disable() {
         .expect("opted-out addr should resolve");
     let opted_out_task = tokio::spawn(nimbus_server::serve(
         opted_out_listener,
-        adapter_serve_options(&engine, opted_out_enablement),
+        adapter_serve_options(&opted_out_engine, opted_out_enablement),
     ));
     crate::test_support::wait_for_live_server_health(
         "opted-out smoke server should answer /health",
@@ -175,6 +179,7 @@ async fn cli_adapters_serve_store_backed_by_default_and_opt_outs_disable() {
     );
     opted_out_task.abort();
     let _ = opted_out_task.await;
+    opted_out_engine.quiesce().await;
 
     // Default-shaped boot: no credentials, no bindings — only explicit
     // ports (reserved above so the conventional ones can't flake the

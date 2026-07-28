@@ -8,20 +8,42 @@
 //! here once instead of being forked per backend.
 
 use std::fs;
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 #[cfg(test)]
 use std::num::NonZeroU16;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use nimbus_core::{TenantId, WorkloadId};
-use nimbus_egress::{
-    CompiledEgressPolicy, EGRESS_CA_BUNDLE_ENV, EGRESS_NODE_EXTRA_CA_CERTS_ENV,
-    EGRESS_PROXY_URL_ENV, EGRESS_RESERVED_ENV_KEYS, EgressPolicy,
+use crate::backends::oci::port_lease::{
+    ExpectedListenerAuthority, OciConfirmedBindFailure, OciPortProvider,
+    abandon_bind_attempt_with_lifetime_without_effect, abandon_bind_attempts_without_effect,
+    adopt_claimed_and_activate_with_lifetime, claim_bind_attempt_with_lifetime,
+    prepare_process_bound_rebind_after_owner_death, prepare_rebind_after_confirmed_stop,
+    prepare_rebind_after_confirmed_stop_with_lifetime, record_bind_failure_with_lifetime,
+    release_reserved_batch_without_effect, require_active_provider_binding,
+    require_current_listener_authority,
 };
+#[cfg(test)]
+use crate::backends::oci::port_lease::{
+    OciPortLeaseIntent, adopt_claimed_and_activate, claim_bind_attempts, port_lease_request,
+    reserve_provider_assigned, target_for_ip,
+};
+#[cfg(test)]
+use crate::backends::oci::port_manager::PortManager;
+use crate::error::{Result, SandboxError};
+use crate::instance::SandboxId;
+use nimbus_core::{TenantId, WorkloadId};
+#[cfg(test)]
+use nimbus_egress::CompiledEgressPolicy;
+use nimbus_egress::{
+    EGRESS_CA_BUNDLE_ENV, EGRESS_NODE_EXTRA_CA_CERTS_ENV, EGRESS_PROXY_URL_ENV,
+    EGRESS_RESERVED_ENV_KEYS, EgressPolicy,
+};
+#[cfg(test)]
+use nimbus_network::PortExposure;
 use nimbus_network::{
-    ListenerId, NetworkReservationClaim, PortBindClaim, PortExposure, PortLeaseRecord,
-    PortLeaseRequest,
+    ListenerId, NetworkReservationClaim, PortBindClaim, PortLeaseEffectScope,
+    PortLeaseLifetimeGuard, PortLeaseRecord, PortLeaseRequest,
 };
 #[cfg(test)]
 use nimbus_proxy::WorkloadPep;
@@ -31,27 +53,18 @@ use nimbus_proxy::{
     RetainedFailedRegistration, WorkloadPepConfig, WorkloadPepReadiness, WorkloadPepTlsAuthority,
     fan_out_decision_loggers, tenant_decision_counter_sink,
 };
-use serde::{Deserialize, Serialize};
-
-use crate::backends::oci::network::{OciNetworkConfig, bridge_gateway_addr};
-use crate::backends::oci::port_lease::{
-    ExpectedListenerAuthority, OciPortProvider, abandon_bind_attempts_without_effect,
-    adopt_claimed_and_activate, claim_bind_attempts, prepare_rebind_after_confirmed_stop,
-    record_bind_failure, release_reserved_batch_without_effect, require_active_provider_binding,
-    require_current_listener_authority, target_for_ip,
-};
-#[cfg(test)]
-use crate::backends::oci::port_lease::{
-    OciPortLeaseIntent, port_lease_request, reserve_provider_assigned,
-};
-#[cfg(test)]
-use crate::backends::oci::port_manager::PortManager;
-use crate::backends::oci::port_manager::{InternalListenerReservation, ReservedInternalListener};
-use crate::error::{Result, SandboxError};
-use crate::instance::SandboxId;
 
 mod cleanup;
 use cleanup::PepCleanupProgress;
+mod assignment;
+#[cfg(test)]
+pub(crate) use assignment::allocate_egress_proxy;
+pub(crate) use assignment::{
+    EgressProxyAssignment, egress_listener_reservation, egress_proxy_assignment,
+    ensure_egress_proxy_running, ensure_egress_proxy_running_with_release_authority,
+};
+mod reload;
+pub(crate) use reload::EgressPolicyReloadState;
 
 /// Registry of running per-sandbox egress proxies, shared by every sandbox
 /// backend. Cloning shares the underlying registry (it is `Arc`-backed), so a
@@ -96,6 +109,10 @@ struct RegisteredArtifacts {
     /// Present on every production registration. Test-only injection may omit
     /// it because it never exercises provider lease lifecycle.
     port_lease: Option<PortLeaseRequest>,
+    /// Exact non-cloneable process lifetime retained for the complete PEP
+    /// socket/worker lifetime. Test-only injection without a durable lease may
+    /// omit it.
+    lifetime: Option<PortLeaseLifetimeGuard>,
     /// Exact retry progress retained by the engine-owned Stopping tombstone.
     cleanup: Option<PepCleanupProgress>,
 }
@@ -127,6 +144,7 @@ struct PepPreAdoptionCompensation<'a> {
     attempt: PepPreAdoptionAttempt<'a>,
     trust_anchor_path: &'a Path,
     port_lease: &'a PortLeaseRequest,
+    lifetime: Option<&'a PortLeaseLifetimeGuard>,
     release_authority: PepPreAdoptionReleaseAuthority<'a>,
 }
 
@@ -145,12 +163,14 @@ impl<'a> PepPreAdoptionCompensation<'a> {
         trust_anchor_path: &'a Path,
         port_lease: &'a PortLeaseRequest,
         claim: &'a PortBindClaim,
+        lifetime: Option<&'a PortLeaseLifetimeGuard>,
         release_authority: PepPreAdoptionReleaseAuthority<'a>,
     ) -> Self {
         Self {
             attempt: PepPreAdoptionAttempt::Claimed(claim),
             trust_anchor_path,
             port_lease,
+            lifetime,
             release_authority,
         }
     }
@@ -160,6 +180,7 @@ impl<'a> PepPreAdoptionCompensation<'a> {
         trust_anchor_path: &'a Path,
         port_lease: &'a PortLeaseRequest,
         claim: &'a PortBindClaim,
+        lifetime: Option<&'a PortLeaseLifetimeGuard>,
         release_authority: PepPreAdoptionReleaseAuthority<'a>,
     ) -> Self {
         Self {
@@ -169,6 +190,7 @@ impl<'a> PepPreAdoptionCompensation<'a> {
             },
             trust_anchor_path,
             port_lease,
+            lifetime,
             release_authority,
         }
     }
@@ -280,6 +302,7 @@ impl EgressProxyRegistry {
             attempt,
             trust_anchor_path,
             port_lease,
+            lifetime,
             release_authority,
         } = compensation;
         let (bound_listener, bind_claim, remove_owned_trust_anchor) = match attempt {
@@ -309,12 +332,24 @@ impl EgressProxyRegistry {
         // drops it before making the port available to another lease owner.
         drop(bound_listener);
         let bind_claim_abandoned = if let Some(bind_claim) = bind_claim {
-            match abandon_bind_attempts_without_effect(
-                &self.network_state_root,
-                std::slice::from_ref(port_lease),
-                std::slice::from_ref(bind_claim),
-                release_authority.reservation_claim(),
-            ) {
+            let abandon = match lifetime {
+                Some(lifetime) => abandon_bind_attempt_with_lifetime_without_effect(
+                    &self.network_state_root,
+                    port_lease,
+                    bind_claim,
+                    lifetime,
+                    release_authority.reservation_claim(),
+                )
+                .map(|_| ()),
+                None => abandon_bind_attempts_without_effect(
+                    &self.network_state_root,
+                    std::slice::from_ref(port_lease),
+                    std::slice::from_ref(bind_claim),
+                    release_authority.reservation_claim(),
+                )
+                .map(|_| ()),
+            };
+            match abandon {
                 Ok(_) => true,
                 Err(abandon_error) => {
                     let Some(bound_addr) = bound_addr else {
@@ -344,11 +379,22 @@ impl EgressProxyRegistry {
                                 });
                                 false
                             } else {
-                                match prepare_rebind_after_confirmed_stop(
-                                    &self.network_state_root,
-                                    port_lease,
-                                    binding,
-                                ) {
+                                let rebind = match lifetime {
+                                    Some(lifetime) => {
+                                        prepare_rebind_after_confirmed_stop_with_lifetime(
+                                            &self.network_state_root,
+                                            port_lease,
+                                            binding,
+                                            lifetime,
+                                        )
+                                    }
+                                    None => prepare_rebind_after_confirmed_stop(
+                                        &self.network_state_root,
+                                        port_lease,
+                                        binding,
+                                    ),
+                                };
+                                match rebind {
                                     Ok(_) => true,
                                     Err(rebind_error) => {
                                         cleanup_errors.push(SandboxError::OperationFailed {
@@ -541,21 +587,34 @@ impl EgressProxyRegistry {
         let registration = self
             .engine
             .reserve_or_inspect(workload_id.clone(), |artifacts| {
-                artifacts.port_lease.as_ref() == Some(port_lease)
+                (artifacts.port_lease.as_ref() == Some(port_lease))
+                    .then_some(artifacts.lifetime.as_ref())
+                    .flatten()
+                    .filter(|lifetime| lifetime.request() == port_lease)
+                    .map(PortLeaseLifetimeGuard::lifetime)
             })
             .map_err(egress_proxy_error)?;
         let slot = match registration {
             RegistrationDecision::Reserved(slot) => slot,
             RegistrationDecision::Occupied {
                 phase: RegisteredLifecyclePhase::Running,
-                evidence: true,
+                evidence: Some(lifetime),
             } => {
-                self.require_pep_lease(tenant_id, id, bind_addr, port_lease)?;
+                let record = self.require_pep_lease(tenant_id, id, bind_addr, port_lease)?;
+                if record.active_lifetime() != Some(lifetime) {
+                    return Err(SandboxError::OperationFailed {
+                        message: format!(
+                            "running egress proxy for sandbox {id} does not match durable \
+                             process-lifetime evidence for lease {}",
+                            port_lease.lease_id()
+                        ),
+                    });
+                }
                 return Ok(());
             }
             RegistrationDecision::Occupied {
                 phase: RegisteredLifecyclePhase::Running,
-                evidence: false,
+                evidence: None,
             } => {
                 return Err(SandboxError::OperationFailed {
                     message: format!(
@@ -568,7 +627,7 @@ impl EgressProxyRegistry {
                 phase: RegisteredLifecyclePhase::Stopping,
                 evidence,
             } => {
-                let detail = if evidence {
+                let detail = if evidence.is_some() {
                     "the exact provider cleanup is still in progress"
                 } else {
                     "a different provider attachment owns the stopping fence"
@@ -581,18 +640,20 @@ impl EgressProxyRegistry {
                 });
             }
         };
-        self.require_pep_lease(tenant_id, id, bind_addr, port_lease)?;
+        let current = self.require_pep_lease(tenant_id, id, bind_addr, port_lease)?;
+        if current.active_lifetime().is_some() && current.binding().is_some() {
+            prepare_process_bound_rebind_after_owner_death(&self.network_state_root, port_lease)?;
+        }
         // Durable attempt exclusivity precedes every fallible preparation.
         // This prevents a concurrent same-request preparation failure from
         // compensating another invocation's restart or fresh-launch authority.
-        let bind_claim = claim_bind_attempts(
+        let (bind_claim, lifetime) = claim_bind_attempt_with_lifetime(
             &self.network_state_root,
-            std::slice::from_ref(port_lease),
+            port_lease,
             OciPortProvider::EgressPep,
             release_authority.reservation_claim(),
-        )?
-        .pop()
-        .expect("one PEP request must return one bind claim");
+            PortLeaseEffectScope::ProcessBound,
+        )?;
         #[cfg(test)]
         if let Some(observer) = self.post_bind_claim_observer.as_ref() {
             observer();
@@ -609,6 +670,7 @@ impl EgressProxyRegistry {
                         &trust_anchor_path,
                         port_lease,
                         &bind_claim,
+                        Some(&lifetime),
                         release_authority,
                     ),
                     error,
@@ -630,6 +692,7 @@ impl EgressProxyRegistry {
                     &trust_anchor_path,
                     port_lease,
                     &bind_claim,
+                    Some(&lifetime),
                     release_authority,
                 ),
                 error,
@@ -644,6 +707,7 @@ impl EgressProxyRegistry {
                         &trust_anchor_path,
                         port_lease,
                         &bind_claim,
+                        Some(&lifetime),
                         release_authority,
                     ),
                     error,
@@ -677,14 +741,13 @@ impl EgressProxyRegistry {
                 let bind_error = match release_authority {
                     PepPreAdoptionReleaseAuthority::Retain => bind_error,
                     PepPreAdoptionReleaseAuthority::FreshLaunch(_) => {
-                        match record_bind_failure(
+                        match record_bind_failure_with_lifetime(
                             &self.network_state_root,
                             port_lease,
                             &bind_claim,
-                            address,
-                            OciPortProvider::EgressPep,
-                            kind,
+                            OciConfirmedBindFailure::new(address, OciPortProvider::EgressPep, kind),
                             release_authority.reservation_claim(),
+                            &lifetime,
                         ) {
                             Ok(_) => bind_error,
                             Err(record_error) => SandboxError::OperationFailed {
@@ -701,6 +764,7 @@ impl EgressProxyRegistry {
                         &trust_anchor_path,
                         port_lease,
                         &bind_claim,
+                        Some(&lifetime),
                         release_authority,
                     ),
                     bind_error,
@@ -712,6 +776,7 @@ impl EgressProxyRegistry {
                         &trust_anchor_path,
                         port_lease,
                         &bind_claim,
+                        Some(&lifetime),
                         release_authority,
                     ),
                     egress_proxy_error(error),
@@ -733,18 +798,20 @@ impl EgressProxyRegistry {
                     &trust_anchor_path,
                     port_lease,
                     &bind_claim,
+                    Some(&lifetime),
                     release_authority,
                 ),
                 error,
             ));
         }
-        if let Err(error) = adopt_claimed_and_activate(
+        if let Err(error) = adopt_claimed_and_activate_with_lifetime(
             &self.network_state_root,
             port_lease,
             release_authority.reservation_claim(),
             &bind_claim,
             prepared.local_addr(),
             OciPortProvider::EgressPep,
+            &lifetime,
         ) {
             return Err(self.compensate_pep_pre_adoption_failure(
                 PepPreAdoptionCompensation::bound(
@@ -752,6 +819,7 @@ impl EgressProxyRegistry {
                     &trust_anchor_path,
                     port_lease,
                     &bind_claim,
+                    Some(&lifetime),
                     release_authority,
                 ),
                 error,
@@ -764,6 +832,7 @@ impl EgressProxyRegistry {
                 trust_anchor_path: Some(trust_anchor_path),
                 tenant_lease,
                 port_lease: Some(port_lease.clone()),
+                lifetime: Some(lifetime),
                 cleanup: None,
             };
             let (primary_error, retained) = slot.retain_failed(
@@ -790,6 +859,7 @@ impl EgressProxyRegistry {
             trust_anchor_path: Some(trust_anchor_path),
             tenant_lease,
             port_lease: Some(port_lease.clone()),
+            lifetime: Some(lifetime),
             cleanup: None,
         };
         match slot.commit(proxy, artifacts) {
@@ -832,27 +902,6 @@ impl EgressProxyRegistry {
         );
         let request = reserve_provider_assigned(&self.network_state_root, request)?;
         self.ensure_running_with_lease(tenant_id, id, policy, bind_addr, &request)
-    }
-
-    /// Hot-reload the policy on the running PEP for `id`.
-    ///
-    /// Errors if no proxy is registered for `id` (the caller ensures it is
-    /// running first). Fail-closed: a reload error is surfaced, not swallowed.
-    pub(crate) fn reload(
-        &self,
-        tenant_id: &TenantId,
-        id: &SandboxId,
-        compiled: CompiledEgressPolicy,
-    ) -> Result<()> {
-        let workload_id = Self::workload_id(tenant_id, id)?;
-        self.engine
-            .with_pep(&workload_id, |pep| pep.reload_policy(compiled))
-            .map_err(egress_proxy_error)?
-            .ok_or_else(|| SandboxError::OperationFailed {
-                message: format!("egress proxy for sandbox {id} is not running"),
-            })?
-            .map_err(egress_proxy_error)?;
-        Ok(())
     }
 
     /// Report the readiness of the PEP registered for `id`.
@@ -966,6 +1015,7 @@ impl EgressProxyRegistry {
                 trust_anchor_path: None,
                 tenant_lease: self.engine.fairness().checkout(tenant_id),
                 port_lease: None,
+                lifetime: None,
                 cleanup: None,
             },
         )
@@ -1267,188 +1317,6 @@ pub(crate) fn egress_trust_anchor_env_entries(guest_path: &str) -> Vec<String> {
     .into_iter()
     .map(|(key, value)| format!("{key}={value}"))
     .collect()
-}
-
-/// Tier-neutral host-side egress PEP assignment for an execute-mode sandbox.
-///
-/// The proxy binds on the bridge gateway address so it is the only reachable
-/// outbound path from inside the sandbox's deny-by-default network namespace.
-/// Every sandbox backend (container today, krun microVM next) embeds an
-/// `Option<EgressProxyAssignment>` in its persisted manifest and renders the
-/// guest-facing proxy URL through [`EgressProxyAssignment::proxy_url`], so the
-/// assignment shape and its IPv6-safe URL rendering live here once instead of
-/// being forked per backend. (egress audit M9.)
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct EgressProxyAssignment {
-    pub(crate) host: String,
-    pub(crate) port: u16,
-    pub(crate) port_lease: PortLeaseRequest,
-}
-
-impl EgressProxyAssignment {
-    #[cfg(test)]
-    pub(crate) fn for_test(host: &str, port: u16) -> Self {
-        let tenant_id = TenantId::new("egress-assignment-test").expect("static tenant id");
-        let sandbox_id = SandboxId::new(format!("egress-assignment-{port}"));
-        let ip = host
-            .parse::<IpAddr>()
-            .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
-        let mode = NonZeroU16::new(port)
-            .map(nimbus_network::PortRequestMode::Exact)
-            .unwrap_or(nimbus_network::PortRequestMode::ProviderAssigned);
-        Self {
-            host: host.to_owned(),
-            port,
-            port_lease: port_lease_request(
-                &tenant_id,
-                &sandbox_id,
-                "egress-pep",
-                OciPortLeaseIntent::host_internal(
-                    target_for_ip(ip)
-                        .expect("parsed test IP should produce a portable bind target"),
-                    PortExposure::Private,
-                ),
-                mode,
-            ),
-        }
-    }
-
-    /// Bind address the PEP listens on. The host must be an IP literal (the
-    /// bridge gateway), so a non-IP value fails closed as an invalid spec.
-    pub(crate) fn bind_addr(&self) -> Result<SocketAddr> {
-        let host = self
-            .host
-            .parse::<IpAddr>()
-            .map_err(|_| SandboxError::InvalidSpec {
-                message: format!("egress proxy host {:?} must be an IP address", self.host),
-            })?;
-        Ok(SocketAddr::new(host, self.port))
-    }
-
-    /// Container-shape proxy URL the guest env is pointed at. Rendered through
-    /// [`SocketAddr`] so an IPv6 gateway is bracketed correctly
-    /// (`http://[::1]:15000`, never the malformed `http://::1:15000`).
-    pub(crate) fn proxy_url(&self) -> Result<String> {
-        Ok(format!("http://{}", self.bind_addr()?))
-    }
-}
-
-/// Assign a host-side egress PEP for an execute-mode launch: the proxy binds on
-/// the bridge gateway address so it is the only outbound path reachable from
-/// inside the sandbox's deny-by-default network namespace. Shared by every
-/// sandbox backend so the gateway+port allocation is defined once.
-#[cfg(test)]
-pub(crate) fn allocate_egress_proxy(
-    network_config: &OciNetworkConfig,
-    port_manager: &PortManager,
-    tenant_id: &TenantId,
-    id: &SandboxId,
-) -> Result<EgressProxyAssignment> {
-    let gateway = bridge_gateway_addr(network_config)?;
-    let (port, port_lease) = port_manager.reserve_internal_listener(
-        tenant_id,
-        id,
-        "egress-pep",
-        target_for_ip(IpAddr::V4(gateway))?,
-        PortExposure::Private,
-    )?;
-    Ok(EgressProxyAssignment {
-        host: gateway.to_string(),
-        port,
-        port_lease,
-    })
-}
-
-/// Portable egress-listener intent to include in one sandbox launch batch.
-pub(crate) fn egress_listener_reservation(
-    network_config: &OciNetworkConfig,
-) -> Result<InternalListenerReservation> {
-    let gateway = bridge_gateway_addr(network_config)?;
-    Ok(InternalListenerReservation::new(
-        "egress-pep",
-        target_for_ip(IpAddr::V4(gateway))?,
-        PortExposure::Private,
-    ))
-}
-
-/// Convert one atomically reserved internal listener into persisted PEP state.
-pub(crate) fn egress_proxy_assignment(
-    network_config: &OciNetworkConfig,
-    reservation: ReservedInternalListener,
-) -> Result<EgressProxyAssignment> {
-    Ok(EgressProxyAssignment {
-        host: bridge_gateway_addr(network_config)?.to_string(),
-        port: reservation.port,
-        port_lease: reservation.lease,
-    })
-}
-
-/// Start the host-side egress PEP for a sandbox on its assigned bridge-gateway
-/// bind address. Fail-closed: a missing assignment or a proxy start error
-/// returns `Err`, which every backend's launch path treats as deny. Shared so
-/// the "no assignment means deny" invariant cannot drift between backends.
-pub(crate) fn ensure_egress_proxy_running(
-    registry: &EgressProxyRegistry,
-    tenant_id: &TenantId,
-    id: &SandboxId,
-    assignment: Option<&EgressProxyAssignment>,
-    policy: &EgressPolicy,
-) -> Result<()> {
-    ensure_egress_proxy_running_with_release_authority(
-        registry,
-        tenant_id,
-        id,
-        assignment,
-        policy,
-        PepPreAdoptionReleaseAuthority::Retain,
-    )
-}
-
-pub(crate) fn ensure_egress_proxy_running_with_release_authority(
-    registry: &EgressProxyRegistry,
-    tenant_id: &TenantId,
-    id: &SandboxId,
-    assignment: Option<&EgressProxyAssignment>,
-    policy: &EgressPolicy,
-    release_authority: PepPreAdoptionReleaseAuthority<'_>,
-) -> Result<()> {
-    let Some(assignment) = assignment else {
-        return Err(SandboxError::OperationFailed {
-            message: format!("sandbox {id} has no egress proxy assignment"),
-        });
-    };
-    let bind_addr = assignment.bind_addr()?;
-    #[cfg(test)]
-    let test_port_lease = if assignment.port == 0 {
-        let request = port_lease_request(
-            tenant_id,
-            id,
-            "egress-pep",
-            OciPortLeaseIntent::host_internal(
-                target_for_ip(bind_addr.ip())?,
-                PortExposure::Private,
-            ),
-            nimbus_network::PortRequestMode::ProviderAssigned,
-        );
-        Some(reserve_provider_assigned(
-            &registry.network_state_root,
-            request,
-        )?)
-    } else {
-        None
-    };
-    #[cfg(test)]
-    let port_lease = test_port_lease.as_ref().unwrap_or(&assignment.port_lease);
-    #[cfg(not(test))]
-    let port_lease = &assignment.port_lease;
-    registry.ensure_running_with_lease_and_release_authority(
-        tenant_id,
-        id,
-        policy,
-        bind_addr,
-        port_lease,
-        release_authority,
-    )
 }
 
 /// Extract the key (`KEY` of `KEY=VALUE`) of an OCI process env entry, or `None`

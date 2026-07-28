@@ -61,6 +61,10 @@ fn natural_execute_exit_releases_exact_network_authority_before_terminal_status(
         .expect("terminal manifest should remain durable");
     assert_eq!(persisted.status, SandboxStatus::Stopped);
     assert_eq!(persisted.last_exit_code, Some(0));
+    assert!(
+        persisted.shutdown_requested,
+        "natural exit must durably publish shutdown intent before terminal cleanup"
+    );
     assert_eq!(
         &recorder.operations()[before_cleanup..],
         [
@@ -80,8 +84,13 @@ fn natural_execute_exit_releases_exact_network_authority_before_terminal_status(
                 manifest.spec.tenant_id.clone(),
                 vec!["netsegment_01ARZ3NDEKTSV4RRFFQ69G5FAV".to_owned()],
             ),
+            SegmentAllocatorOperation::InspectAttachment(
+                manifest.spec.tenant_id.clone(),
+                default_network_attachment_id(&manifest.handle.id),
+            ),
         ],
-        "terminal status may publish only after exact tenant/workload attachment convergence"
+        "terminal status may publish only after exact tenant/workload attachment convergence and \
+         read-only absence verification"
     );
     let authority =
         LocalPortLeaseAuthority::open(&backend.config.state_root).expect("authority should reopen");
@@ -107,9 +116,13 @@ fn natural_execute_exit_releases_exact_network_authority_before_terminal_status(
     assert_eq!(repeated.status, SandboxStatus::Stopped);
     assert!(repeated.published_endpoints.is_empty());
     assert_eq!(
-        recorder.operations(),
-        operations_after_first_inspection,
-        "repeated terminal inspection must not replay provider or allocation cleanup"
+        &recorder.operations()[operations_after_first_inspection.len()..],
+        [SegmentAllocatorOperation::InspectAttachment(
+            manifest.spec.tenant_id.clone(),
+            default_network_attachment_id(&manifest.handle.id),
+        )],
+        "repeated terminal inspection may verify exact absence read-only, but must not replay \
+         provider or allocation cleanup"
     );
 }
 

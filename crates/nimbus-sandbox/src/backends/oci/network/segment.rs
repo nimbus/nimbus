@@ -659,6 +659,15 @@ impl NetworkSegmentAllocator for SingleNodeSegmentAllocator {
             .map(Some)
     }
 
+    fn inspect_attachment_reservation(
+        &self,
+        tenant: &TenantId,
+        attachment_id: &NetworkAttachmentId,
+        reservation_claim: &NetworkReservationClaim,
+    ) -> Result<nimbus_network::NetworkAttachmentReservationState> {
+        self.inspect_attachment_reservation_inner(tenant, attachment_id, reservation_claim)
+    }
+
     fn reserve_attachment_for_coordinator(
         &self,
         tenant: &TenantId,
@@ -1148,6 +1157,16 @@ impl NetworkSegmentAllocator for ConfiguredSegmentAllocator {
 
     fn inspect_segments(&self, tenant: &TenantId) -> Result<Option<Vec<Self::Segment>>> {
         self.inner()?.inspect_segments(tenant)
+    }
+
+    fn inspect_attachment_reservation(
+        &self,
+        tenant: &TenantId,
+        attachment_id: &NetworkAttachmentId,
+        reservation_claim: &NetworkReservationClaim,
+    ) -> Result<nimbus_network::NetworkAttachmentReservationState> {
+        self.inner()?
+            .inspect_attachment_reservation(tenant, attachment_id, reservation_claim)
     }
 
     fn reserve_attachment_for_coordinator(

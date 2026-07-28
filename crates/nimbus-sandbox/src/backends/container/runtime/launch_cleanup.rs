@@ -525,7 +525,16 @@ fn direct_execute_effect_fence_precedes_every_provider_probe() {
         .read_manifest(&planned.handle.id)
         .expect("direct manifest should inspect")
         .expect("direct manifest must be durable before the effect fence");
-    assert_eq!(persisted, planned);
+    let mut expected = planned;
+    expected.runner_handoff_id = persisted.runner_handoff_id.clone();
+    assert!(
+        expected.runner_handoff_id.is_some(),
+        "the effect fence must persist the exact winning runner generation"
+    );
+    assert_eq!(
+        persisted, expected,
+        "claiming execution may add only the exact winning runner generation before provider effects"
+    );
     assert_eq!(
         super::super::runner::execute_handoff_phase(&persisted)
             .expect("durable decision should authenticate"),
@@ -628,8 +637,7 @@ fn published_runner_lifecycle_releases_start_lock_and_fences_execution_replay() 
         .expect("runner should claim execution");
     super::super::runner::mark_runner_effects_started(&manifest, &handoff)
         .expect("effect boundary should become durable");
-    super::super::runner::publish_runner_lifecycle_ownership(&manifest, &handoff)
-        .expect("exact resulting manifest should publish ordinary lifecycle ownership");
+    publish_present_runner_lifecycle(&manifest, &handoff);
     drop(handoff);
 
     assert_eq!(
@@ -737,14 +745,13 @@ fn plan_only_status_callback_rejects_direct_execute_no_decision_without_mutation
 #[test]
 fn plan_only_status_callback_rejects_published_direct_execute_without_mutation() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let (direct, observer, manifest) =
+    let (direct, observer, mut manifest) =
         direct_status_callback_fixture(temp_dir.path(), "direct-status-published");
-    let handoff = super::super::runner::persist_direct_execution_ownership(&direct, &manifest)
+    let handoff = super::super::runner::persist_direct_execution_ownership(&direct, &mut manifest)
         .expect("direct fixture should claim execution");
     super::super::runner::mark_runner_effects_started(&manifest, &handoff)
         .expect("direct effect boundary should become durable");
-    super::super::runner::publish_runner_lifecycle_ownership(&manifest, &handoff)
-        .expect("direct lifecycle publication should become durable");
+    publish_present_runner_lifecycle(&manifest, &handoff);
     drop(handoff);
     let before = std::fs::read(&manifest.conmon_layout.manifest_path)
         .expect("published direct manifest bytes should read");
@@ -809,7 +816,7 @@ fn lifecycle_coordinator_fences_cross_coordinator_execution_claims() {
         .expect("prepared-runner Execute fixture should be durable");
     let direct_error = super::super::runner::persist_direct_execution_ownership(
         &prepared_backend,
-        &prepared_manifest,
+        &mut prepared_manifest,
     )
     .expect_err("direct ownership must reject a prepared-runner lifecycle coordinator");
     assert!(
@@ -1371,18 +1378,20 @@ fn failed_netavark_setup_claims_reconcile_only_after_confirmed_detach() {
         )
         .expect("provider-attempt fixture follows attachment adoption");
     let port_manager = backend.port_manager();
-    let claims = port_manager
-        .claim_netavark_bindings(
+    let lifetimes = port_manager
+        .claim_netavark_bindings_with_lifetimes(
             &manifest.spec.tenant_id,
             &manifest.handle.id,
             &manifest.spec.port_bindings,
             &manifest.port_leases,
         )
         .expect("Netavark claims must be durable before its setup effect");
+    let claims = lifetimes.claims().to_vec();
     assert!(
         !claims.is_empty(),
         "fixture must exercise a claimed publication"
     );
+    drop(lifetimes);
     std::fs::create_dir_all(
         manifest
             .network_layout
@@ -1584,8 +1593,7 @@ fn runner_exit_persists_execute_mode_after_owned_network_cleanup() {
     backend
         .write_manifest(&manifest)
         .expect("post-adoption runner manifest should be durable");
-    super::super::runner::publish_runner_lifecycle_ownership(&manifest, &handoff)
-        .expect("runner fixture should publish ordinary lifecycle ownership");
+    publish_present_runner_lifecycle(&manifest, &handoff);
     drop(handoff);
 
     super::super::runner::finalize_runner_exit(&backend, &mut manifest, 0)

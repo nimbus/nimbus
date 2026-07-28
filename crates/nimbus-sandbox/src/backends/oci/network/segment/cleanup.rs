@@ -65,6 +65,16 @@ impl DurableSegmentCleanupAuthority {
         self.inner.inspect_segments(tenant)
     }
 
+    pub(crate) fn inspect_attachment_reservation(
+        &self,
+        tenant: &TenantId,
+        attachment_id: &NetworkAttachmentId,
+        reservation_claim: &NetworkReservationClaim,
+    ) -> Result<nimbus_network::NetworkAttachmentReservationState> {
+        self.inner
+            .inspect_attachment_reservation(tenant, attachment_id, reservation_claim)
+    }
+
     pub(crate) fn release_reserved_attachment_without_effect(
         &self,
         tenant: &TenantId,

@@ -5,9 +5,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use nimbus_egress::{
-    CompiledEgressPolicy, EgressPolicy, EgressProtocol, EgressRule, LayeredEgressPolicy,
-};
+use nimbus_egress::{CompiledEgressPolicy, EgressProtocol, EgressRule, LayeredEgressPolicy};
 use pingora_core::apps::HttpServerApp;
 use pingora_core::protocols::http::ServerSession as HttpSession;
 use pingora_core::server::configuration::ServerConf;
@@ -58,6 +56,8 @@ use crate::{
 };
 
 const SHUTDOWN_ACK_TIMEOUT: Duration = Duration::from_secs(2);
+
+mod policy_reload;
 
 pub struct WorkloadPepConfig {
     pub bind_addr: SocketAddr,
@@ -350,25 +350,6 @@ impl WorkloadPep {
             })?;
         let audit_healthy = self.audit_healthy.load(Ordering::SeqCst);
         Ok(guard.readiness(audit_healthy))
-    }
-
-    pub fn reload_policy(&self, policy: CompiledEgressPolicy) -> Result<PolicyGeneration> {
-        let mut guard =
-            self.policy_state
-                .write()
-                .map_err(|_| EgressProxyError::OperationFailed {
-                    message: "egress proxy policy lock is poisoned".to_owned(),
-                })?;
-        Ok(guard.reload(policy))
-    }
-
-    pub fn reload_uncompiled_policy(&self, policy: EgressPolicy) -> Result<PolicyGeneration> {
-        let compiled = policy
-            .compile()
-            .map_err(|message| EgressProxyError::OperationFailed {
-                message: format!("invalid egress proxy policy reload: {message}"),
-            })?;
-        self.reload_policy(compiled)
     }
 
     /// Stop accepting, abort in-flight work, and wait for the worker to

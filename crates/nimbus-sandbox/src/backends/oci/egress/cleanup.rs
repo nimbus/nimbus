@@ -8,8 +8,9 @@ use super::{
     SandboxError, SandboxId, egress_proxy_error, remove_trust_anchor_file,
 };
 use crate::backends::oci::port_lease::{
-    inspect_exact, prepare_rebind_after_confirmed_stop, release, release_after_confirmed_stop,
-    require_listener_authority, withdraw,
+    inspect_exact, prepare_rebind_after_confirmed_stop,
+    prepare_rebind_after_confirmed_stop_with_lifetime, release, release_after_confirmed_stop,
+    release_with_lifetime, require_listener_authority, withdraw,
 };
 use crate::error::Result;
 
@@ -20,8 +21,14 @@ enum PepCleanupDisposition {
 }
 
 #[cfg(test)]
+type PostDurableTransitionFault = Box<dyn FnOnce() -> Result<()>>;
+
+#[cfg(test)]
 thread_local! {
     static PRE_WITHDRAW_OBSERVER: std::cell::RefCell<Option<Box<dyn Fn()>>> =
+        const { std::cell::RefCell::new(None) };
+    static POST_DURABLE_TRANSITION_FAULT:
+        std::cell::RefCell<Option<PostDurableTransitionFault>> =
         const { std::cell::RefCell::new(None) };
 }
 
@@ -39,6 +46,19 @@ fn observe_pre_withdraw() {
             observer();
         }
     });
+}
+
+#[cfg(test)]
+pub(super) fn set_post_durable_transition_fault(fault: impl FnOnce() -> Result<()> + 'static) {
+    POST_DURABLE_TRANSITION_FAULT.with(|current| {
+        *current.borrow_mut() = Some(Box::new(fault));
+    });
+}
+
+#[cfg(test)]
+fn observe_post_durable_transition() -> Result<()> {
+    POST_DURABLE_TRANSITION_FAULT
+        .with(|current| current.borrow_mut().take().map_or(Ok(()), |fault| fault()))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -383,7 +403,15 @@ impl EgressProxyRegistry {
                 })?;
             match disposition {
                 PepCleanupDisposition::Release => {
-                    release(&self.network_state_root, request)?;
+                    stop.with_attachment(|artifacts| match artifacts.lifetime.as_ref() {
+                        Some(lifetime) => {
+                            release_with_lifetime(&self.network_state_root, request, lifetime)
+                        }
+                        // Lifetime-free registrations are test-only fixtures
+                        // whose durable record carries no live owner.
+                        None => release(&self.network_state_root, request),
+                    })
+                    .map_err(egress_proxy_error)??;
                 }
                 PepCleanupDisposition::Restart => {
                     let expected_binding = expected_binding.as_ref().ok_or_else(|| {
@@ -393,13 +421,28 @@ impl EgressProxyRegistry {
                             ),
                         }
                     })?;
-                    prepare_rebind_after_confirmed_stop(
-                        &self.network_state_root,
-                        request,
-                        expected_binding,
-                    )?;
+                    stop.with_attachment(|artifacts| match artifacts.lifetime.as_ref() {
+                        Some(lifetime) => prepare_rebind_after_confirmed_stop_with_lifetime(
+                            &self.network_state_root,
+                            request,
+                            expected_binding,
+                            lifetime,
+                        ),
+                        // Durable production registrations always retain a
+                        // lifetime. The lifetime-free path exists solely for
+                        // test fixtures that intentionally omit durable
+                        // listener ownership.
+                        None => prepare_rebind_after_confirmed_stop(
+                            &self.network_state_root,
+                            request,
+                            expected_binding,
+                        ),
+                    })
+                    .map_err(egress_proxy_error)??;
                 }
             }
+            #[cfg(test)]
+            observe_post_durable_transition()?;
             stop.with_attachment_mut(|artifacts| {
                 if let Some(cleanup) = artifacts.cleanup.as_mut() {
                     cleanup.durable_transition_complete = true;

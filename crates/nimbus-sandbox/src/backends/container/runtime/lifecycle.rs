@@ -34,10 +34,14 @@ mod launch_cleanup;
 mod plan_only_inspection;
 #[path = "tests/provider_cleanup.rs"]
 mod provider_cleanup;
+#[path = "tests/runner_recovery.rs"]
+mod runner_recovery;
 #[path = "tests/runner_reliability.rs"]
 mod runner_reliability;
 #[path = "tests/status_callbacks.rs"]
 mod status_callbacks;
+#[path = "tests/terminal_finality.rs"]
+mod terminal_finality;
 
 #[test]
 fn detect_runtime_status_marks_stale_pidfiles_as_failed() {
@@ -488,6 +492,7 @@ fn machine_proxy_registry_is_tenant_qualified_for_equal_local_sandbox_ids() {
                 port_leases: Vec::new(),
                 routes: Vec::new(),
                 proxies: Vec::new(),
+                lease_authority: None,
                 publication_may_exist: false,
             }),
         );
@@ -498,6 +503,7 @@ fn machine_proxy_registry_is_tenant_qualified_for_equal_local_sandbox_ids() {
                 port_leases: Vec::new(),
                 routes: Vec::new(),
                 proxies: Vec::new(),
+                lease_authority: None,
                 publication_may_exist: false,
             }),
         );
@@ -1128,25 +1134,40 @@ fn machine_proxy_restart_waits_for_external_unexpose_before_rebind() {
         .local_addr()
         .expect("forwarder address should resolve")
         .port();
+    let configured_forwarder = sample_forwarder(forwarder_port);
+    let receipt_body = serde_json::to_vec(&serde_json::json!({
+        "outcome": "withdrawn",
+        "provider_instance": configured_forwarder.provider_instance(),
+        "provider_generation": configured_forwarder.provider_generation(),
+        "local": format!("127.0.0.1:{published_port}"),
+        "protocol": "tcp",
+    }))
+    .expect("typed withdrawal receipt should encode");
     let (request_tx, request_rx) = mpsc::channel();
     let (response_tx, response_rx) = mpsc::channel();
     let server = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().expect("unexpose should connect");
-        read_complete_http_request(&mut stream);
+        let (mut unexpose, _) = listener.accept().expect("unexpose should connect");
+        read_complete_http_request(&mut unexpose);
         request_tx
             .send(())
             .expect("unexpose receipt should be observable");
         response_rx
             .recv_timeout(Duration::from_secs(2))
             .expect("unexpose response should be released");
-        stream
-            .write_all(b"HTTP/1.0 200 OK\r\nContent-Length: 0\r\n\r\n")
-            .expect("unexpose response should write");
+        let header = format!(
+            "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n\
+             Content-Length: {}\r\n\r\n",
+            receipt_body.len()
+        );
+        unexpose
+            .write_all(header.as_bytes())
+            .and_then(|()| unexpose.write_all(&receipt_body))
+            .expect("typed unexpose response should write");
     });
 
     let temp_dir = TempDir::new().expect("tempdir should build");
     let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
-    config.machine_port_forwarder = Some(sample_forwarder(forwarder_port));
+    config.machine_port_forwarder = Some(configured_forwarder);
     let backend = ContainerSandboxBackend::new(config);
     let manifest = backend
         .plan_start_with_id(
@@ -1329,8 +1350,8 @@ fn empty_overlapping_machine_proxy_registry_keeps_live_provider_fenced() {
         )
         .expect_err("an empty overlapping registry cannot confirm provider shutdown");
     assert!(
-        ambiguity.to_string().contains("no registry entry"),
-        "the error must identify missing process-local stop evidence: {ambiguity}"
+        ambiguity.to_string().contains("live process lifetime"),
+        "the error must identify the live process-owner fence: {ambiguity}"
     );
 
     let authority =
@@ -1405,8 +1426,8 @@ fn independent_machine_backend_cannot_withdraw_another_process_provider() {
         )
         .expect_err("a backend without the provider registration must not withdraw it");
     assert!(
-        error.to_string().contains("no registry entry"),
-        "the failure must identify missing process-local provider evidence: {error}"
+        error.to_string().contains("live process lifetime"),
+        "the failure must identify the still-live foreign provider owner: {error}"
     );
 
     let authority = nimbus_network::LocalPortLeaseAuthority::open(&owner.config.state_root)
@@ -1441,6 +1462,106 @@ fn independent_machine_backend_cannot_withdraw_another_process_provider() {
             &manifest.port_leases,
         )
         .expect("confirmed provider stop may release durable authority");
+}
+
+#[test]
+fn machine_proxy_lifetime_fences_live_owner_and_recovers_after_owner_drop() {
+    let temp_dir = TempDir::new().expect("tempdir should build");
+    let port = unused_loopback_port();
+    let tenant =
+        nimbus_core::TenantId::new("tenant-machine-lifetime").expect("tenant should validate");
+    let id = SandboxId::new("machine-lifetime");
+    let spec = SandboxSpec::new(
+        tenant.clone(),
+        crate::spec::SandboxOwnerSpec::service("machine-lifetime"),
+        crate::backend::SandboxBackendKind::Container,
+        crate::spec::SandboxRootSpec::Rootfs(crate::spec::SandboxRootfsSpec::new("/tmp/rootfs")),
+        crate::spec::SandboxProcessSpec::new(["/bin/sh", "-c", "sleep 60"]),
+    )
+    .with_port_binding(SandboxPortBinding::tcp("http", port, 8080));
+    let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
+    config.machine_port_forwarder = Some(sample_forwarder(unused_loopback_port()));
+    let owner = ContainerSandboxBackend::new(config.clone());
+    let manifest = owner
+        .plan_start_with_id(&spec, &id, None, None)
+        .expect("plan should reserve the machine listener")
+        .manifest;
+    owner
+        .ensure_machine_port_proxies_running(&id, &[Ipv4Addr::LOCALHOST], &manifest)
+        .expect("owner backend should start the machine proxy");
+
+    let authority =
+        nimbus_network::LocalPortLeaseAuthority::open(&owner.config.state_root).expect("authority");
+    let active = authority
+        .inspect(manifest.port_leases[0].lease_id())
+        .expect("lease should inspect")
+        .expect("lease should remain durable");
+    let lifetime = active
+        .active_lifetime()
+        .expect("every machine provider effect must retain a process-owner generation");
+    assert_eq!(
+        lifetime.effect_scope(),
+        nimbus_network::PortLeaseEffectScope::ProviderManaged,
+        "the external machine publication may outlive its process coordinator"
+    );
+
+    let recovery = ContainerSandboxBackend::new(config);
+    let live_error = match recovery.begin_machine_port_proxy_release(
+        &tenant,
+        &id,
+        &manifest.spec.port_bindings,
+        &manifest.port_leases,
+    ) {
+        Ok(_) => panic!("a second coordinator must fail closed while the lifetime owner is live"),
+        Err(error) => error,
+    };
+    assert!(
+        live_error.to_string().contains("live process lifetime"),
+        "live-owner rejection must identify the exact lifetime fence: {live_error}"
+    );
+    assert_eq!(
+        authority
+            .inspect(manifest.port_leases[0].lease_id())
+            .expect("lease should inspect")
+            .expect("lease should remain durable")
+            .phase(),
+        nimbus_network::PortLeasePhase::Active,
+        "a live-owner recovery attempt must not mutate durable authority"
+    );
+
+    drop(owner);
+    let cleanup = recovery
+        .begin_machine_port_proxy_release(
+            &tenant,
+            &id,
+            &manifest.spec.port_bindings,
+            &manifest.port_leases,
+        )
+        .expect("one successor should acquire dead-owner recovery")
+        .expect("dead provider-managed authority requires exact cleanup");
+    assert_eq!(
+        authority
+            .inspect(manifest.port_leases[0].lease_id())
+            .expect("lease should inspect")
+            .expect("lease should remain durable")
+            .phase(),
+        nimbus_network::PortLeasePhase::CleanupPending,
+        "owner death must quarantine provider-managed authority before inspection"
+    );
+    recovery
+        .confirm_machine_port_proxy_publication_absent(&cleanup)
+        .expect("test provider should authenticate exact publication absence");
+    recovery
+        .complete_machine_port_proxy_cleanup(&cleanup)
+        .expect("exact absence should complete dead-owner cleanup");
+    assert_eq!(
+        authority
+            .inspect(manifest.port_leases[0].lease_id())
+            .expect("lease should inspect")
+            .expect("lease should remain durable")
+            .phase(),
+        nimbus_network::PortLeasePhase::Released
+    );
 }
 
 #[test]
@@ -1685,7 +1806,7 @@ fn absent_machine_registry_accepts_only_an_entire_terminal_no_effect_batch() {
     ];
     let reservation_claim = crate::backends::oci::port_lease::new_launch_reservation_claim()
         .expect("terminal batch launch claim should mint");
-    let reservations = manager
+    let mut reservations = manager
         .reserve_launch_ports_for_sandbox(
             crate::backends::oci::port_manager::SandboxLaunchPortPlan::new(
                 &tenant,
@@ -1696,6 +1817,9 @@ fn absent_machine_registry_accepts_only_an_entire_terminal_no_effect_batch() {
             &reservation_claim,
         )
         .expect("terminal batch should reserve atomically");
+    reservations
+        .confirm_manifest_published()
+        .expect("fixture should publish its exact launch request set");
     manager
         .release_never_bound_requests(
             std::slice::from_ref(&reservations.published_leases[0]),

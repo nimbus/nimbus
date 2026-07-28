@@ -1,20 +1,30 @@
+use std::net::{Ipv4Addr, SocketAddrV4, TcpListener};
 use std::num::NonZeroU16;
 use std::time::Duration;
 
 use nimbus_network::{
     ListenerId, LocalPortLeaseAuthority, NetworkLeaseEpoch, NetworkProviderHandle,
-    NetworkProviderId, NetworkResourceGeneration, NetworkResourceId, PortBindClaim, PortBindRealm,
-    PortBindTarget, PortBindingProvenance, PortBindingSpec, PortBoundEndpoint, PortExposure,
-    PortLeaseBinding, PortLeaseError, PortLeaseId, PortLeasePhase, PortLeaseRequest, PortProtocol,
-    PortRequestMode,
+    NetworkProviderId, NetworkReservationClaim, NetworkReservationLifetimeAttempt,
+    NetworkResourceGeneration, NetworkResourceId, PortBindClaim, PortBindRealm, PortBindTarget,
+    PortBindingProvenance, PortBindingSpec, PortBoundEndpoint, PortExposure, PortLeaseBinding,
+    PortLeaseEffectScope, PortLeaseError, PortLeaseId, PortLeasePhase, PortLeaseRecoveryAttempt,
+    PortLeaseRequest, PortProtocol, PortRequestMode,
 };
 use nimbus_testing::{
-    ContentionOutcome, ProcessRoleSpec, TwoProcessContentionHarness, run_contention_child,
+    ContentionOutcome, ProcessRoleSpec, SubprocessCrashCutHarness, TwoProcessContentionHarness,
+    run_contention_child, run_crash_cut_child, run_crash_recovery_child,
 };
 
 const CHILD_TEST: &str = "network_port_lease_child";
+const RECOVERY_CHILD_TEST: &str = "network_port_lease_recovery_child";
 const MODE_ENV: &str = "NIMBUS_NETWORK_PORT_LEASE_TEST_MODE";
 const PORT: u16 = 41_473;
+const ACTIVE_LISTENER_BOUNDARY: &str = "network.port-lease.active-listener-owned";
+const RECOVERED_LISTENER_OBSERVATION: &str = "kernel-free:lease-released:replacement-reserved";
+const ABANDONED_RESERVATION_BOUNDARY: &str =
+    "network.port-lease.reserved-before-manifest-publication";
+const RECOVERED_RESERVATION_OBSERVATION: &str =
+    "lifetime-dead:no-effect-authenticated:lease-released:replacement-reserved";
 
 #[test]
 fn two_real_processes_cannot_reserve_the_same_host_port() {
@@ -143,6 +153,40 @@ fn two_real_processes_same_request_get_exactly_one_bind_attempt_claim() {
 }
 
 #[test]
+fn fresh_process_reconciles_a_dead_process_owned_listener_before_port_reuse() {
+    let root = tempfile::tempdir().expect("state root should exist");
+    SubprocessCrashCutHarness::new(Duration::from_secs(5))
+        .run(
+            root.path(),
+            ACTIVE_LISTENER_BOUNDARY,
+            RECOVERED_LISTENER_OBSERVATION,
+            recovery_child("active-listener-owner", "crash-active-listener"),
+            recovery_child("fresh-listener-reconciler", "recover-active-listener"),
+        )
+        .unwrap_or_else(|error| panic!("dead-listener recovery failed: {error}"));
+}
+
+#[test]
+fn fresh_process_releases_only_an_abandoned_never_bound_reservation() {
+    let root = tempfile::tempdir().expect("state root should exist");
+    SubprocessCrashCutHarness::new(Duration::from_secs(5))
+        .run(
+            root.path(),
+            ABANDONED_RESERVATION_BOUNDARY,
+            RECOVERED_RESERVATION_OBSERVATION,
+            recovery_child(
+                "reservation-publication-owner",
+                "crash-reserved-before-publication",
+            ),
+            recovery_child(
+                "fresh-reservation-reconciler",
+                "recover-abandoned-reservation",
+            ),
+        )
+        .unwrap_or_else(|error| panic!("abandoned-reservation recovery failed: {error}"));
+}
+
+#[test]
 #[ignore = "spawned only by the real-process port-lease contention parent"]
 fn network_port_lease_child() {
     let mode = std::env::var(MODE_ENV).expect("child test mode should be set");
@@ -229,6 +273,196 @@ fn network_port_lease_child() {
     .unwrap_or_else(|error| panic!("port-lease child failed: {error}"));
 }
 
+#[test]
+#[ignore = "spawned only by the real-process port-lease recovery parent"]
+fn network_port_lease_recovery_child() {
+    let mode = std::env::var(MODE_ENV).expect("child test mode should be set");
+    match mode.as_str() {
+        "crash-active-listener" => run_crash_cut_child(|context| {
+            let authority = LocalPortLeaseAuthority::open(context.state_root())
+                .map_err(|error| format!("failed to open crash-owned authority: {error}"))?;
+            let request = recovery_request("alpha", PortRequestMode::ProviderAssigned);
+            authority
+                .reserve(request.clone())
+                .map_err(|error| format!("failed to reserve crash-owned lease: {error}"))?;
+            let claim = bind_claim("alpha");
+            let lifetime = authority
+                .claim_bind_with_lifetime(
+                    &request,
+                    None,
+                    claim.clone(),
+                    PortLeaseEffectScope::ProcessBound,
+                )
+                .map_err(|error| {
+                    format!("failed to claim crash-owned bind and lifetime: {error}")
+                })?;
+            let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
+                .map_err(|error| format!("failed to bind crash-owned listener: {error}"))?;
+            let actual_port = NonZeroU16::new(
+                listener
+                    .local_addr()
+                    .map_err(|error| format!("failed to inspect crash-owned listener: {error}"))?
+                    .port(),
+            )
+            .ok_or_else(|| "crash-owned listener reported port zero".to_owned())?;
+            authority
+                .adopt_claimed_and_activate_with_lifetime(
+                    &request,
+                    None,
+                    &claim,
+                    recovery_binding("alpha", actual_port),
+                    &lifetime,
+                )
+                .map_err(|error| {
+                    format!("failed to adopt and activate crash-owned listener: {error}")
+                })?;
+            context.reach_boundary(ACTIVE_LISTENER_BOUNDARY)?;
+            drop(listener);
+            Err("crash child resumed after the parent-owned kill boundary".to_owned())
+        })
+        .unwrap_or_else(|error| panic!("active-listener crash child failed: {error}")),
+        "recover-active-listener" => run_crash_recovery_child(|context| {
+            let authority = LocalPortLeaseAuthority::open(context.state_root())
+                .map_err(|error| format!("failed to reopen port authority: {error}"))?;
+            let active = authority
+                .inspect(&lease_id("alpha"))
+                .map_err(|error| format!("failed to inspect crash-owned lease: {error}"))?
+                .ok_or_else(|| "crash-owned lease disappeared".to_owned())?;
+            if active.phase() != PortLeasePhase::Active {
+                return Err(format!(
+                    "crash-owned lease should remain Active before reconciliation, got {:?}",
+                    active.phase()
+                ));
+            }
+            let actual_port = active
+                .reserved_port()
+                .ok_or_else(|| "active crash-owned lease omitted its actual port".to_owned())?;
+            let request = recovery_request("alpha", PortRequestMode::ProviderAssigned);
+            let PortLeaseRecoveryAttempt::Acquired(recovery) = authority
+                .recover_dead_lifetime(&request)
+                .map_err(|error| format!("failed to acquire dead-owner recovery: {error}"))?
+            else {
+                return Err("killed listener owner was still reported live or settled".to_owned());
+            };
+            authority
+                .mark_cleanup_pending_after_owner_death(&request, &recovery)
+                .map_err(|error| format!("failed to quarantine dead listener: {error}"))?;
+            authority
+                .release_process_bound_after_owner_death(&request, &recovery)
+                .map_err(|error| format!("failed to release dead process binding: {error}"))?;
+
+            let replacement = recovery_request("beta", PortRequestMode::Exact(actual_port));
+            match authority.reserve(replacement) {
+                Ok(_) => {
+                    let replacement_listener = TcpListener::bind(SocketAddrV4::new(
+                        Ipv4Addr::LOCALHOST,
+                        actual_port.get(),
+                    ))
+                    .map_err(|error| {
+                        format!(
+                            "released process-bound listener should permit the replacement bind \
+                             on port {actual_port}: {error}"
+                        )
+                    })?;
+                    drop(replacement_listener);
+                    Ok(RECOVERED_LISTENER_OBSERVATION.to_owned())
+                }
+                Err(PortLeaseError::PortConflict { .. }) => {
+                    Ok("kernel-free:lease-active:replacement-conflict".to_owned())
+                }
+                Err(error) => Err(format!(
+                    "unexpected replacement reservation outcome after owner death: {error}"
+                )),
+            }
+        })
+        .unwrap_or_else(|error| panic!("active-listener recovery child failed: {error}")),
+        "crash-reserved-before-publication" => run_crash_cut_child(|context| {
+            let authority = LocalPortLeaseAuthority::open(context.state_root())
+                .map_err(|error| format!("failed to open reservation authority: {error}"))?;
+            let claim = launch_reservation_claim();
+            let _lifetime = match authority
+                .try_acquire_reservation_lifetime(&claim)
+                .map_err(|error| format!("failed to acquire publication lifetime: {error}"))?
+            {
+                NetworkReservationLifetimeAttempt::Acquired(lifetime) => lifetime,
+                NetworkReservationLifetimeAttempt::LiveOwner => {
+                    return Err("first publication coordinator unexpectedly contended".to_owned());
+                }
+            };
+            authority
+                .reserve_batch_for_coordinator(
+                    vec![recovery_request(
+                        "alpha",
+                        PortRequestMode::Exact(port(PORT)),
+                    )],
+                    &claim,
+                )
+                .map_err(|error| format!("failed to reserve pre-publication lease: {error}"))?;
+            context.reach_boundary(ABANDONED_RESERVATION_BOUNDARY)?;
+            Err("reservation child resumed after the parent-owned kill boundary".to_owned())
+        })
+        .unwrap_or_else(|error| panic!("reservation crash child failed: {error}")),
+        "recover-abandoned-reservation" => run_crash_recovery_child(|context| {
+            let authority = LocalPortLeaseAuthority::open(context.state_root())
+                .map_err(|error| format!("failed to reopen reservation authority: {error}"))?;
+            let request = recovery_request("alpha", PortRequestMode::Exact(port(PORT)));
+            let retained = authority
+                .inspect(request.lease_id())
+                .map_err(|error| format!("failed to inspect abandoned reservation: {error}"))?
+                .ok_or_else(|| "abandoned reservation disappeared".to_owned())?;
+            if retained.phase() != PortLeasePhase::Reserved
+                || retained.bind_claim().is_some()
+                || retained.binding().is_some()
+                || retained.failure().is_some()
+            {
+                return Err(format!(
+                    "fresh recovery requires exact never-bound evidence, found {retained:?}"
+                ));
+            }
+            let claim = launch_reservation_claim();
+            let lifetime = match authority
+                .try_acquire_reservation_lifetime(&claim)
+                .map_err(|error| format!("failed to inspect dead publication lifetime: {error}"))?
+            {
+                NetworkReservationLifetimeAttempt::Acquired(lifetime) => lifetime,
+                NetworkReservationLifetimeAttempt::LiveOwner => {
+                    return Err("killed publication coordinator was still reported live".to_owned());
+                }
+            };
+            let released = authority
+                .release_reserved_batch_without_effect_with_lifetime(
+                    std::slice::from_ref(&request),
+                    &lifetime,
+                )
+                .map_err(|error| {
+                    format!("failed to release exact never-bound reservation: {error}")
+                })?;
+            if released[0].phase() != PortLeasePhase::Released {
+                return Err(format!(
+                    "abandoned reservation should be Released, got {:?}",
+                    released[0].phase()
+                ));
+            }
+            let replayed = authority
+                .release_reserved_batch_without_effect_with_lifetime(&[request], &lifetime)
+                .map_err(|error| format!("exact release replay failed: {error}"))?;
+            if replayed != released {
+                return Err(
+                    "exact abandoned-reservation replay changed durable evidence".to_owned(),
+                );
+            }
+            authority
+                .reserve(recovery_request("beta", PortRequestMode::Exact(port(PORT))))
+                .map_err(|error| {
+                    format!("released reservation should permit replacement: {error}")
+                })?;
+            Ok(RECOVERED_RESERVATION_OBSERVATION.to_owned())
+        })
+        .unwrap_or_else(|error| panic!("abandoned-reservation recovery child failed: {error}")),
+        other => panic!("unknown port-lease recovery child mode {other:?}"),
+    }
+}
+
 fn child(role: &str, mode: &str) -> ProcessRoleSpec {
     ProcessRoleSpec::new(
         role,
@@ -239,6 +473,28 @@ fn child(role: &str, mode: &str) -> ProcessRoleSpec {
     .arg("--ignored")
     .arg("--nocapture")
     .env(MODE_ENV, mode)
+}
+
+fn recovery_child(role: &str, mode: &str) -> ProcessRoleSpec {
+    ProcessRoleSpec::new(
+        role,
+        std::env::current_exe().expect("current test executable should resolve"),
+    )
+    .arg("--exact")
+    .arg(RECOVERY_CHILD_TEST)
+    .arg("--ignored")
+    .arg("--nocapture")
+    .env(MODE_ENV, mode)
+}
+
+fn launch_reservation_claim() -> NetworkReservationClaim {
+    NetworkReservationClaim::new(
+        NetworkProviderHandle::new(
+            NetworkProviderId::for_registration_key("nimbus-testing.launch-reservation"),
+            "attempt:nnc3.8-a6",
+        )
+        .expect("fixture launch reservation claim should validate"),
+    )
 }
 
 fn request(role: &str, port_request: PortRequestMode) -> PortLeaseRequest {
@@ -257,6 +513,27 @@ fn request(role: &str, port_request: PortRequestMode) -> PortLeaseRequest {
             PortBindRealm::Host,
             PortBindTarget::ipv4_wildcard(),
             PortExposure::Unknown,
+            port_request,
+        ),
+    )
+}
+
+fn recovery_request(role: &str, port_request: PortRequestMode) -> PortLeaseRequest {
+    PortLeaseRequest::new(
+        lease_id(role),
+        owner_id(role),
+        None,
+        nimbus_network::PortLeaseFence::new(
+            NetworkResourceGeneration::new(7),
+            NetworkLeaseEpoch::new(11),
+        ),
+        nimbus_network::PortLeaseAccounting::HostInternal,
+        nimbus_network::PortPublicationIntent::Unpublished,
+        PortBindingSpec::new(
+            PortProtocol::Tcp,
+            PortBindRealm::Host,
+            PortBindTarget::ipv4_specific(Ipv4Addr::LOCALHOST),
+            PortExposure::Loopback,
             port_request,
         ),
     )
@@ -306,6 +583,24 @@ fn binding(role: &str, provenance: PortBindingProvenance) -> PortLeaseBinding {
         provenance,
         NetworkProviderHandle::new(provider_id, format!("process-{role}"))
             .expect("fixture provider handle should validate"),
+    )
+}
+
+fn recovery_binding(role: &str, actual_port: NonZeroU16) -> PortLeaseBinding {
+    let provider_id: NetworkProviderId = "netprovider_01ARZ3NDEKTSV4RRFFQ69G5FAV"
+        .parse()
+        .expect("fixture provider id should parse");
+    PortLeaseBinding::new(
+        PortBoundEndpoint::new(
+            PortProtocol::Tcp,
+            PortBindRealm::Host,
+            PortBindTarget::ipv4_specific(Ipv4Addr::LOCALHOST),
+            actual_port,
+        )
+        .expect("fixture recovery endpoint should validate"),
+        PortBindingProvenance::ProviderAssigned,
+        NetworkProviderHandle::new(provider_id, format!("process-{role}"))
+            .expect("fixture recovery provider handle should validate"),
     )
 }
 

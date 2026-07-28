@@ -6,6 +6,7 @@ mod config;
 mod creator;
 mod direct_execution;
 mod effect_fence;
+mod egress_reload;
 mod execution_cleanup;
 mod launch;
 mod machine_ports;
@@ -47,7 +48,9 @@ use crate::backends::oci::network::{
     remove_persistent_network_namespace, setup_container_network, teardown_container_network,
 };
 use crate::backends::oci::port_lease::new_launch_reservation_claim;
-use crate::backends::oci::port_manager::{ReservedLaunchPorts, SandboxLaunchPortPlan};
+use crate::backends::oci::port_manager::{
+    NetavarkPortLifetimeRegistry, ReservedLaunchPorts, SandboxLaunchPortPlan,
+};
 use crate::backends::oci::resource_quota::ResourceQuotaManager;
 use crate::error::{Result, SandboxError};
 use crate::instance::{SandboxHandle, SandboxId, SandboxStatus};
@@ -76,6 +79,7 @@ pub struct ContainerSandboxBackend {
     config: ContainerSandboxBackendConfig,
     segment_allocator: Arc<OciSegmentAllocator>,
     egress_proxies: EgressProxyRegistry,
+    netavark_port_lifetimes: NetavarkPortLifetimeRegistry,
     machine_port_proxies: Arc<Mutex<MachinePortProxyRegistry>>,
     startup_reconciliation_error: Option<Arc<str>>,
     #[cfg(test)]
@@ -84,6 +88,8 @@ pub struct ContainerSandboxBackend {
     runner_handoff_failure: Option<RunnerHandoffFailure>,
     #[cfg(test)]
     runner_lifecycle_lock_test_probe: Option<RunnerLifecycleLockTestProbe>,
+    #[cfg(test)]
+    post_egress_reload_ack_observer: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 #[cfg(test)]
@@ -160,6 +166,7 @@ impl ContainerSandboxBackend {
             config,
             segment_allocator,
             egress_proxies,
+            netavark_port_lifetimes: NetavarkPortLifetimeRegistry::default(),
             machine_port_proxies: Arc::new(Mutex::new(MachinePortProxyRegistry::new())),
             startup_reconciliation_error,
             #[cfg(test)]
@@ -168,6 +175,8 @@ impl ContainerSandboxBackend {
             runner_handoff_failure: None,
             #[cfg(test)]
             runner_lifecycle_lock_test_probe: None,
+            #[cfg(test)]
+            post_egress_reload_ack_observer: None,
         }
     }
 
@@ -202,46 +211,6 @@ impl ContainerSandboxBackend {
     ) -> Self {
         self.runner_lifecycle_lock_test_probe = Some(probe);
         self
-    }
-
-    pub fn reload_egress_policy(&self, id: &SandboxId, egress: EgressPolicy) -> Result<()> {
-        let compiled = egress
-            .compile()
-            .map_err(|message| SandboxError::InvalidSpec { message })?;
-        let Some(manifest) = self.read_manifest(id)? else {
-            return Err(SandboxError::NotFound {
-                sandbox_id: id.as_str().to_owned(),
-            });
-        };
-        if manifest.start_mode != ContainerStartMode::Execute {
-            return Err(SandboxError::InvalidSpec {
-                message: "container egress live reload requires execute-mode sandbox".to_owned(),
-            });
-        }
-        self.ensure_startup_reconciliation_ready()?;
-        let (_lifecycle, mut manifest) =
-            runner::lock_current_execute_lifecycle_for_backend(self, &manifest)?;
-        if let Some(phase) = runner::execute_handoff_phase(&manifest)? {
-            return Err(SandboxError::OperationFailed {
-                message: format!(
-                    "container egress live reload for {id} requires published lifecycle \
-                     ownership; runner handoff remains in {phase:?}"
-                ),
-            });
-        }
-        if manifest.launch_reservation_claim.is_some() {
-            return Err(SandboxError::OperationFailed {
-                message: format!(
-                    "container egress live reload for {id} requires published lifecycle \
-                     ownership; the launch reservation remains before provider effects"
-                ),
-            });
-        }
-        manifest.spec.egress = compiled.policy().clone();
-        self.ensure_egress_proxy_running(&manifest)?;
-        self.egress_proxies
-            .reload(&manifest.spec.tenant_id, id, compiled)?;
-        self.write_manifest(&manifest)
     }
 
     fn remove_tenant_artifacts_sync(&self, tenant_id: &nimbus_core::TenantId) -> Result<()> {
@@ -496,7 +465,7 @@ impl ContainerSandboxBackend {
         )?;
         launch_plan.manifest.network_config = Some(network_config.clone());
         let internal_listener = egress_listener_reservation(&network_config)?;
-        let reservations = manager.reserve_launch_ports_for_sandbox(
+        let mut reservations = manager.reserve_launch_ports_for_sandbox(
             SandboxLaunchPortPlan::new(
                 &launch_plan.manifest.spec.tenant_id,
                 &launch_plan.manifest.handle.id,
@@ -537,7 +506,9 @@ impl ContainerSandboxBackend {
             )?;
             self.write_manifest(&launch_plan.manifest)
         })();
-        update_result.map(|()| reservations)
+        update_result?;
+        reservations.confirm_manifest_published()?;
+        Ok(reservations)
     }
 
     fn begin_launch_reservation(
@@ -710,6 +681,7 @@ impl ContainerSandboxBackend {
         if manifest.start_mode == ContainerStartMode::Execute {
             if let Some(phase) = runner::execute_handoff_phase(&manifest)? {
                 if phase == runner::RunnerHandoffPhase::ClaimedBeforeEffects {
+                    self.reconcile_pending_creator_before_cleanup(&mut manifest)?;
                     let cleanup_complete = manifest.status == SandboxStatus::Stopped
                         && manifest.has_terminal_network_finality();
                     if !cleanup_complete {
@@ -728,13 +700,27 @@ impl ContainerSandboxBackend {
                     )?;
                     return Ok(());
                 }
-                return Err(SandboxError::OperationFailed {
-                    message: format!(
-                        "container workload {id} is owned by runner handoff phase {phase:?}; \
-                         external teardown remains fenced"
-                    ),
-                });
+                if phase == runner::RunnerHandoffPhase::EffectsStarted {
+                    let outcome = runner::reconcile_runner_effects_started(
+                        self,
+                        &mut manifest,
+                        execute_handoff
+                            .as_ref()
+                            .expect("execute manifest must own its lifecycle lock"),
+                    )?;
+                    if outcome == runner::RunnerEffectOutcome::Absent {
+                        return Ok(());
+                    }
+                } else {
+                    return Err(SandboxError::OperationFailed {
+                        message: format!(
+                            "container workload {id} is owned by runner handoff phase {phase:?}; \
+                             external teardown remains fenced"
+                        ),
+                    });
+                }
             }
+            self.reconcile_pending_creator_before_cleanup(&mut manifest)?;
             if manifest.has_terminal_network_finality() {
                 self.reconcile_terminal_ipam_retirement(&manifest)?;
                 return Ok(());
@@ -904,10 +890,13 @@ impl ContainerSandboxBackend {
                 network_config: None,
                 network_cleanup_complete: false,
                 creator_handoff: ContainerCreatorHandoffState::NotSpawned,
+                runner_handoff_id: None,
                 requested_port_bindings,
                 port_leases: Vec::new(),
                 launch_reservation_claim: None,
                 egress_proxy: None,
+                egress_policy_reload:
+                    crate::backends::oci::egress::EgressPolicyReloadState::initial(),
                 conmon_launch,
                 runner_config: ContainerRunnerExecutionConfig::from_backend_config(&self.config),
                 last_exit_code: None,
@@ -944,7 +933,7 @@ impl ContainerSandboxBackend {
                     &reservation_claim,
                 )?;
                 let internal_listener = egress_listener_reservation(&network_config)?;
-                let reservations = manager.reserve_launch_ports_for_sandbox(
+                let mut reservations = manager.reserve_launch_ports_for_sandbox(
                     SandboxLaunchPortPlan::new(
                         &plan.manifest.spec.tenant_id,
                         sandbox_id,
@@ -962,8 +951,8 @@ impl ContainerSandboxBackend {
                     }
                 })?;
                 let egress_proxy = egress_proxy_assignment(&network_config, internal)?;
-                plan.manifest.spec.port_bindings = reservations.published_bindings;
-                plan.manifest.port_leases = reservations.published_leases;
+                plan.manifest.spec.port_bindings = reservations.published_bindings.clone();
+                plan.manifest.port_leases = reservations.published_leases.clone();
                 plan.manifest.network_config = Some(network_config);
                 plan.manifest.egress_proxy = Some(egress_proxy);
                 let status = plan.manifest.status;
@@ -981,7 +970,8 @@ impl ContainerSandboxBackend {
                         plan.manifest.egress_proxy.as_ref(),
                     )?,
                 )?;
-                self.write_manifest(&plan.manifest)
+                self.write_manifest(&plan.manifest)?;
+                reservations.confirm_manifest_published()
             })();
             if let Err(error) = planning_result {
                 let cleanup = self
@@ -1251,14 +1241,14 @@ impl ContainerSandboxBackend {
         // Reuse the config resolved + persisted at manifest-prepare; never
         // reassign it so setup and teardown agree on the bridge.
         create_persistent_network_namespace(&manifest.network_layout.netns_path)?;
-        let netavark_claims = if runner_config.machine_port_forwarder.is_none() {
-            match port_manager.claim_netavark_bindings(
+        let mut netavark_lifetimes = if runner_config.machine_port_forwarder.is_none() {
+            match port_manager.claim_netavark_bindings_with_lifetimes(
                 &manifest.spec.tenant_id,
                 &manifest.handle.id,
                 &manifest.spec.port_bindings,
                 &manifest.port_leases,
             ) {
-                Ok(claims) => Some(claims),
+                Ok(batch) => Some(batch),
                 Err(error) => {
                     let _ =
                         remove_persistent_network_namespace(&manifest.network_layout.netns_path);
@@ -1268,30 +1258,48 @@ impl ContainerSandboxBackend {
         } else {
             None
         };
-        let assigned_ips = self.complete_network_setup(
-            manifest,
+        let setup = setup_container_network(
+            &manifest.network_layout,
             &network_config,
+            &manifest.handle.id,
+            manifest.spec.display_name(),
+            &hostname_for(&manifest.spec),
+            &manifest.spec.port_bindings,
             runner_config.machine_port_forwarder.as_ref(),
-            setup_container_network(
-                &manifest.network_layout,
-                &network_config,
-                &manifest.handle.id,
-                manifest.spec.display_name(),
-                &hostname_for(&manifest.spec),
-                &manifest.spec.port_bindings,
-                runner_config.machine_port_forwarder.as_ref(),
-            ),
-        )?;
-        if let Some(claims) = netavark_claims.as_deref()
-            && let Err(error) = port_manager.activate_netavark_bindings(
+        );
+        let assigned_ips = match setup {
+            Ok(assigned_ips) => assigned_ips,
+            Err(error) => {
+                return Err(match netavark_lifetimes.take() {
+                    Some(batch) => {
+                        self.failed_netavark_configuration(manifest, &network_config, batch, error)
+                    }
+                    None => self.failed_network_configuration(
+                        manifest,
+                        &network_config,
+                        runner_config.machine_port_forwarder.as_ref(),
+                        error,
+                    ),
+                });
+            }
+        };
+        if let Some(batch) = netavark_lifetimes.as_ref()
+            && let Err(error) = port_manager.activate_netavark_bindings_with_lifetimes(
                 &manifest.spec.tenant_id,
                 &manifest.handle.id,
                 &manifest.spec.port_bindings,
                 &manifest.port_leases,
-                claims,
+                batch,
             )
         {
-            return Err(self.failed_network_configuration(manifest, &network_config, None, error));
+            return Err(self.failed_netavark_configuration(
+                manifest,
+                &network_config,
+                netavark_lifetimes
+                    .take()
+                    .expect("Netavark activation branch retains its lifetime batch"),
+                error,
+            ));
         }
         // Pin the netns so the ONLY reachable egress is this sandbox's own PEP.
         // The netavark deny is route-based, but the shared bridge gateway is
@@ -1303,12 +1311,17 @@ impl ContainerSandboxBackend {
         if let Some(proxy) = manifest.egress_proxy.as_ref()
             && let Err(error) = pin_netns_egress_to_own_proxy(&manifest.network_layout, proxy)
         {
-            return Err(self.failed_network_configuration(
-                manifest,
-                &network_config,
-                runner_config.machine_port_forwarder.as_ref(),
-                error,
-            ));
+            return Err(match netavark_lifetimes.take() {
+                Some(batch) => {
+                    self.failed_netavark_configuration(manifest, &network_config, batch, error)
+                }
+                None => self.failed_network_configuration(
+                    manifest,
+                    &network_config,
+                    runner_config.machine_port_forwarder.as_ref(),
+                    error,
+                ),
+            });
         }
         if let Some(forwarder) = runner_config.machine_port_forwarder.as_ref()
             && let Err(error) = self.ensure_machine_port_proxies_running_with_publication(
@@ -1326,12 +1339,43 @@ impl ContainerSandboxBackend {
                 error,
             ));
         }
+        if let Some(batch) = netavark_lifetimes.take()
+            && let Err((error, batch)) = self.netavark_port_lifetimes.insert(
+                &manifest.spec.tenant_id,
+                &manifest.handle.id,
+                batch,
+            )
+        {
+            return Err(self.failed_netavark_configuration(
+                manifest,
+                &network_config,
+                batch,
+                error,
+            ));
+        }
         // Take the tenant's refcount hold now the netns is up and pinned; the
         // reaper frees the index + bridge when the last hold releases.
-        self.segment_allocator.acquire(
+        if let Err(error) = self.segment_allocator.acquire(
             &manifest.spec.tenant_id,
             &default_network_attachment_id(&manifest.handle.id),
-        )?;
+        ) {
+            return Err(
+                match self
+                    .netavark_port_lifetimes
+                    .take(&manifest.spec.tenant_id, &manifest.handle.id)?
+                {
+                    Some(batch) => {
+                        self.failed_netavark_configuration(manifest, &network_config, batch, error)
+                    }
+                    None => self.failed_network_configuration(
+                        manifest,
+                        &network_config,
+                        runner_config.machine_port_forwarder.as_ref(),
+                        error,
+                    ),
+                },
+            );
+        }
         Ok(())
     }
 

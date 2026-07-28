@@ -19,7 +19,9 @@ fn explicitly_absent_container_runtime_without_receipts_withdraws_ready_projecti
         .manifest;
     manifest.launch_reservation_claim = None;
     manifest.creator_handoff = ContainerCreatorHandoffState::RuntimeObserved {
-        attempt_id: "runtime-observed-fixture".to_owned(),
+        receipt: crate::backends::conmon::creator::CreatorAttemptReceipt::for_test(
+            "runtime-observed-fixture",
+        ),
     };
     synchronize_handle_status(&mut manifest, SandboxStatus::Ready);
     manifest.conmon_launch.state_command = CommandSpec::new("/bin/sh").args([

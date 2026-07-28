@@ -3,7 +3,8 @@
 use super::support::*;
 
 use nimbus_network::{
-    LocalPortLeaseAuthority, NetworkProviderHandle, NetworkProviderId, NetworkReservationClaim,
+    LocalNetworkStateStore, LocalPortLeaseAuthority, NetworkProviderHandle, NetworkProviderId,
+    NetworkReservationClaim, NetworkReservationLifetimeAttempt, NetworkStatePartition,
     PortLeasePhase,
 };
 use std::sync::Arc;
@@ -45,6 +46,35 @@ fn mark_provider_owned(
     let claim = adopt_launch_network(backend, manifest);
     manifest.launch_authority = KrunLaunchAuthority::ProviderOwned;
     claim
+}
+
+fn activate_netavark_with_live_lifetimes(
+    backend: &KrunSandboxBackend,
+    manifest: &KrunSandboxManifest,
+) {
+    let port_manager = backend.port_manager();
+    let lifetimes = port_manager
+        .claim_netavark_bindings_with_lifetimes(
+            &manifest.spec.tenant_id,
+            &manifest.handle.id,
+            &manifest.spec.port_bindings,
+            &manifest.port_leases,
+        )
+        .expect("Netavark bind attempt should retain exact live lifetimes");
+    port_manager
+        .activate_netavark_bindings_with_lifetimes(
+            &manifest.spec.tenant_id,
+            &manifest.handle.id,
+            &manifest.spec.port_bindings,
+            &manifest.port_leases,
+            &lifetimes,
+        )
+        .expect("test provider evidence should activate under its exact lifetimes");
+    backend
+        .netavark_port_lifetimes
+        .insert(&manifest.spec.tenant_id, &manifest.handle.id, lifetimes)
+        .map_err(|(error, _batch)| error)
+        .expect("fixture should retain the active Netavark lifetime batch");
 }
 
 #[test]
@@ -221,24 +251,7 @@ fn restart_teardown_returns_confirmed_absent_netavark_bindings_to_reserved() {
         .expect("execute launch should reserve published listeners")
         .manifest;
     mark_provider_owned(&backend, &mut manifest);
-    let port_manager = backend.port_manager();
-    let claims = port_manager
-        .claim_netavark_bindings(
-            &manifest.spec.tenant_id,
-            &manifest.handle.id,
-            &manifest.spec.port_bindings,
-            &manifest.port_leases,
-        )
-        .expect("Netavark bind attempt should be durable");
-    port_manager
-        .activate_netavark_bindings(
-            &manifest.spec.tenant_id,
-            &manifest.handle.id,
-            &manifest.spec.port_bindings,
-            &manifest.port_leases,
-            &claims,
-        )
-        .expect("test provider evidence should activate");
+    activate_netavark_with_live_lifetimes(&backend, &manifest);
     manifest.egress_proxy = None;
 
     backend
@@ -310,24 +323,7 @@ fn restart_reset_keeps_exit_receipt_until_stale_pidfiles_are_removed() {
         .expect("execute launch should reserve published listeners")
         .manifest;
     mark_provider_owned(&backend, &mut manifest);
-    let port_manager = backend.port_manager();
-    let claims = port_manager
-        .claim_netavark_bindings(
-            &manifest.spec.tenant_id,
-            &manifest.handle.id,
-            &manifest.spec.port_bindings,
-            &manifest.port_leases,
-        )
-        .expect("Netavark bind attempt should become durable");
-    port_manager
-        .activate_netavark_bindings(
-            &manifest.spec.tenant_id,
-            &manifest.handle.id,
-            &manifest.spec.port_bindings,
-            &manifest.port_leases,
-            &claims,
-        )
-        .expect("test provider evidence should activate");
+    activate_netavark_with_live_lifetimes(&backend, &manifest);
     manifest.egress_proxy = None;
     manifest.conmon_launch.delete_command = CommandSpec::new("/usr/bin/false");
     manifest.conmon_launch.state_command = CommandSpec::new("/bin/sh").args([
@@ -427,7 +423,7 @@ fn restart_reset_keeps_exit_receipt_until_stale_pidfiles_are_removed() {
 }
 
 #[test]
-fn restart_launch_failure_after_netavark_claim_releases_only_after_confirmed_detach() {
+fn dead_restart_netavark_claim_returns_to_reserved_before_terminal_release() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::under_root(
         temp_dir.path().to_path_buf(),
@@ -441,41 +437,19 @@ fn restart_launch_failure_after_netavark_claim_releases_only_after_confirmed_det
         )
         .expect("execute launch should reserve published listeners")
         .manifest;
-    mark_provider_owned(&backend, &mut manifest);
+    let claim = adopt_launch_network(&backend, &mut manifest);
     manifest.egress_proxy = None;
     let port_manager = backend.port_manager();
-    let first_claims = port_manager
-        .claim_netavark_bindings(
-            &manifest.spec.tenant_id,
-            &manifest.handle.id,
-            &manifest.spec.port_bindings,
-            &manifest.port_leases,
-        )
-        .expect("initial Netavark attempt should become durable");
-    port_manager
-        .activate_netavark_bindings(
-            &manifest.spec.tenant_id,
-            &manifest.handle.id,
-            &manifest.spec.port_bindings,
-            &manifest.port_leases,
-            &first_claims,
-        )
-        .expect("initial provider binding should activate");
-    backend
-        .release_network_artifacts(
-            &manifest,
-            super::super::lifecycle::NetworkArtifactTeardownMode::Restart,
-        )
-        .expect("restart must retain exact stopped-binding receipts");
-
-    let restart_claims = port_manager
-        .claim_netavark_bindings(
+    let restart_lifetimes = port_manager
+        .claim_netavark_bindings_with_lifetimes(
             &manifest.spec.tenant_id,
             &manifest.handle.id,
             &manifest.spec.port_bindings,
             &manifest.port_leases,
         )
         .expect("restart setup must durably claim the next attempt");
+    let restart_claims = restart_lifetimes.claims().to_vec();
+    drop(restart_lifetimes);
     let authority =
         LocalPortLeaseAuthority::open(&backend.config.state_root).expect("authority should reopen");
     for (request, expected_claim) in manifest.port_leases.iter().zip(&restart_claims) {
@@ -486,11 +460,68 @@ fn restart_launch_failure_after_netavark_claim_releases_only_after_confirmed_det
         assert_eq!(record.phase(), PortLeasePhase::Reserved);
         assert_eq!(record.bind_claim(), Some(expected_claim));
         assert!(
-            record.confirmed_stopped_binding().is_some(),
-            "the claim must retain the exact prior-stop receipt"
+            record.confirmed_stopped_binding().is_none(),
+            "an initial claim-only launch must not fabricate a prior-stop receipt"
         );
     }
 
+    let interrupted_recoveries = port_manager
+        .recover_netavark_claims_after_owner_death(
+            &manifest.spec.tenant_id,
+            &manifest.handle.id,
+            &manifest.spec.port_bindings,
+            &manifest.port_leases,
+            &restart_claims,
+        )
+        .expect("fresh recovery should quarantine the exact dead claim batch");
+    drop(interrupted_recoveries);
+    for request in &manifest.port_leases {
+        assert_eq!(
+            authority
+                .inspect(request.lease_id())
+                .expect("lease should inspect")
+                .expect("quarantined claim should remain durable")
+                .phase(),
+            PortLeasePhase::CleanupPending,
+            "an interrupted absence check must retain its exact cleanup fence"
+        );
+    }
+
+    backend
+        .release_network_artifacts(
+            &manifest,
+            super::super::lifecycle::NetworkArtifactTeardownMode::Restart,
+        )
+        .expect("confirmed provider absence must return dead claims to rebindable reservations");
+    for request in &manifest.port_leases {
+        let record = authority
+            .inspect(request.lease_id())
+            .expect("lease should inspect")
+            .expect("restart-retained evidence should remain durable");
+        assert_eq!(record.phase(), PortLeasePhase::Reserved);
+        assert_eq!(record.reservation_claim(), Some(&claim));
+        assert!(
+            record.bind_claim().is_none()
+                && record.binding().is_none()
+                && record.failure().is_none()
+                && record.active_lifetime().is_none(),
+            "restart recovery must clear only the dead provider claim and lifetime"
+        );
+        assert!(
+            record.confirmed_stopped_binding().is_none(),
+            "restart recovery must not fabricate provider binding evidence"
+        );
+    }
+
+    let terminal_lifetimes = port_manager
+        .claim_netavark_bindings_with_lifetimes(
+            &manifest.spec.tenant_id,
+            &manifest.handle.id,
+            &manifest.spec.port_bindings,
+            &manifest.port_leases,
+        )
+        .expect("the clean restart reservation must admit a higher bind lifetime");
+    drop(terminal_lifetimes);
     backend
         .release_network_artifacts(
             &manifest,
@@ -506,12 +537,12 @@ fn restart_launch_failure_after_netavark_claim_releases_only_after_confirmed_det
             .expect("released evidence should remain durable");
         assert_eq!(record.phase(), PortLeasePhase::Released);
         assert!(
-            record.reservation_claim().is_none()
-                && record.bind_claim().is_none()
+            record.bind_claim().is_none()
                 && record.binding().is_none()
                 && record.confirmed_stopped_binding().is_none()
                 && record.failure().is_none(),
-            "terminal cleanup must retire every provider and restart receipt"
+            "terminal cleanup must retire every provider and restart receipt; the coordinator \
+             claim may remain only as terminal audit evidence"
         );
     }
     backend
@@ -538,24 +569,7 @@ fn failed_restart_teardown_retains_exact_active_netavark_evidence() {
         .expect("execute launch should reserve published listeners")
         .manifest;
     mark_provider_owned(&backend, &mut manifest);
-    let port_manager = backend.port_manager();
-    let claims = port_manager
-        .claim_netavark_bindings(
-            &manifest.spec.tenant_id,
-            &manifest.handle.id,
-            &manifest.spec.port_bindings,
-            &manifest.port_leases,
-        )
-        .expect("Netavark bind attempt should be durable");
-    port_manager
-        .activate_netavark_bindings(
-            &manifest.spec.tenant_id,
-            &manifest.handle.id,
-            &manifest.spec.port_bindings,
-            &manifest.port_leases,
-            &claims,
-        )
-        .expect("test provider evidence should activate");
+    activate_netavark_with_live_lifetimes(&backend, &manifest);
     manifest.egress_proxy = None;
     fs::create_dir_all(
         manifest
@@ -616,8 +630,27 @@ fn failed_restart_teardown_retains_exact_active_netavark_evidence() {
 #[test]
 fn failed_krun_activation_teardown_retains_retry_evidence_until_confirmed_detach() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let netavark_stub = temp_dir.path().join("netavark-retry-stub");
+    let netavark_count = temp_dir.path().join("netavark-retry-stub.count");
+    fs::write(
+        &netavark_stub,
+        b"#!/bin/sh\n\
+          count_file=\"$0.count\"\n\
+          count=0\n\
+          if [ -f \"$count_file\" ]; then read -r count < \"$count_file\"; fi\n\
+          count=$((count + 1))\n\
+          printf '%s\\n' \"$count\" > \"$count_file\"\n\
+          if [ \"$count\" -le 2 ]; then\n\
+            printf '%s\\n' 'forced exact teardown retry failure' >&2\n\
+            exit 1\n\
+          fi\n\
+          exit 0\n",
+    )
+    .expect("Netavark retry stub should write");
+    fs::set_permissions(&netavark_stub, fs::Permissions::from_mode(0o755))
+        .expect("Netavark retry stub should be executable");
     let mut config = KrunSandboxBackendConfig::under_root(temp_dir.path().to_path_buf());
-    config.netavark_path = PathBuf::from("/usr/bin/false");
+    config.netavark_path = netavark_stub;
     let backend = KrunSandboxBackend::new(config);
     let mut manifest = backend
         .plan_start_with_id(
@@ -629,15 +662,16 @@ fn failed_krun_activation_teardown_retains_retry_evidence_until_confirmed_detach
         .expect("execute launch should reserve complete network authority")
         .manifest;
     adopt_launch_network(&backend, &mut manifest);
-    let claims = backend
+    let lifetimes = backend
         .port_manager()
-        .claim_netavark_bindings(
+        .claim_netavark_bindings_with_lifetimes(
             &manifest.spec.tenant_id,
             &manifest.handle.id,
             &manifest.spec.port_bindings,
             &manifest.port_leases,
         )
         .expect("the activation boundary must retain exact Netavark claims");
+    let claims = lifetimes.claims().to_vec();
     fs::create_dir_all(
         manifest
             .network_layout
@@ -676,12 +710,13 @@ fn failed_krun_activation_teardown_retains_retry_evidence_until_confirmed_detach
         })
         .collect::<Vec<_>>();
 
-    let error = backend.failed_network_configuration(
+    let error = backend.failed_netavark_configuration(
         &manifest,
         manifest
             .network_config
             .as_ref()
             .expect("execute manifest should persist its network config"),
+        lifetimes,
         SandboxError::OperationFailed {
             message: "forced Netavark activation failure".to_owned(),
         },
@@ -692,33 +727,18 @@ fn failed_krun_activation_teardown_retains_retry_evidence_until_confirmed_detach
             .contains("forced Netavark activation failure")
             && error
                 .to_string()
-                .contains("confirmed-detach compensation also failed"),
+                .contains("exact-generation detach compensation also failed"),
         "the result must preserve both activation and detach failures: {error}"
     );
     assert!(
         manifest.network_layout.netns_path.exists(),
         "failed inline detach must retain the namespace retry handle"
     );
-
-    let cleanup_error = backend
-        .release_network_artifacts(
-            &manifest,
-            super::super::lifecycle::NetworkArtifactTeardownMode::Final,
-        )
-        .expect_err("outer cleanup must also fail closed while detach is ambiguous");
-    assert!(
-        cleanup_error
-            .to_string()
-            .contains("provider operation deleting already pending")
-            && cleanup_error
-                .to_string()
-                .contains("inspect-before-retry reconciliation is required"),
-        "outer cleanup must preserve the durable deleting fence without replaying the provider: \
-         {cleanup_error}"
-    );
-    assert!(
-        manifest.network_layout.netns_path.exists(),
-        "outer cleanup must not manufacture provider absence by deleting the namespace"
+    assert_eq!(
+        fs::read_to_string(&netavark_count)
+            .expect("first teardown invocation should be recorded")
+            .trim(),
+        "1"
     );
     for ((request, expected_claim), expected_record) in
         manifest.port_leases.iter().zip(&claims).zip(&before)
@@ -730,6 +750,110 @@ fn failed_krun_activation_teardown_retains_retry_evidence_until_confirmed_detach
         assert_eq!(&record, expected_record);
         assert_eq!(record.bind_claim(), Some(expected_claim));
         assert_eq!(record.phase(), PortLeasePhase::Reserved);
+    }
+    let network_store = LocalNetworkStateStore::open(&backend.config.state_root)
+        .expect("network authority should reopen");
+    let deleting_before_retry = network_store
+        .read::<serde_json::Value>(&NetworkStatePartition::TenantIpam(
+            manifest.spec.tenant_id.clone(),
+        ))
+        .expect("pending delete authority should inspect")
+        .expect("pending delete partition should remain durable");
+
+    let cleanup_error = backend
+        .release_network_artifacts(
+            &manifest,
+            super::super::lifecycle::NetworkArtifactTeardownMode::Final,
+        )
+        .expect_err("outer cleanup must also fail closed while detach is ambiguous");
+    assert!(
+        cleanup_error
+            .to_string()
+            .contains("forced exact teardown retry failure"),
+        "outer cleanup must retry the exact durable delete attempt and preserve its failure: \
+         {cleanup_error}"
+    );
+    assert!(
+        manifest.network_layout.netns_path.exists(),
+        "outer cleanup must not manufacture provider absence by deleting the namespace"
+    );
+    assert_eq!(
+        fs::read_to_string(&netavark_count)
+            .expect("second teardown invocation should be recorded")
+            .trim(),
+        "2"
+    );
+    let deleting_after_retry = network_store
+        .read::<serde_json::Value>(&NetworkStatePartition::TenantIpam(
+            manifest.spec.tenant_id.clone(),
+        ))
+        .expect("retried delete authority should inspect")
+        .expect("retried delete partition should remain durable");
+    assert_eq!(
+        deleting_after_retry, deleting_before_retry,
+        "a failed retry must preserve the exact setup generation, delete attempt, IPAM, and reservation authority byte-for-byte"
+    );
+    for ((request, expected_claim), expected_record) in
+        manifest.port_leases.iter().zip(&claims).zip(&before)
+    {
+        let record = authority
+            .inspect(request.lease_id())
+            .expect("lease should inspect")
+            .expect("claim fence should remain durable");
+        assert_eq!(
+            record.request(),
+            expected_record.request(),
+            "ambiguous cleanup must preserve the exact immutable lease generation"
+        );
+        assert_eq!(
+            record.reservation_claim(),
+            expected_record.reservation_claim(),
+            "ambiguous cleanup must preserve the exact launch coordinator"
+        );
+        assert_eq!(record.bind_claim(), Some(expected_claim));
+        assert_eq!(
+            record.active_lifetime(),
+            expected_record.active_lifetime(),
+            "ambiguous cleanup must preserve the exact dead provider lifetime"
+        );
+        assert_eq!(record.phase(), PortLeasePhase::CleanupPending);
+    }
+
+    backend
+        .release_network_artifacts(
+            &manifest,
+            super::super::lifecycle::NetworkArtifactTeardownMode::Final,
+        )
+        .expect("the next exact teardown retry should confirm detach and converge cleanup");
+    assert_eq!(
+        fs::read_to_string(&netavark_count)
+            .expect("third teardown invocation should be recorded")
+            .trim(),
+        "3"
+    );
+    #[cfg(target_os = "linux")]
+    assert!(
+        !manifest.network_layout.netns_path.exists(),
+        "Linux namespace removal must follow confirmed provider detach"
+    );
+    for request in &manifest.port_leases {
+        let record = authority
+            .inspect(request.lease_id())
+            .expect("lease should inspect")
+            .expect("terminal evidence should remain durable");
+        assert_eq!(record.phase(), PortLeasePhase::Released);
+        assert_eq!(
+            record.reservation_claim(),
+            manifest.reservation_claim(),
+            "terminal no-effect release must retain only its exact replay-authentication claim"
+        );
+        assert!(
+            record.bind_claim().is_none()
+                && record.binding().is_none()
+                && record.confirmed_stopped_binding().is_none()
+                && record.failure().is_none(),
+            "terminal cleanup must retire every provider receipt: {record:?}"
+        );
     }
 }
 
@@ -1040,6 +1164,84 @@ fn pre_provider_failure_compensates_unstarted_ports_and_segment_hold() {
     assert!(
         segments.is_empty(),
         "pre-provider compensation must finalize the unrealized segment hold: {segments:?}"
+    );
+}
+
+#[test]
+fn unpublished_manifest_compensation_retains_original_lifetime_through_cleanup() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let config = KrunSandboxBackendConfig::under_root(temp_dir.path().to_path_buf());
+    let state_root = config.state_root.clone();
+    let backend = KrunSandboxBackend::new(config);
+    let spec = sample_spec();
+    let sandbox_id = SandboxId::new("krun-unpublished-live-lifetime");
+
+    let error = backend
+        .plan_start_with_id_at_reserved_publication_for_test(
+            &spec,
+            &sandbox_id,
+            |reserved_manifest| {
+                let request = reserved_manifest
+                    .port_leases
+                    .first()
+                    .expect("reservation callback should observe published request projection");
+                let authority = LocalPortLeaseAuthority::open(&state_root)
+                    .expect("competing authority should reopen");
+                let reservation_claim = reserved_manifest
+                    .require_reserved_claim()
+                    .expect("reserved manifest should retain its launch coordinator");
+                assert!(
+                    matches!(
+                        authority
+                            .try_acquire_reservation_lifetime(reservation_claim)
+                            .expect("live reservation lifetime inspection should succeed"),
+                        NetworkReservationLifetimeAttempt::LiveOwner
+                    ),
+                    "the original coordinator lifetime must remain live before publication"
+                );
+                assert!(
+                    authority.reserve(request.clone()).is_err(),
+                    "a claimless contender must not replay the live coordinator reservation"
+                );
+                Err(SandboxError::OperationFailed {
+                    message: "injected reserved-manifest publication failure".to_owned(),
+                })
+            },
+        )
+        .expect_err("reserved-manifest publication failure should compensate the launch");
+    assert!(
+        error
+            .to_string()
+            .contains("injected reserved-manifest publication failure"),
+        "the publication failure must remain primary: {error}"
+    );
+
+    let persisted = backend
+        .read_manifest(&sandbox_id)
+        .expect("compensation result should inspect")
+        .expect("compensation result should remain durable");
+    assert!(persisted.shutdown_requested);
+    assert_eq!(persisted.status, SandboxStatus::Failed);
+    assert_eq!(persisted.launch_authority, KrunLaunchAuthority::Released);
+    let records = LocalPortLeaseAuthority::open(&state_root)
+        .expect("port authority should reopen")
+        .list()
+        .expect("port leases should list");
+    assert_eq!(records.len(), 3);
+    assert!(
+        records
+            .iter()
+            .all(|record| record.phase() == PortLeasePhase::Released),
+        "same-owner compensation must release the exact publication and PEP batch: {records:?}"
+    );
+    assert!(
+        backend
+            .segment_allocator
+            .inspect_segments(&spec.tenant_id)
+            .expect("segment authority should inspect")
+            .unwrap_or_default()
+            .is_empty(),
+        "the lifetime must remain held through complete IPAM and segment compensation"
     );
 }
 

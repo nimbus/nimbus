@@ -1,7 +1,14 @@
-//! Durable container creator-attempt orchestration.
+//! Durable container creator-attempt orchestration and recovery.
 
-use crate::backends::conmon::creator::OwnedConmonCreator;
-use crate::backends::conmon::lifecycle::wait_for_runtime_state;
+use crate::backends::conmon::creator::{
+    CreatorAttemptReceipt, CreatorContainmentObservation, CreatorQuiescenceProof,
+    OwnedConmonCreator, confirm_dead_conmon_receipt, observe_creator_containment,
+    publish_creator_attempt_annotation,
+};
+use crate::backends::conmon::lifecycle::{
+    RuntimeStateObservation, runtime_state_for_creator_attempt,
+    wait_for_runtime_state_for_creator_attempt,
+};
 use ulid::Ulid;
 
 use super::*;
@@ -13,49 +20,174 @@ impl ContainerSandboxBackend {
     ) -> Result<String> {
         let attempt_id = Ulid::new().to_string().to_ascii_lowercase();
         self.persist_creator_intent_before_spawn(manifest, &attempt_id)?;
-        let mut creator = match OwnedConmonCreator::spawn_with_pid_receipt(
+        if let Err(error) =
+            publish_creator_attempt_annotation(&manifest.bundle_layout.config_path, &attempt_id)
+        {
+            let persistence = self
+                .persist_creator_quiescence(
+                    manifest,
+                    CreatorQuiescenceProof::never_spawned(attempt_id),
+                )
+                .err();
+            return Err(combine_launch_failure(error, None, persistence));
+        }
+        let mut creator = match OwnedConmonCreator::spawn_gated_with_pid_receipt(
             &manifest.conmon_launch.create_command,
             &manifest.conmon_layout.conmon_pidfile,
         ) {
             Ok(creator) => creator,
             Err(error) => {
-                manifest.creator_handoff = ContainerCreatorHandoffState::Quiesced { attempt_id };
-                let persistence = self.write_manifest(manifest).err();
+                let persistence = self
+                    .persist_creator_quiescence(
+                        manifest,
+                        CreatorQuiescenceProof::never_spawned(attempt_id),
+                    )
+                    .err();
                 return Err(combine_launch_failure(error, None, persistence));
             }
         };
-        let runtime_state = match wait_for_runtime_state(
+        let receipt = match creator.attempt_receipt(&attempt_id) {
+            Ok(receipt) => receipt,
+            Err(error) => {
+                let quiescence = creator.cancel_before_gate_release_and_confirm_quiesced();
+                let persistence = quiescence.as_ref().ok().and_then(|()| {
+                    self.persist_creator_quiescence(
+                        manifest,
+                        CreatorQuiescenceProof::launch_gate_never_released(attempt_id.clone()),
+                    )
+                    .err()
+                });
+                return Err(combine_launch_failure(error, quiescence.err(), persistence));
+            }
+        };
+        if let Err(error) = self.persist_pending_creator_receipt(manifest, &receipt) {
+            let quiescence = creator.cancel_before_gate_release_and_confirm_quiesced();
+            let persistence = quiescence.as_ref().ok().and_then(|()| {
+                self.persist_creator_quiescence(
+                    manifest,
+                    CreatorQuiescenceProof::launch_gate_never_released(attempt_id.clone()),
+                )
+                .err()
+            });
+            return Err(combine_launch_failure(error, quiescence.err(), persistence));
+        }
+        if let Err(error) = creator.release_after_receipt_persisted() {
+            let quiescence = creator.cancel_before_gate_release_and_confirm_quiesced();
+            let persistence = quiescence.as_ref().ok().and_then(|()| {
+                self.persist_creator_quiescence(
+                    manifest,
+                    CreatorQuiescenceProof::launch_gate_never_released(attempt_id.clone()),
+                )
+                .err()
+            });
+            return Err(combine_launch_failure(error, quiescence.err(), persistence));
+        }
+        let runtime_state = match wait_for_runtime_state_for_creator_attempt(
             &manifest.conmon_launch.state_command,
             manifest.handle.id.as_str(),
+            &attempt_id,
             self.config.start_timeout,
         ) {
             Ok(runtime_state) => runtime_state,
             Err(error) => {
                 let quiescence = creator.cancel_and_confirm_quiesced();
-                if quiescence.is_ok() {
-                    manifest.creator_handoff =
-                        ContainerCreatorHandoffState::Quiesced { attempt_id };
-                }
-                let persistence = quiescence
-                    .as_ref()
-                    .ok()
-                    .and_then(|()| self.write_manifest(manifest).err());
+                let persistence = quiescence.as_ref().ok().and_then(|()| {
+                    self.persist_creator_quiescence(
+                        manifest,
+                        CreatorQuiescenceProof::dead_contained(receipt.clone()),
+                    )
+                    .err()
+                });
                 return Err(combine_launch_failure(error, quiescence.err(), persistence));
             }
         };
         if let Err(error) = creator.reap_after_runtime_observed(self.config.start_timeout) {
             let quiescence = creator.cancel_and_confirm_quiesced();
-            if quiescence.is_ok() {
-                manifest.creator_handoff = ContainerCreatorHandoffState::Quiesced { attempt_id };
-            }
-            let persistence = quiescence
-                .as_ref()
-                .ok()
-                .and_then(|()| self.write_manifest(manifest).err());
+            let persistence = quiescence.as_ref().ok().and_then(|()| {
+                self.persist_creator_quiescence(
+                    manifest,
+                    CreatorQuiescenceProof::dead_contained(receipt.clone()),
+                )
+                .err()
+            });
             return Err(combine_launch_failure(error, quiescence.err(), persistence));
         }
-        manifest.creator_handoff = ContainerCreatorHandoffState::RuntimeObserved { attempt_id };
+        manifest.creator_handoff = ContainerCreatorHandoffState::RuntimeObserved { receipt };
         Ok(runtime_state)
+    }
+
+    /// Reconcile only a durably identified creator attempt before a fresh
+    /// process may run provider cleanup. Provider/runtime state remains local
+    /// to this adapter.
+    pub(super) fn reconcile_pending_creator_before_cleanup(
+        &self,
+        manifest: &mut ContainerSandboxManifest,
+    ) -> Result<()> {
+        let receipt = match &manifest.creator_handoff {
+            ContainerCreatorHandoffState::NotSpawned
+            | ContainerCreatorHandoffState::Quiesced { .. }
+            | ContainerCreatorHandoffState::RuntimeObserved { .. } => return Ok(()),
+            ContainerCreatorHandoffState::SpawnIntent { attempt_id } => {
+                return self.persist_creator_quiescence(
+                    manifest,
+                    CreatorQuiescenceProof::launch_gate_never_released(attempt_id.clone()),
+                );
+            }
+            ContainerCreatorHandoffState::Pending { receipt } => receipt.clone(),
+        };
+
+        match observe_creator_containment(&receipt) {
+            CreatorContainmentObservation::Live => {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "container creator attempt {} remains live with its exact process birth; \
+                         cleanup remains fenced",
+                        receipt.attempt_id()
+                    ),
+                });
+            }
+            CreatorContainmentObservation::Escaped { reason } => {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "container creator attempt {} escaped its authenticated containment: \
+                         {reason}; cleanup remains fenced",
+                        receipt.attempt_id()
+                    ),
+                });
+            }
+            CreatorContainmentObservation::Unknown { reason } => {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "container creator attempt {} cannot be authenticated: {reason}; cleanup \
+                         remains fenced",
+                        receipt.attempt_id()
+                    ),
+                });
+            }
+            CreatorContainmentObservation::DeadContained => {}
+        }
+
+        match runtime_state_for_creator_attempt(
+            &manifest.conmon_launch.state_command,
+            manifest.handle.id.as_str(),
+            receipt.attempt_id(),
+        )? {
+            RuntimeStateObservation::Present(_) => self.persist_creator_state(
+                manifest,
+                ContainerCreatorHandoffState::RuntimeObserved { receipt },
+                "fresh-process runtime-observed creator handoff",
+            ),
+            RuntimeStateObservation::ExplicitlyAbsent => {
+                confirm_dead_conmon_receipt(&manifest.conmon_layout.conmon_pidfile)?;
+                self.persist_creator_state(
+                    manifest,
+                    ContainerCreatorHandoffState::Quiesced {
+                        proof: CreatorQuiescenceProof::dead_contained(receipt),
+                    },
+                    "fresh-process quiesced creator handoff",
+                )
+            }
+        }
     }
 
     fn persist_creator_intent_before_spawn(
@@ -81,6 +213,73 @@ impl ContainerSandboxBackend {
     ) -> Result<()> {
         persist_creator_intent_before_spawn_with(manifest, attempt_id, persist, inspect)
     }
+
+    fn persist_pending_creator_receipt(
+        &self,
+        manifest: &mut ContainerSandboxManifest,
+        receipt: &CreatorAttemptReceipt,
+    ) -> Result<()> {
+        let candidate = ContainerCreatorHandoffState::Pending {
+            receipt: receipt.clone(),
+        };
+        self.persist_creator_state(
+            manifest,
+            candidate,
+            "container creator birth/containment receipt",
+        )
+    }
+
+    fn persist_creator_quiescence(
+        &self,
+        manifest: &mut ContainerSandboxManifest,
+        proof: CreatorQuiescenceProof,
+    ) -> Result<()> {
+        self.persist_creator_state(
+            manifest,
+            ContainerCreatorHandoffState::Quiesced { proof },
+            "container creator quiescence",
+        )
+    }
+
+    fn persist_creator_state(
+        &self,
+        manifest: &mut ContainerSandboxManifest,
+        state: ContainerCreatorHandoffState,
+        context: &str,
+    ) -> Result<()> {
+        manifest.creator_handoff = state;
+        let candidate = manifest.clone();
+        let Err(persist_error) = self.write_manifest(manifest) else {
+            return Ok(());
+        };
+        match self.read_manifest(&manifest.handle.id) {
+            Ok(Some(observed)) if observed == candidate => {
+                *manifest = observed;
+                Ok(())
+            }
+            Ok(Some(observed)) => {
+                *manifest = observed;
+                Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "failed to publish {context}: {persist_error}; exact readback differs from \
+                         the candidate and retains its own authority"
+                    ),
+                })
+            }
+            Ok(None) => Err(SandboxError::OperationFailed {
+                message: format!(
+                    "failed to publish {context}: {persist_error}; canonical manifest disappeared \
+                     during readback"
+                ),
+            }),
+            Err(inspect_error) => Err(SandboxError::OperationFailed {
+                message: format!(
+                    "failed to publish {context}: {persist_error}; canonical readback also failed: \
+                     {inspect_error}"
+                ),
+            }),
+        }
+    }
 }
 
 fn persist_creator_intent_before_spawn_with(
@@ -89,7 +288,7 @@ fn persist_creator_intent_before_spawn_with(
     mut persist: impl FnMut(&ContainerSandboxManifest) -> Result<()>,
     mut inspect: impl FnMut(&SandboxId) -> Result<Option<ContainerSandboxManifest>>,
 ) -> Result<()> {
-    manifest.creator_handoff = ContainerCreatorHandoffState::Pending {
+    manifest.creator_handoff = ContainerCreatorHandoffState::SpawnIntent {
         attempt_id: attempt_id.to_owned(),
     };
     let Err(intent_error) = persist(manifest) else {
@@ -100,7 +299,7 @@ fn persist_creator_intent_before_spawn_with(
     // pre-commit failure and a lost post-rename acknowledgement by publishing
     // the exact attempt as quiesced before launch compensation may proceed.
     manifest.creator_handoff = ContainerCreatorHandoffState::Quiesced {
-        attempt_id: attempt_id.to_owned(),
+        proof: CreatorQuiescenceProof::never_spawned(attempt_id),
     };
     let quiesced_candidate = manifest.clone();
     let Err(quiescence_error) = persist(manifest) else {
@@ -121,7 +320,7 @@ fn persist_creator_intent_before_spawn_with(
             ))
         }
         Ok(None) => {
-            manifest.creator_handoff = ContainerCreatorHandoffState::Pending {
+            manifest.creator_handoff = ContainerCreatorHandoffState::SpawnIntent {
                 attempt_id: attempt_id.to_owned(),
             };
             Err(combine_launch_failure(
@@ -131,7 +330,7 @@ fn persist_creator_intent_before_spawn_with(
             ))
         }
         Err(inspect_error) => {
-            manifest.creator_handoff = ContainerCreatorHandoffState::Pending {
+            manifest.creator_handoff = ContainerCreatorHandoffState::SpawnIntent {
                 attempt_id: attempt_id.to_owned(),
             };
             Err(combine_launch_failure(

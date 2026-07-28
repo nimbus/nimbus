@@ -44,6 +44,7 @@ impl KrunSandboxBackend {
             sandbox_id,
             prepared_launch,
             |_| Ok(()),
+            |_| Ok(()),
         )
     }
 
@@ -61,6 +62,7 @@ impl KrunSandboxBackend {
             sandbox_id,
             prepared_launch,
             before_initial_publication,
+            |_| Ok(()),
         )
     }
 
@@ -70,6 +72,7 @@ impl KrunSandboxBackend {
         sandbox_id: &SandboxId,
         prepared_launch: PreparedMaterializedImageLaunch,
         before_initial_publication: impl FnOnce(&KrunSandboxManifest) -> Result<()>,
+        after_network_reservation: impl FnOnce(&KrunSandboxManifest) -> Result<()>,
     ) -> Result<KrunStartPlan> {
         let materialized_artifact = prepared_launch.artifact.clone();
         let result = self.plan_start_with_id_under_lock_at_initial_publication(
@@ -78,6 +81,7 @@ impl KrunSandboxBackend {
             Some(&prepared_launch.launch_defaults),
             Some(KrunLaunchArtifact::Rootfs(prepared_launch.artifact)),
             before_initial_publication,
+            after_network_reservation,
         );
         match result {
             Ok(plan) => Ok(plan),
@@ -215,6 +219,26 @@ impl KrunSandboxBackend {
             launch_defaults,
             launch_artifact,
             |_| Ok(()),
+            |_| Ok(()),
+        )
+    }
+
+    #[cfg(test)]
+    pub(super) fn plan_start_with_id_at_reserved_publication_for_test(
+        &self,
+        spec: &SandboxSpec,
+        sandbox_id: &SandboxId,
+        after_network_reservation: impl FnOnce(&KrunSandboxManifest) -> Result<()>,
+    ) -> Result<KrunStartPlan> {
+        self.ensure_startup_network_reconciliation_ready()?;
+        let _lifecycle = self.lock_launch_lifecycle_for(&spec.tenant_id, sandbox_id)?;
+        self.plan_start_with_id_under_lock_at_initial_publication(
+            spec,
+            sandbox_id,
+            None,
+            None,
+            |_| Ok(()),
+            after_network_reservation,
         )
     }
 
@@ -225,6 +249,7 @@ impl KrunSandboxBackend {
         launch_defaults: Option<&OciImageLaunchDefaults>,
         launch_artifact: Option<KrunLaunchArtifact>,
         before_initial_publication: impl FnOnce(&KrunSandboxManifest) -> Result<()>,
+        after_network_reservation: impl FnOnce(&KrunSandboxManifest) -> Result<()>,
     ) -> Result<KrunStartPlan> {
         self.ensure_startup_network_reconciliation_ready()?;
         if spec.backend != SandboxBackendKind::Krun {
@@ -340,10 +365,28 @@ impl KrunSandboxBackend {
             // evidence.
             before_initial_publication(&manifest)?;
             self.create_manifest(&manifest)?;
-            if let Err(error) = self.reserve_execute_launch_network(&mut manifest, &manager) {
-                return Err(self.persist_unstarted_launch_failure(&mut manifest, error));
+            let mut reservations =
+                match self.reserve_execute_launch_network(&mut manifest, &manager) {
+                    Ok(reservations) => reservations,
+                    Err(error) => {
+                        return Err(self.persist_unstarted_launch_failure(&mut manifest, error));
+                    }
+                };
+            if let Err(error) = after_network_reservation(&manifest) {
+                return Err(self.persist_unstarted_launch_failure_with_reservations(
+                    &mut manifest,
+                    error,
+                    &reservations,
+                ));
             }
             if let Err(error) = self.write_manifest(&manifest) {
+                return Err(self.persist_unstarted_launch_failure_with_reservations(
+                    &mut manifest,
+                    error,
+                    &reservations,
+                ));
+            }
+            if let Err(error) = reservations.confirm_manifest_published() {
                 return Err(self.persist_unstarted_launch_failure(&mut manifest, error));
             }
         }
@@ -379,7 +422,7 @@ impl KrunSandboxBackend {
         &self,
         manifest: &mut KrunSandboxManifest,
         manager: &PortManager,
-    ) -> Result<()> {
+    ) -> Result<ReservedLaunchPorts> {
         let reservation_claim = manifest.require_reserved_claim()?.clone();
         let network_config = self.place_sandbox_config(
             &manifest.spec.tenant_id,
@@ -404,11 +447,11 @@ impl KrunSandboxBackend {
             }
         })?;
         let egress_proxy = egress_proxy_assignment(&network_config, egress_listener)?;
-        manifest.spec.port_bindings = reservations.published_bindings;
-        manifest.port_leases = reservations.published_leases;
+        manifest.spec.port_bindings = reservations.published_bindings.clone();
+        manifest.port_leases = reservations.published_leases.clone();
         manifest.network_config = Some(network_config);
         manifest.egress_proxy = Some(egress_proxy);
-        Ok(())
+        Ok(reservations)
     }
 
     fn prepare_image_launch(

@@ -11,9 +11,11 @@ use std::thread;
 use std::time::Duration;
 
 use nimbus_core::TenantId;
-use nimbus_network::{NetworkReservationClaim, PortBindClaim, PortLeaseRequest};
+use nimbus_network::{
+    NetworkReservationClaim, PortBindClaim, PortLeaseLifetimeGuard, PortLeaseRequest,
+};
 
-use crate::backends::oci::port_lease::canonical_socket_ip;
+use crate::backends::oci::port_lease::{OciPortBindLifetimeBatch, canonical_socket_ip};
 use crate::backends::oci::port_manager::{PortManager, machine_port_proxy_guest_listener_addr};
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
@@ -102,7 +104,22 @@ pub(crate) struct PreparedMachinePortProxy {
     bind_addr: SocketAddr,
     target_addr: SocketAddr,
     listener: TcpListener,
-    bind_claim: PortBindClaim,
+}
+
+/// Inert listener batch plus the exact live process generations that own it.
+pub(crate) struct PreparedMachinePortProxyBatch {
+    proxies: Vec<PreparedMachinePortProxy>,
+    bind_authority: OciPortBindLifetimeBatch,
+}
+
+impl PreparedMachinePortProxyBatch {
+    pub(crate) fn bind_authority(&self) -> &OciPortBindLifetimeBatch {
+        &self.bind_authority
+    }
+
+    pub(crate) fn into_parts(self) -> (Vec<PreparedMachinePortProxy>, OciPortBindLifetimeBatch) {
+        (self.proxies, self.bind_authority)
+    }
 }
 
 /// Exact provider routing intent retained beside a running machine proxy.
@@ -150,6 +167,7 @@ struct MachinePortProxyPreparation<'a> {
     binding: &'a SandboxPortBinding,
     port_lease: &'a PortLeaseRequest,
     bind_claim: PortBindClaim,
+    lifetime: &'a PortLeaseLifetimeGuard,
     port_manager: &'a PortManager,
     route: MachinePortProxyRoute,
     release_authority: MachinePortPreparationReleaseAuthority<'a>,
@@ -158,11 +176,30 @@ struct MachinePortProxyPreparation<'a> {
 pub(crate) struct MachinePortProxyStartFailure {
     error: SandboxError,
     running: Vec<MachinePortProxy>,
+    bind_authority: OciPortBindLifetimeBatch,
 }
 
 impl MachinePortProxyStartFailure {
-    pub(crate) fn into_parts(self) -> (SandboxError, Vec<MachinePortProxy>) {
-        (self.error, self.running)
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        SandboxError,
+        Vec<MachinePortProxy>,
+        OciPortBindLifetimeBatch,
+    ) {
+        (self.error, self.running, self.bind_authority)
+    }
+}
+
+/// Running local workers plus every exact lifetime in their atomic lease batch.
+pub(crate) struct RunningMachinePortProxyBatch {
+    proxies: Vec<MachinePortProxy>,
+    bind_authority: OciPortBindLifetimeBatch,
+}
+
+impl RunningMachinePortProxyBatch {
+    pub(crate) fn into_parts(self) -> (Vec<MachinePortProxy>, OciPortBindLifetimeBatch) {
+        (self.proxies, self.bind_authority)
     }
 }
 
@@ -271,6 +308,7 @@ impl PreparedMachinePortProxy {
             binding,
             port_lease,
             bind_claim,
+            lifetime,
             port_manager,
             route,
             release_authority,
@@ -298,12 +336,15 @@ impl PreparedMachinePortProxy {
                 if matches!(
                     release_authority,
                     MachinePortPreparationReleaseAuthority::FreshLaunch(_)
-                ) && let Err(record_error) = port_manager.record_machine_proxy_bind_failure(
-                    port_lease,
-                    &bind_claim,
-                    guest_listener_addr,
-                    error.kind(),
-                ) {
+                ) && let Err(record_error) = port_manager
+                    .record_machine_proxy_bind_failure_with_lifetime(
+                        port_lease,
+                        &bind_claim,
+                        guest_listener_addr,
+                        error.kind(),
+                        lifetime,
+                    )
+                {
                     return Err(SandboxError::OperationFailed {
                         message: format!(
                             "{bind_error}; durable machine-port bind-failure recording also failed: \
@@ -325,12 +366,15 @@ impl PreparedMachinePortProxy {
             if matches!(
                 release_authority,
                 MachinePortPreparationReleaseAuthority::FreshLaunch(_)
-            ) && let Err(record_error) = port_manager.record_machine_proxy_bind_failure(
-                port_lease,
-                &bind_claim,
-                guest_listener_addr,
-                error.kind(),
-            ) {
+            ) && let Err(record_error) = port_manager
+                .record_machine_proxy_bind_failure_with_lifetime(
+                    port_lease,
+                    &bind_claim,
+                    guest_listener_addr,
+                    error.kind(),
+                    lifetime,
+                )
+            {
                 return Err(SandboxError::OperationFailed {
                     message: format!(
                         "{bind_error}; durable machine-port bind-failure recording also failed: \
@@ -344,12 +388,7 @@ impl PreparedMachinePortProxy {
             bind_addr: guest_listener_addr,
             target_addr,
             listener,
-            bind_claim,
         })
-    }
-
-    pub(crate) fn bind_claim(&self) -> &PortBindClaim {
-        &self.bind_claim
     }
 
     fn start(self) -> Result<MachinePortProxy> {
@@ -357,7 +396,6 @@ impl PreparedMachinePortProxy {
             bind_addr,
             target_addr,
             listener,
-            bind_claim: _,
         } = self;
         let shutdown = Arc::new(AtomicBool::new(false));
         let thread_shutdown = Arc::clone(&shutdown);
@@ -495,7 +533,7 @@ pub(crate) fn prepare_machine_port_proxies(
     port_bindings: &[SandboxPortBinding],
     port_leases: &[PortLeaseRequest],
     port_manager: &PortManager,
-) -> Result<Vec<PreparedMachinePortProxy>> {
+) -> Result<PreparedMachinePortProxyBatch> {
     let reservation_claim = port_manager.reservation_claim_for_requests(port_leases)?;
     let release_authority = reservation_claim
         .as_ref()
@@ -521,7 +559,7 @@ pub(crate) fn prepare_machine_port_proxies_with_release_authority(
     port_leases: &[PortLeaseRequest],
     port_manager: &PortManager,
     release_authority: MachinePortPreparationReleaseAuthority<'_>,
-) -> Result<Vec<PreparedMachinePortProxy>> {
+) -> Result<PreparedMachinePortProxyBatch> {
     port_manager.require_binding_leases(tenant_id, sandbox_id, port_bindings, port_leases)?;
     let routes = match machine_port_proxy_routes(assigned_ips, port_bindings) {
         Ok(routes) => routes,
@@ -540,14 +578,19 @@ pub(crate) fn prepare_machine_port_proxies_with_release_authority(
             );
         }
     };
-    let bind_claims =
-        port_manager.claim_machine_bindings(tenant_id, sandbox_id, port_bindings, port_leases)?;
+    let bind_authority = port_manager.claim_machine_bindings_with_lifetimes(
+        tenant_id,
+        sandbox_id,
+        port_bindings,
+        port_leases,
+    )?;
     let mut proxies = Vec::with_capacity(port_bindings.len());
-    for (((binding, lease), route), bind_claim) in port_bindings
+    for ((((binding, lease), route), bind_claim), lifetime) in port_bindings
         .iter()
         .zip(port_leases)
         .zip(routes)
-        .zip(bind_claims.iter().cloned())
+        .zip(bind_authority.claims().iter().cloned())
+        .zip(bind_authority.lifetimes())
     {
         match PreparedMachinePortProxy::prepare(MachinePortProxyPreparation {
             tenant_id,
@@ -555,6 +598,7 @@ pub(crate) fn prepare_machine_port_proxies_with_release_authority(
             binding,
             port_lease: lease,
             bind_claim,
+            lifetime,
             port_manager,
             route,
             release_authority,
@@ -567,8 +611,10 @@ pub(crate) fn prepare_machine_port_proxies_with_release_authority(
                 // that no-effect evidence while retiring Reserved siblings.
                 drop(proxies);
                 let error = match port_manager
-                    .abandon_machine_bind_claims_without_effect(port_leases, &bind_claims)
-                {
+                    .abandon_machine_bind_claims_with_lifetimes_without_effect(
+                        port_leases,
+                        &bind_authority,
+                    ) {
                     Ok(()) => error,
                     Err(abandon_error) => SandboxError::OperationFailed {
                         message: format!(
@@ -592,7 +638,10 @@ pub(crate) fn prepare_machine_port_proxies_with_release_authority(
             }
         }
     }
-    Ok(proxies)
+    Ok(PreparedMachinePortProxyBatch {
+        proxies,
+        bind_authority,
+    })
 }
 
 /// Normalize the complete provider routing plan without binding or mutating
@@ -624,8 +673,8 @@ pub(crate) fn start_machine_port_proxies(
     port_bindings: &[SandboxPortBinding],
     port_leases: &[PortLeaseRequest],
     port_manager: &PortManager,
-    prepared: Vec<PreparedMachinePortProxy>,
-) -> Result<Vec<MachinePortProxy>> {
+    prepared: PreparedMachinePortProxyBatch,
+) -> Result<RunningMachinePortProxyBatch> {
     start_machine_port_proxies_with_recovery(
         tenant_id,
         sandbox_id,
@@ -635,7 +684,7 @@ pub(crate) fn start_machine_port_proxies(
         prepared,
     )
     .map_err(|failure| {
-        let (error, mut running) = failure.into_parts();
+        let (error, mut running, _bind_authority) = failure.into_parts();
         for proxy in &mut running {
             let _ = proxy.shutdown();
         }
@@ -649,33 +698,32 @@ pub(crate) fn start_machine_port_proxies_with_recovery(
     port_bindings: &[SandboxPortBinding],
     port_leases: &[PortLeaseRequest],
     port_manager: &PortManager,
-    prepared: Vec<PreparedMachinePortProxy>,
-) -> std::result::Result<Vec<MachinePortProxy>, MachinePortProxyStartFailure> {
-    if prepared.len() != port_bindings.len() {
+    prepared: PreparedMachinePortProxyBatch,
+) -> std::result::Result<RunningMachinePortProxyBatch, MachinePortProxyStartFailure> {
+    if prepared.proxies.len() != port_bindings.len() {
         return Err(MachinePortProxyStartFailure {
             error: SandboxError::OperationFailed {
                 message: format!(
                     "machine port proxy batch has {} prepared listeners for {} bindings",
-                    prepared.len(),
+                    prepared.proxies.len(),
                     port_bindings.len()
                 ),
             },
             running: Vec::new(),
+            bind_authority: prepared.bind_authority,
         });
     }
-    if let Err(error) = port_manager.require_active_machine_bindings(
+    if let Err(error) = port_manager.require_active_machine_bindings_with_lifetimes(
         tenant_id,
         sandbox_id,
         port_bindings,
         port_leases,
+        &prepared.bind_authority,
     ) {
-        let bind_claims = prepared
-            .iter()
-            .map(|proxy| proxy.bind_claim().clone())
-            .collect::<Vec<_>>();
-        drop(prepared);
+        let (proxies, bind_authority) = prepared.into_parts();
+        drop(proxies);
         let error = match port_manager
-            .abandon_machine_bind_claims_without_effect(port_leases, &bind_claims)
+            .abandon_machine_bind_claims_with_lifetimes_without_effect(port_leases, &bind_authority)
         {
             Ok(()) => error,
             Err(abandon_error) => SandboxError::OperationFailed {
@@ -688,19 +736,28 @@ pub(crate) fn start_machine_port_proxies_with_recovery(
         return Err(MachinePortProxyStartFailure {
             error,
             running: Vec::new(),
+            bind_authority,
         });
     }
 
+    let (prepared, bind_authority) = prepared.into_parts();
     let mut running = Vec::with_capacity(prepared.len());
     for proxy in prepared {
         match proxy.start() {
             Ok(proxy) => running.push(proxy),
             Err(error) => {
-                return Err(MachinePortProxyStartFailure { error, running });
+                return Err(MachinePortProxyStartFailure {
+                    error,
+                    running,
+                    bind_authority,
+                });
             }
         }
     }
-    Ok(running)
+    Ok(RunningMachinePortProxyBatch {
+        proxies: running,
+        bind_authority,
+    })
 }
 
 fn accept_machine_port_proxy(

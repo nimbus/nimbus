@@ -1,3 +1,5 @@
+mod attachment_recovery;
+mod creator_recovery;
 mod endpoint_projection;
 mod explicit_stop;
 mod generation_fencing;
@@ -1479,7 +1481,17 @@ fn manifest_deserialization_defaults_restart_fields_for_pre_restart_manifests() 
         },
         "creator_handoff": {
             "phase": "runtime_observed",
-            "attempt_id": "fixture-attempt"
+            "receipt": {
+                "attempt_id": "fixture-attempt",
+                "process": {
+                    "pid": 42,
+                    "process_group": 42,
+                    "birth": {
+                        "kind": "linux_proc_start_ticks",
+                        "ticks": 1234
+                    }
+                }
+            }
         },
         "provider_failure_cleanup": {
             "phase": "inactive"
