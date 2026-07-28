@@ -277,3 +277,62 @@ fn sqlite_wal_observation_separates_foreground_and_post_run_passive_work() {
     );
     assert_eq!(reset, Default::default());
 }
+
+/// Guards the status-only contract of the foreground observation probe.
+///
+/// The probe issues `PRAGMA wal_checkpoint(NOOP)`, which the workspace's
+/// bundled SQLite (3.50+) parses as `SQLITE_CHECKPOINT_NOOP` — "do no work at
+/// all". Older SQLite builds do not know the keyword and silently fall
+/// through to a real PASSIVE checkpoint, which would make the observer
+/// checkpoint the database it claims to only watch. This test fails loudly if
+/// the runtime ever degrades that way: a sub-threshold workload must leave
+/// the main database file untouched with its whole backlog still in the WAL.
+#[test]
+fn sqlite_wal_observation_probe_does_not_checkpoint() {
+    let dir = tempdir().expect("temporary directory should create");
+    let path = dir.path().join("tenant.sqlite3");
+    let store = SqliteTenantStore::open(&path)
+        .expect("sqlite tenant store should open for the non-perturbation probe");
+    let db_len_before = std::fs::metadata(&path)
+        .expect("main database file should exist before observation")
+        .len();
+
+    crate::reset_sqlite_wal_checkpoint_observation(&path);
+    let table_id = TableId::new();
+    for sequence in 1..=4_u64 {
+        let document = sample_document("probe_tasks", &format!("doc-{sequence}"));
+        let table = document.table.clone();
+        let record = sqlite_durable_write_record(
+            SequenceNumber(sequence),
+            Timestamp(100 + sequence),
+            &table,
+            &table_id,
+            WriteOpType::Insert,
+            document.id.clone(),
+            None,
+            Some(document),
+        );
+        store
+            .append_durable_records_batch(std::slice::from_ref(&record))
+            .expect("observed small append should succeed");
+        store
+            .apply_durable_records_batch(std::slice::from_ref(&record))
+            .expect("observed small apply should succeed");
+    }
+    let db_len_after = std::fs::metadata(&path)
+        .expect("main database file should exist after observation")
+        .len();
+    let passive = crate::probe_sqlite_passive_checkpoint(&path)
+        .expect("post-run passive checkpoint probe should succeed");
+    crate::disable_sqlite_wal_checkpoint_observation();
+
+    assert_eq!(
+        db_len_after, db_len_before,
+        "a sub-threshold observed workload must leave every page in the WAL; \
+         main-database growth means the observation probe itself checkpointed"
+    );
+    assert!(
+        passive.checkpointed_frames > 0,
+        "the WAL backlog must still be checkpointable after the observed run"
+    );
+}

@@ -182,3 +182,25 @@ same filter was rerun with
 - Counter state is thread-safe, resettable, path-scoped, and test-only.
 - No production dependency, migration, storage-format, concurrency, or
   durability change was introduced.
+
+## Orchestrator review addendum
+
+An independent orchestrator review initially suspected the foreground
+`PRAGMA wal_checkpoint(NOOP)` probe of degrading to a real PASSIVE
+checkpoint, because SQLite builds that predate the NOOP keyword parse unknown
+modes as PASSIVE (verified empirically on the older system sqlite3). The
+workspace's bundled SQLite 3.51.3 parses `noop` to `SQLITE_CHECKPOINT_NOOP`
+("do no work at all"; sqlite3.c pragma parser and sqlite3.h constant), so the
+probe is status-only on the pinned runtime and the seam description above is
+accurate.
+
+That version-skew hazard is now pinned by a regression test instead of an
+assumption: `sqlite_wal_observation_probe_does_not_checkpoint` drives a
+sub-threshold observed workload and asserts the main database file is
+untouched with the whole backlog still checkpointable afterward. Any future
+runtime whose NOOP silently checkpoints fails the SQLite lane loudly.
+
+With that guard added, the task-card SQLite filter passes
+`74 passed, 0 failed, 354 skipped` under
+`NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1`, and
+`cargo clippy -p nimbus-storage --all-targets -- -D warnings` remains clean.
