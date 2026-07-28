@@ -605,7 +605,7 @@ impl KrunSandboxBackend {
                 launch_batch.push(egress_proxy.port_lease.clone());
             }
             if let Err(error) = self
-                .port_manager()
+                .port_lease_coordinator()
                 .require_never_bound_launch_batch(&launch_batch, reservation_claim)
             {
                 return Err(self.persist_unstarted_launch_failure(manifest, error));
@@ -967,8 +967,8 @@ impl KrunSandboxBackend {
         // One-shot: drop the legacy shared nimbus0 bridge before the first
         // per-tenant setup (pre-launch migration, breaking).
         purge_legacy_nimbus0_once(&self.config.state_root.join("networks"))?;
-        let port_manager = self.port_manager();
-        port_manager.require_binding_leases(
+        let port_lease_coordinator = self.port_lease_coordinator();
+        port_lease_coordinator.require_binding_leases(
             &manifest.spec.tenant_id,
             &manifest.handle.id,
             &manifest.spec.port_bindings,
@@ -977,12 +977,13 @@ impl KrunSandboxBackend {
         // Reuse the config resolved + persisted at manifest-prepare; never
         // reassign it so setup and teardown agree on the bridge.
         create_persistent_network_namespace(&manifest.network_layout.netns_path)?;
-        let mut netavark_lifetimes = match port_manager.claim_netavark_bindings_with_lifetimes(
-            &manifest.spec.tenant_id,
-            &manifest.handle.id,
-            &manifest.spec.port_bindings,
-            &manifest.port_leases,
-        ) {
+        let mut netavark_lifetimes = match port_lease_coordinator
+            .claim_netavark_bindings_with_lifetimes(
+                &manifest.spec.tenant_id,
+                &manifest.handle.id,
+                &manifest.spec.port_bindings,
+                &manifest.port_leases,
+            ) {
             Ok(batch) => Some(batch),
             Err(error) => {
                 let _ = remove_persistent_network_namespace(&manifest.network_layout.netns_path);
@@ -1007,7 +1008,7 @@ impl KrunSandboxBackend {
                 error,
             ));
         }
-        if let Err(error) = port_manager.activate_netavark_bindings_with_lifetimes(
+        if let Err(error) = port_lease_coordinator.activate_netavark_bindings_with_lifetimes(
             &manifest.spec.tenant_id,
             &manifest.handle.id,
             &manifest.spec.port_bindings,
@@ -1114,8 +1115,8 @@ impl KrunSandboxBackend {
             };
         }
 
-        let port_manager = self.port_manager();
-        let compensation = port_manager
+        let port_lease_coordinator = self.port_lease_coordinator();
+        let compensation = port_lease_coordinator
             .abandon_netavark_bind_claims_with_lifetimes_without_effect(
                 &manifest.spec.tenant_id,
                 &manifest.handle.id,
@@ -1125,13 +1126,13 @@ impl KrunSandboxBackend {
                 manifest.reservation_claim(),
             )
             .or_else(|abandon_error| {
-                let expected = port_manager.expected_netavark_bindings(
+                let expected = port_lease_coordinator.expected_netavark_bindings(
                     &manifest.spec.tenant_id,
                     &manifest.handle.id,
                     &manifest.spec.port_bindings,
                     &manifest.port_leases,
                 )?;
-                port_manager
+                port_lease_coordinator
                     .prepare_netavark_bindings_for_rebind_with_lifetimes(
                         &manifest.port_leases,
                         &expected,
@@ -1278,10 +1279,10 @@ impl KrunSandboxBackend {
         )?;
         let mut errors = Vec::new();
         let mut detach_confirmed = true;
-        let port_manager = self.port_manager();
+        let port_lease_coordinator = self.port_lease_coordinator();
         let launch_claim = manifest.reservation_claim();
         let published_batch_state = if manifest.start_mode == KrunStartMode::Execute {
-            port_manager.classify_netavark_cleanup_batch(
+            port_lease_coordinator.classify_netavark_cleanup_batch(
                 &manifest.spec.tenant_id,
                 &manifest.handle.id,
                 &manifest.spec.port_bindings,
@@ -1299,7 +1300,7 @@ impl KrunSandboxBackend {
         let pep_batch_state = if mode.releases_authority()
             && let Some(claim) = launch_claim
         {
-            port_manager.classify_launch_port_batch(&pep_requests, claim)
+            port_lease_coordinator.classify_launch_port_batch(&pep_requests, claim)
         } else {
             Ok(LaunchPortBatchState::ProviderOwned)
         };
@@ -1330,7 +1331,7 @@ impl KrunSandboxBackend {
                 Ok(LaunchPortBatchState::ProviderOwned)
             )
         {
-            match port_manager.begin_netavark_cleanup(
+            match port_lease_coordinator.begin_netavark_cleanup(
                 &self.netavark_port_lifetimes,
                 &manifest.spec.tenant_id,
                 &manifest.handle.id,
@@ -1347,7 +1348,7 @@ impl KrunSandboxBackend {
         if manifest.start_mode == KrunStartMode::Execute
             && let Ok(LaunchPortBatchState::NetavarkClaimed(claims)) = &published_batch_state
         {
-            match port_manager.recover_netavark_claims_after_owner_death(
+            match port_lease_coordinator.recover_netavark_claims_after_owner_death(
                 &manifest.spec.tenant_id,
                 &manifest.handle.id,
                 &manifest.spec.port_bindings,
@@ -1420,7 +1421,7 @@ impl KrunSandboxBackend {
                 Ok(LaunchPortBatchState::ProviderOwned)
             )
         {
-            match port_manager.complete_netavark_cleanup(
+            match port_lease_coordinator.complete_netavark_cleanup(
                 &manifest.port_leases,
                 netavark_port_cleanup.as_ref(),
                 mode.releases_authority(),
@@ -1435,9 +1436,10 @@ impl KrunSandboxBackend {
         if netavark_detach_confirmed
             && let Some(recoveries) = netavark_claim_recoveries.take()
             && let Err(error) = if mode.releases_authority() {
-                port_manager.release_recovered_netavark_bindings(&manifest.port_leases, &recoveries)
+                port_lease_coordinator
+                    .release_recovered_netavark_bindings(&manifest.port_leases, &recoveries)
             } else {
-                port_manager.prepare_recovered_netavark_claims_for_rebind(
+                port_lease_coordinator.prepare_recovered_netavark_claims_for_rebind(
                     &manifest.port_leases,
                     &recoveries,
                 )
@@ -1447,7 +1449,7 @@ impl KrunSandboxBackend {
             errors.push(error.to_string());
         }
         if !netavark_detach_confirmed
-            && let Err(error) = port_manager.retain_ambiguous_netavark_cleanup(
+            && let Err(error) = port_lease_coordinator.retain_ambiguous_netavark_cleanup(
                 &self.netavark_port_lifetimes,
                 &manifest.spec.tenant_id,
                 &manifest.handle.id,
@@ -1465,7 +1467,7 @@ impl KrunSandboxBackend {
                 match published_batch_state {
                     Ok(LaunchPortBatchState::NeverBound) => {
                         if let Some(claim) = launch_claim
-                            && let Err(error) = port_manager
+                            && let Err(error) = port_lease_coordinator
                                 .release_never_bound_requests(&manifest.port_leases, claim)
                         {
                             detach_confirmed = false;
@@ -1477,12 +1479,14 @@ impl KrunSandboxBackend {
                         // completed the terminal release above.
                     }
                     Ok(LaunchPortBatchState::RestartRetained) => {
-                        if let Err(error) = port_manager.release_restart_retained_bindings(
-                            &manifest.spec.tenant_id,
-                            &manifest.handle.id,
-                            &manifest.spec.port_bindings,
-                            &manifest.port_leases,
-                        ) {
+                        if let Err(error) = port_lease_coordinator
+                            .release_restart_retained_bindings(
+                                &manifest.spec.tenant_id,
+                                &manifest.handle.id,
+                                &manifest.spec.port_bindings,
+                                &manifest.port_leases,
+                            )
+                        {
                             detach_confirmed = false;
                             errors.push(error.to_string());
                         }
@@ -1502,7 +1506,7 @@ impl KrunSandboxBackend {
                     && matches!(&pep_batch_state, Ok(LaunchPortBatchState::NeverBound))
                     && let Some(claim) = launch_claim
                     && let Err(error) =
-                        port_manager.release_never_bound_requests(&pep_requests, claim)
+                        port_lease_coordinator.release_never_bound_requests(&pep_requests, claim)
                 {
                     detach_confirmed = false;
                     errors.push(error.to_string());

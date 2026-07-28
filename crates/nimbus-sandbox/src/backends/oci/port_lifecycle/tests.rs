@@ -10,8 +10,8 @@ use serde_json::json;
 use tempfile::TempDir;
 
 use super::{
-    InternalListenerReservation, LaunchPortBatchState, PortManager, ReservedLaunchPorts,
-    SandboxLaunchPortPlan, new_launch_reservation_claim,
+    InternalListenerReservation, LaunchPortBatchState, OciPortLeaseCoordinator,
+    ReservedLaunchPorts, SandboxLaunchPortPlan, new_launch_reservation_claim,
 };
 use crate::artifact_paths;
 use crate::backends::oci::buildah::{OciExposedPort, OciExposedPortProtocol};
@@ -29,7 +29,7 @@ mod netavark_lifetime_cleanup;
 mod teardown_progress;
 
 const ALLOCATOR_CHILD_TEST: &str =
-    "backends::oci::port_manager::tests::sandbox_and_pep_allocator_child";
+    "backends::oci::port_lifecycle::tests::sandbox_and_pep_allocator_child";
 const ALLOCATOR_KIND_ENV: &str = "NIMBUS_PORT_MANAGER_ALLOCATOR_KIND";
 const ALLOCATOR_ROLE_ENV: &str = "NIMBUS_PORT_MANAGER_ALLOCATOR_ROLE";
 const ALLOCATOR_STATE_ROOT_ENV: &str = "NIMBUS_PORT_MANAGER_ALLOCATOR_STATE_ROOT";
@@ -38,7 +38,7 @@ const CHARACTERIZATION_PORT_MIN: u16 = 41_337;
 const CHARACTERIZATION_PORT_MAX: u16 = 41_338;
 
 fn reserve_complete_launch(
-    manager: &PortManager,
+    manager: &OciPortLeaseCoordinator,
     tenant_id: &TenantId,
     sandbox_id: &SandboxId,
     existing_bindings: &[SandboxPortBinding],
@@ -56,7 +56,7 @@ fn reserve_complete_launch(
 #[test]
 fn launch_reservation_lifetime_spans_canonical_manifest_publication() {
     let temp_dir = TempDir::new().expect("shared state root should exist");
-    let manager = PortManager::new(temp_dir.path(), 15_000..=15_000);
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15_000..=15_000);
     let tenant = tenant_id("tenant-publication-lifetime");
     let sandbox = SandboxId::new("publication-lifetime");
     let claim = new_launch_reservation_claim().expect("launch claim should mint");
@@ -149,7 +149,7 @@ fn sandbox_and_pep_allocator_child() {
         format!("{ALLOCATOR_PROTOCOL_PREFIX}release")
     );
 
-    let manager = PortManager::new(
+    let manager = OciPortLeaseCoordinator::new(
         &state_root,
         CHARACTERIZATION_PORT_MIN..=CHARACTERIZATION_PORT_MAX,
     );
@@ -196,7 +196,7 @@ fn sandbox_and_pep_allocator_child() {
 #[test]
 fn allocate_missing_bindings_uses_range_and_skips_existing_guest_ports() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let manager = PortManager::new(temp_dir.path(), 15000..=15005);
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15000..=15005);
     let existing = vec![SandboxPortBinding::tcp("http", 18080, 8080)];
     let exposed = vec![
         tcp_exposed_port(8080),
@@ -217,7 +217,7 @@ fn allocate_missing_bindings_uses_range_and_skips_existing_guest_ports() {
 #[test]
 fn netavark_preview_reuses_a_port_across_disjoint_specific_addresses() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let manager = PortManager::new(temp_dir.path(), 15000..=15000);
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15000..=15000);
     let existing = vec![
         SandboxPortBinding::tcp("other-loopback", 15000, 8080)
             .with_host_address("127.0.0.2".parse().expect("fixture address should parse")),
@@ -236,8 +236,8 @@ fn netavark_preview_reuses_a_port_across_disjoint_specific_addresses() {
 #[test]
 fn machine_proxy_preview_keeps_wildcard_numeric_exclusion() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let manager =
-        PortManager::new(temp_dir.path(), 15000..=15000).with_machine_port_proxy_bindings();
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15000..=15000)
+        .with_machine_port_proxy_bindings();
     let existing = vec![
         SandboxPortBinding::tcp("other-loopback", 15000, 8080)
             .with_host_address("127.0.0.2".parse().expect("fixture address should parse")),
@@ -256,7 +256,7 @@ fn machine_proxy_preview_keeps_wildcard_numeric_exclusion() {
 #[test]
 fn preview_rejects_zero_based_range_before_rendering_an_unexecutable_binding() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let manager = PortManager::new(temp_dir.path(), 0..=15005);
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 0..=15005);
 
     let error = manager
         .preview_missing_bindings(&[], &[tcp_exposed_port(8080)])
@@ -273,7 +273,7 @@ fn preview_rejects_zero_based_range_before_rendering_an_unexecutable_binding() {
 #[test]
 fn conflicting_sandbox_binding_batch_leaks_no_partial_reservation() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let manager = PortManager::new(temp_dir.path(), 15000..=15005);
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15000..=15005);
     let bindings = vec![
         SandboxPortBinding::tcp("first", 18080, 8080),
         SandboxPortBinding::tcp("second", 18080, 8081),
@@ -303,7 +303,7 @@ fn conflicting_sandbox_binding_batch_leaks_no_partial_reservation() {
 #[test]
 fn equal_tenant_local_sandbox_ids_have_distinct_host_global_leases() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let manager = PortManager::new(temp_dir.path(), 15000..=15001);
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15000..=15001);
     let sandbox_id = SandboxId::new("same-local-id");
     let exposed = [tcp_exposed_port(8080)];
     let tenant_a = tenant_id("tenant-a");
@@ -340,7 +340,7 @@ fn equal_tenant_local_sandbox_ids_have_distinct_host_global_leases() {
 #[test]
 fn published_lease_rejects_manifest_bind_scope_widening() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let manager = PortManager::new(temp_dir.path(), 15000..=15000);
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15000..=15000);
     let tenant = tenant_id("tenant-a");
     let sandbox_id = SandboxId::new("scope-authentication");
     let loopback = SandboxPortBinding::tcp("http", 15000, 8080);
@@ -382,8 +382,8 @@ fn published_lease_rejects_manifest_bind_scope_widening() {
 #[test]
 fn machine_proxy_lease_reserves_guest_wildcard_and_exact_publication() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let manager =
-        PortManager::new(temp_dir.path(), 15000..=15000).with_machine_port_proxy_bindings();
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15000..=15000)
+        .with_machine_port_proxy_bindings();
     let tenant = tenant_id("tenant-machine-scope");
     let sandbox_id = SandboxId::new("machine-scope");
     let external_loopback = SandboxPortBinding::tcp("http", 15000, 8080);
@@ -442,8 +442,8 @@ fn machine_proxy_lease_reserves_guest_wildcard_and_exact_publication() {
 #[test]
 fn machine_proxy_lease_authenticates_exact_external_publication_address() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let manager =
-        PortManager::new(temp_dir.path(), 15000..=15000).with_machine_port_proxy_bindings();
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15000..=15000)
+        .with_machine_port_proxy_bindings();
     let tenant = tenant_id("tenant-machine-publication-address");
     let sandbox_id = SandboxId::new("machine-publication-address");
     let requested = SandboxPortBinding::tcp("http", 15000, 8080)
@@ -486,8 +486,8 @@ fn machine_proxy_lease_authenticates_exact_external_publication_address() {
 #[test]
 fn machine_proxy_activation_records_wildcard_provider_endpoint() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let manager =
-        PortManager::new(temp_dir.path(), 15000..=15000).with_machine_port_proxy_bindings();
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15000..=15000)
+        .with_machine_port_proxy_bindings();
     let tenant = tenant_id("tenant-machine-active-wildcard");
     let sandbox_id = SandboxId::new("machine-active-wildcard");
     let external_address = IpAddr::V6(std::net::Ipv6Addr::LOCALHOST);
@@ -535,8 +535,8 @@ fn machine_proxy_activation_records_wildcard_provider_endpoint() {
 #[test]
 fn failed_no_effect_launch_member_does_not_strand_reserved_sibling() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let manager =
-        PortManager::new(temp_dir.path(), 15000..=15001).with_machine_port_proxy_bindings();
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15000..=15001)
+        .with_machine_port_proxy_bindings();
     let tenant = tenant_id("tenant-machine-failed-compensation");
     let sandbox_id = SandboxId::new("machine-failed-compensation");
     let bindings = [
@@ -629,7 +629,7 @@ fn failed_no_effect_launch_member_does_not_strand_reserved_sibling() {
 #[test]
 fn published_and_internal_launch_reservations_fail_atomically() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let manager = PortManager::new(temp_dir.path(), 15000..=15000);
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15000..=15000);
     let reservation_claim =
         new_launch_reservation_claim().expect("launch reservation claim should mint");
     let error = manager
@@ -665,7 +665,7 @@ fn published_and_internal_launch_reservations_fail_atomically() {
 #[test]
 fn netavark_bind_attempt_is_durable_before_provider_adoption() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let manager = PortManager::new(temp_dir.path(), 15000..=15000);
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15000..=15000);
     let tenant = tenant_id("tenant-netavark-claim");
     let sandbox = SandboxId::new("netavark-claim");
     let bindings = [SandboxPortBinding::tcp("http", 15000, 8080)];
@@ -731,7 +731,7 @@ fn netavark_bind_attempt_is_durable_before_provider_adoption() {
 #[test]
 fn exact_netavark_claim_batch_is_recoverable_after_ambiguous_setup() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let manager = PortManager::new(temp_dir.path(), 15000..=15000);
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15000..=15000);
     let tenant = tenant_id("tenant-netavark-recovery");
     let sandbox = SandboxId::new("netavark-recovery");
     let bindings = [SandboxPortBinding::tcp("http", 15000, 8080)];
@@ -774,7 +774,7 @@ fn exact_netavark_claim_batch_is_recoverable_after_ambiguous_setup() {
 #[test]
 fn restart_retained_netavark_release_rejects_mixed_terminal_batch_without_mutation() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let manager = PortManager::new(temp_dir.path(), 15000..=15001);
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15000..=15001);
     let tenant = tenant_id("tenant-netavark-restart-claim");
     let sandbox = SandboxId::new("netavark-restart-claim");
     let bindings = [
@@ -851,7 +851,7 @@ fn restart_retained_netavark_release_rejects_mixed_terminal_batch_without_mutati
 #[test]
 fn launch_owned_netavark_cleanup_authenticates_tenant_and_sandbox_before_classification() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let manager = PortManager::new(temp_dir.path(), 15_000..=15_000);
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15_000..=15_000);
     let owner_tenant = tenant_id("tenant-netavark-launch-owner");
     let owner_sandbox = SandboxId::new("netavark-launch-owner");
     let binding = SandboxPortBinding::tcp("http", 15_000, 8080);
@@ -908,9 +908,9 @@ fn launch_owned_netavark_cleanup_authenticates_tenant_and_sandbox_before_classif
 #[test]
 fn machine_abandon_rejects_manager_provider_mismatch_without_mutation() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let machine =
-        PortManager::new(temp_dir.path(), 15000..=15000).with_machine_port_proxy_bindings();
-    let netavark = PortManager::new(temp_dir.path(), 15000..=15000);
+    let machine = OciPortLeaseCoordinator::new(temp_dir.path(), 15000..=15000)
+        .with_machine_port_proxy_bindings();
+    let netavark = OciPortLeaseCoordinator::new(temp_dir.path(), 15000..=15000);
     let tenant = tenant_id("tenant-machine-abandon-provider");
     let sandbox = SandboxId::new("machine-abandon-provider");
     let bindings = [SandboxPortBinding::tcp("http", 15000, 8080)];
@@ -946,9 +946,9 @@ fn machine_abandon_rejects_manager_provider_mismatch_without_mutation() {
 #[test]
 fn machine_bind_failure_rejects_manager_provider_mismatch_without_mutation() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let machine =
-        PortManager::new(temp_dir.path(), 15000..=15000).with_machine_port_proxy_bindings();
-    let netavark = PortManager::new(temp_dir.path(), 15000..=15000);
+    let machine = OciPortLeaseCoordinator::new(temp_dir.path(), 15000..=15000)
+        .with_machine_port_proxy_bindings();
+    let netavark = OciPortLeaseCoordinator::new(temp_dir.path(), 15000..=15000);
     let tenant = tenant_id("tenant-machine-failure-provider");
     let sandbox = SandboxId::new("machine-failure-provider");
     let bindings = [SandboxPortBinding::tcp("http", 15000, 8080)];
@@ -991,8 +991,8 @@ fn machine_bind_failure_rejects_manager_provider_mismatch_without_mutation() {
 #[test]
 fn machine_abandon_rejects_mixed_provider_batch_without_mutation() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let machine =
-        PortManager::new(temp_dir.path(), 15000..=15001).with_machine_port_proxy_bindings();
+    let machine = OciPortLeaseCoordinator::new(temp_dir.path(), 15000..=15001)
+        .with_machine_port_proxy_bindings();
     let tenant = tenant_id("tenant-machine-mixed-abandon");
     let sandbox = SandboxId::new("machine-mixed-abandon");
     let bindings = [
@@ -1041,8 +1041,8 @@ fn machine_abandon_rejects_mixed_provider_batch_without_mutation() {
 #[test]
 fn machine_abandon_accepts_uniform_exact_machine_batch() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let machine =
-        PortManager::new(temp_dir.path(), 15000..=15001).with_machine_port_proxy_bindings();
+    let machine = OciPortLeaseCoordinator::new(temp_dir.path(), 15000..=15001)
+        .with_machine_port_proxy_bindings();
     let tenant = tenant_id("tenant-machine-uniform-abandon");
     let sandbox = SandboxId::new("machine-uniform-abandon");
     let bindings = [
@@ -1077,7 +1077,7 @@ fn machine_abandon_accepts_uniform_exact_machine_batch() {
 #[test]
 fn teardown_rejects_cross_tenant_published_lease_substitution() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let manager = PortManager::new(temp_dir.path(), 15000..=15000);
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15000..=15000);
     let sandbox_id = SandboxId::new("same-local-id");
     let tenant_a = tenant_id("tenant-a");
     let tenant_b = tenant_id("tenant-b");
@@ -1128,7 +1128,7 @@ fn preview_bindings_never_treat_manifests_as_authority() {
         &[(15001, 5432)],
     );
 
-    let manager = PortManager::new(temp_dir.path(), 15000..=15002);
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15000..=15002);
     let allocated = manager
         .preview_missing_bindings(&[], &[tcp_exposed_port(8080), tcp_exposed_port(8443)])
         .expect("port allocation should succeed");
@@ -1154,7 +1154,7 @@ fn not_ready_manifest_is_not_port_authority() {
         &[(15000, 5432)],
     );
 
-    let manager = PortManager::new(temp_dir.path(), 15000..=15001);
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15000..=15001);
     let allocated = manager
         .preview_missing_bindings(&[], &[tcp_exposed_port(8080)])
         .expect("port allocation should succeed");
@@ -1177,7 +1177,7 @@ fn active_egress_manifest_is_not_port_authority() {
         15000,
     );
 
-    let manager = PortManager::new(temp_dir.path(), 15000..=15001);
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15000..=15001);
     let allocated = manager
         .reserve_internal_listener(
             &tenant_id,
@@ -1204,7 +1204,7 @@ fn stopped_egress_manifest_is_not_port_authority() {
         15000,
     );
 
-    let manager = PortManager::new(temp_dir.path(), 15000..=15001);
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15000..=15001);
     let allocated = manager
         .reserve_internal_listener(
             &tenant_id,
@@ -1231,7 +1231,7 @@ fn active_manifest_is_observation_not_host_port_authority() {
         &[(15000, 5432)],
     );
 
-    let manager = PortManager::new(temp_dir.path(), 15000..=15001);
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15000..=15001);
     let allocated = manager
         .reserve_internal_listener(
             &tenant_id,
@@ -1254,8 +1254,8 @@ fn tenant_port_quota_rejects_explicit_bindings_that_exceed_same_tenant_limit() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let tenant_id = tenant_id("tenant-a");
 
-    let manager =
-        PortManager::new(temp_dir.path(), 15000..=15002).with_max_ports_per_tenant(Some(0));
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15000..=15002)
+        .with_max_ports_per_tenant(Some(0));
     let existing = vec![SandboxPortBinding::tcp("http", 18080, 8080)];
     let error = reserve_complete_launch(
         &manager,
@@ -1286,8 +1286,8 @@ fn tenant_quota_is_atomic_across_independent_managers() {
             let tenant = tenant.clone();
             let barrier = Arc::clone(&barrier);
             std::thread::spawn(move || {
-                let manager =
-                    PortManager::new(state_root, 15000..=15001).with_max_ports_per_tenant(Some(1));
+                let manager = OciPortLeaseCoordinator::new(state_root, 15000..=15001)
+                    .with_max_ports_per_tenant(Some(1));
                 barrier.wait();
                 reserve_complete_launch(
                     &manager,
@@ -1333,7 +1333,8 @@ fn tenant_quota_is_atomic_across_independent_managers() {
 fn crash_retained_reservation_consumes_tenant_quota_without_manifest() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let tenant = tenant_id("tenant-quota-crash");
-    let first = PortManager::new(temp_dir.path(), 15000..=15001).with_max_ports_per_tenant(Some(1));
+    let first = OciPortLeaseCoordinator::new(temp_dir.path(), 15000..=15001)
+        .with_max_ports_per_tenant(Some(1));
     let first_reservation = reserve_complete_launch(
         &first,
         &tenant,
@@ -1344,8 +1345,8 @@ fn crash_retained_reservation_consumes_tenant_quota_without_manifest() {
     .expect("first reservation should persist before the simulated crash");
     drop(first);
 
-    let reopened =
-        PortManager::new(temp_dir.path(), 15000..=15001).with_max_ports_per_tenant(Some(1));
+    let reopened = OciPortLeaseCoordinator::new(temp_dir.path(), 15000..=15001)
+        .with_max_ports_per_tenant(Some(1));
     let error = reserve_complete_launch(
         &reopened,
         &tenant,
@@ -1375,8 +1376,8 @@ fn crash_retained_reservation_consumes_tenant_quota_without_manifest() {
 fn foreign_coordinator_tenant_quota_replay_is_fenced() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let tenant = tenant_id("tenant-quota-replay");
-    let manager =
-        PortManager::new(temp_dir.path(), 15000..=15001).with_max_ports_per_tenant(Some(1));
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15000..=15001)
+        .with_max_ports_per_tenant(Some(1));
     let binding = SandboxPortBinding::tcp("http", 15000, 8080);
     let sandbox = SandboxId::new("quota-replay");
     let first = reserve_complete_launch(
@@ -1428,8 +1429,8 @@ fn foreign_coordinator_tenant_quota_replay_is_fenced() {
 fn internal_pep_lease_does_not_consume_published_quota() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let tenant = tenant_id("tenant-quota-internal");
-    let manager =
-        PortManager::new(temp_dir.path(), 15000..=15002).with_max_ports_per_tenant(Some(1));
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15000..=15002)
+        .with_max_ports_per_tenant(Some(1));
     let (pep_port, pep_lease, pep_reservation_claim) = manager
         .reserve_internal_listener_for_coordinator(
             &tenant,
@@ -1518,8 +1519,8 @@ fn tenant_quota_is_tenant_scoped_while_port_conflicts_remain_host_global() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let tenant_a = tenant_id("tenant-a");
     let tenant_b = tenant_id("tenant-b");
-    let manager =
-        PortManager::new(temp_dir.path(), 15000..=15002).with_max_ports_per_tenant(Some(2));
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15000..=15002)
+        .with_max_ports_per_tenant(Some(2));
     reserve_complete_launch(
         &manager,
         &tenant_b,
@@ -1564,7 +1565,7 @@ fn manifest_count_does_not_affect_preview_port_selection() {
             );
         }
 
-        let manager = PortManager::new(temp_dir.path(), HOST_PORT_BASE..=40_000);
+        let manager = OciPortLeaseCoordinator::new(temp_dir.path(), HOST_PORT_BASE..=40_000);
         let expected = HOST_PORT_BASE;
         let mut samples_ns = Vec::with_capacity(SAMPLE_COUNT);
         for _ in 0..SAMPLE_COUNT {

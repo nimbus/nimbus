@@ -3,7 +3,7 @@
 //! New plans snapshot current configuration into their manifest. Every later
 //! effect reconstructs this adapter from that persisted launch-time context.
 
-use crate::backends::oci::port_manager::PortManager;
+use crate::backends::oci::port_lifecycle::OciPortLeaseCoordinator;
 use crate::backends::oci::{conmon::OciConmonLayout, network::OciNetworkLayout};
 use crate::error::{Result, SandboxError};
 
@@ -67,25 +67,30 @@ impl ContainerSandboxBackend {
         Ok(())
     }
 
-    pub(in crate::backends::container::runtime) fn port_manager(&self) -> PortManager {
-        Self::port_manager_for_execution_config(
+    pub(in crate::backends::container::runtime) fn port_lease_coordinator(
+        &self,
+    ) -> OciPortLeaseCoordinator {
+        Self::port_lease_coordinator_for_execution_config(
             &ContainerRunnerExecutionConfig::from_backend_config(&self.config),
         )
     }
 
-    pub(in crate::backends::container::runtime) fn port_manager_for_manifest(
+    pub(in crate::backends::container::runtime) fn port_lease_coordinator_for_manifest(
         &self,
         manifest: &ContainerSandboxManifest,
-    ) -> Result<PortManager> {
+    ) -> Result<OciPortLeaseCoordinator> {
         self.validate_manifest_execution_context(manifest)?;
-        Ok(Self::port_manager_for_execution_config(
+        Ok(Self::port_lease_coordinator_for_execution_config(
             &manifest.runner_config,
         ))
     }
 
-    fn port_manager_for_execution_config(config: &ContainerRunnerExecutionConfig) -> PortManager {
-        let manager = PortManager::new(&config.state_root, config.published_port_range.clone())
-            .with_max_ports_per_tenant(config.max_published_ports_per_tenant);
+    fn port_lease_coordinator_for_execution_config(
+        config: &ContainerRunnerExecutionConfig,
+    ) -> OciPortLeaseCoordinator {
+        let manager =
+            OciPortLeaseCoordinator::new(&config.state_root, config.published_port_range.clone())
+                .with_max_ports_per_tenant(config.max_published_ports_per_tenant);
         if config.machine_port_forwarder.is_some() {
             manager.with_machine_port_proxy_bindings()
         } else {

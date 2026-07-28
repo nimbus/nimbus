@@ -10,7 +10,7 @@ use crate::backends::oci::network::{
     DEFAULT_AARDVARK_DNS_BINARY, DEFAULT_NETAVARK_BINARY, DEFAULT_TENANT_PREFIX,
     OciMachinePortForwarderConfig,
 };
-use crate::backends::oci::port_manager::DEFAULT_MAX_PORTS_PER_TENANT;
+use crate::backends::oci::port_lifecycle::DEFAULT_MAX_PORTS_PER_TENANT;
 use crate::spec::SandboxResourceQuotaPolicy;
 
 const DEFAULT_RUNTIME_PATH: &str = "crun";

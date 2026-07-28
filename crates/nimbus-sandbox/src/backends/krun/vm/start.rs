@@ -264,7 +264,7 @@ impl KrunSandboxBackend {
         apply_guest_user_switch(&mut resolved_launch.spec, &resolved_launch.image_metadata)?;
         self.resource_quota_manager()
             .ensure_launch_quota(&resolved_launch.spec)?;
-        let manager = self.port_manager();
+        let manager = self.port_lease_coordinator();
         if self.config.start_mode == KrunStartMode::PlanOnly {
             // Plan-only port admission is a pure preview. It must precede
             // segment resolution because `network_config` durably allocates
@@ -421,7 +421,7 @@ impl KrunSandboxBackend {
     fn reserve_execute_launch_network(
         &self,
         manifest: &mut KrunSandboxManifest,
-        manager: &PortManager,
+        manager: &OciPortLeaseCoordinator,
     ) -> Result<ReservedLaunchPorts> {
         let reservation_claim = manifest.require_reserved_claim()?.clone();
         let network_config = self.place_sandbox_config(
@@ -549,7 +549,7 @@ impl KrunSandboxBackend {
     ) -> Result<EgressProxyAssignment> {
         crate::backends::oci::egress::allocate_egress_proxy(
             network_config,
-            &self.port_manager(),
+            &self.port_lease_coordinator(),
             &spec.tenant_id,
             sandbox_id,
         )
@@ -589,8 +589,8 @@ impl KrunSandboxBackend {
         }
     }
 
-    pub(super) fn port_manager(&self) -> PortManager {
-        PortManager::new(
+    pub(super) fn port_lease_coordinator(&self) -> OciPortLeaseCoordinator {
+        OciPortLeaseCoordinator::new(
             self.config.state_root.clone(),
             self.config.published_port_range.clone(),
         )

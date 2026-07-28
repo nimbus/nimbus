@@ -183,7 +183,7 @@ fn pre_netavark_setup_failure_preserves_no_effect_authority() {
         .expect("legacy purge should be skipped by marker");
 
     let claims = backend
-        .port_manager()
+        .port_lease_coordinator()
         .claim_netavark_bindings(
             &manifest.spec.tenant_id,
             &manifest.handle.id,
@@ -309,7 +309,7 @@ fn foreign_initial_launch_claim_fails_before_container_provider_effects() {
         );
     }
     backend
-        .port_manager()
+        .port_lease_coordinator()
         .release_never_bound_requests(&launch_batch, &authoritative_claim)
         .expect("the exact coordinator should clean up the test batch");
 }
@@ -592,7 +592,7 @@ fn machine_proxy_rejects_caller_manifest_identity_mismatch_before_effect() {
         "identity rejection must precede durable provider adoption"
     );
     backend
-        .port_manager()
+        .port_lease_coordinator()
         .release_never_bound_requests(
             &manifest.port_leases,
             manifest
@@ -676,7 +676,7 @@ fn machine_proxy_activation_failure_drops_listeners_and_abandons_exact_claims() 
         )
         .expect("the retry provider should stop");
     backend
-        .port_manager()
+        .port_lease_coordinator()
         .release_bindings(
             &manifest.spec.tenant_id,
             &manifest.handle.id,
@@ -759,7 +759,7 @@ fn machine_proxy_activation_ack_loss_inspects_active_binding_and_rebinds() {
         )
         .expect("the retry provider should stop");
     backend
-        .port_manager()
+        .port_lease_coordinator()
         .release_bindings(
             &manifest.spec.tenant_id,
             &manifest.handle.id,
@@ -826,7 +826,7 @@ fn machine_proxy_reuse_requires_exact_normalized_forwarding_plan() {
         )
         .expect("the original exact provider should stop");
     backend
-        .port_manager()
+        .port_lease_coordinator()
         .release_bindings(
             &manifest.spec.tenant_id,
             &manifest.handle.id,
@@ -912,7 +912,7 @@ fn machine_publication_rejects_external_address_substitution_before_proxy_or_for
         "address rejection must precede durable provider adoption"
     );
     backend
-        .port_manager()
+        .port_lease_coordinator()
         .release_never_bound_requests(
             &manifest.port_leases,
             manifest
@@ -985,7 +985,7 @@ fn machine_proxy_restart_rebinds_exact_active_lease() {
         )
         .expect("final provider stop should succeed");
     backend
-        .port_manager()
+        .port_lease_coordinator()
         .release_bindings(
             &manifest.spec.tenant_id,
             &manifest.handle.id,
@@ -1269,7 +1269,7 @@ fn machine_proxy_restart_waits_for_external_unexpose_before_rebind() {
         nimbus_network::PortLeasePhase::Reserved,
         "only external unexpose acknowledgement may authorize exact restart rebind"
     );
-    let manager = backend.port_manager();
+    let manager = backend.port_lease_coordinator();
     manager
         .withdraw_bindings(
             &manifest.spec.tenant_id,
@@ -1324,7 +1324,7 @@ fn empty_overlapping_machine_proxy_registry_keeps_live_provider_fenced() {
         "a fresh backend has no process-local provider evidence"
     );
     overlapping
-        .port_manager()
+        .port_lease_coordinator()
         .withdraw_bindings(
             &tenant,
             &id,
@@ -1378,7 +1378,7 @@ fn empty_overlapping_machine_proxy_registry_keeps_live_provider_fenced() {
         )
         .expect("the exact local registry should resume withdrawal and release its provider");
     first
-        .port_manager()
+        .port_lease_coordinator()
         .release_bindings(
             &tenant,
             &id,
@@ -1454,7 +1454,7 @@ fn independent_machine_backend_cannot_withdraw_another_process_provider() {
         )
         .expect("the backend with the exact registration may withdraw and stop");
     owner
-        .port_manager()
+        .port_lease_coordinator()
         .release_bindings(
             &tenant,
             &id,
@@ -1796,7 +1796,7 @@ fn absent_machine_registry_accepts_only_an_entire_terminal_no_effect_batch() {
     config.machine_port_forwarder = Some(sample_forwarder(unused_loopback_port()));
     config.published_port_range = first_port.min(second_port)..=first_port.max(second_port);
     let backend = ContainerSandboxBackend::new(config);
-    let manager = backend.port_manager();
+    let manager = backend.port_lease_coordinator();
     let tenant =
         nimbus_core::TenantId::new("tenant-machine-terminal").expect("tenant should validate");
     let id = SandboxId::new("machine-terminal");
@@ -1808,7 +1808,7 @@ fn absent_machine_registry_accepts_only_an_entire_terminal_no_effect_batch() {
         .expect("terminal batch launch claim should mint");
     let mut reservations = manager
         .reserve_launch_ports_for_sandbox(
-            crate::backends::oci::port_manager::SandboxLaunchPortPlan::new(
+            crate::backends::oci::port_lifecycle::SandboxLaunchPortPlan::new(
                 &tenant,
                 &id,
                 &bindings,

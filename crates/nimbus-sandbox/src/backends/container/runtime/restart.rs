@@ -81,29 +81,29 @@ impl ContainerSandboxBackend {
         let netavark_cleanup = if manifest.start_mode == ContainerStartMode::Execute
             && manifest.runner_config.machine_port_forwarder.is_none()
         {
-            let port_manager = self.port_manager_for_manifest(manifest)?;
-            match port_manager.classify_netavark_cleanup_batch(
+            let port_lease_coordinator = self.port_lease_coordinator_for_manifest(manifest)?;
+            match port_lease_coordinator.classify_netavark_cleanup_batch(
                 &manifest.spec.tenant_id,
                 &manifest.handle.id,
                 &manifest.spec.port_bindings,
                 &manifest.port_leases,
                 manifest.launch_reservation_claim.as_ref(),
             )? {
-                crate::backends::oci::port_manager::LaunchPortBatchState::ProviderOwned => {
-                    let cleanup = port_manager.begin_netavark_cleanup(
+                crate::backends::oci::port_lifecycle::LaunchPortBatchState::ProviderOwned => {
+                    let cleanup = port_lease_coordinator.begin_netavark_cleanup(
                         &self.netavark_port_lifetimes,
                         &manifest.spec.tenant_id,
                         &manifest.handle.id,
                         &manifest.spec.port_bindings,
                         &manifest.port_leases,
                     )?;
-                    Some((port_manager, cleanup))
+                    Some((port_lease_coordinator, cleanup))
                 }
-                crate::backends::oci::port_manager::LaunchPortBatchState::RestartRetained
-                | crate::backends::oci::port_manager::LaunchPortBatchState::TerminalNoEffect => {
+                crate::backends::oci::port_lifecycle::LaunchPortBatchState::RestartRetained
+                | crate::backends::oci::port_lifecycle::LaunchPortBatchState::TerminalNoEffect => {
                     None
                 }
-                crate::backends::oci::port_manager::LaunchPortBatchState::NeverBound
+                crate::backends::oci::port_lifecycle::LaunchPortBatchState::NeverBound
                     if manifest.port_leases.is_empty() =>
                 {
                     None
@@ -166,8 +166,8 @@ impl ContainerSandboxBackend {
             errors.push(error.to_string());
         }
         if netavark_detach_confirmed
-            && let Some((port_manager, cleanup)) = &netavark_cleanup
-            && let Err(error) = port_manager.complete_netavark_cleanup(
+            && let Some((port_lease_coordinator, cleanup)) = &netavark_cleanup
+            && let Err(error) = port_lease_coordinator.complete_netavark_cleanup(
                 &manifest.port_leases,
                 cleanup.as_ref(),
                 false,
@@ -177,8 +177,8 @@ impl ContainerSandboxBackend {
             errors.push(error.to_string());
         }
         if !netavark_detach_confirmed
-            && let Some((port_manager, cleanup)) = netavark_cleanup
-            && let Err(error) = port_manager.retain_ambiguous_netavark_cleanup(
+            && let Some((port_lease_coordinator, cleanup)) = netavark_cleanup
+            && let Err(error) = port_lease_coordinator.retain_ambiguous_netavark_cleanup(
                 &self.netavark_port_lifetimes,
                 &manifest.spec.tenant_id,
                 &manifest.handle.id,

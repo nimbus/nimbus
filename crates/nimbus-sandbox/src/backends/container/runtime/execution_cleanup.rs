@@ -10,7 +10,7 @@ use crate::backends::oci::network::{
     deallocate_container_ips_after_confirmed_detach, quarantine_network_segment_hold,
     release_network_segment_hold, remove_persistent_network_namespace,
 };
-use crate::backends::oci::port_manager::LaunchPortBatchState;
+use crate::backends::oci::port_lifecycle::LaunchPortBatchState;
 
 impl ContainerSandboxBackend {
     pub(super) fn release_execution_artifacts(
@@ -42,24 +42,26 @@ impl ContainerSandboxBackend {
         if let Err(error) = self.remove_runner_manifest_pointer(manifest) {
             errors.push(error.to_string());
         }
-        let port_manager = self.port_manager_for_manifest(manifest)?;
+        let port_lease_coordinator = self.port_lease_coordinator_for_manifest(manifest)?;
         let launch_claim = manifest.launch_reservation_claim.clone();
         let machine_port_mode = manifest.start_mode == ContainerStartMode::Execute
             && manifest.runner_config.machine_port_forwarder.is_some();
         let published_batch_state = if machine_port_mode {
             launch_claim.as_ref().map_or_else(
                 || {
-                    port_manager.classify_machine_cleanup_batch(
+                    port_lease_coordinator.classify_machine_cleanup_batch(
                         &manifest.spec.tenant_id,
                         &manifest.handle.id,
                         &manifest.spec.port_bindings,
                         &manifest.port_leases,
                     )
                 },
-                |claim| port_manager.classify_launch_port_batch(&manifest.port_leases, claim),
+                |claim| {
+                    port_lease_coordinator.classify_launch_port_batch(&manifest.port_leases, claim)
+                },
             )
         } else {
-            port_manager.classify_netavark_cleanup_batch(
+            port_lease_coordinator.classify_netavark_cleanup_batch(
                 &manifest.spec.tenant_id,
                 &manifest.handle.id,
                 &manifest.spec.port_bindings,
@@ -75,7 +77,7 @@ impl ContainerSandboxBackend {
         let pep_batch_state = launch_claim
             .as_ref()
             .map_or(Ok(LaunchPortBatchState::ProviderOwned), |claim| {
-                port_manager.classify_launch_port_batch(&pep_requests, claim)
+                port_lease_coordinator.classify_launch_port_batch(&pep_requests, claim)
             });
         if let Err(error) = &published_batch_state {
             detach_confirmed = false;
@@ -112,7 +114,7 @@ impl ContainerSandboxBackend {
                     }
                 }
             } else {
-                match port_manager.begin_netavark_cleanup(
+                match port_lease_coordinator.begin_netavark_cleanup(
                     &self.netavark_port_lifetimes,
                     &manifest.spec.tenant_id,
                     &manifest.handle.id,
@@ -131,7 +133,7 @@ impl ContainerSandboxBackend {
             && !machine_port_mode
             && let Ok(LaunchPortBatchState::NetavarkClaimed(claims)) = &published_batch_state
         {
-            match port_manager.recover_netavark_claims_after_owner_death(
+            match port_lease_coordinator.recover_netavark_claims_after_owner_death(
                 &manifest.spec.tenant_id,
                 &manifest.handle.id,
                 &manifest.spec.port_bindings,
@@ -158,7 +160,7 @@ impl ContainerSandboxBackend {
             errors.push(error.to_string());
         }
         if !detach_confirmed {
-            if let Err(error) = port_manager.retain_ambiguous_netavark_cleanup(
+            if let Err(error) = port_lease_coordinator.retain_ambiguous_netavark_cleanup(
                 &self.netavark_port_lifetimes,
                 &manifest.spec.tenant_id,
                 &manifest.handle.id,
@@ -217,7 +219,7 @@ impl ContainerSandboxBackend {
                 Ok(LaunchPortBatchState::ProviderOwned)
             )
         {
-            match port_manager.complete_netavark_cleanup(
+            match port_lease_coordinator.complete_netavark_cleanup(
                 &manifest.port_leases,
                 netavark_port_cleanup.as_ref(),
                 true,
@@ -231,14 +233,14 @@ impl ContainerSandboxBackend {
         }
         if detach_confirmed
             && let Some(recoveries) = netavark_claim_recoveries.take()
-            && let Err(error) =
-                port_manager.release_recovered_netavark_bindings(&manifest.port_leases, &recoveries)
+            && let Err(error) = port_lease_coordinator
+                .release_recovered_netavark_bindings(&manifest.port_leases, &recoveries)
         {
             detach_confirmed = false;
             errors.push(error.to_string());
         }
         if !detach_confirmed
-            && let Err(error) = port_manager.retain_ambiguous_netavark_cleanup(
+            && let Err(error) = port_lease_coordinator.retain_ambiguous_netavark_cleanup(
                 &self.netavark_port_lifetimes,
                 &manifest.spec.tenant_id,
                 &manifest.handle.id,
@@ -254,8 +256,8 @@ impl ContainerSandboxBackend {
             match published_batch_state {
                 Ok(LaunchPortBatchState::NeverBound) => {
                     if let Some(claim) = launch_claim.as_ref()
-                        && let Err(error) =
-                            port_manager.release_never_bound_requests(&manifest.port_leases, claim)
+                        && let Err(error) = port_lease_coordinator
+                            .release_never_bound_requests(&manifest.port_leases, claim)
                     {
                         detach_confirmed = false;
                         errors.push(error.to_string());
@@ -267,14 +269,14 @@ impl ContainerSandboxBackend {
                 }
                 Ok(LaunchPortBatchState::RestartRetained) => {
                     let release = if machine_port_mode {
-                        port_manager.release_restart_retained_machine_bindings(
+                        port_lease_coordinator.release_restart_retained_machine_bindings(
                             &manifest.spec.tenant_id,
                             &manifest.handle.id,
                             &manifest.spec.port_bindings,
                             &manifest.port_leases,
                         )
                     } else {
-                        port_manager.release_restart_retained_bindings(
+                        port_lease_coordinator.release_restart_retained_bindings(
                             &manifest.spec.tenant_id,
                             &manifest.handle.id,
                             &manifest.spec.port_bindings,
@@ -307,7 +309,8 @@ impl ContainerSandboxBackend {
             if detach_confirmed
                 && matches!(&pep_batch_state, Ok(LaunchPortBatchState::NeverBound))
                 && let Some(claim) = launch_claim.as_ref()
-                && let Err(error) = port_manager.release_never_bound_requests(&pep_requests, claim)
+                && let Err(error) =
+                    port_lease_coordinator.release_never_bound_requests(&pep_requests, claim)
             {
                 detach_confirmed = false;
                 errors.push(error.to_string());

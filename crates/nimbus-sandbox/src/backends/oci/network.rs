@@ -135,7 +135,7 @@ const MACHINE_PORT_PROXY_ACCEPT_SLEEP: Duration = Duration::from_millis(50);
 const MACHINE_PORT_PROXY_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[cfg(test)]
-use crate::backends::oci::port_manager::machine_port_proxy_guest_listener_addr;
+use crate::backends::oci::port_lifecycle::machine_port_proxy_guest_listener_addr;
 #[cfg(test)]
 use forwarding::machine_forward_remote;
 #[cfg(test)]
@@ -171,7 +171,7 @@ mod tests {
         start_machine_port_proxies, teardown_container_network,
     };
     use crate::backend::SandboxBackendKind;
-    use crate::backends::oci::port_manager::PortManager;
+    use crate::backends::oci::port_lifecycle::OciPortLeaseCoordinator;
     use crate::error::SandboxError;
     use crate::instance::SandboxId;
     use crate::spec::{
@@ -548,7 +548,7 @@ mod tests {
 
         let binding = SandboxPortBinding::tcp("http", proxy_port, target_port);
         let state = tempdir().expect("network state root");
-        let manager = PortManager::new(state.path(), proxy_port..=proxy_port)
+        let manager = OciPortLeaseCoordinator::new(state.path(), proxy_port..=proxy_port)
             .with_machine_port_proxy_bindings();
         let tenant = TenantId::new("machine-proxy-test").expect("tenant id");
         let sandbox_id = SandboxId::new("machine-proxy-test");
@@ -556,7 +556,7 @@ mod tests {
             .expect("machine proxy test claim should mint");
         let mut reservations = manager
             .reserve_launch_ports_for_sandbox(
-                crate::backends::oci::port_manager::SandboxLaunchPortPlan::new(
+                crate::backends::oci::port_lifecycle::SandboxLaunchPortPlan::new(
                     &tenant,
                     &sandbox_id,
                     std::slice::from_ref(&binding),

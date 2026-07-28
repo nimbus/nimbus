@@ -27,7 +27,7 @@ fn assert_assignmentless_cleanup_preserves_live_leased_pep(id: SandboxId, cleanu
         .local_addr()
         .expect("port probe address should resolve")
         .port();
-    let manager = PortManager::new(state_root.path(), port..=port);
+    let manager = OciPortLeaseCoordinator::new(state_root.path(), port..=port);
     let (_, port_lease) = manager
         .reserve_internal_listener(
             &tenant,
@@ -354,7 +354,7 @@ fn activation_ack_loss_anchor_failure_retains_restart_tombstone() {
         .local_addr()
         .expect("port probe address should resolve")
         .port();
-    let manager = PortManager::new(state_root.path(), port..=port);
+    let manager = OciPortLeaseCoordinator::new(state_root.path(), port..=port);
     let (_, port_lease) = manager
         .reserve_internal_listener(
             &tenant,
@@ -479,7 +479,7 @@ fn fresh_launch_activation_ack_loss_anchor_failure_fences_release() {
         .local_addr()
         .expect("port probe address should resolve")
         .port();
-    let manager = PortManager::new(state_root.path(), port..=port);
+    let manager = OciPortLeaseCoordinator::new(state_root.path(), port..=port);
     let (_, port_lease, reservation_claim) = manager
         .reserve_internal_listener_for_coordinator(
             &tenant,
@@ -583,7 +583,7 @@ fn released_lease_replay_does_not_repeat_withdraw_after_checkpoint_loss() {
         .local_addr()
         .expect("port probe address should resolve")
         .port();
-    let manager = PortManager::new(state_root.path(), port..=port);
+    let manager = OciPortLeaseCoordinator::new(state_root.path(), port..=port);
     let (_, port_lease) = manager
         .reserve_internal_listener(
             &tenant,
@@ -666,7 +666,7 @@ fn restart_rejects_released_lease_without_process_local_provider() {
         .local_addr()
         .expect("port probe address should resolve")
         .port();
-    let manager = PortManager::new(state_root.path(), port..=port);
+    let manager = OciPortLeaseCoordinator::new(state_root.path(), port..=port);
     let (_, port_lease) = manager
         .reserve_internal_listener(
             &tenant,
@@ -723,7 +723,7 @@ fn restart_rejects_failed_lease_without_process_local_provider() {
         .local_addr()
         .expect("port probe address should resolve")
         .port();
-    let manager = PortManager::new(state_root.path(), port..=port);
+    let manager = OciPortLeaseCoordinator::new(state_root.path(), port..=port);
     let (_, port_lease, reservation_claim) = manager
         .reserve_internal_listener_for_coordinator(
             &tenant,

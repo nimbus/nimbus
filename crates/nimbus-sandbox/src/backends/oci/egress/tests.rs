@@ -133,7 +133,7 @@ fn overlapping_live_registry_teardown_without_provider_evidence_retains_fence_an
             .expect("port probe address should resolve")
             .port()
     };
-    let manager = PortManager::new(state_root.path(), port..=port);
+    let manager = OciPortLeaseCoordinator::new(state_root.path(), port..=port);
     let (_, port_lease) = manager
         .reserve_internal_listener(
             &tenant,
@@ -267,7 +267,7 @@ fn stop_for_restart_rebinds_exact_active_lease() {
             .expect("port probe address should resolve")
             .port()
     };
-    let manager = PortManager::new(state_root.path(), port..=port);
+    let manager = OciPortLeaseCoordinator::new(state_root.path(), port..=port);
     let (_, port_lease) = manager
         .reserve_internal_listener(
             &tenant,
@@ -403,7 +403,7 @@ fn restart_stop_followed_by_final_stop_releases_exact_confirmed_absent_pep() {
             .expect("port probe address should resolve")
             .port()
     };
-    let manager = PortManager::new(state_root.path(), port..=port);
+    let manager = OciPortLeaseCoordinator::new(state_root.path(), port..=port);
     let (_, port_lease) = manager
         .reserve_internal_listener(
             &tenant,
@@ -466,7 +466,7 @@ fn activation_ack_loss_rebinds_after_confirmed_pre_start_provider_drop() {
             .expect("port probe address should resolve")
             .port()
     };
-    let manager = PortManager::new(state_root.path(), port..=port);
+    let manager = OciPortLeaseCoordinator::new(state_root.path(), port..=port);
     let (_, port_lease) = manager
         .reserve_internal_listener(
             &tenant,
@@ -568,7 +568,7 @@ fn post_deregister_cleanup_failure_retains_retryable_evidence() {
             .expect("port probe address should resolve")
             .port()
     };
-    let manager = PortManager::new(state_root.path(), port..=port);
+    let manager = OciPortLeaseCoordinator::new(state_root.path(), port..=port);
     let (_, port_lease) = manager
         .reserve_internal_listener(
             &tenant,
@@ -696,7 +696,7 @@ fn overlapping_restart_claim_rejection_preserves_the_live_pep_trust_anchor() {
     let trust_anchor_root = state_root.path().join("trust-anchors");
     let tenant = tenant();
     let id = SandboxId::new("egress-overlapping-restart");
-    let manager = PortManager::new(state_root.path(), address.port()..=address.port());
+    let manager = OciPortLeaseCoordinator::new(state_root.path(), address.port()..=address.port());
     let (_, request) = manager
         .reserve_internal_listener(
             &tenant,
@@ -766,7 +766,7 @@ fn same_request_pep_replay_cannot_terminalize_the_claimed_attempt() {
     let trust_anchor_root = state_root.path().join("trust-anchors");
     let tenant = tenant();
     let id = SandboxId::new("egress-same-request-claim");
-    let manager = PortManager::new(state_root.path(), address.port()..=address.port());
+    let manager = OciPortLeaseCoordinator::new(state_root.path(), address.port()..=address.port());
     let (_, request) = manager
         .reserve_internal_listener(
             &tenant,
@@ -876,7 +876,7 @@ fn pep_bind_collision_records_durable_no_effect_failure() {
     let registry = EgressProxyRegistry::new();
     let tenant = tenant();
     let id = SandboxId::new("egress-bind-collision");
-    let manager = PortManager::new(
+    let manager = OciPortLeaseCoordinator::new(
         registry.network_state_root.as_path(),
         address.port()..=address.port(),
     );
@@ -1443,7 +1443,7 @@ fn fresh_launch_capability_releases_claimed_preparation_failure() {
     drop(port_probe);
     let tenant = tenant();
     let id = SandboxId::new("egress-fresh-launch-release");
-    let manager = PortManager::new(temp_dir.path(), address.port()..=address.port());
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), address.port()..=address.port());
     let (_, port_lease, reservation_claim) = manager
         .reserve_internal_listener_for_coordinator(
             &tenant,
@@ -1508,7 +1508,7 @@ fn retained_restart_bind_failure_returns_to_reserved_and_retries() {
 
     let tenant = tenant();
     let id = SandboxId::new("egress-retained-bind-retry");
-    let manager = PortManager::new(temp_dir.path(), address.port()..=address.port());
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), address.port()..=address.port());
     let (_, port_lease) = manager
         .reserve_internal_listener(
             &tenant,
@@ -1588,7 +1588,7 @@ fn pep_pre_adoption_cleanup_keeps_prepared_socket_exclusive() {
 
     let tenant = tenant();
     let id = SandboxId::new("egress-pre-adoption-exclusion");
-    let manager = PortManager::new(temp_dir.path(), address.port()..=address.port());
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), address.port()..=address.port());
     let (_, port_lease) = manager
         .reserve_internal_listener(
             &tenant,
@@ -1650,7 +1650,7 @@ fn pep_pre_adoption_cleanup_precedes_explicit_coordinator_release() {
 
     let tenant = tenant();
     let id = SandboxId::new("egress-pre-adoption-release-order");
-    let manager = PortManager::new(temp_dir.path(), address.port()..=address.port());
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), address.port()..=address.port());
     let (_, port_lease, reservation_claim) = manager
         .reserve_internal_listener_for_coordinator(
             &tenant,
@@ -1680,7 +1680,8 @@ fn pep_pre_adoption_cleanup_precedes_explicit_coordinator_release() {
     fs::set_permissions(&trust_root, fs::Permissions::from_mode(0o755))
         .expect("trust root permissions should restore");
     result.expect_err("an unwritable trust-anchor root must fail before PEP adoption");
-    let replacement_manager = PortManager::new(temp_dir.path(), address.port()..=address.port());
+    let replacement_manager =
+        OciPortLeaseCoordinator::new(temp_dir.path(), address.port()..=address.port());
     assert!(
         replacement_manager
             .reserve_internal_listener(
@@ -1729,7 +1730,7 @@ fn pep_pre_adoption_cleanup_failure_keeps_reserved_lease_fenced() {
         .local_addr()
         .expect("probe address should resolve");
     drop(port_probe);
-    let manager = PortManager::new(temp_dir.path(), address.port()..=address.port());
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), address.port()..=address.port());
     let (_, port_lease) = manager
         .reserve_internal_listener(
             &tenant,

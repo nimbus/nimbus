@@ -29,7 +29,7 @@ use crate::backends::oci::port_lease::{
     reserve_provider_assigned, target_for_ip,
 };
 #[cfg(test)]
-use crate::backends::oci::port_manager::PortManager;
+use crate::backends::oci::port_lifecycle::OciPortLeaseCoordinator;
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
 use nimbus_core::{TenantId, WorkloadId};

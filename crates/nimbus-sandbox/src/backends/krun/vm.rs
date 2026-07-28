@@ -52,9 +52,9 @@ use crate::backends::oci::network::{
     retire_terminal_container_ipam_release, setup_container_network, teardown_container_network,
 };
 use crate::backends::oci::port_lease::new_launch_reservation_claim;
-use crate::backends::oci::port_manager::{
-    DEFAULT_MAX_PORTS_PER_TENANT, LaunchPortBatchState, NetavarkPortLifetimeRegistry, PortManager,
-    ReservedLaunchPorts, SandboxLaunchPortPlan,
+use crate::backends::oci::port_lifecycle::{
+    DEFAULT_MAX_PORTS_PER_TENANT, LaunchPortBatchState, NetavarkPortLifetimeRegistry,
+    OciPortLeaseCoordinator, ReservedLaunchPorts, SandboxLaunchPortPlan,
 };
 use crate::backends::oci::resource_quota::ResourceQuotaManager;
 use crate::error::{Result, SandboxError};
@@ -378,7 +378,7 @@ impl KrunSandboxBackend {
 
     fn release_reserved_launch(&self, manifest: &KrunSandboxManifest) -> Result<()> {
         let reservation_claim = manifest.require_reserved_claim()?;
-        let manager = self.port_manager();
+        let manager = self.port_lease_coordinator();
         release_reserved_network_launch_after_ports(
             self.segment_allocator.as_ref(),
             &manifest.network_layout,
@@ -395,7 +395,7 @@ impl KrunSandboxBackend {
         reservations: &ReservedLaunchPorts,
     ) -> Result<()> {
         let reservation_claim = manifest.require_reserved_claim()?;
-        let manager = self.port_manager();
+        let manager = self.port_lease_coordinator();
         release_reserved_network_launch_after_ports(
             self.segment_allocator.as_ref(),
             &manifest.network_layout,

@@ -15,7 +15,7 @@ use crate::backends::conmon::lifecycle::{
 use crate::backends::oci::network::{
     MachinePortPreparationReleaseAuthority, authenticate_container_network_generation,
 };
-use crate::backends::oci::port_manager::LaunchPortBatchState;
+use crate::backends::oci::port_lifecycle::LaunchPortBatchState;
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxStatus;
 
@@ -292,7 +292,7 @@ fn classify_explicitly_absent_cleanup(
         launch_batch.push(assignment.port_lease.clone());
     }
     let ports = backend
-        .port_manager_for_manifest(manifest)?
+        .port_lease_coordinator_for_manifest(manifest)?
         .classify_launch_port_batch(&launch_batch, claim)?;
     let status_absent = path_is_absent(
         &manifest.network_layout.status_path,
@@ -373,7 +373,7 @@ fn authenticate_present_runner_effects(
         }
     }
 
-    let port_manager = backend.port_manager_for_manifest(manifest)?;
+    let port_lease_coordinator = backend.port_lease_coordinator_for_manifest(manifest)?;
     if manifest.runner_config.machine_port_forwarder.is_some() {
         backend.ensure_machine_port_proxies_running_with_publication(
             &manifest.handle.id,
@@ -383,7 +383,7 @@ fn authenticate_present_runner_effects(
             || Ok(()),
         )?;
     } else {
-        let state = port_manager.classify_netavark_cleanup_batch(
+        let state = port_lease_coordinator.classify_netavark_cleanup_batch(
             &manifest.spec.tenant_id,
             &manifest.handle.id,
             &manifest.spec.port_bindings,

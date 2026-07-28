@@ -6,14 +6,14 @@ fn two_listener_fixture(
     name: &str,
 ) -> (
     TempDir,
-    PortManager,
+    OciPortLeaseCoordinator,
     TenantId,
     SandboxId,
     [SandboxPortBinding; 2],
     ReservedLaunchPorts,
 ) {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let manager = PortManager::new(temp_dir.path(), 15_000..=15_001);
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15_000..=15_001);
     let tenant = tenant_id(&format!("tenant-{name}"));
     let sandbox = SandboxId::new(name);
     let bindings = [
@@ -26,7 +26,7 @@ fn two_listener_fixture(
 }
 
 fn activate_listener(
-    manager: &PortManager,
+    manager: &OciPortLeaseCoordinator,
     tenant: &TenantId,
     sandbox: &SandboxId,
     binding: &SandboxPortBinding,
@@ -163,7 +163,7 @@ fn release_batch_preserves_later_progress_and_retry_skips_completed_members() {
 #[test]
 fn teardown_batch_authenticates_every_member_before_any_progress() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let manager = PortManager::new(temp_dir.path(), 15_000..=15_001);
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15_000..=15_001);
     let tenant = tenant_id("tenant-authenticated-batch");
     let sandbox = SandboxId::new("authenticated-batch");
     let binding = SandboxPortBinding::tcp("owned", 15_000, 8080);

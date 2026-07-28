@@ -1377,8 +1377,8 @@ fn failed_netavark_setup_claims_reconcile_only_after_confirmed_detach() {
             &launch_claim,
         )
         .expect("provider-attempt fixture follows attachment adoption");
-    let port_manager = backend.port_manager();
-    let lifetimes = port_manager
+    let port_lease_coordinator = backend.port_lease_coordinator();
+    let lifetimes = port_lease_coordinator
         .claim_netavark_bindings_with_lifetimes(
             &manifest.spec.tenant_id,
             &manifest.handle.id,

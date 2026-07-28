@@ -16,7 +16,9 @@ use nimbus_network::{
 };
 
 use crate::backends::oci::port_lease::{OciPortBindLifetimeBatch, canonical_socket_ip};
-use crate::backends::oci::port_manager::{PortManager, machine_port_proxy_guest_listener_addr};
+use crate::backends::oci::port_lifecycle::{
+    OciPortLeaseCoordinator, machine_port_proxy_guest_listener_addr,
+};
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
 use crate::spec::SandboxPortBinding;
@@ -168,7 +170,7 @@ struct MachinePortProxyPreparation<'a> {
     port_lease: &'a PortLeaseRequest,
     bind_claim: PortBindClaim,
     lifetime: &'a PortLeaseLifetimeGuard,
-    port_manager: &'a PortManager,
+    port_lease_coordinator: &'a OciPortLeaseCoordinator,
     route: MachinePortProxyRoute,
     release_authority: MachinePortPreparationReleaseAuthority<'a>,
 }
@@ -309,11 +311,11 @@ impl PreparedMachinePortProxy {
             port_lease,
             bind_claim,
             lifetime,
-            port_manager,
+            port_lease_coordinator,
             route,
             release_authority,
         } = preparation;
-        port_manager.require_binding_leases(
+        port_lease_coordinator.require_binding_leases(
             tenant_id,
             sandbox_id,
             std::slice::from_ref(binding),
@@ -336,7 +338,7 @@ impl PreparedMachinePortProxy {
                 if matches!(
                     release_authority,
                     MachinePortPreparationReleaseAuthority::FreshLaunch(_)
-                ) && let Err(record_error) = port_manager
+                ) && let Err(record_error) = port_lease_coordinator
                     .record_machine_proxy_bind_failure_with_lifetime(
                         port_lease,
                         &bind_claim,
@@ -366,7 +368,7 @@ impl PreparedMachinePortProxy {
             if matches!(
                 release_authority,
                 MachinePortPreparationReleaseAuthority::FreshLaunch(_)
-            ) && let Err(record_error) = port_manager
+            ) && let Err(record_error) = port_lease_coordinator
                 .record_machine_proxy_bind_failure_with_lifetime(
                     port_lease,
                     &bind_claim,
@@ -532,9 +534,9 @@ pub(crate) fn prepare_machine_port_proxies(
     assigned_ips: &[Ipv4Addr],
     port_bindings: &[SandboxPortBinding],
     port_leases: &[PortLeaseRequest],
-    port_manager: &PortManager,
+    port_lease_coordinator: &OciPortLeaseCoordinator,
 ) -> Result<PreparedMachinePortProxyBatch> {
-    let reservation_claim = port_manager.reservation_claim_for_requests(port_leases)?;
+    let reservation_claim = port_lease_coordinator.reservation_claim_for_requests(port_leases)?;
     let release_authority = reservation_claim
         .as_ref()
         .map_or(MachinePortPreparationReleaseAuthority::Retain, |claim| {
@@ -546,7 +548,7 @@ pub(crate) fn prepare_machine_port_proxies(
         assigned_ips,
         port_bindings,
         port_leases,
-        port_manager,
+        port_lease_coordinator,
         release_authority,
     )
 }
@@ -557,16 +559,21 @@ pub(crate) fn prepare_machine_port_proxies_with_release_authority(
     assigned_ips: &[Ipv4Addr],
     port_bindings: &[SandboxPortBinding],
     port_leases: &[PortLeaseRequest],
-    port_manager: &PortManager,
+    port_lease_coordinator: &OciPortLeaseCoordinator,
     release_authority: MachinePortPreparationReleaseAuthority<'_>,
 ) -> Result<PreparedMachinePortProxyBatch> {
-    port_manager.require_binding_leases(tenant_id, sandbox_id, port_bindings, port_leases)?;
+    port_lease_coordinator.require_binding_leases(
+        tenant_id,
+        sandbox_id,
+        port_bindings,
+        port_leases,
+    )?;
     let routes = match machine_port_proxy_routes(assigned_ips, port_bindings) {
         Ok(routes) => routes,
         Err(error) => {
             return Err(
                 if let Some(reservation_claim) = release_authority.reservation_claim() {
-                    port_manager.compensate_failed_never_bound_requests(
+                    port_lease_coordinator.compensate_failed_never_bound_requests(
                         port_leases,
                         reservation_claim,
                         error,
@@ -578,7 +585,7 @@ pub(crate) fn prepare_machine_port_proxies_with_release_authority(
             );
         }
     };
-    let bind_authority = port_manager.claim_machine_bindings_with_lifetimes(
+    let bind_authority = port_lease_coordinator.claim_machine_bindings_with_lifetimes(
         tenant_id,
         sandbox_id,
         port_bindings,
@@ -599,7 +606,7 @@ pub(crate) fn prepare_machine_port_proxies_with_release_authority(
             port_lease: lease,
             bind_claim,
             lifetime,
-            port_manager,
+            port_lease_coordinator,
             route,
             release_authority,
         }) {
@@ -610,7 +617,7 @@ pub(crate) fn prepare_machine_port_proxies_with_release_authority(
                 // when bind lost to an external owner; the authority accepts
                 // that no-effect evidence while retiring Reserved siblings.
                 drop(proxies);
-                let error = match port_manager
+                let error = match port_lease_coordinator
                     .abandon_machine_bind_claims_with_lifetimes_without_effect(
                         port_leases,
                         &bind_authority,
@@ -625,7 +632,7 @@ pub(crate) fn prepare_machine_port_proxies_with_release_authority(
                 };
                 return Err(
                     if let Some(reservation_claim) = release_authority.reservation_claim() {
-                        port_manager.compensate_failed_never_bound_requests(
+                        port_lease_coordinator.compensate_failed_never_bound_requests(
                             port_leases,
                             reservation_claim,
                             error,
@@ -672,7 +679,7 @@ pub(crate) fn start_machine_port_proxies(
     sandbox_id: &SandboxId,
     port_bindings: &[SandboxPortBinding],
     port_leases: &[PortLeaseRequest],
-    port_manager: &PortManager,
+    port_lease_coordinator: &OciPortLeaseCoordinator,
     prepared: PreparedMachinePortProxyBatch,
 ) -> Result<RunningMachinePortProxyBatch> {
     start_machine_port_proxies_with_recovery(
@@ -680,7 +687,7 @@ pub(crate) fn start_machine_port_proxies(
         sandbox_id,
         port_bindings,
         port_leases,
-        port_manager,
+        port_lease_coordinator,
         prepared,
     )
     .map_err(|failure| {
@@ -697,7 +704,7 @@ pub(crate) fn start_machine_port_proxies_with_recovery(
     sandbox_id: &SandboxId,
     port_bindings: &[SandboxPortBinding],
     port_leases: &[PortLeaseRequest],
-    port_manager: &PortManager,
+    port_lease_coordinator: &OciPortLeaseCoordinator,
     prepared: PreparedMachinePortProxyBatch,
 ) -> std::result::Result<RunningMachinePortProxyBatch, MachinePortProxyStartFailure> {
     if prepared.proxies.len() != port_bindings.len() {
@@ -713,7 +720,7 @@ pub(crate) fn start_machine_port_proxies_with_recovery(
             bind_authority: prepared.bind_authority,
         });
     }
-    if let Err(error) = port_manager.require_active_machine_bindings_with_lifetimes(
+    if let Err(error) = port_lease_coordinator.require_active_machine_bindings_with_lifetimes(
         tenant_id,
         sandbox_id,
         port_bindings,
@@ -722,7 +729,7 @@ pub(crate) fn start_machine_port_proxies_with_recovery(
     ) {
         let (proxies, bind_authority) = prepared.into_parts();
         drop(proxies);
-        let error = match port_manager
+        let error = match port_lease_coordinator
             .abandon_machine_bind_claims_with_lifetimes_without_effect(port_leases, &bind_authority)
         {
             Ok(()) => error,

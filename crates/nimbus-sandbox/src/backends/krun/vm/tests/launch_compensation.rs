@@ -52,8 +52,8 @@ fn activate_netavark_with_live_lifetimes(
     backend: &KrunSandboxBackend,
     manifest: &KrunSandboxManifest,
 ) {
-    let port_manager = backend.port_manager();
-    let lifetimes = port_manager
+    let port_lease_coordinator = backend.port_lease_coordinator();
+    let lifetimes = port_lease_coordinator
         .claim_netavark_bindings_with_lifetimes(
             &manifest.spec.tenant_id,
             &manifest.handle.id,
@@ -61,7 +61,7 @@ fn activate_netavark_with_live_lifetimes(
             &manifest.port_leases,
         )
         .expect("Netavark bind attempt should retain exact live lifetimes");
-    port_manager
+    port_lease_coordinator
         .activate_netavark_bindings_with_lifetimes(
             &manifest.spec.tenant_id,
             &manifest.handle.id,
@@ -439,8 +439,8 @@ fn dead_restart_netavark_claim_returns_to_reserved_before_terminal_release() {
         .manifest;
     let claim = adopt_launch_network(&backend, &mut manifest);
     manifest.egress_proxy = None;
-    let port_manager = backend.port_manager();
-    let restart_lifetimes = port_manager
+    let port_lease_coordinator = backend.port_lease_coordinator();
+    let restart_lifetimes = port_lease_coordinator
         .claim_netavark_bindings_with_lifetimes(
             &manifest.spec.tenant_id,
             &manifest.handle.id,
@@ -465,7 +465,7 @@ fn dead_restart_netavark_claim_returns_to_reserved_before_terminal_release() {
         );
     }
 
-    let interrupted_recoveries = port_manager
+    let interrupted_recoveries = port_lease_coordinator
         .recover_netavark_claims_after_owner_death(
             &manifest.spec.tenant_id,
             &manifest.handle.id,
@@ -513,7 +513,7 @@ fn dead_restart_netavark_claim_returns_to_reserved_before_terminal_release() {
         );
     }
 
-    let terminal_lifetimes = port_manager
+    let terminal_lifetimes = port_lease_coordinator
         .claim_netavark_bindings_with_lifetimes(
             &manifest.spec.tenant_id,
             &manifest.handle.id,
@@ -663,7 +663,7 @@ fn failed_krun_activation_teardown_retains_retry_evidence_until_confirmed_detach
         .manifest;
     adopt_launch_network(&backend, &mut manifest);
     let lifetimes = backend
-        .port_manager()
+        .port_lease_coordinator()
         .claim_netavark_bindings_with_lifetimes(
             &manifest.spec.tenant_id,
             &manifest.handle.id,

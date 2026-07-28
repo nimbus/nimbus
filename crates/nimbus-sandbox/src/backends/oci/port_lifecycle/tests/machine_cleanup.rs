@@ -3,7 +3,7 @@
 use super::*;
 
 fn restart_retained_machine_batch(
-    manager: &PortManager,
+    manager: &OciPortLeaseCoordinator,
     tenant: &TenantId,
     sandbox: &SandboxId,
     bindings: &[SandboxPortBinding],
@@ -31,8 +31,8 @@ fn restart_retained_machine_batch(
 #[test]
 fn empty_machine_cleanup_requires_an_authenticated_empty_binding_set() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let manager =
-        PortManager::new(temp_dir.path(), 15_000..=15_000).with_machine_port_proxy_bindings();
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15_000..=15_000)
+        .with_machine_port_proxy_bindings();
     let tenant = tenant_id("tenant-machine-empty-cleanup");
     let sandbox = SandboxId::new("machine-empty-cleanup");
     let binding = SandboxPortBinding::tcp("http", 15_000, 8080);
@@ -64,8 +64,8 @@ fn empty_machine_cleanup_requires_an_authenticated_empty_binding_set() {
 #[test]
 fn machine_restart_receipts_release_atomically_and_replay_idempotently() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let manager =
-        PortManager::new(temp_dir.path(), 15_000..=15_001).with_machine_port_proxy_bindings();
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15_000..=15_001)
+        .with_machine_port_proxy_bindings();
     let tenant = tenant_id("tenant-machine-restart-release");
     let sandbox = SandboxId::new("machine-restart-release");
     let bindings = [
@@ -129,8 +129,8 @@ fn machine_restart_receipts_release_atomically_and_replay_idempotently() {
 #[test]
 fn released_machine_binding_authenticates_exact_historical_provider_evidence() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let manager =
-        PortManager::new(temp_dir.path(), 15_000..=15_000).with_machine_port_proxy_bindings();
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15_000..=15_000)
+        .with_machine_port_proxy_bindings();
     let tenant = tenant_id("tenant-machine-released-binding");
     let sandbox = SandboxId::new("machine-released-binding");
     let bindings = [SandboxPortBinding::tcp("http", 15_000, 8080)];
@@ -187,8 +187,8 @@ fn released_machine_binding_authenticates_exact_historical_provider_evidence() {
 #[test]
 fn mixed_terminal_machine_coordinators_fail_before_any_mutation() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let manager =
-        PortManager::new(temp_dir.path(), 15_000..=15_001).with_machine_port_proxy_bindings();
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15_000..=15_001)
+        .with_machine_port_proxy_bindings();
     let tenant = tenant_id("tenant-machine-terminal-coordinator");
     let sandbox = SandboxId::new("machine-terminal-coordinator");
     let first_binding = SandboxPortBinding::tcp("released", 15_000, 8080);
@@ -262,8 +262,8 @@ fn mixed_terminal_machine_coordinators_fail_before_any_mutation() {
 #[test]
 fn mixed_machine_restart_batch_fails_before_any_mutation() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let manager =
-        PortManager::new(temp_dir.path(), 15_000..=15_001).with_machine_port_proxy_bindings();
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15_000..=15_001)
+        .with_machine_port_proxy_bindings();
     let tenant = tenant_id("tenant-machine-restart-mixed");
     let sandbox = SandboxId::new("machine-restart-mixed");
     let bindings = [
@@ -300,8 +300,8 @@ fn mixed_machine_restart_batch_fails_before_any_mutation() {
 #[test]
 fn active_machine_batch_remains_provider_owned_without_mutation() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let manager =
-        PortManager::new(temp_dir.path(), 15_000..=15_000).with_machine_port_proxy_bindings();
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15_000..=15_000)
+        .with_machine_port_proxy_bindings();
     let tenant = tenant_id("tenant-machine-active-classification");
     let sandbox = SandboxId::new("machine-active-classification");
     let bindings = [SandboxPortBinding::tcp("http", 15_000, 8080)];

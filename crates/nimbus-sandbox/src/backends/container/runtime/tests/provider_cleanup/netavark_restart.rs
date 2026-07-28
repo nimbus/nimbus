@@ -25,10 +25,10 @@ fn confirmed_netavark_restart_detach_prepares_published_leases_for_rebind() {
         explicitly_absent_runtime_state_command(&manifest.handle.id);
     manifest.egress_proxy = None;
 
-    let port_manager = backend
-        .port_manager_for_manifest(&manifest)
+    let port_lease_coordinator = backend
+        .port_lease_coordinator_for_manifest(&manifest)
         .expect("manifest provider context should authenticate");
-    let initial_lifetimes = port_manager
+    let initial_lifetimes = port_lease_coordinator
         .claim_netavark_bindings_with_lifetimes(
             &manifest.spec.tenant_id,
             &manifest.handle.id,
@@ -36,7 +36,7 @@ fn confirmed_netavark_restart_detach_prepares_published_leases_for_rebind() {
             &manifest.port_leases,
         )
         .expect("initial Netavark bind claims should persist");
-    port_manager
+    port_lease_coordinator
         .activate_netavark_bindings_with_lifetimes(
             &manifest.spec.tenant_id,
             &manifest.handle.id,
@@ -94,7 +94,7 @@ fn confirmed_netavark_restart_detach_prepares_published_leases_for_rebind() {
         "the restart receipt may be consumed only after confirmed detach and durable rebind preparation"
     );
 
-    let restart_lifetimes = port_manager
+    let restart_lifetimes = port_lease_coordinator
         .claim_netavark_bindings_with_lifetimes(
             &manifest.spec.tenant_id,
             &manifest.handle.id,
@@ -175,10 +175,10 @@ fn restart_cleanup_retains_network_and_listeners_until_runtime_absence_is_observ
             PepPreAdoptionReleaseAuthority::FreshLaunch(&launch_claim),
         )
         .expect("fixture PEP should own its exact listener");
-    let port_manager = backend
-        .port_manager_for_manifest(&manifest)
+    let port_lease_coordinator = backend
+        .port_lease_coordinator_for_manifest(&manifest)
         .expect("manifest provider context should authenticate");
-    let netavark_lifetimes = port_manager
+    let netavark_lifetimes = port_lease_coordinator
         .claim_netavark_bindings_with_lifetimes(
             &manifest.spec.tenant_id,
             &manifest.handle.id,
@@ -198,7 +198,7 @@ fn restart_cleanup_retains_network_and_listeners_until_runtime_absence_is_observ
         None,
     )
     .expect("fixture should publish Ready Netavark authority");
-    port_manager
+    port_lease_coordinator
         .activate_netavark_bindings_with_lifetimes(
             &manifest.spec.tenant_id,
             &manifest.handle.id,

@@ -361,7 +361,8 @@ verify_network_dependency_contract() {
 verify_single_port_authority() {
   legacy="$(
     rg -n \
-      -e 'struct PortManager' \
+      -e 'PortManager' \
+      -e 'port_manager' \
       -e 'fn resolve_listener_port' \
       -e 'fn ephemeral_port' \
       -e 'fn allocate_machine_ssh_port' \
@@ -370,6 +371,12 @@ verify_single_port_authority() {
       crates/nimbus-cli/src 2>&1
   )"
   scan_status=$?
+  if [ "${NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD:-}" = "1" ] &&
+    [ -n "${NIMBUS_NETWORK_VERIFY_TEST_LEGACY_PORT_AUTHORITY:-}" ]; then
+    legacy="${legacy}${legacy:+
+}${NIMBUS_NETWORK_VERIFY_TEST_LEGACY_PORT_AUTHORITY}"
+    scan_status=0
+  fi
   if [ "${scan_status}" -gt 1 ]; then
     fail "NNCV005" "no-duplicate-port-allocation-authority" "source scan failed: ${legacy}"
   elif [ -z "${legacy}" ] && [ -f "${NETWORK_MANIFEST}" ]; then
@@ -734,6 +741,21 @@ NODE
     self_fail=$((self_fail + 1))
   else
     printf 'SELFTEST PASS nonexistent checkpoint fails closed as NNCV008\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_LEGACY_PORT_AUTHORITY='synthetic.rs:1:struct PortManager' \
+    "${script}" >"${temporary}/legacy-port-authority.out" 2>&1; then
+    printf 'SELFTEST FAIL injected legacy port authority unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV005 no-duplicate-port-allocation-authority' "${temporary}/legacy-port-authority.out" ||
+    grep -q '^PASS NNCV005 no-duplicate-port-allocation-authority' "${temporary}/legacy-port-authority.out" ||
+    [ "$(grep -c '^FAIL ' "${temporary}/legacy-port-authority.out")" -ne 1 ] ||
+    ! grep -q '^Summary: 14 passed, 1 failed$' "${temporary}/legacy-port-authority.out"; then
+    printf 'SELFTEST FAIL legacy port authority did not produce an exclusive NNCV005 failure\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS legacy port authority fails closed as NNCV005\n'
   fi
 
   if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
@@ -1270,7 +1292,7 @@ NODE
     printf 'self-test: %d failed\n' "${self_fail}"
     exit 1
   fi
-  printf 'self-test: 44 passed, 0 failed\n'
+  printf 'self-test: 45 passed, 0 failed\n'
 }
 
 if [ "${1:-}" = "--self-test" ]; then

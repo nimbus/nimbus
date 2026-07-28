@@ -72,7 +72,7 @@ impl ContainerSandboxBackend {
         reservation_claim: &NetworkReservationClaim,
         planning_error: SandboxError,
     ) -> SandboxError {
-        let manager = self.port_manager();
+        let manager = self.port_lease_coordinator();
         compensate_reserved_network_launch_after_ports(
             self.segment_allocator.as_ref(),
             layout,
@@ -90,7 +90,7 @@ impl ContainerSandboxBackend {
         manifest: &ContainerSandboxManifest,
         reservation_claim: &NetworkReservationClaim,
     ) -> Result<()> {
-        let manager = self.port_manager_for_manifest(manifest)?;
+        let manager = self.port_lease_coordinator_for_manifest(manifest)?;
         release_reserved_network_launch_after_ports(
             self.segment_allocator.as_ref(),
             &manifest.network_layout,
@@ -160,7 +160,7 @@ impl ContainerSandboxBackend {
             };
         }
 
-        let manager = match self.port_manager_for_manifest(manifest) {
+        let manager = match self.port_lease_coordinator_for_manifest(manifest) {
             Ok(manager) => manager,
             Err(cleanup) => {
                 return SandboxError::OperationFailed {

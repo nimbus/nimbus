@@ -16,7 +16,7 @@ use crate::backends::oci::network::{
     unexpose_machine_ports,
 };
 use crate::backends::oci::port_lease::OciPortBindLifetimeBatch;
-use crate::backends::oci::port_manager::PortManager;
+use crate::backends::oci::port_lifecycle::OciPortLeaseCoordinator;
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
 use crate::spec::SandboxPortBinding;
@@ -67,7 +67,7 @@ fn partial_start_cleanup_disposition(
 
 pub(super) struct MachinePortProxyCleanupState {
     disposition: MachinePortProxyCleanupDisposition,
-    port_manager: PortManager,
+    port_lease_coordinator: OciPortLeaseCoordinator,
     registration: MachinePortProxyRegistration,
     expected_bindings: Vec<PortLeaseBinding>,
     withdraw_complete: bool,
@@ -94,7 +94,7 @@ struct MachinePortProxyCleanupRequest<'a> {
     expected_port_bindings: &'a [SandboxPortBinding],
     expected_port_leases: &'a [PortLeaseRequest],
     disposition: MachinePortProxyCleanupDisposition,
-    port_manager: PortManager,
+    port_lease_coordinator: OciPortLeaseCoordinator,
 }
 
 #[cfg(test)]
@@ -228,7 +228,7 @@ impl ContainerSandboxBackend {
         let routes = machine_port_proxy_routes(assigned_ips, &manifest.spec.port_bindings)?;
         let mut after_active_validation = Some(after_active_validation);
         let mut publish = Some(publish);
-        let manager = self.port_manager_for_manifest(manifest)?;
+        let manager = self.port_lease_coordinator_for_manifest(manifest)?;
         let mut proxies =
             self.machine_port_proxies
                 .lock()
@@ -396,7 +396,7 @@ impl ContainerSandboxBackend {
                 let disposition = partial_start_cleanup_disposition(release_authority);
                 let state = Arc::new(Mutex::new(MachinePortProxyCleanupState {
                     disposition,
-                    port_manager: manager.clone(),
+                    port_lease_coordinator: manager.clone(),
                     registration: MachinePortProxyRegistration {
                         port_bindings: manifest.spec.port_bindings.clone(),
                         port_leases: manifest.port_leases.clone(),
@@ -455,7 +455,7 @@ impl ContainerSandboxBackend {
         expected_port_bindings: &[SandboxPortBinding],
         expected_port_leases: &[PortLeaseRequest],
     ) -> Result<()> {
-        let manager = self.port_manager();
+        let manager = self.port_lease_coordinator();
         let cleanup = self.begin_machine_port_proxy_cleanup(
             MachinePortProxyCleanupRequest {
                 tenant_id,
@@ -463,7 +463,7 @@ impl ContainerSandboxBackend {
                 expected_port_bindings,
                 expected_port_leases,
                 disposition: MachinePortProxyCleanupDisposition::Release,
-                port_manager: manager,
+                port_lease_coordinator: manager,
             },
             || {},
         )?;
@@ -482,7 +482,7 @@ impl ContainerSandboxBackend {
         expected_port_bindings: &[SandboxPortBinding],
         expected_port_leases: &[PortLeaseRequest],
     ) -> Result<()> {
-        let manager = self.port_manager();
+        let manager = self.port_lease_coordinator();
         let cleanup = self.begin_machine_port_proxy_cleanup(
             MachinePortProxyCleanupRequest {
                 tenant_id,
@@ -490,7 +490,7 @@ impl ContainerSandboxBackend {
                 expected_port_bindings,
                 expected_port_leases,
                 disposition: MachinePortProxyCleanupDisposition::Restart,
-                port_manager: manager,
+                port_lease_coordinator: manager,
             },
             || {},
         )?;
@@ -509,7 +509,7 @@ impl ContainerSandboxBackend {
         expected_port_bindings: &[SandboxPortBinding],
         expected_port_leases: &[PortLeaseRequest],
     ) -> Result<Option<MachinePortProxyCleanup>> {
-        let manager = self.port_manager();
+        let manager = self.port_lease_coordinator();
         self.begin_machine_port_proxy_cleanup(
             MachinePortProxyCleanupRequest {
                 tenant_id,
@@ -517,7 +517,7 @@ impl ContainerSandboxBackend {
                 expected_port_bindings,
                 expected_port_leases,
                 disposition: MachinePortProxyCleanupDisposition::Restart,
-                port_manager: manager,
+                port_lease_coordinator: manager,
             },
             || {},
         )
@@ -527,7 +527,7 @@ impl ContainerSandboxBackend {
         &self,
         manifest: &ContainerSandboxManifest,
     ) -> Result<Option<MachinePortProxyCleanup>> {
-        let manager = self.port_manager_for_manifest(manifest)?;
+        let manager = self.port_lease_coordinator_for_manifest(manifest)?;
         self.begin_machine_port_proxy_cleanup(
             MachinePortProxyCleanupRequest {
                 tenant_id: &manifest.spec.tenant_id,
@@ -535,7 +535,7 @@ impl ContainerSandboxBackend {
                 expected_port_bindings: &manifest.spec.port_bindings,
                 expected_port_leases: &manifest.port_leases,
                 disposition: MachinePortProxyCleanupDisposition::Restart,
-                port_manager: manager,
+                port_lease_coordinator: manager,
             },
             || {},
         )
@@ -549,7 +549,7 @@ impl ContainerSandboxBackend {
         expected_port_bindings: &[SandboxPortBinding],
         expected_port_leases: &[PortLeaseRequest],
     ) -> Result<Option<MachinePortProxyCleanup>> {
-        let manager = self.port_manager();
+        let manager = self.port_lease_coordinator();
         self.begin_machine_port_proxy_cleanup(
             MachinePortProxyCleanupRequest {
                 tenant_id,
@@ -557,7 +557,7 @@ impl ContainerSandboxBackend {
                 expected_port_bindings,
                 expected_port_leases,
                 disposition: MachinePortProxyCleanupDisposition::Release,
-                port_manager: manager,
+                port_lease_coordinator: manager,
             },
             || {},
         )
@@ -567,7 +567,7 @@ impl ContainerSandboxBackend {
         &self,
         manifest: &ContainerSandboxManifest,
     ) -> Result<Option<MachinePortProxyCleanup>> {
-        let manager = self.port_manager_for_manifest(manifest)?;
+        let manager = self.port_lease_coordinator_for_manifest(manifest)?;
         self.begin_machine_port_proxy_cleanup(
             MachinePortProxyCleanupRequest {
                 tenant_id: &manifest.spec.tenant_id,
@@ -575,7 +575,7 @@ impl ContainerSandboxBackend {
                 expected_port_bindings: &manifest.spec.port_bindings,
                 expected_port_leases: &manifest.port_leases,
                 disposition: MachinePortProxyCleanupDisposition::Release,
-                port_manager: manager,
+                port_lease_coordinator: manager,
             },
             || {},
         )
@@ -592,7 +592,7 @@ impl ContainerSandboxBackend {
             expected_port_bindings,
             expected_port_leases,
             disposition,
-            port_manager,
+            port_lease_coordinator,
         } = request;
         if expected_port_bindings.len() != expected_port_leases.len() {
             return Err(SandboxError::OperationFailed {
@@ -611,7 +611,7 @@ impl ContainerSandboxBackend {
             let recovered = match registrations.get(&key) {
                 None => {
                     if expected_port_leases.is_empty()
-                        || port_manager.machine_bindings_are_terminal_without_effect(
+                        || port_lease_coordinator.machine_bindings_are_terminal_without_effect(
                             tenant_id,
                             id,
                             expected_port_bindings,
@@ -621,21 +621,23 @@ impl ContainerSandboxBackend {
                         return Ok(None);
                     }
                     if disposition == MachinePortProxyCleanupDisposition::Restart
-                        && port_manager.classify_machine_cleanup_batch(
+                        && port_lease_coordinator.classify_machine_cleanup_batch(
                             tenant_id,
                             id,
                             expected_port_bindings,
                             expected_port_leases,
-                        )? == crate::backends::oci::port_manager::LaunchPortBatchState::RestartRetained
+                        )? == crate::backends::oci::port_lifecycle::LaunchPortBatchState::RestartRetained
                     {
                         return Ok(None);
                     }
-                    Some(port_manager.recover_machine_bindings_after_owner_death(
-                        tenant_id,
-                        id,
-                        expected_port_bindings,
-                        expected_port_leases,
-                    )?)
+                    Some(
+                        port_lease_coordinator.recover_machine_bindings_after_owner_death(
+                            tenant_id,
+                            id,
+                            expected_port_bindings,
+                            expected_port_leases,
+                        )?,
+                    )
                 }
                 Some(MachinePortProxyEntry::Running(registration)) => {
                     if registration.port_bindings != expected_port_bindings
@@ -671,7 +673,7 @@ impl ContainerSandboxBackend {
             let state = if let Some((expected_bindings, recoveries)) = recovered {
                 Arc::new(Mutex::new(MachinePortProxyCleanupState {
                     disposition,
-                    port_manager,
+                    port_lease_coordinator,
                     registration: MachinePortProxyRegistration {
                         port_bindings: expected_port_bindings.to_vec(),
                         port_leases: expected_port_leases.to_vec(),
@@ -696,14 +698,14 @@ impl ContainerSandboxBackend {
                     Vec::new()
                 } else {
                     match disposition {
-                        MachinePortProxyCleanupDisposition::Restart => port_manager
+                        MachinePortProxyCleanupDisposition::Restart => port_lease_coordinator
                             .require_active_machine_bindings(
                                 tenant_id,
                                 id,
                                 expected_port_bindings,
                                 expected_port_leases,
                             )?,
-                        MachinePortProxyCleanupDisposition::Release => port_manager
+                        MachinePortProxyCleanupDisposition::Release => port_lease_coordinator
                             .require_releasable_machine_bindings(
                                 tenant_id,
                                 id,
@@ -720,7 +722,7 @@ impl ContainerSandboxBackend {
                     vec![!registration.publication_may_exist; registration.port_bindings.len()];
                 Arc::new(Mutex::new(MachinePortProxyCleanupState {
                     disposition,
-                    port_manager,
+                    port_lease_coordinator,
                     registration,
                     expected_bindings,
                     withdraw_complete: disposition == MachinePortProxyCleanupDisposition::Restart,
@@ -792,8 +794,8 @@ impl ContainerSandboxBackend {
             && !state.withdraw_complete
         {
             if !state.registration.port_leases.is_empty() {
-                let port_manager = state.port_manager.clone();
-                port_manager.withdraw_bindings(
+                let port_lease_coordinator = state.port_lease_coordinator.clone();
+                port_lease_coordinator.withdraw_bindings(
                     &cleanup.key.0,
                     &cleanup.key.1,
                     &state.registration.port_bindings,
@@ -898,7 +900,7 @@ impl ContainerSandboxBackend {
                 });
             }
             if !state.durable_transition_complete {
-                let port_manager = state.port_manager.clone();
+                let port_lease_coordinator = state.port_lease_coordinator.clone();
                 if !state.registration.port_leases.is_empty() {
                     let authority =
                         state.registration.lease_authority.as_ref().ok_or_else(|| {
@@ -915,17 +917,18 @@ impl ContainerSandboxBackend {
                             MachinePortProxyCleanupDisposition::Restart,
                             MachinePortProxyLeaseAuthority::Live(lifetimes),
                         ) => {
-                            port_manager.prepare_machine_bindings_for_rebind_with_lifetimes(
-                                &state.registration.port_leases,
-                                &state.expected_bindings,
-                                lifetimes,
-                            )?;
+                            port_lease_coordinator
+                                .prepare_machine_bindings_for_rebind_with_lifetimes(
+                                    &state.registration.port_leases,
+                                    &state.expected_bindings,
+                                    lifetimes,
+                                )?;
                         }
                         (
                             MachinePortProxyCleanupDisposition::Release,
                             MachinePortProxyLeaseAuthority::Live(lifetimes),
                         ) => {
-                            port_manager
+                            port_lease_coordinator
                                 .release_machine_bindings_after_confirmed_stop_with_lifetimes(
                                     &state.registration.port_leases,
                                     &state.expected_bindings,
@@ -936,7 +939,7 @@ impl ContainerSandboxBackend {
                             MachinePortProxyCleanupDisposition::Restart,
                             MachinePortProxyLeaseAuthority::Recovered(recoveries),
                         ) => {
-                            port_manager.prepare_recovered_machine_bindings_for_rebind(
+                            port_lease_coordinator.prepare_recovered_machine_bindings_for_rebind(
                                 &state.registration.port_leases,
                                 &state.expected_bindings,
                                 recoveries,
@@ -946,7 +949,7 @@ impl ContainerSandboxBackend {
                             MachinePortProxyCleanupDisposition::Release,
                             MachinePortProxyLeaseAuthority::Recovered(recoveries),
                         ) => {
-                            port_manager.release_recovered_machine_bindings(
+                            port_lease_coordinator.release_recovered_machine_bindings(
                                 &state.registration.port_leases,
                                 recoveries,
                             )?;
@@ -1076,7 +1079,7 @@ impl ContainerSandboxBackend {
         manifest: &ContainerSandboxManifest,
         release_authority: MachinePortPreparationReleaseAuthority<'_>,
     ) -> Result<()> {
-        let manager = self.port_manager_for_manifest(manifest)?;
+        let manager = self.port_lease_coordinator_for_manifest(manifest)?;
         let expected_bindings = manager.require_active_machine_bindings(
             &manifest.spec.tenant_id,
             &manifest.handle.id,
@@ -1102,7 +1105,7 @@ impl ContainerSandboxBackend {
         let disposition = partial_start_cleanup_disposition(release_authority);
         let state = Arc::new(Mutex::new(MachinePortProxyCleanupState {
             disposition,
-            port_manager: manager,
+            port_lease_coordinator: manager,
             registration,
             expected_bindings,
             withdraw_complete: disposition == MachinePortProxyCleanupDisposition::Restart,
@@ -1126,7 +1129,7 @@ impl ContainerSandboxBackend {
         expected_port_leases: &[PortLeaseRequest],
         before_registry_lock: impl FnOnce(),
     ) -> Result<()> {
-        let manager = self.port_manager();
+        let manager = self.port_lease_coordinator();
         let cleanup = self.begin_machine_port_proxy_cleanup(
             MachinePortProxyCleanupRequest {
                 tenant_id,
@@ -1134,7 +1137,7 @@ impl ContainerSandboxBackend {
                 expected_port_bindings,
                 expected_port_leases,
                 disposition: MachinePortProxyCleanupDisposition::Release,
-                port_manager: manager,
+                port_lease_coordinator: manager,
             },
             before_registry_lock,
         )?;

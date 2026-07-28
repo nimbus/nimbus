@@ -121,7 +121,7 @@ fn runtime_observed_effect_fixture(
         .expect("fixture should establish the exact PEP effect");
     if retire_publication_batch {
         backend
-            .port_manager()
+            .port_lease_coordinator()
             .release_never_bound_requests(&manifest.port_leases, &claim)
             .expect("fixture should retire the exact never-bound publication batch");
     }

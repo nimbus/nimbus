@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "source_head": "17f26c1e576dfc38ee6f435d2556b732ef4ee021",
+  "source_head": "129a06ea2620e0c250de7e6ed496b143431a2511",
   "scope": {
     "production_network": "Every Rust production TCP/UDP allocation, availability probe, bind, provider bind request, pre-bound listener consumer, and inherited socket found by the recorded scans.",
     "local_ipc": "Production Unix-domain binds and inherited descriptors are classified separately because a host TCP/UDP PortLease must not absorb filesystem-path ownership.",
@@ -39,15 +39,13 @@
       "status": "active",
       "verification": "source-occurrence",
       "category": "allocation-adapter",
-      "path": "crates/nimbus-sandbox/src/backends/oci/port_manager.rs",
+      "path": "crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs",
       "line": 242,
-      "symbol": "PortManager::reserve_launch_ports_for_sandbox",
+      "symbol": "OciPortLeaseCoordinator::reserve_launch_ports_for_sandbox",
       "authority_kinds": [
-        "legacy-port-manager-definition",
         "suspicious-port-allocation-definition"
       ],
       "authority_symbols": [
-        "PortManager",
         "reserve_launch_ports_for_sandbox"
       ],
       "current_owner": "nimbus-sandbox composition consuming nimbus-network authority",
@@ -62,9 +60,9 @@
       "status": "active",
       "verification": "symbol-presence",
       "category": "allocation-consumer",
-      "path": "crates/nimbus-sandbox/src/backends/oci/port_manager.rs",
+      "path": "crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs",
       "line": 242,
-      "symbol": "PortManager::reserve_launch_ports_for_sandbox",
+      "symbol": "OciPortLeaseCoordinator::reserve_launch_ports_for_sandbox",
       "declaration_name": "reserve_launch_ports_for_sandbox",
       "current_owner": "nimbus-sandbox composition consuming nimbus-network authority",
       "current_truth": "Adds the host-internal PEP request to the same atomic launch batch; LocalPortLeaseAuthority selects and fences the port without charging tenant publication quota.",
@@ -869,7 +867,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "<module>",
       "ordinal": 1,
-      "line": 106
+      "line": 108
     },
     {
       "site_id": "machine-port-proxy-bind",
@@ -877,7 +875,7 @@
       "kind": "tcp-bind",
       "symbol": "prepare",
       "ordinal": 1,
-      "line": 327
+      "line": 329
     },
     {
       "site_id": "machine-port-proxy-bind",
@@ -885,7 +883,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "accept_machine_port_proxy",
       "ordinal": 1,
-      "line": 764
+      "line": 771
     },
     {
       "site_id": "machine-port-proxy-bind",
@@ -893,7 +891,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "accept_machine_port_proxy_with",
       "ordinal": 1,
-      "line": 779
+      "line": 786
     },
     {
       "site_id": "machine-port-proxy-bind",
@@ -901,7 +899,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "accept_machine_port_proxy_with_listener_observer",
       "ordinal": 1,
-      "line": 803
+      "line": 810
     },
     {
       "site_id": "machine-port-proxy-bind",
@@ -909,7 +907,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "<module>",
       "ordinal": 2,
-      "line": 871
+      "line": 878
     },
     {
       "site_id": "machine-port-proxy-bind",
@@ -917,19 +915,11 @@
       "kind": "listener-ownership-slot",
       "symbol": "new",
       "ordinal": 1,
-      "line": 877
+      "line": 884
     },
     {
       "site_id": "sandbox-manifest-port-allocation",
-      "path": "crates/nimbus-sandbox/src/backends/oci/port_manager.rs",
-      "kind": "legacy-port-manager-definition",
-      "symbol": "PortManager",
-      "ordinal": 1,
-      "line": 55
-    },
-    {
-      "site_id": "sandbox-manifest-port-allocation",
-      "path": "crates/nimbus-sandbox/src/backends/oci/port_manager.rs",
+      "path": "crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs",
       "kind": "suspicious-port-allocation-definition",
       "symbol": "reserve_launch_ports_for_sandbox",
       "ordinal": 1,
@@ -1286,7 +1276,7 @@
       "kind": "authority-shaped-macro",
       "symbol": "unexpose_machine_port_proxy_publications",
       "ordinal": 1,
-      "line": 842,
+      "line": 844,
       "reason": "Formats a failed-withdrawal diagnostic from an existing binding; the classified forwarder call owns the provider effect."
     },
     {
@@ -1350,11 +1340,11 @@
       "kind": "authority-shaped-macro",
       "symbol": "prepare",
       "ordinal": 1,
-      "line": 331,
+      "line": 333,
       "reason": "Formats the error from the separately classified TcpListener bind; it does not create a second bind or allocation authority."
     },
     {
-      "path": "crates/nimbus-sandbox/src/backends/oci/port_manager.rs",
+      "path": "crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs",
       "kind": "authority-shaped-macro",
       "symbol": "reserve_launch_ports_for_sandbox",
       "ordinal": 1,
@@ -1362,7 +1352,7 @@
       "reason": "Formats an invariant error from the already-classified PortLease reservation path; it performs no additional allocation or socket effect."
     },
     {
-      "path": "crates/nimbus-sandbox/src/backends/oci/port_manager.rs",
+      "path": "crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs",
       "kind": "authority-shaped-macro",
       "symbol": "withdraw_bindings",
       "ordinal": 1,
@@ -1519,7 +1509,7 @@
     "production_sites": 26,
     "active_production_sites": 24,
     "retired_production_sites": 2,
-    "authority_occurrences": 67,
+    "authority_occurrences": 66,
     "non_authority_occurrences": 35,
     "portable_owner_sites": 6,
     "trust_inputs_not_network_authorities": 3,

@@ -1100,9 +1100,9 @@ fn runner_handoff_rereserves_previewed_automatic_ports_as_ranges() {
     let reservation_claim = crate::backends::oci::port_lease::new_launch_reservation_claim()
         .expect("competing launch claim should mint");
     backend
-        .port_manager()
+        .port_lease_coordinator()
         .reserve_launch_ports_for_sandbox(
-            crate::backends::oci::port_manager::SandboxLaunchPortPlan::new(
+            crate::backends::oci::port_lifecycle::SandboxLaunchPortPlan::new(
                 &sample_spec().tenant_id,
                 &SandboxId::new("other-sandbox"),
                 &[SandboxPortBinding::tcp("occupied", 15000, 9090)
@@ -1148,9 +1148,9 @@ fn execute_plan_hides_preview_and_projects_only_selected_durable_endpoint_when_r
     let reservation_claim = crate::backends::oci::port_lease::new_launch_reservation_claim()
         .expect("competing launch claim should mint");
     backend
-        .port_manager()
+        .port_lease_coordinator()
         .reserve_launch_ports_for_sandbox(
-            crate::backends::oci::port_manager::SandboxLaunchPortPlan::new(
+            crate::backends::oci::port_lifecycle::SandboxLaunchPortPlan::new(
                 &sample_spec().tenant_id,
                 &SandboxId::new("execute-preview-competitor"),
                 &[SandboxPortBinding::tcp("occupied", 15000, 9090)

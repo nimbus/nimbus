@@ -6,7 +6,7 @@
 
 use super::*;
 
-impl PortManager {
+impl OciPortLeaseCoordinator {
     /// Classify one Netavark publication batch for terminal cleanup.
     ///
     /// Initial launch compensation remains fenced by its exact reservation

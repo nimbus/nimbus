@@ -494,8 +494,8 @@ fn terminal_netavark_cleanup_ignores_current_machine_forwarder() {
             PepPreAdoptionReleaseAuthority::FreshLaunch(&launch_claim),
         )
         .expect("fixture PEP should own exact listener evidence");
-    let port_manager = backend.port_manager();
-    let lifetimes = port_manager
+    let port_lease_coordinator = backend.port_lease_coordinator();
+    let lifetimes = port_lease_coordinator
         .claim_netavark_bindings_with_lifetimes(
             &manifest.spec.tenant_id,
             &manifest.handle.id,
@@ -503,7 +503,7 @@ fn terminal_netavark_cleanup_ignores_current_machine_forwarder() {
             &manifest.port_leases,
         )
         .expect("fixture should claim the exact Netavark publication batch");
-    port_manager
+    port_lease_coordinator
         .activate_netavark_bindings_with_lifetimes(
             &manifest.spec.tenant_id,
             &manifest.handle.id,

@@ -52,7 +52,7 @@ pub(crate) fn machine_port_proxy_guest_listener_addr(binding: &SandboxPortBindin
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PortManager {
+pub(crate) struct OciPortLeaseCoordinator {
     range: RangeInclusive<u16>,
     state_root: PathBuf,
     max_ports_per_tenant: Option<usize>,
@@ -207,7 +207,7 @@ impl<'a> SandboxLaunchPortPlan<'a> {
     }
 }
 
-impl PortManager {
+impl OciPortLeaseCoordinator {
     pub(crate) fn new(state_root: impl Into<PathBuf>, range: RangeInclusive<u16>) -> Self {
         Self {
             range,
@@ -1992,5 +1992,5 @@ pub(crate) fn published_listener_name(binding: &SandboxPortBinding) -> String {
 }
 
 #[cfg(test)]
-#[path = "port_manager/tests.rs"]
+#[path = "port_lifecycle/tests.rs"]
 mod tests;

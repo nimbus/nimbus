@@ -23,12 +23,14 @@ use super::{
     run_machine_port_connection_task, start_machine_port_proxies,
 };
 use crate::backends::oci::port_lease::new_launch_reservation_claim;
-use crate::backends::oci::port_manager::{PortManager, ReservedLaunchPorts, SandboxLaunchPortPlan};
+use crate::backends::oci::port_lifecycle::{
+    OciPortLeaseCoordinator, ReservedLaunchPorts, SandboxLaunchPortPlan,
+};
 use crate::instance::SandboxId;
 use crate::spec::SandboxPortBinding;
 
 fn reserve_machine_proxy_test_launch(
-    manager: &PortManager,
+    manager: &OciPortLeaseCoordinator,
     tenant: &TenantId,
     sandbox_id: &SandboxId,
     bindings: &[SandboxPortBinding],
@@ -857,8 +859,8 @@ fn panicking_accept_scope_drains_tracked_connection_workers_before_unwind_return
 #[test]
 fn machine_port_proxy_rejects_bind_without_port_lease() {
     let state = TempDir::new().expect("state root");
-    let manager =
-        PortManager::new(state.path(), 41_500..=41_500).with_machine_port_proxy_bindings();
+    let manager = OciPortLeaseCoordinator::new(state.path(), 41_500..=41_500)
+        .with_machine_port_proxy_bindings();
     let binding = SandboxPortBinding::tcp("http", 0, 8080);
 
     let tenant = TenantId::new("machine-no-lease").expect("tenant should validate");
@@ -887,7 +889,8 @@ fn restart_route_failure_retains_reserved_machine_listener_authority() {
         .expect("probe address should resolve")
         .port();
     drop(port_probe);
-    let manager = PortManager::new(state.path(), port..=port).with_machine_port_proxy_bindings();
+    let manager =
+        OciPortLeaseCoordinator::new(state.path(), port..=port).with_machine_port_proxy_bindings();
     let tenant = TenantId::new("machine-restart-route").expect("tenant should validate");
     let sandbox_id = SandboxId::new("machine-restart-route");
     let binding = SandboxPortBinding::tcp("http", port, 8080);
@@ -963,7 +966,8 @@ fn machine_port_proxy_collision_records_durable_no_effect_failure() {
         .expect("external address should resolve")
         .port();
     let state = TempDir::new().expect("state root");
-    let manager = PortManager::new(state.path(), port..=port).with_machine_port_proxy_bindings();
+    let manager =
+        OciPortLeaseCoordinator::new(state.path(), port..=port).with_machine_port_proxy_bindings();
     let tenant = TenantId::new("machine-collision").expect("tenant should validate");
     let sandbox_id = SandboxId::new("machine-collision");
     let binding = SandboxPortBinding::tcp("http", port, 8080);
@@ -1013,7 +1017,8 @@ fn retained_machine_proxy_bind_failure_returns_to_reserved_and_retries() {
         .port();
     drop(port_probe);
     let state = TempDir::new().expect("state root");
-    let manager = PortManager::new(state.path(), port..=port).with_machine_port_proxy_bindings();
+    let manager =
+        OciPortLeaseCoordinator::new(state.path(), port..=port).with_machine_port_proxy_bindings();
     let tenant = TenantId::new("machine-retained-bind").expect("tenant should validate");
     let sandbox_id = SandboxId::new("machine-retained-bind");
     let binding = SandboxPortBinding::tcp("http", port, 8080);
@@ -1155,7 +1160,7 @@ fn same_request_machine_replay_cannot_fail_or_release_held_batch() {
     drop((first_probe, second_probe));
 
     let state = TempDir::new().expect("state root");
-    let manager = PortManager::new(
+    let manager = OciPortLeaseCoordinator::new(
         state.path(),
         first_port.min(second_port)..=first_port.max(second_port),
     )
@@ -1177,7 +1182,7 @@ fn same_request_machine_replay_cannot_fail_or_release_held_batch() {
     )
     .expect("first process should claim and hold both sockets");
 
-    let replay_manager = PortManager::new(
+    let replay_manager = OciPortLeaseCoordinator::new(
         state.path(),
         first_port.min(second_port)..=first_port.max(second_port),
     )
@@ -1267,7 +1272,7 @@ fn later_machine_proxy_collision_releases_never_bound_siblings() {
     drop(first_probe);
 
     let state = TempDir::new().expect("state root");
-    let manager = PortManager::new(
+    let manager = OciPortLeaseCoordinator::new(
         state.path(),
         first_port.min(second_port)..=first_port.max(second_port),
     )
@@ -1341,8 +1346,8 @@ fn prepared_machine_proxy_is_inert_until_exact_lease_is_active() {
     drop(port_probe);
 
     let state = TempDir::new().expect("state root");
-    let manager =
-        PortManager::new(state.path(), proxy_port..=proxy_port).with_machine_port_proxy_bindings();
+    let manager = OciPortLeaseCoordinator::new(state.path(), proxy_port..=proxy_port)
+        .with_machine_port_proxy_bindings();
     let tenant = TenantId::new("machine-prepare-order").expect("tenant should validate");
     let sandbox_id = SandboxId::new("machine-prepare-order");
     let binding = SandboxPortBinding::tcp("http", proxy_port, target_port);

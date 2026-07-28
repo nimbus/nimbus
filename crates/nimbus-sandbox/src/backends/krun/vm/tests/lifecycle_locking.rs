@@ -296,7 +296,7 @@ fn nnc0_6a_krun_inspect_must_not_restart_after_withdrawal() {
         )
         .expect("restart fixture should adopt its exact attachment");
     backend
-        .port_manager()
+        .port_lease_coordinator()
         .release_never_bound_launch_claim(&reservation_claim)
         .expect("fixture without a PEP effect should release never-bound port authority");
     manifest.port_leases.clear();

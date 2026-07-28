@@ -5,8 +5,8 @@ use super::*;
 #[test]
 fn reservation_coordinator_is_classified_from_one_durable_generation() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let manager =
-        PortManager::new(temp_dir.path(), 15_000..=15_001).with_machine_port_proxy_bindings();
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15_000..=15_001)
+        .with_machine_port_proxy_bindings();
     let tenant = tenant_id("tenant-reservation-snapshot");
     let sandbox = SandboxId::new("reservation-snapshot");
     let bindings = [
@@ -79,7 +79,7 @@ fn reservation_coordinator_is_classified_from_one_durable_generation() {
 #[test]
 fn empty_netavark_cleanup_is_terminal_no_effect_and_release_is_noop() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let manager = PortManager::new(temp_dir.path(), 15_000..=15_000);
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15_000..=15_000);
     let tenant = tenant_id("tenant-netavark-empty-cleanup");
     let sandbox = SandboxId::new("netavark-empty-cleanup");
 
@@ -106,7 +106,7 @@ fn empty_netavark_cleanup_is_terminal_no_effect_and_release_is_noop() {
 #[test]
 fn empty_netavark_cleanup_requires_cardinality_and_provider_authentication() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let manager = PortManager::new(temp_dir.path(), 15_000..=15_000);
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15_000..=15_000);
     let tenant = tenant_id("tenant-netavark-empty-auth");
     let sandbox = SandboxId::new("netavark-empty-auth");
     let binding = SandboxPortBinding::tcp("http", 15_000, 8080);
@@ -125,8 +125,8 @@ fn empty_netavark_cleanup_requires_cardinality_and_provider_authentication() {
         "cardinality rejection must identify missing durable authority: {cardinality}"
     );
 
-    let machine =
-        PortManager::new(temp_dir.path(), 15_000..=15_000).with_machine_port_proxy_bindings();
+    let machine = OciPortLeaseCoordinator::new(temp_dir.path(), 15_000..=15_000)
+        .with_machine_port_proxy_bindings();
     let provider = machine
         .classify_netavark_cleanup_batch(&tenant, &sandbox, &[], &[], None)
         .expect_err("machine provider mode must reject Netavark classification");

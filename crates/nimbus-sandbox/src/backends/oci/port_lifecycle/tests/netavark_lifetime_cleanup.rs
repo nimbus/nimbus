@@ -7,7 +7,7 @@ use nimbus_network::{LocalPortLeaseAuthority, PortLeasePhase};
 #[test]
 fn live_owner_rejects_foreign_cleanup_and_dead_owner_stays_fenced_until_exact_absence() {
     let temp_dir = TempDir::new().expect("temporary state root should exist");
-    let manager = PortManager::new(temp_dir.path(), 15_000..=15_000);
+    let manager = OciPortLeaseCoordinator::new(temp_dir.path(), 15_000..=15_000);
     let tenant = tenant_id("tenant-netavark-lifetime");
     let sandbox = SandboxId::new("netavark-lifetime");
     let bindings = [SandboxPortBinding::tcp("http", 15_000, 8080)];

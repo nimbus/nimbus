@@ -16,8 +16,8 @@ use crate::backends::oci::port_lease::{
     OciPortLeaseIntent, port_lease_request, reserve_provider_assigned,
 };
 #[cfg(test)]
-use crate::backends::oci::port_manager::PortManager;
-use crate::backends::oci::port_manager::{InternalListenerReservation, ReservedInternalListener};
+use crate::backends::oci::port_lifecycle::OciPortLeaseCoordinator;
+use crate::backends::oci::port_lifecycle::{InternalListenerReservation, ReservedInternalListener};
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
 
@@ -87,12 +87,12 @@ impl EgressProxyAssignment {
 #[cfg(test)]
 pub(crate) fn allocate_egress_proxy(
     network_config: &OciNetworkConfig,
-    port_manager: &PortManager,
+    port_lease_coordinator: &OciPortLeaseCoordinator,
     tenant_id: &TenantId,
     id: &SandboxId,
 ) -> Result<EgressProxyAssignment> {
     let gateway = bridge_gateway_addr(network_config)?;
-    let (port, port_lease) = port_manager.reserve_internal_listener(
+    let (port, port_lease) = port_lease_coordinator.reserve_internal_listener(
         tenant_id,
         id,
         "egress-pep",

@@ -8,7 +8,7 @@ pub(crate) mod hardening;
 pub(crate) mod materializer;
 pub(crate) mod network;
 pub(crate) mod port_lease;
-pub(crate) mod port_manager;
+pub(crate) mod port_lifecycle;
 pub(crate) mod resource_quota;
 
 /// Deserialize an explicitly present nullable field.

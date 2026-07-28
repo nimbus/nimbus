@@ -48,7 +48,7 @@ use crate::backends::oci::network::{
     remove_persistent_network_namespace, setup_container_network, teardown_container_network,
 };
 use crate::backends::oci::port_lease::new_launch_reservation_claim;
-use crate::backends::oci::port_manager::{
+use crate::backends::oci::port_lifecycle::{
     NetavarkPortLifetimeRegistry, ReservedLaunchPorts, SandboxLaunchPortPlan,
 };
 use crate::backends::oci::resource_quota::ResourceQuotaManager;
@@ -450,7 +450,7 @@ impl ContainerSandboxBackend {
                 message: "runner launch already owns an egress proxy reservation".to_owned(),
             });
         }
-        let manager = self.port_manager();
+        let manager = self.port_lease_coordinator();
         let reallocatable = manager.validate_plan_binding_provenance(
             &launch_plan.manifest.requested_port_bindings,
             &launch_plan.manifest.spec.port_bindings,
@@ -808,7 +808,7 @@ impl ContainerSandboxBackend {
         let mut resolved_spec = resolved_launch.spec.clone();
         self.resource_quota_manager()
             .ensure_launch_quota(&resolved_spec)?;
-        let manager = self.port_manager();
+        let manager = self.port_lease_coordinator();
         let requested_port_bindings = resolved_spec.port_bindings.clone();
         if self.config.start_mode == ContainerStartMode::PlanOnly {
             // Preview is a pure admission/rendering step. Run it before
@@ -1038,7 +1038,7 @@ impl ContainerSandboxBackend {
                 launch_batch.push(egress_proxy.port_lease.clone());
             }
             if let Err(error) = self
-                .port_manager_for_manifest(manifest)?
+                .port_lease_coordinator_for_manifest(manifest)?
                 .require_never_bound_launch_batch(&launch_batch, reservation_claim)
             {
                 return Err(self.compensate_reserved_launch(
@@ -1231,8 +1231,8 @@ impl ContainerSandboxBackend {
         // One-shot: drop the legacy shared nimbus0 bridge before the first
         // per-tenant setup (pre-launch migration, breaking).
         purge_legacy_nimbus0_once(&runner_config.state_root.join("networks"))?;
-        let port_manager = self.port_manager_for_manifest(manifest)?;
-        port_manager.require_binding_leases(
+        let port_lease_coordinator = self.port_lease_coordinator_for_manifest(manifest)?;
+        port_lease_coordinator.require_binding_leases(
             &manifest.spec.tenant_id,
             &manifest.handle.id,
             &manifest.spec.port_bindings,
@@ -1242,7 +1242,7 @@ impl ContainerSandboxBackend {
         // reassign it so setup and teardown agree on the bridge.
         create_persistent_network_namespace(&manifest.network_layout.netns_path)?;
         let mut netavark_lifetimes = if runner_config.machine_port_forwarder.is_none() {
-            match port_manager.claim_netavark_bindings_with_lifetimes(
+            match port_lease_coordinator.claim_netavark_bindings_with_lifetimes(
                 &manifest.spec.tenant_id,
                 &manifest.handle.id,
                 &manifest.spec.port_bindings,
@@ -1284,7 +1284,7 @@ impl ContainerSandboxBackend {
             }
         };
         if let Some(batch) = netavark_lifetimes.as_ref()
-            && let Err(error) = port_manager.activate_netavark_bindings_with_lifetimes(
+            && let Err(error) = port_lease_coordinator.activate_netavark_bindings_with_lifetimes(
                 &manifest.spec.tenant_id,
                 &manifest.handle.id,
                 &manifest.spec.port_bindings,

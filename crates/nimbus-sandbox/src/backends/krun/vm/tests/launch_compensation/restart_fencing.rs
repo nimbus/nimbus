@@ -66,8 +66,8 @@ fn assert_restart_cleanup_is_fenced(
             "runtime-observed-fixture",
         ),
     };
-    let port_manager = backend.port_manager();
-    let netavark_claims = port_manager
+    let port_lease_coordinator = backend.port_lease_coordinator();
+    let netavark_claims = port_lease_coordinator
         .claim_netavark_bindings(
             &manifest.spec.tenant_id,
             &manifest.handle.id,
@@ -97,7 +97,7 @@ fn assert_restart_cleanup_is_fenced(
     .expect("netns parent should exist");
     fs::write(&manifest.network_layout.netns_path, b"owned krun netns\n")
         .expect("fixture should retain an owned netns retry handle");
-    port_manager
+    port_lease_coordinator
         .activate_netavark_bindings(
             &manifest.spec.tenant_id,
             &manifest.handle.id,

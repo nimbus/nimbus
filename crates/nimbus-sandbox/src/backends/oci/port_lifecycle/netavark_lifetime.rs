@@ -72,7 +72,7 @@ impl NetavarkPortLifetimeRegistry {
     }
 }
 
-impl PortManager {
+impl OciPortLeaseCoordinator {
     fn require_releasable_netavark_bindings_with_lifetimes(
         &self,
         tenant_id: &TenantId,

@@ -1770,9 +1770,9 @@ fn execute_egress_proxy_binds_bridge_gateway_after_published_ports() {
     let reservation_claim = crate::backends::oci::port_lease::new_launch_reservation_claim()
         .expect("published binding launch claim should mint");
     backend
-        .port_manager()
+        .port_lease_coordinator()
         .reserve_launch_ports_for_sandbox(
-            crate::backends::oci::port_manager::SandboxLaunchPortPlan::new(
+            crate::backends::oci::port_lifecycle::SandboxLaunchPortPlan::new(
                 &spec.tenant_id,
                 &sandbox_id,
                 &spec.port_bindings,

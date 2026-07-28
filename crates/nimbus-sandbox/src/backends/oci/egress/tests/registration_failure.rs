@@ -15,7 +15,7 @@ fn failed_anchor_removal_cannot_publish_clean_rebind_evidence() {
             .port()
     };
     let address = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port);
-    let manager = PortManager::new(state_root.path(), port..=port);
+    let manager = OciPortLeaseCoordinator::new(state_root.path(), port..=port);
     let (_, port_lease) = manager
         .reserve_internal_listener(
             &tenant,
@@ -109,7 +109,7 @@ fn registration_commit_failure_compensates_activated_provider_and_publication() 
             .port()
     };
     let address = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port);
-    let manager = PortManager::new(state_root.path(), port..=port);
+    let manager = OciPortLeaseCoordinator::new(state_root.path(), port..=port);
     let (_, port_lease, reservation_claim) = manager
         .reserve_internal_listener_for_coordinator(
             &tenant,
@@ -225,7 +225,7 @@ fn registration_commit_compensation_failure_retains_retryable_tombstone() {
             .port()
     };
     let address = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port);
-    let manager = PortManager::new(state_root.path(), port..=port);
+    let manager = OciPortLeaseCoordinator::new(state_root.path(), port..=port);
     let (_, port_lease, reservation_claim) = manager
         .reserve_internal_listener_for_coordinator(
             &tenant,
