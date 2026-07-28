@@ -63,27 +63,35 @@ excludes some Rust-side record work.
 CPU-only record/document serialization took 1.147 ms per 768-mutation
 fixture—about 5.8% of current production-storage elapsed time—so serialization
 reuse is real but third in priority. Removing forward-apply preimage guards
-and delete-side resource-binding cleanup reduced the guarded SQL lane by
-another 0.581 ms (11.5% of that lower-layer elapsed time). That is worthwhile,
-but the combined ablation does not attribute the two mechanisms and omits
-production's Rust deserialization/comparison cost. It therefore earns a
-dedicated higher-proof experiment after the low-risk work, not an immediate
-production shortcut.
+and delete-side resource-binding cleanup reduced guarded lower-layer elapsed
+by approximately **7–11.5% across accepted planning and independent-audit
+runs**. That is worthwhile, but the run-sensitive combined ablation does not
+attribute the two mechanisms and omits production's Rust
+deserialization/comparison cost. It therefore earns a dedicated higher-proof
+experiment after the low-risk work, not an immediate production shortcut.
 
-This evidence supports a conservative end-to-end target of **at least 30,000
-durable logical CRUD mutations/s at N=256** on the canonical local protocol,
-with the lower 95% confidence bound at or above 28,000 and no material N=1,
-N=32, contention, latency, memory, WAL, database-size, cold-start, or
-correctness regression. That is a 40.0% mean improvement over the fresh
-21,433 baseline, far below the measured low-risk lower-layer headroom.
+This evidence supports a conservative end-to-end target whose **mean
+same-session paired `F_ref`/`B_ref` ratio is at least 1.40** at N=256, with a
+positive lower 95% confidence bound on the paired percentage delta. SWT0
+freezes the baseline source commit and protocol as `B_ref`; SWT5 freezes the
+exact final source commit as `F_ref`. The final session reruns both immutable
+binaries rather than reusing SWT0's numeric result. Six predeclared balanced
+block pairs prevent post-hoc pairing or adaptive stopping. The existing 30,000
+mean and 28,000 lower-CI values remain absolute `F_ref` floors. This dual gate
+is robust to identical production source measuring 21,433 in the historical
+run and 25,862 in the independent quiet-host audit. Every N=1, N=32,
+contention, latency, memory, WAL, database-size, checkpoint, cold-start, and
+correctness gate still applies.
+The audit and disposition are recorded in
+`../proof/sqlite-write-throughput/independent-audit-remediation.md`.
 
 ## Ownership And Provenance
 
 No current plan owns benchmark-driven SQLite write-path optimization.
 
 - `archive/parallel-prepare-serial-commit-plan.md` is the completed predecessor
-  that established the three Engine-owned mutation routes, batching,
-  publication ordering, and crash/replay evidence.
+  that established the three Engine-owned client document mutation routes,
+  batching, publication ordering, and crash/replay evidence.
 - `architecture-review-2026-07-plan.md` owns findings from its July 6 review;
   it does not contain or own this later SQLite measurement campaign.
 - `layered-admission-control-plan.md` owns future admission work, not storage
@@ -177,6 +185,17 @@ silently inherit one arbitrary last sample.
    including preparation, conflict handling, journal assignment, ordered
    publication, cache invalidation, and fan-out.
 
+Within each layered run, lanes execute in the fixed order
+raw → resident-current → guarded → lower-bound → production storage. The CV
+gate rejects visibly unstable complete runs, but fixed ordering means host
+drift can still map onto lanes and is one reason same-session candidate/base
+alternation remains mandatory for acceptance.
+
+All 256 fixture updates change `rank`; none is a no-op. The statement and
+row-change census depends on that property. The layered SQL append loops also
+receive precomputed MessagePack records, so their timed regions omit record
+encoding; the separate CPU serialization lane prices that work.
+
 ## Baselines And Planning References
 
 ### Complete Engine
@@ -260,7 +279,12 @@ document-version format, and one table-catalog row.
 All Nimbus-shaped lanes produce essentially the same durable byte shape.
 None reaches the 1,000-page automatic-checkpoint threshold. The passive
 checkpoint was issued only after size/frame capture. There is no evidence in
-this fixture that checkpoint policy is the current bottleneck.
+this **768-mutation layered fixture** that checkpoint policy is the current
+bottleneck. That result does not settle Engine-scale behavior: an N=256 Engine
+round writes enough WAL to cross the fixture's scale and may include automatic
+checkpoint work. SWT0 therefore captures Engine-scale WAL high-water frames,
+checkpoint counts, and checkpoint time before the campaign accepts or rejects
+checkpoint tuning globally.
 
 ### Connection and CPU-only preparation
 
@@ -275,9 +299,21 @@ this fixture that checkpoint policy is the current bottleneck.
 The serialization lane performs no SQLite I/O and is not a durable throughput
 number.
 
-## Complete Production Mutation Paths
+## Complete Client Document Mutation Paths
 
-All mutations remain Engine-owned. There are exactly three routes.
+Client document mutations remain Engine-owned. There are exactly three routes.
+This scoped invariant does not cover every storage writer:
+
+- schema, scheduler, trigger, and point-in-time-restore operations can run as
+  internal committer jobs;
+- object manifests write documents and commit-log entries through
+  `TenantPointWrite` on the read executor, outside client-mutation committer
+  routing and write-log staging;
+- libSQL replica refresh reconciles durable records into its local cache
+  through a storage-owned write transaction.
+
+Those surfaces are not fourth client document mutation routes, but they are
+real concurrent-writer constraints for any connection-residency design.
 
 ### Queued journal path
 
@@ -287,9 +323,11 @@ All mutations remain Engine-owned. There are exactly three routes.
 2. Parallel preparation resolves validation, authorization, schema, reads,
    conflict dependencies, and candidate writes outside the serial assign step.
 3. The journal worker adaptively drains pending requests. Serial assignment
-   reparses/reprepares stale work when required, validates conflicts, assigns a
-   dense sequence and commit timestamp, builds `TenantEventRecord`s, and stages
-   the pending write log.
+   reparses/reprepares stale work when conflict-mediated checks require it,
+   assigns a dense sequence and commit timestamp, builds `TenantEventRecord`s,
+   and stages the pending write log. Schema validation belongs to initial
+   preparation and any such reprepare; it is not an unconditional serial-step
+   check.
 4. The embedded ordered publisher calls
    `append_durable_records_batch`. SQLite opens and fully initializes a writer
    connection, begins IMMEDIATE, reads the next sequence, MessagePack-serializes
@@ -298,8 +336,8 @@ All mutations remain Engine-owned. There are exactly three routes.
    opens and fully initializes another writer connection, begins IMMEDIATE,
    reads `applied_sequence`, validates and applies every record, writes
    versions/index versions/live state, updates `applied_sequence`, and commits.
-6. The Engine advances the applied head, publishes the staged write log,
-   invalidates caches, and only then releases subscription/fan-out work.
+6. The Engine publishes the staged write log, invalidates caches, advances
+   the applied head, and only then releases subscription/fan-out work.
 7. Ambiguous apply outcomes recover from the durable journal. The serial
    kill-switch follows the same append-before-apply ordering.
 
@@ -308,11 +346,13 @@ research does not authorize collapsing them.
 
 ### Direct path
 
-Synchronous `apply_mutation_with_mode*` prepares the mutation, passes
-authorization/capability/rate admission, and enters the per-tenant direct
-committer. `run_prepared_direct_mutation` revalidates, assigns the dense
+Synchronous `apply_mutation_with_mode*` validates schema while preparing the
+mutation, passes authorization/capability/rate admission, and enters the
+per-tenant direct committer. `run_prepared_direct_mutation` performs
+conflict-mediated revalidation/re-detection, assigns the dense
 sequence/timestamp, stages publication, and calls
-`persist_prepared_write_batch`.
+`persist_prepared_write_batch`. It does not move the full schema-validation
+operation uniformly into the serial section.
 
 For embedded SQLite, `apply_prepared_write_batch` uses one
 `execute_write` transaction. In that transaction it applies document,
@@ -409,8 +449,8 @@ product benchmark:
 | 1 | Cache/prepare batch statements and hoist format/schema/table invariants | Guarded lane: 50,358 → 151,485 mut/s; 6,449 → 3,401 statements; 15.257 → 5.073 ms | Avoid repeated parse/finalize and 3,048 redundant fixture statements while retaining replay guards | low–medium | low if invalidation boundaries are explicit | medium | **Execute first** |
 | 2 | Actor-owned resident writer connection; retain both queued transaction boundaries | 494.1 µs initialized open; twelve opens ≈5.93 ms; resident-current lane is 29.8% above production storage | Remove repeated open, PRAGMA, 16-statement idempotent schema init, and encrypted key verification; retain statement cache | medium | low–medium: poison/reopen/error recovery and concurrency ownership | medium | **Execute second** |
 | 3 | Serialize current document/record once and reuse encoded forms | 1.147 ms / fixture, 5.8% of production storage elapsed ceiling | Move deterministic encoding off ordered apply and avoid duplicate JSON/typed-field work | medium | low if encoded payload is internal and integrity hash semantics stay unchanged | medium | **Measure after 1–2; execute only if ≥3%** |
-| 4 | Forward-apply conditional write without full preimage deserialization | Guarded → lower-bound saves 0.581 ms / 11.5% of guarded SQL elapsed; combined ablation also omits delete binding cleanup and does not include full Rust deserialization | First isolate preimage vs binding cost, then use affected-row/hash/sequence guard on forward apply while retaining full recovery validation | high | high: corruption/idempotent replay detection | high | **Worthwhile; execute as a dedicated evidence-gated phase after low-risk work** |
-| 5 | Checkpoint tuning | 337–341 frames, below 1,000-page autocheckpoint; byte shape unchanged across optimized SQL lanes | Potentially schedule checkpoints away from foreground commits | medium | medium operational risk | medium | **Reject for current campaign: no bottleneck evidence** |
+| 4 | Forward-apply conditional write without full preimage deserialization | Guarded → lower-bound saves approximately 7–11.5% of guarded lower-layer elapsed across accepted planning/audit runs; combined ablation also omits delete binding cleanup and does not include full Rust deserialization | First isolate preimage vs binding cost, then use affected-row/hash/sequence guard on forward apply while retaining full recovery validation | high | high: corruption/idempotent replay detection | high | **Worthwhile; execute as a dedicated evidence-gated phase after low-risk work** |
+| 5 | Checkpoint tuning | Layered fixture: 337–341 frames, below 1,000-page autocheckpoint; Engine N=256 crosses that WAL scale | Capture Engine-scale checkpoint counts/time before deciding whether foreground scheduling matters | medium | medium operational risk | medium | **Defer pending SWT0 Engine-scale evidence** |
 | 6 | More aggressive queued batching | Current N=256 average batch 142.22; first append only 17.6% while apply is 51.8% | Further amortize two commits/connection setup | medium | medium latency/fairness risk | medium | **Defer until lower-risk apply work lands** |
 | 7 | Collapse append and apply transaction | Would halve queued transaction count | Remove one commit per batch | high | **unacceptable without redesigning crash/replay contract** | high | **Reject** |
 | 8 | Remove journal, versions, indexes, validation, publication, or weaken FULL/WAL | Produces misleading benchmark wins | Deletes product semantics or durability | low code effort | **unacceptable** | irrelevant | **Reject** |
@@ -430,14 +470,17 @@ The first implementation PR should retain:
 - resource-binding cleanup;
 - append-before-apply ordering;
 - FULL/WAL;
-- all three Engine routes.
+- all three client document mutation routes.
 
 ### Candidate 2 boundaries
 
 Writer residency is connection reuse, not a concurrency redesign. A single
 per-tenant writer owner may serve queued, direct, and execution-unit commits
-under the existing Engine commit serialization. The queued publisher still
-executes:
+under the existing Engine commit serialization. It is not SQLite's sole
+writer: object-manifest writes and libSQL replica-cache reconciliation can
+open storage-owned write transactions outside those client routes. The owner
+must preserve busy/locked classification, bounded progress, and recovery while
+coexisting with them. The queued publisher still executes:
 
 1. append transaction COMMIT;
 2. apply transaction COMMIT;
@@ -473,11 +516,29 @@ The following cannot satisfy any performance gate:
 
 ## Target Derivation
 
-Fresh N=256 mean: 21,433 logical mut/s.
+Historical N=256 observation: 21,433 logical mut/s.
 
-Proposed final mean: 30,000 logical mut/s.
+Independent quiet-host audit of identical production source: 25,862 logical
+mut/s. Its raw scratch report was not transferred into this branch, so this is
+diagnostic host-drift evidence rather than an acceptance baseline.
 
-Required gain: `(30,000 / 21,433) - 1 = 40.0%`.
+SWT0 first merges every checkpoint/resource observation seam needed by final
+acceptance, then freezes the resulting source commit and canonical protocol as
+`B_ref` and records one diagnostic reference run. The final session rebuilds
+and reruns `B_ref` alongside an exact post-optimization commit `F_ref`. Both
+commits and binary hashes are recorded before sampling and remain immutable
+for the whole session.
+
+Required relative gain: mean of six predeclared, balanced, same-session paired
+`F_ref`/`B_ref` N=256 throughput ratios ≥1.40. The paired Student-t interval is
+computed over those six adjacent block deltas, never over a post-hoc pairing
+of per-round samples.
+
+Required `F_ref` mean: at least 30,000 logical mut/s.
+
+Required uncertainty gates: the lower 95% confidence bound of the paired
+percentage delta is positive, and the `F_ref` absolute lower 95% confidence
+bound is at least 28,000 logical mut/s.
 
 Why this is ambitious but credible:
 
@@ -487,14 +548,18 @@ Why this is ambitious but credible:
   storage elapsed time;
 - production storage is 1.81× faster than the complete Engine, leaving a
   known translation tax but still substantial headroom;
-- 30k is only 17.8% of the guarded SQL lane and 7.9% of its physical row-change
-  rate;
+- the 30k absolute floor is 19.8% of the guarded lane's 151,485 logical
+  mut/s; expressed in matching physical units, its approximately 90k core row
+  changes/s is also about 19.7% of that lane's 456,823 row changes/s;
 - no durability, transaction, journal, MVCC, index, or publication semantic
   change is required by the target.
 
-The target is not a capacity promise across machines. It is the local
-campaign acceptance gate. Publishable capacity decisions still require
-pinned server-class hardware and an open-loop latency companion.
+The contemporaneous paired 40% requirement preserves the intended
+implementation improvement across host-state drift; the 30k/28k floors prevent
+a uniformly depressed session from weakening it. This target is not a capacity
+promise across machines. It is the local campaign acceptance gate. Publishable
+capacity decisions still require pinned server-class hardware and an open-loop
+latency companion.
 
 ## Reproduction
 
@@ -548,6 +613,15 @@ alternating order where practical.
   execute all Engine validation, authorization, conflict, publication, or
   Rust-side preimage comparison work. Only the production storage and complete
   Engine lanes measure those owners.
+- Their fixture is schemaless, has no maintained secondary index, and carries
+  one document write per durable record. Indexed, multi-write, and
+  schema-bearing behavior is protected by the campaign's Engine correctness
+  and regression gates rather than this lower-layer throughput fixture.
+- MessagePack records are precomputed outside the layered SQL timed append
+  loops; the CPU serialization lane measures that omitted work separately.
+- Layered checkpoint evidence is fixture-scale. Full-Engine retention ratios
+  can include automatic checkpoint I/O and store aging until SWT0 records
+  Engine-scale counters.
 - The raw lane intentionally has one physical row change and one transaction
   per captured batch; it is a device/library control, not an application peer.
 - The statement count is source-derived for the fixed fixture and excludes

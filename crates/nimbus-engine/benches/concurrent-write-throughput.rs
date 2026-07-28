@@ -209,6 +209,18 @@ async fn update_hot_key_until_committed(
                 // entire wait/reprepare interval to this mutation's latency.
                 tokio::task::yield_now().await;
             }
+            Err(error) if error.retryability() == Retryability::RetryableAfterBackoff => {
+                // N=256 intentionally exceeds the bounded committer inbox and
+                // exercises overload recovery. Treat that expected pressure as
+                // client-visible wait, honoring an explicit retry delay when
+                // the error carries one and otherwise avoiding a busy loop.
+                tokio::time::sleep(
+                    error
+                        .retry_after()
+                        .unwrap_or_else(|| Duration::from_millis(1)),
+                )
+                .await;
+            }
             Err(error) => panic!("hot-key update_document_async should succeed: {error}"),
         }
     }

@@ -18,6 +18,8 @@ Runtime:
 
 Report SHA-256:
 `83aa26c5665c9fc7180d6c450ed82598c636973b63aa543140a11d147e96b45c`.
+The byte-for-byte raw report is retained as
+`layered-noisy-diagnostic-raw.md`; its SHA-256 matches this value.
 
 | Lane | Mean logical mut/s | 95% CI | CV |
 | --- | ---: | ---: | ---: |
