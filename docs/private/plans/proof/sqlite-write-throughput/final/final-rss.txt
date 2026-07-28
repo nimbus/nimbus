@@ -1,0 +1,24 @@
+[cwb] workload=crud (insert+update+delete), base_units/worker=100, max_mut/round=9000, measure_rounds=15, warmup_rounds=3, seed_docs=0, ladder=[1, 32, 256], wal_checkpoint_observation=false
+[cwb] commit phase split enabled
+[cwb] rung N=1 (units/worker=100)…
+[cwb] rung N=32 (units/worker=93)…
+[cwb] rung N=256 (units/worker=11)…
+[cwb] report written to /private/tmp/claude-501/-Users-jack-src-github-com-nimbus-nimbus/87eebd0a-fb9b-42ab-9771-58851ac78663/scratchpad/final-crud-frss.md
+        8.32 real        11.10 user         6.80 sys
+           669581312  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               41314  page reclaims
+                   1  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+               42834  voluntary context switches
+              481260  involuntary context switches
+        132115269315  instructions retired
+         56843536205  cycles elapsed
+           632869120  peak memory footprint
