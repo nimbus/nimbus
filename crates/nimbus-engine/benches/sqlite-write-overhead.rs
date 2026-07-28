@@ -1059,15 +1059,24 @@ fn run_attribution_lane(fixture: &Fixture, shape: AttributionShape) -> Sample {
                     .optional()
                     .expect("attribution preimage");
                 if shape.decode {
-                    if let (Some((_, _, fields_json, typed_json)), Some(previous)) =
+                    if let (Some((creation, update, fields_json, typed_json)), Some(previous)) =
                         (row.as_ref(), write.previous.as_ref())
                     {
+                        // Production-equivalent reconstruction and equality:
+                        // rebuild the full document from both JSON columns and
+                        // timestamps, then compare it whole.
                         let fields: serde_json::Map<String, serde_json::Value> =
                             serde_json::from_str(fields_json).expect("decode preimage fields");
-                        let typed: serde_json::Value =
-                            serde_json::from_str(typed_json).expect("decode preimage typed");
-                        black_box(fields == previous.fields);
-                        black_box(typed);
+                        let mut rebuilt = Document::with_id_at(
+                            write.doc_id.clone(),
+                            write.table.clone(),
+                            fields,
+                            Timestamp(*creation),
+                        );
+                        rebuilt.update_time = Timestamp(*update);
+                        rebuilt.typed_fields =
+                            serde_json::from_str(typed_json).expect("decode preimage typed fields");
+                        black_box(rebuilt == *previous);
                     }
                     black_box(&row);
                 } else {

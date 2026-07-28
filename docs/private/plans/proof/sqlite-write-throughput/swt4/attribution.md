@@ -32,3 +32,21 @@ and the campaign target is already exceeded after SWT1+SWT2. The
 attribution instrumentation (opt-in `NIMBUS_SWO_ATTRIBUTION=1`) and this
 proof are retained for any future campaign; binding cleanup (2.3%) is
 recorded as a separately measurable future candidate.
+
+## Review correction: production-equivalent decode
+
+Review flagged that the decode lane compared only `fields`. The lane now
+rebuilds the full `Document` (both JSON columns, timestamps, typed fields)
+and compares it whole, matching production. Two corrected runs were taken:
+a3 rejected whole (host noise; retained) and a4
+(`attribution-raw-a4-partial.md`, SHA-256 `81fb02cd…`) whose *decision pair*
+is clean — guarded 4.670 ms (CV 1.0%) vs decode+compare 4.899 ms (CV 2.6%)
+→ **corrected decode cost 0.229 ms (4.9% of guarded)** vs 0.201 fields-only
+— while two unrelated side lanes breached CV (storage 12.1%,
+minus-binding 22.0%), so a4 is not a whole-run acceptance artifact.
+
+Corrected projection: (0.466 + 0.229) / 6.303 × 36% ≈ **4.0% point,
+≈2.8% conservative** — still below the safe ≥3% positive-lower-bound gate.
+D17 is unchanged under both the original and corrected decode measurements;
+the correction is recorded because it tightens the estimate the decision
+rests on.
