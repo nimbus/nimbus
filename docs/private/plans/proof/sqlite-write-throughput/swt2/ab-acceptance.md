@@ -28,7 +28,7 @@ met on clean pairs only.
   reversing SWT1's D15 deviation. Twelve earlier hot-key runs (all retained
   under `rejected/` with their side-lane CV breaches) showed the same
   direction without overlap. **PASS.**
-- **Cold open ≤5%/100µs**: 562.0µs (lay-b2) vs 547.1µs (lay-c2), no regression on the valid pair. **PASS.**
+- **Cold open ≤5%/100µs**: `SqliteTenantStore::open` + schema load from the one valid layered pair: 452.7µs (lay-b2 base) vs 538.6µs (lay-c2 candidate) = +85.9µs, within the 100µs allowance. **PASS.**
 
 ## Mechanism confirmation
 
@@ -48,9 +48,12 @@ threads coexist with dense journal and working queued route after.
 Storage 431/431; Engine journal/publisher/direct/execution-unit/fan-out
 253/253; fmt + clippy -D warnings clean.
 
-## Evidence-audit correction
+## Evidence-audit correction (cycles 1–2)
 
 Review cycle 1 correctly rejected two runs my lane extraction had missed
-(lay-c1 guarded 12.7%; the original hk pair set's side-lane breaches). The
+(lay-c1 guarded 12.7%; the original hk pair set's side-lane breaches). Cycle 2 additionally caught two staged hot-key runs with side-lane CV
+breaches still under `raw/` (moved to `rejected/`) and a cold-open
+comparison that mixed different operations from different runs (now the
+store-open row from both sides of the single valid layered pair). The
 acceptance above uses only whole-run-clean pairs; every rejected run is
 retained byte-for-byte.
