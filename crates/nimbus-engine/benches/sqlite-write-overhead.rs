@@ -21,6 +21,8 @@
 //! - `NIMBUS_SWO_ROUNDS` (default 12; supported range 2–31)
 //! - `NIMBUS_SWO_REPETITIONS_PER_SAMPLE` (default 60)
 //! - `NIMBUS_SWO_OUT` (optional Markdown output path)
+//! - `NIMBUS_SWO_ATTRIBUTION=1` (adds SWT4.1 forward-apply attribution lanes;
+//!   off in the canonical protocol)
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -137,6 +139,45 @@ fn main() {
     });
     let shaped = run_samples(rounds, repetitions, || run_shaped_lane(&fixture));
     let storage = run_samples(rounds, repetitions, || run_storage_lane(&fixture));
+    let attribution_enabled = std::env::var("NIMBUS_SWO_ATTRIBUTION")
+        .ok()
+        .is_some_and(|value| matches!(value.trim(), "1" | "true" | "yes" | "on"));
+    let attribution = attribution_enabled.then(|| {
+        [
+            (
+                "guarded minus binding cleanup (preimage kept)",
+                AttributionShape {
+                    preimage: true,
+                    decode: false,
+                    binding: false,
+                },
+            ),
+            (
+                "guarded minus preimage (binding kept)",
+                AttributionShape {
+                    preimage: false,
+                    decode: false,
+                    binding: true,
+                },
+            ),
+            (
+                "guarded plus preimage decode+compare",
+                AttributionShape {
+                    preimage: true,
+                    decode: true,
+                    binding: true,
+                },
+            ),
+        ]
+        .map(|(name, shape)| {
+            (
+                name,
+                run_samples(rounds, repetitions, || {
+                    run_attribution_lane(&fixture, shape)
+                }),
+            )
+        })
+    });
     let serialization = measure_serialization(&fixture, rounds);
     let connection = measure_connection_costs(rounds);
     let sqlite_identity = sqlite_build_identity();
@@ -259,6 +300,41 @@ fn main() {
     render_io(&mut report, "Nimbus-shaped SQL lower bound", shaped.io);
     render_io(&mut report, "production storage append+apply", storage.io);
 
+    if let Some(attribution) = &attribution {
+        writeln!(
+            report,
+            "\n## SWT4.1 forward-apply attribution (diagnostic)\n"
+        )
+        .unwrap();
+        writeln!(
+            report,
+            "Each lane replays the guarded fixture with one component toggled. \
+             `decode+compare` additionally deserializes both preimage JSON \
+             columns and compares fields against the record's previous \
+             document, pricing production's Rust-side work that the guarded \
+             lane black-boxes. Deltas attribute the combined guarded-to-lower-bound gap.\n"
+        )
+        .unwrap();
+        writeln!(
+            report,
+            "| lane | logical mut/s | 95% CI | CV% | mean elapsed |"
+        )
+        .unwrap();
+        writeln!(report, "|---|---:|---:|---:|---:|").unwrap();
+        for (name, summary) in attribution {
+            writeln!(
+                report,
+                "| {name} | {:.0} | [{:.0}, {:.0}] | {:.1} | {:.3} ms |",
+                summary.mean_mutations_per_second,
+                summary.ci_low,
+                summary.ci_high,
+                summary.cv_percent,
+                summary.mean_seconds * 1_000.0,
+            )
+            .unwrap();
+        }
+    }
+
     writeln!(report, "\n## Raw measured-round samples\n").unwrap();
     render_samples(&mut report, "raw row mutation", &raw);
     render_samples(
@@ -273,6 +349,11 @@ fn main() {
     );
     render_samples(&mut report, "Nimbus-shaped SQL lower bound", &shaped);
     render_samples(&mut report, "production storage append+apply", &storage);
+    if let Some(attribution) = &attribution {
+        for (name, summary) in attribution {
+            render_samples(&mut report, name, summary);
+        }
+    }
 
     writeln!(report, "\n## CPU-only serialization\n").unwrap();
     writeln!(
@@ -855,6 +936,169 @@ fn guarded_prepared_apply_record(conn: &Connection, record: &TenantEventRecord) 
             .execute([write.doc_id.as_str().as_bytes()])
             .expect("guarded resource binding delete");
     }
+}
+
+/// Which components of the guarded per-record apply the attribution lane
+/// keeps. `preimage` prices the per-record live-document SELECT, `decode`
+/// prices production's Rust JSON deserialization plus `Document` equality
+/// comparison over that preimage, and `binding` prices the delete-side
+/// resource-binding DELETE. The guarded lane is (true, false, true); the
+/// lower-bound lane is (false, false, false).
+#[derive(Clone, Copy)]
+struct AttributionShape {
+    preimage: bool,
+    decode: bool,
+    binding: bool,
+}
+
+fn run_attribution_lane(fixture: &Fixture, shape: AttributionShape) -> Sample {
+    let dir = TempDir::new().expect("attribution tempdir");
+    let path = dir.path().join("attribution.sqlite3");
+    let conn = initialized_shaped_connection(&path, fixture);
+    let hidden_namespace = format!("hidden:{}", fixture.table_id.as_str());
+
+    let started = Instant::now();
+    for_each_batch(|start, end| {
+        conn.execute_batch("BEGIN IMMEDIATE")
+            .expect("attribution append begin");
+        let next = conn
+            .prepare_cached("SELECT value_blob FROM metadata WHERE key = ?1")
+            .expect("prepare attribution next sequence")
+            .query_row([NEXT_SEQUENCE_KEY], |row| row.get::<_, Vec<u8>>(0))
+            .optional()
+            .expect("attribution next sequence");
+        if next.is_none() {
+            black_box(
+                conn.prepare_cached("SELECT MAX(sequence) FROM commit_log")
+                    .expect("prepare attribution latest sequence")
+                    .query_row([], |row| row.get::<_, Option<u64>>(0))
+                    .expect("attribution latest sequence"),
+            );
+        }
+        for (offset, record) in fixture.records[start..end].iter().enumerate() {
+            conn.prepare_cached("INSERT INTO commit_log (sequence, record_blob) VALUES (?1, ?2)")
+                .expect("prepare attribution journal")
+                .execute(params![
+                    record.sequence.0,
+                    &fixture.payloads[start + offset]
+                ])
+                .expect("attribution journal insert");
+        }
+        put_metadata(&conn, NEXT_SEQUENCE_KEY, (end as u64 + 1).to_be_bytes());
+        conn.execute_batch("COMMIT")
+            .expect("attribution append commit");
+
+        conn.execute_batch("BEGIN IMMEDIATE")
+            .expect("attribution apply begin");
+        black_box(
+            conn.prepare_cached("SELECT value_blob FROM metadata WHERE key = ?1")
+                .expect("prepare attribution applied sequence")
+                .query_row([APPLIED_SEQUENCE_KEY], |row| row.get::<_, Vec<u8>>(0))
+                .optional()
+                .expect("attribution applied sequence"),
+        );
+        black_box(
+            conn.prepare_cached("SELECT value_blob FROM metadata WHERE key = ?1")
+                .expect("prepare attribution format")
+                .query_row([DOCUMENT_VERSION_FORMAT_KEY], |row| {
+                    row.get::<_, Vec<u8>>(0)
+                })
+                .optional()
+                .expect("attribution document format"),
+        );
+        black_box(
+            conn.prepare_cached("SELECT schema_json FROM schemas WHERE table_name = ?1")
+                .expect("prepare attribution schema")
+                .query_row([fixture.table.as_str()], |row| row.get::<_, String>(0))
+                .optional()
+                .expect("attribution schema"),
+        );
+        black_box(
+            conn.prepare_cached(
+                "SELECT table_id, state FROM table_catalog
+                 WHERE namespace = ?1 AND table_name = ?2",
+            )
+            .expect("prepare attribution hidden identity")
+            .query_row(params![hidden_namespace, fixture.table.as_str()], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .optional()
+            .expect("attribution hidden identity"),
+        );
+        black_box(
+            conn.prepare_cached(
+                "SELECT table_id, state FROM table_catalog
+                 WHERE namespace = 'default' AND table_name = ?1",
+            )
+            .expect("prepare attribution active identity")
+            .query_row([fixture.table.as_str()], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .expect("attribution active identity"),
+        );
+        for record in &fixture.records[start..end] {
+            let write = &record.writes[0];
+            if shape.preimage {
+                let row = conn
+                    .prepare_cached(
+                        "SELECT creation_time, update_time, data_json, typed_fields_json
+                         FROM documents WHERE table_id = ?1 AND id = ?2",
+                    )
+                    .expect("prepare attribution preimage")
+                    .query_row(
+                        params![write.table_id.as_str(), write.doc_id.as_str()],
+                        |row| {
+                            Ok((
+                                row.get::<_, u64>(0)?,
+                                row.get::<_, u64>(1)?,
+                                row.get::<_, String>(2)?,
+                                row.get::<_, String>(3)?,
+                            ))
+                        },
+                    )
+                    .optional()
+                    .expect("attribution preimage");
+                if shape.decode {
+                    if let (Some((creation, update, fields_json, typed_json)), Some(previous)) =
+                        (row.as_ref(), write.previous.as_ref())
+                    {
+                        // Production-equivalent reconstruction and equality:
+                        // rebuild the full document from both JSON columns and
+                        // timestamps, then compare it whole.
+                        let fields: serde_json::Map<String, serde_json::Value> =
+                            serde_json::from_str(fields_json).expect("decode preimage fields");
+                        let mut rebuilt = Document::with_id_at(
+                            write.doc_id.clone(),
+                            write.table.clone(),
+                            fields,
+                            Timestamp(*creation),
+                        );
+                        rebuilt.update_time = Timestamp(*update);
+                        rebuilt.typed_fields =
+                            serde_json::from_str(typed_json).expect("decode preimage typed fields");
+                        black_box(rebuilt == *previous);
+                    }
+                    black_box(&row);
+                } else {
+                    black_box(row);
+                }
+            }
+            shaped_apply_record(&conn, record);
+            if shape.binding && write.op_type == WriteOpType::Delete {
+                conn.prepare_cached("DELETE FROM resource_path_bindings WHERE locator_key = ?1")
+                    .expect("prepare attribution binding delete")
+                    .execute([write.doc_id.as_str().as_bytes()])
+                    .expect("attribution binding delete");
+            }
+        }
+        put_metadata(&conn, APPLIED_SEQUENCE_KEY, (end as u64).to_be_bytes());
+        conn.execute_batch("COMMIT")
+            .expect("attribution apply commit");
+    });
+    let seconds = started.elapsed().as_secs_f64();
+    assert_shaped_state(&conn);
+    let io = inspect_io(&path, &conn);
+    Sample { seconds, io }
 }
 
 fn run_shaped_lane(fixture: &Fixture) -> Sample {
