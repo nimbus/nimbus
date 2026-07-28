@@ -36,11 +36,13 @@ CI [−5.46, −2.12] (t, df=5). Within the ≤5% regression gate.** Mechanism:
 at batch size 1 the per-transaction context/cache setup amortizes over one
 record; SWT2's resident writer targets exactly this territory.
 
-## Hot-key N=32 cross-gate — six dedicated paired blocks — DEVIATION
+## Hot-key N=32 cross-gate — five valid dedicated paired blocks — DEVIATION
 
-Deltas −5.38, −5.13, −5.22, −5.21, −6.53, −5.29 → **mean −5.46%,
-CI [−6.02, −4.91]. The ≤5% gate fails by ~0.5 points, confirmed and
-reproducible.** The full hot-key runs show the same shape at N=256 (−6.7%).
+Six paired blocks ran; pair 6 was rejected whole because its candidate run's
+forced N=1 rung measured CV 11.9% (both sides retained under `rejected/`).
+The five valid pairs give deltas −5.38, −5.13, −5.22, −5.21, −6.53 →
+**mean −5.49%, CI [−6.22, −4.77] (t, df=4). The ≤5% gate fails by ~0.5
+points, confirmed and reproducible.** The full hot-key runs show the same shape at N=256 (−6.7%).
 No per-operation cost is visible on any other lane; the diff makes apply
 turnaround ~2× faster, which shifts the OCC retry equilibrium on the
 pathological single-document workload: the serial window turns around
@@ -82,7 +84,8 @@ storage lane CV 26.8% under a load spike). Candidate storage now retains
 
 ## Structured review
 
-Codex (`gpt-5.6-sol`, high) accepted one finding: the prepare counter's
+Codex (`gpt-5.6-sol`, high) review cycle 2 also caught the pair-6 CV breach
+corrected above. Cycle 1 accepted one finding: the prepare counter's
 concept keying conflated the current-document and tombstone version inserts
 (two SQL texts under one concept), letting the prepare-bound assertion stay
 green while a second parse happened. Fixed by splitting
