@@ -52,14 +52,21 @@
 //!   NIMBUS_CWB_SEED_DOCS=0                      pre-seed docs (0 = match baseline; >0 pre-ages the store)
 //!   NIMBUS_CWB_BACKEND=sqlite|redb             embedded backend (default sqlite)
 //!   NIMBUS_CWB_SPLIT_PHASES=1                   add plan-CPU/apply/fsync phase shares (default off)
+//!   NIMBUS_CWB_WAL_CHECKPOINT_OBSERVATION=1     add SQLite checkpoint diagnostics (default off)
 //!   NIMBUS_CWB_OUT=<path>                      also write the markdown report to <path>
 
 use std::hint::black_box;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use nimbus_core::{DocumentId, Retryability, TableName, TenantId};
 use nimbus_engine::{CommitPhaseMetricsSnapshot, EmbeddedProviderKind, Engine};
+use nimbus_storage::{
+    SqlitePassiveCheckpointProbe, SqliteWalCheckpointObservationSnapshot,
+    disable_sqlite_wal_checkpoint_observation, probe_sqlite_passive_checkpoint,
+    reset_sqlite_wal_checkpoint_observation, sqlite_wal_checkpoint_observation_snapshot,
+};
 use serde_json::json;
 use tokio::task::JoinSet;
 
@@ -119,10 +126,18 @@ fn backend() -> EmbeddedProviderKind {
     }
 }
 
-fn split_phases_enabled() -> bool {
-    std::env::var("NIMBUS_CWB_SPLIT_PHASES")
+fn env_flag(key: &str) -> bool {
+    std::env::var(key)
         .ok()
         .is_some_and(|value| matches!(value.trim(), "1" | "true" | "yes" | "on"))
+}
+
+fn split_phases_enabled() -> bool {
+    env_flag("NIMBUS_CWB_SPLIT_PHASES")
+}
+
+fn wal_checkpoint_observation_enabled() -> bool {
+    env_flag("NIMBUS_CWB_WAL_CHECKPOINT_OBSERVATION")
 }
 
 /// Which mutation shape one "unit" of work is.
@@ -232,6 +247,7 @@ struct Rung {
     throughputs: Vec<f64>, // per-round ops/sec (measured rounds only)
     latencies_ns: Vec<u64>,
     phase_split: Option<PhaseSplit>,
+    wal_checkpoint_observation: Option<WalCheckpointObservation>,
 }
 
 struct RungStats {
@@ -247,6 +263,14 @@ struct RungStats {
     p99_us: f64,
     mean_latency_s: f64,
     phase_split: Option<PhaseSplit>,
+    wal_checkpoint_observation: Option<WalCheckpointObservation>,
+}
+
+#[derive(Clone, Copy)]
+struct WalCheckpointObservation {
+    foreground: SqliteWalCheckpointObservationSnapshot,
+    passive: SqlitePassiveCheckpointProbe,
+    measured_round_nanos: u64,
 }
 
 /// Perform one closed-loop round: `n` workers each perform `units_per_worker`
@@ -351,6 +375,7 @@ async fn measure_rung(
     workload: Workload,
     split_phases: bool,
     hot_key_document_id: Option<&DocumentId>,
+    wal_checkpoint_observation_path: Option<&Path>,
 ) -> Rung {
     for _ in 0..warmup_rounds {
         let (ops, elapsed, lat) = run_round(
@@ -365,6 +390,9 @@ async fn measure_rung(
         .await;
         black_box((ops, elapsed, lat.len()));
     }
+    if let Some(path) = wal_checkpoint_observation_path {
+        reset_sqlite_wal_checkpoint_observation(path);
+    }
     let phase_before = split_phases.then(|| {
         engine
             .tenant_engine_diagnostics(tenant)
@@ -373,6 +401,7 @@ async fn measure_rung(
     });
     let mut throughputs = Vec::with_capacity(measure_rounds);
     let mut latencies_ns = Vec::new();
+    let mut measured_round_nanos = 0_u128;
     for _ in 0..measure_rounds {
         let (ops, elapsed, mut lat) = run_round(
             engine,
@@ -384,6 +413,7 @@ async fn measure_rung(
             hot_key_document_id,
         )
         .await;
+        measured_round_nanos = measured_round_nanos.saturating_add(elapsed.as_nanos());
         let secs = elapsed.as_secs_f64();
         throughputs.push(if secs > 0.0 { ops as f64 / secs } else { 0.0 });
         latencies_ns.append(&mut lat);
@@ -395,11 +425,22 @@ async fn measure_rung(
             .commit_phases;
         PhaseSplit::between(phase_totals(before), phase_totals(after))
     });
+    let wal_checkpoint_observation = wal_checkpoint_observation_path.map(|path| {
+        let foreground = sqlite_wal_checkpoint_observation_snapshot(path);
+        let passive = probe_sqlite_passive_checkpoint(path);
+        disable_sqlite_wal_checkpoint_observation();
+        WalCheckpointObservation {
+            foreground,
+            passive: passive.expect("post-run SQLite passive checkpoint probe should succeed"),
+            measured_round_nanos: u64::try_from(measured_round_nanos).unwrap_or(u64::MAX),
+        }
+    });
     Rung {
         n,
         throughputs,
         latencies_ns,
         phase_split,
+        wal_checkpoint_observation,
     }
 }
 
@@ -497,6 +538,7 @@ fn summarize(rung: &Rung) -> RungStats {
         p99_us: percentile_ns(&lat_sorted, 99.0) / 1000.0,
         mean_latency_s,
         phase_split: rung.phase_split,
+        wal_checkpoint_observation: rung.wal_checkpoint_observation,
     }
 }
 
@@ -597,6 +639,70 @@ fn render_report(
         .filter_map(|stats| stats.phase_split.map(|split| (stats.n, split)))
         .collect::<Vec<_>>();
     out.push_str(&render_phase_split_section(&phase_rows));
+    out.push_str(&render_wal_checkpoint_observation_section(stats));
+    out
+}
+
+fn render_wal_checkpoint_observation_section(stats: &[RungStats]) -> String {
+    let rows = stats
+        .iter()
+        .filter_map(|stats| {
+            stats
+                .wal_checkpoint_observation
+                .map(|observation| (stats.n, observation))
+        })
+        .collect::<Vec<_>>();
+    if rows.is_empty() {
+        return String::new();
+    }
+
+    let mut out = String::new();
+    out.push_str("\n## WAL/checkpoint observation (diagnostic only)\n\n");
+    out.push_str(
+        "Enabled explicitly with `NIMBUS_CWB_WAL_CHECKPOINT_OBSERVATION=1`. \
+         It is off in canonical timed runs, and the test-only statement counters \
+         are not compiled into this benchmark. During measured rounds, each \
+         successful foreground COMMIT runs a read-only `wal_checkpoint(NOOP)` \
+         status query. `NOOP probe share` is that query's measured wall time \
+         divided by measured-round wall time, so throughput from this diagnostic \
+         mode is not acceptance evidence. The one `PASSIVE` probe runs only after \
+         each rung and is reported separately.\n\n",
+    );
+    out.push_str(
+        "`automatic checkpoints` counts foreground commits whose post-COMMIT WAL \
+         frame count reached the connection's auto-checkpoint threshold. SQLite \
+         does not expose checkpoint-only COMMIT time, so `automatic COMMIT upper \
+         bound` includes all work in those COMMIT calls.\n\n",
+    );
+    out.push_str(
+        "| N | foreground commits | automatic checkpoints | automatic COMMIT upper bound ms | WAL high-water frames | checkpointed high-water frames | auto threshold pages | NOOP probes | NOOP probe ms | NOOP probe share | post-run PASSIVE busy/log/checkpointed | PASSIVE ms |\n",
+    );
+    out.push_str("|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+    for (n, observation) in rows {
+        let foreground = observation.foreground;
+        let probe_share = if observation.measured_round_nanos == 0 {
+            0.0
+        } else {
+            foreground.observation_probe_nanos as f64 / observation.measured_round_nanos as f64
+                * 100.0
+        };
+        out.push_str(&format!(
+            "| {n} | {} | {} | {:.3} | {} | {} | {} | {} | {:.3} | {:.3}% | {}/{}/{} | {:.3} |\n",
+            foreground.foreground_commit_count,
+            foreground.automatic_checkpoint_count,
+            foreground.automatic_checkpoint_commit_upper_bound_nanos as f64 / 1e6,
+            foreground.wal_high_water_frames,
+            foreground.checkpointed_high_water_frames,
+            foreground.auto_checkpoint_pages,
+            foreground.observation_probe_count,
+            foreground.observation_probe_nanos as f64 / 1e6,
+            probe_share,
+            observation.passive.busy,
+            observation.passive.wal_frames,
+            observation.passive.checkpointed_frames,
+            observation.passive.elapsed_nanos as f64 / 1e6,
+        ));
+    }
     out
 }
 
@@ -629,14 +735,24 @@ async fn run() -> String {
     let backend = backend();
     let workload = workload();
     let split_phases = split_phases_enabled();
+    let wal_checkpoint_observation = wal_checkpoint_observation_enabled();
+    assert!(
+        !wal_checkpoint_observation || backend == EmbeddedProviderKind::Sqlite,
+        "WAL/checkpoint observation requires NIMBUS_CWB_BACKEND=sqlite"
+    );
 
     let cfg = format!(
-        "workload={}, base_units/worker={base_units}, max_mut/round={max_mut_per_round}, measure_rounds={measure_rounds}, warmup_rounds={warmup_rounds}, seed_docs={seed_docs}, ladder={ladder:?}",
+        "workload={}, base_units/worker={base_units}, max_mut/round={max_mut_per_round}, measure_rounds={measure_rounds}, warmup_rounds={warmup_rounds}, seed_docs={seed_docs}, ladder={ladder:?}, wal_checkpoint_observation={wal_checkpoint_observation}",
         workload.label(),
     );
     eprintln!("[cwb] {cfg}");
     if split_phases {
         eprintln!("[cwb] commit phase split enabled");
+    }
+    if wal_checkpoint_observation {
+        eprintln!(
+            "[cwb] WAL/checkpoint observation enabled; results are diagnostic, not timed acceptance"
+        );
     }
 
     let dir = tempfile::tempdir().expect("tempdir should build");
@@ -650,6 +766,8 @@ async fn run() -> String {
         .create_tenant_async(tenant.clone())
         .await
         .expect("tenant creation should succeed");
+    let wal_checkpoint_observation_path =
+        wal_checkpoint_observation.then(|| dir.path().join(format!("{}.sqlite3", tenant.as_str())));
 
     // Pre-age the store so we are not measuring the empty-file fast path.
     if seed_docs > 0 {
@@ -696,6 +814,7 @@ async fn run() -> String {
             workload,
             split_phases,
             hot_key_document_id.as_ref(),
+            wal_checkpoint_observation_path.as_deref(),
         )
         .await;
         stats.push(summarize(&rung));
