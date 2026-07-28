@@ -660,3 +660,77 @@ fn sqlite_resident_writer_reuses_encrypted_connection() {
     );
     store.reset_write_test_observation();
 }
+
+#[test]
+#[serial_test::serial(sqlite_write_observation)]
+fn sqlite_resident_writer_coexists_with_concurrent_point_writers() {
+    use crate::TenantPointWrite;
+
+    let dir = tempdir().expect("temporary directory should create");
+    let path = dir.path().join("tenant.sqlite3");
+    let store = std::sync::Arc::new(
+        SqliteTenantStore::open(&path).expect("sqlite tenant store should open"),
+    );
+
+    // Four concurrent point writers model non-committer traffic (object
+    // manifests, replica reconciliation): whoever misses the resident slot
+    // opens its own connection, and SQLite's busy handling serializes the
+    // transactions. Every write must make progress within the busy timeout.
+    let mut workers = Vec::new();
+    for worker in 0..4_u64 {
+        let store = store.clone();
+        workers.push(std::thread::spawn(move || {
+            for item in 0..25_u64 {
+                let document = sample_document("overlap_tasks", &format!("w{worker}-doc-{item}"));
+                store
+                    .insert_document(&document)
+                    .expect("concurrent point write should make progress");
+            }
+        }));
+    }
+    for worker in workers {
+        worker.join().expect("point-writer thread should not panic");
+    }
+
+    let live = store
+        .scan_table(&TableName::new("overlap_tasks").expect("table name"))
+        .expect("scan should succeed");
+    assert_eq!(live.len(), 100, "every concurrent point write must land");
+    let progress = store.journal_progress().expect("progress should load");
+    assert_eq!(
+        progress.durable_head, progress.applied_head,
+        "point writes commit journal and effects atomically"
+    );
+    assert_eq!(
+        progress.durable_head,
+        SequenceNumber(100),
+        "the commit log must stay dense under concurrent writers"
+    );
+
+    // The queued route still works on the same store afterward.
+    let table_id = sqlite_active_table_id(&store, &TableName::new("overlap_tasks").expect("t"));
+    let document = sample_document("overlap_tasks", "queued-after");
+    let record = sqlite_durable_write_record(
+        SequenceNumber(101),
+        Timestamp(500),
+        &TableName::new("overlap_tasks").expect("t"),
+        &table_id,
+        WriteOpType::Insert,
+        document.id.clone(),
+        None,
+        Some(document),
+    );
+    store
+        .append_durable_records_batch(std::slice::from_ref(&record))
+        .expect("queued append after overlap should succeed");
+    store
+        .apply_durable_records_batch(std::slice::from_ref(&record))
+        .expect("queued apply after overlap should succeed");
+    assert_eq!(
+        store
+            .journal_progress()
+            .expect("progress should load")
+            .applied_head,
+        SequenceNumber(101)
+    );
+}
