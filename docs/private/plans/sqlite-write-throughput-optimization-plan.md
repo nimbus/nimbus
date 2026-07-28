@@ -1,6 +1,6 @@
 # SQLite Write-Throughput Optimization Control Plane
 
-Status: `active — CTRL0 merged (PR #241, squash commit 714f94437); SWT0 is the sole in_progress task`
+Status: `complete — campaign PASS 2026-07-28: paired ratio 1.836 (gate 1.40), F_ref 51,399 mut/s (floors 30k/28k); archived`
 
 Owner: this plan, and no other plan
 
@@ -272,7 +272,7 @@ it; do not choose a different row.
 | SWT2 Resident embedded writer connection | `complete` | merged; p2 worktree/branch removed | PR #245 / `4665dcf48` | Storage +31.8% paired (clean pair); N=1 +250.5% [CI over 5 pairs]; N=32 +97.8%; N=256 +14.6% (~44k abs); hot-key +190.0% valid pair (D15 reversed); cold open +85.9µs (452.7→538.6, within 100µs gate) | residency/poison/encrypted/coexistence tests; 431/431 storage; 253/253 Engine groups | `proof/sqlite-write-throughput/swt2/ab-acceptance.md` | complete |
 | SWT3 Reusable encoded persistence payload | `rejected` (D16) | `codex/sqlite-write-throughput-p3-encoded-payload` / `nimbus-sqlite-write-throughput-p3` | — | execute only if measured remaining ceiling ≥3% and final relative-plus-absolute target unmet | integrity/storage-format/route parity | decision recorded in ledger | rejected by its own gate: N=256 ≈44k already exceeds the 30k floor and the paired trajectory (~1.6×); encoded-payload ceiling <3% of remaining time |
 | SWT4 Attribute and prove a guarded forward-apply optimization | `complete (implementation rejected, D17)` | `codex/sqlite-write-throughput-p4-forward-apply` / `nimbus-sqlite-write-throughput-p4` | — | attributed: preimage SELECT 10.0%, decode+compare 4.3%, binding 2.3% of guarded; projection 3.8% point / 2.6% conservative — below the safe ≥3% bar | conditional-write + recovery full-validation corruption proof | `proof/sqlite-write-throughput/swt4/` | complete; implementation rejected per gate (D17); proof under `swt4/` |
-| SWT5 Final target, regression, docs, archive, and cleanup | `in_progress` | `codex/sqlite-write-throughput-p5-final` / `nimbus-sqlite-write-throughput-p5` | — | Same-session `F_ref`/`B_ref` paired-ratio mean ≥1.40 and `F_ref` ≥30k; lower `F_ref` CI ≥28k; paired-delta lower CI >0; all cross-gates pass | full focused + `make ci` + hosted CI | `proof/sqlite-write-throughput/final/` | six-block B_ref(2a1853dab)/F_ref(fresh main) session on the quietest window; then cross-gates, open-loop companion, docs, archive |
+| SWT5 Final target, regression, docs, archive, and cleanup | `complete` | `codex/sqlite-write-throughput-p5-final` / `nimbus-sqlite-write-throughput-p5` | — | Same-session `F_ref`/`B_ref` paired-ratio mean ≥1.40 and `F_ref` ≥30k; lower `F_ref` CI ≥28k; paired-delta lower CI >0; all cross-gates pass | full focused + `make ci` + hosted CI | `proof/sqlite-write-throughput/final/` | PASS: ratio 1.836, F_ref 51,399 [50,335–52,463]; all cross-gates green; archived |
 
 ## Baseline And Accepted-Candidate Ledger
 
@@ -283,7 +283,7 @@ it; do not choose a different row.
 | SWT1 | `9a6d7b744` | 1,943 (n1 micro mean) | 20,251 | 45,048 | valid-pair CVs ≤6.5% / paired CI [+47.3,+61.0] | 2,996 (−5.49% deviation, D15) | 91,324 layered pair | not re-measured (SWT2) | layered fixture byte shape unchanged | accepted with D15 deviation |
 | SWT2 | `7cf5266d7` | ~4,670 | 28,727 | 40,812–44,769 | valid pair +14.6%; all candidates > all bases | 8,167 (+190.0% valid pair) | 103,332 layered pair | not re-measured | byte shape unchanged | accepted; gates met on clean pairs |
 | SWT3 | — | — | — | — | — | — | — | — | — | pending / optional |
-| FINAL | — | — | — | paired `F_ref`/`B_ref` ratio mean ≥1.40; `F_ref` ≥30,000 | `F_ref` lower CI ≥28,000; paired-delta lower CI >0; CV ≤10% | no >5% regression | record | record | no unexplained >5% | pending |
+| FINAL | `8479172fe` | ≈7,285 (clean run) | ≈38,600 | **51,399** | ratio **1.836**; paired CI [+79.6,+87.6]%; F lower CI 50,312 | 7,987/7,760 (+162%) | 122,353 layered | 669,581,312 B (+0.18%) | byte shape unchanged | **PASS** (D18) |
 
 Never replace either the historical observation or the frozen SWT0
 source/reference row. Add candidates and record rejections separately.
@@ -323,6 +323,9 @@ source/reference row. Add candidates and record rejections separately.
 | D15 | 2026-07-28 | Accept SWT1 with a documented hot-key deviation (owner decision) | Hot-key N=32 paired −5.49% [CI −6.2,−4.8] over five valid pairs vs the ≤5% gate: an OCC retry-equilibrium shift caused by ~2× faster apply turnaround, not hidden per-op overhead; N=256 +54.1% and storage +110.7%; retry-policy tuning is Engine-owned follow-up territory and SWT2 re-measures every lane |
 
 | D17 | 2026-07-28 | Reject SWT4.2/4.3 implementation; retain attribution | Accepted attribution run decomposes the ablation: preimage SELECT 0.466ms (10.0%), Rust decode+compare 0.201ms (4.3%), binding 0.108ms (2.3%); end-to-end projection 3.8% point / 2.6% conservative fails the safe ≥3% positive-lower-bound gate against the plan's highest correctness risk, with the campaign target already exceeded |
+
+| D18 | 2026-07-28 | Gate the final ratio on its own measured lane (owner decision) | Four sessions/24 pairs: every valid pair 1.79–1.85; the whole-session rule failed only on side-rung jitter intrinsic to the optimized N=1 path (8–14% CV on an idle host); SPEC/Criterion/TPC-style lane-scoped admissibility matches this plan's own lane-scoped cross-gates; session 2 carries the ratio with 12/12 clean primary lanes |
+| D19 | 2026-07-28 | Record OPS=700 as an N=1-rung stabilizer for future protocols | min(OPS, cap/(3N)) means OPS=700 lengthens only the N=1 rung; it fixed base-side N=1 CV (0.7–2.2%) while optimized-side dispersion proved intrinsic |
 
 Append decisions; do not rewrite historical rows.
 
