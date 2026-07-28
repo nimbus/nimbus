@@ -10,7 +10,9 @@ The local implementation commits are:
   WAL/checkpoint seam;
 - `5ca8a3988` — opt-in Engine benchmark reporting;
 - `dff400fad` — complete indexed CRUD concept coverage and independently
-  incrementable prepare/execute counters.
+  incrementable prepare/execute counters;
+- `ab8a87ed3` — concept-owned observability test module, keeping its parent
+  below the repository modularity threshold.
 
 No SWT0.2 baseline was frozen or run.
 
