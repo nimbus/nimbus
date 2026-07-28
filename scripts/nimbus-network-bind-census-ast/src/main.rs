@@ -1,0 +1,1373 @@
+use std::collections::{BTreeMap, BTreeSet};
+use std::env;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use proc_macro2::Span;
+use serde::Serialize;
+use syn::spanned::Spanned;
+use syn::visit::{self, Visit};
+use syn::{
+    Arm, Attribute, Expr, ExprCall, ExprMethodCall, ExprPath, ExprStruct, Field, FieldValue, FnArg,
+    ForeignItem, ForeignItemFn, ImplItem, ImplItemFn, ImplItemType, Item, ItemFn, ItemMod,
+    ItemStruct, ItemType, Lit, LitStr, Macro, ReturnType, Stmt, TraitItem, TraitItemFn,
+    TraitItemType, Type, UseTree, Variant,
+};
+
+const FIXTURE_PATH: &str =
+    "__nimbus_network_verifier_self_test__/cfg-test-followed-by-production.rs";
+
+#[derive(Debug, Serialize)]
+struct ScanOutput {
+    authorities: Vec<Occurrence>,
+    risks: Vec<Occurrence>,
+    declarations: Vec<Declaration>,
+    errors: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct Occurrence {
+    path: String,
+    kind: String,
+    symbol: String,
+    ordinal: usize,
+    line: usize,
+    #[serde(skip_serializing)]
+    column: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct Declaration {
+    path: String,
+    name: String,
+    line: usize,
+}
+
+#[derive(Default)]
+struct Args {
+    root: PathBuf,
+    excludes: BTreeSet<String>,
+}
+
+fn main() {
+    let args = parse_args().unwrap_or_else(|error| {
+        eprintln!("{error}");
+        std::process::exit(2);
+    });
+    let mut files = Vec::new();
+    walk_rust_sources(&args.root, &mut files).unwrap_or_else(|error| {
+        eprintln!("failed to walk {}: {error}", args.root.display());
+        std::process::exit(1);
+    });
+    files.sort();
+    let exempt_paths = files
+        .iter()
+        .map(|file| normalized_path(file))
+        .filter(|file| args.excludes.contains(file) || is_convention_exempt(file))
+        .collect::<BTreeSet<_>>();
+
+    let mut authorities = Vec::new();
+    let mut risks = Vec::new();
+    let mut declarations = Vec::new();
+    let mut errors = Vec::new();
+    for file in files {
+        let display = normalized_path(&file);
+        if exempt_paths.contains(&display) {
+            continue;
+        }
+        let source = match fs::read_to_string(&file) {
+            Ok(source) => source,
+            Err(error) => {
+                errors.push(format!("Rust source unreadable: {display}: {error}"));
+                continue;
+            }
+        };
+        scan_source(
+            &display,
+            &source,
+            &mut authorities,
+            &mut risks,
+            &mut declarations,
+            &mut errors,
+            &exempt_paths,
+        );
+    }
+
+    if env::var("NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD").as_deref() == Ok("1")
+        && let Ok(fixture) = env::var("NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE")
+    {
+        scan_source(
+            FIXTURE_PATH,
+            &fixture,
+            &mut authorities,
+            &mut risks,
+            &mut declarations,
+            &mut errors,
+            &exempt_paths,
+        );
+    }
+
+    finish_ordinals(&mut authorities);
+    finish_ordinals(&mut risks);
+    declarations.sort_by(|left, right| {
+        left.path
+            .cmp(&right.path)
+            .then(left.line.cmp(&right.line))
+            .then(left.name.cmp(&right.name))
+    });
+    let output = ScanOutput {
+        authorities,
+        risks,
+        declarations,
+        errors,
+    };
+    serde_json::to_writer(std::io::stdout(), &output).unwrap_or_else(|error| {
+        eprintln!("failed to encode census output: {error}");
+        std::process::exit(1);
+    });
+    println!();
+}
+
+fn parse_args() -> Result<Args, String> {
+    let mut args = Args {
+        root: PathBuf::from("crates"),
+        ..Args::default()
+    };
+    let mut values = env::args().skip(1);
+    while let Some(value) = values.next() {
+        match value.as_str() {
+            "--root" => {
+                args.root = PathBuf::from(
+                    values
+                        .next()
+                        .ok_or_else(|| "--root requires a path".to_owned())?,
+                );
+            }
+            "--exclude" => {
+                let excluded = values
+                    .next()
+                    .ok_or_else(|| "--exclude requires a repository path".to_owned())?;
+                args.excludes.insert(normalized_path(Path::new(&excluded)));
+            }
+            _ => return Err(format!("unknown argument: {value}")),
+        }
+    }
+    Ok(args)
+}
+
+fn walk_rust_sources(directory: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    if !directory.is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "source root is not a directory",
+        ));
+    }
+    let mut entries = fs::read_dir(directory)?.collect::<Result<Vec<_>, _>>()?;
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            walk_rust_sources(&path, files)?;
+        } else if file_type.is_file()
+            && path.extension().and_then(|extension| extension.to_str()) == Some("rs")
+        {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn is_convention_exempt(path: &str) -> bool {
+    path == "crates/nimbus-testing"
+        || path.starts_with("crates/nimbus-testing/")
+        || path.ends_with("/tests.rs")
+        || path
+            .split('/')
+            .any(|component| matches!(component, "tests" | "benches"))
+}
+
+fn scan_source(
+    path: &str,
+    source: &str,
+    authorities: &mut Vec<Occurrence>,
+    risks: &mut Vec<Occurrence>,
+    declarations: &mut Vec<Declaration>,
+    errors: &mut Vec<String>,
+    exempt_paths: &BTreeSet<String>,
+) {
+    let file = match syn::parse_file(source) {
+        Ok(file) => file,
+        Err(error) => {
+            errors.push(format!(
+                "Rust source parse failed: {path}:{}:{}: {error}",
+                error.span().start().line,
+                error.span().start().column + 1
+            ));
+            return;
+        }
+    };
+    verify_exempt_references(path, &file, exempt_paths, errors);
+    let mut scanner = Scanner {
+        path,
+        symbols: Vec::new(),
+        authorities,
+        risks,
+        declarations,
+        errors,
+    };
+    scanner.visit_file(&file);
+}
+
+fn verify_exempt_references(
+    path: &str,
+    file: &syn::File,
+    exempt_paths: &BTreeSet<String>,
+    errors: &mut Vec<String>,
+) {
+    let source_path = PathBuf::from(path);
+    let source_directory = source_path.parent().unwrap_or(Path::new(""));
+    let module_directory = if source_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| matches!(name, "lib.rs" | "main.rs" | "mod.rs"))
+    {
+        source_directory.to_path_buf()
+    } else {
+        source_directory.join(
+            source_path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or_default(),
+        )
+    };
+    let mut scanner = ExemptReferenceScanner {
+        source_path: path,
+        source_directory,
+        module_directories: vec![module_directory],
+        exempt_paths,
+        errors,
+    };
+    scanner.visit_file(file);
+}
+
+struct ExemptReferenceScanner<'a> {
+    source_path: &'a str,
+    source_directory: &'a Path,
+    module_directories: Vec<PathBuf>,
+    exempt_paths: &'a BTreeSet<String>,
+    errors: &'a mut Vec<String>,
+}
+
+impl ExemptReferenceScanner<'_> {
+    fn module_directory(&self) -> &Path {
+        self.module_directories
+            .last()
+            .map(PathBuf::as_path)
+            .unwrap_or(self.source_directory)
+    }
+
+    fn check_candidates(
+        &mut self,
+        raw_path: &str,
+        candidates: impl IntoIterator<Item = PathBuf>,
+        span: Span,
+    ) {
+        let raw_is_exempt = is_convention_exempt(&normalized_path(Path::new(raw_path)));
+        let matched = candidates
+            .into_iter()
+            .map(|candidate| normalized_path(&candidate))
+            .find(|candidate| {
+                self.exempt_paths.contains(candidate) || is_convention_exempt(candidate)
+            });
+        if raw_is_exempt || matched.is_some() {
+            let start = span.start();
+            self.errors.push(format!(
+                "{}:{}:{}: production module/include references test-exempt source: {}",
+                self.source_path,
+                start.line,
+                start.column + 1,
+                matched.unwrap_or_else(|| raw_path.to_owned())
+            ));
+        }
+    }
+
+    fn visit_module(&mut self, item: &ItemMod) {
+        if let Some((_, items)) = &item.content {
+            self.module_directories
+                .push(self.module_directory().join(item.ident.to_string()));
+            for nested in items {
+                self.visit_item(nested);
+            }
+            self.module_directories.pop();
+            return;
+        }
+
+        if let Some(path_value) = path_attribute(&item.attrs) {
+            self.check_candidates(
+                &path_value,
+                [
+                    self.source_directory.join(&path_value),
+                    self.module_directory().join(&path_value),
+                ],
+                item.ident.span(),
+            );
+            return;
+        }
+
+        let module_name = item.ident.to_string();
+        self.check_candidates(
+            &module_name,
+            [
+                self.module_directory().join(format!("{module_name}.rs")),
+                self.module_directory().join(&module_name).join("mod.rs"),
+            ],
+            item.ident.span(),
+        );
+    }
+}
+
+impl<'ast> Visit<'ast> for ExemptReferenceScanner<'_> {
+    fn visit_item(&mut self, item: &'ast Item) {
+        if item_attributes(item).is_some_and(is_cfg_test) {
+            return;
+        }
+        visit::visit_item(self, item);
+    }
+
+    fn visit_item_mod(&mut self, item: &'ast ItemMod) {
+        self.visit_module(item);
+    }
+
+    fn visit_impl_item(&mut self, item: &'ast ImplItem) {
+        if impl_item_attributes(item).is_some_and(is_cfg_test) {
+            return;
+        }
+        visit::visit_impl_item(self, item);
+    }
+
+    fn visit_trait_item(&mut self, item: &'ast TraitItem) {
+        if trait_item_attributes(item).is_some_and(is_cfg_test) {
+            return;
+        }
+        visit::visit_trait_item(self, item);
+    }
+
+    fn visit_foreign_item(&mut self, item: &'ast ForeignItem) {
+        if foreign_item_attributes(item).is_some_and(is_cfg_test) {
+            return;
+        }
+        visit::visit_foreign_item(self, item);
+    }
+
+    fn visit_stmt(&mut self, statement: &'ast Stmt) {
+        if stmt_attributes(statement).is_some_and(is_cfg_test) {
+            return;
+        }
+        visit::visit_stmt(self, statement);
+    }
+
+    fn visit_expr(&mut self, expression: &'ast Expr) {
+        if expr_attributes(expression).is_some_and(is_cfg_test) {
+            return;
+        }
+        visit::visit_expr(self, expression);
+    }
+
+    fn visit_arm(&mut self, arm: &'ast Arm) {
+        if is_cfg_test(&arm.attrs) {
+            return;
+        }
+        visit::visit_arm(self, arm);
+    }
+
+    fn visit_field_value(&mut self, field: &'ast FieldValue) {
+        if is_cfg_test(&field.attrs) {
+            return;
+        }
+        visit::visit_field_value(self, field);
+    }
+
+    fn visit_macro(&mut self, macro_invocation: &'ast Macro) {
+        if macro_invocation
+            .path
+            .segments
+            .last()
+            .is_some_and(|segment| segment.ident == "include")
+            && let Ok(path) = syn::parse2::<LitStr>(macro_invocation.tokens.clone())
+        {
+            let path = path.value();
+            self.check_candidates(
+                &path,
+                [
+                    self.source_directory.join(&path),
+                    self.module_directory().join(&path),
+                ],
+                macro_invocation.span(),
+            );
+        }
+        visit::visit_macro(self, macro_invocation);
+    }
+}
+
+fn path_attribute(attributes: &[Attribute]) -> Option<String> {
+    attributes.iter().find_map(|attribute| {
+        if !attribute.path().is_ident("path") {
+            return None;
+        }
+        let syn::Meta::NameValue(name_value) = &attribute.meta else {
+            return None;
+        };
+        let Expr::Lit(literal) = &name_value.value else {
+            return None;
+        };
+        let Lit::Str(value) = &literal.lit else {
+            return None;
+        };
+        Some(value.value())
+    })
+}
+
+fn finish_ordinals(occurrences: &mut Vec<Occurrence>) {
+    occurrences.sort_by(|left, right| {
+        left.path
+            .cmp(&right.path)
+            .then(left.line.cmp(&right.line))
+            .then(left.column.cmp(&right.column))
+            .then(left.kind.cmp(&right.kind))
+    });
+    let mut ordinals = BTreeMap::<(String, String, String), usize>::new();
+    for occurrence in occurrences {
+        let key = (
+            occurrence.path.clone(),
+            occurrence.kind.clone(),
+            occurrence.symbol.clone(),
+        );
+        let ordinal = ordinals.entry(key).or_default();
+        *ordinal += 1;
+        occurrence.ordinal = *ordinal;
+    }
+}
+
+struct Scanner<'a> {
+    path: &'a str,
+    symbols: Vec<String>,
+    authorities: &'a mut Vec<Occurrence>,
+    risks: &'a mut Vec<Occurrence>,
+    declarations: &'a mut Vec<Declaration>,
+    errors: &'a mut Vec<String>,
+}
+
+impl Scanner<'_> {
+    fn symbol(&self) -> String {
+        self.symbols
+            .last()
+            .cloned()
+            .unwrap_or_else(|| "<module>".to_owned())
+    }
+
+    fn authority(&mut self, kind: &str, span: Span) {
+        self.authorities
+            .push(occurrence(self.path, kind, self.symbol(), span));
+    }
+
+    fn risk(&mut self, kind: &str, span: Span) {
+        self.risks
+            .push(occurrence(self.path, kind, self.symbol(), span));
+    }
+
+    fn error(&mut self, message: impl Into<String>, span: Span) {
+        let start = span.start();
+        self.errors.push(format!(
+            "{}:{}:{}: {}",
+            self.path,
+            start.line,
+            start.column + 1,
+            message.into()
+        ));
+    }
+
+    fn visit_signature_body(
+        &mut self,
+        name: &str,
+        signature: &syn::Signature,
+        block: Option<&syn::Block>,
+    ) {
+        self.declarations.push(Declaration {
+            path: self.path.to_owned(),
+            name: name.to_owned(),
+            line: signature.ident.span().start().line,
+        });
+        self.symbols.push(name.to_owned());
+        scan_port_function_name(name, signature.ident.span(), self);
+        visit::visit_signature(self, signature);
+        if let Some(block) = block {
+            self.visit_block(block);
+        }
+        self.symbols.pop();
+    }
+}
+
+fn occurrence(path: &str, kind: &str, symbol: String, span: Span) -> Occurrence {
+    let start = span.start();
+    Occurrence {
+        path: path.to_owned(),
+        kind: kind.to_owned(),
+        symbol,
+        ordinal: 0,
+        line: start.line,
+        column: start.column,
+    }
+}
+
+impl<'ast> Visit<'ast> for Scanner<'_> {
+    fn visit_item(&mut self, item: &'ast Item) {
+        if item_attributes(item).is_some_and(is_cfg_test) {
+            return;
+        }
+        visit::visit_item(self, item);
+    }
+
+    fn visit_impl_item(&mut self, item: &'ast ImplItem) {
+        if impl_item_attributes(item).is_some_and(is_cfg_test) {
+            return;
+        }
+        visit::visit_impl_item(self, item);
+    }
+
+    fn visit_trait_item(&mut self, item: &'ast TraitItem) {
+        if trait_item_attributes(item).is_some_and(is_cfg_test) {
+            return;
+        }
+        visit::visit_trait_item(self, item);
+    }
+
+    fn visit_foreign_item(&mut self, item: &'ast ForeignItem) {
+        if foreign_item_attributes(item).is_some_and(is_cfg_test) {
+            return;
+        }
+        visit::visit_foreign_item(self, item);
+    }
+
+    fn visit_stmt(&mut self, statement: &'ast Stmt) {
+        if stmt_attributes(statement).is_some_and(is_cfg_test) {
+            return;
+        }
+        visit::visit_stmt(self, statement);
+    }
+
+    fn visit_arm(&mut self, arm: &'ast Arm) {
+        if is_cfg_test(&arm.attrs) {
+            return;
+        }
+        visit::visit_arm(self, arm);
+    }
+
+    fn visit_field_value(&mut self, field: &'ast FieldValue) {
+        if is_cfg_test(&field.attrs) {
+            return;
+        }
+        visit::visit_field_value(self, field);
+    }
+
+    fn visit_item_fn(&mut self, item: &'ast ItemFn) {
+        self.visit_signature_body(&item.sig.ident.to_string(), &item.sig, Some(&item.block));
+    }
+
+    fn visit_impl_item_fn(&mut self, item: &'ast ImplItemFn) {
+        if is_cfg_test(&item.attrs) {
+            return;
+        }
+        self.visit_signature_body(&item.sig.ident.to_string(), &item.sig, Some(&item.block));
+    }
+
+    fn visit_trait_item_fn(&mut self, item: &'ast TraitItemFn) {
+        if is_cfg_test(&item.attrs) {
+            return;
+        }
+        self.visit_signature_body(
+            &item.sig.ident.to_string(),
+            &item.sig,
+            item.default.as_ref(),
+        );
+    }
+
+    fn visit_foreign_item_fn(&mut self, item: &'ast ForeignItemFn) {
+        if is_cfg_test(&item.attrs) {
+            return;
+        }
+        self.visit_signature_body(&item.sig.ident.to_string(), &item.sig, None);
+    }
+
+    fn visit_item_struct(&mut self, item: &'ast ItemStruct) {
+        if item.ident == "PortManager" {
+            self.authorities.push(occurrence(
+                self.path,
+                "legacy-port-manager-definition",
+                item.ident.to_string(),
+                item.ident.span(),
+            ));
+        }
+        visit::visit_item_struct(self, item);
+    }
+
+    fn visit_item_type(&mut self, item: &'ast ItemType) {
+        if socket_type_info(&item.ty).found {
+            self.error(
+                format!("socket authority type alias is forbidden: {}", item.ident),
+                item.ident.span(),
+            );
+        }
+        visit::visit_item_type(self, item);
+    }
+
+    fn visit_impl_item_type(&mut self, item: &'ast ImplItemType) {
+        if socket_type_info(&item.ty).found {
+            self.error(
+                format!(
+                    "associated socket authority type alias is forbidden: {}",
+                    item.ident
+                ),
+                item.ident.span(),
+            );
+        }
+        visit::visit_impl_item_type(self, item);
+    }
+
+    fn visit_trait_item_type(&mut self, item: &'ast TraitItemType) {
+        if let Some((_, ty)) = &item.default
+            && socket_type_info(ty).found
+        {
+            self.error(
+                format!(
+                    "associated socket authority type alias is forbidden: {}",
+                    item.ident
+                ),
+                item.ident.span(),
+            );
+        }
+        visit::visit_trait_item_type(self, item);
+    }
+
+    fn visit_use_tree(&mut self, tree: &'ast UseTree) {
+        match tree {
+            UseTree::Name(name) if is_bind_operation(&name.ident.to_string()) => {
+                self.risk("ambiguous-bind-function-import", name.span());
+            }
+            UseTree::Rename(rename) => {
+                let original = rename.ident.to_string();
+                let alias = rename.rename.to_string();
+                if is_socket_type_name(&original)
+                    && !(original == "UnixListener" && alias == "StdUnixListener")
+                {
+                    self.error(
+                        format!(
+                            "ambiguous socket authority alias is forbidden: {original} as {alias}"
+                        ),
+                        rename.span(),
+                    );
+                }
+                if is_bind_operation(&original) {
+                    self.risk("ambiguous-bind-function-import", rename.span());
+                }
+            }
+            _ => {}
+        }
+        visit::visit_use_tree(self, tree);
+    }
+
+    fn visit_field(&mut self, field: &'ast Field) {
+        if is_cfg_test(&field.attrs) {
+            return;
+        }
+        let info = socket_type_info(&field.ty);
+        if info.owned {
+            self.authority("listener-ownership-slot", field.ty.span());
+        }
+        visit::visit_field(self, field);
+    }
+
+    fn visit_variant(&mut self, variant: &'ast Variant) {
+        if is_cfg_test(&variant.attrs) {
+            return;
+        }
+        visit::visit_variant(self, variant);
+    }
+
+    fn visit_fn_arg(&mut self, argument: &'ast FnArg) {
+        if let FnArg::Typed(typed) = argument {
+            if is_cfg_test(&typed.attrs) {
+                return;
+            }
+            let info = socket_type_info(&typed.ty);
+            if info.owned {
+                self.authority("listener-ownership-slot", typed.ty.span());
+            }
+        }
+        visit::visit_fn_arg(self, argument);
+    }
+
+    fn visit_return_type(&mut self, return_type: &'ast ReturnType) {
+        if let ReturnType::Type(_, ty) = return_type {
+            let info = socket_type_info(ty);
+            if info.owned {
+                self.authority("listener-return-handoff", ty.span());
+            }
+        }
+        visit::visit_return_type(self, return_type);
+    }
+
+    fn visit_expr(&mut self, expression: &'ast Expr) {
+        if expr_attributes(expression).is_some_and(is_cfg_test) {
+            return;
+        }
+        visit::visit_expr(self, expression);
+    }
+
+    fn visit_expr_call(&mut self, call: &'ast ExprCall) {
+        if let Expr::Path(function) = &*call.func
+            && function.path.segments.len() == 1
+            && function
+                .path
+                .segments
+                .last()
+                .is_some_and(|segment| is_bind_operation(&segment.ident.to_string()))
+        {
+            self.risk("ambiguous-bare-bind-call", call.func.span());
+        }
+        visit::visit_expr_call(self, call);
+    }
+
+    fn visit_expr_path(&mut self, expression: &'ast ExprPath) {
+        let segments = expression.path.segments.iter().collect::<Vec<_>>();
+        if segments.len() >= 2 {
+            let operation = segments[segments.len() - 1].ident.to_string();
+            let receiver = segments[segments.len() - 2].ident.to_string();
+            if let Some(kind) = associated_authority_kind(&receiver, &operation) {
+                self.authority(kind, expression.path.span());
+            } else if operation == "bind" {
+                self.risk("ambiguous-associated-bind", expression.path.span());
+            } else if is_descriptor_adoption(&operation) {
+                self.risk("ambiguous-descriptor-adoption", expression.path.span());
+            }
+        }
+        visit::visit_expr_path(self, expression);
+    }
+
+    fn visit_expr_method_call(&mut self, call: &'ast ExprMethodCall) {
+        if call.method == "bind" {
+            self.risk("ambiguous-instance-bind", call.method.span());
+        }
+        visit::visit_expr_method_call(self, call);
+    }
+
+    fn visit_expr_struct(&mut self, expression: &'ast ExprStruct) {
+        let Some(type_name) = expression
+            .path
+            .segments
+            .last()
+            .map(|segment| segment.ident.to_string())
+        else {
+            visit::visit_expr_struct(self, expression);
+            return;
+        };
+        if type_name.ends_with("Request") {
+            let fields = expression
+                .fields
+                .iter()
+                .filter_map(|field| match &field.member {
+                    syn::Member::Named(ident) => Some(ident.to_string()),
+                    syn::Member::Unnamed(_) => None,
+                })
+                .collect::<BTreeSet<_>>();
+            let kind = if type_name == "MachinePortForwardRequest" {
+                Some("machine-forwarder-port-request")
+            } else if type_name == "NetavarkRequest" {
+                Some("netavark-port-mapping-request")
+            } else if fields.iter().any(|field| {
+                field == "host_port"
+                    || field == "port_mappings"
+                    || (field.starts_with("publish") && field.ends_with("_port"))
+            }) {
+                Some("provider-port-request")
+            } else {
+                None
+            };
+            if let Some(kind) = kind {
+                self.authority(kind, expression.path.span());
+            }
+        }
+        visit::visit_expr_struct(self, expression);
+    }
+
+    fn visit_lit_str(&mut self, literal: &'ast LitStr) {
+        let value = literal.value();
+        if matches!(value.as_str(), "-ssh-port" | "--ssh-port") {
+            self.authority("gvproxy-ssh-port-request", literal.span());
+        }
+        if value.contains("ListenStream=") {
+            self.authority("systemd-listen-stream-request", literal.span());
+        }
+        visit::visit_lit_str(self, literal);
+    }
+
+    fn visit_macro(&mut self, macro_invocation: &'ast Macro) {
+        let tokens = macro_invocation.tokens.to_string();
+        if tokens.contains("ListenStream") {
+            self.authority("systemd-listen-stream-request", macro_invocation.span());
+        }
+        if tokens.contains("ssh-port") {
+            self.authority("gvproxy-ssh-port-request", macro_invocation.span());
+        }
+        if [
+            "TcpListener",
+            "UdpSocket",
+            "TcpSocket",
+            "UnixListener",
+            "UnixDatagram",
+            "host_port",
+            "port_mappings",
+        ]
+        .iter()
+        .any(|needle| tokens.contains(needle))
+        {
+            self.risk("authority-shaped-macro", macro_invocation.span());
+        }
+        visit::visit_macro(self, macro_invocation);
+    }
+}
+
+fn scan_port_function_name(name: &str, span: Span, scanner: &mut Scanner<'_>) {
+    if matches!(
+        name,
+        "resolve_listener_port"
+            | "ephemeral_port"
+            | "allocate_machine_ssh_port"
+            | "machine_port_is_available"
+    ) {
+        scanner.authority("legacy-port-probe-definition", span);
+        return;
+    }
+    let tokens = name.split('_').collect::<BTreeSet<_>>();
+    let has_port = tokens.contains("port") || tokens.contains("ports");
+    let has_action = [
+        "allocate",
+        "available",
+        "choose",
+        "ephemeral",
+        "find",
+        "free",
+        "pick",
+        "reserve",
+        "select",
+        "unused",
+    ]
+    .iter()
+    .any(|action| tokens.contains(action));
+    if has_port && has_action {
+        scanner.authority("suspicious-port-allocation-definition", span);
+    }
+}
+
+fn associated_authority_kind(receiver: &str, operation: &str) -> Option<&'static str> {
+    match (receiver, operation) {
+        ("TcpListener", "bind") => Some("tcp-bind"),
+        ("TcpSocket", "bind") => Some("tcp-socket-bind"),
+        ("UdpSocket", "bind") => Some("udp-bind"),
+        ("Socket", "bind") => Some("generic-socket-bind"),
+        ("TcpListener", "from_std") => Some("tcp-from-std"),
+        ("TcpListener", "from_raw_fd") => Some("tcp-from-raw-fd"),
+        ("TcpListener", "from_raw_socket") => Some("tcp-from-raw-socket"),
+        ("UdpSocket", "from_std") => Some("udp-from-std"),
+        ("UdpSocket", "from_raw_fd") => Some("udp-from-raw-fd"),
+        ("UdpSocket", "from_raw_socket") => Some("udp-from-raw-socket"),
+        ("UnixListener" | "StdUnixListener", "bind") => Some("unix-bind"),
+        ("UnixListener" | "StdUnixListener", "from_std") => Some("unix-from-std"),
+        ("UnixListener" | "StdUnixListener", "from_raw_fd") => Some("unix-from-raw-fd"),
+        ("UnixDatagram" | "StdUnixDatagram", "bind") => Some("unix-datagram-bind"),
+        ("UnixDatagram" | "StdUnixDatagram", "from_std") => Some("unix-datagram-from-std"),
+        ("UnixDatagram" | "StdUnixDatagram", "from_raw_fd") => Some("unix-datagram-from-raw-fd"),
+        _ => None,
+    }
+}
+
+fn is_descriptor_adoption(operation: &str) -> bool {
+    matches!(operation, "from_std" | "from_raw_fd" | "from_raw_socket")
+}
+
+fn is_bind_operation(operation: &str) -> bool {
+    operation == "bind" || is_descriptor_adoption(operation)
+}
+
+fn is_socket_type_name(name: &str) -> bool {
+    matches!(
+        name,
+        "TcpListener"
+            | "TcpSocket"
+            | "UdpSocket"
+            | "Socket"
+            | "UnixListener"
+            | "StdUnixListener"
+            | "UnixDatagram"
+            | "StdUnixDatagram"
+    )
+}
+
+#[derive(Default)]
+struct SocketTypeInfo {
+    found: bool,
+    owned: bool,
+}
+
+fn socket_type_info(ty: &Type) -> SocketTypeInfo {
+    struct Inspector {
+        info: SocketTypeInfo,
+        reference_depth: usize,
+    }
+
+    impl<'ast> Visit<'ast> for Inspector {
+        fn visit_type_reference(&mut self, reference: &'ast syn::TypeReference) {
+            self.reference_depth += 1;
+            visit::visit_type_reference(self, reference);
+            self.reference_depth -= 1;
+        }
+
+        fn visit_type_path(&mut self, path: &'ast syn::TypePath) {
+            if path
+                .path
+                .segments
+                .last()
+                .is_some_and(|segment| is_socket_type_name(&segment.ident.to_string()))
+            {
+                self.info.found = true;
+                if self.reference_depth == 0 {
+                    self.info.owned = true;
+                }
+            }
+            visit::visit_type_path(self, path);
+        }
+    }
+    let mut inspector = Inspector {
+        info: SocketTypeInfo::default(),
+        reference_depth: 0,
+    };
+    inspector.visit_type(ty);
+    inspector.info
+}
+
+fn is_cfg_test(attributes: &[Attribute]) -> bool {
+    attributes.iter().any(|attribute| {
+        attribute.path().is_ident("cfg")
+            && match &attribute.meta {
+                syn::Meta::List(list) => list.tokens.to_string() == "test",
+                _ => false,
+            }
+    })
+}
+
+fn item_attributes(item: &Item) -> Option<&[Attribute]> {
+    match item {
+        Item::Const(item) => Some(&item.attrs),
+        Item::Enum(item) => Some(&item.attrs),
+        Item::ExternCrate(item) => Some(&item.attrs),
+        Item::Fn(item) => Some(&item.attrs),
+        Item::ForeignMod(item) => Some(&item.attrs),
+        Item::Impl(item) => Some(&item.attrs),
+        Item::Macro(item) => Some(&item.attrs),
+        Item::Mod(item) => Some(&item.attrs),
+        Item::Static(item) => Some(&item.attrs),
+        Item::Struct(item) => Some(&item.attrs),
+        Item::Trait(item) => Some(&item.attrs),
+        Item::TraitAlias(item) => Some(&item.attrs),
+        Item::Type(item) => Some(&item.attrs),
+        Item::Union(item) => Some(&item.attrs),
+        Item::Use(item) => Some(&item.attrs),
+        Item::Verbatim(_) | _ => None,
+    }
+}
+
+fn impl_item_attributes(item: &ImplItem) -> Option<&[Attribute]> {
+    match item {
+        ImplItem::Const(item) => Some(&item.attrs),
+        ImplItem::Fn(item) => Some(&item.attrs),
+        ImplItem::Type(item) => Some(&item.attrs),
+        ImplItem::Macro(item) => Some(&item.attrs),
+        ImplItem::Verbatim(_) | _ => None,
+    }
+}
+
+fn trait_item_attributes(item: &TraitItem) -> Option<&[Attribute]> {
+    match item {
+        TraitItem::Const(item) => Some(&item.attrs),
+        TraitItem::Fn(item) => Some(&item.attrs),
+        TraitItem::Type(item) => Some(&item.attrs),
+        TraitItem::Macro(item) => Some(&item.attrs),
+        TraitItem::Verbatim(_) | _ => None,
+    }
+}
+
+fn foreign_item_attributes(item: &ForeignItem) -> Option<&[Attribute]> {
+    match item {
+        ForeignItem::Fn(item) => Some(&item.attrs),
+        ForeignItem::Static(item) => Some(&item.attrs),
+        ForeignItem::Type(item) => Some(&item.attrs),
+        ForeignItem::Macro(item) => Some(&item.attrs),
+        ForeignItem::Verbatim(_) | _ => None,
+    }
+}
+
+fn stmt_attributes(statement: &Stmt) -> Option<&[Attribute]> {
+    match statement {
+        Stmt::Local(statement) => Some(&statement.attrs),
+        Stmt::Item(item) => item_attributes(item),
+        Stmt::Expr(expression, _) => expr_attributes(expression),
+        Stmt::Macro(statement) => Some(&statement.attrs),
+    }
+}
+
+fn expr_attributes(expression: &Expr) -> Option<&[Attribute]> {
+    match expression {
+        Expr::Array(expression) => Some(&expression.attrs),
+        Expr::Assign(expression) => Some(&expression.attrs),
+        Expr::Async(expression) => Some(&expression.attrs),
+        Expr::Await(expression) => Some(&expression.attrs),
+        Expr::Binary(expression) => Some(&expression.attrs),
+        Expr::Block(expression) => Some(&expression.attrs),
+        Expr::Break(expression) => Some(&expression.attrs),
+        Expr::Call(expression) => Some(&expression.attrs),
+        Expr::Cast(expression) => Some(&expression.attrs),
+        Expr::Closure(expression) => Some(&expression.attrs),
+        Expr::Const(expression) => Some(&expression.attrs),
+        Expr::Continue(expression) => Some(&expression.attrs),
+        Expr::Field(expression) => Some(&expression.attrs),
+        Expr::ForLoop(expression) => Some(&expression.attrs),
+        Expr::Group(expression) => Some(&expression.attrs),
+        Expr::If(expression) => Some(&expression.attrs),
+        Expr::Index(expression) => Some(&expression.attrs),
+        Expr::Infer(expression) => Some(&expression.attrs),
+        Expr::Let(expression) => Some(&expression.attrs),
+        Expr::Lit(expression) => Some(&expression.attrs),
+        Expr::Loop(expression) => Some(&expression.attrs),
+        Expr::Macro(expression) => Some(&expression.attrs),
+        Expr::Match(expression) => Some(&expression.attrs),
+        Expr::MethodCall(expression) => Some(&expression.attrs),
+        Expr::Paren(expression) => Some(&expression.attrs),
+        Expr::Path(expression) => Some(&expression.attrs),
+        Expr::Range(expression) => Some(&expression.attrs),
+        Expr::RawAddr(expression) => Some(&expression.attrs),
+        Expr::Reference(expression) => Some(&expression.attrs),
+        Expr::Repeat(expression) => Some(&expression.attrs),
+        Expr::Return(expression) => Some(&expression.attrs),
+        Expr::Struct(expression) => Some(&expression.attrs),
+        Expr::Try(expression) => Some(&expression.attrs),
+        Expr::TryBlock(expression) => Some(&expression.attrs),
+        Expr::Tuple(expression) => Some(&expression.attrs),
+        Expr::Unary(expression) => Some(&expression.attrs),
+        Expr::Unsafe(expression) => Some(&expression.attrs),
+        Expr::While(expression) => Some(&expression.attrs),
+        Expr::Yield(expression) => Some(&expression.attrs),
+        Expr::Verbatim(_) | _ => None,
+    }
+}
+
+fn normalized_path(path: &Path) -> String {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if !normalized.pop() {
+                    normalized.push("..");
+                }
+            }
+            std::path::Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            std::path::Component::RootDir => normalized.push(Path::new("/")),
+            std::path::Component::Normal(component) => normalized.push(component),
+        }
+    }
+    normalized.to_string_lossy().replace('\\', "/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scan_fixture(source: &str) -> ScanOutput {
+        scan_fixture_with_exemptions(source, &BTreeSet::new())
+    }
+
+    fn scan_fixture_with_exemptions(source: &str, exempt_paths: &BTreeSet<String>) -> ScanOutput {
+        let mut authorities = Vec::new();
+        let mut risks = Vec::new();
+        let mut declarations = Vec::new();
+        let mut errors = Vec::new();
+        scan_source(
+            FIXTURE_PATH,
+            source,
+            &mut authorities,
+            &mut risks,
+            &mut declarations,
+            &mut errors,
+            exempt_paths,
+        );
+        finish_ordinals(&mut authorities);
+        finish_ordinals(&mut risks);
+        ScanOutput {
+            authorities,
+            risks,
+            declarations,
+            errors,
+        }
+    }
+
+    fn authority_kinds(output: &ScanOutput) -> Vec<&str> {
+        output
+            .authorities
+            .iter()
+            .map(|occurrence| occurrence.kind.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn cfg_test_macro_item_does_not_hide_following_production_bind() {
+        let output = scan_fixture(
+            r#"
+#[cfg(test)]
+fixture! {
+    fn hidden() {
+        let _ = std::net::TcpListener::bind("127.0.0.1:0");
+    }
+}
+
+fn production() {
+    let _ = std::net::TcpListener::bind("127.0.0.1:0");
+}
+"#,
+        );
+
+        assert!(output.errors.is_empty(), "{:?}", output.errors);
+        assert_eq!(authority_kinds(&output), vec!["tcp-bind"]);
+        assert_eq!(output.authorities[0].symbol, "production");
+    }
+
+    #[test]
+    fn unix_datagram_effects_and_owned_tuple_fields_are_structural() {
+        let output = scan_fixture(
+            r#"
+struct Held(pub std::os::unix::net::UnixDatagram);
+
+fn bind() -> std::os::unix::net::UnixDatagram {
+    std::os::unix::net::UnixDatagram::bind("/tmp/nimbus.sock").unwrap()
+}
+
+unsafe fn adopt(fd: std::os::fd::RawFd) -> std::os::unix::net::UnixDatagram {
+    std::os::unix::net::UnixDatagram::from_raw_fd(fd)
+}
+"#,
+        );
+
+        assert!(output.errors.is_empty(), "{:?}", output.errors);
+        assert_eq!(
+            authority_kinds(&output),
+            vec![
+                "listener-ownership-slot",
+                "listener-return-handoff",
+                "unix-datagram-bind",
+                "listener-return-handoff",
+                "unix-datagram-from-raw-fd",
+            ]
+        );
+    }
+
+    #[test]
+    fn shorthand_provider_request_and_multiline_return_are_structural() {
+        let output = scan_fixture(
+            r#"
+struct GenericRequest { host_port: u16 }
+
+fn request(host_port: u16) {
+    let _ = GenericRequest { host_port };
+}
+
+fn handoff()
+    -> Result<
+        std::net::TcpListener,
+        std::io::Error,
+    >
+{
+    std::net::TcpListener::bind("127.0.0.1:0")
+}
+"#,
+        );
+
+        assert!(output.errors.is_empty(), "{:?}", output.errors);
+        assert_eq!(
+            authority_kinds(&output),
+            vec![
+                "provider-port-request",
+                "listener-return-handoff",
+                "tcp-bind",
+            ]
+        );
+        assert!(
+            output
+                .declarations
+                .iter()
+                .any(|declaration| { declaration.name == "handoff" && declaration.line == 8 })
+        );
+    }
+
+    #[test]
+    fn referenced_socket_does_not_hide_owned_socket_in_same_type() {
+        let output = scan_fixture(
+            r#"
+struct Mixed<'a>(&'a std::net::TcpListener, Option<std::net::TcpListener>);
+"#,
+        );
+
+        assert!(output.errors.is_empty(), "{:?}", output.errors);
+        assert_eq!(authority_kinds(&output), vec!["listener-ownership-slot"]);
+    }
+
+    #[test]
+    fn production_reference_to_test_exempt_path_fails_closed() {
+        let output = scan_fixture(
+            r#"
+#[path = "tests/fixture.rs"]
+mod fixture;
+"#,
+        );
+        assert!(
+            output
+                .errors
+                .iter()
+                .any(|error| error
+                    .contains("production module/include references test-exempt source")),
+            "{:?}",
+            output.errors
+        );
+
+        let cfg_only = scan_fixture(
+            r#"
+#[cfg(test)]
+#[path = "tests/fixture.rs"]
+mod fixture;
+"#,
+        );
+        assert!(cfg_only.errors.is_empty(), "{:?}", cfg_only.errors);
+
+        let exempt_paths = BTreeSet::from([format!(
+            "{}/excluded.rs",
+            Path::new(FIXTURE_PATH)
+                .parent()
+                .unwrap_or(Path::new(""))
+                .display()
+        )]);
+        let second_inclusion = scan_fixture_with_exemptions(
+            r#"
+#[path = "./excluded.rs"]
+mod excluded;
+"#,
+            &exempt_paths,
+        );
+        assert!(
+            second_inclusion
+                .errors
+                .iter()
+                .any(|error| error
+                    .contains("production module/include references test-exempt source")),
+            "{:?}",
+            second_inclusion.errors
+        );
+    }
+
+    #[test]
+    fn bind_function_values_imports_and_bare_calls_fail_closed() {
+        let output = scan_fixture(
+            r#"
+use libc::bind;
+
+fn indirect() {
+    let socket_bind = std::net::TcpListener::bind;
+    let _ = socket_bind("127.0.0.1:0");
+}
+
+fn bare() {
+    unsafe { bind(0, std::ptr::null(), 0); }
+}
+"#,
+        );
+
+        assert!(output.errors.is_empty(), "{:?}", output.errors);
+        assert_eq!(authority_kinds(&output), vec!["tcp-bind"]);
+        assert!(
+            output
+                .risks
+                .iter()
+                .any(|risk| risk.kind == "ambiguous-bind-function-import")
+        );
+        assert!(
+            output
+                .risks
+                .iter()
+                .any(|risk| risk.kind == "ambiguous-bare-bind-call")
+        );
+    }
+
+    #[test]
+    fn associated_socket_aliases_fail_closed() {
+        let output = scan_fixture(
+            r#"
+trait ListenerKind {
+    type Listener = std::net::TcpListener;
+}
+
+struct Host;
+impl ListenerKind for Host {
+    type Listener = std::net::TcpListener;
+}
+"#,
+        );
+
+        assert_eq!(
+            output
+                .errors
+                .iter()
+                .filter(|error| {
+                    error.contains("associated socket authority type alias is forbidden")
+                })
+                .count(),
+            2,
+            "{:?}",
+            output.errors
+        );
+    }
+
+    #[test]
+    fn cfg_test_associated_and_statement_nodes_are_skipped_exactly() {
+        let output = scan_fixture(
+            r#"
+struct Fixture;
+
+impl Fixture {
+    #[cfg(test)]
+    fixture! { TcpListener host_port }
+}
+
+fn production() {
+    #[cfg(test)]
+    fixture! { TcpListener host_port }
+    let _ = match 1 {
+        #[cfg(test)]
+        0 => TcpListener::bind("127.0.0.1:0"),
+        _ => TcpListener::bind("127.0.0.1:0"),
+    };
+}
+"#,
+        );
+
+        assert!(output.errors.is_empty(), "{:?}", output.errors);
+        assert_eq!(authority_kinds(&output), vec!["tcp-bind"]);
+        assert!(output.risks.is_empty(), "{:?}", output.risks);
+    }
+}

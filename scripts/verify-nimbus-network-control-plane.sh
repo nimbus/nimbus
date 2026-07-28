@@ -18,6 +18,7 @@ DEPENDENCIES="${NIMBUS_NETWORK_VERIFY_DEPENDENCIES:-docs/private/plans/proof/nim
 NETWORK_MANIFEST="crates/nimbus-network/Cargo.toml"
 CORE_SOURCE_ROOT="${NIMBUS_NETWORK_VERIFY_CORE_SCAN_ROOT:-crates/nimbus-core/src}"
 SOURCE_CONTRACT_HELPER="scripts/verify-nimbus-network-source-contract.mjs"
+BIND_CENSUS_HELPER="scripts/verify-nimbus-network-bind-census.mjs"
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -103,22 +104,76 @@ const inventory = readJson(inventoryPath, "bind inventory");
 const dependencies = readJson(dependencyPath, "dependency baseline");
 
 if (inventory) {
-  if (inventory.schema_version !== 1) errors.push("bind inventory schema_version must be 1");
+  if (inventory.schema_version !== 2) errors.push("bind inventory schema_version must be 2");
   if (!Array.isArray(inventory.production_sites) || inventory.production_sites.length === 0) {
     errors.push("bind inventory production_sites must be non-empty");
+  }
+  if (!Array.isArray(inventory.authority_occurrences) || inventory.authority_occurrences.length === 0) {
+    errors.push("bind inventory authority_occurrences must be non-empty");
+  }
+  if (!Array.isArray(inventory.non_authority_occurrences)) {
+    errors.push("bind inventory non_authority_occurrences must be an array");
   }
   if (!Array.isArray(inventory.non_production_exemptions)) {
     errors.push("bind inventory non_production_exemptions must be an array");
   }
+  const exemptionMechanisms = new Set(
+    (inventory.non_production_exemptions || []).map(entry => entry.mechanism),
+  );
+  for (const mechanism of [
+    "path-convention",
+    "cfg-test-item",
+    "path-owned-test-module",
+    "test-support-crate",
+  ]) {
+    if (!exemptionMechanisms.has(mechanism)) {
+      errors.push("bind inventory lacks exemption mechanism: " + mechanism);
+    }
+  }
+  if ((inventory.non_production_exemptions || []).some(entry => "examples" in entry)) {
+    errors.push("bind inventory exemptions must not exempt whole production files through examples");
+  }
+  for (const exemption of inventory.non_production_exemptions || []) {
+    if (exemption.mechanism !== "path-owned-test-module") continue;
+    if (!Array.isArray(exemption.files) || exemption.files.length === 0) {
+      errors.push("bind inventory path-owned-test-module exemption must name exact files");
+      continue;
+    }
+    for (const evidence of exemption.files) {
+      for (const field of ["path", "declared_from", "cfg_owner", "owner_module", "module"]) {
+        if (typeof evidence[field] !== "string" || !evidence[field].trim()) {
+          errors.push("bind inventory path-owned test exemption lacks " + field);
+        }
+      }
+    }
+  }
   if (!inventory.summary || inventory.summary.production_sites !== inventory.production_sites?.length) {
     errors.push("bind inventory summary.production_sites does not match production_sites");
+  }
+  if (inventory.summary?.authority_occurrences !== inventory.authority_occurrences?.length) {
+    errors.push("bind inventory summary.authority_occurrences does not match authority_occurrences");
+  }
+  if (inventory.summary?.non_authority_occurrences !== inventory.non_authority_occurrences?.length) {
+    errors.push("bind inventory summary.non_authority_occurrences does not match non_authority_occurrences");
   }
   if (inventory.summary?.unclassified_production_sites !== 0) {
     errors.push("bind inventory baseline records unclassified production sites");
   }
   const ids = new Set();
+  let activeSites = 0;
+  let retiredSites = 0;
   for (const site of inventory.production_sites || []) {
-    for (const field of ["id", "path", "current_owner", "target_owner", "owner_item"]) {
+    for (const field of [
+      "id",
+      "status",
+      "verification",
+      "path",
+      "current_owner",
+      "current_truth",
+      "disposition",
+      "target_owner",
+      "owner_item",
+    ]) {
       if (typeof site[field] !== "string" || !site[field].trim()) {
         errors.push("bind inventory site " + (site.id || "<unknown>") + " lacks " + field);
       }
@@ -126,6 +181,82 @@ if (inventory) {
     if (ids.has(site.id)) errors.push("duplicate bind inventory id: " + site.id);
     ids.add(site.id);
     if (site.path && !fs.existsSync(site.path)) errors.push("bind inventory path missing: " + site.path);
+    if (site.status === "active") activeSites += 1;
+    else if (site.status === "retired") {
+      retiredSites += 1;
+      if (typeof site.retired_item !== "string" || !site.retired_item.trim()) {
+        errors.push("retired bind inventory site lacks retired_item: " + site.id);
+      }
+    } else {
+      errors.push("bind inventory site has invalid status: " + site.id);
+    }
+    if (site.status === "active" && site.verification === "source-occurrence") {
+      if (!Array.isArray(site.authority_kinds) || site.authority_kinds.length === 0) {
+        errors.push("source-occurrence site lacks authority_kinds: " + site.id);
+      }
+      if (!Array.isArray(site.authority_symbols) || site.authority_symbols.length === 0) {
+        errors.push("source-occurrence site lacks authority_symbols: " + site.id);
+      }
+      if (site.authority_paths !== undefined) {
+        if (
+          !Array.isArray(site.authority_paths) ||
+          site.authority_paths.length === 0 ||
+          !site.authority_paths.every(path => typeof path === "string" && path.trim()) ||
+          !site.authority_paths.includes(site.path)
+        ) {
+          errors.push("source-occurrence site has invalid authority_paths: " + site.id);
+        }
+      }
+    } else if (site.status === "active" && site.verification === "symbol-presence") {
+      if (typeof site.declaration_name !== "string" || !site.declaration_name.trim()) {
+        errors.push("symbol-presence site lacks declaration_name: " + site.id);
+      }
+    } else if (site.status === "active") {
+      errors.push("active bind inventory site has invalid verification: " + site.id);
+    }
+  }
+  if (inventory.summary?.active_production_sites !== activeSites) {
+    errors.push("bind inventory summary.active_production_sites does not match production_sites");
+  }
+  if (inventory.summary?.retired_production_sites !== retiredSites) {
+    errors.push("bind inventory summary.retired_production_sites does not match production_sites");
+  }
+  const occurrenceKeys = new Set();
+  for (const occurrence of inventory.authority_occurrences || []) {
+    for (const field of ["site_id", "path", "kind", "symbol"]) {
+      if (typeof occurrence[field] !== "string" || !occurrence[field].trim()) {
+        errors.push("bind inventory authority occurrence lacks " + field);
+      }
+    }
+    if (!ids.has(occurrence.site_id)) {
+      errors.push("bind inventory authority occurrence references unknown site: " + occurrence.site_id);
+    }
+    if (!Number.isInteger(occurrence.ordinal) || occurrence.ordinal < 1) {
+      errors.push("bind inventory authority occurrence has invalid ordinal: " + occurrence.site_id);
+    }
+    if (!Number.isInteger(occurrence.line) || occurrence.line < 1) {
+      errors.push("bind inventory authority occurrence has invalid line: " + occurrence.site_id);
+    }
+    const key = [occurrence.path, occurrence.kind, occurrence.symbol, occurrence.ordinal].join("|");
+    if (occurrenceKeys.has(key)) errors.push("duplicate bind inventory authority occurrence: " + key);
+    occurrenceKeys.add(key);
+  }
+  const nonAuthorityKeys = new Set();
+  for (const occurrence of inventory.non_authority_occurrences || []) {
+    for (const field of ["path", "kind", "symbol", "reason"]) {
+      if (typeof occurrence[field] !== "string" || !occurrence[field].trim()) {
+        errors.push("bind inventory non-authority occurrence lacks " + field);
+      }
+    }
+    if (!Number.isInteger(occurrence.ordinal) || occurrence.ordinal < 1) {
+      errors.push("bind inventory non-authority occurrence has invalid ordinal: " + occurrence.path);
+    }
+    if (!Number.isInteger(occurrence.line) || occurrence.line < 1) {
+      errors.push("bind inventory non-authority occurrence has invalid line: " + occurrence.path);
+    }
+    const key = [occurrence.path, occurrence.kind, occurrence.symbol, occurrence.ordinal].join("|");
+    if (nonAuthorityKeys.has(key)) errors.push("duplicate bind inventory non-authority occurrence: " + key);
+    nonAuthorityKeys.add(key);
   }
   if (typeof inventory.source_head !== "string" || !/^[0-9a-f]{7,40}$/.test(inventory.source_head)) {
     errors.push("bind inventory source_head is missing or invalid");
@@ -254,210 +385,7 @@ verify_bind_census() {
     fail "NNCV006" "unclassified-production-bind" "unable to create census output file"
     return
   }
-  node - "${INVENTORY}" >"${census_output}" <<'NODE'
-const fs = require("fs");
-const path = require("path");
-
-const inventoryPath = process.argv[2];
-const errors = [];
-if (!fs.existsSync("crates") || !fs.statSync("crates").isDirectory()) {
-  errors.push("production source root missing: crates");
-}
-if (!fs.existsSync(inventoryPath)) {
-  process.stdout.write("bind inventory missing: " + inventoryPath);
-  process.exit(1);
-}
-
-let inventory;
-try {
-  inventory = JSON.parse(fs.readFileSync(inventoryPath, "utf8"));
-} catch (error) {
-  process.stdout.write("bind inventory invalid: " + error.message);
-  process.exit(1);
-}
-
-const classifiedPaths = new Set((inventory.production_sites || []).map(site => site.path));
-const explicitTestFiles = new Set(
-  (inventory.non_production_exemptions || []).flatMap(entry => entry.examples || [])
-);
-const candidates = [];
-
-function walk(directory) {
-  if (!fs.existsSync(directory)) return;
-  for (const entry of fs.readdirSync(directory, {withFileTypes: true})) {
-    const full = path.join(directory, entry.name);
-    if (entry.isDirectory()) {
-      if (entry.name === "tests" || entry.name === "benches") continue;
-      walk(full);
-    } else if (entry.isFile() && entry.name.endsWith(".rs") && entry.name !== "tests.rs") {
-      candidates.push({file: full.split(path.sep).join("/")});
-    }
-  }
-}
-walk("crates");
-if (process.env.NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD === "1" &&
-    process.env.NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE) {
-  candidates.push({
-    file: "__nimbus_network_verifier_self_test__/cfg-test-followed-by-production.rs",
-    source: process.env.NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE,
-  });
-}
-
-const authorityPatterns = [
-  /(?:TcpListener|UdpSocket|TcpSocket|Socket)::bind\s*\(/,
-  /\bfn\s+(?:resolve_listener_port|ephemeral_port|allocate_machine_ssh_port|machine_port_is_available)\b/,
-  /\bstruct\s+PortManager\b/,
-  /["\u0027]LISTEN_FDS["\u0027]/,
-];
-
-function maskNonCode(rustText) {
-  const lexicalView = rustText.split("");
-  const blank = (start, end) => {
-    for (let cursor = start; cursor < end; cursor += 1) {
-      if (lexicalView.at(cursor) !== "\n" && lexicalView.at(cursor) !== "\r") {
-        lexicalView.splice(cursor, 1, " ");
-      }
-    }
-  };
-
-  let cursor = 0;
-  while (cursor < rustText.length) {
-    if (rustText.startsWith("//", cursor)) {
-      const end = rustText.indexOf("\n", cursor + 2);
-      blank(cursor, end < 0 ? rustText.length : end);
-      cursor = end < 0 ? rustText.length : end;
-      continue;
-    }
-    if (rustText.startsWith("/*", cursor)) {
-      let depth = 1;
-      let end = cursor + 2;
-      while (end < rustText.length && depth > 0) {
-        if (rustText.startsWith("/*", end)) {
-          depth += 1;
-          end += 2;
-        } else if (rustText.startsWith("*/", end)) {
-          depth -= 1;
-          end += 2;
-        } else {
-          end += 1;
-        }
-      }
-      blank(cursor, end);
-      cursor = end;
-      continue;
-    }
-
-    const raw = rustText.slice(cursor).match(/^(?:br|rb|cr|r)(#*)"/);
-    if (raw) {
-      const terminator = "\"" + raw[1];
-      const contentStart = cursor + raw[0].length;
-      const found = rustText.indexOf(terminator, contentStart);
-      const end = found < 0 ? rustText.length : found + terminator.length;
-      blank(cursor, end);
-      cursor = end;
-      continue;
-    }
-
-    const quoteOffset = ["b", "c"].includes(rustText[cursor]) && rustText[cursor + 1] === "\"" ? 1 : 0;
-    if (rustText[cursor + quoteOffset] === "\"") {
-      let end = cursor + quoteOffset + 1;
-      while (end < rustText.length) {
-        if (rustText[end] === "\\") {
-          end += 2;
-        } else if (rustText[end] === "\"") {
-          end += 1;
-          break;
-        } else {
-          end += 1;
-        }
-      }
-      blank(cursor, end);
-      cursor = end;
-      continue;
-    }
-
-    if (rustText[cursor] === "\u0027") {
-      const character = rustText.slice(cursor).match(/^\u0027(?:\\.|[^\\\u0027\r\n])\u0027/u);
-      if (character) {
-        blank(cursor, cursor + character[0].length);
-        cursor += character[0].length;
-        continue;
-      }
-    }
-    cursor += 1;
-  }
-  return lexicalView.join("");
-}
-
-function withoutCfgTestItems(rustText) {
-  const lexicalView = maskNonCode(rustText);
-  const ranges = [];
-  const cfgTest = /#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]/g;
-  let attribute;
-  while ((attribute = cfgTest.exec(lexicalView)) !== null) {
-    if (ranges.some(([start, end]) => attribute.index >= start && attribute.index < end)) continue;
-    let cursor = cfgTest.lastIndex;
-    let parentheses = 0;
-    let brackets = 0;
-    let itemEnd = -1;
-    while (cursor < lexicalView.length) {
-      const token = lexicalView.at(cursor);
-      if (token === "(") parentheses += 1;
-      else if (token === ")") parentheses = Math.max(0, parentheses - 1);
-      else if (token === "[") brackets += 1;
-      else if (token === "]") brackets = Math.max(0, brackets - 1);
-      else if (parentheses === 0 && brackets === 0 && token === ";") {
-        itemEnd = cursor + 1;
-        break;
-      } else if (parentheses === 0 && brackets === 0 && token === "{") {
-        let depth = 1;
-        cursor += 1;
-        while (cursor < lexicalView.length && depth > 0) {
-          if (lexicalView.at(cursor) === "{") depth += 1;
-          else if (lexicalView.at(cursor) === "}") depth -= 1;
-          cursor += 1;
-        }
-        itemEnd = cursor;
-        break;
-      }
-      cursor += 1;
-    }
-    ranges.push([attribute.index, itemEnd < 0 ? lexicalView.length : itemEnd]);
-  }
-
-  const visible = rustText.split("");
-  for (const [start, end] of ranges) {
-    for (let cursor = start; cursor < end; cursor += 1) {
-      if (visible[cursor] !== "\n" && visible[cursor] !== "\r") visible[cursor] = " ";
-    }
-  }
-  return visible.join("");
-}
-
-const unclassified = [];
-for (const candidate of candidates) {
-  const file = candidate.file;
-  if (file.startsWith("crates/nimbus-testing/") || explicitTestFiles.has(file)) continue;
-  const source = withoutCfgTestItems(candidate.source ?? fs.readFileSync(file, "utf8"));
-  if (!authorityPatterns.some(pattern => pattern.test(source))) continue;
-  if (!classifiedPaths.has(file)) unclassified.push(file);
-}
-
-const injected = process.env.NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD === "1"
-  ? process.env.NIMBUS_NETWORK_VERIFY_TEST_UNCLASSIFIED
-  : "";
-if (injected) unclassified.push(injected);
-
-if (unclassified.length) {
-  errors.push("unclassified production bind/allocation authority: " + [...new Set(unclassified)].sort().join(", "));
-}
-if (inventory.summary?.unclassified_production_sites !== 0) {
-  errors.push("inventory summary reports " + inventory.summary?.unclassified_production_sites + " unclassified production sites");
-}
-
-process.stdout.write(errors.join("\n"));
-process.exit(errors.length === 0 ? 0 : 1);
-NODE
+  node "${BIND_CENSUS_HELPER}" --inventory "${INVENTORY}" >"${census_output}"
   status=$?
   error="$(<"${census_output}")"
   rm -f "${census_output}"
@@ -834,6 +762,383 @@ NODE
     printf 'SELFTEST PASS production bind after test-only item fails as NNCV006\n'
   fi
 
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE=$'struct Fixture {\n    #[cfg(test)]\n    test_only: bool,\n}\nimpl Fixture {\n    fn production_authority() { TcpListener::bind("127.0.0.1:0"); }\n}\n' \
+    "${script}" >"${temporary}/production-after-test-field.out" 2>&1; then
+    printf 'SELFTEST FAIL production bind after cfg(test) field unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV006 unclassified-production-bind' "${temporary}/production-after-test-field.out" ||
+    grep -q '^PASS NNCV006 unclassified-production-bind' "${temporary}/production-after-test-field.out"; then
+    printf 'SELFTEST FAIL cfg(test) field hid a later production bind from NNCV006\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS cfg(test) field cannot hide a later production bind from NNCV006\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE=$'fn production_authority(\n    #[cfg(test)]\n    test_only: bool\n) { TcpListener::bind("127.0.0.1:0"); }\n' \
+    "${script}" >"${temporary}/production-after-test-parameter.out" 2>&1; then
+    printf 'SELFTEST FAIL production bind after cfg(test) parameter unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV006 unclassified-production-bind' "${temporary}/production-after-test-parameter.out" ||
+    grep -q '^PASS NNCV006 unclassified-production-bind' "${temporary}/production-after-test-parameter.out"; then
+    printf 'SELFTEST FAIL cfg(test) parameter hid its production function from NNCV006\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS cfg(test) parameter cannot hide its production function from NNCV006\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE=$'#[cfg(test)]\nmacro_rules! listener_fixture { () => {}; }\nfn production_authority() { TcpListener::bind("127.0.0.1:0"); }\n' \
+    "${script}" >"${temporary}/production-after-test-macro.out" 2>&1; then
+    printf 'SELFTEST FAIL production bind after cfg(test) macro unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV006 unclassified-production-bind' "${temporary}/production-after-test-macro.out" ||
+    ! grep -q 'tcp-bind|production_authority' "${temporary}/production-after-test-macro.out"; then
+    printf 'SELFTEST FAIL cfg(test) macro hid the following production bind from NNCV006\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS cfg(test) macro cannot hide the following production bind from NNCV006\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE=$'#[cfg(test)]\nfixture! {\n    fn hidden() { TcpListener::bind("127.0.0.1:0"); }\n}\nfn production_authority() { TcpListener::bind("127.0.0.1:0"); }\n' \
+    "${script}" >"${temporary}/production-after-test-macro-invocation.out" 2>&1; then
+    printf 'SELFTEST FAIL production bind after cfg(test) brace macro unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV006 unclassified-production-bind' "${temporary}/production-after-test-macro-invocation.out" ||
+    ! grep -q 'tcp-bind|production_authority' "${temporary}/production-after-test-macro-invocation.out" ||
+    grep -q 'tcp-bind|hidden' "${temporary}/production-after-test-macro-invocation.out"; then
+    printf 'SELFTEST FAIL cfg(test) brace macro hid or leaked authority across its AST item boundary\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS cfg(test) brace macro cannot hide the following production bind from NNCV006\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE=$'use std::net::TcpListener as Listener;\nfn production_authority() { Listener::bind("127.0.0.1:0"); }\n' \
+    "${script}" >"${temporary}/aliased-listener-bind.out" 2>&1; then
+    printf 'SELFTEST FAIL aliased listener bind unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV006 unclassified-production-bind' "${temporary}/aliased-listener-bind.out" ||
+    ! grep -q 'ambiguous socket authority alias is forbidden:' "${temporary}/aliased-listener-bind.out"; then
+    printf 'SELFTEST FAIL aliased listener bind did not fail NNCV006 precisely\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS aliased listener bind fails closed as NNCV006\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE=$'type Listener = TcpListener;\nfn production_authority() { Listener::bind("127.0.0.1:0"); }\n' \
+    "${script}" >"${temporary}/type-aliased-listener-bind.out" 2>&1; then
+    printf 'SELFTEST FAIL type-aliased listener bind unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV006 unclassified-production-bind' "${temporary}/type-aliased-listener-bind.out" ||
+    ! grep -q 'socket authority type alias is forbidden:' "${temporary}/type-aliased-listener-bind.out"; then
+    printf 'SELFTEST FAIL type-aliased listener bind did not fail NNCV006 precisely\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS type-aliased listener bind fails closed as NNCV006\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE=$'fn production_authority() { unsafe { UdpSocket::from_raw_socket(1); } }\n' \
+    "${script}" >"${temporary}/udp-raw-socket-adoption.out" 2>&1; then
+    printf 'SELFTEST FAIL UDP raw-socket adoption unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV006 unclassified-production-bind' "${temporary}/udp-raw-socket-adoption.out" ||
+    ! grep -q 'udp-from-raw-socket' "${temporary}/udp-raw-socket-adoption.out"; then
+    printf 'SELFTEST FAIL UDP raw-socket adoption did not fail NNCV006 precisely\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS UDP raw-socket adoption fails closed as NNCV006\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE=$'fn production_authority(listener: &Socket) { listener.bind("127.0.0.1:0"); }\n' \
+    "${script}" >"${temporary}/instance-listener-bind.out" 2>&1; then
+    printf 'SELFTEST FAIL instance listener bind unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV006 unclassified-production-bind' "${temporary}/instance-listener-bind.out" ||
+    ! grep -q 'unclassified ambiguous bind/adoption operation:' "${temporary}/instance-listener-bind.out"; then
+    printf 'SELFTEST FAIL instance listener bind did not fail NNCV006 precisely\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS instance listener bind fails closed as NNCV006\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE=$'fn production_authority(sockets: &[Socket], index: usize) { sockets[index].bind("127.0.0.1:0"); }\n' \
+    "${script}" >"${temporary}/postfix-listener-bind.out" 2>&1; then
+    printf 'SELFTEST FAIL postfix listener bind unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV006 unclassified-production-bind' "${temporary}/postfix-listener-bind.out" ||
+    ! grep -q 'ambiguous-instance-bind' "${temporary}/postfix-listener-bind.out"; then
+    printf 'SELFTEST FAIL postfix listener bind did not fail NNCV006 precisely\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS postfix listener bind fails closed as NNCV006\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE=$'fn production_authority() { UnixDatagram::bind("/tmp/nimbus-verifier.sock"); }\n' \
+    "${script}" >"${temporary}/unix-datagram-bind.out" 2>&1; then
+    printf 'SELFTEST FAIL Unix datagram bind unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV006 unclassified-production-bind' "${temporary}/unix-datagram-bind.out" ||
+    ! grep -q 'unix-datagram-bind|production_authority' "${temporary}/unix-datagram-bind.out"; then
+    printf 'SELFTEST FAIL Unix datagram bind did not fail NNCV006 precisely\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS Unix datagram bind fails closed as NNCV006\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE=$'struct Held(pub TcpListener);\n' \
+    "${script}" >"${temporary}/tuple-listener-ownership.out" 2>&1; then
+    printf 'SELFTEST FAIL tuple listener ownership unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV006 unclassified-production-bind' "${temporary}/tuple-listener-ownership.out" ||
+    ! grep -q 'listener-ownership-slot|<module>' "${temporary}/tuple-listener-ownership.out"; then
+    printf 'SELFTEST FAIL tuple listener ownership did not fail NNCV006 precisely\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS tuple listener ownership fails closed as NNCV006\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE=$'fn handoff()\n    -> Result<\n        TcpListener,\n        std::io::Error,\n    >\n{\n    unreachable!()\n}\n' \
+    "${script}" >"${temporary}/multiline-listener-return.out" 2>&1; then
+    printf 'SELFTEST FAIL multiline listener return unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV006 unclassified-production-bind' "${temporary}/multiline-listener-return.out" ||
+    ! grep -q 'listener-return-handoff|handoff' "${temporary}/multiline-listener-return.out"; then
+    printf 'SELFTEST FAIL multiline listener return did not fail NNCV006 precisely\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS multiline listener return fails closed as NNCV006\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE=$'#[path = "tests/fixture.rs"]\nmod fixture;\n' \
+    "${script}" >"${temporary}/production-test-path-inclusion.out" 2>&1; then
+    printf 'SELFTEST FAIL production inclusion of a test-exempt path unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV006 unclassified-production-bind' "${temporary}/production-test-path-inclusion.out" ||
+    ! grep -q 'production module/include references test-exempt source:' "${temporary}/production-test-path-inclusion.out"; then
+    printf 'SELFTEST FAIL production inclusion of a test-exempt path did not fail NNCV006 precisely\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS production inclusion of a test-exempt path fails closed as NNCV006\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE=$'fn indirect() { let bind_listener = TcpListener::bind; let _ = bind_listener("127.0.0.1:0"); }\n' \
+    "${script}" >"${temporary}/bind-function-value.out" 2>&1; then
+    printf 'SELFTEST FAIL bind function value unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV006 unclassified-production-bind' "${temporary}/bind-function-value.out" ||
+    ! grep -q 'tcp-bind|indirect' "${temporary}/bind-function-value.out"; then
+    printf 'SELFTEST FAIL bind function value did not fail NNCV006 precisely\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS bind function value fails closed as NNCV006\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE=$'use libc::bind;\nfn bare() { unsafe { bind(0, std::ptr::null(), 0); } }\n' \
+    "${script}" >"${temporary}/bare-bind-import.out" 2>&1; then
+    printf 'SELFTEST FAIL bare imported bind unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV006 unclassified-production-bind' "${temporary}/bare-bind-import.out" ||
+    ! grep -q 'ambiguous-bind-function-import' "${temporary}/bare-bind-import.out" ||
+    ! grep -q 'ambiguous-bare-bind-call' "${temporary}/bare-bind-import.out"; then
+    printf 'SELFTEST FAIL bare imported bind did not fail NNCV006 precisely\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS bare imported bind fails closed as NNCV006\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE=$'trait Kind { type Listener; }\nstruct Host;\nimpl Kind for Host { type Listener = TcpListener; }\n' \
+    "${script}" >"${temporary}/associated-listener-alias.out" 2>&1; then
+    printf 'SELFTEST FAIL associated listener alias unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV006 unclassified-production-bind' "${temporary}/associated-listener-alias.out" ||
+    ! grep -q 'associated socket authority type alias is forbidden:' "${temporary}/associated-listener-alias.out"; then
+    printf 'SELFTEST FAIL associated listener alias did not fail NNCV006 precisely\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS associated listener alias fails closed as NNCV006\n'
+  fi
+
+  NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE=$'struct Fixture;\nimpl Fixture {\n    #[cfg(test)]\n    fixture! { TcpListener host_port }\n}\nfn production_without_bind() {\n    #[cfg(test)]\n    fixture! { TcpListener host_port }\n    let _ = match 1 {\n        #[cfg(test)]\n        0 => TcpListener::bind("127.0.0.1:0"),\n        _ => 1,\n    };\n}\n' \
+    "${script}" >"${temporary}/cfg-associated-statement-nodes.out" 2>&1 || true
+  if ! grep -q '^PASS NNCV006 unclassified-production-bind' "${temporary}/cfg-associated-statement-nodes.out" ||
+    grep -q '^FAIL NNCV006 unclassified-production-bind' "${temporary}/cfg-associated-statement-nodes.out"; then
+    printf 'SELFTEST FAIL cfg(test) associated/statement nodes were misclassified as production\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS cfg(test) associated/statement nodes remain test-only for NNCV006\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE=$'fn consume_prebound(listener: TcpListener) { drop(listener); }\n' \
+    "${script}" >"${temporary}/prebound-listener-consumer.out" 2>&1; then
+    printf 'SELFTEST FAIL pre-bound listener consumer unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV006 unclassified-production-bind' "${temporary}/prebound-listener-consumer.out" ||
+    ! grep -q 'listener-ownership-slot|consume_prebound' "${temporary}/prebound-listener-consumer.out"; then
+    printf 'SELFTEST FAIL pre-bound listener consumer did not fail NNCV006 precisely\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS pre-bound listener consumer fails closed as NNCV006\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE=$'fn find_available_listener_port() -> u16 { 7000 }\n' \
+    "${script}" >"${temporary}/suspicious-port-allocation.out" 2>&1; then
+    printf 'SELFTEST FAIL suspicious port allocator unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV006 unclassified-production-bind' "${temporary}/suspicious-port-allocation.out" ||
+    ! grep -q 'suspicious-port-allocation-definition' "${temporary}/suspicious-port-allocation.out"; then
+    printf 'SELFTEST FAIL suspicious port allocator did not fail NNCV006 precisely\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS suspicious port allocator fails closed as NNCV006\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE=$'fn reserve_port() -> u16 { 7000 }\n' \
+    "${script}" >"${temporary}/reserve-port-allocation.out" 2>&1; then
+    printf 'SELFTEST FAIL reserve-port allocator unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV006 unclassified-production-bind' "${temporary}/reserve-port-allocation.out" ||
+    ! grep -q 'suspicious-port-allocation-definition|reserve_port' "${temporary}/reserve-port-allocation.out"; then
+    printf 'SELFTEST FAIL reserve-port allocator did not fail NNCV006 precisely\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS reserve-port allocator fails closed as NNCV006\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE=$'fn configure_gvproxy() { let args = ["-ssh-port"]; }\n' \
+    "${script}" >"${temporary}/provider-port-request.out" 2>&1; then
+    printf 'SELFTEST FAIL provider port request unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV006 unclassified-production-bind' "${temporary}/provider-port-request.out" ||
+    ! grep -q 'gvproxy-ssh-port-request' "${temporary}/provider-port-request.out"; then
+    printf 'SELFTEST FAIL provider port request did not fail NNCV006 precisely\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS provider port request fails closed as NNCV006\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE=$'fn configure_provider() {\n    let generic = ProviderRequest { host_port: 7000 };\n    let forward = crate::MachinePortForwardRequest { local: "127.0.0.1:7000" };\n    let netavark = crate::NetavarkRequest { port_mappings: mappings };\n}\n' \
+    "${script}" >"${temporary}/generic-provider-port-request.out" 2>&1; then
+    printf 'SELFTEST FAIL generic provider port request unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV006 unclassified-production-bind' "${temporary}/generic-provider-port-request.out" ||
+    ! grep -q 'provider-port-request|configure_provider' "${temporary}/generic-provider-port-request.out" ||
+    ! grep -q 'machine-forwarder-port-request|configure_provider' "${temporary}/generic-provider-port-request.out" ||
+    ! grep -q 'netavark-port-mapping-request|configure_provider' "${temporary}/generic-provider-port-request.out"; then
+    printf 'SELFTEST FAIL generic provider port request did not fail NNCV006 precisely\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS generic provider port request fails closed as NNCV006\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE=$'fn configure_provider(host_port: u16) { let request = ProviderRequest { host_port }; }\n' \
+    "${script}" >"${temporary}/shorthand-provider-port-request.out" 2>&1; then
+    printf 'SELFTEST FAIL shorthand provider port request unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV006 unclassified-production-bind' "${temporary}/shorthand-provider-port-request.out" ||
+    ! grep -q 'provider-port-request|configure_provider' "${temporary}/shorthand-provider-port-request.out"; then
+    printf 'SELFTEST FAIL shorthand provider port request did not fail NNCV006 precisely\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS shorthand provider port request fails closed as NNCV006\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_SWAP_SITE_IDS='cli-main-direct-listener,cli-main-systemd-listener' \
+    "${script}" >"${temporary}/same-path-site-swap.out" 2>&1; then
+    printf 'SELFTEST FAIL same-path site swap unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV006 unclassified-production-bind' "${temporary}/same-path-site-swap.out" ||
+    ! grep -Eq 'authority (kind|symbol) .* is invalid for site' "${temporary}/same-path-site-swap.out"; then
+    printf 'SELFTEST FAIL same-path site swap did not fail NNCV006 precisely\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS same-path site swap fails closed as NNCV006\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_CORRUPT_SITE_DECLARATION='sandbox-pep-port-allocation' \
+    "${script}" >"${temporary}/stale-site-declaration.out" 2>&1; then
+    printf 'SELFTEST FAIL stale site declaration unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV006 unclassified-production-bind' "${temporary}/stale-site-declaration.out" ||
+    ! grep -q 'active site declaration missing or stale: sandbox-pep-port-allocation' "${temporary}/stale-site-declaration.out"; then
+    printf 'SELFTEST FAIL stale site declaration did not fail NNCV006 precisely\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS stale site declaration fails closed as NNCV006\n'
+  fi
+
+  invalid_path_exemption="${temporary}/invalid-path-exemption.json"
+  node - "${INVENTORY}" "${invalid_path_exemption}" <<'NODE'
+const fs = require("fs");
+const [source, target] = process.argv.slice(2);
+const inventory = JSON.parse(fs.readFileSync(source, "utf8"));
+const exemption = inventory.non_production_exemptions.find(
+  entry => entry.mechanism === "path-owned-test-module",
+);
+if (!exemption?.files?.[0]) process.exit(1);
+exemption.files[0].module = "lifecycle.*";
+fs.writeFileSync(target, JSON.stringify(inventory, null, 2) + "\n");
+NODE
+  if NIMBUS_NETWORK_VERIFY_INVENTORY="${invalid_path_exemption}" \
+    NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    "${script}" >"${temporary}/invalid-path-exemption.out" 2>&1; then
+    printf 'SELFTEST FAIL regex-shaped path exemption unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV006 unclassified-production-bind' "${temporary}/invalid-path-exemption.out" ||
+    ! grep -q 'path-owned test exemption is not mechanically cfg(test)-owned:' "${temporary}/invalid-path-exemption.out"; then
+    printf 'SELFTEST FAIL regex-shaped path exemption did not fail NNCV006 precisely\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS regex-shaped path exemption fails closed as NNCV006\n'
+  fi
+
+  NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_CLASSIFIED_OCCURRENCE="__nimbus_network_verifier_self_test__/cfg-test-followed-by-production.rs|tcp-bind|first_authority|1" \
+    NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE=$'fn first_authority() { TcpListener::bind("127.0.0.1:0"); }\nfn second_authority() { TcpListener::bind("127.0.0.1:0"); }\n' \
+    "${script}" >"${temporary}/second-bind-in-classified-file.out" 2>&1 || true
+  if grep -q '^PASS NNCV006 unclassified-production-bind' "${temporary}/second-bind-in-classified-file.out" ||
+    ! grep -q '^FAIL NNCV006 unclassified-production-bind' "${temporary}/second-bind-in-classified-file.out"; then
+    printf 'SELFTEST FAIL second bind in a classified file escaped NNCV006\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS second bind in a classified file fails as NNCV006\n'
+  fi
+
+  NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_CLASSIFIED_OCCURRENCE="__nimbus_network_verifier_self_test__/cfg-test-followed-by-production.rs|tcp-bind|deleted_authority|1" \
+    NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE=$'fn production_without_bind() {}\n' \
+    "${script}" >"${temporary}/stale-bind-classification.out" 2>&1 || true
+  if ! grep -q '^FAIL NNCV006 unclassified-production-bind' "${temporary}/stale-bind-classification.out" ||
+    grep -q '^PASS NNCV006 unclassified-production-bind' "${temporary}/stale-bind-classification.out" ||
+    ! grep -q 'stale authority occurrence classification: .*deleted_authority' "${temporary}/stale-bind-classification.out"; then
+    printf 'SELFTEST FAIL stale bind classification did not fail NNCV006 precisely\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS stale bind classification fails as NNCV006\n'
+  fi
+
   NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
     NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE=$'#[cfg(test)]\nmod tests { fn listener_fixture() { TcpListener::bind("127.0.0.1:0"); } }\nfn production_without_bind() {}\n' \
     "${script}" >"${temporary}/test-module-bind.out" 2>&1 || true
@@ -965,7 +1270,7 @@ NODE
     printf 'self-test: %d failed\n' "${self_fail}"
     exit 1
   fi
-  printf 'self-test: 16 passed, 0 failed\n'
+  printf 'self-test: 44 passed, 0 failed\n'
 }
 
 if [ "${1:-}" = "--self-test" ]; then
