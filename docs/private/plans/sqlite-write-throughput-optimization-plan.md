@@ -1,7 +1,6 @@
 # SQLite Write-Throughput Optimization Control Plane
 
-Status: `active — draft control-plane PR #241 is open; implementation is
-gated on that PR merging`
+Status: `active — CTRL0 merged (PR #241, squash commit 714f94437); SWT0 is the sole in_progress task`
 
 Owner: this plan, and no other plan
 
@@ -267,8 +266,8 @@ it; do not choose a different row.
 
 | Phase/task | Status | Branch / worktree | PR / commit | Measurement result | Correctness evidence | Proof | Next action |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| CTRL0 Research, exact harness, and control-plane PR | `in_progress` | `codex/sqlite-write-throughput-plan` / `nimbus-sqlite-write-throughput-plan` | draft PR #241 / branch head | Historical Engine observation 21,433; clean layered planning reference: storage 38,810, guarded SQL 151,485; independent quiet-host audit reported 25,862 and exposed host drift | Benchmark compiles and focused clippy passes; exact hot-key N=256 protocol completes under overload; deterministic layered fixture audits durable state; docs gates pass; rejected reports retained whole | `proof/sqlite-write-throughput/{environment,full-engine-baseline,layered-planning-reference,layered-review-reruns,layered-final-binary-rejected,layered-noisy-diagnostic-raw,hotkey-backpressure-validation,independent-audit-remediation}.md` | structured review, push; SWT0 captures hashed quiet-host base |
-| SWT0 Install diagnostics, then freeze same-session base and resources | `planned` | sequential `p0-observability` then `p0-baseline` branches/worktrees | — | — | — | `proof/sqlite-write-throughput/swt0/` | start only after CTRL0 merges |
+| CTRL0 Research, exact harness, and control-plane PR | `complete` | `codex/sqlite-write-throughput-plan` / `nimbus-sqlite-write-throughput-plan` | PR #241 merged / `714f94437` | Historical Engine observation 21,433; clean layered planning reference: storage 38,810, guarded SQL 151,485; independent quiet-host audit reported 25,862 and exposed host drift | Benchmark compiles and focused clippy passes; exact hot-key N=256 protocol completes under overload; deterministic layered fixture audits durable state; docs gates pass; rejected reports retained whole | `proof/sqlite-write-throughput/{environment,full-engine-baseline,layered-planning-reference,layered-review-reruns,layered-final-binary-rejected,layered-noisy-diagnostic-raw,hotkey-backpressure-validation,independent-audit-remediation}.md` | complete; planning worktree/branch removed |
+| SWT0 Install diagnostics, then freeze same-session base and resources | `in_progress` | sequential `p0-observability` then `p0-baseline` branches/worktrees | — | — | — | `proof/sqlite-write-throughput/swt0/` | SWT0.1 observability counters on `codex/sqlite-write-throughput-p0-observability` |
 | SWT1 Prepared statements + batch-invariant apply context | `planned` | `codex/sqlite-write-throughput-p1-batch-sql` / `nimbus-sqlite-write-throughput-p1` | — | target ≥5% paired N=256 gain; lower-layer delta lower CI >0 | queued/direct/unit parity + crash/replay + fail-before counters | `proof/sqlite-write-throughput/swt1/` | after SWT0 merge/cleanup |
 | SWT2 Resident embedded writer connection | `planned` | `codex/sqlite-write-throughput-p2-writer-residency` / `nimbus-sqlite-write-throughput-p2` | — | target ≥5% storage gain and N=1 or N=32 gain; no N=256 loss >2% | two queued commits retained; route/fault/reopen parity | `proof/sqlite-write-throughput/swt2/` | after SWT1 merge/cleanup |
 | SWT3 Reusable encoded persistence payload | `planned` | `codex/sqlite-write-throughput-p3-encoded-payload` / `nimbus-sqlite-write-throughput-p3` | — | execute only if measured remaining ceiling ≥3% and final relative-plus-absolute target unmet | integrity/storage-format/route parity | `proof/sqlite-write-throughput/swt3/` | decision after SWT2 |
@@ -338,7 +337,7 @@ is removed.
 
 | Blocker | Owner | Unblock condition | Status |
 | --- | --- | --- | --- |
-| Implementation cannot begin until CTRL0 merges | CTRL0 | plan/harness PR merged and worktree cleaned | open |
+| Implementation cannot begin until CTRL0 merges | CTRL0 | plan/harness PR merged and worktree cleaned | closed 2026-07-28: PR #241 squash-merged as `714f94437`; planning worktree/branch removed |
 | Final hashed layered binary has no quiet-host accepted report | SWT0 | same-session report and binary hashes recorded with every lane CV≤10% | open; planning reference is non-acceptance evidence |
 | Fresh hot-key/resource baseline not captured in exact SWT0 session | SWT0 | accepted CV≤10% reports under `swt0/` | open |
 | `B_ref` cannot be frozen before observability merges | SWT0 | SWT0.1 fail-before and Engine-scale WAL/checkpoint counter seams merged to `origin/main`, then the exact post-merge commit frozen per D13 | open |
