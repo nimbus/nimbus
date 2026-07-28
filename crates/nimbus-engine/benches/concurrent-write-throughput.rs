@@ -666,7 +666,9 @@ fn render_wal_checkpoint_observation_section(stats: &[RungStats]) -> String {
          status query. `NOOP probe share` is that query's measured wall time \
          divided by measured-round wall time, so throughput from this diagnostic \
          mode is not acceptance evidence. The one `PASSIVE` probe runs only after \
-         each rung and is reported separately.\n\n",
+         each rung and is reported separately. A nonzero `probe errors` count \
+         means the frame and checkpoint columns are incomplete; treat that \
+         rung's diagnostic as invalid and rerun.\n\n",
     );
     out.push_str(
         "`automatic checkpoints` counts foreground commits whose post-COMMIT WAL \
@@ -675,9 +677,9 @@ fn render_wal_checkpoint_observation_section(stats: &[RungStats]) -> String {
          bound` includes all work in those COMMIT calls.\n\n",
     );
     out.push_str(
-        "| N | foreground commits | automatic checkpoints | automatic COMMIT upper bound ms | WAL high-water frames | checkpointed high-water frames | auto threshold pages | NOOP probes | NOOP probe ms | NOOP probe share | post-run PASSIVE busy/log/checkpointed | PASSIVE ms |\n",
+        "| N | foreground commits | automatic checkpoints | automatic COMMIT upper bound ms | WAL high-water frames | checkpointed high-water frames | auto threshold pages | NOOP probes | NOOP probe ms | NOOP probe share | probe errors | post-run PASSIVE busy/log/checkpointed | PASSIVE ms |\n",
     );
-    out.push_str("|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+    out.push_str("|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n");
     for (n, observation) in rows {
         let foreground = observation.foreground;
         let probe_share = if observation.measured_round_nanos == 0 {
@@ -687,7 +689,7 @@ fn render_wal_checkpoint_observation_section(stats: &[RungStats]) -> String {
                 * 100.0
         };
         out.push_str(&format!(
-            "| {n} | {} | {} | {:.3} | {} | {} | {} | {} | {:.3} | {:.3}% | {}/{}/{} | {:.3} |\n",
+            "| {n} | {} | {} | {:.3} | {} | {} | {} | {} | {:.3} | {:.3}% | {} | {}/{}/{} | {:.3} |\n",
             foreground.foreground_commit_count,
             foreground.automatic_checkpoint_count,
             foreground.automatic_checkpoint_commit_upper_bound_nanos as f64 / 1e6,
@@ -697,6 +699,7 @@ fn render_wal_checkpoint_observation_section(stats: &[RungStats]) -> String {
             foreground.observation_probe_count,
             foreground.observation_probe_nanos as f64 / 1e6,
             probe_share,
+            foreground.observation_probe_error_count,
             observation.passive.busy,
             observation.passive.wal_frames,
             observation.passive.checkpointed_frames,

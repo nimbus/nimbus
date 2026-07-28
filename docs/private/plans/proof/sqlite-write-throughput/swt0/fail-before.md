@@ -204,3 +204,28 @@ With that guard added, the task-card SQLite filter passes
 `74 passed, 0 failed, 354 skipped` under
 `NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1`, and
 `cargo clippy -p nimbus-storage --all-targets -- -D warnings` remains clean.
+
+## Structured review findings and fixes
+
+The orchestrator's structured autoreview (Codex `gpt-5.6-sol`, high reasoning;
+the Claude engine was unavailable on this host because the isolated reviewer
+subprocess lacks the local egress proxy's CA trust) accepted three findings,
+all fixed on this branch:
+
+1. **Failed foreground probes were invisible in the benchmark report.** The
+   WAL observation table now has a `probe errors` column and the section text
+   declares a nonzero count to invalidate that rung's diagnostic.
+2. **Process-global observer state raced under plain `cargo test`.** All three
+   observability tests now share `#[serial_test::serial(sqlite_write_observation)]`;
+   nextest's process-per-test model was already safe.
+3. **The NOOP guard's file-length assertion was not a sound discriminator**
+   (a degraded PASSIVE probe can rewrite already-allocated pages without
+   growing the file). The guard now also asserts zero probe errors and
+   `checkpointed_high_water_frames == 0` across the observed run, which a
+   PASSIVE-degraded probe cannot satisfy on a fresh sub-threshold store.
+
+After the fixes: `cargo fmt --all --check` passes; the task-card SQLite filter
+passes `74 passed, 0 failed` under
+`NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1`;
+`cargo clippy -p nimbus-storage --all-targets -- -D warnings` is clean; and the
+Engine benchmark compiles in the bench profile.

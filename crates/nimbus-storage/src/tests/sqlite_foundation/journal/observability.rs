@@ -2,6 +2,7 @@ use super::*;
 use crate::sqlite::SqliteWriteStatementConcept;
 
 #[test]
+#[serial_test::serial(sqlite_write_observation)]
 fn sqlite_queued_batch_fail_before_observes_repeated_write_work() {
     let dir = tempdir().expect("temporary directory should create");
     let store = SqliteTenantStore::open(dir.path().join("tenant.sqlite3"))
@@ -200,6 +201,7 @@ fn sqlite_queued_batch_fail_before_observes_repeated_write_work() {
 }
 
 #[test]
+#[serial_test::serial(sqlite_write_observation)]
 fn sqlite_wal_observation_separates_foreground_and_post_run_passive_work() {
     let dir = tempdir().expect("temporary directory should create");
     let path = dir.path().join("tenant.sqlite3");
@@ -288,6 +290,7 @@ fn sqlite_wal_observation_separates_foreground_and_post_run_passive_work() {
 /// the runtime ever degrades that way: a sub-threshold workload must leave
 /// the main database file untouched with its whole backlog still in the WAL.
 #[test]
+#[serial_test::serial(sqlite_write_observation)]
 fn sqlite_wal_observation_probe_does_not_checkpoint() {
     let dir = tempdir().expect("temporary directory should create");
     let path = dir.path().join("tenant.sqlite3");
@@ -322,10 +325,20 @@ fn sqlite_wal_observation_probe_does_not_checkpoint() {
     let db_len_after = std::fs::metadata(&path)
         .expect("main database file should exist after observation")
         .len();
+    let foreground = crate::sqlite_wal_checkpoint_observation_snapshot(&path);
     let passive = crate::probe_sqlite_passive_checkpoint(&path)
         .expect("post-run passive checkpoint probe should succeed");
     crate::disable_sqlite_wal_checkpoint_observation();
 
+    assert_eq!(
+        foreground.observation_probe_error_count, 0,
+        "every foreground probe must succeed for this guard to be meaningful"
+    );
+    assert_eq!(
+        foreground.checkpointed_high_water_frames, 0,
+        "a status-only probe over a fresh sub-threshold store must observe \
+         zero checkpointed frames; any other value means a probe checkpointed"
+    );
     assert_eq!(
         db_len_after, db_len_before,
         "a sub-threshold observed workload must leave every page in the WAL; \
