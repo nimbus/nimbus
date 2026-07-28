@@ -14,6 +14,7 @@ pub(crate) enum SqliteWriteStatementConcept {
     DocumentVersionFormatRead,
     DocumentVersionFormatWrite,
     DocumentVersionInsert,
+    DocumentVersionTombstoneInsert,
     IndexSchemaRead,
     IndexVersionFormatRead,
     IndexVersionFormatWrite,
@@ -30,7 +31,7 @@ pub(crate) enum SqliteWriteStatementConcept {
 
 #[cfg(test)]
 impl SqliteWriteStatementConcept {
-    const COUNT: usize = 21;
+    const COUNT: usize = 22;
 }
 
 #[cfg(test)]
@@ -76,6 +77,11 @@ impl SqliteWriteTestObservationSnapshot {
 struct SqliteWriteTestObservationState {
     target_path: Option<PathBuf>,
     snapshot: SqliteWriteTestObservationSnapshot,
+    /// Concepts already used on the current writer connection. A fresh
+    /// connection starts with an empty SQLite statement cache, so the first
+    /// use of a concept per connection is the prepare bound SWT1 optimizes;
+    /// later uses hit the connection's prepared-statement cache.
+    cache_seen: [bool; SqliteWriteStatementConcept::COUNT],
 }
 
 #[cfg(test)]
@@ -94,6 +100,7 @@ pub(super) fn reset_sqlite_write_test_observation(path: &Path) {
     let mut observation = lock_sqlite_write_test_observation();
     observation.target_path = Some(path.to_path_buf());
     observation.snapshot = SqliteWriteTestObservationSnapshot::default();
+    observation.cache_seen = [false; SqliteWriteStatementConcept::COUNT];
 }
 
 #[cfg(test)]
@@ -113,35 +120,31 @@ pub(super) fn observe_sqlite_writer_open(path: &Path) {
     let mut observation = lock_sqlite_write_test_observation();
     if observation.target_path.as_deref() == Some(path) {
         observation.snapshot.writer_opens = observation.snapshot.writer_opens.saturating_add(1);
+        // A new connection starts with an empty prepared-statement cache.
+        observation.cache_seen = [false; SqliteWriteStatementConcept::COUNT];
     }
 }
 
+/// Records one execution of a cached statement: the execute counter always
+/// advances, while the prepare counter advances only on the concept's first
+/// use since the current writer connection opened. Every concept maps to
+/// exactly one SQL text; concepts that share one text (the two
+/// table-catalog namespace reads) still parse once, so the counter is an
+/// upper bound on real parses.
 #[cfg(test)]
-pub(super) fn observe_sqlite_statement_prepare(path: &Path, concept: SqliteWriteStatementConcept) {
+pub(super) fn observe_sqlite_cached_statement(path: &Path, concept: SqliteWriteStatementConcept) {
     let mut observation = lock_sqlite_write_test_observation();
     if observation.target_path.as_deref() != Some(path) {
         return;
     }
     let index = concept as usize;
-    observation.snapshot.statement_prepares[index] =
-        observation.snapshot.statement_prepares[index].saturating_add(1);
-}
-
-#[cfg(test)]
-pub(super) fn observe_sqlite_statement_execute(path: &Path, concept: SqliteWriteStatementConcept) {
-    let mut observation = lock_sqlite_write_test_observation();
-    if observation.target_path.as_deref() != Some(path) {
-        return;
+    if !observation.cache_seen[index] {
+        observation.cache_seen[index] = true;
+        observation.snapshot.statement_prepares[index] =
+            observation.snapshot.statement_prepares[index].saturating_add(1);
     }
-    let index = concept as usize;
     observation.snapshot.statement_executes[index] =
         observation.snapshot.statement_executes[index].saturating_add(1);
-}
-
-#[cfg(test)]
-pub(super) fn observe_sqlite_uncached_statement(path: &Path, concept: SqliteWriteStatementConcept) {
-    observe_sqlite_statement_prepare(path, concept);
-    observe_sqlite_statement_execute(path, concept);
 }
 
 #[cfg(test)]
@@ -781,7 +784,13 @@ impl SqliteTenantStore {
     pub(super) fn open_writer_connection(&self) -> Result<Connection> {
         #[cfg(test)]
         observe_sqlite_writer_open(&self.path);
-        self.open_connection()
+        let conn = self.open_connection()?;
+        // Write batches re-execute a small fixed set of statements per record;
+        // size the connection's prepared-statement cache so none of them is
+        // evicted within a transaction. This is a rusqlite-level setting and
+        // changes no SQL semantics.
+        conn.set_prepared_statement_cache_capacity(64);
+        Ok(conn)
     }
 
     #[cfg(test)]

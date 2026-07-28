@@ -20,9 +20,11 @@ impl SqliteTenantStore {
             }
             #[cfg(test)]
             let observation_path = transaction.observation_path.clone();
+            let mut apply_context = SqliteBatchApplyContext::new();
             super::journal::apply_durable_record_in_conn(
                 transaction.connection_mut()?,
                 record,
+                &mut apply_context,
                 #[cfg(test)]
                 &observation_path,
             )?;

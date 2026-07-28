@@ -60,6 +60,10 @@ fn sqlite_queued_batch_fail_before_observes_repeated_write_work() {
         (SqliteWriteStatementConcept::DocumentVersionFormatRead, 1),
         (SqliteWriteStatementConcept::DocumentVersionFormatWrite, 1),
         (SqliteWriteStatementConcept::DocumentVersionInsert, 1),
+        (
+            SqliteWriteStatementConcept::DocumentVersionTombstoneInsert,
+            0,
+        ),
         (SqliteWriteStatementConcept::IndexSchemaRead, 1),
         (SqliteWriteStatementConcept::IndexVersionFormatRead, 0),
         (SqliteWriteStatementConcept::IndexVersionFormatWrite, 0),
@@ -154,45 +158,62 @@ fn sqlite_queued_batch_fail_before_observes_repeated_write_work() {
     let indexed_observation = indexed_store.write_test_observation();
 
     assert_eq!(indexed_observation.writer_opens, 2);
-    assert_eq!(indexed_observation.format_checks, 3);
-    assert_eq!(indexed_observation.schema_checks, 3);
-    assert_eq!(indexed_observation.table_identity_checks, 3);
+    // Batch-invariant hoisting: one format check per apply transaction, one
+    // schema plan and one identity verification per distinct table key.
+    assert_eq!(indexed_observation.format_checks, 1);
+    assert_eq!(indexed_observation.schema_checks, 1);
+    assert_eq!(indexed_observation.table_identity_checks, 1);
     assert_eq!(
         indexed_observation.current_document_encodes, 4,
         "insert and update each encode version and live projections"
     );
+    // (concept, expected prepares, expected executes). Executes must stay
+    // byte-identical to the SWT0 fail-before census: statement caching may
+    // never change what runs. Prepares are the SWT1.1 bound: at most one
+    // first-use prepare per concept per writer connection (an upper bound on
+    // real parses, since several concepts share one SQL text and therefore
+    // one cache entry).
     let indexed_statement_counts = [
-        (SqliteWriteStatementConcept::JournalNextSequenceRead, 1),
-        (SqliteWriteStatementConcept::JournalInsert, 3),
-        (SqliteWriteStatementConcept::NextSequenceWrite, 1),
-        (SqliteWriteStatementConcept::AppliedSequenceRead, 1),
-        (SqliteWriteStatementConcept::AppliedSequenceWrite, 1),
-        (SqliteWriteStatementConcept::DurableRecordRead, 0),
-        (SqliteWriteStatementConcept::DocumentVersionFormatRead, 3),
-        (SqliteWriteStatementConcept::DocumentVersionFormatWrite, 1),
-        (SqliteWriteStatementConcept::DocumentVersionInsert, 3),
-        (SqliteWriteStatementConcept::IndexSchemaRead, 3),
-        (SqliteWriteStatementConcept::IndexVersionFormatRead, 3),
-        (SqliteWriteStatementConcept::IndexVersionFormatWrite, 1),
-        (SqliteWriteStatementConcept::IndexVersionClose, 2),
-        (SqliteWriteStatementConcept::IndexVersionOpen, 2),
-        (SqliteWriteStatementConcept::TableIdentityCheck, 3),
-        (SqliteWriteStatementConcept::DocumentPreimageRead, 3),
-        (SqliteWriteStatementConcept::LiveDocumentInsert, 1),
-        (SqliteWriteStatementConcept::LiveDocumentUpdate, 1),
-        (SqliteWriteStatementConcept::LiveDocumentDelete, 1),
-        (SqliteWriteStatementConcept::ResourceBindingUpsert, 0),
-        (SqliteWriteStatementConcept::ResourceBindingDelete, 1),
+        (SqliteWriteStatementConcept::JournalNextSequenceRead, 1, 1),
+        (SqliteWriteStatementConcept::JournalInsert, 1, 3),
+        (SqliteWriteStatementConcept::NextSequenceWrite, 1, 1),
+        (SqliteWriteStatementConcept::AppliedSequenceRead, 1, 1),
+        (SqliteWriteStatementConcept::AppliedSequenceWrite, 1, 1),
+        (SqliteWriteStatementConcept::DurableRecordRead, 0, 0),
+        (SqliteWriteStatementConcept::DocumentVersionFormatRead, 1, 1),
+        (
+            SqliteWriteStatementConcept::DocumentVersionFormatWrite,
+            1,
+            1,
+        ),
+        (SqliteWriteStatementConcept::DocumentVersionInsert, 1, 2),
+        (
+            SqliteWriteStatementConcept::DocumentVersionTombstoneInsert,
+            1,
+            1,
+        ),
+        (SqliteWriteStatementConcept::IndexSchemaRead, 1, 1),
+        (SqliteWriteStatementConcept::IndexVersionFormatRead, 1, 1),
+        (SqliteWriteStatementConcept::IndexVersionFormatWrite, 1, 1),
+        (SqliteWriteStatementConcept::IndexVersionClose, 1, 2),
+        (SqliteWriteStatementConcept::IndexVersionOpen, 1, 2),
+        (SqliteWriteStatementConcept::TableIdentityCheck, 1, 1),
+        (SqliteWriteStatementConcept::DocumentPreimageRead, 1, 3),
+        (SqliteWriteStatementConcept::LiveDocumentInsert, 1, 1),
+        (SqliteWriteStatementConcept::LiveDocumentUpdate, 1, 1),
+        (SqliteWriteStatementConcept::LiveDocumentDelete, 1, 1),
+        (SqliteWriteStatementConcept::ResourceBindingUpsert, 0, 0),
+        (SqliteWriteStatementConcept::ResourceBindingDelete, 1, 1),
     ];
-    for (concept, expected) in indexed_statement_counts {
+    for (concept, expected_prepares, expected_executes) in indexed_statement_counts {
         assert_eq!(
             indexed_observation.statement_prepares(concept),
-            expected,
+            expected_prepares,
             "unexpected indexed prepare count for {concept:?}"
         );
         assert_eq!(
             indexed_observation.statement_executes(concept),
-            expected,
+            expected_executes,
             "unexpected indexed execute count for {concept:?}"
         );
     }
@@ -348,4 +369,146 @@ fn sqlite_wal_observation_probe_does_not_checkpoint() {
         passive.checkpointed_frames > 0,
         "the WAL backlog must still be checkpointable after the observed run"
     );
+}
+
+#[test]
+#[serial_test::serial(sqlite_write_observation)]
+fn sqlite_batch_apply_context_reloads_schema_after_mid_batch_change() {
+    let dir = tempdir().expect("temporary directory should create");
+    let store = SqliteTenantStore::open(dir.path().join("tenant.sqlite3"))
+        .expect("sqlite tenant store should open");
+    let schema = ranked_tasks_schema();
+    let table = schema.table.clone();
+    let table_id = TableId::new();
+    let before_change = ranked_document(&table, "before", 1);
+    let after_change = ranked_document(&table, "after", 2);
+
+    let records = vec![
+        sqlite_durable_write_record(
+            SequenceNumber(1),
+            Timestamp(100),
+            &table,
+            &table_id,
+            WriteOpType::Insert,
+            before_change.id.clone(),
+            None,
+            Some(before_change.clone()),
+        ),
+        TenantEventRecord::from_events(
+            SequenceNumber(2),
+            Timestamp(101),
+            vec![TenantEventKind::SchemaChange {
+                change: Box::new(SchemaChangeEvent::SetTable {
+                    table: table.clone(),
+                    table_id: table_id.clone(),
+                    previous: None,
+                    current: schema.clone(),
+                }),
+            }],
+        )
+        .expect("schema change record should build"),
+        sqlite_durable_write_record(
+            SequenceNumber(3),
+            Timestamp(102),
+            &table,
+            &table_id,
+            WriteOpType::Insert,
+            after_change.id.clone(),
+            None,
+            Some(after_change.clone()),
+        ),
+    ];
+
+    store.reset_write_test_observation();
+    store
+        .append_durable_records_batch(&records)
+        .expect("mid-batch schema change append should succeed");
+    store
+        .apply_durable_records_batch(&records)
+        .expect("mid-batch schema change apply should succeed");
+    let observation = store.write_test_observation();
+
+    // The pre-change write planned against the schemaless table, the schema
+    // change invalidated the cached plan, and the post-change write planned
+    // against the new indexed schema: two schema loads, not one and not three.
+    assert_eq!(
+        observation.schema_checks, 2,
+        "schema change must invalidate the cached plan at its sequence boundary"
+    );
+    assert_eq!(
+        observation.statement_executes(SqliteWriteStatementConcept::IndexSchemaRead),
+        2
+    );
+
+    let index = &schema.indexes[0];
+    let intervals = store
+        .index_version_intervals_for_testing(&table_id, &index.id)
+        .expect("index intervals should load");
+    assert_eq!(
+        intervals.len(),
+        1,
+        "only the post-change write may open a maintained-index interval"
+    );
+    assert_eq!(intervals[0].document_id, after_change.id);
+    assert_eq!(intervals[0].visible_from, SequenceNumber(3));
+    store.reset_write_test_observation();
+}
+
+#[test]
+#[serial_test::serial(sqlite_write_observation)]
+fn sqlite_batch_apply_context_checks_each_distinct_table_once() {
+    let dir = tempdir().expect("temporary directory should create");
+    let store = SqliteTenantStore::open(dir.path().join("tenant.sqlite3"))
+        .expect("sqlite tenant store should open");
+    let first_table = TableName::new("first_tasks").expect("first table name");
+    let second_table = TableName::new("second_tasks").expect("second table name");
+    let first_id = TableId::new();
+    let second_id = TableId::new();
+
+    let mut records = Vec::new();
+    let mut sequence = 0_u64;
+    for (table, table_id, keys) in [
+        (&first_table, &first_id, ["a", "b"]),
+        (&second_table, &second_id, ["c", "d"]),
+    ] {
+        for key in keys {
+            sequence += 1;
+            let document = sample_document(table.as_str(), key);
+            records.push(sqlite_durable_write_record(
+                SequenceNumber(sequence),
+                Timestamp(100 + sequence),
+                table,
+                table_id,
+                WriteOpType::Insert,
+                document.id.clone(),
+                None,
+                Some(document),
+            ));
+        }
+    }
+
+    store.reset_write_test_observation();
+    store
+        .append_durable_records_batch(&records)
+        .expect("multi-table append should succeed");
+    store
+        .apply_durable_records_batch(&records)
+        .expect("multi-table apply should succeed");
+    let observation = store.write_test_observation();
+
+    assert_eq!(observation.format_checks, 1, "one format check per batch");
+    assert_eq!(
+        observation.schema_checks, 2,
+        "one schema plan per distinct table"
+    );
+    assert_eq!(
+        observation.table_identity_checks, 2,
+        "one identity verification per distinct (table, table_id)"
+    );
+    assert_eq!(
+        observation.statement_executes(SqliteWriteStatementConcept::DocumentPreimageRead),
+        4,
+        "every write keeps its own preimage read"
+    );
+    store.reset_write_test_observation();
 }
