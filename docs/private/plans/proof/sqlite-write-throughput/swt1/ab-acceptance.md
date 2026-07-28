@@ -79,3 +79,15 @@ storage lane CV 26.8% under a load spike). Candidate storage now retains
   including torn-tail replay, sequence-order-across-retry, fsync
   amortization, and ppsc differentials.
 - `cargo fmt --all --check`; clippy `-D warnings` on storage+engine: clean.
+
+## Structured review
+
+Codex (`gpt-5.6-sol`, high) accepted one finding: the prepare counter's
+concept keying conflated the current-document and tombstone version inserts
+(two SQL texts under one concept), letting the prepare-bound assertion stay
+green while a second parse happened. Fixed by splitting
+`DocumentVersionTombstoneInsert` into its own concept; every concept now maps
+to exactly one SQL text (the two table-catalog namespace reads share one
+text, keeping the counter an upper bound on parses). Census updated
+(indexed batch: version insert 1/2, tombstone 1/1); the rerun review is
+recorded below.

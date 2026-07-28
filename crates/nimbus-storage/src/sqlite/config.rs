@@ -14,6 +14,7 @@ pub(crate) enum SqliteWriteStatementConcept {
     DocumentVersionFormatRead,
     DocumentVersionFormatWrite,
     DocumentVersionInsert,
+    DocumentVersionTombstoneInsert,
     IndexSchemaRead,
     IndexVersionFormatRead,
     IndexVersionFormatWrite,
@@ -30,7 +31,7 @@ pub(crate) enum SqliteWriteStatementConcept {
 
 #[cfg(test)]
 impl SqliteWriteStatementConcept {
-    const COUNT: usize = 21;
+    const COUNT: usize = 22;
 }
 
 #[cfg(test)]
@@ -126,9 +127,10 @@ pub(super) fn observe_sqlite_writer_open(path: &Path) {
 
 /// Records one execution of a cached statement: the execute counter always
 /// advances, while the prepare counter advances only on the concept's first
-/// use since the current writer connection opened. This is an upper bound on
-/// real SQL parses because several concepts share one statement text and
-/// therefore one prepared-statement cache entry.
+/// use since the current writer connection opened. Every concept maps to
+/// exactly one SQL text; concepts that share one text (the two
+/// table-catalog namespace reads) still parse once, so the counter is an
+/// upper bound on real parses.
 #[cfg(test)]
 pub(super) fn observe_sqlite_cached_statement(path: &Path, concept: SqliteWriteStatementConcept) {
     let mut observation = lock_sqlite_write_test_observation();

@@ -127,7 +127,7 @@ pub(super) fn record_document_versions_for_writes_in_conn(
                 #[cfg(test)]
                 observe_sqlite_cached_statement(
                     observation_path,
-                    SqliteWriteStatementConcept::DocumentVersionInsert,
+                    SqliteWriteStatementConcept::DocumentVersionTombstoneInsert,
                 );
                 cached_execute(
                     conn,
