@@ -1,5 +1,10 @@
 use std::collections::BTreeSet;
 
+#[cfg(test)]
+use super::config::{
+    SqliteWriteStatementConcept, observe_sqlite_current_document_encode,
+    observe_sqlite_format_check, observe_sqlite_uncached_statement,
+};
 use super::*;
 use crate::diagnostics::DocumentVersionStorageDiagnostic;
 use crate::{
@@ -46,10 +51,18 @@ pub(super) fn record_document_versions_for_events_in_conn(
     sequence: SequenceNumber,
     timestamp: Timestamp,
     events: &[TenantEventKind],
+    #[cfg(test)] observation_path: &Path,
 ) -> Result<()> {
     for event in events {
         if let TenantEventKind::DocumentWrite { writes } = event {
-            record_document_versions_for_writes_in_conn(conn, sequence, timestamp, writes)?;
+            record_document_versions_for_writes_in_conn(
+                conn,
+                sequence,
+                timestamp,
+                writes,
+                #[cfg(test)]
+                observation_path,
+            )?;
         }
     }
     Ok(())
@@ -60,15 +73,30 @@ pub(super) fn record_document_versions_for_writes_in_conn(
     sequence: SequenceNumber,
     timestamp: Timestamp,
     writes: &[WriteOp],
+    #[cfg(test)] observation_path: &Path,
 ) -> Result<()> {
     if writes.is_empty() {
         return Ok(());
     }
 
-    ensure_document_version_storage_format_in_conn(conn)?;
+    #[cfg(test)]
+    observe_sqlite_format_check(observation_path);
+    ensure_document_version_storage_format_in_conn(
+        conn,
+        #[cfg(test)]
+        observation_path,
+    )?;
     for write in writes {
         match &write.current {
             Some(current) => {
+                #[cfg(test)]
+                {
+                    observe_sqlite_current_document_encode(observation_path);
+                    observe_sqlite_uncached_statement(
+                        observation_path,
+                        SqliteWriteStatementConcept::DocumentVersionInsert,
+                    );
+                }
                 conn.execute(
                     "INSERT INTO document_versions (
                         table_id,
@@ -95,6 +123,11 @@ pub(super) fn record_document_versions_for_writes_in_conn(
                 .map_err(map_sqlite_error)?;
             }
             None => {
+                #[cfg(test)]
+                observe_sqlite_uncached_statement(
+                    observation_path,
+                    SqliteWriteStatementConcept::DocumentVersionInsert,
+                );
                 conn.execute(
                     "INSERT INTO document_versions (
                         table_id,
@@ -291,12 +324,25 @@ fn validate_document_version_storage_format_in_conn(conn: &Connection) -> Result
     validate_document_version_storage_format_state(format_version, has_versions)
 }
 
-fn ensure_document_version_storage_format_in_conn(conn: &Connection) -> Result<()> {
+fn ensure_document_version_storage_format_in_conn(
+    conn: &Connection,
+    #[cfg(test)] observation_path: &Path,
+) -> Result<()> {
+    #[cfg(test)]
+    observe_sqlite_uncached_statement(
+        observation_path,
+        SqliteWriteStatementConcept::DocumentVersionFormatRead,
+    );
     if let Some(format_version) = load_document_version_storage_format_in_conn(conn)? {
         validate_document_version_storage_format(format_version)?;
         return Ok(());
     }
 
+    #[cfg(test)]
+    observe_sqlite_uncached_statement(
+        observation_path,
+        SqliteWriteStatementConcept::DocumentVersionFormatWrite,
+    );
     conn.execute(
         "INSERT INTO metadata (key, value_blob) VALUES (?1, ?2)
          ON CONFLICT(key) DO UPDATE SET value_blob = excluded.value_blob",

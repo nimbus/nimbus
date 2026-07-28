@@ -1,6 +1,437 @@
 use super::encryption::{apply_encryption_key, harden_temp_storage, verify_encryption_key};
 use super::*;
 
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(usize)]
+pub(crate) enum SqliteWriteStatementConcept {
+    JournalNextSequenceRead,
+    JournalInsert,
+    NextSequenceWrite,
+    AppliedSequenceRead,
+    AppliedSequenceWrite,
+    DurableRecordRead,
+    DocumentVersionFormatRead,
+    DocumentVersionFormatWrite,
+    DocumentVersionInsert,
+    IndexSchemaRead,
+    IndexVersionFormatRead,
+    IndexVersionFormatWrite,
+    IndexVersionClose,
+    IndexVersionOpen,
+    TableIdentityCheck,
+    DocumentPreimageRead,
+    LiveDocumentInsert,
+    LiveDocumentUpdate,
+    LiveDocumentDelete,
+    ResourceBindingUpsert,
+    ResourceBindingDelete,
+}
+
+#[cfg(test)]
+impl SqliteWriteStatementConcept {
+    const COUNT: usize = 21;
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SqliteWriteTestObservationSnapshot {
+    pub writer_opens: u64,
+    pub format_checks: u64,
+    pub schema_checks: u64,
+    pub table_identity_checks: u64,
+    pub current_document_encodes: u64,
+    statement_prepares: [u64; SqliteWriteStatementConcept::COUNT],
+    statement_executes: [u64; SqliteWriteStatementConcept::COUNT],
+}
+
+#[cfg(test)]
+impl Default for SqliteWriteTestObservationSnapshot {
+    fn default() -> Self {
+        Self {
+            writer_opens: 0,
+            format_checks: 0,
+            schema_checks: 0,
+            table_identity_checks: 0,
+            current_document_encodes: 0,
+            statement_prepares: [0; SqliteWriteStatementConcept::COUNT],
+            statement_executes: [0; SqliteWriteStatementConcept::COUNT],
+        }
+    }
+}
+
+#[cfg(test)]
+impl SqliteWriteTestObservationSnapshot {
+    pub fn statement_prepares(&self, concept: SqliteWriteStatementConcept) -> u64 {
+        self.statement_prepares[concept as usize]
+    }
+
+    pub fn statement_executes(&self, concept: SqliteWriteStatementConcept) -> u64 {
+        self.statement_executes[concept as usize]
+    }
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct SqliteWriteTestObservationState {
+    target_path: Option<PathBuf>,
+    snapshot: SqliteWriteTestObservationSnapshot,
+}
+
+#[cfg(test)]
+static SQLITE_WRITE_TEST_OBSERVATION: std::sync::LazyLock<Mutex<SqliteWriteTestObservationState>> =
+    std::sync::LazyLock::new(|| Mutex::new(SqliteWriteTestObservationState::default()));
+
+#[cfg(test)]
+fn lock_sqlite_write_test_observation() -> MutexGuard<'static, SqliteWriteTestObservationState> {
+    SQLITE_WRITE_TEST_OBSERVATION
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+#[cfg(test)]
+pub(super) fn reset_sqlite_write_test_observation(path: &Path) {
+    let mut observation = lock_sqlite_write_test_observation();
+    observation.target_path = Some(path.to_path_buf());
+    observation.snapshot = SqliteWriteTestObservationSnapshot::default();
+}
+
+#[cfg(test)]
+pub(super) fn sqlite_write_test_observation_snapshot(
+    path: &Path,
+) -> SqliteWriteTestObservationSnapshot {
+    let observation = lock_sqlite_write_test_observation();
+    if observation.target_path.as_deref() == Some(path) {
+        observation.snapshot.clone()
+    } else {
+        SqliteWriteTestObservationSnapshot::default()
+    }
+}
+
+#[cfg(test)]
+pub(super) fn observe_sqlite_writer_open(path: &Path) {
+    let mut observation = lock_sqlite_write_test_observation();
+    if observation.target_path.as_deref() == Some(path) {
+        observation.snapshot.writer_opens = observation.snapshot.writer_opens.saturating_add(1);
+    }
+}
+
+#[cfg(test)]
+pub(super) fn observe_sqlite_statement_prepare(path: &Path, concept: SqliteWriteStatementConcept) {
+    let mut observation = lock_sqlite_write_test_observation();
+    if observation.target_path.as_deref() != Some(path) {
+        return;
+    }
+    let index = concept as usize;
+    observation.snapshot.statement_prepares[index] =
+        observation.snapshot.statement_prepares[index].saturating_add(1);
+}
+
+#[cfg(test)]
+pub(super) fn observe_sqlite_statement_execute(path: &Path, concept: SqliteWriteStatementConcept) {
+    let mut observation = lock_sqlite_write_test_observation();
+    if observation.target_path.as_deref() != Some(path) {
+        return;
+    }
+    let index = concept as usize;
+    observation.snapshot.statement_executes[index] =
+        observation.snapshot.statement_executes[index].saturating_add(1);
+}
+
+#[cfg(test)]
+pub(super) fn observe_sqlite_uncached_statement(path: &Path, concept: SqliteWriteStatementConcept) {
+    observe_sqlite_statement_prepare(path, concept);
+    observe_sqlite_statement_execute(path, concept);
+}
+
+#[cfg(test)]
+pub(super) fn observe_sqlite_format_check(path: &Path) {
+    let mut observation = lock_sqlite_write_test_observation();
+    if observation.target_path.as_deref() == Some(path) {
+        observation.snapshot.format_checks = observation.snapshot.format_checks.saturating_add(1);
+    }
+}
+
+#[cfg(test)]
+pub(super) fn observe_sqlite_schema_check(path: &Path) {
+    let mut observation = lock_sqlite_write_test_observation();
+    if observation.target_path.as_deref() == Some(path) {
+        observation.snapshot.schema_checks = observation.snapshot.schema_checks.saturating_add(1);
+    }
+}
+
+#[cfg(test)]
+pub(super) fn observe_sqlite_table_identity_check(path: &Path) {
+    let mut observation = lock_sqlite_write_test_observation();
+    if observation.target_path.as_deref() == Some(path) {
+        observation.snapshot.table_identity_checks =
+            observation.snapshot.table_identity_checks.saturating_add(1);
+    }
+}
+
+#[cfg(test)]
+pub(super) fn observe_sqlite_current_document_encode(path: &Path) {
+    let mut observation = lock_sqlite_write_test_observation();
+    if observation.target_path.as_deref() == Some(path) {
+        observation.snapshot.current_document_encodes = observation
+            .snapshot
+            .current_document_encodes
+            .saturating_add(1);
+    }
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+pub struct SqliteWalCheckpointObservationSnapshot {
+    pub foreground_commit_count: u64,
+    pub foreground_commit_nanos: u64,
+    /// Post-COMMIT samples whose WAL frame count was at or beyond the
+    /// connection's automatic-checkpoint threshold.
+    ///
+    /// This is sampled WAL state, not proven per-commit attribution: the probe
+    /// runs after COMMIT releases the writer lock, so attribution to the
+    /// sampled commit is exact only while writers to this database are
+    /// externally serialized. Per-tenant Engine commits are serialized by the
+    /// tenant committer, which holds for the canonical benchmark workloads;
+    /// concurrent non-committer writers (object manifests, replica
+    /// reconciliation) can shift a sample onto an adjacent commit. Threshold
+    /// crossings observed by this path's own writers remain aggregate-accurate.
+    pub automatic_checkpoint_count: u64,
+    /// Total commit duration for the sampled threshold-crossing commits. An
+    /// upper bound twice over: SQLite does not expose the checkpoint-only
+    /// portion of COMMIT, and attribution is sampled as described on
+    /// `automatic_checkpoint_count`.
+    pub automatic_checkpoint_commit_upper_bound_nanos: u64,
+    pub wal_high_water_frames: u64,
+    pub checkpointed_high_water_frames: u64,
+    pub auto_checkpoint_pages: u64,
+    pub observation_probe_count: u64,
+    pub observation_probe_nanos: u64,
+    pub observation_probe_error_count: u64,
+    pub post_run_passive_probe_count: u64,
+    pub post_run_passive_probe_nanos: u64,
+    pub post_run_passive_busy: u64,
+    pub post_run_passive_wal_frames: u64,
+    pub post_run_passive_checkpointed_frames: u64,
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+pub struct SqlitePassiveCheckpointProbe {
+    pub busy: u64,
+    pub wal_frames: u64,
+    pub checkpointed_frames: u64,
+    pub elapsed_nanos: u64,
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+#[derive(Default)]
+struct SqliteWalCheckpointObservationState {
+    generation: u64,
+    target_path: Option<PathBuf>,
+    snapshot: SqliteWalCheckpointObservationSnapshot,
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+static SQLITE_WAL_CHECKPOINT_OBSERVATION_ENABLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(any(test, feature = "test-hooks"))]
+static SQLITE_WAL_CHECKPOINT_OBSERVATION: std::sync::LazyLock<
+    Mutex<SqliteWalCheckpointObservationState>,
+> = std::sync::LazyLock::new(|| Mutex::new(SqliteWalCheckpointObservationState::default()));
+
+#[cfg(any(test, feature = "test-hooks"))]
+fn lock_sqlite_wal_checkpoint_observation()
+-> MutexGuard<'static, SqliteWalCheckpointObservationState> {
+    SQLITE_WAL_CHECKPOINT_OBSERVATION
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Resets and enables the opt-in WAL/checkpoint observer for one SQLite path.
+///
+/// This surface is compiled only for tests and benchmark builds that enable
+/// `test-hooks`. Normal release builds contain neither the counters nor the
+/// post-COMMIT observation probes.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn reset_sqlite_wal_checkpoint_observation(path: impl AsRef<Path>) {
+    let mut observation = lock_sqlite_wal_checkpoint_observation();
+    observation.generation = observation.generation.wrapping_add(1);
+    observation.target_path = Some(path.as_ref().to_path_buf());
+    observation.snapshot = SqliteWalCheckpointObservationSnapshot::default();
+    SQLITE_WAL_CHECKPOINT_OBSERVATION_ENABLED.store(true, Ordering::Release);
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn disable_sqlite_wal_checkpoint_observation() {
+    SQLITE_WAL_CHECKPOINT_OBSERVATION_ENABLED.store(false, Ordering::Release);
+    let mut observation = lock_sqlite_wal_checkpoint_observation();
+    observation.generation = observation.generation.wrapping_add(1);
+    observation.target_path = None;
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn sqlite_wal_checkpoint_observation_snapshot(
+    path: impl AsRef<Path>,
+) -> SqliteWalCheckpointObservationSnapshot {
+    let observation = lock_sqlite_wal_checkpoint_observation();
+    if observation.target_path.as_deref() == Some(path.as_ref()) {
+        observation.snapshot
+    } else {
+        SqliteWalCheckpointObservationSnapshot::default()
+    }
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+pub(super) fn observe_sqlite_foreground_commit(
+    path: &Path,
+    conn: &Connection,
+    commit_elapsed: Duration,
+) {
+    if !SQLITE_WAL_CHECKPOINT_OBSERVATION_ENABLED.load(Ordering::Acquire) {
+        return;
+    }
+    let (generation, known_auto_checkpoint_pages) = {
+        let observation = lock_sqlite_wal_checkpoint_observation();
+        if observation.target_path.as_deref() != Some(path) {
+            return;
+        }
+        (
+            observation.generation,
+            observation.snapshot.auto_checkpoint_pages,
+        )
+    };
+
+    let probe_started = std::time::Instant::now();
+    let result: Result<(u64, u64, u64)> = (|| {
+        let auto_checkpoint_pages = if known_auto_checkpoint_pages == 0 {
+            conn.query_row("PRAGMA wal_autocheckpoint", [], |row| row.get::<_, i64>(0))
+                .map_err(map_sqlite_error)
+                .and_then(|value| nonnegative_checkpoint_value("autocheckpoint pages", value))?
+        } else {
+            known_auto_checkpoint_pages
+        };
+        let (wal_frames, checkpointed_frames) = conn
+            .query_row("PRAGMA wal_checkpoint(NOOP)", [], |row| {
+                Ok((row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))
+            })
+            .map_err(map_sqlite_error)?;
+        Ok((
+            auto_checkpoint_pages,
+            nonnegative_checkpoint_value("WAL frames", wal_frames)?,
+            nonnegative_checkpoint_value("checkpointed frames", checkpointed_frames)?,
+        ))
+    })();
+    let probe_elapsed = probe_started.elapsed();
+
+    let mut observation = lock_sqlite_wal_checkpoint_observation();
+    if observation.generation != generation || observation.target_path.as_deref() != Some(path) {
+        return;
+    }
+    let snapshot = &mut observation.snapshot;
+    snapshot.foreground_commit_count = snapshot.foreground_commit_count.saturating_add(1);
+    snapshot.foreground_commit_nanos = snapshot
+        .foreground_commit_nanos
+        .saturating_add(duration_nanos(commit_elapsed));
+    snapshot.observation_probe_count = snapshot.observation_probe_count.saturating_add(1);
+    snapshot.observation_probe_nanos = snapshot
+        .observation_probe_nanos
+        .saturating_add(duration_nanos(probe_elapsed));
+    match result {
+        Ok((auto_checkpoint_pages, wal_frames, checkpointed_frames)) => {
+            snapshot.auto_checkpoint_pages = auto_checkpoint_pages;
+            snapshot.wal_high_water_frames = snapshot.wal_high_water_frames.max(wal_frames);
+            snapshot.checkpointed_high_water_frames = snapshot
+                .checkpointed_high_water_frames
+                .max(checkpointed_frames);
+            if auto_checkpoint_pages > 0 && wal_frames >= auto_checkpoint_pages {
+                snapshot.automatic_checkpoint_count =
+                    snapshot.automatic_checkpoint_count.saturating_add(1);
+                snapshot.automatic_checkpoint_commit_upper_bound_nanos = snapshot
+                    .automatic_checkpoint_commit_upper_bound_nanos
+                    .saturating_add(duration_nanos(commit_elapsed));
+            }
+        }
+        Err(_) => {
+            // A diagnostic failure after COMMIT must never turn a durable
+            // success into an ambiguous business-operation result.
+            snapshot.observation_probe_error_count =
+                snapshot.observation_probe_error_count.saturating_add(1);
+        }
+    }
+}
+
+/// Runs the explicitly post-run passive checkpoint probe and records it
+/// separately from automatic foreground checkpoint observations.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn probe_sqlite_passive_checkpoint(
+    path: impl AsRef<Path>,
+) -> Result<SqlitePassiveCheckpointProbe> {
+    let path = path.as_ref();
+    let generation = {
+        let observation = lock_sqlite_wal_checkpoint_observation();
+        if observation.target_path.as_deref() != Some(path) {
+            return Err(Error::InvalidInput(format!(
+                "SQLite WAL/checkpoint observation is not enabled for {}",
+                path.display()
+            )));
+        }
+        observation.generation
+    };
+    let conn = Connection::open(path).map_err(map_sqlite_error)?;
+    let started = std::time::Instant::now();
+    let (busy, wal_frames, checkpointed_frames) = conn
+        .query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })
+        .map_err(map_sqlite_error)?;
+    let probe = SqlitePassiveCheckpointProbe {
+        busy: nonnegative_checkpoint_value("passive checkpoint busy result", busy)?,
+        wal_frames: nonnegative_checkpoint_value("passive checkpoint WAL frames", wal_frames)?,
+        checkpointed_frames: nonnegative_checkpoint_value(
+            "passive checkpointed frames",
+            checkpointed_frames,
+        )?,
+        elapsed_nanos: duration_nanos(started.elapsed()),
+    };
+
+    let mut observation = lock_sqlite_wal_checkpoint_observation();
+    if observation.generation == generation && observation.target_path.as_deref() == Some(path) {
+        observation.snapshot.post_run_passive_probe_count = observation
+            .snapshot
+            .post_run_passive_probe_count
+            .saturating_add(1);
+        observation.snapshot.post_run_passive_probe_nanos = observation
+            .snapshot
+            .post_run_passive_probe_nanos
+            .saturating_add(probe.elapsed_nanos);
+        observation.snapshot.post_run_passive_busy = probe.busy;
+        observation.snapshot.post_run_passive_wal_frames = probe.wal_frames;
+        observation.snapshot.post_run_passive_checkpointed_frames = probe.checkpointed_frames;
+    }
+    Ok(probe)
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+fn nonnegative_checkpoint_value(label: &str, value: i64) -> Result<u64> {
+    u64::try_from(value).map_err(|_| {
+        Error::storage(
+            StorageErrorKind::Corruption,
+            format!("SQLite {label} is negative: {value}"),
+        )
+    })
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+fn duration_nanos(duration: Duration) -> u64 {
+    u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
+}
+
 impl SqliteTenantStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         Self::open_with_max_read_connections(path, default_sqlite_read_connection_limit())
@@ -250,11 +681,13 @@ impl SqliteTenantStore {
     where
         Check: Fn() -> Result<()> + Send + 'static,
     {
-        let conn = self.open_connection()?;
+        let conn = self.open_writer_connection()?;
         conn.execute_batch("BEGIN IMMEDIATE")
             .map_err(map_sqlite_error)?;
         Ok(SqliteWriteTransaction {
             conn: Some(conn),
+            #[cfg(any(test, feature = "test-hooks"))]
+            observation_path: self.path.clone(),
             clock: self.clock.clone(),
             fault_injector: self.fault_injector.clone(),
             id_source: self.id_source.clone(),
@@ -343,6 +776,22 @@ impl SqliteTenantStore {
             );
         }
         Ok(conn)
+    }
+
+    pub(super) fn open_writer_connection(&self) -> Result<Connection> {
+        #[cfg(test)]
+        observe_sqlite_writer_open(&self.path);
+        self.open_connection()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reset_write_test_observation(&self) {
+        reset_sqlite_write_test_observation(&self.path);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn write_test_observation(&self) -> SqliteWriteTestObservationSnapshot {
+        sqlite_write_test_observation_snapshot(&self.path)
     }
 
     /// Try to claim a pool slot without waiting; `false` means the pool

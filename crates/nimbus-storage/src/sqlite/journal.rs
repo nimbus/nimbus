@@ -1,3 +1,10 @@
+#[cfg(any(test, feature = "test-hooks"))]
+use super::config::observe_sqlite_foreground_commit;
+#[cfg(test)]
+use super::config::{
+    SqliteWriteStatementConcept, observe_sqlite_current_document_encode,
+    observe_sqlite_table_identity_check, observe_sqlite_uncached_statement,
+};
 use super::*;
 use crate::keys::{document_path_key, resource_locator_key};
 use crate::sqlite::document_versions::{
@@ -71,7 +78,7 @@ impl SqliteTenantStore {
         snapshot.validate()?;
         self.ensure_materialized_journal_restore_target_is_empty()?;
 
-        let conn = self.open_connection()?;
+        let conn = self.open_writer_connection()?;
         conn.execute_batch("BEGIN IMMEDIATE")
             .map_err(map_sqlite_error)?;
         for identity in &snapshot.table_identities {
@@ -120,7 +127,11 @@ impl SqliteTenantStore {
             APPLIED_SEQUENCE_KEY,
             &encode_u64(snapshot.applied_sequence.0),
         )?;
+        #[cfg(any(test, feature = "test-hooks"))]
+        let commit_started = std::time::Instant::now();
         conn.execute_batch("COMMIT").map_err(map_sqlite_error)?;
+        #[cfg(any(test, feature = "test-hooks"))]
+        observe_sqlite_foreground_commit(&self.path, &conn, commit_started.elapsed());
         self.replace_cached_schema(snapshot.schema.clone())?;
         Ok(())
     }
@@ -221,9 +232,14 @@ impl SqliteTenantStore {
             return Ok(());
         }
 
-        let conn = self.open_connection()?;
+        let conn = self.open_writer_connection()?;
         conn.execute_batch("BEGIN IMMEDIATE")
             .map_err(map_sqlite_error)?;
+        #[cfg(test)]
+        observe_sqlite_uncached_statement(
+            &self.path,
+            SqliteWriteStatementConcept::JournalNextSequenceRead,
+        );
         let mut next = latest_sequence_in_conn(&conn)?.0.saturating_add(1);
         for record in records {
             if record.sequence.0 != next {
@@ -232,6 +248,11 @@ impl SqliteTenantStore {
                     next, record.sequence.0
                 )));
             }
+            #[cfg(test)]
+            observe_sqlite_uncached_statement(
+                &self.path,
+                SqliteWriteStatementConcept::JournalInsert,
+            );
             conn.execute(
                 "INSERT INTO commit_log (sequence, record_blob) VALUES (?1, ?2)",
                 params![record.sequence.0, serialize_tenant_event_record(record)?],
@@ -239,10 +260,19 @@ impl SqliteTenantStore {
             .map_err(map_sqlite_error)?;
             next = next.saturating_add(1);
         }
+        #[cfg(test)]
+        observe_sqlite_uncached_statement(
+            &self.path,
+            SqliteWriteStatementConcept::NextSequenceWrite,
+        );
         put_metadata_in_conn(&conn, NEXT_SEQUENCE_KEY, &encode_u64(next))?;
         self.fault_injector
             .check(FaultPoint::JournalAppendBeforeDurableFlush)?;
+        #[cfg(any(test, feature = "test-hooks"))]
+        let commit_started = std::time::Instant::now();
         conn.execute_batch("COMMIT").map_err(map_sqlite_error)?;
+        #[cfg(any(test, feature = "test-hooks"))]
+        observe_sqlite_foreground_commit(&self.path, &conn, commit_started.elapsed());
         self.fault_injector
             .check(FaultPoint::JournalFlushBeforeVisibility)?;
         Ok(())
@@ -266,13 +296,23 @@ impl SqliteTenantStore {
             return Ok(());
         }
 
-        let conn = self.open_connection()?;
+        let conn = self.open_writer_connection()?;
         conn.execute_batch("BEGIN IMMEDIATE")
             .map_err(map_sqlite_error)?;
+        #[cfg(test)]
+        observe_sqlite_uncached_statement(
+            &self.path,
+            SqliteWriteStatementConcept::JournalNextSequenceRead,
+        );
         let mut next = latest_sequence_in_conn(&conn)?.0.saturating_add(1);
         let mut appended = false;
         for record in records {
             if record.sequence.0 < next {
+                #[cfg(test)]
+                observe_sqlite_uncached_statement(
+                    &self.path,
+                    SqliteWriteStatementConcept::DurableRecordRead,
+                );
                 let payload = conn
                     .query_row(
                         "SELECT record_blob FROM commit_log WHERE sequence = ?1",
@@ -294,6 +334,11 @@ impl SqliteTenantStore {
                     next, record.sequence.0
                 )));
             }
+            #[cfg(test)]
+            observe_sqlite_uncached_statement(
+                &self.path,
+                SqliteWriteStatementConcept::JournalInsert,
+            );
             conn.execute(
                 "INSERT INTO commit_log (sequence, record_blob) VALUES (?1, ?2)",
                 params![record.sequence.0, serialize_tenant_event_record(record)?],
@@ -303,11 +348,20 @@ impl SqliteTenantStore {
             appended = true;
         }
         if appended {
+            #[cfg(test)]
+            observe_sqlite_uncached_statement(
+                &self.path,
+                SqliteWriteStatementConcept::NextSequenceWrite,
+            );
             put_metadata_in_conn(&conn, NEXT_SEQUENCE_KEY, &encode_u64(next))?;
             self.fault_injector
                 .check(FaultPoint::JournalAppendBeforeDurableFlush)?;
         }
+        #[cfg(any(test, feature = "test-hooks"))]
+        let commit_started = std::time::Instant::now();
         conn.execute_batch("COMMIT").map_err(map_sqlite_error)?;
+        #[cfg(any(test, feature = "test-hooks"))]
+        observe_sqlite_foreground_commit(&self.path, &conn, commit_started.elapsed());
         if appended {
             self.fault_injector
                 .check(FaultPoint::JournalFlushBeforeVisibility)?;
@@ -321,12 +375,22 @@ impl SqliteTenantStore {
         }
 
         let schema_cache_dirty = records.iter().any(durable_record_changes_schema_cache);
-        let conn = self.open_connection()?;
+        let conn = self.open_writer_connection()?;
         conn.execute_batch("BEGIN IMMEDIATE")
             .map_err(map_sqlite_error)?;
+        #[cfg(test)]
+        observe_sqlite_uncached_statement(
+            &self.path,
+            SqliteWriteStatementConcept::AppliedSequenceRead,
+        );
         let mut applied_head = applied_sequence_in_conn(&conn)?.0;
         for record in records {
             if record.sequence.0 <= applied_head {
+                #[cfg(test)]
+                observe_sqlite_uncached_statement(
+                    &self.path,
+                    SqliteWriteStatementConcept::DurableRecordRead,
+                );
                 let payload = conn
                     .query_row(
                         "SELECT record_blob FROM commit_log WHERE sequence = ?1",
@@ -349,16 +413,30 @@ impl SqliteTenantStore {
                     record.sequence.0
                 )));
             }
-            apply_durable_record_in_conn(&conn, record)?;
+            apply_durable_record_in_conn(
+                &conn,
+                record,
+                #[cfg(test)]
+                &self.path,
+            )?;
             applied_head = record.sequence.0;
         }
 
         if applied_head >= records[0].sequence.0 {
+            #[cfg(test)]
+            observe_sqlite_uncached_statement(
+                &self.path,
+                SqliteWriteStatementConcept::AppliedSequenceWrite,
+            );
             put_metadata_in_conn(&conn, APPLIED_SEQUENCE_KEY, &encode_u64(applied_head))?;
         }
         self.fault_injector
             .check(FaultPoint::StorageCommitBeforeVisibility)?;
+        #[cfg(any(test, feature = "test-hooks"))]
+        let commit_started = std::time::Instant::now();
         conn.execute_batch("COMMIT").map_err(map_sqlite_error)?;
+        #[cfg(any(test, feature = "test-hooks"))]
+        observe_sqlite_foreground_commit(&self.path, &conn, commit_started.elapsed());
         if schema_cache_dirty {
             self.replace_cached_schema(load_schema_from_conn(&conn)?)?;
         }
@@ -413,9 +491,22 @@ pub(super) fn append_commit_entry(
     timestamp: Timestamp,
     writes: Vec<WriteOp>,
     events: Vec<TenantEventKind>,
+    #[cfg(test)] observation_path: &Path,
 ) -> Result<CommitEntry> {
+    #[cfg(test)]
+    observe_sqlite_uncached_statement(
+        observation_path,
+        SqliteWriteStatementConcept::JournalNextSequenceRead,
+    );
     let sequence = next_sequence_in_conn(conn)?;
-    let record = append_tenant_event_record(conn, SequenceNumber(sequence), timestamp, events)?;
+    let record = append_tenant_event_record(
+        conn,
+        SequenceNumber(sequence),
+        timestamp,
+        events,
+        #[cfg(test)]
+        observation_path,
+    )?;
     Ok(CommitEntry {
         sequence: record.sequence,
         timestamp: record.timestamp,
@@ -426,8 +517,14 @@ pub(super) fn append_commit_entry(
 pub(super) fn append_prepared_commit_entry(
     conn: &Connection,
     record: &TenantEventRecord,
+    #[cfg(test)] observation_path: &Path,
 ) -> Result<CommitEntry> {
     record.validate_integrity()?;
+    #[cfg(test)]
+    observe_sqlite_uncached_statement(
+        observation_path,
+        SqliteWriteStatementConcept::JournalNextSequenceRead,
+    );
     let expected = next_sequence_in_conn(conn)?;
     if record.sequence.0 != expected {
         return Err(Error::conflict(format!(
@@ -435,21 +532,38 @@ pub(super) fn append_prepared_commit_entry(
             record.sequence.0
         )));
     }
+    #[cfg(test)]
+    observe_sqlite_uncached_statement(
+        observation_path,
+        SqliteWriteStatementConcept::AppliedSequenceRead,
+    );
     crate::commit_log::ensure_applied_prefix_precedes(
         applied_sequence_in_conn(conn)?,
         record.sequence,
     )?;
     let payload = serialize_tenant_event_record(record)?;
+    #[cfg(test)]
+    observe_sqlite_uncached_statement(observation_path, SqliteWriteStatementConcept::JournalInsert);
     conn.execute(
         "INSERT INTO commit_log (sequence, record_blob) VALUES (?1, ?2)",
         params![record.sequence.0, payload],
     )
     .map_err(map_sqlite_error)?;
+    #[cfg(test)]
+    observe_sqlite_uncached_statement(
+        observation_path,
+        SqliteWriteStatementConcept::NextSequenceWrite,
+    );
     put_metadata_in_conn(
         conn,
         NEXT_SEQUENCE_KEY,
         &encode_u64(record.sequence.0.saturating_add(1)),
     )?;
+    #[cfg(test)]
+    observe_sqlite_uncached_statement(
+        observation_path,
+        SqliteWriteStatementConcept::AppliedSequenceWrite,
+    );
     put_metadata_in_conn(conn, APPLIED_SEQUENCE_KEY, &encode_u64(record.sequence.0))?;
     Ok(record.as_commit_entry())
 }
@@ -459,7 +573,13 @@ pub(super) fn append_tenant_event_record(
     sequence: SequenceNumber,
     timestamp: Timestamp,
     events: Vec<TenantEventKind>,
+    #[cfg(test)] observation_path: &Path,
 ) -> Result<TenantEventRecord> {
+    #[cfg(test)]
+    observe_sqlite_uncached_statement(
+        observation_path,
+        SqliteWriteStatementConcept::AppliedSequenceRead,
+    );
     crate::commit_log::ensure_applied_prefix_precedes(applied_sequence_in_conn(conn)?, sequence)?;
     let record = TenantEventRecord::from_events(sequence, timestamp, events)?;
     record_document_versions_for_events_in_conn(
@@ -467,19 +587,39 @@ pub(super) fn append_tenant_event_record(
         record.sequence,
         record.timestamp,
         &record.events,
+        #[cfg(test)]
+        observation_path,
     )?;
-    record_index_versions_for_events_in_conn(conn, record.sequence, &record.events)?;
+    record_index_versions_for_events_in_conn(
+        conn,
+        record.sequence,
+        &record.events,
+        #[cfg(test)]
+        observation_path,
+    )?;
     let payload = serialize_tenant_event_record(&record)?;
+    #[cfg(test)]
+    observe_sqlite_uncached_statement(observation_path, SqliteWriteStatementConcept::JournalInsert);
     conn.execute(
         "INSERT INTO commit_log (sequence, record_blob) VALUES (?1, ?2)",
         params![sequence.0, payload],
     )
     .map_err(map_sqlite_error)?;
+    #[cfg(test)]
+    observe_sqlite_uncached_statement(
+        observation_path,
+        SqliteWriteStatementConcept::NextSequenceWrite,
+    );
     put_metadata_in_conn(
         conn,
         NEXT_SEQUENCE_KEY,
         &encode_u64(sequence.0.saturating_add(1)),
     )?;
+    #[cfg(test)]
+    observe_sqlite_uncached_statement(
+        observation_path,
+        SqliteWriteStatementConcept::AppliedSequenceWrite,
+    );
     put_metadata_in_conn(conn, APPLIED_SEQUENCE_KEY, &encode_u64(sequence.0))?;
     Ok(record)
 }
@@ -487,6 +627,7 @@ pub(super) fn append_tenant_event_record(
 pub(super) fn apply_durable_record_in_conn(
     conn: &Connection,
     record: &TenantEventRecord,
+    #[cfg(test)] observation_path: &Path,
 ) -> Result<()> {
     if record.events.is_empty() {
         if let Some(execution_id) = record.scheduled_execution_id.as_deref() {
@@ -497,9 +638,23 @@ pub(super) fn apply_durable_record_in_conn(
             record.sequence,
             record.timestamp,
             &record.writes,
+            #[cfg(test)]
+            observation_path,
         )?;
-        record_index_versions_for_writes_in_conn(conn, record.sequence, &record.writes)?;
-        return apply_document_writes_in_conn(conn, record.sequence, &record.writes);
+        record_index_versions_for_writes_in_conn(
+            conn,
+            record.sequence,
+            &record.writes,
+            #[cfg(test)]
+            observation_path,
+        )?;
+        return apply_document_writes_in_conn(
+            conn,
+            record.sequence,
+            &record.writes,
+            #[cfg(test)]
+            observation_path,
+        );
     }
 
     record_document_versions_for_events_in_conn(
@@ -507,10 +662,24 @@ pub(super) fn apply_durable_record_in_conn(
         record.sequence,
         record.timestamp,
         &record.events,
+        #[cfg(test)]
+        observation_path,
     )?;
-    record_index_versions_for_events_in_conn(conn, record.sequence, &record.events)?;
+    record_index_versions_for_events_in_conn(
+        conn,
+        record.sequence,
+        &record.events,
+        #[cfg(test)]
+        observation_path,
+    )?;
     for event in &record.events {
-        apply_tenant_event_in_conn(conn, record.sequence, event)?;
+        apply_tenant_event_in_conn(
+            conn,
+            record.sequence,
+            event,
+            #[cfg(test)]
+            observation_path,
+        )?;
     }
     Ok(())
 }
@@ -519,11 +688,16 @@ fn apply_tenant_event_in_conn(
     conn: &Connection,
     sequence: SequenceNumber,
     event: &TenantEventKind,
+    #[cfg(test)] observation_path: &Path,
 ) -> Result<()> {
     match event {
-        TenantEventKind::DocumentWrite { writes } => {
-            apply_document_writes_in_conn(conn, sequence, writes)
-        }
+        TenantEventKind::DocumentWrite { writes } => apply_document_writes_in_conn(
+            conn,
+            sequence,
+            writes,
+            #[cfg(test)]
+            observation_path,
+        ),
         TenantEventKind::SchemaChange { change } => apply_schema_change_in_conn(conn, change),
         TenantEventKind::TableLifecycle { lifecycle } => {
             apply_table_lifecycle_in_conn(conn, lifecycle)
@@ -545,9 +719,16 @@ fn apply_document_writes_in_conn(
     conn: &Connection,
     sequence: SequenceNumber,
     writes: &[WriteOp],
+    #[cfg(test)] observation_path: &Path,
 ) -> Result<()> {
     for write in writes {
-        apply_document_write_in_conn(conn, sequence, write)?;
+        apply_document_write_in_conn(
+            conn,
+            sequence,
+            write,
+            #[cfg(test)]
+            observation_path,
+        )?;
     }
     Ok(())
 }
@@ -556,10 +737,24 @@ fn apply_document_write_in_conn(
     conn: &Connection,
     sequence: SequenceNumber,
     write: &WriteOp,
+    #[cfg(test)] observation_path: &Path,
 ) -> Result<()> {
+    #[cfg(test)]
+    {
+        observe_sqlite_table_identity_check(observation_path);
+        observe_sqlite_uncached_statement(
+            observation_path,
+            SqliteWriteStatementConcept::TableIdentityCheck,
+        );
+    }
     match (&write.previous, &write.current) {
         (None, Some(current)) => {
             ensure_table_id_in_conn(conn, &write.table, &write.table_id)?;
+            #[cfg(test)]
+            observe_sqlite_uncached_statement(
+                observation_path,
+                SqliteWriteStatementConcept::DocumentPreimageRead,
+            );
             let existing = load_document_by_table_id_from_conn(
                 conn,
                 &write.table,
@@ -577,6 +772,14 @@ fn apply_document_write_in_conn(
                     ));
                 }
                 None => {
+                    #[cfg(test)]
+                    {
+                        observe_sqlite_current_document_encode(observation_path);
+                        observe_sqlite_uncached_statement(
+                            observation_path,
+                            SqliteWriteStatementConcept::LiveDocumentInsert,
+                        );
+                    }
                     conn.execute(
                         "INSERT INTO documents (table_id, id, data_json, typed_fields_json, creation_time, update_time)
                          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -593,11 +796,21 @@ fn apply_document_write_in_conn(
                 }
             }
             if let Some(binding) = write.resource_path_binding.as_ref() {
-                upsert_resource_path_binding_in_conn(conn, binding)?;
+                upsert_resource_path_binding_in_conn(
+                    conn,
+                    binding,
+                    #[cfg(test)]
+                    observation_path,
+                )?;
             }
         }
         (Some(previous), Some(current)) => {
             ensure_table_id_in_conn(conn, &write.table, &write.table_id)?;
+            #[cfg(test)]
+            observe_sqlite_uncached_statement(
+                observation_path,
+                SqliteWriteStatementConcept::DocumentPreimageRead,
+            );
             let existing = load_document_by_table_id_from_conn(
                 conn,
                 &write.table,
@@ -623,6 +836,14 @@ fn apply_document_write_in_conn(
                     "found a pre-image mismatch",
                 ));
             }
+            #[cfg(test)]
+            {
+                observe_sqlite_current_document_encode(observation_path);
+                observe_sqlite_uncached_statement(
+                    observation_path,
+                    SqliteWriteStatementConcept::LiveDocumentUpdate,
+                );
+            }
             conn.execute(
                 "UPDATE documents
                  SET data_json = ?3, typed_fields_json = ?4, creation_time = ?5, update_time = ?6
@@ -638,11 +859,21 @@ fn apply_document_write_in_conn(
             )
             .map_err(map_sqlite_error)?;
             if let Some(binding) = write.resource_path_binding.as_ref() {
-                upsert_resource_path_binding_in_conn(conn, binding)?;
+                upsert_resource_path_binding_in_conn(
+                    conn,
+                    binding,
+                    #[cfg(test)]
+                    observation_path,
+                )?;
             }
         }
         (Some(previous), None) => {
             ensure_table_id_in_conn(conn, &write.table, &write.table_id)?;
+            #[cfg(test)]
+            observe_sqlite_uncached_statement(
+                observation_path,
+                SqliteWriteStatementConcept::DocumentPreimageRead,
+            );
             match load_document_by_table_id_from_conn(
                 conn,
                 &write.table,
@@ -658,6 +889,11 @@ fn apply_document_write_in_conn(
                     ));
                 }
                 Some(_) => {
+                    #[cfg(test)]
+                    observe_sqlite_uncached_statement(
+                        observation_path,
+                        SqliteWriteStatementConcept::LiveDocumentDelete,
+                    );
                     conn.execute(
                         "DELETE FROM documents WHERE table_id = ?1 AND id = ?2",
                         params![write.table_id.as_str(), write.doc_id.to_string()],
@@ -669,6 +905,8 @@ fn apply_document_write_in_conn(
             remove_resource_path_binding_in_conn(
                 conn,
                 &DocumentLocator::new(write.table.clone(), write.doc_id.clone()),
+                #[cfg(test)]
+                observation_path,
             )?;
         }
         (None, None) => {
@@ -809,6 +1047,7 @@ fn apply_table_lifecycle_in_conn(conn: &Connection, lifecycle: &TableLifecycleEv
 fn upsert_resource_path_binding_in_conn(
     conn: &Connection,
     binding: &ResourcePathBinding,
+    #[cfg(test)] observation_path: &Path,
 ) -> Result<()> {
     let path_key = document_path_key(&binding.document_path);
     let locator_key = resource_locator_key(&binding.locator);
@@ -816,6 +1055,11 @@ fn upsert_resource_path_binding_in_conn(
         rmp_serde::to_vec(binding).map_err(|error| Error::Serialization(error.to_string()))?;
     let encoded_locator = rmp_serde::to_vec(&binding.locator)
         .map_err(|error| Error::Serialization(error.to_string()))?;
+    #[cfg(test)]
+    observe_sqlite_uncached_statement(
+        observation_path,
+        SqliteWriteStatementConcept::ResourceBindingUpsert,
+    );
     conn.execute(
         "INSERT INTO resource_path_bindings (
             locator_key,
@@ -844,8 +1088,14 @@ fn upsert_resource_path_binding_in_conn(
 fn remove_resource_path_binding_in_conn(
     conn: &Connection,
     locator: &DocumentLocator,
+    #[cfg(test)] observation_path: &Path,
 ) -> Result<()> {
     let locator_key = resource_locator_key(locator);
+    #[cfg(test)]
+    observe_sqlite_uncached_statement(
+        observation_path,
+        SqliteWriteStatementConcept::ResourceBindingDelete,
+    );
     conn.execute(
         "DELETE FROM resource_path_bindings WHERE locator_key = ?1",
         params![locator_key.as_slice()],

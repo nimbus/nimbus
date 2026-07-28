@@ -6,6 +6,8 @@ use nimbus_core::{
 use rusqlite::OptionalExtension;
 use rusqlite::types::Value as SqlValue;
 use serde_json::Value;
+#[cfg(test)]
+use std::path::Path;
 
 use crate::diagnostics::IndexVersionStorageDiagnostic;
 use crate::index::encoded_index_tuple_for_document;
@@ -20,6 +22,10 @@ use crate::{
     validate_index_version_storage_format,
 };
 
+#[cfg(test)]
+use super::config::{
+    SqliteWriteStatementConcept, observe_sqlite_schema_check, observe_sqlite_uncached_statement,
+};
 use super::{
     SqliteReadSnapshot, SqliteTenantStore, decode_u64, encode_u64, load_table_schema_from_conn,
     map_sqlite_error,
@@ -410,10 +416,17 @@ pub(super) fn record_index_versions_for_events_in_conn(
     conn: &rusqlite::Connection,
     sequence: SequenceNumber,
     events: &[TenantEventKind],
+    #[cfg(test)] observation_path: &Path,
 ) -> Result<()> {
     for event in events {
         if let TenantEventKind::DocumentWrite { writes } = event {
-            record_index_versions_for_writes_in_conn(conn, sequence, writes)?;
+            record_index_versions_for_writes_in_conn(
+                conn,
+                sequence,
+                writes,
+                #[cfg(test)]
+                observation_path,
+            )?;
         }
     }
     Ok(())
@@ -423,20 +436,35 @@ pub(super) fn record_index_versions_for_writes_in_conn(
     conn: &rusqlite::Connection,
     sequence: SequenceNumber,
     writes: &[WriteOp],
+    #[cfg(test)] observation_path: &Path,
 ) -> Result<()> {
     if writes.is_empty() {
         return Ok(());
     }
 
-    let mutations = index_version_mutations_for_writes(conn, writes)?;
+    let mutations = index_version_mutations_for_writes(
+        conn,
+        writes,
+        #[cfg(test)]
+        observation_path,
+    )?;
     if mutations.is_empty() {
         return Ok(());
     }
 
-    ensure_index_version_storage_format_in_conn(conn)?;
+    ensure_index_version_storage_format_in_conn(
+        conn,
+        #[cfg(test)]
+        observation_path,
+    )?;
     let sequence_i64 = i64_from_sequence(sequence)?;
     for mutation in mutations {
         if let Some(close_tuple) = mutation.close_tuple {
+            #[cfg(test)]
+            observe_sqlite_uncached_statement(
+                observation_path,
+                SqliteWriteStatementConcept::IndexVersionClose,
+            );
             conn.execute(
                 "UPDATE index_versions
                  SET visible_until = ?5
@@ -456,6 +484,11 @@ pub(super) fn record_index_versions_for_writes_in_conn(
             .map_err(map_sqlite_error)?;
         }
         if let Some(open_tuple) = mutation.open_tuple {
+            #[cfg(test)]
+            observe_sqlite_uncached_statement(
+                observation_path,
+                SqliteWriteStatementConcept::IndexVersionOpen,
+            );
             conn.execute(
                 "INSERT INTO index_versions (
                     table_id,
@@ -505,9 +538,18 @@ pub(super) fn prune_index_versions_before_in_conn(
 fn index_version_mutations_for_writes(
     conn: &rusqlite::Connection,
     writes: &[WriteOp],
+    #[cfg(test)] observation_path: &Path,
 ) -> Result<Vec<IndexVersionMutation>> {
     let mut mutations = Vec::new();
     for write in writes {
+        #[cfg(test)]
+        {
+            observe_sqlite_schema_check(observation_path);
+            observe_sqlite_uncached_statement(
+                observation_path,
+                SqliteWriteStatementConcept::IndexSchemaRead,
+            );
+        }
         let Some(table_schema) = load_table_schema_from_conn(conn, &write.table)? else {
             continue;
         };
@@ -585,12 +627,25 @@ fn index_version_storage_diagnostic_in_conn(
     })
 }
 
-fn ensure_index_version_storage_format_in_conn(conn: &rusqlite::Connection) -> Result<()> {
+fn ensure_index_version_storage_format_in_conn(
+    conn: &rusqlite::Connection,
+    #[cfg(test)] observation_path: &Path,
+) -> Result<()> {
+    #[cfg(test)]
+    observe_sqlite_uncached_statement(
+        observation_path,
+        SqliteWriteStatementConcept::IndexVersionFormatRead,
+    );
     if let Some(format_version) = load_index_version_storage_format_in_conn(conn)? {
         validate_index_version_storage_format(format_version)?;
         return Ok(());
     }
 
+    #[cfg(test)]
+    observe_sqlite_uncached_statement(
+        observation_path,
+        SqliteWriteStatementConcept::IndexVersionFormatWrite,
+    );
     conn.execute(
         "INSERT INTO metadata (key, value_blob) VALUES (?1, ?2)
          ON CONFLICT(key) DO UPDATE SET value_blob = excluded.value_blob",

@@ -1,3 +1,5 @@
+#[cfg(any(test, feature = "test-hooks"))]
+use super::config::observe_sqlite_foreground_commit;
 use super::*;
 
 impl SqliteTenantStore {
@@ -16,7 +18,14 @@ impl SqliteTenantStore {
             if !transaction.begin_scheduled_execution(scheduled_execution_id)? {
                 return Ok(false);
             }
-            super::journal::apply_durable_record_in_conn(transaction.connection_mut()?, record)?;
+            #[cfg(test)]
+            let observation_path = transaction.observation_path.clone();
+            super::journal::apply_durable_record_in_conn(
+                transaction.connection_mut()?,
+                record,
+                #[cfg(test)]
+                &observation_path,
+            )?;
             apply_schedule_ops_in_transaction(transaction, schedule_ops)?;
             transaction.set_prepared_record(record.clone());
             Ok(true)
@@ -26,7 +35,7 @@ impl SqliteTenantStore {
 
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn insert_document_for_testing(&self, document: &Document) -> Result<()> {
-        let conn = self.open_connection()?;
+        let conn = self.open_writer_connection()?;
         let table_id =
             resolve_or_create_table_id_in_conn(&conn, &document.table, self.id_source.as_ref())?;
         conn.execute(
@@ -926,7 +935,10 @@ impl SqliteWriteTransaction {
                 &self.tenant_events,
             )?;
             Some(super::journal::append_prepared_commit_entry(
-                &conn, &record,
+                &conn,
+                &record,
+                #[cfg(test)]
+                &self.observation_path,
             )?)
         } else if self.tenant_events.is_empty() {
             None
@@ -936,11 +948,17 @@ impl SqliteWriteTransaction {
                 self.commit_timestamp.unwrap_or_else(|| self.clock.now()),
                 commit_writes,
                 std::mem::take(&mut self.tenant_events),
+                #[cfg(test)]
+                &self.observation_path,
             )?)
         };
         self.fault_injector
             .check(FaultPoint::StorageCommitBeforeVisibility)?;
+        #[cfg(any(test, feature = "test-hooks"))]
+        let commit_started = std::time::Instant::now();
         conn.execute_batch("COMMIT").map_err(map_sqlite_error)?;
+        #[cfg(any(test, feature = "test-hooks"))]
+        observe_sqlite_foreground_commit(&self.observation_path, &conn, commit_started.elapsed());
         if self.schema_cache_dirty {
             let schema = load_schema_from_conn(&conn)?;
             *self

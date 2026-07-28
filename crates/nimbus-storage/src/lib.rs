@@ -110,6 +110,13 @@ pub use simulation::{
     generated_task_history_seed_corpus, replay_generated_task_history,
     replay_generated_task_history_async, selected_generated_task_history_seed_corpus,
 };
+#[cfg(any(test, feature = "test-hooks"))]
+#[doc(hidden)]
+pub use sqlite::{
+    SqlitePassiveCheckpointProbe, SqliteWalCheckpointObservationSnapshot,
+    disable_sqlite_wal_checkpoint_observation, probe_sqlite_passive_checkpoint,
+    reset_sqlite_wal_checkpoint_observation, sqlite_wal_checkpoint_observation_snapshot,
+};
 pub use sqlite::{
     SqliteReadSnapshot, SqliteTenantStore, SqliteWriteTransaction,
     encryption::{

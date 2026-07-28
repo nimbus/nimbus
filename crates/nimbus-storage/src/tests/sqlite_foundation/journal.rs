@@ -2,6 +2,7 @@ use super::support::*;
 use crate::RetentionGcConfig;
 use std::ops::Bound;
 
+mod observability;
 mod ppsc;
 
 #[test]
