@@ -37,7 +37,7 @@ impl SqliteTenantStore {
 
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn insert_document_for_testing(&self, document: &Document) -> Result<()> {
-        let conn = self.open_writer_connection()?;
+        let conn = self.acquire_writer_connection()?;
         let table_id =
             resolve_or_create_table_id_in_conn(&conn, &document.table, self.id_source.as_ref())?;
         conn.execute(
@@ -54,6 +54,7 @@ impl SqliteTenantStore {
             ],
         )
         .map_err(map_sqlite_error)?;
+        self.release_writer_connection(conn);
         Ok(())
     }
 
@@ -971,12 +972,17 @@ impl SqliteWriteTransaction {
         }
         self.fault_injector
             .check(FaultPoint::StorageCommitAfterVisibilityBeforeReturn)?;
+        super::config::return_writer_connection(&self.writer_slot, conn);
         Ok(commit)
     }
 
     pub fn rollback(mut self) {
         if let Some(conn) = self.conn.take() {
-            let _ = conn.execute_batch("ROLLBACK");
+            // Return the connection only after a clean ROLLBACK; a failed
+            // rollback drops it so the next writer reopens from scratch.
+            if conn.execute_batch("ROLLBACK").is_ok() {
+                super::config::return_writer_connection(&self.writer_slot, conn);
+            }
         }
     }
 

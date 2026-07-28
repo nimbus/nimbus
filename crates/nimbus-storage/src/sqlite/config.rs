@@ -115,6 +115,17 @@ pub(super) fn sqlite_write_test_observation_snapshot(
     }
 }
 
+pub(super) fn lock_writer_slot(
+    slot: &Mutex<Option<Connection>>,
+) -> MutexGuard<'_, Option<Connection>> {
+    slot.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+pub(super) fn return_writer_connection(slot: &Mutex<Option<Connection>>, conn: Connection) {
+    lock_writer_slot(slot).replace(conn);
+}
+
 #[cfg(test)]
 pub(super) fn observe_sqlite_writer_open(path: &Path) {
     let mut observation = lock_sqlite_write_test_observation();
@@ -627,6 +638,7 @@ impl SqliteTenantStore {
             max_read_connections: max_read_connections.max(1),
             open_read_connections: Arc::new(AtomicUsize::new(0)),
             read_connections: Arc::new(Mutex::new(Vec::new())),
+            writer_slot: Arc::new(Mutex::new(None)),
             schema_cache: Arc::new(RwLock::new(Schema::default())),
             retention_floor: RetentionFloor::new(),
         };
@@ -684,11 +696,12 @@ impl SqliteTenantStore {
     where
         Check: Fn() -> Result<()> + Send + 'static,
     {
-        let conn = self.open_writer_connection()?;
+        let conn = self.acquire_writer_connection()?;
         conn.execute_batch("BEGIN IMMEDIATE")
             .map_err(map_sqlite_error)?;
         Ok(SqliteWriteTransaction {
             conn: Some(conn),
+            writer_slot: self.writer_slot.clone(),
             #[cfg(any(test, feature = "test-hooks"))]
             observation_path: self.path.clone(),
             clock: self.clock.clone(),
@@ -779,6 +792,21 @@ impl SqliteTenantStore {
             );
         }
         Ok(conn)
+    }
+
+    /// Takes the resident writer connection, or opens and fully initializes
+    /// a fresh one when the slot is empty (first use, a concurrent writer
+    /// holds it, or the previous user hit an error and dropped it).
+    pub(super) fn acquire_writer_connection(&self) -> Result<Connection> {
+        if let Some(conn) = lock_writer_slot(&self.writer_slot).take() {
+            return Ok(conn);
+        }
+        self.open_writer_connection()
+    }
+
+    /// Returns a writer connection whose transaction ended cleanly.
+    pub(super) fn release_writer_connection(&self, conn: Connection) {
+        return_writer_connection(&self.writer_slot, conn);
     }
 
     pub(super) fn open_writer_connection(&self) -> Result<Connection> {

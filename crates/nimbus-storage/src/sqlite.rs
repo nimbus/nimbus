@@ -274,6 +274,14 @@ pub struct SqliteTenantStore {
     max_read_connections: usize,
     open_read_connections: Arc<AtomicUsize>,
     read_connections: Arc<Mutex<Vec<Connection>>>,
+    /// Resident writer connection. Write paths take it for one transaction
+    /// and return it only after a clean COMMIT or ROLLBACK; every error path
+    /// drops the connection instead so the next writer reopens from scratch.
+    /// The mutex guards only the take/put itself and is never held across a
+    /// transaction, so non-committer writers (object manifests, replica
+    /// reconciliation) coexist exactly as before: a concurrent writer finds
+    /// the slot empty and opens its own connection.
+    writer_slot: Arc<Mutex<Option<Connection>>>,
     schema_cache: Arc<RwLock<Schema>>,
     pub(crate) retention_floor: Arc<RetentionFloor>,
 }
@@ -285,6 +293,7 @@ pub struct SqliteReadSnapshot {
 
 pub struct SqliteWriteTransaction {
     conn: Option<Connection>,
+    writer_slot: Arc<Mutex<Option<Connection>>>,
     #[cfg(any(test, feature = "test-hooks"))]
     observation_path: PathBuf,
     clock: Arc<dyn WallClock>,
