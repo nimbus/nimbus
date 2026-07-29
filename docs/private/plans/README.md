@@ -137,6 +137,13 @@ extension-registry seam before the second concern edits `extensions.rs`.
   crash/replay and differential verification, and pinned external Elle
   evidence. FINAL recorded all readiness dimensions `PASS` and all closeout
   verdicts `SAFE`.
+- `storage-unification-and-carryover-plan.md` - `active`. Sole owner for
+  the 2026-07-29 storage review's ranked wins (CommitTransaction witness,
+  objects/KV/scheduler onto a real commit path, provider facade extraction,
+  DynamoDB principal) plus every carry-over: main full-CI triage (RED at
+  plan creation; gates all phases), the July 21 HIGH-bug triad, the
+  open-loop latency companion, the resource-binding decision, and the
+  formal hot-key/OCC closure.
 - `archive/sqlite-write-throughput-optimization-plan.md` - `complete, archived`
   (2026-07-28). Campaign PASS in one day: prepared-statement reuse +
   batch-invariant apply context (PR #244), resident writer (PR #245),
