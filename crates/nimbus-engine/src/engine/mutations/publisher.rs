@@ -470,77 +470,31 @@ pub(crate) fn persist_assigned_batch_once(
         "ordered publisher durable head must equal the prior completed batch"
     );
 
-    let durable_append_started = Instant::now();
-    let write_log_guard = runtime.arm_write_log_append();
-    let provider_applied = match runtime.persist_fenced_provider_batch(expected_previous, records) {
-        Ok(provider_applied) => provider_applied,
-        Err(error) => {
+    let outcome = match super::durable_batch::persist_and_apply_assigned_batch(
+        runtime,
+        records,
+        commit_faults,
+        || {},
+    ) {
+        Ok(outcome) => outcome,
+        Err(super::durable_batch::DurableBatchFailure::Persistence { error, .. }) => {
             return Err(classify_publisher_persistence_error(
                 runtime,
                 expected_previous,
                 error,
             ));
         }
-    };
-    if !provider_applied && let Err(error) = runtime.store.append_durable_records_batch(records) {
-        return Err(classify_publisher_persistence_error(
-            runtime,
-            expected_previous,
-            error,
-        ));
-    }
-    let last_sequence = records
-        .last()
-        .expect("publisher persistence batches must not be empty")
-        .sequence;
-    runtime.mark_durable_head(last_sequence);
-    write_log_guard.disarm();
-    let durable_append = durable_append_started.elapsed();
-
-    let apply_started = Instant::now();
-    if !provider_applied {
-        runtime
-            .store
-            .check_fault(nimbus_storage::FaultPoint::JournalDurableAppendBeforeApply)
-            .map_err(PublishAttemptError::Ambiguous)?;
-    }
-    commit_faults
-        .wait(labels::DURABLE_BEFORE_PUBLISH)
-        .into_result()
-        .map_err(PublishAttemptError::Ambiguous)?;
-    let applied_head = if provider_applied {
-        last_sequence
-    } else {
-        match runtime.store.apply_durable_records_batch(records) {
-            Ok(()) => runtime
-                .store
-                .applied_head_after_durable_apply(records)
-                .map_err(PublishAttemptError::Ambiguous)?,
-            Err(apply_error) => runtime
-                .store
-                .recover_durable_journal()
-                .map(|progress| progress.applied_head)
-                .map_err(|recovery_error| {
-                    PublishAttemptError::Ambiguous(Error::Internal(format!(
-                        "durable batch apply failed ({apply_error}) and recovery failed ({recovery_error})"
-                    )))
-                })?,
+        Err(super::durable_batch::DurableBatchFailure::Ambiguous(error)) => {
+            return Err(PublishAttemptError::Ambiguous(error));
         }
     };
-    let mut applied = records
-        .iter()
-        .map(TenantEventRecord::as_commit_entry)
-        .filter(|commit| commit.sequence <= applied_head)
-        .collect::<Vec<_>>();
-    let published_frontier = runtime.publish_write_log_through(applied_head);
-    applied.retain(|commit| commit.sequence <= published_frontier);
-    runtime.invalidate_document_cache_for_commits(applied.iter());
-    let apply = apply_started.elapsed();
+    let applied = outcome.applied;
+    let durable_append = outcome.durable_append;
+    let apply = outcome.apply;
 
     let publish_started = Instant::now();
-    // Obligation #9c: the applied watermark is visible before this function
-    // returns control to the task that performs subscription fan-out.
-    runtime.mark_applied_head(published_frontier);
+    // Obligation #9c: the applied watermark became visible inside the shared
+    // durable-batch core, before fan-out control transfer below.
     commit_faults
         .wait(labels::POST_PUBLISH_PRE_FANOUT)
         .into_result()

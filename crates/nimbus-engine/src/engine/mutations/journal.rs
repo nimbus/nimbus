@@ -1021,7 +1021,6 @@ fn process_serial_queued_mutation_batch(
     let sample_started_at = assigned.sample_started_at;
     let first_staged_sequence = Some(assigned.first_sequence());
 
-    let durable_append_started = Instant::now();
     let append_baseline = runtime.durable_head();
     if let Err(error) = crate::tenant::validate_append_sequences(
         append_baseline,
@@ -1035,81 +1034,51 @@ fn process_serial_queued_mutation_batch(
         }
         return Err(FailedSerialQueuedMutationBatch { error, deferred });
     }
-    let write_log_guard = runtime.arm_write_log_append();
-    let provider_applied = match runtime.persist_fenced_provider_batch(append_baseline, &records) {
-        Ok(provider_applied) => provider_applied,
-        Err(error) => {
-            drop(active);
-            return Err(FailedSerialQueuedMutationBatch { error, deferred });
-        }
-    };
-    if !provider_applied && let Err(error) = runtime.store.append_durable_records_batch(&records) {
-        let mapped_error = map_durable_journal_append_error(&error);
-        drop(active);
-        return Err(FailedSerialQueuedMutationBatch {
-            error: mapped_error,
-            deferred,
-        });
-    }
-
-    if let Some(last_record) = records.last() {
-        runtime.mark_durable_head(last_record.sequence);
-    }
-    write_log_guard.disarm();
-    for response in deferred {
-        response.complete();
-    }
-    phases.durable_append = durable_append_started.elapsed();
-
-    let mut applied = Vec::with_capacity(records.len());
     let mut responses = Vec::with_capacity(records.len());
-    for (active_request, record) in active.into_iter().zip(records.iter()) {
+    for active_request in active {
         responses.push(PendingPublisherResponse {
             _operation: active_request._operation,
             response: active_request.response,
             result: active_request.result,
         });
-        applied.push(record.as_commit_entry());
     }
-
-    let apply_started = Instant::now();
-    if !provider_applied {
-        runtime
-            .store
-            .check_fault(nimbus_storage::FaultPoint::JournalDurableAppendBeforeApply)
-            .map_err(FailedSerialQueuedMutationBatch::without_deferred)?;
-        commit_faults
-            .wait(labels::DURABLE_BEFORE_PUBLISH)
-            .into_result()
-            .map_err(FailedSerialQueuedMutationBatch::without_deferred)?;
-    }
-
-    let applied_head = if provider_applied {
-        records
-            .last()
-            .expect("non-empty assigned provider batch")
-            .sequence
-    } else {
-        match runtime.store.apply_durable_records_batch(&records) {
-            Ok(()) => runtime
-                .store
-                .applied_head_after_durable_apply(&records)
-                .map_err(FailedSerialQueuedMutationBatch::without_deferred)?,
-            Err(_) => {
-                let progress = runtime
-                    .store
-                    .recover_durable_journal()
-                    .map_err(FailedSerialQueuedMutationBatch::without_deferred)?;
-                progress.applied_head
+    // `on_durable` takes the deferred acknowledgements only once the batch is
+    // durable; a persistence failure leaves them here so the outer actor can
+    // rewrite same-batch dependents as retryable conflicts.
+    let mut deferred = Some(deferred);
+    let outcome = match super::durable_batch::persist_and_apply_assigned_batch(
+        runtime.as_ref(),
+        &records,
+        commit_faults,
+        || {
+            for response in deferred.take().unwrap_or_default() {
+                response.complete();
             }
+        },
+    ) {
+        Ok(outcome) => outcome,
+        Err(super::durable_batch::DurableBatchFailure::Persistence { fenced, error }) => {
+            let error = if fenced {
+                error
+            } else {
+                map_durable_journal_append_error(&error)
+            };
+            drop(responses);
+            return Err(FailedSerialQueuedMutationBatch {
+                error,
+                deferred: deferred.take().unwrap_or_default(),
+            });
+        }
+        Err(super::durable_batch::DurableBatchFailure::Ambiguous(error)) => {
+            drop(responses);
+            return Err(FailedSerialQueuedMutationBatch::without_deferred(error));
         }
     };
-    retain_commits_through_applied_head(&mut applied, applied_head);
-    let published_frontier = runtime.publish_write_log_through(applied_head);
-    runtime.invalidate_document_cache_for_commits(applied.iter());
-    phases.apply = apply_started.elapsed();
+    phases.durable_append = outcome.durable_append;
+    let applied = outcome.applied;
+    let apply_started = Instant::now();
+    phases.apply = outcome.apply.saturating_add(apply_started.elapsed());
     let publish_started = Instant::now();
-    runtime.mark_applied_head(published_frontier);
     phases.publish = publish_started.elapsed();
     let committed_batch_size = u64::try_from(records.len()).unwrap_or(u64::MAX);
     runtime
@@ -1169,13 +1138,6 @@ fn prepared_queued_from_window(
         result,
         prepare_nanos: duration_nanos(elapsed),
     })
-}
-
-fn retain_commits_through_applied_head(
-    applied: &mut Vec<CommitEntry>,
-    applied_head: SequenceNumber,
-) {
-    applied.retain(|commit| commit.sequence.0 <= applied_head.0);
 }
 
 fn prepare_queued_mutation(
@@ -1432,43 +1394,6 @@ fn map_durable_journal_append_error(error: &Error) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn commit(sequence: u64) -> CommitEntry {
-        CommitEntry {
-            sequence: SequenceNumber(sequence),
-            timestamp: nimbus_core::Timestamp(sequence),
-            writes: Vec::new(),
-        }
-    }
-
-    #[test]
-    fn retain_commits_through_applied_head_clips_recovered_batches() {
-        let mut applied = vec![commit(10), commit(11), commit(12)];
-        retain_commits_through_applied_head(&mut applied, SequenceNumber(11));
-        assert_eq!(
-            applied
-                .iter()
-                .map(|commit| commit.sequence)
-                .collect::<Vec<_>>(),
-            vec![SequenceNumber(10), SequenceNumber(11)]
-        );
-
-        retain_commits_through_applied_head(&mut applied, SequenceNumber(9));
-        assert!(
-            applied.is_empty(),
-            "no downstream commit should remain when recovery reports an applied head before the batch"
-        );
-
-        let mut fully_visible = vec![commit(20), commit(21)];
-        retain_commits_through_applied_head(&mut fully_visible, SequenceNumber(25));
-        assert_eq!(
-            fully_visible
-                .iter()
-                .map(|commit| commit.sequence)
-                .collect::<Vec<_>>(),
-            vec![SequenceNumber(20), SequenceNumber(21)]
-        );
-    }
 
     #[test]
     fn prepared_window_validation_includes_assigned_unpublished_writes() {
