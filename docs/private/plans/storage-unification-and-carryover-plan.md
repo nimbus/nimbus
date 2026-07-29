@@ -88,6 +88,7 @@ canonical CRUD/layered/hot-key protocols with D18/D19 as recorded.
 | U1 | 2026-07-29 | SUC0.1 gates all phases | main full CI red at plan creation (CI, Coverage, Node Compatibility); the fast-merge bill is triaged first, not last |
 | U2 | 2026-07-29 | Facade extraction treats sqlite as reference, after the witness | the sqlite fork is merged and A/B-proven; the witness shapes the facade API, so SUC2 precedes SUC3 |
 | U3 | 2026-07-29 | Lease durations unify to milliseconds | postgres and libsql already use millis; mysql converts at its SQL edge; conformance test pins the unit |
+| U4 | 2026-07-29 | Fault-point exact-parity assertion deferred to SUC3 | the site survey shows three structurally different flows; SUC3's facade deletes the triplication that permits drift, making per-provider parity tests redundant rather than writing them against code scheduled for deletion |
 
 ## Open Blockers
 

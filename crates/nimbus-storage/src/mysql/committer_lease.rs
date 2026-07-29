@@ -152,7 +152,12 @@ fn validate_lease_request(owner_id: &str, duration: Duration) -> Result<u64> {
             "committer lease owner id must contain 1 through 191 bytes".to_string(),
         ));
     }
-    u64::try_from(duration.as_micros()).map_err(|_| {
+    // Canonical lease representation is milliseconds (provider parity, U3);
+    // MySQL's TIMESTAMPADD(MICROSECOND, ...) edge multiplies at bind time.
+    let millis = u64::try_from(duration.as_millis()).map_err(|_| {
+        Error::InvalidInput("committer lease duration exceeds provider range".to_string())
+    })?;
+    millis.checked_mul(1_000).ok_or_else(|| {
         Error::InvalidInput("committer lease duration exceeds provider range".to_string())
     })
 }
@@ -192,4 +197,21 @@ fn mysql_row_to_renewed_committer_lease(row: Row) -> Result<(CommitterLease, boo
         },
         unexpired != 0,
     ))
+}
+
+#[cfg(test)]
+mod validate_tests {
+    use super::*;
+
+    #[test]
+    fn mysql_lease_validation_is_canonical_millis_bound_as_micros() {
+        assert!(validate_lease_request("", Duration::from_secs(1)).is_err());
+        assert!(validate_lease_request(&"x".repeat(192), Duration::from_secs(1)).is_err());
+        assert_eq!(
+            validate_lease_request("owner", Duration::from_millis(1500)).expect("valid request"),
+            1_500_000,
+            "milliseconds are canonical; the MICROSECOND SQL edge gets millis x 1000"
+        );
+        assert!(validate_lease_request("owner", Duration::MAX).is_err());
+    }
 }

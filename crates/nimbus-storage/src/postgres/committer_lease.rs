@@ -123,9 +123,9 @@ impl PostgresTenantStore {
 }
 
 fn validate_lease_request(owner_id: &str, duration: Duration) -> Result<i64> {
-    if owner_id.is_empty() {
+    if owner_id.is_empty() || owner_id.len() > 191 {
         return Err(Error::InvalidInput(
-            "committer lease owner id cannot be empty".to_string(),
+            "committer lease owner id must contain 1 through 191 bytes".to_string(),
         ));
     }
     i64::try_from(duration.as_millis()).map_err(|_| {
@@ -158,4 +158,20 @@ fn postgres_row_to_committer_lease(row: tokio_postgres::Row) -> Result<Committer
         expires_at: Timestamp(expires_at),
         durable_sequence: SequenceNumber(durable_sequence),
     })
+}
+
+#[cfg(test)]
+mod validate_tests {
+    use super::*;
+
+    #[test]
+    fn postgres_lease_owner_id_guard_matches_provider_parity() {
+        assert!(validate_lease_request("", Duration::from_secs(1)).is_err());
+        assert!(validate_lease_request(&"x".repeat(192), Duration::from_secs(1)).is_err());
+        assert_eq!(
+            validate_lease_request(&"x".repeat(191), Duration::from_millis(1500))
+                .expect("valid request"),
+            1500
+        );
+    }
 }
