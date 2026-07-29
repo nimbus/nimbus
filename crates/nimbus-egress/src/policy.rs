@@ -955,6 +955,82 @@ mod tests {
         );
     }
 
+    /// Regression pin for the July-21 review HIGH finding (fixed in #231): a
+    /// CONNECT authority request carries no method or path, so a rule with
+    /// L7 predicates must (a) allow the CONNECT gate with those predicates
+    /// deferred, (b) force TLS interception so the deferred predicates are
+    /// enforced on the decrypted inner request, and (c) still enforce them
+    /// there. Without (b), relaxing the gate would splice an opaque tunnel
+    /// and never enforce L7 at all.
+    #[test]
+    fn connect_gate_defers_method_path_and_forces_interception() {
+        let policy = EgressPolicy::new([EgressRule::new(
+            "stripe",
+            EgressProtocol::Https,
+            "api.stripe.com",
+            443,
+        )
+        .with_methods(["POST"])
+        .with_path_prefixes(["/v1/"])]);
+        let compiled = policy.compile().expect("policy should compile");
+        // The proxy's CONNECT parse produces an authority-only request: no
+        // method, no path (`crates/nimbus-proxy/src/request.rs`).
+        let connect = EgressRequest::new(EgressProtocol::Https, "api.stripe.com", 443);
+
+        let full = compiled.authorize(&connect);
+        assert!(
+            !full.is_allowed(),
+            "full L7 authorization must not pass without method/path: {full:?}"
+        );
+
+        let gate = compiled.authorize_connect(&connect);
+        assert!(
+            gate.is_allowed(),
+            "CONNECT gate must defer method/path instead of denying: {gate:?}"
+        );
+        assert_eq!(gate.matched_rule(), Some("stripe"));
+
+        assert!(
+            compiled.connect_requires_interception(&connect),
+            "a rule carrying deferred L7 predicates must force interception"
+        );
+
+        let inner_allowed = compiled.authorize(
+            &EgressRequest::new(EgressProtocol::Https, "api.stripe.com", 443)
+                .with_http("POST", "/v1/charges"),
+        );
+        assert!(inner_allowed.is_allowed(), "{inner_allowed:?}");
+
+        let inner_denied = compiled.authorize(
+            &EgressRequest::new(EgressProtocol::Https, "api.stripe.com", 443)
+                .with_http("GET", "/other"),
+        );
+        assert!(
+            !inner_denied.is_allowed(),
+            "deferred predicates must still bind the decrypted inner request"
+        );
+    }
+
+    /// A rule with no L7 predicates, credential, or DLP needs no interception:
+    /// the CONNECT gate is the complete check and the tunnel may splice.
+    #[test]
+    fn connect_gate_without_l7_predicates_splices() {
+        let policy = EgressPolicy::new([EgressRule::new(
+            "plain",
+            EgressProtocol::Https,
+            "api.example.com",
+            443,
+        )]);
+        let compiled = policy.compile().expect("policy should compile");
+        let connect = EgressRequest::new(EgressProtocol::Https, "api.example.com", 443);
+
+        assert!(compiled.authorize_connect(&connect).is_allowed());
+        assert!(
+            !compiled.connect_requires_interception(&connect),
+            "a predicate-free rule must not force interception"
+        );
+    }
+
     #[test]
     fn sandbox_egress_policy_allows_matching_http_method_and_path() {
         let policy = EgressPolicy::new([EgressRule::new(
