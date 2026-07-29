@@ -1009,17 +1009,19 @@ fn machine_abandon_rejects_mixed_provider_batch_without_mutation() {
             &reserved.published_leases[..1],
         )
         .expect("first machine provider attempt should become durable");
+    // Same-process fixture authority: retain one handle for the injected
+    // foreign claim and the before/after durable-state comparison.
+    let authority = nimbus_network::LocalPortLeaseAuthority::open(temp_dir.path())
+        .expect("fixture authority should open");
     claims.extend(
         crate::backends::oci::port_lease::claim_bind_attempts(
-            temp_dir.path(),
+            &authority,
             &reserved.published_leases[1..],
             crate::backends::oci::port_lease::OciPortProvider::Netavark,
             Some(&reserved.reservation_claim),
         )
         .expect("second exact claim should model a foreign provider attempt"),
     );
-    let authority = nimbus_network::LocalPortLeaseAuthority::open(temp_dir.path())
-        .expect("authority should reopen");
     let before = authority.list().expect("claimed batch should inspect");
 
     let error = machine

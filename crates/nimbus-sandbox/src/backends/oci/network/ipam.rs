@@ -5,9 +5,11 @@ use std::net::Ipv4Addr;
 use std::path::Path;
 
 use nimbus_core::TenantId;
+#[cfg(test)]
+use nimbus_network::LocalNetworkStateStore;
 use nimbus_network::{
-    LocalNetworkStateStore, NetworkAttachmentId, NetworkProviderHandle, NetworkProviderId,
-    NetworkReservationClaim, NetworkSegmentId, NetworkStatePartition, NetworkStateTransactionError,
+    NetworkAttachmentId, NetworkProviderHandle, NetworkProviderId, NetworkReservationClaim,
+    NetworkSegmentId,
 };
 use ulid::Ulid;
 
@@ -17,6 +19,10 @@ use crate::instance::{SandboxId, SandboxStatus};
 use super::default_network_attachment_id;
 use super::dto::{IpamAllocation, IpamState, NetavarkProviderOperation};
 use super::layout::{OciNetworkConfig, OciNetworkLayout};
+
+mod authority;
+
+pub(crate) use authority::OciIpamAuthority;
 
 pub(super) fn parse_ipv4_subnet_and_gateway(subnet_cidr: &str) -> Result<(String, String)> {
     let subnet = parse_ipv4_bridge_subnet(subnet_cidr)?;
@@ -104,11 +110,13 @@ fn parse_ipv4_bridge_subnet(subnet_cidr: &str) -> Result<Ipv4BridgeSubnet> {
 
 #[cfg(test)]
 pub(crate) fn allocate_container_ips(
+    authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     config: &OciNetworkConfig,
     sandbox_id: &SandboxId,
 ) -> Result<Vec<Ipv4Addr>> {
     allocate_container_ips_on_first_available(
+        authority,
         layout,
         std::slice::from_ref(config),
         sandbox_id,
@@ -190,6 +198,7 @@ pub(super) enum NetavarkTeardownPlan {
 /// address. Existing idempotent reservations are mapped back to their owning
 /// block and fail closed if that block is no longer in the supplied set.
 pub(super) fn allocate_container_ips_on_first_available(
+    authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     configs: &[OciNetworkConfig],
     sandbox_id: &SandboxId,
@@ -205,7 +214,7 @@ pub(super) fn allocate_container_ips_on_first_available(
     }
 
     let attachment_id = default_network_attachment_id(sandbox_id);
-    with_ipam_state(layout, |state| {
+    with_ipam_state(authority, layout, |state| {
         if let Some(assigned) = state.allocations.get(attachment_id.as_str()) {
             if &assigned.reservation_claim != reservation_claim {
                 return Err(SandboxError::OperationFailed {
@@ -296,11 +305,12 @@ pub(super) fn allocate_container_ips_on_first_available(
 
 #[cfg(test)]
 pub(super) fn load_container_ips(
+    authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     sandbox_id: &SandboxId,
 ) -> Result<Vec<Ipv4Addr>> {
     let attachment_id = default_network_attachment_id(sandbox_id);
-    read_ipam_state(layout)?
+    read_ipam_state(authority, layout)?
         .allocations
         .get(attachment_id.as_str())
         .ok_or_else(|| SandboxError::OperationFailed {
@@ -316,28 +326,30 @@ pub(super) fn load_container_ips(
 }
 
 pub(super) fn load_container_ips_for_segment(
+    authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     config: &OciNetworkConfig,
     sandbox_id: &SandboxId,
 ) -> Result<Vec<Ipv4Addr>> {
-    load_container_ips_for_segment_if_present(layout, config, sandbox_id)?.ok_or_else(|| {
-        SandboxError::OperationFailed {
+    load_container_ips_for_segment_if_present(authority, layout, config, sandbox_id)?.ok_or_else(
+        || SandboxError::OperationFailed {
             message: format!(
                 "failed to find allocated container IPs for attachment {}",
                 default_network_attachment_id(sandbox_id).as_str()
             ),
-        }
-    })
+        },
+    )
 }
 
 pub(super) fn begin_netavark_setup(
+    authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     config: &OciNetworkConfig,
     sandbox_id: &SandboxId,
 ) -> Result<(Vec<Ipv4Addr>, NetavarkSetupClaim)> {
     let attachment_id = default_network_attachment_id(sandbox_id);
     let operation_attempt = new_netavark_operation_attempt("setup", &attachment_id)?;
-    with_ipam_state(layout, |state| {
+    with_ipam_state(authority, layout, |state| {
         let allocation = state
             .allocations
             .get_mut(attachment_id.as_str())
@@ -370,12 +382,13 @@ pub(super) fn begin_netavark_setup(
 
 #[cfg(test)]
 pub(super) fn inspect_netavark_provider_operation(
+    authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     config: &OciNetworkConfig,
     sandbox_id: &SandboxId,
 ) -> Result<NetavarkProviderOperation> {
     let attachment_id = default_network_attachment_id(sandbox_id);
-    let state = read_ipam_state(layout)?;
+    let state = read_ipam_state(authority, layout)?;
     let allocation = state
         .allocations
         .get(attachment_id.as_str())
@@ -390,10 +403,11 @@ pub(super) fn inspect_netavark_provider_operation(
 }
 
 pub(super) fn complete_netavark_setup(
+    authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     claim: &NetavarkSetupClaim,
 ) -> Result<()> {
-    with_ipam_state(layout, |state| {
+    with_ipam_state(authority, layout, |state| {
         let allocation = exact_live_allocation_for_setup_claim(state, claim)?;
         match &allocation.provider_operation {
             NetavarkProviderOperation::Provisioning { operation_attempt }
@@ -419,6 +433,7 @@ pub(super) fn complete_netavark_setup(
 }
 
 pub(super) fn begin_netavark_teardown(
+    authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     config: &OciNetworkConfig,
     sandbox_id: &SandboxId,
@@ -428,7 +443,7 @@ pub(super) fn begin_netavark_teardown(
     if let Some(claim) = setup_claim {
         validate_setup_claim_identity(claim, &attachment_id, &config.reservation_claim)?;
     }
-    with_ipam_state(layout, |state| {
+    with_ipam_state(authority, layout, |state| {
         let Some(allocation) = state.allocations.get_mut(attachment_id.as_str()) else {
             let released = state
                 .released_allocations
@@ -548,10 +563,11 @@ pub(super) fn begin_netavark_teardown(
 }
 
 pub(super) fn confirm_netavark_provider_detached(
+    authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     claim: &NetavarkTeardownClaim,
 ) -> Result<()> {
-    with_ipam_state(layout, |state| {
+    with_ipam_state(authority, layout, |state| {
         let allocation = exact_live_allocation_for_teardown_claim(state, claim)?;
         match &allocation.provider_operation {
             NetavarkProviderOperation::Deleting {
@@ -585,10 +601,11 @@ pub(super) fn confirm_netavark_provider_detached(
 }
 
 pub(super) fn complete_netavark_teardown(
+    authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     claim: &NetavarkTeardownClaim,
 ) -> Result<()> {
-    with_ipam_state(layout, |state| {
+    with_ipam_state(authority, layout, |state| {
         let allocation = exact_live_allocation_for_teardown_claim(state, claim)?;
         match &allocation.provider_operation {
             NetavarkProviderOperation::DetachedProjectionPending {
@@ -614,12 +631,13 @@ pub(super) fn complete_netavark_teardown(
 /// generation. Returns the exact live addresses only while provider effects
 /// may still exist, so callers cannot split authentication from observation.
 pub(super) fn authenticate_container_network_generation_for_cleanup(
+    authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     config: &OciNetworkConfig,
     sandbox_id: &SandboxId,
 ) -> Result<Option<Vec<Ipv4Addr>>> {
     let attachment_id = default_network_attachment_id(sandbox_id);
-    let state = read_ipam_state(layout)?;
+    let state = read_ipam_state(authority, layout)?;
     if let Some(assigned) = state.allocations.get(attachment_id.as_str()) {
         return validate_ipam_generation(config, &attachment_id, assigned).map(Some);
     }
@@ -649,12 +667,13 @@ pub(super) enum ContainerIpamAuthorityState {
 
 /// Inspect one exact IPAM generation without creating, deleting, or retiring it.
 pub(super) fn inspect_container_ipam_authority(
+    authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     config: &OciNetworkConfig,
     sandbox_id: &SandboxId,
 ) -> Result<ContainerIpamAuthorityState> {
     let attachment_id = default_network_attachment_id(sandbox_id);
-    let state = read_ipam_state(layout)?;
+    let state = read_ipam_state(authority, layout)?;
     if let Some(assigned) = state.allocations.get(attachment_id.as_str()) {
         validate_ipam_generation(config, &attachment_id, assigned)?;
         return Ok(ContainerIpamAuthorityState::Live);
@@ -667,12 +686,13 @@ pub(super) fn inspect_container_ipam_authority(
 }
 
 fn load_container_ips_for_segment_if_present(
+    authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     config: &OciNetworkConfig,
     sandbox_id: &SandboxId,
 ) -> Result<Option<Vec<Ipv4Addr>>> {
     let attachment_id = default_network_attachment_id(sandbox_id);
-    let state = read_ipam_state(layout)?;
+    let state = read_ipam_state(authority, layout)?;
     state
         .allocations
         .get(attachment_id.as_str())
@@ -858,12 +878,13 @@ fn netavark_claim_mismatch(
 /// Pre-effect compensation must use [`deallocate_container_ips_for_claim`]
 /// instead; both operations require the exact launch-coordinator fence.
 pub(crate) fn deallocate_container_ips_after_confirmed_detach(
+    authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     sandbox_id: &SandboxId,
     reservation_claim: &NetworkReservationClaim,
 ) -> Result<()> {
     let attachment_id = default_network_attachment_id(sandbox_id);
-    with_ipam_state(layout, |state| {
+    with_ipam_state(authority, layout, |state| {
         if let Some(allocation) = state.allocations.get(attachment_id.as_str()) {
             if &allocation.reservation_claim != reservation_claim {
                 return Err(SandboxError::OperationFailed {
@@ -892,12 +913,13 @@ pub(crate) fn deallocate_container_ips_after_confirmed_detach(
 }
 
 pub(super) fn deallocate_container_ips_for_claim(
+    authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     sandbox_id: &SandboxId,
     reservation_claim: &NetworkReservationClaim,
 ) -> Result<()> {
     let attachment_id = default_network_attachment_id(sandbox_id);
-    with_ipam_state(layout, |state| {
+    with_ipam_state(authority, layout, |state| {
         if let Some(allocation) = state.allocations.get(attachment_id.as_str()) {
             if &allocation.reservation_claim != reservation_claim {
                 return Err(SandboxError::OperationFailed {
@@ -943,12 +965,13 @@ pub(super) fn deallocate_container_ips_for_claim(
 /// A live allocation or a foreign terminal generation is never mutated. The
 /// boolean reports whether the exact tombstone was retired.
 pub(crate) fn retire_terminal_container_ipam_release(
+    authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     sandbox_id: &SandboxId,
     reservation_claim: &NetworkReservationClaim,
 ) -> Result<bool> {
     let attachment_id = default_network_attachment_id(sandbox_id);
-    let observed = read_ipam_state(layout)?;
+    let observed = read_ipam_state(authority, layout)?;
     if observed.allocations.contains_key(attachment_id.as_str())
         || !observed
             .released_allocations
@@ -957,7 +980,7 @@ pub(crate) fn retire_terminal_container_ipam_release(
     {
         return Ok(false);
     }
-    with_ipam_state(layout, |state| {
+    with_ipam_state(authority, layout, |state| {
         if state.allocations.contains_key(attachment_id.as_str()) {
             return Ok(false);
         }
@@ -981,8 +1004,8 @@ pub(crate) fn retire_terminal_container_ipam_release(
 /// keeps a stale manifest from mutating a replacement live or terminal
 /// generation.
 pub(crate) fn reconcile_terminal_container_ipam_releases(
+    authority: &OciIpamAuthority,
     workload_state_root: &Path,
-    network_state_root: &Path,
 ) -> Result<usize> {
     let manifest_paths = crate::artifact_paths::all_manifest_paths(workload_state_root).map_err(
         |error| SandboxError::OperationFailed {
@@ -1165,11 +1188,22 @@ pub(crate) fn reconcile_terminal_container_ipam_releases(
         })?;
         let expected_network_layout = OciNetworkLayout::with_roots(
             workload_state_root,
-            network_state_root,
+            authority.state_root(),
             &spec_tenant_id,
             &sandbox_id,
         );
-        if network_layout != expected_network_layout {
+        authority
+            .authenticate_layout(&network_layout)
+            .map_err(|error| SandboxError::OperationFailed {
+                message: format!(
+                    "manifest {} carries an untrusted network layout during terminal IPAM \
+                     reconciliation: {error}",
+                    manifest_path.display()
+                ),
+            })?;
+        let mut authenticated_network_layout = network_layout.clone();
+        authenticated_network_layout.network_state_root = authority.state_root().to_path_buf();
+        if authenticated_network_layout != expected_network_layout {
             return Err(SandboxError::OperationFailed {
                 message: format!(
                     "manifest {} carries an untrusted network layout during terminal IPAM \
@@ -1179,6 +1213,7 @@ pub(crate) fn reconcile_terminal_container_ipam_releases(
             });
         }
         retired += usize::from(retire_terminal_container_ipam_release(
+            authority,
             &network_layout,
             &sandbox_id,
             &network_config.reservation_claim,
@@ -1230,27 +1265,15 @@ fn ensure_netavark_release_ready(
 }
 
 fn with_ipam_state<T>(
+    authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     mutator: impl FnOnce(&mut IpamState) -> Result<T>,
 ) -> Result<T> {
-    let store =
-        LocalNetworkStateStore::open(&layout.network_state_root).map_err(ipam_store_error)?;
-    match store.transaction(
-        &NetworkStatePartition::TenantIpam(layout.tenant_id.clone()),
-        mutator,
-    ) {
-        Ok(result) => Ok(result),
-        Err(NetworkStateTransactionError::Operation(error)) => Err(error),
-        Err(NetworkStateTransactionError::Store(error)) => Err(ipam_store_error(error)),
-    }
+    authority.transaction(layout, mutator)
 }
 
-fn read_ipam_state(layout: &OciNetworkLayout) -> Result<IpamState> {
-    LocalNetworkStateStore::open(&layout.network_state_root)
-        .map_err(ipam_store_error)?
-        .read(&NetworkStatePartition::TenantIpam(layout.tenant_id.clone()))
-        .map_err(ipam_store_error)
-        .map(Option::unwrap_or_default)
+fn read_ipam_state(authority: &OciIpamAuthority, layout: &OciNetworkLayout) -> Result<IpamState> {
+    authority.read(layout)
 }
 
 fn ipam_store_error(error: impl std::fmt::Display) -> SandboxError {
@@ -1372,6 +1395,7 @@ mod tests {
     fn fixture() -> (
         tempfile::TempDir,
         OciNetworkLayout,
+        OciIpamAuthority,
         OciNetworkConfig,
         SandboxId,
     ) {
@@ -1379,18 +1403,21 @@ mod tests {
         let tenant = TenantId::new("tenant-original").expect("tenant should parse");
         let sandbox = SandboxId::new("sandbox-original");
         let layout = OciNetworkLayout::under_root(dir.path(), &tenant, &sandbox);
-        (dir, layout, OciNetworkConfig::default(), sandbox)
+        let authority = OciIpamAuthority::reconstruct_for_direct_test(&layout)
+            .expect("direct test authority should open");
+        (dir, layout, authority, OciNetworkConfig::default(), sandbox)
     }
 
     #[test]
     fn torn_ipam_state_fails_closed_with_the_authority_path() {
-        let (_dir, layout, config, sandbox) = fixture();
-        allocate_container_ips(&layout, &config, &sandbox).expect("original IP should allocate");
+        let (_dir, layout, authority, config, sandbox) = fixture();
+        allocate_container_ips(&authority, &layout, &config, &sandbox)
+            .expect("original IP should allocate");
         let authority_path = LocalNetworkStateStore::authority_path_for(&layout.network_state_root);
         fs::write(&authority_path, b"{").expect("torn state should be installed");
 
-        let error =
-            load_container_ips(&layout, &sandbox).expect_err("torn IPAM JSON must fail closed");
+        let error = load_container_ips(&authority, &layout, &sandbox)
+            .expect_err("torn IPAM JSON must fail closed");
         let rendered = error.to_string();
         assert!(
             rendered.contains("network authority state") && rendered.contains("corrupt"),
@@ -1404,8 +1431,8 @@ mod tests {
 
     #[test]
     fn semantically_valid_ipam_state_corruption_must_not_reissue_a_live_ip() {
-        let (_dir, layout, config, original_sandbox) = fixture();
-        let original = allocate_container_ips(&layout, &config, &original_sandbox)
+        let (_dir, layout, authority, config, original_sandbox) = fixture();
+        let original = allocate_container_ips(&authority, &layout, &config, &original_sandbox)
             .expect("original IP should allocate");
         let authority_path = LocalNetworkStateStore::authority_path_for(&layout.network_state_root);
         let mut envelope: serde_json::Value =
@@ -1421,8 +1448,12 @@ mod tests {
         )
         .expect("semantically corrupt IPAM state should be installed without checksum update");
 
-        let replacement =
-            allocate_container_ips(&layout, &config, &SandboxId::new("sandbox-replacement"));
+        let replacement = allocate_container_ips(
+            &authority,
+            &layout,
+            &config,
+            &SandboxId::new("sandbox-replacement"),
+        );
         match replacement.as_ref() {
             Ok(ips) => assert_eq!(
                 ips, &original,
@@ -1446,24 +1477,26 @@ mod tests {
 
     #[test]
     fn stale_claim_cannot_load_or_delete_reallocated_same_attachment_ipam() {
-        let (_dir, layout, mut config, sandbox) = fixture();
+        let (_dir, layout, authority, mut config, sandbox) = fixture();
         config.network_subnet = "10.89.0.0/30".to_owned();
         let first_claim = test_reservation_claim("first-generation");
         let second_claim = test_reservation_claim("second-generation");
         config.reservation_claim = first_claim.clone();
 
         let first = allocate_container_ips_on_first_available(
+            &authority,
             &layout,
             std::slice::from_ref(&config),
             &sandbox,
             &first_claim,
         )
         .expect("first generation should reserve IPAM");
-        deallocate_container_ips_for_claim(&layout, &sandbox, &first_claim)
+        deallocate_container_ips_for_claim(&authority, &layout, &sandbox, &first_claim)
             .expect("first generation should compare-delete its own IPAM");
         let mut replacement_config = config.clone();
         replacement_config.reservation_claim = second_claim.clone();
         let second = allocate_container_ips_on_first_available(
+            &authority,
             &layout,
             std::slice::from_ref(&replacement_config),
             &sandbox,
@@ -1471,7 +1504,7 @@ mod tests {
         )
         .expect("second generation should reserve replacement IPAM");
 
-        let stale_load = load_container_ips_for_segment(&layout, &config, &sandbox)
+        let stale_load = load_container_ips_for_segment(&authority, &layout, &config, &sandbox)
             .expect_err("stale first-generation provider work must not load replacement IPAM");
         assert!(
             stale_load
@@ -1479,15 +1512,20 @@ mod tests {
                 .contains("different launch coordinator"),
             "the rejected provider observation must name its generation fence: {stale_load}"
         );
-        let stale_error = deallocate_container_ips_for_claim(&layout, &sandbox, &first_claim)
-            .expect_err("stale first-generation cleanup must not delete replacement IPAM");
+        let stale_error =
+            deallocate_container_ips_for_claim(&authority, &layout, &sandbox, &first_claim)
+                .expect_err("stale first-generation cleanup must not delete replacement IPAM");
         assert!(
             stale_error.to_string().contains("stale launch coordinator"),
             "the rejected ABA cleanup must name its generation fence: {stale_error}"
         );
-        let stale_confirmed_detach =
-            deallocate_container_ips_after_confirmed_detach(&layout, &sandbox, &first_claim)
-                .expect_err("stale confirmed-detach cleanup must not delete replacement IPAM");
+        let stale_confirmed_detach = deallocate_container_ips_after_confirmed_detach(
+            &authority,
+            &layout,
+            &sandbox,
+            &first_claim,
+        )
+        .expect_err("stale confirmed-detach cleanup must not delete replacement IPAM");
         assert!(
             stale_confirmed_detach
                 .to_string()
@@ -1495,7 +1533,7 @@ mod tests {
             "confirmed-detach ABA rejection must name its generation fence: {stale_confirmed_detach}"
         );
         assert_eq!(
-            load_container_ips_for_segment(&layout, &replacement_config, &sandbox)
+            load_container_ips_for_segment(&authority, &layout, &replacement_config, &sandbox)
                 .expect("replacement IPAM should remain loadable"),
             second.ips,
             "stale cleanup must leave the replacement allocation byte-for-byte authoritative"
@@ -1505,10 +1543,16 @@ mod tests {
             "the ABA proof must reuse the same address so IP can never masquerade as generation identity"
         );
 
-        deallocate_container_ips_after_confirmed_detach(&layout, &sandbox, &second_claim)
-            .expect("replacement generation should publish exact terminal evidence");
+        deallocate_container_ips_after_confirmed_detach(
+            &authority,
+            &layout,
+            &sandbox,
+            &second_claim,
+        )
+        .expect("replacement generation should publish exact terminal evidence");
         assert!(
             authenticate_container_network_generation_for_cleanup(
+                &authority,
                 &layout,
                 &replacement_config,
                 &sandbox,
@@ -1517,21 +1561,27 @@ mod tests {
             .is_none(),
             "terminal evidence must not imply that provider effects remain live"
         );
-        let stale_terminal =
-            authenticate_container_network_generation_for_cleanup(&layout, &config, &sandbox)
-                .expect_err("an old generation must not borrow a replacement's terminal tombstone");
+        let stale_terminal = authenticate_container_network_generation_for_cleanup(
+            &authority, &layout, &config, &sandbox,
+        )
+        .expect_err("an old generation must not borrow a replacement's terminal tombstone");
         assert!(
             stale_terminal
                 .to_string()
                 .contains("different launch coordinator"),
             "terminal ABA rejection must name its generation fence: {stale_terminal}"
         );
-        deallocate_container_ips_after_confirmed_detach(&layout, &sandbox, &first_claim)
-            .expect_err("stale cleanup must not accept a replacement terminal tombstone");
+        deallocate_container_ips_after_confirmed_detach(
+            &authority,
+            &layout,
+            &sandbox,
+            &first_claim,
+        )
+        .expect_err("stale cleanup must not accept a replacement terminal tombstone");
         let authority_path = LocalNetworkStateStore::authority_path_for(&layout.network_state_root);
         let before_retirement = fs::read(&authority_path).expect("authority bytes should read");
         assert!(
-            !retire_terminal_container_ipam_release(&layout, &sandbox, &first_claim)
+            !retire_terminal_container_ipam_release(&authority, &layout, &sandbox, &first_claim)
                 .expect("stale retirement should inspect"),
             "a stale generation must not retire replacement terminal evidence"
         );
@@ -1541,36 +1591,42 @@ mod tests {
             "rejected retirement must leave replacement authority byte-for-byte unchanged"
         );
         assert!(
-            retire_terminal_container_ipam_release(&layout, &sandbox, &second_claim)
+            retire_terminal_container_ipam_release(&authority, &layout, &sandbox, &second_claim)
                 .expect("exact terminal retirement should succeed")
         );
     }
 
     #[test]
     fn newer_never_realized_claim_supersedes_older_terminal_generation() {
-        let (_dir, layout, mut config, sandbox) = fixture();
+        let (_dir, layout, authority, mut config, sandbox) = fixture();
         let first_claim = test_reservation_claim("completed-first-generation");
         let second_claim = test_reservation_claim("never-realized-second-generation");
         config.reservation_claim = first_claim.clone();
         allocate_container_ips_on_first_available(
+            &authority,
             &layout,
             std::slice::from_ref(&config),
             &sandbox,
             &first_claim,
         )
         .expect("first generation should reserve IPAM");
-        deallocate_container_ips_after_confirmed_detach(&layout, &sandbox, &first_claim)
-            .expect("first generation should publish terminal evidence");
+        deallocate_container_ips_after_confirmed_detach(
+            &authority,
+            &layout,
+            &sandbox,
+            &first_claim,
+        )
+        .expect("first generation should publish terminal evidence");
 
-        deallocate_container_ips_for_claim(&layout, &sandbox, &second_claim)
+        deallocate_container_ips_for_claim(&authority, &layout, &sandbox, &second_claim)
             .expect("authenticated newer no-effect cleanup should supersede old terminal evidence");
-        let state = read_ipam_state(&layout).expect("IPAM authority should inspect");
+        let state = read_ipam_state(&authority, &layout).expect("IPAM authority should inspect");
         assert!(state.allocations.is_empty());
         assert!(
             state.released_allocations.is_empty(),
             "the newer generation never committed IPAM and must not inherit old retry history"
         );
-        deallocate_container_ips_for_claim(&layout, &sandbox, &second_claim)
+        deallocate_container_ips_for_claim(&authority, &layout, &sandbox, &second_claim)
             .expect("no-effect cleanup replay should be idempotent");
     }
 
@@ -1581,25 +1637,29 @@ mod tests {
         for index in 0..256 {
             let sandbox = SandboxId::new(format!("sandbox-ipam-churn-{index}"));
             let layout = OciNetworkLayout::under_root(dir.path(), &tenant, &sandbox);
+            let authority = OciIpamAuthority::reconstruct_for_direct_test(&layout)
+                .expect("direct test authority should open");
             let claim = test_reservation_claim(&format!("churn-{index}"));
             let config = OciNetworkConfig {
                 reservation_claim: claim.clone(),
                 ..OciNetworkConfig::default()
             };
             allocate_container_ips_on_first_available(
+                &authority,
                 &layout,
                 std::slice::from_ref(&config),
                 &sandbox,
                 &claim,
             )
             .expect("churn generation should reserve IPAM");
-            deallocate_container_ips_after_confirmed_detach(&layout, &sandbox, &claim)
+            deallocate_container_ips_after_confirmed_detach(&authority, &layout, &sandbox, &claim)
                 .expect("provider-confirmed detach should publish retry evidence");
             assert!(
-                retire_terminal_container_ipam_release(&layout, &sandbox, &claim)
+                retire_terminal_container_ipam_release(&authority, &layout, &sandbox, &claim)
                     .expect("durably final lifecycle should retire exact evidence")
             );
-            let state = read_ipam_state(&layout).expect("IPAM authority should inspect");
+            let state =
+                read_ipam_state(&authority, &layout).expect("IPAM authority should inspect");
             assert!(state.allocations.is_empty());
             assert!(
                 state.released_allocations.is_empty(),
@@ -1619,17 +1679,20 @@ mod tests {
             &tenant,
             &sandbox,
         );
+        let authority = OciIpamAuthority::reconstruct_for_direct_test(&layout)
+            .expect("direct test authority should open");
         let mut config = OciNetworkConfig::default();
         let claim = test_reservation_claim("startup-terminal-reconciliation");
         config.reservation_claim = claim.clone();
         allocate_container_ips_on_first_available(
+            &authority,
             &layout,
             std::slice::from_ref(&config),
             &sandbox,
             &claim,
         )
         .expect("generation should reserve IPAM");
-        deallocate_container_ips_after_confirmed_detach(&layout, &sandbox, &claim)
+        deallocate_container_ips_after_confirmed_detach(&authority, &layout, &sandbox, &claim)
             .expect("provider detach should publish terminal retry evidence");
         let manifest_path = crate::artifact_paths::manifest_path(
             &layout.workload_state_root,
@@ -1661,38 +1724,33 @@ mod tests {
         );
 
         assert_eq!(
-            reconcile_terminal_container_ipam_releases(
-                &layout.workload_state_root,
-                &layout.network_state_root,
-            )
-            .expect("startup reconciliation should succeed"),
+            reconcile_terminal_container_ipam_releases(&authority, &layout.workload_state_root)
+                .expect("startup reconciliation should succeed"),
             1
         );
-        let state = read_ipam_state(&layout).expect("IPAM authority should inspect");
+        let state = read_ipam_state(&authority, &layout).expect("IPAM authority should inspect");
         assert!(state.released_allocations.is_empty());
         assert_eq!(
-            reconcile_terminal_container_ipam_releases(
-                &layout.workload_state_root,
-                &layout.network_state_root,
-            )
-            .expect("startup reconciliation replay should succeed"),
+            reconcile_terminal_container_ipam_releases(&authority, &layout.workload_state_root)
+                .expect("startup reconciliation replay should succeed"),
             0
         );
     }
 
     #[test]
     fn startup_reconciliation_retains_ipam_until_explicit_network_cleanup_finality() {
-        let (_dir, layout, mut config, sandbox) = fixture();
+        let (_dir, layout, authority, mut config, sandbox) = fixture();
         let claim = test_reservation_claim("startup-incomplete-network-cleanup");
         config.reservation_claim = claim.clone();
         allocate_container_ips_on_first_available(
+            &authority,
             &layout,
             std::slice::from_ref(&config),
             &sandbox,
             &claim,
         )
         .expect("generation should reserve IPAM");
-        deallocate_container_ips_after_confirmed_detach(&layout, &sandbox, &claim)
+        deallocate_container_ips_after_confirmed_detach(&authority, &layout, &sandbox, &claim)
             .expect("provider detach should publish terminal retry evidence");
         let manifest_path = crate::artifact_paths::manifest_path(
             &layout.workload_state_root,
@@ -1718,14 +1776,11 @@ mod tests {
         .expect("terminal projection should write");
 
         assert_eq!(
-            reconcile_terminal_container_ipam_releases(
-                &layout.workload_state_root,
-                &layout.network_state_root,
-            )
-            .expect("incomplete cleanup should be a successful no-op"),
+            reconcile_terminal_container_ipam_releases(&authority, &layout.workload_state_root)
+                .expect("incomplete cleanup should be a successful no-op"),
             0
         );
-        let state = read_ipam_state(&layout).expect("IPAM authority should inspect");
+        let state = read_ipam_state(&authority, &layout).expect("IPAM authority should inspect");
         assert_eq!(
             state.released_allocations.len(),
             1,
@@ -1740,20 +1795,31 @@ mod tests {
         let tenant = TenantId::new("tenant-cross-root").expect("tenant should parse");
         let sandbox = SandboxId::new("sandbox-cross-root");
         let foreign_layout = OciNetworkLayout::under_root(foreign.path(), &tenant, &sandbox);
+        let foreign_authority = OciIpamAuthority::reconstruct_for_direct_test(&foreign_layout)
+            .expect("foreign direct test authority should open");
+        let trusted_layout = OciNetworkLayout::under_root(trusted.path(), &tenant, &sandbox);
+        let trusted_authority = OciIpamAuthority::reconstruct_for_direct_test(&trusted_layout)
+            .expect("trusted direct test authority should open");
         let claim = test_reservation_claim("cross-root");
         let config = OciNetworkConfig {
             reservation_claim: claim.clone(),
             ..OciNetworkConfig::default()
         };
         allocate_container_ips_on_first_available(
+            &foreign_authority,
             &foreign_layout,
             std::slice::from_ref(&config),
             &sandbox,
             &claim,
         )
         .expect("foreign generation should reserve IPAM");
-        deallocate_container_ips_after_confirmed_detach(&foreign_layout, &sandbox, &claim)
-            .expect("foreign detach should publish terminal evidence");
+        deallocate_container_ips_after_confirmed_detach(
+            &foreign_authority,
+            &foreign_layout,
+            &sandbox,
+            &claim,
+        )
+        .expect("foreign detach should publish terminal evidence");
         let authority_path = LocalNetworkStateStore::authority_path_for(foreign.path());
         let before = fs::read(&authority_path).expect("foreign authority should read");
 
@@ -1781,7 +1847,7 @@ mod tests {
         )
         .expect("copied manifest should write");
 
-        let error = reconcile_terminal_container_ipam_releases(trusted.path(), trusted.path())
+        let error = reconcile_terminal_container_ipam_releases(&trusted_authority, trusted.path())
             .expect_err("embedded foreign state root must fail closed");
         assert!(
             error.to_string().contains("untrusted network layout"),
@@ -1793,7 +1859,7 @@ mod tests {
             "a copied manifest must not mutate another state root's authority"
         );
         assert_eq!(
-            read_ipam_state(&foreign_layout)
+            read_ipam_state(&foreign_authority, &foreign_layout)
                 .expect("foreign IPAM should inspect")
                 .released_allocations
                 .len(),
@@ -1804,10 +1870,11 @@ mod tests {
 
     #[test]
     fn existing_ipam_requires_the_exact_reservation_claim() {
-        let (_dir, layout, config, sandbox) = fixture();
+        let (_dir, layout, authority, config, sandbox) = fixture();
         let owner = test_reservation_claim("owner");
         let stale = test_reservation_claim("stale");
         allocate_container_ips_on_first_available(
+            &authority,
             &layout,
             std::slice::from_ref(&config),
             &sandbox,
@@ -1818,6 +1885,7 @@ mod tests {
         let before = fs::read(&authority_path).expect("authority bytes should read");
 
         let error = allocate_container_ips_on_first_available(
+            &authority,
             &layout,
             std::slice::from_ref(&config),
             &sandbox,
@@ -1837,10 +1905,11 @@ mod tests {
 
     #[test]
     fn ipam_load_is_byte_stable() {
-        let (_dir, layout, mut config, sandbox) = fixture();
+        let (_dir, layout, authority, mut config, sandbox) = fixture();
         let claim = test_reservation_claim("read-only-load");
         config.reservation_claim = claim.clone();
         let allocation = allocate_container_ips_on_first_available(
+            &authority,
             &layout,
             std::slice::from_ref(&config),
             &sandbox,
@@ -1851,11 +1920,11 @@ mod tests {
         let before = fs::read(&authority_path).expect("authority bytes should read");
 
         assert_eq!(
-            load_container_ips(&layout, &sandbox).expect("generic load should succeed"),
+            load_container_ips(&authority, &layout, &sandbox).expect("generic load should succeed"),
             allocation.ips
         );
         assert_eq!(
-            load_container_ips_for_segment(&layout, &config, &sandbox)
+            load_container_ips_for_segment(&authority, &layout, &config, &sandbox)
                 .expect("segment-fenced load should succeed"),
             allocation.ips
         );

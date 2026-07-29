@@ -40,7 +40,7 @@
       "verification": "source-occurrence",
       "category": "allocation-adapter",
       "path": "crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs",
-      "line": 242,
+      "line": 239,
       "symbol": "OciPortLeaseCoordinator::reserve_launch_ports_for_sandbox",
       "authority_kinds": [
         "suspicious-port-allocation-definition"
@@ -61,7 +61,7 @@
       "verification": "symbol-presence",
       "category": "allocation-consumer",
       "path": "crates/nimbus-sandbox/src/backends/oci/port_lifecycle.rs",
-      "line": 242,
+      "line": 239,
       "symbol": "OciPortLeaseCoordinator::reserve_launch_ports_for_sandbox",
       "declaration_name": "reserve_launch_ports_for_sandbox",
       "current_owner": "nimbus-sandbox composition consuming nimbus-network authority",
@@ -404,7 +404,7 @@
       "verification": "source-occurrence",
       "category": "provider-bind-request",
       "path": "crates/nimbus-sandbox/src/backends/oci/network/netavark.rs",
-      "line": 356,
+      "line": 374,
       "symbol": "build_netavark_request",
       "authority_kinds": [
         "netavark-port-mapping-request"
@@ -859,7 +859,7 @@
       "kind": "netavark-port-mapping-request",
       "symbol": "build_netavark_request",
       "ordinal": 1,
-      "line": 356
+      "line": 374
     },
     {
       "site_id": "machine-port-proxy-bind",
@@ -923,7 +923,7 @@
       "kind": "suspicious-port-allocation-definition",
       "symbol": "reserve_launch_ports_for_sandbox",
       "ordinal": 1,
-      "line": 242
+      "line": 239
     },
     {
       "site_id": "server-sibling-wire-listeners",
@@ -1276,7 +1276,7 @@
       "kind": "authority-shaped-macro",
       "symbol": "unexpose_machine_port_proxy_publications",
       "ordinal": 1,
-      "line": 844,
+      "line": 801,
       "reason": "Formats a failed-withdrawal diagnostic from an existing binding; the classified forwarder call owns the provider effect."
     },
     {
@@ -1348,7 +1348,7 @@
       "kind": "authority-shaped-macro",
       "symbol": "reserve_launch_ports_for_sandbox",
       "ordinal": 1,
-      "line": 353,
+      "line": 350,
       "reason": "Formats an invariant error from the already-classified PortLease reservation path; it performs no additional allocation or socket effect."
     },
     {
@@ -1356,7 +1356,7 @@
       "kind": "authority-shaped-macro",
       "symbol": "withdraw_bindings",
       "ordinal": 1,
-      "line": 1796,
+      "line": 1785,
       "reason": "Formats a withdrawal failure for an authenticated existing lease; the nimbus-network withdrawal call owns the state transition."
     },
     {

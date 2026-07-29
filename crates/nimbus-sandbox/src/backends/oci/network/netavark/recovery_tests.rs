@@ -19,6 +19,7 @@ use super::super::ipam::{
 };
 use super::super::layout::{OciNetworkConfig, OciNetworkLayout};
 use super::*;
+use crate::backends::oci::network::{OciIpamAuthority, direct_test_ipam_authority};
 use crate::backends::oci::port_lease::new_launch_reservation_claim;
 
 const CRASH_CHILD_TEST: &str =
@@ -60,71 +61,87 @@ fn stale_setup_claim_cannot_take_over_deleting_or_detached_projection_cleanup() 
         TenantId::new("tenant-netavark-stale-setup-claim").expect("tenant should validate");
     let sandbox = SandboxId::new("netavark-stale-setup-claim");
     let layout = OciNetworkLayout::under_root(root.path(), &tenant, &sandbox);
+    let ipam_authority = direct_test_ipam_authority(&layout);
     layout
         .ensure_directories()
         .expect("network layout should create");
     let config = OciNetworkConfig::default();
-    allocate_container_ips(&layout, &config, &sandbox)
+    allocate_container_ips(&ipam_authority, &layout, &config, &sandbox)
         .expect("current generation should reserve IPAM");
 
-    let (_, stale_setup_claim) =
-        begin_netavark_setup(&layout, &config, &sandbox).expect("first setup should begin");
-    complete_netavark_setup(&layout, &stale_setup_claim).expect("first setup should publish Ready");
-    let first_teardown = match begin_netavark_teardown(&layout, &config, &sandbox, None)
-        .expect("first teardown should begin")
-    {
-        NetavarkTeardownPlan::Run { claim, .. } => claim,
-        _ => panic!("Ready authority must begin provider teardown"),
-    };
-    confirm_netavark_provider_detached(&layout, &first_teardown)
+    let (_, stale_setup_claim) = begin_netavark_setup(&ipam_authority, &layout, &config, &sandbox)
+        .expect("first setup should begin");
+    complete_netavark_setup(&ipam_authority, &layout, &stale_setup_claim)
+        .expect("first setup should publish Ready");
+    let first_teardown =
+        match begin_netavark_teardown(&ipam_authority, &layout, &config, &sandbox, None)
+            .expect("first teardown should begin")
+        {
+            NetavarkTeardownPlan::Run { claim, .. } => claim,
+            _ => panic!("Ready authority must begin provider teardown"),
+        };
+    confirm_netavark_provider_detached(&ipam_authority, &layout, &first_teardown)
         .expect("first provider absence should publish");
-    complete_netavark_teardown(&layout, &first_teardown)
+    complete_netavark_teardown(&ipam_authority, &layout, &first_teardown)
         .expect("first projection removal should complete");
 
     let (_, current_setup_claim) =
-        begin_netavark_setup(&layout, &config, &sandbox).expect("second setup should begin");
-    complete_netavark_setup(&layout, &current_setup_claim)
+        begin_netavark_setup(&ipam_authority, &layout, &config, &sandbox)
+            .expect("second setup should begin");
+    complete_netavark_setup(&ipam_authority, &layout, &current_setup_claim)
         .expect("second setup should publish Ready");
-    let current_teardown = match begin_netavark_teardown(&layout, &config, &sandbox, None)
-        .expect("current teardown should begin")
-    {
-        NetavarkTeardownPlan::Run { claim, .. } => claim,
-        _ => panic!("current Ready authority must begin provider teardown"),
-    };
-
-    let deleting = inspect_netavark_provider_operation(&layout, &config, &sandbox)
-        .expect("Deleting authority should inspect");
-    let deleting_error =
-        match begin_netavark_teardown(&layout, &config, &sandbox, Some(&stale_setup_claim)) {
-            Ok(_) => panic!("stale setup capability must not take over Deleting"),
-            Err(error) => error,
+    let current_teardown =
+        match begin_netavark_teardown(&ipam_authority, &layout, &config, &sandbox, None)
+            .expect("current teardown should begin")
+        {
+            NetavarkTeardownPlan::Run { claim, .. } => claim,
+            _ => panic!("current Ready authority must begin provider teardown"),
         };
+
+    let deleting = inspect_netavark_provider_operation(&ipam_authority, &layout, &config, &sandbox)
+        .expect("Deleting authority should inspect");
+    let deleting_error = match begin_netavark_teardown(
+        &ipam_authority,
+        &layout,
+        &config,
+        &sandbox,
+        Some(&stale_setup_claim),
+    ) {
+        Ok(_) => panic!("stale setup capability must not take over Deleting"),
+        Err(error) => error,
+    };
     assert!(
         deleting_error.to_string().contains("does not own"),
         "rejection must identify the stale setup capability: {deleting_error}"
     );
     assert_eq!(
-        inspect_netavark_provider_operation(&layout, &config, &sandbox)
+        inspect_netavark_provider_operation(&ipam_authority, &layout, &config, &sandbox)
             .expect("Deleting authority should remain inspectable"),
         deleting,
         "stale setup rejection must not mutate the current delete attempt"
     );
 
-    confirm_netavark_provider_detached(&layout, &current_teardown)
+    confirm_netavark_provider_detached(&ipam_authority, &layout, &current_teardown)
         .expect("current provider absence should publish");
-    let detached_projection = inspect_netavark_provider_operation(&layout, &config, &sandbox)
-        .expect("DetachedProjectionPending authority should inspect");
-    let projection_error =
-        match begin_netavark_teardown(&layout, &config, &sandbox, Some(&stale_setup_claim)) {
-            Ok(_) => panic!("stale setup capability must not remove a current projection"),
-            Err(error) => error,
-        };
+    let detached_projection =
+        inspect_netavark_provider_operation(&ipam_authority, &layout, &config, &sandbox)
+            .expect("DetachedProjectionPending authority should inspect");
+    let projection_error = match begin_netavark_teardown(
+        &ipam_authority,
+        &layout,
+        &config,
+        &sandbox,
+        Some(&stale_setup_claim),
+    ) {
+        Ok(_) => panic!("stale setup capability must not remove a current projection"),
+        Err(error) => error,
+    };
     assert!(
         projection_error.to_string().contains("does not own"),
         "rejection must identify the stale setup capability: {projection_error}"
     );
     assert_eq!(
-        inspect_netavark_provider_operation(&layout, &config, &sandbox)
+        inspect_netavark_provider_operation(&ipam_authority, &layout, &config, &sandbox)
             .expect("pending projection authority should remain inspectable"),
         detached_projection,
         "stale setup rejection must not mutate the current projection-removal attempt"
@@ -137,29 +154,37 @@ fn reopened_deleting_reuses_the_exact_attempt_instead_of_staying_pending() {
     let tenant = TenantId::new("tenant-netavark-delete-recovery").expect("tenant should validate");
     let sandbox = SandboxId::new("netavark-delete-recovery");
     let layout = OciNetworkLayout::under_root(root.path(), &tenant, &sandbox);
+    let ipam_authority = direct_test_ipam_authority(&layout);
     layout
         .ensure_directories()
         .expect("network layout should create");
     let config = OciNetworkConfig::default();
-    allocate_container_ips(&layout, &config, &sandbox)
+    allocate_container_ips(&ipam_authority, &layout, &config, &sandbox)
         .expect("current generation should reserve IPAM");
-    setup_container_network_with_runner(&layout, &config, &sandbox, |action, _assigned_ips| {
-        assert_eq!(action, "setup");
-        Ok(Value::Null)
-    })
+    setup_container_network_with_runner(
+        &ipam_authority,
+        &layout,
+        &config,
+        &sandbox,
+        |action, _assigned_ips| {
+            assert_eq!(action, "setup");
+            Ok(Value::Null)
+        },
+    )
     .expect("fixture setup should publish Ready provider authority");
     std::fs::write(&layout.netns_path, b"current-netns")
         .expect("provider namespace marker should exist");
 
-    let first_claim = match begin_netavark_teardown(&layout, &config, &sandbox, None)
-        .expect("first owner should durably publish Deleting before its provider effect")
-    {
-        NetavarkTeardownPlan::Run { claim, .. } => claim,
-        _ => panic!("Ready provider authority must begin one teardown attempt"),
-    };
+    let first_claim =
+        match begin_netavark_teardown(&ipam_authority, &layout, &config, &sandbox, None)
+            .expect("first owner should durably publish Deleting before its provider effect")
+        {
+            NetavarkTeardownPlan::Run { claim, .. } => claim,
+            _ => panic!("Ready provider authority must begin one teardown attempt"),
+        };
 
     let calls = AtomicUsize::new(0);
-    let recovered = begin_netavark_teardown(&layout, &config, &sandbox, None)
+    let recovered = begin_netavark_teardown(&ipam_authority, &layout, &config, &sandbox, None)
         .expect("fresh owner should inspect the exact durable delete attempt");
     let recovered_claim = match &recovered {
         NetavarkTeardownPlan::Run { claim, .. } => claim,
@@ -169,11 +194,16 @@ fn reopened_deleting_reuses_the_exact_attempt_instead_of_staying_pending() {
         recovered_claim, &first_claim,
         "fresh recovery must reuse the exact attempt instead of minting a replacement"
     );
-    execute_teardown_plan(&layout, recovered, &mut |action, _assigned_ips| {
-        assert_eq!(action, "teardown");
-        calls.fetch_add(1, Ordering::SeqCst);
-        Ok(Value::Null)
-    })
+    execute_teardown_plan(
+        &ipam_authority,
+        &layout,
+        recovered,
+        &mut |action, _assigned_ips| {
+            assert_eq!(action, "teardown");
+            calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Value::Null)
+        },
+    )
     .expect("fresh owner should resume the exact durable delete attempt");
 
     assert_eq!(
@@ -189,31 +219,38 @@ fn reopened_provisioning_compensates_the_exact_attempt_without_duplicate_setup()
     let tenant = TenantId::new("tenant-netavark-setup-recovery").expect("tenant should validate");
     let sandbox = SandboxId::new("netavark-setup-recovery");
     let layout = OciNetworkLayout::under_root(root.path(), &tenant, &sandbox);
+    let ipam_authority = direct_test_ipam_authority(&layout);
     layout
         .ensure_directories()
         .expect("network layout should create");
     let config = OciNetworkConfig::default();
-    allocate_container_ips(&layout, &config, &sandbox)
+    allocate_container_ips(&ipam_authority, &layout, &config, &sandbox)
         .expect("current generation should reserve IPAM");
-    let _lost_setup_claim = begin_netavark_setup(&layout, &config, &sandbox)
+    let _lost_setup_claim = begin_netavark_setup(&ipam_authority, &layout, &config, &sandbox)
         .expect("first owner should durably publish Provisioning");
     std::fs::write(&layout.netns_path, b"provider-created-before-response-loss")
         .expect("provider effect marker should exist");
 
     let setup_calls = AtomicUsize::new(0);
     let teardown_calls = AtomicUsize::new(0);
-    teardown_container_network_with_runner(&layout, &config, &sandbox, |action, _assigned_ips| {
-        match action {
-            "setup" => {
-                setup_calls.fetch_add(1, Ordering::SeqCst);
+    teardown_container_network_with_runner(
+        &ipam_authority,
+        &layout,
+        &config,
+        &sandbox,
+        |action, _assigned_ips| {
+            match action {
+                "setup" => {
+                    setup_calls.fetch_add(1, Ordering::SeqCst);
+                }
+                "teardown" => {
+                    teardown_calls.fetch_add(1, Ordering::SeqCst);
+                }
+                other => panic!("unexpected Netavark action {other}"),
             }
-            "teardown" => {
-                teardown_calls.fetch_add(1, Ordering::SeqCst);
-            }
-            other => panic!("unexpected Netavark action {other}"),
-        }
-        Ok(Value::Null)
-    })
+            Ok(Value::Null)
+        },
+    )
     .expect("fresh owner should compensate the exact pending setup generation");
 
     assert_eq!(
@@ -265,10 +302,21 @@ fn netavark_response_loss_crash_child() {
     let root = child_root();
 
     let (setup_layout, setup_config, setup_sandbox) = initialize_case(&root, SETUP_CASE, SETUP_ID);
-    allocate_container_ips(&setup_layout, &setup_config, &setup_sandbox)
-        .expect("setup case should reserve exact IPAM");
-    begin_netavark_setup(&setup_layout, &setup_config, &setup_sandbox)
-        .expect("setup attempt should become durable before provider effect");
+    let ipam_authority = direct_test_ipam_authority(&setup_layout);
+    allocate_container_ips(
+        &ipam_authority,
+        &setup_layout,
+        &setup_config,
+        &setup_sandbox,
+    )
+    .expect("setup case should reserve exact IPAM");
+    begin_netavark_setup(
+        &ipam_authority,
+        &setup_layout,
+        &setup_config,
+        &setup_sandbox,
+    )
+    .expect("setup attempt should become durable before provider effect");
     std::fs::write(&setup_layout.netns_path, b"setup-effect-created")
         .expect("setup provider namespace should exist");
     write_provider_evidence(
@@ -276,6 +324,7 @@ fn netavark_response_loss_crash_child() {
         SETUP_CASE,
         &TestProviderEvidence {
             operation: inspect_netavark_provider_operation(
+                &ipam_authority,
                 &setup_layout,
                 &setup_config,
                 &setup_sandbox,
@@ -287,9 +336,15 @@ fn netavark_response_loss_crash_child() {
 
     let (delete_layout, delete_config, delete_sandbox) =
         initialize_case(&root, DELETE_CASE, DELETE_ID);
-    allocate_container_ips(&delete_layout, &delete_config, &delete_sandbox)
-        .expect("delete case should reserve exact IPAM");
+    allocate_container_ips(
+        &ipam_authority,
+        &delete_layout,
+        &delete_config,
+        &delete_sandbox,
+    )
+    .expect("delete case should reserve exact IPAM");
     setup_container_network_with_runner(
+        &ipam_authority,
         &delete_layout,
         &delete_config,
         &delete_sandbox,
@@ -301,14 +356,21 @@ fn netavark_response_loss_crash_child() {
     .expect("delete case should publish Ready provider authority");
     std::fs::write(&delete_layout.netns_path, b"delete-effect-started")
         .expect("delete provider namespace should exist");
-    begin_netavark_teardown(&delete_layout, &delete_config, &delete_sandbox, None)
-        .expect("delete attempt should become durable before provider effect");
+    begin_netavark_teardown(
+        &ipam_authority,
+        &delete_layout,
+        &delete_config,
+        &delete_sandbox,
+        None,
+    )
+    .expect("delete attempt should become durable before provider effect");
     remove_provider_marker(&delete_layout.netns_path);
     write_provider_evidence(
         &root,
         DELETE_CASE,
         &TestProviderEvidence {
             operation: inspect_netavark_provider_operation(
+                &ipam_authority,
                 &delete_layout,
                 &delete_config,
                 &delete_sandbox,
@@ -328,9 +390,23 @@ fn netavark_response_loss_crash_child() {
 #[ignore = "spawned only by the NNC3.8 Netavark crash-matrix parent"]
 fn netavark_response_loss_recovery_child() {
     let root = child_root();
+    let (setup_layout, _, _) = load_case(&root, SETUP_CASE, SETUP_ID);
+    let ipam_authority = direct_test_ipam_authority(&setup_layout);
 
-    recover_case(&root, SETUP_CASE, SETUP_ID, TestProviderEffect::Present);
-    recover_case(&root, DELETE_CASE, DELETE_ID, TestProviderEffect::Absent);
+    recover_case(
+        &ipam_authority,
+        &root,
+        SETUP_CASE,
+        SETUP_ID,
+        TestProviderEffect::Present,
+    );
+    recover_case(
+        &ipam_authority,
+        &root,
+        DELETE_CASE,
+        DELETE_ID,
+        TestProviderEffect::Absent,
+    );
 
     println!("{RECOVERY_OBSERVATION}");
 }
@@ -339,14 +415,20 @@ fn netavark_response_loss_recovery_child() {
 #[ignore = "spawned only by the NNC3.8 Netavark crash-matrix parent"]
 fn netavark_response_loss_replay_child() {
     let root = child_root();
+    let (setup_layout, _, _) = load_case(&root, SETUP_CASE, SETUP_ID);
+    let ipam_authority = direct_test_ipam_authority(&setup_layout);
     let authority_path = LocalNetworkStateStore::authority_path_for(&root);
     let before = std::fs::read(&authority_path).expect("terminal network authority should read");
 
     for (case, id) in [(SETUP_CASE, SETUP_ID), (DELETE_CASE, DELETE_ID)] {
         let (layout, config, sandbox) = load_case(&root, case, id);
-        teardown_container_network_with_runner(&layout, &config, &sandbox, |_, _| {
-            panic!("terminal replay must not invoke Netavark")
-        })
+        teardown_container_network_with_runner(
+            &ipam_authority,
+            &layout,
+            &config,
+            &sandbox,
+            |_, _| panic!("terminal replay must not invoke Netavark"),
+        )
         .expect("terminal response-loss replay should remain idempotent");
     }
     assert_eq!(
@@ -359,19 +441,25 @@ fn netavark_response_loss_replay_child() {
         let (layout, mut replacement, sandbox) = load_case(&root, case, id);
         replacement.reservation_claim =
             new_launch_reservation_claim().expect("replacement claim should mint");
-        allocate_container_ips(&layout, &replacement, &sandbox)
+        allocate_container_ips(&ipam_authority, &layout, &replacement, &sandbox)
             .expect("replacement may reserve only after exact terminal detach and IPAM release");
     }
 
     println!("{REPLAY_OBSERVATION}");
 }
 
-fn recover_case(root: &Path, case: &str, id: &str, expected_effect: TestProviderEffect) {
+fn recover_case(
+    ipam_authority: &OciIpamAuthority,
+    root: &Path,
+    case: &str,
+    id: &str,
+    expected_effect: TestProviderEffect,
+) {
     let (layout, config, sandbox) = load_case(root, case, id);
     let evidence = read_provider_evidence(root, case);
     assert_eq!(evidence.effect, expected_effect);
     assert_eq!(
-        inspect_netavark_provider_operation(&layout, &config, &sandbox)
+        inspect_netavark_provider_operation(ipam_authority, &layout, &config, &sandbox)
             .expect("fresh process should inspect exact provider generation"),
         evidence.operation,
         "provider evidence must authenticate the durable operation generation"
@@ -383,7 +471,7 @@ fn recover_case(root: &Path, case: &str, id: &str, expected_effect: TestProvider
         "persisted provider evidence must agree with the exact namespace effect"
     );
 
-    let plan = begin_netavark_teardown(&layout, &config, &sandbox, None)
+    let plan = begin_netavark_teardown(ipam_authority, &layout, &config, &sandbox, None)
         .expect("fresh process should derive exact teardown reconciliation");
     let claim = match &plan {
         NetavarkTeardownPlan::Run { claim, .. } => claim,
@@ -411,7 +499,7 @@ fn recover_case(root: &Path, case: &str, id: &str, expected_effect: TestProvider
         other => panic!("unexpected pending operation evidence {other:?}"),
     }
     let teardown_calls = AtomicUsize::new(0);
-    execute_teardown_plan(&layout, plan, &mut |action, _| {
+    execute_teardown_plan(ipam_authority, &layout, plan, &mut |action, _| {
         assert_eq!(action, "teardown");
         assert_eq!(
             expected_effect,
@@ -437,10 +525,15 @@ fn recover_case(root: &Path, case: &str, id: &str, expected_effect: TestProvider
     let mut replacement = config.clone();
     replacement.reservation_claim =
         new_launch_reservation_claim().expect("replacement claim should mint");
-    allocate_container_ips(&layout, &replacement, &sandbox)
+    allocate_container_ips(ipam_authority, &layout, &replacement, &sandbox)
         .expect_err("replacement must remain fenced before exact IPAM release");
-    deallocate_container_ips_after_confirmed_detach(&layout, &sandbox, &config.reservation_claim)
-        .expect("terminal provider absence should release exact IPAM");
+    deallocate_container_ips_after_confirmed_detach(
+        ipam_authority,
+        &layout,
+        &sandbox,
+        &config.reservation_claim,
+    )
+    .expect("terminal provider absence should release exact IPAM");
 }
 
 fn initialize_case(

@@ -100,7 +100,7 @@ impl OciPortLeaseCoordinator {
             .zip(batch.lifetimes())
             .map(|((binding, request), lifetime)| {
                 let record = crate::backends::oci::port_lease::require_releasable_provider_binding(
-                    &self.state_root,
+                    self.authority()?,
                     request,
                     binding.host_socket_addr(),
                     OciPortProvider::Netavark,

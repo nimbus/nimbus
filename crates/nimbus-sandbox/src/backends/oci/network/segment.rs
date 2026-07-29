@@ -19,7 +19,8 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::sync::Arc;
 
 use nimbus_core::TenantId;
 use nimbus_core::net::Cidr;
@@ -291,43 +292,102 @@ pub(crate) struct SingleNodeSegmentAllocator {
     tenant_prefix: u8,
 }
 
-/// Deferred single-node adapter used by backend composition roots.
+/// Handle-first single-node adapter used by backend composition roots.
 ///
-/// Backends retain one injected trait object, while each operation opens the
-/// shared durable authority and propagates any fail-closed store error. This
-/// preserves the existing constructor contract without leaking the concrete
-/// allocator or silently accepting an unusable state root.
+/// The adapter freezes typed topology around one injected allocator backed by
+/// the manager-derived state-store handle. Operations delegate to that retained
+/// allocator; they never reopen durable authority from a path.
 pub(crate) struct ConfiguredSegmentAllocator {
-    state_root: PathBuf,
-    supernet: String,
-    tenant_prefix: u8,
+    inner: std::result::Result<SingleNodeSegmentAllocator, Arc<str>>,
 }
 
 impl ConfiguredSegmentAllocator {
-    pub(crate) fn new(state_root: PathBuf, supernet: String, tenant_prefix: u8) -> Self {
-        Self {
-            state_root,
-            supernet,
-            tenant_prefix,
-        }
+    /// Compose the in-process adapter from the manager-derived store handle and
+    /// already-validated topology.
+    pub(crate) fn from_store(
+        store: LocalNetworkStateStore,
+        supernet: Cidr,
+        tenant_prefix: u8,
+    ) -> Result<Self> {
+        Ok(Self {
+            inner: Ok(SingleNodeSegmentAllocator::from_store(
+                store,
+                Some(InstalledSuperNet {
+                    cidr: supernet,
+                    epoch: NetworkLeaseEpoch::new(0),
+                }),
+                tenant_prefix,
+            )?),
+        })
     }
 
-    fn inner(&self) -> Result<SingleNodeSegmentAllocator> {
-        SingleNodeSegmentAllocator::for_node_supernet(
-            &self.state_root,
-            &self.supernet,
-            self.tenant_prefix,
+    /// Explicit path-based reconstruction for direct/test adapters that do not
+    /// participate in the injected process composition.
+    pub(crate) fn reconstruct_from_state_root(
+        state_root: impl AsRef<Path>,
+        supernet: &str,
+        tenant_prefix: u8,
+    ) -> Result<Self> {
+        let supernet = Cidr::parse(supernet).map_err(|error| SandboxError::InvalidSpec {
+            message: format!("invalid node network super-net {supernet:?}: {error}"),
+        })?;
+        let store =
+            LocalNetworkStateStore::open(state_root.as_ref()).map_err(network_store_error)?;
+        Self::from_store(store, supernet, tenant_prefix)
+    }
+
+    /// Cache one direct-adapter reconstruction outcome without reopening it
+    /// during later lifecycle operations.
+    pub(crate) fn reconstruct_direct(
+        state_root: impl AsRef<Path>,
+        supernet: &str,
+        tenant_prefix: u8,
+    ) -> Self {
+        Self::reconstruct_at_boundary("direct adapter", state_root, supernet, tenant_prefix)
+    }
+
+    /// Cache one reconstruction outcome for the separate container runner
+    /// process without treating it as an injected in-process composition.
+    pub(crate) fn reconstruct_for_runner(
+        state_root: impl AsRef<Path>,
+        supernet: &str,
+        tenant_prefix: u8,
+    ) -> Self {
+        Self::reconstruct_at_boundary("container runner", state_root, supernet, tenant_prefix)
+    }
+
+    fn reconstruct_at_boundary(
+        boundary: &'static str,
+        state_root: impl AsRef<Path>,
+        supernet: &str,
+        tenant_prefix: u8,
+    ) -> Self {
+        Self::reconstruct_from_state_root(state_root, supernet, tenant_prefix).unwrap_or_else(
+            |error| Self {
+                inner: Err(Arc::<str>::from(format!(
+                    "failed to reconstruct segment authority for {boundary}: {error}"
+                ))),
+            },
         )
+    }
+
+    fn allocator(&self) -> Result<&SingleNodeSegmentAllocator> {
+        self.inner
+            .as_ref()
+            .map_err(|reason| SandboxError::OperationFailed {
+                message: format!("configured network segment authority is unavailable: {reason}"),
+            })
     }
 }
 
 impl SingleNodeSegmentAllocator {
-    pub(crate) fn new(
-        state_root: &Path,
+    /// Build an allocator over an already-opened state-store handle.
+    pub(crate) fn from_store(
+        store: LocalNetworkStateStore,
         supernet: Option<InstalledSuperNet>,
         tenant_prefix: u8,
     ) -> Result<Self> {
-        let store = LocalNetworkStateStore::open(state_root).map_err(network_store_error)?;
+        validate_tenant_prefix(supernet.as_ref(), tenant_prefix)?;
         Ok(Self {
             store,
             supernet,
@@ -335,11 +395,29 @@ impl SingleNodeSegmentAllocator {
         })
     }
 
+    /// Reconstruct creation authority at the future cluster-lease boundary.
+    pub(crate) fn reconstruct_for_cluster_lease(
+        state_root: &Path,
+        supernet: Option<InstalledSuperNet>,
+        tenant_prefix: u8,
+    ) -> Result<Self> {
+        let store = LocalNetworkStateStore::open(state_root).map_err(network_store_error)?;
+        Self::from_store(store, supernet, tenant_prefix)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new(
+        state_root: &Path,
+        supernet: Option<InstalledSuperNet>,
+        tenant_prefix: u8,
+    ) -> Result<Self> {
+        Self::reconstruct_for_cluster_lease(state_root, supernet, tenant_prefix)
+    }
+
     /// Test-only convenience for a temporary node-0 `/16`, `/24` per tenant.
     ///
-    /// Production construction uses [`Self::for_node_supernet`] and propagates
-    /// state-root validation errors. Tests intentionally panic if their fresh
-    /// temporary local filesystem cannot satisfy that prerequisite.
+    /// Tests intentionally panic if their fresh temporary local filesystem
+    /// cannot satisfy the state-root prerequisite.
     #[cfg(test)]
     pub(crate) fn single_node_default(state_root: &Path) -> Self {
         let supernet = InstalledSuperNet {
@@ -347,12 +425,13 @@ impl SingleNodeSegmentAllocator {
                 .expect("the default node super-net constant must be a valid CIDR"),
             epoch: NetworkLeaseEpoch::new(0),
         };
-        Self::new(state_root, Some(supernet), DEFAULT_TENANT_PREFIX)
+        Self::reconstruct_for_cluster_lease(state_root, Some(supernet), DEFAULT_TENANT_PREFIX)
             .expect("temporary local state root should support the network store contract")
     }
 
     /// Build a single-node allocator carving `/24` tenant subnets from the given
     /// node super-net (the configurable knob a backend passes from its config).
+    #[cfg(test)]
     pub(crate) fn for_node_supernet(
         state_root: &Path,
         supernet: &str,
@@ -361,7 +440,7 @@ impl SingleNodeSegmentAllocator {
         let cidr = Cidr::parse(supernet).map_err(|error| SandboxError::InvalidSpec {
             message: format!("invalid node network super-net {supernet:?}: {error}"),
         })?;
-        Self::new(
+        Self::reconstruct_for_cluster_lease(
             state_root,
             Some(InstalledSuperNet {
                 cidr,
@@ -575,6 +654,23 @@ fn network_store_error(error: impl std::fmt::Display) -> SandboxError {
     SandboxError::OperationFailed {
         message: format!("network segment authority failed: {error}"),
     }
+}
+
+fn validate_tenant_prefix(supernet: Option<&InstalledSuperNet>, tenant_prefix: u8) -> Result<()> {
+    let invalid_for_supernet =
+        supernet.is_some_and(|installed| tenant_prefix < installed.cidr.prefix());
+    if tenant_prefix > 32 || invalid_for_supernet {
+        let parent = supernet
+            .map(|installed| installed.cidr.to_string())
+            .unwrap_or_else(|| "<unassigned>".to_owned());
+        return Err(SandboxError::InvalidSpec {
+            message: format!(
+                "invalid per-tenant network prefix /{tenant_prefix}: it must be within node \
+                 super-net {parent} and 0..=32"
+            ),
+        });
+    }
+    Ok(())
 }
 
 impl SingleNodeSegmentAllocator {
@@ -1183,15 +1279,15 @@ impl NetworkSegmentAllocator for ConfiguredSegmentAllocator {
     type Error = SandboxError;
 
     fn segment_for(&self, tenant: &TenantId) -> Result<Self::Segment> {
-        self.inner()?.segment_for(tenant)
+        self.allocator()?.segment_for(tenant)
     }
 
     fn segments_for(&self, tenant: &TenantId) -> Result<Vec<Self::Segment>> {
-        self.inner()?.segments_for(tenant)
+        self.allocator()?.segments_for(tenant)
     }
 
     fn inspect_segments(&self, tenant: &TenantId) -> Result<Option<Vec<Self::Segment>>> {
-        self.inner()?.inspect_segments(tenant)
+        self.allocator()?.inspect_segments(tenant)
     }
 
     fn inspect_attachment_reservation(
@@ -1200,7 +1296,7 @@ impl NetworkSegmentAllocator for ConfiguredSegmentAllocator {
         attachment_id: &NetworkAttachmentId,
         reservation_claim: &NetworkReservationClaim,
     ) -> Result<nimbus_network::NetworkAttachmentReservationState> {
-        self.inner()?
+        self.allocator()?
             .inspect_attachment_reservation(tenant, attachment_id, reservation_claim)
     }
 
@@ -1210,8 +1306,11 @@ impl NetworkSegmentAllocator for ConfiguredSegmentAllocator {
         attachment_id: &NetworkAttachmentId,
         reservation_claim: &NetworkReservationClaim,
     ) -> Result<()> {
-        self.inner()?
-            .reserve_attachment_for_coordinator(tenant, attachment_id, reservation_claim)
+        self.allocator()?.reserve_attachment_for_coordinator(
+            tenant,
+            attachment_id,
+            reservation_claim,
+        )
     }
 
     fn bind_reserved_attachment_to_segment(
@@ -1221,7 +1320,7 @@ impl NetworkSegmentAllocator for ConfiguredSegmentAllocator {
         segment_id: &NetworkSegmentId,
         reservation_claim: &NetworkReservationClaim,
     ) -> Result<Self::Segment> {
-        self.inner()?.bind_reserved_attachment_to_segment(
+        self.allocator()?.bind_reserved_attachment_to_segment(
             tenant,
             attachment_id,
             segment_id,
@@ -1235,7 +1334,7 @@ impl NetworkSegmentAllocator for ConfiguredSegmentAllocator {
         attachment_id: &NetworkAttachmentId,
         reservation_claim: &NetworkReservationClaim,
     ) -> Result<Self::Segment> {
-        self.inner()?
+        self.allocator()?
             .adopt_reserved_attachment(tenant, attachment_id, reservation_claim)
     }
 
@@ -1245,11 +1344,8 @@ impl NetworkSegmentAllocator for ConfiguredSegmentAllocator {
         attachment_id: &NetworkAttachmentId,
         reservation_claim: &NetworkReservationClaim,
     ) -> Result<NetworkSegmentReleaseOutcome<Self::Segment>> {
-        self.inner()?.release_reserved_attachment_without_effect(
-            tenant,
-            attachment_id,
-            reservation_claim,
-        )
+        self.allocator()?
+            .release_reserved_attachment_without_effect(tenant, attachment_id, reservation_claim)
     }
 
     fn finalize_reserved_attachment_without_effect(
@@ -1258,11 +1354,8 @@ impl NetworkSegmentAllocator for ConfiguredSegmentAllocator {
         attachment_id: &NetworkAttachmentId,
         reservation_claim: &NetworkReservationClaim,
     ) -> Result<NetworkSegmentReleaseOutcome<Self::Segment>> {
-        self.inner()?.finalize_reserved_attachment_without_effect(
-            tenant,
-            attachment_id,
-            reservation_claim,
-        )
+        self.allocator()?
+            .finalize_reserved_attachment_without_effect(tenant, attachment_id, reservation_claim)
     }
 
     fn acquire(
@@ -1270,7 +1363,7 @@ impl NetworkSegmentAllocator for ConfiguredSegmentAllocator {
         tenant: &TenantId,
         attachment_id: &NetworkAttachmentId,
     ) -> Result<Self::Segment> {
-        self.inner()?.acquire(tenant, attachment_id)
+        self.allocator()?.acquire(tenant, attachment_id)
     }
 
     fn quarantine(
@@ -1279,7 +1372,7 @@ impl NetworkSegmentAllocator for ConfiguredSegmentAllocator {
         attachment_id: &NetworkAttachmentId,
         expected_adoption_receipt: Option<&NetworkReservationClaim>,
     ) -> Result<NetworkSegmentQuarantineOutcome> {
-        self.inner()?
+        self.allocator()?
             .quarantine(tenant, attachment_id, expected_adoption_receipt)
     }
 
@@ -1289,7 +1382,7 @@ impl NetworkSegmentAllocator for ConfiguredSegmentAllocator {
         attachment_id: &NetworkAttachmentId,
         expected_adoption_receipt: Option<&NetworkReservationClaim>,
     ) -> Result<NetworkSegmentReleaseOutcome<Self::Segment>> {
-        self.inner()?
+        self.allocator()?
             .release(tenant, attachment_id, expected_adoption_receipt)
     }
 
@@ -1297,7 +1390,7 @@ impl NetworkSegmentAllocator for ConfiguredSegmentAllocator {
         &self,
         cleanup: &NetworkSegmentCleanup<Self::Segment>,
     ) -> Result<NetworkSegmentFinalizeOutcome> {
-        self.inner()?.finalize_release(cleanup)
+        self.allocator()?.finalize_release(cleanup)
     }
 
     fn grow_block_if_current(
@@ -1305,7 +1398,7 @@ impl NetworkSegmentAllocator for ConfiguredSegmentAllocator {
         tenant: &TenantId,
         observed_segments: &[Self::Segment],
     ) -> Result<NetworkSegmentGrowth<Self::Segment>> {
-        self.inner()?
+        self.allocator()?
             .grow_block_if_current(tenant, observed_segments)
     }
 
@@ -1313,9 +1406,13 @@ impl NetworkSegmentAllocator for ConfiguredSegmentAllocator {
         &self,
         live: &BTreeSet<(TenantId, NetworkAttachmentId)>,
     ) -> Result<Vec<Self::Segment>> {
-        self.inner()?.reconcile_orphans(live)
+        self.allocator()?.reconcile_orphans(live)
     }
 }
+
+#[cfg(test)]
+#[path = "segment/configured_handle_tests.rs"]
+mod configured_handle_tests;
 
 #[cfg(test)]
 #[path = "segment/tests.rs"]

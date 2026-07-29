@@ -9,8 +9,9 @@ use nimbus_network::NetworkReservationClaim;
 
 use super::*;
 use crate::backends::oci::network::{
-    OciMachinePortForwarderConfig, OciNetworkConfig, OciNetworkDirectEgress, OciNetworkLayout,
-    OciSegmentRealization, compensate_reserved_network_launch_after_ports, place_sandbox_on_block,
+    OciMachinePortForwarderConfig, OciNetavarkOperation, OciNetworkConfig, OciNetworkDirectEgress,
+    OciNetworkLayout, OciSegmentRealization, ReservedNetworkLaunchAuthority,
+    compensate_reserved_network_launch_after_ports, place_sandbox_on_block,
     release_reserved_network_launch_after_ports,
 };
 use crate::backends::oci::port_lease::OciPortBindLifetimeBatch;
@@ -55,6 +56,7 @@ impl ContainerSandboxBackend {
     ) -> Result<OciNetworkConfig> {
         place_sandbox_on_block(
             self.segment_allocator.as_ref(),
+            &self.ipam_authority,
             tenant,
             layout,
             sandbox_id,
@@ -74,11 +76,14 @@ impl ContainerSandboxBackend {
     ) -> SandboxError {
         let manager = self.port_lease_coordinator();
         compensate_reserved_network_launch_after_ports(
-            self.segment_allocator.as_ref(),
-            layout,
-            tenant_id,
-            sandbox_id,
-            reservation_claim,
+            ReservedNetworkLaunchAuthority::new(
+                self.segment_allocator.as_ref(),
+                &self.ipam_authority,
+                layout,
+                tenant_id,
+                sandbox_id,
+                reservation_claim,
+            ),
             planning_error,
             manager.release_never_bound_launch_claim(reservation_claim),
         )
@@ -92,11 +97,14 @@ impl ContainerSandboxBackend {
     ) -> Result<()> {
         let manager = self.port_lease_coordinator_for_manifest(manifest)?;
         release_reserved_network_launch_after_ports(
-            self.segment_allocator.as_ref(),
-            &manifest.network_layout,
-            &manifest.spec.tenant_id,
-            &manifest.handle.id,
-            reservation_claim,
+            ReservedNetworkLaunchAuthority::new(
+                self.segment_allocator.as_ref(),
+                &self.ipam_authority,
+                &manifest.network_layout,
+                &manifest.spec.tenant_id,
+                &manifest.handle.id,
+                reservation_claim,
+            ),
             manager.release_never_bound_launch_claim(reservation_claim),
         )
     }
@@ -111,13 +119,16 @@ impl ContainerSandboxBackend {
         primary: SandboxError,
     ) -> SandboxError {
         let cleanup = teardown_container_network(
-            &manifest.network_layout,
-            network_config,
-            &manifest.handle.id,
-            manifest.spec.display_name(),
-            &hostname_for(&manifest.spec),
-            &manifest.spec.port_bindings,
-            machine_port_forwarder,
+            &self.ipam_authority,
+            &OciNetavarkOperation::new(
+                &manifest.network_layout,
+                network_config,
+                &manifest.handle.id,
+                manifest.spec.display_name(),
+                &hostname_for(&manifest.spec),
+                &manifest.spec.port_bindings,
+                machine_port_forwarder,
+            ),
         )
         .and_then(|()| remove_persistent_network_namespace(&manifest.network_layout.netns_path));
         match cleanup {
@@ -141,13 +152,16 @@ impl ContainerSandboxBackend {
         primary: SandboxError,
     ) -> SandboxError {
         let cleanup = teardown_container_network(
-            &manifest.network_layout,
-            network_config,
-            &manifest.handle.id,
-            manifest.spec.display_name(),
-            &hostname_for(&manifest.spec),
-            &manifest.spec.port_bindings,
-            None,
+            &self.ipam_authority,
+            &OciNetavarkOperation::new(
+                &manifest.network_layout,
+                network_config,
+                &manifest.handle.id,
+                manifest.spec.display_name(),
+                &hostname_for(&manifest.spec),
+                &manifest.spec.port_bindings,
+                None,
+            ),
         )
         .and_then(|()| remove_persistent_network_namespace(&manifest.network_layout.netns_path));
         if let Err(cleanup) = cleanup {

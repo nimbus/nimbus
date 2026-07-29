@@ -175,7 +175,7 @@ pub(crate) fn ensure_egress_proxy_running_with_release_authority(
             nimbus_network::PortRequestMode::ProviderAssigned,
         );
         Some(reserve_provider_assigned(
-            &registry.network_state_root,
+            registry.port_authority()?,
             request,
         )?)
     } else {

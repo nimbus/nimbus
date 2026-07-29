@@ -13,6 +13,7 @@ use super::super::ipam::{
 };
 use super::super::layout::{OciNetworkConfig, OciNetworkLayout};
 use super::*;
+use crate::backends::oci::network::direct_test_ipam_authority;
 
 const BARRIER_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -23,11 +24,12 @@ fn reserved_teardown_with_precreated_namespace_never_calls_netavark_or_rewrites_
         TenantId::new("tenant-netavark-reserved-no-effect").expect("tenant should validate");
     let sandbox = SandboxId::new("netavark-reserved-no-effect");
     let layout = OciNetworkLayout::under_root(temp_dir.path(), &tenant, &sandbox);
+    let ipam_authority = direct_test_ipam_authority(&layout);
     layout
         .ensure_directories()
         .expect("network layout should create");
     let config = OciNetworkConfig::default();
-    allocate_container_ips(&layout, &config, &sandbox)
+    allocate_container_ips(&ipam_authority, &layout, &config, &sandbox)
         .expect("current generation should reserve IPAM");
     std::fs::write(&layout.netns_path, b"nimbus-owned-namespace")
         .expect("separate namespace effect should exist");
@@ -35,7 +37,7 @@ fn reserved_teardown_with_precreated_namespace_never_calls_netavark_or_rewrites_
     let before = std::fs::read(&authority_path).expect("network authority bytes should read");
     let calls = AtomicUsize::new(0);
 
-    teardown_container_network_with_runner(&layout, &config, &sandbox, |_, _| {
+    teardown_container_network_with_runner(&ipam_authority, &layout, &config, &sandbox, |_, _| {
         calls.fetch_add(1, Ordering::SeqCst);
         Ok(Value::Null)
     })
@@ -65,11 +67,12 @@ fn reserved_teardown_rejects_status_projection_without_provider_effect() {
         TenantId::new("tenant-netavark-reserved-status-conflict").expect("tenant should validate");
     let sandbox = SandboxId::new("netavark-reserved-status-conflict");
     let layout = OciNetworkLayout::under_root(temp_dir.path(), &tenant, &sandbox);
+    let ipam_authority = direct_test_ipam_authority(&layout);
     layout
         .ensure_directories()
         .expect("network layout should create");
     let config = OciNetworkConfig::default();
-    allocate_container_ips(&layout, &config, &sandbox)
+    allocate_container_ips(&ipam_authority, &layout, &config, &sandbox)
         .expect("current generation should reserve IPAM");
     std::fs::write(&layout.status_path, b"contradictory-status")
         .expect("contradictory projection should exist");
@@ -77,10 +80,16 @@ fn reserved_teardown_rejects_status_projection_without_provider_effect() {
     let before = std::fs::read(&authority_path).expect("network authority bytes should read");
     let calls = AtomicUsize::new(0);
 
-    let error = teardown_container_network_with_runner(&layout, &config, &sandbox, |_, _| {
-        calls.fetch_add(1, Ordering::SeqCst);
-        Ok(Value::Null)
-    })
+    let error = teardown_container_network_with_runner(
+        &ipam_authority,
+        &layout,
+        &config,
+        &sandbox,
+        |_, _| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Value::Null)
+        },
+    )
     .expect_err("a status projection must contradict durable Reserved no-effect authority");
 
     assert!(
@@ -111,11 +120,12 @@ fn setup_operation_claim_blocks_release_and_replacement_during_provider_effect()
         .expect("tenant identity should validate");
     let sandbox = SandboxId::new("netavark-setup-interleaving");
     let layout = OciNetworkLayout::under_root(temp_dir.path(), &tenant, &sandbox);
+    let ipam_authority = direct_test_ipam_authority(&layout);
     layout
         .ensure_directories()
         .expect("network layout should create");
     let current = OciNetworkConfig::default();
-    allocate_container_ips(&layout, &current, &sandbox)
+    allocate_container_ips(&ipam_authority, &layout, &current, &sandbox)
         .expect("current generation should reserve IPAM");
 
     let (entered_sender, entered_receiver) = mpsc::sync_channel(0);
@@ -123,8 +133,10 @@ fn setup_operation_claim_blocks_release_and_replacement_during_provider_effect()
     let worker_layout = layout.clone();
     let worker_config = current.clone();
     let worker_sandbox = sandbox.clone();
+    let worker_ipam_authority = ipam_authority.clone();
     let worker = thread::spawn(move || {
         setup_container_network_with_runner(
+            &worker_ipam_authority,
             &worker_layout,
             &worker_config,
             &worker_sandbox,
@@ -145,6 +157,7 @@ fn setup_operation_claim_blocks_release_and_replacement_during_provider_effect()
         .expect("setup must reach the post-claim provider boundary");
 
     let release_error = deallocate_container_ips_after_confirmed_detach(
+        &ipam_authority,
         &layout,
         &sandbox,
         &current.reservation_claim,
@@ -160,8 +173,9 @@ fn setup_operation_claim_blocks_release_and_replacement_during_provider_effect()
     replacement.reservation_claim =
         crate::backends::oci::port_lease::new_launch_reservation_claim()
             .expect("replacement claim should mint");
-    let replacement_error = allocate_container_ips(&layout, &replacement, &sandbox)
-        .expect_err("replacement generation must remain fenced during setup");
+    let replacement_error =
+        allocate_container_ips(&ipam_authority, &layout, &replacement, &sandbox)
+            .expect_err("replacement generation must remain fenced during setup");
     assert!(
         replacement_error
             .to_string()
@@ -186,14 +200,17 @@ fn teardown_operation_claim_blocks_release_and_replacement_during_provider_effec
         .expect("tenant identity should validate");
     let sandbox = SandboxId::new("netavark-teardown-interleaving");
     let layout = OciNetworkLayout::under_root(temp_dir.path(), &tenant, &sandbox);
+    let ipam_authority = direct_test_ipam_authority(&layout);
     layout
         .ensure_directories()
         .expect("network layout should create");
     let current = OciNetworkConfig::default();
-    allocate_container_ips(&layout, &current, &sandbox)
+    allocate_container_ips(&ipam_authority, &layout, &current, &sandbox)
         .expect("current generation should reserve IPAM");
-    setup_container_network_with_runner(&layout, &current, &sandbox, |_, _| Ok(Value::Null))
-        .expect("fixture setup should complete");
+    setup_container_network_with_runner(&ipam_authority, &layout, &current, &sandbox, |_, _| {
+        Ok(Value::Null)
+    })
+    .expect("fixture setup should complete");
     std::fs::write(&layout.netns_path, b"current-netns")
         .expect("provider netns marker should exist");
 
@@ -202,8 +219,10 @@ fn teardown_operation_claim_blocks_release_and_replacement_during_provider_effec
     let worker_layout = layout.clone();
     let worker_config = current.clone();
     let worker_sandbox = sandbox.clone();
+    let worker_ipam_authority = ipam_authority.clone();
     let worker = thread::spawn(move || {
         teardown_container_network_with_runner(
+            &worker_ipam_authority,
             &worker_layout,
             &worker_config,
             &worker_sandbox,
@@ -224,6 +243,7 @@ fn teardown_operation_claim_blocks_release_and_replacement_during_provider_effec
         .expect("teardown must reach the post-claim provider boundary");
 
     let release_error = deallocate_container_ips_after_confirmed_detach(
+        &ipam_authority,
         &layout,
         &sandbox,
         &current.reservation_claim,
@@ -239,7 +259,7 @@ fn teardown_operation_claim_blocks_release_and_replacement_during_provider_effec
     replacement.reservation_claim =
         crate::backends::oci::port_lease::new_launch_reservation_claim()
             .expect("replacement claim should mint");
-    allocate_container_ips(&layout, &replacement, &sandbox)
+    allocate_container_ips(&ipam_authority, &layout, &replacement, &sandbox)
         .expect_err("replacement generation must remain fenced during teardown");
 
     release_sender
@@ -249,9 +269,14 @@ fn teardown_operation_claim_blocks_release_and_replacement_during_provider_effec
         .join()
         .expect("teardown worker should not panic")
         .expect("current teardown should complete");
-    deallocate_container_ips_after_confirmed_detach(&layout, &sandbox, &current.reservation_claim)
-        .expect("confirmed current detach should release IPAM");
-    allocate_container_ips(&layout, &replacement, &sandbox)
+    deallocate_container_ips_after_confirmed_detach(
+        &ipam_authority,
+        &layout,
+        &sandbox,
+        &current.reservation_claim,
+    )
+    .expect("confirmed current detach should release IPAM");
+    allocate_container_ips(&ipam_authority, &layout, &replacement, &sandbox)
         .expect("replacement may reserve only after current detach completion");
     std::fs::write(&layout.status_path, b"replacement-status")
         .expect("replacement projection should create");
@@ -267,21 +292,28 @@ fn reopened_pending_setup_fails_closed_without_rerunning_provider() {
     let tenant = TenantId::new("tenant-netavark-reopen").expect("tenant identity should validate");
     let sandbox = SandboxId::new("netavark-reopen");
     let layout = OciNetworkLayout::under_root(temp_dir.path(), &tenant, &sandbox);
+    let ipam_authority = direct_test_ipam_authority(&layout);
     layout
         .ensure_directories()
         .expect("network layout should create");
     let config = OciNetworkConfig::default();
-    allocate_container_ips(&layout, &config, &sandbox)
+    allocate_container_ips(&ipam_authority, &layout, &config, &sandbox)
         .expect("current generation should reserve IPAM");
-    let _abandoned =
-        begin_netavark_setup(&layout, &config, &sandbox).expect("setup claim should persist");
+    let _abandoned = begin_netavark_setup(&ipam_authority, &layout, &config, &sandbox)
+        .expect("setup claim should persist");
 
     let provider_ran = Arc::new(AtomicBool::new(false));
     let observed_provider_ran = Arc::clone(&provider_ran);
-    let error = setup_container_network_with_runner(&layout, &config, &sandbox, move |_, _| {
-        observed_provider_ran.store(true, Ordering::SeqCst);
-        Ok(Value::Null)
-    })
+    let error = setup_container_network_with_runner(
+        &ipam_authority,
+        &layout,
+        &config,
+        &sandbox,
+        move |_, _| {
+            observed_provider_ran.store(true, Ordering::SeqCst);
+            Ok(Value::Null)
+        },
+    )
     .expect_err("a reopened pending claim must require inspect-before-retry");
     assert!(
         error.to_string().contains("inspect-before-retry")
@@ -293,6 +325,7 @@ fn reopened_pending_setup_fails_closed_without_rerunning_provider() {
         "pending durable authority must reject before invoking the provider"
     );
     let release_error = deallocate_container_ips_after_confirmed_detach(
+        &ipam_authority,
         &layout,
         &sandbox,
         &config.reservation_claim,
@@ -313,16 +346,23 @@ fn projection_retry_does_not_rerun_confirmed_netavark_teardown() {
         TenantId::new("tenant-netavark-projection-retry").expect("tenant identity should validate");
     let sandbox = SandboxId::new("netavark-projection-retry");
     let layout = OciNetworkLayout::under_root(temp_dir.path(), &tenant, &sandbox);
+    let ipam_authority = direct_test_ipam_authority(&layout);
     layout
         .ensure_directories()
         .expect("network layout should create");
     let config = OciNetworkConfig::default();
-    allocate_container_ips(&layout, &config, &sandbox)
+    allocate_container_ips(&ipam_authority, &layout, &config, &sandbox)
         .expect("current generation should reserve IPAM");
-    setup_container_network_with_runner(&layout, &config, &sandbox, |action, _assigned_ips| {
-        assert_eq!(action, "setup");
-        Ok(Value::Null)
-    })
+    setup_container_network_with_runner(
+        &ipam_authority,
+        &layout,
+        &config,
+        &sandbox,
+        |action, _assigned_ips| {
+            assert_eq!(action, "setup");
+            Ok(Value::Null)
+        },
+    )
     .expect("fixture setup should publish Ready provider authority");
     std::fs::write(&layout.netns_path, b"current-netns")
         .expect("provider netns marker should exist");
@@ -332,13 +372,18 @@ fn projection_retry_does_not_rerun_confirmed_netavark_teardown() {
 
     let teardown_calls = Arc::new(AtomicUsize::new(0));
     let observed_calls = Arc::clone(&teardown_calls);
-    let error =
-        teardown_container_network_with_runner(&layout, &config, &sandbox, move |action, _| {
+    let error = teardown_container_network_with_runner(
+        &ipam_authority,
+        &layout,
+        &config,
+        &sandbox,
+        move |action, _| {
             assert_eq!(action, "teardown");
             observed_calls.fetch_add(1, Ordering::SeqCst);
             Ok(Value::Null)
-        })
-        .expect_err("projection removal failure must retain completion authority");
+        },
+    )
+    .expect_err("projection removal failure must retain completion authority");
     assert!(
         error
             .to_string()
@@ -351,11 +396,16 @@ fn projection_retry_does_not_rerun_confirmed_netavark_teardown() {
         1,
         "the first teardown must execute the provider exactly once"
     );
-    deallocate_container_ips_after_confirmed_detach(&layout, &sandbox, &config.reservation_claim)
-        .expect_err("projection-pending teardown must keep IPAM fenced");
+    deallocate_container_ips_after_confirmed_detach(
+        &ipam_authority,
+        &layout,
+        &sandbox,
+        &config.reservation_claim,
+    )
+    .expect_err("projection-pending teardown must keep IPAM fenced");
 
     std::fs::remove_dir(&layout.status_path).expect("projection obstacle should remove");
-    teardown_container_network_with_runner(&layout, &config, &sandbox, |_, _| {
+    teardown_container_network_with_runner(&ipam_authority, &layout, &config, &sandbox, |_, _| {
         panic!("projection-only retry must not rerun the Netavark provider")
     })
     .expect("projection-only retry should complete the durable teardown");
@@ -364,6 +414,11 @@ fn projection_retry_does_not_rerun_confirmed_netavark_teardown() {
         1,
         "projection retry must preserve the one acknowledged provider effect"
     );
-    deallocate_container_ips_after_confirmed_detach(&layout, &sandbox, &config.reservation_claim)
-        .expect("completed projection cleanup may release exact IPAM authority");
+    deallocate_container_ips_after_confirmed_detach(
+        &ipam_authority,
+        &layout,
+        &sandbox,
+        &config.reservation_claim,
+    )
+    .expect("completed projection cleanup may release exact IPAM authority");
 }

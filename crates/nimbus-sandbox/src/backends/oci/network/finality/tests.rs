@@ -3,15 +3,15 @@ use std::num::NonZeroU16;
 
 use nimbus_core::TenantId;
 use nimbus_network::{
-    NetworkAttachmentReservationState, NetworkSegmentAllocator, NetworkSegmentReleaseOutcome,
-    PortBindTarget, PortExposure, PortLeasePhase, PortRequestMode,
+    LocalPortLeaseAuthority, NetworkAttachmentReservationState, NetworkSegmentAllocator,
+    NetworkSegmentReleaseOutcome, PortBindTarget, PortExposure, PortLeasePhase, PortRequestMode,
 };
 use tempfile::TempDir;
 
 use super::*;
 use crate::backends::oci::network::{
-    OciSegmentRealization, RecordingSegmentAllocator, allocate_container_ips,
-    default_network_attachment_id,
+    OciIpamAuthority, OciSegmentRealization, RecordingSegmentAllocator, allocate_container_ips,
+    default_network_attachment_id, direct_test_ipam_authority, direct_test_port_authority,
 };
 use crate::backends::oci::port_lease::{
     OciPortLeaseIntent, inspect_exact, port_lease_request, release_reserved_batch_without_effect,
@@ -26,6 +26,8 @@ fn fixture(
     TenantId,
     SandboxId,
     OciNetworkLayout,
+    OciIpamAuthority,
+    LocalPortLeaseAuthority,
     OciNetworkConfig,
     OciSegmentRealization,
 ) {
@@ -48,33 +50,34 @@ fn fixture(
         network_id: segment.network_id().as_str().to_owned(),
         ..OciNetworkConfig::default()
     };
+    let ipam_authority = direct_test_ipam_authority(&layout);
+    let port_authority = direct_test_port_authority(temp_dir.path());
     (
-        temp_dir, allocator, tenant_id, sandbox_id, layout, config, segment,
+        temp_dir,
+        allocator,
+        tenant_id,
+        sandbox_id,
+        layout,
+        ipam_authority,
+        port_authority,
+        config,
+        segment,
     )
 }
 
 fn finality<'a>(
     allocator: &'a RecordingSegmentAllocator,
-    tenant_id: &'a TenantId,
-    sandbox_id: &'a SandboxId,
-    layout: &'a OciNetworkLayout,
-    config: Option<&'a OciNetworkConfig>,
-    port_leases: &'a [nimbus_network::PortLeaseRequest],
+    ipam_authority: &'a OciIpamAuthority,
+    port_authority: &'a LocalPortLeaseAuthority,
+    evidence: TerminalNetworkFinalityEvidence<'a>,
 ) -> TerminalNetworkAuthoritySet<'a> {
-    TerminalNetworkAuthoritySet::new(
-        allocator,
-        tenant_id,
-        sandbox_id,
-        layout,
-        config,
-        port_leases,
-        None,
-    )
+    TerminalNetworkAuthoritySet::new(allocator, ipam_authority, port_authority, evidence)
 }
 
 #[test]
 fn terminal_finality_rejects_reserved_port_authority_until_exact_release() {
-    let (temp_dir, allocator, tenant_id, sandbox_id, layout, _, _) = fixture("port");
+    let (_temp_dir, allocator, tenant_id, sandbox_id, layout, ipam_authority, port_authority, _, _) =
+        fixture("port");
     let request = port_lease_request(
         &tenant_id,
         &sandbox_id,
@@ -86,16 +89,21 @@ fn terminal_finality_rejects_reserved_port_authority_until_exact_release() {
         ),
         PortRequestMode::Exact(NonZeroU16::new(18_484).expect("port should be non-zero")),
     );
-    let (request, _, claim) = reserve(temp_dir.path(), request).expect("port lease should reserve");
+    let (request, _, claim) = reserve(&port_authority, request).expect("port lease should reserve");
     let requests = vec![request.clone()];
 
     let error = finality(
         &allocator,
-        &tenant_id,
-        &sandbox_id,
-        &layout,
-        None,
-        &requests,
+        &ipam_authority,
+        &port_authority,
+        TerminalNetworkFinalityEvidence::new(
+            &tenant_id,
+            &sandbox_id,
+            &layout,
+            None,
+            &requests,
+            None,
+        ),
     )
     .require_released()
     .expect_err("reserved port authority must reject terminal finality");
@@ -108,21 +116,26 @@ fn terminal_finality_rejects_reserved_port_authority_until_exact_release() {
         "diagnostic must identify the exact retained authority: {error}"
     );
 
-    release_reserved_batch_without_effect(temp_dir.path(), &requests, &claim)
+    release_reserved_batch_without_effect(&port_authority, &requests, &claim)
         .expect("exact never-bound release should succeed");
     assert_eq!(
-        inspect_exact(temp_dir.path(), &request)
+        inspect_exact(&port_authority, &request)
             .expect("released lease should inspect")
             .phase(),
         PortLeasePhase::Released
     );
     finality(
         &allocator,
-        &tenant_id,
-        &sandbox_id,
-        &layout,
-        None,
-        &requests,
+        &ipam_authority,
+        &port_authority,
+        TerminalNetworkFinalityEvidence::new(
+            &tenant_id,
+            &sandbox_id,
+            &layout,
+            None,
+            &requests,
+            None,
+        ),
     )
     .require_released()
     .expect("exactly released port authority should admit terminal finality");
@@ -130,14 +143,25 @@ fn terminal_finality_rejects_reserved_port_authority_until_exact_release() {
 
 #[test]
 fn terminal_finality_rejects_every_reserved_attachment_phase_until_absent() {
-    let (_temp_dir, allocator, tenant_id, sandbox_id, layout, config, segment) =
-        fixture("reserved-attachment");
+    let (
+        _temp_dir,
+        allocator,
+        tenant_id,
+        sandbox_id,
+        layout,
+        ipam_authority,
+        port_authority,
+        config,
+        segment,
+    ) = fixture("reserved-attachment");
     let attachment_id = default_network_attachment_id(&sandbox_id);
     allocator
         .reserve_attachment_for_coordinator(&tenant_id, &attachment_id, &config.reservation_claim)
         .expect("attachment should reserve");
-    allocate_container_ips(&layout, &config, &sandbox_id).expect("IPAM should allocate");
+    allocate_container_ips(&ipam_authority, &layout, &config, &sandbox_id)
+        .expect("IPAM should allocate");
     super::super::ipam::deallocate_container_ips_for_claim(
+        &ipam_authority,
         &layout,
         &sandbox_id,
         &config.reservation_claim,
@@ -146,11 +170,16 @@ fn terminal_finality_rejects_every_reserved_attachment_phase_until_absent() {
 
     let error = finality(
         &allocator,
-        &tenant_id,
-        &sandbox_id,
-        &layout,
-        Some(&config),
-        &[],
+        &ipam_authority,
+        &port_authority,
+        TerminalNetworkFinalityEvidence::new(
+            &tenant_id,
+            &sandbox_id,
+            &layout,
+            Some(&config),
+            &[],
+            None,
+        ),
     )
     .require_released()
     .expect_err("reserved attachment must reject terminal finality");
@@ -172,11 +201,16 @@ fn terminal_finality_rejects_every_reserved_attachment_phase_until_absent() {
     ));
     let error = finality(
         &allocator,
-        &tenant_id,
-        &sandbox_id,
-        &layout,
-        Some(&config),
-        &[],
+        &ipam_authority,
+        &port_authority,
+        TerminalNetworkFinalityEvidence::new(
+            &tenant_id,
+            &sandbox_id,
+            &layout,
+            Some(&config),
+            &[],
+            None,
+        ),
     )
     .require_released()
     .expect_err("reservation cleanup pending must reject terminal finality");
@@ -205,11 +239,16 @@ fn terminal_finality_rejects_every_reserved_attachment_phase_until_absent() {
     );
     finality(
         &allocator,
-        &tenant_id,
-        &sandbox_id,
-        &layout,
-        Some(&config),
-        &[],
+        &ipam_authority,
+        &port_authority,
+        TerminalNetworkFinalityEvidence::new(
+            &tenant_id,
+            &sandbox_id,
+            &layout,
+            Some(&config),
+            &[],
+            None,
+        ),
     )
     .require_released()
     .expect("absent attachment plus released IPAM should admit terminal finality");
@@ -219,8 +258,17 @@ fn terminal_finality_rejects_every_reserved_attachment_phase_until_absent() {
 
 #[test]
 fn terminal_finality_rejects_adopted_and_provider_cleanup_pending_attachments() {
-    let (_temp_dir, allocator, tenant_id, sandbox_id, layout, config, segment) =
-        fixture("adopted-attachment");
+    let (
+        _temp_dir,
+        allocator,
+        tenant_id,
+        sandbox_id,
+        layout,
+        ipam_authority,
+        port_authority,
+        config,
+        segment,
+    ) = fixture("adopted-attachment");
     let attachment_id = default_network_attachment_id(&sandbox_id);
     allocator
         .reserve_attachment_for_coordinator(&tenant_id, &attachment_id, &config.reservation_claim)
@@ -236,8 +284,10 @@ fn terminal_finality_rejects_adopted_and_provider_cleanup_pending_attachments() 
     allocator
         .adopt_reserved_attachment(&tenant_id, &attachment_id, &config.reservation_claim)
         .expect("attachment should adopt");
-    allocate_container_ips(&layout, &config, &sandbox_id).expect("IPAM should allocate");
+    allocate_container_ips(&ipam_authority, &layout, &config, &sandbox_id)
+        .expect("IPAM should allocate");
     super::super::ipam::deallocate_container_ips_for_claim(
+        &ipam_authority,
         &layout,
         &sandbox_id,
         &config.reservation_claim,
@@ -246,11 +296,16 @@ fn terminal_finality_rejects_adopted_and_provider_cleanup_pending_attachments() 
 
     let error = finality(
         &allocator,
-        &tenant_id,
-        &sandbox_id,
-        &layout,
-        Some(&config),
-        &[],
+        &ipam_authority,
+        &port_authority,
+        TerminalNetworkFinalityEvidence::new(
+            &tenant_id,
+            &sandbox_id,
+            &layout,
+            Some(&config),
+            &[],
+            None,
+        ),
     )
     .require_released()
     .expect_err("adopted attachment must reject terminal finality");
@@ -264,11 +319,16 @@ fn terminal_finality_rejects_adopted_and_provider_cleanup_pending_attachments() 
         .expect("provider cleanup should quarantine the attachment");
     let error = finality(
         &allocator,
-        &tenant_id,
-        &sandbox_id,
-        &layout,
-        Some(&config),
-        &[],
+        &ipam_authority,
+        &port_authority,
+        TerminalNetworkFinalityEvidence::new(
+            &tenant_id,
+            &sandbox_id,
+            &layout,
+            Some(&config),
+            &[],
+            None,
+        ),
     )
     .require_released()
     .expect_err("provider cleanup pending must reject terminal finality");
@@ -287,11 +347,16 @@ fn terminal_finality_rejects_adopted_and_provider_cleanup_pending_attachments() 
     }
     finality(
         &allocator,
-        &tenant_id,
-        &sandbox_id,
-        &layout,
-        Some(&config),
-        &[],
+        &ipam_authority,
+        &port_authority,
+        TerminalNetworkFinalityEvidence::new(
+            &tenant_id,
+            &sandbox_id,
+            &layout,
+            Some(&config),
+            &[],
+            None,
+        ),
     )
     .require_released()
     .expect("absent attachment plus released IPAM should admit terminal finality");
@@ -299,13 +364,23 @@ fn terminal_finality_rejects_adopted_and_provider_cleanup_pending_attachments() 
 
 #[test]
 fn terminal_finality_rejects_live_ipam_even_after_attachment_release() {
-    let (_temp_dir, allocator, tenant_id, sandbox_id, layout, config, _segment) =
-        fixture("live-ipam");
+    let (
+        _temp_dir,
+        allocator,
+        tenant_id,
+        sandbox_id,
+        layout,
+        ipam_authority,
+        port_authority,
+        config,
+        _segment,
+    ) = fixture("live-ipam");
     let attachment_id = default_network_attachment_id(&sandbox_id);
     allocator
         .reserve_attachment_for_coordinator(&tenant_id, &attachment_id, &config.reservation_claim)
         .expect("attachment should reserve");
-    allocate_container_ips(&layout, &config, &sandbox_id).expect("IPAM should allocate");
+    allocate_container_ips(&ipam_authority, &layout, &config, &sandbox_id)
+        .expect("IPAM should allocate");
     allocator
         .release_reserved_attachment_without_effect(
             &tenant_id,
@@ -328,11 +403,16 @@ fn terminal_finality_rejects_live_ipam_even_after_attachment_release() {
 
     let error = finality(
         &allocator,
-        &tenant_id,
-        &sandbox_id,
-        &layout,
-        Some(&config),
-        &[],
+        &ipam_authority,
+        &port_authority,
+        TerminalNetworkFinalityEvidence::new(
+            &tenant_id,
+            &sandbox_id,
+            &layout,
+            Some(&config),
+            &[],
+            None,
+        ),
     )
     .require_released()
     .expect_err("live IPAM must reject terminal finality");

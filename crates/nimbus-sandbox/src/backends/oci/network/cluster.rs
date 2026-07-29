@@ -131,7 +131,7 @@ impl ClusterSegmentAllocator {
                     .to_owned(),
             });
         }
-        SingleNodeSegmentAllocator::new(
+        SingleNodeSegmentAllocator::reconstruct_for_cluster_lease(
             &self.state_root,
             Some(InstalledSuperNet {
                 cidr: lease.super_net,
@@ -149,7 +149,10 @@ impl ClusterSegmentAllocator {
     /// The returned type has no assign/acquire/grow methods, so durable cleanup
     /// state cannot be confused with live creation authority.
     fn cleanup_inner(&self) -> Result<Option<DurableSegmentCleanupAuthority>> {
-        DurableSegmentCleanupAuthority::open(&self.state_root, self.tenant_prefix)
+        DurableSegmentCleanupAuthority::reconstruct_for_cluster_cleanup(
+            &self.state_root,
+            self.tenant_prefix,
+        )
     }
 }
 

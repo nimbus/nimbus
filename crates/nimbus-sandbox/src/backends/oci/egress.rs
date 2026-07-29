@@ -42,8 +42,8 @@ use nimbus_egress::{
 #[cfg(test)]
 use nimbus_network::PortExposure;
 use nimbus_network::{
-    ListenerId, NetworkReservationClaim, PortBindClaim, PortLeaseEffectScope,
-    PortLeaseLifetimeGuard, PortLeaseRecord, PortLeaseRequest,
+    ListenerId, LocalNetworkAuthority, LocalPortLeaseAuthority, NetworkReservationClaim,
+    PortBindClaim, PortLeaseEffectScope, PortLeaseLifetimeGuard, PortLeaseRecord, PortLeaseRequest,
 };
 use nimbus_proxy::{
     AppendOnlyDecisionLogSink, DecisionLogSinkContext, EgressEngine, EgressProxyError,
@@ -56,6 +56,8 @@ use nimbus_proxy::{WorkloadPep, WorkloadPepReadiness};
 
 mod cleanup;
 use cleanup::PepCleanupProgress;
+mod process;
+pub(crate) use process::EgressProxyProcess;
 mod readiness;
 pub(crate) use readiness::{EgressReadinessState, EgressReloadAttachmentState};
 mod assignment;
@@ -86,7 +88,9 @@ pub(crate) struct EgressProxyRegistry {
     engine: Arc<EgressEngine<RegisteredArtifacts>>,
     decision_log_root: Arc<PathBuf>,
     trust_anchor_root: Arc<PathBuf>,
+    #[cfg(test)]
     network_state_root: Arc<PathBuf>,
+    port_authority: std::result::Result<LocalPortLeaseAuthority, Arc<str>>,
     #[cfg(test)]
     _test_state_root: Option<Arc<tempfile::TempDir>>,
     #[cfg(test)]
@@ -236,16 +240,67 @@ impl EgressProxyRegistry {
         Self::with_roots_and_network_state(decision_log_root, trust_anchor_root, state_root)
     }
 
+    #[cfg(test)]
     pub(crate) fn with_roots_and_network_state(
         decision_log_root: impl Into<PathBuf>,
         trust_anchor_root: impl Into<PathBuf>,
         network_state_root: impl Into<PathBuf>,
     ) -> Self {
+        let network_state_root = network_state_root.into();
+        let port_authority = LocalPortLeaseAuthority::open(&network_state_root)
+            .map_err(|error| Arc::<str>::from(error.to_string()));
+        Self::with_roots_and_port_authority(
+            decision_log_root,
+            trust_anchor_root,
+            network_state_root,
+            port_authority,
+        )
+    }
+
+    pub(crate) fn with_roots_and_port_authority(
+        decision_log_root: impl Into<PathBuf>,
+        trust_anchor_root: impl Into<PathBuf>,
+        network_state_root: impl Into<PathBuf>,
+        port_authority: std::result::Result<LocalPortLeaseAuthority, Arc<str>>,
+    ) -> Self {
+        Self::from_parts(
+            EgressProxyProcess::new(),
+            decision_log_root,
+            trust_anchor_root,
+            network_state_root.into(),
+            port_authority,
+        )
+    }
+
+    pub(crate) fn from_process(
+        process: EgressProxyProcess,
+        decision_log_root: impl Into<PathBuf>,
+        trust_anchor_root: impl Into<PathBuf>,
+        authority: &LocalNetworkAuthority,
+    ) -> Self {
+        Self::from_parts(
+            process,
+            decision_log_root,
+            trust_anchor_root,
+            authority.state_root().to_path_buf(),
+            Ok(authority.port_leases()),
+        )
+    }
+
+    fn from_parts(
+        process: EgressProxyProcess,
+        decision_log_root: impl Into<PathBuf>,
+        trust_anchor_root: impl Into<PathBuf>,
+        _network_state_root: PathBuf,
+        port_authority: std::result::Result<LocalPortLeaseAuthority, Arc<str>>,
+    ) -> Self {
         Self {
-            engine: Arc::new(EgressEngine::new()),
+            engine: process.engine(),
             decision_log_root: Arc::new(decision_log_root.into()),
             trust_anchor_root: Arc::new(trust_anchor_root.into()),
-            network_state_root: Arc::new(network_state_root.into()),
+            #[cfg(test)]
+            network_state_root: Arc::new(_network_state_root),
+            port_authority,
             #[cfg(test)]
             _test_state_root: None,
             #[cfg(test)]
@@ -255,6 +310,14 @@ impl EgressProxyRegistry {
             #[cfg(test)]
             post_activation_observer: None,
         }
+    }
+
+    fn port_authority(&self) -> Result<&LocalPortLeaseAuthority> {
+        self.port_authority
+            .as_ref()
+            .map_err(|reason| SandboxError::OperationFailed {
+                message: format!("egress PEP port authority is unavailable: {reason}"),
+            })
     }
 
     /// Derive the engine's opaque workload id from a sandbox id.
@@ -278,7 +341,7 @@ impl EgressProxyRegistry {
         port_lease: &PortLeaseRequest,
     ) -> Result<PortLeaseRecord> {
         require_current_listener_authority(
-            &self.network_state_root,
+            self.port_authority()?,
             ExpectedListenerAuthority::egress_pep(tenant_id, id, bind_addr)?,
             port_lease,
         )
@@ -333,10 +396,20 @@ impl EgressProxyRegistry {
         // cleanup so an overlapping process cannot replace the anchor, then
         // drops it before making the port available to another lease owner.
         drop(bound_listener);
+        let port_authority = match self.port_authority() {
+            Ok(authority) => authority,
+            Err(authority_error) => {
+                cleanup_errors.push(authority_error);
+                return Self::finish_pep_pre_adoption_compensation(
+                    preparation_error,
+                    cleanup_errors,
+                );
+            }
+        };
         let bind_claim_abandoned = if let Some(bind_claim) = bind_claim {
             let abandon = match lifetime {
                 Some(lifetime) => abandon_bind_attempt_with_lifetime_without_effect(
-                    &self.network_state_root,
+                    port_authority,
                     port_lease,
                     bind_claim,
                     lifetime,
@@ -344,7 +417,7 @@ impl EgressProxyRegistry {
                 )
                 .map(|_| ()),
                 None => abandon_bind_attempts_without_effect(
-                    &self.network_state_root,
+                    port_authority,
                     std::slice::from_ref(port_lease),
                     std::slice::from_ref(bind_claim),
                     release_authority.reservation_claim(),
@@ -362,7 +435,7 @@ impl EgressProxyRegistry {
                         );
                     };
                     match require_active_provider_binding(
-                        &self.network_state_root,
+                        port_authority,
                         port_lease,
                         bound_addr,
                         OciPortProvider::EgressPep,
@@ -384,14 +457,14 @@ impl EgressProxyRegistry {
                                 let rebind = match lifetime {
                                     Some(lifetime) => {
                                         prepare_rebind_after_confirmed_stop_with_lifetime(
-                                            &self.network_state_root,
+                                            port_authority,
                                             port_lease,
                                             binding,
                                             lifetime,
                                         )
                                     }
                                     None => prepare_rebind_after_confirmed_stop(
-                                        &self.network_state_root,
+                                        port_authority,
                                         port_lease,
                                         binding,
                                     ),
@@ -431,7 +504,7 @@ impl EgressProxyRegistry {
             .filter(|_| trust_anchor_cleanup_confirmed && bind_claim_abandoned)
         {
             match release_reserved_batch_without_effect(
-                &self.network_state_root,
+                port_authority,
                 std::slice::from_ref(port_lease),
                 reservation_claim,
             ) {
@@ -644,13 +717,13 @@ impl EgressProxyRegistry {
         };
         let current = self.require_pep_lease(tenant_id, id, bind_addr, port_lease)?;
         if current.active_lifetime().is_some() && current.binding().is_some() {
-            prepare_process_bound_rebind_after_owner_death(&self.network_state_root, port_lease)?;
+            prepare_process_bound_rebind_after_owner_death(self.port_authority()?, port_lease)?;
         }
         // Durable attempt exclusivity precedes every fallible preparation.
         // This prevents a concurrent same-request preparation failure from
         // compensating another invocation's restart or fresh-launch authority.
         let (bind_claim, lifetime) = claim_bind_attempt_with_lifetime(
-            &self.network_state_root,
+            self.port_authority()?,
             port_lease,
             OciPortProvider::EgressPep,
             release_authority.reservation_claim(),
@@ -744,7 +817,7 @@ impl EgressProxyRegistry {
                     PepPreAdoptionReleaseAuthority::Retain => bind_error,
                     PepPreAdoptionReleaseAuthority::FreshLaunch(_) => {
                         match record_bind_failure_with_lifetime(
-                            &self.network_state_root,
+                            self.port_authority()?,
                             port_lease,
                             &bind_claim,
                             OciConfirmedBindFailure::new(address, OciPortProvider::EgressPep, kind),
@@ -807,7 +880,7 @@ impl EgressProxyRegistry {
             ));
         }
         if let Err(error) = adopt_claimed_and_activate_with_lifetime(
-            &self.network_state_root,
+            self.port_authority()?,
             port_lease,
             release_authority.reservation_claim(),
             &bind_claim,
@@ -933,7 +1006,7 @@ impl EgressProxyRegistry {
             ),
             nimbus_network::PortRequestMode::ProviderAssigned,
         );
-        let request = reserve_provider_assigned(&self.network_state_root, request)?;
+        let request = reserve_provider_assigned(self.port_authority()?, request)?;
         self.ensure_running_with_lease(tenant_id, id, policy, bind_addr, &request)
     }
 

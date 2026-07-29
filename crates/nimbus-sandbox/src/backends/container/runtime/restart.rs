@@ -5,8 +5,8 @@ use crate::backends::conmon::lifecycle::{
     restart_policy_allows_restart,
 };
 use crate::backends::oci::network::{
-    authenticate_container_network_generation, remove_persistent_network_namespace,
-    teardown_container_network,
+    OciNetavarkOperation, authenticate_container_network_generation,
+    remove_persistent_network_namespace, teardown_container_network,
 };
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxStatus;
@@ -62,6 +62,7 @@ impl ContainerSandboxBackend {
         self.validate_manifest_execution_context(manifest)?;
         let network_config = manifest.require_network_config()?;
         authenticate_container_network_generation(
+            &self.ipam_authority,
             &manifest.network_layout,
             network_config,
             &manifest.handle.id,
@@ -142,15 +143,18 @@ impl ContainerSandboxBackend {
             None
         };
         let mut netavark_detach_confirmed = match teardown_container_network(
-            &manifest.network_layout,
-            network_config,
-            &manifest.handle.id,
-            manifest.spec.display_name(),
-            &hostname_for(&manifest.spec),
-            &manifest.spec.port_bindings,
-            (manifest.start_mode == ContainerStartMode::Execute)
-                .then_some(manifest.runner_config.machine_port_forwarder.as_ref())
-                .flatten(),
+            &self.ipam_authority,
+            &OciNetavarkOperation::new(
+                &manifest.network_layout,
+                network_config,
+                &manifest.handle.id,
+                manifest.spec.display_name(),
+                &hostname_for(&manifest.spec),
+                &manifest.spec.port_bindings,
+                (manifest.start_mode == ContainerStartMode::Execute)
+                    .then_some(manifest.runner_config.machine_port_forwarder.as_ref())
+                    .flatten(),
+            ),
         ) {
             Ok(()) => true,
             Err(error) => {

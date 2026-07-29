@@ -3,15 +3,26 @@ use std::sync::{Arc, Mutex};
 
 use nimbus_core::{Cidr, TenantId};
 use nimbus_network::{
-    AllocatedSegment, NetworkAttachmentId, NetworkAttachmentReservationState, NetworkLeaseEpoch,
-    NetworkReservationClaim, NetworkSegmentAllocator, NetworkSegmentCleanup,
-    NetworkSegmentFinalizeOutcome, NetworkSegmentGrowth, NetworkSegmentQuarantineOutcome,
-    NetworkSegmentReleaseOutcome,
+    AllocatedSegment, LocalPortLeaseAuthority, NetworkAttachmentId,
+    NetworkAttachmentReservationState, NetworkLeaseEpoch, NetworkReservationClaim,
+    NetworkSegmentAllocator, NetworkSegmentCleanup, NetworkSegmentFinalizeOutcome,
+    NetworkSegmentGrowth, NetworkSegmentQuarantineOutcome, NetworkSegmentReleaseOutcome,
 };
 
 use crate::error::SandboxError;
 
-use super::OciSegmentRealization;
+use super::{OciIpamAuthority, OciNetworkLayout, OciSegmentRealization};
+
+pub(crate) fn direct_test_ipam_authority(layout: &OciNetworkLayout) -> OciIpamAuthority {
+    OciIpamAuthority::reconstruct_for_direct_test(layout)
+        .expect("direct test IPAM authority should open")
+}
+
+pub(crate) fn direct_test_port_authority(
+    state_root: impl AsRef<std::path::Path>,
+) -> LocalPortLeaseAuthority {
+    LocalPortLeaseAuthority::open(state_root).expect("direct test port authority should open")
+}
 
 type ReserveAttachmentObserver =
     dyn Fn(&NetworkReservationClaim) -> Result<(), SandboxError> + Send + Sync;

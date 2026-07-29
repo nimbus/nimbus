@@ -188,15 +188,18 @@ fn restart_cleanup_retains_network_and_listeners_until_runtime_absence_is_observ
         )
         .expect("fixture should claim the published listener");
     setup_container_network(
-        &manifest.network_layout,
-        manifest
-            .require_network_config()
-            .expect("manifest should carry its exact network config"),
-        &manifest.handle.id,
-        manifest.spec.display_name(),
-        &hostname_for(&manifest.spec),
-        &manifest.spec.port_bindings,
-        None,
+        &backend.ipam_authority,
+        &OciNetavarkOperation::new(
+            &manifest.network_layout,
+            manifest
+                .require_network_config()
+                .expect("manifest should carry its exact network config"),
+            &manifest.handle.id,
+            manifest.spec.display_name(),
+            &hostname_for(&manifest.spec),
+            &manifest.spec.port_bindings,
+            None,
+        ),
     )
     .expect("fixture should publish Ready Netavark authority");
     port_lease_coordinator

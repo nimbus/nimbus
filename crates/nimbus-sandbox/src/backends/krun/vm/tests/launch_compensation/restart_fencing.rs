@@ -76,15 +76,18 @@ fn assert_restart_cleanup_is_fenced(
         )
         .expect("fixture should claim the published listener");
     crate::backends::oci::network::setup_container_network(
-        &manifest.network_layout,
-        manifest
-            .require_network_config()
-            .expect("manifest should carry exact network config"),
-        &manifest.handle.id,
-        manifest.spec.display_name(),
-        &crate::backends::krun::vm::start::hostname_for(&manifest.spec),
-        &manifest.spec.port_bindings,
-        None,
+        &backend.ipam_authority,
+        &crate::backends::oci::network::OciNetavarkOperation::new(
+            &manifest.network_layout,
+            manifest
+                .require_network_config()
+                .expect("manifest should carry exact network config"),
+            &manifest.handle.id,
+            manifest.spec.display_name(),
+            &crate::backends::krun::vm::start::hostname_for(&manifest.spec),
+            &manifest.spec.port_bindings,
+            None,
+        ),
     )
     .expect("fixture should publish Ready Netavark authority");
     fs::create_dir_all(

@@ -7,8 +7,9 @@
 use super::*;
 use crate::backends::conmon::lifecycle::delete_runtime_and_confirm_absent as delete_conmon_runtime_and_confirm_absent;
 use crate::backends::oci::network::{
-    deallocate_container_ips_after_confirmed_detach, quarantine_network_segment_hold,
-    release_network_segment_hold, remove_persistent_network_namespace,
+    OciNetavarkOperation, deallocate_container_ips_after_confirmed_detach,
+    quarantine_network_segment_hold, release_network_segment_hold,
+    remove_persistent_network_namespace,
 };
 use crate::backends::oci::port_lifecycle::LaunchPortBatchState;
 
@@ -33,6 +34,7 @@ impl ContainerSandboxBackend {
         let network_config = manifest.require_network_config()?;
         let adoption_receipt = network_config.reservation_claim.clone();
         authenticate_container_network_generation_for_cleanup(
+            &self.ipam_authority,
             &manifest.network_layout,
             network_config,
             &manifest.handle.id,
@@ -187,15 +189,18 @@ impl ContainerSandboxBackend {
             errors.push(error.to_string());
         }
         let netavark_detach_confirmed = match teardown_container_network(
-            &manifest.network_layout,
-            network_config,
-            &manifest.handle.id,
-            manifest.spec.display_name(),
-            &hostname_for(&manifest.spec),
-            &manifest.spec.port_bindings,
-            (manifest.start_mode == ContainerStartMode::Execute)
-                .then_some(manifest.runner_config.machine_port_forwarder.as_ref())
-                .flatten(),
+            &self.ipam_authority,
+            &OciNetavarkOperation::new(
+                &manifest.network_layout,
+                network_config,
+                &manifest.handle.id,
+                manifest.spec.display_name(),
+                &hostname_for(&manifest.spec),
+                &manifest.spec.port_bindings,
+                (manifest.start_mode == ContainerStartMode::Execute)
+                    .then_some(manifest.runner_config.machine_port_forwarder.as_ref())
+                    .flatten(),
+            ),
         ) {
             Ok(()) => true,
             Err(error) => {
@@ -319,6 +324,7 @@ impl ContainerSandboxBackend {
         if detach_confirmed
             && let Ok(network_config) = manifest.require_network_config()
             && let Err(error) = deallocate_container_ips_after_confirmed_detach(
+                &self.ipam_authority,
                 &manifest.network_layout,
                 &manifest.handle.id,
                 &network_config.reservation_claim,

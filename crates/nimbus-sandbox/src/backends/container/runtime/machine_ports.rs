@@ -1,56 +1,26 @@
 //! Container-owned lifecycle for provider-managed machine port proxies.
 
-use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use nimbus_core::TenantId;
-use nimbus_network::{PortLeaseBinding, PortLeaseRecoveryGuard, PortLeaseRequest};
+use nimbus_network::PortLeaseRequest;
 
 #[cfg(test)]
 use crate::backends::oci::network::panicking_machine_port_proxy_for_test;
 use crate::backends::oci::network::{
-    MachinePortPreparationReleaseAuthority, MachinePortProxy, MachinePortProxyRoute,
-    OciMachinePortForwarderConfig, machine_port_proxy_routes,
-    prepare_machine_port_proxies_with_release_authority, start_machine_port_proxies_with_recovery,
-    unexpose_machine_ports,
+    MachinePortPreparationReleaseAuthority, MachinePortProxyCleanupDisposition,
+    MachinePortProxyCleanupState, MachinePortProxyEntry, MachinePortProxyKey,
+    MachinePortProxyLeaseAuthority, MachinePortProxyRegistration, OciMachinePortForwarderConfig,
+    machine_port_proxy_routes, prepare_machine_port_proxies_with_release_authority,
+    start_machine_port_proxies_with_recovery, unexpose_machine_ports,
 };
-use crate::backends::oci::port_lease::OciPortBindLifetimeBatch;
 use crate::backends::oci::port_lifecycle::OciPortLeaseCoordinator;
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
 use crate::spec::SandboxPortBinding;
 
 use super::{ContainerSandboxBackend, ContainerSandboxManifest};
-
-type MachinePortProxyKey = (TenantId, SandboxId);
-
-pub(super) struct MachinePortProxyRegistration {
-    pub(super) port_bindings: Vec<SandboxPortBinding>,
-    pub(super) port_leases: Vec<PortLeaseRequest>,
-    pub(super) routes: Vec<MachinePortProxyRoute>,
-    pub(super) proxies: Vec<MachinePortProxy>,
-    pub(super) lease_authority: Option<MachinePortProxyLeaseAuthority>,
-    pub(super) publication_may_exist: bool,
-}
-
-pub(super) enum MachinePortProxyLeaseAuthority {
-    Live(OciPortBindLifetimeBatch),
-    Recovered(Vec<PortLeaseRecoveryGuard>),
-}
-
-pub(super) enum MachinePortProxyEntry {
-    Running(MachinePortProxyRegistration),
-    Stopping(Arc<Mutex<MachinePortProxyCleanupState>>),
-}
-
-pub(super) type MachinePortProxyRegistry = HashMap<MachinePortProxyKey, MachinePortProxyEntry>;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum MachinePortProxyCleanupDisposition {
-    Restart,
-    Release,
-}
 
 fn partial_start_cleanup_disposition(
     release_authority: MachinePortPreparationReleaseAuthority<'_>,
@@ -63,17 +33,6 @@ fn partial_start_cleanup_disposition(
             MachinePortProxyCleanupDisposition::Restart
         }
     }
-}
-
-pub(super) struct MachinePortProxyCleanupState {
-    disposition: MachinePortProxyCleanupDisposition,
-    port_lease_coordinator: OciPortLeaseCoordinator,
-    registration: MachinePortProxyRegistration,
-    expected_bindings: Vec<PortLeaseBinding>,
-    withdraw_complete: bool,
-    provider_stopped: bool,
-    publication_withdrawn: Vec<bool>,
-    durable_transition_complete: bool,
 }
 
 pub(super) struct MachinePortProxyCleanup {
@@ -768,12 +727,10 @@ impl ContainerSandboxBackend {
         Ok(())
     }
 
-    fn lock_machine_port_proxy_registry(&self) -> Result<MutexGuard<'_, MachinePortProxyRegistry>> {
-        self.machine_port_proxies
-            .lock()
-            .map_err(|_| SandboxError::OperationFailed {
-                message: "container machine port proxy registry lock is poisoned".to_owned(),
-            })
+    fn lock_machine_port_proxy_registry(
+        &self,
+    ) -> Result<MutexGuard<'_, crate::backends::oci::network::MachinePortProxyEntries>> {
+        self.machine_port_proxies.lock()
     }
 
     fn lock_machine_port_proxy_cleanup<'a>(

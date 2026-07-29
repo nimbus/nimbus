@@ -101,7 +101,7 @@ impl EgressProxyRegistry {
         let persisted_record = assignment
             .map(|assignment| {
                 require_listener_authority(
-                    &self.network_state_root,
+                    self.port_authority()?,
                     ExpectedListenerAuthority::egress_pep(tenant_id, id, assignment.bind_addr()?)?,
                     &assignment.port_lease,
                 )
@@ -130,7 +130,7 @@ impl EgressProxyRegistry {
         let persisted_record = assignment
             .map(|assignment| {
                 require_listener_authority(
-                    &self.network_state_root,
+                    self.port_authority()?,
                     ExpectedListenerAuthority::egress_pep(tenant_id, id, assignment.bind_addr()?)?,
                     &assignment.port_lease,
                 )
@@ -204,7 +204,7 @@ impl EgressProxyRegistry {
                         .as_ref()
                         .is_some_and(restart_transition_is_durably_complete) =>
             {
-                release_after_confirmed_stop(&self.network_state_root, request)?;
+                release_after_confirmed_stop(self.port_authority()?, request)?;
                 return Ok(());
             }
             (Some(_), None)
@@ -282,7 +282,7 @@ impl EgressProxyRegistry {
             .map(|request| {
                 persisted_record
                     .filter(|record| record.request() == request)
-                    .map_or_else(|| inspect_exact(&self.network_state_root, request), Ok)
+                    .map_or_else(|| inspect_exact(self.port_authority()?, request), Ok)
             })
             .transpose()?;
         let durable_record_proves_transition_complete = durable_record
@@ -365,7 +365,7 @@ impl EgressProxyRegistry {
         {
             #[cfg(test)]
             observe_pre_withdraw();
-            withdraw(&self.network_state_root, request)?;
+            withdraw(self.port_authority()?, request)?;
         }
 
         // Explicit acknowledgement, not Drop or socket bindability, grants
@@ -405,11 +405,11 @@ impl EgressProxyRegistry {
                 PepCleanupDisposition::Release => {
                     stop.with_attachment(|artifacts| match artifacts.lifetime.as_ref() {
                         Some(lifetime) => {
-                            release_with_lifetime(&self.network_state_root, request, lifetime)
+                            release_with_lifetime(self.port_authority()?, request, lifetime)
                         }
                         // Lifetime-free registrations are test-only fixtures
                         // whose durable record carries no live owner.
-                        None => release(&self.network_state_root, request),
+                        None => release(self.port_authority()?, request),
                     })
                     .map_err(egress_proxy_error)??;
                 }
@@ -423,7 +423,7 @@ impl EgressProxyRegistry {
                     })?;
                     stop.with_attachment(|artifacts| match artifacts.lifetime.as_ref() {
                         Some(lifetime) => prepare_rebind_after_confirmed_stop_with_lifetime(
-                            &self.network_state_root,
+                            self.port_authority()?,
                             request,
                             expected_binding,
                             lifetime,
@@ -433,7 +433,7 @@ impl EgressProxyRegistry {
                         // test fixtures that intentionally omit durable
                         // listener ownership.
                         None => prepare_rebind_after_confirmed_stop(
-                            &self.network_state_root,
+                            self.port_authority()?,
                             request,
                             expected_binding,
                         ),

@@ -970,6 +970,7 @@ impl KrunSandboxBackend {
         // effect. PlanOnly manifests carry `None` and can never reach Netavark.
         let network_config = manifest.require_network_config()?.clone();
         authenticate_container_network_generation(
+            &self.ipam_authority,
             &manifest.network_layout,
             &network_config,
             &manifest.handle.id,
@@ -1001,13 +1002,16 @@ impl KrunSandboxBackend {
             }
         };
         if let Err(error) = setup_container_network(
-            &manifest.network_layout,
-            &network_config,
-            &manifest.handle.id,
-            manifest.spec.display_name(),
-            &hostname_for(&manifest.spec),
-            &manifest.spec.port_bindings,
-            None,
+            &self.ipam_authority,
+            &OciNetavarkOperation::new(
+                &manifest.network_layout,
+                &network_config,
+                &manifest.handle.id,
+                manifest.spec.display_name(),
+                &hostname_for(&manifest.spec),
+                &manifest.spec.port_bindings,
+                None,
+            ),
         ) {
             return Err(self.failed_netavark_configuration(
                 manifest,
@@ -1106,13 +1110,16 @@ impl KrunSandboxBackend {
         primary: SandboxError,
     ) -> SandboxError {
         let cleanup = teardown_container_network(
-            &manifest.network_layout,
-            network_config,
-            &manifest.handle.id,
-            manifest.spec.display_name(),
-            &hostname_for(&manifest.spec),
-            &manifest.spec.port_bindings,
-            None,
+            &self.ipam_authority,
+            &OciNetavarkOperation::new(
+                &manifest.network_layout,
+                network_config,
+                &manifest.handle.id,
+                manifest.spec.display_name(),
+                &hostname_for(&manifest.spec),
+                &manifest.spec.port_bindings,
+                None,
+            ),
         )
         .and_then(|()| remove_persistent_network_namespace(&manifest.network_layout.netns_path));
         if let Err(cleanup) = cleanup {
@@ -1319,6 +1326,7 @@ impl KrunSandboxBackend {
         }
         let network_config = manifest.require_network_config()?;
         authenticate_container_network_generation_for_cleanup(
+            &self.ipam_authority,
             &manifest.network_layout,
             network_config,
             &manifest.handle.id,
@@ -1432,13 +1440,16 @@ impl KrunSandboxBackend {
                 .require_network_config()
                 .and_then(|network_config| {
                     teardown_container_network(
-                        &manifest.network_layout,
-                        network_config,
-                        &manifest.handle.id,
-                        manifest.spec.display_name(),
-                        &hostname_for(&manifest.spec),
-                        &manifest.spec.port_bindings,
-                        None,
+                        &self.ipam_authority,
+                        &OciNetavarkOperation::new(
+                            &manifest.network_layout,
+                            network_config,
+                            &manifest.handle.id,
+                            manifest.spec.display_name(),
+                            &hostname_for(&manifest.spec),
+                            &manifest.spec.port_bindings,
+                            None,
+                        ),
                     )
                 }) {
                 Ok(()) => true,
@@ -1560,6 +1571,7 @@ impl KrunSandboxBackend {
                 if detach_confirmed
                     && let Ok(network_config) = manifest.require_network_config()
                     && let Err(error) = deallocate_container_ips_after_confirmed_detach(
+                        &self.ipam_authority,
                         &manifest.network_layout,
                         &manifest.handle.id,
                         &network_config.reservation_claim,
@@ -1765,15 +1777,19 @@ impl KrunSandboxBackend {
             }
             TerminalNetworkAuthoritySet::new(
                 self.segment_allocator.as_ref(),
-                &manifest.spec.tenant_id,
-                &manifest.handle.id,
-                &manifest.network_layout,
-                manifest.network_config.as_ref(),
-                &manifest.port_leases,
-                manifest
-                    .egress_proxy
-                    .as_ref()
-                    .map(|assignment| &assignment.port_lease),
+                &self.ipam_authority,
+                self.port_lease_coordinator.authority()?,
+                TerminalNetworkFinalityEvidence::new(
+                    &manifest.spec.tenant_id,
+                    &manifest.handle.id,
+                    &manifest.network_layout,
+                    manifest.network_config.as_ref(),
+                    &manifest.port_leases,
+                    manifest
+                        .egress_proxy
+                        .as_ref()
+                        .map(|assignment| &assignment.port_lease),
+                ),
             )
             .require_released()?;
         }
@@ -1862,6 +1878,7 @@ impl KrunSandboxBackend {
                 });
             }
             retire_terminal_container_ipam_release(
+                &self.ipam_authority,
                 &manifest.network_layout,
                 &manifest.handle.id,
                 &network_config.reservation_claim,

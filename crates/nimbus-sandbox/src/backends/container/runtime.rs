@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 mod artifact_cleanup;
 mod config;
@@ -11,6 +11,7 @@ mod execution_cleanup;
 mod launch;
 mod machine_ports;
 mod manifest;
+mod network_composition;
 mod network_launch;
 mod provider_context;
 mod restart;
@@ -35,25 +36,30 @@ use crate::backends::conmon::lifecycle::{
 use crate::backends::oci::buildah::OciImageLaunchDefaults;
 use crate::backends::oci::builder::OciDockerfileBuilder;
 use crate::backends::oci::conmon::{OciConmonConfig, OciConmonLayout, build_launch_plan};
+#[cfg(test)]
+use crate::backends::oci::egress::egress_trust_anchor_root;
 use crate::backends::oci::egress::{
     EgressProxyAssignment, EgressProxyRegistry, EgressReadinessState,
-    PepPreAdoptionReleaseAuthority, egress_decision_log_root, egress_listener_reservation,
-    egress_proxy_assignment, egress_trust_anchor_mount, egress_trust_anchor_root,
-    ensure_egress_proxy_running as ensure_oci_egress_proxy_running,
+    PepPreAdoptionReleaseAuthority, egress_listener_reservation, egress_proxy_assignment,
+    egress_trust_anchor_mount, ensure_egress_proxy_running as ensure_oci_egress_proxy_running,
     ensure_egress_proxy_running_with_release_authority,
 };
 use crate::backends::oci::materializer::{OciImageMaterializer, PreparedMaterializedImageLaunch};
 use crate::backends::oci::network::{
-    ConfiguredSegmentAllocator, MachinePortPreparationReleaseAuthority, OciNetworkLayout,
-    OciSegmentAllocator, authenticate_container_network_generation,
+    MachinePortPreparationReleaseAuthority, MachinePortProxyLifetimeRegistry, OciIpamAuthority,
+    OciNetavarkOperation, OciNetworkLayout, OciNetworkProcess, OciSegmentAllocator,
+    authenticate_container_network_generation,
     authenticate_container_network_generation_for_cleanup, create_persistent_network_namespace,
     default_network_attachment_id, expose_machine_ports, pin_netns_egress_to_own_proxy,
-    purge_legacy_nimbus0_once, reconcile_startup_network_state,
-    remove_persistent_network_namespace, setup_container_network, teardown_container_network,
+    purge_legacy_nimbus0_once, remove_persistent_network_namespace, setup_container_network,
+    teardown_container_network,
 };
+#[cfg(test)]
+use crate::backends::oci::network::{MachinePortProxyEntry, MachinePortProxyRegistration};
 use crate::backends::oci::port_lease::new_launch_reservation_claim;
 use crate::backends::oci::port_lifecycle::{
-    NetavarkPortLifetimeRegistry, ReservedLaunchPorts, SandboxLaunchPortPlan,
+    NetavarkPortLifetimeRegistry, OciPortLeaseCoordinator, ReservedLaunchPorts,
+    SandboxLaunchPortPlan,
 };
 use crate::backends::oci::resource_quota::ResourceQuotaManager;
 use crate::error::{Result, SandboxError};
@@ -63,13 +69,9 @@ use nimbus_egress::EgressPolicy;
 
 pub use config::{ContainerSandboxBackendConfig, ContainerStartMode};
 use launch::{hostname_for, next_sandbox_id, resolve_start_spec};
-use machine_ports::MachinePortProxyRegistry;
-#[cfg(test)]
-use machine_ports::{MachinePortProxyEntry, MachinePortProxyRegistration};
 use manifest::{
     ContainerCreatorHandoffState, ContainerLaunchArtifact, ContainerLifecycleCoordinator,
     ContainerRunnerExecutionConfig, ContainerSandboxManifest, ContainerStartPlan,
-    reconcile_startup_manifest_publications,
 };
 use restart::{ContainerRestartDecision, mark_restart_decision_after_exit};
 use runner::RUNNER_MANIFEST_POINTER_FILE;
@@ -82,9 +84,12 @@ use status::{running_status, synchronize_handle_status, visible_published_endpoi
 pub struct ContainerSandboxBackend {
     config: ContainerSandboxBackendConfig,
     segment_allocator: Arc<OciSegmentAllocator>,
+    ipam_authority: OciIpamAuthority,
+    port_lease_coordinator: OciPortLeaseCoordinator,
     egress_proxies: EgressProxyRegistry,
     netavark_port_lifetimes: NetavarkPortLifetimeRegistry,
-    machine_port_proxies: Arc<Mutex<MachinePortProxyRegistry>>,
+    machine_port_proxies: MachinePortProxyLifetimeRegistry,
+    _network_process: Option<Arc<OciNetworkProcess>>,
     startup_reconciliation_error: Option<Arc<str>>,
     #[cfg(test)]
     restart_launch_test_probe: Option<RestartLaunchTestProbe>,
@@ -156,54 +161,6 @@ impl ContainerSandboxBackend {
             self.config.machine_port_forwarder.is_some(),
             self.startup_reconciliation_error.as_ref(),
         )
-    }
-
-    pub fn new(config: ContainerSandboxBackendConfig) -> Self {
-        let segment_allocator: Arc<OciSegmentAllocator> =
-            Arc::new(ConfiguredSegmentAllocator::new(
-                config.network_state_root.clone(),
-                config.node_network_supernet.clone(),
-                config.node_tenant_subnet_prefix,
-            ));
-        Self::with_segment_allocator(config, segment_allocator)
-    }
-
-    pub(crate) fn with_segment_allocator(
-        config: ContainerSandboxBackendConfig,
-        segment_allocator: Arc<OciSegmentAllocator>,
-    ) -> Self {
-        let startup_reconciliation_error =
-            reconcile_startup_manifest_publications(&config.workload_state_root)
-                .and_then(|()| {
-                    reconcile_startup_network_state(
-                        &config.workload_state_root,
-                        &config.network_state_root,
-                        segment_allocator.as_ref(),
-                    )
-                })
-                .err()
-                .map(|error| Arc::<str>::from(error.to_string()));
-        let egress_proxies = EgressProxyRegistry::with_roots_and_network_state(
-            egress_decision_log_root(&config.workload_state_root),
-            egress_trust_anchor_root(&config.workload_state_root),
-            &config.network_state_root,
-        );
-        Self {
-            config,
-            segment_allocator,
-            egress_proxies,
-            netavark_port_lifetimes: NetavarkPortLifetimeRegistry::default(),
-            machine_port_proxies: Arc::new(Mutex::new(MachinePortProxyRegistry::new())),
-            startup_reconciliation_error,
-            #[cfg(test)]
-            restart_launch_test_probe: None,
-            #[cfg(test)]
-            runner_handoff_failure: None,
-            #[cfg(test)]
-            runner_lifecycle_lock_test_probe: None,
-            #[cfg(test)]
-            post_egress_reload_ack_observer: None,
-        }
     }
 
     fn ensure_startup_reconciliation_ready(&self) -> Result<()> {
@@ -1259,6 +1216,7 @@ impl ContainerSandboxBackend {
         // effect. PlanOnly manifests carry `None` and can never reach Netavark.
         let network_config = manifest.require_network_config()?.clone();
         authenticate_container_network_generation(
+            &self.ipam_authority,
             &manifest.network_layout,
             &network_config,
             &manifest.handle.id,
@@ -1296,13 +1254,16 @@ impl ContainerSandboxBackend {
             None
         };
         let setup = setup_container_network(
-            &manifest.network_layout,
-            &network_config,
-            &manifest.handle.id,
-            manifest.spec.display_name(),
-            &hostname_for(&manifest.spec),
-            &manifest.spec.port_bindings,
-            runner_config.machine_port_forwarder.as_ref(),
+            &self.ipam_authority,
+            &OciNetavarkOperation::new(
+                &manifest.network_layout,
+                &network_config,
+                &manifest.handle.id,
+                manifest.spec.display_name(),
+                &hostname_for(&manifest.spec),
+                &manifest.spec.port_bindings,
+                runner_config.machine_port_forwarder.as_ref(),
+            ),
         );
         let assigned_ips = match setup {
             Ok(assigned_ips) => assigned_ips,

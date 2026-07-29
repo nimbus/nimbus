@@ -7,7 +7,6 @@
 use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroU16;
-use std::path::Path;
 
 use nimbus_core::TenantId;
 use nimbus_network::{
@@ -189,12 +188,11 @@ pub(crate) fn port_lease_request(
 /// Atomically reserve and return the selected non-zero host port.
 #[cfg(test)]
 pub(crate) fn reserve(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     request: PortLeaseRequest,
 ) -> Result<(PortLeaseRequest, NonZeroU16, NetworkReservationClaim)> {
-    let authority = open_authority(state_root)?;
     let reservation_claim = new_launch_reservation_claim()?;
-    let publication_lifetime = acquire_reservation_lifetime(&authority, &reservation_claim)?;
+    let publication_lifetime = acquire_reservation_lifetime(authority, &reservation_claim)?;
     let record = authority
         .reserve_for_coordinator(request.clone(), &reservation_claim)
         .map_err(port_lease_error)?;
@@ -208,7 +206,7 @@ pub(crate) fn reserve(
                 ),
             };
             return Err(compensate_projection_failure(
-                &authority,
+                authority,
                 std::slice::from_ref(&request),
                 &publication_lifetime,
                 projection_error,
@@ -239,12 +237,11 @@ fn compensate_projection_failure(
 
 /// Atomically reserve an ordered group and return each selected host port.
 pub(crate) fn reserve_batch(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     requests: Vec<PortLeaseRequest>,
     reservation_claim: &NetworkReservationClaim,
 ) -> Result<ReservedPortLeaseBatch> {
-    let authority = open_authority(state_root)?;
-    let publication_lifetime = acquire_reservation_lifetime(&authority, reservation_claim)?;
+    let publication_lifetime = acquire_reservation_lifetime(authority, reservation_claim)?;
     let records = authority
         .reserve_batch_for_coordinator(requests.clone(), reservation_claim)
         .map_err(port_lease_error)?;
@@ -259,14 +256,13 @@ pub(crate) fn reserve_batch(
 
 /// Reserve a complete launch batch under one caller-supplied tenant limit.
 pub(crate) fn reserve_batch_with_tenant_limit(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     requests: Vec<PortLeaseRequest>,
     tenant_id: &TenantId,
     maximum: usize,
     reservation_claim: &NetworkReservationClaim,
 ) -> Result<ReservedPortLeaseBatch> {
-    let authority = open_authority(state_root)?;
-    let publication_lifetime = acquire_reservation_lifetime(&authority, reservation_claim)?;
+    let publication_lifetime = acquire_reservation_lifetime(authority, reservation_claim)?;
     let records = authority
         .reserve_batch_with_tenant_limit_for_coordinator(
             requests.clone(),
@@ -284,7 +280,7 @@ pub(crate) fn reserve_batch_with_tenant_limit(
 }
 
 fn finish_reserved_batch(
-    authority: LocalPortLeaseAuthority,
+    authority: &LocalPortLeaseAuthority,
     requests: Vec<PortLeaseRequest>,
     records: Vec<PortLeaseRecord>,
     reservation_claim: &NetworkReservationClaim,
@@ -297,7 +293,7 @@ fn finish_reserved_batch(
             publication_lifetime,
         }),
         Err(projection_error) => Err(compensate_projection_failure(
-            &authority,
+            authority,
             &requests,
             &publication_lifetime,
             projection_error,
@@ -355,11 +351,11 @@ fn selected_ports(
 
 /// Release one never-bound planning batch after a coordinator failure.
 pub(crate) fn release_reserved_batch_without_effect(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     requests: &[PortLeaseRequest],
     reservation_claim: &NetworkReservationClaim,
 ) -> Result<Vec<PortLeaseRecord>> {
-    open_authority(state_root)?
+    authority
         .release_reserved_batch_without_effect(requests, reservation_claim)
         .map_err(port_lease_error)
 }
@@ -367,22 +363,22 @@ pub(crate) fn release_reserved_batch_without_effect(
 /// Release one exact never-bound batch while its original coordinator remains
 /// live and has not yet published the canonical request set.
 pub(crate) fn release_reserved_batch_with_lifetime_without_effect(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     requests: &[PortLeaseRequest],
     publication_lifetime: &NetworkReservationLifetimeGuard,
 ) -> Result<Vec<PortLeaseRecord>> {
-    open_authority(state_root)?
+    authority
         .release_reserved_batch_without_effect_with_lifetime(requests, publication_lifetime)
         .map_err(port_lease_error)
 }
 
 /// Authenticate a complete still-never-bound launch batch before effects.
 pub(crate) fn verify_reserved_batch_for_coordinator(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     requests: &[PortLeaseRequest],
     reservation_claim: &NetworkReservationClaim,
 ) -> Result<Vec<PortLeaseRecord>> {
-    open_authority(state_root)?
+    authority
         .verify_reserved_batch_for_coordinator(requests, reservation_claim)
         .map_err(port_lease_error)
 }
@@ -390,7 +386,7 @@ pub(crate) fn verify_reserved_batch_for_coordinator(
 /// Claim a complete Nimbus-owned listener batch before any provider bind.
 #[cfg(test)]
 pub(crate) fn claim_bind_attempts(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     requests: &[PortLeaseRequest],
     provider: OciPortProvider,
     reservation_claim: Option<&NetworkReservationClaim>,
@@ -404,7 +400,7 @@ pub(crate) fn claim_bind_attempts(
         .cloned()
         .zip(claims.iter().cloned())
         .collect::<Vec<_>>();
-    open_authority(state_root)?
+    authority
         .claim_bind_batch(&claimed, reservation_claim)
         .map_err(port_lease_error)?;
     Ok(claims)
@@ -412,14 +408,14 @@ pub(crate) fn claim_bind_attempts(
 
 /// Claim one sandbox provider attempt together with its exact process lifetime.
 pub(crate) fn claim_bind_attempt_with_lifetime(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     request: &PortLeaseRequest,
     provider: OciPortProvider,
     reservation_claim: Option<&NetworkReservationClaim>,
     effect_scope: PortLeaseEffectScope,
 ) -> Result<(PortBindClaim, PortLeaseLifetimeGuard)> {
     let claim = provider_bind_claim(request, provider)?;
-    let lifetime = open_authority(state_root)?
+    let lifetime = authority
         .claim_bind_with_lifetime(request, reservation_claim, claim.clone(), effect_scope)
         .map_err(port_lease_error)?;
     Ok((claim, lifetime))
@@ -427,7 +423,7 @@ pub(crate) fn claim_bind_attempt_with_lifetime(
 
 /// Claim a complete provider batch together with exact process lifetimes.
 pub(crate) fn claim_bind_attempts_with_lifetimes(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     requests: &[PortLeaseRequest],
     provider: OciPortProvider,
     reservation_claim: Option<&NetworkReservationClaim>,
@@ -442,7 +438,7 @@ pub(crate) fn claim_bind_attempts_with_lifetimes(
         .cloned()
         .zip(claims.iter().cloned())
         .collect::<Vec<_>>();
-    let lifetimes = open_authority(state_root)?
+    let lifetimes = authority
         .claim_bind_batch_with_lifetimes(&claimed, reservation_claim, effect_scope)
         .map_err(port_lease_error)?;
     Ok(OciPortBindLifetimeBatch { claims, lifetimes })
@@ -450,7 +446,7 @@ pub(crate) fn claim_bind_attempts_with_lifetimes(
 
 /// Relinquish exact bind claims after all corresponding effects are absent.
 pub(crate) fn abandon_bind_attempts_without_effect(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     requests: &[PortLeaseRequest],
     claims: &[PortBindClaim],
     reservation_claim: Option<&NetworkReservationClaim>,
@@ -469,27 +465,27 @@ pub(crate) fn abandon_bind_attempts_without_effect(
         .cloned()
         .zip(claims.iter().cloned())
         .collect::<Vec<_>>();
-    open_authority(state_root)?
+    authority
         .abandon_bind_claims_without_effect(&claimed, reservation_claim)
         .map_err(port_lease_error)
 }
 
 /// Relinquish one exact lifetime-fenced attempt after proving no effect.
 pub(crate) fn abandon_bind_attempt_with_lifetime_without_effect(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     request: &PortLeaseRequest,
     claim: &PortBindClaim,
     lifetime: &PortLeaseLifetimeGuard,
     reservation_claim: Option<&NetworkReservationClaim>,
 ) -> Result<PortLeaseRecord> {
-    open_authority(state_root)?
+    authority
         .abandon_bind_with_lifetime_without_effect(request, reservation_claim, claim, lifetime)
         .map_err(port_lease_error)
 }
 
 /// Relinquish one complete lifetime-fenced batch after proving no effect.
 pub(crate) fn abandon_bind_attempts_with_lifetimes_without_effect(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     requests: &[PortLeaseRequest],
     batch: &OciPortBindLifetimeBatch,
     reservation_claim: Option<&NetworkReservationClaim>,
@@ -509,7 +505,7 @@ pub(crate) fn abandon_bind_attempts_with_lifetimes_without_effect(
         .cloned()
         .zip(batch.claims.iter().cloned())
         .collect::<Vec<_>>();
-    open_authority(state_root)?
+    authority
         .abandon_bind_batch_with_lifetimes_without_effect(
             &claims,
             reservation_claim,
@@ -521,10 +517,9 @@ pub(crate) fn abandon_bind_attempts_with_lifetimes_without_effect(
 /// Reserve a provider-assigned identity whose numeric port is adopted later.
 #[cfg(test)]
 pub(crate) fn reserve_provider_assigned(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     request: PortLeaseRequest,
 ) -> Result<PortLeaseRequest> {
-    let authority = open_authority(state_root)?;
     let record = authority
         .reserve(request.clone())
         .map_err(port_lease_error)?;
@@ -548,10 +543,10 @@ pub(crate) fn reserve_provider_assigned(
 /// confirmed local teardown; NNC3.8 owns explicit crash/ambiguity
 /// reconciliation for that reconstruction window.
 pub(crate) fn require_current_bind_authority(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     request: &PortLeaseRequest,
 ) -> Result<PortLeaseRecord> {
-    let record = inspect_exact(state_root, request)?;
+    let record = inspect_exact(authority, request)?;
     if !matches!(
         record.phase(),
         PortLeasePhase::Reserved | PortLeasePhase::Binding | PortLeasePhase::Active
@@ -627,7 +622,7 @@ impl<'a> ExpectedListenerAuthority<'a> {
 /// manifest must not borrow another listener's otherwise-current authority.
 /// The expected port is absent only for a provider-assigned port-zero bind.
 pub(crate) fn require_listener_authority(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     expected: ExpectedListenerAuthority<'_>,
     request: &PortLeaseRequest,
 ) -> Result<PortLeaseRecord> {
@@ -673,7 +668,7 @@ pub(crate) fn require_listener_authority(
         });
     }
 
-    let record = inspect_exact(state_root, request)?;
+    let record = inspect_exact(authority, request)?;
     if let Some(expected_port) = expected.port
         && record.reserved_port() != Some(expected_port)
     {
@@ -692,11 +687,11 @@ pub(crate) fn require_listener_authority(
 /// Verify logical listener ownership plus a phase that may create or
 /// reconstruct the named provider effect.
 pub(crate) fn require_current_listener_authority(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     expected: ExpectedListenerAuthority<'_>,
     request: &PortLeaseRequest,
 ) -> Result<PortLeaseRecord> {
-    let record = require_listener_authority(state_root, expected, request)?;
+    let record = require_listener_authority(authority, expected, request)?;
     if !matches!(
         record.phase(),
         PortLeasePhase::Reserved | PortLeasePhase::Binding | PortLeasePhase::Active
@@ -714,13 +709,13 @@ pub(crate) fn require_current_listener_authority(
 
 /// Verify logical listener ownership and one exact Active provider binding.
 pub(crate) fn require_active_listener_binding(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     expected: ExpectedListenerAuthority<'_>,
     request: &PortLeaseRequest,
     actual_addr: SocketAddr,
     provider: OciPortProvider,
 ) -> Result<PortLeaseRecord> {
-    let record = require_listener_authority(state_root, expected, request)?;
+    let record = require_listener_authority(authority, expected, request)?;
     let expected_binding = provider_binding(request, actual_addr, provider)?;
     if record.phase() != PortLeasePhase::Active || record.binding() != Some(&expected_binding) {
         return Err(SandboxError::OperationFailed {
@@ -737,14 +732,13 @@ pub(crate) fn require_active_listener_binding(
 /// Adopt and activate a successful bind owned by the exact durable claim.
 #[cfg(test)]
 pub(crate) fn adopt_claimed_and_activate(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     request: &PortLeaseRequest,
     reservation_claim: Option<&NetworkReservationClaim>,
     claim: &PortBindClaim,
     actual_addr: SocketAddr,
     provider: OciPortProvider,
 ) -> Result<PortLeaseRecord> {
-    let authority = open_authority(state_root)?;
     let binding = provider_binding(request, actual_addr, provider)?;
     let adopted = authority
         .adopt_claimed(request, reservation_claim, claim, binding)
@@ -757,7 +751,7 @@ pub(crate) fn adopt_claimed_and_activate(
 
 /// Adopt and activate one binding under the exact process-lifetime guard.
 pub(crate) fn adopt_claimed_and_activate_with_lifetime(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     request: &PortLeaseRequest,
     reservation_claim: Option<&NetworkReservationClaim>,
     claim: &PortBindClaim,
@@ -765,7 +759,6 @@ pub(crate) fn adopt_claimed_and_activate_with_lifetime(
     provider: OciPortProvider,
     lifetime: &PortLeaseLifetimeGuard,
 ) -> Result<PortLeaseRecord> {
-    let authority = open_authority(state_root)?;
     let binding = provider_binding(request, actual_addr, provider)?;
     authority
         .adopt_claimed_and_activate_with_lifetime(
@@ -780,10 +773,9 @@ pub(crate) fn adopt_claimed_and_activate_with_lifetime(
 
 /// Convert an exact dead process-bound effect into a restart-retained slot.
 pub(crate) fn prepare_process_bound_rebind_after_owner_death(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     request: &PortLeaseRequest,
 ) -> Result<PortLeaseRecord> {
-    let authority = open_authority(state_root)?;
     match authority
         .recover_dead_lifetime(request)
         .map_err(port_lease_error)?
@@ -816,7 +808,7 @@ pub(crate) fn prepare_process_bound_rebind_after_owner_death(
 /// Atomically adopt and activate a complete Nimbus-owned listener batch.
 #[cfg(test)]
 pub(crate) fn adopt_claimed_and_activate_batch(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     requests: &[PortLeaseRequest],
     claims: &[PortBindClaim],
     actual_addrs: &[SocketAddr],
@@ -845,14 +837,14 @@ pub(crate) fn adopt_claimed_and_activate_batch(
             ))
         })
         .collect::<Result<Vec<_>>>()?;
-    open_authority(state_root)?
+    authority
         .adopt_claimed_and_activate_batch(&bindings, reservation_claim)
         .map_err(port_lease_error)
 }
 
 /// Atomically activate a complete batch under its exact live lifetimes.
 pub(crate) fn adopt_claimed_and_activate_batch_with_lifetimes(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     requests: &[PortLeaseRequest],
     batch: &OciPortBindLifetimeBatch,
     actual_addrs: &[SocketAddr],
@@ -886,7 +878,7 @@ pub(crate) fn adopt_claimed_and_activate_batch_with_lifetimes(
             ))
         })
         .collect::<Result<Vec<_>>>()?;
-    open_authority(state_root)?
+    authority
         .adopt_claimed_and_activate_batch_with_lifetimes(
             &bindings,
             reservation_claim,
@@ -897,12 +889,12 @@ pub(crate) fn adopt_claimed_and_activate_batch_with_lifetimes(
 
 /// Verify that one sandbox-owned provider effect has exact active evidence.
 pub(crate) fn require_active_provider_binding(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     request: &PortLeaseRequest,
     actual_addr: SocketAddr,
     provider: OciPortProvider,
 ) -> Result<PortLeaseRecord> {
-    let record = inspect_exact(state_root, request)?;
+    let record = inspect_exact(authority, request)?;
     let expected = provider_binding(request, actual_addr, provider)?;
     if record.phase() != PortLeasePhase::Active || record.binding() != Some(&expected) {
         return Err(SandboxError::OperationFailed {
@@ -924,12 +916,12 @@ pub(crate) fn require_active_provider_binding(
 /// other phase either lacks a live effect or belongs to a different lifecycle
 /// disposition. The exact binding remains mandatory in both accepted phases.
 pub(crate) fn require_releasable_provider_binding(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     request: &PortLeaseRequest,
     actual_addr: SocketAddr,
     provider: OciPortProvider,
 ) -> Result<PortLeaseRecord> {
-    let record = inspect_exact(state_root, request)?;
+    let record = inspect_exact(authority, request)?;
     let expected = provider_binding(request, actual_addr, provider)?;
     if !matches!(
         record.phase(),
@@ -951,12 +943,12 @@ pub(crate) fn require_releasable_provider_binding(
 
 /// Verify exact provider evidence that may require owner-death recovery.
 pub(crate) fn require_provider_recovery_binding(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     request: &PortLeaseRequest,
     actual_addr: SocketAddr,
     provider: OciPortProvider,
 ) -> Result<PortLeaseRecord> {
-    let record = inspect_exact(state_root, request)?;
+    let record = inspect_exact(authority, request)?;
     let expected = provider_binding(request, actual_addr, provider)?;
     if !matches!(
         record.phase(),
@@ -980,13 +972,12 @@ pub(crate) fn require_provider_recovery_binding(
 /// Record a confirmed no-effect provider bind failure.
 #[cfg(test)]
 pub(crate) fn record_bind_failure(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     request: &PortLeaseRequest,
     claim: &PortBindClaim,
     observed: OciConfirmedBindFailure,
     reservation_claim: Option<&NetworkReservationClaim>,
 ) -> Result<PortLeaseRecord> {
-    let authority = open_authority(state_root)?;
     let failure = provider_bind_failure(
         request,
         claim,
@@ -1001,14 +992,13 @@ pub(crate) fn record_bind_failure(
 
 /// Record a confirmed no-effect failure under its exact live lifetime.
 pub(crate) fn record_bind_failure_with_lifetime(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     request: &PortLeaseRequest,
     claim: &PortBindClaim,
     observed: OciConfirmedBindFailure,
     reservation_claim: Option<&NetworkReservationClaim>,
     lifetime: &PortLeaseLifetimeGuard,
 ) -> Result<PortLeaseRecord> {
-    let authority = open_authority(state_root)?;
     let failure = provider_bind_failure(
         request,
         claim,
@@ -1061,9 +1051,11 @@ fn provider_bind_failure(
 }
 
 /// Fence new use before the provider effect is stopped or detached.
-pub(crate) fn withdraw(state_root: &Path, request: &PortLeaseRequest) -> Result<PortLeaseRecord> {
-    let authority = open_authority(state_root)?;
-    let record = inspect_exact_with(&authority, request)?;
+pub(crate) fn withdraw(
+    authority: &LocalPortLeaseAuthority,
+    request: &PortLeaseRequest,
+) -> Result<PortLeaseRecord> {
+    let record = inspect_exact(authority, request)?;
     if matches!(
         record.phase(),
         PortLeasePhase::Withdrawing | PortLeasePhase::Released | PortLeasePhase::Failed
@@ -1075,23 +1067,23 @@ pub(crate) fn withdraw(state_root: &Path, request: &PortLeaseRequest) -> Result<
 
 /// Retain an exact port for rebind after this process confirmed provider stop.
 pub(crate) fn prepare_rebind_after_confirmed_stop(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     request: &PortLeaseRequest,
     expected_binding: &PortLeaseBinding,
 ) -> Result<PortLeaseRecord> {
-    open_authority(state_root)?
+    authority
         .prepare_rebind_after_confirmed_stop(request, expected_binding)
         .map_err(port_lease_error)
 }
 
 /// Retain one exact live-owner listener after acknowledged provider stop.
 pub(crate) fn prepare_rebind_after_confirmed_stop_with_lifetime(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     request: &PortLeaseRequest,
     expected_binding: &PortLeaseBinding,
     lifetime: &PortLeaseLifetimeGuard,
 ) -> Result<PortLeaseRecord> {
-    open_authority(state_root)?
+    authority
         .prepare_rebind_batch_after_confirmed_stop_with_lifetimes(
             &[(request.clone(), expected_binding.clone())],
             std::slice::from_ref(lifetime),
@@ -1107,7 +1099,7 @@ pub(crate) fn prepare_rebind_after_confirmed_stop_with_lifetime(
 /// Atomically retain an exact stopped listener batch for same-generation rebind.
 #[cfg(test)]
 pub(crate) fn prepare_rebind_batch_after_confirmed_stop(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     requests: &[PortLeaseRequest],
     expected_bindings: &[PortLeaseBinding],
 ) -> Result<Vec<PortLeaseRecord>> {
@@ -1125,14 +1117,14 @@ pub(crate) fn prepare_rebind_batch_after_confirmed_stop(
         .cloned()
         .zip(expected_bindings.iter().cloned())
         .collect::<Vec<_>>();
-    open_authority(state_root)?
+    authority
         .prepare_rebind_batch_after_confirmed_stop(&expected)
         .map_err(port_lease_error)
 }
 
 /// Retain a live-owner batch after exact provider stop.
 pub(crate) fn prepare_rebind_batch_after_confirmed_stop_with_lifetimes(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     requests: &[PortLeaseRequest],
     expected_bindings: &[PortLeaseBinding],
     lifetimes: &[PortLeaseLifetimeGuard],
@@ -1151,14 +1143,14 @@ pub(crate) fn prepare_rebind_batch_after_confirmed_stop_with_lifetimes(
         .cloned()
         .zip(expected_bindings.iter().cloned())
         .collect::<Vec<_>>();
-    open_authority(state_root)?
+    authority
         .prepare_rebind_batch_after_confirmed_stop_with_lifetimes(&expected, lifetimes)
         .map_err(port_lease_error)
 }
 
 /// Atomically release a live provider batch after exact provider stop.
 pub(crate) fn release_provider_managed_batch_after_confirmed_stop_with_lifetimes(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     requests: &[PortLeaseRequest],
     expected_bindings: &[PortLeaseBinding],
     lifetimes: &[PortLeaseLifetimeGuard],
@@ -1177,7 +1169,7 @@ pub(crate) fn release_provider_managed_batch_after_confirmed_stop_with_lifetimes
         .cloned()
         .zip(expected_bindings.iter().cloned())
         .collect::<Vec<_>>();
-    open_authority(state_root)?
+    authority
         .release_provider_managed_batch_after_confirmed_stop_with_lifetimes(&expected, lifetimes)
         .map_err(port_lease_error)
 }
@@ -1187,10 +1179,9 @@ pub(crate) fn release_provider_managed_batch_after_confirmed_stop_with_lifetimes
 /// This operation proves only owner death. The returned guards must remain
 /// held while the OCI adapter inspects or removes the provider effect.
 pub(crate) fn recover_provider_managed_batch_after_owner_death(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     requests: &[PortLeaseRequest],
 ) -> Result<Vec<PortLeaseRecoveryGuard>> {
-    let authority = open_authority(state_root)?;
     let mut recoveries = Vec::with_capacity(requests.len());
     for request in requests {
         match authority
@@ -1227,7 +1218,7 @@ pub(crate) fn recover_provider_managed_batch_after_owner_death(
 
 /// Retain a recovered provider batch after the adapter confirms exact absence.
 pub(crate) fn prepare_provider_managed_batch_after_confirmed_stop(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     requests: &[PortLeaseRequest],
     expected_bindings: &[PortLeaseBinding],
     recoveries: &[PortLeaseRecoveryGuard],
@@ -1246,37 +1237,39 @@ pub(crate) fn prepare_provider_managed_batch_after_confirmed_stop(
         .cloned()
         .zip(expected_bindings.iter().cloned())
         .collect::<Vec<_>>();
-    open_authority(state_root)?
+    authority
         .prepare_rebind_provider_managed_batch_after_confirmed_stop(&expected, recoveries)
         .map_err(port_lease_error)
 }
 
 /// Retire a recovered provider-claim batch while retaining its exact slots.
 pub(crate) fn prepare_provider_managed_claim_batch_after_confirmed_stop(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     requests: &[PortLeaseRequest],
     recoveries: &[PortLeaseRecoveryGuard],
 ) -> Result<Vec<PortLeaseRecord>> {
-    open_authority(state_root)?
+    authority
         .prepare_rebind_provider_managed_claim_batch_after_confirmed_stop(requests, recoveries)
         .map_err(port_lease_error)
 }
 
 /// Release a recovered provider batch after the adapter confirms exact absence.
 pub(crate) fn release_provider_managed_batch_after_confirmed_stop(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     requests: &[PortLeaseRequest],
     recoveries: &[PortLeaseRecoveryGuard],
 ) -> Result<Vec<PortLeaseRecord>> {
-    open_authority(state_root)?
+    authority
         .release_provider_managed_batch_after_confirmed_stop(requests, recoveries)
         .map_err(port_lease_error)
 }
 
 /// Release the numeric slot only after provider effect removal is confirmed.
-pub(crate) fn release(state_root: &Path, request: &PortLeaseRequest) -> Result<PortLeaseRecord> {
-    let authority = open_authority(state_root)?;
-    let record = inspect_exact_with(&authority, request)?;
+pub(crate) fn release(
+    authority: &LocalPortLeaseAuthority,
+    request: &PortLeaseRequest,
+) -> Result<PortLeaseRecord> {
+    let record = inspect_exact(authority, request)?;
     if matches!(
         record.phase(),
         PortLeasePhase::Released | PortLeasePhase::Failed
@@ -1288,31 +1281,31 @@ pub(crate) fn release(state_root: &Path, request: &PortLeaseRequest) -> Result<P
 
 /// Release a live-owner slot after the adapter confirms exact effect absence.
 pub(crate) fn release_with_lifetime(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     request: &PortLeaseRequest,
     lifetime: &PortLeaseLifetimeGuard,
 ) -> Result<PortLeaseRecord> {
-    open_authority(state_root)?
+    authority
         .release_with_lifetime(request, lifetime)
         .map_err(port_lease_error)
 }
 
 /// Release a restart-retained slot using its exact durable stopped-binding receipt.
 pub(crate) fn release_after_confirmed_stop(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     request: &PortLeaseRequest,
 ) -> Result<PortLeaseRecord> {
-    open_authority(state_root)?
+    authority
         .release_after_confirmed_stop(request)
         .map_err(port_lease_error)
 }
 
 /// Atomically release a complete restart-retained listener batch.
 pub(crate) fn release_batch_after_confirmed_stop(
-    state_root: &Path,
+    authority: &LocalPortLeaseAuthority,
     requests: &[PortLeaseRequest],
 ) -> Result<Vec<PortLeaseRecord>> {
-    open_authority(state_root)?
+    authority
         .release_batch_after_confirmed_stop(requests)
         .map_err(port_lease_error)
 }
@@ -1433,13 +1426,6 @@ fn failure_kind(kind: io::ErrorKind) -> PortBindFailureKind {
 }
 
 pub(crate) fn inspect_exact(
-    state_root: &Path,
-    request: &PortLeaseRequest,
-) -> Result<PortLeaseRecord> {
-    inspect_exact_with(&open_authority(state_root)?, request)
-}
-
-fn inspect_exact_with(
     authority: &LocalPortLeaseAuthority,
     request: &PortLeaseRequest,
 ) -> Result<PortLeaseRecord> {
@@ -1461,10 +1447,6 @@ fn inspect_exact_with(
         });
     }
     Ok(record)
-}
-
-fn open_authority(state_root: &Path) -> Result<LocalPortLeaseAuthority> {
-    LocalPortLeaseAuthority::open(state_root).map_err(port_lease_error)
 }
 
 fn port_lease_error(error: impl std::fmt::Display) -> SandboxError {

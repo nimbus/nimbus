@@ -179,7 +179,8 @@ pub fn run_prepared_container_service_workload(bundle_dir: impl AsRef<Path>) -> 
         });
     }
     validate_runner_authority_roots(&manifest)?;
-    let backend = ContainerSandboxBackend::new(manifest.runner_config.to_backend_config());
+    let backend =
+        ContainerSandboxBackend::reconstruct_for_runner(manifest.runner_config.to_backend_config());
     let acquisition = acquire_runner_execution_ownership(&backend, &mut manifest, true)?;
     let (handoff, recovered_outcome) = match acquisition {
         RunnerExecutionAcquisition::Fresh(handoff) => (handoff, None),

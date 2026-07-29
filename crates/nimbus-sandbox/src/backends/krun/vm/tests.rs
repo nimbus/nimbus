@@ -1705,6 +1705,7 @@ fn restart_network_teardown_retains_exact_segment_hold() {
             .expect("execute-shaped network config should resolve"),
     );
     allocate_container_ips(
+        &backend.ipam_authority,
         &manifest.network_layout,
         manifest
             .network_config

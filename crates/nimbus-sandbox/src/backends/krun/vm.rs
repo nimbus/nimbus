@@ -46,8 +46,10 @@ use crate::backends::oci::materializer::{
 use crate::backends::oci::network::{
     ConfiguredSegmentAllocator, DEFAULT_AARDVARK_DNS_BINARY, DEFAULT_NETAVARK_BINARY,
     DEFAULT_NETWORK_INTERFACE, DEFAULT_NETWORK_NAME, DEFAULT_NETWORK_SUBNET, DEFAULT_TENANT_PREFIX,
-    OciNetworkConfig, OciNetworkDirectEgress, OciNetworkLayout, OciSegmentAllocator,
-    OciSegmentRealization, TerminalNetworkAuthoritySet, authenticate_container_network_generation,
+    OciIpamAuthority, OciNetavarkOperation, OciNetworkConfig, OciNetworkDirectEgress,
+    OciNetworkLayout, OciNetworkProcess, OciSegmentAllocator, OciSegmentRealization,
+    ReservedNetworkLaunchAuthority, TerminalNetworkAuthoritySet, TerminalNetworkFinalityEvidence,
+    authenticate_container_network_generation,
     authenticate_container_network_generation_for_cleanup, create_persistent_network_namespace,
     deallocate_container_ips_after_confirmed_detach, default_network_attachment_id,
     pin_netns_egress_to_own_proxy, place_sandbox_on_block, purge_legacy_nimbus0_once,
@@ -73,6 +75,7 @@ mod attachment_recovery;
 mod creator;
 mod lifecycle;
 mod manifest_publication;
+mod network_composition;
 mod readiness;
 mod root_authentication;
 mod start;
@@ -213,8 +216,11 @@ impl Default for KrunSandboxBackendConfig {
 pub struct KrunSandboxBackend {
     config: KrunSandboxBackendConfig,
     segment_allocator: Arc<OciSegmentAllocator>,
+    ipam_authority: OciIpamAuthority,
+    port_lease_coordinator: OciPortLeaseCoordinator,
     egress_proxies: EgressProxyRegistry,
     netavark_port_lifetimes: NetavarkPortLifetimeRegistry,
+    _network_process: Option<Arc<OciNetworkProcess>>,
     startup_network_reconciliation_error: Option<Arc<str>>,
     #[cfg(test)]
     restart_launch_test_probe: Option<RestartLaunchTestProbe>,
@@ -287,9 +293,9 @@ impl KrunSandboxBackend {
 
     pub fn new(config: KrunSandboxBackendConfig) -> Self {
         let segment_allocator: Arc<OciSegmentAllocator> =
-            Arc::new(ConfiguredSegmentAllocator::new(
-                config.network_state_root.clone(),
-                config.node_network_supernet.clone(),
+            Arc::new(ConfiguredSegmentAllocator::reconstruct_direct(
+                &config.network_state_root,
+                &config.node_network_supernet,
                 config.node_tenant_subnet_prefix,
             ));
         Self::with_segment_allocator(config, segment_allocator)
@@ -299,23 +305,65 @@ impl KrunSandboxBackend {
         config: KrunSandboxBackendConfig,
         segment_allocator: Arc<OciSegmentAllocator>,
     ) -> Self {
+        Self::with_segment_allocator_and_process(config, segment_allocator, None)
+    }
+
+    fn with_segment_allocator_and_process(
+        config: KrunSandboxBackendConfig,
+        segment_allocator: Arc<OciSegmentAllocator>,
+        network_process: Option<Arc<OciNetworkProcess>>,
+    ) -> Self {
+        let ipam_authority = network_process.as_ref().map_or_else(
+            || OciIpamAuthority::reconstruct_direct(&config.network_state_root),
+            |process| process.ipam_authority(),
+        );
+        let port_lease_coordinator = network_process.as_ref().map_or_else(
+            || {
+                OciPortLeaseCoordinator::reconstruct_direct(
+                    &config.network_state_root,
+                    config.published_port_range.clone(),
+                )
+                .with_max_ports_per_tenant(config.max_published_ports_per_tenant)
+            },
+            |process| {
+                process.port_lease_coordinator(
+                    config.published_port_range.clone(),
+                    config.max_published_ports_per_tenant,
+                )
+            },
+        );
         let startup_network_reconciliation_error = reconcile_startup_network_state(
             &config.workload_state_root,
-            &config.network_state_root,
+            &ipam_authority,
             segment_allocator.as_ref(),
         )
         .err()
         .map(|error| Arc::<str>::from(error.to_string()));
-        let egress_proxies = EgressProxyRegistry::with_roots_and_network_state(
-            egress_decision_log_root(&config.workload_state_root),
-            egress_trust_anchor_root(&config.workload_state_root),
-            &config.network_state_root,
-        );
+        let egress_proxies = match network_process.as_ref() {
+            Some(process) => process.egress_registry(
+                egress_decision_log_root(&config.workload_state_root),
+                egress_trust_anchor_root(&config.workload_state_root),
+            ),
+            None => EgressProxyRegistry::with_roots_and_port_authority(
+                egress_decision_log_root(&config.workload_state_root),
+                egress_trust_anchor_root(&config.workload_state_root),
+                &config.network_state_root,
+                port_lease_coordinator.cloned_authority(),
+            ),
+        };
+        let netavark_port_lifetimes = network_process
+            .as_ref()
+            .map_or_else(NetavarkPortLifetimeRegistry::default, |process| {
+                process.netavark_port_lifetimes()
+            });
         Self {
             config,
             segment_allocator,
+            ipam_authority,
+            port_lease_coordinator,
             egress_proxies,
-            netavark_port_lifetimes: NetavarkPortLifetimeRegistry::default(),
+            netavark_port_lifetimes,
+            _network_process: network_process,
             startup_network_reconciliation_error,
             #[cfg(test)]
             restart_launch_test_probe: None,
@@ -410,6 +458,7 @@ impl KrunSandboxBackend {
     ) -> Result<OciNetworkConfig> {
         place_sandbox_on_block(
             self.segment_allocator.as_ref(),
+            &self.ipam_authority,
             tenant,
             layout,
             sandbox_id,
@@ -422,11 +471,14 @@ impl KrunSandboxBackend {
         let reservation_claim = manifest.require_reserved_claim()?;
         let manager = self.port_lease_coordinator();
         release_reserved_network_launch_after_ports(
-            self.segment_allocator.as_ref(),
-            &manifest.network_layout,
-            &manifest.spec.tenant_id,
-            &manifest.handle.id,
-            reservation_claim,
+            ReservedNetworkLaunchAuthority::new(
+                self.segment_allocator.as_ref(),
+                &self.ipam_authority,
+                &manifest.network_layout,
+                &manifest.spec.tenant_id,
+                &manifest.handle.id,
+                reservation_claim,
+            ),
             manager.release_never_bound_launch_claim(reservation_claim),
         )
     }
@@ -439,11 +491,14 @@ impl KrunSandboxBackend {
         let reservation_claim = manifest.require_reserved_claim()?;
         let manager = self.port_lease_coordinator();
         release_reserved_network_launch_after_ports(
-            self.segment_allocator.as_ref(),
-            &manifest.network_layout,
-            &manifest.spec.tenant_id,
-            &manifest.handle.id,
-            reservation_claim,
+            ReservedNetworkLaunchAuthority::new(
+                self.segment_allocator.as_ref(),
+                &self.ipam_authority,
+                &manifest.network_layout,
+                &manifest.spec.tenant_id,
+                &manifest.handle.id,
+                reservation_claim,
+            ),
             manager.release_unpublished_launch_ports(reservations, reservation_claim),
         )
     }

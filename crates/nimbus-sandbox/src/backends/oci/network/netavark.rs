@@ -20,7 +20,7 @@ use super::dto::{
 };
 use super::forwarding::OciMachinePortForwarderConfig;
 use super::ipam::{
-    NetavarkSetupClaim, NetavarkTeardownPlan,
+    NetavarkSetupClaim, NetavarkTeardownPlan, OciIpamAuthority,
     authenticate_container_network_generation_for_cleanup as authenticate_ipam_generation_for_cleanup,
     begin_netavark_setup, begin_netavark_teardown, complete_netavark_setup,
     complete_netavark_teardown, confirm_netavark_provider_detached, load_container_ips_for_segment,
@@ -41,55 +41,81 @@ mod tests;
 /// Authenticate the immutable attachment generation before any provider,
 /// namespace, status-projection, port, or segment mutation.
 pub(crate) fn authenticate_container_network_generation(
+    ipam_authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     config: &OciNetworkConfig,
     sandbox_id: &SandboxId,
 ) -> Result<Vec<Ipv4Addr>> {
-    load_container_ips_for_segment(layout, config, sandbox_id)
+    load_container_ips_for_segment(ipam_authority, layout, config, sandbox_id)
 }
 
 /// Authenticate cleanup against either the exact live allocation or its
 /// terminal tombstone. A terminal witness authorizes idempotent continuation
 /// of the owning cleanup saga but never provider setup.
 pub(crate) fn authenticate_container_network_generation_for_cleanup(
+    ipam_authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     config: &OciNetworkConfig,
     sandbox_id: &SandboxId,
 ) -> Result<()> {
-    authenticate_ipam_generation_for_cleanup(layout, config, sandbox_id).map(drop)
+    authenticate_ipam_generation_for_cleanup(ipam_authority, layout, config, sandbox_id).map(drop)
 }
 
-pub(crate) fn setup_container_network(
-    layout: &OciNetworkLayout,
-    config: &OciNetworkConfig,
-    sandbox_id: &SandboxId,
-    sandbox_name: &str,
-    hostname: &str,
-    port_bindings: &[SandboxPortBinding],
-    machine_port_forwarder: Option<&OciMachinePortForwarderConfig>,
-) -> Result<Vec<Ipv4Addr>> {
-    setup_container_network_with_runner(layout, config, sandbox_id, |action, assigned_ips| {
-        run_netavark(
-            action,
+/// Immutable input for one exact Netavark provider operation.
+pub(crate) struct OciNetavarkOperation<'a> {
+    layout: &'a OciNetworkLayout,
+    config: &'a OciNetworkConfig,
+    sandbox_id: &'a SandboxId,
+    sandbox_name: &'a str,
+    hostname: &'a str,
+    port_bindings: &'a [SandboxPortBinding],
+    machine_port_forwarder: Option<&'a OciMachinePortForwarderConfig>,
+}
+
+impl<'a> OciNetavarkOperation<'a> {
+    pub(crate) fn new(
+        layout: &'a OciNetworkLayout,
+        config: &'a OciNetworkConfig,
+        sandbox_id: &'a SandboxId,
+        sandbox_name: &'a str,
+        hostname: &'a str,
+        port_bindings: &'a [SandboxPortBinding],
+        machine_port_forwarder: Option<&'a OciMachinePortForwarderConfig>,
+    ) -> Self {
+        Self {
             layout,
             config,
             sandbox_id,
             sandbox_name,
             hostname,
-            assigned_ips,
-            netavark_port_bindings(port_bindings, machine_port_forwarder),
-            machine_port_forwarder.is_some(),
-        )
-    })
+            port_bindings,
+            machine_port_forwarder,
+        }
+    }
+}
+
+pub(crate) fn setup_container_network(
+    ipam_authority: &OciIpamAuthority,
+    operation: &OciNetavarkOperation<'_>,
+) -> Result<Vec<Ipv4Addr>> {
+    setup_container_network_with_runner(
+        ipam_authority,
+        operation.layout,
+        operation.config,
+        operation.sandbox_id,
+        |action, assigned_ips| run_netavark(action, operation, assigned_ips),
+    )
 }
 
 fn setup_container_network_with_runner(
+    ipam_authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     config: &OciNetworkConfig,
     sandbox_id: &SandboxId,
     mut runner: impl FnMut(&str, &[Ipv4Addr]) -> Result<Value>,
 ) -> Result<Vec<Ipv4Addr>> {
-    let (assigned_ips, setup_claim) = begin_netavark_setup(layout, config, sandbox_id)?;
+    let (assigned_ips, setup_claim) =
+        begin_netavark_setup(ipam_authority, layout, config, sandbox_id)?;
     let setup = (|| {
         let response = runner("setup", &assigned_ips)?;
         let rendered = serde_json::to_vec_pretty(&response).map_err(|error| {
@@ -105,11 +131,18 @@ fn setup_container_network_with_runner(
                 ),
             }
         })?;
-        complete_netavark_setup(layout, &setup_claim)
+        complete_netavark_setup(ipam_authority, layout, &setup_claim)
     })();
     if let Err(primary) = setup {
-        let cleanup =
-            compensate_failed_setup(layout, config, sandbox_id, &setup_claim, &mut runner).err();
+        let cleanup = compensate_failed_setup(
+            ipam_authority,
+            layout,
+            config,
+            sandbox_id,
+            &setup_claim,
+            &mut runner,
+        )
+        .err();
         return Err(match cleanup {
             None => primary,
             Some(cleanup) => SandboxError::OperationFailed {
@@ -124,51 +157,49 @@ fn setup_container_network_with_runner(
 }
 
 pub(crate) fn teardown_container_network(
-    layout: &OciNetworkLayout,
-    config: &OciNetworkConfig,
-    sandbox_id: &SandboxId,
-    sandbox_name: &str,
-    hostname: &str,
-    port_bindings: &[SandboxPortBinding],
-    machine_port_forwarder: Option<&OciMachinePortForwarderConfig>,
+    ipam_authority: &OciIpamAuthority,
+    operation: &OciNetavarkOperation<'_>,
 ) -> Result<()> {
-    teardown_container_network_with_runner(layout, config, sandbox_id, |action, assigned_ips| {
-        run_netavark(
-            action,
-            layout,
-            config,
-            sandbox_id,
-            sandbox_name,
-            hostname,
-            assigned_ips,
-            netavark_port_bindings(port_bindings, machine_port_forwarder),
-            machine_port_forwarder.is_some(),
-        )
-    })
+    teardown_container_network_with_runner(
+        ipam_authority,
+        operation.layout,
+        operation.config,
+        operation.sandbox_id,
+        |action, assigned_ips| run_netavark(action, operation, assigned_ips),
+    )
 }
 
 fn teardown_container_network_with_runner(
+    ipam_authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     config: &OciNetworkConfig,
     sandbox_id: &SandboxId,
     mut runner: impl FnMut(&str, &[Ipv4Addr]) -> Result<Value>,
 ) -> Result<()> {
-    let plan = begin_netavark_teardown(layout, config, sandbox_id, None)?;
-    execute_teardown_plan(layout, plan, &mut runner)
+    let plan = begin_netavark_teardown(ipam_authority, layout, config, sandbox_id, None)?;
+    execute_teardown_plan(ipam_authority, layout, plan, &mut runner)
 }
 
 fn compensate_failed_setup(
+    ipam_authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     config: &OciNetworkConfig,
     sandbox_id: &SandboxId,
     setup_claim: &NetavarkSetupClaim,
     runner: &mut impl FnMut(&str, &[Ipv4Addr]) -> Result<Value>,
 ) -> Result<()> {
-    let plan = begin_netavark_teardown(layout, config, sandbox_id, Some(setup_claim))?;
-    execute_teardown_plan(layout, plan, runner)
+    let plan = begin_netavark_teardown(
+        ipam_authority,
+        layout,
+        config,
+        sandbox_id,
+        Some(setup_claim),
+    )?;
+    execute_teardown_plan(ipam_authority, layout, plan, runner)
 }
 
 fn execute_teardown_plan(
+    ipam_authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     plan: NetavarkTeardownPlan,
     runner: &mut impl FnMut(&str, &[Ipv4Addr]) -> Result<Value>,
@@ -198,12 +229,12 @@ fn execute_teardown_plan(
                     let _ = runner("teardown", &assigned_ips)?;
                 }
             }
-            confirm_netavark_provider_detached(layout, &claim)?;
+            confirm_netavark_provider_detached(ipam_authority, layout, &claim)?;
             claim
         }
     };
     remove_netavark_status(&layout.status_path)?;
-    complete_netavark_teardown(layout, &claim)
+    complete_netavark_teardown(ipam_authority, layout, &claim)
 }
 
 fn remove_netavark_status(path: &Path) -> Result<()> {
@@ -240,47 +271,34 @@ fn require_netavark_status_absent(path: &Path) -> Result<()> {
     }
 }
 
-// This param cluster (layout, config, sandbox_id, sandbox_name, hostname, ...)
-// is shared verbatim with sibling functions in this module (setup/teardown
-// above, build_netavark_request below); bundling only this one call would
-// fragment the pattern rather than clarify it. A struct-based refactor across
-// the whole module is a larger, separate change, not a hygiene-sweep edit to
-// this network-isolation-sensitive path.
-#[allow(clippy::too_many_arguments)]
 fn run_netavark(
     action: &str,
-    layout: &OciNetworkLayout,
-    config: &OciNetworkConfig,
-    sandbox_id: &SandboxId,
-    sandbox_name: &str,
-    hostname: &str,
+    operation: &OciNetavarkOperation<'_>,
     assigned_ips: &[Ipv4Addr],
-    port_bindings: &[SandboxPortBinding],
-    strip_host_ip: bool,
 ) -> Result<Value> {
     let request = build_netavark_request(
-        config,
-        sandbox_id,
-        sandbox_name,
-        hostname,
+        operation.config,
+        operation.sandbox_id,
+        operation.sandbox_name,
+        operation.hostname,
         assigned_ips,
-        port_bindings,
-        strip_host_ip,
+        netavark_port_bindings(operation.port_bindings, operation.machine_port_forwarder),
+        operation.machine_port_forwarder.is_some(),
     )?;
     let request_bytes =
         serde_json::to_vec(&request).map_err(|error| SandboxError::OperationFailed {
             message: format!("failed to serialize netavark request: {error}"),
         })?;
-    let output = std::process::Command::new(&config.netavark_path)
+    let output = std::process::Command::new(&operation.config.netavark_path)
         .arg("--config")
-        .arg(&layout.run_root)
+        .arg(&operation.layout.run_root)
         .arg("--rootless=false")
         .arg(format!(
             "--aardvark-binary={}",
-            config.aardvark_dns_path.display()
+            operation.config.aardvark_dns_path.display()
         ))
         .arg(action)
-        .arg(&layout.netns_path)
+        .arg(&operation.layout.netns_path)
         .env("PATH", netavark_path_env(std::env::var_os("PATH")))
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -296,7 +314,7 @@ fn run_netavark(
             message: format!(
                 "failed to run netavark {} for sandbox {}: {error}",
                 action,
-                sandbox_id.as_str()
+                operation.sandbox_id.as_str()
             ),
         })?;
     if !output.status.success() {
@@ -304,7 +322,7 @@ fn run_netavark(
             message: format!(
                 "netavark {} failed for sandbox {}: {}",
                 action,
-                sandbox_id.as_str(),
+                operation.sandbox_id.as_str(),
                 render_netavark_failure(&output.stdout, &output.stderr)
             ),
         });
@@ -316,7 +334,7 @@ fn run_netavark(
         message: format!(
             "failed to parse netavark {} response for sandbox {}: {error}",
             action,
-            sandbox_id.as_str()
+            operation.sandbox_id.as_str()
         ),
     })
 }

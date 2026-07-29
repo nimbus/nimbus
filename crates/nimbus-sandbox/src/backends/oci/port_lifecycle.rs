@@ -3,7 +3,7 @@ use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::num::NonZeroU16;
 use std::ops::RangeInclusive;
-use std::path::PathBuf;
+use std::sync::Arc;
 
 use nimbus_core::TenantId;
 use nimbus_network::{
@@ -40,6 +40,7 @@ use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
 use crate::spec::SandboxPortBinding;
 
+mod authority;
 mod batch_state;
 mod netavark_lifetime;
 
@@ -54,7 +55,7 @@ pub(crate) fn machine_port_proxy_guest_listener_addr(binding: &SandboxPortBindin
 #[derive(Debug, Clone)]
 pub(crate) struct OciPortLeaseCoordinator {
     range: RangeInclusive<u16>,
-    state_root: PathBuf,
+    authority: std::result::Result<LocalPortLeaseAuthority, Arc<str>>,
     max_ports_per_tenant: Option<usize>,
     published_listener_provider: PublishedListenerProvider,
 }
@@ -208,13 +209,9 @@ impl<'a> SandboxLaunchPortPlan<'a> {
 }
 
 impl OciPortLeaseCoordinator {
-    pub(crate) fn new(state_root: impl Into<PathBuf>, range: RangeInclusive<u16>) -> Self {
-        Self {
-            range,
-            state_root: state_root.into(),
-            max_ports_per_tenant: None,
-            published_listener_provider: PublishedListenerProvider::Netavark,
-        }
+    pub(crate) fn with_range(mut self, range: RangeInclusive<u16>) -> Self {
+        self.range = range;
+        self
     }
 
     /// Model published listeners by the socket this process actually binds.
@@ -312,13 +309,13 @@ impl OciPortLeaseCoordinator {
 
         let reserved_batch = match self.max_ports_per_tenant {
             Some(maximum) => reserve_batch_with_tenant_limit(
-                &self.state_root,
+                self.authority()?,
                 requests,
                 tenant_id,
                 maximum,
                 reservation_claim,
             )?,
-            None => reserve_batch(&self.state_root, requests, reservation_claim)?,
+            None => reserve_batch(self.authority()?, requests, reservation_claim)?,
         };
         let (reserved, reservation_claim, publication_lifetime) = reserved_batch.into_parts();
         let reserved_requests = reserved
@@ -402,7 +399,7 @@ impl OciPortLeaseCoordinator {
         requests: &[PortLeaseRequest],
         reservation_claim: &NetworkReservationClaim,
     ) -> Result<()> {
-        release_reserved_batch_without_effect(&self.state_root, requests, reservation_claim)?;
+        release_reserved_batch_without_effect(self.authority()?, requests, reservation_claim)?;
         Ok(())
     }
 
@@ -434,7 +431,7 @@ impl OciPortLeaseCoordinator {
             }
         })?;
         release_reserved_batch_with_lifetime_without_effect(
-            &self.state_root,
+            self.authority()?,
             &reservations.all_requests(),
             publication_lifetime,
         )?;
@@ -451,11 +448,7 @@ impl OciPortLeaseCoordinator {
         &self,
         reservation_claim: &NetworkReservationClaim,
     ) -> Result<()> {
-        let authority = LocalPortLeaseAuthority::open(&self.state_root).map_err(|error| {
-            SandboxError::OperationFailed {
-                message: format!("failed to open port reservation authority: {error}"),
-            }
-        })?;
+        let authority = self.authority()?;
         let requests = authority
             .list()
             .map_err(|error| SandboxError::OperationFailed {
@@ -477,7 +470,7 @@ impl OciPortLeaseCoordinator {
         requests: &[PortLeaseRequest],
         reservation_claim: &NetworkReservationClaim,
     ) -> Result<()> {
-        verify_reserved_batch_for_coordinator(&self.state_root, requests, reservation_claim)?;
+        verify_reserved_batch_for_coordinator(self.authority()?, requests, reservation_claim)?;
         Ok(())
     }
 
@@ -593,11 +586,7 @@ impl OciPortLeaseCoordinator {
         requests: &[PortLeaseRequest],
         provider_name: &str,
     ) -> Result<Vec<PortLeaseRecord>> {
-        let authority = LocalPortLeaseAuthority::open(&self.state_root).map_err(|error| {
-            SandboxError::OperationFailed {
-                message: format!("failed to open {provider_name} port authority: {error}"),
-            }
-        })?;
+        let authority = self.authority()?;
         let records = authority
             .list()
             .map_err(|error| SandboxError::OperationFailed {
@@ -660,11 +649,15 @@ impl OciPortLeaseCoordinator {
         provider_error: SandboxError,
         operation: &str,
     ) -> SandboxError {
-        match release_reserved_batch_with_lifetime_without_effect(
-            &self.state_root,
-            requests,
-            publication_lifetime,
-        ) {
+        let compensation = self.authority().and_then(|authority| {
+            release_reserved_batch_with_lifetime_without_effect(
+                authority,
+                requests,
+                publication_lifetime,
+            )
+            .map(|_| ())
+        });
+        match compensation {
             Ok(_) => provider_error,
             Err(compensation_error) => SandboxError::OperationFailed {
                 message: format!(
@@ -786,11 +779,7 @@ impl OciPortLeaseCoordinator {
             OciPortLeaseIntent::host_internal(target, exposure),
             self.range_request_mode()?,
         );
-        let authority = LocalPortLeaseAuthority::open(&self.state_root).map_err(|error| {
-            SandboxError::OperationFailed {
-                message: format!("failed to open port reservation authority: {error}"),
-            }
-        })?;
+        let authority = self.authority()?;
         let record =
             authority
                 .reserve(request.clone())
@@ -822,7 +811,7 @@ impl OciPortLeaseCoordinator {
             OciPortLeaseIntent::host_internal(target, exposure),
             self.range_request_mode()?,
         );
-        let (request, selected, reservation_claim) = reserve(&self.state_root, request)?;
+        let (request, selected, reservation_claim) = reserve(self.authority()?, request)?;
         Ok((selected.get(), request, reservation_claim))
     }
 
@@ -883,7 +872,7 @@ impl OciPortLeaseCoordinator {
                 })?;
             let (target, publication, exposure) = self.published_binding_scope(binding)?;
             require_current_listener_authority(
-                &self.state_root,
+                self.authority()?,
                 ExpectedListenerAuthority::published(
                     tenant_id,
                     sandbox_id,
@@ -920,7 +909,7 @@ impl OciPortLeaseCoordinator {
             });
         }
         for request in leases {
-            require_current_bind_authority(&self.state_root, request)?;
+            require_current_bind_authority(self.authority()?, request)?;
         }
         let reservation_claim = self.reservation_claim_for_requests(leases)?;
         let actual_addrs = bindings
@@ -928,7 +917,7 @@ impl OciPortLeaseCoordinator {
             .map(SandboxPortBinding::host_socket_addr)
             .collect::<Vec<_>>();
         adopt_claimed_and_activate_batch(
-            &self.state_root,
+            self.authority()?,
             leases,
             claims,
             &actual_addrs,
@@ -954,7 +943,7 @@ impl OciPortLeaseCoordinator {
             .map(SandboxPortBinding::host_socket_addr)
             .collect::<Vec<_>>();
         adopt_claimed_and_activate_batch_with_lifetimes(
-            &self.state_root,
+            self.authority()?,
             leases,
             batch,
             &actual_addrs,
@@ -976,7 +965,7 @@ impl OciPortLeaseCoordinator {
         self.require_binding_leases(tenant_id, sandbox_id, bindings, leases)?;
         let reservation_claim = self.reservation_claim_for_requests(leases)?;
         claim_bind_attempts(
-            &self.state_root,
+            self.authority()?,
             leases,
             OciPortProvider::Netavark,
             reservation_claim.as_ref(),
@@ -994,7 +983,7 @@ impl OciPortLeaseCoordinator {
         self.require_binding_leases(tenant_id, sandbox_id, bindings, leases)?;
         let reservation_claim = self.reservation_claim_for_requests(leases)?;
         claim_bind_attempts_with_lifetimes(
-            &self.state_root,
+            self.authority()?,
             leases,
             OciPortProvider::Netavark,
             reservation_claim.as_ref(),
@@ -1020,7 +1009,7 @@ impl OciPortLeaseCoordinator {
             claims,
         )?;
         self.require_binding_lease_identities(tenant_id, sandbox_id, bindings, leases)?;
-        abandon_bind_attempts_without_effect(&self.state_root, leases, claims, reservation_claim)?;
+        abandon_bind_attempts_without_effect(self.authority()?, leases, claims, reservation_claim)?;
         Ok(())
     }
 
@@ -1041,7 +1030,7 @@ impl OciPortLeaseCoordinator {
         )?;
         self.require_binding_lease_identities(tenant_id, sandbox_id, bindings, leases)?;
         abandon_bind_attempts_with_lifetimes_without_effect(
-            &self.state_root,
+            self.authority()?,
             leases,
             batch,
             reservation_claim,
@@ -1078,7 +1067,7 @@ impl OciPortLeaseCoordinator {
         expected_bindings: &[nimbus_network::PortLeaseBinding],
     ) -> Result<()> {
         self.require_published_listener_provider(PublishedListenerProvider::Netavark)?;
-        prepare_rebind_batch_after_confirmed_stop(&self.state_root, leases, expected_bindings)?;
+        prepare_rebind_batch_after_confirmed_stop(self.authority()?, leases, expected_bindings)?;
         Ok(())
     }
 
@@ -1090,7 +1079,7 @@ impl OciPortLeaseCoordinator {
     ) -> Result<()> {
         self.require_published_listener_provider(PublishedListenerProvider::Netavark)?;
         prepare_rebind_batch_after_confirmed_stop_with_lifetimes(
-            &self.state_root,
+            self.authority()?,
             leases,
             expected_bindings,
             batch.lifetimes(),
@@ -1106,7 +1095,7 @@ impl OciPortLeaseCoordinator {
     ) -> Result<()> {
         self.require_published_listener_provider(PublishedListenerProvider::Netavark)?;
         release_provider_managed_batch_after_confirmed_stop_with_lifetimes(
-            &self.state_root,
+            self.authority()?,
             leases,
             expected_bindings,
             batch.lifetimes(),
@@ -1128,7 +1117,7 @@ impl OciPortLeaseCoordinator {
             .zip(leases)
             .map(|(binding, request)| {
                 require_provider_recovery_binding(
-                    &self.state_root,
+                    self.authority()?,
                     request,
                     binding.host_socket_addr(),
                     OciPortProvider::Netavark,
@@ -1144,7 +1133,7 @@ impl OciPortLeaseCoordinator {
             })
             .collect::<Result<Vec<_>>>()?;
         let recoveries =
-            recover_provider_managed_batch_after_owner_death(&self.state_root, leases)?;
+            recover_provider_managed_batch_after_owner_death(self.authority()?, leases)?;
         Ok((expected, recoveries))
     }
 
@@ -1163,7 +1152,7 @@ impl OciPortLeaseCoordinator {
             claims,
         )?;
         self.require_binding_lease_identities(tenant_id, sandbox_id, bindings, leases)?;
-        recover_provider_managed_batch_after_owner_death(&self.state_root, leases)
+        recover_provider_managed_batch_after_owner_death(self.authority()?, leases)
     }
 
     pub(crate) fn prepare_recovered_netavark_bindings_for_rebind(
@@ -1174,7 +1163,7 @@ impl OciPortLeaseCoordinator {
     ) -> Result<()> {
         self.require_published_listener_provider(PublishedListenerProvider::Netavark)?;
         prepare_provider_managed_batch_after_confirmed_stop(
-            &self.state_root,
+            self.authority()?,
             leases,
             expected_bindings,
             recoveries,
@@ -1189,7 +1178,7 @@ impl OciPortLeaseCoordinator {
     ) -> Result<()> {
         self.require_published_listener_provider(PublishedListenerProvider::Netavark)?;
         prepare_provider_managed_claim_batch_after_confirmed_stop(
-            &self.state_root,
+            self.authority()?,
             leases,
             recoveries,
         )?;
@@ -1202,7 +1191,7 @@ impl OciPortLeaseCoordinator {
         recoveries: &[PortLeaseRecoveryGuard],
     ) -> Result<()> {
         self.require_published_listener_provider(PublishedListenerProvider::Netavark)?;
-        release_provider_managed_batch_after_confirmed_stop(&self.state_root, leases, recoveries)?;
+        release_provider_managed_batch_after_confirmed_stop(self.authority()?, leases, recoveries)?;
         Ok(())
     }
 
@@ -1238,7 +1227,7 @@ impl OciPortLeaseCoordinator {
             });
         }
         for request in leases {
-            require_current_bind_authority(&self.state_root, request)?;
+            require_current_bind_authority(self.authority()?, request)?;
         }
         let reservation_claim = self.reservation_claim_for_requests(leases)?;
         let actual_addrs = bindings
@@ -1246,7 +1235,7 @@ impl OciPortLeaseCoordinator {
             .map(machine_port_proxy_guest_listener_addr)
             .collect::<Vec<_>>();
         adopt_claimed_and_activate_batch(
-            &self.state_root,
+            self.authority()?,
             leases,
             claims,
             &actual_addrs,
@@ -1279,7 +1268,7 @@ impl OciPortLeaseCoordinator {
         self.require_published_listener_provider(PublishedListenerProvider::MachinePortProxy)?;
         self.require_binding_leases(tenant_id, sandbox_id, bindings, leases)?;
         for request in leases {
-            require_current_bind_authority(&self.state_root, request)?;
+            require_current_bind_authority(self.authority()?, request)?;
         }
         let reservation_claim = self.reservation_claim_for_requests(leases)?;
         let actual_addrs = bindings
@@ -1287,7 +1276,7 @@ impl OciPortLeaseCoordinator {
             .map(machine_port_proxy_guest_listener_addr)
             .collect::<Vec<_>>();
         adopt_claimed_and_activate_batch_with_lifetimes(
-            &self.state_root,
+            self.authority()?,
             leases,
             batch,
             &actual_addrs,
@@ -1321,7 +1310,7 @@ impl OciPortLeaseCoordinator {
         self.require_binding_leases(tenant_id, sandbox_id, bindings, leases)?;
         let reservation_claim = self.reservation_claim_for_requests(leases)?;
         claim_bind_attempts(
-            &self.state_root,
+            self.authority()?,
             leases,
             OciPortProvider::MachinePortProxy,
             reservation_claim.as_ref(),
@@ -1339,7 +1328,7 @@ impl OciPortLeaseCoordinator {
         self.require_binding_leases(tenant_id, sandbox_id, bindings, leases)?;
         let reservation_claim = self.reservation_claim_for_requests(leases)?;
         claim_bind_attempts_with_lifetimes(
-            &self.state_root,
+            self.authority()?,
             leases,
             OciPortProvider::MachinePortProxy,
             reservation_claim.as_ref(),
@@ -1361,7 +1350,7 @@ impl OciPortLeaseCoordinator {
         )?;
         let reservation_claim = self.reservation_claim_for_requests(leases)?;
         abandon_bind_attempts_without_effect(
-            &self.state_root,
+            self.authority()?,
             leases,
             claims,
             reservation_claim.as_ref(),
@@ -1382,7 +1371,7 @@ impl OciPortLeaseCoordinator {
         )?;
         let reservation_claim = self.reservation_claim_for_requests(leases)?;
         abandon_bind_attempts_with_lifetimes_without_effect(
-            &self.state_root,
+            self.authority()?,
             leases,
             batch,
             reservation_claim.as_ref(),
@@ -1436,7 +1425,7 @@ impl OciPortLeaseCoordinator {
             .zip(leases)
             .map(|(binding, request)| {
                 require_active_provider_binding(
-                    &self.state_root,
+                    self.authority()?,
                     request,
                     machine_port_proxy_guest_listener_addr(binding),
                     OciPortProvider::MachinePortProxy,
@@ -1476,7 +1465,7 @@ impl OciPortLeaseCoordinator {
             self.require_active_machine_bindings(tenant_id, sandbox_id, bindings, leases)?;
         for ((request, binding), lifetime) in leases.iter().zip(bindings).zip(batch.lifetimes()) {
             let record = require_active_provider_binding(
-                &self.state_root,
+                self.authority()?,
                 request,
                 machine_port_proxy_guest_listener_addr(binding),
                 OciPortProvider::MachinePortProxy,
@@ -1510,7 +1499,7 @@ impl OciPortLeaseCoordinator {
             .zip(leases)
             .map(|(binding, request)| {
                 crate::backends::oci::port_lease::require_releasable_provider_binding(
-                    &self.state_root,
+                    self.authority()?,
                     request,
                     machine_port_proxy_guest_listener_addr(binding),
                     OciPortProvider::MachinePortProxy,
@@ -1534,7 +1523,7 @@ impl OciPortLeaseCoordinator {
         expected_bindings: &[nimbus_network::PortLeaseBinding],
     ) -> Result<()> {
         self.require_published_listener_provider(PublishedListenerProvider::MachinePortProxy)?;
-        prepare_rebind_batch_after_confirmed_stop(&self.state_root, leases, expected_bindings)?;
+        prepare_rebind_batch_after_confirmed_stop(self.authority()?, leases, expected_bindings)?;
         Ok(())
     }
 
@@ -1546,7 +1535,7 @@ impl OciPortLeaseCoordinator {
     ) -> Result<()> {
         self.require_published_listener_provider(PublishedListenerProvider::MachinePortProxy)?;
         prepare_rebind_batch_after_confirmed_stop_with_lifetimes(
-            &self.state_root,
+            self.authority()?,
             leases,
             expected_bindings,
             batch.lifetimes(),
@@ -1562,7 +1551,7 @@ impl OciPortLeaseCoordinator {
     ) -> Result<()> {
         self.require_published_listener_provider(PublishedListenerProvider::MachinePortProxy)?;
         release_provider_managed_batch_after_confirmed_stop_with_lifetimes(
-            &self.state_root,
+            self.authority()?,
             leases,
             expected_bindings,
             batch.lifetimes(),
@@ -1584,7 +1573,7 @@ impl OciPortLeaseCoordinator {
             .zip(leases)
             .map(|(binding, request)| {
                 require_provider_recovery_binding(
-                    &self.state_root,
+                    self.authority()?,
                     request,
                     machine_port_proxy_guest_listener_addr(binding),
                     OciPortProvider::MachinePortProxy,
@@ -1600,7 +1589,7 @@ impl OciPortLeaseCoordinator {
             })
             .collect::<Result<Vec<_>>>()?;
         let recoveries =
-            recover_provider_managed_batch_after_owner_death(&self.state_root, leases)?;
+            recover_provider_managed_batch_after_owner_death(self.authority()?, leases)?;
         Ok((expected, recoveries))
     }
 
@@ -1612,7 +1601,7 @@ impl OciPortLeaseCoordinator {
     ) -> Result<()> {
         self.require_published_listener_provider(PublishedListenerProvider::MachinePortProxy)?;
         prepare_provider_managed_batch_after_confirmed_stop(
-            &self.state_root,
+            self.authority()?,
             leases,
             expected_bindings,
             recoveries,
@@ -1626,7 +1615,7 @@ impl OciPortLeaseCoordinator {
         recoveries: &[PortLeaseRecoveryGuard],
     ) -> Result<()> {
         self.require_published_listener_provider(PublishedListenerProvider::MachinePortProxy)?;
-        release_provider_managed_batch_after_confirmed_stop(&self.state_root, leases, recoveries)?;
+        release_provider_managed_batch_after_confirmed_stop(self.authority()?, leases, recoveries)?;
         Ok(())
     }
 
@@ -1663,7 +1652,7 @@ impl OciPortLeaseCoordinator {
         let reservation_claim =
             self.reservation_claim_for_requests(std::slice::from_ref(request))?;
         record_bind_failure(
-            &self.state_root,
+            self.authority()?,
             request,
             claim,
             OciConfirmedBindFailure::new(
@@ -1688,7 +1677,7 @@ impl OciPortLeaseCoordinator {
         let reservation_claim =
             self.reservation_claim_for_requests(std::slice::from_ref(request))?;
         record_bind_failure_with_lifetime(
-            &self.state_root,
+            self.authority()?,
             request,
             claim,
             OciConfirmedBindFailure::new(
@@ -1732,7 +1721,7 @@ impl OciPortLeaseCoordinator {
                 })?;
                 let (target, publication, exposure) = self.published_binding_scope(binding)?;
                 require_listener_authority(
-                    &self.state_root,
+                    self.authority()?,
                     ExpectedListenerAuthority::published(
                         tenant_id,
                         sandbox_id,
@@ -1792,7 +1781,7 @@ impl OciPortLeaseCoordinator {
             ) {
                 continue;
             }
-            if let Err(error) = withdraw(&self.state_root, request) {
+            if let Err(error) = withdraw(self.authority()?, request) {
                 errors.push(format!(
                     "listener {:?} lease {} at {}:{} withdrawal was blocked: {error}",
                     binding.name,
@@ -1831,7 +1820,7 @@ impl OciPortLeaseCoordinator {
             ) {
                 continue;
             }
-            if let Err(error) = release(&self.state_root, request) {
+            if let Err(error) = release(self.authority()?, request) {
                 errors.push(format!(
                     "listener {:?} lease {} at {}:{} release was blocked: {error}",
                     binding.name,
@@ -1932,22 +1921,12 @@ impl OciPortLeaseCoordinator {
     }
 
     fn read_published_lease_count_for_tenant(&self, tenant_id: &TenantId) -> Result<usize> {
-        let authority = LocalPortLeaseAuthority::open(&self.state_root).map_err(|error| {
-            SandboxError::OperationFailed {
-                message: format!(
-                    "failed to inspect durable tenant port usage at {} for tenant {tenant_id}: \
-                     {error}",
-                    self.state_root.display()
-                ),
-            }
-        })?;
+        let authority = self.authority()?;
         Ok(authority
             .list()
             .map_err(|error| SandboxError::OperationFailed {
                 message: format!(
-                    "failed to list durable tenant port usage at {} for tenant {tenant_id}: \
-                     {error}",
-                    self.state_root.display()
+                    "failed to list durable tenant port usage for tenant {tenant_id}: {error}"
                 ),
             })?
             .into_iter()

@@ -25,8 +25,15 @@ fn failed_anchor_removal_cannot_publish_clean_rebind_evidence() {
             PortExposure::Private,
         )
         .expect("PEP listener authority should reserve");
-    let bind_claim = claim_bind_attempts(
+    let registry = EgressProxyRegistry::with_roots_and_network_state(
+        state_root.path().join("decision-logs"),
+        &trust_anchor_root,
         state_root.path(),
+    );
+    let bind_claim = claim_bind_attempts(
+        registry
+            .port_authority()
+            .expect("same-process PEP port authority should remain available"),
         std::slice::from_ref(&port_lease),
         OciPortProvider::EgressPep,
         None,
@@ -39,7 +46,9 @@ fn failed_anchor_removal_cannot_publish_clean_rebind_evidence() {
     )
     .expect("test PEP should bind inertly");
     adopt_claimed_and_activate(
-        state_root.path(),
+        registry
+            .port_authority()
+            .expect("same-process PEP port authority should remain available"),
         &port_lease,
         None,
         &bind_claim,
@@ -47,11 +56,6 @@ fn failed_anchor_removal_cannot_publish_clean_rebind_evidence() {
         OciPortProvider::EgressPep,
     )
     .expect("fixture should durably activate before acknowledgement loss");
-    let registry = EgressProxyRegistry::with_roots_and_network_state(
-        state_root.path().join("decision-logs"),
-        &trust_anchor_root,
-        state_root.path(),
-    );
     let trust_anchor_path = registry.trust_anchor_path_for_test(&tenant, &id);
     fs::create_dir_all(&trust_anchor_path)
         .expect("directory-shaped trust anchor should be created");
@@ -77,9 +81,9 @@ fn failed_anchor_removal_cannot_publish_clean_rebind_evidence() {
             .contains("failed to remove egress trust anchor"),
         "cleanup must report the retained publication artifact: {error}"
     );
-    let authority = nimbus_network::LocalPortLeaseAuthority::open(state_root.path())
-        .expect("authority should reopen");
-    let retained = authority
+    let retained = registry
+        .port_authority()
+        .expect("same-process PEP port authority should remain available")
         .inspect(port_lease.lease_id())
         .expect("lease should inspect")
         .expect("lease should remain durable");
@@ -132,7 +136,9 @@ fn registration_commit_failure_compensates_activated_provider_and_publication() 
     )
     .expect("published trust-anchor evidence should exist");
     let bind_claim = claim_bind_attempts(
-        state_root.path(),
+        registry
+            .port_authority()
+            .expect("same-process PEP port authority should remain available"),
         std::slice::from_ref(&port_lease),
         OciPortProvider::EgressPep,
         Some(&reservation_claim),
@@ -145,7 +151,9 @@ fn registration_commit_failure_compensates_activated_provider_and_publication() 
     )
     .expect("test PEP should bind inertly");
     adopt_claimed_and_activate(
-        state_root.path(),
+        registry
+            .port_authority()
+            .expect("same-process PEP port authority should remain available"),
         &port_lease,
         Some(&reservation_claim),
         &bind_claim,
@@ -196,8 +204,9 @@ fn registration_commit_failure_compensates_activated_provider_and_publication() 
         !trust_anchor_path.exists(),
         "confirmed provider stop must precede publication withdrawal"
     );
-    let retained = nimbus_network::LocalPortLeaseAuthority::open(state_root.path())
-        .expect("authority should reopen")
+    let retained = registry
+        .port_authority()
+        .expect("same-process PEP port authority should remain available")
         .inspect(port_lease.lease_id())
         .expect("lease should inspect")
         .expect("listener authority should remain durable");
@@ -251,7 +260,9 @@ fn registration_commit_compensation_failure_retains_retryable_tombstone() {
     fs::write(trust_anchor_path.join("blocker"), b"retain")
         .expect("nonempty trust-anchor directory should force removal failure");
     let bind_claim = claim_bind_attempts(
-        state_root.path(),
+        registry
+            .port_authority()
+            .expect("same-process PEP port authority should remain available"),
         std::slice::from_ref(&port_lease),
         OciPortProvider::EgressPep,
         Some(&reservation_claim),
@@ -264,7 +275,9 @@ fn registration_commit_compensation_failure_retains_retryable_tombstone() {
     )
     .expect("test PEP should bind inertly");
     adopt_claimed_and_activate(
-        state_root.path(),
+        registry
+            .port_authority()
+            .expect("same-process PEP port authority should remain available"),
         &port_lease,
         Some(&reservation_claim),
         &bind_claim,
@@ -323,8 +336,9 @@ fn registration_commit_compensation_failure_retains_retryable_tombstone() {
     registry
         .stop_with_assignment(&tenant, &id, Some(&assignment))
         .expect("retry must resume the exact failed-registration cleanup evidence");
-    let retained = nimbus_network::LocalPortLeaseAuthority::open(state_root.path())
-        .expect("authority should reopen")
+    let retained = registry
+        .port_authority()
+        .expect("same-process PEP port authority should remain available")
         .inspect(assignment.port_lease.lease_id())
         .expect("lease should inspect")
         .expect("listener authority should remain durable");

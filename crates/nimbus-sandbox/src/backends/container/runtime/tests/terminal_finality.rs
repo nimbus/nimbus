@@ -121,11 +121,14 @@ fn terminal_manifest_publication_rejects_a_retained_port_lease() {
     // its caller, so terminal publication must independently reject the
     // surviving port authority.
     crate::backends::oci::network::release_reserved_network_launch_after_ports(
-        backend.segment_allocator.as_ref(),
-        &manifest.network_layout,
-        &manifest.spec.tenant_id,
-        &manifest.handle.id,
-        &network_config.reservation_claim,
+        crate::backends::oci::network::ReservedNetworkLaunchAuthority::new(
+            backend.segment_allocator.as_ref(),
+            &backend.ipam_authority,
+            &manifest.network_layout,
+            &manifest.spec.tenant_id,
+            &manifest.handle.id,
+            &network_config.reservation_claim,
+        ),
         Ok(()),
     )
     .expect("fixture should release attachment authority while retaining ports");

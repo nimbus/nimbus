@@ -8,6 +8,8 @@ mod egress_reload_recovery;
 mod lifecycle;
 #[path = "tests/manifest_durability.rs"]
 mod manifest_durability;
+#[path = "tests/network_process_composition.rs"]
+mod network_process_composition;
 #[path = "planning.rs"]
 mod planning;
 #[path = "support.rs"]

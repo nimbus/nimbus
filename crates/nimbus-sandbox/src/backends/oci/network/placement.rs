@@ -16,7 +16,8 @@ use crate::instance::SandboxId;
 
 use super::{
     OciNetworkConfig, OciNetworkLayout, OciSegmentAllocator, OciSegmentRealization,
-    default_network_attachment_id, ipam::allocate_container_ips_on_first_available,
+    default_network_attachment_id,
+    ipam::{OciIpamAuthority, allocate_container_ips_on_first_available},
 };
 
 /// Reserve and return the network config of the block bridge that will host
@@ -32,6 +33,7 @@ use super::{
 /// paths), keeping this loop backend-agnostic.
 pub(crate) fn place_sandbox_on_block(
     allocator: &OciSegmentAllocator,
+    ipam_authority: &OciIpamAuthority,
     tenant: &TenantId,
     layout: &OciNetworkLayout,
     sandbox_id: &SandboxId,
@@ -60,6 +62,7 @@ pub(crate) fn place_sandbox_on_block(
                 });
             }
             match allocate_container_ips_on_first_available(
+                ipam_authority,
                 layout,
                 &configs,
                 sandbox_id,
@@ -106,11 +109,14 @@ pub(crate) fn place_sandbox_on_block(
     })();
     placement.map_err(|error| {
         super::reaper::compensate_reserved_network_launch_without_effect(
-            allocator,
-            layout,
-            tenant,
-            sandbox_id,
-            reservation_claim,
+            super::reaper::ReservedNetworkLaunchAuthority::new(
+                allocator,
+                ipam_authority,
+                layout,
+                tenant,
+                sandbox_id,
+                reservation_claim,
+            ),
             error,
         )
     })
@@ -120,8 +126,8 @@ pub(crate) fn place_sandbox_on_block(
 mod tests {
     use super::*;
     use crate::backends::oci::network::{
-        OciSegmentAllocator, RecordingSegmentAllocator, SegmentAllocatorOperation,
-        SingleNodeSegmentAllocator,
+        OciIpamAuthority, OciSegmentAllocator, RecordingSegmentAllocator,
+        SegmentAllocatorOperation, SingleNodeSegmentAllocator, direct_test_ipam_authority,
     };
     use nimbus_network::NetworkSegmentAllocator;
     use proptest::prelude::*;
@@ -163,6 +169,7 @@ mod tests {
 
     fn place_sandbox_on_block(
         allocator: &OciSegmentAllocator,
+        ipam_authority: &OciIpamAuthority,
         tenant: &TenantId,
         layout: &OciNetworkLayout,
         sandbox_id: &SandboxId,
@@ -170,6 +177,7 @@ mod tests {
     ) -> Result<OciNetworkConfig> {
         super::place_sandbox_on_block(
             allocator,
+            ipam_authority,
             tenant,
             layout,
             sandbox_id,
@@ -196,12 +204,14 @@ mod tests {
         );
         let allocator: Arc<OciSegmentAllocator> = recorder.clone();
         let layout = OciNetworkLayout::under_root(dir.path(), &tenant, &sandbox_id);
+        let ipam_authority = direct_test_ipam_authority(&layout);
         layout.ensure_directories().expect("layout should exist");
         let build_count = Arc::new(AtomicUsize::new(0));
         let build_count_for_call = Arc::clone(&build_count);
 
         let error = super::place_sandbox_on_block(
             allocator.as_ref(),
+            &ipam_authority,
             &tenant,
             &layout,
             &sandbox_id,
@@ -274,10 +284,12 @@ mod tests {
         )
         .expect("local network store should open");
         let layout = OciNetworkLayout::under_root(dir.path(), &tenant, &sandbox_id);
+        let ipam_authority = direct_test_ipam_authority(&layout);
         layout.ensure_directories().expect("layout should exist");
 
         let error = super::place_sandbox_on_block(
             &allocator,
+            &ipam_authority,
             &tenant,
             &layout,
             &sandbox_id,
@@ -292,7 +304,7 @@ mod tests {
             "rejection must name the duplicated authority: {error}"
         );
         assert!(
-            super::super::ipam::load_container_ips(&layout, &sandbox_id).is_err(),
+            super::super::ipam::load_container_ips(&ipam_authority, &layout, &sandbox_id).is_err(),
             "foreign config authority must not leave an IPAM reservation"
         );
     }
@@ -318,9 +330,11 @@ mod tests {
         let t = tenant("tenant-a");
         // Sandbox 1 lands on block 0 (10.7.0.0/30 -> .2).
         let sb1_layout = OciNetworkLayout::under_root(state_root, &t, &SandboxId::new("sb-1"));
+        let ipam_authority = direct_test_ipam_authority(&sb1_layout);
         sb1_layout.ensure_directories().expect("dirs");
         let c1 = place_sandbox_on_block(
             &allocator,
+            &ipam_authority,
             &t,
             &sb1_layout,
             &SandboxId::new("sb-1"),
@@ -335,6 +349,7 @@ mod tests {
         sb2_layout.ensure_directories().expect("dirs");
         let c2 = place_sandbox_on_block(
             &allocator,
+            &ipam_authority,
             &t,
             &sb2_layout,
             &SandboxId::new("sb-2"),
@@ -346,6 +361,7 @@ mod tests {
 
         let sb2 = SandboxId::new("sb-2");
         let selected = super::super::ipam::allocate_container_ips_on_first_available(
+            &ipam_authority,
             &sb2_layout,
             &[c1.clone(), c2.clone()],
             &sb2,
@@ -387,19 +403,34 @@ mod tests {
         let t = tenant("tenant-a");
         let sb1 = SandboxId::new("sb-1");
         let sb1_layout = OciNetworkLayout::under_root(state_root, &t, &sb1);
+        let ipam_authority = direct_test_ipam_authority(&sb1_layout);
         sb1_layout.ensure_directories().expect("sb-1 dirs");
-        let first = place_sandbox_on_block(&allocator, &t, &sb1_layout, &sb1, config_for_segment)
-            .expect("sb-1 should fill the primary /30");
+        let first = place_sandbox_on_block(
+            &allocator,
+            &ipam_authority,
+            &t,
+            &sb1_layout,
+            &sb1,
+            config_for_segment,
+        )
+        .expect("sb-1 should fill the primary /30");
         assert_eq!(first.network_subnet, "10.7.0.0/30");
 
         let sb2 = SandboxId::new("sb-2");
         let sb2_layout = OciNetworkLayout::under_root(state_root, &t, &sb2);
         sb2_layout.ensure_directories().expect("sb-2 dirs");
-        let secondary =
-            place_sandbox_on_block(&allocator, &t, &sb2_layout, &sb2, config_for_segment)
-                .expect("sb-2 should grow the first secondary /30");
+        let secondary = place_sandbox_on_block(
+            &allocator,
+            &ipam_authority,
+            &t,
+            &sb2_layout,
+            &sb2,
+            config_for_segment,
+        )
+        .expect("sb-2 should grow the first secondary /30");
         assert_eq!(secondary.network_subnet, "10.7.0.4/30");
         super::super::ipam::deallocate_container_ips_after_confirmed_detach(
+            &ipam_authority,
             &sb2_layout,
             &sb2,
             &secondary.reservation_claim,
@@ -409,9 +440,15 @@ mod tests {
         let sb3 = SandboxId::new("sb-3");
         let sb3_layout = OciNetworkLayout::under_root(state_root, &t, &sb3);
         sb3_layout.ensure_directories().expect("sb-3 dirs");
-        let replacement =
-            place_sandbox_on_block(&allocator, &t, &sb3_layout, &sb3, config_for_segment)
-                .expect("sb-3 placement should resolve");
+        let replacement = place_sandbox_on_block(
+            &allocator,
+            &ipam_authority,
+            &t,
+            &sb3_layout,
+            &sb3,
+            config_for_segment,
+        )
+        .expect("sb-3 placement should resolve");
         assert_eq!(
             replacement.network_subnet, secondary.network_subnet,
             "placement must reuse free capacity in an existing secondary block before growth"
@@ -443,9 +480,11 @@ mod tests {
 
         let primary = SandboxId::new("primary");
         let primary_layout = OciNetworkLayout::under_root(state_root, &tenant, &primary);
+        let ipam_authority = direct_test_ipam_authority(&primary_layout);
         primary_layout.ensure_directories().expect("primary dirs");
         place_sandbox_on_block(
             &allocator,
+            &ipam_authority,
             &tenant,
             &primary_layout,
             &primary,
@@ -460,6 +499,7 @@ mod tests {
             .expect("secondary dirs");
         let first = place_sandbox_on_block(
             &allocator,
+            &ipam_authority,
             &tenant,
             &secondary_layout,
             &secondary,
@@ -468,6 +508,7 @@ mod tests {
         .expect("secondary placement should resolve");
         let retry = place_sandbox_on_block(
             &allocator,
+            &ipam_authority,
             &tenant,
             &secondary_layout,
             &secondary,
@@ -506,6 +547,12 @@ mod tests {
             )
             .expect("local network store should open");
             let tenant = tenant("property-tenant");
+            let authority_layout = OciNetworkLayout::under_root(
+                state_root,
+                &tenant,
+                &SandboxId::new("placement-authority"),
+            );
+            let ipam_authority = direct_test_ipam_authority(&authority_layout);
             let mut placements = Vec::with_capacity(block_count);
 
             for index in 0..block_count {
@@ -514,6 +561,7 @@ mod tests {
                 layout.ensure_directories().expect("seed dirs");
                 let config = place_sandbox_on_block(
                     &allocator,
+                    &ipam_authority,
                     &tenant,
                     &layout,
                     &sandbox,
@@ -526,6 +574,7 @@ mod tests {
             let free_index = free_seed % block_count;
             let expected_subnet = placements[free_index].2.network_subnet.clone();
             super::super::ipam::deallocate_container_ips_after_confirmed_detach(
+                &ipam_authority,
                 &placements[free_index].1,
                 &placements[free_index].0,
                 &placements[free_index].2.reservation_claim,
@@ -539,6 +588,7 @@ mod tests {
                 .expect("replacement dirs");
             let selected = place_sandbox_on_block(
                 &allocator,
+                &ipam_authority,
                 &tenant,
                 &replacement_layout,
                 &replacement,
@@ -576,6 +626,12 @@ mod tests {
             .expect("local network store should open"),
         );
         let tenant = tenant("concurrent-tenant");
+        let authority_layout = OciNetworkLayout::under_root(
+            &state_root,
+            &tenant,
+            &SandboxId::new("placement-authority"),
+        );
+        let ipam_authority = direct_test_ipam_authority(&authority_layout);
         let barrier = Arc::new(Barrier::new(PLACERS));
         let threads = (0..PLACERS)
             .map(|index| {
@@ -583,6 +639,7 @@ mod tests {
                 let barrier = Arc::clone(&barrier);
                 let state_root = state_root.clone();
                 let tenant = tenant.clone();
+                let ipam_authority = ipam_authority.clone();
                 std::thread::spawn(move || {
                     let sandbox = SandboxId::new(format!("concurrent-{index}"));
                     let layout = OciNetworkLayout::under_root(&state_root, &tenant, &sandbox);
@@ -590,6 +647,7 @@ mod tests {
                     barrier.wait();
                     place_sandbox_on_block(
                         allocator.as_ref(),
+                        &ipam_authority,
                         &tenant,
                         &layout,
                         &sandbox,

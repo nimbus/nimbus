@@ -16,6 +16,7 @@ use crate::backends::oci::egress::{EgressPolicyReloadState, EgressProxyAssignmen
 use crate::backends::oci::materializer::MaterializedImageRootfs;
 use crate::backends::oci::network::{
     OciMachinePortForwarderConfig, OciNetworkConfig, OciNetworkLayout, TerminalNetworkAuthoritySet,
+    TerminalNetworkFinalityEvidence,
 };
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
@@ -112,15 +113,19 @@ impl ContainerSandboxBackend {
             }
             TerminalNetworkAuthoritySet::new(
                 self.segment_allocator.as_ref(),
-                &manifest.spec.tenant_id,
-                &manifest.handle.id,
-                &manifest.network_layout,
-                manifest.network_config.as_ref(),
-                &manifest.port_leases,
-                manifest
-                    .egress_proxy
-                    .as_ref()
-                    .map(|assignment| &assignment.port_lease),
+                &self.ipam_authority,
+                self.port_lease_coordinator.authority()?,
+                TerminalNetworkFinalityEvidence::new(
+                    &manifest.spec.tenant_id,
+                    &manifest.handle.id,
+                    &manifest.network_layout,
+                    manifest.network_config.as_ref(),
+                    &manifest.port_leases,
+                    manifest
+                        .egress_proxy
+                        .as_ref()
+                        .map(|assignment| &assignment.port_lease),
+                ),
             )
             .require_released()?;
         }
@@ -158,6 +163,7 @@ impl ContainerSandboxBackend {
             && let Some(network_config) = manifest.network_config.as_ref()
         {
             crate::backends::oci::network::retire_terminal_container_ipam_release(
+                &self.ipam_authority,
                 &manifest.network_layout,
                 &manifest.handle.id,
                 &network_config.reservation_claim,

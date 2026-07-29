@@ -131,7 +131,7 @@ impl EgressProxyRegistry {
             return Ok(Err(EgressReadinessFailure::ListenerAddressMismatch));
         }
         let record = match require_active_listener_binding(
-            &self.network_state_root,
+            self.port_authority()?,
             ExpectedListenerAuthority::egress_pep(tenant_id, id, expected_addr)?,
             &assignment.port_lease,
             expected_addr,

@@ -288,7 +288,7 @@ impl OciPortLeaseCoordinator {
             "Netavark",
         )?;
         if requires_release {
-            release_batch_after_confirmed_stop(&self.state_root, leases)?;
+            release_batch_after_confirmed_stop(self.authority()?, leases)?;
         }
         Ok(())
     }
@@ -306,7 +306,7 @@ impl OciPortLeaseCoordinator {
             "MachinePortProxy",
         )?;
         if requires_release {
-            release_batch_after_confirmed_stop(&self.state_root, leases)?;
+            release_batch_after_confirmed_stop(self.authority()?, leases)?;
         }
         Ok(())
     }

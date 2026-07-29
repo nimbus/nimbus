@@ -272,9 +272,15 @@ fn terminal_ipam_retirement_failure_is_not_manifest_acknowledgement_loss() {
         .network_layout
         .ensure_directories()
         .expect("network layout should exist");
-    allocate_container_ips(&terminal.network_layout, &network_config, &sandbox_id)
-        .expect("fixture should allocate exact IPAM");
+    allocate_container_ips(
+        &backend.ipam_authority,
+        &terminal.network_layout,
+        &network_config,
+        &sandbox_id,
+    )
+    .expect("fixture should allocate exact IPAM");
     deallocate_container_ips_after_confirmed_detach(
+        &backend.ipam_authority,
         &terminal.network_layout,
         &sandbox_id,
         &network_config.reservation_claim,
@@ -309,16 +315,16 @@ fn terminal_ipam_retirement_failure_is_not_manifest_acknowledgement_loss() {
     );
     assert_eq!(
         reconcile_terminal_container_ipam_releases(
+            &failing.ipam_authority,
             &failing.config.workload_state_root,
-            &failing.config.network_state_root,
         )
         .expect("fresh-process reconciliation should retire the exact witness"),
         1
     );
     assert_eq!(
         reconcile_terminal_container_ipam_releases(
+            &failing.ipam_authority,
             &failing.config.workload_state_root,
-            &failing.config.network_state_root,
         )
         .expect("terminal reconciliation replay should be idempotent"),
         0

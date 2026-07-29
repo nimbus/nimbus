@@ -346,6 +346,7 @@ fn authenticate_present_runner_effects(
     }
     let network_config = manifest.require_network_config()?;
     let assigned_ips = authenticate_container_network_generation(
+        &backend.ipam_authority,
         &manifest.network_layout,
         network_config,
         &manifest.handle.id,

@@ -173,8 +173,13 @@ fn assert_substituted_provider_port_preserves_live_leased_pep(id: SandboxId, cle
         ),
         nimbus_network::PortRequestMode::ProviderAssigned,
     );
-    let request = reserve_provider_assigned(&registry.network_state_root, request)
-        .expect("provider-assigned PEP identity should reserve");
+    let request = reserve_provider_assigned(
+        registry
+            .port_authority()
+            .expect("same-process PEP port authority should remain available"),
+        request,
+    )
+    .expect("provider-assigned PEP identity should reserve");
     registry
         .ensure_running_with_lease(
             &tenant,
@@ -676,9 +681,13 @@ fn restart_rejects_released_lease_without_process_local_provider() {
             PortExposure::Private,
         )
         .expect("PEP lease should reserve");
-    crate::backends::oci::port_lease::withdraw(state_root.path(), &port_lease)
+    // Same-process fixture authority: retain one handle across terminalization
+    // and the restart rejection assertions below.
+    let authority = nimbus_network::LocalPortLeaseAuthority::open(state_root.path())
+        .expect("fixture authority should open");
+    crate::backends::oci::port_lease::withdraw(&authority, &port_lease)
         .expect("effect-free lease should enter withdrawal");
-    crate::backends::oci::port_lease::release(state_root.path(), &port_lease)
+    crate::backends::oci::port_lease::release(&authority, &port_lease)
         .expect("effect-free lease should release");
     let assignment = EgressProxyAssignment {
         host: Ipv4Addr::LOCALHOST.to_string(),
@@ -690,8 +699,6 @@ fn restart_rejects_released_lease_without_process_local_provider() {
         state_root.path().join("trust-anchors"),
         state_root.path(),
     );
-    let authority = nimbus_network::LocalPortLeaseAuthority::open(state_root.path())
-        .expect("authority should reopen");
     assert_eq!(
         authority
             .inspect(port_lease.lease_id())
@@ -733,8 +740,12 @@ fn restart_rejects_failed_lease_without_process_local_provider() {
             PortExposure::Private,
         )
         .expect("PEP lease should reserve for its launch coordinator");
+    // Same-process fixture authority: retain one handle across terminalization
+    // and the restart rejection assertions below.
+    let authority = nimbus_network::LocalPortLeaseAuthority::open(state_root.path())
+        .expect("fixture authority should open");
     let bind_claim = crate::backends::oci::port_lease::claim_bind_attempts(
-        state_root.path(),
+        &authority,
         std::slice::from_ref(&port_lease),
         crate::backends::oci::port_lease::OciPortProvider::EgressPep,
         Some(&reservation_claim),
@@ -743,7 +754,7 @@ fn restart_rejects_failed_lease_without_process_local_provider() {
     .pop()
     .expect("one request should return one claim");
     crate::backends::oci::port_lease::record_bind_failure(
-        state_root.path(),
+        &authority,
         &port_lease,
         &bind_claim,
         crate::backends::oci::port_lease::OciConfirmedBindFailure::new(
@@ -764,8 +775,6 @@ fn restart_rejects_failed_lease_without_process_local_provider() {
         state_root.path().join("trust-anchors"),
         state_root.path(),
     );
-    let authority = nimbus_network::LocalPortLeaseAuthority::open(state_root.path())
-        .expect("authority should reopen");
     assert_eq!(
         authority
             .inspect(port_lease.lease_id())

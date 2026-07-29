@@ -31,9 +31,15 @@ fn stale_krun_cleanup_cannot_mutate_replacement_network_generation() {
         .ensure_directories()
         .expect("network layout should exist");
     let stale_config = OciNetworkConfig::default();
-    allocate_container_ips(&layout, &stale_config, &manifest.handle.id)
-        .expect("first generation should reserve IPAM");
+    allocate_container_ips(
+        &backend.ipam_authority,
+        &layout,
+        &stale_config,
+        &manifest.handle.id,
+    )
+    .expect("first generation should reserve IPAM");
     deallocate_container_ips_after_confirmed_detach(
+        &backend.ipam_authority,
         &layout,
         &manifest.handle.id,
         &stale_config.reservation_claim,
@@ -43,8 +49,13 @@ fn stale_krun_cleanup_cannot_mutate_replacement_network_generation() {
     replacement_config.reservation_claim =
         crate::backends::oci::port_lease::new_launch_reservation_claim()
             .expect("replacement claim should mint");
-    allocate_container_ips(&layout, &replacement_config, &manifest.handle.id)
-        .expect("replacement generation should reserve the stable attachment");
+    allocate_container_ips(
+        &backend.ipam_authority,
+        &layout,
+        &replacement_config,
+        &manifest.handle.id,
+    )
+    .expect("replacement generation should reserve the stable attachment");
     std::fs::write(&layout.netns_path, b"replacement-netns")
         .expect("replacement netns should persist");
     std::fs::write(&layout.status_path, b"replacement-status")

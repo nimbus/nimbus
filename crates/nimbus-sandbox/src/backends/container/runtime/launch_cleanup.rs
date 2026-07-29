@@ -1214,6 +1214,7 @@ fn container_cleanup_retains_network_authority_until_runtime_absence_is_observed
     );
     assert!(
         crate::backends::oci::network::inspect_container_ips(
+            &backend.ipam_authority,
             &manifest.network_layout,
             &manifest.handle.id,
         )
@@ -1298,6 +1299,7 @@ fn container_cleanup_rejects_unknown_runtime_observation_and_retains_authority()
     );
     assert!(
         crate::backends::oci::network::inspect_container_ips(
+            &backend.ipam_authority,
             &manifest.network_layout,
             &manifest.handle.id,
         )
@@ -1412,6 +1414,7 @@ fn failed_netavark_setup_claims_reconcile_only_after_confirmed_detach() {
         .expect("ambiguous provider boundary should retain the netns handle");
     assert!(
         crate::backends::oci::network::inspect_container_ips(
+            &backend.ipam_authority,
             &manifest.network_layout,
             &manifest.handle.id,
         )
@@ -1453,6 +1456,7 @@ fn failed_netavark_setup_claims_reconcile_only_after_confirmed_detach() {
     );
     assert!(
         crate::backends::oci::network::inspect_container_ips(
+            &backend.ipam_authority,
             &manifest.network_layout,
             &manifest.handle.id,
         )
@@ -1857,7 +1861,12 @@ fn direct_planning_cleanup_failure_retains_claim_across_restart() {
         "cleanup-pending planning authority must not be published as terminal"
     );
     assert!(
-        crate::backends::oci::network::inspect_container_ips(&fenced.network_layout, &id).is_ok(),
+        crate::backends::oci::network::inspect_container_ips(
+            &first.ipam_authority,
+            &fenced.network_layout,
+            &id,
+        )
+        .is_ok(),
         "failed compensation must safe-leak claim-fenced IPAM for exact retry"
     );
     std::fs::remove_file(&blocked_bundle_root)
@@ -1886,7 +1895,12 @@ fn direct_planning_cleanup_failure_retains_claim_across_restart() {
         "successful exact retry must retire the retained claim"
     );
     assert!(
-        crate::backends::oci::network::inspect_container_ips(&stopped.network_layout, &id).is_err(),
+        crate::backends::oci::network::inspect_container_ips(
+            &recovery.ipam_authority,
+            &stopped.network_layout,
+            &id,
+        )
+        .is_err(),
         "exact recovery must delete the matching IPAM generation"
     );
 }
@@ -1931,7 +1945,12 @@ fn runner_planning_cleanup_failure_retains_claim_across_restart() {
         "failed runner cleanup must retain exact compensation authority"
     );
     assert!(
-        crate::backends::oci::network::inspect_container_ips(&fenced.network_layout, &id).is_ok(),
+        crate::backends::oci::network::inspect_container_ips(
+            &first.ipam_authority,
+            &fenced.network_layout,
+            &id,
+        )
+        .is_ok(),
         "failed runner compensation must retain claim-fenced IPAM"
     );
 
@@ -1951,7 +1970,12 @@ fn runner_planning_cleanup_failure_retains_claim_across_restart() {
     assert_eq!(stopped.status, SandboxStatus::Stopped);
     assert!(stopped.launch_reservation_claim.is_none());
     assert!(
-        crate::backends::oci::network::inspect_container_ips(&stopped.network_layout, &id).is_err(),
+        crate::backends::oci::network::inspect_container_ips(
+            &recovery.ipam_authority,
+            &stopped.network_layout,
+            &id,
+        )
+        .is_err(),
         "runner recovery must delete the matching IPAM generation"
     );
 }

@@ -7,20 +7,22 @@
 
 use nimbus_core::TenantId;
 use nimbus_network::{
-    NetworkAttachmentReservationState, NetworkReservationClaim, PortLeaseRequest,
+    LocalPortLeaseAuthority, NetworkAttachmentReservationState, NetworkReservationClaim,
+    PortLeaseRequest,
 };
 
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
 
-use super::ipam::{ContainerIpamAuthorityState, inspect_container_ipam_authority};
+use super::ipam::{
+    ContainerIpamAuthorityState, OciIpamAuthority, inspect_container_ipam_authority,
+};
 use super::{
     OciNetworkConfig, OciNetworkLayout, OciSegmentAllocator, default_network_attachment_id,
 };
 
-/// Exact authority set that must be terminal before workload terminal status.
-pub(crate) struct TerminalNetworkAuthoritySet<'a> {
-    allocator: &'a OciSegmentAllocator,
+/// Immutable workload evidence authenticated before terminal publication.
+pub(crate) struct TerminalNetworkFinalityEvidence<'a> {
     tenant_id: &'a TenantId,
     sandbox_id: &'a SandboxId,
     layout: &'a OciNetworkLayout,
@@ -29,9 +31,8 @@ pub(crate) struct TerminalNetworkAuthoritySet<'a> {
     egress_port_lease: Option<&'a PortLeaseRequest>,
 }
 
-impl<'a> TerminalNetworkAuthoritySet<'a> {
+impl<'a> TerminalNetworkFinalityEvidence<'a> {
     pub(crate) fn new(
-        allocator: &'a OciSegmentAllocator,
         tenant_id: &'a TenantId,
         sandbox_id: &'a SandboxId,
         layout: &'a OciNetworkLayout,
@@ -40,13 +41,36 @@ impl<'a> TerminalNetworkAuthoritySet<'a> {
         egress_port_lease: Option<&'a PortLeaseRequest>,
     ) -> Self {
         Self {
-            allocator,
             tenant_id,
             sandbox_id,
             layout,
             network_config,
             published_port_leases,
             egress_port_lease,
+        }
+    }
+}
+
+/// Exact authority set that must be terminal before workload terminal status.
+pub(crate) struct TerminalNetworkAuthoritySet<'a> {
+    allocator: &'a OciSegmentAllocator,
+    ipam_authority: &'a OciIpamAuthority,
+    port_authority: &'a LocalPortLeaseAuthority,
+    evidence: TerminalNetworkFinalityEvidence<'a>,
+}
+
+impl<'a> TerminalNetworkAuthoritySet<'a> {
+    pub(crate) fn new(
+        allocator: &'a OciSegmentAllocator,
+        ipam_authority: &'a OciIpamAuthority,
+        port_authority: &'a LocalPortLeaseAuthority,
+        evidence: TerminalNetworkFinalityEvidence<'a>,
+    ) -> Self {
+        Self {
+            allocator,
+            ipam_authority,
+            port_authority,
+            evidence,
         }
     }
 
@@ -57,14 +81,13 @@ impl<'a> TerminalNetworkAuthoritySet<'a> {
     /// publication against the same immutable identities and fences.
     pub(crate) fn require_released(&self) -> Result<()> {
         for request in self
+            .evidence
             .published_port_leases
             .iter()
-            .chain(self.egress_port_lease)
+            .chain(self.evidence.egress_port_lease)
         {
-            let record = crate::backends::oci::port_lease::inspect_exact(
-                &self.layout.network_state_root,
-                request,
-            )?;
+            let record =
+                crate::backends::oci::port_lease::inspect_exact(self.port_authority, request)?;
             if !record.phase().is_terminal() {
                 let coordinator = record
                     .reservation_claim()
@@ -75,7 +98,7 @@ impl<'a> TerminalNetworkAuthoritySet<'a> {
                     message: format!(
                         "terminal network finality rejected for {}: port lease {} remains {:?} \
                          under coordinator {coordinator}",
-                        self.sandbox_id,
+                        self.evidence.sandbox_id,
                         request.lease_id(),
                         record.phase()
                     ),
@@ -83,17 +106,22 @@ impl<'a> TerminalNetworkAuthoritySet<'a> {
             }
         }
 
-        let Some(network_config) = self.network_config else {
+        let Some(network_config) = self.evidence.network_config else {
             return Ok(());
         };
 
-        match inspect_container_ipam_authority(self.layout, network_config, self.sandbox_id)? {
+        match inspect_container_ipam_authority(
+            self.ipam_authority,
+            self.evidence.layout,
+            network_config,
+            self.evidence.sandbox_id,
+        )? {
             ContainerIpamAuthorityState::Live => {
                 return Err(SandboxError::OperationFailed {
                     message: format!(
                         "terminal network finality rejected for {}: exact IPAM generation remains \
                          live under coordinator {}",
-                        self.sandbox_id,
+                        self.evidence.sandbox_id,
                         network_config
                             .reservation_claim
                             .coordinator_attempt()
@@ -104,9 +132,9 @@ impl<'a> TerminalNetworkAuthoritySet<'a> {
             ContainerIpamAuthorityState::Released | ContainerIpamAuthorityState::Absent => {}
         }
 
-        let attachment_id = default_network_attachment_id(self.sandbox_id);
+        let attachment_id = default_network_attachment_id(self.evidence.sandbox_id);
         let attachment_state = self.allocator.inspect_attachment_reservation(
-            self.tenant_id,
+            self.evidence.tenant_id,
             &attachment_id,
             &network_config.reservation_claim,
         )?;
@@ -115,7 +143,7 @@ impl<'a> TerminalNetworkAuthoritySet<'a> {
                 message: format!(
                     "terminal network finality rejected for {}: attachment {} remains \
                      {attachment_state:?} under coordinator {}",
-                    self.sandbox_id,
+                    self.evidence.sandbox_id,
                     attachment_id,
                     network_config
                         .reservation_claim

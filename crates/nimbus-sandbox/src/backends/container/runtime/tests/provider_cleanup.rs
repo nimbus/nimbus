@@ -793,6 +793,7 @@ fn pending_creator_retains_network_authority_despite_runtime_absence() {
     }
     assert!(
         crate::backends::oci::network::inspect_container_ips(
+            &backend.ipam_authority,
             &manifest.network_layout,
             &manifest.handle.id,
         )
@@ -1254,6 +1255,7 @@ fn stale_container_cleanup_cannot_mutate_replacement_network_generation() {
         .expect("execute manifest should carry network config")
         .clone();
     crate::backends::oci::network::deallocate_container_ips_after_confirmed_detach(
+        &backend.ipam_authority,
         &stale.network_layout,
         &stale.handle.id,
         &stale_network_config.reservation_claim,
@@ -1264,6 +1266,7 @@ fn stale_container_cleanup_cannot_mutate_replacement_network_generation() {
         crate::backends::oci::port_lease::new_launch_reservation_claim()
             .expect("replacement IPAM claim should mint");
     crate::backends::oci::network::allocate_container_ips(
+        &backend.ipam_authority,
         &stale.network_layout,
         &replacement_network_config,
         &stale.handle.id,
@@ -1325,12 +1328,14 @@ fn stale_container_cleanup_cannot_mutate_replacement_network_generation() {
     );
 
     crate::backends::oci::network::deallocate_container_ips_after_confirmed_detach(
+        &backend.ipam_authority,
         &stale.network_layout,
         &stale.handle.id,
         &replacement_network_config.reservation_claim,
     )
     .expect("replacement IPAM should release exactly for fixture cleanup");
     crate::backends::oci::network::allocate_container_ips(
+        &backend.ipam_authority,
         &stale.network_layout,
         &stale_network_config,
         &stale.handle.id,
@@ -1422,6 +1427,7 @@ fn natural_exit_preserves_terminal_ipam_until_segment_cleanup_finalizes() {
         "failed segment finalization must retain a nonterminal cleanup witness"
     );
     authenticate_container_network_generation_for_cleanup(
+        &backend.ipam_authority,
         &manifest.network_layout,
         manifest
             .network_config
@@ -1451,6 +1457,7 @@ fn natural_exit_preserves_terminal_ipam_until_segment_cleanup_finalizes() {
     );
     assert!(
         !crate::backends::oci::network::retire_terminal_container_ipam_release(
+            &backend.ipam_authority,
             &terminal.network_layout,
             &id,
             &terminal
@@ -1480,6 +1487,7 @@ fn terminal_stop_replay_retries_ipam_receipt_retirement() {
         .expect("execute manifest should carry IPAM authority")
         .clone();
     crate::backends::oci::network::deallocate_container_ips_after_confirmed_detach(
+        &backend.ipam_authority,
         &manifest.network_layout,
         &id,
         &network_config.reservation_claim,
@@ -1512,6 +1520,7 @@ fn terminal_stop_replay_retries_ipam_receipt_retirement() {
         .expect("terminal stop replay should retire the exact pending IPAM receipt");
     assert!(
         !crate::backends::oci::network::retire_terminal_container_ipam_release(
+            &backend.ipam_authority,
             &manifest.network_layout,
             &id,
             &network_config.reservation_claim,

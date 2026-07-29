@@ -591,11 +591,10 @@ impl KrunSandboxBackend {
     }
 
     pub(super) fn port_lease_coordinator(&self) -> OciPortLeaseCoordinator {
-        OciPortLeaseCoordinator::new(
-            self.config.network_state_root.clone(),
-            self.config.published_port_range.clone(),
-        )
-        .with_max_ports_per_tenant(self.config.max_published_ports_per_tenant)
+        self.port_lease_coordinator
+            .clone()
+            .with_range(self.config.published_port_range.clone())
+            .with_max_ports_per_tenant(self.config.max_published_ports_per_tenant)
     }
 }
 

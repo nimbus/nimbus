@@ -81,7 +81,7 @@ impl ContainerSandboxBackend {
     pub(in crate::backends::container::runtime) fn port_lease_coordinator(
         &self,
     ) -> OciPortLeaseCoordinator {
-        Self::port_lease_coordinator_for_execution_config(
+        self.port_lease_coordinator_for_execution_config(
             &ContainerRunnerExecutionConfig::from_backend_config(&self.config),
         )
     }
@@ -91,19 +91,18 @@ impl ContainerSandboxBackend {
         manifest: &ContainerSandboxManifest,
     ) -> Result<OciPortLeaseCoordinator> {
         self.validate_manifest_execution_context(manifest)?;
-        Ok(Self::port_lease_coordinator_for_execution_config(
-            &manifest.runner_config,
-        ))
+        Ok(self.port_lease_coordinator_for_execution_config(&manifest.runner_config))
     }
 
     fn port_lease_coordinator_for_execution_config(
+        &self,
         config: &ContainerRunnerExecutionConfig,
     ) -> OciPortLeaseCoordinator {
-        let manager = OciPortLeaseCoordinator::new(
-            &config.network_state_root,
-            config.published_port_range.clone(),
-        )
-        .with_max_ports_per_tenant(config.max_published_ports_per_tenant);
+        let manager = self
+            .port_lease_coordinator
+            .clone()
+            .with_range(config.published_port_range.clone())
+            .with_max_ports_per_tenant(config.max_published_ports_per_tenant);
         if config.machine_port_forwarder.is_some() {
             manager.with_machine_port_proxy_bindings()
         } else {

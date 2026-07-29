@@ -1854,8 +1854,13 @@ fn concurrent_cross_listener_lease_cannot_borrow_pep_registration() {
             ),
             nimbus_network::PortRequestMode::ProviderAssigned,
         );
-        reserve_provider_assigned(&registry.network_state_root, request)
-            .expect("provider-assigned identity should reserve")
+        reserve_provider_assigned(
+            registry
+                .port_authority()
+                .expect("same-process PEP port authority should remain available"),
+            request,
+        )
+        .expect("provider-assigned identity should reserve")
     });
     let barrier = Arc::new(std::sync::Barrier::new(2));
 

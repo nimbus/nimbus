@@ -17,7 +17,10 @@ pub(crate) struct DurableSegmentCleanupAuthority {
 }
 
 impl SingleNodeSegmentAllocator {
-    fn for_durable_cleanup(state_root: &Path, tenant_prefix: u8) -> Result<Option<Self>> {
+    fn reconstruct_for_cluster_cleanup(
+        state_root: &Path,
+        tenant_prefix: u8,
+    ) -> Result<Option<Self>> {
         let store = LocalNetworkStateStore::open(state_root).map_err(network_store_error)?;
         let Some(state) = store
             .read::<SegmentState>(&NetworkStatePartition::SegmentAllocations)
@@ -53,9 +56,17 @@ impl SingleNodeSegmentAllocator {
 }
 
 impl DurableSegmentCleanupAuthority {
-    pub(crate) fn open(state_root: &Path, tenant_prefix: u8) -> Result<Option<Self>> {
-        SingleNodeSegmentAllocator::for_durable_cleanup(state_root, tenant_prefix)
+    pub(crate) fn reconstruct_for_cluster_cleanup(
+        state_root: &Path,
+        tenant_prefix: u8,
+    ) -> Result<Option<Self>> {
+        SingleNodeSegmentAllocator::reconstruct_for_cluster_cleanup(state_root, tenant_prefix)
             .map(|inner| inner.map(|inner| Self { inner }))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn open(state_root: &Path, tenant_prefix: u8) -> Result<Option<Self>> {
+        Self::reconstruct_for_cluster_cleanup(state_root, tenant_prefix)
     }
 
     pub(crate) fn inspect_segments(

@@ -157,8 +157,11 @@ fn adopted_krun_final_cleanup_retains_claimed_pep_without_process_evidence() {
         .expect("execute launch should reserve its PEP")
         .port_lease
         .clone();
+    let port_lease_coordinator = backend.port_lease_coordinator();
     let claim = claim_bind_attempts(
-        &backend.config.network_state_root,
+        port_lease_coordinator
+            .authority()
+            .expect("backend must retain its process-derived port authority"),
         std::slice::from_ref(&request),
         OciPortProvider::EgressPep,
         Some(&reservation_claim),
@@ -588,13 +591,16 @@ fn failed_restart_teardown_retains_exact_active_netavark_evidence() {
         .expect("fixture should retain network config");
     setup_config.netavark_path = PathBuf::from("/usr/bin/true");
     crate::backends::oci::network::setup_container_network(
-        &manifest.network_layout,
-        &setup_config,
-        &manifest.handle.id,
-        manifest.spec.display_name(),
-        manifest.spec.display_name(),
-        &manifest.spec.port_bindings,
-        None,
+        &backend.ipam_authority,
+        &crate::backends::oci::network::OciNetavarkOperation::new(
+            &manifest.network_layout,
+            &setup_config,
+            &manifest.handle.id,
+            manifest.spec.display_name(),
+            manifest.spec.display_name(),
+            &manifest.spec.port_bindings,
+            None,
+        ),
     )
     .expect("fixture should establish Ready Netavark authority before restart teardown");
 
@@ -689,13 +695,16 @@ fn failed_krun_activation_teardown_retains_retry_evidence_until_confirmed_detach
         .expect("fixture should retain network config");
     setup_config.netavark_path = PathBuf::from("/usr/bin/true");
     crate::backends::oci::network::setup_container_network(
-        &manifest.network_layout,
-        &setup_config,
-        &manifest.handle.id,
-        manifest.spec.display_name(),
-        manifest.spec.display_name(),
-        &manifest.spec.port_bindings,
-        None,
+        &backend.ipam_authority,
+        &crate::backends::oci::network::OciNetavarkOperation::new(
+            &manifest.network_layout,
+            &setup_config,
+            &manifest.handle.id,
+            manifest.spec.display_name(),
+            manifest.spec.display_name(),
+            &manifest.spec.port_bindings,
+            None,
+        ),
     )
     .expect("fixture should establish Ready Netavark authority before activation failure");
     let authority = LocalPortLeaseAuthority::open(&backend.config.network_state_root)
