@@ -1109,6 +1109,7 @@ services:
         ]);
         let crate::Command::Compose(ComposeCommand {
             command: ComposeSubcommand::Export(export),
+            ..
         }) = cli.command
         else {
             panic!("compose export should parse");

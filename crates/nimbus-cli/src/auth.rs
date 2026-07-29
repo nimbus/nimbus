@@ -597,7 +597,9 @@ mod tests {
         let server_task = tokio::spawn(async move {
             serve(
                 listener,
-                ServeOptions::new(server_service).with_local_server_security(local_server_security),
+                ServeOptions::reconstruct_direct(server_service)
+                    .expect("auth test server authority should open")
+                    .with_local_server_security(local_server_security),
             )
             .await
             .expect("auth url test server should keep serving");

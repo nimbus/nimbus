@@ -8,9 +8,9 @@ use crate::compose::discovery::ResolvedComposeSelection;
 use crate::machine::MachineApiClient;
 
 use super::{
-    ComposeDownCommand, ComposeUpCommand, load_service_definition_catalog_for_execution_platform,
-    lookup_current_remote_service_details, requested_service_names,
-    resolve_remote_service_down_targets, resolve_service_down_targets,
+    ComposeDownCommand, ComposeUpCommand, LocalKrunExecutionSurface,
+    load_service_definition_catalog_for_execution_platform, lookup_current_remote_service_details,
+    requested_service_names, resolve_remote_service_down_targets, resolve_service_down_targets,
     resolve_service_execution_surface, validate_forwarded_machine_api_backend,
     validate_forwarded_machine_api_operations,
 };
@@ -86,6 +86,7 @@ pub(super) async fn service_up_outcomes_for_selection(
     control_data_dir: &Path,
     host_platform: super::ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
+    local_krun: Option<LocalKrunExecutionSurface>,
 ) -> Result<Vec<ServiceLifecycleOutcome>, Error> {
     let context = super::load_compose_project_context_for_selection(selection, control_data_dir)?;
     let tenant = command
@@ -102,6 +103,7 @@ pub(super) async fn service_up_outcomes_for_selection(
         "compose up",
         host_platform,
         machine_api_client,
+        local_krun,
     )? {
         super::ServiceExecutionSurface::Krun {
             state_view,
@@ -195,6 +197,7 @@ pub(super) async fn service_down_outcomes_for_selection(
     control_data_dir: &Path,
     host_platform: super::ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
+    local_krun: Option<LocalKrunExecutionSurface>,
 ) -> Result<Vec<ServiceLifecycleOutcome>, Error> {
     let context = super::load_compose_project_context_for_selection(selection, control_data_dir)?;
     let tenant = command
@@ -208,6 +211,7 @@ pub(super) async fn service_down_outcomes_for_selection(
         "compose down",
         host_platform,
         machine_api_client,
+        local_krun,
     )? {
         super::ServiceExecutionSurface::Krun {
             state_view,

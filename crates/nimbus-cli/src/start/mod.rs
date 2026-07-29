@@ -15,10 +15,11 @@ mod tests;
 pub(crate) use self::boot::resolve_optional_compose_selection;
 #[cfg(test)]
 pub(crate) use self::boot::resolve_start_app_dir;
-pub(crate) use self::boot::run_start_command;
+pub(crate) use self::boot::{run_start_command, run_start_command_with_prepared_network};
 pub(crate) use self::config::persistence_config_from_start_command;
 pub(crate) use self::config::{
-    CliKeyProvider, CliTenantProvider, RuntimeConfigFile, runtime_config_from_start_command,
+    CliKeyProvider, CliTenantProvider, RuntimeConfigFile, network_root_from_start_command,
+    runtime_config_from_start_command,
 };
 use self::runtime_limits::{
     default_runtime_control_plane_reserve_millicpus, default_runtime_heap_mb,
@@ -179,6 +180,12 @@ pub(crate) struct StartCommand {
     /// Optional override for the local redb control-plane directory.
     #[arg(long)]
     pub(crate) control_data_dir: Option<PathBuf>,
+
+    /// Stable OS-node root for host-global network allocation authority.
+    ///
+    /// This is independent of tenant, control-plane, and project data roots.
+    #[arg(long)]
+    pub(crate) network_state_dir: Option<PathBuf>,
 
     /// Tenant persistence provider mode.
     #[arg(long, value_enum)]
@@ -445,6 +452,7 @@ impl Default for StartCommand {
             s3_access_key: Vec::new(),
             data_dir: None,
             control_data_dir: None,
+            network_state_dir: None,
             tenant_provider: None,
             libsql_url: None,
             libsql_auth_token: None,

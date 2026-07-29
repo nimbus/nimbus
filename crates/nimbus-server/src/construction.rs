@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use nimbus_engine::Engine;
+use nimbus_network::LocalNetworkAuthority;
 use nimbus_runtime::{
     EffectiveRuntimeScalingPlan, RuntimeAdaptiveControllerSettings, RuntimeHostResourceBudget,
     RuntimeLimits, RuntimeScalingPlanSet,
@@ -39,13 +40,16 @@ pub struct ServeOptions {
 }
 
 impl ServeOptions {
-    pub fn new(engine: Arc<Engine>) -> Self {
-        Self::from_router_options(RouterOptions::new(engine))
+    /// Construct server options under the process manager's node authority.
+    pub fn new(engine: Arc<Engine>, network_authority: LocalNetworkAuthority) -> Self {
+        Self::from_router_options(RouterOptions::new(engine), network_authority)
     }
 
-    pub fn from_router_options(router_options: RouterOptions) -> Self {
-        let listener_leases =
-            ServerListenerLeaseAuthority::new(router_options.engine().data_dir().to_path_buf());
+    pub fn from_router_options(
+        router_options: RouterOptions,
+        network_authority: LocalNetworkAuthority,
+    ) -> Self {
+        let listener_leases = ServerListenerLeaseAuthority::new(network_authority);
         Self {
             router_options,
             wire_adapters: Vec::new(),
@@ -55,6 +59,36 @@ impl ServeOptions {
         }
     }
 
+    /// Explicitly reconstruct the primitive listener authority once.
+    ///
+    /// This direct embedder/test seam does not claim process-manager
+    /// composition. Production composition should inject a
+    /// [`LocalNetworkAuthority`] through [`Self::new`].
+    pub fn reconstruct_direct(engine: Arc<Engine>) -> std::io::Result<Self> {
+        let state_root = engine.data_dir().to_path_buf();
+        Self::reconstruct_direct_at(engine, state_root)
+    }
+
+    /// Explicitly reconstruct the primitive listener authority at a root
+    /// independent of engine persistence.
+    ///
+    /// This is a direct embedder/test seam. Production process composition
+    /// should inject a manager-derived [`LocalNetworkAuthority`].
+    pub fn reconstruct_direct_at(
+        engine: Arc<Engine>,
+        state_root: impl AsRef<std::path::Path>,
+    ) -> std::io::Result<Self> {
+        let router_options = RouterOptions::new(engine);
+        let listener_leases = ServerListenerLeaseAuthority::reconstruct_direct(state_root)?;
+        Ok(Self {
+            router_options,
+            wire_adapters: Vec::new(),
+            tls_config: None,
+            listener_leases,
+            prebound_wire_listeners: None,
+        })
+    }
+
     /// Report the closed capability facts of Nimbus-owned local ingress.
     ///
     /// This value describes the existing composition only. Constructing it
@@ -62,18 +96,7 @@ impl ServeOptions {
     pub fn nimbus_owned_local_ingress_registration(
         &self,
     ) -> nimbus_network::NetworkIngressProviderRegistration {
-        crate::network_capabilities::nimbus_owned_local_ingress_registration(
-            self.tls_config.is_some(),
-        )
-    }
-
-    /// Use this node-local root for durable listener leases.
-    ///
-    /// The default is the engine data directory. Composition roots that share
-    /// one host-global network authority with other providers may override it.
-    pub fn with_network_state_root(mut self, state_root: impl Into<std::path::PathBuf>) -> Self {
-        self.listener_leases = self.listener_leases.with_state_root(state_root);
-        self
+        crate::nimbus_owned_local_ingress_registration(self.tls_config.is_some())
     }
 
     /// Authenticate one externally owned main-listener provider incarnation.
@@ -96,9 +119,14 @@ impl ServeOptions {
     /// Call this before preparing the main listener. The bundle itself may
     /// remain with the composition owner until every other startup step has
     /// succeeded, allowing exact cleanup on an earlier error.
-    pub fn with_prebound_listener_authority(mut self, listeners: &PreboundServerListeners) -> Self {
-        self.listener_leases = listeners.authority();
-        self
+    pub fn with_prebound_listener_authority(
+        mut self,
+        listeners: &PreboundServerListeners,
+    ) -> std::io::Result<Self> {
+        self.listener_leases = self
+            .listener_leases
+            .authenticate_prebound_authority(&listeners.authority())?;
+        Ok(self)
     }
 
     /// Transfer continuously held sibling sockets into server ownership.
@@ -106,9 +134,15 @@ impl ServeOptions {
     /// Their authority must already have been selected with
     /// [`with_prebound_listener_authority`](Self::with_prebound_listener_authority)
     /// before the main listener was prepared.
-    pub fn with_prebound_wire_listeners(mut self, listeners: PreboundServerListeners) -> Self {
+    pub fn with_prebound_wire_listeners(
+        mut self,
+        listeners: PreboundServerListeners,
+    ) -> std::io::Result<Self> {
+        let listener_authority = listeners.authority();
+        self.listener_leases
+            .authenticate_prebound_bundle(&listener_authority)?;
         self.prebound_wire_listeners = Some(listeners);
-        self
+        Ok(self)
     }
 
     /// Reserve and claim the main TCP listener before the caller-owned bind.
@@ -352,7 +386,10 @@ pub async fn serve_leased(
     listener: LeasedServerListener,
     mut options: ServeOptions,
 ) -> std::io::Result<()> {
-    if !options.listener_leases.owns(listener.owner_incarnation()) {
+    if !options
+        .listener_leases
+        .owns(listener.owner_incarnation(), listener.network_authority())
+    {
         let mut result = match listener.close_and_settle() {
             Ok(()) => Err(std::io::Error::other(
                 "leased main listener belongs to a different ServeOptions incarnation",
@@ -399,7 +436,8 @@ pub async fn serve_leased(
                 .as_mut()
                 .and_then(|listeners| listeners.remove(adapter.name()))
             {
-                if !listener_leases.owns(prebound.owner_incarnation()) {
+                if !listener_leases.owns(prebound.owner_incarnation(), prebound.network_authority())
+                {
                     return close_prebound_after_error(
                         prebound,
                         std::io::Error::other(format!(
@@ -503,11 +541,14 @@ pub async fn serve_leased(
                     };
                 }
             };
-            let (adapter_listener, adapter_lease, listener_owner) = leased_listener.into_parts();
             debug_assert!(
-                listener_leases.owns(listener_owner.as_ref()),
+                listener_leases.owns(
+                    leased_listener.owner_incarnation(),
+                    leased_listener.network_authority(),
+                ),
                 "sibling listener must belong to the serving incarnation"
             );
+            let (adapter_listener, adapter_lease, _) = leased_listener.into_parts();
             if let Err(error) = crate::system_tenant::record_listener_state_async(
                 &engine,
                 adapter.name(),
@@ -696,6 +737,18 @@ mod tests {
     use tokio::task::AbortHandle;
 
     use super::*;
+
+    const TEST_LISTENER_LIVENESS_TIMEOUT: Duration = Duration::from_secs(5);
+
+    fn direct_options(engine: Arc<Engine>) -> ServeOptions {
+        ServeOptions::reconstruct_direct(engine)
+            .expect("test server network authority should reconstruct once")
+    }
+
+    fn direct_prebound(state_root: &Path) -> PreboundServerListeners {
+        PreboundServerListeners::reconstruct_direct(state_root)
+            .expect("test prebound network authority should reconstruct once")
+    }
 
     struct ProbeAdapter {
         bound_addr: Arc<Mutex<Option<SocketAddr>>>,
@@ -889,7 +942,7 @@ mod tests {
             .await
             .expect("main listener should bind");
         let addr = listener.local_addr().expect("main address should resolve");
-        let task = tokio::spawn(serve(listener, ServeOptions::new(fixture.engine())));
+        let task = tokio::spawn(serve(listener, direct_options(fixture.engine())));
 
         let mut active = false;
         for _ in 0..100 {
@@ -911,7 +964,7 @@ mod tests {
     #[tokio::test]
     async fn nnc3_5_mismatched_options_close_socket_and_release_lease() {
         let fixture = EngineFixture::new(|path| Engine::new(path));
-        let preparing_options = ServeOptions::new(fixture.engine());
+        let preparing_options = direct_options(fixture.engine());
         let prepared = preparing_options
             .prepare_main_listener("127.0.0.1:0".parse().expect("fixture address should parse"))
             .expect("main listener should reserve");
@@ -919,7 +972,7 @@ mod tests {
             .await
             .expect("main listener should bind");
         let leased = prepared.adopt(raw).expect("main listener should activate");
-        let serving_options = ServeOptions::new(fixture.engine());
+        let serving_options = direct_options(fixture.engine());
 
         let error = serve_leased(leased, serving_options)
             .await
@@ -940,7 +993,7 @@ mod tests {
     #[tokio::test]
     async fn nnc3_5_synchronous_sibling_failure_closes_and_releases_owned_main_listener() {
         let fixture = EngineFixture::new(|path| Engine::new(path));
-        let mut options = ServeOptions::new(fixture.engine());
+        let mut options = direct_options(fixture.engine());
         let prepared = options
             .prepare_main_listener("127.0.0.1:0".parse().expect("fixture address should parse"))
             .expect("main listener should reserve");
@@ -1015,7 +1068,7 @@ mod tests {
             .expect("main listener should bind");
         let bound_addr = Arc::new(Mutex::new(None));
         let claim_observed = Arc::new(AtomicBool::new(false));
-        let mut options = ServeOptions::new(fixture.engine());
+        let mut options = direct_options(fixture.engine());
         options.wire_adapters.push(Box::new(LeaseAwareAdapter {
             state_root: fixture.data_dir().to_path_buf(),
             bound_addr: Arc::clone(&bound_addr),
@@ -1023,7 +1076,7 @@ mod tests {
         }));
         let task = tokio::spawn(serve(main_listener, options));
 
-        let sibling_addr = tokio::time::timeout(Duration::from_secs(1), async {
+        let sibling_addr = tokio::time::timeout(TEST_LISTENER_LIVENESS_TIMEOUT, async {
             loop {
                 if let Some(addr) = *bound_addr
                     .lock()
@@ -1038,7 +1091,7 @@ mod tests {
         .expect("sibling guard should run");
         let claimed_before_guard = claim_observed.load(Ordering::Acquire);
         let bytes = if claimed_before_guard {
-            tokio::time::timeout(Duration::from_secs(1), async {
+            tokio::time::timeout(TEST_LISTENER_LIVENESS_TIMEOUT, async {
                 let mut stream = tokio::net::TcpStream::connect(sibling_addr).await?;
                 let mut bytes = [0_u8; 11];
                 stream.read_exact(&mut bytes).await?;
@@ -1067,7 +1120,7 @@ mod tests {
     #[tokio::test]
     async fn nnc3_7a_prebound_sibling_is_adopted_without_rebind() {
         let fixture = EngineFixture::new(|path| Engine::new(path));
-        let mut prebound = PreboundServerListeners::new(fixture.data_dir());
+        let mut prebound = direct_prebound(fixture.data_dir());
         let requested_addr = "127.0.0.1:0"
             .parse()
             .expect("provider-assigned address should parse");
@@ -1099,17 +1152,20 @@ mod tests {
             .await
             .expect("main listener should bind");
         let active_observed = Arc::new(AtomicBool::new(false));
-        let mut options =
-            ServeOptions::new(fixture.engine()).with_prebound_listener_authority(&prebound);
+        let mut options = direct_options(fixture.engine())
+            .with_prebound_listener_authority(&prebound)
+            .expect("matching prebound authority should authenticate");
         options.wire_adapters.push(Box::new(PreboundAdapter {
             addr: sibling_addr,
             state_root: fixture.data_dir().to_path_buf(),
             active_observed: Arc::clone(&active_observed),
         }));
-        options = options.with_prebound_wire_listeners(prebound);
+        options = options
+            .with_prebound_wire_listeners(prebound)
+            .expect("matching prebound bundle should transfer");
         let task = tokio::spawn(serve(main_listener, options));
 
-        let bytes = tokio::time::timeout(Duration::from_secs(1), async {
+        let bytes = tokio::time::timeout(TEST_LISTENER_LIVENESS_TIMEOUT, async {
             let mut stream = tokio::net::TcpStream::connect(sibling_addr).await?;
             let mut bytes = [0_u8; 14];
             stream.read_exact(&mut bytes).await?;
@@ -1135,7 +1191,7 @@ mod tests {
     #[tokio::test]
     async fn nnc3_7a_mismatched_handoff_settles_every_prebound_listener() {
         let fixture = EngineFixture::new(|path| Engine::new(path));
-        let mut prebound = PreboundServerListeners::new(fixture.data_dir());
+        let mut prebound = direct_prebound(fixture.data_dir());
         let requested_addr = "127.0.0.1:0"
             .parse()
             .expect("provider-assigned address should parse");
@@ -1171,7 +1227,7 @@ mod tests {
             .expect("unconsumed listener should enter the bundle");
 
         let active_observed = Arc::new(AtomicBool::new(false));
-        let mut options = ServeOptions::new(fixture.engine());
+        let mut options = direct_options(fixture.engine());
         options.wire_adapters.push(Box::new(PreboundAdapter {
             addr: matching_addr,
             state_root: fixture.data_dir().to_path_buf(),
@@ -1180,18 +1236,14 @@ mod tests {
         // Deliberately omit `with_prebound_listener_authority`: the server
         // must reject the foreign incarnation and settle both the selected
         // listener and every still-unconsumed bundle member.
-        options = options.with_prebound_wire_listeners(prebound);
-        let main_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("main listener should bind");
-
-        let error = serve(main_listener, options)
-            .await
-            .expect_err("cross-incarnation pre-bound adoption must fail closed");
+        let error = match options.with_prebound_wire_listeners(prebound) {
+            Ok(_) => panic!("cross-incarnation pre-bound adoption must fail closed"),
+            Err(error) => error,
+        };
         assert!(
             error
                 .to_string()
-                .contains("different ServeOptions incarnation"),
+                .contains("different server authority incarnation"),
             "the failure should identify the authority mismatch: {error}"
         );
         assert!(
@@ -1223,7 +1275,7 @@ mod tests {
     fn nnc3_7a_serve_options_drop_and_replacement_settle_prebound_bundles() {
         let fixture = EngineFixture::new(|path| Engine::new(path));
         let prepare_bundle = |listener_name: &str, adapter_name: &str| {
-            let mut listeners = PreboundServerListeners::new(fixture.data_dir());
+            let mut listeners = direct_prebound(fixture.data_dir());
             let requested_addr = "127.0.0.1:0"
                 .parse()
                 .expect("provider-assigned address should parse");
@@ -1246,16 +1298,26 @@ mod tests {
 
         let (first, first_addr) = prepare_bundle("dev-mongodb-provider-assigned", "mongodb");
         let (second, second_addr) = prepare_bundle("dev-s3-provider-assigned", "s3");
-        let options = ServeOptions::new(fixture.engine())
+        let options = direct_options(fixture.engine())
             .with_prebound_listener_authority(&first)
+            .expect("first prebound authority should authenticate")
             .with_prebound_wire_listeners(first)
-            .with_prebound_wire_listeners(second);
+            .expect("first prebound bundle should transfer");
+        let error = match options.with_prebound_wire_listeners(second) {
+            Ok(_) => panic!("a divergent replacement incarnation must fail closed"),
+            Err(error) => error,
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("different server authority incarnation"),
+            "the failure should identify the replacement mismatch: {error}"
+        );
 
         std::net::TcpListener::bind(first_addr)
-            .expect("replacing a pre-bound bundle must close and settle the old bundle");
-        drop(options);
+            .expect("rejected replacement must settle the previously retained bundle");
         std::net::TcpListener::bind(second_addr)
-            .expect("dropping ServeOptions must close and settle its unconsumed bundle");
+            .expect("rejected replacement must settle the divergent bundle");
 
         let records = LocalPortLeaseAuthority::open(fixture.data_dir())
             .expect("port authority should reopen")
@@ -1293,7 +1355,7 @@ mod tests {
             .expect("external owner address should resolve");
         let bound_addr = Arc::new(Mutex::new(None));
         let abort_handle = Arc::new(Mutex::new(None));
-        let mut options = ServeOptions::new(fixture.engine());
+        let mut options = direct_options(fixture.engine());
         options.wire_adapters.push(Box::new(ProbeAdapter {
             bound_addr: Arc::clone(&bound_addr),
             abort_handle: Arc::clone(&abort_handle),

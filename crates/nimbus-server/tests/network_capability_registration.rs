@@ -17,7 +17,7 @@ use nimbus_sandbox::backends::container::{
 };
 #[cfg(target_os = "linux")]
 use nimbus_sandbox::backends::krun::{KrunSandboxBackend, KrunSandboxBackendConfig, KrunStartMode};
-use nimbus_server::{ServeOptions, TlsConfig};
+use nimbus_server::{ServeOptions, TlsConfig, nimbus_owned_local_ingress_registration};
 use nimbus_testing::EngineFixture;
 #[cfg(target_os = "linux")]
 use tempfile::tempdir;
@@ -29,8 +29,14 @@ fn set<T: Ord, const N: usize>(values: [T; N]) -> std::collections::BTreeSet<T> 
 #[test]
 fn local_ingress_registration_reuses_listener_identity_and_is_conservative() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
-    let registration =
-        ServeOptions::new(fixture.engine()).nimbus_owned_local_ingress_registration();
+    let registration = ServeOptions::reconstruct_direct(fixture.engine())
+        .expect("test server network authority should reconstruct once")
+        .nimbus_owned_local_ingress_registration();
+    assert_eq!(
+        registration,
+        nimbus_owned_local_ingress_registration(false),
+        "ServeOptions must delegate to the same effect-free server-owned capability source"
+    );
 
     assert_eq!(
         registration.provider_id(),
@@ -139,7 +145,8 @@ fn local_ingress_registration_reuses_listener_identity_and_is_conservative() {
 #[test]
 fn tls_is_advertised_only_by_the_configured_local_ingress_instance() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
-    let registration = ServeOptions::new(fixture.engine())
+    let registration = ServeOptions::reconstruct_direct(fixture.engine())
+        .expect("test server network authority should reconstruct once")
         .with_tls(TlsConfig::new("local-cert.pem", "local-key.pem"))
         .nimbus_owned_local_ingress_registration();
 
@@ -171,7 +178,9 @@ fn real_container_and_krun_pairs_select_with_real_server_ingress() {
         .host_managed_attachment_registration()
         .expect("real krun Execute composition should register on Linux");
     let fixture = EngineFixture::new(|path| Engine::new(path));
-    let ingress = ServeOptions::new(fixture.engine()).nimbus_owned_local_ingress_registration();
+    let ingress = ServeOptions::reconstruct_direct(fixture.engine())
+        .expect("test server network authority should reconstruct once")
+        .nimbus_owned_local_ingress_registration();
 
     let container_bundle = NetworkCapabilityBundle::new(container, ingress.clone());
     let krun_bundle = NetworkCapabilityBundle::new(krun, ingress);

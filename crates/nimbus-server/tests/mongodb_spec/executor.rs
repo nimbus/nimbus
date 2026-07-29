@@ -28,10 +28,12 @@ impl SpecTestFixture {
         let http_listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let server = tokio::spawn(serve(
             http_listener,
-            ServeOptions::new(fixture.engine()).with_mongodb(MongoDbConfig::localhost(
-                adapter_port,
-                MongoDbAuthConfig::new(TEST_USERNAME.into(), TEST_PASSWORD.into()),
-            )),
+            ServeOptions::reconstruct_direct(fixture.engine())
+                .expect("test server network authority should reconstruct once")
+                .with_mongodb(MongoDbConfig::localhost(
+                    adapter_port,
+                    MongoDbAuthConfig::new(TEST_USERNAME.into(), TEST_PASSWORD.into()),
+                )),
         ));
         wait_for_tcp_port(addr, &server).await;
 

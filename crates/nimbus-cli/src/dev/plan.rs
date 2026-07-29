@@ -5,12 +5,15 @@ use rand::RngCore;
 
 use crate::compose::discovery::{ResolvedComposeSelection, resolve_compose_selection};
 use crate::dirs;
+use crate::network_composition::{PreparedLocalNetworkComposition, StagedLocalNetworkComposition};
 use crate::start::{CliTenantProvider, StartCommand};
 
 use super::adapter::{DevAdapter, detect_dev_adapter};
 use super::firebase_project::{DEMO_TENANT, ProjectTenantMapping, discover_project_tenant};
 use super::launch::{AutoOpenDecision, ProcessEnv, resolve_auto_open};
 use super::surfaces::{WireSurfaces, detect_wire_surfaces};
+#[cfg(test)]
+use super::wire::reconstruct_direct_wire_plan_for_test;
 use super::wire::{WirePlan, resolve_wire_plan};
 use super::{DevCommand, DevTailLogsMode};
 
@@ -78,7 +81,28 @@ impl DevPlan {
     }
 }
 
+pub(super) fn resolve_dev_plan_with_staged_network(
+    command: DevCommand,
+    cwd: &Path,
+    staged_network: StagedLocalNetworkComposition,
+) -> io::Result<(DevPlan, PreparedLocalNetworkComposition)> {
+    let (plan, prepared_network) = resolve_dev_plan_inner(command, cwd, Some(staged_network))?;
+    Ok((
+        plan,
+        prepared_network.expect("production dev planning must prepare the staged network"),
+    ))
+}
+
+#[cfg(test)]
 pub(super) fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<DevPlan> {
+    resolve_dev_plan_inner(command, cwd, None).map(|(plan, _)| plan)
+}
+
+fn resolve_dev_plan_inner(
+    command: DevCommand,
+    cwd: &Path,
+    staged_network: Option<StagedLocalNetworkComposition>,
+) -> io::Result<(DevPlan, Option<PreparedLocalNetworkComposition>)> {
     let auto_open_decision =
         resolve_auto_open(command.no_open, io::stdout().is_terminal(), &ProcessEnv);
     let app_dir = resolve_app_dir(command.app_dir.as_deref(), cwd)?;
@@ -123,7 +147,25 @@ pub(super) fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<De
     // conventional ports, undetected go ephemeral) and the shared persisted
     // credentials (D5); the start command below serves exactly those
     // endpoints so `.env.local` and the run banner stay truthful.
-    let prepared_wire = resolve_wire_plan(wire_surfaces, &data_dir)?;
+    let prepared_network = staged_network
+        .map(|staged| {
+            PreparedLocalNetworkComposition::prepare(
+                staged,
+                compose_selection.as_ref(),
+                &data_dir,
+                nimbus_tenant::TenantIsolationMode::LocalDevelopment,
+                nimbus_server::nimbus_owned_local_ingress_registration(false),
+            )
+            .map_err(|error| io::Error::other(error.to_string()))
+        })
+        .transpose()?;
+    let prepared_wire = match prepared_network.as_ref() {
+        Some(prepared) => resolve_wire_plan(wire_surfaces, &data_dir, prepared.authority())?,
+        #[cfg(test)]
+        None => reconstruct_direct_wire_plan_for_test(wire_surfaces, &data_dir)?,
+        #[cfg(not(test))]
+        None => unreachable!("production dev planning requires a manager-derived authority"),
+    };
     let wire = prepared_wire.plan;
     let start_compose_files = compose_selection
         .as_ref()
@@ -158,6 +200,9 @@ pub(super) fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<De
         )],
         data_dir: Some(data_dir.clone()),
         control_data_dir: Some(data_dir.clone()),
+        network_state_dir: prepared_network
+            .as_ref()
+            .map(|prepared| prepared.authority().state_root().to_path_buf()),
         tenant_provider: Some(CliTenantProvider::Sqlite),
         app_dir: start_app_dir,
         skip_codegen: command.skip_codegen,
@@ -170,21 +215,24 @@ pub(super) fn resolve_dev_plan(command: DevCommand, cwd: &Path) -> io::Result<De
         ..StartCommand::default()
     };
 
-    Ok(DevPlan {
-        app_dir,
-        data_dir,
-        deployment_slug,
-        compose_selection,
-        local_url,
-        adapter,
-        firestore_tenant,
-        wire_surfaces,
-        wire,
-        once: command.once,
-        tail_logs: command.tail_logs,
-        start_command,
-        auto_open_decision,
-    })
+    Ok((
+        DevPlan {
+            app_dir,
+            data_dir,
+            deployment_slug,
+            compose_selection,
+            local_url,
+            adapter,
+            firestore_tenant,
+            wire_surfaces,
+            wire,
+            once: command.once,
+            tail_logs: command.tail_logs,
+            start_command,
+            auto_open_decision,
+        },
+        prepared_network,
+    ))
 }
 
 pub(super) fn resolve_app_dir(explicit_app_dir: Option<&Path>, cwd: &Path) -> io::Result<PathBuf> {

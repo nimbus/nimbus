@@ -117,8 +117,18 @@ impl ComposeProjectControlPlane {
         self.backend_root(SandboxBackendKind::Krun)
     }
 
-    pub(crate) fn krun_backend_config(&self) -> KrunSandboxBackendConfig {
+    /// Explicit test-only reconstruction for isolated state-view fixtures.
+    #[cfg(test)]
+    pub(crate) fn reconstruct_direct_krun_backend_config(&self) -> KrunSandboxBackendConfig {
         KrunSandboxBackendConfig::under_root(self.krun_backend_root())
+    }
+
+    pub(crate) fn krun_backend_config_with_network_authority(
+        &self,
+        network_state_root: &Path,
+    ) -> KrunSandboxBackendConfig {
+        KrunSandboxBackendConfig::under_root(self.krun_backend_root())
+            .with_network_state_root(network_state_root)
     }
 }
 
@@ -218,7 +228,10 @@ services:
                 .join("container")
         );
 
-        let config = context.control_plane.krun_backend_config();
+        let network_state_root = tempdir.path().join("logical-node-network");
+        let config = context
+            .control_plane
+            .krun_backend_config_with_network_authority(&network_state_root);
         assert_eq!(
             config.bundle_root,
             context
@@ -237,7 +250,8 @@ services:
                 .join("krun")
                 .join("state")
         );
-        assert_eq!(config.network_state_root, config.workload_state_root);
+        assert_eq!(config.network_state_root, network_state_root);
+        assert_ne!(config.network_state_root, config.workload_state_root);
         assert_eq!(
             context.control_plane.local_tenant_id.as_str(),
             format!("svc-{}", context.control_plane.project_key)

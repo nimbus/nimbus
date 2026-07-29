@@ -416,7 +416,8 @@ mod tests {
             .expect("server discovery should be recorded");
         let server_task = tokio::spawn(serve(
             listener,
-            ServeOptions::new(service.clone())
+            ServeOptions::reconstruct_direct(service.clone())
+                .expect("machine test server authority should open")
                 .with_local_server_security(Arc::new(LocalServerSecurityState::new(
                     local_paths.clone(),
                     token,

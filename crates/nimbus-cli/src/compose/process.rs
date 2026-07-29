@@ -10,7 +10,7 @@ use crate::compose::discovery::ResolvedComposeSelection;
 use crate::machine::MachineApiClient;
 
 use super::{
-    ComposeProjectContext, ComposeTopCommand, ServiceHostPlatform,
+    ComposeProjectContext, ComposeTopCommand, LocalKrunExecutionSurface, ServiceHostPlatform,
     load_compose_project_context_for_selection, lookup_current_remote_service_details,
     machine_api_operation_error, missing_persisted_service_error, render_state_lookup_error,
     require_krun_backend_for_service_operation, resolve_service_execution_surface,
@@ -43,6 +43,7 @@ pub(super) fn resolve_service_sandbox_process_snapshot_for_selection(
     control_data_dir: &Path,
     host_platform: ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
+    local_krun: Option<LocalKrunExecutionSurface>,
 ) -> Result<ServiceProcessSnapshot, Error> {
     let context = load_compose_project_context_for_selection(selection, control_data_dir)?;
     let tenant = command
@@ -55,9 +56,15 @@ pub(super) fn resolve_service_sandbox_process_snapshot_for_selection(
         "compose top",
         host_platform,
         machine_api_client,
+        local_krun,
     )? {
-        super::ServiceExecutionSurface::Krun { .. } => {
-            resolve_krun_service_sandbox_process_snapshot(&context, &tenant, &command.service)
+        super::ServiceExecutionSurface::Krun { state_view, .. } => {
+            resolve_krun_service_sandbox_process_snapshot(
+                &context,
+                &state_view,
+                &tenant,
+                &command.service,
+            )
         }
         super::ServiceExecutionSurface::ForwardedContainer { client, .. } => {
             validate_forwarded_machine_api_operations(
@@ -115,12 +122,11 @@ pub(super) fn resolve_service_sandbox_process_snapshot_for_selection(
 
 fn resolve_krun_service_sandbox_process_snapshot(
     context: &ComposeProjectContext,
+    state_view: &KrunSandboxStateView,
     tenant: &TenantId,
     service_name: &str,
 ) -> Result<ServiceProcessSnapshot, Error> {
     require_krun_backend_for_service_operation(context, Some(service_name), "compose top")?;
-    let state_view =
-        KrunSandboxStateView::from_config(&context.control_plane.krun_backend_config());
     let details = state_view
         .inspect_service(tenant, service_name)
         .map_err(|error| render_state_lookup_error("resolve persisted service processes", error))?

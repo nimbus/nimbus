@@ -24,11 +24,11 @@ fn external_binder_after_probe_blocks_provider_while_machine_state_claims_port()
         temp_dir.path().join("runtime"),
     );
     let engine = Arc::new(
-        Engine::new(temp_dir.path().join("engine"))
+        Engine::new(roots.network_state_root.clone())
             .expect("collision fixture engine should initialize"),
     );
-    let server = nimbus_server::ServeOptions::new(engine)
-        .with_network_state_root(roots.network_state_root.clone());
+    let server = nimbus_server::ServeOptions::reconstruct_direct(engine)
+        .expect("test server authority should open");
     let first_kernel_free = fence_preoccupied_range_prefix(&server);
 
     let prepared = super::super::ports::PreparedMachineSshPortLease::prepare(
@@ -102,11 +102,11 @@ fn machine_ssh_reservation_conflicts_with_server_listener_authority() {
     .expect("machine should select and claim its desired SSH port");
     let allocated_port = prepared.selected_port();
     let engine = Arc::new(
-        Engine::new(temp_dir.path().join("engine"))
+        Engine::new(roots.network_state_root.clone())
             .expect("conflict fixture engine should initialize"),
     );
-    let server = nimbus_server::ServeOptions::new(engine)
-        .with_network_state_root(roots.network_state_root.clone());
+    let server = nimbus_server::ServeOptions::reconstruct_direct(engine)
+        .expect("test server authority should open");
     let requested_addr =
         std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, allocated_port));
 

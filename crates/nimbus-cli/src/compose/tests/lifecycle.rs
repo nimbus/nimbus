@@ -7,7 +7,9 @@ fn resolve_service_down_targets_deduplicates_manifest_history_per_service_identi
     let control_data_dir = temp_dir.path().join("control");
     let context = load_compose_project_context(&compose_path, &control_data_dir)
         .expect("compose project context should load");
-    let krun_config = context.control_plane.krun_backend_config();
+    let krun_config = context
+        .control_plane
+        .reconstruct_direct_krun_backend_config();
     let tenant = context.control_plane.local_tenant_id.clone();
 
     write_manifest(

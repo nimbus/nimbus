@@ -2,6 +2,7 @@ use std::io;
 use std::net::{Ipv4Addr, SocketAddr, TcpListener};
 use std::path::Path;
 
+use nimbus_network::LocalNetworkAuthority;
 use nimbus_server::PreboundServerListeners;
 
 use crate::start::adapters::{
@@ -205,9 +206,33 @@ impl WirePlan {
 pub(super) fn resolve_wire_plan(
     surfaces: WireSurfaces,
     data_dir: &Path,
+    network_authority: LocalNetworkAuthority,
+) -> io::Result<PreparedWirePlan> {
+    resolve_wire_plan_with_listeners(
+        surfaces,
+        data_dir,
+        PreboundServerListeners::new(network_authority),
+    )
+}
+
+#[cfg(test)]
+pub(super) fn reconstruct_direct_wire_plan_for_test(
+    surfaces: WireSurfaces,
+    data_dir: &Path,
+) -> io::Result<PreparedWirePlan> {
+    resolve_wire_plan_with_listeners(
+        surfaces,
+        data_dir,
+        PreboundServerListeners::reconstruct_direct(data_dir)?,
+    )
+}
+
+fn resolve_wire_plan_with_listeners(
+    surfaces: WireSurfaces,
+    data_dir: &Path,
+    mut listeners: PreboundServerListeners,
 ) -> io::Result<PreparedWirePlan> {
     let credentials = load_or_generate(data_dir)?;
-    let mut listeners = PreboundServerListeners::new(data_dir);
     let result = (|| {
         let mongodb_port = prepare_wire_listener(
             &mut listeners,
@@ -353,7 +378,7 @@ fn prepare_test_wire_listener(
     detected: bool,
     conventional: u16,
 ) -> io::Result<(WireListenerPort, PreboundServerListeners)> {
-    let mut listeners = PreboundServerListeners::new(data_dir);
+    let mut listeners = PreboundServerListeners::reconstruct_direct(data_dir)?;
     let port = prepare_wire_listener(&mut listeners, "mongodb", detected, conventional)?;
     Ok((port, listeners))
 }
@@ -387,6 +412,8 @@ fn provider_assigned_fixture(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
 
     fn surfaces(mongodb: bool, dynamodb: bool, s3: bool) -> WireSurfaces {
@@ -396,6 +423,75 @@ mod tests {
             s3,
             aws_sdk_v2_hint: false,
         }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn manager_derived_dev_bundle_and_main_share_one_primitive_authority() {
+        let root = tempfile::tempdir().expect("fixture root");
+        let node_root = root.path().join("node");
+        let bootstrap = nimbus_network::LocalNetworkManager::bootstrap(&node_root)
+            .expect("node manager should claim");
+        let authority = bootstrap.authority();
+        let prepared = resolve_wire_plan(
+            surfaces(true, true, true),
+            &root.path().join("dev"),
+            authority.clone(),
+        )
+        .expect("all dev sibling listeners should prepare");
+        for port in [
+            prepared.plan.mongodb_port.port,
+            prepared.plan.dynamodb_port.port,
+            prepared.plan.s3_port.port,
+        ] {
+            assert_port_is_still_held(port);
+        }
+
+        let engine = Arc::new(
+            nimbus::Engine::new(root.path().join("engine"))
+                .expect("fixture engine should initialize"),
+        );
+        let options = nimbus_server::ServeOptions::new(engine, authority.clone())
+            .with_prebound_listener_authority(&prepared.listeners)
+            .expect("main and every sibling must share manager provenance and primitive authority");
+        let requested_main = "127.0.0.1:0"
+            .parse()
+            .expect("provider-assigned main address should parse");
+        let main = options
+            .prepare_main_listener(requested_main)
+            .expect("main listener should reserve under the same authority");
+        let raw = TcpListener::bind(requested_main).expect("main listener should bind");
+        let main = main
+            .adopt_std(raw)
+            .expect("main listener should activate under the same authority");
+
+        let records = authority
+            .port_leases()
+            .list()
+            .expect("shared primitive authority should list");
+        let active_records = records
+            .iter()
+            .filter(|record| record.phase() == nimbus_network::PortLeasePhase::Active)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            active_records.len(),
+            4,
+            "concurrent external occupancy may leave durable failed-attempt evidence, \
+             but MongoDB, DynamoDB, S3, and main must be the four active leases"
+        );
+        assert!(
+            active_records
+                .iter()
+                .all(|record| record.binding().is_some()),
+            "every active dev/main lease must retain binding evidence"
+        );
+
+        main.close_and_settle()
+            .expect("main listener should settle");
+        prepared
+            .listeners
+            .close_and_settle()
+            .expect("dev siblings should settle");
     }
 
     #[test]

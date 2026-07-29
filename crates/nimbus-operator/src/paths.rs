@@ -32,6 +32,121 @@ impl LocalServerPlatform {
     }
 }
 
+const NETWORK_STATE_DIR_ENV: &str = "NIMBUS_NETWORK_STATE_DIR";
+
+/// Stable, host-local state root for process-wide network allocation authority.
+///
+/// This type resolves platform policy only. It does not create, authenticate,
+/// or open the directory.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LocalNodeNetworkRoot(PathBuf);
+
+impl LocalNodeNetworkRoot {
+    /// Resolves the current platform's logical-node network root.
+    ///
+    /// An explicit root takes precedence over `NIMBUS_NETWORK_STATE_DIR`.
+    pub fn resolve_for_current_platform(explicit: Option<&Path>) -> io::Result<Self> {
+        let env = env_map(env::vars_os());
+        Self::resolve_for_platform(LocalServerPlatform::current(), explicit, &env)
+    }
+
+    pub fn as_path(&self) -> &Path {
+        &self.0
+    }
+
+    pub fn into_path_buf(self) -> PathBuf {
+        self.0
+    }
+
+    fn resolve_for_platform(
+        platform: LocalServerPlatform,
+        explicit: Option<&Path>,
+        env: &BTreeMap<String, OsString>,
+    ) -> io::Result<Self> {
+        if let Some(explicit) = explicit {
+            return validate_network_root(
+                platform,
+                explicit.to_path_buf(),
+                "explicit network root",
+            );
+        }
+
+        if let Some(value) = env.get(NETWORK_STATE_DIR_ENV) {
+            return validate_network_root(platform, PathBuf::from(value), NETWORK_STATE_DIR_ENV);
+        }
+
+        let path = match platform {
+            LocalServerPlatform::Linux => {
+                let home = home_dir(env, LocalServerPlatform::Linux)?;
+                env_path(env, "XDG_STATE_HOME")
+                    .unwrap_or_else(|| home.join(".local").join("state"))
+                    .join("nimbus")
+                    .join("network")
+            }
+            LocalServerPlatform::MacOs => home_dir(env, LocalServerPlatform::MacOs)?
+                .join("Library")
+                .join("Application Support")
+                .join("nimbus")
+                .join("network"),
+            LocalServerPlatform::Windows => env_path(env, "LOCALAPPDATA")
+                .unwrap_or_else(|| {
+                    user_profile_dir(env)
+                        .unwrap_or_else(|| PathBuf::from(r"C:\Users\Default"))
+                        .join("AppData")
+                        .join("Local")
+                })
+                .join("nimbus")
+                .join("network"),
+        };
+
+        validate_network_root(platform, path, "platform network root")
+    }
+}
+
+fn validate_network_root(
+    platform: LocalServerPlatform,
+    path: PathBuf,
+    source: &str,
+) -> io::Result<LocalNodeNetworkRoot> {
+    if path.as_os_str().is_empty() || !is_absolute_for_platform(platform, &path) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{source} must be an absolute, non-empty path"),
+        ));
+    }
+
+    Ok(LocalNodeNetworkRoot(path))
+}
+
+fn is_absolute_for_platform(platform: LocalServerPlatform, path: &Path) -> bool {
+    match platform {
+        LocalServerPlatform::Linux | LocalServerPlatform::MacOs => {
+            path.as_os_str().to_string_lossy().starts_with('/')
+        }
+        LocalServerPlatform::Windows => {
+            let value = path.as_os_str().to_string_lossy();
+            let bytes = value.as_bytes();
+            let has_drive_root = bytes.len() >= 3
+                && bytes[0].is_ascii_alphabetic()
+                && bytes[1] == b':'
+                && matches!(bytes[2], b'\\' | b'/');
+            has_drive_root || has_complete_windows_unc_root(&value)
+        }
+    }
+}
+
+fn has_complete_windows_unc_root(value: &str) -> bool {
+    let Some(remainder) = value
+        .strip_prefix(r"\\")
+        .or_else(|| value.strip_prefix("//"))
+    else {
+        return false;
+    };
+    let mut components = remainder.split(['\\', '/']);
+    components.next().is_some_and(|server| !server.is_empty())
+        && components.next().is_some_and(|share| !share.is_empty())
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LocalServerPaths {
     pub auth_token_path: PathBuf,
@@ -334,5 +449,265 @@ mod tests {
                 .join("auth")
                 .join("token.json")
         );
+    }
+
+    #[test]
+    fn network_root_explicit_path_wins_over_environment_override() {
+        let root = LocalNodeNetworkRoot::resolve_for_platform(
+            LocalServerPlatform::Linux,
+            Some(Path::new("/explicit/network-state")),
+            &env(&[
+                ("NIMBUS_NETWORK_STATE_DIR", "/environment/network-state"),
+                ("XDG_STATE_HOME", "/xdg/state"),
+                ("HOME", "/Users/jack"),
+            ]),
+        )
+        .expect("absolute explicit network root should resolve");
+
+        assert_eq!(root.as_path(), Path::new("/explicit/network-state"));
+    }
+
+    #[test]
+    fn linux_network_root_uses_override_then_xdg_then_home() {
+        let overridden = LocalNodeNetworkRoot::resolve_for_platform(
+            LocalServerPlatform::Linux,
+            None,
+            &env(&[
+                ("NIMBUS_NETWORK_STATE_DIR", "/override/network-state"),
+                ("XDG_STATE_HOME", "/xdg/state"),
+                ("HOME", "/Users/jack"),
+            ]),
+        )
+        .expect("linux override should resolve");
+        assert_eq!(
+            overridden.into_path_buf(),
+            PathBuf::from("/override/network-state")
+        );
+
+        let xdg = LocalNodeNetworkRoot::resolve_for_platform(
+            LocalServerPlatform::Linux,
+            None,
+            &env(&[("XDG_STATE_HOME", "/xdg/state"), ("HOME", "/Users/jack")]),
+        )
+        .expect("linux XDG state root should resolve");
+        assert_eq!(
+            xdg.into_path_buf(),
+            PathBuf::from("/xdg/state/nimbus/network")
+        );
+
+        let home = LocalNodeNetworkRoot::resolve_for_platform(
+            LocalServerPlatform::Linux,
+            None,
+            &env(&[("HOME", "/Users/jack")]),
+        )
+        .expect("linux home fallback should resolve");
+        assert_eq!(
+            home.into_path_buf(),
+            PathBuf::from("/Users/jack/.local/state/nimbus/network")
+        );
+    }
+
+    #[test]
+    fn macos_network_root_uses_override_then_application_support() {
+        let overridden = LocalNodeNetworkRoot::resolve_for_platform(
+            LocalServerPlatform::MacOs,
+            None,
+            &env(&[
+                ("NIMBUS_NETWORK_STATE_DIR", "/override/network-state"),
+                ("HOME", "/Users/jack"),
+            ]),
+        )
+        .expect("macOS override should resolve");
+        assert_eq!(
+            overridden.into_path_buf(),
+            PathBuf::from("/override/network-state")
+        );
+
+        let fallback = LocalNodeNetworkRoot::resolve_for_platform(
+            LocalServerPlatform::MacOs,
+            None,
+            &env(&[("HOME", "/Users/jack")]),
+        )
+        .expect("macOS Application Support fallback should resolve");
+        assert_eq!(
+            fallback.into_path_buf(),
+            PathBuf::from("/Users/jack/Library/Application Support/nimbus/network")
+        );
+    }
+
+    #[test]
+    fn windows_network_root_uses_override_localappdata_then_profile() {
+        let overridden = LocalNodeNetworkRoot::resolve_for_platform(
+            LocalServerPlatform::Windows,
+            None,
+            &env(&[
+                ("NIMBUS_NETWORK_STATE_DIR", r"C:\Nimbus\NetworkState"),
+                ("LOCALAPPDATA", r"C:\Users\jack\AppData\Local"),
+            ]),
+        )
+        .expect("Windows override should resolve");
+        assert_eq!(
+            overridden.into_path_buf(),
+            PathBuf::from(r"C:\Nimbus\NetworkState")
+        );
+
+        let local_app_data = LocalNodeNetworkRoot::resolve_for_platform(
+            LocalServerPlatform::Windows,
+            None,
+            &env(&[("LOCALAPPDATA", r"C:\Users\jack\AppData\Local")]),
+        )
+        .expect("Windows LOCALAPPDATA root should resolve");
+        assert_eq!(
+            local_app_data.into_path_buf(),
+            PathBuf::from(r"C:\Users\jack\AppData\Local").join("nimbus/network")
+        );
+
+        let profile = LocalNodeNetworkRoot::resolve_for_platform(
+            LocalServerPlatform::Windows,
+            None,
+            &env(&[("USERPROFILE", r"C:\Users\jack")]),
+        )
+        .expect("Windows profile fallback should resolve");
+        assert_eq!(
+            profile.into_path_buf(),
+            PathBuf::from(r"C:\Users\jack")
+                .join("AppData")
+                .join("Local")
+                .join("nimbus")
+                .join("network")
+        );
+    }
+
+    #[test]
+    fn network_root_rejects_empty_and_relative_explicit_paths() {
+        for invalid in [Path::new(""), Path::new("relative/network-state")] {
+            let error = LocalNodeNetworkRoot::resolve_for_platform(
+                LocalServerPlatform::Linux,
+                Some(invalid),
+                &env(&[("HOME", "/Users/jack")]),
+            )
+            .expect_err("invalid explicit network root must be rejected");
+
+            assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        }
+    }
+
+    #[test]
+    fn network_root_absolute_syntax_follows_the_target_platform() {
+        assert!(is_absolute_for_platform(
+            LocalServerPlatform::Linux,
+            Path::new("/var/lib/nimbus/network")
+        ));
+        assert!(is_absolute_for_platform(
+            LocalServerPlatform::MacOs,
+            Path::new("/Users/jack/Library/Application Support/nimbus/network")
+        ));
+        assert!(is_absolute_for_platform(
+            LocalServerPlatform::Windows,
+            Path::new(r"C:\Users\jack\AppData\Local\nimbus\network")
+        ));
+        assert!(is_absolute_for_platform(
+            LocalServerPlatform::Windows,
+            Path::new(r"\\server\share\nimbus\network")
+        ));
+        assert!(!is_absolute_for_platform(
+            LocalServerPlatform::Linux,
+            Path::new(r"C:\Nimbus\Network")
+        ));
+        assert!(!is_absolute_for_platform(
+            LocalServerPlatform::Windows,
+            Path::new("/var/lib/nimbus/network")
+        ));
+        for incomplete_unc in [r"\\", r"\\server", r"\\server\", r"\\\share"] {
+            assert!(
+                !is_absolute_for_platform(LocalServerPlatform::Windows, Path::new(incomplete_unc)),
+                "incomplete UNC root must be rejected: {incomplete_unc:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn network_root_rejects_empty_and_relative_environment_overrides() {
+        for invalid in ["", "relative/network-state"] {
+            let error = LocalNodeNetworkRoot::resolve_for_platform(
+                LocalServerPlatform::Linux,
+                None,
+                &env(&[
+                    ("NIMBUS_NETWORK_STATE_DIR", invalid),
+                    ("HOME", "/Users/jack"),
+                ]),
+            )
+            .expect_err("invalid environment network root must be rejected");
+
+            assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        }
+    }
+
+    #[test]
+    fn network_root_rejects_relative_platform_fallbacks() {
+        let linux_error = LocalNodeNetworkRoot::resolve_for_platform(
+            LocalServerPlatform::Linux,
+            None,
+            &env(&[
+                ("XDG_STATE_HOME", "relative/state"),
+                ("HOME", "/Users/jack"),
+            ]),
+        )
+        .expect_err("relative XDG state root must be rejected");
+        assert_eq!(linux_error.kind(), io::ErrorKind::InvalidInput);
+
+        let macos_error = LocalNodeNetworkRoot::resolve_for_platform(
+            LocalServerPlatform::MacOs,
+            None,
+            &env(&[("HOME", "relative/home")]),
+        )
+        .expect_err("relative macOS home must be rejected");
+        assert_eq!(macos_error.kind(), io::ErrorKind::InvalidInput);
+
+        let windows_error = LocalNodeNetworkRoot::resolve_for_platform(
+            LocalServerPlatform::Windows,
+            None,
+            &env(&[("LOCALAPPDATA", r"relative\AppData\Local")]),
+        )
+        .expect_err("relative Windows LOCALAPPDATA must be rejected");
+        assert_eq!(windows_error.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn default_network_root_is_independent_of_project_working_directory() {
+        let project_a = LocalNodeNetworkRoot::resolve_for_platform(
+            LocalServerPlatform::Linux,
+            None,
+            &env(&[("HOME", "/Users/jack"), ("PWD", "/workspaces/project-a")]),
+        )
+        .expect("project A root should resolve");
+        let project_b = LocalNodeNetworkRoot::resolve_for_platform(
+            LocalServerPlatform::Linux,
+            None,
+            &env(&[("HOME", "/Users/jack"), ("PWD", "/workspaces/project-b")]),
+        )
+        .expect("project B root should resolve");
+
+        assert_eq!(project_a, project_b);
+    }
+
+    #[test]
+    fn resolving_network_root_does_not_create_the_directory() {
+        let tempdir = tempfile::tempdir().expect("temporary directory");
+        let state_home = tempdir.path().join("state");
+        let env = BTreeMap::from([
+            ("HOME".to_string(), tempdir.path().as_os_str().to_owned()),
+            (
+                "XDG_STATE_HOME".to_string(),
+                state_home.as_os_str().to_owned(),
+            ),
+        ]);
+
+        let root =
+            LocalNodeNetworkRoot::resolve_for_platform(LocalServerPlatform::Linux, None, &env)
+                .expect("network root should resolve without an effect");
+
+        assert_eq!(root.as_path(), state_home.join("nimbus/network"));
+        assert!(!root.as_path().exists());
     }
 }

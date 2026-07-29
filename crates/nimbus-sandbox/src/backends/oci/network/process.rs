@@ -102,7 +102,7 @@ impl OciNetworkProcess {
 
     /// Authenticate configured topology and return the immutable process root
     /// that injected backends must retain for every later path-based handoff.
-    pub(crate) fn authenticate_backend_config(
+    pub fn authenticate_backend_config(
         &self,
         network_state_root: impl AsRef<Path>,
         node_supernet: &str,

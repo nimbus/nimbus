@@ -7,7 +7,9 @@ fn resolve_service_ctr_log_path_defaults_to_local_project_tenant_and_honors_over
     let control_data_dir = temp_dir.path().join("control");
     let context = load_compose_project_context(&compose_path, &control_data_dir)
         .expect("compose project context should load");
-    let krun_config = context.control_plane.krun_backend_config();
+    let krun_config = context
+        .control_plane
+        .reconstruct_direct_krun_backend_config();
 
     write_manifest(
         &krun_config.workload_state_root,
@@ -124,7 +126,9 @@ fn render_compose_top_reads_pidfiles_from_persisted_state() {
     let control_data_dir = temp_dir.path().join("control");
     let context = load_compose_project_context(&compose_path, &control_data_dir)
         .expect("compose project context should load");
-    let krun_config = context.control_plane.krun_backend_config();
+    let krun_config = context
+        .control_plane
+        .reconstruct_direct_krun_backend_config();
 
     write_manifest(
         &krun_config.workload_state_root,

@@ -12,6 +12,12 @@ use crate::cli_ux;
     subcommand_help_heading = "Available Commands"
 )]
 pub(crate) struct ComposeCommand {
+    /// Stable OS-node root for host-global network allocation authority.
+    ///
+    /// This is independent of Compose project and Nimbus persistence roots.
+    #[arg(long, global = true)]
+    pub(crate) network_state_dir: Option<PathBuf>,
+
     #[command(subcommand)]
     pub(super) command: ComposeSubcommand,
 }

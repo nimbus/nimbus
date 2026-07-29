@@ -21,6 +21,7 @@ const FIXTURE_PATH: &str =
 struct ScanOutput {
     authorities: Vec<Occurrence>,
     risks: Vec<Occurrence>,
+    composition: Vec<Occurrence>,
     declarations: Vec<Declaration>,
     errors: Vec<String>,
 }
@@ -68,6 +69,7 @@ fn main() {
 
     let mut authorities = Vec::new();
     let mut risks = Vec::new();
+    let mut composition = Vec::new();
     let mut declarations = Vec::new();
     let mut errors = Vec::new();
     for file in files {
@@ -87,6 +89,7 @@ fn main() {
             &source,
             &mut authorities,
             &mut risks,
+            &mut composition,
             &mut declarations,
             &mut errors,
             &exempt_paths,
@@ -101,6 +104,7 @@ fn main() {
             &fixture,
             &mut authorities,
             &mut risks,
+            &mut composition,
             &mut declarations,
             &mut errors,
             &exempt_paths,
@@ -109,6 +113,7 @@ fn main() {
 
     finish_ordinals(&mut authorities);
     finish_ordinals(&mut risks);
+    finish_ordinals(&mut composition);
     declarations.sort_by(|left, right| {
         left.path
             .cmp(&right.path)
@@ -118,6 +123,7 @@ fn main() {
     let output = ScanOutput {
         authorities,
         risks,
+        composition,
         declarations,
         errors,
     };
@@ -192,6 +198,7 @@ fn scan_source(
     source: &str,
     authorities: &mut Vec<Occurrence>,
     risks: &mut Vec<Occurrence>,
+    composition: &mut Vec<Occurrence>,
     declarations: &mut Vec<Declaration>,
     errors: &mut Vec<String>,
     exempt_paths: &BTreeSet<String>,
@@ -213,6 +220,7 @@ fn scan_source(
         symbols: Vec::new(),
         authorities,
         risks,
+        composition,
         declarations,
         errors,
     };
@@ -454,6 +462,7 @@ struct Scanner<'a> {
     symbols: Vec<String>,
     authorities: &'a mut Vec<Occurrence>,
     risks: &'a mut Vec<Occurrence>,
+    composition: &'a mut Vec<Occurrence>,
     declarations: &'a mut Vec<Declaration>,
     errors: &'a mut Vec<String>,
 }
@@ -473,6 +482,11 @@ impl Scanner<'_> {
 
     fn risk(&mut self, kind: &str, span: Span) {
         self.risks
+            .push(occurrence(self.path, kind, self.symbol(), span));
+    }
+
+    fn composition(&mut self, kind: &str, span: Span) {
+        self.composition
             .push(occurrence(self.path, kind, self.symbol(), span));
     }
 
@@ -499,6 +513,9 @@ impl Scanner<'_> {
             line: signature.ident.span().start().line,
         });
         self.symbols.push(name.to_owned());
+        if matches!(name, "reconstruct_direct" | "reconstruct_direct_at") {
+            self.composition("direct-reconstruction-declaration", signature.ident.span());
+        }
         scan_port_function_name(name, signature.ident.span(), self);
         visit::visit_signature(self, signature);
         if let Some(block) = block {
@@ -612,6 +629,9 @@ impl<'ast> Visit<'ast> for Scanner<'_> {
     }
 
     fn visit_item_type(&mut self, item: &'ast ItemType) {
+        if network_composition_type_info(&item.ty) {
+            self.composition("composition-type-alias", item.ident.span());
+        }
         if socket_type_info(&item.ty).found {
             self.error(
                 format!("socket authority type alias is forbidden: {}", item.ident),
@@ -657,6 +677,9 @@ impl<'ast> Visit<'ast> for Scanner<'_> {
             UseTree::Rename(rename) => {
                 let original = rename.ident.to_string();
                 let alias = rename.rename.to_string();
+                if is_network_composition_type(&original) {
+                    self.composition("composition-type-import-alias", rename.span());
+                }
                 if is_socket_type_name(&original)
                     && !(original == "UnixListener" && alias == "StdUnixListener")
                 {
@@ -743,6 +766,9 @@ impl<'ast> Visit<'ast> for Scanner<'_> {
         if segments.len() >= 2 {
             let operation = segments[segments.len() - 1].ident.to_string();
             let receiver = segments[segments.len() - 2].ident.to_string();
+            if let Some(kind) = network_composition_call_kind(&receiver, &operation) {
+                self.composition(kind, expression.path.span());
+            }
             if let Some(kind) = associated_authority_kind(&receiver, &operation) {
                 self.authority(kind, expression.path.span());
             } else if operation == "bind" {
@@ -813,6 +839,9 @@ impl<'ast> Visit<'ast> for Scanner<'_> {
 
     fn visit_macro(&mut self, macro_invocation: &'ast Macro) {
         let tokens = macro_invocation.tokens.to_string();
+        if tokens.contains("NetworkCapabilityBundle :: new") {
+            self.composition("capability-bundle-construction", macro_invocation.span());
+        }
         if tokens.contains("ListenStream") {
             self.authority("systemd-listen-stream-request", macro_invocation.span());
         }
@@ -835,6 +864,94 @@ impl<'ast> Visit<'ast> for Scanner<'_> {
         }
         visit::visit_macro(self, macro_invocation);
     }
+}
+
+fn network_composition_call_kind(receiver: &str, operation: &str) -> Option<&'static str> {
+    match (receiver, operation) {
+        ("LocalNetworkManager", "bootstrap") => Some("manager-bootstrap"),
+        ("LocalNetworkManager", "open") => Some("manager-direct-open"),
+        ("LocalPortLeaseAuthority", "open") => Some("primitive-port-authority-open"),
+        ("StagedLocalNetworkComposition", "claim") => Some("cli-staged-manager-claim"),
+        ("PreparedLocalNetworkComposition", "prepare") => Some("cli-complete-composition"),
+        ("PreparedLocalNetworkComposition", "prepare_attachment_only") => {
+            Some("cli-attachment-only-composition")
+        }
+        ("OciNetworkProcess", "new") => Some("oci-process-construction"),
+        ("KrunSandboxBackend", "new") => Some("direct-krun-backend-construction"),
+        ("KrunSandboxBackend", "with_network_process") => {
+            Some("manager-derived-krun-backend-construction")
+        }
+        ("ContainerSandboxBackend", "new") => Some("direct-container-backend-construction"),
+        ("ContainerSandboxBackend", "with_network_process") => {
+            Some("manager-derived-container-backend-construction")
+        }
+        ("PreboundServerListeners", "new") => Some("manager-derived-prebound-listeners"),
+        ("PreboundServerListeners", "reconstruct_direct") => {
+            Some("direct-prebound-listener-reconstruction")
+        }
+        ("ServeOptions", "new") => Some("manager-derived-serve-options"),
+        ("ServeOptions", "reconstruct_direct" | "reconstruct_direct_at") => {
+            Some("direct-serve-options-reconstruction")
+        }
+        ("ServerListenerLeaseAuthority", "reconstruct_direct") => {
+            Some("server-internal-direct-reconstruction")
+        }
+        ("RetainedServerNetworkAuthority", "reconstruct_direct") => {
+            Some("server-primitive-direct-reconstruction")
+        }
+        ("NetworkAttachmentProviderRegistration", "new") => {
+            Some("attachment-registration-construction")
+        }
+        ("NetworkIngressProviderRegistration", "new") => Some("ingress-registration-construction"),
+        ("NetworkCapabilityBundle", "new") => Some("capability-bundle-construction"),
+        ("NetworkCapabilityRegistry", "new") => Some("capability-registry-construction"),
+        _ => None,
+    }
+}
+
+fn is_network_composition_type(name: &str) -> bool {
+    matches!(
+        name,
+        "LocalNetworkManager"
+            | "LocalPortLeaseAuthority"
+            | "StagedLocalNetworkComposition"
+            | "PreparedLocalNetworkComposition"
+            | "OciNetworkProcess"
+            | "KrunSandboxBackend"
+            | "ContainerSandboxBackend"
+            | "PreboundServerListeners"
+            | "ServeOptions"
+            | "ServerListenerLeaseAuthority"
+            | "RetainedServerNetworkAuthority"
+            | "NetworkAttachmentProviderRegistration"
+            | "NetworkIngressProviderRegistration"
+            | "NetworkCapabilityBundle"
+            | "NetworkCapabilityRegistry"
+    )
+}
+
+fn network_composition_type_info(ty: &Type) -> bool {
+    struct Inspector {
+        found: bool,
+    }
+
+    impl<'ast> Visit<'ast> for Inspector {
+        fn visit_type_path(&mut self, path: &'ast syn::TypePath) {
+            if path
+                .path
+                .segments
+                .last()
+                .is_some_and(|segment| is_network_composition_type(&segment.ident.to_string()))
+            {
+                self.found = true;
+            }
+            visit::visit_type_path(self, path);
+        }
+    }
+
+    let mut inspector = Inspector { found: false };
+    inspector.visit_type(ty);
+    inspector.found
 }
 
 fn scan_port_function_name(name: &str, span: Span, scanner: &mut Scanner<'_>) {

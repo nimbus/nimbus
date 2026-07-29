@@ -6,6 +6,7 @@ fn cli_parses_dev_defaults() {
     assert_eq!(command.port, DEFAULT_DEV_PORT);
     assert_eq!(command.app_dir, None);
     assert_eq!(command.data_dir, None);
+    assert_eq!(command.network_state_dir, None);
     assert_eq!(command.compose_file, Vec::<PathBuf>::new());
     assert!(!command.once);
     assert!(!command.skip_codegen);
@@ -28,6 +29,8 @@ fn cli_parses_dev_overrides() {
         "./demo",
         "--data-dir",
         "./state",
+        "--network-state-dir",
+        "/var/lib/nimbus/network",
         "--compose-file",
         "./compose.yaml",
         "--once",
@@ -40,12 +43,38 @@ fn cli_parses_dev_overrides() {
     assert_eq!(command.port, 4567);
     assert_eq!(command.app_dir, Some(PathBuf::from("./demo")));
     assert_eq!(command.data_dir, Some(PathBuf::from("./state")));
+    assert_eq!(
+        command.network_state_dir,
+        Some(PathBuf::from("/var/lib/nimbus/network"))
+    );
     assert_eq!(command.compose_file, vec![PathBuf::from("./compose.yaml")]);
     assert!(command.once);
     assert!(command.skip_codegen);
     assert!(command.debug_node_apis);
     assert_eq!(command.tail_logs, DevTailLogsMode::Disable);
     assert!(command.no_open, "--no-open should opt out of auto-open");
+}
+
+#[test]
+#[serial_test::serial]
+fn dev_network_root_honors_discovered_start_config_before_claim() {
+    let workspace = tempdir().expect("temporary workspace should exist");
+    let configured_root = workspace.path().join("configured-network");
+    fs::write(
+        workspace.path().join("nimbus.yaml"),
+        format!("network:\n  state_dir: {}\n", configured_root.display()),
+    )
+    .expect("network config should write");
+
+    with_current_dir(workspace.path(), || {
+        let command = parse_dev(["nimbus", "dev"]);
+        let resolved = resolve_dev_network_root(&command).expect("dev network root should resolve");
+        assert_eq!(resolved.as_path(), configured_root);
+        assert!(
+            !configured_root.exists(),
+            "config resolution must not mutate the network root"
+        );
+    });
 }
 
 /// Test stub for [`EnvLookup`] so smart-detect branches can be driven
@@ -157,6 +186,7 @@ fn dev_help_is_honest_about_watch_scope() {
     assert!(rendered.contains("--skip-codegen"));
     assert!(rendered.contains("--debug-node-apis"));
     assert!(rendered.contains("--data-dir"));
+    assert!(rendered.contains("--network-state-dir"));
     assert!(rendered.contains("--once"));
     assert!(rendered.contains("--tail-logs"));
     assert!(rendered.contains("debounced codegen reruns"));

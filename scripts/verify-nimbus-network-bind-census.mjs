@@ -17,6 +17,7 @@ if (inventoryFlag < 0 || !process.argv[inventoryFlag + 1]) {
 const inventoryPath = process.argv[inventoryFlag + 1];
 const printCandidates = process.argv.includes("--print-candidates");
 const printRisks = process.argv.includes("--print-risks");
+const printComposition = process.argv.includes("--print-composition");
 const errors = [];
 
 function readInventory() {
@@ -348,7 +349,7 @@ function runStructuralScan(wholeFileExemptions) {
   const manifest = "scripts/nimbus-network-bind-census-ast/Cargo.toml";
   if (!fs.existsSync(manifest)) {
     errors.push(`bind census structural scanner manifest missing: ${manifest}`);
-    return { authorities: [], risks: [], declarations: [] };
+    return { authorities: [], risks: [], composition: [], declarations: [] };
   }
 
   const arguments_ = [
@@ -373,7 +374,7 @@ function runStructuralScan(wholeFileExemptions) {
     errors.push(
       `bind census structural scanner failed to start: ${result.error.message}`,
     );
-    return { authorities: [], risks: [], declarations: [] };
+    return { authorities: [], risks: [], composition: [], declarations: [] };
   }
   if (result.status !== 0) {
     const detail = [result.stderr, result.stdout]
@@ -383,7 +384,7 @@ function runStructuralScan(wholeFileExemptions) {
     errors.push(
       `bind census structural scanner exited ${result.status}: ${detail || "<no output>"}`,
     );
-    return { authorities: [], risks: [], declarations: [] };
+    return { authorities: [], risks: [], composition: [], declarations: [] };
   }
 
   let output;
@@ -393,9 +394,15 @@ function runStructuralScan(wholeFileExemptions) {
     errors.push(
       `bind census structural scanner returned invalid JSON: ${error.message}`,
     );
-    return { authorities: [], risks: [], declarations: [] };
+    return { authorities: [], risks: [], composition: [], declarations: [] };
   }
-  for (const field of ["authorities", "risks", "declarations", "errors"]) {
+  for (const field of [
+    "authorities",
+    "risks",
+    "composition",
+    "declarations",
+    "errors",
+  ]) {
     if (!Array.isArray(output[field])) {
       errors.push(`bind census structural scanner lacks ${field} array`);
       output[field] = [];
@@ -404,6 +411,7 @@ function runStructuralScan(wholeFileExemptions) {
   for (const [field, occurrences] of [
     ["authority", output.authorities],
     ["risk", output.risks],
+    ["composition", output.composition],
   ]) {
     for (const occurrence of occurrences) {
       if (!validScannerOccurrence(occurrence)) {
@@ -550,6 +558,7 @@ const wholeFileExemptions = validatePathOwnedTestModules(inventory);
 const scan = runStructuralScan(wholeFileExemptions);
 const occurrences = scan.authorities;
 const risks = scan.risks;
+const composition = scan.composition;
 const declarations = scan.declarations;
 
 const tcpBindCount = occurrences.filter(
@@ -593,6 +602,10 @@ if (printCandidates) {
 }
 if (printRisks) {
   process.stdout.write(`${JSON.stringify(risks, null, 2)}\n`);
+  process.exit(errors.length === 0 ? 0 : 1);
+}
+if (printComposition) {
+  process.stdout.write(`${JSON.stringify(composition, null, 2)}\n`);
   process.exit(errors.length === 0 ? 0 : 1);
 }
 

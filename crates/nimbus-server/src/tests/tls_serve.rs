@@ -20,10 +20,12 @@ async fn https_round_trip_with_self_signed_pair_and_plain_http_refused() {
         .expect("listener should bind");
     let addr = listener.local_addr().expect("addr should resolve");
 
-    let options = crate::ServeOptions::new(engine_fixture.engine()).with_tls(TlsConfig::new(
-        fixture("tests/fixtures/tls/localhost-cert.pem"),
-        fixture("tests/fixtures/tls/localhost-key.pem"),
-    ));
+    let options = crate::ServeOptions::reconstruct_direct(engine_fixture.engine())
+        .expect("test server network authority should reconstruct once")
+        .with_tls(TlsConfig::new(
+            fixture("tests/fixtures/tls/localhost-cert.pem"),
+            fixture("tests/fixtures/tls/localhost-key.pem"),
+        ));
     let server = tokio::spawn(crate::serve(listener, options));
 
     let client = reqwest::Client::builder()
@@ -72,10 +74,12 @@ async fn invalid_tls_identity_fails_the_boot_with_the_offending_path() {
         .await
         .expect("listener should bind");
 
-    let options = crate::ServeOptions::new(engine_fixture.engine()).with_tls(TlsConfig::new(
-        fixture("tests/fixtures/tls/does-not-exist.pem"),
-        fixture("tests/fixtures/tls/localhost-key.pem"),
-    ));
+    let options = crate::ServeOptions::reconstruct_direct(engine_fixture.engine())
+        .expect("test server network authority should reconstruct once")
+        .with_tls(TlsConfig::new(
+            fixture("tests/fixtures/tls/does-not-exist.pem"),
+            fixture("tests/fixtures/tls/localhost-key.pem"),
+        ));
     let error = crate::serve(listener, options)
         .await
         .expect_err("serve must refuse a missing certificate at startup");

@@ -20,6 +20,7 @@ mod kv;
 mod list;
 mod local_server_client;
 mod machine;
+mod network_composition;
 mod node_runtime;
 mod node_service;
 mod node_workload_executor;

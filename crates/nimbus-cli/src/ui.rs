@@ -253,7 +253,9 @@ mod tests {
             .expect("listener address should resolve");
         let server_task = tokio::spawn(serve(
             listener,
-            ServeOptions::new(service.clone()).with_local_server_security(local_server_security),
+            ServeOptions::reconstruct_direct(service.clone())
+                .expect("UI test server authority should open")
+                .with_local_server_security(local_server_security),
         ));
         wait_for_live_server_health(
             "ui resolver test server should answer health checks",

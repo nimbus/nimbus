@@ -88,7 +88,9 @@ async fn system_shutdown_endpoint_stops_live_server() {
         .expect("listener address should resolve");
     let server_task = tokio::spawn(serve(
         listener,
-        ServeOptions::new(service.clone()).with_local_server_security(local_server_security),
+        ServeOptions::reconstruct_direct(service.clone())
+            .expect("test server network authority should reconstruct once")
+            .with_local_server_security(local_server_security),
     ));
     let client = reqwest::Client::new();
     wait_for_condition(

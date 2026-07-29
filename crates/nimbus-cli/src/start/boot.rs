@@ -23,8 +23,8 @@ use nimbus_tenant::OperatorPolicyDocument;
 use super::StartCommand;
 use super::adapters::{AdapterEnablement, resolve_adapter_enablement};
 use super::config::{
-    control_data_dir_from_persistence_config, persistence_config_from_start_command,
-    runtime_config_from_start_command,
+    control_data_dir_from_persistence_config, network_root_from_start_command,
+    persistence_config_from_start_command, runtime_config_from_start_command,
 };
 use super::first_boot::{is_first_boot, spawn_first_boot_announce};
 use super::network_bind::{
@@ -40,7 +40,7 @@ use crate::codegen::{CodegenOptions, run_codegen_for_app_dir_with_options};
 use crate::compose::discovery::{
     ResolvedComposeSelection, compose_selection_summary, resolve_explicit_compose_selection,
 };
-use crate::compose::load_host_backed_service_manager_for_selection_with_isolation_mode;
+use crate::compose::load_forwarded_service_manager_for_selection_with_isolation_mode;
 use crate::deploy::resolve_deploy_app_dir;
 use crate::dirs;
 use crate::function_scaling::{
@@ -48,6 +48,7 @@ use crate::function_scaling::{
     FunctionScalingFileConfig, admit_function_scaling_plans, load_optional_policy,
     resolve_function_scaling_intent,
 };
+use crate::network_composition::{PreparedLocalNetworkComposition, StagedLocalNetworkComposition};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ResolvedStartAppDir {
@@ -63,17 +64,47 @@ impl ResolvedStartAppDir {
 }
 
 pub(crate) async fn run_start_command(
+    command: StartCommand,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let network_root = network_root_from_start_command(&command)?;
+    let staged_network = StagedLocalNetworkComposition::claim(&network_root)?;
+    run_start_command_with_network(command, StartNetworkComposition::Staged(staged_network)).await
+}
+
+pub(crate) async fn run_start_command_with_prepared_network(
+    command: StartCommand,
+    prepared_network: PreparedLocalNetworkComposition,
+) -> Result<(), Box<dyn std::error::Error>> {
+    run_start_command_with_network(
+        command,
+        StartNetworkComposition::Prepared(Box::new(prepared_network)),
+    )
+    .await
+}
+
+enum StartNetworkComposition {
+    Staged(StagedLocalNetworkComposition),
+    Prepared(Box<PreparedLocalNetworkComposition>),
+}
+
+async fn run_start_command_with_network(
     mut command: StartCommand,
+    network: StartNetworkComposition,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut prebound_wire_listeners = command.prebound_wire_listeners.take();
-    let result = run_start_command_inner(command, &mut prebound_wire_listeners).await;
+    let result = run_start_command_inner(command, &mut prebound_wire_listeners, network).await;
     finish_prebound_listener_ownership(result, prebound_wire_listeners)
 }
 
 async fn run_start_command_inner(
     command: StartCommand,
     prebound_wire_listeners: &mut Option<nimbus_server::PreboundServerListeners>,
+    network: StartNetworkComposition,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if let StartNetworkComposition::Prepared(prepared) = &network {
+        let requested_root = network_root_from_start_command(&command)?;
+        prepared.authenticate_requested_root(&requested_root)?;
+    }
     // Stage 1 of the network-bind gate runs before any expensive
     // initialization so a typo'd `--host` (or a forgotten
     // `--allow-network`) fails fast without paying codegen or registry
@@ -168,13 +199,25 @@ async fn run_start_command_inner(
             "resolved compose workload-control boot plan"
         );
     }
-    let service_manager = load_service_manager(
-        compose_selection.as_ref(),
-        &compose_control_data_dir,
-        command.tenant_isolation_mode,
-    )?;
-    let machine_lifecycle_manager =
-        crate::machine::host_machine_lifecycle_manager(compose_control_data_dir.clone())?;
+    let source_ingress = nimbus_server::nimbus_owned_local_ingress_registration(tls_enabled);
+    let prepared_network = match network {
+        StartNetworkComposition::Staged(staged) => PreparedLocalNetworkComposition::prepare(
+            staged,
+            compose_selection.as_ref(),
+            &compose_control_data_dir,
+            command.tenant_isolation_mode,
+            source_ingress.clone(),
+        )?,
+        StartNetworkComposition::Prepared(prepared) => {
+            prepared.validate_start_context(
+                compose_selection.as_ref(),
+                &compose_control_data_dir,
+                command.tenant_isolation_mode,
+                &source_ingress,
+            )?;
+            *prepared
+        }
+    };
     let local_server_paths = LocalServerPaths::resolve_for_current_platform()?;
     let local_admin_token = load_or_create_local_admin_token(&local_server_paths)?;
     if !command.systemd_socket_activation {
@@ -185,21 +228,6 @@ async fn run_start_command_inner(
         )?;
         emit_rotation_warning(rotation_warning);
     }
-    let activated_listener = if command.systemd_socket_activation {
-        let listener = activated_systemd_listener()?;
-        let activated_host = listener.local_addr()?.ip().to_string();
-        ensure_host_opt_in(&activated_host, command.allow_network)?;
-        ensure_firebase_bypass_loopback_only(&activated_host, firebase_bypass_enabled)?;
-        let rotation_warning = ensure_admin_token_rotated_for_public_bind(
-            &activated_host,
-            &local_admin_token,
-            time::OffsetDateTime::now_utc(),
-        )?;
-        emit_rotation_warning(rotation_warning);
-        Some(listener)
-    } else {
-        None
-    };
     let local_server_security = Arc::new(LocalServerSecurityState::new(
         local_server_paths.clone(),
         local_admin_token,
@@ -228,14 +256,13 @@ async fn run_start_command_inner(
                         bindings.bind(&silo, verifier.clone())
                     })
             });
-    let mut serve_options = ServeOptions::new(engine.clone())
-        .with_network_state_root(compose_control_data_dir.clone())
+    let mut serve_options = ServeOptions::new(engine.clone(), prepared_network.authority())
         .with_license(license_state)
         .with_runtime_host_resource_budget(runtime_host_resource_budget)
         .with_runtime_adaptive_controller_settings(runtime_adaptive_controller_settings)
         .with_effective_runtime_scaling_plans(effective_runtime_scaling_plans);
     if let Some(listeners) = prebound_wire_listeners.as_ref() {
-        serve_options = serve_options.with_prebound_listener_authority(listeners);
+        serve_options = serve_options.with_prebound_listener_authority(listeners)?;
     }
     if let Some(registry) = convex_registry {
         serve_options = serve_options
@@ -245,19 +272,61 @@ async fn run_start_command_inner(
     if let Some(registry) = cloud_functions_registry {
         serve_options = serve_options.with_cloud_functions_registry(registry);
     }
-    if let Some(manager) = service_manager {
+    if let Some(manager) = prepared_network.local_service_manager() {
         serve_options = serve_options.with_service_manager(manager);
     }
-    serve_options = serve_options.with_machine_lifecycle_manager(machine_lifecycle_manager);
     if let Some(token) = command.deploy_admin_token.clone() {
         serve_options = serve_options.with_deploy_admin_token(token);
     }
-    serve_options = serve_options.with_local_server_security(local_server_security);
+    serve_options = serve_options.with_local_server_security(Arc::clone(&local_server_security));
     serve_options = serve_options.with_tenant_isolation_mode(command.tenant_isolation_mode);
     serve_options = serve_options.with_cors_allowed_origins(cors_allowed_origins);
     if let Some(tls_config) = tls_config {
         serve_options = serve_options.with_tls(tls_config);
     }
+    serve_options = adapter_enablement.clone().apply_to(serve_options);
+
+    prepared_network.validate_start_context(
+        compose_selection.as_ref(),
+        &compose_control_data_dir,
+        command.tenant_isolation_mode,
+        &serve_options.nimbus_owned_local_ingress_registration(),
+    )?;
+
+    // Validate the actual inherited bind before any forwarded-machine or
+    // machine-lifecycle construction. Forwarded service-manager construction
+    // may start a VM, so a refused public systemd socket must fail first.
+    let activated_listener = if command.systemd_socket_activation {
+        let listener = activated_systemd_listener()?;
+        let activated_host = listener.local_addr()?.ip().to_string();
+        ensure_host_opt_in(&activated_host, command.allow_network)?;
+        ensure_firebase_bypass_loopback_only(&activated_host, firebase_bypass_enabled)?;
+        let rotation_warning = ensure_admin_token_rotated_for_public_bind(
+            &activated_host,
+            &local_server_security.current_token(),
+            time::OffsetDateTime::now_utc(),
+        )?;
+        emit_rotation_warning(rotation_warning);
+        Some(listener)
+    } else {
+        None
+    };
+
+    // Forwarded-machine service composition is a separate provider realm.
+    // It is intentionally constructed only after the host-local registry has
+    // frozen empty, so machine startup cannot be mistaken for local evidence.
+    if prepared_network.requires_forwarded_service_manager()
+        && let Some(manager) = load_service_manager(
+            compose_selection.as_ref(),
+            &compose_control_data_dir,
+            command.tenant_isolation_mode,
+        )?
+    {
+        serve_options = serve_options.with_service_manager(manager);
+    }
+    let machine_lifecycle_manager =
+        crate::machine::host_machine_lifecycle_manager(compose_control_data_dir.clone())?;
+    serve_options = serve_options.with_machine_lifecycle_manager(machine_lifecycle_manager);
 
     let listener = match activated_listener {
         Some(listener) => serve_options.adopt_external_main_listener(listener)?,
@@ -314,9 +383,8 @@ async fn run_start_command_inner(
     }
 
     tracing::info!("nimbus listening on {listener_addr}");
-    serve_options = adapter_enablement.apply_to(serve_options);
     if let Some(listeners) = prebound_wire_listeners.take() {
-        serve_options = serve_options.with_prebound_wire_listeners(listeners);
+        serve_options = serve_options.with_prebound_wire_listeners(listeners)?;
     }
     let server_result = serve_leased(listener, serve_options).await;
     drop(discovery_lease);
@@ -327,6 +395,7 @@ async fn run_start_command_inner(
         let _ = handle.await;
     }
     shutdown_engine.quiesce().await;
+    drop(prepared_network);
     server_result.map_err(|error| conventional_wire_port_guidance(&command, error))?;
     Ok(())
 }
@@ -497,7 +566,7 @@ pub(super) fn load_service_manager(
 ) -> Result<Option<Arc<nimbus::ServiceManager>>, Error> {
     compose_selection
         .map(|selection| {
-            load_host_backed_service_manager_for_selection_with_isolation_mode(
+            load_forwarded_service_manager_for_selection_with_isolation_mode(
                 selection,
                 compose_control_data_dir,
                 tenant_isolation_mode,
@@ -1006,12 +1075,90 @@ mod listener_tests {
 
     use super::*;
 
+    #[test]
+    #[serial_test::serial]
+    fn divergent_prepared_start_root_settles_dev_listener_before_other_effects() {
+        std::thread::Builder::new()
+            .name("divergent-prepared-start-root".to_owned())
+            .stack_size(8 * 1024 * 1024)
+            .spawn(divergent_prepared_start_root_case)
+            .expect("divergent-root test thread should start")
+            .join()
+            .expect("divergent-root test thread should not panic");
+    }
+
+    fn divergent_prepared_start_root_case() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("divergent-root test runtime should build")
+            .block_on(divergent_prepared_start_root_case_async());
+    }
+
+    async fn divergent_prepared_start_root_case_async() {
+        let root = tempfile::tempdir().expect("fixture root should exist");
+        let source_path = root.path().join("source-node");
+        let foreign_path = root.path().join("foreign-node");
+        let source_root =
+            nimbus_operator::LocalNodeNetworkRoot::resolve_for_current_platform(Some(&source_path))
+                .expect("source node root should resolve");
+        let staged = StagedLocalNetworkComposition::claim(&source_root)
+            .expect("source manager should claim");
+        let mut listeners = nimbus_server::PreboundServerListeners::new(staged.authority());
+        let requested_addr = "127.0.0.1:0"
+            .parse()
+            .expect("provider-assigned address should parse");
+        let prepared_listener = listeners
+            .prepare("dev-mongodb-provider-assigned", requested_addr)
+            .expect("source listener should reserve before bind");
+        let raw = std::net::TcpListener::bind(requested_addr).expect("source listener should bind");
+        let listener = prepared_listener
+            .adopt_std(raw)
+            .expect("source listener should activate");
+        let actual_addr = listener
+            .local_addr()
+            .expect("source listener address should resolve");
+        listeners
+            .insert("mongodb", listener)
+            .expect("source listener should enter the handoff bundle");
+        let prepared_network = PreparedLocalNetworkComposition::prepare(
+            staged,
+            None,
+            &root.path().join("control"),
+            nimbus_tenant::TenantIsolationMode::LocalDevelopment,
+            nimbus_server::nimbus_owned_local_ingress_registration(false),
+        )
+        .expect("source composition should freeze empty");
+        let command = StartCommand {
+            network_state_dir: Some(foreign_path.clone()),
+            prebound_wire_listeners: Some(listeners),
+            ..StartCommand::default()
+        };
+
+        let error = run_start_command_with_prepared_network(command, prepared_network)
+            .await
+            .expect_err("a divergent prepared start root must fail before startup effects");
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("prepared local network authority")
+                && rendered.contains("active")
+                && rendered.contains(&source_path.display().to_string())
+                && rendered.contains(&foreign_path.display().to_string()),
+            "typed root evidence should remain actionable: {rendered}"
+        );
+        assert!(
+            !foreign_path.exists(),
+            "divergent root validation must precede attempted-root mutation"
+        );
+        std::net::TcpListener::bind(actual_addr)
+            .expect("rejected dev handoff must close and settle its held listener");
+    }
+
     #[tokio::test]
     async fn start_listener_activates_provider_assigned_lease_for_cli_owned_bind() {
         let state_root = tempfile::tempdir().expect("state root should be created");
         let engine = Arc::new(Engine::new(state_root.path()).expect("engine should initialize"));
-        let options =
-            ServeOptions::new(engine).with_network_state_root(state_root.path().to_path_buf());
+        let options = ServeOptions::reconstruct_direct(engine).expect("test authority should open");
         let command = StartCommand {
             host: "127.0.0.1".to_owned(),
             port: 0,
@@ -1050,8 +1197,7 @@ mod listener_tests {
             .local_addr()
             .expect("external address should resolve");
         let engine = Arc::new(Engine::new(state_root.path()).expect("engine should initialize"));
-        let options =
-            ServeOptions::new(engine).with_network_state_root(state_root.path().to_path_buf());
+        let options = ServeOptions::reconstruct_direct(engine).expect("test authority should open");
         let command = StartCommand {
             host: occupied_addr.ip().to_string(),
             port: occupied_addr.port(),
@@ -1082,8 +1228,7 @@ mod listener_tests {
     async fn startup_error_closes_and_releases_cli_owned_listener() {
         let state_root = tempfile::tempdir().expect("state root should be created");
         let engine = Arc::new(Engine::new(state_root.path()).expect("engine should initialize"));
-        let options =
-            ServeOptions::new(engine).with_network_state_root(state_root.path().to_path_buf());
+        let options = ServeOptions::reconstruct_direct(engine).expect("test authority should open");
         let command = StartCommand {
             host: "127.0.0.1".to_owned(),
             port: 0,
@@ -1119,7 +1264,9 @@ mod listener_tests {
     #[test]
     fn startup_error_closes_and_releases_untransferred_prebound_listeners() {
         let state_root = tempfile::tempdir().expect("state root should be created");
-        let mut listeners = nimbus_server::PreboundServerListeners::new(state_root.path());
+        let mut listeners =
+            nimbus_server::PreboundServerListeners::reconstruct_direct(state_root.path())
+                .expect("test authority should open");
         let requested_addr = "127.0.0.1:0"
             .parse()
             .expect("provider-assigned address should parse");

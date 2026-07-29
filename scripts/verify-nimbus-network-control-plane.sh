@@ -19,6 +19,7 @@ NETWORK_MANIFEST="crates/nimbus-network/Cargo.toml"
 CORE_SOURCE_ROOT="${NIMBUS_NETWORK_VERIFY_CORE_SCAN_ROOT:-crates/nimbus-core/src}"
 SOURCE_CONTRACT_HELPER="scripts/verify-nimbus-network-source-contract.mjs"
 BIND_CENSUS_HELPER="scripts/verify-nimbus-network-bind-census.mjs"
+COMPOSITION_CENSUS_HELPER="scripts/verify-nimbus-network-composition-census.mjs"
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -669,6 +670,25 @@ verify_address_is_not_network_identity() {
   fi
 }
 
+verify_local_network_composition_census() {
+  if [ "${NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD:-}" = "1" ] &&
+    [ "${NIMBUS_NETWORK_VERIFY_TEST_COMPOSITION_CASE:-}" != "1" ]; then
+    pass "NNCV015" "local-network-composition-census"
+    return
+  fi
+  if [ ! -f "${COMPOSITION_CENSUS_HELPER}" ]; then
+    fail "NNCV015" "local-network-composition-census" "missing ${COMPOSITION_CENSUS_HELPER}"
+    return
+  fi
+  error="$(node "${COMPOSITION_CENSUS_HELPER}" --inventory "${INVENTORY}" 2>&1)"
+  status=$?
+  if [ "${status}" -eq 0 ]; then
+    pass "NNCV015" "local-network-composition-census"
+  else
+    fail "NNCV015" "local-network-composition-census" "${error}"
+  fi
+}
+
 run_self_test() {
   temporary="$(mktemp -d "${TMPDIR:-/tmp}/nimbus-network-verifier-self-test.XXXXXX")" || {
     printf 'SELFTEST FAIL unable to create temporary directory\n'
@@ -751,7 +771,7 @@ NODE
   elif ! grep -q '^FAIL NNCV005 no-duplicate-port-allocation-authority' "${temporary}/legacy-port-authority.out" ||
     grep -q '^PASS NNCV005 no-duplicate-port-allocation-authority' "${temporary}/legacy-port-authority.out" ||
     [ "$(grep -c '^FAIL ' "${temporary}/legacy-port-authority.out")" -ne 1 ] ||
-    ! grep -q '^Summary: 14 passed, 1 failed$' "${temporary}/legacy-port-authority.out"; then
+    ! grep -q '^Summary: 15 passed, 1 failed$' "${temporary}/legacy-port-authority.out"; then
     printf 'SELFTEST FAIL legacy port authority did not produce an exclusive NNCV005 failure\n'
     self_fail=$((self_fail + 1))
   else
@@ -1288,11 +1308,94 @@ NODE
     printf 'SELFTEST PASS missing network source fails closed for NNCV012-NNCV014\n'
   fi
 
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_COMPOSITION_CASE=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE='fn bad() { LocalPortLeaseAuthority::open("foreign"); }' \
+    "${script}" >"${temporary}/composition-primitive-open.out" 2>&1; then
+    printf 'SELFTEST FAIL unclassified primitive composition open unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV015 local-network-composition-census' "${temporary}/composition-primitive-open.out" ||
+    grep -q '^PASS NNCV015 local-network-composition-census' "${temporary}/composition-primitive-open.out" ||
+    ! grep -q 'primitive-port-authority-open|bad' "${temporary}/composition-primitive-open.out"; then
+    printf 'SELFTEST FAIL primitive composition open did not fail NNCV015 precisely\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS primitive composition open fails closed as NNCV015\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_COMPOSITION_CASE=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE='fn bad(config: Config) { KrunSandboxBackend::new(config); }' \
+    "${script}" >"${temporary}/composition-direct-backend.out" 2>&1; then
+    printf 'SELFTEST FAIL unclassified direct backend construction unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV015 local-network-composition-census' "${temporary}/composition-direct-backend.out" ||
+    ! grep -q 'direct-krun-backend-construction|bad' "${temporary}/composition-direct-backend.out"; then
+    printf 'SELFTEST FAIL direct backend construction did not fail NNCV015 precisely\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS direct backend construction fails closed as NNCV015\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_COMPOSITION_CASE=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE='fn bad() { NetworkAttachmentProviderRegistration::new(provider(), endpoints(), lifecycle(), sovereignty()); }' \
+    "${script}" >"${temporary}/composition-fabricated-registration.out" 2>&1; then
+    printf 'SELFTEST FAIL fabricated attachment registration unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV015 local-network-composition-census' "${temporary}/composition-fabricated-registration.out" ||
+    ! grep -q 'attachment-registration-construction|bad' "${temporary}/composition-fabricated-registration.out"; then
+    printf 'SELFTEST FAIL fabricated attachment registration did not fail NNCV015 precisely\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS fabricated attachment registration fails closed as NNCV015\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_COMPOSITION_CASE=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE='use nimbus_network::LocalNetworkManager as HiddenManager;' \
+    "${script}" >"${temporary}/composition-import-alias.out" 2>&1; then
+    printf 'SELFTEST FAIL composition authority import alias unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV015 local-network-composition-census' "${temporary}/composition-import-alias.out" ||
+    ! grep -q 'composition-type-import-alias|<module>' "${temporary}/composition-import-alias.out"; then
+    printf 'SELFTEST FAIL composition import alias did not fail NNCV015 precisely\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS composition import alias fails closed as NNCV015\n'
+  fi
+
+  NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_COMPOSITION_CASE=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_RUST_FIXTURE=$'#[cfg(test)]\nfn hidden() { LocalPortLeaseAuthority::open("test-only"); }\nfn production_without_composition() {}\n' \
+    "${script}" >"${temporary}/composition-cfg-test.out" 2>&1 || true
+  if ! grep -q '^PASS NNCV015 local-network-composition-census' "${temporary}/composition-cfg-test.out" ||
+    grep -q '^FAIL NNCV015 local-network-composition-census' "${temporary}/composition-cfg-test.out"; then
+    printf 'SELFTEST FAIL cfg(test) composition call was misclassified as production\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS cfg(test) composition call remains test-only for NNCV015\n'
+  fi
+
+  if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_COMPOSITION_CASE=1 \
+    NIMBUS_NETWORK_VERIFY_TEST_DROP_COMPOSITION_KEY='crates/nimbus-cli/src/network_composition.rs|manager-bootstrap|claim|1' \
+    "${script}" >"${temporary}/composition-stale-classification.out" 2>&1; then
+    printf 'SELFTEST FAIL stale composition classification unexpectedly exited zero\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV015 local-network-composition-census' "${temporary}/composition-stale-classification.out" ||
+    ! grep -q 'stale local composition authority classification: crates/nimbus-cli/src/network_composition.rs|manager-bootstrap|claim|1' "${temporary}/composition-stale-classification.out"; then
+    printf 'SELFTEST FAIL stale composition classification did not fail NNCV015 precisely\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS stale composition classification fails closed as NNCV015\n'
+  fi
+
   if [ "${self_fail}" -ne 0 ]; then
     printf 'self-test: %d failed\n' "${self_fail}"
     exit 1
   fi
-  printf 'self-test: 45 passed, 0 failed\n'
+  printf 'self-test: 51 passed, 0 failed\n'
 }
 
 if [ "${1:-}" = "--self-test" ]; then
@@ -1322,6 +1425,7 @@ verify_portable_vocabulary_owner
 verify_forbidden_network_dependencies_effects
 verify_single_network_definition_owner
 verify_address_is_not_network_identity
+verify_local_network_composition_census
 
 printf '\nSummary: %d passed, %d failed\n' "${PASS_COUNT}" "${FAIL_COUNT}"
 if [ "${FAIL_COUNT}" -ne 0 ]; then

@@ -16,6 +16,36 @@ fn compose_help_uses_shared_template_and_examples() {
     assert!(rendered.contains("Validate and print the resolved service plan"));
     assert!(rendered.contains("Start one or more declared services"));
     assert!(rendered.contains("Show persisted sandbox state"));
+    assert!(rendered.contains("--network-state-dir"));
+}
+
+#[test]
+fn network_state_dir_is_global_across_compose_subcommands() {
+    for argv in [
+        vec![
+            "nimbus",
+            "compose",
+            "--network-state-dir",
+            "/var/lib/nimbus/network",
+            "up",
+        ],
+        vec![
+            "nimbus",
+            "compose",
+            "down",
+            "--network-state-dir",
+            "/var/lib/nimbus/network",
+        ],
+    ] {
+        let cli = RootCli::parse_from(argv);
+        let Some(RootCommand::Compose(compose_command)) = cli.command else {
+            panic!("compose subcommand should parse");
+        };
+        assert_eq!(
+            compose_command.network_state_dir.as_deref(),
+            Some(Path::new("/var/lib/nimbus/network"))
+        );
+    }
 }
 
 #[test]

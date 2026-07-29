@@ -381,7 +381,11 @@ async fn serve_loads_embedded_system_convex_registry_by_default() {
         .await
         .expect("listener should bind");
     let addr = listener.local_addr().expect("listener should have addr");
-    let server = tokio::spawn(serve(listener, ServeOptions::new(fixture.engine())));
+    let server = tokio::spawn(serve(
+        listener,
+        ServeOptions::reconstruct_direct(fixture.engine())
+            .expect("test server network authority should reconstruct once"),
+    ));
     tokio::task::yield_now().await;
     if server.is_finished() {
         let result = server.await;

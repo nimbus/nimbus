@@ -6,6 +6,7 @@ use nimbus::{
     Error, LocalBuildAdmission, SandboxBackend, SandboxBackendKind, ServiceDefinitionCatalog,
     ServiceManager, TenantId,
 };
+use nimbus_network::NetworkAttachmentProviderRegistration;
 use nimbus_sandbox::backends::krun::{KrunSandboxBackend, KrunSandboxStateView};
 
 use crate::compose::discovery::ResolvedComposeSelection;
@@ -13,6 +14,7 @@ use crate::machine::{
     ForwardedMachineApiSandboxBackend, MachineApiClient, ensure_default_machine_api_client_started,
     require_default_machine_api_client,
 };
+use crate::network_composition::StagedLocalNetworkComposition;
 
 use super::lifecycle::ServiceLifecycleTarget;
 use super::{ComposeProjectContext, file};
@@ -47,6 +49,87 @@ pub(super) enum ServiceExecutionSurface {
     },
 }
 
+#[derive(Clone)]
+pub(crate) struct LocalKrunExecutionSurface {
+    pub(crate) state_view: KrunSandboxStateView,
+    pub(crate) backend: Arc<dyn SandboxBackend>,
+}
+
+/// A local service manager prepared under the staged OS-node authority.
+///
+/// The concrete backend remains retained by `ServiceManager`; its exact
+/// source-owned attachment report is kept separately until the CLI freezes
+/// the complete local capability registry.
+pub(crate) struct PreparedLocalServiceManager {
+    pub(crate) manager: ServiceManager,
+    pub(crate) attachment: NetworkAttachmentProviderRegistration,
+    pub(crate) backend: Arc<KrunSandboxBackend>,
+    pub(crate) state_view: KrunSandboxStateView,
+}
+
+/// Prepare a host-managed local backend without performing machine or socket
+/// effects.
+///
+/// `None` means this selection is not a host-managed local composition (for
+/// example the macOS forwarded-machine path). The caller freezes an honest
+/// empty local registry before constructing that separate provider realm.
+pub(crate) fn prepare_local_service_manager_for_selection_with_isolation_mode(
+    selection: &ResolvedComposeSelection,
+    control_data_dir: &Path,
+    tenant_isolation_mode: nimbus_tenant::TenantIsolationMode,
+    staged_network: &mut StagedLocalNetworkComposition,
+) -> Result<Option<PreparedLocalServiceManager>, Error> {
+    let host_platform = ServiceHostPlatform::current();
+    let admission_mode = match tenant_isolation_mode {
+        nimbus_tenant::TenantIsolationMode::LocalDevelopment => {
+            file::ComposeAdmissionMode::LocalDevelopment
+        }
+        nimbus_tenant::TenantIsolationMode::Production => file::ComposeAdmissionMode::Production,
+    };
+    let context = super::load_compose_project_context_for_selection(selection, control_data_dir)?;
+    let backend = required_effective_project_backend(
+        &context,
+        None,
+        "prepare a compose-backed local network composition",
+        host_platform,
+    )?;
+    if backend != SandboxBackendKind::Krun {
+        return Ok(None);
+    }
+
+    let catalog = load_service_definition_catalog_for_execution_platform_with_admission(
+        selection,
+        host_platform,
+        admission_mode,
+    )?;
+    let config = context
+        .control_plane
+        .krun_backend_config_with_network_authority(staged_network.authority().state_root());
+    let process = staged_network
+        .prepare_krun_process(&config)
+        .map_err(|error| Error::InvalidInput(error.to_string()))?;
+    let state_view = KrunSandboxStateView::from_config(&config);
+    let backend = Arc::new(
+        KrunSandboxBackend::with_network_process(config, process)
+            .map_err(|error| Error::InvalidInput(error.to_string()))?,
+    );
+    let attachment = backend
+        .host_managed_attachment_registration()
+        .map_err(|error| Error::InvalidInput(error.to_string()))?;
+    let sandbox_backend: Arc<dyn SandboxBackend> = backend.clone();
+    let local_build_admission = match admission_mode {
+        file::ComposeAdmissionMode::LocalDevelopment => LocalBuildAdmission::Allowed,
+        file::ComposeAdmissionMode::Production => LocalBuildAdmission::Denied,
+    };
+    Ok(Some(PreparedLocalServiceManager {
+        manager: ServiceManager::new(catalog, sandbox_backend)
+            .with_local_build_admission(local_build_admission),
+        attachment,
+        backend,
+        state_view,
+    }))
+}
+
 #[cfg(test)]
 pub(super) fn load_host_backed_service_manager_for_platform(
     file: &Path,
@@ -63,6 +146,7 @@ pub(super) fn load_host_backed_service_manager_for_platform(
     )
 }
 
+#[cfg(test)]
 pub(super) fn load_host_backed_service_manager_for_platform_selection_with_admission(
     selection: &ResolvedComposeSelection,
     control_data_dir: &Path,
@@ -84,6 +168,48 @@ pub(super) fn load_host_backed_service_manager_for_platform_selection_with_admis
         None => None,
     };
     let backend = load_host_backed_project_backend(&context, host_platform, machine_api_client)?;
+    let local_build_admission = match admission_mode {
+        file::ComposeAdmissionMode::LocalDevelopment => LocalBuildAdmission::Allowed,
+        file::ComposeAdmissionMode::Production => LocalBuildAdmission::Denied,
+    };
+    Ok(ServiceManager::new(catalog, backend).with_local_build_admission(local_build_admission))
+}
+
+pub(crate) fn load_forwarded_service_manager_for_selection_with_isolation_mode(
+    selection: &ResolvedComposeSelection,
+    control_data_dir: &Path,
+    tenant_isolation_mode: nimbus_tenant::TenantIsolationMode,
+) -> Result<ServiceManager, Error> {
+    let host_platform = ServiceHostPlatform::current();
+    let admission_mode = match tenant_isolation_mode {
+        nimbus_tenant::TenantIsolationMode::LocalDevelopment => {
+            file::ComposeAdmissionMode::LocalDevelopment
+        }
+        nimbus_tenant::TenantIsolationMode::Production => file::ComposeAdmissionMode::Production,
+    };
+    let context = super::load_compose_project_context_for_selection(selection, control_data_dir)?;
+    let backend = required_effective_project_backend(
+        &context,
+        None,
+        "load a forwarded compose-backed sandbox manager",
+        host_platform,
+    )?;
+    if backend != SandboxBackendKind::Container {
+        return Err(Error::Internal(format!(
+            "compose project {} selected local krun after the local network composition froze",
+            context.control_plane.project_name
+        )));
+    }
+    let catalog = load_service_definition_catalog_for_execution_platform_with_admission(
+        selection,
+        host_platform,
+        admission_mode,
+    )?;
+    let machine_api_client =
+        should_auto_start_default_machine_for_host_loader(&context, host_platform)?
+            .then(ensure_default_machine_api_client_started)
+            .transpose()?;
+    let backend = load_forwarded_machine_api_backend(&context, host_platform, machine_api_client)?;
     let local_build_admission = match admission_mode {
         file::ComposeAdmissionMode::LocalDevelopment => LocalBuildAdmission::Allowed,
         file::ComposeAdmissionMode::Production => LocalBuildAdmission::Denied,
@@ -418,6 +544,7 @@ fn effective_project_backend_assignments(
         .join(", ")
 }
 
+#[cfg(test)]
 pub(super) fn load_host_backed_project_backend(
     context: &ComposeProjectContext,
     host_platform: ServiceHostPlatform,
@@ -431,7 +558,9 @@ pub(super) fn load_host_backed_project_backend(
     )?;
     match backend {
         SandboxBackendKind::Krun => Ok(Arc::new(KrunSandboxBackend::new(
-            context.control_plane.krun_backend_config(),
+            context
+                .control_plane
+                .reconstruct_direct_krun_backend_config(),
         ))),
         SandboxBackendKind::Container => {
             load_forwarded_machine_api_backend(context, host_platform, machine_api_client)
@@ -526,18 +655,18 @@ pub(super) fn resolve_service_execution_surface(
     operation: &str,
     host_platform: ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
+    local_krun: Option<LocalKrunExecutionSurface>,
 ) -> Result<ServiceExecutionSurface, Error> {
     let backend =
         required_effective_project_backend(context, requested_service, operation, host_platform)?;
     match backend {
-        SandboxBackendKind::Krun => Ok(ServiceExecutionSurface::Krun {
-            state_view: KrunSandboxStateView::from_config(
-                &context.control_plane.krun_backend_config(),
-            ),
-            backend: Arc::new(KrunSandboxBackend::new(
-                context.control_plane.krun_backend_config(),
-            )),
-        }),
+        SandboxBackendKind::Krun => {
+            let local_krun = require_local_krun_execution(context, operation, local_krun)?;
+            Ok(ServiceExecutionSurface::Krun {
+                state_view: local_krun.state_view,
+                backend: local_krun.backend,
+            })
+        }
         SandboxBackendKind::Container => {
             let client = resolve_forwarded_machine_api_client(
                 context,
@@ -550,6 +679,31 @@ pub(super) fn resolve_service_execution_surface(
             Ok(ServiceExecutionSurface::ForwardedContainer { client, backend })
         }
     }
+}
+
+fn require_local_krun_execution(
+    context: &ComposeProjectContext,
+    _operation: &str,
+    local_krun: Option<LocalKrunExecutionSurface>,
+) -> Result<LocalKrunExecutionSurface, Error> {
+    if let Some(local_krun) = local_krun {
+        return Ok(local_krun);
+    }
+    #[cfg(test)]
+    {
+        let config = context
+            .control_plane
+            .reconstruct_direct_krun_backend_config();
+        Ok(LocalKrunExecutionSurface {
+            state_view: KrunSandboxStateView::from_config(&config),
+            backend: Arc::new(KrunSandboxBackend::new(config)),
+        })
+    }
+    #[cfg(not(test))]
+    Err(Error::Internal(format!(
+        "nimbus {_operation} requires the manager-derived local krun composition for project {}",
+        context.control_plane.project_name
+    )))
 }
 
 fn resolve_forwarded_machine_api_client(

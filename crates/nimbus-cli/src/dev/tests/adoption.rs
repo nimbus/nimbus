@@ -21,11 +21,15 @@ fn dev_serve_options(
         .prebound_wire_listeners
         .take()
         .expect("dev plan should retain its wire-listener handoff bundle");
-    let options = nimbus_server::ServeOptions::new(engine.clone())
-        .with_prebound_listener_authority(&listeners);
+    let options =
+        nimbus_server::ServeOptions::reconstruct_direct_at(engine.clone(), &plan.data_dir)
+            .expect("test server authority should open")
+            .with_prebound_listener_authority(&listeners)
+            .expect("test listener authority should match");
     enablement
         .apply_to(options)
         .with_prebound_wire_listeners(listeners)
+        .expect("test listener bundle should transfer")
 }
 
 #[tokio::test]

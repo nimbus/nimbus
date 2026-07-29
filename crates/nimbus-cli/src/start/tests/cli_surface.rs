@@ -16,6 +16,22 @@ fn cli_defaults_to_embedded_sqlite() {
 }
 
 #[test]
+fn network_state_dir_is_an_explicit_top_level_start_input() {
+    let command = parse_start([
+        "nimbus",
+        "start",
+        "--network-state-dir",
+        "/var/lib/nimbus/network",
+    ]);
+
+    assert_eq!(
+        command.network_state_dir.as_deref(),
+        Some(Path::new("/var/lib/nimbus/network"))
+    );
+    assert!(StartCommand::default().network_state_dir.is_none());
+}
+
+#[test]
 fn cors_allow_origin_flag_repeats_and_normalizes() {
     let command = parse_start([
         "nimbus",

@@ -11,6 +11,7 @@ mod license;
 mod listener_lease;
 mod local_server;
 mod network_capabilities;
+mod network_composition;
 mod owned_tasks;
 mod protocol;
 mod router;
@@ -71,6 +72,7 @@ pub use local_server::{
     SERVER_DISCOVERY_PROTOCOL_VERSIONS, ServerDiscoveryLease, ServerDiscoveryRecord,
     read_live_server_discovery,
 };
+pub use network_capabilities::nimbus_owned_local_ingress_registration;
 pub use nimbus_dynamodb::AccessKeyRegistry as DynamoDbAccessKeyRegistry;
 pub use nimbus_s3::AccessKeyRegistry as S3AccessKeyRegistry;
 pub use router::{RouterOptions, build_router, normalize_cors_origin};

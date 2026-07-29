@@ -74,8 +74,8 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC4.6c complete; NNC4.6d
-  in progress`. Sole owner for
+- `nimbus-network-control-plane-plan.md` - `active; NNC4.6d complete; NNC4.6g
+  in progress`. Standalone KV parity is the current item. Sole owner for
   the transport-free
   connectivity-resource control plane: portable network identities and plans,
   crash-safe segment and cross-process host-port lease authority,

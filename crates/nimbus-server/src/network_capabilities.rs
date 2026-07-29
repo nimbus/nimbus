@@ -16,7 +16,13 @@ use nimbus_network::{
 
 use crate::listener_lease::SERVER_LISTENER_PROVIDER_KEY;
 
-pub(crate) fn nimbus_owned_local_ingress_registration(
+/// Report the closed capability facts of Nimbus-owned local ingress.
+///
+/// This source-owned report is effect-free: it does not construct listener
+/// authority, inspect certificates, bind sockets, or validate readiness.
+/// Callers that must freeze provider selection before constructing
+/// [`crate::ServeOptions`] may use this function directly.
+pub fn nimbus_owned_local_ingress_registration(
     tls_configured: bool,
 ) -> NetworkIngressProviderRegistration {
     let mut ingress_features = BTreeSet::from([

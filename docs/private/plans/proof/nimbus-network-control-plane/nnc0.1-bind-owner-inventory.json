@@ -92,7 +92,7 @@
       "verification": "source-occurrence",
       "category": "socket-bind",
       "path": "crates/nimbus-cli/src/dev/wire.rs",
-      "line": 308,
+      "line": 333,
       "symbol": "bind_and_retain_wire_listener",
       "authority_kinds": [
         "tcp-bind"
@@ -112,7 +112,7 @@
       "verification": "symbol-presence",
       "category": "pre-bound-consumer",
       "path": "crates/nimbus-cli/src/start/boot.rs",
-      "line": 73,
+      "line": 99,
       "symbol": "run_start_command_inner",
       "declaration_name": "run_start_command_inner",
       "current_owner": "nimbus-cli startup composition plus nimbus-server adoption",
@@ -579,7 +579,7 @@
       "kind": "tcp-bind",
       "symbol": "bind_and_retain_wire_listener",
       "ordinal": 1,
-      "line": 308
+      "line": 333
     },
     {
       "site_id": "machine-api-unix-consumer",
@@ -707,7 +707,7 @@
       "kind": "tcp-bind",
       "symbol": "start_listener",
       "ordinal": 1,
-      "line": 728
+      "line": 797
     },
     {
       "site_id": "cli-main-systemd-listener",
@@ -715,7 +715,7 @@
       "kind": "listener-return-handoff",
       "symbol": "activated_systemd_listener",
       "ordinal": 1,
-      "line": 789
+      "line": 858
     },
     {
       "site_id": "cli-main-systemd-listener",
@@ -723,7 +723,7 @@
       "kind": "tcp-from-raw-fd",
       "symbol": "activated_systemd_listener",
       "ordinal": 1,
-      "line": 836
+      "line": 905
     },
     {
       "site_id": "cli-main-systemd-listener",
@@ -731,7 +731,7 @@
       "kind": "tcp-from-std",
       "symbol": "activated_systemd_listener",
       "ordinal": 1,
-      "line": 838
+      "line": 907
     },
     {
       "site_id": "cli-main-systemd-listener",
@@ -739,7 +739,7 @@
       "kind": "listener-return-handoff",
       "symbol": "activated_systemd_listener",
       "ordinal": 2,
-      "line": 842
+      "line": 911
     },
     {
       "site_id": "kv-direct-listener",
@@ -987,7 +987,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "adopt_external_main_listener",
       "ordinal": 1,
-      "line": 125
+      "line": 159
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -995,7 +995,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "serve_with_router_config",
       "ordinal": 1,
-      "line": 294
+      "line": 328
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1003,7 +1003,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "serve",
       "ordinal": 1,
-      "line": 343
+      "line": 377
     },
     {
       "site_id": "server-sibling-wire-listeners",
@@ -1011,7 +1011,7 @@
       "kind": "tcp-bind",
       "symbol": "serve_leased",
       "ordinal": 1,
-      "line": 450
+      "line": 488
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1019,7 +1019,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "adopt",
       "ordinal": 1,
-      "line": 133
+      "line": 135
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1027,7 +1027,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "adopt_std",
       "ordinal": 1,
-      "line": 165
+      "line": 171
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1035,7 +1035,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "close_after_failed_adoption",
       "ordinal": 1,
-      "line": 222
+      "line": 232
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1043,7 +1043,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "close_std_after_failed_adoption",
       "ordinal": 1,
-      "line": 240
+      "line": 250
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1051,7 +1051,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "<module>",
       "ordinal": 1,
-      "line": 269
+      "line": 279
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1059,7 +1059,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "<module>",
       "ordinal": 2,
-      "line": 281
+      "line": 291
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1067,7 +1067,7 @@
       "kind": "tcp-from-std",
       "symbol": "into_leased",
       "ordinal": 1,
-      "line": 332
+      "line": 346
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1075,7 +1075,7 @@
       "kind": "listener-return-handoff",
       "symbol": "into_parts",
       "ordinal": 1,
-      "line": 379
+      "line": 397
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1083,7 +1083,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "adopt_external_main",
       "ordinal": 1,
-      "line": 592
+      "line": 663
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1091,7 +1091,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "abandon_prepared_after_guard_failure",
       "ordinal": 1,
-      "line": 926
+      "line": 1003
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -1148,7 +1148,7 @@
       "kind": "ambiguous-instance-bind",
       "symbol": "run_start_command_inner",
       "ordinal": 1,
-      "line": 228,
+      "line": 256,
       "reason": "Binds resolved adapter configuration into an in-process registry; real listener effects are classified separately."
     },
     {

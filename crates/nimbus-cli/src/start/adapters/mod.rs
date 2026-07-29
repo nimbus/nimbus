@@ -48,7 +48,7 @@ const DEFAULT_WIRE_TENANT: &str = "default";
 
 /// Adapter configs resolved from the start command. `None` means the
 /// surface does not serve this boot because it was explicitly opted out.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct AdapterEnablement {
     pub(crate) firebase: Option<FirebaseConfig>,
     pub(crate) cloudflare: Option<CloudflareConfig>,

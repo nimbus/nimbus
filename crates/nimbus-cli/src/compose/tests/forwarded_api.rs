@@ -328,6 +328,7 @@ services:
         "compose up",
         ServiceHostPlatform::Macos,
         None,
+        None,
     )
     .expect("explicit krun selection should remain local");
 

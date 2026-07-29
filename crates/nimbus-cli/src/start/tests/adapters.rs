@@ -10,7 +10,10 @@ fn adapter_serve_options(
     engine: &Arc<nimbus::Engine>,
     enablement: super::super::adapters::AdapterEnablement,
 ) -> nimbus_server::ServeOptions {
-    enablement.apply_to(nimbus_server::ServeOptions::new(engine.clone()))
+    enablement.apply_to(
+        nimbus_server::ServeOptions::reconstruct_direct(engine.clone())
+            .expect("test server authority should open"),
+    )
 }
 
 #[test]
@@ -56,7 +59,9 @@ async fn conventional_port_conflict_fails_through_shared_authority_with_guidance
         })
         .expect("pure default desired state should resolve before availability is known");
 
-    let conflict_authority = nimbus_server::PreboundServerListeners::new(temp.path());
+    let conflict_authority =
+        nimbus_server::PreboundServerListeners::reconstruct_direct(temp.path())
+            .expect("test listener authority should open");
     let conventional_addr = format!(
         "127.0.0.1:{}",
         super::super::adapters::MONGODB_CONVENTIONAL_PORT
@@ -67,13 +72,14 @@ async fn conventional_port_conflict_fails_through_shared_authority_with_guidance
         .prepare("existing-mongodb-owner", conventional_addr)
         .expect("the earlier authority should fence the conventional port");
 
-    let engine =
-        Arc::new(nimbus::Engine::new(temp.path().join("engine")).expect("engine should build"));
+    let engine = Arc::new(nimbus::Engine::new(temp.path()).expect("engine should build"));
     let main_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("main listener should bind");
-    let options = enablement
-        .apply_to(nimbus_server::ServeOptions::new(engine).with_network_state_root(temp.path()));
+    let options = enablement.apply_to(
+        nimbus_server::ServeOptions::reconstruct_direct(engine)
+            .expect("test server authority should open"),
+    );
     let error = nimbus_server::serve(main_listener, options)
         .await
         .expect_err("the durable conventional-port fence must fail startup");

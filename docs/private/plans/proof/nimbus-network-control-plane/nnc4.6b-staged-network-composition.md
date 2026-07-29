@@ -36,7 +36,8 @@ report would weaken the existing NNC4.3 contract.
 
 NNC4.6b stops at the portable manager/authority seam. NNC4.6c gives container
 and krun one sandbox-owned process composition. NNC4.6d consumes both seams
-for start/dev/Compose/server/KV. NNC4.6e owns the separately testable
+for start/dev/Compose/server, while the prospectively split NNC4.6g gives
+standalone KV the same typed authority. NNC4.6e owns the separately testable
 parent-host versus guest-node machine composition. NNC4.6f closes the
 mechanical census.
 
@@ -46,7 +47,8 @@ The original NNC4.6b sentence named five independently reviewable seams:
 
 1. staged manager construction and immutable registry freeze;
 2. sandbox process-local lifecycle sharing;
-3. CLI/start/dev/Compose/server/KV production wiring; and
+3. CLI/start/dev/Compose/server production wiring plus independent standalone
+   KV parity; and
 4. parent-host versus guest-machine authority; and
 5. mechanical constructor/root/handle closure.
 
@@ -59,7 +61,8 @@ review:
 | --- | --- |
 | NNC4.6b | Staged manager claim, paired authority, and consuming immutable freeze. |
 | NNC4.6c | Sandbox-owned OCI process composition and injected container/krun lifecycle sharing. |
-| NNC4.6d | CLI/start/dev/Compose/server/KV root and handle wiring plus the real local attachment/ingress registry. |
+| NNC4.6d | CLI/start/dev/Compose/server root and handle wiring plus the real local attachment/ingress registry. |
+| NNC4.6g | Standalone KV typed-root and retained-authority parity with an honestly empty registry. |
 | NNC4.6e | Host-machine and guest-machine managers, provenance, and independently fenced publication realms. |
 | NNC4.6f | Machine-readable constructor/root/handle census and verifier closure. |
 
@@ -302,27 +305,27 @@ network roots. It is not changed into a runtime handle or manager.
 | `oci/egress.rs` | Builds a process engine per backend and retains a network root. | NNC4.6c: shared engine plus per-backend artifact roots and injected port handle. |
 | `container/runtime/runner.rs` | Separate child authenticates both roots and reconstructs backend. | NNC4.6f: admitted same-node cross-process reconstruction. |
 
-### Deferred production wiring: NNC4.6d
+### Deferred production wiring: NNC4.6d and NNC4.6g
 
-| Current site | Defect or gap | NNC4.6d target |
+| Current site | Defect or gap | Target item |
 | --- | --- | --- |
-| `nimbus-cli/src/start/config.rs` | Root precedence exists as untyped path policy. | One CLI-owned typed logical-node-root resolver. |
-| `nimbus-cli/src/start/boot.rs` | Server root is node control root; local Compose backend derives project root. | One prepared start composition retains manager, backend/process, registry, and listener handle. |
-| `nimbus-cli/src/dev/wire.rs` | Prebind opens raw authority before start owns a manager. | Freeze one prepared composition before any prebind. |
-| `nimbus-cli/src/dev/plan.rs` | Runtime listener bundle is hidden inside parsed command state. | Parsed config stays data; runtime ownership moves to prepared composition. |
-| `nimbus-cli/src/compose/project.rs` | Krun workload and network roots are both project-local. | Project artifacts stay local; exact manager root is injected as network root. |
-| `nimbus-cli/src/compose/execution.rs` | Reconstructs backend repeatedly, including inspection commands. | One prepared backend/process per command. |
-| `nimbus-server/src/construction.rs` | Engine data root can be replaced by a prebound bundle. | Manager-derived opaque server authority; divergence is typed failure. |
-| `nimbus-server/src/listener_lease.rs` | Stores a root and reopens primitive authority for main/siblings. | Store and clone the manager-derived port handle. |
-| `nimbus-cli/src/kv.rs` | Root precedence omits start's data/config fallbacks. | Shared typed root policy and one empty fail-closed manager. |
-| `nimbus-kv/src/listener.rs` | Config stores a path and reopens authority. | Config carries manager-derived port handle. |
+| `nimbus-cli/src/start/config.rs` | Root precedence exists as untyped path policy. | NNC4.6d: one CLI-owned typed logical-node-root resolver. |
+| `nimbus-cli/src/start/boot.rs` | Server root is node control root; local Compose backend derives project root. | NNC4.6d: one prepared start composition retains manager, backend/process, registry, and listener handle. |
+| `nimbus-cli/src/dev/wire.rs` | Prebind opens raw authority before start owns a manager. | NNC4.6d: stage one prepared composition before any prebind. |
+| `nimbus-cli/src/dev/plan.rs` | Runtime listener bundle is hidden inside parsed command state. | NNC4.6d: parsed config stays data; runtime ownership moves to prepared composition. |
+| `nimbus-cli/src/compose/project.rs` | Krun workload and network roots are both project-local. | NNC4.6d: project artifacts stay local; exact manager root is injected as network root. |
+| `nimbus-cli/src/compose/execution.rs` | Reconstructs backend repeatedly, including inspection commands. | NNC4.6d: one prepared backend/process per command. |
+| `nimbus-server/src/construction.rs` | Engine data root can be replaced by a prebound bundle. | NNC4.6d: manager-derived opaque server authority; divergence is typed failure. |
+| `nimbus-server/src/listener_lease.rs` | Stores a root and reopens primitive authority for main/siblings. | NNC4.6d: store and clone the manager-derived authority. |
+| `nimbus-cli/src/kv.rs` | Root precedence omits start's data/config fallbacks. | NNC4.6g: shared typed root policy and one empty fail-closed manager. |
+| `nimbus-kv/src/listener.rs` | Config stores a path and reopens authority. | NNC4.6g: config and live listener retain manager-derived authority. |
 
 NNC4.6d must prove:
 
 - one pointer-identical manager across start, dev prebind, local Compose, and
   server listeners;
 - different project workload roots but one node network root;
-- exact-port conflict before bind between two projects and across server/KV;
+- exact-port conflict before bind between two projects and across sandbox/server;
 - no silent prebound authority replacement;
 - root policy parity under explicit control root, environment, config data,
   and default data cases;
@@ -330,6 +333,12 @@ NNC4.6d must prove:
 - empty complete-bundle registries for processes with no attachment/ingress
   pair; and
 - no fabricated partial provider.
+
+NNC4.6g must independently prove typed-root parity, retained KV authority,
+alias-retarget pinning, divergent-root fail-before, server/KV durable conflict
+before KV bind, an honestly empty KV-only registry, and post-bind listening
+observability. It is a separate canonical value/review/commit unit, not a
+review chunk of NNC4.6d.
 
 ### Deferred machine/guest wiring: NNC4.6e
 
@@ -377,7 +386,7 @@ This closes NNCF24 without moving gvproxy effects out of machine/sandbox.
 NNC4.6b does not:
 
 - construct or inject `OciNetworkProcess`;
-- wire CLI/start/dev/Compose/server/KV production paths;
+- wire CLI/start/dev/Compose/server or standalone KV production paths;
 - change machine or guest behavior;
 - add a third machine role to `NetworkCapabilityRegistry`;
 - make WSL2 look like host-managed Netavark/gvproxy;
@@ -574,6 +583,12 @@ NNC4.6d reserves:
 - `nimbus-cli/src/start/network_composition.rs`;
 - a server listener-authority child plus moved intact listener tests; and
 - CLI dev resolved-intent versus prepared-listener separation.
+
+NNC4.6g reserves:
+
+- `nimbus-cli/src/kv.rs`;
+- `nimbus-kv/src/listener.rs` and its concept-owned composition tests; and
+- standalone KV root-policy parity and post-bind observability.
 
 NNC4.6e reserves:
 
