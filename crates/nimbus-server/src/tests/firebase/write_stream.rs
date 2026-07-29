@@ -200,13 +200,19 @@ async fn firebase_write_stream_roundtrips_lossless_firestore_field_types() {
         panic!("typed document should be found")
     };
 
-    assert!(matches!(
-        document.fields["createdAt"].value_type,
-        Some(GrpcValueType::TimestampValue(ProstTimestamp {
-            seconds: 1_704_164_645,
-            nanos: 123_456_789,
-        }))
-    ));
+    // Stored at Firestore's microsecond precision, so the sub-microsecond digits
+    // the client sent are truncated toward the start of time.
+    assert!(
+        matches!(
+            document.fields["createdAt"].value_type,
+            Some(GrpcValueType::TimestampValue(ProstTimestamp {
+                seconds: 1_704_164_645,
+                nanos: 123_456_000,
+            }))
+        ),
+        "timestamp should read back truncated to microseconds, got {:?}",
+        document.fields["createdAt"].value_type
+    );
     assert!(matches!(
         &document.fields["payload"].value_type,
         Some(GrpcValueType::BytesValue(value)) if value == &[1, 2, 3, 4]

@@ -107,6 +107,25 @@ FAIL nimbus-engine ... atomic_write_batch_array_transforms_apply_numeric_equival
                               Json { value: Object {"counts": Array [Number(1), Number(2)]} }] })
 ```
 
+Timestamp canonicalization has a wire-level RED that needs no revert, because
+the fix is additive to a function that already existed:
+
+```
+FAIL nimbus-server ... firebase_commit_array_transforms_dedupe_equivalent_timestamp_spellings
+  assertion `left == right` failed: equivalent spellings of one instant must dedupe to one canonical element
+    left: [{"timestampValue": "2024-01-02T03:04:05Z"},
+           {"timestampValue": "2024-01-02T04:04:05+01:00"},
+           {"timestampValue": "2024-01-02T03:04:05.123456789Z"},
+           {"timestampValue": "2024-01-02T03:04:05.123456Z"}]
+   right: [{"timestampValue": "2024-01-02T03:04:05Z"},
+           {"timestampValue": "2024-01-02T03:04:05.123456Z"}]
+```
+
+Four operands, two instants, four surviving elements — arrayUnion appended a
+duplicate for each equivalent spelling. The paired unit test failed on the same
+run with `left: "2024-01-02T03:04:05.123456789Z"`, `right:
+"2024-01-02T03:04:05.123456Z"`.
+
 Every reverted file was restored from a saved copy, not from `git checkout`,
 and each restored file was re-run green afterwards.
 
@@ -152,6 +171,48 @@ applying numeric equivalence at numeric leaves. Object keys are matched by
 lookup rather than by zipped iteration order, so the result does not depend on
 `serde_json`'s map ordering. This corrects plain JSON containers as well as
 typed ones; the gap predated typed operands.
+
+**Timestamps are canonicalized at lowering.** A Firestore timestamp is stored
+as its RFC 3339 text, and every comparison downstream is on that stored text,
+so one instant with several spellings would defeat array-transform dedupe and
+removal. `normalize_firestore_timestamp` already reformatted through `time`'s
+RFC 3339 parser, which collapsed `+00:00`, `-00:00`, lowercase `t`/`z`, and
+trailing fractional zeros to one form. Two gaps remained: a non-UTC offset was
+preserved verbatim, so `2024-01-02T04:04:05+01:00` and `2024-01-02T03:04:05Z`
+stored differently despite being one instant; and nanosecond precision was
+retained, so `.123456789Z` and `.123456Z` stored differently despite being one
+value in Firestore, which keeps timestamps to microsecond precision truncated
+toward the start of time.
+
+Both are now closed at lowering: convert to UTC, then floor the
+nanosecond-of-second to a microsecond. That component is non-negative
+regardless of era, so flooring it truncates toward the start of time for
+pre-epoch instants too, rather than toward zero.
+
+Canonicalizing at lowering was chosen over normalizing at comparison. Lowering
+is a single choke point every write lane already passes through — REST
+`:commit`, the gRPC `Write` stream, and array-transform operands all reach
+`FirestoreValue::into_stored_value`, and it is the only place outside tests
+that constructs a `FirestoreTimestamp`. Fixing it there makes storage, dedupe,
+removal, and rendering agree by construction, whereas a comparison-time
+normalizer would have to be repeated at each comparison site and would still
+leave two documents holding one instant rendering differently on read.
+
+This changes observable output: a client that writes `.123456789Z` reads back
+`.123456Z`, and one that writes `+01:00` reads back the `Z` form. That is what
+real Firestore does, so the round-trip tests that asserted the caller's exact
+spelling were pinning a divergence from Firestore. They now assert the
+truncation explicitly instead of carrying a quietly swapped literal.
+
+**Bytes and geo points need no equivalent fix, and a test pins why.**
+`bytesValue` is decoded to `Vec<u8>` at parse and compared as bytes, so base64
+spelling cannot reach storage at all; only the standard padded alphabet parses,
+and URL-safe or mispadded input is refused rather than admitted as a second
+spelling. `geoPointValue` coordinates are `f64` compared by derived
+`PartialEq`, where IEEE equality already makes `-0.0` and `0.0` one value and
+integer and double JSON spellings parse identically through `as_f64`. NaN,
+infinities, and out-of-range coordinates are refused at parse, so no value that
+is unequal to itself can be stored.
 
 **Typed operands are rejected in query filters and cursors.** Query evaluation
 compares against `Document.fields` — the plain JSON projection — at
@@ -201,6 +262,13 @@ All three were verified against the real code paths and all three were real.
 | Timestamp range/cursor ordering is not chronological | Fixed by the same rejection. The reviewer's framing is the right one: this change is what would newly have accepted those operands, so accepting them with known-wrong ordering was not separable from the change. Recorded above as the reason for the contract rather than as a deferred ticket. |
 | Numeric equivalence not applied inside typed containers | Fixed by recursing in `firestore_transform_values_equivalent`. Scope was wider than reported: plain JSON containers had the same gap before this change. |
 
+A second review pass raised one more finding, of the same equivalence class.
+
+| finding | disposition |
+| --- | --- |
+| `FirestoreTimestamp` compared by stored RFC 3339 string, so equivalent spellings compare unequal | Fixed by canonicalizing to UTC microseconds at lowering. Partly refuted as reported: the specific `+00:00` vs `Z` example was already collapsed by the existing `time` reformat, as were `-00:00`, lowercase `t`/`z`, and trailing fractional zeros. The class is real via the two spellings that survived — non-UTC offsets, and sub-microsecond precision — and `firebase_commit_array_transforms_dedupe_equivalent_timestamp_spellings` failed at the wire with all four operand spellings surviving as four distinct elements. |
+| Analogous hazard in `bytesValue` and `geoPointValue` (asked, not asserted) | No fix needed; pinned rather than assumed. `bytes_and_geo_points_have_no_spelling_equivalence_hazard` passes unchanged against the pre-fix code, which is the point: it records why these two are structurally immune, so a future change that admits a second spelling fails loudly. |
+
 ## Verification
 
 All under `NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1`, `set -o
@@ -209,11 +277,18 @@ pipefail`, exit status checked directly (never through a pipe).
 | crate | result |
 | --- | --- |
 | `nimbus-core` | 193 run, 193 passed, 0 skipped |
-| `nimbus-firebase` | 74 run, 74 passed, 0 skipped |
+| `nimbus-firebase` | 76 run, 76 passed, 0 skipped |
 | `nimbus-engine` | 657 run, 657 passed, 5 skipped |
 | `nimbus-storage` | 435 run, 435 passed, 2 skipped |
 | `nimbus-mongodb` | 288 run, 288 passed, 0 skipped |
-| `nimbus-server` | 579 run, 579 passed, 25 skipped |
+| `nimbus-server` | 580 run, 580 passed, 25 skipped |
+
+One unrelated engine test, `mutation_journal::arm_selection::
+opaque_internal_job_cannot_overtake_ordered_publisher`, failed once under full-
+suite load and passed on a full-suite rerun and three isolated runs. It is a
+load-sensitive concurrency assertion (`journal.len() == 2`) in the committer
+arm-selection lane; no engine file changed in this revision, so it is not
+attributable to this work and is recorded rather than swept up.
 
 Crate set chosen by grepping `TypedScalarValue|StoredValue` across `crates/`,
 which returns exactly these six. The skips are `#[ignore]` lanes, none of them
@@ -253,6 +328,21 @@ Write lane:
   parse-level pin on operand lowering, including the nested map.
 - `nimbus-core`
   `canonical_collapses_metadata_free_subtrees_so_equal_values_compare_equal`.
+
+Timestamp equivalence:
+
+- `nimbus-server`
+  `firebase_commit_array_transforms_dedupe_equivalent_timestamp_spellings` —
+  arrayUnion of four operands spelling two instants dedupes to two canonical
+  elements, and arrayRemove with a `-05:00` spelling the client never wrote
+  removes the element stored in `Z` form.
+- `nimbus-firebase` `firestore_timestamps_lower_to_canonical_utc_microseconds`
+  — sub-microsecond truncation, truncation toward the start of time for a
+  pre-epoch instant, and seven spellings of one instant lowering identically.
+- `nimbus-firebase` `bytes_and_geo_points_have_no_spelling_equivalence_hazard`
+  — the negative pin: standard-alphabet-only base64 decoding, `-0.0` equal to
+  `0.0`, integer and double coordinate spellings equal, non-finite and
+  out-of-range coordinates refused.
 
 Query contract, both sides:
 

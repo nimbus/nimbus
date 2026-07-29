@@ -6,8 +6,8 @@ use nimbus_core::{
 };
 use serde_json::{Map, Number, Value, json};
 use thiserror::Error;
-use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
+use time::{OffsetDateTime, UtcOffset};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum FirestoreValue {
@@ -460,9 +460,33 @@ fn format_firestore_timestamp(timestamp: Timestamp) -> Result<String, FirestoreP
         })
 }
 
+/// Reduces an RFC 3339 timestamp to the single spelling Firestore stores for
+/// that instant: canonical UTC, truncated to the microsecond.
+///
+/// Storing the caller's spelling would let one instant have several stored
+/// forms — `+01:00` and `Z`, `.123456789` and `.123456` — and every comparison
+/// downstream is on the stored value. Array-transform dedupe and removal
+/// compare timestamps by that value, so two spellings of one instant would
+/// append a duplicate and then fail to remove it. Canonicalizing here, at the
+/// one point every write lane already passes through, keeps storage, dedupe,
+/// removal, and rendering in agreement without each of them repeating the rule.
+///
+/// Microsecond truncation is Firestore's own behavior: it keeps timestamps to
+/// microsecond precision, truncated toward the start of time. `nanosecond()` is
+/// the non-negative nanosecond-of-second, so flooring it truncates toward the
+/// start of time for pre-epoch instants too, not toward zero.
 fn normalize_firestore_timestamp(value: &str) -> Result<String, FirestoreProtoJsonError> {
-    OffsetDateTime::parse(value, &Rfc3339)
+    let parsed = OffsetDateTime::parse(value, &Rfc3339)
         .map_err(|error| invalid_field("timestampValue", format!("invalid timestamp: {error}")))?
+        .to_offset(UtcOffset::UTC);
+    parsed
+        .replace_nanosecond(parsed.nanosecond() - parsed.nanosecond() % 1_000)
+        .map_err(|error| {
+            invalid_field(
+                "timestampValue",
+                format!("failed to truncate timestamp to microseconds: {error}"),
+            )
+        })?
         .format(&Rfc3339)
         .map_err(|error| {
             invalid_field(
@@ -711,10 +735,127 @@ mod tests {
 
         let stored = decode_proto_json_stored_value(&wire).expect("wire value should lower");
         assert!(stored.contains_typed_metadata());
+
+        // Every field round-trips unchanged except the timestamp, which comes
+        // back truncated to the microsecond because that is the precision
+        // Firestore stores. See `firestore_timestamps_lower_to_canonical_utc_microseconds`.
+        let mut expected = wire.clone();
+        expected["mapValue"]["fields"]["createdAt"] =
+            json!({ "timestampValue": "2024-01-02T03:04:05.123456Z" });
         assert_eq!(
             encode_proto_json_stored_value(&stored).expect("stored value should encode"),
-            wire
+            expected
         );
+    }
+
+    fn lowered_timestamp(value: &str) -> String {
+        let stored = FirestoreValue::Timestamp(value.to_string())
+            .into_stored_value()
+            .expect("timestamp should lower");
+        match stored {
+            StoredValue::TypedScalar {
+                value: TypedScalarValue::FirestoreTimestamp { rfc3339 },
+            } => rfc3339,
+            other => panic!("timestamp should lower to a typed scalar, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn firestore_timestamps_lower_to_canonical_utc_microseconds() {
+        // Firestore stores timestamps truncated to the microsecond, toward the
+        // start of time, and renders them in canonical UTC `Z` form. Storing the
+        // caller's spelling instead would make two spellings of one instant
+        // compare unequal, which array-transform dedupe and removal rely on.
+        assert_eq!(
+            lowered_timestamp("2024-01-02T03:04:05.123456789Z"),
+            "2024-01-02T03:04:05.123456Z",
+            "sub-microsecond digits must be truncated, not retained"
+        );
+
+        // Truncation is toward the start of time, not toward zero, so it holds
+        // for instants before the Unix epoch too.
+        assert_eq!(
+            lowered_timestamp("1960-01-02T03:04:05.123456789Z"),
+            "1960-01-02T03:04:05.123456Z",
+            "pre-epoch instants must truncate toward the start of time"
+        );
+
+        // Every spelling of one instant must lower to one stored value.
+        let canonical = "2024-01-02T03:04:05Z";
+        for spelling in [
+            "2024-01-02T03:04:05Z",
+            "2024-01-02T03:04:05+00:00",
+            "2024-01-02T03:04:05-00:00",
+            "2024-01-02T04:04:05+01:00",
+            "2024-01-01T22:04:05-05:00",
+            "2024-01-02t03:04:05z",
+            "2024-01-02T03:04:05.000000Z",
+        ] {
+            assert_eq!(
+                lowered_timestamp(spelling),
+                canonical,
+                "`{spelling}` is the same instant as `{canonical}` and must store identically"
+            );
+        }
+    }
+
+    #[test]
+    fn bytes_and_geo_points_have_no_spelling_equivalence_hazard() {
+        // Unlike timestamps, these two cannot store two spellings of one value,
+        // so they need no canonicalization. This pins the reasons.
+
+        // Bytes are compared as decoded bytes, so base64 spelling cannot survive
+        // into storage at all, and the only accepted alphabet is standard padded.
+        assert_eq!(
+            FirestoreValue::from_proto_json(&json!({ "bytesValue": "+/8=" }))
+                .expect("standard-alphabet base64 should parse"),
+            FirestoreValue::Bytes(vec![0xfb, 0xff])
+        );
+        assert!(
+            FirestoreValue::from_proto_json(&json!({ "bytesValue": "-_8=" })).is_err(),
+            "URL-safe alphabet is refused, so it cannot become a second spelling"
+        );
+        assert!(
+            FirestoreValue::from_proto_json(&json!({ "bytesValue": "AQID" })).is_ok()
+                && FirestoreValue::from_proto_json(&json!({ "bytesValue": "AQID=" })).is_err(),
+            "unpadded/mispadded input is refused rather than stored differently"
+        );
+
+        // Geo coordinates are f64, where IEEE equality already makes `-0.0` and
+        // `0.0` one value, and integer and double JSON spellings parse alike.
+        let zero = FirestoreValue::from_proto_json(
+            &json!({ "geoPointValue": { "latitude": 0.0, "longitude": 0.0 } }),
+        )
+        .expect("geo point should parse");
+        let negative_zero = FirestoreValue::from_proto_json(
+            &json!({ "geoPointValue": { "latitude": -0.0, "longitude": -0.0 } }),
+        )
+        .expect("geo point should parse");
+        assert_eq!(zero, negative_zero, "`-0.0` and `0.0` are one coordinate");
+
+        let integral = FirestoreValue::from_proto_json(
+            &json!({ "geoPointValue": { "latitude": 37, "longitude": -122 } }),
+        )
+        .expect("geo point should parse");
+        let fractional = FirestoreValue::from_proto_json(
+            &json!({ "geoPointValue": { "latitude": 37.0, "longitude": -122.0 } }),
+        )
+        .expect("geo point should parse");
+        assert_eq!(
+            integral, fractional,
+            "integer and double coordinate spellings are one coordinate"
+        );
+
+        // A value that is not equal to itself can never be stored.
+        for coordinate in [json!("NaN"), json!("Infinity"), json!(91.0)] {
+            assert!(
+                FirestoreValue::from_proto_json(
+                    &json!({ "geoPointValue": { "latitude": coordinate, "longitude": 0.0 } })
+                )
+                .is_err(),
+                "{coordinate} must be refused as a latitude"
+            );
+        }
     }
 
     #[test]

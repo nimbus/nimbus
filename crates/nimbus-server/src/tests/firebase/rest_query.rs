@@ -1194,7 +1194,9 @@ async fn firebase_run_query_rejects_typed_operands_that_projection_matching_cann
         ),
         (
             "lookalike",
-            json!({ "stringValue": "2024-01-02T03:04:05.123456789Z" }),
+            // The text a stored timestamp projects to, which is the canonical
+            // microsecond form rather than the sub-microsecond text written above.
+            json!({ "stringValue": "2024-01-02T03:04:05.123456Z" }),
             json!({ "stringValue": "AQIDBA==" }),
         ),
     ];
@@ -1372,6 +1374,7 @@ async fn firebase_run_query_rejects_typed_operands_that_projection_matching_cann
     );
     assert_eq!(
         document["found"]["fields"]["createdAt"],
-        json!({ "timestampValue": "2024-01-02T03:04:05.123456789Z" })
+        json!({ "timestampValue": "2024-01-02T03:04:05.123456Z" }),
+        "the timestamp reads back at Firestore's stored microsecond precision"
     );
 }

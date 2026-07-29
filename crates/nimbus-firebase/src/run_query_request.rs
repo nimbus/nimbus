@@ -373,8 +373,10 @@ mod tests {
         );
 
         // And the ordering the projection implies is not the ordering the values
-        // have: a later timestamp sorts before an earlier one as a string.
-        assert!("2024-01-02T03:04:05.500000000Z" < "2024-01-02T03:04:05Z");
+        // have: a later timestamp sorts before an earlier one as a string. Both
+        // spellings below are canonical stored forms, so this is the ordering a
+        // range filter would actually get, not an artifact of a odd spelling.
+        assert!("2024-01-02T03:04:05.5Z" < "2024-01-02T03:04:05Z");
     }
 
     #[test]
