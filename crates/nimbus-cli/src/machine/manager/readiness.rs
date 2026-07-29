@@ -13,6 +13,7 @@ use axum::Router;
 use axum::extract::State as AxumState;
 use axum::routing::get;
 use nimbus::Error;
+use nimbus_network::NetworkManagementMode;
 
 use super::super::client::MachineApiClient;
 use super::super::{
@@ -168,13 +169,12 @@ pub(super) fn post_start_networking(
     api_forward_child: &mut Option<Child>,
     startup_signals: &StartupSignalMonitor,
 ) -> Result<(), Error> {
-    if config.provider.uses_provider_networking() {
-        // Future providers such as WSL own their own host networking startup
-        // and will wire their post-start verification here.
-        return Ok(());
+    match config.provider.network_management_mode() {
+        NetworkManagementMode::NimbusHostManaged => {
+            start_machine_api_forward(paths, config, ssh_port, api_forward_child, startup_signals)
+        }
+        NetworkManagementMode::ProviderManaged => Err(config.provider.unavailable_error()),
     }
-
-    start_machine_api_forward(paths, config, ssh_port, api_forward_child, startup_signals)
 }
 
 pub(super) fn conduct_readiness_check(

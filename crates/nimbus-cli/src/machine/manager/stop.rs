@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use libc::{SIGKILL, SIGTERM, kill};
 use nimbus::Error;
+use nimbus_network::NetworkManagementMode;
 
 use super::super::{
     MachineBootstrapMode, MachineConfigRecord, MachineLifecycle, MachinePaths, MachineProvider,
@@ -28,17 +29,19 @@ pub(super) fn stop_machine(
         return Ok(());
     }
 
-    let host_network_cleanup = if config.provider.uses_provider_networking() {
-        None
-    } else {
-        let runtime = state.runtime.as_ref().ok_or_else(|| {
-            Error::conflict(format!(
-                "machine '{}' has no runtime identity for its host SSH listener",
-                config.name
-            ))
-        })?;
-        withdraw_machine_ssh_port(&config.roots, runtime)?
-    };
+    match config.provider.network_management_mode() {
+        NetworkManagementMode::NimbusHostManaged => {}
+        NetworkManagementMode::ProviderManaged => {
+            return Err(config.provider.unavailable_error());
+        }
+    }
+    let runtime = state.runtime.as_ref().ok_or_else(|| {
+        Error::conflict(format!(
+            "machine '{}' has no runtime identity for its host SSH listener",
+            config.name
+        ))
+    })?;
+    let host_network_cleanup = withdraw_machine_ssh_port(&config.roots, runtime)?;
 
     let mut stop_errors = Vec::new();
     if let Err(error) = stop_provider_machine(paths, config, resolve_stop_wait_timeout()) {
@@ -52,26 +55,23 @@ pub(super) fn stop_machine(
             "provider stop completed but the machine VMM is still alive at pid {pid}"
         ));
     }
-    if !config.provider.uses_provider_networking()
-        && let Some(pid) = read_pid(&paths.api_forward_pid_path)?
+    if let Some(pid) = read_pid(&paths.api_forward_pid_path)?
         && let Err(error) = stop_pid(pid, HARD_STOP_WAIT_TIMEOUT)
     {
         stop_errors.push(error.to_string());
     }
     let mut gvproxy_stop_confirmed = false;
-    if !config.provider.uses_provider_networking() {
-        match read_pid(&paths.gvproxy_pid_path)? {
-            Some(pid) => match stop_pid(pid, HARD_STOP_WAIT_TIMEOUT) {
-                Ok(()) => {
-                    gvproxy_stop_confirmed = true;
-                }
-                Err(error) => stop_errors.push(error.to_string()),
-            },
-            None => stop_errors.push(
-                "gvproxy pid evidence is missing; the machine SSH port remains fenced for reconciliation"
-                    .to_owned(),
-            ),
-        }
+    match read_pid(&paths.gvproxy_pid_path)? {
+        Some(pid) => match stop_pid(pid, HARD_STOP_WAIT_TIMEOUT) {
+            Ok(()) => {
+                gvproxy_stop_confirmed = true;
+            }
+            Err(error) => stop_errors.push(error.to_string()),
+        },
+        None => stop_errors.push(
+            "gvproxy pid evidence is missing; the machine SSH port remains fenced for reconciliation"
+                .to_owned(),
+        ),
     }
     if gvproxy_stop_confirmed
         && let Some(cleanup) = host_network_cleanup

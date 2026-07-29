@@ -1,6 +1,9 @@
 use super::*;
 use nimbus_engine::Engine;
-use nimbus_network::{LocalPortLeaseAuthority, PortLeaseId, PortLeasePhase};
+use nimbus_network::{
+    LocalPortLeaseAuthority, NetworkManagementMode, PortLeaseEffectScope, PortLeaseId,
+    PortLeasePhase,
+};
 use std::io::{self, BufRead as _};
 use std::sync::Arc;
 
@@ -241,6 +244,16 @@ fn machine_ssh_claim_precedes_provider_and_exact_observation_activates() {
         &MachineStateRecord::initialized(),
     )
     .expect("machine listener should prepare");
+    assert_eq!(
+        MachineProvider::Krunkit.network_management_mode(),
+        NetworkManagementMode::NimbusHostManaged,
+        "Nimbus owns the machine topology even though gvproxy owns the socket effect"
+    );
+    assert_eq!(
+        prepared.effect_scope(),
+        PortLeaseEffectScope::ProviderManaged,
+        "the out-of-process gvproxy bind must retain provider-effect fencing"
+    );
     let listener_id = prepared.listener_id().clone();
     let selected_port = prepared.selected_port();
     let authority =

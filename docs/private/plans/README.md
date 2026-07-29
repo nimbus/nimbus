@@ -74,8 +74,8 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC4.2 complete; NNC4.3
-  capability registration and exact selection in progress`. Sole owner for
+- `nimbus-network-control-plane-plan.md` - `active; NNC4.4 complete; NNC4.5
+  egress readiness audit in progress`. Sole owner for
   the transport-free
   connectivity-resource control plane: portable network identities and plans,
   crash-safe segment and cross-process host-port lease authority,

@@ -52,10 +52,10 @@ pub(super) struct ObservedGuestNimbusBinaryStatus {
 
 pub(super) fn start_machine(
     paths: &MachinePaths,
-    _config: &MachineConfigRecord,
+    config: &MachineConfigRecord,
     state: &mut MachineStateRecord,
 ) -> Result<(), Error> {
-    let error = unsupported_machine_host_error();
+    let error = config.provider.unavailable_error();
     state.lifecycle = MachineLifecycle::Failed;
     state.manager = MachineManagerState::Failed;
     state.last_error = Some(error.to_string());
@@ -64,8 +64,8 @@ pub(super) fn start_machine(
 }
 
 pub(super) fn stop_machine(
-    paths: &MachinePaths,
-    _config: &MachineConfigRecord,
+    _paths: &MachinePaths,
+    config: &MachineConfigRecord,
     state: &mut MachineStateRecord,
 ) -> Result<(), Error> {
     if matches!(
@@ -75,14 +75,7 @@ pub(super) fn stop_machine(
         return Ok(());
     }
 
-    state.lifecycle = MachineLifecycle::Stopped;
-    state.manager = if state.runtime.is_some() {
-        MachineManagerState::HelpersResolved
-    } else {
-        MachineManagerState::Unconfigured
-    };
-    state.last_error = None;
-    write_json_file(&paths.state_path, state)
+    Err(config.provider.unavailable_error())
 }
 
 pub(super) fn refresh_machine_state(
@@ -125,8 +118,14 @@ pub(super) fn mount_tag(target: &Path) -> String {
 
 pub(super) fn release_machine_ssh_port(
     _roots: &MachineRootLayout,
-    _state: &MachineStateRecord,
+    state: &MachineStateRecord,
 ) -> Result<(), Error> {
+    if state.runtime.is_some() {
+        return Err(Error::conflict(
+            "the non-unix machine stub has retained runtime authority and cannot attest SSH port release"
+                .to_owned(),
+        ));
+    }
     Ok(())
 }
 
@@ -192,4 +191,134 @@ fn unsupported_machine_host_error() -> Error {
         "nimbus machine support currently requires a unix host; Windows builds keep the CLI surface but cannot start or forward a machine"
             .to_owned(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use nimbus_network::ListenerId;
+    use tempfile::TempDir;
+
+    use super::*;
+    use crate::machine::{
+        CURRENT_MACHINE_CONFIG_VERSION, MachineGuestConfig, MachineGuestProvisioning,
+        MachineHelperBinaryPaths, MachineImageSource, MachineProvider, MachineResources,
+        MachineRuntimeState, MachineVolume,
+    };
+
+    fn fixture(
+        temp_dir: &TempDir,
+        provider: MachineProvider,
+    ) -> (MachinePaths, MachineConfigRecord) {
+        let root = temp_dir.path();
+        let roots = MachineRootLayout::new(
+            root.join("config"),
+            root.join("state"),
+            root.join("data"),
+            root.join("cache"),
+            root.join("runtime"),
+        );
+        let paths = roots.paths("stub-contract");
+        let config = MachineConfigRecord {
+            version: CURRENT_MACHINE_CONFIG_VERSION,
+            name: "stub-contract".to_owned(),
+            provider,
+            guest: MachineGuestConfig {
+                image_source: MachineImageSource::LocalDisk {
+                    path: root.join("machine.raw"),
+                },
+                provisioning: MachineGuestProvisioning::Ignition,
+                ssh_user: "core".to_owned(),
+                ssh_identity_path: None,
+                ignition_file_path: None,
+                efi_variable_store_path: None,
+            },
+            resources: MachineResources {
+                cpus: 2,
+                memory_mib: 2_048,
+                disk_gib: 20,
+            },
+            volumes: Vec::<MachineVolume>::new(),
+            roots,
+        };
+        (paths, config)
+    }
+
+    fn retained_runtime() -> MachineRuntimeState {
+        MachineRuntimeState {
+            helper_binaries: MachineHelperBinaryPaths {
+                vmm: PathBuf::from("/unavailable/vmm"),
+                gvproxy: PathBuf::from("/unavailable/gvproxy"),
+            },
+            image_path: PathBuf::from("/unavailable/machine.raw"),
+            efi_variable_store_path: PathBuf::from("/unavailable/efi"),
+            machine_image_source: "unavailable".to_owned(),
+            ssh_listener_id: ListenerId::for_workload_listener(
+                "nimbus-cli-non-unix-stub-test",
+                "retained-runtime",
+            ),
+            ssh_port: 22_222,
+            rest_uri: "unavailable://machine".to_owned(),
+            ready_vsock_port: 1_025,
+        }
+    }
+
+    #[test]
+    fn non_unix_unavailable_start_uses_the_named_provider_error() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let (paths, config) = fixture(&temp_dir, MachineProvider::Wsl2);
+        let mut state = MachineStateRecord::initialized();
+
+        let error = start_machine(&paths, &config, &mut state)
+            .expect_err("the unavailable WSL2 stub must fail closed");
+
+        assert!(
+            error.to_string().contains("WSL2"),
+            "the unavailable provider must be named: {error}"
+        );
+        assert_eq!(state.lifecycle, MachineLifecycle::Failed);
+    }
+
+    #[test]
+    fn non_unix_unavailable_stop_never_transitions_to_stopped() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let (paths, config) = fixture(&temp_dir, MachineProvider::Wsl2);
+        let mut state = MachineStateRecord::initialized();
+        state.lifecycle = MachineLifecycle::Running;
+        state.manager = MachineManagerState::Ready;
+        state.runtime = Some(retained_runtime());
+        state.last_error = Some("retained provider evidence".to_owned());
+        let before = state.clone();
+
+        let error = stop_machine(&paths, &config, &mut state)
+            .expect_err("an unavailable stub cannot attest a provider stop");
+
+        assert!(
+            error.to_string().contains("WSL2"),
+            "the unavailable provider must be named: {error}"
+        );
+        assert_eq!(
+            state, before,
+            "a failed unavailable-provider stop must preserve retained evidence"
+        );
+        assert!(
+            !paths.state_path.exists(),
+            "the rejected stop must not persist false terminal state"
+        );
+    }
+
+    #[test]
+    fn non_unix_release_rejects_retained_runtime_authority() {
+        let temp_dir = TempDir::new().expect("temp dir should exist");
+        let (_paths, config) = fixture(&temp_dir, MachineProvider::Wsl2);
+        let mut state = MachineStateRecord::initialized();
+        state.runtime = Some(retained_runtime());
+
+        let error = release_machine_ssh_port(&config.roots, &state)
+            .expect_err("retained runtime evidence cannot be reported released by a no-op stub");
+
+        assert!(
+            error.to_string().contains("retained"),
+            "release refusal should name the retained authority: {error}"
+        );
+    }
 }

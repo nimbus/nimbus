@@ -37,6 +37,10 @@ mod manager;
 #[cfg(not(unix))]
 #[path = "stub/manager.rs"]
 mod manager;
+#[cfg(all(test, unix))]
+#[allow(dead_code)]
+#[path = "stub/manager.rs"]
+mod non_unix_manager_contract;
 mod record;
 mod render;
 mod server_control;

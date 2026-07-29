@@ -134,6 +134,11 @@ impl PreparedMachineSshPortLease {
         &self.listener_id
     }
 
+    #[cfg(test)]
+    pub(super) const fn effect_scope(&self) -> PortLeaseEffectScope {
+        self.lifetime.lifetime().effect_scope()
+    }
+
     /// Settle a claim when every caller-owned step before gvproxy spawn proves
     /// that no provider process or listener could have been created.
     pub(super) fn abandon_before_provider_start(&self) -> Result<(), Error> {

@@ -1,8 +1,12 @@
 use super::*;
+use nimbus_network::NetworkManagementMode;
 
 #[test]
 fn krunkit_provider_capabilities_match_podman_aligned_contract() {
-    assert!(!MachineProvider::Krunkit.uses_provider_networking());
+    assert_eq!(
+        MachineProvider::Krunkit.network_management_mode(),
+        NetworkManagementMode::NimbusHostManaged
+    );
     assert!(MachineProvider::Krunkit.requires_exclusive_active());
     assert_eq!(
         MachineProvider::Krunkit.image_format(),
@@ -17,7 +21,10 @@ fn krunkit_provider_capabilities_match_podman_aligned_contract() {
     // vfkit is an applehv sibling of krunkit: it must report the identical
     // podman-aligned capability contract so the shared launch/bootstrap path
     // treats both managed applehv guests the same way.
-    assert!(!MachineProvider::Vfkit.uses_provider_networking());
+    assert_eq!(
+        MachineProvider::Vfkit.network_management_mode(),
+        NetworkManagementMode::NimbusHostManaged
+    );
     assert!(MachineProvider::Vfkit.requires_exclusive_active());
     assert_eq!(
         MachineProvider::Vfkit.image_format(),
@@ -32,7 +39,10 @@ fn krunkit_provider_capabilities_match_podman_aligned_contract() {
     assert!(MachineProvider::Krunkit.uses_managed_applehv_guest());
     assert!(!MachineProvider::Wsl2.uses_managed_applehv_guest());
 
-    assert!(MachineProvider::Wsl2.uses_provider_networking());
+    assert_eq!(
+        MachineProvider::Wsl2.network_management_mode(),
+        NetworkManagementMode::ProviderManaged
+    );
     assert!(!MachineProvider::Wsl2.requires_exclusive_active());
     assert_eq!(
         MachineProvider::Wsl2.image_format(),
@@ -416,6 +426,34 @@ fn provider_managed_backend_is_rejected_before_host_listener_authority() {
     assert!(
         !paths.state_dir.exists() && !paths.runtime_dir.exists(),
         "rejection must happen before machine state or runtime effects"
+    );
+}
+
+#[test]
+fn provider_managed_post_start_networking_does_not_silently_succeed() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let image_path = temp_dir.path().join("disk.tar");
+    let mut config = sample_config(&image_path);
+    config.provider = MachineProvider::Wsl2;
+    let paths = config.roots.paths("default");
+    let mut api_forward_child = None;
+
+    let error = post_start_networking(
+        &paths,
+        &config,
+        22_222,
+        &mut api_forward_child,
+        &StartupSignalMonitor::inactive_for_test(),
+    )
+    .expect_err("an unavailable provider-managed path must fail closed");
+
+    assert!(
+        error.to_string().contains("WSL2"),
+        "the unavailable provider should be named: {error}"
+    );
+    assert!(
+        api_forward_child.is_none(),
+        "rejection must precede provider forwarding effects"
     );
 }
 
