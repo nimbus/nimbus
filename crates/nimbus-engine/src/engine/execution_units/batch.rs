@@ -1307,16 +1307,65 @@ fn write_array_elements(document: &mut Document, field_name: &str, values: Vec<S
     }
 }
 
+/// Compare two array-transform values the way Firestore compares them.
+///
+/// Structural equality is not enough at any depth: Firestore treats an int64 and
+/// a double of the same magnitude as the same value, so `3` and `3.0` must
+/// dedupe together whether they sit at the top of an element or several levels
+/// inside one. Both sides are expected to be canonical (see
+/// `StoredValue::canonical`), which means every metadata-free subtree is spelled
+/// `Json`; a `Map` or `List` node therefore still carries typed metadata
+/// somewhere and can never equal a plain `Json` node.
 fn firestore_transform_values_equivalent(left: &StoredValue, right: &StoredValue) -> bool {
     match (left, right) {
         (StoredValue::Json { value: left }, StoredValue::Json { value: right }) => {
-            match (
-                FiniteNumericTransformValue::from_document(left),
-                FiniteNumericTransformValue::from_document(right),
-            ) {
-                (Some(left), Some(right)) => numeric_transform_values_equivalent(left, right),
-                _ => left == right,
-            }
+            json_transform_values_equivalent(left, right)
+        }
+        (StoredValue::TypedScalar { value: left }, StoredValue::TypedScalar { value: right }) => {
+            left == right
+        }
+        (StoredValue::Map { entries: left }, StoredValue::Map { entries: right }) => {
+            left.len() == right.len()
+                && left.iter().all(|(field, left)| {
+                    right
+                        .get(field)
+                        .is_some_and(|right| firestore_transform_values_equivalent(left, right))
+                })
+        }
+        (StoredValue::List { items: left }, StoredValue::List { items: right }) => {
+            left.len() == right.len()
+                && left
+                    .iter()
+                    .zip(right.iter())
+                    .all(|(left, right)| firestore_transform_values_equivalent(left, right))
+        }
+        _ => false,
+    }
+}
+
+/// Numeric-aware structural comparison of two plain JSON subtrees.
+fn json_transform_values_equivalent(left: &serde_json::Value, right: &serde_json::Value) -> bool {
+    if let (Some(left), Some(right)) = (
+        FiniteNumericTransformValue::from_document(left),
+        FiniteNumericTransformValue::from_document(right),
+    ) {
+        return numeric_transform_values_equivalent(left, right);
+    }
+    match (left, right) {
+        (serde_json::Value::Object(left), serde_json::Value::Object(right)) => {
+            left.len() == right.len()
+                && left.iter().all(|(field, left)| {
+                    right
+                        .get(field)
+                        .is_some_and(|right| json_transform_values_equivalent(left, right))
+                })
+        }
+        (serde_json::Value::Array(left), serde_json::Value::Array(right)) => {
+            left.len() == right.len()
+                && left
+                    .iter()
+                    .zip(right.iter())
+                    .all(|(left, right)| json_transform_values_equivalent(left, right))
         }
         (left, right) => left == right,
     }

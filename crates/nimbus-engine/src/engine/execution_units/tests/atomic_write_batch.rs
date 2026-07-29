@@ -1321,6 +1321,100 @@ fn atomic_write_batch_array_transforms_preserve_typed_elements_at_every_depth() 
     assert_eq!(document.get_field("tags"), Some(&json!(["seed"])));
 }
 
+#[test]
+fn atomic_write_batch_array_transforms_apply_numeric_equivalence_at_nested_leaves() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let table = messages_table("messages_atomic_nested_numeric");
+    let document_id = DocumentId::from_key("nested-numeric").expect("id should parse");
+
+    let timestamp = StoredValue::from(TypedScalarValue::FirestoreTimestamp {
+        rfc3339: "2024-01-02T03:04:05Z".to_string(),
+    });
+    // Firestore treats an int64 and a double of the same magnitude as one value.
+    // These two elements differ only in that spelling, at a leaf two levels down
+    // inside a typed container, so arrayUnion must dedupe them together.
+    let typed_integer = StoredValue::Map {
+        entries: std::collections::BTreeMap::from([
+            ("at".to_string(), timestamp.clone()),
+            ("n".to_string(), stored(json!(3))),
+        ]),
+    };
+    let typed_double = StoredValue::Map {
+        entries: std::collections::BTreeMap::from([
+            ("at".to_string(), timestamp.clone()),
+            ("n".to_string(), stored(json!(3.0))),
+        ]),
+    };
+    // The same equivalence has to hold inside a plain JSON container, which
+    // canonicalizes to `Json` rather than staying a `Map`.
+    let plain_integer = stored(json!({ "counts": [1, 2] }));
+    let plain_double = stored(json!({ "counts": [1.0, 2.0] }));
+
+    let execution_unit = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("execution unit should start");
+    execution_unit
+        .execute_atomic_write_batch(
+            AtomicWriteBatch::new(vec![AtomicWrite::Transform {
+                key: locator_key(table.clone(), document_id.clone()),
+                transforms: vec![FieldTransform {
+                    field: "tags".to_string(),
+                    transform: FieldTransformOperation::AppendMissingElements {
+                        values: vec![
+                            typed_integer.clone(),
+                            typed_double.clone(),
+                            plain_integer.clone(),
+                            plain_double.clone(),
+                        ],
+                    },
+                }],
+                precondition: WritePrecondition::default(),
+            }])
+            .expect("batch should build"),
+        )
+        .expect("numeric-equivalent arrayUnion should succeed");
+
+    let document = engine
+        .get_document(&tenant_id, &table, document_id.clone())
+        .expect("nested numeric document should exist");
+    assert_eq!(
+        document.typed_value("tags"),
+        Some(&StoredValue::List {
+            items: vec![typed_integer.clone(), plain_integer.clone()],
+        }),
+        "int and double spellings must dedupe at nested leaves, keeping the first appended"
+    );
+
+    // Removal must match through the same equivalence: the double spelling has
+    // to remove the element stored with the integer spelling.
+    let execution_unit = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("execution unit should start");
+    execution_unit
+        .execute_atomic_write_batch(
+            AtomicWriteBatch::new(vec![AtomicWrite::Transform {
+                key: locator_key(table.clone(), document_id.clone()),
+                transforms: vec![FieldTransform {
+                    field: "tags".to_string(),
+                    transform: FieldTransformOperation::RemoveAllFromArray {
+                        values: vec![typed_double, plain_double],
+                    },
+                }],
+                precondition: WritePrecondition::default(),
+            }])
+            .expect("batch should build"),
+        )
+        .expect("numeric-equivalent arrayRemove should succeed");
+
+    let document = engine
+        .get_document(&tenant_id, &table, document_id)
+        .expect("nested numeric document should exist");
+    assert_eq!(document.typed_value("tags"), None);
+    assert_eq!(document.get_field("tags"), Some(&json!([])));
+}
+
 fn locator_key(table: nimbus_core::TableName, id: DocumentId) -> WriteKey {
     WriteKey::from(DocumentLocator::new(table, id))
 }

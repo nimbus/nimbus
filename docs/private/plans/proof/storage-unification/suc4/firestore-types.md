@@ -16,21 +16,23 @@ brief flagged as a trap
 longer exists — it was replaced by
 `firestore_value_preserves_firestore_only_types_in_stored_values`.
 
-What survived that fix is the residue this change closes. Two Firestore
-surfaces still lowered wire values through the legacy plain-JSON converter,
-and both rejected all four typed kinds outright:
-
-1. **Array transforms** — `appendMissingElements` (arrayUnion) and
-   `removeAllFromArray` (arrayRemove), on both REST `:commit` and the gRPC
-   `Write` stream. A client could write a timestamp into a document field
-   but could not append that same timestamp to an array field.
-2. **Query filter and cursor operands** — `structuredQuery.where` field
-   filters and `startAt`/`endAt` cursors. A client could store a typed value
-   and then had no way to filter on it.
+What survived that fix is the residue this change closes: **array
+transforms**. `appendMissingElements` (arrayUnion) and `removeAllFromArray`
+(arrayRemove), on both REST `:commit` and the gRPC `Write` stream, still
+lowered operands through the legacy plain-JSON converter and rejected all four
+typed kinds outright. A client could write a timestamp into a document field
+but could not append that same timestamp to an array field.
 
 The root cause sat below the adapter: `FieldTransformOperation`'s four array
 variants in `nimbus-core` carried `Vec<serde_json::Value>`, so a typed
 operand had nowhere to live even if the adapter had decoded it.
+
+Query filter and cursor operands are the adjacent surface with the same
+symptom, and they are deliberately **not** opened up here. Filters compare
+against the stored plain-JSON projection, which cannot distinguish a typed
+value from a lookalike plain one and does not order it correctly, so accepting
+typed operands there would trade a clear rejection for silent wrong answers.
+They stay rejected, with a better diagnostic; see the Design section.
 
 ### Blast radius
 
@@ -38,18 +40,19 @@ operand had nowhere to live even if the adapter had decoded it.
   RemoveAllFromArray}` now carry `Vec<StoredValue>`.
 - `nimbus-engine`: `execution_units::batch::apply_field_transform` — the array
   arms read and write through the typed tree.
-- `nimbus-firebase`: REST commit lowering, gRPC write-stream lowering, query
-  value decoding.
+- `nimbus-firebase`: REST commit lowering and gRPC write-stream lowering carry
+  typed operands; query value decoding gains an explicit, explained rejection
+  for the three projection-unsafe types.
 - `nimbus-mongodb`: `$addToSet` / `$push` / `$pull` / `$pullAll` adapted to the
   retyped operand. MongoDB operands are plain JSON, which is already the
   canonical spelling for a metadata-free value, so behavior is unchanged.
 
 ## Fail-before
 
-Three wire-level tests were run against **unmodified HEAD source**: the eight
-implementation files and the engine test file were reverted with `git checkout
-HEAD --`, leaving only the new `nimbus-server` tests in the tree (they use wire
-types only, so they compile against HEAD). All three fail:
+The two wire-level write-lane tests were run against **unmodified HEAD
+source**: the eight implementation files and the engine test file were reverted
+with `git checkout HEAD --`, leaving only the new `nimbus-server` tests in the
+tree (they use wire types only, so they compile against HEAD). Both fail:
 
 ```
 FAIL nimbus-server tests::firebase_write_stream::firebase_write_stream_array_transforms_roundtrip_typed_values
@@ -58,20 +61,24 @@ FAIL nimbus-server tests::firebase_write_stream::firebase_write_stream_array_tra
 FAIL nimbus-server tests::firebase_rest_crud::firebase_commit_array_transforms_roundtrip_typed_values
   {"error":{"code":"op.invalid_input","message":"invalid input: unsupported Firestore Value type `timestampValue`", ...}}
   left: 400  right: 200
-
-FAIL nimbus-server tests::firebase_rest_query::firebase_run_query_filters_on_typed_scalar_field_values
-  {"error":{"code":400,"message":"invalid input: invalid Firestore RunQuery request: invalid query value: unsupported Firestore Value type `timestampValue`","status":"INVALID_ARGUMENT"}}
-  left: 400  right: 200
-
-Summary 3 tests run: 0 passed, 3 failed, 601 skipped
 ```
 
-The engine test cannot be run against literal HEAD — it asserts on a type
+The first revision of this change also carried a third RED, for a test that
+accepted typed query operands. The review found that behavior wrong and the
+test was deleted, so it is not evidence for anything that ships. The query
+surface now keeps HEAD's rejection, which means there is deliberately **no**
+fail-before for it: nothing about the accept/reject verdict changes. Its
+evidence is positive instead — the collision test shows why the rejection is
+the correct contract, and the parse-level tests pin the improved diagnostic.
+
+The engine tests cannot be run against literal HEAD — they assert on a type
 (`Vec<StoredValue>` operands) that does not exist there, so a literal revert
-is a compile error rather than a failure. Its RED was produced by a semantic
-revert of the two new helpers in `batch.rs` to their pre-change behavior
-(read arrays only from `get_field`, always write back with `set_field`),
-which is exactly what the old plain-JSON code did:
+is a compile error rather than a failure. Both REDs were produced by a semantic
+revert of the specific helper under test, disclosed here as such.
+
+Reverting the two new helpers in `batch.rs` to their pre-change behavior (read
+arrays only from `get_field`, always write back with `set_field`), which is
+exactly what the old plain-JSON code did:
 
 ```
 FAIL nimbus-engine ... atomic_write_batch_array_transforms_preserve_typed_elements_at_every_depth
@@ -85,8 +92,23 @@ FAIL nimbus-engine ... atomic_write_batch_array_transforms_preserve_typed_elemen
                      "label": Json { value: String("kept") }} }] })
 ```
 
+Reverting `firestore_transform_values_equivalent` to its non-recursive form
+(numeric equivalence only when both whole operands are scalar numbers) leaves
+both duplicate spellings alive, which is the defect the review reported:
+
+```
+FAIL nimbus-engine ... atomic_write_batch_array_transforms_apply_numeric_equivalence_at_nested_leaves
+  assertion `left == right` failed: int and double spellings must dedupe at nested leaves, keeping the first appended
+    left: Some(List { items: [Map { entries: {"at": TypedScalar { ... }, "n": Json { value: Number(3) }} },
+                              Map { entries: {"at": TypedScalar { ... }, "n": Json { value: Number(3.0) }} },
+                              Json { value: Object {"counts": Array [Number(1), Number(2)]} },
+                              Json { value: Object {"counts": Array [Number(1.0), Number(2.0)]} }] })
+   right: Some(List { items: [Map { entries: {"at": TypedScalar { ... }, "n": Json { value: Number(3) }} },
+                              Json { value: Object {"counts": Array [Number(1), Number(2)]} }] })
+```
+
 Every reverted file was restored from a saved copy, not from `git checkout`,
-and the restored diff was verified byte-identical to the pre-revert patch.
+and each restored file was re-run green afterwards.
 
 ## Design
 
@@ -119,25 +141,65 @@ appended by transform and later matched for removal — is pinned by
 and, at the parse level, by
 `lowers_typed_array_transform_operands_into_stored_values_at_every_depth`.
 
-**Query operands lower to the stored projection, not to typed metadata.**
-Filters and cursors compare against `Document.fields`, the plain JSON
-projection stored beside the typed sidecar, so a typed operand decodes to
-exactly `StoredValue::projected_json()`. This makes the equality filter in
-the REST query test match. The bespoke `referenceValue` special case in
-`run_query_request` was deleted because its output is provably identical to
-`TypedScalarValue::Reference`'s projection. The structural recursion for
-`arrayValue` / `mapValue` in that file was deliberately **kept**: `in` and
-`not-in` legitimately carry an array of array candidates, which the document
-write path rejects, so routing containers through the stored lowering would
-have regressed those queries.
+**Numeric equivalence applies at every leaf.** Firestore treats an int64 and a
+double of the same magnitude as one value, so `3` and `3.0` must dedupe
+together. The old comparator applied that rule only when both whole operands
+were scalar numbers, because `FiniteNumericTransformValue::from_document`
+reads only scalars — a nested leaf fell through to structural JSON equality,
+where `Number(3)` and `Number(3.0)` differ. `firestore_transform_values_equivalent`
+now recurses through `Map`, `List`, and plain JSON objects and arrays,
+applying numeric equivalence at numeric leaves. Object keys are matched by
+lookup rather than by zipped iteration order, so the result does not depend on
+`serde_json`'s map ordering. This corrects plain JSON containers as well as
+typed ones; the gap predated typed operands.
 
-**Known limitation, unchanged by this work.** A Firestore timestamp projects
-to its RFC3339 string, and RFC3339 strings do not sort lexicographically in
-chronological order (`"...05.5Z"` sorts before `"...05Z"`, because `.` is
-0x2E and `Z` is 0x5A). Equality filters on timestamp fields are exact;
-range and ordering queries on them are not. This is a property of the
-projection introduced by #231 and is independent of write acceptance —
-recorded here as a separate finding, not fixed under this change.
+**Typed operands are rejected in query filters and cursors.** Query evaluation
+compares against `Document.fields` — the plain JSON projection — at
+`queries/structured/finalize.rs`, where equality is `field_value == value` and
+ordering runs through `compare_structured_order_values`. A projection cannot
+carry type identity, so lowering a typed operand to its projection produces
+false matches across types: a `bytesValue` projects to its base64 string and
+would equal a plain string of that text, a `timestampValue` to its RFC3339
+string, a `geoPointValue` to an ordinary two-key map. Ordering is worse —
+RFC3339 strings do not sort chronologically (`…05.5Z` sorts before `…05Z`,
+because `.` is 0x2E and `Z` is 0x5A), base64 does not sort in byte order, and a
+map has no ordering at all — so range filters and cursors would silently omit
+or misplace documents.
+
+Making comparison type-aware means carrying `StoredValue` through
+`FieldFilter.value`, `StructuredCursor.values`, the prepared-filter machinery,
+and index selection, across every adapter that builds a filter. That is a
+separate design with its own index-correctness question, not a detail of a
+write-path fix. So the contract here is the smallest correct one:
+`timestampValue`, `bytesValue`, and `geoPointValue` are refused in filters and
+cursors — at any depth, including inside an `in` candidate array — with an
+error naming the type and the reason. This is what the surface did before this
+change, so nothing regresses; only the diagnostic improves.
+
+`referenceValue` stays accepted, unchanged from before: `__name__` document-ID
+filters are built on it, and it is compared against the document name rather
+than a stored field. It carries the same projection-collision property against
+a plain string field, which is pre-existing and out of scope here.
+
+The structural recursion for `arrayValue` / `mapValue` is kept, because `in`
+and `not-in` legitimately carry an array of array candidates that the document
+write path rejects; routing containers through the stored lowering would have
+broken those queries.
+
+Writes are unaffected. A client can store all four typed kinds, read them back
+with full fidelity, and use them in array transforms; it cannot yet filter or
+sort on the three whose projection is ambiguous.
+
+## Review findings and dispositions
+
+A structured second-model review of the first revision raised three findings.
+All three were verified against the real code paths and all three were real.
+
+| finding | disposition |
+| --- | --- |
+| Cross-type false matches from projecting typed query operands | Fixed by rejecting the three projection-unsafe types in filters and cursors. Collision demonstrated end to end by `firebase_run_query_rejects_typed_operands_that_projection_matching_cannot_separate`, which shows a plain `stringValue` operand matching both a stored `bytesValue` and a lookalike string. |
+| Timestamp range/cursor ordering is not chronological | Fixed by the same rejection. The reviewer's framing is the right one: this change is what would newly have accepted those operands, so accepting them with known-wrong ordering was not separable from the change. Recorded above as the reason for the contract rather than as a deferred ticket. |
+| Numeric equivalence not applied inside typed containers | Fixed by recursing in `firestore_transform_values_equivalent`. Scope was wider than reported: plain JSON containers had the same gap before this change. |
 
 ## Verification
 
@@ -147,8 +209,8 @@ pipefail`, exit status checked directly (never through a pipe).
 | crate | result |
 | --- | --- |
 | `nimbus-core` | 193 run, 193 passed, 0 skipped |
-| `nimbus-firebase` | 73 run, 73 passed, 0 skipped |
-| `nimbus-engine` | 656 run, 656 passed, 5 skipped |
+| `nimbus-firebase` | 74 run, 74 passed, 0 skipped |
+| `nimbus-engine` | 657 run, 657 passed, 5 skipped |
 | `nimbus-storage` | 435 run, 435 passed, 2 skipped |
 | `nimbus-mongodb` | 288 run, 288 passed, 0 skipped |
 | `nimbus-server` | 579 run, 579 passed, 25 skipped |
@@ -160,10 +222,13 @@ verification-harness corpora, 2 runtime-owner subprocess conformance tests,
 and 2 transport-liveness campaigns.
 
 - `cargo clippy -p nimbus-core -p nimbus-firebase -p nimbus-engine -p
-  nimbus-mongodb -p nimbus-server --all-targets -- -D warnings` — exit 0.
+  nimbus-mongodb -p nimbus-server -p nimbus-storage --all-targets -- -D
+  warnings` — exit 0.
 - `cargo fmt --all --check` — exit 0.
 
 ### Tests added
+
+Write lane:
 
 - `nimbus-server` `firebase_commit_array_transforms_roundtrip_typed_values` —
   REST arrayUnion of a string plus all four typed kinds, `batchGet` returns the
@@ -172,21 +237,37 @@ and 2 transport-liveness campaigns.
 - `nimbus-server` `firebase_write_stream_array_transforms_roundtrip_typed_values`
   — the same round trip over the gRPC `Write` stream; bytes must come back as
   `bytesValue`, not as their base64 projection.
-- `nimbus-server` `firebase_run_query_filters_on_typed_scalar_field_values` —
-  equality filters on a `timestampValue` field (selective) and a `bytesValue`
-  field (matches both documents).
 - `nimbus-engine`
   `atomic_write_batch_array_transforms_preserve_typed_elements_at_every_depth`
   — typed elements including one nested inside a map inside an array element;
   dedupe by typed identity; plain projection kept in step with the typed tree;
   arrayRemove matching typed elements by value; sidecar dropped when the last
   typed element leaves.
+- `nimbus-engine`
+  `atomic_write_batch_array_transforms_apply_numeric_equivalence_at_nested_leaves`
+  — `3` and `3.0` dedupe together at a leaf inside a typed map and inside a
+  plain JSON object, and the double spelling removes an element stored with the
+  integer spelling.
 - `nimbus-firebase`
   `lowers_typed_array_transform_operands_into_stored_values_at_every_depth` —
   parse-level pin on operand lowering, including the nested map.
-- `nimbus-firebase`
-  `decodes_typed_scalar_filter_and_cursor_values_to_their_stored_projection` —
-  parse-level pin on the query projection semantics; guards the deleted
-  `referenceValue` special case.
 - `nimbus-core`
   `canonical_collapses_metadata_free_subtrees_so_equal_values_compare_equal`.
+
+Query contract, both sides:
+
+- `nimbus-server`
+  `firebase_run_query_rejects_typed_operands_that_projection_matching_cannot_separate`
+  — writes typed values and lookalike plain strings; shows an accepted
+  `stringValue` operand matching **both**, which is the collision; then pins
+  that each of the three types is refused with `400` naming the type, in
+  filters and in cursors; then confirms the documents still read back with full
+  typed fidelity.
+- `nimbus-firebase` `rejects_projection_unsafe_typed_values_in_filters_and_cursors`
+  — parse-level rejection for all three types in filters, in cursors, and
+  nested inside an `in` candidate array.
+- `nimbus-firebase` `projection_collision_shows_why_typed_query_operands_stay_rejected`
+  — pins the projections that collide and the non-chronological string ordering,
+  so the rejection's justification fails loudly if a projection ever changes.
+- `nimbus-firebase` `parses_reference_values_for_document_id_filters_and_cursors`
+  (pre-existing) — `referenceValue` still accepted for `__name__`.

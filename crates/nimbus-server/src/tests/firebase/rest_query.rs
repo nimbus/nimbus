@@ -1173,7 +1173,7 @@ async fn firebase_run_query_rejects_invalid_filter_combinations() {
 }
 
 #[tokio::test]
-async fn firebase_run_query_filters_on_typed_scalar_field_values() {
+async fn firebase_run_query_rejects_typed_operands_that_projection_matching_cannot_separate() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let _tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
     let service = fixture.engine();
@@ -1184,11 +1184,21 @@ async fn firebase_run_query_filters_on_typed_scalar_field_values() {
     .await;
     let client = firebase_rest_client("user-123", "demo");
 
-    let matching = json!({ "timestampValue": "2024-01-02T03:04:05.123456789Z" });
-    let other = json!({ "timestampValue": "2025-06-07T08:09:10Z" });
-    let payload = json!({ "bytesValue": "AQIDBA==" });
-
-    for (document_id, created_at) in [("hit", &matching), ("miss", &other)] {
+    // `typed` stores real Firestore types; `lookalike` stores plain strings whose
+    // text is exactly what those typed values project to.
+    let seeds = [
+        (
+            "typed",
+            json!({ "timestampValue": "2024-01-02T03:04:05.123456789Z" }),
+            json!({ "bytesValue": "AQIDBA==" }),
+        ),
+        (
+            "lookalike",
+            json!({ "stringValue": "2024-01-02T03:04:05.123456789Z" }),
+            json!({ "stringValue": "AQIDBA==" }),
+        ),
+    ];
+    for (document_id, created_at, payload) in &seeds {
         let commit = client
             .post(server.http_url("/v1/projects/demo/databases/(default)/documents:commit"))
             .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
@@ -1211,59 +1221,157 @@ async fn firebase_run_query_filters_on_typed_scalar_field_values() {
             )
             .send()
             .await
-            .expect("typed seed commit should send");
-        assert_eq!(commit.status(), StatusCode::OK);
+            .expect("seed commit should send");
+        assert_eq!(
+            commit.status(),
+            StatusCode::OK,
+            "writing typed values must keep working; only querying them is refused"
+        );
     }
 
-    for (field_path, value) in [("createdAt", &matching), ("payload", &payload)] {
-        let response = client
-            .post(server.http_url("/v1/projects/demo/databases/(default)/documents:runQuery"))
-            .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
-            .body(
-                json!({
-                    "structuredQuery": {
-                        "from": [{ "collectionId": "events" }],
-                        "where": {
-                            "fieldFilter": {
-                                "field": { "fieldPath": field_path },
-                                "op": "EQUAL",
-                                "value": value,
-                            }
-                        }
+    let run_query = |body: serde_json::Value| {
+        let client = client.clone();
+        let url = server.http_url("/v1/projects/demo/databases/(default)/documents:runQuery");
+        async move {
+            let response = client
+                .post(url)
+                .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
+                .body(body.to_string())
+                .send()
+                .await
+                .expect("runQuery should send");
+            let status = response.status();
+            let body = response
+                .text()
+                .await
+                .expect("runQuery response should read");
+            (status, body)
+        }
+    };
+
+    // A plain string operand is accepted, and it matches BOTH documents: the
+    // stored projection of the bytes value is indistinguishable from the plain
+    // string. This collision is why the typed operand below is refused outright
+    // rather than quietly lowered to the same projection.
+    let (status, body) = run_query(json!({
+        "structuredQuery": {
+            "from": [{ "collectionId": "events" }],
+            "where": {
+                "fieldFilter": {
+                    "field": { "fieldPath": "payload" },
+                    "op": "EQUAL",
+                    "value": { "stringValue": "AQIDBA==" }
+                }
+            }
+        }
+    }))
+    .await;
+    assert_eq!(status, StatusCode::OK, "string operand should be accepted");
+    let mut names = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter_map(|entry| entry["document"]["name"].as_str().map(ToOwned::to_owned))
+        .collect::<Vec<_>>();
+    names.sort();
+    assert_eq!(
+        names,
+        vec![
+            "projects/demo/databases/(default)/documents/events/lookalike".to_string(),
+            "projects/demo/databases/(default)/documents/events/typed".to_string(),
+        ],
+        "projection matching cannot separate stored bytes from a lookalike string"
+    );
+
+    // So each projection-unsafe type is refused in filters and in cursors, with
+    // an error that names the type.
+    for (field_path, value) in [
+        (
+            "createdAt",
+            json!({ "timestampValue": "2024-01-02T03:04:05.123456789Z" }),
+        ),
+        ("payload", json!({ "bytesValue": "AQIDBA==" })),
+        (
+            "location",
+            json!({ "geoPointValue": { "latitude": 37.7749, "longitude": -122.4194 } }),
+        ),
+    ] {
+        let wire_type = value
+            .as_object()
+            .and_then(|value| value.keys().next().cloned())
+            .expect("wire type should be present");
+
+        let (status, body) = run_query(json!({
+            "structuredQuery": {
+                "from": [{ "collectionId": "events" }],
+                "where": {
+                    "fieldFilter": {
+                        "field": { "fieldPath": field_path },
+                        "op": "EQUAL",
+                        "value": value.clone()
                     }
-                })
-                .to_string(),
-            )
-            .send()
-            .await
-            .expect("typed field filter query should send");
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .expect("typed field filter response should read");
+                }
+            }
+        }))
+        .await;
         assert_eq!(
             status,
-            StatusCode::OK,
-            "query filtering on typed field `{field_path}` should be accepted: {body}"
+            StatusCode::BAD_REQUEST,
+            "`{wire_type}` filter operand should be refused: {body}"
         );
-        let names = body
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-            .filter_map(|entry| entry["document"]["name"].as_str().map(ToOwned::to_owned))
-            .collect::<Vec<_>>();
-        let expected: Vec<String> = if field_path == "createdAt" {
-            vec!["projects/demo/databases/(default)/documents/events/hit".to_string()]
-        } else {
-            vec![
-                "projects/demo/databases/(default)/documents/events/hit".to_string(),
-                "projects/demo/databases/(default)/documents/events/miss".to_string(),
-            ]
-        };
+        assert!(
+            body.contains(&wire_type),
+            "`{wire_type}` filter rejection should name the type: {body}"
+        );
+
+        let (status, body) = run_query(json!({
+            "structuredQuery": {
+                "from": [{ "collectionId": "events" }],
+                "orderBy": [{
+                    "field": { "fieldPath": field_path },
+                    "direction": "ASCENDING"
+                }],
+                "startAt": { "values": [value], "before": true }
+            }
+        }))
+        .await;
         assert_eq!(
-            names, expected,
-            "typed field filter on `{field_path}` should match the documents written with that value"
+            status,
+            StatusCode::BAD_REQUEST,
+            "`{wire_type}` cursor operand should be refused: {body}"
+        );
+        assert!(
+            body.contains(&wire_type),
+            "`{wire_type}` cursor rejection should name the type: {body}"
         );
     }
+
+    // The documents are still readable with full fidelity — the write lane is
+    // untouched by the query restriction.
+    let read = client
+        .post(server.http_url("/v1/projects/demo/databases/(default)/documents:batchGet"))
+        .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
+        .body(
+            json!({
+                "documents": ["projects/demo/databases/(default)/documents/events/typed"]
+            })
+            .to_string(),
+        )
+        .send()
+        .await
+        .expect("typed document read should send");
+    assert_eq!(read.status(), StatusCode::OK);
+    let document = response_json_lines(read)
+        .await
+        .into_iter()
+        .next()
+        .expect("typed document should be returned");
+    assert_eq!(
+        document["found"]["fields"]["payload"],
+        json!({ "bytesValue": "AQIDBA==" })
+    );
+    assert_eq!(
+        document["found"]["fields"]["createdAt"],
+        json!({ "timestampValue": "2024-01-02T03:04:05.123456789Z" })
+    );
 }
