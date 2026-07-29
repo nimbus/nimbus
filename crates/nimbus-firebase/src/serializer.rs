@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use nimbus_core::{
     Document, NumericValue, SpecialDouble, StoredValue, Timestamp, TypedScalarValue,
-    base64_decode_standard, base64_encode_standard,
+    base64_encode_standard,
 };
 use serde_json::{Map, Number, Value, json};
 use thiserror::Error;
@@ -565,8 +565,29 @@ fn parse_bytes_value(value: &Value) -> Result<Vec<u8>, FirestoreProtoJsonError> 
             "expected base64 string".to_string(),
         ));
     };
-    base64_decode_standard(value)
+    decode_proto_json_base64(value)
         .map_err(|error| invalid_field("bytesValue", format!("invalid base64: {error}")))
+}
+
+/// Decodes `bytes` per the proto3 JSON mapping, which requires parsers to
+/// accept standard and URL-safe alphabets, with or without padding. Spelling
+/// cannot leak into storage: every accepted form decodes to the same bytes,
+/// and the read path re-encodes from bytes in one canonical form.
+fn decode_proto_json_base64(value: &str) -> Result<Vec<u8>, base64::DecodeError> {
+    use base64::Engine;
+    use base64::engine::general_purpose::GeneralPurpose;
+    use base64::engine::{DecodePaddingMode, GeneralPurposeConfig};
+
+    const PAD_INDIFFERENT: GeneralPurposeConfig =
+        GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent);
+    const STANDARD_INDIFFERENT: GeneralPurpose =
+        GeneralPurpose::new(&base64::alphabet::STANDARD, PAD_INDIFFERENT);
+    const URL_SAFE_INDIFFERENT: GeneralPurpose =
+        GeneralPurpose::new(&base64::alphabet::URL_SAFE, PAD_INDIFFERENT);
+
+    STANDARD_INDIFFERENT
+        .decode(value)
+        .or_else(|_| URL_SAFE_INDIFFERENT.decode(value))
 }
 
 fn parse_geo_point_value(value: &Value) -> Result<FirestoreValue, FirestoreProtoJsonError> {
@@ -854,21 +875,21 @@ mod tests {
         // Unlike timestamps, these two cannot store two spellings of one value,
         // so they need no canonicalization. This pins the reasons.
 
-        // Bytes are compared as decoded bytes, so base64 spelling cannot survive
-        // into storage at all, and the only accepted alphabet is standard padded.
-        assert_eq!(
-            FirestoreValue::from_proto_json(&json!({ "bytesValue": "+/8=" }))
-                .expect("standard-alphabet base64 should parse"),
-            FirestoreValue::Bytes(vec![0xfb, 0xff])
-        );
+        // Bytes are compared as decoded bytes, so base64 spelling cannot
+        // survive into storage: the proto3 JSON mapping requires accepting
+        // standard and URL-safe alphabets with or without padding, and every
+        // accepted spelling of one value decodes to the same bytes.
+        for spelling in ["+/8=", "+/8", "-_8=", "-_8"] {
+            assert_eq!(
+                FirestoreValue::from_proto_json(&json!({ "bytesValue": spelling }))
+                    .unwrap_or_else(|error| panic!("`{spelling}` should parse: {error:?}")),
+                FirestoreValue::Bytes(vec![0xfb, 0xff]),
+                "every ProtoJSON spelling must decode to the same bytes"
+            );
+        }
         assert!(
-            FirestoreValue::from_proto_json(&json!({ "bytesValue": "-_8=" })).is_err(),
-            "URL-safe alphabet is refused, so it cannot become a second spelling"
-        );
-        assert!(
-            FirestoreValue::from_proto_json(&json!({ "bytesValue": "AQID" })).is_ok()
-                && FirestoreValue::from_proto_json(&json!({ "bytesValue": "AQID=" })).is_err(),
-            "unpadded/mispadded input is refused rather than stored differently"
+            FirestoreValue::from_proto_json(&json!({ "bytesValue": "AQID@" })).is_err(),
+            "non-base64 input is still refused"
         );
 
         // Geo coordinates are f64, where IEEE equality already makes `-0.0` and

@@ -393,3 +393,15 @@ Query contract, both sides:
   removed as dead code; instead the invariant is pinned by
   `atomic_write_batch_set_normalizes_metadata_free_typed_twins` and the
   `current_array_elements` comment names all three barriers.
+
+## Review pass 6 disposition
+
+- **Accepted (P2) — REST bytesValue rejected valid ProtoJSON spellings.**
+  The proto3 JSON mapping requires parsers to accept standard and URL-safe
+  base64, with or without padding; the strict standard-padded decoder
+  rejected `-_8=` and unpadded input, and the pass-3 pin test enshrined that
+  rejection. `parse_bytes_value` now decodes via padding-indifferent
+  standard-then-URL-safe engines; spelling still cannot leak into storage
+  (all spellings decode to identical bytes; reads re-encode canonically).
+  The pin test now asserts all four spellings of one value decode
+  identically and non-base64 input is still refused.
