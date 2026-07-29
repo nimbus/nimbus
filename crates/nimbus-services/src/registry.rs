@@ -272,6 +272,24 @@ mod tests {
     }
 
     #[test]
+    fn not_ready_endpoint_withdrawal_cannot_materialize_a_service_binding() {
+        let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+        let handle = SandboxHandle::new(
+            tenant_id,
+            SandboxId::new("sandbox-withdrawn"),
+            "db",
+            SandboxBackendKind::Krun,
+            SandboxStatus::NotReady,
+            Vec::new(),
+        );
+
+        assert!(
+            service_binding_from_handle(&handle).is_none(),
+            "a backend-withdrawn NotReady projection must not become a logical service binding"
+        );
+    }
+
+    #[test]
     fn snapshot_skips_sandboxes_for_a_different_tenant() {
         let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
         let other_tenant = TenantId::new("tenant-b").expect("tenant id should be valid");

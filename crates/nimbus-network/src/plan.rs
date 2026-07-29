@@ -5,9 +5,12 @@ use std::str::FromStr;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 
-use crate::{NetworkCapabilityRequirements, NetworkPlanId, NetworkResourceGeneration};
+use crate::{
+    NetworkCapabilityRequirements, NetworkPlanId, NetworkReadinessRequirement,
+    NetworkReadinessRequirementError, NetworkResourceGeneration,
+};
 
-const PLAN_DIGEST_DOMAIN: &[u8] = b"nimbus.network.plan.digest.v1\0";
+const PLAN_DIGEST_DOMAIN: &[u8] = b"nimbus.network.plan.digest.v2\0";
 
 /// SHA-256 digest of the upper-layer canonical resource-plan encoding.
 ///
@@ -47,6 +50,7 @@ impl NetworkPlanDigest {
     pub fn for_content(
         content_digest: NetworkPlanContentDigest,
         requirements: &NetworkCapabilityRequirements,
+        readiness_requirements: &[NetworkReadinessRequirement],
     ) -> Self {
         // These closed value objects contain only enums, booleans, structs, and
         // BTreeSets. Their serde field order and set order are deterministic,
@@ -55,11 +59,17 @@ impl NetworkPlanDigest {
             .expect("closed network capability requirements always serialize");
         let requirements_len = u64::try_from(requirements.len())
             .expect("a serialized Rust value length fits u64 on supported targets");
+        let readiness_requirements = serde_json::to_vec(readiness_requirements)
+            .expect("closed network readiness requirements always serialize");
+        let readiness_requirements_len = u64::try_from(readiness_requirements.len())
+            .expect("a serialized Rust value length fits u64 on supported targets");
         let mut digest = Sha256::new();
         digest.update(PLAN_DIGEST_DOMAIN);
         digest.update(content_digest.as_bytes());
         digest.update(requirements_len.to_be_bytes());
         digest.update(requirements);
+        digest.update(readiness_requirements_len.to_be_bytes());
+        digest.update(readiness_requirements);
         Self(digest.finalize().into())
     }
 
@@ -177,12 +187,13 @@ impl StdError for NetworkPlanDigestParseError {}
 /// distinct content digest and typed capability requirements are the complete
 /// desired state from which [`Self::digest`] is derived.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "NetworkPlanWire")]
 pub struct NetworkPlan {
     plan_id: NetworkPlanId,
     generation: NetworkResourceGeneration,
     content_digest: NetworkPlanContentDigest,
     requirements: NetworkCapabilityRequirements,
+    readiness_requirements: Vec<NetworkReadinessRequirement>,
 }
 
 impl NetworkPlan {
@@ -200,7 +211,20 @@ impl NetworkPlan {
             generation,
             content_digest,
             requirements,
+            readiness_requirements: Vec::new(),
         }
+    }
+
+    /// Add the complete canonical desired readiness requirement set.
+    ///
+    /// Input ordering is normalized; exact duplicates are rejected instead of
+    /// being silently collapsed.
+    pub fn with_readiness_requirements(
+        mut self,
+        requirements: impl IntoIterator<Item = NetworkReadinessRequirement>,
+    ) -> Result<Self, NetworkReadinessRequirementError> {
+        self.readiness_requirements = crate::readiness::canonicalize_requirements(requirements)?;
+        Ok(self)
     }
 
     /// Stable identity of this connectivity plan across generations.
@@ -220,12 +244,21 @@ impl NetworkPlan {
 
     /// Domain-separated digest of resource content plus requirements.
     pub fn digest(&self) -> NetworkPlanDigest {
-        NetworkPlanDigest::for_content(self.content_digest, &self.requirements)
+        NetworkPlanDigest::for_content(
+            self.content_digest,
+            &self.requirements,
+            &self.readiness_requirements,
+        )
     }
 
     /// Provider-neutral capabilities required by this desired generation.
     pub fn requirements(&self) -> &NetworkCapabilityRequirements {
         &self.requirements
+    }
+
+    /// Canonically ordered desired readiness requirements.
+    pub fn readiness_requirements(&self) -> &[NetworkReadinessRequirement] {
+        &self.readiness_requirements
     }
 
     /// Decide whether another desired envelope is an idempotent replay or a
@@ -244,7 +277,8 @@ impl NetworkPlan {
             }),
             std::cmp::Ordering::Equal
                 if candidate.content_digest != self.content_digest
-                    || candidate.requirements != self.requirements =>
+                    || candidate.requirements != self.requirements
+                    || candidate.readiness_requirements != self.readiness_requirements =>
             {
                 Err(NetworkPlanUpdateError::EqualGenerationContentConflict {
                     generation: self.generation,
@@ -253,6 +287,30 @@ impl NetworkPlan {
             std::cmp::Ordering::Equal => Ok(NetworkPlanUpdate::Idempotent),
             std::cmp::Ordering::Greater => Ok(NetworkPlanUpdate::Advance),
         }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NetworkPlanWire {
+    plan_id: NetworkPlanId,
+    generation: NetworkResourceGeneration,
+    content_digest: NetworkPlanContentDigest,
+    requirements: NetworkCapabilityRequirements,
+    readiness_requirements: Vec<NetworkReadinessRequirement>,
+}
+
+impl TryFrom<NetworkPlanWire> for NetworkPlan {
+    type Error = NetworkReadinessRequirementError;
+
+    fn try_from(wire: NetworkPlanWire) -> Result<Self, Self::Error> {
+        NetworkPlan::new(
+            wire.plan_id,
+            wire.generation,
+            wire.content_digest,
+            wire.requirements,
+        )
+        .with_readiness_requirements(wire.readiness_requirements)
     }
 }
 
@@ -343,10 +401,10 @@ mod tests {
             content_digest
         );
 
-        let plan_digest = NetworkPlanDigest::for_content(content_digest, &test_requirements());
+        let plan_digest = NetworkPlanDigest::for_content(content_digest, &test_requirements(), &[]);
         assert_eq!(
             plan_digest.to_string(),
-            "dd1314e61f5027ead64e890f99fd4c421defb60ae4edda124924e0b522f4fe60"
+            "7faeb95f648631e78863a829113ddc7a23f4b949278e44f81c5fb5c033b39384"
         );
         assert_eq!(
             serde_json::from_str::<NetworkPlanDigest>(
@@ -471,6 +529,11 @@ mod tests {
             )
         );
         assert_eq!(
+            wire.get("readiness_requirements"),
+            Some(&serde_json::json!([])),
+            "empty readiness remains explicit desired state on the wire"
+        );
+        assert_eq!(
             wire.get("content_digest"),
             Some(
                 &serde_json::to_value(plan.content_digest())
@@ -490,6 +553,16 @@ mod tests {
         assert!(
             serde_json::from_value::<NetworkPlan>(missing_requirements).is_err(),
             "requirements are desired state and must never default"
+        );
+
+        let mut missing_readiness = wire.clone();
+        missing_readiness
+            .as_object_mut()
+            .expect("plan wire should be an object")
+            .remove("readiness_requirements");
+        assert!(
+            serde_json::from_value::<NetworkPlan>(missing_readiness).is_err(),
+            "readiness requirements are desired state and must never default"
         );
 
         let mut supplied_final_digest = wire;

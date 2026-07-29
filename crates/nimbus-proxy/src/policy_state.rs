@@ -10,8 +10,8 @@ impl PolicyGeneration {
         Self(1)
     }
 
-    pub(crate) fn next(self) -> Self {
-        Self(self.0.saturating_add(1))
+    pub(crate) fn next(self) -> Option<Self> {
+        self.0.checked_add(1).map(Self)
     }
 
     pub fn get(self) -> u64 {
@@ -79,12 +79,60 @@ pub enum PolicyReloadObservation {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkloadPepReadiness {
-    pub ready: bool,
+    pub(crate) ready: bool,
     /// False after the first durable decision-log append failure. This is
     /// sticky for the lifetime of the PEP, so readiness fail-closes until the
     /// process restarts with a healthy audit sink.
-    pub audit_healthy: bool,
-    pub policy_generation: Option<PolicyGeneration>,
+    pub(crate) audit_healthy: bool,
+    pub(crate) worker_live: bool,
+    pub(crate) policy_generation: Option<PolicyGeneration>,
+}
+
+impl WorkloadPepReadiness {
+    /// True only while a worker, active policy, and healthy audit sink coexist.
+    pub const fn is_ready(&self) -> bool {
+        self.ready
+    }
+
+    /// Sticky durable decision-log health for this PEP lifetime.
+    pub const fn audit_healthy(&self) -> bool {
+        self.audit_healthy
+    }
+
+    /// Whether the PEP accept worker is still live.
+    pub const fn worker_live(&self) -> bool {
+        self.worker_live
+    }
+
+    /// Current provider-local policy generation, when a policy is active.
+    pub const fn policy_generation(&self) -> Option<PolicyGeneration> {
+        self.policy_generation
+    }
+}
+
+/// Atomic read-only policy and lifecycle evidence for one running PEP.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkloadPepPolicyEvidence {
+    readiness: WorkloadPepReadiness,
+    policy_matches: bool,
+    reload_attempt: Option<PolicyReloadAttempt>,
+}
+
+impl WorkloadPepPolicyEvidence {
+    /// Worker, audit, and active-policy readiness from the same policy lock.
+    pub fn readiness(&self) -> &WorkloadPepReadiness {
+        &self.readiness
+    }
+
+    /// Whether active sandbox policy bytes equal the caller's expected policy.
+    pub const fn policy_matches(&self) -> bool {
+        self.policy_matches
+    }
+
+    /// Durable reload attempt tagged on the active policy, when one exists.
+    pub const fn reload_attempt(&self) -> Option<PolicyReloadAttempt> {
+        self.reload_attempt
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -196,11 +244,13 @@ impl EgressProxyPolicyState {
             PolicyReloadObservation::Untagged | PolicyReloadObservation::Different(_) => {}
         }
 
-        let policy_generation = self
-            .last_known_good
-            .as_ref()
-            .map(|current| current.policy_generation.next())
-            .unwrap_or_else(PolicyGeneration::initial);
+        let policy_generation = match self.last_known_good.as_ref() {
+            Some(current) => current.policy_generation.next().ok_or_else(|| {
+                "egress proxy policy generation exhausted; last-known-good policy retained"
+                    .to_owned()
+            })?,
+            None => PolicyGeneration::initial(),
+        };
         self.last_known_good = Some(LastKnownGoodPolicy {
             policy_generation,
             reload_attempt: Some(attempt),
@@ -212,15 +262,30 @@ impl EgressProxyPolicyState {
         })
     }
 
-    pub(crate) fn readiness(&self, audit_healthy: bool) -> WorkloadPepReadiness {
+    pub(crate) fn readiness(&self, audit_healthy: bool, worker_live: bool) -> WorkloadPepReadiness {
         let policy_generation = self
             .last_known_good
             .as_ref()
             .map(|policy| policy.policy_generation);
         WorkloadPepReadiness {
-            ready: policy_generation.is_some() && audit_healthy,
+            ready: policy_generation.is_some() && audit_healthy && worker_live,
             audit_healthy,
+            worker_live,
             policy_generation,
+        }
+    }
+
+    pub(crate) fn policy_evidence(
+        &self,
+        expected: &CompiledEgressPolicy,
+        audit_healthy: bool,
+        worker_live: bool,
+    ) -> WorkloadPepPolicyEvidence {
+        let active = self.last_known_good.as_ref();
+        WorkloadPepPolicyEvidence {
+            readiness: self.readiness(audit_healthy, worker_live),
+            policy_matches: active.is_some_and(|policy| policy.policy.sandbox() == expected),
+            reload_attempt: active.and_then(|policy| policy.reload_attempt),
         }
     }
 }
@@ -252,7 +317,7 @@ mod tests {
     fn readiness_fails_closed_when_audit_health_is_false() {
         let state = EgressProxyPolicyState::with_policy(CompiledEgressPolicy::deny_all());
 
-        let readiness = state.readiness(false);
+        let readiness = state.readiness(false, true);
 
         assert!(
             !readiness.ready,
@@ -326,6 +391,46 @@ mod tests {
         assert!(
             error.contains("stale relative to active attempt"),
             "{error}"
+        );
+    }
+
+    #[test]
+    fn policy_generation_overflow_preserves_last_known_good() {
+        let mut state = EgressProxyPolicyState::with_policy(CompiledEgressPolicy::deny_all());
+        state
+            .last_known_good
+            .as_mut()
+            .expect("fixture should have an active policy")
+            .policy_generation = PolicyGeneration(u64::MAX);
+        let before = state
+            .last_known_good
+            .clone()
+            .expect("fixture should retain its last-known-good policy");
+
+        let error = state
+            .reload_for_attempt(policy("overflow-candidate", 8443), attempt(2, 1))
+            .expect_err("provider policy generation exhaustion must fail closed");
+
+        assert!(
+            error.contains("generation exhausted"),
+            "overflow should produce a stable exhaustion diagnostic: {error}"
+        );
+        let after = state
+            .last_known_good
+            .as_ref()
+            .expect("overflow must preserve the last-known-good policy");
+        assert_eq!(
+            after.policy_generation, before.policy_generation,
+            "overflow must not reuse the maximum generation"
+        );
+        assert_eq!(
+            after.reload_attempt, before.reload_attempt,
+            "overflow must not publish the candidate attempt"
+        );
+        assert_eq!(
+            after.policy.sandbox(),
+            before.policy.sandbox(),
+            "overflow must not replace the active policy bytes"
         );
     }
 }

@@ -672,7 +672,7 @@ fn reload_acknowledgement_before_completion_persistence_retains_durable_desired_
         .expect("running PEP should remain registered");
     assert_eq!(
         acknowledged
-            .policy_generation
+            .policy_generation()
             .map(|generation| generation.get()),
         Some(2),
         "the first exact reload attempt should advance the process-local PEP generation once"
@@ -701,7 +701,8 @@ fn reload_acknowledgement_before_completion_persistence_retains_durable_desired_
         .expect("reconciled provider state should inspect")
         .expect("running PEP should remain registered");
     assert_eq!(
-        reconciled.policy_generation, acknowledged.policy_generation,
+        reconciled.policy_generation(),
+        acknowledged.policy_generation(),
         "inspect-before-retry must not apply an already exact provider attempt twice"
     );
 }

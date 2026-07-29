@@ -15,6 +15,7 @@ use tempfile::TempDir;
 
 use super::support::*;
 use super::*;
+use crate::backends::oci::command::CommandSpec;
 use crate::backends::oci::egress::PepPreAdoptionReleaseAuthority;
 
 const CRASH_CHILD_TEST: &str =
@@ -126,6 +127,317 @@ fn fresh_process_recovers_acknowledged_egress_reload_without_rollback_or_duplica
         "fresh recovery child did not report the exact converged state\nstdout:\n{}\nstderr:\n{}",
         recovery.stdout,
         recovery.stderr
+    );
+}
+
+#[test]
+fn container_ready_rejects_active_pep_for_prior_desired_policy_attempt() {
+    let root = TempDir::new().expect("stale-policy state root should exist");
+    let pep_port = unused_loopback_port();
+    let backend = ContainerSandboxBackend::new(backend_config(root.path(), pep_port));
+    let sandbox_id = SandboxId::new("container-stale-egress-policy");
+    let mut manifest = backend
+        .plan_start_with_id(&sample_spec(), &sandbox_id, None, None)
+        .expect("stale-policy fixture should reserve exact network authority")
+        .manifest;
+    let launch_claim = manifest
+        .launch_reservation_claim
+        .clone()
+        .expect("fresh execute plan should retain its launch claim");
+    backend
+        .ensure_egress_proxy_running_with_release_authority(
+            &manifest,
+            PepPreAdoptionReleaseAuthority::FreshLaunch(&launch_claim),
+        )
+        .expect("generation-1 PEP should start");
+    manifest.launch_reservation_claim = None;
+    manifest.conmon_launch.state_command = CommandSpec::new("/bin/sh").args([
+        "-c".to_owned(),
+        format!(
+            "printf '%s\\n' '{{\"id\":\"{}\",\"status\":\"running\"}}'",
+            manifest.handle.id
+        ),
+    ]);
+
+    let prior_policy_readiness = backend
+        .egress_proxies
+        .readiness(&manifest.spec.tenant_id, &sandbox_id)
+        .expect("generation-1 PEP readiness should inspect")
+        .expect("generation-1 PEP should remain registered");
+    assert!(prior_policy_readiness.is_ready());
+    assert!(prior_policy_readiness.audit_healthy());
+    assert_eq!(
+        prior_policy_readiness
+            .policy_generation()
+            .map(|generation| generation.get()),
+        Some(1),
+        "fixture must retain the initial active policy generation"
+    );
+
+    let pending_attempt = manifest
+        .egress_policy_reload
+        .begin()
+        .expect("desired generation 2 should begin");
+    manifest.spec.egress = desired_policy();
+    backend
+        .write_manifest(&manifest)
+        .expect("desired generation 2 Applying state should be durable before provider effect");
+    assert_eq!(manifest.egress_policy_reload.desired_generation().get(), 2);
+    assert_eq!(manifest.egress_policy_reload.latest_attempt_generation(), 1);
+    assert_eq!(
+        manifest
+            .egress_policy_reload
+            .pending_attempt()
+            .expect("Applying state should expose its exact pending attempt"),
+        Some(pending_attempt)
+    );
+    assert!(manifest.egress_policy_reload.is_applying());
+
+    let still_prior = backend
+        .egress_proxies
+        .readiness(&manifest.spec.tenant_id, &sandbox_id)
+        .expect("prior-policy PEP readiness should remain inspectable")
+        .expect("prior-policy PEP should remain registered");
+    assert_eq!(
+        still_prior.policy_generation(),
+        prior_policy_readiness.policy_generation(),
+        "persisting desired generation 2 must not mutate the generation-1 PEP"
+    );
+    let launch_error = backend
+        .require_authenticated_egress_readiness(&manifest)
+        .expect_err("the exact pre-spawn gate must reject the stale PEP dependency");
+    assert!(
+        launch_error.to_string().contains("denied launch")
+            && launch_error
+                .to_string()
+                .contains("egress PEP dependency is not ready"),
+        "the pre-spawn gate must fail before any runtime creator effect: {launch_error}"
+    );
+
+    let observed = backend
+        .inspect_sync(&sandbox_id)
+        .expect("running stale-policy fixture should remain inspectable")
+        .expect("running stale-policy fixture should remain visible");
+    assert!(
+        observed.published_endpoints.is_empty(),
+        "stale PEP policy evidence must withdraw published endpoints"
+    );
+    assert_eq!(
+        observed.status,
+        SandboxStatus::NotReady,
+        "a running container must not report Ready while its PEP realizes the prior desired policy"
+    );
+
+    backend
+        .reload_egress_policy(&sandbox_id, desired_policy())
+        .expect("exact current attachment must permit the stale policy bytes to reconcile");
+    let completed = backend
+        .read_manifest(&sandbox_id)
+        .expect("completed stale-policy manifest should inspect")
+        .expect("completed stale-policy manifest should remain");
+    assert!(
+        !completed.egress_policy_reload.is_applying(),
+        "exact reconciliation should complete the durable attempt"
+    );
+    backend
+        .require_authenticated_egress_readiness(&completed)
+        .expect("exact reconciled attachment should become ready");
+    let reconciled = backend
+        .egress_proxies
+        .readiness(&completed.spec.tenant_id, &sandbox_id)
+        .expect("reconciled PEP should inspect")
+        .expect("reconciled PEP should remain registered");
+    assert_eq!(
+        reconciled
+            .policy_generation()
+            .map(|generation| generation.get()),
+        Some(2),
+        "the exact durable attempt should advance the stale PEP exactly once"
+    );
+}
+
+#[test]
+fn stable_reload_reseeds_exact_attempt_after_pep_process_replacement() {
+    let root = TempDir::new().expect("replacement state root should exist");
+    let pep_port = unused_loopback_port();
+    let config = backend_config(root.path(), pep_port);
+    let backend = ContainerSandboxBackend::new(config.clone());
+    let sandbox_id = SandboxId::new("stable-reload-pep-replacement");
+    let mut manifest = backend
+        .plan_start_with_id(&sample_spec(), &sandbox_id, None, None)
+        .expect("replacement fixture should reserve exact network authority")
+        .manifest;
+    backend
+        .write_manifest(&manifest)
+        .expect("replacement baseline manifest should publish");
+    backend
+        .ensure_egress_proxy_running_with_release_authority(
+            &manifest,
+            PepPreAdoptionReleaseAuthority::FreshLaunch(
+                manifest
+                    .launch_reservation_claim
+                    .as_ref()
+                    .expect("fresh execute plan should retain its reservation claim"),
+            ),
+        )
+        .expect("replacement baseline PEP should start");
+    manifest.launch_reservation_claim = None;
+    backend
+        .write_manifest(&manifest)
+        .expect("replacement running manifest should publish");
+
+    let desired = desired_policy();
+    backend
+        .reload_egress_policy(&sandbox_id, desired.clone())
+        .expect("first exact reload should complete");
+    let completed = backend
+        .read_manifest(&sandbox_id)
+        .expect("stable manifest should inspect")
+        .expect("stable manifest should remain");
+    assert!(!completed.egress_policy_reload.is_applying());
+    assert_eq!(completed.egress_policy_reload.desired_generation().get(), 2);
+    assert_eq!(
+        completed.egress_policy_reload.latest_attempt_generation(),
+        1
+    );
+    let first = backend
+        .egress_proxies
+        .readiness(&completed.spec.tenant_id, &sandbox_id)
+        .expect("first PEP should inspect")
+        .expect("first PEP should remain registered");
+    assert_eq!(
+        first.policy_generation().map(|generation| generation.get()),
+        Some(2),
+        "the completed attempt should advance the original PEP exactly once"
+    );
+    drop(backend);
+
+    let replacement = ContainerSandboxBackend::new(config);
+    replacement
+        .ensure_egress_proxy_running_with_release_authority(
+            &completed,
+            PepPreAdoptionReleaseAuthority::Retain,
+        )
+        .expect("release-authority reconstruction should seed the replacement PEP");
+    let replaced = replacement
+        .egress_proxies
+        .readiness(&completed.spec.tenant_id, &sandbox_id)
+        .expect("replacement PEP should inspect")
+        .expect("replacement PEP should be registered");
+    assert_eq!(
+        replaced
+            .policy_generation()
+            .map(|generation| generation.get()),
+        Some(2),
+        "replacement PEP must replay the exact durable attempt instead of remaining untagged"
+    );
+    replacement
+        .require_authenticated_egress_readiness(&completed)
+        .expect("replacement PEP should be launch-ready without a reload API call");
+
+    replacement
+        .reload_egress_policy(&sandbox_id, desired)
+        .expect("stable exact replacement replay should be idempotent");
+    let replayed = replacement
+        .egress_proxies
+        .readiness(&completed.spec.tenant_id, &sandbox_id)
+        .expect("replayed replacement PEP should inspect")
+        .expect("replayed replacement PEP should remain registered");
+    assert_eq!(
+        replayed.policy_generation(),
+        replaced.policy_generation(),
+        "stable replay must not duplicate the provider generation"
+    );
+}
+
+#[test]
+fn applying_reload_rejects_foreign_listener_before_policy_or_manifest_completion() {
+    let root = TempDir::new().expect("foreign-listener state root should exist");
+    let pep_port = unused_loopback_port();
+    let backend = ContainerSandboxBackend::new(backend_config(root.path(), pep_port));
+    let sandbox_id = SandboxId::new("reload-foreign-listener");
+    let mut manifest = backend
+        .plan_start_with_id(&sample_spec(), &sandbox_id, None, None)
+        .expect("foreign-listener fixture should reserve exact network authority")
+        .manifest;
+    backend
+        .write_manifest(&manifest)
+        .expect("foreign-listener baseline manifest should publish");
+    backend
+        .ensure_egress_proxy_running_with_release_authority(
+            &manifest,
+            PepPreAdoptionReleaseAuthority::FreshLaunch(
+                manifest
+                    .launch_reservation_claim
+                    .as_ref()
+                    .expect("fresh execute plan should retain its reservation claim"),
+            ),
+        )
+        .expect("foreign-listener baseline PEP should start");
+    manifest.launch_reservation_claim = None;
+    backend
+        .write_manifest(&manifest)
+        .expect("foreign-listener running manifest should publish");
+    let policy_before = backend
+        .egress_proxies
+        .readiness(&manifest.spec.tenant_id, &sandbox_id)
+        .expect("baseline PEP should inspect")
+        .expect("baseline PEP should remain registered");
+    assert_eq!(
+        policy_before
+            .policy_generation()
+            .map(|generation| generation.get()),
+        Some(1)
+    );
+
+    manifest
+        .egress_policy_reload
+        .begin()
+        .expect("foreign-listener Applying attempt should begin");
+    let desired = desired_policy();
+    manifest.spec.egress = desired.clone();
+    manifest
+        .egress_proxy
+        .as_mut()
+        .expect("execute manifest should retain its PEP assignment")
+        .host = Ipv4Addr::new(127, 0, 0, 2).to_string();
+    backend
+        .write_manifest(&manifest)
+        .expect("foreign-listener Applying state should publish");
+    let applying_bytes = std::fs::read(&manifest.conmon_layout.manifest_path)
+        .expect("Applying manifest bytes should read");
+
+    let error = backend
+        .reload_egress_policy(&sandbox_id, desired)
+        .expect_err("foreign listener evidence must reject durable reload reconciliation");
+    assert!(
+        error.to_string().contains("listener")
+            || error.to_string().contains("attachment")
+            || error.to_string().contains("authority"),
+        "rejection must identify the unauthenticated lifecycle attachment: {error}"
+    );
+    let policy_after = backend
+        .egress_proxies
+        .readiness(&manifest.spec.tenant_id, &sandbox_id)
+        .expect("rejected PEP should remain inspectable")
+        .expect("rejected PEP should remain registered");
+    assert_eq!(
+        policy_after, policy_before,
+        "attachment rejection must precede every PEP policy mutation"
+    );
+    assert_eq!(
+        std::fs::read(&manifest.conmon_layout.manifest_path)
+            .expect("rejected Applying manifest bytes should read"),
+        applying_bytes,
+        "attachment rejection must not complete or otherwise rewrite durable reload state"
+    );
+    let persisted = backend
+        .read_manifest(&sandbox_id)
+        .expect("rejected manifest should inspect")
+        .expect("rejected manifest should remain");
+    assert!(
+        persisted.egress_policy_reload.is_applying(),
+        "unauthenticated registration must not complete the durable reload attempt"
     );
 }
 
@@ -255,7 +567,7 @@ fn egress_reload_recovery_child() {
         .expect("fresh PEP should be registered");
     assert_eq!(
         readiness
-            .policy_generation
+            .policy_generation()
             .map(|generation| generation.get()),
         Some(2),
         "the fresh PEP should tag the exact durable attempt once"
@@ -271,7 +583,8 @@ fn egress_reload_recovery_child() {
         .expect("replayed PEP readiness should inspect")
         .expect("replayed PEP should remain registered");
     assert_eq!(
-        replay_readiness.policy_generation, readiness.policy_generation,
+        replay_readiness.policy_generation(),
+        readiness.policy_generation(),
         "stable replay must not apply the provider attempt twice"
     );
     assert_eq!(

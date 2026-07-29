@@ -525,7 +525,7 @@ impl KrunSandboxBackend {
                 shutdown_requested: manifest.shutdown_requested,
                 current_status: manifest.status,
             },
-            || Ok(running_status(manifest)),
+            || self.running_status_with_egress(manifest),
         )
     }
 
@@ -542,8 +542,17 @@ impl KrunSandboxBackend {
                 shutdown_requested: manifest.shutdown_requested,
                 current_status: manifest.status,
             },
-            || Ok(running_status(manifest)),
+            || self.running_status_with_egress(manifest),
         )
+    }
+
+    fn running_status_with_egress(&self, manifest: &KrunSandboxManifest) -> Result<SandboxStatus> {
+        let application_status = running_status(manifest);
+        if self.authenticated_egress_readiness(manifest)?.is_ready() {
+            Ok(application_status)
+        } else {
+            Ok(SandboxStatus::NotReady)
+        }
     }
 
     fn maybe_restart_after_exit(&self, manifest: &mut KrunSandboxManifest) -> Result<bool> {
@@ -1178,11 +1187,33 @@ impl KrunSandboxBackend {
         // still fails closed because crun/libkrun cannot spawn the VMM without
         // /dev/kvm. Deny on every non-Linux build.
         ensure_linux_host("krun")?;
-        self.ensure_execute_egress_preconditions(
-            &manifest.spec.tenant_id,
-            &manifest.handle.id,
-            &manifest.network_layout.netns_path,
-        )
+        if !manifest.network_layout.netns_path.exists() {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "krun sandbox {} denied launch: deny-by-default network namespace {} is not \
+                     installed",
+                    manifest.handle.id,
+                    manifest.network_layout.netns_path.display()
+                ),
+            });
+        }
+        self.require_authenticated_egress_readiness(manifest)
+    }
+
+    pub(super) fn require_authenticated_egress_readiness(
+        &self,
+        manifest: &KrunSandboxManifest,
+    ) -> Result<()> {
+        match self.authenticated_egress_readiness(manifest)? {
+            EgressReadinessState::Ready(_) => Ok(()),
+            EgressReadinessState::NotReady(reason) => Err(SandboxError::OperationFailed {
+                message: format!(
+                    "krun sandbox {} denied launch: egress PEP dependency is not ready: \
+                     {reason:?}",
+                    manifest.handle.id
+                ),
+            }),
+        }
     }
 
     /// Platform-independent half of the readiness gate: deny unless the
@@ -1190,6 +1221,7 @@ impl KrunSandboxBackend {
     /// with an active policy generation. Split out from
     /// [`KrunSandboxBackend::ensure_execute_egress_enforced`] so the deny/permit
     /// matrix is unit-testable without a Linux host or `/dev/kvm`.
+    #[cfg(test)]
     pub(super) fn ensure_execute_egress_preconditions(
         &self,
         tenant_id: &nimbus_core::TenantId,
@@ -1219,7 +1251,7 @@ impl KrunSandboxBackend {
                     "krun sandbox {id} denied launch: no egress policy-enforcement proxy is running for the deny-by-default namespace"
                 ),
             }),
-            Some(readiness) if !readiness.ready || readiness.policy_generation.is_none() => {
+            Some(readiness) if !readiness.is_ready() || readiness.policy_generation().is_none() => {
                 Err(SandboxError::OperationFailed {
                     message: format!(
                         "krun sandbox {id} denied launch: egress policy-enforcement proxy is not ready (no active policy generation loaded)"
@@ -1228,6 +1260,19 @@ impl KrunSandboxBackend {
             }
             Some(_) => Ok(()),
         }
+    }
+
+    fn authenticated_egress_readiness(
+        &self,
+        manifest: &KrunSandboxManifest,
+    ) -> Result<EgressReadinessState> {
+        self.egress_proxies.authenticated_readiness(
+            &manifest.spec.tenant_id,
+            &manifest.handle.id,
+            manifest.egress_proxy.as_ref(),
+            &manifest.spec.egress,
+            None,
+        )
     }
 
     fn ensure_egress_proxy_running_with_release_authority(

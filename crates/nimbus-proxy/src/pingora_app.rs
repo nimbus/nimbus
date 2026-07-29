@@ -1,6 +1,5 @@
 use std::io;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -20,6 +19,7 @@ use crate::pingora_io::FinalResponseWriteGate;
 use crate::policy_state::PolicyGeneration;
 use crate::request::{ParsedProxyRequest, ProxyRequestMode};
 use crate::terminal::{ResponseStartedSignal, emit_terminal_log, record_durable_decision};
+use crate::worker::WorkloadPepHealth;
 
 const UPSTREAM_FAILURE_BODY: &str = "egress proxy failed to dial the upstream";
 
@@ -38,7 +38,7 @@ pub(crate) struct ForwardRequestPlan {
     pub(crate) phase_recorder: RequestPhaseRecorder,
     pub(crate) decision_logger: DecisionLogger,
     pub(crate) durable_decision_sink: DurableDecisionSink,
-    pub(crate) audit_healthy: Arc<AtomicBool>,
+    pub(crate) health: Arc<WorkloadPepHealth>,
     pub(crate) response_started_signal: ResponseStartedSignal,
     pub(crate) final_response_write_gate: FinalResponseWriteGate,
 }
@@ -114,7 +114,7 @@ impl NimbusForwardApp {
         record_durable_decision(
             &self.plan.phase_recorder,
             &self.plan.durable_decision_sink,
-            self.plan.audit_healthy.as_ref(),
+            self.plan.health.as_ref(),
             decision_log,
         )
     }

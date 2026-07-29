@@ -1,7 +1,6 @@
 use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use nimbus_egress::{EgressProtocol, EgressRequest, EgressRule, LayeredEgressPolicy};
@@ -32,6 +31,7 @@ use crate::request::{ParsedProxyRequest, ProxyRequestMode};
 use crate::response::{HttpProxyResponse, write_http_response_async};
 use crate::terminal::ResponseStartedSignal;
 use crate::tls_authority::WorkloadPepTlsAuthority;
+use crate::worker::WorkloadPepHealth;
 
 /// Upper bound on informational (1xx) responses forwarded per intercepted
 /// request. RFC-conformant upstreams send at most a couple (100 Continue,
@@ -68,7 +68,7 @@ pub(crate) struct HttpsInterceptContext<'a> {
     pub(crate) phase_recorder: &'a RequestPhaseRecorder,
     pub(crate) decision_logger: &'a DecisionLogger,
     pub(crate) durable_decision_sink: &'a DurableDecisionSink,
-    pub(crate) audit_healthy: &'a AtomicBool,
+    pub(crate) health: &'a WorkloadPepHealth,
     pub(crate) response_started_signal: ResponseStartedSignal,
     pub(crate) request_id: &'a str,
     pub(crate) policy_generation: PolicyGeneration,
@@ -124,7 +124,7 @@ fn record_inner_durable_decision(
             Ok(())
         }
         Err(error) => {
-            context.audit_healthy.store(false, Ordering::SeqCst);
+            context.health.mark_audit_unhealthy();
             Err(error)
         }
     }

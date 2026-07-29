@@ -36,9 +36,9 @@ use crate::backends::oci::buildah::OciImageLaunchDefaults;
 use crate::backends::oci::builder::OciDockerfileBuilder;
 use crate::backends::oci::conmon::{OciConmonConfig, OciConmonLayout, build_launch_plan};
 use crate::backends::oci::egress::{
-    EgressProxyAssignment, EgressProxyRegistry, PepPreAdoptionReleaseAuthority,
-    egress_decision_log_root, egress_listener_reservation, egress_proxy_assignment,
-    egress_trust_anchor_mount, egress_trust_anchor_root,
+    EgressProxyAssignment, EgressProxyRegistry, EgressReadinessState,
+    PepPreAdoptionReleaseAuthority, egress_decision_log_root, egress_listener_reservation,
+    egress_proxy_assignment, egress_trust_anchor_mount, egress_trust_anchor_root,
     ensure_egress_proxy_running as ensure_oci_egress_proxy_running,
     ensure_egress_proxy_running_with_release_authority,
 };
@@ -1114,6 +1114,7 @@ impl ContainerSandboxBackend {
                 None => PepPreAdoptionReleaseAuthority::Retain,
             },
         )?;
+        self.require_authenticated_egress_readiness(manifest)?;
         let runtime_state = self.spawn_creator_and_wait_for_runtime(manifest)?;
         if runtime_state != "running" {
             run_status_checked(&manifest.conmon_launch.start_command)?;
@@ -1173,8 +1174,17 @@ impl ContainerSandboxBackend {
                 current_status: manifest.status,
             },
             || {
-                self.ensure_egress_proxy_running(manifest)?;
-                Ok(running_status(manifest))
+                let application_status = running_status(manifest);
+                let mut readiness = self.authenticated_egress_readiness(manifest)?;
+                if readiness.is_missing_registration() {
+                    self.ensure_egress_proxy_running(manifest)?;
+                    readiness = self.authenticated_egress_readiness(manifest)?;
+                }
+                if readiness.is_ready() {
+                    Ok(application_status)
+                } else {
+                    Ok(SandboxStatus::NotReady)
+                }
             },
         )
     }
@@ -1408,7 +1418,8 @@ impl ContainerSandboxBackend {
             &manifest.handle.id,
             manifest.egress_proxy.as_ref(),
             &manifest.spec.egress,
-        )
+        )?;
+        self.replay_stable_egress_reload_attempt(manifest)
     }
 
     fn ensure_egress_proxy_running_with_release_authority(
@@ -1423,7 +1434,40 @@ impl ContainerSandboxBackend {
             manifest.egress_proxy.as_ref(),
             &manifest.spec.egress,
             release_authority,
+        )?;
+        // Once activation succeeds, replay failure must leave the registered
+        // PEP and its Active lifetime evidence intact for exact retry. The
+        // generic start path already owns pre-adoption compensation.
+        self.replay_stable_egress_reload_attempt(manifest)
+    }
+
+    fn authenticated_egress_readiness(
+        &self,
+        manifest: &ContainerSandboxManifest,
+    ) -> Result<EgressReadinessState> {
+        self.egress_proxies.authenticated_readiness(
+            &manifest.spec.tenant_id,
+            &manifest.handle.id,
+            manifest.egress_proxy.as_ref(),
+            &manifest.spec.egress,
+            Some(&manifest.egress_policy_reload),
         )
+    }
+
+    fn require_authenticated_egress_readiness(
+        &self,
+        manifest: &ContainerSandboxManifest,
+    ) -> Result<()> {
+        match self.authenticated_egress_readiness(manifest)? {
+            EgressReadinessState::Ready(_) => Ok(()),
+            EgressReadinessState::NotReady(reason) => Err(SandboxError::OperationFailed {
+                message: format!(
+                    "container sandbox {} denied launch: egress PEP dependency is not ready: \
+                     {reason:?}",
+                    manifest.handle.id
+                ),
+            }),
+        }
     }
 }
 

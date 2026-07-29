@@ -36,7 +36,7 @@ use crate::backends::oci::conmon::{
     OciConmonConfig, OciConmonLaunchPlan, OciConmonLayout, build_launch_plan,
 };
 use crate::backends::oci::egress::{
-    EgressProxyAssignment, EgressProxyRegistry, egress_decision_log_root,
+    EgressProxyAssignment, EgressProxyRegistry, EgressReadinessState, egress_decision_log_root,
     egress_listener_reservation, egress_proxy_assignment, egress_trust_anchor_mount,
     egress_trust_anchor_root,
 };

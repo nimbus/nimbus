@@ -1,5 +1,6 @@
 mod attachment_recovery;
 mod creator_recovery;
+mod egress_readiness;
 mod endpoint_projection;
 mod explicit_stop;
 mod generation_fencing;
@@ -66,7 +67,7 @@ fn execute_launch_denies_when_egress_pep_is_not_ready() {
         .expect("readiness should resolve")
         .expect("a PEP is registered");
     assert!(
-        !readiness.ready && readiness.policy_generation.is_none(),
+        !readiness.is_ready() && readiness.policy_generation().is_none(),
         "precondition: the registered PEP must be not-ready, got: {readiness:?}"
     );
 
@@ -105,7 +106,7 @@ fn execute_launch_permits_when_netns_installed_and_pep_ready() {
         .expect("readiness should resolve")
         .expect("a PEP is registered");
     assert!(
-        readiness.ready && readiness.policy_generation.is_some(),
+        readiness.is_ready() && readiness.policy_generation().is_some(),
         "precondition: the registered PEP must be ready, got: {readiness:?}"
     );
 

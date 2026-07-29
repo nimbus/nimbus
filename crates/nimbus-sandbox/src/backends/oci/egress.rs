@@ -45,17 +45,19 @@ use nimbus_network::{
     ListenerId, NetworkReservationClaim, PortBindClaim, PortLeaseEffectScope,
     PortLeaseLifetimeGuard, PortLeaseRecord, PortLeaseRequest,
 };
-#[cfg(test)]
-use nimbus_proxy::WorkloadPep;
 use nimbus_proxy::{
     AppendOnlyDecisionLogSink, DecisionLogSinkContext, EgressEngine, EgressProxyError,
     PreparedWorkloadPep, RegisteredLifecyclePhase, RegistrationDecision,
-    RetainedFailedRegistration, WorkloadPepConfig, WorkloadPepReadiness, WorkloadPepTlsAuthority,
+    RetainedFailedRegistration, WorkloadPepConfig, WorkloadPepTlsAuthority,
     fan_out_decision_loggers, tenant_decision_counter_sink,
 };
+#[cfg(test)]
+use nimbus_proxy::{WorkloadPep, WorkloadPepReadiness};
 
 mod cleanup;
 use cleanup::PepCleanupProgress;
+mod readiness;
+pub(crate) use readiness::{EgressReadinessState, EgressReloadAttachmentState};
 mod assignment;
 #[cfg(test)]
 pub(crate) use assignment::allocate_egress_proxy;
@@ -610,7 +612,7 @@ impl EgressProxyRegistry {
                         ),
                     });
                 }
-                return Ok(());
+                return self.require_running_policy_matches(tenant_id, id, policy);
             }
             RegistrationDecision::Occupied {
                 phase: RegisteredLifecyclePhase::Running,
@@ -882,6 +884,37 @@ impl EgressProxyRegistry {
         }
     }
 
+    fn require_running_policy_matches(
+        &self,
+        tenant_id: &TenantId,
+        id: &SandboxId,
+        policy: &EgressPolicy,
+    ) -> Result<()> {
+        let compiled = policy
+            .compile()
+            .map_err(|message| SandboxError::InvalidSpec { message })?;
+        let workload_id = Self::workload_id(tenant_id, id)?;
+        let evidence = self
+            .engine
+            .with_pep(&workload_id, |pep| pep.inspect_policy_evidence(&compiled))
+            .map_err(egress_proxy_error)?
+            .ok_or_else(|| SandboxError::OperationFailed {
+                message: format!(
+                    "running egress proxy for sandbox {id} disappeared during policy inspection"
+                ),
+            })?
+            .map_err(egress_proxy_error)?;
+        if evidence.policy_matches() && evidence.readiness().is_ready() {
+            return Ok(());
+        }
+        Err(SandboxError::OperationFailed {
+            message: format!(
+                "running egress proxy for sandbox {id} does not carry the exact expected active \
+                 policy, live worker, and healthy audit sink"
+            ),
+        })
+    }
+
     #[cfg(test)]
     pub(crate) fn ensure_running(
         &self,
@@ -911,6 +944,7 @@ impl EgressProxyRegistry {
     /// active-policy state otherwise. A readiness gate must require both that a
     /// proxy is registered AND that its `WorkloadPepReadiness` reports an active
     /// policy generation before permitting a workload to launch.
+    #[cfg(test)]
     pub(crate) fn readiness(
         &self,
         tenant_id: &TenantId,

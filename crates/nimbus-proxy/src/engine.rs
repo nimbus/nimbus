@@ -944,6 +944,28 @@ impl<A> EgressEngine<A> {
         }
     }
 
+    /// Inspect the running PEP and caller-owned attachment atomically.
+    ///
+    /// The callback runs under only the workload-local lifecycle lock. It is
+    /// for composition owners that must authenticate provider liveness and
+    /// durable attachment identity as one snapshot.
+    pub fn with_pep_and_attachment<R>(
+        &self,
+        id: &WorkloadId,
+        f: impl FnOnce(&WorkloadPep, &A) -> R,
+    ) -> Result<Option<R>> {
+        let Some(lifecycle) = self.lifecycle(id)? else {
+            return Ok(None);
+        };
+        let state = lifecycle.lock()?;
+        match &*state {
+            LifecycleState::Running { pep, attachment } => Ok(Some(f(pep, attachment))),
+            LifecycleState::Stopping { .. }
+            | LifecycleState::Retiring { .. }
+            | LifecycleState::Retired => Ok(None),
+        }
+    }
+
     /// Run `f` against the caller-owned lifecycle attachment for `id`.
     ///
     /// This is deliberately separate from [`Self::with_pep`]: composition

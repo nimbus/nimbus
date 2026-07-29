@@ -353,7 +353,7 @@
       "verification": "source-occurrence",
       "category": "socket-bind",
       "path": "crates/nimbus-proxy/src/worker.rs",
-      "line": 243,
+      "line": 246,
       "symbol": "PreparedWorkloadPep::prepare",
       "authority_kinds": [
         "listener-ownership-slot",
@@ -811,7 +811,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "<module>",
       "ordinal": 1,
-      "line": 227
+      "line": 230
     },
     {
       "site_id": "pep-listener-bind",
@@ -819,7 +819,7 @@
       "kind": "tcp-bind",
       "symbol": "prepare",
       "ordinal": 1,
-      "line": 243
+      "line": 246
     },
     {
       "site_id": "pep-listener-bind",
@@ -827,7 +827,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "<module>",
       "ordinal": 2,
-      "line": 398
+      "line": 402
     },
     {
       "site_id": "pep-listener-bind",
@@ -835,7 +835,7 @@
       "kind": "tcp-from-std",
       "symbol": "run",
       "ordinal": 1,
-      "line": 420
+      "line": 425
     },
     {
       "site_id": "pep-listener-bind",
@@ -843,7 +843,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "accept_loop",
       "ordinal": 1,
-      "line": 452
+      "line": 473
     },
     {
       "site_id": "machine-forwarder-port-effect",

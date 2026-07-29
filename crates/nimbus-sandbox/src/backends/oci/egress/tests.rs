@@ -7,6 +7,8 @@ use std::time::Duration;
 
 #[path = "tests/post_activation_cleanup.rs"]
 mod post_activation_cleanup;
+#[path = "tests/readiness.rs"]
+mod readiness;
 #[path = "tests/registration_failure.rs"]
 mod registration_failure;
 
@@ -1038,7 +1040,9 @@ fn readiness_reports_active_policy_for_a_running_proxy() {
         .expect("readiness lookup should succeed")
         .expect("a registered proxy should report readiness");
     assert!(
-        readiness.ready && readiness.audit_healthy && readiness.policy_generation.is_some(),
+        readiness.is_ready()
+            && readiness.audit_healthy()
+            && readiness.policy_generation().is_some(),
         "a PEP started with a compiled policy must be ready with an active generation: {readiness:?}"
     );
 }
@@ -1059,7 +1063,9 @@ fn readiness_reports_not_ready_for_a_policyless_proxy() {
         .expect("readiness lookup should succeed")
         .expect("the registered proxy should report readiness");
     assert!(
-        !readiness.ready && readiness.audit_healthy && readiness.policy_generation.is_none(),
+        !readiness.is_ready()
+            && readiness.audit_healthy()
+            && readiness.policy_generation().is_none(),
         "a PEP with no loaded policy must report not-ready so the gate denies: {readiness:?}"
     );
 }
@@ -1105,18 +1111,20 @@ fn reload_advances_generation_used_by_running_pep() {
         .expect("running PEP should remain registered");
     assert_eq!(
         (
-            before.ready,
-            before.audit_healthy,
-            before.policy_generation.map(|generation| generation.get()),
+            before.is_ready(),
+            before.audit_healthy(),
+            before
+                .policy_generation()
+                .map(|generation| generation.get()),
         ),
         (true, true, Some(1)),
         "initial deny-all policy must be the first active generation"
     );
     assert_eq!(
         (
-            after.ready,
-            after.audit_healthy,
-            after.policy_generation.map(|generation| generation.get()),
+            after.is_ready(),
+            after.audit_healthy(),
+            after.policy_generation().map(|generation| generation.get()),
         ),
         (true, true, Some(2)),
         "reload must advance the policy generation observed by the running PEP"

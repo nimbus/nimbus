@@ -1,6 +1,6 @@
 use std::io;
 use std::net::{SocketAddr, TcpListener};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -57,7 +57,10 @@ use crate::{
 
 const SHUTDOWN_ACK_TIMEOUT: Duration = Duration::from_secs(2);
 
+mod health;
 mod policy_reload;
+
+pub(crate) use health::WorkloadPepHealth;
 
 pub struct WorkloadPepConfig {
     pub bind_addr: SocketAddr,
@@ -215,7 +218,7 @@ pub struct WorkloadPep {
     shutdown_ack: Option<mpsc::Receiver<()>>,
     _substrate: ProxySubstrate,
     policy_state: Arc<RwLock<EgressProxyPolicyState>>,
-    audit_healthy: Arc<AtomicBool>,
+    health: Arc<WorkloadPepHealth>,
 }
 
 /// Bound but inert PEP listener.
@@ -293,6 +296,7 @@ impl PreparedWorkloadPep {
             .unwrap_or_else(|| Arc::new(AtomicBool::new(true)));
         #[cfg(not(test))]
         let audit_healthy = Arc::new(AtomicBool::new(true));
+        let health = Arc::new(WorkloadPepHealth::new(audit_healthy));
         let request_ids = Arc::new(RequestIdGenerator::new());
         let (shutdown, shutdown_rx) = watch::channel(false);
         let (ack_tx, ack_rx) = mpsc::channel();
@@ -300,7 +304,7 @@ impl PreparedWorkloadPep {
         let worker = ProxyWorker {
             listener,
             policy_state: Arc::clone(&policy_state),
-            audit_healthy: Arc::clone(&audit_healthy),
+            health: Arc::clone(&health),
             resolver: config.resolver,
             dns_cache: config.dns_cache,
             credential_provider: config
@@ -327,7 +331,7 @@ impl PreparedWorkloadPep {
             shutdown_ack: Some(ack_rx),
             _substrate: substrate,
             policy_state,
-            audit_healthy,
+            health,
         }
     }
 }
@@ -348,8 +352,8 @@ impl WorkloadPep {
             .map_err(|_| EgressProxyError::OperationFailed {
                 message: "egress proxy policy lock is poisoned".to_owned(),
             })?;
-        let audit_healthy = self.audit_healthy.load(Ordering::SeqCst);
-        Ok(guard.readiness(audit_healthy))
+        let (audit_healthy, worker_live) = self.health.snapshot();
+        Ok(guard.readiness(audit_healthy, worker_live))
     }
 
     /// Stop accepting, abort in-flight work, and wait for the worker to
@@ -397,7 +401,7 @@ impl Drop for WorkloadPep {
 struct ProxyWorker {
     listener: TcpListener,
     policy_state: Arc<RwLock<EgressProxyPolicyState>>,
-    audit_healthy: Arc<AtomicBool>,
+    health: Arc<WorkloadPepHealth>,
     resolver: Resolver,
     dns_cache: DnsCacheConfig,
     credential_provider: CredentialSecretProviderRef,
@@ -417,9 +421,11 @@ struct ProxyWorker {
 
 impl ProxyWorker {
     async fn run(self, shutdown: watch::Receiver<bool>, shutdown_ack: mpsc::Sender<()>) {
+        let mut liveness = WorkerLivenessGuard(Arc::clone(&self.health));
         let listener = match tokio::net::TcpListener::from_std(self.listener) {
             Ok(listener) => listener,
             Err(_) => {
+                liveness.mark_stopped();
                 let _ = shutdown_ack.send(());
                 return;
             }
@@ -427,7 +433,7 @@ impl ProxyWorker {
         let limiter = Arc::new(Semaphore::new(self.max_connections));
         let context = Arc::new(ClientHandlerContext {
             policy_state: self.policy_state,
-            audit_healthy: self.audit_healthy,
+            health: self.health,
             resolver: self.resolver,
             dns_cache: self.dns_cache,
             credential_provider: self.credential_provider,
@@ -444,7 +450,22 @@ impl ProxyWorker {
             tenant_fairness: self.tenant_fairness,
         });
         accept_loop(listener, context, limiter, shutdown).await;
+        liveness.mark_stopped();
         let _ = shutdown_ack.send(());
+    }
+}
+
+struct WorkerLivenessGuard(Arc<WorkloadPepHealth>);
+
+impl WorkerLivenessGuard {
+    fn mark_stopped(&mut self) {
+        self.0.mark_worker_stopped();
+    }
+}
+
+impl Drop for WorkerLivenessGuard {
+    fn drop(&mut self) {
+        self.0.mark_worker_stopped();
     }
 }
 
@@ -508,7 +529,7 @@ async fn drain_over_limit_client(client: &mut TcpStream) {
 #[derive(Clone)]
 struct ClientHandlerContext {
     policy_state: Arc<RwLock<EgressProxyPolicyState>>,
-    audit_healthy: Arc<AtomicBool>,
+    health: Arc<WorkloadPepHealth>,
     resolver: Resolver,
     dns_cache: DnsCacheConfig,
     credential_provider: CredentialSecretProviderRef,
@@ -529,7 +550,7 @@ impl ClientHandlerContext {
     fn terminal_sinks(&self) -> TerminalSinks<'_> {
         TerminalSinks::new(
             &self.durable_decision_sink,
-            self.audit_healthy.as_ref(),
+            self.health.as_ref(),
             &self.decision_logger,
         )
     }
@@ -583,7 +604,7 @@ async fn handle_client(
     };
     phase_recorder.record(EgressProxyRequestPhase::RejectMalformedOrCallerCredentials);
 
-    if !context.audit_healthy.load(Ordering::SeqCst) {
+    if !context.health.audit_is_healthy() {
         return audit_unhealthy_terminal(
             &mut client,
             &phase_recorder,
@@ -604,7 +625,7 @@ async fn handle_client(
         phase_recorder.clone(),
         Arc::clone(&context.decision_logger),
         Arc::clone(&context.durable_decision_sink),
-        Arc::clone(&context.audit_healthy),
+        Arc::clone(&context.health),
         EgressDecisionLog::denied(
             &request_id,
             &parsed,
@@ -817,7 +838,7 @@ async fn handle_client(
                 if let Err(error) = record_durable_decision(
                     &phase_recorder,
                     &context.durable_decision_sink,
-                    context.audit_healthy.as_ref(),
+                    context.health.as_ref(),
                     &allowed_decision_log,
                 ) {
                     let mut client = client;
@@ -888,7 +909,7 @@ async fn handle_client(
                         let _ = record_durable_decision(
                             &phase_recorder,
                             &context.durable_decision_sink,
-                            context.audit_healthy.as_ref(),
+                            context.health.as_ref(),
                             &decision_log,
                         );
                         emit_terminal_log(&phase_recorder, &context.decision_logger, decision_log);
@@ -935,7 +956,7 @@ async fn handle_client(
                 if let Err(error) = record_durable_decision(
                     &phase_recorder,
                     &context.durable_decision_sink,
-                    context.audit_healthy.as_ref(),
+                    context.health.as_ref(),
                     &outer_allowed_decision_log,
                 ) {
                     return audit_failure_terminal(
@@ -969,7 +990,7 @@ async fn handle_client(
                         phase_recorder: &phase_recorder,
                         decision_logger: &context.decision_logger,
                         durable_decision_sink: &context.durable_decision_sink,
-                        audit_healthy: context.audit_healthy.as_ref(),
+                        health: context.health.as_ref(),
                         response_started_signal: response_started_signal.clone(),
                         request_id: &request_id,
                         policy_generation: active_policy.policy_generation,
@@ -1009,7 +1030,7 @@ async fn handle_client(
                         let _ = record_durable_decision(
                             &phase_recorder,
                             &context.durable_decision_sink,
-                            context.audit_healthy.as_ref(),
+                            context.health.as_ref(),
                             &decision_log,
                         );
                         emit_terminal_log(&phase_recorder, &context.decision_logger, decision_log);
@@ -1018,7 +1039,7 @@ async fn handle_client(
                             && record_durable_decision(
                                 &phase_recorder,
                                 &context.durable_decision_sink,
-                                context.audit_healthy.as_ref(),
+                                context.health.as_ref(),
                                 &decision_log,
                             )
                             .is_err()
@@ -1040,7 +1061,7 @@ async fn handle_client(
                             let _ = record_durable_decision(
                                 &phase_recorder,
                                 &context.durable_decision_sink,
-                                context.audit_healthy.as_ref(),
+                                context.health.as_ref(),
                                 &decision_log,
                             );
                         }
@@ -1197,7 +1218,7 @@ async fn handle_forward_http(
     if let Err(error) = record_durable_decision(
         &phase_recorder,
         &context.durable_decision_sink,
-        context.audit_healthy.as_ref(),
+        context.health.as_ref(),
         &allowed_decision_log,
     ) {
         return audit_failure_terminal(
@@ -1231,7 +1252,7 @@ async fn handle_forward_http(
         phase_recorder,
         decision_logger: Arc::clone(&context.decision_logger),
         durable_decision_sink: Arc::clone(&context.durable_decision_sink),
-        audit_healthy: Arc::clone(&context.audit_healthy),
+        health: Arc::clone(&context.health),
         response_started_signal: response_started_signal.clone(),
         final_response_write_gate: final_response_write_gate.clone(),
     };
@@ -1460,5 +1481,30 @@ mod tests {
                 "attempt {attempt} must retain the exact fail-closed diagnostic: {error}"
             );
         }
+    }
+
+    #[test]
+    fn stopped_worker_with_active_policy_is_not_ready() {
+        let mut pep = WorkloadPep::start(WorkloadPepConfig::new(
+            nimbus_egress::CompiledEgressPolicy::deny_all(),
+        ))
+        .expect("test PEP should start");
+        assert!(
+            pep.readiness()
+                .expect("running PEP readiness should be observable")
+                .ready,
+            "precondition: a running policy-bearing PEP should be ready"
+        );
+        pep.shutdown()
+            .expect("worker should acknowledge explicit listener shutdown");
+
+        let readiness = pep
+            .readiness()
+            .expect("stopped PEP readiness should remain observable");
+
+        assert!(
+            !readiness.ready,
+            "a stopped worker must not remain ready merely because policy state is retained"
+        );
     }
 }

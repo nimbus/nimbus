@@ -83,7 +83,10 @@ mod tests {
                 key.substrate = EgressProxySubstrate::Isolate;
             }),
             ("policy generation", |key| {
-                key.policy_generation = key.policy_generation.next();
+                key.policy_generation = key
+                    .policy_generation
+                    .next()
+                    .expect("fixture policy generation should not overflow");
             }),
             ("credential", |key| {
                 key.credential_identity = Some("credential:github".to_owned());

@@ -15,6 +15,7 @@ mod identity;
 mod plan;
 mod port_lease;
 mod provider;
+mod readiness;
 mod segment;
 mod state;
 mod state_store;
@@ -60,6 +61,11 @@ pub use port_lease::{
     PortRangeError, PortRequestMode, TenantPublishedPortLimit,
 };
 pub use provider::{NetworkProviderHandle, NetworkProviderHandleError, NetworkReservationClaim};
+pub use readiness::{
+    NetworkReadinessDependency, NetworkReadinessDependencyError, NetworkReadinessEvaluationError,
+    NetworkReadinessEvidence, NetworkReadinessEvidenceError, NetworkReadinessRequirement,
+    NetworkReadinessRequirementError,
+};
 pub use segment::{
     AllocatedSegment, NetworkAttachmentReservationState, NetworkSegmentAllocator,
     NetworkSegmentCleanup, NetworkSegmentFinalizeOutcome, NetworkSegmentGrowth,

@@ -2,6 +2,7 @@
 
 use nimbus_egress::EgressPolicy;
 
+use crate::backends::oci::egress::EgressReloadAttachmentState;
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
 
@@ -60,10 +61,11 @@ impl ContainerSandboxBackend {
                     ),
                 }
             })?;
-            self.ensure_egress_proxy_running(&manifest)?;
-            let receipt = self.egress_proxies.reconcile_reload(
+            self.ensure_reload_registration(&manifest, &durable)?;
+            let receipt = self.egress_proxies.reconcile_authenticated_reload(
                 &manifest.spec.tenant_id,
                 id,
+                manifest.egress_proxy.as_ref(),
                 durable,
                 pending,
             )?;
@@ -76,7 +78,16 @@ impl ContainerSandboxBackend {
         }
 
         if manifest.spec.egress == *requested.policy() {
-            self.ensure_egress_proxy_running(&manifest)?;
+            self.ensure_reload_registration(&manifest, &requested)?;
+            if let Some(attempt) = manifest.egress_policy_reload.active_attempt()? {
+                self.egress_proxies.reconcile_authenticated_reload(
+                    &manifest.spec.tenant_id,
+                    id,
+                    manifest.egress_proxy.as_ref(),
+                    requested,
+                    attempt,
+                )?;
+            }
             return Ok(());
         }
 
@@ -86,10 +97,11 @@ impl ContainerSandboxBackend {
         // effect. Any failure after this publication is an applying attempt,
         // never an unrecorded acknowledged policy.
         self.write_manifest(&manifest)?;
-        self.ensure_egress_proxy_running(&manifest)?;
-        let receipt = self.egress_proxies.reconcile_reload(
+        self.ensure_reload_registration(&manifest, &requested)?;
+        let receipt = self.egress_proxies.reconcile_authenticated_reload(
             &manifest.spec.tenant_id,
             id,
+            manifest.egress_proxy.as_ref(),
             requested,
             attempt,
         )?;
@@ -103,5 +115,70 @@ impl ContainerSandboxBackend {
         if let Some(observer) = self.post_egress_reload_ack_observer.as_ref() {
             observer();
         }
+    }
+
+    fn ensure_reload_registration(
+        &self,
+        manifest: &super::ContainerSandboxManifest,
+        durable: &nimbus_egress::CompiledEgressPolicy,
+    ) -> Result<()> {
+        match self.egress_proxies.authenticated_reload_attachment(
+            &manifest.spec.tenant_id,
+            &manifest.handle.id,
+            manifest.egress_proxy.as_ref(),
+            durable,
+        )? {
+            EgressReloadAttachmentState::Authenticated => return Ok(()),
+            EgressReloadAttachmentState::MissingRegistration => {
+                self.ensure_egress_proxy_running(manifest)?;
+            }
+        }
+        match self.egress_proxies.authenticated_reload_attachment(
+            &manifest.spec.tenant_id,
+            &manifest.handle.id,
+            manifest.egress_proxy.as_ref(),
+            durable,
+        )? {
+            EgressReloadAttachmentState::Authenticated => Ok(()),
+            EgressReloadAttachmentState::MissingRegistration => {
+                Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "egress proxy for sandbox {} remained absent after reconstruction",
+                        manifest.handle.id
+                    ),
+                })
+            }
+        }
+    }
+
+    pub(super) fn replay_stable_egress_reload_attempt(
+        &self,
+        manifest: &super::ContainerSandboxManifest,
+    ) -> Result<()> {
+        if manifest.egress_policy_reload.is_applying() {
+            return Ok(());
+        }
+        let Some(attempt) = manifest.egress_policy_reload.active_attempt()? else {
+            return Ok(());
+        };
+        let durable =
+            manifest
+                .spec
+                .egress
+                .compile()
+                .map_err(|message| SandboxError::OperationFailed {
+                    message: format!(
+                        "stable durable egress policy for reload replay {attempt:?} is invalid: \
+                     {message}"
+                    ),
+                })?;
+        self.egress_proxies.reconcile_authenticated_reload(
+            &manifest.spec.tenant_id,
+            &manifest.handle.id,
+            manifest.egress_proxy.as_ref(),
+            durable,
+            attempt,
+        )?;
+        Ok(())
     }
 }

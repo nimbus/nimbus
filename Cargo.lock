@@ -7278,7 +7278,6 @@ dependencies = [
  "nimbus-core",
  "nimbus-egress",
  "nimbus-network",
- "nimbus-proxy",
  "nimbus-runtime",
  "nimbus-sandbox",
  "nimbus-storage",

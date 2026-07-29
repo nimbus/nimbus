@@ -340,7 +340,10 @@ fn egress_proxy_pool_key_shape_distinguishes_every_isolation_dimension() {
             key.substrate = EgressProxySubstrate::Isolate;
         }),
         ("policy_generation", |key| {
-            key.policy_generation = key.policy_generation.next();
+            key.policy_generation = key
+                .policy_generation
+                .next()
+                .expect("fixture policy generation should not overflow");
         }),
         ("credential_identity", |key| {
             key.credential_identity = Some("secret:github".to_string());

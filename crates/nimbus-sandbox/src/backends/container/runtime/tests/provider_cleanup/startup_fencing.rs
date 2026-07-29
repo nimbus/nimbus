@@ -174,7 +174,7 @@ fn startup_reconciliation_failure_allows_exact_natural_exit_cleanup() {
         "natural-exit cleanup must remove the exact PEP registration"
     );
     assert!(
-        readiness_before.ready,
+        readiness_before.is_ready(),
         "the fixture must begin with a live PEP before cleanup"
     );
     let persisted = backend

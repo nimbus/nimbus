@@ -12,7 +12,9 @@ use serde::{Deserialize, Serialize};
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
 
-use super::{EgressProxyRegistry, egress_proxy_error};
+#[cfg(test)]
+use super::egress_proxy_error;
+use super::{EgressProxyAssignment, EgressProxyRegistry};
 
 /// Container-manifest state for the desired egress policy and its latest
 /// provider-effect attempt.
@@ -57,6 +59,22 @@ impl EgressPolicyReloadState {
 
     pub(crate) const fn is_applying(&self) -> bool {
         matches!(self.phase, EgressPolicyReloadPhase::Applying)
+    }
+
+    pub(crate) fn active_attempt(&self) -> Result<Option<PolicyReloadAttempt>> {
+        if self.latest_attempt_generation == 0 {
+            return Ok(None);
+        }
+        let attempt_generation =
+            NonZeroU64::new(self.latest_attempt_generation).ok_or_else(|| {
+                SandboxError::OperationFailed {
+                    message: "active egress policy reload attempt generation is zero".to_owned(),
+                }
+            })?;
+        Ok(Some(PolicyReloadAttempt::new(
+            self.desired_generation,
+            attempt_generation,
+        )))
     }
 
     pub(crate) fn begin(&mut self) -> Result<PolicyReloadAttempt> {
@@ -162,6 +180,7 @@ impl EgressProxyRegistry {
 
     /// Inspect first, apply only when the exact durable attempt is not active,
     /// then re-inspect before returning acknowledgement to the manifest owner.
+    #[cfg(test)]
     pub(crate) fn reconcile_reload(
         &self,
         tenant_id: &TenantId,
@@ -200,6 +219,63 @@ impl EgressProxyRegistry {
         }
     }
 
+    /// Reconcile an exact durable reload attempt only while the registered PEP
+    /// and its complete listener lifecycle attachment remain authenticated.
+    pub(crate) fn reconcile_authenticated_reload(
+        &self,
+        tenant_id: &TenantId,
+        id: &SandboxId,
+        assignment: Option<&EgressProxyAssignment>,
+        compiled: CompiledEgressPolicy,
+        attempt: PolicyReloadAttempt,
+    ) -> Result<PolicyReloadReceipt> {
+        if let PolicyReloadObservation::Exact(receipt) =
+            self.inspect_authenticated_reload(tenant_id, id, assignment, &compiled, attempt)?
+        {
+            return Ok(receipt);
+        }
+
+        self.with_authenticated_reload_attachment(tenant_id, id, assignment, &compiled, |pep| {
+            pep.reload_policy_for_attempt(compiled.clone(), attempt)
+        })?
+        .ok_or_else(|| SandboxError::OperationFailed {
+            message: format!(
+                "egress proxy for sandbox {id} disappeared while reconciling authenticated \
+                 reload attempt {attempt:?}"
+            ),
+        })?;
+
+        match self.inspect_authenticated_reload(tenant_id, id, assignment, &compiled, attempt)? {
+            PolicyReloadObservation::Exact(receipt) => Ok(receipt),
+            observation => Err(SandboxError::OperationFailed {
+                message: format!(
+                    "egress proxy for sandbox {id} did not expose exact authenticated reload \
+                     attempt {attempt:?} after acknowledgement; observed {observation:?}"
+                ),
+            }),
+        }
+    }
+
+    fn inspect_authenticated_reload(
+        &self,
+        tenant_id: &TenantId,
+        id: &SandboxId,
+        assignment: Option<&EgressProxyAssignment>,
+        compiled: &CompiledEgressPolicy,
+        attempt: PolicyReloadAttempt,
+    ) -> Result<PolicyReloadObservation> {
+        self.with_authenticated_reload_attachment(tenant_id, id, assignment, compiled, |pep| {
+            pep.inspect_policy_reload(compiled, attempt)
+        })?
+        .ok_or_else(|| SandboxError::OperationFailed {
+            message: format!(
+                "egress proxy for sandbox {id} is not running while inspecting authenticated \
+                 reload attempt {attempt:?}"
+            ),
+        })
+    }
+
+    #[cfg(test)]
     fn inspect_reload(
         &self,
         tenant_id: &TenantId,

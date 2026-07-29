@@ -712,6 +712,28 @@ pub(crate) fn require_current_listener_authority(
     Ok(record)
 }
 
+/// Verify logical listener ownership and one exact Active provider binding.
+pub(crate) fn require_active_listener_binding(
+    state_root: &Path,
+    expected: ExpectedListenerAuthority<'_>,
+    request: &PortLeaseRequest,
+    actual_addr: SocketAddr,
+    provider: OciPortProvider,
+) -> Result<PortLeaseRecord> {
+    let record = require_listener_authority(state_root, expected, request)?;
+    let expected_binding = provider_binding(request, actual_addr, provider)?;
+    if record.phase() != PortLeasePhase::Active || record.binding() != Some(&expected_binding) {
+        return Err(SandboxError::OperationFailed {
+            message: format!(
+                "sandbox port lease {} does not carry the exact Active {:?} listener binding",
+                request.lease_id(),
+                provider
+            ),
+        });
+    }
+    Ok(record)
+}
+
 /// Adopt and activate a successful bind owned by the exact durable claim.
 #[cfg(test)]
 pub(crate) fn adopt_claimed_and_activate(
