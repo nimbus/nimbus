@@ -1281,7 +1281,13 @@ fn current_array_elements(document: &Document, field_name: &str) -> Vec<StoredVa
             return items.iter().map(StoredValue::canonical).collect();
         }
         // A field whose typed value is not a list has no array to transform;
-        // Firestore array transforms overwrite such a field with a fresh array.
+        // Firestore array transforms overwrite such a field with a fresh
+        // array. `Json`-spelled arrays cannot appear here: every write site
+        // strips metadata-free root entries from the typed sidecar
+        // (`set_document_typed_field_path`, `write_array_elements`, adapter
+        // lowering), `typed_value` is an exact root-key lookup, and nested
+        // field paths are rejected by transform validation upstream — pinned
+        // by `atomic_write_batch_set_normalizes_metadata_free_typed_twins`.
         Some(_) => return Vec::new(),
         None => {}
     }

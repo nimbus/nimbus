@@ -376,3 +376,20 @@ Query contract, both sides:
   0 digits when micros == 0, 3 when whole milliseconds, else 6.
 - Tests extended: trailing-zero six-digit width, three-digit millisecond
   width, and both out-of-range edges rejected by name.
+
+## Review pass 5 disposition
+
+- **Rejected as unreachable (P1) — "Json-spelled nested arrays dropped by
+  array transforms."** Verified three independent barriers: (1) field
+  transforms reject nested/quoted paths upstream
+  (`InvalidInput("nested or quoted field paths in field transforms are not
+  supported yet")` — reproduced in-test); (2) `Document::typed_value` is an
+  exact root-key lookup with no path resolution, so it can only return what
+  a root sidecar entry holds; (3) every write site strips metadata-free root
+  entries from the typed sidecar (`set_document_typed_field_path` removes
+  them, `write_array_elements` only stores metadata-bearing lists, adapter
+  lowering keeps metadata-free values in plain fields), so a root entry can
+  never be `Json`-spelled. A defensive `Json(Array)` arm was drafted and then
+  removed as dead code; instead the invariant is pinned by
+  `atomic_write_batch_set_normalizes_metadata_free_typed_twins` and the
+  `current_array_elements` comment names all three barriers.

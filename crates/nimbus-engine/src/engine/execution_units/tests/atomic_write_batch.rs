@@ -1415,6 +1415,76 @@ fn atomic_write_batch_array_transforms_apply_numeric_equivalence_at_nested_leave
     assert_eq!(document.get_field("tags"), Some(&json!([])));
 }
 
+#[test]
+fn atomic_write_batch_set_normalizes_metadata_free_typed_twins() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let table = messages_table("messages_atomic_typed_twin_normalization");
+    let document_id = DocumentId::from_key("typed-twin").expect("id should parse");
+
+    // The typed sidecar is keyed to plain fields: a metadata-free typed twin
+    // accompanying its plain projection must normalize away at write time, so
+    // `typed_value` at a root key can never observe a `Json`-spelled array.
+    // `current_array_elements` relies on that invariant when it treats every
+    // non-`List` typed value as "not an array".
+    let execution_unit = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("execution unit should start");
+    execution_unit
+        .execute_atomic_write_batch(
+            AtomicWriteBatch::new(vec![AtomicWrite::Set {
+                key: locator_key(table.clone(), document_id.clone()),
+                document: serde_json::Map::from_iter([("tags".to_string(), json!(["a"]))]),
+                typed_fields: std::collections::BTreeMap::from([(
+                    "tags".to_string(),
+                    stored(json!(["a"])),
+                )]),
+                mode: WriteSetMode::Overwrite,
+                precondition: WritePrecondition::default(),
+                transforms: Vec::new(),
+            }])
+            .expect("batch should build"),
+        )
+        .expect("seed set should commit");
+
+    let document = engine
+        .get_document(&tenant_id, &table, document_id.clone())
+        .expect("document should exist");
+    assert_eq!(
+        document.typed_value("tags"),
+        None,
+        "a metadata-free typed twin must be stripped from the sidecar at write time"
+    );
+    assert_eq!(document.get_field("tags"), Some(&json!(["a"])));
+
+    // With the invariant holding, the transform reads the plain array and
+    // existing elements survive.
+    let execution_unit = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("execution unit should start");
+    execution_unit
+        .execute_atomic_write_batch(
+            AtomicWriteBatch::new(vec![AtomicWrite::Transform {
+                key: locator_key(table.clone(), document_id.clone()),
+                transforms: vec![FieldTransform {
+                    field: "tags".to_string(),
+                    transform: FieldTransformOperation::AppendMissingElements {
+                        values: vec![stored(json!("b"))],
+                    },
+                }],
+                precondition: WritePrecondition::default(),
+            }])
+            .expect("batch should build"),
+        )
+        .expect("arrayUnion should succeed");
+
+    let document = engine
+        .get_document(&tenant_id, &table, document_id)
+        .expect("document should exist");
+    assert_eq!(document.get_field("tags"), Some(&json!(["a", "b"])));
+}
+
 fn locator_key(table: nimbus_core::TableName, id: DocumentId) -> WriteKey {
     WriteKey::from(DocumentLocator::new(table, id))
 }
