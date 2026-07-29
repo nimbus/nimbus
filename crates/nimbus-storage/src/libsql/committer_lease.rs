@@ -197,3 +197,18 @@ fn libsql_row_to_committer_lease(row: libsql::Row) -> Result<CommitterLease> {
         durable_sequence: SequenceNumber(durable_sequence),
     })
 }
+
+#[cfg(test)]
+mod validate_tests {
+    use super::*;
+
+    #[test]
+    fn libsql_lease_owner_id_guard_matches_provider_parity() {
+        assert!(validate_lease_request("", Duration::from_secs(1)).is_err());
+        assert!(validate_lease_request(&"x".repeat(192), Duration::from_secs(1)).is_err());
+        assert_eq!(
+            validate_lease_request("owner", Duration::from_millis(1500)).expect("valid request"),
+            1500
+        );
+    }
+}
