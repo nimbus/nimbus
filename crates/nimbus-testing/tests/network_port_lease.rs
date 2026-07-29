@@ -3,12 +3,12 @@ use std::num::NonZeroU16;
 use std::time::Duration;
 
 use nimbus_network::{
-    ListenerId, LocalPortLeaseAuthority, NetworkLeaseEpoch, NetworkProviderHandle,
-    NetworkProviderId, NetworkReservationClaim, NetworkReservationLifetimeAttempt,
-    NetworkResourceGeneration, NetworkResourceId, PortBindClaim, PortBindRealm, PortBindTarget,
-    PortBindingProvenance, PortBindingSpec, PortBoundEndpoint, PortExposure, PortLeaseBinding,
-    PortLeaseEffectScope, PortLeaseError, PortLeaseId, PortLeasePhase, PortLeaseRecoveryAttempt,
-    PortLeaseRequest, PortProtocol, PortRequestMode,
+    ListenerId, LocalNetworkManager, LocalPortLeaseAuthority, NetworkCapabilityRegistry,
+    NetworkLeaseEpoch, NetworkProviderHandle, NetworkProviderId, NetworkReservationClaim,
+    NetworkReservationLifetimeAttempt, NetworkResourceGeneration, NetworkResourceId, PortBindClaim,
+    PortBindRealm, PortBindTarget, PortBindingProvenance, PortBindingSpec, PortBoundEndpoint,
+    PortExposure, PortLeaseBinding, PortLeaseEffectScope, PortLeaseError, PortLeaseId,
+    PortLeasePhase, PortLeaseRecoveryAttempt, PortLeaseRequest, PortProtocol, PortRequestMode,
 };
 use nimbus_testing::{
     ContentionOutcome, ProcessRoleSpec, SubprocessCrashCutHarness, TwoProcessContentionHarness,
@@ -192,8 +192,8 @@ fn network_port_lease_child() {
     let mode = std::env::var(MODE_ENV).expect("child test mode should be set");
 
     run_contention_child(|context| {
-        let authority = LocalPortLeaseAuthority::open(context.state_root())
-            .map_err(|error| format!("failed to open port authority: {error}"))?;
+        let manager = process_manager(context.state_root())?;
+        let authority = manager.port_leases();
         match mode.as_str() {
             "exact" => {
                 let request = request(context.role(), exact_port());
@@ -279,8 +279,8 @@ fn network_port_lease_recovery_child() {
     let mode = std::env::var(MODE_ENV).expect("child test mode should be set");
     match mode.as_str() {
         "crash-active-listener" => run_crash_cut_child(|context| {
-            let authority = LocalPortLeaseAuthority::open(context.state_root())
-                .map_err(|error| format!("failed to open crash-owned authority: {error}"))?;
+            let manager = process_manager(context.state_root())?;
+            let authority = manager.port_leases();
             let request = recovery_request("alpha", PortRequestMode::ProviderAssigned);
             authority
                 .reserve(request.clone())
@@ -322,8 +322,8 @@ fn network_port_lease_recovery_child() {
         })
         .unwrap_or_else(|error| panic!("active-listener crash child failed: {error}")),
         "recover-active-listener" => run_crash_recovery_child(|context| {
-            let authority = LocalPortLeaseAuthority::open(context.state_root())
-                .map_err(|error| format!("failed to reopen port authority: {error}"))?;
+            let manager = process_manager(context.state_root())?;
+            let authority = manager.port_leases();
             let active = authority
                 .inspect(&lease_id("alpha"))
                 .map_err(|error| format!("failed to inspect crash-owned lease: {error}"))?
@@ -377,8 +377,8 @@ fn network_port_lease_recovery_child() {
         })
         .unwrap_or_else(|error| panic!("active-listener recovery child failed: {error}")),
         "crash-reserved-before-publication" => run_crash_cut_child(|context| {
-            let authority = LocalPortLeaseAuthority::open(context.state_root())
-                .map_err(|error| format!("failed to open reservation authority: {error}"))?;
+            let manager = process_manager(context.state_root())?;
+            let authority = manager.port_leases();
             let claim = launch_reservation_claim();
             let _lifetime = match authority
                 .try_acquire_reservation_lifetime(&claim)
@@ -403,8 +403,8 @@ fn network_port_lease_recovery_child() {
         })
         .unwrap_or_else(|error| panic!("reservation crash child failed: {error}")),
         "recover-abandoned-reservation" => run_crash_recovery_child(|context| {
-            let authority = LocalPortLeaseAuthority::open(context.state_root())
-                .map_err(|error| format!("failed to reopen reservation authority: {error}"))?;
+            let manager = process_manager(context.state_root())?;
+            let authority = manager.port_leases();
             let request = recovery_request("alpha", PortRequestMode::Exact(port(PORT)));
             let retained = authority
                 .inspect(request.lease_id())
@@ -461,6 +461,15 @@ fn network_port_lease_recovery_child() {
         .unwrap_or_else(|error| panic!("abandoned-reservation recovery child failed: {error}")),
         other => panic!("unknown port-lease recovery child mode {other:?}"),
     }
+}
+
+fn process_manager(
+    state_root: &std::path::Path,
+) -> Result<std::sync::Arc<LocalNetworkManager>, String> {
+    let capabilities = NetworkCapabilityRegistry::new([])
+        .map_err(|error| format!("failed to build fail-closed capability registry: {error}"))?;
+    LocalNetworkManager::open(state_root, capabilities)
+        .map_err(|error| format!("failed to open process network manager: {error}"))
 }
 
 fn child(role: &str, mode: &str) -> ProcessRoleSpec {

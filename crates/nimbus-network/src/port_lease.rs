@@ -731,13 +731,15 @@ pub struct LocalPortLeaseAuthority {
 }
 
 impl LocalPortLeaseAuthority {
-    /// Open the shared node-local authority.
-    pub fn open(state_root: impl AsRef<Path>) -> Result<Self, PortLeaseError> {
-        let authority = Self {
-            store: LocalNetworkStateStore::open(state_root).map_err(PortLeaseError::Store)?,
-        };
+    pub(crate) fn from_store(store: LocalNetworkStateStore) -> Result<Self, PortLeaseError> {
+        let authority = Self { store };
         authority.load_state()?;
         Ok(authority)
+    }
+
+    /// Open the shared node-local authority.
+    pub fn open(state_root: impl AsRef<Path>) -> Result<Self, PortLeaseError> {
+        Self::from_store(LocalNetworkStateStore::open(state_root).map_err(PortLeaseError::Store)?)
     }
 
     /// Atomically reserve an exact/range slot or provider-assigned identity.

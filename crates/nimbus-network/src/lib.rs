@@ -12,6 +12,7 @@ mod capability;
 mod capability_registry;
 mod endpoint;
 mod identity;
+mod manager;
 mod plan;
 mod port_lease;
 mod provider;
@@ -43,6 +44,7 @@ pub use identity::{
     NetworkProviderId, NetworkResourceGeneration, NetworkResourceIdParseError,
     NetworkResourceIdParseErrorKind, NetworkSegmentId, PortLeaseId, PublishedEndpointId,
 };
+pub use manager::{LocalNetworkManager, LocalNetworkManagerError};
 pub use plan::{
     NetworkPlan, NetworkPlanContentDigest, NetworkPlanDigest, NetworkPlanDigestParseError,
     NetworkPlanUpdate, NetworkPlanUpdateError,
