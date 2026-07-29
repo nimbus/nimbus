@@ -1188,24 +1188,28 @@ async fn projection_flush_never_observes_no_marker_and_no_work() {
     .expect("every commit past the cap should drop");
 
     drop(saturating);
+    // `stats()` reads its fields non-atomically and the claim path registers
+    // the covering reservation before incrementing the catch-up count, so a
+    // snapshot taken mid-claim can tear into (depth = 0, count = 1) even
+    // though the seam invariant holds. Poll until one snapshot shows the
+    // claimed catch-up together with its covering reservation; the held
+    // projection lock keeps that pair stable once it exists.
     let claimed = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let stats = projection_work.stats(&tenant_id);
-            if stats.catch_up_projection_count == 1 {
+            if stats.catch_up_projection_count == 1 && stats.depth == 1 {
                 break stats;
             }
             tokio::task::yield_now().await;
         }
     })
     .await
-    .expect("returned capacity should claim the dirty scope");
+    .expect(
+        "the claimed catch-up must be covered by an in-flight reservation the flush seam can see",
+    );
     assert_eq!(
         claimed.dirty_projection_scope_count, 0,
         "claiming a catch-up clears the marker it stands in for"
-    );
-    assert_eq!(
-        claimed.depth, 1,
-        "the claim must be covered by an in-flight reservation the flush seam can see"
     );
 
     // The seed flush above already tripped this seam, so re-arm it before
