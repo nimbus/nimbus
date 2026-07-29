@@ -28,5 +28,5 @@ pub use kv::{
 pub use object_metadata::{
     OBJECT_MANIFEST_TABLE, OBJECT_MULTIPART_TABLE, ObjectBlobLayout, ObjectChecksums,
     ObjectChunkRef, ObjectManifest, ObjectManifestAttributes, ObjectMetaStore, ObjectMultipartPart,
-    ObjectMultipartUpload,
+    ObjectMultipartUpload, multipart_upload_document_id, object_manifest_document_id,
 };
