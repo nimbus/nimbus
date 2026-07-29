@@ -1,7 +1,6 @@
 # Storage Unification And Carry-Over Closeout Control Plane
 
-Status: `active — SUC0 is the sole in_progress task; SUC0.1 (main full-CI
-triage) gates every other phase`
+Status: `active — SUC0.1 complete (gate cleared); SUC0.2+SUC1.1 in_progress as one concept PR`
 
 Owner: this plan, and no other plan
 
@@ -49,9 +48,9 @@ Proof root: `proof/storage-unification/`
 
 | Phase/task | Status | Scope | Gate | Proof | Next action |
 | --- | --- | --- | --- | --- | --- |
-| SUC0.1 Main full-CI triage | `in_progress` | attribute every red lane on `main` (CI, Coverage, Node Compatibility failing at plan creation) to campaign merges vs pre-existing; fix-forward campaign breakage immediately | main required lanes green or every red attributed non-campaign with owner sign-off | `proof/storage-unification/suc0/ci-triage.md` | run now; gates all phases |
-| SUC0.2 Fail-before inventory | `planned` | reproduce the objects race shape, the two engine commit-sequence transcriptions, and the three provider divergences as failing/characterizing tests | each defect has a committed fail-before artifact | `suc0/fail-before.md` | after SUC0.1 |
-| SUC1.1 Provider divergence spot-fixes | `planned` | libsql missing fault-injection point; lease validation unified to milliseconds (postgres+libsql convention; mysql converts at the edge); mysql length guard propagated to postgres | conformance harness asserts parity across all providers | `suc1/` | small PRs; may land during SUC0.2 |
+| SUC0.1 Main full-CI triage | `complete` (PR #248 / `97f6d134b`) | attribute every red lane on `main` (CI, Coverage, Node Compatibility failing at plan creation) to campaign merges vs pre-existing; fix-forward campaign breakage immediately | main required lanes green or every red attributed non-campaign with owner sign-off | `proof/storage-unification/suc0/ci-triage.md` | complete: flush test fixed; Coverage downstream; Node Compat pre-campaign (open, non-campaign) |
+| SUC0.2 Fail-before inventory | `in_progress` (with SUC1.1 on `codex/storage-unification-suc1`) | reproduce the objects race shape, the two engine commit-sequence transcriptions, and the three provider divergences as failing/characterizing tests | each defect has a committed fail-before artifact | `suc0/fail-before.md` | after SUC0.1 |
+| SUC1.1 Provider divergence spot-fixes | `in_progress` (same PR as SUC0.2) | libsql missing fault-injection point; lease validation unified to milliseconds (postgres+libsql convention; mysql converts at the edge); mysql length guard propagated to postgres | conformance harness asserts parity across all providers | `suc1/` | small PRs; may land during SUC0.2 |
 | SUC2.1 CommitTransaction witness | `planned` | witness type threading document/version/index/journal/watermark effects so a provider omitting one cannot compile; unify the two engine transcriptions of the queued commit sequence under one compiler-linked definition | witness adopted by all providers; transcription count = 1 | `suc2/witness.md` | after SUC0 |
 | SUC2.2 Objects/KV/scheduler/trigger onto a real commit path | `planned` | object manifests and multipart, KV, scheduler-state, and trigger-cursor writes leave `TenantPointWrite`-on-read-executor; sequence assignment fenced through the committer or an explicitly serialized internal path; publication/subscription classification made explicit per event kind | audit F3 closed: no journal-sequence consumer outside a fenced path; deterministic race test RED before/GREEN after; paired A/B no N=256 regression >2% (campaign protocol) | `suc2/commit-path.md` | after SUC2.1 |
 | SUC3.1 Provider facade extraction | `planned` | delete the ~855-line triplicated blocks into one facade; sqlite (with #244/#245 optimizations) is the reference; provider feature gates so embedded builds/measures in isolation | ~−1,700 LoC net; conformance harness green for all providers; sqlite paired A/B unchanged | `suc3/facade.md` | after SUC2; sqlite fork is canonical, not blocked-on |
