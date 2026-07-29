@@ -760,11 +760,11 @@ fn lower_document_transform(
     })
 }
 
-fn lower_array_transform_values(values: ArrayValue) -> Result<Vec<JsonValue>, Status> {
+fn lower_array_transform_values(values: ArrayValue) -> Result<Vec<StoredValue>, Status> {
     values
         .values
         .iter()
-        .map(decode_nimbus_value_from_grpc)
+        .map(decode_stored_value_from_grpc)
         .collect()
 }
 
@@ -788,6 +788,12 @@ pub(super) fn proto_write_result(
 pub(super) fn decode_nimbus_value_from_grpc(value: &Value) -> Result<JsonValue, Status> {
     firestore_value_from_grpc(value)?
         .into_nimbus_value()
+        .map_err(firestore_value_status)
+}
+
+fn decode_stored_value_from_grpc(value: &Value) -> Result<StoredValue, Status> {
+    firestore_value_from_grpc(value)?
+        .into_stored_value()
         .map_err(firestore_value_status)
 }
 

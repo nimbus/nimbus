@@ -1,10 +1,19 @@
 use nimbus_core::{
     ArrayPopSide, AtomicWrite, BitwiseOperation, Document, FieldTransform, FieldTransformOperation,
-    NumericValue, WriteKey, WriteSetMode,
+    NumericValue, StoredValue, WriteKey, WriteSetMode,
 };
 
 use super::super::super::error::{BAD_VALUE, MongoError};
 use super::filter::bson_to_filter_value;
+
+/// Lower one BSON array-transform operand into the shared stored model. MongoDB
+/// operands reach the engine as plain JSON, which is already the canonical
+/// spelling for a value carrying no typed metadata.
+fn bson_to_stored_value(value: &bson::Bson) -> StoredValue {
+    StoredValue::Json {
+        value: bson_to_filter_value(value),
+    }
+}
 
 pub(super) fn build_replacement_write(
     write_key: WriteKey,
@@ -125,9 +134,9 @@ pub(super) fn build_operator_write(
                 for (field, add_val) in op_doc.iter() {
                     let values = match add_val.as_document().and_then(|d| d.get("$each")) {
                         Some(bson::Bson::Array(arr)) => {
-                            arr.iter().map(bson_to_filter_value).collect()
+                            arr.iter().map(bson_to_stored_value).collect()
                         }
-                        _ => vec![bson_to_filter_value(add_val)],
+                        _ => vec![bson_to_stored_value(add_val)],
                     };
                     transforms.push(FieldTransform {
                         field: field.to_string(),
@@ -137,12 +146,12 @@ pub(super) fn build_operator_write(
             }
             "$push" => {
                 for (field, push_val) in op_doc.iter() {
-                    let values: Vec<serde_json::Value> =
+                    let values: Vec<StoredValue> =
                         match push_val.as_document().and_then(|d| d.get("$each")) {
                             Some(bson::Bson::Array(arr)) => {
-                                arr.iter().map(bson_to_filter_value).collect()
+                                arr.iter().map(bson_to_stored_value).collect()
                             }
-                            _ => vec![bson_to_filter_value(push_val)],
+                            _ => vec![bson_to_stored_value(push_val)],
                         };
                     transforms.push(FieldTransform {
                         field: field.to_string(),
@@ -152,7 +161,7 @@ pub(super) fn build_operator_write(
             }
             "$pull" => {
                 for (field, pull_val) in op_doc.iter() {
-                    let remove_val = bson_to_filter_value(pull_val);
+                    let remove_val = bson_to_stored_value(pull_val);
                     transforms.push(FieldTransform {
                         field: field.to_string(),
                         transform: FieldTransformOperation::RemoveAllFromArray {
@@ -164,8 +173,8 @@ pub(super) fn build_operator_write(
             "$pullAll" => {
                 for (field, pull_vals) in op_doc.iter() {
                     let values = match pull_vals {
-                        bson::Bson::Array(arr) => arr.iter().map(bson_to_filter_value).collect(),
-                        _ => vec![bson_to_filter_value(pull_vals)],
+                        bson::Bson::Array(arr) => arr.iter().map(bson_to_stored_value).collect(),
+                        _ => vec![bson_to_stored_value(pull_vals)],
                     };
                     transforms.push(FieldTransform {
                         field: field.to_string(),

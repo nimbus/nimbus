@@ -679,6 +679,18 @@ fn grpc_append_missing_elements_transform(
     }
 }
 
+fn grpc_remove_all_from_array_transform(
+    field_path: &str,
+    values: impl IntoIterator<Item = GrpcValue>,
+) -> GrpcFieldTransform {
+    GrpcFieldTransform {
+        field_path: field_path.to_string(),
+        transform_type: Some(GrpcTransformType::RemoveAllFromArray(GrpcArrayValue {
+            values: values.into_iter().collect(),
+        })),
+    }
+}
+
 fn grpc_document_mask(fields: impl IntoIterator<Item = &'static str>) -> GrpcDocumentMask {
     GrpcDocumentMask {
         field_paths: fields.into_iter().map(str::to_string).collect(),

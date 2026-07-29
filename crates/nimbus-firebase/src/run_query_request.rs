@@ -84,11 +84,44 @@ pub fn decode_structured_query_values(
     Ok(())
 }
 
+/// Wire types whose stored projection cannot be compared correctly.
+///
+/// Query filters and cursors are evaluated against `Document.fields`, the plain
+/// JSON projection kept beside a field's typed metadata, so a comparison cannot
+/// tell a typed value from a plain one that projects to the same JSON: a
+/// `bytesValue` projects to its base64 string, a `timestampValue` to its RFC3339
+/// string, a `geoPointValue` to an ordinary two-key map. Accepting these
+/// operands would match documents of a different type. Ordering is worse than
+/// equality: RFC3339 strings do not sort chronologically (`…05.5Z` sorts before
+/// `…05Z`, because `.` is 0x2E and `Z` is 0x5A), base64 does not sort in byte
+/// order, and a map has no ordering at all — so range filters and cursors would
+/// silently omit or misplace documents.
+///
+/// They stay rejected until filter evaluation carries type metadata rather than
+/// comparing projections. `referenceValue` is deliberately absent: `__name__`
+/// document-ID filters are built on it, it is compared against the document
+/// name rather than a stored field, and it has been accepted here all along.
+const PROJECTION_UNSAFE_QUERY_VALUE_TYPES: [&str; 3] =
+    ["timestampValue", "bytesValue", "geoPointValue"];
+
 fn decode_query_value(value: &Value) -> Result<Value, FirestoreRequestError> {
     if let Some(value) = value.as_object() {
         if let Some(reference) = value.get("referenceValue").and_then(Value::as_str) {
             return Ok(Value::String(reference.to_string()));
         }
+        if let Some(unsafe_type) = PROJECTION_UNSAFE_QUERY_VALUE_TYPES
+            .iter()
+            .find(|wire_type| value.contains_key(**wire_type))
+        {
+            return Err(unsupported_request(format!(
+                "`{unsafe_type}` in a query filter or cursor: comparisons run against the stored \
+                 JSON projection, which cannot distinguish it from a plain value that projects to \
+                 the same JSON, and does not order it correctly"
+            )));
+        }
+        // Containers recurse here rather than through the stored-value lowering
+        // because `in`/`not-in` legitimately carry an array of array candidates,
+        // which the document write path rejects.
         if let Some(array) = value.get("arrayValue") {
             let values = array
                 .get("values")
@@ -231,6 +264,119 @@ mod tests {
                 .values,
             vec![json!(2)]
         );
+    }
+
+    #[test]
+    fn rejects_projection_unsafe_typed_values_in_filters_and_cursors() {
+        // Every projection-unsafe wire type is refused in both places a query
+        // compares a value, and the error names the type so a caller can tell
+        // this apart from a malformed request.
+        for value in [
+            json!({ "timestampValue": "2024-01-02T03:04:05.123456789Z" }),
+            json!({ "bytesValue": "AQIDBA==" }),
+            json!({ "geoPointValue": { "latitude": 37.7749, "longitude": -122.4194 } }),
+        ] {
+            let wire_type = value
+                .as_object()
+                .and_then(|value| value.keys().next().cloned())
+                .expect("wire type should be present");
+
+            let filter_request = json!({
+                "structuredQuery": {
+                    "from": [{ "collectionId": "events" }],
+                    "where": {
+                        "fieldFilter": {
+                            "field": { "fieldPath": "createdAt" },
+                            "op": "EQUAL",
+                            "value": value.clone()
+                        }
+                    }
+                }
+            });
+            let error = parse_run_query_request(&filter_request)
+                .expect_err("projection-unsafe filter operand should be rejected")
+                .to_string();
+            assert!(
+                error.contains(&wire_type) && error.contains("query filter or cursor"),
+                "filter rejection should name `{wire_type}`: {error}"
+            );
+
+            let cursor_request = json!({
+                "structuredQuery": {
+                    "from": [{ "collectionId": "events" }],
+                    "startAt": { "values": [value.clone()], "before": true }
+                }
+            });
+            let error = parse_run_query_request(&cursor_request)
+                .expect_err("projection-unsafe cursor operand should be rejected")
+                .to_string();
+            assert!(
+                error.contains(&wire_type) && error.contains("query filter or cursor"),
+                "cursor rejection should name `{wire_type}`: {error}"
+            );
+
+            // Nesting does not launder the operand: an `in` filter carrying the
+            // same value inside an arrayValue is refused on the same grounds.
+            let nested_request = json!({
+                "structuredQuery": {
+                    "from": [{ "collectionId": "events" }],
+                    "where": {
+                        "fieldFilter": {
+                            "field": { "fieldPath": "createdAt" },
+                            "op": "IN",
+                            "value": { "arrayValue": { "values": [value] } }
+                        }
+                    }
+                }
+            });
+            let error = parse_run_query_request(&nested_request)
+                .expect_err("nested projection-unsafe operand should be rejected")
+                .to_string();
+            assert!(
+                error.contains(&wire_type),
+                "nested rejection should name `{wire_type}`: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn projection_collision_shows_why_typed_query_operands_stay_rejected() {
+        // The rejection above is not conservatism. These typed values project to
+        // exactly the JSON a plain value of another type projects to, and query
+        // evaluation compares those projections, so accepting them would report
+        // documents of the wrong type as matches.
+        use nimbus_core::{StoredValue, TypedScalarValue};
+
+        let bytes = StoredValue::TypedScalar {
+            value: TypedScalarValue::Bytes {
+                data: vec![1, 2, 3, 4],
+            },
+        };
+        assert_eq!(bytes.projected_json(), json!("AQIDBA=="));
+
+        let timestamp = StoredValue::TypedScalar {
+            value: TypedScalarValue::FirestoreTimestamp {
+                rfc3339: "2024-01-02T03:04:05Z".to_string(),
+            },
+        };
+        assert_eq!(timestamp.projected_json(), json!("2024-01-02T03:04:05Z"));
+
+        let geo_point = StoredValue::TypedScalar {
+            value: TypedScalarValue::GeoPoint {
+                latitude: 37.7749,
+                longitude: -122.4194,
+            },
+        };
+        assert_eq!(
+            geo_point.projected_json(),
+            json!({ "latitude": 37.7749, "longitude": -122.4194 })
+        );
+
+        // And the ordering the projection implies is not the ordering the values
+        // have: a later timestamp sorts before an earlier one as a string. Both
+        // spellings below are canonical stored forms, so this is the ordering a
+        // range filter would actually get, not an artifact of a odd spelling.
+        assert!("2024-01-02T03:04:05.5Z" < "2024-01-02T03:04:05Z");
     }
 
     #[test]

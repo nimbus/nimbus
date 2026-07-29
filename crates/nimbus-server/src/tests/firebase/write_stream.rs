@@ -200,13 +200,19 @@ async fn firebase_write_stream_roundtrips_lossless_firestore_field_types() {
         panic!("typed document should be found")
     };
 
-    assert!(matches!(
-        document.fields["createdAt"].value_type,
-        Some(GrpcValueType::TimestampValue(ProstTimestamp {
-            seconds: 1_704_164_645,
-            nanos: 123_456_789,
-        }))
-    ));
+    // Stored at Firestore's microsecond precision, so the sub-microsecond digits
+    // the client sent are truncated toward the start of time.
+    assert!(
+        matches!(
+            document.fields["createdAt"].value_type,
+            Some(GrpcValueType::TimestampValue(ProstTimestamp {
+                seconds: 1_704_164_645,
+                nanos: 123_456_000,
+            }))
+        ),
+        "timestamp should read back truncated to microseconds, got {:?}",
+        document.fields["createdAt"].value_type
+    );
     assert!(matches!(
         &document.fields["payload"].value_type,
         Some(GrpcValueType::BytesValue(value)) if value == &[1, 2, 3, 4]
@@ -798,4 +804,128 @@ async fn firebase_write_stream_closes_cleanly_after_handshake_when_sender_drops(
             .is_none(),
         "write stream should terminate cleanly once the client half-closes it"
     );
+}
+
+#[tokio::test]
+async fn firebase_write_stream_array_transforms_roundtrip_typed_values() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    fixture.create_tenant("demo", Engine::create_tenant);
+    let server = ServerFixture::start(router_for_firebase(
+        fixture.engine(),
+        firebase_verified_config(),
+    ))
+    .await;
+    let mut client = firestore_grpc_authed_client(&server, "user-123", "demo").await;
+    let (sender, receiver) = mpsc::unbounded();
+    let mut responses = client
+        .write(receiver)
+        .await
+        .expect("Firestore write stream should open")
+        .into_inner();
+
+    sender
+        .unbounded_send(GrpcWriteRequest {
+            database: "projects/demo/databases/(default)".to_string(),
+            ..Default::default()
+        })
+        .expect("handshake request should send");
+    let handshake = responses
+        .message()
+        .await
+        .expect("handshake should stream")
+        .expect("handshake should be present");
+    let document_name = "projects/demo/databases/(default)/documents/events/arrays-grpc";
+
+    sender
+        .unbounded_send(GrpcWriteRequest {
+            stream_token: handshake.stream_token.clone(),
+            writes: vec![grpc_transform_write(
+                document_name,
+                [grpc_append_missing_elements_transform(
+                    "tags",
+                    [
+                        grpc_string_value("seed"),
+                        grpc_timestamp_value(1_704_164_645, 123_456_789),
+                        grpc_bytes_value([1, 2, 3, 4]),
+                        grpc_reference_value(
+                            "projects/demo/databases/(default)/documents/users/ada",
+                        ),
+                        grpc_geo_point_value(37.7749, -122.4194),
+                    ],
+                )],
+            )],
+            ..Default::default()
+        })
+        .expect("typed arrayUnion request should send");
+    let append = responses
+        .message()
+        .await
+        .expect("typed arrayUnion response should stream")
+        .expect("typed arrayUnion response should be present");
+
+    sender
+        .unbounded_send(GrpcWriteRequest {
+            stream_token: append.stream_token,
+            writes: vec![grpc_transform_write(
+                document_name,
+                [grpc_remove_all_from_array_transform(
+                    "tags",
+                    [
+                        grpc_timestamp_value(1_704_164_645, 123_456_789),
+                        grpc_geo_point_value(37.7749, -122.4194),
+                    ],
+                )],
+            )],
+            ..Default::default()
+        })
+        .expect("typed arrayRemove request should send");
+    responses
+        .message()
+        .await
+        .expect("typed arrayRemove response should stream")
+        .expect("typed arrayRemove response should be present");
+    drop(sender);
+    drop(responses);
+
+    let mut reads = client
+        .batch_get_documents(grpc_batch_get_request([document_name]))
+        .await
+        .expect("typed array batch get should succeed")
+        .into_inner();
+    let response = reads
+        .message()
+        .await
+        .expect("typed array read should stream")
+        .expect("typed array read should be present");
+    let GrpcBatchGetResult::Found(document) = response
+        .result
+        .expect("typed array batch get result should exist")
+    else {
+        panic!("typed array document should be found")
+    };
+
+    let Some(GrpcValueType::ArrayValue(tags)) = &document.fields["tags"].value_type else {
+        panic!("tags should read back as an array value")
+    };
+    assert_eq!(
+        tags.values.len(),
+        3,
+        "arrayRemove should drop exactly the two typed elements it named"
+    );
+    assert!(matches!(
+        &tags.values[0].value_type,
+        Some(GrpcValueType::StringValue(value)) if value == "seed"
+    ));
+    assert!(
+        matches!(
+            &tags.values[1].value_type,
+            Some(GrpcValueType::BytesValue(value)) if value == &[1, 2, 3, 4]
+        ),
+        "array elements must survive as bytes, not as their base64 projection"
+    );
+    assert!(matches!(
+        &tags.values[2].value_type,
+        Some(GrpcValueType::ReferenceValue(value))
+            if value == "projects/demo/databases/(default)/documents/users/ada"
+    ));
 }
