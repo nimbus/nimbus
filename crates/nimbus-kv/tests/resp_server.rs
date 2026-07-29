@@ -23,7 +23,8 @@ async fn spawn_test_server(credentials: CredentialRegistry) -> (SocketAddr, Join
     let config = NimbusKvConfig::new(
         addr,
         credentials,
-        NimbusKvListenerConfig::new(state_root.path()),
+        NimbusKvListenerConfig::reconstruct_direct(state_root.path())
+            .expect("direct test authority should reconstruct once"),
     );
     let handle = tokio::spawn(async move {
         let _state_root = state_root;
@@ -111,7 +112,8 @@ async fn listener_rejects_non_loopback_bind() {
     let config = NimbusKvConfig::new(
         "0.0.0.0:0".parse().expect("addr parses"),
         CredentialRegistry::generated_dev(tenant("tenant-a")).0,
-        NimbusKvListenerConfig::new(state_root.path()),
+        NimbusKvListenerConfig::reconstruct_direct(state_root.path())
+            .expect("direct test authority should reconstruct once"),
     );
 
     let error = run_listener(config)

@@ -8,7 +8,8 @@ use nimbus_kv::{
     NimbusKvStore, TieringConfig, adopt_listener, bind_listener, run_listener,
 };
 use nimbus_network::{
-    LocalPortLeaseAuthority, NetworkResourceId, PortBindFailureKind, PortBindingProvenance,
+    LocalNetworkManager, LocalNetworkManagerError, LocalNetworkStateStore, LocalPortLeaseAuthority,
+    NetworkCapabilityRegistry, NetworkResourceId, PortBindFailureKind, PortBindingProvenance,
     PortLeasePhase,
 };
 use nimbus_testing::{
@@ -32,10 +33,12 @@ fn config(
     addr: SocketAddr,
     incarnation: &str,
 ) -> NimbusKvConfig {
+    let root = root.into();
     NimbusKvConfig::new(
         addr,
         credentials(),
-        NimbusKvListenerConfig::for_incarnation(root, incarnation),
+        NimbusKvListenerConfig::reconstruct_direct_for_incarnation(&root, incarnation)
+            .expect("direct test authority should reconstruct once"),
     )
 }
 
@@ -365,6 +368,115 @@ async fn synchronous_server_setup_failure_releases_direct_listener_authority() {
         .expect("records should list");
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].phase(), PortLeasePhase::Released);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn manager_derived_listener_pins_alias_and_retains_process_claim_until_final_drop() {
+    use std::fs;
+    use std::os::unix::fs::symlink;
+
+    let parent = tempfile::tempdir().expect("fixture root should exist");
+    let source_root = parent.path().join("source");
+    let foreign_root = parent.path().join("foreign");
+    let alias = parent.path().join("network-current");
+    fs::create_dir(&source_root).expect("source root should exist");
+    fs::create_dir(&foreign_root).expect("foreign root should exist");
+    let canonical_source = fs::canonicalize(&source_root).expect("source root should canonicalize");
+    let canonical_foreign =
+        fs::canonicalize(&foreign_root).expect("foreign root should canonicalize");
+    symlink(&source_root, &alias).expect("source alias should exist");
+
+    let bootstrap =
+        LocalNetworkManager::bootstrap(&alias).expect("manager should claim the source alias");
+    let authority = bootstrap.authority();
+    let manager = bootstrap.freeze(
+        NetworkCapabilityRegistry::new(Vec::new()).expect("empty registry should be valid"),
+    );
+    assert_eq!(manager.capability_registry().selections().len(), 0);
+
+    let config = NimbusKvConfig::new(
+        SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+        credentials(),
+        NimbusKvListenerConfig::from_network_authority_for_incarnation(
+            authority,
+            "manager-retained",
+        ),
+    );
+    fs::remove_file(&alias).expect("source alias should remove");
+    symlink(&foreign_root, &alias).expect("foreign alias should replace source alias");
+
+    let listener = bind_listener(&config)
+        .await
+        .expect("manager-derived listener should bind against retained source authority");
+    let actual = listener
+        .local_addr()
+        .expect("manager-derived listener should report an address");
+
+    drop(config);
+    drop(manager);
+
+    let records = LocalPortLeaseAuthority::open(&source_root)
+        .expect("source authority should reopen")
+        .list()
+        .expect("source records should list");
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].phase(), PortLeasePhase::Active);
+    assert_eq!(
+        records[0]
+            .binding()
+            .expect("active listener should retain binding evidence")
+            .actual_port()
+            .get(),
+        actual.port()
+    );
+    assert!(
+        !LocalNetworkStateStore::authority_path_for(&foreign_root).exists(),
+        "retargeting the alias must not create or mutate foreign authority"
+    );
+
+    let error = LocalNetworkManager::bootstrap(&foreign_root)
+        .expect_err("the active listener must retain the original process claim");
+    match error {
+        LocalNetworkManagerError::DuplicateProcessComposition {
+            active_authority_path,
+            attempted_authority_path,
+        } => {
+            assert_eq!(
+                active_authority_path,
+                LocalNetworkStateStore::authority_path_for(&canonical_source)
+            );
+            assert_eq!(
+                attempted_authority_path,
+                LocalNetworkStateStore::authority_path_for(&canonical_foreign)
+            );
+        }
+        other => panic!("expected typed duplicate composition, got {other:?}"),
+    }
+    assert!(
+        !LocalNetworkStateStore::authority_path_for(&foreign_root).exists(),
+        "rejected divergent bootstrap must remain non-mutating"
+    );
+
+    listener
+        .close_and_settle()
+        .expect("confirmed listener close should settle the source lease");
+    let settled = LocalPortLeaseAuthority::open(&source_root)
+        .expect("source authority should remain pinned through settlement")
+        .list()
+        .expect("settled source records should list");
+    assert_eq!(settled.len(), 1);
+    assert_eq!(settled[0].phase(), PortLeasePhase::Released);
+    assert!(
+        !LocalNetworkStateStore::authority_path_for(&foreign_root).exists(),
+        "prepare, activation, and settlement must not follow a retargeted alias"
+    );
+    let reopened = LocalNetworkManager::bootstrap(&foreign_root)
+        .expect("final listener drop should release the process claim")
+        .freeze(
+            NetworkCapabilityRegistry::new(Vec::new()).expect("empty registry should be valid"),
+        );
+    assert_eq!(reopened.capability_registry().selections().len(), 0);
 }
 
 #[test]

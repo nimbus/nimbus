@@ -308,7 +308,7 @@
       "verification": "source-occurrence",
       "category": "socket-bind",
       "path": "crates/nimbus-kv/src/listener.rs",
-      "line": 297,
+      "line": 359,
       "symbol": "bind",
       "authority_kinds": [
         "listener-ownership-slot",
@@ -747,7 +747,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "adopt",
       "ordinal": 1,
-      "line": 168
+      "line": 225
     },
     {
       "site_id": "kv-direct-listener",
@@ -755,7 +755,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "close_after_failed_adoption",
       "ordinal": 1,
-      "line": 209
+      "line": 270
     },
     {
       "site_id": "kv-direct-listener",
@@ -763,7 +763,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "<module>",
       "ordinal": 1,
-      "line": 235
+      "line": 296
     },
     {
       "site_id": "kv-direct-listener",
@@ -771,7 +771,7 @@
       "kind": "tcp-bind",
       "symbol": "bind",
       "ordinal": 1,
-      "line": 297
+      "line": 359
     },
     {
       "site_id": "kv-direct-listener",
@@ -779,7 +779,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "adopt",
       "ordinal": 2,
-      "line": 306
+      "line": 368
     },
     {
       "site_id": "kv-prebound-listener",
@@ -1122,10 +1122,10 @@
     {
       "path": "crates/nimbus-cli/src/kv.rs",
       "kind": "ambiguous-instance-bind",
-      "symbol": "run_kv_command",
+      "symbol": "prepare_kv_command",
       "ordinal": 1,
-      "line": 60,
-      "reason": "Binds CLI arguments into NimbusKvConfig; it does not create, adopt, or allocate a network socket."
+      "line": 91,
+      "reason": "Binds validated CLI values and a manager-derived listener capability into NimbusKvConfig; the real socket remains classified under nimbus-kv."
     },
     {
       "path": "crates/nimbus-cli/src/start/adapters/convex_tenancy.rs",

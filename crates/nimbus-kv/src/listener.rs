@@ -7,15 +7,16 @@
 use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroU16;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use nimbus_network::{
-    ListenerId, LocalPortLeaseAuthority, NetworkLeaseEpoch, NetworkProviderHandle,
-    NetworkProviderId, NetworkResourceGeneration, PortBindAttempt, PortBindClaim, PortBindFailure,
-    PortBindFailureKind, PortBindRealm, PortBindTarget, PortBindingProvenance, PortBindingSpec,
-    PortBoundEndpoint, PortExposure, PortIpv6Overlap, PortLeaseAccounting, PortLeaseBinding,
-    PortLeaseEffectScope, PortLeaseError, PortLeaseFence, PortLeaseId, PortLeaseLifetimeGuard,
-    PortLeaseRequest, PortProtocol, PortPublicationIntent, PortRequestMode,
+    ListenerId, LocalNetworkAuthority, LocalPortLeaseAuthority, NetworkLeaseEpoch,
+    NetworkProviderHandle, NetworkProviderId, NetworkResourceGeneration, PortBindAttempt,
+    PortBindClaim, PortBindFailure, PortBindFailureKind, PortBindRealm, PortBindTarget,
+    PortBindingProvenance, PortBindingSpec, PortBoundEndpoint, PortExposure, PortIpv6Overlap,
+    PortLeaseAccounting, PortLeaseBinding, PortLeaseEffectScope, PortLeaseError, PortLeaseFence,
+    PortLeaseId, PortLeaseLifetimeGuard, PortLeaseRequest, PortProtocol, PortPublicationIntent,
+    PortRequestMode,
 };
 use tokio::net::{TcpListener, TcpStream};
 use ulid::Ulid;
@@ -24,32 +25,87 @@ use crate::KvError;
 
 const KV_LISTENER_PROVIDER_KEY: &str = "nimbus-kv.tcp-listener";
 
-/// Stable identity and shared state root for one standalone KV listener
+/// Retained authority for one standalone KV listener lifecycle.
+#[derive(Debug, Clone)]
+enum NimbusKvListenerAuthority {
+    ManagerDerived(LocalNetworkAuthority),
+    Direct(LocalPortLeaseAuthority),
+}
+
+impl NimbusKvListenerAuthority {
+    fn port_leases(&self) -> LocalPortLeaseAuthority {
+        match self {
+            Self::ManagerDerived(authority) => authority.port_leases(),
+            Self::Direct(authority) => authority.clone(),
+        }
+    }
+}
+
+/// Stable identity and retained authority for one standalone KV listener
 /// incarnation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct NimbusKvListenerConfig {
-    state_root: PathBuf,
+    authority: NimbusKvListenerAuthority,
     listener_id: ListenerId,
     fence: PortLeaseFence,
 }
 
 impl NimbusKvListenerConfig {
-    /// Create a fresh process-incarnation identity under one node-local
-    /// network state root.
+    /// Create a fresh listener identity under the process manager's authority.
     #[must_use]
-    pub fn new(state_root: impl Into<PathBuf>) -> Self {
-        Self::for_incarnation(state_root, format!("standalone-kv:{}", Ulid::new()))
+    pub fn from_network_authority(authority: LocalNetworkAuthority) -> Self {
+        Self::from_network_authority_for_incarnation(
+            authority,
+            format!("standalone-kv:{}", Ulid::new()),
+        )
     }
 
-    /// Create a deterministic incarnation identity.
+    /// Create a deterministic identity under the process manager's authority.
     ///
     /// Orchestrators and deterministic process tests may supply an
     /// address-independent incarnation. A fresh launch must use a fresh value
-    /// until NNC3.8 adds durable generation handoff and restart reconciliation.
+    /// unless durable generation handoff deliberately replays an existing
+    /// incarnation.
     #[must_use]
-    pub fn for_incarnation(state_root: impl Into<PathBuf>, incarnation: impl AsRef<str>) -> Self {
+    pub fn from_network_authority_for_incarnation(
+        authority: LocalNetworkAuthority,
+        incarnation: impl AsRef<str>,
+    ) -> Self {
+        Self::with_authority(
+            NimbusKvListenerAuthority::ManagerDerived(authority),
+            incarnation,
+        )
+    }
+
+    /// Explicitly reconstruct primitive listener authority from a durable root.
+    ///
+    /// Production composition must inject [`LocalNetworkAuthority`] through
+    /// [`Self::from_network_authority`]. This fallible seam exists for tests,
+    /// embedders, and deliberate restart recovery that do not own a process
+    /// manager.
+    pub fn reconstruct_direct(state_root: impl AsRef<Path>) -> Result<Self, PortLeaseError> {
+        Self::reconstruct_direct_for_incarnation(
+            state_root,
+            format!("standalone-kv:{}", Ulid::new()),
+        )
+    }
+
+    /// Explicitly reconstruct primitive authority with a deterministic
+    /// listener incarnation.
+    pub fn reconstruct_direct_for_incarnation(
+        state_root: impl AsRef<Path>,
+        incarnation: impl AsRef<str>,
+    ) -> Result<Self, PortLeaseError> {
+        let authority = LocalPortLeaseAuthority::open(state_root)?;
+        Ok(Self::with_authority(
+            NimbusKvListenerAuthority::Direct(authority),
+            incarnation,
+        ))
+    }
+
+    fn with_authority(authority: NimbusKvListenerAuthority, incarnation: impl AsRef<str>) -> Self {
         Self {
-            state_root: state_root.into(),
+            authority,
             listener_id: ListenerId::for_workload_listener(incarnation.as_ref(), "resp"),
             fence: PortLeaseFence::new(
                 NetworkResourceGeneration::new(1),
@@ -58,9 +114,8 @@ impl NimbusKvListenerConfig {
         }
     }
 
-    /// Shared node-local state root used by the cross-process authority.
-    pub fn state_root(&self) -> &Path {
-        &self.state_root
+    fn authority(&self) -> NimbusKvListenerAuthority {
+        self.authority.clone()
     }
 
     /// Address-independent owner identity for this listener incarnation.
@@ -80,7 +135,7 @@ impl NimbusKvListenerConfig {
 /// synchronous no-effect path instead records failure or settles the exact
 /// claim; ambiguous interruption is reconciled by NNC3.8.
 struct PreparedKvListener {
-    authority: LocalPortLeaseAuthority,
+    authority: NimbusKvListenerAuthority,
     request: PortLeaseRequest,
     claim: PortBindClaim,
     attempt: PortBindAttempt,
@@ -123,9 +178,10 @@ impl PreparedKvListener {
             requested_addr.port(),
         )
         .map_err(other_io)?;
-        let authority = LocalPortLeaseAuthority::open(config.state_root())?;
-        authority.reconcile_dead_process_bound_leases()?;
-        let reservation = authority.reserve_and_claim_bind_with_lifetime(
+        let authority = config.authority();
+        let port_leases = authority.port_leases();
+        port_leases.reconcile_dead_process_bound_leases()?;
+        let reservation = port_leases.reserve_and_claim_bind_with_lifetime(
             request.clone(),
             claim.clone(),
             lifetime_scope(provenance),
@@ -149,6 +205,7 @@ impl PreparedKvListener {
         );
         match self
             .authority
+            .port_leases()
             .record_claimed_bind_failure_with_lifetime_without_effect(
                 &self.request,
                 None,
@@ -170,13 +227,17 @@ impl PreparedKvListener {
             Ok(binding) => binding,
             Err(primary) => return Err(self.close_after_failed_adoption(listener, primary)),
         };
-        if let Err(primary) = self.authority.adopt_claimed_and_activate_with_lifetime(
-            &self.request,
-            None,
-            &self.claim,
-            binding,
-            &self.lifetime,
-        ) {
+        if let Err(primary) = self
+            .authority
+            .port_leases()
+            .adopt_claimed_and_activate_with_lifetime(
+                &self.request,
+                None,
+                &self.claim,
+                binding,
+                &self.lifetime,
+            )
+        {
             return Err(self.close_after_failed_adoption(listener, primary.into()));
         }
         Ok(NimbusKvListener {
@@ -233,7 +294,7 @@ impl PreparedKvListener {
 /// synchronous shutdown paths use [`Self::close_and_settle`].
 pub struct NimbusKvListener {
     listener: TcpListener,
-    authority: LocalPortLeaseAuthority,
+    authority: NimbusKvListenerAuthority,
     request: PortLeaseRequest,
     provenance: PortBindingProvenance,
     lifetime: PortLeaseLifetimeGuard,
@@ -261,9 +322,10 @@ impl NimbusKvListener {
         } = self;
         drop(listener);
         debug_assert_eq!(lifetime.request(), &request);
-        authority.withdraw(&request)?;
+        let port_leases = authority.port_leases();
+        port_leases.withdraw(&request)?;
         if provenance != PortBindingProvenance::ExternallyOwned {
-            authority.release_with_lifetime(&request, &lifetime)?;
+            port_leases.release_with_lifetime(&request, &lifetime)?;
         }
         Ok(())
     }
@@ -320,16 +382,17 @@ pub(crate) fn adopt(
 }
 
 fn settle_claim_without_effect(
-    authority: &LocalPortLeaseAuthority,
+    authority: &NimbusKvListenerAuthority,
     request: &PortLeaseRequest,
     claim: &PortBindClaim,
     provenance: PortBindingProvenance,
     lifetime: &PortLeaseLifetimeGuard,
 ) -> Result<(), PortLeaseError> {
-    authority.abandon_bind_with_lifetime_without_effect(request, None, claim, lifetime)?;
-    authority.withdraw(request)?;
+    let port_leases = authority.port_leases();
+    port_leases.abandon_bind_with_lifetime_without_effect(request, None, claim, lifetime)?;
+    port_leases.withdraw(request)?;
     if provenance != PortBindingProvenance::ExternallyOwned {
-        authority.release(request)?;
+        port_leases.release(request)?;
     }
     Ok(())
 }

@@ -12,6 +12,6 @@ pub use listener::{NimbusKvListener, NimbusKvListenerConfig};
 pub use metrics::{CommandMetricsSnapshot, NimbusKvMetrics, NimbusKvMetricsSnapshot};
 pub use server::{
     CredentialBinding, CredentialRegistry, DevCredential, KvError, NimbusKvConfig, adopt_listener,
-    bind_listener, run_listener, serve,
+    bind_listener, run_listener, serve, serve_listener,
 };
 pub use store::{NimbusKvStore, TieringConfig, TieringMode};

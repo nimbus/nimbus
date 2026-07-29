@@ -259,14 +259,14 @@ struct CommandOutcome {
 pub async fn run_listener(config: NimbusKvConfig) -> Result<(), KvError> {
     refuse_non_loopback_bind(config.bind_addr)?;
     let listener = bind_listener(&config).await?;
-    serve_leased(listener, config).await
+    serve_listener(listener, config).await
 }
 
 /// Serve an already-bound listener.
 pub async fn serve(listener: TcpListener, config: NimbusKvConfig) -> Result<(), KvError> {
     refuse_non_loopback_bind(listener.local_addr()?)?;
     let listener = adopt_listener(listener, &config)?;
-    serve_leased(listener, config).await
+    serve_listener(listener, config).await
 }
 
 /// Bind the configured RESP socket in the `nimbus-kv` effect owner.
@@ -284,7 +284,18 @@ pub fn adopt_listener(
     crate::listener::adopt(&config.listener, config.bind_addr, listener)
 }
 
-async fn serve_leased(listener: NimbusKvListener, config: NimbusKvConfig) -> Result<(), KvError> {
+/// Serve through an already active standalone KV listener.
+///
+/// This narrow transition lets an outer composition observe the exact bound
+/// address before serving without exposing the raw socket or duplicating the
+/// listener lifecycle.
+pub async fn serve_listener(
+    listener: NimbusKvListener,
+    config: NimbusKvConfig,
+) -> Result<(), KvError> {
+    if let Err(error) = validate_serve_listener_policy(&listener, &config) {
+        return Err(listener.close_after_confirmed_local_error(error));
+    }
     let NimbusKvConfig {
         bind_addr: _,
         credentials,
@@ -315,6 +326,15 @@ async fn serve_leased(listener: NimbusKvListener, config: NimbusKvConfig) -> Res
             }
         });
     }
+}
+
+fn validate_serve_listener_policy(
+    listener: &NimbusKvListener,
+    config: &NimbusKvConfig,
+) -> Result<(), KvError> {
+    refuse_non_loopback_bind(config.bind_addr)?;
+    refuse_non_loopback_bind(listener.local_addr()?)?;
+    Ok(())
 }
 
 fn create_store(
@@ -1030,6 +1050,58 @@ fn generate_dev_password() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn leased_listener_serve_revalidates_loopback_and_settles_rejection() {
+        let root = tempfile::tempdir().expect("network state root should exist");
+        let bind_addr = SocketAddr::from((std::net::Ipv4Addr::UNSPECIFIED, 0));
+        let listener_config =
+            NimbusKvListenerConfig::reconstruct_direct_for_incarnation(root.path(), "serve-policy")
+                .expect("direct test authority should reconstruct");
+        let mut config = NimbusKvConfig::new(
+            bind_addr,
+            CredentialRegistry::single_dev(
+                TenantId::new("tenant-a").expect("tenant should validate"),
+                "test-password",
+            ),
+            listener_config,
+        );
+        let listener = crate::listener::bind(&config.listener, config.bind_addr)
+            .await
+            .expect("internal test setup should create the policy-invalid active listener");
+        let actual_addr = listener
+            .local_addr()
+            .expect("active listener should report its kernel address");
+        assert!(!actual_addr.ip().is_loopback());
+        config.bind_addr = SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, actual_addr.port()));
+
+        let error = tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            serve_listener(listener, config),
+        )
+        .await
+        .expect("the public serve transition must reject before entering its accept loop")
+        .expect_err("a non-loopback leased listener must not serve");
+        match error {
+            KvError::Io(error) => assert_eq!(error.kind(), io::ErrorKind::InvalidInput),
+            other => panic!("expected loopback policy rejection, got {other:?}"),
+        }
+
+        let records = nimbus_network::LocalPortLeaseAuthority::open(root.path())
+            .expect("authority should reopen")
+            .list()
+            .expect("records should list");
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            records[0].phase(),
+            nimbus_network::PortLeasePhase::Released,
+            "confirmed policy rejection must settle the exact active lease"
+        );
+        let rebound = TcpListener::bind(actual_addr)
+            .await
+            .expect("policy rejection must close the concrete listener");
+        drop(rebound);
+    }
 
     #[test]
     fn registry_authentication_checks_username_and_password() {
