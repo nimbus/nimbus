@@ -8,195 +8,12 @@ use super::write_schema_events::{
     durable_record_changes_schema_cache, record_postgres_schema_set_events,
 };
 use super::*;
-use crate::{CommitterLeaseError, CommitterLeaseResult};
+use crate::sql::store_core::{SqlStoreCore, SqlWriteTransactionCore, sql_store_core_facade};
+use crate::sql::write_pipeline::SqlWritePipelineMetrics;
 
-pub(super) const FENCED_COMMITTER_LEASE_MARKER: &str =
-    "fenced committer lease during durable apply";
+sql_store_core_facade!(PostgresTenantStore);
 
 impl PostgresTenantStore {
-    pub fn apply_prepared_write_batch(
-        &self,
-        record: &TenantEventRecord,
-        schedule_ops: &[ResolvedScheduleOp],
-        scheduled_execution_id: Option<&str>,
-    ) -> Result<Option<CommitEntry>> {
-        if record.writes.is_empty() {
-            return Err(Error::Internal(
-                "prepared write batch must contain at least one document write".to_string(),
-            ));
-        }
-        let record = record.clone();
-        let schedule_ops = schedule_ops.to_vec();
-        let scheduled_execution_id = scheduled_execution_id.map(str::to_string);
-        let committed = self.execute_write(move |transaction| {
-            if !transaction.begin_scheduled_execution(scheduled_execution_id.as_deref())? {
-                return Ok(false);
-            }
-            transaction.apply_durable_record(&record)?;
-            apply_schedule_ops_in_transaction(transaction, &schedule_ops)?;
-            transaction.set_prepared_record(record);
-            Ok(true)
-        })?;
-        Ok(committed.value.then_some(committed.commit).flatten())
-    }
-
-    pub fn fenced_apply_prepared_write_batch(
-        &self,
-        owner_id: &str,
-        epoch: u64,
-        expected_previous: SequenceNumber,
-        record: &TenantEventRecord,
-        schedule_ops: &[ResolvedScheduleOp],
-        scheduled_execution_id: Option<&str>,
-    ) -> CommitterLeaseResult<Option<CommitEntry>> {
-        if record.writes.is_empty() {
-            return Err(Error::Internal(
-                "prepared write batch must contain at least one document write".to_string(),
-            )
-            .into());
-        }
-        let owner_id = owner_id.to_string();
-        let fenced_owner_id = owner_id.clone();
-        let record = record.clone();
-        let schedule_ops = schedule_ops.to_vec();
-        let scheduled_execution_id = scheduled_execution_id.map(str::to_string);
-        let result = self.execute_write(move |transaction| {
-            if !transaction.begin_scheduled_execution(scheduled_execution_id.as_deref())? {
-                return Ok(false);
-            }
-            if transaction.advance_fenced_committer_lease(
-                &owner_id,
-                epoch,
-                expected_previous,
-                record.sequence,
-            )? != 1
-            {
-                return Err(Error::PreconditionFailed(
-                    FENCED_COMMITTER_LEASE_MARKER.to_string(),
-                ));
-            }
-            transaction.apply_durable_record(&record)?;
-            apply_schedule_ops_in_transaction(transaction, &schedule_ops)?;
-            transaction.set_prepared_record(record);
-            Ok(true)
-        });
-        match result {
-            Ok(committed) => Ok(committed.value.then_some(committed.commit).flatten()),
-            Err(Error::PreconditionFailed(message)) if message == FENCED_COMMITTER_LEASE_MARKER => {
-                Err(CommitterLeaseError::Fenced {
-                    owner_id: fenced_owner_id,
-                    epoch,
-                })
-            }
-            Err(error) => Err(error.into()),
-        }
-    }
-
-    pub fn retention_gc_watermarks(
-        &self,
-        config: crate::RetentionGcConfig,
-    ) -> Result<crate::RetentionGcWatermarks> {
-        Ok(self
-            .retention_floor
-            .gc_watermarks(self.journal_progress()?.applied_head, config))
-    }
-
-    pub fn compact_retained_versions(
-        &self,
-        config: crate::RetentionGcConfig,
-    ) -> Result<crate::RetentionGcSummary> {
-        let watermarks = self.retention_gc_watermarks(config)?;
-        let document_prune_before = watermarks.document_versions.safe_prune_before;
-        let index_prune_before = watermarks.index_versions.safe_prune_before;
-        let committed = self.execute_write(move |transaction| {
-            transaction.prune_retained_versions(document_prune_before, index_prune_before)
-        })?;
-        debug_assert!(committed.commit.is_none());
-        Ok(crate::RetentionGcSummary {
-            watermarks,
-            document_versions_pruned: committed.value.0,
-            index_versions_pruned: committed.value.1,
-        })
-    }
-
-    pub fn export_point_in_time_restore_archive(
-        &self,
-        target: PointInTimeRestoreTarget,
-        retention_config: crate::RetentionGcConfig,
-    ) -> Result<PointInTimeRestoreArchive> {
-        let records = self.read_durable_journal_from(SequenceNumber(1))?;
-        let progress = self.journal_progress()?;
-        let watermarks = self.retention_gc_watermarks(retention_config)?;
-        crate::store::build_point_in_time_restore_archive(
-            target,
-            records,
-            progress.durable_head,
-            watermarks.document_versions.safe_prune_before,
-        )
-    }
-
-    pub fn import_point_in_time_restore_archive(
-        &self,
-        archive: &PointInTimeRestoreArchive,
-    ) -> Result<JournalProgress> {
-        crate::store::validate_point_in_time_archive_for_journal_replay_import(archive)?;
-        let current = self.export_materialized_journal_snapshot()?;
-        crate::store::validate_materialized_journal_replay_base_is_empty(&current)?;
-        self.append_durable_records_batch(&archive.journal_tail)?;
-        let progress = self.recover_durable_journal()?;
-        let restored_fingerprint = self
-            .export_materialized_journal_snapshot()?
-            .canonical_fingerprint()?;
-        if restored_fingerprint != archive.target_fingerprint {
-            return Err(Error::storage(
-                nimbus_core::StorageErrorKind::Corruption,
-                format!(
-                    "point-in-time restore fingerprint mismatch: restored {} expected {}",
-                    restored_fingerprint, archive.target_fingerprint
-                ),
-            ));
-        }
-        Ok(progress)
-    }
-
-    pub fn fenced_import_point_in_time_restore_archive(
-        &self,
-        owner_id: &str,
-        epoch: u64,
-        expected_previous: SequenceNumber,
-        archive: &PointInTimeRestoreArchive,
-    ) -> CommitterLeaseResult<JournalProgress> {
-        crate::store::validate_point_in_time_archive_for_journal_replay_import(archive)?;
-        let current = self.export_materialized_journal_snapshot()?;
-        crate::store::validate_materialized_journal_replay_base_is_empty(&current)?;
-        if archive.journal_tail.is_empty() {
-            return self
-                .import_point_in_time_restore_archive(archive)
-                .map_err(Into::into);
-        }
-        self.fenced_append_and_apply_durable_records_batch(
-            owner_id,
-            epoch,
-            expected_previous,
-            &archive.journal_tail,
-        )?;
-        let progress = self.journal_progress()?;
-        let restored_fingerprint = self
-            .export_materialized_journal_snapshot()?
-            .canonical_fingerprint()?;
-        if restored_fingerprint != archive.target_fingerprint {
-            return Err(Error::storage(
-                nimbus_core::StorageErrorKind::Corruption,
-                format!(
-                    "point-in-time restore fingerprint mismatch: restored {} expected {}",
-                    restored_fingerprint, archive.target_fingerprint
-                ),
-            )
-            .into());
-        }
-        Ok(progress)
-    }
-
     pub fn execute_write<T, F>(&self, task: F) -> Result<TenantWriteCommit<T>>
     where
         T: Send + 'static,
@@ -255,552 +72,198 @@ impl PostgresTenantStore {
     {
         PostgresWriteTransaction::begin(self.clone(), check_cancel)
     }
+}
 
-    pub fn replace_table_schema(&self, table_schema: &TableSchema) -> Result<()> {
-        let table_schema = table_schema.clone();
-        self.execute_write(move |transaction| transaction.replace_table_schema(&table_schema))?;
-        Ok(())
+/// Wire PostgreSQL into the shared store-level wrapper layer. Everything below
+/// forwards to the inherent write bridge above or to an inherent journal read;
+/// the wrappers built on them live once in [`crate::sql::store_core`].
+impl SqlStoreCore for PostgresTenantStore {
+    type Transaction = PostgresWriteTransaction;
+
+    fn execute_write<T, F>(&self, task: F) -> Result<TenantWriteCommit<T>>
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut PostgresWriteTransaction) -> Result<T> + Send + 'static,
+    {
+        PostgresTenantStore::execute_write(self, task)
     }
 
-    pub fn fenced_replace_table_schema(
+    fn execute_write_cancellable<T, Check, F>(
         &self,
-        owner_id: &str,
-        epoch: u64,
-        expected_previous: SequenceNumber,
-        table_schema: &TableSchema,
-    ) -> CommitterLeaseResult<()> {
-        let owner_id = owner_id.to_string();
-        let fenced_owner_id = owner_id.clone();
-        let table_schema = table_schema.clone();
-        let durable_sequence = SequenceNumber(expected_previous.0.saturating_add(1));
-        let result = self.execute_write(move |transaction| {
-            if transaction.advance_fenced_committer_lease(
-                &owner_id,
-                epoch,
-                expected_previous,
-                durable_sequence,
-            )? != 1
-            {
-                return Err(Error::PreconditionFailed(
-                    FENCED_COMMITTER_LEASE_MARKER.to_string(),
-                ));
-            }
-            transaction.replace_table_schema(&table_schema)
-        });
-        map_fenced_write_result(result.map(|_| ()), fenced_owner_id, epoch)
-    }
-
-    pub fn delete_table_schema(&self, table: &TableName) -> Result<()> {
-        let table = table.clone();
-        self.execute_write(move |transaction| transaction.delete_table_schema(&table))?;
-        Ok(())
-    }
-
-    pub fn fenced_delete_table_schema(
-        &self,
-        owner_id: &str,
-        epoch: u64,
-        expected_previous: SequenceNumber,
-        table: &TableName,
-    ) -> CommitterLeaseResult<()> {
-        let owner_id = owner_id.to_string();
-        let fenced_owner_id = owner_id.clone();
-        let table = table.clone();
-        let durable_sequence = SequenceNumber(expected_previous.0.saturating_add(1));
-        let result = self.execute_write(move |transaction| {
-            if transaction.advance_fenced_committer_lease(
-                &owner_id,
-                epoch,
-                expected_previous,
-                durable_sequence,
-            )? != 1
-            {
-                return Err(Error::PreconditionFailed(
-                    FENCED_COMMITTER_LEASE_MARKER.to_string(),
-                ));
-            }
-            transaction.delete_table_schema(&table)
-        });
-        map_fenced_write_result(result.map(|_| ()), fenced_owner_id, epoch)
-    }
-
-    pub fn append_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
-        let records = records.to_vec();
-        self.execute_write(move |transaction| transaction.append_durable_records_batch(&records))?;
-        Ok(())
-    }
-
-    pub fn apply_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
-        let records = records.to_vec();
-        self.execute_write(move |transaction| transaction.apply_durable_records_batch(&records))?;
-        Ok(())
-    }
-
-    pub fn fenced_append_and_apply_durable_records_batch(
-        &self,
-        owner_id: &str,
-        epoch: u64,
-        expected_previous: SequenceNumber,
-        records: &[TenantEventRecord],
-    ) -> CommitterLeaseResult<()> {
-        self.fenced_append_and_apply_durable_records_batch_cancellable(
-            owner_id,
-            epoch,
-            expected_previous,
-            records,
-            || Ok(()),
-        )
-    }
-
-    pub fn fenced_append_and_apply_durable_records_batch_cancellable<Check>(
-        &self,
-        owner_id: &str,
-        epoch: u64,
-        expected_previous: SequenceNumber,
-        records: &[TenantEventRecord],
         check_cancel: Check,
-    ) -> CommitterLeaseResult<()>
+        task: F,
+    ) -> Result<TenantWriteCommit<T>>
     where
+        T: Send + 'static,
         Check: Fn() -> Result<()> + Send + 'static,
+        F: FnOnce(&mut PostgresWriteTransaction) -> Result<T> + Send + 'static,
     {
-        if records.is_empty() {
-            return Err(Error::InvalidInput(
-                "fenced durable apply requires at least one record".to_string(),
-            )
-            .into());
-        }
-        let owner_id = owner_id.to_string();
-        let fenced_owner_id = owner_id.clone();
-        let records = records.to_vec();
-        let pipeline_operations_completed = Arc::new(AtomicBool::new(false));
-        let pipeline_operations_completed_in_transaction = pipeline_operations_completed.clone();
-        let result = self.execute_write_cancellable(check_cancel, move |transaction| {
-            let durable_sequence = records
-                .last()
-                .expect("non-empty fenced durable apply batch")
-                .sequence;
-            if transaction.advance_fenced_committer_lease(
-                &owner_id,
-                epoch,
-                expected_previous,
-                durable_sequence,
-            )? != 1
-            {
-                return Err(Error::PreconditionFailed(
-                    FENCED_COMMITTER_LEASE_MARKER.to_string(),
-                ));
-            }
-            crate::commit_log::ensure_applied_prefix_precedes(
-                transaction.applied_sequence()?,
-                records[0].sequence,
-            )?;
-            transaction.append_and_apply_durable_records_batch(&records)?;
-            pipeline_operations_completed_in_transaction.store(true, AtomicOrdering::Release);
-            Ok(())
-        });
-        if let Err(error @ Error::Cancelled) = &result
-            && pipeline_operations_completed.load(AtomicOrdering::Acquire)
-        {
-            // The ordered runner records its own errors. A cancellation can
-            // still arrive at the transaction's final pre-commit check after
-            // that runner has completed, so record only that outer-boundary
-            // case and avoid double-counting an inner cancellation.
-            self.pipeline_metrics.record_error(error);
-        }
-        match result {
-            Ok(_) => Ok(()),
-            Err(Error::PreconditionFailed(message)) if message == FENCED_COMMITTER_LEASE_MARKER => {
-                Err(CommitterLeaseError::Fenced {
-                    owner_id: fenced_owner_id,
-                    epoch,
-                })
-            }
-            Err(error) => Err(error.into()),
-        }
+        PostgresTenantStore::execute_write_cancellable(self, check_cancel, task)
     }
 
-    pub fn insert_scheduled_job(&self, job: &ScheduledJob) -> Result<()> {
-        let job = job.clone();
-        self.execute_write(move |transaction| transaction.insert_scheduled_job(&job))?;
-        Ok(())
+    fn retention_floor(&self) -> &RetentionFloor {
+        self.retention_floor.as_ref()
     }
 
-    pub fn claim_due_jobs(&self, now: Timestamp, max_jobs: usize) -> Result<Vec<ScheduledJob>> {
-        Ok(self
-            .execute_write(move |transaction| transaction.claim_due_jobs(now, max_jobs))?
-            .value)
+    fn pipeline_metrics(&self) -> &SqlWritePipelineMetrics {
+        self.pipeline_metrics.as_ref()
     }
 
-    pub fn complete_scheduled_job(&self, job_id: &DocumentId) -> Result<()> {
-        let job_id = job_id.clone();
-        self.execute_write(move |transaction| transaction.complete_scheduled_job(&job_id))?;
-        Ok(())
+    fn journal_progress(&self) -> Result<JournalProgress> {
+        PostgresTenantStore::journal_progress(self)
     }
 
-    pub fn cancel_scheduled_job(&self, job_id: &DocumentId) -> Result<bool> {
-        let job_id = job_id.clone();
-        Ok(self
-            .execute_write(move |transaction| transaction.cancel_scheduled_job(&job_id))?
-            .value)
-    }
-
-    pub fn record_scheduled_job_result(&self, result: &ScheduledJobResult) -> Result<()> {
-        let result = result.clone();
-        self.execute_write(move |transaction| transaction.record_scheduled_job_result(&result))?;
-        Ok(())
-    }
-
-    pub fn save_cron_job(&self, cron: &CronJob) -> Result<()> {
-        let cron = cron.clone();
-        self.execute_write(move |transaction| transaction.save_cron_job(&cron))?;
-        Ok(())
-    }
-
-    pub fn delete_cron_job(&self, name: &str) -> Result<()> {
-        let name = name.to_string();
-        self.execute_write(move |transaction| transaction.delete_cron_job(name.as_str()))?;
-        Ok(())
-    }
-
-    pub fn recover_running_jobs(&self, now: Timestamp) -> Result<()> {
-        self.execute_write(move |transaction| transaction.recover_running_jobs(now))?;
-        Ok(())
-    }
-
-    pub fn apply_execution_unit_batch(
+    fn read_durable_journal_from(
         &self,
-        writes: &[ResolvedWrite],
-        schedule_ops: &[ResolvedScheduleOp],
-    ) -> Result<Option<CommitEntry>> {
-        self.apply_execution_unit_batch_with_origin(writes, schedule_ops, None, None)
+        sequence: SequenceNumber,
+    ) -> Result<Vec<TenantEventRecord>> {
+        PostgresTenantStore::read_durable_journal_from(self, sequence)
     }
 
-    pub fn apply_execution_unit_batch_with_origin(
-        &self,
-        writes: &[ResolvedWrite],
-        schedule_ops: &[ResolvedScheduleOp],
-        trigger_write_origin: Option<&TriggerWriteOrigin>,
-        commit_timestamp: Option<Timestamp>,
-    ) -> Result<Option<CommitEntry>> {
-        if writes.is_empty() && schedule_ops.is_empty() {
-            return Err(Error::Internal(
-                "execution-unit batch must contain at least one change".to_string(),
-            ));
-        }
-
-        let writes = writes.to_vec();
-        let schedule_ops = schedule_ops.to_vec();
-        let trigger_write_origin = trigger_write_origin.cloned();
-        let committed = self.execute_write(move |transaction| {
-            transaction.set_trigger_write_origin(trigger_write_origin.clone());
-            transaction.set_commit_timestamp(commit_timestamp);
-            for write in &writes {
-                transaction.apply_resolved_write(write)?;
-            }
-            apply_schedule_ops_in_transaction(transaction, &schedule_ops)?;
-            Ok(())
-        })?;
-        Ok(committed.commit)
+    fn recover_durable_journal(&self) -> Result<JournalProgress> {
+        PostgresTenantStore::recover_durable_journal(self)
     }
 
-    pub fn insert(&self, document: &Document) -> Result<CommitEntry> {
-        self.insert_once(document, None)?
-            .ok_or_else(|| Error::Internal("non-deduplicated insert should commit".to_string()))
-    }
-
-    pub fn insert_with_indexes(
-        &self,
-        document: &Document,
-        _indexes: &[IndexDefinition],
-    ) -> Result<CommitEntry> {
-        self.insert(document)
-    }
-
-    pub fn insert_once(
-        &self,
-        document: &Document,
-        execution_id: Option<&str>,
-    ) -> Result<Option<CommitEntry>> {
-        let document = document.clone();
-        let execution_id = execution_id.map(str::to_string);
-        let committed = self.execute_write(move |transaction| {
-            if !transaction.begin_scheduled_execution(execution_id.as_deref())? {
-                return Ok(false);
-            }
-            transaction.insert_document(&document)?;
-            Ok(true)
-        })?;
-        Ok(if committed.value {
-            Some(expect_write_commit(
-                committed.commit,
-                "deduplicated insert should record a commit entry",
-            )?)
-        } else {
-            None
-        })
-    }
-
-    pub fn insert_with_indexes_once(
-        &self,
-        document: &Document,
-        _indexes: &[IndexDefinition],
-        execution_id: Option<&str>,
-    ) -> Result<Option<CommitEntry>> {
-        self.insert_once(document, execution_id)
-    }
-
-    pub fn insert_with_indexes_once_at(
-        &self,
-        document: &Document,
-        assignment: crate::DirectWriteAssignment<'_>,
-    ) -> Result<Option<CommitEntry>> {
-        let document = document.clone();
-        let execution_id = assignment.execution_id.map(str::to_string);
-        let committed = self.execute_write(move |transaction| {
-            transaction.set_commit_timestamp(Some(assignment.commit_timestamp));
-            if !transaction.begin_scheduled_execution(execution_id.as_deref())? {
-                return Ok(false);
-            }
-            transaction.insert_document(&document)?;
-            Ok(true)
-        })?;
-        Ok(if committed.value {
-            Some(expect_write_commit(
-                committed.commit,
-                "deduplicated insert should record a commit entry",
-            )?)
-        } else {
-            None
-        })
-    }
-
-    pub fn update_validated<F>(
-        &self,
-        table: &TableName,
-        id: &DocumentId,
-        patch: &serde_json::Map<String, Value>,
-        validate: F,
-    ) -> Result<CommitEntry>
-    where
-        F: FnOnce(&Document, &Document) -> Result<()> + Send + 'static,
-    {
-        self.update_validated_once(table, id, patch, None, validate)?
-            .ok_or_else(|| Error::Internal("non-deduplicated update should commit".to_string()))
-    }
-
-    pub fn update_validated_once<F>(
-        &self,
-        table: &TableName,
-        id: &DocumentId,
-        patch: &serde_json::Map<String, Value>,
-        execution_id: Option<&str>,
-        validate: F,
-    ) -> Result<Option<CommitEntry>>
-    where
-        F: FnOnce(&Document, &Document) -> Result<()> + Send + 'static,
-    {
-        let table = table.clone();
-        let id = id.clone();
-        let patch = patch.clone();
-        let execution_id = execution_id.map(str::to_string);
-        let committed = self.execute_write(move |transaction| {
-            if !transaction.begin_scheduled_execution(execution_id.as_deref())? {
-                return Ok(false);
-            }
-            transaction.update_document_validated(&table, &id, &patch, validate)?;
-            Ok(true)
-        })?;
-        Ok(if committed.value {
-            Some(expect_write_commit(
-                committed.commit,
-                "deduplicated update should record a commit entry",
-            )?)
-        } else {
-            None
-        })
-    }
-
-    pub fn update_with_indexes_validated<F>(
-        &self,
-        table: &TableName,
-        id: &DocumentId,
-        patch: &serde_json::Map<String, Value>,
-        _indexes: &[IndexDefinition],
-        validate: F,
-    ) -> Result<CommitEntry>
-    where
-        F: FnOnce(&Document, &Document) -> Result<()> + Send + 'static,
-    {
-        self.update_validated(table, id, patch, validate)
-    }
-
-    pub fn update_with_indexes_validated_once<F>(
-        &self,
-        table: &TableName,
-        id: &DocumentId,
-        patch: &serde_json::Map<String, Value>,
-        _indexes: &[IndexDefinition],
-        execution_id: Option<&str>,
-        validate: F,
-    ) -> Result<Option<CommitEntry>>
-    where
-        F: FnOnce(&Document, &Document) -> Result<()> + Send + 'static,
-    {
-        self.update_validated_once(table, id, patch, execution_id, validate)
-    }
-
-    pub fn update_with_indexes_validated_once_at<F>(
-        &self,
-        table: &TableName,
-        id: &DocumentId,
-        patch: &serde_json::Map<String, Value>,
-        assignment: crate::DirectWriteAssignment<'_>,
-        validate: F,
-    ) -> Result<Option<CommitEntry>>
-    where
-        F: FnOnce(&Document, &Document) -> Result<()> + Send + 'static,
-    {
-        let table = table.clone();
-        let id = id.clone();
-        let patch = patch.clone();
-        let execution_id = assignment.execution_id.map(str::to_string);
-        let committed = self.execute_write(move |transaction| {
-            transaction.set_commit_timestamp(Some(assignment.commit_timestamp));
-            if !transaction.begin_scheduled_execution(execution_id.as_deref())? {
-                return Ok(false);
-            }
-            transaction.update_document_validated(&table, &id, &patch, validate)?;
-            Ok(true)
-        })?;
-        Ok(if committed.value {
-            Some(expect_write_commit(
-                committed.commit,
-                "deduplicated update should record a commit entry",
-            )?)
-        } else {
-            None
-        })
-    }
-
-    pub fn delete_validated_returning_document<F>(
-        &self,
-        table: &TableName,
-        id: &DocumentId,
-        validate: F,
-    ) -> Result<(CommitEntry, Document)>
-    where
-        F: FnOnce(&Document) -> Result<()> + Send + 'static,
-    {
-        self.delete_validated_once(table, id, None, validate)?
-            .ok_or_else(|| Error::Internal("non-deduplicated delete should commit".to_string()))
-    }
-
-    pub fn delete_validated_once<F>(
-        &self,
-        table: &TableName,
-        id: &DocumentId,
-        execution_id: Option<&str>,
-        validate: F,
-    ) -> Result<Option<(CommitEntry, Document)>>
-    where
-        F: FnOnce(&Document) -> Result<()> + Send + 'static,
-    {
-        let table = table.clone();
-        let id = id.clone();
-        let execution_id = execution_id.map(str::to_string);
-        let committed = self.execute_write(move |transaction| {
-            if !transaction.begin_scheduled_execution(execution_id.as_deref())? {
-                return Ok(None);
-            }
-            let removed_document = transaction.delete_document_validated(&table, &id, validate)?;
-            Ok(Some(removed_document))
-        })?;
-        Ok(if let Some(removed_document) = committed.value {
-            Some((
-                expect_write_commit(
-                    committed.commit,
-                    "deduplicated delete should record a commit entry",
-                )?,
-                removed_document,
-            ))
-        } else {
-            None
-        })
-    }
-
-    pub fn delete_with_indexes_validated_returning_document<F>(
-        &self,
-        table: &TableName,
-        id: &DocumentId,
-        _indexes: &[IndexDefinition],
-        validate: F,
-    ) -> Result<(CommitEntry, Document)>
-    where
-        F: FnOnce(&Document) -> Result<()> + Send + 'static,
-    {
-        self.delete_validated_returning_document(table, id, validate)
-    }
-
-    pub fn delete_with_indexes_validated_once<F>(
-        &self,
-        table: &TableName,
-        id: &DocumentId,
-        _indexes: &[IndexDefinition],
-        execution_id: Option<&str>,
-        validate: F,
-    ) -> Result<Option<(CommitEntry, Document)>>
-    where
-        F: FnOnce(&Document) -> Result<()> + Send + 'static,
-    {
-        self.delete_validated_once(table, id, execution_id, validate)
-    }
-
-    pub fn delete_with_indexes_validated_once_at<F>(
-        &self,
-        table: &TableName,
-        id: &DocumentId,
-        assignment: crate::DirectWriteAssignment<'_>,
-        validate: F,
-    ) -> Result<Option<(CommitEntry, Document)>>
-    where
-        F: FnOnce(&Document) -> Result<()> + Send + 'static,
-    {
-        let table = table.clone();
-        let id = id.clone();
-        let execution_id = assignment.execution_id.map(str::to_string);
-        let committed = self.execute_write(move |transaction| {
-            transaction.set_commit_timestamp(Some(assignment.commit_timestamp));
-            if !transaction.begin_scheduled_execution(execution_id.as_deref())? {
-                return Ok(None);
-            }
-            let removed_document = transaction.delete_document_validated(&table, &id, validate)?;
-            Ok(Some(removed_document))
-        })?;
-        Ok(if let Some(removed_document) = committed.value {
-            Some((
-                expect_write_commit(
-                    committed.commit,
-                    "deduplicated delete should record a commit entry",
-                )?,
-                removed_document,
-            ))
-        } else {
-            None
-        })
+    fn export_materialized_journal_snapshot(&self) -> Result<MaterializedJournalSnapshot> {
+        PostgresTenantStore::export_materialized_journal_snapshot(self)
     }
 }
 
-pub(super) fn map_fenced_write_result<T>(
-    result: Result<T>,
-    owner_id: String,
-    epoch: u64,
-) -> CommitterLeaseResult<T> {
-    match result {
-        Ok(value) => Ok(value),
-        Err(Error::PreconditionFailed(message)) if message == FENCED_COMMITTER_LEASE_MARKER => {
-            Err(CommitterLeaseError::Fenced { owner_id, epoch })
-        }
-        Err(error) => Err(error.into()),
+/// Transaction-side seam for the shared wrappers. Each method forwards to the
+/// inherent method of the same name, which wins method-call resolution.
+impl SqlWriteTransactionCore for PostgresWriteTransaction {
+    fn begin_scheduled_execution(&mut self, execution_id: Option<&str>) -> Result<bool> {
+        PostgresWriteTransaction::begin_scheduled_execution(self, execution_id)
+    }
+
+    fn set_prepared_record(&mut self, record: TenantEventRecord) {
+        PostgresWriteTransaction::set_prepared_record(self, record)
+    }
+
+    fn set_trigger_write_origin(&mut self, trigger_write_origin: Option<TriggerWriteOrigin>) {
+        PostgresWriteTransaction::set_trigger_write_origin(self, trigger_write_origin)
+    }
+
+    fn set_commit_timestamp(&mut self, commit_timestamp: Option<Timestamp>) {
+        PostgresWriteTransaction::set_commit_timestamp(self, commit_timestamp)
+    }
+
+    fn advance_fenced_committer_lease(
+        &mut self,
+        owner_id: &str,
+        epoch: u64,
+        expected_previous: SequenceNumber,
+        durable_sequence: SequenceNumber,
+    ) -> Result<u64> {
+        PostgresWriteTransaction::advance_fenced_committer_lease(
+            self,
+            owner_id,
+            epoch,
+            expected_previous,
+            durable_sequence,
+        )
+    }
+
+    fn append_durable_records_batch(&mut self, records: &[TenantEventRecord]) -> Result<()> {
+        PostgresWriteTransaction::append_durable_records_batch(self, records)
+    }
+
+    fn apply_durable_records_batch(&mut self, records: &[TenantEventRecord]) -> Result<()> {
+        PostgresWriteTransaction::apply_durable_records_batch(self, records)
+    }
+
+    /// PostgreSQL pipelines the journal insert and the apply as one ordered pair
+    /// on a shared connection, so pipeline progress is reported once both have
+    /// completed.
+    fn append_and_apply_fenced_durable_batch(
+        &mut self,
+        records: &[TenantEventRecord],
+        on_pipeline_progress: &mut dyn FnMut(),
+    ) -> Result<()> {
+        PostgresWriteTransaction::append_and_apply_durable_records_batch(self, records)?;
+        on_pipeline_progress();
+        Ok(())
+    }
+
+    fn replace_table_schema(&mut self, table_schema: &TableSchema) -> Result<()> {
+        PostgresWriteTransaction::replace_table_schema(self, table_schema)
+    }
+
+    fn delete_table_schema(&mut self, table: &TableName) -> Result<()> {
+        PostgresWriteTransaction::delete_table_schema(self, table)
+    }
+
+    fn insert_scheduled_job(&mut self, job: &ScheduledJob) -> Result<()> {
+        PostgresWriteTransaction::insert_scheduled_job(self, job)
+    }
+
+    fn claim_due_jobs(&mut self, now: Timestamp, max_jobs: usize) -> Result<Vec<ScheduledJob>> {
+        PostgresWriteTransaction::claim_due_jobs(self, now, max_jobs)
+    }
+
+    fn complete_scheduled_job(&mut self, job_id: &DocumentId) -> Result<()> {
+        PostgresWriteTransaction::complete_scheduled_job(self, job_id)
+    }
+
+    fn cancel_scheduled_job(&mut self, job_id: &DocumentId) -> Result<bool> {
+        PostgresWriteTransaction::cancel_scheduled_job(self, job_id)
+    }
+
+    fn record_scheduled_job_result(&mut self, result: &ScheduledJobResult) -> Result<()> {
+        PostgresWriteTransaction::record_scheduled_job_result(self, result)
+    }
+
+    fn save_cron_job(&mut self, cron: &CronJob) -> Result<()> {
+        PostgresWriteTransaction::save_cron_job(self, cron)
+    }
+
+    fn delete_cron_job(&mut self, name: &str) -> Result<()> {
+        PostgresWriteTransaction::delete_cron_job(self, name)
+    }
+
+    fn recover_running_jobs(&mut self, now: Timestamp) -> Result<()> {
+        PostgresWriteTransaction::recover_running_jobs(self, now)
+    }
+
+    fn apply_resolved_write(&mut self, write: &ResolvedWrite) -> Result<()> {
+        PostgresWriteTransaction::apply_resolved_write(self, write)
+    }
+
+    fn update_document_validated<F>(
+        &mut self,
+        table: &TableName,
+        id: &DocumentId,
+        patch: &serde_json::Map<String, Value>,
+        validate: F,
+    ) -> Result<()>
+    where
+        F: FnOnce(&Document, &Document) -> Result<()> + Send + 'static,
+    {
+        PostgresWriteTransaction::update_document_validated(self, table, id, patch, validate)
+    }
+
+    fn delete_document_validated<F>(
+        &mut self,
+        table: &TableName,
+        id: &DocumentId,
+        validate: F,
+    ) -> Result<Document>
+    where
+        F: FnOnce(&Document) -> Result<()> + Send + 'static,
+    {
+        PostgresWriteTransaction::delete_document_validated(self, table, id, validate)
+    }
+
+    fn prune_retained_versions(
+        &mut self,
+        document_prune_before: SequenceNumber,
+        index_prune_before: SequenceNumber,
+    ) -> Result<(u64, u64)> {
+        PostgresWriteTransaction::prune_retained_versions(
+            self,
+            document_prune_before,
+            index_prune_before,
+        )
     }
 }
 

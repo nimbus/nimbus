@@ -1,7 +1,6 @@
 use std::fmt::Write as _;
 use std::future::Future;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use mysql_async::prelude::Queryable;
@@ -22,19 +21,16 @@ use sha2::{Digest, Sha256};
 use tokio::runtime::Handle as TokioRuntimeHandle;
 use tokio::sync::Semaphore;
 
+use crate::ResolvedWrite;
 use crate::RetentionFloor;
-use crate::async_storage::{
-    TenantReadStorage, TenantWriteOutcome, TenantWriteStorage, map_executor_join_error,
-    map_executor_permit_error,
-};
+use crate::async_storage::{TenantReadStorage, TenantWriteOutcome, TenantWriteStorage};
 use crate::commit_log::{deserialize_tenant_event_record, serialize_tenant_event_record};
 use crate::runtime_bridge::bridge_tokio_runtime;
 use crate::simulation::{FaultInjector, FaultPoint, NoopFaultInjector};
 use crate::store::{
     DurableJournalBootstrap, DurableJournalPage, JournalProgress, MaterializedJournalSnapshot,
-    PointInTimeRestoreArchive, PointInTimeRestoreTarget, TenantWriteCommit,
+    TenantWriteCommit,
 };
-use crate::{ResolvedScheduleOp, ResolvedWrite};
 
 mod backend;
 mod committer_lease;
@@ -166,12 +162,12 @@ pub struct MySqlWriteTransaction {
     check_cancel: Box<dyn Fn() -> Result<()> + Send>,
 }
 
-#[derive(Clone)]
-struct MySqlBlockingWriteExecutor {
-    store: Arc<MySqlTenantStore>,
-    permits: Arc<Semaphore>,
-    runtime_handle: TokioRuntimeHandle,
-}
+/// Provider-owned blocking write executor. MySQL keeps its own instead of
+/// the generic `async_storage::write` executor because transaction and session
+/// lifecycles are coupled to the MySQL async client; the bounded-permit
+/// mechanics themselves are shared with PostgreSQL.
+type MySqlBlockingWriteExecutor =
+    crate::sql::store_core::SqlBlockingWriteExecutor<MySqlTenantStore>;
 
 impl MySqlTenantStore {
     fn new(provider: MySqlProvider, registration: MySqlTenantRegistration) -> Self {

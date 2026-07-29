@@ -1470,30 +1470,6 @@ where
     Ok(row.is_some())
 }
 
-pub(super) fn expect_write_commit(
-    commit: Option<CommitEntry>,
-    expectation: &str,
-) -> Result<CommitEntry> {
-    commit.ok_or_else(|| Error::Internal(expectation.to_string()))
-}
-
-pub(super) fn apply_schedule_ops_in_transaction(
-    transaction: &mut MySqlWriteTransaction,
-    schedule_ops: &[ResolvedScheduleOp],
-) -> Result<()> {
-    for schedule_op in schedule_ops {
-        match schedule_op {
-            ResolvedScheduleOp::Insert { job } => transaction.insert_scheduled_job(job)?,
-            ResolvedScheduleOp::Cancel { job_id } => {
-                if !transaction.cancel_scheduled_job(job_id)? {
-                    return Err(Error::ScheduledJobNotFound(job_id.clone()));
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
