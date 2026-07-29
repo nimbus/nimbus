@@ -1280,4 +1280,73 @@ mod tests {
             "both ADD operations must be preserved"
         );
     }
+
+    /// Two UpdateItem calls that SET **different** attributes of one item must
+    /// both survive. `ADD` merges numerically, so a lost write there shows up
+    /// only as a wrong total; a distinct-attribute `SET` is the sharper probe —
+    /// a read-modify-write that writes its own snapshot back wholesale drops
+    /// the attribute the interleaved writer added, leaving no trace at all.
+    #[test]
+    fn concurrent_set_updates_on_distinct_attributes_both_survive() {
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
+        put(
+            &engine,
+            &ctx,
+            json!({ "TableName": "Orders", "Item": { "pk": {"S": "item"} } }),
+        )
+        .expect("seed item");
+
+        let set = |attribute: &str| -> UpdateItemInput {
+            serde_json::from_value(json!({
+                "TableName": "Orders",
+                "Key": { "pk": {"S": "item"} },
+                "UpdateExpression": format!("SET {attribute} = :v"),
+                "ExpressionAttributeValues": { ":v": {"S": attribute} },
+            }))
+            .unwrap()
+        };
+
+        let faults = engine.commit_fault_handle_for_testing();
+        faults.arm(commit_fault_labels::PREPARE_COMPLETE);
+        let first = std::thread::spawn({
+            let engine = engine.clone();
+            let ctx = ctx.clone();
+            let input = set("alpha");
+            move || update_item(&engine, &ctx, input)
+        });
+
+        let entered = faults.wait_until_entered(
+            commit_fault_labels::PREPARE_COMPLETE,
+            Duration::from_secs(5),
+        );
+        if entered {
+            update_item(&engine, &ctx, set("beta")).expect("concurrent update should commit");
+        }
+        faults.release(commit_fault_labels::PREPARE_COMPLETE);
+        assert!(
+            entered,
+            "first update should reach the deterministic commit pause"
+        );
+        first
+            .join()
+            .expect("first update thread should join")
+            .expect("first update should retry and commit");
+
+        assert!(
+            faults.hit_count(commit_fault_labels::PREPARE_COMPLETE) >= 3,
+            "first attempt, concurrent commit, and retried attempt should all reach commit"
+        );
+        let item = stored(&engine, &ctx, "item").expect("item present");
+        assert_eq!(
+            item.get("alpha"),
+            Some(&AttributeValue::S("alpha".into())),
+            "the retried update's own attribute must be present"
+        );
+        assert_eq!(
+            item.get("beta"),
+            Some(&AttributeValue::S("beta".into())),
+            "the interleaved concurrent update must not be lost"
+        );
+    }
 }
