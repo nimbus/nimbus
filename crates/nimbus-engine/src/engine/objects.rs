@@ -11,6 +11,9 @@ use nimbus_storage::{
 };
 
 use super::Engine;
+use super::mutations::durable_outcome::{
+    DurableWriteOutcome, DurableWriteRoute, classify_durable_write_error,
+};
 use super::mutations::{begin_durable_recovery_eviction, durable_batch};
 use crate::engine::execution_units::CommitFaultClient;
 use crate::tenant::{TenantOperationGuard, TenantRuntime};
@@ -237,14 +240,15 @@ impl TenantObjectMeta {
 
     /// Commits one object-metadata write through the tenant committer actor.
     ///
-    /// Mirrors the scheduler-write shape: the actor task owns sequencing and
-    /// persistence; an ambiguous durable outcome begins crash-recovery
+    /// Mirrors the direct-mutation shape: the actor task owns sequencing,
+    /// persistence, evidence-based failure classification, and the ordered
+    /// fan-out boundary; an ambiguous durable outcome begins crash-recovery
     /// eviction inside the task, and this caller awaits that eviction before
-    /// surfacing the error. On success the commit fans out to subscriptions
-    /// and committed-mutation observers exactly like a journal batch.
+    /// surfacing the error.
     async fn commit_meta_write(&self, write: ObjectMetaWrite) -> Result<ObjectMetaWriteOutcome> {
         let _operation = self.runtime.enter_operation(&self.tenant_id)?;
         let now = self.engine.now();
+        let engine = self.engine.clone();
         let commit_faults = self.engine.commit_faults.clone();
         let initiated_eviction = Arc::new(AtomicBool::new(false));
         let initiated_eviction_for_commit = initiated_eviction.clone();
@@ -253,6 +257,7 @@ impl TenantObjectMeta {
             .runtime
             .submit_internal_committer_async(move || {
                 commit_object_meta_write_in_actor(
+                    &engine,
                     &runtime_for_commit,
                     &commit_faults,
                     now,
@@ -267,19 +272,7 @@ impl TenantObjectMeta {
         if let Some(completion) = eviction_completion {
             completion.wait().await;
         }
-        let outcome = result?;
-        if let ObjectMetaWriteOutcome::Committed { commit, .. } = &outcome {
-            let applied = std::slice::from_ref(commit);
-            self.engine.process_applied_commit_batch_fanout(
-                self.runtime.clone(),
-                applied,
-                Some(commit.clone()),
-                true,
-            );
-            self.engine
-                .enqueue_applied_commit_batch_observers(self.runtime.clone(), applied);
-        }
-        Ok(outcome)
+        result
     }
 }
 
@@ -290,7 +283,16 @@ impl TenantObjectMeta {
 /// assigning the next sequence here is race-free, and the read-modify-write
 /// against the previous document image cannot interleave with a concurrent
 /// put or delete of the same object.
+///
+/// This is an engine-internal committer route in the same family as the
+/// scheduler-state and trigger-cursor writes, not a fourth client mutation
+/// path: sequencing, persistence, failure classification
+/// (`classify_durable_write_error`), and fan-out are the same seams the
+/// direct route uses. Representing an upsert-with-previous-image as a client
+/// `Mutation` would expand the client mutation and authorization surface for
+/// no additional safety.
 fn commit_object_meta_write_in_actor(
+    engine: &Arc<Engine>,
     runtime: &Arc<TenantRuntime>,
     commit_faults: &CommitFaultClient,
     now: Timestamp,
@@ -325,7 +327,8 @@ fn commit_object_meta_write_in_actor(
         previous: previous.clone(),
         current,
     };
-    let sequence = SequenceNumber(runtime.durable_head().0.saturating_add(1));
+    let previous_sequence = runtime.durable_head();
+    let sequence = SequenceNumber(previous_sequence.0.saturating_add(1));
     let record = TenantEventRecord::new(sequence, now, vec![write_op], None)?;
     let commit = record.as_commit_entry();
     runtime.stage_pending_write_log_commits([commit.clone()], now);
@@ -335,18 +338,57 @@ fn commit_object_meta_write_in_actor(
         commit_faults,
         || {},
     ) {
-        Ok(_) => Ok(ObjectMetaWriteOutcome::Committed { commit, previous }),
+        Ok(_) => {
+            // Ordered fan-out boundary: the actor cannot start the next
+            // commit until this returns, so subscriptions and observers see
+            // object commits in sequence order (same seams as the direct
+            // route's post-commit stage).
+            engine.process_commit_fanout(runtime.clone(), &commit);
+            engine.enqueue_applied_commit_batch_observers(
+                runtime.clone(),
+                std::slice::from_ref(&commit),
+            );
+            Ok(ObjectMetaWriteOutcome::Committed { commit, previous })
+        }
+        // A failed persistence call is not proof the provider did not commit.
+        // Classify on durable evidence: rollback is safe only when the
+        // authoritative durable head is exactly the pre-write head.
         Err(durable_batch::DurableBatchFailure::Persistence { error, .. }) => {
-            runtime.discard_unpersisted_write_log_suffix(sequence);
-            Err(error)
+            match classify_durable_write_error(
+                runtime.as_ref(),
+                DurableWriteRoute::ObjectMetadata,
+                previous_sequence,
+                error,
+            ) {
+                DurableWriteOutcome::Definitive(error) => {
+                    runtime.discard_unpersisted_write_log_suffix(sequence);
+                    Err(error)
+                }
+                DurableWriteOutcome::Ambiguous(recovery_error) => {
+                    begin_object_meta_durable_recovery(
+                        runtime,
+                        &recovery_error,
+                        &initiated_eviction,
+                    );
+                    Err(recovery_error)
+                }
+            }
         }
         Err(durable_batch::DurableBatchFailure::Ambiguous(error)) => {
-            runtime.publisher_record_ambiguous_error();
-            begin_durable_recovery_eviction(runtime.as_ref(), &error);
-            runtime.fail_and_drain_mutation_queues(&error);
-            runtime.close_committed_mutation_observers();
-            initiated_eviction.store(true, Ordering::Release);
+            begin_object_meta_durable_recovery(runtime, &error, &initiated_eviction);
             Err(error)
         }
     }
+}
+
+fn begin_object_meta_durable_recovery(
+    runtime: &Arc<TenantRuntime>,
+    error: &Error,
+    initiated_eviction: &AtomicBool,
+) {
+    runtime.publisher_record_ambiguous_error();
+    begin_durable_recovery_eviction(runtime.as_ref(), error);
+    runtime.fail_and_drain_mutation_queues(error);
+    runtime.close_committed_mutation_observers();
+    initiated_eviction.store(true, Ordering::Release);
 }

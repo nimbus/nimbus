@@ -21,6 +21,7 @@ pub(crate) enum DurableWriteRoute {
     SchemaDelete,
     TriggerCursor,
     PointInTimeRestore,
+    ObjectMetadata,
 }
 
 impl DurableWriteRoute {
@@ -33,6 +34,7 @@ impl DurableWriteRoute {
             Self::SchemaDelete => "schema delete",
             Self::TriggerCursor => "trigger cursor",
             Self::PointInTimeRestore => "point-in-time restore import",
+            Self::ObjectMetadata => "object metadata write",
         }
     }
 }

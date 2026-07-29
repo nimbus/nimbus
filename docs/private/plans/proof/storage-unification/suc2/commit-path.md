@@ -108,3 +108,32 @@ whole-block CV ≤ 10% admissibility. Baseline = branch point a082b9776
 Baseline mean (a1, a2) = **47,386**; branch mean (b1, b3) = **47,299**;
 ratio **0.9982** ≥ 0.98 — **PASS** (−0.18%, well inside noise). Raw block
 reports: session scratchpad `ab-{a1,b1,b2,a2,b3}.md`.
+
+## Structured Review (gpt-5.6-sol, high)
+
+First pass returned three findings; each verified against the real code:
+
+1. **Accepted (P1) — persistence-failure ambiguity.** The first cut discarded
+   the staged suffix and returned the raw error on any persistence failure,
+   treating it as definitively-not-committed. Fixed: failures now classify via
+   `classify_durable_write_error` with a new `DurableWriteRoute::ObjectMetadata`
+   (definitive only when the authoritative durable head equals the pre-write
+   head); ambiguous outcomes begin crash-recovery eviction — the direct
+   route's exact shape.
+2. **Accepted (P2) — fan-out ordering.** Fan-out originally ran in the caller
+   task after the committer returned, so concurrent object commits could
+   notify out of order. Fixed: `process_commit_fanout` (the committer's
+   documented ordered publication boundary) plus observer enqueue now run
+   inside the committer task, so the actor cannot start the next commit until
+   fan-out for this one is accepted.
+3. **Rejected — "route through the client mutation path".** The three
+   engine-owned client mutation routes are unchanged; this is an internal
+   committer route in the same family as scheduler-state and trigger-cursor
+   writes (the plan's own acceptance wording: "fenced through the committer or
+   an explicitly serialized internal path"). After fixes 1–2 it shares the
+   direct route's classification and fan-out seams; expressing
+   upsert-with-previous-image as a client `Mutation` would expand the client
+   mutation and authorization surface without additional safety. Rationale
+   recorded as a code comment on `commit_object_meta_write_in_actor`.
+
+Second review pass result recorded below.
