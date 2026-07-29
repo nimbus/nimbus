@@ -13,8 +13,11 @@ fn initial_manifest(
     let sandbox_id = SandboxId::new(sandbox);
     let mut manifest = sample_manifest(spec.clone(), KrunStartMode::Execute);
     manifest.handle.id = sandbox_id.clone();
-    manifest.conmon_layout =
-        OciConmonLayout::new_for_tenant(&backend.config.state_root, &spec.tenant_id, &sandbox_id);
+    manifest.conmon_layout = OciConmonLayout::new_for_tenant(
+        &backend.config.workload_state_root,
+        &spec.tenant_id,
+        &sandbox_id,
+    );
     manifest
 }
 
@@ -54,15 +57,15 @@ fn initial_manifest_syncs_full_trusted_ancestor_chain_before_attachment_reservat
     let mut expected = vec![
         backend
             .config
-            .state_root
+            .workload_state_root
             .parent()
             .expect("state root should have a parent")
             .to_path_buf(),
-        backend.config.state_root.clone(),
+        backend.config.workload_state_root.clone(),
     ];
-    let mut current = backend.config.state_root.clone();
+    let mut current = backend.config.workload_state_root.clone();
     for component in state_dir
-        .strip_prefix(&backend.config.state_root)
+        .strip_prefix(&backend.config.workload_state_root)
         .expect("manifest directory should belong to state root")
         .components()
     {
@@ -92,7 +95,7 @@ fn initial_manifest_ancestor_sync_failure_prevents_attachment_reservation() {
         "failed-durable-krun-tenant",
         "failed-durable-krun-sandbox",
     );
-    let failed_directory = backend.config.state_root.join("tenants");
+    let failed_directory = backend.config.workload_state_root.join("tenants");
     let mut synchronized = Vec::new();
 
     let error = backend
@@ -120,7 +123,7 @@ fn initial_manifest_ancestor_sync_failure_prevents_attachment_reservation() {
         synchronized,
         [
             temp_dir.path().to_path_buf(),
-            backend.config.state_root.clone(),
+            backend.config.workload_state_root.clone(),
             failed_directory,
         ],
         "publication must stop at the failed ancestor before any attachment authority can exist"

@@ -119,8 +119,9 @@ fn assert_restart_cleanup_is_fenced(
     for (path, contents) in receipts {
         fs::write(path, contents).expect("restart receipt should persist");
     }
-    let authority_path =
-        nimbus_network::LocalNetworkStateStore::authority_path_for(&backend.config.state_root);
+    let authority_path = nimbus_network::LocalNetworkStateStore::authority_path_for(
+        &backend.config.network_state_root,
+    );
     let authority_before =
         fs::read(&authority_path).expect("active network authority should be durable");
     let lease_records_before = manifest
@@ -133,7 +134,7 @@ fn assert_restart_cleanup_is_fenced(
                 .map(|assignment| &assignment.port_lease),
         )
         .map(|request| {
-            nimbus_network::LocalPortLeaseAuthority::open(&backend.config.state_root)
+            nimbus_network::LocalPortLeaseAuthority::open(&backend.config.network_state_root)
                 .expect("port authority should reopen")
                 .inspect(request.lease_id())
                 .expect("lease should inspect")
@@ -186,8 +187,9 @@ fn assert_restart_cleanup_is_fenced(
         fs::read(&manifest.network_layout.netns_path).expect("fenced netns should remain"),
         netns_before
     );
-    let authority = nimbus_network::LocalPortLeaseAuthority::open(&backend.config.state_root)
-        .expect("port authority should reopen");
+    let authority =
+        nimbus_network::LocalPortLeaseAuthority::open(&backend.config.network_state_root)
+            .expect("port authority should reopen");
     for (request, expected) in manifest
         .port_leases
         .iter()

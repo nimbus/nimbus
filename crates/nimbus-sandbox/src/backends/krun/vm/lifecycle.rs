@@ -284,7 +284,8 @@ impl KrunSandboxBackend {
         tenant: &nimbus_core::TenantId,
         sandbox_id: &SandboxId,
     ) -> Result<KrunLifecycleGuard> {
-        let layout = OciConmonLayout::new_for_tenant(&self.config.state_root, tenant, sandbox_id);
+        let layout =
+            OciConmonLayout::new_for_tenant(&self.config.workload_state_root, tenant, sandbox_id);
         self.lock_launch_lifecycle_dir(&layout.container_state_dir)
     }
 
@@ -975,7 +976,7 @@ impl KrunSandboxBackend {
         )?;
         // One-shot: drop the legacy shared nimbus0 bridge before the first
         // per-tenant setup (pre-launch migration, breaking).
-        purge_legacy_nimbus0_once(&self.config.state_root.join("networks"))?;
+        purge_legacy_nimbus0_once(&self.config.workload_state_root.join("networks"))?;
         let port_lease_coordinator = self.port_lease_coordinator();
         port_lease_coordinator.require_binding_leases(
             &manifest.spec.tenant_id,
@@ -1613,15 +1614,17 @@ impl KrunSandboxBackend {
     }
 
     pub(super) fn read_manifest(&self, id: &SandboxId) -> Result<Option<KrunSandboxManifest>> {
-        let Some(manifest_path) =
-            crate::artifact_paths::manifest_path_for_sandbox_id(&self.config.state_root, id)
-                .map_err(|error| SandboxError::OperationFailed {
-                    message: format!(
-                        "failed to find krun sandbox manifest for {} under {}: {error}",
-                        id,
-                        self.config.state_root.display()
-                    ),
-                })?
+        let Some(manifest_path) = crate::artifact_paths::manifest_path_for_sandbox_id(
+            &self.config.workload_state_root,
+            id,
+        )
+        .map_err(|error| SandboxError::OperationFailed {
+            message: format!(
+                "failed to find krun sandbox manifest for {} under {}: {error}",
+                id,
+                self.config.workload_state_root.display()
+            ),
+        })?
         else {
             return Ok(None);
         };
@@ -1636,13 +1639,14 @@ impl KrunSandboxBackend {
                     manifest_path.display()
                 ),
             })?;
-        let manifest =
+        let manifest: KrunSandboxManifest =
             serde_json::from_slice(&contents).map_err(|error| SandboxError::OperationFailed {
                 message: format!(
                     "failed to parse sandbox manifest {}: {error}",
                     manifest_path.display()
                 ),
             })?;
+        self.validate_manifest_roots(id, &manifest)?;
         Ok(Some(manifest))
     }
 

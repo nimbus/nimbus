@@ -980,12 +980,15 @@ pub(crate) fn retire_terminal_container_ipam_release(
 /// krun manifests with `Released` authority qualify. Exact compare-delete
 /// keeps a stale manifest from mutating a replacement live or terminal
 /// generation.
-pub(crate) fn reconcile_terminal_container_ipam_releases(state_root: &Path) -> Result<usize> {
-    let manifest_paths = crate::artifact_paths::all_manifest_paths(state_root).map_err(
+pub(crate) fn reconcile_terminal_container_ipam_releases(
+    workload_state_root: &Path,
+    network_state_root: &Path,
+) -> Result<usize> {
+    let manifest_paths = crate::artifact_paths::all_manifest_paths(workload_state_root).map_err(
         |error| SandboxError::OperationFailed {
             message: format!(
                 "failed to enumerate manifests for terminal IPAM reconciliation under {}: {error}",
-                state_root.display()
+                workload_state_root.display()
             ),
         },
     )?;
@@ -1084,7 +1087,7 @@ pub(crate) fn reconcile_terminal_container_ipam_releases(state_root: &Path) -> R
             });
         }
         let expected_manifest_path =
-            crate::artifact_paths::manifest_path(state_root, &spec_tenant_id, &sandbox_id);
+            crate::artifact_paths::manifest_path(workload_state_root, &spec_tenant_id, &sandbox_id);
         if manifest_path != expected_manifest_path {
             return Err(SandboxError::OperationFailed {
                 message: format!(
@@ -1160,8 +1163,12 @@ pub(crate) fn reconcile_terminal_container_ipam_releases(state_root: &Path) -> R
                 manifest_path.display()
             ),
         })?;
-        let expected_network_layout =
-            OciNetworkLayout::new(state_root, &spec_tenant_id, &sandbox_id);
+        let expected_network_layout = OciNetworkLayout::with_roots(
+            workload_state_root,
+            network_state_root,
+            &spec_tenant_id,
+            &sandbox_id,
+        );
         if network_layout != expected_network_layout {
             return Err(SandboxError::OperationFailed {
                 message: format!(
@@ -1226,7 +1233,8 @@ fn with_ipam_state<T>(
     layout: &OciNetworkLayout,
     mutator: impl FnOnce(&mut IpamState) -> Result<T>,
 ) -> Result<T> {
-    let store = LocalNetworkStateStore::open(&layout.state_root).map_err(ipam_store_error)?;
+    let store =
+        LocalNetworkStateStore::open(&layout.network_state_root).map_err(ipam_store_error)?;
     match store.transaction(
         &NetworkStatePartition::TenantIpam(layout.tenant_id.clone()),
         mutator,
@@ -1238,7 +1246,7 @@ fn with_ipam_state<T>(
 }
 
 fn read_ipam_state(layout: &OciNetworkLayout) -> Result<IpamState> {
-    LocalNetworkStateStore::open(&layout.state_root)
+    LocalNetworkStateStore::open(&layout.network_state_root)
         .map_err(ipam_store_error)?
         .read(&NetworkStatePartition::TenantIpam(layout.tenant_id.clone()))
         .map_err(ipam_store_error)
@@ -1370,7 +1378,7 @@ mod tests {
         let dir = tempdir().expect("temp dir");
         let tenant = TenantId::new("tenant-original").expect("tenant should parse");
         let sandbox = SandboxId::new("sandbox-original");
-        let layout = OciNetworkLayout::new(dir.path(), &tenant, &sandbox);
+        let layout = OciNetworkLayout::under_root(dir.path(), &tenant, &sandbox);
         (dir, layout, OciNetworkConfig::default(), sandbox)
     }
 
@@ -1378,7 +1386,7 @@ mod tests {
     fn torn_ipam_state_fails_closed_with_the_authority_path() {
         let (_dir, layout, config, sandbox) = fixture();
         allocate_container_ips(&layout, &config, &sandbox).expect("original IP should allocate");
-        let authority_path = LocalNetworkStateStore::authority_path_for(&layout.state_root);
+        let authority_path = LocalNetworkStateStore::authority_path_for(&layout.network_state_root);
         fs::write(&authority_path, b"{").expect("torn state should be installed");
 
         let error =
@@ -1399,7 +1407,7 @@ mod tests {
         let (_dir, layout, config, original_sandbox) = fixture();
         let original = allocate_container_ips(&layout, &config, &original_sandbox)
             .expect("original IP should allocate");
-        let authority_path = LocalNetworkStateStore::authority_path_for(&layout.state_root);
+        let authority_path = LocalNetworkStateStore::authority_path_for(&layout.network_state_root);
         let mut envelope: serde_json::Value =
             serde_json::from_slice(&fs::read(&authority_path).expect("authority should read"))
                 .expect("authority envelope should parse");
@@ -1520,7 +1528,7 @@ mod tests {
         );
         deallocate_container_ips_after_confirmed_detach(&layout, &sandbox, &first_claim)
             .expect_err("stale cleanup must not accept a replacement terminal tombstone");
-        let authority_path = LocalNetworkStateStore::authority_path_for(&layout.state_root);
+        let authority_path = LocalNetworkStateStore::authority_path_for(&layout.network_state_root);
         let before_retirement = fs::read(&authority_path).expect("authority bytes should read");
         assert!(
             !retire_terminal_container_ipam_release(&layout, &sandbox, &first_claim)
@@ -1572,7 +1580,7 @@ mod tests {
         let tenant = TenantId::new("tenant-ipam-churn").expect("tenant should parse");
         for index in 0..256 {
             let sandbox = SandboxId::new(format!("sandbox-ipam-churn-{index}"));
-            let layout = OciNetworkLayout::new(dir.path(), &tenant, &sandbox);
+            let layout = OciNetworkLayout::under_root(dir.path(), &tenant, &sandbox);
             let claim = test_reservation_claim(&format!("churn-{index}"));
             let config = OciNetworkConfig {
                 reservation_claim: claim.clone(),
@@ -1602,7 +1610,16 @@ mod tests {
 
     #[test]
     fn startup_reconciliation_retires_only_terminal_manifest_ipam_evidence() {
-        let (_dir, layout, mut config, sandbox) = fixture();
+        let dir = tempdir().expect("temp dir");
+        let tenant = TenantId::new("tenant-split-reconciliation").expect("tenant should parse");
+        let sandbox = SandboxId::new("sandbox-split-reconciliation");
+        let layout = OciNetworkLayout::with_roots(
+            dir.path().join("project-state"),
+            dir.path().join("node-network-state"),
+            &tenant,
+            &sandbox,
+        );
+        let mut config = OciNetworkConfig::default();
         let claim = test_reservation_claim("startup-terminal-reconciliation");
         config.reservation_claim = claim.clone();
         allocate_container_ips_on_first_available(
@@ -1614,8 +1631,11 @@ mod tests {
         .expect("generation should reserve IPAM");
         deallocate_container_ips_after_confirmed_detach(&layout, &sandbox, &claim)
             .expect("provider detach should publish terminal retry evidence");
-        let manifest_path =
-            crate::artifact_paths::manifest_path(&layout.state_root, &layout.tenant_id, &sandbox);
+        let manifest_path = crate::artifact_paths::manifest_path(
+            &layout.workload_state_root,
+            &layout.tenant_id,
+            &sandbox,
+        );
         fs::create_dir_all(manifest_path.parent().expect("manifest parent"))
             .expect("manifest parent should create");
         fs::write(
@@ -1633,17 +1653,29 @@ mod tests {
             .expect("manifest projection should render"),
         )
         .expect("terminal manifest should write");
+        let authority_path = LocalNetworkStateStore::authority_path_for(&layout.network_state_root);
+        assert!(authority_path.is_file());
+        assert!(
+            !LocalNetworkStateStore::authority_path_for(&layout.workload_state_root).exists(),
+            "split startup reconciliation must not create network authority under workload state"
+        );
 
         assert_eq!(
-            reconcile_terminal_container_ipam_releases(&layout.state_root)
-                .expect("startup reconciliation should succeed"),
+            reconcile_terminal_container_ipam_releases(
+                &layout.workload_state_root,
+                &layout.network_state_root,
+            )
+            .expect("startup reconciliation should succeed"),
             1
         );
         let state = read_ipam_state(&layout).expect("IPAM authority should inspect");
         assert!(state.released_allocations.is_empty());
         assert_eq!(
-            reconcile_terminal_container_ipam_releases(&layout.state_root)
-                .expect("startup reconciliation replay should succeed"),
+            reconcile_terminal_container_ipam_releases(
+                &layout.workload_state_root,
+                &layout.network_state_root,
+            )
+            .expect("startup reconciliation replay should succeed"),
             0
         );
     }
@@ -1662,8 +1694,11 @@ mod tests {
         .expect("generation should reserve IPAM");
         deallocate_container_ips_after_confirmed_detach(&layout, &sandbox, &claim)
             .expect("provider detach should publish terminal retry evidence");
-        let manifest_path =
-            crate::artifact_paths::manifest_path(&layout.state_root, &layout.tenant_id, &sandbox);
+        let manifest_path = crate::artifact_paths::manifest_path(
+            &layout.workload_state_root,
+            &layout.tenant_id,
+            &sandbox,
+        );
         fs::create_dir_all(manifest_path.parent().expect("manifest parent"))
             .expect("manifest parent should create");
         fs::write(
@@ -1683,8 +1718,11 @@ mod tests {
         .expect("terminal projection should write");
 
         assert_eq!(
-            reconcile_terminal_container_ipam_releases(&layout.state_root)
-                .expect("incomplete cleanup should be a successful no-op"),
+            reconcile_terminal_container_ipam_releases(
+                &layout.workload_state_root,
+                &layout.network_state_root,
+            )
+            .expect("incomplete cleanup should be a successful no-op"),
             0
         );
         let state = read_ipam_state(&layout).expect("IPAM authority should inspect");
@@ -1701,7 +1739,7 @@ mod tests {
         let foreign = tempdir().expect("foreign state root");
         let tenant = TenantId::new("tenant-cross-root").expect("tenant should parse");
         let sandbox = SandboxId::new("sandbox-cross-root");
-        let foreign_layout = OciNetworkLayout::new(foreign.path(), &tenant, &sandbox);
+        let foreign_layout = OciNetworkLayout::under_root(foreign.path(), &tenant, &sandbox);
         let claim = test_reservation_claim("cross-root");
         let config = OciNetworkConfig {
             reservation_claim: claim.clone(),
@@ -1743,7 +1781,7 @@ mod tests {
         )
         .expect("copied manifest should write");
 
-        let error = reconcile_terminal_container_ipam_releases(trusted.path())
+        let error = reconcile_terminal_container_ipam_releases(trusted.path(), trusted.path())
             .expect_err("embedded foreign state root must fail closed");
         assert!(
             error.to_string().contains("untrusted network layout"),
@@ -1776,7 +1814,7 @@ mod tests {
             &owner,
         )
         .expect("owner should reserve IPAM");
-        let authority_path = LocalNetworkStateStore::authority_path_for(&layout.state_root);
+        let authority_path = LocalNetworkStateStore::authority_path_for(&layout.network_state_root);
         let before = fs::read(&authority_path).expect("authority bytes should read");
 
         let error = allocate_container_ips_on_first_available(
@@ -1809,7 +1847,7 @@ mod tests {
             &claim,
         )
         .expect("fixture should reserve IPAM");
-        let authority_path = LocalNetworkStateStore::authority_path_for(&layout.state_root);
+        let authority_path = LocalNetworkStateStore::authority_path_for(&layout.network_state_root);
         let before = fs::read(&authority_path).expect("authority bytes should read");
 
         assert_eq!(

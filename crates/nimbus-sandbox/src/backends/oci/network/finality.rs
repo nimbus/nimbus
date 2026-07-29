@@ -61,8 +61,10 @@ impl<'a> TerminalNetworkAuthoritySet<'a> {
             .iter()
             .chain(self.egress_port_lease)
         {
-            let record =
-                crate::backends::oci::port_lease::inspect_exact(&self.layout.state_root, request)?;
+            let record = crate::backends::oci::port_lease::inspect_exact(
+                &self.layout.network_state_root,
+                request,
+            )?;
             if !record.phase().is_terminal() {
                 let coordinator = record
                     .reservation_claim()

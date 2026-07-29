@@ -141,8 +141,9 @@ fn fresh_machine_partial_start_shutdown_diagnostic_replays_terminal_release() {
         first.to_string().contains("panicked"),
         "the exact provider-stop diagnostic must remain visible: {first}"
     );
-    let authority = nimbus_network::LocalPortLeaseAuthority::open(&backend.config.state_root)
-        .expect("port authority should reopen");
+    let authority =
+        nimbus_network::LocalPortLeaseAuthority::open(&backend.config.network_state_root)
+            .expect("port authority should reopen");
     assert_eq!(
         authority
             .inspect(manifest.port_leases[0].lease_id())
@@ -157,7 +158,7 @@ fn fresh_machine_partial_start_shutdown_diagnostic_replays_terminal_release() {
     backend
         .release_execution_artifacts(&mut manifest)
         .expect("outer terminal compensation must resume the same Release tombstone");
-    assert_manifest_port_leases_released(&backend.config.state_root, &manifest);
+    assert_manifest_port_leases_released(&backend.config.network_state_root, &manifest);
     backend
         .release_execution_artifacts(&mut manifest)
         .expect("terminal compensation replay must remain idempotent");
@@ -199,8 +200,9 @@ fn retained_machine_partial_start_shutdown_diagnostic_replays_restart() {
         first.to_string().contains("panicked"),
         "the exact provider-stop diagnostic must remain visible: {first}"
     );
-    let authority = nimbus_network::LocalPortLeaseAuthority::open(&backend.config.state_root)
-        .expect("port authority should reopen");
+    let authority =
+        nimbus_network::LocalPortLeaseAuthority::open(&backend.config.network_state_root)
+            .expect("port authority should reopen");
     assert_eq!(
         authority
             .inspect(manifest.port_leases[0].lease_id())
@@ -338,7 +340,8 @@ fn terminal_cleanup_uses_manifest_machine_forwarder_after_backend_config_drift()
         .port();
 
     let temp_dir = TempDir::new().expect("tempdir should build");
-    let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
+    let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path())
+        .with_network_state_root(temp_dir.path().join("node-network-state"));
     config.node_network_supernet = "127.0.0.0/24".to_owned();
     let mut egress_proxy_port = unused_loopback_port();
     while egress_proxy_port == published_port {
@@ -383,7 +386,7 @@ fn terminal_cleanup_uses_manifest_machine_forwarder_after_backend_config_drift()
         .ensure_machine_port_proxies_running(&manifest.handle.id, &[Ipv4Addr::LOCALHOST], &manifest)
         .expect("fixture should start machine provider under launch-time configuration");
     let bindings_before =
-        manifest_port_lease_records(&manifest.runner_config.state_root, &manifest)
+        manifest_port_lease_records(&manifest.runner_config.network_state_root, &manifest)
             .into_iter()
             .map(|record| record.binding().cloned())
             .collect::<Vec<_>>();
@@ -423,7 +426,7 @@ fn terminal_cleanup_uses_manifest_machine_forwarder_after_backend_config_drift()
         "backend configuration drift must not redirect teardown provider effects"
     );
     let released =
-        assert_manifest_port_leases_released(&manifest.runner_config.state_root, &manifest);
+        assert_manifest_port_leases_released(&manifest.runner_config.network_state_root, &manifest);
     assert!(
         released.iter().all(|record| {
             record.reservation_claim().is_none() && record.bind_claim().is_none()
@@ -459,7 +462,8 @@ fn terminal_netavark_cleanup_ignores_current_machine_forwarder() {
         .port();
 
     let temp_dir = TempDir::new().expect("tempdir should build");
-    let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
+    let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path())
+        .with_network_state_root(temp_dir.path().join("node-network-state"));
     config.node_network_supernet = "127.0.0.0/24".to_owned();
     let mut egress_proxy_port = unused_loopback_port();
     while egress_proxy_port == published_port {
@@ -518,7 +522,7 @@ fn terminal_netavark_cleanup_ignores_current_machine_forwarder() {
         .map_err(|(error, _batch)| error)
         .expect("fixture should retain the exact live Netavark lifetimes");
     let bindings_before =
-        manifest_port_lease_records(&manifest.runner_config.state_root, &manifest)
+        manifest_port_lease_records(&manifest.runner_config.network_state_root, &manifest)
             .into_iter()
             .map(|record| record.binding().cloned())
             .collect::<Vec<_>>();
@@ -540,7 +544,7 @@ fn terminal_netavark_cleanup_ignores_current_machine_forwarder() {
         "persisted Netavark cleanup must not contact the current machine forwarder"
     );
     let released =
-        assert_manifest_port_leases_released(&manifest.runner_config.state_root, &manifest);
+        assert_manifest_port_leases_released(&manifest.runner_config.network_state_root, &manifest);
     assert!(
         released.iter().all(|record| {
             record.reservation_claim().is_none() && record.bind_claim().is_none()
@@ -585,7 +589,7 @@ fn unstarted_cancellation_uses_manifest_provider_context_after_backend_config_dr
         .launch_reservation_claim
         .clone()
         .expect("claim-only fixture must retain exact reservation authority");
-    let manifest_state_root = manifest.runner_config.state_root.clone();
+    let manifest_state_root = manifest.runner_config.network_state_root.clone();
     backend.config.published_port_range = 28000..=28001;
     backend.config.max_published_ports_per_tenant = Some(1);
     backend.config.machine_port_forwarder = Some(sample_forwarder(drift_forwarder_port));
@@ -628,8 +632,13 @@ fn substituted_execution_context_fails_before_cancellation_effects() {
     std::fs::create_dir_all(&rootfs_path).expect("rootfs fixture should create");
     let rootfs_sentinel = rootfs_path.join("sentinel");
     std::fs::write(&rootfs_sentinel, b"owned-artifact").expect("rootfs sentinel should persist");
-    let backend =
-        ContainerSandboxBackend::new(ContainerSandboxBackendConfig::under_root(temp_dir.path()));
+    let workload_state_root = temp_dir.path().join("state");
+    let network_state_root = temp_dir.path().join("node-network-state");
+    let backend = ContainerSandboxBackend::new(
+        ContainerSandboxBackendConfig::under_root(temp_dir.path())
+            .with_network_state_root(&network_state_root),
+    );
+    assert_eq!(backend.config.workload_state_root, workload_state_root);
     let mut manifest = backend
         .plan_start_with_id(
             &sample_spec().with_port_binding(SandboxPortBinding::tcp("http", 18082, 8080)),
@@ -649,19 +658,29 @@ fn substituted_execution_context_fails_before_cancellation_effects() {
         .join(super::super::runner::RUNNER_MANIFEST_POINTER_FILE);
     std::fs::write(&pointer_path, b"owned-pointer\n")
         .expect("runner pointer sentinel should persist");
-    let authority_path =
-        nimbus_network::LocalNetworkStateStore::authority_path_for(&backend.config.state_root);
+    let authority_path = nimbus_network::LocalNetworkStateStore::authority_path_for(
+        &backend.config.network_state_root,
+    );
     let authority_before =
         std::fs::read(&authority_path).expect("launch authority should be durable");
-    manifest.runner_config.state_root = temp_dir.path().join("substituted-authority");
+    manifest.runner_config.workload_state_root = temp_dir.path().join("substituted-workload-state");
 
     let error = backend
         .release_unstarted_launch_artifacts(&mut manifest)
-        .expect_err("substituted execution context must fail before every cleanup effect");
+        .expect_err("substituted workload context must fail before every cleanup effect");
     assert!(
-        error.to_string().contains("authority root")
+        error.to_string().contains("workload root") && error.to_string().contains("does not match"),
+        "context rejection must name the mismatched workload root: {error}"
+    );
+    manifest.runner_config.workload_state_root = workload_state_root;
+    manifest.runner_config.network_state_root = temp_dir.path().join("substituted-network-state");
+    let error = backend
+        .release_unstarted_launch_artifacts(&mut manifest)
+        .expect_err("substituted network context must fail before every cleanup effect");
+    assert!(
+        error.to_string().contains("network authority root")
             && error.to_string().contains("does not match"),
-        "context rejection must name the mismatched authority: {error}"
+        "context rejection must name the mismatched network root: {error}"
     );
     assert_eq!(
         std::fs::read(&authority_path).expect("launch authority should remain readable"),
@@ -744,8 +763,9 @@ fn pending_creator_retains_network_authority_despite_runtime_absence() {
         .launch_reservation_claim
         .clone()
         .expect("launch coordinator claim should remain");
-    let authority = nimbus_network::LocalPortLeaseAuthority::open(&backend.config.state_root)
-        .expect("port authority should open");
+    let authority =
+        nimbus_network::LocalPortLeaseAuthority::open(&backend.config.network_state_root)
+            .expect("port authority should open");
 
     let error = backend
         .release_execution_artifacts(&mut manifest)
@@ -854,8 +874,9 @@ fn machine_forwarder_unexpose_failure_keeps_port_lease_fenced() {
         error.to_string().contains("machine forwarder unexpose"),
         "cleanup should report the provider failure: {error}"
     );
-    let authority = nimbus_network::LocalPortLeaseAuthority::open(&backend.config.state_root)
-        .expect("port authority should remain readable");
+    let authority =
+        nimbus_network::LocalPortLeaseAuthority::open(&backend.config.network_state_root)
+            .expect("port authority should remain readable");
     let record = authority
         .inspect(manifest.port_leases[0].lease_id())
         .expect("lease inspection should succeed")
@@ -1023,7 +1044,7 @@ fn machine_forwarder_unexpose_attempts_every_binding_and_retries_only_failures()
         &manifest.spec.port_bindings[0],
         &manifest_forwarder,
     );
-    assert_manifest_port_leases_released(&manifest.runner_config.state_root, &manifest);
+    assert_manifest_port_leases_released(&manifest.runner_config.network_state_root, &manifest);
 }
 
 #[test]
@@ -1079,8 +1100,9 @@ fn restart_retained_machine_listener_releases_without_process_registry() {
             &manifest.port_leases,
         )
         .expect("ordinary restart stop should retain exact durable receipts");
-    let authority = nimbus_network::LocalPortLeaseAuthority::open(&backend.config.state_root)
-        .expect("port authority should open");
+    let authority =
+        nimbus_network::LocalPortLeaseAuthority::open(&backend.config.network_state_root)
+            .expect("port authority should open");
     let retained = authority
         .inspect(manifest.port_leases[0].lease_id())
         .expect("retained lease should inspect")
@@ -1267,8 +1289,9 @@ fn stale_container_cleanup_cannot_mutate_replacement_network_generation() {
     .expect("replacement status parent should create");
     std::fs::write(&stale.network_layout.status_path, b"replacement-status")
         .expect("replacement status should persist");
-    let authority_path =
-        nimbus_network::LocalNetworkStateStore::authority_path_for(&backend.config.state_root);
+    let authority_path = nimbus_network::LocalNetworkStateStore::authority_path_for(
+        &backend.config.network_state_root,
+    );
     let authority_before =
         std::fs::read(&authority_path).expect("replacement authority should read");
 
@@ -1470,8 +1493,9 @@ fn terminal_stop_replay_retries_ipam_receipt_retirement() {
     synchronize_handle_status(&mut manifest, SandboxStatus::Stopped);
     assert!(manifest.has_terminal_network_finality());
 
-    let authority_path =
-        nimbus_network::LocalNetworkStateStore::authority_path_for(&backend.config.state_root);
+    let authority_path = nimbus_network::LocalNetworkStateStore::authority_path_for(
+        &backend.config.network_state_root,
+    );
     let saved_authority = authority_path.with_extension("saved-for-terminal-replay");
     std::fs::rename(&authority_path, &saved_authority)
         .expect("authority should move behind deterministic fault");

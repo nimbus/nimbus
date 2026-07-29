@@ -487,7 +487,7 @@ mod tests {
         let dir = tempdir().expect("state root");
         let tenant = TenantId::new("tenant-exact-compensation").expect("tenant fixture");
         let sandbox = SandboxId::new("sandbox-exact-compensation");
-        let layout = OciNetworkLayout::new(dir.path(), &tenant, &sandbox);
+        let layout = OciNetworkLayout::under_root(dir.path(), &tenant, &sandbox);
         layout
             .ensure_directories()
             .expect("layout should initialize");
@@ -544,8 +544,8 @@ mod tests {
         let tenant = TenantId::new("tenant-sibling-compensation").expect("tenant fixture");
         let cancelled = SandboxId::new("sandbox-cancelled");
         let sibling = SandboxId::new("sandbox-sibling");
-        let cancelled_layout = OciNetworkLayout::new(dir.path(), &tenant, &cancelled);
-        let sibling_layout = OciNetworkLayout::new(dir.path(), &tenant, &sibling);
+        let cancelled_layout = OciNetworkLayout::under_root(dir.path(), &tenant, &cancelled);
+        let sibling_layout = OciNetworkLayout::under_root(dir.path(), &tenant, &sibling);
         cancelled_layout
             .ensure_directories()
             .expect("cancelled layout should initialize");
@@ -618,7 +618,7 @@ mod tests {
         let dir = tempdir().expect("state root");
         let tenant = TenantId::new("tenant-foreign-compensation").expect("tenant fixture");
         let sandbox = SandboxId::new("sandbox-foreign-compensation");
-        let layout = OciNetworkLayout::new(dir.path(), &tenant, &sandbox);
+        let layout = OciNetworkLayout::under_root(dir.path(), &tenant, &sandbox);
         layout
             .ensure_directories()
             .expect("layout should initialize");
@@ -720,6 +720,29 @@ mod tests {
             )
             .expect("re-acquire live");
         assert_eq!(live.cidr().to_string(), "10.0.0.0/24");
+    }
+
+    #[test]
+    fn startup_reconciliation_reads_live_netns_from_the_workload_root() {
+        let dir = tempdir().expect("temp dir");
+        let workload_root = dir.path().join("project-state");
+        let network_root = dir.path().join("node-network-state");
+        let allocator = SingleNodeSegmentAllocator::single_node_default(&network_root);
+        let tenant = TenantId::new("tenant-split-root-live").expect("tenant should parse");
+        let sandbox = SandboxId::new("sandbox-split-root-live");
+        allocator
+            .acquire(&tenant, &default_network_attachment_id(&sandbox))
+            .expect("live attachment should allocate");
+        touch_netns(&workload_root, tenant.as_str(), sandbox.as_str());
+
+        super::super::reconcile_startup_network_state(&workload_root, &network_root, &allocator)
+            .expect("startup reconciliation must retain workload-root netns evidence");
+
+        assert!(
+            allocator.has_hold(tenant.as_str(), sandbox.as_str())
+                && !allocator.has_pending_hold(tenant.as_str(), sandbox.as_str()),
+            "a live workload-root netns must not be quarantined as a network-root orphan"
+        );
     }
 
     #[test]

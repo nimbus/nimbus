@@ -178,7 +178,7 @@ pub fn run_prepared_container_service_workload(bundle_dir: impl AsRef<Path>) -> 
             ),
         });
     }
-    validate_runner_authority_root(&manifest)?;
+    validate_runner_authority_roots(&manifest)?;
     let backend = ContainerSandboxBackend::new(manifest.runner_config.to_backend_config());
     let acquisition = acquire_runner_execution_ownership(&backend, &mut manifest, true)?;
     let (handoff, recovered_outcome) = match acquisition {
@@ -1912,13 +1912,23 @@ fn converge_runner_cleanup_stage_with(
     unreachable!("runner cleanup convergence always attempts at least once")
 }
 
-pub(super) fn validate_runner_authority_root(manifest: &ContainerSandboxManifest) -> Result<()> {
-    if manifest.runner_config.state_root != manifest.network_layout.state_root {
+pub(super) fn validate_runner_authority_roots(manifest: &ContainerSandboxManifest) -> Result<()> {
+    if manifest.runner_config.workload_state_root != manifest.network_layout.workload_state_root {
         return Err(SandboxError::InvalidSpec {
             message: format!(
-                "container runner authority root {} does not match prepared network authority {}",
-                manifest.runner_config.state_root.display(),
-                manifest.network_layout.state_root.display()
+                "container runner workload root {} does not match prepared workload root {}",
+                manifest.runner_config.workload_state_root.display(),
+                manifest.network_layout.workload_state_root.display()
+            ),
+        });
+    }
+    if manifest.runner_config.network_state_root != manifest.network_layout.network_state_root {
+        return Err(SandboxError::InvalidSpec {
+            message: format!(
+                "container runner network authority root {} does not match prepared network \
+                 authority root {}",
+                manifest.runner_config.network_state_root.display(),
+                manifest.network_layout.network_state_root.display()
             ),
         });
     }

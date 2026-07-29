@@ -25,10 +25,16 @@ fn terminal_publication_fixture(
     manifest.port_leases.clear();
     manifest.egress_proxy = None;
     manifest.launch_artifact = None;
-    manifest.conmon_layout =
-        OciConmonLayout::new_for_tenant(&backend.config.state_root, &spec.tenant_id, sandbox_id);
-    manifest.network_layout =
-        OciNetworkLayout::new(&backend.config.state_root, &spec.tenant_id, sandbox_id);
+    manifest.conmon_layout = OciConmonLayout::new_for_tenant(
+        &backend.config.workload_state_root,
+        &spec.tenant_id,
+        sandbox_id,
+    );
+    manifest.network_layout = OciNetworkLayout::under_root(
+        &backend.config.workload_state_root,
+        &spec.tenant_id,
+        sandbox_id,
+    );
     manifest.shutdown_requested = true;
     manifest.status = SandboxStatus::Stopping;
     manifest.handle.status = SandboxStatus::Stopping;
@@ -302,13 +308,19 @@ fn terminal_ipam_retirement_failure_is_not_manifest_acknowledgement_loss() {
         "terminal desired state should remain durable while witness retirement retries"
     );
     assert_eq!(
-        reconcile_terminal_container_ipam_releases(&failing.config.state_root)
-            .expect("fresh-process reconciliation should retire the exact witness"),
+        reconcile_terminal_container_ipam_releases(
+            &failing.config.workload_state_root,
+            &failing.config.network_state_root,
+        )
+        .expect("fresh-process reconciliation should retire the exact witness"),
         1
     );
     assert_eq!(
-        reconcile_terminal_container_ipam_releases(&failing.config.state_root)
-            .expect("terminal reconciliation replay should be idempotent"),
+        reconcile_terminal_container_ipam_releases(
+            &failing.config.workload_state_root,
+            &failing.config.network_state_root,
+        )
+        .expect("terminal reconciliation replay should be idempotent"),
         0
     );
     KrunSandboxBackend::new(KrunSandboxBackendConfig::under_root(
@@ -432,8 +444,8 @@ fn reserved_stop_releases_only_the_exact_unstarted_launch_batch() {
     assert_eq!(stopped.handle.status, SandboxStatus::Stopped);
     assert_eq!(stopped.launch_authority, KrunLaunchAuthority::Released);
 
-    let port_authority =
-        LocalPortLeaseAuthority::open(&backend.config.state_root).expect("authority should reopen");
+    let port_authority = LocalPortLeaseAuthority::open(&backend.config.network_state_root)
+        .expect("authority should reopen");
     for request in reservations {
         assert_eq!(
             port_authority

@@ -54,8 +54,9 @@ fn confirmed_netavark_restart_detach_prepares_published_leases_for_rebind() {
         )
         .map_err(|(error, _batch)| error)
         .expect("fixture should retain its exact live Netavark lifetimes");
-    let authority = nimbus_network::LocalPortLeaseAuthority::open(&backend.config.state_root)
-        .expect("port authority should reopen");
+    let authority =
+        nimbus_network::LocalPortLeaseAuthority::open(&backend.config.network_state_root)
+            .expect("port authority should reopen");
     assert_eq!(
         authority
             .inspect(manifest.port_leases[0].lease_id())
@@ -234,8 +235,9 @@ fn restart_cleanup_retains_network_and_listeners_until_runtime_absence_is_observ
     for (path, contents) in receipts {
         std::fs::write(path, contents).expect("restart receipt should persist");
     }
-    let authority_path =
-        nimbus_network::LocalNetworkStateStore::authority_path_for(&backend.config.state_root);
+    let authority_path = nimbus_network::LocalNetworkStateStore::authority_path_for(
+        &backend.config.network_state_root,
+    );
     let authority_before =
         std::fs::read(&authority_path).expect("active network authority should be durable");
     let readiness_before = backend
@@ -244,7 +246,7 @@ fn restart_cleanup_retains_network_and_listeners_until_runtime_absence_is_observ
         .expect("fixture PEP readiness should inspect")
         .expect("fixture PEP should remain registered");
     assert!(
-        manifest_port_lease_records(&backend.config.state_root, &manifest)
+        manifest_port_lease_records(&backend.config.network_state_root, &manifest)
             .iter()
             .all(|record| record.phase() == nimbus_network::PortLeasePhase::Active),
         "fixture must begin with active PEP and published-listener authority"

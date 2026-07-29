@@ -1192,3 +1192,169 @@ fn semantically_valid_segment_state_corruption_must_not_reissue_a_live_segment()
         "the store must reject corruption with a named integrity error: {rendered}"
     );
 }
+
+#[test]
+fn durable_segment_authority_rejects_tenant_prefix_substitution() {
+    let dir = tempdir().expect("temp dir");
+    let owner_tenant = tenant("tenant-prefix-owner");
+    let original = SingleNodeSegmentAllocator::for_node_supernet(
+        dir.path(),
+        DEFAULT_NODE_SUPERNET,
+        DEFAULT_TENANT_PREFIX,
+    )
+    .expect("original allocator should open");
+    let original_segment = original
+        .acquire(&owner_tenant, &attachment("sandbox-prefix-owner"))
+        .expect("original /24 segment should allocate");
+    assert_eq!(original_segment.cidr().prefix(), DEFAULT_TENANT_PREFIX);
+    let original_observation = original
+        .segments_for(&owner_tenant)
+        .expect("original segment observation should resolve");
+    let authority_path = LocalNetworkStateStore::authority_path_for(dir.path());
+    let before = fs::read(&authority_path).expect("durable authority should read");
+
+    let substituted = SingleNodeSegmentAllocator::for_node_supernet(
+        dir.path(),
+        DEFAULT_NODE_SUPERNET,
+        DEFAULT_TENANT_PREFIX + 1,
+    )
+    .expect("substituted allocator construction is deferred until authority inspection");
+    let cleanup = DurableSegmentCleanupAuthority::open(dir.path(), DEFAULT_TENANT_PREFIX + 1)
+        .expect("checksummed authority should open")
+        .expect("the durable allocation should expose cleanup authority");
+    let errors = [
+        substituted
+            .inspect_segments(&owner_tenant)
+            .expect_err("inspection must reject prefix substitution"),
+        substituted
+            .segments_for(&owner_tenant)
+            .expect_err("assignment inspection must reject prefix substitution"),
+        substituted
+            .acquire(
+                &tenant("tenant-prefix-intruder"),
+                &attachment("sandbox-prefix-intruder"),
+            )
+            .expect_err("acquire must reject prefix substitution"),
+        substituted
+            .grow_block_if_current(&owner_tenant, &original_observation)
+            .expect_err("growth must reject prefix substitution"),
+        substituted
+            .reconcile_orphans(&BTreeSet::new())
+            .expect_err("restart reconciliation must reject prefix substitution"),
+        cleanup
+            .inspect_segments(&owner_tenant)
+            .expect_err("durable cleanup inspection must reject prefix substitution"),
+        cleanup
+            .reconcile_orphans(&BTreeSet::new())
+            .expect_err("durable cleanup reconciliation must reject prefix substitution"),
+    ];
+    for error in errors {
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("tenant prefix")
+                && rendered.contains("/24")
+                && rendered.contains("/25"),
+            "prefix substitution must name stored and requested authority: {rendered}"
+        );
+    }
+    assert_eq!(
+        fs::read(&authority_path).expect("rejected operations must preserve authority"),
+        before,
+        "every rejected prefix-substitution path must leave durable state byte-unchanged"
+    );
+}
+
+#[test]
+fn first_segment_allocation_durably_authenticates_tenant_prefix() {
+    let dir = tempdir().expect("temp dir");
+    let allocator = SingleNodeSegmentAllocator::for_node_supernet(
+        dir.path(),
+        DEFAULT_NODE_SUPERNET,
+        DEFAULT_TENANT_PREFIX,
+    )
+    .expect("allocator should open");
+
+    allocator
+        .segment_for(&tenant("tenant-prefix-first-write"))
+        .expect("a pristine authority may adopt its configured tenant prefix");
+
+    let state = LocalNetworkStateStore::open(dir.path())
+        .expect("local authority should open")
+        .read::<SegmentState>(&NetworkStatePartition::SegmentAllocations)
+        .expect("segment state should read")
+        .expect("the first allocation should persist segment state");
+    assert_eq!(
+        state.tenant_prefix,
+        Some(DEFAULT_TENANT_PREFIX),
+        "the first allocation must authenticate its CIDR geometry durably"
+    );
+}
+
+#[test]
+fn non_empty_segment_state_without_tenant_prefix_fails_closed() {
+    let dir = tempdir().expect("temp dir");
+    let store = LocalNetworkStateStore::open(dir.path()).expect("local authority should open");
+    store
+        .transaction(
+            &NetworkStatePartition::SegmentAllocations,
+            |state: &mut SegmentState| {
+                state.supernet_cidr = Some(DEFAULT_NODE_SUPERNET.to_owned());
+                state.supernet_epoch = Some(NetworkLeaseEpoch::new(0));
+                state.tenant_prefix = None;
+                state.tenants.insert(
+                    "tenant-missing-prefix".to_owned(),
+                    TenantEntry {
+                        blocks: vec![SegmentBlock {
+                            local_slot: 0,
+                            segment_id: NetworkSegmentId::generate(),
+                        }],
+                        attachments: BTreeMap::new(),
+                        allocation_cleanup_pending: false,
+                        pending_reservation_cleanup_claim: None,
+                    },
+                );
+                Ok::<_, Infallible>(())
+            },
+        )
+        .expect("typed fixture should persist a checksum-valid legacy payload");
+    let authority_path = LocalNetworkStateStore::authority_path_for(dir.path());
+    let before = fs::read(&authority_path).expect("fixture authority should read");
+    let allocator = SingleNodeSegmentAllocator::for_node_supernet(
+        dir.path(),
+        DEFAULT_NODE_SUPERNET,
+        DEFAULT_TENANT_PREFIX,
+    )
+    .expect("allocator construction defers semantic authority inspection");
+
+    let cleanup = DurableSegmentCleanupAuthority::open(dir.path(), DEFAULT_TENANT_PREFIX)
+        .expect("checksummed authority should open")
+        .expect("the durable allocation should expose cleanup authority");
+    let errors = [
+        allocator
+            .inspect_segments(&tenant("tenant-missing-prefix"))
+            .expect_err("inspection must reject non-empty state without a durable prefix"),
+        allocator
+            .acquire(
+                &tenant("tenant-missing-prefix-intruder"),
+                &attachment("sandbox-missing-prefix-intruder"),
+            )
+            .expect_err("acquire must reject non-empty state without a durable prefix"),
+        cleanup
+            .inspect_segments(&tenant("tenant-missing-prefix"))
+            .expect_err("cleanup inspection must reject missing durable prefix authority"),
+    ];
+    for error in errors {
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("tenant prefix")
+                && rendered.contains("<missing>")
+                && rendered.contains("/24"),
+            "missing-prefix diagnostics must name stored and requested authority: {rendered}"
+        );
+    }
+    assert_eq!(
+        fs::read(&authority_path).expect("rejected inspection must preserve authority"),
+        before,
+        "missing-prefix rejection must not mutate the durable authority"
+    );
+}

@@ -238,7 +238,7 @@ fn startup_reconciles_a_stage_only_first_publication_crash() {
     let spec = sample_spec();
     let id = SandboxId::new("stage-only-startup-reconcile");
     let manifest_path =
-        crate::artifact_paths::manifest_path(&config.state_root, &spec.tenant_id, &id);
+        crate::artifact_paths::manifest_path(&config.workload_state_root, &spec.tenant_id, &id);
     let state_dir = manifest_path
         .parent()
         .expect("manifest parent should exist");
@@ -269,7 +269,7 @@ fn startup_ignores_and_preserves_retired_unique_stage_names() {
     let spec = sample_spec();
     let id = SandboxId::new("retired-stage-name");
     let manifest_path =
-        crate::artifact_paths::manifest_path(&config.state_root, &spec.tenant_id, &id);
+        crate::artifact_paths::manifest_path(&config.workload_state_root, &spec.tenant_id, &id);
     let state_dir = manifest_path
         .parent()
         .expect("manifest parent should exist");
@@ -302,7 +302,7 @@ fn non_regular_exact_stage_fails_closed_but_read_remains_side_effect_free() {
     let spec = sample_spec();
     let id = SandboxId::new("non-regular-publication-stage");
     let manifest_path =
-        crate::artifact_paths::manifest_path(&config.state_root, &spec.tenant_id, &id);
+        crate::artifact_paths::manifest_path(&config.workload_state_root, &spec.tenant_id, &id);
     let state_dir = manifest_path
         .parent()
         .expect("manifest parent should exist");
@@ -346,7 +346,7 @@ fn startup_reconciles_every_independent_state_directory_before_failing_closed() 
     ];
     for id in &invalid_ids {
         let manifest_path =
-            crate::artifact_paths::manifest_path(&config.state_root, &spec.tenant_id, id);
+            crate::artifact_paths::manifest_path(&config.workload_state_root, &spec.tenant_id, id);
         let state_dir = manifest_path
             .parent()
             .expect("manifest parent should exist");
@@ -355,8 +355,11 @@ fn startup_reconciles_every_independent_state_directory_before_failing_closed() 
             .expect("non-regular stage should create");
     }
     let recoverable_id = SandboxId::new("zzz-recoverable-publication-stage");
-    let recoverable_manifest_path =
-        crate::artifact_paths::manifest_path(&config.state_root, &spec.tenant_id, &recoverable_id);
+    let recoverable_manifest_path = crate::artifact_paths::manifest_path(
+        &config.workload_state_root,
+        &spec.tenant_id,
+        &recoverable_id,
+    );
     let recoverable_state_dir = recoverable_manifest_path
         .parent()
         .expect("recoverable manifest parent should exist");
@@ -394,8 +397,11 @@ fn public_oci_plan_is_fenced_before_materialization_effects() {
     let config = plan_only_config(temp_dir.path());
     let startup_owner = SandboxId::new("oci-plan-startup-fence");
     let mut spec = sample_spec();
-    let startup_manifest_path =
-        crate::artifact_paths::manifest_path(&config.state_root, &spec.tenant_id, &startup_owner);
+    let startup_manifest_path = crate::artifact_paths::manifest_path(
+        &config.workload_state_root,
+        &spec.tenant_id,
+        &startup_owner,
+    );
     let startup_state_dir = startup_manifest_path
         .parent()
         .expect("startup manifest parent should exist");
@@ -421,11 +427,11 @@ fn public_oci_plan_is_fenced_before_materialization_effects() {
         "the startup fence must be the exact primary diagnostic: {error}"
     );
     assert!(
-        !config.state_root.join("image-cache").exists(),
+        !config.workload_state_root.join("image-cache").exists(),
         "readiness rejection must precede OCI cache creation"
     );
     assert_eq!(
-        crate::artifact_paths::all_container_state_dirs(&config.state_root)
+        crate::artifact_paths::all_container_state_dirs(&config.workload_state_root)
             .expect("container state directories should inspect"),
         [startup_state_dir.to_path_buf()],
         "readiness rejection must not create a generated sandbox rootfs or build session"
@@ -466,7 +472,7 @@ fn retained_startup_failure_fences_egress_reload_before_live_policy_mutation() {
 
     let fenced_owner = SandboxId::new("reload-startup-fence");
     let fenced_manifest_path = crate::artifact_paths::manifest_path(
-        &config.state_root,
+        &config.workload_state_root,
         &manifest.spec.tenant_id,
         &fenced_owner,
     );

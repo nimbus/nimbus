@@ -129,8 +129,9 @@ fn terminal_manifest_publication_rejects_a_retained_port_lease() {
         Ok(()),
     )
     .expect("fixture should release attachment authority while retaining ports");
-    let port_authority = nimbus_network::LocalPortLeaseAuthority::open(&backend.config.state_root)
-        .expect("port authority should reopen");
+    let port_authority =
+        nimbus_network::LocalPortLeaseAuthority::open(&backend.config.network_state_root)
+            .expect("port authority should reopen");
     for request in &manifest.port_leases {
         assert_eq!(
             port_authority

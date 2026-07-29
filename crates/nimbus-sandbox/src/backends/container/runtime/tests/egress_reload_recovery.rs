@@ -512,7 +512,7 @@ fn egress_reload_recovery_child() {
         .egress_proxy
         .as_ref()
         .expect("crash manifest should retain the exact PEP assignment");
-    let authority = LocalPortLeaseAuthority::open(&config.state_root)
+    let authority = LocalPortLeaseAuthority::open(&config.network_state_root)
         .expect("fresh recovery should reopen the shared port authority");
     let dead_owner = authority
         .inspect(assignment.port_lease.lease_id())

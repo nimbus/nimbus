@@ -37,7 +37,7 @@ impl KrunSandboxBackend {
         F: FnMut(&Path) -> std::io::Result<()>,
     {
         crate::backends::oci::durable_directory::establish_durable_directory_chain_with(
-            &self.config.state_root,
+            &self.config.workload_state_root,
             &manifest.conmon_layout.container_state_dir,
             "krun manifest",
             &mut directory_sync,

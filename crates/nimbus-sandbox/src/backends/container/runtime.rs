@@ -161,7 +161,7 @@ impl ContainerSandboxBackend {
     pub fn new(config: ContainerSandboxBackendConfig) -> Self {
         let segment_allocator: Arc<OciSegmentAllocator> =
             Arc::new(ConfiguredSegmentAllocator::new(
-                config.state_root.clone(),
+                config.network_state_root.clone(),
                 config.node_network_supernet.clone(),
                 config.node_tenant_subnet_prefix,
             ));
@@ -173,16 +173,20 @@ impl ContainerSandboxBackend {
         segment_allocator: Arc<OciSegmentAllocator>,
     ) -> Self {
         let startup_reconciliation_error =
-            reconcile_startup_manifest_publications(&config.state_root)
+            reconcile_startup_manifest_publications(&config.workload_state_root)
                 .and_then(|()| {
-                    reconcile_startup_network_state(&config.state_root, segment_allocator.as_ref())
+                    reconcile_startup_network_state(
+                        &config.workload_state_root,
+                        &config.network_state_root,
+                        segment_allocator.as_ref(),
+                    )
                 })
                 .err()
                 .map(|error| Arc::<str>::from(error.to_string()));
         let egress_proxies = EgressProxyRegistry::with_roots_and_network_state(
-            egress_decision_log_root(&config.state_root),
-            egress_trust_anchor_root(&config.state_root),
-            &config.state_root,
+            egress_decision_log_root(&config.workload_state_root),
+            egress_trust_anchor_root(&config.workload_state_root),
+            &config.network_state_root,
         );
         Self {
             config,
@@ -236,7 +240,7 @@ impl ContainerSandboxBackend {
     }
 
     fn remove_tenant_artifacts_sync(&self, tenant_id: &nimbus_core::TenantId) -> Result<()> {
-        for root in [&self.config.bundle_root, &self.config.state_root] {
+        for root in [&self.config.bundle_root, &self.config.workload_state_root] {
             crate::artifact_paths::remove_tenant_root(root, tenant_id).map_err(|error| {
                 SandboxError::OperationFailed {
                     message: format!(
@@ -252,7 +256,7 @@ impl ContainerSandboxBackend {
 
     fn resource_quota_manager(&self) -> ResourceQuotaManager {
         ResourceQuotaManager::new(
-            self.config.state_root.clone(),
+            self.config.workload_state_root.clone(),
             self.config.resource_quota_policy.clone(),
         )
     }
@@ -520,7 +524,7 @@ impl ContainerSandboxBackend {
                 launch_plan.manifest.image_metadata.user.as_deref(),
                 Some(launch_plan.manifest.network_layout.netns_path.as_path()),
                 &container_bundle_options(
-                    &self.config.state_root,
+                    &self.config.workload_state_root,
                     &launch_plan.manifest.spec,
                     &launch_plan.manifest.handle.id,
                     Some(&egress_proxy),
@@ -843,8 +847,9 @@ impl ContainerSandboxBackend {
             )?;
             resolved_spec.port_bindings.extend(auto_bindings);
         }
-        let network_layout = OciNetworkLayout::new(
-            &self.config.state_root,
+        let network_layout = OciNetworkLayout::with_roots(
+            &self.config.workload_state_root,
+            &self.config.network_state_root,
             &resolved_spec.tenant_id,
             sandbox_id,
         );
@@ -855,7 +860,7 @@ impl ContainerSandboxBackend {
             sandbox_id,
         ));
         let conmon_layout = OciConmonLayout::new_for_tenant(
-            &self.config.state_root,
+            &self.config.workload_state_root,
             &resolved_launch.spec.tenant_id,
             sandbox_id,
         );
@@ -864,7 +869,7 @@ impl ContainerSandboxBackend {
             .map_err(|error| SandboxError::OperationFailed {
                 message: format!(
                     "failed to create container state directories under {}: {error}",
-                    self.config.state_root.display()
+                    self.config.workload_state_root.display()
                 ),
             })?;
         let conmon_launch = build_launch_plan(
@@ -986,7 +991,7 @@ impl ContainerSandboxBackend {
                     plan.manifest.image_metadata.user.as_deref(),
                     Some(plan.manifest.network_layout.netns_path.as_path()),
                     &container_bundle_options(
-                        &self.config.state_root,
+                        &self.config.workload_state_root,
                         &plan.manifest.spec,
                         sandbox_id,
                         plan.manifest.egress_proxy.as_ref(),
@@ -1009,7 +1014,7 @@ impl ContainerSandboxBackend {
                 plan.manifest.image_metadata.user.as_deref(),
                 Some(plan.manifest.network_layout.netns_path.as_path()),
                 &container_bundle_options(
-                    &self.config.state_root,
+                    &self.config.workload_state_root,
                     &plan.manifest.spec,
                     sandbox_id,
                     None,
@@ -1196,7 +1201,7 @@ impl ContainerSandboxBackend {
         image_reference: &str,
     ) -> Result<PreparedMaterializedImageLaunch> {
         OciImageMaterializer::for_tenant_sandbox(
-            &self.config.state_root,
+            &self.config.workload_state_root,
             &spec.tenant_id,
             sandbox_id,
         )
@@ -1212,7 +1217,7 @@ impl ContainerSandboxBackend {
         context_path: &Path,
     ) -> Result<PreparedMaterializedImageLaunch> {
         OciDockerfileBuilder::for_tenant_sandbox(
-            &self.config.state_root,
+            &self.config.workload_state_root,
             &spec.tenant_id,
             sandbox_id,
         )
@@ -1262,7 +1267,7 @@ impl ContainerSandboxBackend {
         let runner_config = &manifest.runner_config;
         // One-shot: drop the legacy shared nimbus0 bridge before the first
         // per-tenant setup (pre-launch migration, breaking).
-        purge_legacy_nimbus0_once(&runner_config.state_root.join("networks"))?;
+        purge_legacy_nimbus0_once(&runner_config.workload_state_root.join("networks"))?;
         let port_lease_coordinator = self.port_lease_coordinator_for_manifest(manifest)?;
         port_lease_coordinator.require_binding_leases(
             &manifest.spec.tenant_id,

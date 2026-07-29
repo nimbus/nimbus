@@ -195,7 +195,7 @@ mod tests {
                 }),
         );
         let allocator: Arc<OciSegmentAllocator> = recorder.clone();
-        let layout = OciNetworkLayout::new(dir.path(), &tenant, &sandbox_id);
+        let layout = OciNetworkLayout::under_root(dir.path(), &tenant, &sandbox_id);
         layout.ensure_directories().expect("layout should exist");
         let build_count = Arc::new(AtomicUsize::new(0));
         let build_count_for_call = Arc::clone(&build_count);
@@ -273,7 +273,7 @@ mod tests {
             30,
         )
         .expect("local network store should open");
-        let layout = OciNetworkLayout::new(dir.path(), &tenant, &sandbox_id);
+        let layout = OciNetworkLayout::under_root(dir.path(), &tenant, &sandbox_id);
         layout.ensure_directories().expect("layout should exist");
 
         let error = super::place_sandbox_on_block(
@@ -317,7 +317,7 @@ mod tests {
         .expect("local network store should open");
         let t = tenant("tenant-a");
         // Sandbox 1 lands on block 0 (10.7.0.0/30 -> .2).
-        let sb1_layout = OciNetworkLayout::new(state_root, &t, &SandboxId::new("sb-1"));
+        let sb1_layout = OciNetworkLayout::under_root(state_root, &t, &SandboxId::new("sb-1"));
         sb1_layout.ensure_directories().expect("dirs");
         let c1 = place_sandbox_on_block(
             &allocator,
@@ -331,7 +331,7 @@ mod tests {
 
         // Sandbox 2 cannot fit block 0's single slot, so placement grows onto
         // block 1 (10.7.0.4/30).
-        let sb2_layout = OciNetworkLayout::new(state_root, &t, &SandboxId::new("sb-2"));
+        let sb2_layout = OciNetworkLayout::under_root(state_root, &t, &SandboxId::new("sb-2"));
         sb2_layout.ensure_directories().expect("dirs");
         let c2 = place_sandbox_on_block(
             &allocator,
@@ -386,14 +386,14 @@ mod tests {
         .expect("local network store should open");
         let t = tenant("tenant-a");
         let sb1 = SandboxId::new("sb-1");
-        let sb1_layout = OciNetworkLayout::new(state_root, &t, &sb1);
+        let sb1_layout = OciNetworkLayout::under_root(state_root, &t, &sb1);
         sb1_layout.ensure_directories().expect("sb-1 dirs");
         let first = place_sandbox_on_block(&allocator, &t, &sb1_layout, &sb1, config_for_segment)
             .expect("sb-1 should fill the primary /30");
         assert_eq!(first.network_subnet, "10.7.0.0/30");
 
         let sb2 = SandboxId::new("sb-2");
-        let sb2_layout = OciNetworkLayout::new(state_root, &t, &sb2);
+        let sb2_layout = OciNetworkLayout::under_root(state_root, &t, &sb2);
         sb2_layout.ensure_directories().expect("sb-2 dirs");
         let secondary =
             place_sandbox_on_block(&allocator, &t, &sb2_layout, &sb2, config_for_segment)
@@ -407,7 +407,7 @@ mod tests {
         .expect("free the secondary block's only container slot");
 
         let sb3 = SandboxId::new("sb-3");
-        let sb3_layout = OciNetworkLayout::new(state_root, &t, &sb3);
+        let sb3_layout = OciNetworkLayout::under_root(state_root, &t, &sb3);
         sb3_layout.ensure_directories().expect("sb-3 dirs");
         let replacement =
             place_sandbox_on_block(&allocator, &t, &sb3_layout, &sb3, config_for_segment)
@@ -442,7 +442,7 @@ mod tests {
         let tenant = tenant("tenant-a");
 
         let primary = SandboxId::new("primary");
-        let primary_layout = OciNetworkLayout::new(state_root, &tenant, &primary);
+        let primary_layout = OciNetworkLayout::under_root(state_root, &tenant, &primary);
         primary_layout.ensure_directories().expect("primary dirs");
         place_sandbox_on_block(
             &allocator,
@@ -454,7 +454,7 @@ mod tests {
         .expect("primary placement should resolve");
 
         let secondary = SandboxId::new("secondary");
-        let secondary_layout = OciNetworkLayout::new(state_root, &tenant, &secondary);
+        let secondary_layout = OciNetworkLayout::under_root(state_root, &tenant, &secondary);
         secondary_layout
             .ensure_directories()
             .expect("secondary dirs");
@@ -510,7 +510,7 @@ mod tests {
 
             for index in 0..block_count {
                 let sandbox = SandboxId::new(format!("seed-{index}"));
-                let layout = OciNetworkLayout::new(state_root, &tenant, &sandbox);
+                let layout = OciNetworkLayout::under_root(state_root, &tenant, &sandbox);
                 layout.ensure_directories().expect("seed dirs");
                 let config = place_sandbox_on_block(
                     &allocator,
@@ -533,7 +533,7 @@ mod tests {
             .expect("selected block should deallocate");
 
             let replacement = SandboxId::new("replacement");
-            let replacement_layout = OciNetworkLayout::new(state_root, &tenant, &replacement);
+            let replacement_layout = OciNetworkLayout::under_root(state_root, &tenant, &replacement);
             replacement_layout
                 .ensure_directories()
                 .expect("replacement dirs");
@@ -585,7 +585,7 @@ mod tests {
                 let tenant = tenant.clone();
                 std::thread::spawn(move || {
                     let sandbox = SandboxId::new(format!("concurrent-{index}"));
-                    let layout = OciNetworkLayout::new(&state_root, &tenant, &sandbox);
+                    let layout = OciNetworkLayout::under_root(&state_root, &tenant, &sandbox);
                     layout.ensure_directories().expect("placement dirs");
                     barrier.wait();
                     place_sandbox_on_block(

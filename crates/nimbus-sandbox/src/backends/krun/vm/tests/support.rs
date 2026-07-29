@@ -174,7 +174,7 @@ pub(super) fn sample_image_metadata() -> KrunImageMetadata {
 
 pub(super) fn sample_manifest(spec: SandboxSpec, start_mode: KrunStartMode) -> KrunSandboxManifest {
     let endpoints = visible_published_endpoints(start_mode, &spec, SandboxStatus::Starting);
-    let network_layout = super::super::OciNetworkLayout::new(
+    let network_layout = super::super::OciNetworkLayout::under_root(
         "/tmp/state",
         &spec.tenant_id,
         &crate::instance::SandboxId::new("sandbox-01"),

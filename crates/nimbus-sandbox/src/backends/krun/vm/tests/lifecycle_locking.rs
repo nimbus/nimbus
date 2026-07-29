@@ -14,10 +14,16 @@ fn fresh_krun_lifecycle_lock_bootstraps_only_its_private_parent() {
     ));
     let spec = sample_spec_for_tenant("krun-lock-bootstrap", "api");
     let sandbox_id = SandboxId::new("krun-lock-bootstrap");
-    let conmon_layout =
-        OciConmonLayout::new_for_tenant(&backend.config.state_root, &spec.tenant_id, &sandbox_id);
-    let network_layout =
-        OciNetworkLayout::new(&backend.config.state_root, &spec.tenant_id, &sandbox_id);
+    let conmon_layout = OciConmonLayout::new_for_tenant(
+        &backend.config.workload_state_root,
+        &spec.tenant_id,
+        &sandbox_id,
+    );
+    let network_layout = OciNetworkLayout::under_root(
+        &backend.config.workload_state_root,
+        &spec.tenant_id,
+        &sandbox_id,
+    );
     assert!(!conmon_layout.container_state_dir.exists());
 
     let lifecycle = backend
@@ -54,10 +60,16 @@ fn execute_planning_waits_for_lifecycle_lock_before_network_or_manifest_effects(
     let lifecycle = backend
         .lock_launch_lifecycle_for(&spec.tenant_id, &sandbox_id)
         .expect("test owner should acquire the lifecycle lock");
-    let network_layout =
-        OciNetworkLayout::new(&backend.config.state_root, &spec.tenant_id, &sandbox_id);
-    let conmon_layout =
-        OciConmonLayout::new_for_tenant(&backend.config.state_root, &spec.tenant_id, &sandbox_id);
+    let network_layout = OciNetworkLayout::under_root(
+        &backend.config.workload_state_root,
+        &spec.tenant_id,
+        &sandbox_id,
+    );
+    let conmon_layout = OciConmonLayout::new_for_tenant(
+        &backend.config.workload_state_root,
+        &spec.tenant_id,
+        &sandbox_id,
+    );
     let planning_backend = backend.clone();
     let planning_spec = spec.clone();
     let planning_id = sandbox_id.clone();
@@ -223,12 +235,8 @@ fn explicitly_absent_runtime_with_inaccessible_pidfile_fails_closed() {
         ),
     ]);
     let _ = fs::remove_file(&manifest.conmon_layout.exit_status_file);
-    let non_directory = manifest
-        .conmon_layout
-        .container_state_dir
-        .join("pidfile-parent");
-    fs::write(&non_directory, b"not a directory").expect("non-directory parent should create");
-    manifest.conmon_layout.pidfile = non_directory.join("pid");
+    fs::create_dir(&manifest.conmon_layout.pidfile)
+        .expect("the exact pidfile path should be unreadable as a file");
     backend
         .write_manifest(&manifest)
         .expect("provider-owned fixture should persist");
@@ -241,9 +249,7 @@ fn explicitly_absent_runtime_with_inaccessible_pidfile_fails_closed() {
         .inspect_sync(&sandbox_id)
         .expect_err("inaccessible creator evidence must fail inspection closed");
     assert!(
-        error
-            .to_string()
-            .contains("failed to inspect sandbox pidfile")
+        error.to_string().contains("failed to read sandbox pidfile")
             && error
                 .to_string()
                 .contains(&manifest.conmon_layout.pidfile.display().to_string()),

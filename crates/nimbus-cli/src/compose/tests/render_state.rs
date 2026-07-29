@@ -10,14 +10,14 @@ fn render_service_list_defaults_to_local_project_tenant_and_can_expand_to_all_te
     let krun_config = context.control_plane.krun_backend_config();
 
     write_manifest(
-        &krun_config.state_root,
+        &krun_config.workload_state_root,
         "db-01aaa",
         context.control_plane.local_tenant_id.as_str(),
         "db",
         SandboxStatus::Ready,
     );
     write_manifest(
-        &krun_config.state_root,
+        &krun_config.workload_state_root,
         "db-01bbb",
         "tenant-other",
         "db",
@@ -70,7 +70,7 @@ fn render_service_list_discovers_parent_project_when_file_is_omitted() {
     let krun_config = context.control_plane.krun_backend_config();
 
     write_manifest(
-        &krun_config.state_root,
+        &krun_config.workload_state_root,
         "db-01aaa",
         context.control_plane.local_tenant_id.as_str(),
         "db",
@@ -128,14 +128,14 @@ fn render_service_inspect_defaults_to_local_project_tenant_and_honors_tenant_ove
     let krun_config = context.control_plane.krun_backend_config();
 
     write_manifest(
-        &krun_config.state_root,
+        &krun_config.workload_state_root,
         "db-01aaa",
         context.control_plane.local_tenant_id.as_str(),
         "db",
         SandboxStatus::Ready,
     );
     write_manifest(
-        &krun_config.state_root,
+        &krun_config.workload_state_root,
         "db-01bbb",
         "tenant-other",
         "db",

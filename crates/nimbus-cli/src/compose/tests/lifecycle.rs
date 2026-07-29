@@ -11,21 +11,21 @@ fn resolve_service_down_targets_deduplicates_manifest_history_per_service_identi
     let tenant = context.control_plane.local_tenant_id.clone();
 
     write_manifest(
-        &krun_config.state_root,
+        &krun_config.workload_state_root,
         "db-01aaa",
         tenant.as_str(),
         "db",
         SandboxStatus::Stopped,
     );
     write_manifest(
-        &krun_config.state_root,
+        &krun_config.workload_state_root,
         "db-01bbb",
         tenant.as_str(),
         "db",
         SandboxStatus::Ready,
     );
     write_manifest(
-        &krun_config.state_root,
+        &krun_config.workload_state_root,
         "cache-01aaa",
         tenant.as_str(),
         "cache",

@@ -171,11 +171,13 @@ impl TenantEntry {
 
 #[derive(Default, Serialize, Deserialize)]
 struct SegmentState {
-    /// The super-net (and its fencing epoch) these assignments were carved under.
-    /// A mismatch on load is fail-closed: the node must drain + re-carve, never
-    /// silently reuse a stale-epoch block (the cluster reclamation-safety hook).
+    /// The super-net, fencing epoch, and tenant prefix these assignments were
+    /// carved under. A mismatch on load is fail-closed: the node must drain +
+    /// re-carve, never silently reinterpret a durable local slot through a
+    /// different CIDR geometry or reuse a stale-epoch block.
     supernet_cidr: Option<String>,
     supernet_epoch: Option<NetworkLeaseEpoch>,
+    tenant_prefix: Option<u8>,
     /// tenant id → its allocation (index + live-attachment refcount).
     tenants: BTreeMap<String, TenantEntry>,
 }
@@ -447,8 +449,12 @@ impl SingleNodeSegmentAllocator {
         ))
     }
 
-    /// Fail closed if the persisted state was carved under a different super-net
-    /// or epoch than the one this allocator has installed.
+    /// Fail closed if persisted state was carved under a different super-net,
+    /// epoch, or tenant prefix than the authority installed in this allocator.
+    ///
+    /// A pristine state may adopt the configured prefix on its first
+    /// allocation. Once any tenant exists, a missing prefix is unauthenticated
+    /// allocation geometry and cannot be used to derive a CIDR.
     fn ensure_supernet_matches(
         &self,
         supernet: &InstalledSuperNet,
@@ -475,6 +481,25 @@ impl SingleNodeSegmentAllocator {
                 ),
             });
         }
+        match state.tenant_prefix {
+            Some(stored) if stored != self.tenant_prefix => {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "network segment state was carved under tenant prefix /{stored}, not the requested /{}; drain and re-carve before reuse",
+                        self.tenant_prefix
+                    ),
+                });
+            }
+            None if !state.tenants.is_empty() => {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "network segment state has stored tenant prefix <missing>, not the requested /{}; refusing to reinterpret non-empty durable allocations",
+                        self.tenant_prefix
+                    ),
+                });
+            }
+            Some(_) | None => {}
+        }
         Ok(())
     }
 
@@ -483,8 +508,14 @@ impl SingleNodeSegmentAllocator {
             .store
             .transaction(&NetworkStatePartition::SegmentAllocations, |state| {
                 validate_segment_state(state)?;
+                if let Some(supernet) = self.supernet.as_ref() {
+                    self.ensure_supernet_matches(supernet, state)?;
+                }
                 let result = mutator(state)?;
                 validate_segment_state(state)?;
+                if let Some(supernet) = self.supernet.as_ref() {
+                    self.ensure_supernet_matches(supernet, state)?;
+                }
                 Ok(result)
             }) {
             Ok(result) => Ok(result),
@@ -500,6 +531,9 @@ impl SingleNodeSegmentAllocator {
             .map_err(network_store_error)?;
         if let Some(state) = state.as_ref() {
             validate_segment_state(state)?;
+            if let Some(supernet) = self.supernet.as_ref() {
+                self.ensure_supernet_matches(supernet, state)?;
+            }
         }
         Ok(state)
     }
@@ -597,6 +631,7 @@ impl SingleNodeSegmentAllocator {
         );
         state.supernet_cidr = Some(supernet.cidr.to_string());
         state.supernet_epoch = Some(supernet.epoch);
+        state.tenant_prefix = Some(self.tenant_prefix);
         Ok(block)
     }
 }

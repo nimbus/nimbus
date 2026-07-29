@@ -74,6 +74,7 @@ mod creator;
 mod lifecycle;
 mod manifest_publication;
 mod readiness;
+mod root_authentication;
 mod start;
 
 #[cfg(test)]
@@ -112,7 +113,10 @@ pub enum KrunStartMode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KrunSandboxBackendConfig {
     pub bundle_root: PathBuf,
-    pub state_root: PathBuf,
+    /// Backend-local manifests, runtime artifacts, trust material, and quotas.
+    pub workload_state_root: PathBuf,
+    /// Node-local segment, IPAM, and host-port allocation authority.
+    pub network_state_root: PathBuf,
     pub conmon_path: PathBuf,
     pub runtime_path: PathBuf,
     pub buildah_path: PathBuf,
@@ -147,17 +151,29 @@ impl KrunSandboxBackendConfig {
         let mut config = Self::default();
         let root = root.into();
         config.bundle_root = root.join("bundles");
-        config.state_root = root.join("state");
+        config.workload_state_root = root.join("state");
+        config.network_state_root = root.join("state");
         config
     }
 
-    pub fn plan_only(bundle_root: impl Into<PathBuf>, state_root: impl Into<PathBuf>) -> Self {
+    pub fn plan_only(
+        bundle_root: impl Into<PathBuf>,
+        workload_state_root: impl Into<PathBuf>,
+    ) -> Self {
+        let workload_state_root = workload_state_root.into();
         Self {
             bundle_root: bundle_root.into(),
-            state_root: state_root.into(),
+            network_state_root: workload_state_root.clone(),
+            workload_state_root,
             start_mode: KrunStartMode::PlanOnly,
             ..Self::default()
         }
+    }
+
+    /// Override the node-local network authority without moving workload state.
+    pub fn with_network_state_root(mut self, network_state_root: impl Into<PathBuf>) -> Self {
+        self.network_state_root = network_state_root.into();
+        self
     }
 }
 
@@ -166,7 +182,8 @@ impl Default for KrunSandboxBackendConfig {
         let temp_root = std::env::temp_dir().join("nimbus-sandbox");
         Self {
             bundle_root: temp_root.join("bundles"),
-            state_root: temp_root.join("state"),
+            workload_state_root: temp_root.join("state"),
+            network_state_root: temp_root.join("state"),
             conmon_path: PathBuf::from(DEFAULT_CONMON_PATH),
             runtime_path: PathBuf::from(DEFAULT_RUNTIME_PATH),
             buildah_path: PathBuf::from(DEFAULT_BUILDAH_PATH),
@@ -271,7 +288,7 @@ impl KrunSandboxBackend {
     pub fn new(config: KrunSandboxBackendConfig) -> Self {
         let segment_allocator: Arc<OciSegmentAllocator> =
             Arc::new(ConfiguredSegmentAllocator::new(
-                config.state_root.clone(),
+                config.network_state_root.clone(),
                 config.node_network_supernet.clone(),
                 config.node_tenant_subnet_prefix,
             ));
@@ -282,14 +299,17 @@ impl KrunSandboxBackend {
         config: KrunSandboxBackendConfig,
         segment_allocator: Arc<OciSegmentAllocator>,
     ) -> Self {
-        let startup_network_reconciliation_error =
-            reconcile_startup_network_state(&config.state_root, segment_allocator.as_ref())
-                .err()
-                .map(|error| Arc::<str>::from(error.to_string()));
+        let startup_network_reconciliation_error = reconcile_startup_network_state(
+            &config.workload_state_root,
+            &config.network_state_root,
+            segment_allocator.as_ref(),
+        )
+        .err()
+        .map(|error| Arc::<str>::from(error.to_string()));
         let egress_proxies = EgressProxyRegistry::with_roots_and_network_state(
-            egress_decision_log_root(&config.state_root),
-            egress_trust_anchor_root(&config.state_root),
-            &config.state_root,
+            egress_decision_log_root(&config.workload_state_root),
+            egress_trust_anchor_root(&config.workload_state_root),
+            &config.network_state_root,
         );
         Self {
             config,
@@ -429,7 +449,7 @@ impl KrunSandboxBackend {
     }
 
     fn remove_tenant_artifacts_sync(&self, tenant_id: &nimbus_core::TenantId) -> Result<()> {
-        for root in [&self.config.bundle_root, &self.config.state_root] {
+        for root in [&self.config.bundle_root, &self.config.workload_state_root] {
             crate::artifact_paths::remove_tenant_root(root, tenant_id).map_err(|error| {
                 SandboxError::OperationFailed {
                     message: format!(
@@ -481,7 +501,7 @@ impl KrunSandboxBackend {
 
     fn resource_quota_manager(&self) -> ResourceQuotaManager {
         ResourceQuotaManager::new(
-            self.config.state_root.clone(),
+            self.config.workload_state_root.clone(),
             self.config.resource_quota_policy.clone(),
         )
     }

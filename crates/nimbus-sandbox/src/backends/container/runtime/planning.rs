@@ -128,8 +128,11 @@ fn startup_network_reconciliation_failure_blocks_new_container_planning() {
     let config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
     let corrupt_owner = SandboxId::new("corrupt-startup-owner");
     let spec = sample_spec();
-    let corrupt_manifest_path =
-        crate::artifact_paths::manifest_path(&config.state_root, &spec.tenant_id, &corrupt_owner);
+    let corrupt_manifest_path = crate::artifact_paths::manifest_path(
+        &config.workload_state_root,
+        &spec.tenant_id,
+        &corrupt_owner,
+    );
     std::fs::create_dir_all(
         corrupt_manifest_path
             .parent()
@@ -155,7 +158,7 @@ fn startup_network_reconciliation_failure_blocks_new_container_planning() {
         "admission must preserve the exact observable startup failure: {error}"
     );
     assert_eq!(
-        crate::artifact_paths::all_manifest_paths(&backend.config.state_root)
+        crate::artifact_paths::all_manifest_paths(&backend.config.workload_state_root)
             .expect("manifest paths should inspect"),
         [corrupt_manifest_path],
         "rejected planning must not create a second launch authority"
@@ -377,12 +380,15 @@ fn plan_only_launches_do_not_materialize_live_proxy_env() {
 }
 
 #[test]
-fn plan_only_service_workload_prepares_runner_manifest_pointer_and_proxy_env() {
+fn substituted_execution_context_preserves_split_runner_roots_and_rejects_redirection() {
     let temp_dir = TempDir::new().expect("tempdir should build");
+    let workload_state_root = temp_dir.path().join("project-state");
+    let network_state_root = temp_dir.path().join("node-network-state");
     let mut config = ContainerSandboxBackendConfig::plan_only(
         temp_dir.path().join("bundles"),
-        temp_dir.path().join("state"),
-    );
+        &workload_state_root,
+    )
+    .with_network_state_root(&network_state_root);
     config.published_port_range = 15000..=15002;
     config.buildah_path = "/opt/nimbus/bin/buildah-cleanup".into();
     config.use_buildah_unshare = true;
@@ -402,7 +408,7 @@ fn plan_only_service_workload_prepares_runner_manifest_pointer_and_proxy_env() {
         .expect("service workload should prepare");
 
     let manifest_path = crate::artifact_paths::manifest_path(
-        &temp_dir.path().join("state"),
+        &workload_state_root,
         &sample_spec().tenant_id,
         &prepared.handle.id,
     );
@@ -453,7 +459,7 @@ fn plan_only_service_workload_prepares_runner_manifest_pointer_and_proxy_env() {
             .port_lease
             .clone(),
     );
-    let authority = nimbus_network::LocalPortLeaseAuthority::open(temp_dir.path().join("state"))
+    let authority = nimbus_network::LocalPortLeaseAuthority::open(&network_state_root)
         .expect("runner authority should reopen");
     for request in &launch_batch {
         assert_eq!(
@@ -492,9 +498,27 @@ fn plan_only_service_workload_prepares_runner_manifest_pointer_and_proxy_env() {
     );
     let runner_config = typed_manifest.runner_config.to_backend_config();
     assert_eq!(
-        runner_config.state_root,
-        temp_dir.path().join("state"),
-        "the runner must reopen the exact authority root that prepared its claim"
+        runner_config.workload_state_root, workload_state_root,
+        "the runner must reopen the exact workload root that prepared its artifacts"
+    );
+    assert_eq!(
+        runner_config.network_state_root, network_state_root,
+        "the runner must reopen the exact node authority that prepared its leases"
+    );
+    assert_eq!(
+        typed_manifest.network_layout.workload_state_root,
+        runner_config.workload_state_root
+    );
+    assert_eq!(
+        typed_manifest.network_layout.network_state_root,
+        runner_config.network_state_root
+    );
+    assert!(
+        !nimbus_network::LocalNetworkStateStore::authority_path_for(
+            &runner_config.workload_state_root
+        )
+        .exists(),
+        "split planning must not create a network authority under workload state"
     );
     assert_eq!(
         runner_config.buildah_path,
@@ -542,12 +566,22 @@ fn plan_only_service_workload_prepares_runner_manifest_pointer_and_proxy_env() {
         .write_manifest(&typed_manifest)
         .expect("test should restore the plan-only cancellation fixture");
     let mut substituted_authority = typed_manifest.clone();
-    substituted_authority.runner_config.state_root = temp_dir.path().join("foreign-state");
-    let error = super::super::runner::validate_runner_authority_root(&substituted_authority)
-        .expect_err("a substituted runner authority root must fail before backend effects");
+    substituted_authority.runner_config.workload_state_root = temp_dir.path().join("foreign-state");
+    let error = super::super::runner::validate_runner_authority_roots(&substituted_authority)
+        .expect_err("a substituted runner workload root must fail before backend effects");
     assert!(
-        error.to_string().contains("does not match"),
-        "the authority-root rejection must be explicit: {error}"
+        error.to_string().contains("workload root") && error.to_string().contains("does not match"),
+        "the workload-root rejection must be explicit: {error}"
+    );
+    let mut substituted_authority = typed_manifest.clone();
+    substituted_authority.runner_config.network_state_root =
+        temp_dir.path().join("foreign-network-state");
+    let error = super::super::runner::validate_runner_authority_roots(&substituted_authority)
+        .expect_err("a substituted runner network root must fail before backend effects");
+    assert!(
+        error.to_string().contains("network authority root")
+            && error.to_string().contains("does not match"),
+        "the network-root rejection must be explicit: {error}"
     );
     assert_eq!(
         runner_config
@@ -576,9 +610,7 @@ fn plan_only_service_workload_prepares_runner_manifest_pointer_and_proxy_env() {
             ),
         "service bundle should route proxy-aware tools through the runner-owned egress proxy: {env:?}"
     );
-    let trust_anchor_path = temp_dir
-        .path()
-        .join("state")
+    let trust_anchor_path = workload_state_root
         .join("egress-trust-anchors")
         .join("svc-demo")
         .join(format!("{}.pem", prepared.handle.id.as_str()));
@@ -1002,11 +1034,11 @@ fn plan_only_backend_scopes_network_state_by_tenant_for_same_sandbox_id() {
         "same sandbox id in different tenants must not share network namespaces"
     );
     assert_eq!(
-        tenant_a_plan.manifest.network_layout.state_root,
+        tenant_a_plan.manifest.network_layout.network_state_root,
         temp_dir.path().join("state")
     );
     assert_eq!(
-        tenant_b_plan.manifest.network_layout.state_root,
+        tenant_b_plan.manifest.network_layout.network_state_root,
         temp_dir.path().join("state"),
         "all network resources on one node share one authority root"
     );
@@ -1267,7 +1299,7 @@ fn later_container_planning_failure_compensates_never_bound_port_batch() {
     config.bundle_root = blocked_bundle_root;
     config.start_mode = ContainerStartMode::Execute;
     config.published_port_range = 15000..=15001;
-    let authority_root = config.state_root.clone();
+    let authority_root = config.network_state_root.clone();
     let backend = ContainerSandboxBackend::new(config);
     let spec = sample_spec();
 
@@ -1346,7 +1378,7 @@ fn plan_only_backend_does_not_charge_manifest_only_port_previews() {
     config.start_mode = ContainerStartMode::PlanOnly;
     config.published_port_range = 15000..=15005;
     config.max_published_ports_per_tenant = Some(1);
-    let state_root = config.state_root.clone();
+    let state_root = config.network_state_root.clone();
     let backend = ContainerSandboxBackend::new(config);
 
     backend

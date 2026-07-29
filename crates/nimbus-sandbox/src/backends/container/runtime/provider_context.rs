@@ -16,14 +16,24 @@ impl ContainerSandboxBackend {
         &self,
         manifest: &ContainerSandboxManifest,
     ) -> Result<()> {
-        runner::validate_runner_authority_root(manifest)?;
-        if self.config.state_root != manifest.runner_config.state_root {
+        runner::validate_runner_authority_roots(manifest)?;
+        if self.config.workload_state_root != manifest.runner_config.workload_state_root {
             return Err(SandboxError::InvalidSpec {
                 message: format!(
-                    "container backend authority root {} does not match manifest launch-time \
-                     authority {}",
-                    self.config.state_root.display(),
-                    manifest.runner_config.state_root.display()
+                    "container backend workload root {} does not match manifest launch-time \
+                     workload root {}",
+                    self.config.workload_state_root.display(),
+                    manifest.runner_config.workload_state_root.display()
+                ),
+            });
+        }
+        if self.config.network_state_root != manifest.runner_config.network_state_root {
+            return Err(SandboxError::InvalidSpec {
+                message: format!(
+                    "container backend network authority root {} does not match manifest \
+                     launch-time network authority root {}",
+                    self.config.network_state_root.display(),
+                    manifest.runner_config.network_state_root.display()
                 ),
             });
         }
@@ -36,8 +46,9 @@ impl ContainerSandboxBackend {
                 ),
             });
         }
-        let expected_network_layout = OciNetworkLayout::new(
-            &manifest.runner_config.state_root,
+        let expected_network_layout = OciNetworkLayout::with_roots(
+            &manifest.runner_config.workload_state_root,
+            &manifest.runner_config.network_state_root,
             &manifest.spec.tenant_id,
             &manifest.handle.id,
         );
@@ -51,7 +62,7 @@ impl ContainerSandboxBackend {
             });
         }
         let expected_conmon_layout = OciConmonLayout::new_for_tenant(
-            &manifest.runner_config.state_root,
+            &manifest.runner_config.workload_state_root,
             &manifest.spec.tenant_id,
             &manifest.handle.id,
         );
@@ -88,9 +99,11 @@ impl ContainerSandboxBackend {
     fn port_lease_coordinator_for_execution_config(
         config: &ContainerRunnerExecutionConfig,
     ) -> OciPortLeaseCoordinator {
-        let manager =
-            OciPortLeaseCoordinator::new(&config.state_root, config.published_port_range.clone())
-                .with_max_ports_per_tenant(config.max_published_ports_per_tenant);
+        let manager = OciPortLeaseCoordinator::new(
+            &config.network_state_root,
+            config.published_port_range.clone(),
+        )
+        .with_max_ports_per_tenant(config.max_published_ports_per_tenant);
         if config.machine_port_forwarder.is_some() {
             manager.with_machine_port_proxy_bindings()
         } else {

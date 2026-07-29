@@ -229,7 +229,7 @@ services:
                 .join("bundles")
         );
         assert_eq!(
-            config.state_root,
+            config.workload_state_root,
             context
                 .control_plane
                 .project_root
@@ -237,6 +237,7 @@ services:
                 .join("krun")
                 .join("state")
         );
+        assert_eq!(config.network_state_root, config.workload_state_root);
         assert_eq!(
             context.control_plane.local_tenant_id.as_str(),
             format!("svc-{}", context.control_plane.project_key)

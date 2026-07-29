@@ -22,8 +22,8 @@ fn stale_krun_cleanup_cannot_mutate_replacement_network_generation() {
         injected,
     );
     let mut manifest = sample_manifest(spec, KrunStartMode::Execute);
-    let layout = OciNetworkLayout::new(
-        &backend.config.state_root,
+    let layout = OciNetworkLayout::under_root(
+        &backend.config.workload_state_root,
         &manifest.spec.tenant_id,
         &manifest.handle.id,
     );
@@ -49,8 +49,9 @@ fn stale_krun_cleanup_cannot_mutate_replacement_network_generation() {
         .expect("replacement netns should persist");
     std::fs::write(&layout.status_path, b"replacement-status")
         .expect("replacement status should persist");
-    let authority_path =
-        nimbus_network::LocalNetworkStateStore::authority_path_for(&backend.config.state_root);
+    let authority_path = nimbus_network::LocalNetworkStateStore::authority_path_for(
+        &backend.config.network_state_root,
+    );
     let authority_before =
         std::fs::read(&authority_path).expect("replacement authority should read");
     let allocator_before = recorder.operations();

@@ -28,7 +28,7 @@ fn execute_auto_port_projection_uses_reserved_port_only_when_ready() {
     );
     assert!(!manifest.port_leases.is_empty());
 
-    let authority = LocalPortLeaseAuthority::open(&backend.config.state_root)
+    let authority = LocalPortLeaseAuthority::open(&backend.config.network_state_root)
         .expect("port authority should reopen");
     for (binding, lease) in manifest
         .spec

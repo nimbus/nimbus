@@ -18,10 +18,16 @@ fn krun_creator_fixture(
     let sandbox_id = SandboxId::new(id);
     let mut manifest = sample_manifest(spec.clone(), KrunStartMode::Execute);
     manifest.handle.id = sandbox_id.clone();
-    manifest.conmon_layout =
-        OciConmonLayout::new_for_tenant(&backend.config.state_root, &spec.tenant_id, &sandbox_id);
-    manifest.network_layout =
-        OciNetworkLayout::new(&backend.config.state_root, &spec.tenant_id, &sandbox_id);
+    manifest.conmon_layout = OciConmonLayout::new_for_tenant(
+        &backend.config.workload_state_root,
+        &spec.tenant_id,
+        &sandbox_id,
+    );
+    manifest.network_layout = OciNetworkLayout::under_root(
+        &backend.config.workload_state_root,
+        &spec.tenant_id,
+        &sandbox_id,
+    );
     (backend, manifest)
 }
 

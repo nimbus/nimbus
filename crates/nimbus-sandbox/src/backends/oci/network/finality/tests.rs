@@ -36,7 +36,7 @@ fn fixture(
     let segment = allocator
         .segment_for(&tenant_id)
         .expect("recording segment should inspect");
-    let layout = OciNetworkLayout::new(temp_dir.path(), &tenant_id, &sandbox_id);
+    let layout = OciNetworkLayout::under_root(temp_dir.path(), &tenant_id, &sandbox_id);
     layout
         .ensure_directories()
         .expect("network layout should exist");

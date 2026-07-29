@@ -92,8 +92,8 @@ fn natural_execute_exit_releases_exact_network_authority_before_terminal_status(
         "terminal status may publish only after exact tenant/workload attachment convergence and \
          read-only absence verification"
     );
-    let authority =
-        LocalPortLeaseAuthority::open(&backend.config.state_root).expect("authority should reopen");
+    let authority = LocalPortLeaseAuthority::open(&backend.config.network_state_root)
+        .expect("authority should reopen");
     let pep_request = &manifest
         .egress_proxy
         .as_ref()
@@ -195,8 +195,8 @@ fn natural_execute_exit_cleanup_failure_remains_stopping_with_exact_fence() {
         },
         "failed convergence must retain authenticated provider teardown authority"
     );
-    let authority =
-        LocalPortLeaseAuthority::open(&backend.config.state_root).expect("authority should reopen");
+    let authority = LocalPortLeaseAuthority::open(&backend.config.network_state_root)
+        .expect("authority should reopen");
     let pep_request = &manifest
         .egress_proxy
         .as_ref()

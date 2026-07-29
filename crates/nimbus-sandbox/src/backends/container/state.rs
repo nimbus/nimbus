@@ -23,7 +23,7 @@ impl ContainerSandboxStateView {
     }
 
     pub fn from_config(config: &ContainerSandboxBackendConfig) -> Self {
-        Self::new(config.state_root.clone())
+        Self::new(config.workload_state_root.clone())
     }
 
     pub fn state_root(&self) -> &Path {

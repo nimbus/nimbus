@@ -1282,9 +1282,10 @@ fn direct_effect_fence_persistence_exhaustion_stop_converges() {
         None,
         "explicit stop must publish terminal lifecycle ownership"
     );
-    let authority =
-        nimbus_network::LocalPortLeaseAuthority::open(&recovering_backend.config.state_root)
-            .expect("port authority should reopen");
+    let authority = nimbus_network::LocalPortLeaseAuthority::open(
+        &recovering_backend.config.network_state_root,
+    )
+    .expect("port authority should reopen");
     for request in planned.port_leases.iter().chain(
         planned
             .egress_proxy

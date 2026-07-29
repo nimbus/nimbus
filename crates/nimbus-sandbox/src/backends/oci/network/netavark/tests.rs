@@ -22,7 +22,7 @@ fn reserved_teardown_with_precreated_namespace_never_calls_netavark_or_rewrites_
     let tenant =
         TenantId::new("tenant-netavark-reserved-no-effect").expect("tenant should validate");
     let sandbox = SandboxId::new("netavark-reserved-no-effect");
-    let layout = OciNetworkLayout::new(temp_dir.path(), &tenant, &sandbox);
+    let layout = OciNetworkLayout::under_root(temp_dir.path(), &tenant, &sandbox);
     layout
         .ensure_directories()
         .expect("network layout should create");
@@ -64,7 +64,7 @@ fn reserved_teardown_rejects_status_projection_without_provider_effect() {
     let tenant =
         TenantId::new("tenant-netavark-reserved-status-conflict").expect("tenant should validate");
     let sandbox = SandboxId::new("netavark-reserved-status-conflict");
-    let layout = OciNetworkLayout::new(temp_dir.path(), &tenant, &sandbox);
+    let layout = OciNetworkLayout::under_root(temp_dir.path(), &tenant, &sandbox);
     layout
         .ensure_directories()
         .expect("network layout should create");
@@ -110,7 +110,7 @@ fn setup_operation_claim_blocks_release_and_replacement_during_provider_effect()
     let tenant = TenantId::new("tenant-netavark-setup-interleaving")
         .expect("tenant identity should validate");
     let sandbox = SandboxId::new("netavark-setup-interleaving");
-    let layout = OciNetworkLayout::new(temp_dir.path(), &tenant, &sandbox);
+    let layout = OciNetworkLayout::under_root(temp_dir.path(), &tenant, &sandbox);
     layout
         .ensure_directories()
         .expect("network layout should create");
@@ -185,7 +185,7 @@ fn teardown_operation_claim_blocks_release_and_replacement_during_provider_effec
     let tenant = TenantId::new("tenant-netavark-teardown-interleaving")
         .expect("tenant identity should validate");
     let sandbox = SandboxId::new("netavark-teardown-interleaving");
-    let layout = OciNetworkLayout::new(temp_dir.path(), &tenant, &sandbox);
+    let layout = OciNetworkLayout::under_root(temp_dir.path(), &tenant, &sandbox);
     layout
         .ensure_directories()
         .expect("network layout should create");
@@ -266,7 +266,7 @@ fn reopened_pending_setup_fails_closed_without_rerunning_provider() {
     let temp_dir = tempdir().expect("temporary directory should create");
     let tenant = TenantId::new("tenant-netavark-reopen").expect("tenant identity should validate");
     let sandbox = SandboxId::new("netavark-reopen");
-    let layout = OciNetworkLayout::new(temp_dir.path(), &tenant, &sandbox);
+    let layout = OciNetworkLayout::under_root(temp_dir.path(), &tenant, &sandbox);
     layout
         .ensure_directories()
         .expect("network layout should create");
@@ -312,7 +312,7 @@ fn projection_retry_does_not_rerun_confirmed_netavark_teardown() {
     let tenant =
         TenantId::new("tenant-netavark-projection-retry").expect("tenant identity should validate");
     let sandbox = SandboxId::new("netavark-projection-retry");
-    let layout = OciNetworkLayout::new(temp_dir.path(), &tenant, &sandbox);
+    let layout = OciNetworkLayout::under_root(temp_dir.path(), &tenant, &sandbox);
     layout
         .ensure_directories()
         .expect("network layout should create");

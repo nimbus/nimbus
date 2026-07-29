@@ -115,7 +115,7 @@ impl ContainerSandboxBackend {
         // before PEP adoption has no registry entry to own that step, so the
         // same idempotent removal must also run for execute-mode compensation.
         if let Err(error) = remove_unactivated_egress_trust_anchor(
-            &manifest.runner_config.state_root,
+            &manifest.runner_config.workload_state_root,
             &manifest.spec.tenant_id,
             &manifest.handle.id,
         ) {

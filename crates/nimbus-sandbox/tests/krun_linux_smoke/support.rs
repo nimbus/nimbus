@@ -6,7 +6,8 @@ pub(super) fn smoke_backend_config(
 ) -> KrunSandboxBackendConfig {
     let mut config = KrunSandboxBackendConfig::default();
     config.bundle_root = bundle_root;
-    config.state_root = state_root;
+    config.workload_state_root = state_root.clone();
+    config.network_state_root = state_root;
     config.start_mode = KrunStartMode::Execute;
 
     if let Some(runtime_path) = env::var_os("NIMBUS_KRUN_SMOKE_RUNTIME") {

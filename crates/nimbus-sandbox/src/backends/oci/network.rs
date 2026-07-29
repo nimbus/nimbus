@@ -86,14 +86,17 @@ pub(crate) fn default_network_attachment_id(sandbox_id: &SandboxId) -> NetworkAt
 /// while planning and provider launch effects require a fresh backend whose
 /// startup reconciliation completed.
 pub(crate) fn reconcile_startup_network_state(
-    state_root: &Path,
+    workload_state_root: &Path,
+    network_state_root: &Path,
     allocator: &OciSegmentAllocator,
 ) -> crate::error::Result<()> {
     let mut errors = Vec::new();
-    if let Err(error) = reconcile_terminal_container_ipam_releases(state_root) {
+    if let Err(error) =
+        reconcile_terminal_container_ipam_releases(workload_state_root, network_state_root)
+    {
         errors.push(error.to_string());
     }
-    if let Err(error) = reconcile_network_segment_orphans(state_root, allocator) {
+    if let Err(error) = reconcile_network_segment_orphans(workload_state_root, allocator) {
         errors.push(error.to_string());
     }
     if errors.is_empty() {
@@ -102,7 +105,7 @@ pub(crate) fn reconcile_startup_network_state(
         Err(SandboxError::OperationFailed {
             message: format!(
                 "startup network reconciliation failed under {}: {}",
-                state_root.display(),
+                network_state_root.display(),
                 errors.join("; ")
             ),
         })
@@ -673,7 +676,7 @@ mod tests {
         let temp_dir = tempdir().expect("temp dir should create");
         let tenant_id = TenantId::new("tenant-netavark-failure").expect("tenant should parse");
         let sandbox_id = SandboxId::new("netavark-failure");
-        let layout = OciNetworkLayout::new(temp_dir.path(), &tenant_id, &sandbox_id);
+        let layout = OciNetworkLayout::under_root(temp_dir.path(), &tenant_id, &sandbox_id);
         layout
             .ensure_directories()
             .expect("network layout should exist");
@@ -706,7 +709,7 @@ mod tests {
         let temp_dir = tempdir().expect("temp dir should create");
         let tenant_id = TenantId::new("tenant-netavark-status-fence").expect("tenant should parse");
         let sandbox_id = SandboxId::new("netavark-status-fence");
-        let layout = OciNetworkLayout::new(temp_dir.path(), &tenant_id, &sandbox_id);
+        let layout = OciNetworkLayout::under_root(temp_dir.path(), &tenant_id, &sandbox_id);
         layout
             .ensure_directories()
             .expect("network layout should exist");
@@ -806,7 +809,7 @@ mod tests {
         let tenant_id =
             TenantId::new("tenant-netavark-netns-observation").expect("tenant should parse");
         let sandbox_id = SandboxId::new("netavark-netns-observation");
-        let layout = OciNetworkLayout::new(temp_dir.path(), &tenant_id, &sandbox_id);
+        let layout = OciNetworkLayout::under_root(temp_dir.path(), &tenant_id, &sandbox_id);
         layout
             .ensure_directories()
             .expect("network layout should exist");
@@ -866,7 +869,7 @@ mod tests {
         let tenant_id =
             TenantId::new("tenant-netavark-teardown-fence").expect("tenant should parse");
         let sandbox_id = SandboxId::new("netavark-teardown-fence");
-        let layout = OciNetworkLayout::new(temp_dir.path(), &tenant_id, &sandbox_id);
+        let layout = OciNetworkLayout::under_root(temp_dir.path(), &tenant_id, &sandbox_id);
         layout
             .ensure_directories()
             .expect("network layout should exist");
@@ -921,7 +924,7 @@ mod tests {
         let tenant_id =
             TenantId::new("tenant-netavark-generation-fence").expect("tenant should parse");
         let sandbox_id = SandboxId::new("netavark-generation-fence");
-        let layout = OciNetworkLayout::new(temp_dir.path(), &tenant_id, &sandbox_id);
+        let layout = OciNetworkLayout::under_root(temp_dir.path(), &tenant_id, &sandbox_id);
         layout
             .ensure_directories()
             .expect("network layout should exist");
@@ -946,7 +949,7 @@ mod tests {
         fs::write(&layout.status_path, b"replacement-status")
             .expect("replacement status should exist");
         let authority_path =
-            nimbus_network::LocalNetworkStateStore::authority_path_for(&layout.state_root);
+            nimbus_network::LocalNetworkStateStore::authority_path_for(&layout.network_state_root);
         let authority_before =
             fs::read(&authority_path).expect("replacement authority should be durable");
         let mut stale_provider = stale.clone();
@@ -1061,12 +1064,12 @@ mod tests {
         let temp_dir = tempdir().expect("temp dir should create");
         let tenant_id = TenantId::new("tenant-netavark-no-ipam").expect("tenant should parse");
         let sandbox_id = SandboxId::new("netavark-no-ipam");
-        let layout = OciNetworkLayout::new(temp_dir.path(), &tenant_id, &sandbox_id);
+        let layout = OciNetworkLayout::under_root(temp_dir.path(), &tenant_id, &sandbox_id);
         layout
             .ensure_directories()
             .expect("network layout should exist");
         let config = OciNetworkConfig::default();
-        let store = nimbus_network::LocalNetworkStateStore::open(&layout.state_root)
+        let store = nimbus_network::LocalNetworkStateStore::open(&layout.network_state_root)
             .expect("network authority should open");
         let authority_path = store.authority_path().to_path_buf();
         let before = std::fs::read(&authority_path).ok();
@@ -1105,7 +1108,7 @@ mod tests {
         let tenant_id = TenantId::new("tenant-a").expect("tenant should parse");
         let first_id = crate::instance::SandboxId::new("db-01");
         let second_id = crate::instance::SandboxId::new("db-02");
-        let layout = OciNetworkLayout::new(temp_dir.path(), &tenant_id, &first_id);
+        let layout = OciNetworkLayout::under_root(temp_dir.path(), &tenant_id, &first_id);
 
         let first = allocate_container_ips(&layout, &config, &first_id)
             .expect("first allocation should succeed");
@@ -1136,7 +1139,7 @@ mod tests {
         let tenant_id = TenantId::new("tenant-a").expect("tenant should parse");
         let first_id = crate::instance::SandboxId::new("db-01");
         let second_id = crate::instance::SandboxId::new("db-02");
-        let layout = OciNetworkLayout::new(temp_dir.path(), &tenant_id, &first_id);
+        let layout = OciNetworkLayout::under_root(temp_dir.path(), &tenant_id, &first_id);
 
         let first = allocate_container_ips(&layout, &config, &first_id)
             .expect("single allocatable container address should succeed");
@@ -1168,7 +1171,7 @@ mod tests {
         let tenant_id = TenantId::new("tenant-a").expect("tenant should parse");
         let first_id = crate::instance::SandboxId::new("db-01");
         let second_id = crate::instance::SandboxId::new("db-02");
-        let layout = OciNetworkLayout::new(temp_dir.path(), &tenant_id, &first_id);
+        let layout = OciNetworkLayout::under_root(temp_dir.path(), &tenant_id, &first_id);
 
         // Block 0 (10.0.0.0/30): the first sandbox takes the single host .2, leaving
         // the shared per-tenant cursor at .2.
@@ -1219,7 +1222,7 @@ mod tests {
         let config = OciNetworkConfig::default();
         let tenant_id = TenantId::new("tenant-a").expect("tenant should parse");
         let sandbox_id = crate::instance::SandboxId::new("db-01");
-        let layout = OciNetworkLayout::new(temp_dir.path(), &tenant_id, &sandbox_id);
+        let layout = OciNetworkLayout::under_root(temp_dir.path(), &tenant_id, &sandbox_id);
 
         let assigned = allocate_container_ips(&layout, &config, &sandbox_id)
             .expect("allocation should succeed");
@@ -1244,8 +1247,8 @@ mod tests {
         let tenant_b = TenantId::new("tenant-b").expect("tenant should parse");
         let sandbox_id = crate::instance::SandboxId::new("db-01");
 
-        let layout_a = OciNetworkLayout::new(temp_dir.path(), &tenant_a, &sandbox_id);
-        let layout_b = OciNetworkLayout::new(temp_dir.path(), &tenant_b, &sandbox_id);
+        let layout_a = OciNetworkLayout::under_root(temp_dir.path(), &tenant_a, &sandbox_id);
+        let layout_b = OciNetworkLayout::under_root(temp_dir.path(), &tenant_b, &sandbox_id);
 
         assert_eq!(
             layout_a.network_root,
@@ -1266,7 +1269,7 @@ mod tests {
                 .join("db-01")
         );
         assert_eq!(
-            layout_a.state_root, layout_b.state_root,
+            layout_a.network_state_root, layout_b.network_state_root,
             "one node-local authority owns every network partition"
         );
         assert_ne!(
@@ -1317,8 +1320,8 @@ mod tests {
             network_subnet: seg_b.cidr().to_string(),
             ..OciNetworkConfig::default()
         };
-        let layout_a = OciNetworkLayout::new(state_root, &tenant_a, &sandbox_id);
-        let layout_b = OciNetworkLayout::new(state_root, &tenant_b, &sandbox_id);
+        let layout_a = OciNetworkLayout::under_root(state_root, &tenant_a, &sandbox_id);
+        let layout_b = OciNetworkLayout::under_root(state_root, &tenant_b, &sandbox_id);
         let ips_a = allocate_container_ips(&layout_a, &config_a, &sandbox_id).expect("tenant-a IP");
         let ips_b = allocate_container_ips(&layout_b, &config_b, &sandbox_id).expect("tenant-b IP");
 

@@ -330,8 +330,9 @@ fn durable_execute_decision_fences_plan_only_cancellation_before_manifest_transi
             .contains("already decided as Execute"),
         "the losing cancellation must name the handoff winner: {cancellation_error}"
     );
-    let authority = nimbus_network::LocalPortLeaseAuthority::open(&backend.config.state_root)
-        .expect("port authority should reopen");
+    let authority =
+        nimbus_network::LocalPortLeaseAuthority::open(&backend.config.network_state_root)
+            .expect("port authority should reopen");
     for request in &launch_batch {
         assert_eq!(
             authority
@@ -485,8 +486,9 @@ fn corrupt_runner_handoff_decision_fences_execution_and_cancellation_without_rel
             "corrupt handoff rejection must name the durable evidence: {error}"
         );
     }
-    let authority = nimbus_network::LocalPortLeaseAuthority::open(&backend.config.state_root)
-        .expect("port authority should reopen");
+    let authority =
+        nimbus_network::LocalPortLeaseAuthority::open(&backend.config.network_state_root)
+            .expect("port authority should reopen");
     assert!(
         manifest.port_leases.iter().all(|request| {
             authority
@@ -546,8 +548,9 @@ fn direct_execute_effect_fence_precedes_every_provider_probe() {
             && !persisted.network_layout.status_path.exists(),
         "no Netavark or namespace effect may precede the durable effect fence"
     );
-    let authority = nimbus_network::LocalPortLeaseAuthority::open(&backend.config.state_root)
-        .expect("port authority should reopen");
+    let authority =
+        nimbus_network::LocalPortLeaseAuthority::open(&backend.config.network_state_root)
+            .expect("port authority should reopen");
     for request in persisted.port_leases.iter().chain(
         persisted
             .egress_proxy
@@ -889,8 +892,9 @@ fn plan_only_stop_callback_rejects_direct_execute_before_cleanup_authority() {
     let before_manifest = std::fs::read(&manifest.conmon_layout.manifest_path)
         .expect("direct manifest bytes should read");
     let before_operations = recorder.operations();
-    let authority = nimbus_network::LocalPortLeaseAuthority::open(&direct.config.state_root)
-        .expect("port authority should reopen");
+    let authority =
+        nimbus_network::LocalPortLeaseAuthority::open(&direct.config.network_state_root)
+            .expect("port authority should reopen");
     let before_ports = authority.list().expect("port leases should list");
 
     let error = observer
@@ -952,8 +956,9 @@ fn direct_stop_after_predecision_owner_death_releases_only_unstarted_authority()
             .expect("no decision should remain after no-effect compensation"),
         None
     );
-    let authority = nimbus_network::LocalPortLeaseAuthority::open(&backend.config.state_root)
-        .expect("port authority should reopen");
+    let authority =
+        nimbus_network::LocalPortLeaseAuthority::open(&backend.config.network_state_root)
+            .expect("port authority should reopen");
     for request in manifest.port_leases.iter().chain(
         manifest
             .egress_proxy
@@ -1034,7 +1039,7 @@ fn container_preflight_failure_compensates_all_unstarted_launch_artifacts() {
         )
         .expect("launch should reserve complete network authority")
         .manifest;
-    let trust_anchor = egress_trust_anchor_root(&backend.config.state_root)
+    let trust_anchor = egress_trust_anchor_root(&backend.config.workload_state_root)
         .join(manifest.spec.tenant_id.as_str())
         .join(format!("{}.pem", manifest.handle.id.as_str()));
     assert!(
@@ -1057,8 +1062,9 @@ fn container_preflight_failure_compensates_all_unstarted_launch_artifacts() {
         "the original preflight failure must remain primary: {error}"
     );
 
-    let authority = nimbus_network::LocalPortLeaseAuthority::open(&backend.config.state_root)
-        .expect("port authority should reopen");
+    let authority =
+        nimbus_network::LocalPortLeaseAuthority::open(&backend.config.network_state_root)
+            .expect("port authority should reopen");
     let records = authority.list().expect("port leases should list");
     assert!(
         !records.is_empty()
@@ -1124,8 +1130,9 @@ fn adopted_container_attachment_cleanup_releases_never_bound_launch_authority() 
         .release_execution_artifacts(&mut manifest)
         .expect("confirmed provider absence should compensate mixed adopted/reserved authority");
 
-    let authority = nimbus_network::LocalPortLeaseAuthority::open(&backend.config.state_root)
-        .expect("port authority should reopen");
+    let authority =
+        nimbus_network::LocalPortLeaseAuthority::open(&backend.config.network_state_root)
+            .expect("port authority should reopen");
     for request in &launch_batch {
         let record = authority
             .inspect(request.lease_id())
@@ -1261,8 +1268,9 @@ fn container_cleanup_rejects_unknown_runtime_observation_and_retains_authority()
             && error.to_string().contains("delete denied"),
         "cleanup must retain both provider diagnostics: {error}"
     );
-    let authority = nimbus_network::LocalPortLeaseAuthority::open(&backend.config.state_root)
-        .expect("port authority should reopen");
+    let authority =
+        nimbus_network::LocalPortLeaseAuthority::open(&backend.config.network_state_root)
+            .expect("port authority should reopen");
     for request in manifest.port_leases.iter().chain(
         manifest
             .egress_proxy
@@ -1416,8 +1424,9 @@ fn failed_netavark_setup_claims_reconcile_only_after_confirmed_detach() {
         .release_execution_artifacts(&mut manifest)
         .expect("confirmed detach should abandon claims, release ports, then delete IPAM");
 
-    let authority = nimbus_network::LocalPortLeaseAuthority::open(&backend.config.state_root)
-        .expect("port authority should reopen");
+    let authority =
+        nimbus_network::LocalPortLeaseAuthority::open(&backend.config.network_state_root)
+            .expect("port authority should reopen");
     let mut launch_batch = manifest.port_leases.clone();
     launch_batch.push(
         manifest
@@ -1521,8 +1530,9 @@ fn runner_launch_failure_after_attachment_adoption_compensates_network_authority
         "the primary launch failure must survive successful compensation: {error}"
     );
 
-    let authority = nimbus_network::LocalPortLeaseAuthority::open(&backend.config.state_root)
-        .expect("port authority should reopen");
+    let authority =
+        nimbus_network::LocalPortLeaseAuthority::open(&backend.config.network_state_root)
+            .expect("port authority should reopen");
     for request in &launch_batch {
         assert_eq!(
             authority

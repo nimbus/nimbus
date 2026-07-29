@@ -35,15 +35,17 @@ pub(super) use publication::{
 
 impl ContainerSandboxBackend {
     pub(super) fn read_manifest(&self, id: &SandboxId) -> Result<Option<ContainerSandboxManifest>> {
-        let Some(manifest_path) =
-            crate::artifact_paths::manifest_path_for_sandbox_id(&self.config.state_root, id)
-                .map_err(|error| SandboxError::OperationFailed {
-                    message: format!(
-                        "failed to find container sandbox manifest for {} under {}: {error}",
-                        id,
-                        self.config.state_root.display()
-                    ),
-                })?
+        let Some(manifest_path) = crate::artifact_paths::manifest_path_for_sandbox_id(
+            &self.config.workload_state_root,
+            id,
+        )
+        .map_err(|error| SandboxError::OperationFailed {
+            message: format!(
+                "failed to find container sandbox manifest for {} under {}: {error}",
+                id,
+                self.config.workload_state_root.display()
+            ),
+        })?
         else {
             return Ok(None);
         };
@@ -128,7 +130,7 @@ impl ContainerSandboxBackend {
             })?;
         rendered.push(b'\n');
         publication::publish(
-            &self.config.state_root,
+            &self.config.workload_state_root,
             &manifest.conmon_layout.container_state_dir,
             &manifest.conmon_layout.manifest_path,
             &rendered,
@@ -368,9 +370,12 @@ impl ContainerSandboxManifest {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct ContainerRunnerExecutionConfig {
-    /// Exact node control-state root that owns the serialized port and segment
-    /// authority. A runner must never reconstruct this from process defaults.
-    pub(super) state_root: PathBuf,
+    /// Exact backend-local root that owns workload manifests and provider
+    /// artifacts. A runner must never reconstruct this from process defaults.
+    pub(super) workload_state_root: PathBuf,
+    /// Exact node-local root that owns serialized segment, IPAM, and port
+    /// authority. A runner must never reconstruct this from workload state.
+    pub(super) network_state_root: PathBuf,
     /// Exact Buildah binary that owns mounted-rootfs cleanup.
     pub(super) buildah_path: PathBuf,
     /// Whether mounted-rootfs cleanup must execute through `buildah unshare`.
@@ -390,7 +395,8 @@ pub(super) struct ContainerRunnerExecutionConfig {
 impl ContainerRunnerExecutionConfig {
     pub(super) fn from_backend_config(config: &ContainerSandboxBackendConfig) -> Self {
         Self {
-            state_root: config.state_root.clone(),
+            workload_state_root: config.workload_state_root.clone(),
+            network_state_root: config.network_state_root.clone(),
             buildah_path: config.buildah_path.clone(),
             use_buildah_unshare: config.use_buildah_unshare,
             netavark_path: config.netavark_path.clone(),
@@ -408,7 +414,8 @@ impl ContainerRunnerExecutionConfig {
 
     pub(super) fn to_backend_config(&self) -> ContainerSandboxBackendConfig {
         ContainerSandboxBackendConfig {
-            state_root: self.state_root.clone(),
+            workload_state_root: self.workload_state_root.clone(),
+            network_state_root: self.network_state_root.clone(),
             buildah_path: self.buildah_path.clone(),
             use_buildah_unshare: self.use_buildah_unshare,
             netavark_path: self.netavark_path.clone(),

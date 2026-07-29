@@ -59,7 +59,7 @@ fn stale_setup_claim_cannot_take_over_deleting_or_detached_projection_cleanup() 
     let tenant =
         TenantId::new("tenant-netavark-stale-setup-claim").expect("tenant should validate");
     let sandbox = SandboxId::new("netavark-stale-setup-claim");
-    let layout = OciNetworkLayout::new(root.path(), &tenant, &sandbox);
+    let layout = OciNetworkLayout::under_root(root.path(), &tenant, &sandbox);
     layout
         .ensure_directories()
         .expect("network layout should create");
@@ -136,7 +136,7 @@ fn reopened_deleting_reuses_the_exact_attempt_instead_of_staying_pending() {
     let root = tempdir().expect("network state root should create");
     let tenant = TenantId::new("tenant-netavark-delete-recovery").expect("tenant should validate");
     let sandbox = SandboxId::new("netavark-delete-recovery");
-    let layout = OciNetworkLayout::new(root.path(), &tenant, &sandbox);
+    let layout = OciNetworkLayout::under_root(root.path(), &tenant, &sandbox);
     layout
         .ensure_directories()
         .expect("network layout should create");
@@ -188,7 +188,7 @@ fn reopened_provisioning_compensates_the_exact_attempt_without_duplicate_setup()
     let root = tempdir().expect("network state root should create");
     let tenant = TenantId::new("tenant-netavark-setup-recovery").expect("tenant should validate");
     let sandbox = SandboxId::new("netavark-setup-recovery");
-    let layout = OciNetworkLayout::new(root.path(), &tenant, &sandbox);
+    let layout = OciNetworkLayout::under_root(root.path(), &tenant, &sandbox);
     layout
         .ensure_directories()
         .expect("network layout should create");
@@ -451,7 +451,7 @@ fn initialize_case(
     let tenant = TenantId::new(format!("tenant-netavark-{case}-response-loss"))
         .expect("tenant should validate");
     let sandbox = SandboxId::new(id);
-    let layout = OciNetworkLayout::new(root, &tenant, &sandbox);
+    let layout = OciNetworkLayout::under_root(root, &tenant, &sandbox);
     layout
         .ensure_directories()
         .expect("case network layout should create");
@@ -470,7 +470,7 @@ fn load_case(root: &Path, case: &str, id: &str) -> (OciNetworkLayout, OciNetwork
     let tenant = TenantId::new(format!("tenant-netavark-{case}-response-loss"))
         .expect("tenant should validate");
     let sandbox = SandboxId::new(id);
-    let layout = OciNetworkLayout::new(root, &tenant, &sandbox);
+    let layout = OciNetworkLayout::under_root(root, &tenant, &sandbox);
     let config = serde_json::from_slice(
         &std::fs::read(root.join(case).join("config.json"))
             .expect("case config should remain durable"),

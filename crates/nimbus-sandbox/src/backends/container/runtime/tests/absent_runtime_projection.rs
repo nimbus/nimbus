@@ -37,8 +37,9 @@ fn explicitly_absent_container_runtime_without_receipts_withdraws_ready_projecti
     backend
         .write_manifest(&manifest)
         .expect("ready provider-owned fixture should persist");
-    let authority_path =
-        nimbus_network::LocalNetworkStateStore::authority_path_for(&backend.config.state_root);
+    let authority_path = nimbus_network::LocalNetworkStateStore::authority_path_for(
+        &backend.config.network_state_root,
+    );
     let authority_before =
         std::fs::read(&authority_path).expect("retained network authority should be durable");
 

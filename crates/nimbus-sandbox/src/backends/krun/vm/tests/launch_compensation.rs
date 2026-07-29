@@ -110,8 +110,8 @@ fn adopted_krun_attachment_cleanup_releases_never_bound_launch_authority() {
         )
         .expect("confirmed provider absence should compensate mixed adopted/reserved authority");
 
-    let authority =
-        LocalPortLeaseAuthority::open(&backend.config.state_root).expect("authority should reopen");
+    let authority = LocalPortLeaseAuthority::open(&backend.config.network_state_root)
+        .expect("authority should reopen");
     for request in &launch_batch {
         let record = authority
             .inspect(request.lease_id())
@@ -137,7 +137,8 @@ fn adopted_krun_attachment_cleanup_releases_never_bound_launch_authority() {
 #[test]
 fn adopted_krun_final_cleanup_retains_claimed_pep_without_process_evidence() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
-    let mut config = KrunSandboxBackendConfig::under_root(temp_dir.path().to_path_buf());
+    let mut config = KrunSandboxBackendConfig::under_root(temp_dir.path().to_path_buf())
+        .with_network_state_root(temp_dir.path().join("node-network-state"));
     config.netavark_path = PathBuf::from("/usr/bin/true");
     let backend = KrunSandboxBackend::new(config);
     let mut manifest = backend
@@ -157,7 +158,7 @@ fn adopted_krun_final_cleanup_retains_claimed_pep_without_process_evidence() {
         .port_lease
         .clone();
     let claim = claim_bind_attempts(
-        &backend.config.state_root,
+        &backend.config.network_state_root,
         std::slice::from_ref(&request),
         OciPortProvider::EgressPep,
         Some(&reservation_claim),
@@ -177,7 +178,7 @@ fn adopted_krun_final_cleanup_retains_claimed_pep_without_process_evidence() {
         error.to_string().contains("non-Netavark provider claim"),
         "cleanup must identify the still-ambiguous PEP claim: {error}"
     );
-    let record = LocalPortLeaseAuthority::open(&backend.config.state_root)
+    let record = LocalPortLeaseAuthority::open(&backend.config.network_state_root)
         .expect("port authority should reopen")
         .inspect(request.lease_id())
         .expect("PEP lease should inspect")
@@ -212,7 +213,7 @@ fn netavark_endpoint_effect_requires_complete_current_port_leases() {
 
     let legacy_marker = backend
         .config
-        .state_root
+        .workload_state_root
         .join("networks/.legacy-nimbus0-purged");
     fs::create_dir_all(legacy_marker.parent().expect("marker parent"))
         .expect("legacy marker parent should create");
@@ -260,8 +261,8 @@ fn restart_teardown_returns_confirmed_absent_netavark_bindings_to_reserved() {
             super::super::lifecycle::NetworkArtifactTeardownMode::Restart,
         )
         .expect("confirmed Netavark absence should retain the exact ports for restart");
-    let authority =
-        LocalPortLeaseAuthority::open(&backend.config.state_root).expect("authority should reopen");
+    let authority = LocalPortLeaseAuthority::open(&backend.config.network_state_root)
+        .expect("authority should reopen");
     let first_cleanup = manifest
         .port_leases
         .iter()
@@ -360,8 +361,8 @@ fn restart_reset_keeps_exit_receipt_until_stale_pidfiles_are_removed() {
         manifest.conmon_layout.exit_status_file.exists(),
         "pidfile failure must not consume restart eligibility"
     );
-    let authority =
-        LocalPortLeaseAuthority::open(&backend.config.state_root).expect("authority should reopen");
+    let authority = LocalPortLeaseAuthority::open(&backend.config.network_state_root)
+        .expect("authority should reopen");
     let retained = manifest
         .port_leases
         .iter()
@@ -450,8 +451,8 @@ fn dead_restart_netavark_claim_returns_to_reserved_before_terminal_release() {
         .expect("restart setup must durably claim the next attempt");
     let restart_claims = restart_lifetimes.claims().to_vec();
     drop(restart_lifetimes);
-    let authority =
-        LocalPortLeaseAuthority::open(&backend.config.state_root).expect("authority should reopen");
+    let authority = LocalPortLeaseAuthority::open(&backend.config.network_state_root)
+        .expect("authority should reopen");
     for (request, expected_claim) in manifest.port_leases.iter().zip(&restart_claims) {
         let record = authority
             .inspect(request.lease_id())
@@ -612,8 +613,8 @@ fn failed_restart_teardown_retains_exact_active_netavark_evidence() {
         "ambiguous Netavark detach must retain the namespace retry handle"
     );
 
-    let authority =
-        LocalPortLeaseAuthority::open(&backend.config.state_root).expect("authority should reopen");
+    let authority = LocalPortLeaseAuthority::open(&backend.config.network_state_root)
+        .expect("authority should reopen");
     for request in &manifest.port_leases {
         let record = authority
             .inspect(request.lease_id())
@@ -697,8 +698,8 @@ fn failed_krun_activation_teardown_retains_retry_evidence_until_confirmed_detach
         None,
     )
     .expect("fixture should establish Ready Netavark authority before activation failure");
-    let authority =
-        LocalPortLeaseAuthority::open(&backend.config.state_root).expect("authority should open");
+    let authority = LocalPortLeaseAuthority::open(&backend.config.network_state_root)
+        .expect("authority should open");
     let before = manifest
         .port_leases
         .iter()
@@ -751,7 +752,7 @@ fn failed_krun_activation_teardown_retains_retry_evidence_until_confirmed_detach
         assert_eq!(record.bind_claim(), Some(expected_claim));
         assert_eq!(record.phase(), PortLeasePhase::Reserved);
     }
-    let network_store = LocalNetworkStateStore::open(&backend.config.state_root)
+    let network_store = LocalNetworkStateStore::open(&backend.config.network_state_root)
         .expect("network authority should reopen");
     let deleting_before_retry = network_store
         .read::<serde_json::Value>(&NetworkStatePartition::TenantIpam(
@@ -919,8 +920,8 @@ fn stale_foreign_launch_plan_cannot_disturb_the_durable_winner() {
         winner,
         "the rejected stale launch may not rewrite the winner's desired state"
     );
-    let authority =
-        LocalPortLeaseAuthority::open(&backend.config.state_root).expect("authority should reopen");
+    let authority = LocalPortLeaseAuthority::open(&backend.config.network_state_root)
+        .expect("authority should reopen");
     for request in &launch_batch {
         let record = authority
             .inspect(request.lease_id())
@@ -1042,7 +1043,7 @@ fn losing_port_coordinator_cannot_release_winning_segment_authority() {
         segments.is_some(),
         "losing port admission must not release segment authority still owned by the winning launch"
     );
-    let authority = LocalPortLeaseAuthority::open(&first.config.state_root)
+    let authority = LocalPortLeaseAuthority::open(&first.config.network_state_root)
         .expect("port authority should reopen");
     for request in winner.port_leases.iter().chain(
         winner
@@ -1123,7 +1124,7 @@ fn post_adoption_cleanup_failure_is_returned_with_primary_error() {
 fn pre_provider_failure_compensates_unstarted_ports_and_segment_hold() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let config = KrunSandboxBackendConfig::under_root(temp_dir.path().to_path_buf());
-    let state_root = config.state_root.clone();
+    let state_root = config.network_state_root.clone();
     let backend = KrunSandboxBackend::new(config);
     let spec = sample_spec();
     let launch_plan = backend
@@ -1171,7 +1172,7 @@ fn pre_provider_failure_compensates_unstarted_ports_and_segment_hold() {
 fn unpublished_manifest_compensation_retains_original_lifetime_through_cleanup() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let config = KrunSandboxBackendConfig::under_root(temp_dir.path().to_path_buf());
-    let state_root = config.state_root.clone();
+    let state_root = config.network_state_root.clone();
     let backend = KrunSandboxBackend::new(config);
     let spec = sample_spec();
     let sandbox_id = SandboxId::new("krun-unpublished-live-lifetime");
@@ -1249,7 +1250,7 @@ fn unpublished_manifest_compensation_retains_original_lifetime_through_cleanup()
 fn vm_config_materialization_failure_compensates_unstarted_launch_batch() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let config = KrunSandboxBackendConfig::under_root(temp_dir.path().to_path_buf());
-    let state_root = config.state_root.clone();
+    let state_root = config.network_state_root.clone();
     let backend = KrunSandboxBackend::new(config);
     let missing_rootfs = temp_dir.path().join("missing-rootfs");
     let spec = sample_spec_with_rootfs(&missing_rootfs).with_resource_limits(
@@ -1325,7 +1326,7 @@ fn first_attachment_reservation_observes_a_durable_claim_only_manifest() {
     );
     let injected: Arc<OciSegmentAllocator> = recorder;
     let config = KrunSandboxBackendConfig::under_root(temp_dir.path().to_path_buf());
-    assert_eq!(config.state_root, state_root);
+    assert_eq!(config.workload_state_root, state_root);
     let backend = KrunSandboxBackend::with_segment_allocator(config, injected);
 
     backend
@@ -1560,7 +1561,7 @@ fn later_krun_planning_failure_compensates_ports_and_segment_hold() {
     fs::write(&blocked_bundle_root, b"not a directory").expect("obstacle should write");
     let mut config = KrunSandboxBackendConfig::under_root(temp_dir.path().to_path_buf());
     config.bundle_root = blocked_bundle_root;
-    let state_root = config.state_root.clone();
+    let state_root = config.network_state_root.clone();
     let backend = KrunSandboxBackend::new(config);
     let spec = sample_spec();
 

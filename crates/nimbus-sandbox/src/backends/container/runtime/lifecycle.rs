@@ -127,7 +127,7 @@ fn netavark_endpoint_effect_requires_complete_current_port_leases() {
 
     let legacy_marker = backend
         .config
-        .state_root
+        .workload_state_root
         .join("networks/.legacy-nimbus0-purged");
     std::fs::create_dir_all(legacy_marker.parent().expect("marker parent"))
         .expect("legacy marker parent should create");
@@ -175,7 +175,7 @@ fn pre_netavark_setup_failure_preserves_no_effect_authority() {
         .manifest;
     let legacy_marker = backend
         .config
-        .state_root
+        .workload_state_root
         .join("networks/.legacy-nimbus0-purged");
     std::fs::create_dir_all(legacy_marker.parent().expect("marker parent"))
         .expect("legacy marker parent should create");
@@ -228,8 +228,9 @@ fn pre_netavark_setup_failure_preserves_no_effect_authority() {
             "the separately owned namespace may be removed after Netavark proves no effect"
         );
     }
-    let authority = nimbus_network::LocalPortLeaseAuthority::open(&backend.config.state_root)
-        .expect("authority should reopen");
+    let authority =
+        nimbus_network::LocalPortLeaseAuthority::open(&backend.config.network_state_root)
+            .expect("authority should reopen");
     for (request, expected_claim) in manifest.port_leases.iter().zip(claims) {
         let record = authority
             .inspect(request.lease_id())
@@ -293,8 +294,9 @@ fn foreign_initial_launch_claim_fails_before_container_provider_effects() {
             && !manifest.network_layout.status_path.exists(),
         "coordinator authentication must precede namespace and Netavark effects"
     );
-    let authority = nimbus_network::LocalPortLeaseAuthority::open(&backend.config.state_root)
-        .expect("authority should reopen");
+    let authority =
+        nimbus_network::LocalPortLeaseAuthority::open(&backend.config.network_state_root)
+            .expect("authority should reopen");
     for request in &launch_batch {
         let record = authority
             .inspect(request.lease_id())
@@ -581,7 +583,7 @@ fn machine_proxy_rejects_caller_manifest_identity_mismatch_before_effect() {
     let port_probe = TcpListener::bind((Ipv4Addr::UNSPECIFIED, port))
         .expect("identity rejection must not bind the requested host port");
     drop(port_probe);
-    let record = nimbus_network::LocalPortLeaseAuthority::open(&backend.config.state_root)
+    let record = nimbus_network::LocalPortLeaseAuthority::open(&backend.config.network_state_root)
         .expect("port authority should open")
         .inspect(manifest.port_leases[0].lease_id())
         .expect("lease should inspect")
@@ -649,7 +651,7 @@ fn machine_proxy_activation_failure_drops_listeners_and_abandons_exact_claims() 
     let port_probe = TcpListener::bind((Ipv4Addr::UNSPECIFIED, port))
         .expect("failed activation must drop every inert listener before compensation");
     drop(port_probe);
-    let record = nimbus_network::LocalPortLeaseAuthority::open(&backend.config.state_root)
+    let record = nimbus_network::LocalPortLeaseAuthority::open(&backend.config.network_state_root)
         .expect("port authority should open")
         .inspect(manifest.port_leases[0].lease_id())
         .expect("lease should inspect")
@@ -732,7 +734,7 @@ fn machine_proxy_activation_ack_loss_inspects_active_binding_and_rebinds() {
     let port_probe = TcpListener::bind((Ipv4Addr::UNSPECIFIED, port))
         .expect("compensation must drop every inert listener before durable inspection");
     drop(port_probe);
-    let record = nimbus_network::LocalPortLeaseAuthority::open(&backend.config.state_root)
+    let record = nimbus_network::LocalPortLeaseAuthority::open(&backend.config.network_state_root)
         .expect("port authority should open")
         .inspect(manifest.port_leases[0].lease_id())
         .expect("lease should inspect")
@@ -901,7 +903,7 @@ fn machine_publication_rejects_external_address_substitution_before_proxy_or_for
             .is_empty(),
         "address substitution must not retain a provider effect"
     );
-    let record = nimbus_network::LocalPortLeaseAuthority::open(&backend.config.state_root)
+    let record = nimbus_network::LocalPortLeaseAuthority::open(&backend.config.network_state_root)
         .expect("authority should open")
         .inspect(manifest.port_leases[0].lease_id())
         .expect("lease should inspect")
@@ -951,8 +953,9 @@ fn machine_proxy_restart_rebinds_exact_active_lease() {
         )
         .expect("restart stop should acknowledge provider absence");
 
-    let authority = nimbus_network::LocalPortLeaseAuthority::open(&backend.config.state_root)
-        .expect("authority should open");
+    let authority =
+        nimbus_network::LocalPortLeaseAuthority::open(&backend.config.network_state_root)
+            .expect("authority should open");
     let rebound = authority
         .inspect(manifest.port_leases[0].lease_id())
         .expect("rebound lease should inspect")
@@ -1105,8 +1108,9 @@ fn machine_proxy_accept_worker_panic_reports_then_cleanup_converges_on_retry() {
         "the first attempt must preserve the provider diagnostic: {first}"
     );
 
-    let authority = nimbus_network::LocalPortLeaseAuthority::open(&backend.config.state_root)
-        .expect("authority should open");
+    let authority =
+        nimbus_network::LocalPortLeaseAuthority::open(&backend.config.network_state_root)
+            .expect("authority should open");
     assert_eq!(
         authority
             .inspect(manifest.port_leases[0].lease_id())
@@ -1190,8 +1194,9 @@ fn machine_proxy_restart_waits_for_external_unexpose_before_rebind() {
         )
         .expect("restart cleanup should begin")
         .expect("the running provider should yield exact cleanup evidence");
-    let authority = nimbus_network::LocalPortLeaseAuthority::open(&backend.config.state_root)
-        .expect("authority should open");
+    let authority =
+        nimbus_network::LocalPortLeaseAuthority::open(&backend.config.network_state_root)
+            .expect("authority should open");
     assert_eq!(
         authority
             .inspect(manifest.port_leases[0].lease_id())
@@ -1354,8 +1359,8 @@ fn empty_overlapping_machine_proxy_registry_keeps_live_provider_fenced() {
         "the error must identify the live process-owner fence: {ambiguity}"
     );
 
-    let authority =
-        nimbus_network::LocalPortLeaseAuthority::open(&first.config.state_root).expect("authority");
+    let authority = nimbus_network::LocalPortLeaseAuthority::open(&first.config.network_state_root)
+        .expect("authority");
     let record = authority
         .inspect(manifest.port_leases[0].lease_id())
         .expect("lease should inspect")
@@ -1430,7 +1435,7 @@ fn independent_machine_backend_cannot_withdraw_another_process_provider() {
         "the failure must identify the still-live foreign provider owner: {error}"
     );
 
-    let authority = nimbus_network::LocalPortLeaseAuthority::open(&owner.config.state_root)
+    let authority = nimbus_network::LocalPortLeaseAuthority::open(&owner.config.network_state_root)
         .expect("authority should open");
     let record = authority
         .inspect(manifest.port_leases[0].lease_id())
@@ -1490,8 +1495,8 @@ fn machine_proxy_lifetime_fences_live_owner_and_recovers_after_owner_drop() {
         .ensure_machine_port_proxies_running(&id, &[Ipv4Addr::LOCALHOST], &manifest)
         .expect("owner backend should start the machine proxy");
 
-    let authority =
-        nimbus_network::LocalPortLeaseAuthority::open(&owner.config.state_root).expect("authority");
+    let authority = nimbus_network::LocalPortLeaseAuthority::open(&owner.config.network_state_root)
+        .expect("authority");
     let active = authority
         .inspect(manifest.port_leases[0].lease_id())
         .expect("lease should inspect")
@@ -1636,7 +1641,7 @@ fn machine_proxy_withdrawal_waits_for_inflight_active_validation() {
         .expect("withdrawal should reach the registry lock barrier");
 
     let phase_during_validation =
-        nimbus_network::LocalPortLeaseAuthority::open(&backend.config.state_root)
+        nimbus_network::LocalPortLeaseAuthority::open(&backend.config.network_state_root)
             .expect("authority should open")
             .inspect(manifest.port_leases[0].lease_id())
             .expect("lease should inspect")
@@ -1745,7 +1750,7 @@ fn machine_proxy_withdrawal_waits_for_inflight_publication() {
         .expect("withdrawal should reach the registry-lock boundary");
 
     let phase_during_publication =
-        nimbus_network::LocalPortLeaseAuthority::open(&backend.config.state_root)
+        nimbus_network::LocalPortLeaseAuthority::open(&backend.config.network_state_root)
             .expect("authority should open")
             .inspect(manifest.port_leases[0].lease_id())
             .expect("lease should inspect")
@@ -1856,7 +1861,7 @@ fn absent_machine_registry_accepts_only_an_entire_terminal_no_effect_batch() {
         .published_leases
         .iter()
         .map(|request| {
-            nimbus_network::LocalPortLeaseAuthority::open(&backend.config.state_root)
+            nimbus_network::LocalPortLeaseAuthority::open(&backend.config.network_state_root)
                 .expect("authority should open")
                 .inspect(request.lease_id())
                 .expect("lease should inspect")

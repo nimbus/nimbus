@@ -72,8 +72,9 @@ fn startup_reconciliation_failure_allows_exact_explicit_stop() {
     backend
         .write_manifest(&manifest)
         .expect("baseline manifest should persist");
-    let authority_path =
-        nimbus_network::LocalNetworkStateStore::authority_path_for(&backend.config.state_root);
+    let authority_path = nimbus_network::LocalNetworkStateStore::authority_path_for(
+        &backend.config.network_state_root,
+    );
     let authority_before =
         std::fs::read(&authority_path).expect("launch authority should be durable");
     inject_startup_reconciliation_failure(&mut backend);
@@ -149,8 +150,9 @@ fn startup_reconciliation_failure_allows_exact_natural_exit_cleanup() {
         .readiness(&manifest.spec.tenant_id, &manifest.handle.id)
         .expect("baseline readiness should inspect")
         .expect("baseline PEP should remain registered");
-    let authority_path =
-        nimbus_network::LocalNetworkStateStore::authority_path_for(&backend.config.state_root);
+    let authority_path = nimbus_network::LocalNetworkStateStore::authority_path_for(
+        &backend.config.network_state_root,
+    );
     let authority_before =
         std::fs::read(&authority_path).expect("active authority should be durable");
     inject_startup_reconciliation_failure(&mut backend);
@@ -237,8 +239,9 @@ fn startup_reconciliation_failure_keeps_restart_eligible_inspection_read_only() 
         .expect("running manifest should persist before inspection");
     let manifest_before = std::fs::read(&manifest.conmon_layout.manifest_path)
         .expect("canonical manifest bytes should read");
-    let authority_path =
-        nimbus_network::LocalNetworkStateStore::authority_path_for(&backend.config.state_root);
+    let authority_path = nimbus_network::LocalNetworkStateStore::authority_path_for(
+        &backend.config.network_state_root,
+    );
     let authority_before =
         std::fs::read(&authority_path).expect("active authority should be durable");
     let operations_before = recorder.operations();

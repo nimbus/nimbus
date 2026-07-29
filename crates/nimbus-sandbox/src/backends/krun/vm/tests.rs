@@ -10,6 +10,7 @@ mod manifest_durability;
 mod manifest_schema;
 mod natural_exit;
 mod provider_failure_recovery;
+mod root_ownership;
 mod startup_fencing;
 mod support;
 use support::*;
@@ -1067,7 +1068,7 @@ fn oci_image_root_plan_only_does_not_charge_manifest_only_port_previews() {
     config.use_buildah_unshare = false;
     config.published_port_range = 15000..=15005;
     config.max_published_ports_per_tenant = Some(1);
-    let state_root = config.state_root.clone();
+    let state_root = config.network_state_root.clone();
 
     let backend = KrunSandboxBackend::new(config);
 
@@ -1467,7 +1468,8 @@ fn manifest_deserialization_defaults_restart_fields_for_pre_restart_manifests() 
             "manifest_path": "/tmp/state/containers/sandbox-01/manifest.json",
         },
         "network_layout": {
-            "state_root": "/tmp/state",
+            "workload_state_root": "/tmp/state",
+            "network_state_root": "/tmp/state",
             "tenant_id": "tenant",
             "network_root": "/tmp/state/tenants/tenant/networks",
             "run_root": "/tmp/state/tenants/tenant/networks/run",
@@ -1607,8 +1609,11 @@ fn startup_network_reconciliation_failure_blocks_new_krun_planning() {
     let config = KrunSandboxBackendConfig::under_root(temp_dir.path());
     let corrupt_owner = SandboxId::new("corrupt-krun-startup-owner");
     let spec = sample_spec();
-    let corrupt_manifest_path =
-        crate::artifact_paths::manifest_path(&config.state_root, &spec.tenant_id, &corrupt_owner);
+    let corrupt_manifest_path = crate::artifact_paths::manifest_path(
+        &config.workload_state_root,
+        &spec.tenant_id,
+        &corrupt_owner,
+    );
     fs::create_dir_all(
         corrupt_manifest_path
             .parent()
@@ -1634,7 +1639,7 @@ fn startup_network_reconciliation_failure_blocks_new_krun_planning() {
         "admission must preserve the exact observable startup failure: {error}"
     );
     assert_eq!(
-        crate::artifact_paths::all_manifest_paths(&backend.config.state_root)
+        crate::artifact_paths::all_manifest_paths(&backend.config.workload_state_root)
             .expect("manifest paths should inspect"),
         [corrupt_manifest_path],
         "rejected planning must not create a second launch authority"

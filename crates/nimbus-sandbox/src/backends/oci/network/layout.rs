@@ -24,8 +24,10 @@ use super::{
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct OciNetworkLayout {
+    /// Backend-local root containing manifests and provider artifacts.
+    pub workload_state_root: PathBuf,
     /// Node-local root containing the single network control-plane authority.
-    pub state_root: PathBuf,
+    pub network_state_root: PathBuf,
     /// Typed IPAM partition owner inside that shared authority.
     pub tenant_id: TenantId,
     pub network_root: PathBuf,
@@ -37,18 +39,33 @@ pub(crate) struct OciNetworkLayout {
 }
 
 impl OciNetworkLayout {
-    pub(crate) fn new(
+    /// Deterministic test layout whose workload and network roots match.
+    #[cfg(test)]
+    pub(crate) fn under_root(
         state_root: impl Into<PathBuf>,
         tenant_id: &TenantId,
         sandbox_id: &SandboxId,
     ) -> Self {
         let state_root = state_root.into();
-        let network_root = artifact_paths::tenant_root(&state_root, tenant_id).join("networks");
+        Self::with_roots(state_root.clone(), state_root, tenant_id, sandbox_id)
+    }
+
+    /// Layout with explicit backend-local artifacts and node network authority.
+    pub(crate) fn with_roots(
+        workload_state_root: impl Into<PathBuf>,
+        network_state_root: impl Into<PathBuf>,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+    ) -> Self {
+        let workload_state_root = workload_state_root.into();
+        let network_root =
+            artifact_paths::tenant_root(&workload_state_root, tenant_id).join("networks");
         let run_root = network_root.join("run");
         let netns_root = network_root.join("netns");
         let container_network_dir = network_root.join("containers").join(sandbox_id.as_str());
         Self {
-            state_root,
+            workload_state_root,
+            network_state_root: network_state_root.into(),
             tenant_id: tenant_id.clone(),
             status_path: container_network_dir.join("status.json"),
             netns_path: netns_root.join(sandbox_id.as_str()),

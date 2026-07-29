@@ -181,7 +181,10 @@ fn cached_startup_reconciliation_failures_refuse_backend_registrations() {
     let root = tempdir().expect("temporary sandbox root");
     let container_config = ContainerSandboxBackendConfig::under_root(root.path().join("container"));
     let krun_config = KrunSandboxBackendConfig::under_root(root.path().join("krun"));
-    for state_root in [&container_config.state_root, &krun_config.state_root] {
+    for state_root in [
+        &container_config.network_state_root,
+        &krun_config.network_state_root,
+    ] {
         let authority_path = LocalNetworkStateStore::authority_path_for(state_root);
         std::fs::create_dir_all(
             authority_path

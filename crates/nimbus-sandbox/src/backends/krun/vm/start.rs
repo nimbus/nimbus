@@ -119,7 +119,7 @@ impl KrunSandboxBackend {
         artifact: &MaterializedImageRootfs,
     ) -> Result<()> {
         let expected_rootfs = crate::artifact_paths::rootfs_root(
-            &self.config.state_root,
+            &self.config.workload_state_root,
             &spec.tenant_id,
             sandbox_id,
         )
@@ -136,7 +136,7 @@ impl KrunSandboxBackend {
         }
 
         let manifest_path = crate::artifact_paths::manifest_path(
-            &self.config.state_root,
+            &self.config.workload_state_root,
             &spec.tenant_id,
             sandbox_id,
         );
@@ -278,8 +278,9 @@ impl KrunSandboxBackend {
             )?;
             resolved_launch.spec.port_bindings.extend(auto_bindings);
         }
-        let network_layout = OciNetworkLayout::new(
-            &self.config.state_root,
+        let network_layout = OciNetworkLayout::with_roots(
+            &self.config.workload_state_root,
+            &self.config.network_state_root,
             &resolved_launch.spec.tenant_id,
             sandbox_id,
         );
@@ -290,7 +291,7 @@ impl KrunSandboxBackend {
             sandbox_id,
         ));
         let conmon_layout = OciConmonLayout::new_for_tenant(
-            &self.config.state_root,
+            &self.config.workload_state_root,
             &resolved_launch.spec.tenant_id,
             sandbox_id,
         );
@@ -299,7 +300,7 @@ impl KrunSandboxBackend {
             .map_err(|error| SandboxError::OperationFailed {
                 message: format!(
                     "failed to create krun state directories under {}: {error}",
-                    self.config.state_root.display()
+                    self.config.workload_state_root.display()
                 ),
             })?;
         let conmon_launch = build_launch_plan(
@@ -461,7 +462,7 @@ impl KrunSandboxBackend {
         image_reference: &str,
     ) -> Result<PreparedMaterializedImageLaunch> {
         OciImageMaterializer::for_tenant_sandbox(
-            &self.config.state_root,
+            &self.config.workload_state_root,
             &spec.tenant_id,
             sandbox_id,
         )
@@ -477,7 +478,7 @@ impl KrunSandboxBackend {
         context_path: &Path,
     ) -> Result<PreparedMaterializedImageLaunch> {
         OciDockerfileBuilder::for_tenant_sandbox(
-            &self.config.state_root,
+            &self.config.workload_state_root,
             &spec.tenant_id,
             sandbox_id,
         )
@@ -591,7 +592,7 @@ impl KrunSandboxBackend {
 
     pub(super) fn port_lease_coordinator(&self) -> OciPortLeaseCoordinator {
         OciPortLeaseCoordinator::new(
-            self.config.state_root.clone(),
+            self.config.network_state_root.clone(),
             self.config.published_port_range.clone(),
         )
         .with_max_ports_per_tenant(self.config.max_published_ports_per_tenant)
@@ -769,7 +770,7 @@ fn krun_additional_mounts(
     spec: &SandboxSpec,
     image_metadata: &KrunImageMetadata,
 ) -> Result<Vec<KrunBundleMount>> {
-    let mut mounts = tenant_volume_mounts(&config.state_root, spec)?;
+    let mut mounts = tenant_volume_mounts(&config.workload_state_root, spec)?;
     mounts.extend(guest_user_switch_mounts(config, image_metadata));
     Ok(mounts)
 }
@@ -785,7 +786,7 @@ fn krun_bundle_options(
     let mut egress_trust_anchor_guest_path = None;
     if egress_proxy.is_some() {
         let trust_anchor =
-            egress_trust_anchor_mount(&config.state_root, &spec.tenant_id, sandbox_id)?;
+            egress_trust_anchor_mount(&config.workload_state_root, &spec.tenant_id, sandbox_id)?;
         egress_trust_anchor_guest_path = Some(trust_anchor.guest_path.clone());
         additional_mounts.push(KrunBundleMount {
             destination: trust_anchor.guest_path,
