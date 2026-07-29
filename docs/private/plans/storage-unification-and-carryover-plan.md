@@ -1,6 +1,6 @@
 # Storage Unification And Carry-Over Closeout Control Plane
 
-Status: `active — SUC0–SUC2 complete (PRs #248–#250); SUC4.1+4.3 complete (PRs #251, #252, both pre-fixed by #231); SUC4.2 in review`
+Status: `active — SUC0–SUC2 and all of SUC4 complete (PRs #248–#253); SUC3.1 in_progress (step 1/5 committed)`
 
 Owner: this plan, and no other plan
 
@@ -53,9 +53,9 @@ Proof root: `proof/storage-unification/`
 | SUC1.1 Provider divergence spot-fixes | `complete` (PR #249) | libsql missing fault-injection point; lease validation unified to milliseconds (postgres+libsql convention; mysql converts at the edge); mysql length guard propagated to postgres | conformance harness asserts parity across all providers | `suc1/` | small PRs; may land during SUC0.2 |
 | SUC2.1 CommitTransaction witness | `complete` (PR #250) | witness type threading document/version/index/journal/watermark effects so a provider omitting one cannot compile; unify the two engine transcriptions of the queued commit sequence under one compiler-linked definition | engine transcription count = 1 (durable_batch core; two serial-arm drifts fixed); provider-side witness rides with SUC3 per U5 | `suc2/witness.md` | after SUC0 |
 | SUC2.2 Objects/KV/scheduler/trigger onto a real commit path | `complete` (PR #250) | object manifests and multipart, KV, scheduler-state, and trigger-cursor writes leave `TenantPointWrite`-on-read-executor; sequence assignment fenced through the committer or an explicitly serialized internal path; publication/subscription classification made explicit per event kind | audit F3 closed (fail-before 3/4 RED, all GREEN; A/B N=256 ratio 0.9982 PASS; per-kind classification recorded; scheduler/trigger already fenced, KV consumes no sequences) | `suc2/commit-path.md` | after SUC2.1 |
-| SUC3.1 Provider facade extraction | `planned` | delete the ~855-line triplicated blocks into one facade; sqlite (with #244/#245 optimizations) is the reference; provider feature gates so embedded builds/measures in isolation | ~−1,700 LoC net; conformance harness green for all providers; sqlite paired A/B unchanged | `suc3/facade.md` | after SUC2; sqlite fork is canonical, not blocked-on |
+| SUC3.1 Provider facade extraction | `in_progress` (`codex/suc3-provider-facade`, step 1/5 committed) | delete the ~855-line triplicated blocks into one facade; sqlite (with #244/#245 optimizations) is the reference; provider feature gates so embedded builds/measures in isolation | ~−1,700 LoC net; conformance harness green for all providers; sqlite paired A/B unchanged | `suc3/facade.md` | after SUC2; sqlite fork is canonical, not blocked-on |
 | SUC4.1 DynamoDB non-atomic RMW (HIGH) | `complete` (PR #251; fix landed earlier in #231, verified + regression-pinned; follow-up ticket: batch_write_item stream-record staleness) | atomic read-modify-write with fail-before race test | `suc4/dynamodb-rmw.md` | independent; parallel-capable |
-| SUC4.2 Firestore Timestamp+GeoPoint writes (HIGH) | `in_progress` (`codex/suc4b-firestore-types`) | rejected typed writes accepted with round-trip fidelity | conformance + adapter tests | `suc4/firestore-types.md` | independent; parallel-capable |
+| SUC4.2 Firestore Timestamp+GeoPoint writes (HIGH) | `complete` (PR #253; #231 pre-fixed document fields, this closed array transforms + query contract + wire canonicalization; 7-pass review trail in proof) | rejected typed writes accepted with round-trip fidelity | conformance + adapter tests | `suc4/firestore-types.md` | independent; parallel-capable |
 | SUC4.3 Egress HTTPS CONNECT rule (HIGH) | `complete` (PR #252; fix landed earlier in #231 — gate deferral + forced interception — verified + regression-pinned) | method-path rule denying all CONNECT fixed with policy tests | egress policy suite + proxy integration test | `suc4/egress-connect.md` | independent; parallel-capable |
 | SUC5.1 Real DynamoDB principal | `planned` | end DynamoDB executing as `system()`; storage-specific half only (generic `TenantBindingRegistry` stays out of scope) | requests carry a real principal; authz tests | `suc5/principal.md` | after SUC4.1 |
 | SUC6.1 Open-loop latency companion | `planned` | constant-rate below-saturation harness (e.g. 50%/75% of measured N=256 capacity), coordinated-omission-free percentiles; publishes the campaign's standing prerequisite | accepted CV-gated runs at two rates; doc stating what latency claims are now supportable | `suc6/open-loop.md` | needs quiet windows |
@@ -80,6 +80,14 @@ surface-matched key lanes per the owner's fast-loop policy, rejected-run
 retention, ledger discipline, remove only your own worktree/branch after
 merge). Performance-sensitive phases (SUC2.2, SUC3.1, SUC6.*) use the
 canonical CRUD/layered/hot-key protocols with D18/D19 as recorded.
+
+## Follow-Up Tickets
+
+| Ticket | Source | Notes |
+| --- | --- | --- |
+| DynamoDB `batch_write_item` stream-record staleness | SUC4.1 verification | reads prior images outside a transaction; not a lost-update bug (BatchWriteItem is non-atomic by contract); affects stream INSERT/MODIFY classification and OldImage freshness; fix = route through `execute_single_item_transaction` |
+| Type-aware typed-operand query comparison | SUC4.2 review | filters/cursors compare against the plain projection, so typed operands stay rejected (collision + ordering hazards pinned by tests); accepting them needs StoredValue-aware comparison and index-order design. Supersedes the earlier RFC3339-projection-ordering note: range operands are rejected outright now |
+| `arm_selection::opaque_internal_job_cannot_overtake_ordered_publisher` load-flake | observed 3× this campaign | pre-existing (#226/#229 era); fails only under heavy parallel multi-crate load; 30/30 clean isolated, passes full single-crate runs; timing-sensitive not-finished assertion |
 
 ## Decision Log
 
