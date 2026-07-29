@@ -338,7 +338,23 @@ fn commit_object_meta_write_in_actor(
         commit_faults,
         || {},
     ) {
-        Ok(_) => {
+        Ok(outcome) => {
+            // The core reports success even when a failed apply recovered to
+            // an applied head below this record: the write is durable but not
+            // yet visible, and acknowledging or fanning it out would expose a
+            // commit above the published frontier. Only a returned `applied`
+            // entry at this sequence proves visibility.
+            if !outcome
+                .applied
+                .iter()
+                .any(|entry| entry.sequence == commit.sequence)
+            {
+                let error = Error::Internal(format!(
+                    "object metadata write became durable at {sequence} but recovery reports an applied head below it; crash-and-replay required"
+                ));
+                begin_object_meta_durable_recovery(runtime, &error, &initiated_eviction);
+                return Err(error);
+            }
             // Ordered fan-out boundary: the actor cannot start the next
             // commit until this returns, so subscriptions and observers see
             // object commits in sequence order (same seams as the direct

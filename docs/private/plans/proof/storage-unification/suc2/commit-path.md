@@ -136,4 +136,21 @@ First pass returned three findings; each verified against the real code:
    mutation and authorization surface without additional safety. Rationale
    recorded as a code comment on `commit_object_meta_write_in_actor`.
 
-Second review pass result recorded below.
+Second pass (after fixes) returned two findings:
+
+4. **Accepted (P1) — clipped-applied acknowledgment.** The success arm
+   ignored the core's returned outcome; when a failed apply recovers to an
+   applied head below the record, the write is durable but not visible, and
+   the path would have acknowledged and fanned out an unapplied commit.
+   Fixed: success requires the returned `applied` set to contain this
+   sequence; otherwise the path begins crash-recovery eviction and surfaces
+   an ambiguous error (replay applies the durable record on next load).
+5. **Rejected — canonical-path routing, restated.** Same architecture claim
+   as finding 3; the rejection rationale stands. The repo invariant names
+   three engine-owned *client* mutation routes and the tree already contains
+   engine-internal committer routes (scheduler state, trigger cursor, schema,
+   PITR import); the plan's acceptance wording for this phase explicitly
+   sanctions "fenced through the committer or an explicitly serialized
+   internal path". Re-litigation without new substance does not block landing.
+
+Third pass result: recorded in the PR if it surfaces anything new.
