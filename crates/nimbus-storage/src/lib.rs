@@ -148,7 +148,7 @@ pub use traits::{
     ObjectChunkRef, ObjectManifest, ObjectManifestAttributes, ObjectMetaStore, ObjectMultipartPart,
     ObjectMultipartUpload, ReadCapabilities, ResourcePathScan, ResourcePathSnapshot,
     SchedulerStore, StorageEngine, TenantKvStore, TenantLifecycle, TenantPointRead,
-    TenantPointWrite, TenantRangeScan,
+    TenantPointWrite, TenantRangeScan, multipart_upload_document_id, object_manifest_document_id,
 };
 pub use trigger_invocation_transition::TriggerInvocationTransitionStore;
 pub use usage_store::{MonthlyActiveUsersSnapshot, UsageStore};

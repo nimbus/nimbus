@@ -54,6 +54,7 @@ mod libsql_replica_provider;
 mod materialized_serving;
 mod mutation_journal;
 mod mysql_provider;
+mod objects;
 mod policy;
 mod postgres_provider;
 mod ppsc;

@@ -252,7 +252,7 @@ impl ObjectManifest {
         }
     }
 
-    fn document_id(&self) -> Result<DocumentId> {
+    pub fn document_id(&self) -> Result<DocumentId> {
         object_document_id(&self.bucket, &self.key)
     }
 
@@ -469,11 +469,11 @@ impl ObjectMultipartUpload {
         }
     }
 
-    fn document_id(&self) -> Result<DocumentId> {
+    pub fn document_id(&self) -> Result<DocumentId> {
         upload_document_id(&self.upload_id)
     }
 
-    fn to_document(&self) -> Result<Document> {
+    pub fn to_document(&self) -> Result<Document> {
         self.validate()?;
         let mut fields = Map::new();
         fields.insert(
@@ -516,7 +516,7 @@ impl ObjectMultipartUpload {
         ))
     }
 
-    fn from_document(document: &Document) -> Result<Self> {
+    pub fn from_document(document: &Document) -> Result<Self> {
         let upload_id = required_string(document, OBJECT_FIELD_UPLOAD_ID)?;
         let bucket = required_string(document, OBJECT_FIELD_BUCKET)?;
         let key = required_string(document, OBJECT_FIELD_KEY)?;
@@ -605,6 +605,18 @@ fn validate_object_key(key: &str) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+/// Document id of the manifest row for `bucket`/`key`, for callers that
+/// address a manifest by name without holding a decoded [`ObjectManifest`].
+pub fn object_manifest_document_id(bucket: &str, key: &str) -> Result<DocumentId> {
+    object_document_id(bucket, key)
+}
+
+/// Document id of the multipart-upload row for `upload_id`, for callers that
+/// address an upload by id without holding a decoded [`ObjectMultipartUpload`].
+pub fn multipart_upload_document_id(upload_id: &str) -> Result<DocumentId> {
+    upload_document_id(upload_id)
 }
 
 fn object_manifest_table() -> Result<TableName> {

@@ -4,6 +4,7 @@ mod commit_processing;
 #[cfg(test)]
 mod crash_recovery;
 mod direct;
+pub(in crate::engine) mod durable_batch;
 pub(crate) mod durable_outcome;
 mod inline_reprepare;
 mod journal;
