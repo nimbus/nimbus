@@ -44,7 +44,10 @@ pub use identity::{
     NetworkProviderId, NetworkResourceGeneration, NetworkResourceIdParseError,
     NetworkResourceIdParseErrorKind, NetworkSegmentId, PortLeaseId, PublishedEndpointId,
 };
-pub use manager::{LocalNetworkManager, LocalNetworkManagerError};
+pub use manager::{
+    LocalNetworkAuthority, LocalNetworkAuthorityRootMismatch, LocalNetworkManager,
+    LocalNetworkManagerBootstrap, LocalNetworkManagerError,
+};
 pub use plan::{
     NetworkPlan, NetworkPlanContentDigest, NetworkPlanDigest, NetworkPlanDigestParseError,
     NetworkPlanUpdate, NetworkPlanUpdateError,

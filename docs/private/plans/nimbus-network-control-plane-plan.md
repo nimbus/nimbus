@@ -1,6 +1,6 @@
 # Nimbus Network Control Plane Plan
 
-Status: `active; NNC4.6a complete; NNC4.6b read-only substitution audit in progress`
+Status: `active; NNC4.6b complete; NNC4.6c sandbox-process acceptance next`
 
 Owner: this plan is the sole implementation control plane for the
 transport-free `nimbus-network` crate and the connectivity-resource lifecycle
@@ -36,24 +36,24 @@ ledger transition.
 
 | Field | Current value |
 | --- | --- |
-| Plan status | `active; NNC4.6a complete; NNC4.6b read-only substitution audit in progress` |
+| Plan status | `active; NNC4.6b complete; NNC4.6c sandbox-process acceptance next` |
 | Current band | `NNC4 — evidence-based capability registry and sovereignty profile` |
-| Current item | `NNC4.6b — wire one manager/root through every production process composition path` |
-| Last completed item | `NNC4.6a — separate backend workload state from the serialized node network-authority root` |
-| Next action | Complete NNC4.6b's read-only substitution audit of every production process composition/root path and checkpoint an explicit fail-before matrix; do not mutate production code until that acceptance-bearing packet is recorded. |
-| Current acceptance checkpoint | NNC4.6a R1-R12 are green on corrected executable SHA-256 `26bad585c1365a23c7809034657e5bf727f51754525bba82266676ec6f071400`. The full review's two exact split-root fail-before proofs reproduce at 0/1/0 and their fixes pass 1/0/0; startup reconciliation passes 12/0/0, krun launch compensation 23/0/0, and the exact corrected sandbox suite 706 executed/0 failed/24 ignored. All affected quality/static/docs gates are green. The one permitted narrow correction review is clean with zero findings and `patch is correct` at 0.98. |
+| Current item | `NNC4.6c — inject one sandbox-owned OCI process composition into container and krun` |
+| Last completed item | `NNC4.6b — stage one manager claim before consuming immutable freeze` |
+| Next action | Commit the exact reviewed NNC4.6b six-path item, then convert the deferred NNC4.6c sandbox audit in its proof into a standalone acceptance/fail-before checkpoint without changing production. |
+| Current acceptance checkpoint | NNC4.6b B1-B8 are green. Fail-before exited 101 with 14 seam-only compiler errors; manager 2/0/0, subprocess store/port 8/0/3, network 200/0/0, affected quality/static/verifier/docs gates pass. Executable digest is `e15324d8c6ed4f5eef0f5e89b9b9af4b0a28e8d109e4dd1ff7c52782092ba07d`. The sole item review found one P2 proof-state contradiction and no executable defect; the proof-only correction is applied with no repeat review under the frozen cadence. |
 | Owner branch | `codex/nimbus-network-architecture-audit` |
 | Owner worktree | `/Users/jack/src/github.com/nimbus/nimbus-network-architecture-audit` |
 | Audit base | Original architecture audit: `b69007a78a220847812370d9418049f1253f0384`. |
 | Execution base | Rebased without conflicts onto `origin/main` at `9c2d4f150c60f43dfdc0a3f1ec6550942e26ab8f` after NNC0.0. |
-| Last checkpoint commit | `2bf1b62520be9bea9eef77ae6e45eb3ae0e21663` — NNC4.6 process-owned local network composition; tree `2cd2c342a70b`. |
-| Audit dirty state | NNC4.6a's exact implementation, behavioral proof, review dispositions, closeout ledger, and the NNC4.6b read-only recovery transition are the sole staged checkpoint; no NNC4.6b production code and no unrelated path are dirty. |
-| Latest dirty-state checkpoint | HEAD is the committed NNC4.6 checkpoint `2bf1b62520be9bea9eef77ae6e45eb3ae0e21663`; NNC4.6a's corrected executable SHA-256 is `26bad585c1365a23c7809034657e5bf727f51754525bba82266676ec6f071400`. The branch remains unpushed with no PR. The resulting item commit/tree is recorded at the next checkpoint because a commit cannot contain its own hash. |
-| Current item review | NNC4.6a's one full Sol/xhigh/fast review reported two accepted findings. P1 is amended to the source-proven outcome: the wrong root caused live split-root netns evidence to be quarantined/fenced, not immediately reclaimed. P2 exposed a same-root-masked krun PEP test call. Both have exact red/green proofs. The one permitted narrow correction review is clean at 0.98. No further NNC4.6a review is warranted. |
+| Last checkpoint commit | `62e743e280dff1c3c2d43dc214b01a270347cd8c` — NNC4.6a backend network-root separation; tree `88b099b0058e`. |
+| Audit dirty state | Exactly six NNC4.6b-owned paths are staged: manager façade/export/test plus canonical plan/routing/proof. The post-review change is documentation-only. No NNC4.6c-f executable path, inventory, generated artifact, or unrelated path is modified. |
+| Latest dirty-state checkpoint | HEAD is the committed NNC4.6a checkpoint `62e743e280dff1c3c2d43dc214b01a270347cd8c`; its tree is `88b099b0058e4e80ef4fa15799fe5a599ac558b6`. The branch remains unpushed with no PR. |
+| Current item review | Complete. The helper invoked GPT-5.6 Sol at xhigh with `service_tier="fast"` in one 88,067-byte pass. It reported one P2 proof-state contradiction at 0.99 and no executable defect. The finding is accepted and corrected in plan/proof wording. No repeat review is warranted because executable digest `e15324d8c6ed4f5eef0f5e89b9b9af4b0a28e8d109e4dd1ff7c52782092ba07d` is unchanged. |
 | Execution mode | Autonomous implementation goal active; commit each completed item with its ledger/evidence checkpoint; no push or PR without separate authority. Per owner direction on 2026-07-24, all future structured autoreviews use `gpt-5.6-sol` at `xhigh` reasoning with fast mode explicitly enabled; do not use Claude Opus 4.8. |
 | Last verification | Final NNC4.5 network 198/0/0, proxy 164/0/0, sandbox 697/0/24, services 90/0/1, and focused corrections 30/0/2 pass. Affected check, strict Clippy, warning-denied rustdoc, format/diff, exact core-only edge, 66/66 authority plus 35/35 non-authority census, verifier 15/15, verifier self-test 45/45, docs 108 pages, and site 17/17 pass. |
-| Latest verification checkpoint | NNC4.6a focused roots 5/0/0, prefix 3/0/0, substitutions 2/0/0, split-root provider drift 2/0/0, CLI compose 43/0/0, accepted fixes 1/0/0 each, startup reconciliation 12/0/0, krun launch compensation 23/0/0, and exact corrected sandbox 706 executed/0 failed/24 ignored pass. Affected all-target check, combined strict Clippy, warning-denied rustdoc, core-only edge, live verifier 15/15 plus prior unchanged self-test 45/45, format/diff, docs 108, and site 17/17 pass. |
-| Blocking decision | No blocker. Commit the exact NNC4.6a checkpoint plus NNC4.6b read-only recovery transition, then continue that audit. |
+| Latest verification checkpoint | NNC4.6b fail-before 14 expected compiler errors/exit 101; focused manager 2/0/0; real-process port 6/0/2; real-process store 2/0/1; full network 200/0/0. Affected check/strict Clippy/warning-denied rustdoc, exact `nimbus-network -> nimbus-core` edge, verifier 15/15 plus unchanged self-test 45/45, format/diff, docs 108, and site 17/17 pass. The initial focused run exposed a macOS `/var` versus `/private/var` authority-path mismatch; canonical manager-store reopening corrected it. Known emitted warnings are unchanged vendored Brotli warnings, not owner code. |
+| Blocking decision | No blocker. Commit NNC4.6b, then begin NNC4.6c acceptance/fail-before design. |
 
 Recovery protocol:
 
@@ -219,6 +219,30 @@ The result must provide:
     internal table/schema and mutation path are recorded before NNC6 begins.
     `nimbus-services` lazy activation and sandbox restart policy are subordinate
     to this durable saga.
+23. **Production manager construction is staged, consuming, and immutable.**
+    `LocalNetworkManager::bootstrap` claims one canonical process root and
+    exposes only a paired network-owned authority handle. Upper composition
+    code may use that handle to construct and reconcile source owners, then
+    gathers their exact reports and consumes the bootstrap exactly once to
+    freeze `NetworkCapabilityRegistry` into `LocalNetworkManager`. Authority
+    clones retain the process claim; failed assembly releases it only after the
+    last clone drops. There is no registry setter, hidden singleton lookup,
+    callback into an upper crate, or lower-crate provider type.
+24. **One sandbox process composition owns process-local network lifetimes.**
+    A sandbox-owned `OciNetworkProcess` binds one manager-derived authority,
+    one node super-net/prefix, the shared segment adapter, and the PEP,
+    Netavark, and machine-port lifetime registries. Container and krun
+    backends authenticate and reuse that object instead of minting parallel
+    process-local lifecycle maps. Provider effects remain sandbox/proxy owned;
+    persisted `OciNetworkLayout` remains restart evidence rather than runtime
+    authority.
+25. **Bind realm is relative to an explicit OS node.** A guest wildcard proxy
+    bind and gvproxy's parent-host publication are both `Host` binds in
+    different node authorities. Forwarded publication therefore owns two
+    independently fenced lifetimes: guest proxy authority and parent-host
+    provider authority. The parent issues the gvproxy provider handle and
+    generation; a guest boot ID cannot mint parent authority. Equal numeric
+    ports may coexist across nodes and never become workload identity.
 
 ## Current Ownership And Dependency Audit
 
@@ -383,6 +407,11 @@ edge and creates no cycle.
 | NNCF19 | medium | `nimbus-system` `routes` denotes HTTP method/path/adapter inventory, not connectivity forwarding routes. | Reusing the name/identity can collide two unrelated projections and blur observed ownership. | Structurally distinct connectivity-route observation kind/table and one conversion locality. |
 | NNCF20 | critical | Container and krun `inspect` paths may execute backend restart policy and launch a workload. | An observation interface is a second workload coordinator and can race withdrawal or activate a stale generation without current attachment/PEP proof. | Make inspection side-effect-free; compute alone decides restart through the durable prepare→attach→activate saga; fenced generations veto restart. |
 | NNCF21 | high | Production CLI dev/start probe-drop paths and the sandbox `MachinePortProxy` bind sit outside the original listener census. | A “one authority” migration can close while real callers still race or bind without a lease. | Exhaustive source-derived bind/allocation inventory with explicit migrate/adopt/exempt disposition and static unclassified-bind rejection. |
+| NNCF22 | high | `LocalNetworkManager::open` requires the final registry, while truthful sandbox registration requires backend construction and startup reconciliation; those operations need manager-derived authority first. | Production either constructs no manager, freezes speculative facts, or performs reconciliation through an unclaimed parallel root. | Staged process claim with a paired authority handle, followed by consuming one-shot registry freeze after source reconciliation. |
+| NNCF23 | high | Container and krun constructors independently mint segment adapters, PEP engines, Netavark lifetime registries, and machine-port registries. | Two backends in one process can hold divergent in-memory lifecycle truth even when durable paths happen to match. | One sandbox-owned `OciNetworkProcess` with injected/root-authenticated backend constructors and cross-backend lifecycle tests. |
+| NNCF24 | critical | A machine-forwarded workload leases and binds its wildcard proxy inside the guest, but gvproxy realizes the external publication in the parent host without a parent-host publication lease. | A guest lease cannot serialize the parent bind; conflicts can reach provider I/O, ambiguous outcomes can lose the parent fence, and the two OS-node realms are conflated. | Parent reserves/claims before Machine API I/O, activates from exact gvproxy evidence, withdraws before guest stop, and releases only after authenticated parent-effect absence. |
+| NNCF25 | high | Machine deletion reloads serialized roots but releases the SSH lease through the caller's independently resolved roots. | A mismatched caller can delete machine artifacts while leaking the real lease in another authority. | Persist canonical manager provenance, authenticate it before mutation, and pass one manager-derived handle through launch, stop, and delete. |
+| NNCF26 | medium | Start/Compose, dev prebinding, standalone KV, and server prebound handoff independently resolve or replace authority roots. | One process can reserve listeners and sandbox resources in different stores; KV may disagree with start under the same environment. | One typed root policy plus manager-derived server/KV handles; divergent prebound authority fails before durable or socket effects. |
 
 ## Independent Review Disposition
 
@@ -1202,8 +1231,11 @@ Dependencies: NNC1-NNC3.
 | NNC4.5 | Compose egress readiness as a dependency handle. | Proxy-required plan cannot become ready without current PEP evidence; no PDP/PEP behavior moves. |
 | NNC4.6 | Define the concrete process-owned `LocalNetworkManager` over one store, port authority, and immutable capability registry. | M1-M12 in `proof/nimbus-network-control-plane/nnc4.6-single-network-composition-root.md` pass: the first manager owns the process composition; a second independent same, aliased, or divergent-root manager fails before attempted-root mutation with typed clone/injection guidance; `Arc` reuse, final-drop reopen, failed-open cleanup, concurrent construction, and separate-process same-root lease contention are deterministic. |
 | NNC4.6a | Separate backend workload state from the serialized node network-authority root in container and krun. | Workload artifacts remain project/backend-local; segment/IPAM/port authority uses the exact node root; runner manifests persist both concepts; substituted authority fails before any Netavark, PEP, socket, or cleanup effect; the durable segment authority authenticates its tenant prefix as well as super-net/epoch; direct constructors retain one explicit deterministic default. |
-| NNC4.6b | Wire one manager/root through every production process composition path. | `nimbus start`, server listeners, local compose backends, guest machine API, host machine listeners, and standalone KV resolve one logical-node root; two compose projects conflict in durable port authority before bind; source-owned capability reports freeze into the one immutable production registry; separate OS nodes remain explicitly distinct. |
-| NNC4.6c | Close the production manager/root/primitive-handle census and verifier. | A machine-readable census classifies every production constructor/root resolver as owning manager, manager-derived handle, admitted cross-process reconstruction, or test fixture; no unclassified raw root remains; the verifier self-tests missing census, second constructor, divergent resolver, and false runtime-proof claims while preserving the exact core-only edge. |
+| NNC4.6b | Stage one process claim before consuming immutable registry freeze. | B1-B8 in `proof/nimbus-network-control-plane/nnc4.6b-staged-network-composition.md` pass: bootstrap/derived handles retain one claim; same/alias/divergent roots fail before mutation; consuming freeze is one-shot and fail-closed; direct open delegates to the same path; raw recovery/process primitives remain legal; the core-only/effect-free boundary is unchanged. |
+| NNC4.6c | Inject one sandbox-owned OCI process composition into container and krun. | One manager-derived authority freezes node super-net/prefix and shared segment, PEP, Netavark, and machine-port lifecycle state; divergent configs fail before reconciliation/effects; distinct workload roots share only portable node authority; direct and runner construction remain explicit/classified. |
+| NNC4.6d | Wire the manager/root through CLI start/dev/Compose, server listeners, and standalone KV. | Start, dev, standalone Compose, and KV resolve one typed logical-node root; local Compose workload roots stay distinct while their network authority is shared; two projects conflict durably before bind; every server/KV listener carries the manager-derived handle; source-owned local attachment/ingress reports freeze into the exact production registry without fabricated partial providers. |
+| NNC4.6e | Wire host-machine and guest-machine compositions as explicit OS-node authority realms. | Direct and embedded host lifecycle reuse the parent manager; machine config authenticates manager provenance; guest API opens one guest manager and keeps workload artifacts separate; parent publication conflicts before Machine API I/O; guest/parent lifetimes use parent-issued provider generation and converge under exact/ambiguous stop evidence; WSL2 remains fail-closed and separate. |
+| NNC4.6f | Close the production manager/root/primitive-handle census and verifier. | A machine-readable census classifies every production constructor/root resolver as owning manager, manager-derived handle, admitted cross-process reconstruction, or test fixture; no unclassified raw root remains; the verifier self-tests missing census, second constructor, divergent resolver, wrong OS-node realm, guest-minted parent identity, and false runtime-proof claims while preserving the exact core-only edge. |
 | NNC4.7 | Build and self-test the local-sovereignty isolation/tripwire profile. | On a named privileged Linux KVM/minicloud host, an outer namespace/private-veth boundary permits only loopback and enumerated private peers; IPv4/IPv6 public output is denied/countable, UDP/TCP DNS is recorded, network syscalls are traced, and positive-control DNS/raw-IP attempts prove detection before reset. macOS or unavailable privilege is `SKIPPED`, never passing evidence. |
 
 Band gate: capability selection is explicit, fail-closed, and does not create
@@ -1609,8 +1641,11 @@ checkpoint.
 | NNC4.5 | `done` | Final evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc4.5-egress-readiness-dependency.md`. E1-E18 pass: portable desired/durable/observed readiness is exact and provider-inclusive; the sandbox authenticates current PEP, listener, lease, lifetime, policy, reload attempt, worker, and audit evidence; container/krun/service publication withdraws fail closed; dead pseudo-authority is deleted. Network 198/0/0, proxy 164/0/0, sandbox 697/0/24, services 90/0/1, focused corrections 30/0/2, affected quality/static/dependency/effect/census/verifier/docs gates pass. The sole full Sol/xhigh/fast review's six findings and the one permitted narrow correction review's P1 health/effect race are accepted and corrected; worker/audit transitions now serialize through the proxy-owned health state while reload rejects without policy mutation. No further review ran or is warranted. |
 | NNC4.6 | `done` | M1-M12 in `proof/nimbus-network-control-plane/nnc4.6-single-network-composition-root.md`: exact fail-before; manager 1/0/0; manager-backed port 6/0/2; raw store 2/0/1; full network 199/0/0; affected check/Clippy/rustdoc; exact core-only edge; verifier 15/15 plus self-test 45/45; docs 108 and site 17/17. Full Sol review accepted one P2; fail-before 0/1/0 proved it; the narrow correction review is clean at 0.99. |
 | NNC4.6a | `done` | Final evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc4.6a-backend-network-root-separation.md`. R1-R12 pass; prefix and root-seam fail-before proofs are exact; the full review's two accepted split-root defects reproduce at 0/1/0 and their fixes pass 1/0/0. Focused roots 5, prefix 3, substitutions 2, split-root drift 2, CLI compose 43, startup 12, krun launch compensation 23, and corrected sandbox 706 executed/0 failed/24 ignored pass. Affected check, strict Clippy, warning-denied rustdoc, core-only edge, verifier 15/15 plus unchanged self-test 45/45, format/diff, docs 108, and site 17/17 pass. Corrected executable SHA-256 is `26bad585c1365a23c7809034657e5bf727f51754525bba82266676ec6f071400`; the one permitted narrow Sol/xhigh/fast correction review is clean at 0.98. |
-| NNC4.6b | `in_progress` | **Owned paths:** canonical plan/new item proof; read-only inventory first across CLI start/dev/compose/machine/KV, server construction/listeners, standalone KV listener, machine roots/API, sandbox backend composition, and the existing `LocalNetworkManager`/capability registry seams. No production mutation belongs to the NNC4.6a checkpoint. **Last green:** NNC4.6a R1-R12, corrected sandbox 706/0/24, affected quality/static/docs gates, and clean narrow correction review at 0.98. **Next:** derive the exact production root/constructor substitution matrix and fail-before tests for one logical-node manager/root plus immutable source-owned capabilities; checkpoint that acceptance packet before implementation. **Blocker:** none. |
-| NNC4.6c | `todo` | Depends on NNC4.6b; close the constructor/root census and named verifier condition. |
+| NNC4.6b | `done` | Final evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc4.6b-staged-network-composition.md`. B1-B8 pass: one staged process claim owns paired store/port authority; every authority clone retains it; same/lexical/symlink/divergent roots are typed and non-mutating; consuming freeze installs the exact immutable registry once; direct open delegates; raw recovery/process primitives remain; the core-only/effect-free boundary is unchanged. Fail-before 14 seam-only errors/exit 101; manager 2/0/0; subprocess port 6/0/2; subprocess store 2/0/1; network 200/0/0; affected check/strict Clippy/rustdoc; verifier 15/15 plus self-test 45/45; format/diff; docs 108; site 17/17. Executable SHA-256 `e15324d8c6ed4f5eef0f5e89b9b9af4b0a28e8d109e4dd1ff7c52782092ba07d`. The sole Sol/xhigh/fast review found one P2 proof-state contradiction and no executable defect; the proof-only correction is applied and requires no repeat review. |
+| NNC4.6c | `in_progress` | **Owned paths:** canonical plan/routing and a standalone NNC4.6c acceptance proof first; no source edit until exact fail-before is frozen. **Last green:** NNC4.6b complete with every B1-B8 proof and one fully dispositioned item review. **Next:** extract the deferred sandbox-process audit into exact acceptance, failure, modularity, and fail-before matrices. **Blocker:** none. |
+| NNC4.6d | `todo` | Depends on NNC4.6c; wire typed root/manager-derived handles through start/dev/Compose/server/KV and freeze the real local registry. |
+| NNC4.6e | `todo` | Depends on NNC4.6d; separate parent-host and guest-node manager/provenance/publication lifetimes and close NNCF24-NNCF25. |
+| NNC4.6f | `todo` | Depends on NNC4.6b-e; close the constructor/root/primitive-handle census and named verifier condition. |
 | NNC4.7 | `todo` | — |
 | NNC5.1 | `todo` | — |
 | NNC5.2 | `todo` | — |
