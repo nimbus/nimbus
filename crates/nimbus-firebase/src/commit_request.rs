@@ -1,5 +1,5 @@
 use nimbus_core::{
-    AtomicWrite, AtomicWriteBatch, FieldTransform, FieldTransformOperation, Timestamp,
+    AtomicWrite, AtomicWriteBatch, FieldTransform, FieldTransformOperation, StoredValue, Timestamp,
     TypedFieldMap, WriteKey, WritePrecondition, WriteSetMode,
 };
 use serde::Deserialize;
@@ -349,10 +349,12 @@ fn lower_field_transform(
     })
 }
 
-fn lower_array_transform_values(values: Vec<Value>) -> Result<Vec<Value>, FirestoreRequestError> {
+fn lower_array_transform_values(
+    values: Vec<Value>,
+) -> Result<Vec<StoredValue>, FirestoreRequestError> {
     values
         .into_iter()
-        .map(|value| serializer::decode_proto_json_value(&value))
+        .map(|value| serializer::decode_proto_json_stored_value(&value))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| FirestoreRequestError::invalid_value(FirestoreRpc::Commit, error))
 }
@@ -401,7 +403,7 @@ fn unsupported(message: impl Into<String>) -> FirestoreRequestError {
 mod tests {
     use nimbus_core::{
         DocumentId, DocumentLocator, FieldTransformOperation, NumericValue, ResourcePathBinding,
-        SpecialDouble, TableName,
+        SpecialDouble, TableName, TypedScalarValue,
     };
     use serde_json::json;
 
@@ -603,5 +605,103 @@ mod tests {
                     }] if field == "score"
                 )
         ));
+    }
+
+    #[test]
+    fn lowers_typed_array_transform_operands_into_stored_values_at_every_depth() {
+        let request = json!({
+            "database": "projects/demo/databases/(default)",
+            "writes": [
+                {
+                    "transform": {
+                        "document": "projects/demo/databases/(default)/documents/events/hit",
+                        "fieldTransforms": [
+                            {
+                                "fieldPath": "tags",
+                                "appendMissingElements": {
+                                    "values": [
+                                        { "stringValue": "plain" },
+                                        { "timestampValue": "2024-01-02T03:04:05Z" },
+                                        {
+                                            "mapValue": {
+                                                "fields": {
+                                                    "at": {
+                                                        "geoPointValue": {
+                                                            "latitude": 1.5,
+                                                            "longitude": -2.5
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    ]
+                                }
+                            },
+                            {
+                                "fieldPath": "tags",
+                                "removeAllFromArray": {
+                                    "values": [
+                                        { "bytesValue": "AQID" }
+                                    ]
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        });
+
+        let parsed = parse_commit_request_with_resolver(&request, resolve_preview_key)
+            .expect("typed array transform operands should parse");
+        let AtomicWrite::Transform { transforms, .. } = &parsed.batch.writes[0] else {
+            panic!("transform write should parse")
+        };
+        let [append, remove] = transforms.as_slice() else {
+            panic!("both transforms should parse")
+        };
+
+        let FieldTransformOperation::AppendMissingElements { values } = &append.transform else {
+            panic!("appendMissingElements should lower to AppendMissingElements")
+        };
+        assert_eq!(
+            values,
+            &vec![
+                // A metadata-free operand collapses to plain JSON so it compares
+                // equal to the elements the write path already stored.
+                StoredValue::Json {
+                    value: json!("plain")
+                },
+                StoredValue::TypedScalar {
+                    value: TypedScalarValue::FirestoreTimestamp {
+                        rfc3339: "2024-01-02T03:04:05Z".to_string(),
+                    },
+                },
+                // Nesting is preserved: a typed scalar inside a map inside an
+                // array element keeps its metadata all the way down.
+                StoredValue::Map {
+                    entries: std::collections::BTreeMap::from([(
+                        "at".to_string(),
+                        StoredValue::TypedScalar {
+                            value: TypedScalarValue::GeoPoint {
+                                latitude: 1.5,
+                                longitude: -2.5,
+                            },
+                        },
+                    )]),
+                },
+            ]
+        );
+
+        let FieldTransformOperation::RemoveAllFromArray { values } = &remove.transform else {
+            panic!("removeAllFromArray should lower to RemoveAllFromArray")
+        };
+        assert_eq!(
+            values,
+            &vec![StoredValue::TypedScalar {
+                value: TypedScalarValue::Bytes {
+                    data: vec![1, 2, 3],
+                },
+            }]
+        );
     }
 }

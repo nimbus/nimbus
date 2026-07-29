@@ -492,13 +492,17 @@ fn atomic_write_batch_transform_write_creates_missing_document_and_returns_order
                     FieldTransform {
                         field: "tags".to_string(),
                         transform: FieldTransformOperation::AppendMissingElements {
-                            values: vec![json!(2.0), json!("a"), json!("a")],
+                            values: vec![
+                                stored(json!(2.0)),
+                                stored(json!("a")),
+                                stored(json!("a")),
+                            ],
                         },
                     },
                     FieldTransform {
                         field: "tags".to_string(),
                         transform: FieldTransformOperation::RemoveAllFromArray {
-                            values: vec![json!(2)],
+                            values: vec![stored(json!(2))],
                         },
                     },
                 ],
@@ -558,7 +562,7 @@ fn atomic_write_batch_applies_array_multiply_and_bitwise_transforms() {
                     FieldTransform {
                         field: "tags".to_string(),
                         transform: FieldTransformOperation::AppendElements {
-                            values: vec![json!("b"), json!("c")],
+                            values: vec![stored(json!("b")), stored(json!("c"))],
                         },
                     },
                     FieldTransform {
@@ -1168,6 +1172,159 @@ fn atomic_write_batch_applies_special_double_extrema_as_typed_scalars() {
     assert_eq!(document.get_field("floor"), Some(&json!("NaN")));
 }
 
+#[test]
+fn atomic_write_batch_array_transforms_preserve_typed_elements_at_every_depth() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let table = messages_table("messages_atomic_typed_arrays");
+    let document_id = DocumentId::from_key("typed-arrays").expect("id should parse");
+
+    let timestamp = StoredValue::from(TypedScalarValue::FirestoreTimestamp {
+        rfc3339: "2024-01-02T03:04:05.123456789Z".to_string(),
+    });
+    let bytes = StoredValue::from(TypedScalarValue::Bytes {
+        data: vec![1, 2, 3, 4],
+    });
+    let geo_point = StoredValue::from(TypedScalarValue::GeoPoint {
+        latitude: 37.7749,
+        longitude: -122.4194,
+    });
+    // A typed scalar buried inside a map inside the array element: the deepest
+    // nesting an array transform operand can carry.
+    let nested = StoredValue::Map {
+        entries: std::collections::BTreeMap::from([
+            ("attachment".to_string(), bytes.clone()),
+            (
+                "label".to_string(),
+                StoredValue::Json {
+                    value: json!("kept"),
+                },
+            ),
+        ]),
+    };
+
+    let execution_unit = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("execution unit should start");
+    execution_unit
+        .execute_atomic_write_batch(
+            AtomicWriteBatch::new(vec![AtomicWrite::Transform {
+                key: locator_key(table.clone(), document_id.clone()),
+                transforms: vec![FieldTransform {
+                    field: "tags".to_string(),
+                    transform: FieldTransformOperation::AppendMissingElements {
+                        values: vec![
+                            stored(json!("seed")),
+                            timestamp.clone(),
+                            bytes.clone(),
+                            geo_point.clone(),
+                            nested.clone(),
+                            // Repeats of every kind must dedupe against the
+                            // element already appended in this same transform.
+                            timestamp.clone(),
+                            nested.clone(),
+                        ],
+                    },
+                }],
+                precondition: WritePrecondition::default(),
+            }])
+            .expect("batch should build"),
+        )
+        .expect("typed arrayUnion should succeed");
+
+    let document = engine
+        .get_document(&tenant_id, &table, document_id.clone())
+        .expect("typed array document should exist");
+    assert_eq!(
+        document.typed_value("tags"),
+        Some(&StoredValue::List {
+            items: vec![
+                stored(json!("seed")),
+                timestamp.clone(),
+                bytes.clone(),
+                geo_point.clone(),
+                nested.clone(),
+            ]
+        }),
+        "arrayUnion must keep typed elements and dedupe repeats by typed identity"
+    );
+    assert_eq!(
+        document.get_field("tags"),
+        Some(&json!([
+            "seed",
+            "2024-01-02T03:04:05.123456789Z",
+            "AQIDBA==",
+            { "latitude": 37.7749, "longitude": -122.4194 },
+            { "attachment": "AQIDBA==", "label": "kept" },
+        ])),
+        "the plain JSON projection must stay in step with the typed tree"
+    );
+
+    // arrayRemove matches typed elements by value, including the nested map.
+    let execution_unit = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("execution unit should start");
+    execution_unit
+        .execute_atomic_write_batch(
+            AtomicWriteBatch::new(vec![AtomicWrite::Transform {
+                key: locator_key(table.clone(), document_id.clone()),
+                transforms: vec![FieldTransform {
+                    field: "tags".to_string(),
+                    transform: FieldTransformOperation::RemoveAllFromArray {
+                        values: vec![timestamp, geo_point, nested],
+                    },
+                }],
+                precondition: WritePrecondition::default(),
+            }])
+            .expect("batch should build"),
+        )
+        .expect("typed arrayRemove should succeed");
+
+    let document = engine
+        .get_document(&tenant_id, &table, document_id.clone())
+        .expect("typed array document should exist");
+    assert_eq!(
+        document.typed_value("tags"),
+        Some(&StoredValue::List {
+            items: vec![stored(json!("seed")), bytes],
+        })
+    );
+
+    // Removing the last typed element drops the sidecar so a metadata-free
+    // array is stored as plain JSON rather than an inert typed tree.
+    let execution_unit = engine
+        .begin_mutation_execution_unit(tenant_id.clone(), PrincipalContext::anonymous())
+        .expect("execution unit should start");
+    execution_unit
+        .execute_atomic_write_batch(
+            AtomicWriteBatch::new(vec![AtomicWrite::Transform {
+                key: locator_key(table.clone(), document_id.clone()),
+                transforms: vec![FieldTransform {
+                    field: "tags".to_string(),
+                    transform: FieldTransformOperation::RemoveAllFromArray {
+                        values: vec![StoredValue::from(TypedScalarValue::Bytes {
+                            data: vec![1, 2, 3, 4],
+                        })],
+                    },
+                }],
+                precondition: WritePrecondition::default(),
+            }])
+            .expect("batch should build"),
+        )
+        .expect("final typed arrayRemove should succeed");
+
+    let document = engine
+        .get_document(&tenant_id, &table, document_id)
+        .expect("typed array document should exist");
+    assert_eq!(document.typed_value("tags"), None);
+    assert_eq!(document.get_field("tags"), Some(&json!(["seed"])));
+}
+
 fn locator_key(table: nimbus_core::TableName, id: DocumentId) -> WriteKey {
     WriteKey::from(DocumentLocator::new(table, id))
+}
+
+fn stored(value: serde_json::Value) -> StoredValue {
+    StoredValue::Json { value }
 }

@@ -1171,3 +1171,99 @@ async fn firebase_run_query_rejects_invalid_filter_combinations() {
         "invalid filter combination should be called out: {body:?}"
     );
 }
+
+#[tokio::test]
+async fn firebase_run_query_filters_on_typed_scalar_field_values() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let _tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    let client = firebase_rest_client("user-123", "demo");
+
+    let matching = json!({ "timestampValue": "2024-01-02T03:04:05.123456789Z" });
+    let other = json!({ "timestampValue": "2025-06-07T08:09:10Z" });
+    let payload = json!({ "bytesValue": "AQIDBA==" });
+
+    for (document_id, created_at) in [("hit", &matching), ("miss", &other)] {
+        let commit = client
+            .post(server.http_url("/v1/projects/demo/databases/(default)/documents:commit"))
+            .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
+            .body(
+                json!({
+                    "database": "projects/demo/databases/(default)",
+                    "writes": [{
+                        "update": {
+                            "name": format!(
+                                "projects/demo/databases/(default)/documents/events/{document_id}"
+                            ),
+                            "fields": {
+                                "createdAt": created_at,
+                                "payload": payload,
+                            }
+                        }
+                    }]
+                })
+                .to_string(),
+            )
+            .send()
+            .await
+            .expect("typed seed commit should send");
+        assert_eq!(commit.status(), StatusCode::OK);
+    }
+
+    for (field_path, value) in [("createdAt", &matching), ("payload", &payload)] {
+        let response = client
+            .post(server.http_url("/v1/projects/demo/databases/(default)/documents:runQuery"))
+            .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
+            .body(
+                json!({
+                    "structuredQuery": {
+                        "from": [{ "collectionId": "events" }],
+                        "where": {
+                            "fieldFilter": {
+                                "field": { "fieldPath": field_path },
+                                "op": "EQUAL",
+                                "value": value,
+                            }
+                        }
+                    }
+                })
+                .to_string(),
+            )
+            .send()
+            .await
+            .expect("typed field filter query should send");
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .expect("typed field filter response should read");
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "query filtering on typed field `{field_path}` should be accepted: {body}"
+        );
+        let names = body
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter_map(|entry| entry["document"]["name"].as_str().map(ToOwned::to_owned))
+            .collect::<Vec<_>>();
+        let expected: Vec<String> = if field_path == "createdAt" {
+            vec!["projects/demo/databases/(default)/documents/events/hit".to_string()]
+        } else {
+            vec![
+                "projects/demo/databases/(default)/documents/events/hit".to_string(),
+                "projects/demo/databases/(default)/documents/events/miss".to_string(),
+            ]
+        };
+        assert_eq!(
+            names, expected,
+            "typed field filter on `{field_path}` should match the documents written with that value"
+        );
+    }
+}

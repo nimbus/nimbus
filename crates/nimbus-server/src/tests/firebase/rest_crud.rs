@@ -1203,3 +1203,177 @@ async fn firebase_list_collection_ids_rejects_invalid_page_tokens_and_read_time(
         "unsupported selector should mention readTime: {read_time:?}"
     );
 }
+
+#[tokio::test]
+async fn firebase_commit_array_transforms_roundtrip_typed_values() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let service = fixture.engine();
+    let server = ServerFixture::start(router_for_firebase(
+        service.clone(),
+        firebase_verified_config(),
+    ))
+    .await;
+    let bearer = firebase_verified_bearer("user-123", "demo");
+    let commit_path = "/v1/projects/demo/databases/(default)/documents:commit";
+    let document_name = "projects/demo/databases/(default)/documents/events/arrays";
+
+    let created_at = json!({ "timestampValue": "2024-01-02T03:04:05.123456789Z" });
+    let payload = json!({ "bytesValue": "AQIDBA==" });
+    let owner = json!({
+        "referenceValue": "projects/demo/databases/(default)/documents/users/ada"
+    });
+    let location = json!({
+        "geoPointValue": { "latitude": 37.7749, "longitude": -122.4194 }
+    });
+
+    let append = server
+        .client()
+        .post(server.http_url(commit_path))
+        .header(header::AUTHORIZATION, &bearer)
+        .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
+        .body(
+            json!({
+                "database": "projects/demo/databases/(default)",
+                "writes": [{
+                    "update": {
+                        "name": document_name,
+                        "fields": {
+                            "tags": {
+                                "arrayValue": {
+                                    "values": [{ "stringValue": "seed" }]
+                                }
+                            }
+                        }
+                    },
+                    "updateTransforms": [{
+                        "fieldPath": "tags",
+                        "appendMissingElements": {
+                            "values": [
+                                { "stringValue": "seed" },
+                                created_at,
+                                payload,
+                                owner,
+                                location,
+                            ]
+                        }
+                    }]
+                }]
+            })
+            .to_string(),
+        )
+        .send()
+        .await
+        .expect("typed arrayUnion commit should send");
+    assert_eq!(
+        append.status(),
+        StatusCode::OK,
+        "arrayUnion carrying Firestore typed values should be accepted: {}",
+        append.text().await.unwrap_or_default()
+    );
+
+    let read = server
+        .client()
+        .post(server.http_url("/v1/projects/demo/databases/(default)/documents:batchGet"))
+        .header(header::AUTHORIZATION, &bearer)
+        .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
+        .body(json!({ "documents": [document_name] }).to_string())
+        .send()
+        .await
+        .expect("typed array batch get should send");
+    assert_eq!(read.status(), StatusCode::OK);
+    let body = response_json_lines(read)
+        .await
+        .into_iter()
+        .next()
+        .expect("typed array document should be returned");
+    assert_eq!(
+        body["found"]["fields"]["tags"],
+        json!({
+            "arrayValue": {
+                "values": [
+                    { "stringValue": "seed" },
+                    created_at,
+                    payload,
+                    owner,
+                    location,
+                ]
+            }
+        }),
+        "arrayUnion elements must read back as the typed values the client wrote"
+    );
+
+    let locator = crate::adapters::firebase::locator_for_document_path(
+        &DocumentPath::from_segments(["events", "arrays"]).expect("document path should parse"),
+    )
+    .expect("firebase locator should derive");
+    let stored = service
+        .get_document(&tenant_id, &locator.table, locator.id)
+        .expect("typed array document should persist");
+    assert!(
+        stored
+            .typed_value("tags")
+            .is_some_and(nimbus_core::StoredValue::contains_typed_metadata),
+        "array field holding typed elements should retain typed metadata"
+    );
+
+    let remove = server
+        .client()
+        .post(server.http_url(commit_path))
+        .header(header::AUTHORIZATION, &bearer)
+        .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
+        .body(
+            json!({
+                "database": "projects/demo/databases/(default)",
+                "writes": [{
+                    "transform": {
+                        "document": document_name,
+                        "fieldTransforms": [{
+                            "fieldPath": "tags",
+                            "removeAllFromArray": {
+                                "values": [created_at, location]
+                            }
+                        }]
+                    }
+                }]
+            })
+            .to_string(),
+        )
+        .send()
+        .await
+        .expect("typed arrayRemove commit should send");
+    assert_eq!(
+        remove.status(),
+        StatusCode::OK,
+        "arrayRemove carrying Firestore typed values should be accepted: {}",
+        remove.text().await.unwrap_or_default()
+    );
+
+    let read_after = server
+        .client()
+        .post(server.http_url("/v1/projects/demo/databases/(default)/documents:batchGet"))
+        .header(header::AUTHORIZATION, &bearer)
+        .header(header::CONTENT_TYPE, "text/plain;charset=UTF-8")
+        .body(json!({ "documents": [document_name] }).to_string())
+        .send()
+        .await
+        .expect("typed array batch get should send");
+    let body_after = response_json_lines(read_after)
+        .await
+        .into_iter()
+        .next()
+        .expect("typed array document should be returned");
+    assert_eq!(
+        body_after["found"]["fields"]["tags"],
+        json!({
+            "arrayValue": {
+                "values": [
+                    { "stringValue": "seed" },
+                    payload,
+                    owner,
+                ]
+            }
+        }),
+        "arrayRemove must match typed elements by value and leave the rest intact"
+    );
+}

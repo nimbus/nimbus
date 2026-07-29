@@ -135,16 +135,16 @@ pub enum FieldTransformOperation {
         operand: NumericValue,
     },
     AppendElements {
-        values: Vec<Value>,
+        values: Vec<StoredValue>,
     },
     PopArray {
         side: ArrayPopSide,
     },
     AppendMissingElements {
-        values: Vec<Value>,
+        values: Vec<StoredValue>,
     },
     RemoveAllFromArray {
-        values: Vec<Value>,
+        values: Vec<StoredValue>,
     },
     Bitwise {
         operation: BitwiseOperation,

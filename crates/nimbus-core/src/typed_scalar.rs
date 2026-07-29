@@ -170,6 +170,34 @@ impl StoredValue {
         }
     }
 
+    /// Collapse every metadata-free subtree back to plain JSON.
+    ///
+    /// Producers disagree on how they spell a value that needs no typed
+    /// metadata: `from_json_tree` builds `Map`/`List` nodes all the way down,
+    /// while adapters that lower wire values collapse those nodes to `Json`.
+    /// Both spellings mean the same value, so anything comparing two stored
+    /// values for equality must canonicalize first or it will report a false
+    /// difference.
+    pub fn canonical(&self) -> Self {
+        if !self.contains_typed_metadata() {
+            return Self::Json {
+                value: self.projected_json(),
+            };
+        }
+        match self {
+            Self::Map { entries } => Self::Map {
+                entries: entries
+                    .iter()
+                    .map(|(key, value)| (key.clone(), value.canonical()))
+                    .collect(),
+            },
+            Self::List { items } => Self::List {
+                items: items.iter().map(Self::canonical).collect(),
+            },
+            value => value.clone(),
+        }
+    }
+
     /// Build a navigable plain value tree. Adapters use this as the base when
     /// updating one nested path while retaining typed metadata on siblings.
     pub fn from_json_tree(value: Value) -> Self {
@@ -383,6 +411,68 @@ mod tests {
             )]),
         };
         assert!(typed.contains_typed_metadata());
+    }
+
+    #[test]
+    fn canonical_collapses_metadata_free_subtrees_so_equal_values_compare_equal() {
+        // The same metadata-free value spelled two ways: navigable tree nodes
+        // versus collapsed plain JSON.
+        let tree = StoredValue::from_json_tree(json!({ "a": [1, "x"], "b": 2 }));
+        let collapsed = StoredValue::Json {
+            value: json!({ "a": [1, "x"], "b": 2 }),
+        };
+        assert_ne!(tree, collapsed, "the two spellings differ structurally");
+        assert_eq!(
+            tree.canonical(),
+            collapsed.canonical(),
+            "canonical form must make the two spellings compare equal"
+        );
+        assert_eq!(tree.canonical(), collapsed);
+
+        // Subtrees that carry typed metadata keep their structure; only the
+        // metadata-free siblings collapse.
+        let mixed = StoredValue::Map {
+            entries: BTreeMap::from([
+                (
+                    "plain".to_owned(),
+                    StoredValue::from_json_tree(json!({ "n": [1] })),
+                ),
+                (
+                    "typed".to_owned(),
+                    StoredValue::List {
+                        items: vec![StoredValue::TypedScalar {
+                            value: TypedScalarValue::Bytes { data: vec![7] },
+                        }],
+                    },
+                ),
+            ]),
+        };
+        assert_eq!(
+            mixed.canonical(),
+            StoredValue::Map {
+                entries: BTreeMap::from([
+                    (
+                        "plain".to_owned(),
+                        StoredValue::Json {
+                            value: json!({ "n": [1] })
+                        },
+                    ),
+                    (
+                        "typed".to_owned(),
+                        StoredValue::List {
+                            items: vec![StoredValue::TypedScalar {
+                                value: TypedScalarValue::Bytes { data: vec![7] },
+                            }],
+                        },
+                    ),
+                ]),
+            }
+        );
+
+        // Canonicalization never changes what the value projects to.
+        for value in [tree, collapsed, mixed] {
+            assert_eq!(value.canonical().projected_json(), value.projected_json());
+        }
     }
 
     #[test]

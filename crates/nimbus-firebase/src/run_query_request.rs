@@ -86,9 +86,9 @@ pub fn decode_structured_query_values(
 
 fn decode_query_value(value: &Value) -> Result<Value, FirestoreRequestError> {
     if let Some(value) = value.as_object() {
-        if let Some(reference) = value.get("referenceValue").and_then(Value::as_str) {
-            return Ok(Value::String(reference.to_string()));
-        }
+        // Containers recurse here rather than through the stored-value lowering
+        // because `in`/`not-in` legitimately carry an array of array candidates,
+        // which the document write path rejects.
         if let Some(array) = value.get("arrayValue") {
             let values = array
                 .get("values")
@@ -120,7 +120,11 @@ fn decode_query_value(value: &Value) -> Result<Value, FirestoreRequestError> {
             ));
         }
     }
-    serializer::decode_proto_json_value(value)
+    // Filters and cursors compare against the plain JSON projection the write
+    // path stores beside a field's typed metadata, so a typed scalar operand
+    // lowers to that same projection instead of being rejected outright.
+    serializer::decode_proto_json_stored_value(value)
+        .map(|value| value.projected_json())
         .map_err(|error| invalid_request(format!("invalid query value: {error}")))
 }
 
@@ -230,6 +234,91 @@ mod tests {
                 .expect("cursor should exist")
                 .values,
             vec![json!(2)]
+        );
+    }
+
+    #[test]
+    fn decodes_typed_scalar_filter_and_cursor_values_to_their_stored_projection() {
+        // Filters compare against the plain JSON projection stored beside a
+        // field's typed metadata, so a typed operand lowers to that projection.
+        // Timestamps normalize exactly as the write path normalizes them, which
+        // is what makes an equality filter on a timestamp field match.
+        let request = json!({
+            "structuredQuery": {
+                "from": [{ "collectionId": "events" }],
+                "where": {
+                    "compositeFilter": {
+                        "op": "AND",
+                        "filters": [
+                            {
+                                "fieldFilter": {
+                                    "field": { "fieldPath": "createdAt" },
+                                    "op": "EQUAL",
+                                    "value": {
+                                        "timestampValue": "2024-01-02T03:04:05.123456789Z"
+                                    }
+                                }
+                            },
+                            {
+                                "fieldFilter": {
+                                    "field": { "fieldPath": "payload" },
+                                    "op": "EQUAL",
+                                    "value": { "bytesValue": "AQIDBA==" }
+                                }
+                            },
+                            {
+                                "fieldFilter": {
+                                    "field": { "fieldPath": "location" },
+                                    "op": "EQUAL",
+                                    "value": {
+                                        "geoPointValue": {
+                                            "latitude": 37.7749,
+                                            "longitude": -122.4194
+                                        }
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                },
+                "startAt": {
+                    "values": [{ "timestampValue": "2024-01-02T03:04:05Z" }],
+                    "before": true
+                }
+            }
+        });
+
+        let parsed = parse_run_query_request(&request).expect("typed query should parse");
+        let nimbus_core::QueryFilter::CompositeFilter(composite) = parsed
+            .structured_query
+            .where_filter
+            .expect("filter should exist")
+        else {
+            panic!("composite filter should parse")
+        };
+        let values = composite
+            .filters
+            .iter()
+            .map(|filter| match filter {
+                nimbus_core::QueryFilter::FieldFilter(filter) => filter.value.clone(),
+                other => panic!("unexpected nested filter: {other:?}"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            values,
+            vec![
+                json!("2024-01-02T03:04:05.123456789Z"),
+                json!("AQIDBA=="),
+                json!({ "latitude": 37.7749, "longitude": -122.4194 }),
+            ]
+        );
+        assert_eq!(
+            parsed
+                .structured_query
+                .start_at
+                .expect("cursor should exist")
+                .values,
+            vec![json!("2024-01-02T03:04:05Z")]
         );
     }
 

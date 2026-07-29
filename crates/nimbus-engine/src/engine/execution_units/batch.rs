@@ -1092,45 +1092,31 @@ fn apply_field_transform(
             Ok(next.into_stored_value())
         }
         FieldTransformOperation::AppendMissingElements { values } => {
-            let mut next_values = match document.get_field(field_name) {
-                Some(serde_json::Value::Array(values)) => values.clone(),
-                _ => Vec::new(),
-            };
+            let mut next_values = current_array_elements(document, field_name);
             for value in values {
+                let value = value.canonical();
                 if !next_values
                     .iter()
-                    .any(|existing| firestore_transform_values_equivalent(existing, value))
+                    .any(|existing| firestore_transform_values_equivalent(existing, &value))
                 {
-                    next_values.push(value.clone());
+                    next_values.push(value);
                 }
             }
-            document.set_field(
-                field_name.to_string(),
-                serde_json::Value::Array(next_values),
-            );
+            write_array_elements(document, field_name, next_values);
             Ok(StoredValue::Json {
                 value: serde_json::Value::Null,
             })
         }
         FieldTransformOperation::AppendElements { values } => {
-            let mut next_values = match document.get_field(field_name) {
-                Some(serde_json::Value::Array(values)) => values.clone(),
-                _ => Vec::new(),
-            };
-            next_values.extend(values.iter().cloned());
-            document.set_field(
-                field_name.to_string(),
-                serde_json::Value::Array(next_values),
-            );
+            let mut next_values = current_array_elements(document, field_name);
+            next_values.extend(values.iter().map(StoredValue::canonical));
+            write_array_elements(document, field_name, next_values);
             Ok(StoredValue::Json {
                 value: serde_json::Value::Null,
             })
         }
         FieldTransformOperation::PopArray { side } => {
-            let mut next_values = match document.get_field(field_name) {
-                Some(serde_json::Value::Array(values)) => values.clone(),
-                _ => Vec::new(),
-            };
+            let mut next_values = current_array_elements(document, field_name);
             if !next_values.is_empty() {
                 match side {
                     ArrayPopSide::First => {
@@ -1141,31 +1127,25 @@ fn apply_field_transform(
                     }
                 }
             }
-            document.set_field(
-                field_name.to_string(),
-                serde_json::Value::Array(next_values),
-            );
+            write_array_elements(document, field_name, next_values);
             Ok(StoredValue::Json {
                 value: serde_json::Value::Null,
             })
         }
         FieldTransformOperation::RemoveAllFromArray { values } => {
-            let next_values = match document.get_field(field_name) {
-                Some(serde_json::Value::Array(existing)) => existing
-                    .iter()
-                    .filter(|existing| {
-                        !values
-                            .iter()
-                            .any(|value| firestore_transform_values_equivalent(existing, value))
-                    })
-                    .cloned()
-                    .collect(),
-                _ => Vec::new(),
-            };
-            document.set_field(
-                field_name.to_string(),
-                serde_json::Value::Array(next_values),
-            );
+            let removals = values
+                .iter()
+                .map(StoredValue::canonical)
+                .collect::<Vec<_>>();
+            let next_values = current_array_elements(document, field_name)
+                .into_iter()
+                .filter(|existing| {
+                    !removals
+                        .iter()
+                        .any(|value| firestore_transform_values_equivalent(existing, value))
+                })
+                .collect();
+            write_array_elements(document, field_name, next_values);
             Ok(StoredValue::Json {
                 value: serde_json::Value::Null,
             })
@@ -1291,16 +1271,54 @@ fn transform_extreme(
     Ok(if use_operand { operand } else { current })
 }
 
-fn firestore_transform_values_equivalent(
-    left: &serde_json::Value,
-    right: &serde_json::Value,
-) -> bool {
-    match (
-        FiniteNumericTransformValue::from_document(left),
-        FiniteNumericTransformValue::from_document(right),
-    ) {
-        (Some(left), Some(right)) => numeric_transform_values_equivalent(left, right),
-        _ => left == right,
+/// Read one array field as canonical stored elements, preferring the typed tree
+/// so array members that carry adapter scalars (Firestore timestamps, bytes,
+/// references, geo points) survive a transform instead of decaying to their
+/// plain JSON projection.
+fn current_array_elements(document: &Document, field_name: &str) -> Vec<StoredValue> {
+    match document.typed_value(field_name) {
+        Some(StoredValue::List { items }) => {
+            return items.iter().map(StoredValue::canonical).collect();
+        }
+        // A field whose typed value is not a list has no array to transform;
+        // Firestore array transforms overwrite such a field with a fresh array.
+        Some(_) => return Vec::new(),
+        None => {}
+    }
+    match document.get_field(field_name) {
+        Some(serde_json::Value::Array(values)) => values
+            .iter()
+            .map(|value| StoredValue::Json {
+                value: value.clone(),
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Write one array field back, keeping typed metadata only when some element
+/// still needs it so metadata-free arrays stay plain JSON in storage.
+fn write_array_elements(document: &mut Document, field_name: &str, values: Vec<StoredValue>) {
+    let stored = StoredValue::List { items: values };
+    if stored.contains_typed_metadata() {
+        document.set_typed_field(field_name.to_string(), stored);
+    } else {
+        document.set_field(field_name.to_string(), stored.projected_json());
+    }
+}
+
+fn firestore_transform_values_equivalent(left: &StoredValue, right: &StoredValue) -> bool {
+    match (left, right) {
+        (StoredValue::Json { value: left }, StoredValue::Json { value: right }) => {
+            match (
+                FiniteNumericTransformValue::from_document(left),
+                FiniteNumericTransformValue::from_document(right),
+            ) {
+                (Some(left), Some(right)) => numeric_transform_values_equivalent(left, right),
+                _ => left == right,
+            }
+        }
+        (left, right) => left == right,
     }
 }
 
