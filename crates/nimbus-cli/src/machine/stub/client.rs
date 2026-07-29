@@ -2,27 +2,36 @@ use std::path::{Path, PathBuf};
 
 use nimbus::{Error, SandboxHandle, SandboxId, SandboxSpec, TenantId};
 
+use nimbus_machine::MachineForwarderAuthority;
 use nimbus_machine::api::{
     MachineApiCapabilityResponse, MachineApiHealthResponse, MachineApiServiceProcessSnapshot,
     MachineApiServiceSandboxLogChunkResponse, MachineApiServiceSandboxLookupResponse,
+    MachineApiServiceSandboxStartResponse, MachineApiServiceSandboxStopResponse,
     MachineApiServiceSandboxSummary,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MachineApiClient {
     socket_path: PathBuf,
+    forwarder_authority: Option<MachineForwarderAuthority>,
 }
 
 impl MachineApiClient {
     pub(crate) fn new(socket_path: impl Into<PathBuf>) -> Self {
         Self {
             socket_path: socket_path.into(),
+            forwarder_authority: None,
         }
     }
 
     #[cfg(test)]
     pub(crate) fn new_for_test(socket_path: impl Into<PathBuf>) -> Self {
         Self::new(socket_path)
+    }
+
+    pub(crate) fn with_forwarder_authority(mut self, authority: MachineForwarderAuthority) -> Self {
+        self.forwarder_authority = Some(authority);
+        self
     }
 
     pub(crate) fn socket_path(&self) -> &Path {
@@ -43,16 +52,18 @@ impl MachineApiClient {
     #[allow(dead_code)]
     pub(crate) fn start_service_sandbox_from_image(
         &self,
+        _sandbox_id: SandboxId,
         _spec: SandboxSpec,
-    ) -> Result<SandboxHandle, Error> {
+    ) -> Result<MachineApiServiceSandboxStartResponse, Error> {
         Err(unsupported_machine_api_client_error(&self.socket_path))
     }
 
     #[allow(dead_code)]
     pub(crate) fn start_service_sandbox_from_build(
         &self,
+        _sandbox_id: SandboxId,
         _spec: SandboxSpec,
-    ) -> Result<SandboxHandle, Error> {
+    ) -> Result<MachineApiServiceSandboxStartResponse, Error> {
         Err(unsupported_machine_api_client_error(&self.socket_path))
     }
 
@@ -65,7 +76,12 @@ impl MachineApiClient {
     }
 
     #[allow(dead_code)]
-    pub(crate) fn stop_service_sandbox(&self, _sandbox_id: &SandboxId) -> Result<(), Error> {
+    pub(crate) fn stop_service_sandbox(
+        &self,
+        _tenant_id: &TenantId,
+        _sandbox_id: &SandboxId,
+        _expected_bindings: &[nimbus::SandboxPortBinding],
+    ) -> Result<MachineApiServiceSandboxStopResponse, Error> {
         Err(unsupported_machine_api_client_error(&self.socket_path))
     }
 

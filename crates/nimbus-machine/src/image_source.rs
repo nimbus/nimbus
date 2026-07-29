@@ -1,8 +1,10 @@
 //! Machine configuration record and its image-source / resource / volume parts.
 
-use std::path::PathBuf;
+use std::fmt::{self, Display, Formatter};
+use std::path::{Component, Path, PathBuf};
 
 use nimbus_core::Error;
+use nimbus_network::NetworkProviderHandle;
 use serde::{Deserialize, Serialize};
 
 use crate::provider::MachineProvider;
@@ -24,6 +26,111 @@ use crate::roots::MachineRootLayout;
 // first post-launch schema change bumps to 2.
 pub const CURRENT_MACHINE_CONFIG_VERSION: u32 = 1;
 
+/// Persisted provenance for the parent OS-node network authority that owns one
+/// machine's gvproxy effects.
+///
+/// This record carries only serialized intent and identity. Resolving aliases,
+/// authenticating the live authority, and performing provider effects remain
+/// responsibilities of the parent composition layer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    try_from = "MachineNetworkAuthorityRecordWire",
+    into = "MachineNetworkAuthorityRecordWire"
+)]
+pub struct MachineNetworkAuthorityRecord {
+    authority_path: PathBuf,
+    provider_instance: NetworkProviderHandle,
+}
+
+impl MachineNetworkAuthorityRecord {
+    /// Record an already-canonicalized absolute authority path and a
+    /// parent-issued opaque gvproxy provider instance.
+    ///
+    /// This validation is lexical and performs no filesystem I/O.
+    pub fn new(
+        authority_path: impl Into<PathBuf>,
+        provider_instance: NetworkProviderHandle,
+    ) -> Result<Self, MachineNetworkAuthorityRecordError> {
+        let authority_path = authority_path.into();
+        if authority_path.as_os_str().is_empty() {
+            return Err(MachineNetworkAuthorityRecordError::EmptyAuthorityPath);
+        }
+        if !authority_path.is_absolute() {
+            return Err(MachineNetworkAuthorityRecordError::RelativeAuthorityPath);
+        }
+        if authority_path
+            .components()
+            .any(|component| matches!(component, Component::CurDir | Component::ParentDir))
+        {
+            return Err(MachineNetworkAuthorityRecordError::NonCanonicalAuthorityPath);
+        }
+        Ok(Self {
+            authority_path,
+            provider_instance,
+        })
+    }
+
+    /// Canonical parent authority provenance. This is not an artifact root.
+    pub fn authority_path(&self) -> &Path {
+        &self.authority_path
+    }
+
+    /// Parent-issued gvproxy provider identity for this machine configuration.
+    pub fn provider_instance(&self) -> &NetworkProviderHandle {
+        &self.provider_instance
+    }
+}
+
+/// Stable validation failures for serialized machine network provenance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MachineNetworkAuthorityRecordError {
+    EmptyAuthorityPath,
+    RelativeAuthorityPath,
+    NonCanonicalAuthorityPath,
+}
+
+impl Display for MachineNetworkAuthorityRecordError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyAuthorityPath => {
+                formatter.write_str("machine network authority path must not be empty")
+            }
+            Self::RelativeAuthorityPath => {
+                formatter.write_str("machine network authority path must be absolute")
+            }
+            Self::NonCanonicalAuthorityPath => formatter.write_str(
+                "machine network authority path must not contain '.' or '..' components",
+            ),
+        }
+    }
+}
+
+impl std::error::Error for MachineNetworkAuthorityRecordError {}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MachineNetworkAuthorityRecordWire {
+    authority_path: PathBuf,
+    provider_instance: NetworkProviderHandle,
+}
+
+impl TryFrom<MachineNetworkAuthorityRecordWire> for MachineNetworkAuthorityRecord {
+    type Error = MachineNetworkAuthorityRecordError;
+
+    fn try_from(value: MachineNetworkAuthorityRecordWire) -> Result<Self, Self::Error> {
+        Self::new(value.authority_path, value.provider_instance)
+    }
+}
+
+impl From<MachineNetworkAuthorityRecord> for MachineNetworkAuthorityRecordWire {
+    fn from(value: MachineNetworkAuthorityRecord) -> Self {
+        Self {
+            authority_path: value.authority_path,
+            provider_instance: value.provider_instance,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MachineConfigRecord {
     pub version: u32,
@@ -33,6 +140,7 @@ pub struct MachineConfigRecord {
     pub resources: MachineResources,
     pub volumes: Vec<MachineVolume>,
     pub roots: MachineRootLayout,
+    pub network_authority: MachineNetworkAuthorityRecord,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -182,7 +290,99 @@ impl MachineVolume {
 mod tests {
     use std::path::PathBuf;
 
-    use super::{MachineImageSource, MachineVolume};
+    use nimbus_network::{NetworkProviderHandle, NetworkProviderId};
+
+    use super::{MachineImageSource, MachineNetworkAuthorityRecord, MachineVolume};
+
+    fn provider_instance(value: &str) -> NetworkProviderHandle {
+        NetworkProviderHandle::new(
+            NetworkProviderId::for_registration_key("machine-gvproxy"),
+            value,
+        )
+        .expect("provider fixture should validate")
+    }
+
+    fn absolute_authority_path() -> PathBuf {
+        #[cfg(windows)]
+        {
+            PathBuf::from(r"C:\ProgramData\Nimbus\control")
+        }
+        #[cfg(not(windows))]
+        {
+            PathBuf::from("/var/lib/nimbus/control")
+        }
+    }
+
+    fn noncanonical_absolute_authority_path() -> PathBuf {
+        #[cfg(windows)]
+        {
+            PathBuf::from(r"C:\ProgramData\Nimbus\..\control")
+        }
+        #[cfg(not(windows))]
+        {
+            PathBuf::from("/var/lib/nimbus/../control")
+        }
+    }
+
+    #[test]
+    fn machine_network_authority_is_absolute_strict_and_round_trips() {
+        let authority = MachineNetworkAuthorityRecord::new(
+            absolute_authority_path(),
+            provider_instance("machine-config-01"),
+        )
+        .expect("absolute authority path should validate");
+
+        assert_eq!(authority.authority_path(), absolute_authority_path());
+        assert_eq!(
+            authority.provider_instance(),
+            &provider_instance("machine-config-01")
+        );
+
+        let value = serde_json::to_value(&authority).expect("authority should serialize");
+        assert_eq!(
+            serde_json::from_value::<MachineNetworkAuthorityRecord>(value.clone())
+                .expect("authority should deserialize"),
+            authority
+        );
+
+        let mut unknown = value.clone();
+        unknown
+            .as_object_mut()
+            .expect("authority wire should be an object")
+            .insert("unexpected".to_owned(), serde_json::json!(true));
+        assert!(
+            serde_json::from_value::<MachineNetworkAuthorityRecord>(unknown).is_err(),
+            "unknown authority fields must fail closed"
+        );
+
+        let mut missing = value;
+        missing
+            .as_object_mut()
+            .expect("authority wire should be an object")
+            .remove("provider_instance");
+        assert!(
+            serde_json::from_value::<MachineNetworkAuthorityRecord>(missing).is_err(),
+            "missing authority fields must fail closed"
+        );
+    }
+
+    #[test]
+    fn machine_network_authority_rejects_noncanonical_paths_without_io() {
+        for path in [
+            PathBuf::new(),
+            PathBuf::from("relative/control"),
+            noncanonical_absolute_authority_path(),
+        ] {
+            assert!(
+                MachineNetworkAuthorityRecord::new(
+                    path.clone(),
+                    provider_instance("machine-config-01"),
+                )
+                .is_err(),
+                "authority path {path:?} must be rejected"
+            );
+        }
+    }
 
     #[test]
     fn machine_image_source_parse_classifies_supported_sources() {

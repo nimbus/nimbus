@@ -59,6 +59,7 @@ fn machine_status_renders_release_asset_guest_binary_contract() {
             disk_gib: DEFAULT_MACHINE_DISK_GIB,
         },
         volumes: Vec::new(),
+        network_authority: test_network_authority_record(temp_dir.path(), DEFAULT_MACHINE_NAME),
         roots: layout,
     };
     let desired = inspect_desired_guest_nimbus_binary(&paths);
@@ -141,6 +142,7 @@ fn machine_status_renders_explicit_override_guest_binary_contract() {
             disk_gib: DEFAULT_MACHINE_DISK_GIB,
         },
         volumes: Vec::new(),
+        network_authority: test_network_authority_record(temp_dir.path(), DEFAULT_MACHINE_NAME),
         roots: layout,
     };
 
@@ -328,6 +330,7 @@ fn machine_status_reports_forwarding_contract_when_machine_identity_exists() {
             disk_gib: DEFAULT_MACHINE_DISK_GIB,
         },
         volumes: Vec::new(),
+        network_authority: test_network_authority_record(temp_dir.path(), DEFAULT_MACHINE_NAME),
         roots: layout,
     };
 

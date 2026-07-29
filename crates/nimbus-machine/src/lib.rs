@@ -15,7 +15,8 @@ mod state;
 
 pub use image_source::{
     CURRENT_MACHINE_CONFIG_VERSION, MachineConfigRecord, MachineGuestConfig,
-    MachineGuestProvisioning, MachineImageSource, MachineResources, MachineVolume,
+    MachineGuestProvisioning, MachineImageSource, MachineNetworkAuthorityRecord,
+    MachineNetworkAuthorityRecordError, MachineResources, MachineVolume,
 };
 pub use networking::{
     MachineConnectivityCapabilities, MachineConnectivityError, MachineConnectivityRequirements,
@@ -26,8 +27,10 @@ pub use paths::{
 pub use provider::{
     MachineBootstrapMode, MachineImageFormat, MachineProvider, MachineProviderCapabilities,
 };
-pub use roots::{DEFAULT_NETWORK_STATE_ROOT, MachineRootLayout, NETWORK_STATE_ROOT_ENV};
+pub use roots::MachineRootLayout;
 pub use state::{
-    CURRENT_MACHINE_STATE_VERSION, MachineHelperBinaryPaths, MachineLifecycle, MachineManagerState,
-    MachineRuntimeState, MachineStateRecord,
+    CURRENT_MACHINE_BOOT_AUTHORITY_VERSION, CURRENT_MACHINE_STATE_VERSION,
+    MachineBootAuthorityEvidence, MachineBootAuthorityEvidenceError, MachineForwarderAuthority,
+    MachineForwarderAuthorityMismatch, MachineHelperBinaryPaths, MachineLifecycle,
+    MachineManagerState, MachineRuntimeState, MachineStateRecord,
 };

@@ -9,7 +9,7 @@ use nimbus_sandbox::backends::krun::KrunSandboxStateView;
 
 use crate::cli_ux;
 use crate::compose::discovery::ResolvedComposeSelection;
-use crate::machine::MachineApiClient;
+use crate::machine::{HostMachineNetworkAuthority, MachineApiClient};
 
 use super::{
     ComposeLogsCommand, LocalKrunExecutionSurface, ServiceHostPlatform,
@@ -26,6 +26,7 @@ pub(super) fn run_compose_logs_for_selection(
     host_platform: ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
     local_krun: Option<LocalKrunExecutionSurface>,
+    network: Option<&HostMachineNetworkAuthority>,
 ) -> Result<(), Error> {
     let context = super::load_compose_project_context_for_selection(selection, control_data_dir)?;
     let tenant = command
@@ -39,6 +40,7 @@ pub(super) fn run_compose_logs_for_selection(
         host_platform,
         machine_api_client,
         local_krun,
+        network,
     )? {
         super::ServiceExecutionSurface::Krun { state_view, .. } => {
             let log_path = resolve_service_ctr_log_path_with_state_view(

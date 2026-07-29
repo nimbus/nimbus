@@ -9,6 +9,8 @@ mod effect_fence;
 mod egress_reload;
 mod execution_cleanup;
 mod launch;
+mod machine_port_evidence;
+pub use machine_port_evidence::MachinePortAbsenceEvidence;
 mod machine_ports;
 mod manifest;
 mod network_composition;
@@ -227,6 +229,29 @@ impl ContainerSandboxBackend {
         &self,
         spec: SandboxSpec,
     ) -> Result<PreparedContainerServiceWorkload> {
+        self.prepare_plan_only_service_workload_inner(spec, None)
+    }
+
+    /// Materialize one service-owned PlanOnly workload under a caller-selected
+    /// sandbox incarnation.
+    ///
+    /// The caller allocates the stable incarnation before crossing a process or
+    /// provider boundary. This method preserves that exact identity through the
+    /// canonical manifest, bundle, network attachment, listener leases, and
+    /// runner handoff. It never replaces a currently owned durable manifest.
+    pub fn prepare_plan_only_service_workload_with_id(
+        &self,
+        spec: SandboxSpec,
+        sandbox_id: SandboxId,
+    ) -> Result<PreparedContainerServiceWorkload> {
+        self.prepare_plan_only_service_workload_inner(spec, Some(sandbox_id))
+    }
+
+    fn prepare_plan_only_service_workload_inner(
+        &self,
+        spec: SandboxSpec,
+        sandbox_id: Option<SandboxId>,
+    ) -> Result<PreparedContainerServiceWorkload> {
         if self.config.start_mode != ContainerStartMode::PlanOnly {
             return Err(SandboxError::InvalidSpec {
                 message: "container service workload materialization requires plan-only mode"
@@ -240,7 +265,22 @@ impl ContainerSandboxBackend {
                         .to_owned(),
             });
         }
-        let mut launch_plan = self.plan_start(&spec)?;
+        let sandbox_id = sandbox_id.unwrap_or_else(|| next_sandbox_id(spec.display_name()));
+        if sandbox_id.as_str().is_empty() {
+            return Err(SandboxError::InvalidSpec {
+                message: "container service workload identity cannot be empty".to_owned(),
+            });
+        }
+        if self.read_manifest(&sandbox_id)?.is_some() {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "container service workload {} already has a durable manifest; refusing to \
+                     replace its current owner",
+                    sandbox_id
+                ),
+            });
+        }
+        let mut launch_plan = self.plan_start_for_id(&spec, &sandbox_id)?;
         launch_plan.manifest.assign_prepared_service_runner()?;
         if let Err(error) = self.attach_runner_owned_egress_proxy(&mut launch_plan) {
             return Err(self.compensate_prepared_runner_failure(&mut launch_plan.manifest, error));
@@ -743,15 +783,23 @@ impl ContainerSandboxBackend {
     }
 
     pub(crate) fn plan_start(&self, spec: &SandboxSpec) -> Result<ContainerStartPlan> {
-        self.ensure_startup_reconciliation_ready()?;
         let sandbox_id = next_sandbox_id(spec.display_name());
+        self.plan_start_for_id(spec, &sandbox_id)
+    }
+
+    fn plan_start_for_id(
+        &self,
+        spec: &SandboxSpec,
+        sandbox_id: &SandboxId,
+    ) -> Result<ContainerStartPlan> {
+        self.ensure_startup_reconciliation_ready()?;
         match &spec.root {
-            SandboxRootSpec::Rootfs(_) => self.plan_start_with_id(spec, &sandbox_id, None, None),
+            SandboxRootSpec::Rootfs(_) => self.plan_start_with_id(spec, sandbox_id, None, None),
             SandboxRootSpec::OciImage(image) => {
                 self.resource_quota_manager().ensure_launch_quota(spec)?;
                 let prepared_launch =
-                    self.prepare_oci_image_start(spec, &sandbox_id, &image.source)?;
-                self.plan_start_with_materialized_image(spec, &sandbox_id, prepared_launch)
+                    self.prepare_oci_image_start(spec, sandbox_id, &image.source)?;
+                self.plan_start_with_materialized_image(spec, sandbox_id, prepared_launch)
             }
         }
     }
@@ -1327,7 +1375,15 @@ impl ContainerSandboxBackend {
                 &assigned_ips,
                 manifest,
                 listener_release_authority,
-                || expose_machine_ports(forwarder, &manifest.spec.port_bindings),
+                || {
+                    let receipts = expose_machine_ports(
+                        forwarder,
+                        &manifest.spec.tenant_id,
+                        &manifest.handle.id,
+                        &manifest.spec.port_bindings,
+                    )?;
+                    self.persist_exposed_machine_port_receipts(manifest, receipts)
+                },
             )
         {
             return Err(self.failed_network_configuration(

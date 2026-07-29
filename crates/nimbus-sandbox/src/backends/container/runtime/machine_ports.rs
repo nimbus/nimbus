@@ -368,6 +368,7 @@ impl ContainerSandboxBackend {
                     withdraw_complete: disposition == MachinePortProxyCleanupDisposition::Restart,
                     provider_stopped: false,
                     publication_withdrawn: vec![true; manifest.spec.port_bindings.len()],
+                    publication_absence_receipts: vec![None; manifest.spec.port_bindings.len()],
                     durable_transition_complete: false,
                 }));
                 proxies.insert(
@@ -650,6 +651,7 @@ impl ContainerSandboxBackend {
                     withdraw_complete: true,
                     provider_stopped: true,
                     publication_withdrawn: vec![false; expected_port_bindings.len()],
+                    publication_absence_receipts: vec![None; expected_port_bindings.len()],
                     durable_transition_complete: false,
                 }))
             } else {
@@ -679,6 +681,7 @@ impl ContainerSandboxBackend {
                 };
                 let publication_withdrawn =
                     vec![!registration.publication_may_exist; registration.port_bindings.len()];
+                let publication_absence_receipts = vec![None; registration.port_bindings.len()];
                 Arc::new(Mutex::new(MachinePortProxyCleanupState {
                     disposition,
                     port_lease_coordinator,
@@ -687,6 +690,7 @@ impl ContainerSandboxBackend {
                     withdraw_complete: disposition == MachinePortProxyCleanupDisposition::Restart,
                     provider_stopped: false,
                     publication_withdrawn,
+                    publication_absence_receipts,
                     durable_transition_complete: false,
                 }))
             };
@@ -790,14 +794,51 @@ impl ContainerSandboxBackend {
         forwarder: &OciMachinePortForwarderConfig,
     ) -> Result<()> {
         let mut state = self.lock_machine_port_proxy_cleanup(cleanup)?;
+        if state.publication_withdrawn.len() != state.registration.port_bindings.len()
+            || state.publication_absence_receipts.len() != state.registration.port_bindings.len()
+        {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "machine port publication withdrawal state for tenant {} sandbox {} does \
+                     not cover the exact registered binding batch",
+                    cleanup.key.0, cleanup.key.1
+                ),
+            });
+        }
+        if state
+            .publication_withdrawn
+            .iter()
+            .any(|withdrawn| !withdrawn)
+        {
+            self.authenticate_machine_port_forwarder(
+                &cleanup.key.0,
+                &cleanup.key.1,
+                &state.registration.port_bindings,
+                forwarder,
+            )?;
+        }
         let mut errors = Vec::new();
         for index in 0..state.registration.port_bindings.len() {
             if state.publication_withdrawn[index] {
                 continue;
             }
             let binding = state.registration.port_bindings[index].clone();
-            match unexpose_machine_ports(forwarder, std::slice::from_ref(&binding)) {
-                Ok(()) => state.publication_withdrawn[index] = true,
+            match unexpose_machine_ports(
+                forwarder,
+                &cleanup.key.0,
+                &cleanup.key.1,
+                std::slice::from_ref(&binding),
+            ) {
+                Ok(mut receipts) if receipts.len() == 1 => {
+                    state.publication_absence_receipts[index] = receipts.pop();
+                    state.publication_withdrawn[index] = true;
+                }
+                Ok(receipts) => errors.push(format!(
+                    "{}:{} withdrawal returned {} authenticated receipts instead of exactly one",
+                    binding.host_address,
+                    binding.host_port,
+                    receipts.len()
+                )),
                 Err(error) => errors.push(format!(
                     "{}:{} withdrawal was unconfirmed: {error}",
                     binding.host_address, binding.host_port
@@ -815,6 +856,20 @@ impl ContainerSandboxBackend {
                 ),
             });
         }
+        if let Some(receipts) = state
+            .publication_absence_receipts
+            .iter()
+            .cloned()
+            .collect::<Option<Vec<_>>>()
+        {
+            self.persist_absent_machine_port_receipts(
+                &cleanup.key.0,
+                &cleanup.key.1,
+                &state.registration.port_bindings,
+                forwarder,
+                receipts,
+            )?;
+        }
         Ok(())
     }
 
@@ -825,6 +880,7 @@ impl ContainerSandboxBackend {
     ) -> Result<()> {
         let mut state = self.lock_machine_port_proxy_cleanup(cleanup)?;
         state.publication_withdrawn.fill(true);
+        state.publication_absence_receipts.fill(None);
         Ok(())
     }
 
@@ -1068,6 +1124,7 @@ impl ContainerSandboxBackend {
             withdraw_complete: disposition == MachinePortProxyCleanupDisposition::Restart,
             provider_stopped: false,
             publication_withdrawn: vec![true; manifest.spec.port_bindings.len()],
+            publication_absence_receipts: vec![None; manifest.spec.port_bindings.len()],
             durable_transition_complete: false,
         }));
         registrations.insert(

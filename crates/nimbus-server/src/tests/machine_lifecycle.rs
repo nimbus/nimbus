@@ -368,6 +368,11 @@ fn snapshot_for_resources(
     memory_mib: u32,
     disk_gib: u32,
 ) -> MachineLifecycleSnapshot {
+    let provider_instance = nimbus_network::NetworkProviderHandle::new(
+        nimbus_network::NetworkProviderId::for_registration_key("server-test-machine-gvproxy"),
+        format!("server-machine-fixture:{name}"),
+    )
+    .expect("fixture provider handle should validate");
     let config = nimbus_machine::MachineConfigRecord {
         version: nimbus_machine::CURRENT_MACHINE_CONFIG_VERSION,
         name: name.to_owned(),
@@ -389,6 +394,11 @@ fn snapshot_for_resources(
         },
         volumes: Vec::new(),
         roots: roots.clone(),
+        network_authority: nimbus_machine::MachineNetworkAuthorityRecord::new(
+            roots.state_root.join("network-authority"),
+            provider_instance.clone(),
+        )
+        .expect("fixture network authority should validate"),
     };
     let paths = roots.paths(name);
     let state = nimbus_machine::MachineStateRecord {
@@ -410,6 +420,10 @@ fn snapshot_for_resources(
             ssh_listener_id: nimbus_network::ListenerId::for_workload_listener(
                 &format!("server-machine-fixture:{name}"),
                 "ssh-forward",
+            ),
+            forwarder_authority: nimbus_machine::MachineForwarderAuthority::new(
+                provider_instance,
+                nimbus_network::NetworkResourceGeneration::new(1),
             ),
             ssh_port: 10022,
             rest_uri: format!("unix://{}", paths.api_socket_path.display()),

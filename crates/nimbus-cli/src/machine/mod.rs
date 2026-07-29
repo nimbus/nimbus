@@ -37,10 +37,13 @@ mod manager;
 #[cfg(not(unix))]
 #[path = "stub/manager.rs"]
 mod manager;
+mod network_composition;
 #[cfg(all(test, unix))]
 #[allow(dead_code)]
 #[path = "stub/manager.rs"]
 mod non_unix_manager_contract;
+#[cfg(unix)]
+mod publication_authority;
 mod record;
 mod render;
 mod server_control;
@@ -48,6 +51,7 @@ mod server_control;
 #[cfg(test)]
 pub(crate) use self::api::{
     MachineApiListenMode, MachineApiState, bind_direct_listener, default_guest_helper_binary_dirs,
+    machine_api_node_workload_facade_from_container_backend,
     machine_api_node_workload_facade_from_sandbox_backend, serve_machine_api,
 };
 pub(crate) use self::backend::ForwardedMachineApiSandboxBackend;
@@ -57,6 +61,9 @@ pub(crate) use self::handlers::{
     ensure_default_machine_api_client_started, require_default_machine_api_client,
     run_machine_command,
 };
+pub(crate) use self::network_composition::HostMachineNetworkAuthority;
+#[cfg(test)]
+pub(crate) use self::network_composition::HostMachineNetworkComposition;
 pub(crate) use self::server_control::host_machine_lifecycle_manager;
 pub(crate) use nimbus_machine::api::MachineApiServiceSandboxDetails;
 

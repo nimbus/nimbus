@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
 use nimbus::Error;
+use nimbus_machine::MachineForwarderAuthority;
+use nimbus_network::{LocalPortLeaseAuthority, NetworkResourceGeneration};
 
 use super::super::bootstrap::resolve_ignition_file;
 use super::super::guest_config::render_machine_config_bundle;
@@ -116,6 +118,7 @@ impl MachineCommandLine {
 
 impl MachineLaunchPlan {
     pub(super) fn build(
+        port_authority: &LocalPortLeaseAuthority,
         paths: &MachinePaths,
         config: &MachineConfigRecord,
         state: &MachineStateRecord,
@@ -128,6 +131,7 @@ impl MachineLaunchPlan {
                 config.provider
             )));
         }
+        let forwarder_authority = next_machine_forwarder_authority(config, state)?;
         let helper_binaries = MachineHelperBinaryPaths {
             vmm: backend.resolve_vmm_binary()?,
             gvproxy: resolve_gvproxy_binary()?,
@@ -136,9 +140,12 @@ impl MachineLaunchPlan {
             resolve_bootable_image_path(paths, &config.guest.image_source, config.provider)?;
         let bootstrap_mode = machine_bootstrap_mode(config);
         let ignition_file_path = match bootstrap_mode {
-            MachineBootstrapMode::Ignition => {
-                Some(resolve_ignition_file(paths, config, READY_VSOCK_PORT)?)
-            }
+            MachineBootstrapMode::Ignition => Some(resolve_ignition_file(
+                paths,
+                config,
+                READY_VSOCK_PORT,
+                &forwarder_authority,
+            )?),
             MachineBootstrapMode::BootcMachineConfig | MachineBootstrapMode::ShellScript => None,
         };
         let machine_config_bundle_dir = match bootstrap_mode {
@@ -146,6 +153,7 @@ impl MachineLaunchPlan {
                 paths,
                 config,
                 READY_VSOCK_PORT,
+                &forwarder_authority,
             )?),
             MachineBootstrapMode::ShellScript => None,
             MachineBootstrapMode::Ignition => None,
@@ -175,7 +183,7 @@ impl MachineLaunchPlan {
         // always reaches the explicit pre-provider compensation boundary in
         // `start_machine`.
         let ssh_port_lease =
-            PreparedMachineSshPortLease::prepare(&config.roots, &config.name, state)?;
+            PreparedMachineSshPortLease::prepare(port_authority.clone(), &config.name, state)?;
         let ssh_port = ssh_port_lease.selected_port();
         let runtime = MachineRuntimeState {
             helper_binaries: helper_binaries.clone(),
@@ -183,6 +191,7 @@ impl MachineLaunchPlan {
             efi_variable_store_path,
             machine_image_source: describe_machine_image_source(&config.guest.image_source),
             ssh_listener_id: ssh_port_lease.listener_id().clone(),
+            forwarder_authority,
             ssh_port,
             rest_uri: rest_uri.clone(),
             ready_vsock_port: READY_VSOCK_PORT,
@@ -219,6 +228,39 @@ impl MachineLaunchPlan {
     pub(super) fn ssh_port_lease(&self) -> &PreparedMachineSshPortLease {
         &self.ssh_port_lease
     }
+}
+
+fn next_machine_forwarder_authority(
+    config: &MachineConfigRecord,
+    state: &MachineStateRecord,
+) -> Result<MachineForwarderAuthority, Error> {
+    let provider_instance = config.network_authority.provider_instance();
+    let generation = match state.runtime.as_ref() {
+        None => NetworkResourceGeneration::new(1),
+        Some(runtime) => {
+            if runtime.forwarder_authority.provider_instance() != provider_instance {
+                return Err(Error::conflict(format!(
+                    "machine '{}' persisted runtime belongs to a different parent-issued \
+                     forwarder provider",
+                    config.name
+                )));
+            }
+            runtime
+                .forwarder_authority
+                .generation()
+                .checked_next()
+                .ok_or_else(|| {
+                    Error::conflict(format!(
+                        "machine '{}' exhausted its forwarder provider generation",
+                        config.name
+                    ))
+                })?
+        }
+    };
+    Ok(MachineForwarderAuthority::new(
+        provider_instance.clone(),
+        generation,
+    ))
 }
 
 fn build_gvproxy_args(

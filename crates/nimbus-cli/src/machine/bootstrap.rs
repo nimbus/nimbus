@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use nimbus::Error;
 use nimbus_assets::templates::machine as machine_templates;
+use nimbus_machine::{MachineBootAuthorityEvidence, MachineForwarderAuthority};
 use serde_json::{Value, json};
 
 use super::manager::mount_tag;
@@ -13,6 +14,8 @@ const CORE_USER: &str = "core";
 const GUEST_NIMBUS_DATA_DIR: &str = "/var/lib/nimbus";
 const GUEST_NIMBUS_CONTROL_DIR: &str = "/var/lib/nimbus/control";
 const GUEST_NIMBUS_DB_DIR: &str = "/var/lib/nimbus/data";
+pub(super) const GUEST_MACHINE_API_AUTHORITY_PATH: &str =
+    "/var/lib/nimbus/machine-api-authority.json";
 // On FCOS, /usr/local is a writable symlink to /var/usrlocal and carries an
 // executable label, unlike /var/lib where systemd will not exec guest-managed binaries.
 pub(super) const GUEST_NIMBUS_BIN: &str = "/usr/local/bin/nimbus";
@@ -22,6 +25,7 @@ pub(super) fn resolve_ignition_file(
     paths: &MachinePaths,
     config: &MachineConfigRecord,
     ready_vsock_port: u32,
+    forwarder_authority: &MachineForwarderAuthority,
 ) -> Result<PathBuf, Error> {
     match &config.guest.ignition_file_path {
         Some(path) => {
@@ -35,7 +39,7 @@ pub(super) fn resolve_ignition_file(
                 )))
             }
         }
-        None => render_generated_ignition(paths, config, ready_vsock_port),
+        None => render_generated_ignition(paths, config, ready_vsock_port, forwarder_authority),
     }
 }
 
@@ -43,8 +47,9 @@ fn render_generated_ignition(
     paths: &MachinePaths,
     config: &MachineConfigRecord,
     ready_vsock_port: u32,
+    forwarder_authority: &MachineForwarderAuthority,
 ) -> Result<PathBuf, Error> {
-    let ignition = generated_ignition_value(config, ready_vsock_port)?;
+    let ignition = generated_ignition_value(config, ready_vsock_port, forwarder_authority)?;
     write_json_file(&paths.generated_ignition_path, &ignition)?;
     Ok(paths.generated_ignition_path.clone())
 }
@@ -52,6 +57,7 @@ fn render_generated_ignition(
 fn generated_ignition_value(
     config: &MachineConfigRecord,
     ready_vsock_port: u32,
+    forwarder_authority: &MachineForwarderAuthority,
 ) -> Result<Value, Error> {
     let authorized_keys = resolve_authorized_keys(config)?;
     let mut units = Vec::new();
@@ -79,17 +85,36 @@ fn generated_ignition_value(
         true,
         ready_signal_unit(ready_vsock_port),
     ));
-    units.push(systemd_unit("nimbus.socket", true, nimbus_socket_unit()));
     units.push(systemd_unit("nimbus.service", false, nimbus_service_unit()));
+    let authority =
+        MachineBootAuthorityEvidence::new(config.name.clone(), forwarder_authority.clone())
+            .map_err(|error| {
+                Error::Internal(format!(
+                    "failed to build parent-issued machine boot authority for '{}': {error}",
+                    config.name
+                ))
+            })?;
+    let authority_json = serde_json::to_vec(&authority).map_err(|error| {
+        Error::Internal(format!(
+            "failed to serialize parent-issued machine boot authority for '{}': {error}",
+            config.name
+        ))
+    })?;
 
     let mut root = json!({
         "ignition": { "version": IGNITION_VERSION },
         "storage": {
             "directories": [
                 directory_entry(GUEST_NIMBUS_DATA_DIR, 0o755),
-                directory_entry(GUEST_NIMBUS_CONTROL_DIR, 0o755),
                 directory_entry(GUEST_NIMBUS_DB_DIR, 0o755),
-            ]
+            ],
+            "files": [
+                file_entry(
+                    GUEST_MACHINE_API_AUTHORITY_PATH,
+                    0o600,
+                    &authority_json,
+                ),
+            ],
         },
         "systemd": { "units": units },
     });
@@ -169,6 +194,25 @@ fn directory_entry(path: &str, mode: u32) -> Value {
     })
 }
 
+fn file_entry(path: &str, mode: u32, contents: &[u8]) -> Value {
+    json!({
+        "path": path,
+        "mode": mode,
+        "user": { "name": "root" },
+        "group": { "name": "root" },
+        "contents": {
+            "source": format!(
+                "data:application/json,{}",
+                percent_encode_data_url(contents)
+            ),
+        },
+    })
+}
+
+fn percent_encode_data_url(contents: &[u8]) -> String {
+    contents.iter().map(|byte| format!("%{byte:02X}")).collect()
+}
+
 fn ready_signal_unit(ready_vsock_port: u32) -> String {
     machine_templates::READY_SERVICE.replace("{ready_vsock_port}", &ready_vsock_port.to_string())
 }
@@ -178,10 +222,7 @@ fn nimbus_service_unit() -> String {
         .replace("{guest_nimbus_data_dir}", GUEST_NIMBUS_DATA_DIR)
         .replace("{guest_nimbus_bin}", GUEST_NIMBUS_BIN)
         .replace("{guest_nimbus_control_dir}", GUEST_NIMBUS_CONTROL_DIR)
-}
-
-fn nimbus_socket_unit() -> String {
-    machine_templates::NIMBUS_SOCKET.replace("{guest_nimbus_socket}", GUEST_NIMBUS_SOCKET)
+        .replace("{guest_nimbus_socket}", GUEST_NIMBUS_SOCKET)
 }
 
 fn immutable_root_off_unit() -> String {
@@ -278,15 +319,35 @@ mod tests {
                 temp_dir.path().join("state"),
                 temp_dir.path().join("runtime"),
             ),
+            network_authority: nimbus_machine::MachineNetworkAuthorityRecord::new(
+                temp_dir.path().join("network-authority"),
+                nimbus_network::NetworkProviderHandle::new(
+                    nimbus_network::NetworkProviderId::for_registration_key(
+                        "bootstrap-test-gvproxy",
+                    ),
+                    "bootstrap-test-machine",
+                )
+                .expect("test provider handle should validate"),
+            )
+            .expect("test network authority should validate"),
         }
+    }
+
+    fn forwarder_authority(config: &MachineConfigRecord) -> MachineForwarderAuthority {
+        MachineForwarderAuthority::new(
+            config.network_authority.provider_instance().clone(),
+            nimbus_network::NetworkResourceGeneration::new(1),
+        )
     }
 
     #[test]
     fn generated_ignition_includes_ready_nimbus_and_mount_units() {
         let temp_dir = TempDir::new().expect("temp dir should exist");
         let config = sample_config(&temp_dir);
+        let authority = forwarder_authority(&config);
 
-        let ignition = generated_ignition_value(&config, 1025).expect("ignition should render");
+        let ignition =
+            generated_ignition_value(&config, 1025, &authority).expect("ignition should render");
         let units = ignition["systemd"]["units"]
             .as_array()
             .expect("systemd units should render");
@@ -296,7 +357,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert!(names.contains(&"ready.service"));
-        assert!(names.contains(&"nimbus.socket"));
+        assert!(!names.contains(&"nimbus.socket"));
         assert!(names.contains(&"nimbus.service"));
         assert!(names.contains(&"immutable-root-off.service"));
         assert!(names.contains(&"immutable-root-on.service"));
@@ -314,16 +375,27 @@ mod tests {
                 .is_some_and(|contents| contents.contains("[Mount]"))
         }));
         assert!(units.iter().any(|unit| {
-            unit["contents"]
-                .as_str()
-                .is_some_and(|contents| contents.contains("machine api --socket-activation"))
+            unit["contents"].as_str().is_some_and(|contents| {
+                contents.contains("machine api --socket-path /run/nimbus/nimbus.sock")
+            })
         }));
         assert!(
-            !ignition["storage"]["directories"]
+            ignition["storage"]["files"]
+                .as_array()
+                .expect("authority file should render")
+                .iter()
+                .any(|file| file["path"] == GUEST_MACHINE_API_AUTHORITY_PATH),
+            "generated boot config must carry exact parent authority evidence"
+        );
+        assert!(
+            ignition["storage"]["directories"]
                 .as_array()
                 .expect("storage directories should render")
                 .iter()
-                .any(|directory| directory["path"] == "/var/lib/nimbus/bin")
+                .all(|directory| {
+                    directory["path"] != "/var/lib/nimbus/bin"
+                        && directory["path"] != GUEST_NIMBUS_CONTROL_DIR
+                })
         );
     }
 
@@ -337,8 +409,10 @@ mod tests {
         fs::write(&public_key_path, "ssh-ed25519 AAAA nimbus@test\n")
             .expect("public key should write");
         config.guest.ssh_identity_path = Some(identity_path);
+        let authority = forwarder_authority(&config);
 
-        let ignition = generated_ignition_value(&config, 1025).expect("ignition should render");
+        let ignition =
+            generated_ignition_value(&config, 1025, &authority).expect("ignition should render");
         let users = ignition["passwd"]["users"]
             .as_array()
             .expect("passwd users should render");
@@ -358,9 +432,10 @@ mod tests {
         let config = sample_config(&temp_dir);
         let paths = config.roots.paths("default");
         fs::create_dir_all(&paths.config_dir).expect("config dir should exist");
+        let authority = forwarder_authority(&config);
 
-        let ignition_path =
-            resolve_ignition_file(&paths, &config, 1025).expect("ignition path should resolve");
+        let ignition_path = resolve_ignition_file(&paths, &config, 1025, &authority)
+            .expect("ignition path should resolve");
 
         assert_eq!(ignition_path, paths.generated_ignition_path);
         assert!(ignition_path.is_file());

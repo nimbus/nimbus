@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use nimbus::Error;
+use nimbus_network::LocalPortLeaseAuthority;
 use serde::Serialize;
 #[cfg(test)]
 use sha2::{Digest, Sha256};
@@ -18,6 +19,7 @@ use super::{
     MachineConfigRecord, MachineLifecycle, MachineManagerState, MachinePaths, MachineRootLayout,
     MachineStateRecord, write_json_file,
 };
+use crate::machine::HostMachineNetworkAuthority;
 
 pub(super) const MACHINE_API_FORWARD_TRANSPORT: &str = "gvproxy-ssh-forwarded-unix-socket";
 pub(super) const MACHINE_API_FORWARD_USER: &str = "root";
@@ -51,8 +53,9 @@ pub(super) struct ObservedGuestNimbusBinaryStatus {
 }
 
 pub(super) fn start_machine(
+    _network: &HostMachineNetworkAuthority,
     paths: &MachinePaths,
-    config: &MachineConfigRecord,
+    config: &mut MachineConfigRecord,
     state: &mut MachineStateRecord,
 ) -> Result<(), Error> {
     let error = config.provider.unavailable_error();
@@ -64,6 +67,7 @@ pub(super) fn start_machine(
 }
 
 pub(super) fn stop_machine(
+    _network: &HostMachineNetworkAuthority,
     _paths: &MachinePaths,
     config: &MachineConfigRecord,
     state: &mut MachineStateRecord,
@@ -117,7 +121,7 @@ pub(super) fn mount_tag(target: &Path) -> String {
 }
 
 pub(super) fn release_machine_ssh_port(
-    _roots: &MachineRootLayout,
+    _port_authority: &LocalPortLeaseAuthority,
     state: &MachineStateRecord,
 ) -> Result<(), Error> {
     if state.runtime.is_some() {
@@ -195,7 +199,9 @@ fn unsupported_machine_host_error() -> Error {
 
 #[cfg(test)]
 mod tests {
-    use nimbus_network::ListenerId;
+    use nimbus_machine::{MachineForwarderAuthority, MachineNetworkAuthorityRecord};
+    use nimbus_network::{ListenerId, LocalNetworkStateStore, NetworkResourceGeneration};
+    use nimbus_sandbox::backends::container::OciMachinePortForwarderConfig;
     use tempfile::TempDir;
 
     use super::*;
@@ -210,6 +216,9 @@ mod tests {
         provider: MachineProvider,
     ) -> (MachinePaths, MachineConfigRecord) {
         let root = temp_dir.path();
+        let provider_instance =
+            OciMachinePortForwarderConfig::gvproxy_provider_handle("non-unix-stub:stub-contract")
+                .expect("test gvproxy provider identity should validate");
         let roots = MachineRootLayout::new(
             root.join("config"),
             root.join("state"),
@@ -238,12 +247,17 @@ mod tests {
                 disk_gib: 20,
             },
             volumes: Vec::<MachineVolume>::new(),
+            network_authority: MachineNetworkAuthorityRecord::new(
+                LocalNetworkStateStore::authority_path_for(root.join("network-authority")),
+                provider_instance,
+            )
+            .expect("test machine network authority should validate"),
             roots,
         };
         (paths, config)
     }
 
-    fn retained_runtime() -> MachineRuntimeState {
+    fn retained_runtime(config: &MachineConfigRecord) -> MachineRuntimeState {
         MachineRuntimeState {
             helper_binaries: MachineHelperBinaryPaths {
                 vmm: PathBuf::from("/unavailable/vmm"),
@@ -256,19 +270,31 @@ mod tests {
                 "nimbus-cli-non-unix-stub-test",
                 "retained-runtime",
             ),
+            forwarder_authority: MachineForwarderAuthority::new(
+                config.network_authority.provider_instance().clone(),
+                NetworkResourceGeneration::new(1),
+            ),
             ssh_port: 22_222,
             rest_uri: "unavailable://machine".to_owned(),
             ready_vsock_port: 1_025,
         }
     }
 
+    fn port_authority(temp_dir: &TempDir) -> LocalPortLeaseAuthority {
+        LocalPortLeaseAuthority::open(temp_dir.path().join("network-port-authority"))
+            .expect("test machine port authority should open")
+    }
+
     #[test]
+    #[serial_test::serial]
     fn non_unix_unavailable_start_uses_the_named_provider_error() {
         let temp_dir = TempDir::new().expect("temp dir should exist");
-        let (paths, config) = fixture(&temp_dir, MachineProvider::Wsl2);
+        let (paths, mut config) = fixture(&temp_dir, MachineProvider::Wsl2);
         let mut state = MachineStateRecord::initialized();
+        let network = crate::machine::HostMachineNetworkComposition::claim_at(temp_dir.path())
+            .expect("stub test network authority should open");
 
-        let error = start_machine(&paths, &config, &mut state)
+        let error = start_machine(&network.authority(), &paths, &mut config, &mut state)
             .expect_err("the unavailable WSL2 stub must fail closed");
 
         assert!(
@@ -279,17 +305,20 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn non_unix_unavailable_stop_never_transitions_to_stopped() {
         let temp_dir = TempDir::new().expect("temp dir should exist");
         let (paths, config) = fixture(&temp_dir, MachineProvider::Wsl2);
         let mut state = MachineStateRecord::initialized();
         state.lifecycle = MachineLifecycle::Running;
         state.manager = MachineManagerState::Ready;
-        state.runtime = Some(retained_runtime());
+        state.runtime = Some(retained_runtime(&config));
         state.last_error = Some("retained provider evidence".to_owned());
         let before = state.clone();
 
-        let error = stop_machine(&paths, &config, &mut state)
+        let network = crate::machine::HostMachineNetworkComposition::claim_at(temp_dir.path())
+            .expect("stub test network authority should open");
+        let error = stop_machine(&network.authority(), &paths, &config, &mut state)
             .expect_err("an unavailable stub cannot attest a provider stop");
 
         assert!(
@@ -311,9 +340,10 @@ mod tests {
         let temp_dir = TempDir::new().expect("temp dir should exist");
         let (_paths, config) = fixture(&temp_dir, MachineProvider::Wsl2);
         let mut state = MachineStateRecord::initialized();
-        state.runtime = Some(retained_runtime());
+        let port_authority = port_authority(&temp_dir);
+        state.runtime = Some(retained_runtime(&config));
 
-        let error = release_machine_ssh_port(&config.roots, &state)
+        let error = release_machine_ssh_port(&port_authority, &state)
             .expect_err("retained runtime evidence cannot be reported released by a no-op stub");
 
         assert!(

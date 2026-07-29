@@ -6,7 +6,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use nimbus_core::TenantId;
 use nimbus_network::{PortLeaseBinding, PortLeaseRecoveryGuard, PortLeaseRequest};
 
-use crate::backends::oci::network::{MachinePortProxy, MachinePortProxyRoute};
+use crate::backends::oci::network::{
+    MachinePortForwardReceipt, MachinePortProxy, MachinePortProxyRoute,
+};
 use crate::backends::oci::port_lease::OciPortBindLifetimeBatch;
 use crate::backends::oci::port_lifecycle::OciPortLeaseCoordinator;
 use crate::error::{Result, SandboxError};
@@ -49,6 +51,7 @@ pub(crate) struct MachinePortProxyCleanupState {
     pub(crate) withdraw_complete: bool,
     pub(crate) provider_stopped: bool,
     pub(crate) publication_withdrawn: Vec<bool>,
+    pub(crate) publication_absence_receipts: Vec<Option<MachinePortForwardReceipt>>,
     pub(crate) durable_transition_complete: bool,
 }
 

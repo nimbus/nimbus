@@ -12,5 +12,7 @@ mod manifest_durability;
 mod network_process_composition;
 #[path = "planning.rs"]
 mod planning;
+#[path = "tests/preselected_identity.rs"]
+mod preselected_identity;
 #[path = "support.rs"]
 mod support;

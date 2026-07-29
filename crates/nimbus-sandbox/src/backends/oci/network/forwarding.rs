@@ -4,12 +4,14 @@ use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::{Duration, Instant};
 
+use nimbus_core::TenantId;
 use nimbus_network::{
     NetworkProviderHandle, NetworkProviderHandleError, NetworkProviderId, NetworkResourceGeneration,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Result, SandboxError};
+use crate::instance::SandboxId;
 use crate::spec::SandboxPortBinding;
 
 use super::dto::MachinePortForwardRequest;
@@ -21,6 +23,9 @@ use super::{
 const MACHINE_FORWARDER_PROVIDER_KEY: &str = "nimbus-sandbox.gvproxy-forwarder";
 const MAX_MACHINE_FORWARDER_RESPONSE_BYTES: usize = 1024 * 1024;
 
+mod receipt;
+pub use receipt::{MachinePortForwardOutcome, MachinePortForwardReceipt};
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OciMachinePortForwarderConfig {
     pub host: String,
@@ -31,6 +36,20 @@ pub struct OciMachinePortForwarderConfig {
 }
 
 impl OciMachinePortForwarderConfig {
+    /// Build the stable provider-scoped identity owned by the gvproxy adapter.
+    ///
+    /// Lifecycle coordinators mint only the opaque instance value. Keeping the
+    /// registration key here prevents upper layers from duplicating or
+    /// drifting the provider's stable identity.
+    pub fn gvproxy_provider_handle(
+        provider_instance: impl Into<String>,
+    ) -> std::result::Result<NetworkProviderHandle, NetworkProviderHandleError> {
+        NetworkProviderHandle::new(
+            NetworkProviderId::for_registration_key(MACHINE_FORWARDER_PROVIDER_KEY),
+            provider_instance,
+        )
+    }
+
     /// Configure the built-in gvproxy endpoint under lifecycle-issued authority.
     ///
     /// The provider instance and generation must come from the owner that
@@ -60,10 +79,7 @@ impl OciMachinePortForwarderConfig {
             host: host.into(),
             port,
             path_prefix: path_prefix.into(),
-            provider_instance: NetworkProviderHandle::new(
-                NetworkProviderId::for_registration_key(MACHINE_FORWARDER_PROVIDER_KEY),
-                provider_instance,
-            )?,
+            provider_instance: Self::gvproxy_provider_handle(provider_instance)?,
             provider_generation,
         })
     }
@@ -79,15 +95,18 @@ impl OciMachinePortForwarderConfig {
 
 pub(crate) fn expose_machine_ports(
     config: &OciMachinePortForwarderConfig,
+    tenant_id: &TenantId,
+    sandbox_id: &SandboxId,
     port_bindings: &[SandboxPortBinding],
-) -> Result<()> {
+) -> Result<Vec<MachinePortForwardReceipt>> {
+    let mut receipts = Vec::with_capacity(port_bindings.len());
     for binding in port_bindings {
         let deadline = Instant::now() + MACHINE_FORWARDER_TIMEOUT;
         let request = machine_port_forward_request(config, binding, true)?;
         let attempted =
             send_machine_forwarder_request(config, "POST", "/expose", &request, deadline);
         if let Ok(response) = &attempted
-            && response_authenticates(
+            && let Some(outcome) = authenticate_response(
                 config,
                 binding,
                 Some(machine_forward_remote(binding)),
@@ -95,6 +114,14 @@ pub(crate) fn expose_machine_ports(
                 &[MachinePortForwardOutcome::Exposed],
             )
         {
+            receipts.push(MachinePortForwardReceipt::authenticated(
+                outcome,
+                tenant_id,
+                sandbox_id,
+                binding,
+                &config.provider_instance,
+                config.provider_generation,
+            ));
             continue;
         }
         return Err(ambiguous_forwarder_error(
@@ -106,30 +133,27 @@ pub(crate) fn expose_machine_ports(
              publication, and exposed outcome",
         ));
     }
-    Ok(())
+    Ok(receipts)
 }
 
 pub(crate) fn unexpose_machine_ports(
     config: &OciMachinePortForwarderConfig,
+    tenant_id: &TenantId,
+    sandbox_id: &SandboxId,
     port_bindings: &[SandboxPortBinding],
-) -> Result<()> {
+) -> Result<Vec<MachinePortForwardReceipt>> {
+    let mut receipts = Vec::with_capacity(port_bindings.len());
     for binding in port_bindings {
-        withdraw_machine_port(config, binding)?;
+        receipts.push(withdraw_machine_port(
+            config, tenant_id, sandbox_id, binding,
+        )?);
     }
-    Ok(())
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum MachinePortForwardOutcome {
-    Exposed,
-    Withdrawn,
-    ExactAlreadyAbsent,
+    Ok(receipts)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct MachinePortForwardReceipt {
+struct GvproxyMachinePortForwardReceipt {
     outcome: MachinePortForwardOutcome,
     provider_instance: NetworkProviderHandle,
     provider_generation: NetworkResourceGeneration,
@@ -145,14 +169,16 @@ struct MachineForwarderHttpResponse {
 
 fn withdraw_machine_port(
     config: &OciMachinePortForwarderConfig,
+    tenant_id: &TenantId,
+    sandbox_id: &SandboxId,
     binding: &SandboxPortBinding,
-) -> Result<()> {
+) -> Result<MachinePortForwardReceipt> {
     let deadline = Instant::now() + MACHINE_FORWARDER_TIMEOUT;
     let request = machine_port_forward_request(config, binding, false)?;
     let attempted = send_machine_forwarder_request(config, "POST", "/unexpose", &request, deadline);
 
     if let Ok(response) = &attempted
-        && response_authenticates(
+        && let Some(outcome) = authenticate_response(
             config,
             binding,
             None,
@@ -163,7 +189,14 @@ fn withdraw_machine_port(
             ],
         )
     {
-        return Ok(());
+        return Ok(MachinePortForwardReceipt::authenticated(
+            outcome,
+            tenant_id,
+            sandbox_id,
+            binding,
+            &config.provider_instance,
+            config.provider_generation,
+        ));
     }
 
     Err(ambiguous_forwarder_error(
@@ -196,24 +229,25 @@ fn machine_port_forward_request(
     })
 }
 
-fn response_authenticates(
+fn authenticate_response(
     config: &OciMachinePortForwarderConfig,
     binding: &SandboxPortBinding,
     remote: Option<String>,
     response: &MachineForwarderHttpResponse,
     allowed_outcomes: &[MachinePortForwardOutcome],
-) -> bool {
-    response.status_code == 200
-        && serde_json::from_slice::<MachinePortForwardReceipt>(&response.body).is_ok_and(
-            |receipt| {
-                receipt.provider_instance == config.provider_instance
-                    && receipt.provider_generation == config.provider_generation
-                    && receipt.local == machine_forward_local(binding)
-                    && receipt.remote == remote
-                    && receipt.protocol == "tcp"
-                    && allowed_outcomes.contains(&receipt.outcome)
-            },
-        )
+) -> Option<MachinePortForwardOutcome> {
+    if response.status_code != 200 {
+        return None;
+    }
+    let receipt =
+        serde_json::from_slice::<GvproxyMachinePortForwardReceipt>(&response.body).ok()?;
+    (receipt.provider_instance == config.provider_instance
+        && receipt.provider_generation == config.provider_generation
+        && receipt.local == machine_forward_local(binding)
+        && receipt.remote == remote
+        && receipt.protocol == "tcp"
+        && allowed_outcomes.contains(&receipt.outcome))
+    .then_some(receipt.outcome)
 }
 
 fn machine_forward_local(binding: &SandboxPortBinding) -> String {
@@ -470,9 +504,15 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
+    use nimbus_core::TenantId;
     use nimbus_network::NetworkResourceGeneration;
 
-    use super::{OciMachinePortForwarderConfig, expose_machine_ports, unexpose_machine_ports};
+    use super::{
+        MachinePortForwardOutcome, MachinePortForwardReceipt, OciMachinePortForwarderConfig,
+        expose_machine_ports as expose_machine_ports_with_identity,
+        unexpose_machine_ports as unexpose_machine_ports_with_identity,
+    };
+    use crate::instance::SandboxId;
     use crate::spec::SandboxPortBinding;
 
     enum ScriptedResponse {
@@ -501,6 +541,28 @@ mod tests {
 
     fn binding() -> SandboxPortBinding {
         SandboxPortBinding::tcp("http", 18080, 8080)
+    }
+
+    fn tenant_id() -> TenantId {
+        TenantId::new("tenant-forwarding-test").expect("test tenant should validate")
+    }
+
+    fn sandbox_id() -> SandboxId {
+        SandboxId::new("machine-api:test-forwarding-plan")
+    }
+
+    fn expose_machine_ports(
+        config: &OciMachinePortForwarderConfig,
+        bindings: &[SandboxPortBinding],
+    ) -> crate::error::Result<Vec<MachinePortForwardReceipt>> {
+        expose_machine_ports_with_identity(config, &tenant_id(), &sandbox_id(), bindings)
+    }
+
+    fn unexpose_machine_ports(
+        config: &OciMachinePortForwarderConfig,
+        bindings: &[SandboxPortBinding],
+    ) -> crate::error::Result<Vec<MachinePortForwardReceipt>> {
+        unexpose_machine_ports_with_identity(config, &tenant_id(), &sandbox_id(), bindings)
     }
 
     fn http_response(status: &str, body: &[u8]) -> Vec<u8> {
@@ -627,12 +689,28 @@ mod tests {
             ],
         );
 
-        expose_machine_ports(&config, &[binding()])
+        let exposed_receipts = expose_machine_ports(&config, &[binding()])
             .expect("exact typed expose receipt should authenticate");
-        unexpose_machine_ports(&config, &[binding()])
+        let absent_receipts = unexpose_machine_ports(&config, &[binding()])
             .expect("exact typed unexpose receipt should authenticate");
         let requests = server.join().expect("test forwarder should join");
 
+        assert_eq!(
+            exposed_receipts,
+            vec![MachinePortForwardReceipt {
+                outcome: MachinePortForwardOutcome::Exposed,
+                tenant_id: tenant_id(),
+                sandbox_id: sandbox_id(),
+                binding: binding(),
+                provider_instance: config.provider_instance().clone(),
+                provider_generation: config.provider_generation(),
+            }]
+        );
+        assert_eq!(
+            absent_receipts[0].outcome,
+            MachinePortForwardOutcome::Withdrawn
+        );
+        assert_eq!(absent_receipts[0].binding, binding());
         assert_eq!(requests.len(), 2);
         for (index, request) in requests.iter().enumerate() {
             let (_, body) = request
@@ -662,6 +740,73 @@ mod tests {
                     "unexpose must carry the same context without inventing a remote target"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn partial_and_stale_receipt_batches_return_no_success_evidence() {
+        let second_binding = SandboxPortBinding::tcp("metrics", 19090, 9090);
+        let bindings = vec![binding(), second_binding.clone()];
+
+        for action in ["expose", "unexpose"] {
+            let listener =
+                TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("test forwarder should bind");
+            let config = config_for(&listener, action, 51);
+            let first_outcome = if action == "expose" {
+                "exposed"
+            } else {
+                "withdrawn"
+            };
+            let first_remote = if action == "expose" {
+                serde_json::json!(":18080")
+            } else {
+                serde_json::Value::Null
+            };
+            let first = serde_json::to_vec(&serde_json::json!({
+                "outcome": first_outcome,
+                "provider_instance": config.provider_instance(),
+                "provider_generation": config.provider_generation(),
+                "local": "127.0.0.1:18080",
+                "remote": first_remote,
+                "protocol": "tcp",
+            }))
+            .expect("first exact receipt should encode");
+            let second = serde_json::to_vec(&serde_json::json!({
+                "outcome": first_outcome,
+                "provider_instance": config.provider_instance(),
+                "provider_generation": 50,
+                "local": "127.0.0.1:19090",
+                "remote": if action == "expose" {
+                    serde_json::json!(":19090")
+                } else {
+                    serde_json::Value::Null
+                },
+                "protocol": "tcp",
+            }))
+            .expect("stale second receipt should encode");
+            let server = spawn_scripted_forwarder(
+                listener,
+                vec![
+                    ScriptedResponse::Bytes(http_response("200 OK", &first)),
+                    ScriptedResponse::Bytes(http_response("200 OK", &second)),
+                ],
+            );
+
+            let error = if action == "expose" {
+                expose_machine_ports(&config, &bindings)
+                    .expect_err("a partial exposed batch must return no success evidence")
+            } else {
+                unexpose_machine_ports(&config, &bindings)
+                    .expect_err("a partial absent batch must return no success evidence")
+            };
+            let requests = server.join().expect("test forwarder should join");
+
+            assert_eq!(
+                requests.len(),
+                2,
+                "both operations must reach the stale member before rejecting the batch"
+            );
+            assert_ambiguous(error);
         }
     }
 

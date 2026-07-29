@@ -11,7 +11,7 @@ use nimbus_operator::LocalNodeNetworkRoot;
 use nimbus_sandbox::backends::krun::KrunSandboxStateView;
 
 use crate::cli_ux;
-use crate::machine::MachineApiClient;
+use crate::machine::{HostMachineNetworkAuthority, MachineApiClient};
 use crate::network_composition::{PreparedLocalNetworkComposition, StagedLocalNetworkComposition};
 
 mod commands;
@@ -162,6 +162,7 @@ async fn run_compose_up(
     let selection = resolve_required_compose_selection(command.file.as_slice())?;
     let prepared =
         prepare_standalone_compose_network(&selection, control_data_dir, network_state_dir)?;
+    let machine_network = HostMachineNetworkAuthority::injected(prepared.authority());
     let rendered = render_service_up_for_selection(
         &command,
         &selection,
@@ -169,6 +170,7 @@ async fn run_compose_up(
         ServiceHostPlatform::current(),
         None,
         local_krun_execution(&prepared),
+        Some(&machine_network),
     )
     .await?;
     emit_service_stdout(&rendered)?;
@@ -183,6 +185,7 @@ async fn run_compose_down(
     let selection = resolve_required_compose_selection(command.file.as_slice())?;
     let prepared =
         prepare_standalone_compose_network(&selection, control_data_dir, network_state_dir)?;
+    let machine_network = HostMachineNetworkAuthority::injected(prepared.authority());
     let rendered = render_service_down_for_selection(
         &command,
         &selection,
@@ -190,6 +193,7 @@ async fn run_compose_down(
         ServiceHostPlatform::current(),
         None,
         local_krun_execution(&prepared),
+        Some(&machine_network),
     )
     .await?;
     emit_service_stdout(&rendered)?;
@@ -204,6 +208,7 @@ fn run_compose_ps(
     let selection = resolve_required_compose_selection(command.file.as_slice())?;
     let prepared =
         prepare_standalone_compose_network(&selection, control_data_dir, network_state_dir)?;
+    let machine_network = HostMachineNetworkAuthority::injected(prepared.authority());
     let rendered = render_service_list_for_selection(
         &command,
         &selection,
@@ -211,6 +216,7 @@ fn run_compose_ps(
         ServiceHostPlatform::current(),
         None,
         local_krun_execution(&prepared),
+        Some(&machine_network),
     )?;
     emit_service_stdout(&rendered)?;
     Ok(())
@@ -224,6 +230,7 @@ fn run_compose_inspect(
     let selection = resolve_required_compose_selection(command.file.as_slice())?;
     let prepared =
         prepare_standalone_compose_network(&selection, control_data_dir, network_state_dir)?;
+    let machine_network = HostMachineNetworkAuthority::injected(prepared.authority());
     let rendered = render_service_inspect_for_selection(
         &command,
         &selection,
@@ -231,6 +238,7 @@ fn run_compose_inspect(
         ServiceHostPlatform::current(),
         None,
         local_krun_execution(&prepared),
+        Some(&machine_network),
     )?;
     emit_service_stdout(&rendered)?;
     Ok(())
@@ -244,6 +252,7 @@ fn run_compose_logs(
     let selection = resolve_required_compose_selection(command.file.as_slice())?;
     let prepared =
         prepare_standalone_compose_network(&selection, control_data_dir, network_state_dir)?;
+    let machine_network = HostMachineNetworkAuthority::injected(prepared.authority());
     self::logs::run_compose_logs_for_selection(
         &command,
         &selection,
@@ -251,6 +260,7 @@ fn run_compose_logs(
         ServiceHostPlatform::current(),
         None,
         local_krun_execution(&prepared),
+        Some(&machine_network),
     )
 }
 
@@ -268,6 +278,7 @@ fn run_compose_top(
     let selection = resolve_required_compose_selection(command.file.as_slice())?;
     let prepared =
         prepare_standalone_compose_network(&selection, control_data_dir, network_state_dir)?;
+    let machine_network = HostMachineNetworkAuthority::injected(prepared.authority());
     let snapshot = self::process::resolve_service_sandbox_process_snapshot_for_selection(
         &command,
         &selection,
@@ -275,6 +286,7 @@ fn run_compose_top(
         ServiceHostPlatform::current(),
         None,
         local_krun_execution(&prepared),
+        Some(&machine_network),
     )?;
     let rendered = render_service_sandbox_process_snapshot_view(
         &snapshot,
@@ -348,6 +360,7 @@ fn render_service_list_for_platform(
         host_platform,
         machine_api_client,
         None,
+        None,
     )
 }
 
@@ -358,6 +371,7 @@ fn render_service_list_for_selection(
     host_platform: ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
     local_krun: Option<LocalKrunExecutionSurface>,
+    network: Option<&HostMachineNetworkAuthority>,
 ) -> Result<String, Error> {
     let context = load_compose_project_context_for_selection(selection, control_data_dir)?;
     match resolve_service_execution_surface(
@@ -367,6 +381,7 @@ fn render_service_list_for_selection(
         host_platform,
         machine_api_client,
         local_krun,
+        network,
     )? {
         ServiceExecutionSurface::Krun { state_view, .. } => {
             let summaries = if command.all_tenants {
@@ -437,6 +452,7 @@ async fn render_service_up_for_platform(
         host_platform,
         machine_api_client,
         None,
+        None,
     )
     .await
 }
@@ -448,6 +464,7 @@ async fn render_service_up_for_selection(
     host_platform: ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
     local_krun: Option<LocalKrunExecutionSurface>,
+    network: Option<&HostMachineNetworkAuthority>,
 ) -> Result<String, Error> {
     let context = load_compose_project_context_for_selection(selection, control_data_dir)?;
     let tenant = command
@@ -461,6 +478,7 @@ async fn render_service_up_for_selection(
         host_platform,
         machine_api_client,
         local_krun,
+        network,
     )
     .await?;
     Ok(render_service_lifecycle_action_summary(
@@ -486,6 +504,7 @@ async fn render_service_down_for_platform(
         host_platform,
         machine_api_client,
         None,
+        None,
     )
     .await
 }
@@ -497,6 +516,7 @@ async fn render_service_down_for_selection(
     host_platform: ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
     local_krun: Option<LocalKrunExecutionSurface>,
+    network: Option<&HostMachineNetworkAuthority>,
 ) -> Result<String, Error> {
     let context = load_compose_project_context_for_selection(selection, control_data_dir)?;
     let tenant = command
@@ -510,6 +530,7 @@ async fn render_service_down_for_selection(
         host_platform,
         machine_api_client,
         local_krun,
+        network,
     )
     .await?;
     Ok(render_service_lifecycle_action_summary(
@@ -535,6 +556,7 @@ fn render_service_inspect_for_platform(
         host_platform,
         machine_api_client,
         None,
+        None,
     )
 }
 
@@ -545,6 +567,7 @@ fn render_service_inspect_for_selection(
     host_platform: ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
     local_krun: Option<LocalKrunExecutionSurface>,
+    network: Option<&HostMachineNetworkAuthority>,
 ) -> Result<String, Error> {
     let context = load_compose_project_context_for_selection(selection, control_data_dir)?;
     let tenant = command
@@ -558,6 +581,7 @@ fn render_service_inspect_for_selection(
         host_platform,
         machine_api_client,
         local_krun,
+        network,
     )? {
         ServiceExecutionSurface::Krun { state_view, .. } => {
             let details = state_view
@@ -614,6 +638,7 @@ fn render_compose_top_for_platform(
         control_data_dir,
         host_platform,
         machine_api_client,
+        None,
         None,
     )?;
     render_service_sandbox_process_snapshot_view(&snapshot, command.format, command.no_heading)

@@ -405,11 +405,15 @@ fn provider_managed_backend_is_rejected_before_host_listener_authority() {
     let mut config = sample_config(&image_path);
     config.provider = MachineProvider::Wsl2;
     let paths = config.roots.paths("default");
+    let port_authority = test_port_authority(temp_dir.path());
 
-    let error = MachineLaunchPlan::build(&paths, &config, &MachineStateRecord::initialized())
-        .expect_err(
-            "provider-managed networking must not enter the host-managed launch/lease seam",
-        );
+    let error = MachineLaunchPlan::build(
+        &port_authority,
+        &paths,
+        &config,
+        &MachineStateRecord::initialized(),
+    )
+    .expect_err("provider-managed networking must not enter the host-managed launch/lease seam");
 
     assert!(
         matches!(error, Error::InvalidInput(_)),
@@ -420,8 +424,11 @@ fn provider_managed_backend_is_rejected_before_host_listener_authority() {
         "the rejected provider should be named: {error}"
     );
     assert!(
-        !config.roots.network_state_root.exists(),
-        "rejection must happen before the host listener authority creates durable state"
+        port_authority
+            .list()
+            .expect("host listener authority should remain readable")
+            .is_empty(),
+        "rejection must happen before the host listener authority creates any lease"
     );
     assert!(
         !paths.state_dir.exists() && !paths.runtime_dir.exists(),

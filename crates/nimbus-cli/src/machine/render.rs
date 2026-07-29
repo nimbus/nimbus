@@ -14,8 +14,8 @@ use super::command::{
     MachineListOutputFormat, MachineStatusOutputFormat,
 };
 use super::files::{
-    load_machine_config_if_exists, load_machine_state_if_exists, with_default_machine_lock,
-    with_machine_lock, write_json_file,
+    load_machine_config_if_exists, load_machine_state_if_exists,
+    with_authenticated_default_machine_lock, with_authenticated_machine_lock, write_json_file,
 };
 use super::manager::{
     GuestNimbusBinarySourceKind, MACHINE_API_FORWARD_TRANSPORT, MACHINE_API_FORWARD_USER,
@@ -27,8 +27,8 @@ use super::record::{
     MachineProvider, MachineResources, MachineRootLayout, MachineStateRecord, MachineVolume,
 };
 use super::{
-    DEFAULT_MACHINE_NAME, describe_machine_image_source, desired_machine_image_source,
-    uses_host_managed_machine_image_contract,
+    DEFAULT_MACHINE_NAME, HostMachineNetworkAuthority, describe_machine_image_source,
+    desired_machine_image_source, uses_host_managed_machine_image_contract,
 };
 use nimbus_machine::api::MachineApiCapabilityResponse;
 
@@ -365,10 +365,11 @@ fn render_machine_status_table(view: &MachineStatusView, no_heading: bool) -> St
 
 pub(super) fn build_machine_list_entries(
     roots: &MachineRootLayout,
+    network: &HostMachineNetworkAuthority,
 ) -> Result<Vec<MachineListEntryView>, Error> {
     let mut entries = Vec::new();
     for machine_name in initialized_machine_names(roots)? {
-        let entry = with_machine_lock(roots, &machine_name, || {
+        let entry = with_authenticated_machine_lock(roots, network, &machine_name, || {
             let paths = roots.paths(&machine_name);
             let Some(config) = load_machine_config_if_exists(&paths.config_path)? else {
                 return Ok(None);
@@ -409,7 +410,7 @@ fn machine_list_sort_rank(machine: &MachineListEntryView) -> u8 {
     }
 }
 
-fn initialized_machine_names(roots: &MachineRootLayout) -> Result<Vec<String>, Error> {
+pub(super) fn initialized_machine_names(roots: &MachineRootLayout) -> Result<Vec<String>, Error> {
     let mut names = Vec::new();
     let entries = match fs::read_dir(&roots.config_root) {
         Ok(entries) => entries,
@@ -519,8 +520,11 @@ fn render_machine_list_table(machines: &[MachineListEntryView], no_heading: bool
     )
 }
 
-pub(super) fn build_machine_info_view(roots: &MachineRootLayout) -> Result<MachineInfoView, Error> {
-    let machines = build_machine_list_entries(roots)?;
+pub(super) fn build_machine_info_view(
+    roots: &MachineRootLayout,
+    network: &HostMachineNetworkAuthority,
+) -> Result<MachineInfoView, Error> {
+    let machines = build_machine_list_entries(roots, network)?;
     let default_paths = roots.paths(DEFAULT_MACHINE_NAME);
     let (
         default_initialized,
@@ -528,7 +532,7 @@ pub(super) fn build_machine_info_view(roots: &MachineRootLayout) -> Result<Machi
         default_manager,
         default_provider,
         default_api_reachable,
-    ) = with_default_machine_lock(roots, || {
+    ) = with_authenticated_default_machine_lock(roots, network, || {
         let default_config = load_machine_config_if_exists(&default_paths.config_path)?;
         Ok(if let Some(config) = default_config.as_ref() {
             let mut state = load_machine_state_if_exists(&default_paths.state_path)?

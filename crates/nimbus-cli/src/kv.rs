@@ -465,6 +465,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn manager_and_store_failures_emit_no_success_and_precede_later_effects() {
         let _test_lock = lock_kv_network_test().await;
         let fixture = tempfile::tempdir().expect("fixture root should exist");
@@ -570,6 +571,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn standalone_kv_freezes_empty_registry_and_rejects_divergent_root_before_mutation() {
         let _test_lock = lock_kv_network_test().await;
         let fixture = tempfile::tempdir().expect("fixture root should exist");
@@ -611,6 +613,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn server_and_kv_conflict_durably_before_the_losing_kv_bind() {
         let _test_lock = lock_kv_network_test().await;
         let fixture = tempfile::tempdir().expect("fixture root should exist");
@@ -679,6 +682,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn startup_observation_uses_actual_bound_address_and_prebind_failure_is_silent() {
         let _test_lock = lock_kv_network_test().await;
         let success_root = tempfile::tempdir().expect("success root should exist");
@@ -757,6 +761,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn output_failure_after_bind_closes_and_settles_the_active_lease() {
         let _test_lock = lock_kv_network_test().await;
         let root = tempfile::tempdir().expect("state root should exist");

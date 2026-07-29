@@ -11,8 +11,8 @@ use super::{
     PortLeasePhase, PortRange,
 };
 use crate::{
-    NetworkProviderId, NetworkResourceId, NetworkStateStoreError, NetworkStateTransactionError,
-    PortLeaseId,
+    NetworkPlanId, NetworkProviderId, NetworkResourceId, NetworkStateStoreError,
+    NetworkStateTransactionError, PortLeaseId,
 };
 
 /// Durable authority or lifecycle rejection.
@@ -26,6 +26,10 @@ pub enum PortLeaseError {
     NotFound { lease_id: PortLeaseId },
     /// One lease ID was reused with different immutable reservation identity.
     IdentityConflict { lease_id: PortLeaseId },
+    /// A provider-managed publication batch member omitted durable plan identity.
+    PlanRequired { lease_id: PortLeaseId },
+    /// A caller did not present the complete immutable member set of one plan.
+    PlanMembershipConflict { plan_id: NetworkPlanId },
     /// A tenant-published request omitted tenant attribution.
     TenantAttributionRequired { lease_id: PortLeaseId },
     /// Publication intent does not match the request's accounting class.
@@ -113,6 +117,10 @@ impl From<PortLeaseOperationError> for PortLeaseError {
             PortLeaseOperationError::NotFound { lease_id } => Self::NotFound { lease_id },
             PortLeaseOperationError::IdentityConflict { lease_id } => {
                 Self::IdentityConflict { lease_id }
+            }
+            PortLeaseOperationError::PlanRequired { lease_id } => Self::PlanRequired { lease_id },
+            PortLeaseOperationError::PlanMembershipConflict { plan_id } => {
+                Self::PlanMembershipConflict { plan_id }
             }
             PortLeaseOperationError::TenantAttributionRequired { lease_id } => {
                 Self::TenantAttributionRequired { lease_id }
@@ -219,6 +227,14 @@ impl Display for PortLeaseError {
                 formatter,
                 "port lease {lease_id} was reused with different immutable reservation identity"
             ),
+            Self::PlanRequired { lease_id } => write!(
+                formatter,
+                "provider-managed port lease {lease_id} requires durable network plan identity"
+            ),
+            Self::PlanMembershipConflict { plan_id } => write!(
+                formatter,
+                "network plan {plan_id} requires its complete immutable durable member set"
+            ),
             Self::TenantAttributionRequired { lease_id } => write!(
                 formatter,
                 "tenant-published port lease {lease_id} requires tenant attribution"
@@ -279,12 +295,13 @@ impl Display for PortLeaseError {
             ),
             Self::StaleFence(mismatch) => write!(
                 formatter,
-                "port lease {} rejected stale or divergent fence: expected owner {:?} tenant {:?} \
-                 accounting {:?} publication {:?} binding {:?} generation {} epoch {}, candidate \
-                 owner {:?} tenant {:?} accounting {:?} publication {:?} binding {:?} generation \
-                 {} epoch {}",
+                "port lease {} rejected stale or divergent fence: expected owner {:?} plan {:?} \
+                 tenant {:?} accounting {:?} publication {:?} binding {:?} generation {} epoch {}, \
+                 candidate owner {:?} plan {:?} tenant {:?} accounting {:?} publication {:?} \
+                 binding {:?} generation {} epoch {}",
                 mismatch.expected.lease_id,
                 mismatch.expected.owner_id,
+                mismatch.expected.plan_id,
                 mismatch.expected.tenant_id,
                 mismatch.expected.accounting,
                 mismatch.expected.publication,
@@ -292,6 +309,7 @@ impl Display for PortLeaseError {
                 mismatch.expected.generation.as_u64(),
                 mismatch.expected.lease_epoch.as_u64(),
                 mismatch.candidate.owner_id,
+                mismatch.candidate.plan_id,
                 mismatch.candidate.tenant_id,
                 mismatch.candidate.accounting,
                 mismatch.candidate.publication,

@@ -10,9 +10,11 @@ use nimbus_network::NetworkAttachmentProviderRegistration;
 use nimbus_sandbox::backends::krun::{KrunSandboxBackend, KrunSandboxStateView};
 
 use crate::compose::discovery::ResolvedComposeSelection;
+#[cfg(test)]
+use crate::machine::HostMachineNetworkComposition;
 use crate::machine::{
-    ForwardedMachineApiSandboxBackend, MachineApiClient, ensure_default_machine_api_client_started,
-    require_default_machine_api_client,
+    ForwardedMachineApiSandboxBackend, HostMachineNetworkAuthority, MachineApiClient,
+    ensure_default_machine_api_client_started, require_default_machine_api_client,
 };
 use crate::network_composition::StagedLocalNetworkComposition;
 
@@ -163,7 +165,10 @@ pub(super) fn load_host_backed_service_manager_for_platform_selection_with_admis
     let machine_api_client = match machine_api_client {
         Some(client) => Some(client),
         None if should_auto_start_default_machine_for_host_loader(&context, host_platform)? => {
-            Some(ensure_default_machine_api_client_started()?)
+            let network = HostMachineNetworkComposition::claim_default()?;
+            Some(ensure_default_machine_api_client_started(
+                &network.authority(),
+            )?)
         }
         None => None,
     };
@@ -179,6 +184,7 @@ pub(crate) fn load_forwarded_service_manager_for_selection_with_isolation_mode(
     selection: &ResolvedComposeSelection,
     control_data_dir: &Path,
     tenant_isolation_mode: nimbus_tenant::TenantIsolationMode,
+    network: &HostMachineNetworkAuthority,
 ) -> Result<ServiceManager, Error> {
     let host_platform = ServiceHostPlatform::current();
     let admission_mode = match tenant_isolation_mode {
@@ -207,9 +213,14 @@ pub(crate) fn load_forwarded_service_manager_for_selection_with_isolation_mode(
     )?;
     let machine_api_client =
         should_auto_start_default_machine_for_host_loader(&context, host_platform)?
-            .then(ensure_default_machine_api_client_started)
+            .then(|| ensure_default_machine_api_client_started(network))
             .transpose()?;
-    let backend = load_forwarded_machine_api_backend(&context, host_platform, machine_api_client)?;
+    let backend = load_forwarded_machine_api_backend(
+        &context,
+        host_platform,
+        machine_api_client,
+        Some(network),
+    )?;
     let local_build_admission = match admission_mode {
         file::ComposeAdmissionMode::LocalDevelopment => LocalBuildAdmission::Allowed,
         file::ComposeAdmissionMode::Production => LocalBuildAdmission::Denied,
@@ -563,7 +574,7 @@ pub(super) fn load_host_backed_project_backend(
                 .reconstruct_direct_krun_backend_config(),
         ))),
         SandboxBackendKind::Container => {
-            load_forwarded_machine_api_backend(context, host_platform, machine_api_client)
+            load_forwarded_machine_api_backend(context, host_platform, machine_api_client, None)
         }
     }
 }
@@ -572,15 +583,46 @@ pub(super) fn load_forwarded_machine_api_backend(
     context: &ComposeProjectContext,
     host_platform: ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
+    network: Option<&HostMachineNetworkAuthority>,
 ) -> Result<Arc<dyn SandboxBackend>, Error> {
     match host_platform {
         ServiceHostPlatform::Macos => {
             let client = match machine_api_client {
                 Some(client) => client,
-                None => require_default_machine_api_client()?,
+                None => require_default_machine_api_client(network.ok_or_else(|| {
+                    Error::Internal(
+                        "forwarded machine backend requires the retained parent network authority"
+                            .to_owned(),
+                    )
+                })?)?,
             };
             validate_forwarded_machine_api_backend(context, &client)?;
-            Ok(Arc::new(ForwardedMachineApiSandboxBackend::new(client)))
+            let backend = match network {
+                Some(network) => ForwardedMachineApiSandboxBackend::new(client, network)?,
+                #[cfg(test)]
+                None => ForwardedMachineApiSandboxBackend::new_for_test(
+                    client,
+                    nimbus_network::LocalPortLeaseAuthority::open(
+                        context
+                            .control_plane
+                            .project_root
+                            .join("test-parent-machine-network"),
+                    )
+                    .map_err(|error| {
+                        Error::Internal(format!(
+                            "failed to open isolated test parent publication authority: {error}"
+                        ))
+                    })?,
+                )?,
+                #[cfg(not(test))]
+                None => {
+                    return Err(Error::Internal(
+                        "forwarded machine backend requires the retained parent network authority"
+                            .to_owned(),
+                    ));
+                }
+            };
+            Ok(Arc::new(backend))
         }
         ServiceHostPlatform::Linux => Err(Error::InvalidInput(format!(
             "compose project {} selects sandbox backend container, but nimbus load a compose-backed sandbox manager only supports that backend through the macOS guest machine API today",
@@ -656,6 +698,7 @@ pub(super) fn resolve_service_execution_surface(
     host_platform: ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
     local_krun: Option<LocalKrunExecutionSurface>,
+    network: Option<&HostMachineNetworkAuthority>,
 ) -> Result<ServiceExecutionSurface, Error> {
     let backend =
         required_effective_project_backend(context, requested_service, operation, host_platform)?;
@@ -673,9 +716,34 @@ pub(super) fn resolve_service_execution_surface(
                 host_platform,
                 machine_api_client,
                 operation,
+                network,
             )?;
-            let backend: Arc<dyn SandboxBackend> =
-                Arc::new(ForwardedMachineApiSandboxBackend::new(client.clone()));
+            let backend = match network {
+                Some(network) => ForwardedMachineApiSandboxBackend::new(client.clone(), network)?,
+                #[cfg(test)]
+                None => ForwardedMachineApiSandboxBackend::new_for_test(
+                    client.clone(),
+                    nimbus_network::LocalPortLeaseAuthority::open(
+                        context
+                            .control_plane
+                            .project_root
+                            .join("test-parent-machine-network"),
+                    )
+                    .map_err(|error| {
+                        Error::Internal(format!(
+                            "failed to open isolated test parent publication authority: {error}"
+                        ))
+                    })?,
+                )?,
+                #[cfg(not(test))]
+                None => {
+                    return Err(Error::Internal(
+                        "forwarded service execution requires the retained parent network authority"
+                            .to_owned(),
+                    ));
+                }
+            };
+            let backend: Arc<dyn SandboxBackend> = Arc::new(backend);
             Ok(ServiceExecutionSurface::ForwardedContainer { client, backend })
         }
     }
@@ -711,11 +779,16 @@ fn resolve_forwarded_machine_api_client(
     host_platform: ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
     operation: &str,
+    network: Option<&HostMachineNetworkAuthority>,
 ) -> Result<MachineApiClient, Error> {
     match host_platform {
         ServiceHostPlatform::Macos => match machine_api_client {
             Some(client) => Ok(client),
-            None => require_default_machine_api_client(),
+            None => require_default_machine_api_client(network.ok_or_else(|| {
+                Error::Internal(format!(
+                    "nimbus {operation} requires the retained parent network authority"
+                ))
+            })?),
         },
         ServiceHostPlatform::Linux => Err(Error::InvalidInput(format!(
             "compose project {} selects sandbox backend container, but nimbus {} only supports that backend through the macOS guest machine API today",

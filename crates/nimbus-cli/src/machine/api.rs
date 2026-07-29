@@ -4,7 +4,7 @@ use std::fs::File;
 use std::future::Future;
 use std::io::{Read, Seek, SeekFrom};
 use std::net::{TcpStream, ToSocketAddrs};
-use std::os::fd::FromRawFd;
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixListener as StdUnixListener;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -20,11 +20,11 @@ use nimbus::{
     Error, SandboxBackendKind, SandboxError, SandboxOciImageSource, SandboxRootSpec, SandboxSpec,
     SandboxStatus, TenantId,
 };
-use nimbus_network::NetworkResourceGeneration;
 use nimbus_node::{NodeAgent, SystemdTransientUnitBackend};
+#[cfg(test)]
+use nimbus_sandbox::backends::container::ContainerSandboxBackend;
 use nimbus_sandbox::backends::container::{
-    ContainerSandboxBackend, ContainerSandboxBackendConfig, ContainerSandboxStateView,
-    OciMachinePortForwarderConfig,
+    ContainerSandboxBackendConfig, ContainerSandboxStateView, OciMachinePortForwarderConfig,
 };
 use nimbus_workloads::NodeIdentity;
 use serde::Deserialize;
@@ -32,6 +32,7 @@ use serde::Deserialize;
 use crate::node_workload_executor::JsonlStatusWriter;
 
 use super::{MachineApiCommand, MachineRootLayout};
+use nimbus_machine::MachineForwarderAuthority;
 use nimbus_machine::api::{
     MACHINE_API_BOOTC_ROLLBACK_OPERATION, MACHINE_API_BOOTC_STATUS_OPERATION,
     MACHINE_API_BOOTC_SWITCH_OPERATION, MACHINE_API_BOOTC_UPGRADE_OPERATION,
@@ -49,7 +50,8 @@ use nimbus_machine::api::{
     MachineApiServiceSandboxInspectResponse, MachineApiServiceSandboxListResponse,
     MachineApiServiceSandboxLogChunkResponse, MachineApiServiceSandboxLogPaths,
     MachineApiServiceSandboxLookupResponse, MachineApiServiceSandboxStartResponse,
-    MachineApiServiceSandboxStopResponse, MachineApiServiceSandboxSummary, PROTOCOL_VERSION,
+    MachineApiServiceSandboxStopRequest, MachineApiServiceSandboxStopResponse,
+    MachineApiServiceSandboxSummary, PROTOCOL_VERSION,
 };
 
 mod binaries;
@@ -57,6 +59,7 @@ mod bootc;
 mod capabilities;
 mod listener;
 mod logs;
+mod network_composition;
 mod process;
 mod routes;
 mod service_workloads;
@@ -70,18 +73,18 @@ pub(crate) use self::listener::bind_direct_listener;
 
 use self::binaries::apply_resolved_runtime_paths;
 use self::listener::resolve_machine_api_listener;
+use self::network_composition::{GuestMachineNetworkComposition, load_parent_forwarder_authority};
 use self::routes::machine_api_router;
-#[cfg(test)]
-pub(crate) use self::service_workloads::machine_api_node_workload_facade_from_sandbox_backend;
 pub(crate) use self::service_workloads::{GuestNodeWorkloadService, MachineApiNodeWorkloadFacade};
+#[cfg(test)]
+pub(crate) use self::service_workloads::{
+    machine_api_node_workload_facade_from_container_backend,
+    machine_api_node_workload_facade_from_sandbox_backend,
+};
 
 const MACHINE_API_OPERATION_BLOCKER: &str =
     "guest machine API does not yet expose service lifecycle operations";
 const MACHINE_PORT_FORWARDER_TIMEOUT: Duration = Duration::from_millis(200);
-const MACHINE_BOOT_ID_PATH: &str = "/proc/sys/kernel/random/boot_id";
-const INITIAL_MACHINE_FORWARDER_GENERATION: NetworkResourceGeneration =
-    NetworkResourceGeneration::new(1);
-
 #[derive(Clone)]
 pub(crate) struct MachineApiState {
     pub(crate) control_data_dir: PathBuf,
@@ -90,19 +93,18 @@ pub(crate) struct MachineApiState {
     pub(crate) helper_binary_dirs: Vec<PathBuf>,
     pub(crate) service_workloads: Option<Arc<dyn MachineApiNodeWorkloadFacade>>,
     pub(crate) machine_port_forwarder: Option<OciMachinePortForwarderConfig>,
+    pub(crate) forwarder_authority: Option<MachineForwarderAuthority>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MachineApiListenMode {
     DirectSocket,
-    SystemdSocketActivation,
 }
 
 impl MachineApiListenMode {
     fn as_str(self) -> &'static str {
         match self {
             Self::DirectSocket => "direct-socket",
-            Self::SystemdSocketActivation => "systemd-socket-activation",
         }
     }
 }
@@ -120,14 +122,8 @@ pub(super) async fn run_machine_api_command(
         .as_ref()
         .cloned()
         .unwrap_or(default_control_data_dir);
-    fs::create_dir_all(&control_data_dir).map_err(|error| {
-        Error::Internal(format!(
-            "failed to create machine API control directory {}: {error}",
-            control_data_dir.display()
-        ))
-    })?;
-
-    let (listener, listen_mode) = resolve_machine_api_listener(&command)?;
+    let (forwarder_authority, machine_port_forwarder) =
+        load_parent_forwarder_authority(&control_data_dir)?;
     let binary_lookup_path = std::env::var_os("PATH");
     let helper_binary_dirs = default_guest_helper_binary_dirs();
     let container_root = control_data_dir.join("service-sandboxes").join("container");
@@ -140,20 +136,16 @@ pub(super) async fn run_machine_api_command(
         binary_lookup_path.as_deref(),
         &helper_binary_dirs,
     );
-    let machine_boot_id = std::fs::read_to_string(MACHINE_BOOT_ID_PATH).map_err(|error| {
-        Error::Internal(format!(
-            "failed to read guest boot identity from {MACHINE_BOOT_ID_PATH}: {error}"
-        ))
-    })?;
-    let machine_port_forwarder =
-        machine_port_forwarder_config(&command.guest_node_id, &machine_boot_id)?;
     container_config.machine_port_forwarder = Some(machine_port_forwarder.clone());
-    let bundle_materializer = Arc::new(ContainerSandboxBackend::new(container_config));
     let node_id = NodeIdentity::new(&command.guest_node_id).map_err(|error| {
         Error::Internal(format!(
             "failed to build machine API guest node identity: {error}"
         ))
     })?;
+    let network_composition =
+        GuestMachineNetworkComposition::claim(&control_data_dir, container_config)?;
+    let (listener, listen_mode) = resolve_machine_api_listener(&command)?;
+    let bundle_materializer = network_composition.backend();
     let status_writer = JsonlStatusWriter::new(control_data_dir.join("node-agent/status.jsonl"));
     #[cfg(target_os = "linux")]
     let node_lifecycle_backend =
@@ -181,30 +173,9 @@ pub(super) async fn run_machine_api_command(
         binary_lookup_path,
         helper_binary_dirs,
         machine_port_forwarder: Some(machine_port_forwarder),
+        forwarder_authority: Some(forwarder_authority),
     };
     serve_machine_api(listener, state, std::future::pending()).await
-}
-
-fn machine_port_forwarder_config(
-    guest_node_id: &str,
-    machine_boot_id: &str,
-) -> Result<OciMachinePortForwarderConfig, Error> {
-    let machine_boot_id = machine_boot_id.trim();
-    if machine_boot_id.is_empty() {
-        return Err(Error::Internal(
-            "guest boot identity is empty; gvproxy provider identity cannot be fenced".to_owned(),
-        ));
-    }
-    OciMachinePortForwarderConfig::gvproxy_for_provider_instance(
-        format!("machine:{guest_node_id}:boot:{machine_boot_id}:gvproxy"),
-        INITIAL_MACHINE_FORWARDER_GENERATION,
-    )
-    .map_err(|error| {
-        Error::Internal(format!(
-            "failed to build lifecycle-owned machine forwarder identity for guest node \
-             {guest_node_id}: {error}"
-        ))
-    })
 }
 
 pub(crate) async fn serve_machine_api<F>(
@@ -230,6 +201,25 @@ fn require_service_workloads(
         .ok_or_else(|| MachineApiHttpError {
             status: StatusCode::SERVICE_UNAVAILABLE,
             message: MACHINE_API_OPERATION_BLOCKER.to_owned(),
+        })
+}
+
+fn require_forwarder_authority(
+    state: &MachineApiState,
+    presented: &MachineForwarderAuthority,
+) -> Result<(), MachineApiHttpError> {
+    let expected = state
+        .forwarder_authority
+        .as_ref()
+        .ok_or_else(|| MachineApiHttpError {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            message: "machine API has no boot-authenticated forwarder authority".to_owned(),
+        })?;
+    expected
+        .authenticate(presented)
+        .map_err(|error| MachineApiHttpError {
+            status: StatusCode::CONFLICT,
+            message: error.to_string(),
         })
 }
 

@@ -1,9 +1,6 @@
 use super::*;
 use nimbus_engine::Engine;
-use nimbus_network::{
-    LocalPortLeaseAuthority, NetworkManagementMode, PortLeaseEffectScope, PortLeaseId,
-    PortLeasePhase,
-};
+use nimbus_network::{NetworkManagementMode, PortLeaseEffectScope, PortLeaseId, PortLeasePhase};
 use std::io::{self, BufRead as _};
 use std::sync::Arc;
 
@@ -18,21 +15,16 @@ fn external_binder_after_probe_blocks_provider_while_machine_state_claims_port()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let roots = MachineRootLayout::test_sibling_roots(
-        temp_dir.path().join("config"),
-        temp_dir.path().join("state"),
-        temp_dir.path().join("runtime"),
-    );
-    let engine = Arc::new(
-        Engine::new(roots.network_state_root.clone())
-            .expect("collision fixture engine should initialize"),
-    );
+    let authority_root = test_network_authority_root(temp_dir.path());
+    let engine =
+        Arc::new(Engine::new(authority_root).expect("collision fixture engine should initialize"));
     let server = nimbus_server::ServeOptions::reconstruct_direct(engine)
         .expect("test server authority should open");
     let first_kernel_free = fence_preoccupied_range_prefix(&server);
+    let authority = test_port_authority(temp_dir.path());
 
     let prepared = super::super::ports::PreparedMachineSshPortLease::prepare(
-        &roots,
+        authority.clone(),
         "race-window",
         &MachineStateRecord::initialized(),
     )
@@ -63,8 +55,6 @@ fn external_binder_after_probe_blocks_provider_while_machine_state_claims_port()
     prepared
         .record_bind_failure(provider_error)
         .expect("the exact no-effect provider failure should become durable");
-    let authority = LocalPortLeaseAuthority::open(&roots.network_state_root)
-        .expect("shared authority should reopen");
     let record = authority
         .inspect(&PortLeaseId::for_listener(&listener_id))
         .expect("machine lease should inspect")
@@ -89,20 +79,16 @@ fn machine_ssh_reservation_conflicts_with_server_listener_authority() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let roots = MachineRootLayout::test_sibling_roots(
-        temp_dir.path().join("config"),
-        temp_dir.path().join("state"),
-        temp_dir.path().join("runtime"),
-    );
+    let authority = test_port_authority(temp_dir.path());
     let prepared = super::super::ports::PreparedMachineSshPortLease::prepare(
-        &roots,
+        authority,
         "server-conflict",
         &MachineStateRecord::initialized(),
     )
     .expect("machine should select and claim its desired SSH port");
     let allocated_port = prepared.selected_port();
     let engine = Arc::new(
-        Engine::new(roots.network_state_root.clone())
+        Engine::new(test_network_authority_root(temp_dir.path()))
             .expect("conflict fixture engine should initialize"),
     );
     let server = nimbus_server::ServeOptions::reconstruct_direct(engine)
@@ -179,15 +165,21 @@ fn launch_plan_reuses_confirmed_stopped_managed_ssh_port() {
     fs::write(&image_path, []).expect("image should write");
     let config = sample_config(&image_path);
     let paths = config.roots.paths("default");
-    let first = MachineLaunchPlan::build(&paths, &config, &MachineStateRecord::initialized())
-        .expect("first launch plan should build");
+    let authority = test_port_authority(temp_dir.path());
+    let first = MachineLaunchPlan::build(
+        &authority,
+        &paths,
+        &config,
+        &MachineStateRecord::initialized(),
+    )
+    .expect("first launch plan should build");
     first
         .ssh_port_lease()
         .activate_exact_loopback()
         .expect("exact provider observation should activate");
     let first_runtime = first.runtime().clone();
     drop(first);
-    let cleanup = super::super::ports::withdraw_machine_ssh_port(&config.roots, &first_runtime)
+    let cleanup = super::super::ports::withdraw_machine_ssh_port(&authority, &first_runtime)
         .expect("stop must fence before provider teardown")
         .expect("dead provider owner should yield exact cleanup authority");
     super::super::ports::retain_machine_ssh_port_after_confirmed_stop(cleanup)
@@ -195,8 +187,8 @@ fn launch_plan_reuses_confirmed_stopped_managed_ssh_port() {
     let mut state = MachineStateRecord::initialized();
     state.runtime = Some(first_runtime.clone());
 
-    let restarted =
-        MachineLaunchPlan::build(&paths, &config, &state).expect("restart plan should build");
+    let restarted = MachineLaunchPlan::build(&authority, &paths, &config, &state)
+        .expect("restart plan should build");
     assert_eq!(restarted.runtime.ssh_port, first_runtime.ssh_port);
     assert_eq!(
         restarted.runtime.ssh_listener_id,
@@ -205,21 +197,74 @@ fn launch_plan_reuses_confirmed_stopped_managed_ssh_port() {
 }
 
 #[test]
+fn machine_provider_generation_is_parent_issued_persisted_and_monotonic() {
+    let temp_dir = TempDir::new().expect("temp dir should exist");
+    let _guard = MachineHelperEnvGuard::install_stub_binaries(temp_dir.path());
+    let image_path = temp_dir.path().join("disk.raw");
+    fs::write(&image_path, []).expect("image should write");
+    let config = sample_config(&image_path);
+    let paths = config.roots.paths("default");
+    let authority = test_port_authority(temp_dir.path());
+
+    let first = MachineLaunchPlan::build(
+        &authority,
+        &paths,
+        &config,
+        &MachineStateRecord::initialized(),
+    )
+    .expect("initial launch plan should build");
+    assert_eq!(
+        first.runtime.forwarder_authority.provider_instance(),
+        config.network_authority.provider_instance(),
+        "the parent-persisted provider instance must be preserved"
+    );
+    assert_eq!(
+        first.runtime.forwarder_authority.generation(),
+        NetworkResourceGeneration::new(1),
+        "the first parent-issued machine incarnation must use generation one"
+    );
+
+    first
+        .ssh_port_lease()
+        .activate_exact_loopback()
+        .expect("exact provider observation should activate");
+    let first_runtime = first.runtime().clone();
+    drop(first);
+    let cleanup = super::super::ports::withdraw_machine_ssh_port(&authority, &first_runtime)
+        .expect("stop must fence before provider teardown")
+        .expect("dead provider owner should yield exact cleanup authority");
+    super::super::ports::retain_machine_ssh_port_after_confirmed_stop(cleanup)
+        .expect("confirmed stop should retain the selected SSH port");
+
+    let mut persisted_state = MachineStateRecord::initialized();
+    persisted_state.runtime = Some(first_runtime.clone());
+    let restarted = MachineLaunchPlan::build(&authority, &paths, &config, &persisted_state)
+        .expect("restart launch plan should build from persisted runtime evidence");
+
+    assert_eq!(
+        restarted.runtime.forwarder_authority.provider_instance(),
+        first_runtime.forwarder_authority.provider_instance(),
+        "restart must retain the parent-issued provider instance"
+    );
+    assert_eq!(
+        restarted.runtime.forwarder_authority.generation(),
+        NetworkResourceGeneration::new(2),
+        "restart must monotonically advance the persisted provider generation"
+    );
+}
+
+#[test]
 fn concurrent_machine_listener_reservations_receive_distinct_ports() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let roots = MachineRootLayout::test_sibling_roots(
-        temp_dir.path().join("config"),
-        temp_dir.path().join("state"),
-        temp_dir.path().join("runtime"),
-    );
+    let authority = test_port_authority(temp_dir.path());
     let first = super::super::ports::PreparedMachineSshPortLease::prepare(
-        &roots,
+        authority.clone(),
         "first",
         &MachineStateRecord::initialized(),
     )
     .expect("first machine listener should reserve");
     let second = super::super::ports::PreparedMachineSshPortLease::prepare(
-        &roots,
+        authority,
         "second",
         &MachineStateRecord::initialized(),
     )
@@ -233,13 +278,9 @@ fn concurrent_machine_listener_reservations_receive_distinct_ports() {
 #[test]
 fn machine_ssh_claim_precedes_provider_and_exact_observation_activates() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let roots = MachineRootLayout::test_sibling_roots(
-        temp_dir.path().join("config"),
-        temp_dir.path().join("state"),
-        temp_dir.path().join("runtime"),
-    );
+    let authority = test_port_authority(temp_dir.path());
     let prepared = super::super::ports::PreparedMachineSshPortLease::prepare(
-        &roots,
+        authority.clone(),
         "claim-before-provider",
         &MachineStateRecord::initialized(),
     )
@@ -256,8 +297,6 @@ fn machine_ssh_claim_precedes_provider_and_exact_observation_activates() {
     );
     let listener_id = prepared.listener_id().clone();
     let selected_port = prepared.selected_port();
-    let authority =
-        LocalPortLeaseAuthority::open(&roots.network_state_root).expect("authority should open");
     let claimed = authority
         .inspect(&PortLeaseId::for_listener(&listener_id))
         .expect("claimed lease should inspect")
@@ -293,13 +332,9 @@ fn machine_ssh_claim_precedes_provider_and_exact_observation_activates() {
 #[test]
 fn pre_provider_failure_releases_claim_without_creating_an_effect() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let roots = MachineRootLayout::test_sibling_roots(
-        temp_dir.path().join("config"),
-        temp_dir.path().join("state"),
-        temp_dir.path().join("runtime"),
-    );
+    let authority = test_port_authority(temp_dir.path());
     let prepared = super::super::ports::PreparedMachineSshPortLease::prepare(
-        &roots,
+        authority.clone(),
         "pre-provider-failure",
         &MachineStateRecord::initialized(),
     )
@@ -309,8 +344,7 @@ fn pre_provider_failure_releases_claim_without_creating_an_effect() {
     prepared
         .abandon_before_provider_start()
         .expect("proven no-effect preparation should release");
-    let released = LocalPortLeaseAuthority::open(&roots.network_state_root)
-        .expect("authority should reopen")
+    let released = authority
         .inspect(&PortLeaseId::for_listener(&listener_id))
         .expect("released lease should inspect")
         .expect("released lease should remain as audit evidence");
@@ -322,13 +356,11 @@ fn pre_provider_failure_releases_claim_without_creating_an_effect() {
 #[test]
 fn release_machine_ssh_port_releases_confirmed_stopped_authority() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let roots = MachineRootLayout::test_sibling_roots(
-        temp_dir.path().join("config"),
-        temp_dir.path().join("state"),
-        temp_dir.path().join("runtime"),
-    );
+    let image_path = temp_dir.path().join("disk.raw");
+    let config = sample_config(&image_path);
+    let authority = test_port_authority(temp_dir.path());
     let prepared = super::super::ports::PreparedMachineSshPortLease::prepare(
-        &roots,
+        authority.clone(),
         "default",
         &MachineStateRecord::initialized(),
     )
@@ -345,12 +377,13 @@ fn release_machine_ssh_port_releases_confirmed_stopped_authority() {
         efi_variable_store_path: PathBuf::from("/tmp/efi"),
         machine_image_source: "fixture".to_owned(),
         ssh_listener_id: prepared.listener_id().clone(),
+        forwarder_authority: test_forwarder_authority(&config),
         ssh_port: prepared.selected_port(),
         rest_uri: "unix:///tmp/vmm.sock".to_owned(),
         ready_vsock_port: READY_VSOCK_PORT,
     };
     drop(prepared);
-    let cleanup = super::super::ports::withdraw_machine_ssh_port(&roots, &runtime)
+    let cleanup = super::super::ports::withdraw_machine_ssh_port(&authority, &runtime)
         .expect("stop should fence the listener")
         .expect("dead provider owner should yield exact cleanup authority");
     super::super::ports::retain_machine_ssh_port_after_confirmed_stop(cleanup)
@@ -358,9 +391,7 @@ fn release_machine_ssh_port_releases_confirmed_stopped_authority() {
     let mut state = MachineStateRecord::initialized();
     state.runtime = Some(runtime.clone());
 
-    release_machine_ssh_port(&roots, &state).expect("port release should succeed");
-    let authority =
-        LocalPortLeaseAuthority::open(&roots.network_state_root).expect("authority should open");
+    release_machine_ssh_port(&authority, &state).expect("port release should succeed");
     let record = authority
         .inspect(&PortLeaseId::for_listener(&runtime.ssh_listener_id))
         .expect("lease should inspect")
@@ -371,12 +402,8 @@ fn release_machine_ssh_port_releases_confirmed_stopped_authority() {
 #[test]
 fn refresh_machine_state_marks_missing_pids_as_stale() {
     let temp_dir = TempDir::new().expect("temp dir should exist");
-    let layout = MachineRootLayout::test_sibling_roots(
-        temp_dir.path().join("config"),
-        temp_dir.path().join("state"),
-        temp_dir.path().join("runtime"),
-    );
-    let paths = layout.paths("default");
+    let config = sample_config(&temp_dir.path().join("disk.raw"));
+    let paths = config.roots.paths("default");
     paths
         .ensure_runtime_directories()
         .expect("runtime directories should exist");
@@ -393,6 +420,7 @@ fn refresh_machine_state_marks_missing_pids_as_stale() {
         efi_variable_store_path: paths.efi_variable_store_path.clone(),
         machine_image_source: "docker://quay.io/podman/machine-os@sha256:test".to_owned(),
         ssh_listener_id: fixture_machine_ssh_listener_id("refresh-stale"),
+        forwarder_authority: test_forwarder_authority(&config),
         ssh_port: 2222,
         rest_uri: format!("unix://{}", paths.vmm_endpoint_path.display()),
         ready_vsock_port: READY_VSOCK_PORT,

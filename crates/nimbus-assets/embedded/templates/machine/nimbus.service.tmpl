@@ -1,7 +1,6 @@
 [Unit]
 Description=Nimbus API Service
-Requires=nimbus.socket
-After=nimbus.socket network-online.target local-fs.target
+After=network-online.target local-fs.target
 Wants=network-online.target
 
 [Service]
@@ -9,9 +8,5 @@ Type=exec
 KillMode=process
 WorkingDirectory={guest_nimbus_data_dir}
 Environment=HOME={guest_nimbus_data_dir}
-ExecStart={guest_nimbus_bin} machine api --socket-activation --control-data-dir {guest_nimbus_control_dir}
-Restart=on-failure
-RestartSec=2
-
-[Install]
-WantedBy=default.target
+ExecStart={guest_nimbus_bin} machine api --socket-path {guest_nimbus_socket} --control-data-dir {guest_nimbus_control_dir}
+Restart=no

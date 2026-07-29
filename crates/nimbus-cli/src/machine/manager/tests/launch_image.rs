@@ -60,6 +60,7 @@ fn converge_machine_image_contract_rebuilds_boot_artifacts_when_recorded_image_d
         efi_variable_store_path: paths.efi_variable_store_path.clone(),
         machine_image_source: "docker://quay.io/podman/machine-os@sha256:old-digest".to_owned(),
         ssh_listener_id: fixture_machine_ssh_listener_id("launch-image"),
+        forwarder_authority: test_forwarder_authority(&config),
         ssh_port: 20022,
         rest_uri: format!("unix://{}", paths.vmm_endpoint_path.display()),
         ready_vsock_port: READY_VSOCK_PORT,
@@ -118,7 +119,9 @@ fn launch_plan_requires_bootable_local_disk_image() {
     let config = sample_config(&image_path);
     let paths = config.roots.paths("default");
     let state = MachineStateRecord::initialized();
-    let plan = MachineLaunchPlan::build(&paths, &config, &state).expect("launch plan should build");
+    let port_authority = test_port_authority(temp_dir.path());
+    let plan = MachineLaunchPlan::build(&port_authority, &paths, &config, &state)
+        .expect("launch plan should build");
 
     assert!(
         plan.vmm_command
@@ -178,8 +181,10 @@ fn launch_plan_bootc_machine_config_attaches_bundle_without_ignition() {
     config.guest.ssh_identity_path = Some(ssh_identity_path);
     let paths = config.roots.paths("default");
     let state = MachineStateRecord::initialized();
+    let port_authority = test_port_authority(temp_dir.path());
 
-    let plan = MachineLaunchPlan::build(&paths, &config, &state).expect("launch plan should build");
+    let plan = MachineLaunchPlan::build(&port_authority, &paths, &config, &state)
+        .expect("launch plan should build");
 
     assert_eq!(
         plan.machine_config_bundle_dir,
@@ -227,7 +232,9 @@ fn launch_plan_keeps_gvproxy_network_only_and_builds_separate_machine_api_forwar
 
     let paths = config.roots.paths("default");
     let state = MachineStateRecord::initialized();
-    let plan = MachineLaunchPlan::build(&paths, &config, &state).expect("launch plan should build");
+    let port_authority = test_port_authority(temp_dir.path());
+    let plan = MachineLaunchPlan::build(&port_authority, &paths, &config, &state)
+        .expect("launch plan should build");
 
     assert!(!plan.gvproxy_command.args.iter().any(|arg| {
         matches!(
@@ -338,10 +345,17 @@ fn registry_image_reference_reuses_materialized_disk_when_present() {
         },
         volumes: Vec::new(),
         roots: layout.clone(),
+        network_authority: test_network_authority_record(temp_dir.path(), "default"),
     };
 
-    let plan = MachineLaunchPlan::build(&paths, &config, &MachineStateRecord::initialized())
-        .expect("materialized disk should satisfy launch plan");
+    let port_authority = test_port_authority(temp_dir.path());
+    let plan = MachineLaunchPlan::build(
+        &port_authority,
+        &paths,
+        &config,
+        &MachineStateRecord::initialized(),
+    )
+    .expect("materialized disk should satisfy launch plan");
 
     assert_eq!(plan.runtime.image_path, paths.materialized_image_path);
     assert!(

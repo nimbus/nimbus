@@ -8,6 +8,7 @@ use clap::{Parser, Subcommand, error::ErrorKind};
 use tempfile::TempDir;
 
 mod forwarded_api;
+mod network_authority;
 mod os_image;
 mod parse_help;
 mod provider_selection;

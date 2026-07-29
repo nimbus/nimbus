@@ -1,5 +1,5 @@
 use nimbus::{
-    SandboxBackend, SandboxBackendKind, SandboxError, SandboxHandle, SandboxId, SandboxSpec,
+    Error, SandboxBackend, SandboxBackendKind, SandboxError, SandboxHandle, SandboxId, SandboxSpec,
 };
 use nimbus_sandbox::SandboxFuture;
 
@@ -14,8 +14,19 @@ pub(crate) struct ForwardedMachineApiSandboxBackend {
 }
 
 impl ForwardedMachineApiSandboxBackend {
-    pub(crate) fn new(client: MachineApiClient) -> Self {
-        Self { client }
+    pub(crate) fn new(
+        client: MachineApiClient,
+        _network: &super::HostMachineNetworkAuthority,
+    ) -> Result<Self, Error> {
+        Ok(Self { client })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_for_test(
+        client: MachineApiClient,
+        _port_leases: nimbus_network::LocalPortLeaseAuthority,
+    ) -> Result<Self, Error> {
+        Ok(Self { client })
     }
 }
 

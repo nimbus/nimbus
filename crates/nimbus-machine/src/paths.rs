@@ -35,6 +35,10 @@ pub struct MachinePaths {
     pub efi_variable_store_path: PathBuf,
     pub api_forward_pid_path: PathBuf,
     pub gvproxy_pid_path: PathBuf,
+    /// Durable parent-authenticated process birth receipt for the exact
+    /// gvproxy incarnation. The numeric pidfile remains provider output, not
+    /// signaling authority.
+    pub gvproxy_process_identity_path: PathBuf,
     /// Pidfile for the active VMM process (krunkit/vfkit `--pidfile`). The
     /// readiness/stop lifecycle reads this slot regardless of provider.
     pub vmm_pid_path: PathBuf,

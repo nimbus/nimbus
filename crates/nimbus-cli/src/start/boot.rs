@@ -320,12 +320,13 @@ async fn run_start_command_inner(
             compose_selection.as_ref(),
             &compose_control_data_dir,
             command.tenant_isolation_mode,
+            &crate::machine::HostMachineNetworkAuthority::injected(prepared_network.authority()),
         )?
     {
         serve_options = serve_options.with_service_manager(manager);
     }
     let machine_lifecycle_manager =
-        crate::machine::host_machine_lifecycle_manager(compose_control_data_dir.clone())?;
+        crate::machine::host_machine_lifecycle_manager(prepared_network.authority())?;
     serve_options = serve_options.with_machine_lifecycle_manager(machine_lifecycle_manager);
 
     let listener = match activated_listener {
@@ -563,6 +564,7 @@ pub(super) fn load_service_manager(
     compose_selection: Option<&ResolvedComposeSelection>,
     compose_control_data_dir: &std::path::Path,
     tenant_isolation_mode: nimbus_tenant::TenantIsolationMode,
+    network: &crate::machine::HostMachineNetworkAuthority,
 ) -> Result<Option<Arc<nimbus::ServiceManager>>, Error> {
     compose_selection
         .map(|selection| {
@@ -570,6 +572,7 @@ pub(super) fn load_service_manager(
                 selection,
                 compose_control_data_dir,
                 tenant_isolation_mode,
+                network,
             )
         })
         .transpose()

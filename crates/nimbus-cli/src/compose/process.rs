@@ -7,7 +7,7 @@ use nimbus_sandbox::backends::krun::KrunSandboxStateView;
 use serde::Serialize;
 
 use crate::compose::discovery::ResolvedComposeSelection;
-use crate::machine::MachineApiClient;
+use crate::machine::{HostMachineNetworkAuthority, MachineApiClient};
 
 use super::{
     ComposeProjectContext, ComposeTopCommand, LocalKrunExecutionSurface, ServiceHostPlatform,
@@ -44,6 +44,7 @@ pub(super) fn resolve_service_sandbox_process_snapshot_for_selection(
     host_platform: ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
     local_krun: Option<LocalKrunExecutionSurface>,
+    network: Option<&HostMachineNetworkAuthority>,
 ) -> Result<ServiceProcessSnapshot, Error> {
     let context = load_compose_project_context_for_selection(selection, control_data_dir)?;
     let tenant = command
@@ -57,6 +58,7 @@ pub(super) fn resolve_service_sandbox_process_snapshot_for_selection(
         host_platform,
         machine_api_client,
         local_krun,
+        network,
     )? {
         super::ServiceExecutionSurface::Krun { state_view, .. } => {
             resolve_krun_service_sandbox_process_snapshot(

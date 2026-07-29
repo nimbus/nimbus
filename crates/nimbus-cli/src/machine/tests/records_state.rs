@@ -9,8 +9,7 @@ fn hidden_machine_api_subcommand_falls_back_without_home() {
 
     let roots = resolve_roots_for_command(&MachineCommand {
         command: MachineSubcommand::Api(MachineApiCommand {
-            socket_path: Some(PathBuf::from("/tmp/nimbus.sock")),
-            socket_activation: false,
+            socket_path: PathBuf::from("/tmp/nimbus.sock"),
             control_data_dir: Some(PathBuf::from("/tmp/nimbus-control")),
             guest_node_id: "machine-os-guest-node".to_owned(),
         }),
@@ -384,6 +383,7 @@ fn machine_set_rejects_running_machine() {
                 disk_gib: DEFAULT_MACHINE_DISK_GIB,
             },
             volumes: Vec::new(),
+            network_authority: test_network_authority_record(temp_dir.path(), "team-a"),
             roots: layout.clone(),
         },
     )

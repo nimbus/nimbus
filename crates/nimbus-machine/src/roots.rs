@@ -13,22 +13,14 @@ use crate::paths::{
     resolve_data_root_with_env, resolve_runtime_root_with_env, resolve_state_root_with_env,
 };
 
-pub const NETWORK_STATE_ROOT_ENV: &str = "NIMBUS_CONTROL_DATA_DIR";
-pub const DEFAULT_NETWORK_STATE_ROOT: &str = "./data";
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MachineRootLayout {
     pub config_root: PathBuf,
     pub state_root: PathBuf,
     pub data_root: PathBuf,
     pub cache_root: PathBuf,
     pub runtime_root: PathBuf,
-    /// Shared node-local network authority used by every host listener owner.
-    ///
-    /// This path is composition data. Machine provider effects remain in their
-    /// owning adapters; the portable lease state itself remains
-    /// `nimbus-network` owned.
-    pub network_state_root: PathBuf,
 }
 
 impl MachineRootLayout {
@@ -37,16 +29,12 @@ impl MachineRootLayout {
     }
 
     fn resolve_with_env(mut lookup: impl FnMut(&str) -> Option<OsString>) -> Result<Self, Error> {
-        let network_state_root = lookup(NETWORK_STATE_ROOT_ENV)
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(DEFAULT_NETWORK_STATE_ROOT));
         Ok(Self {
             config_root: resolve_config_root_with_env(&mut lookup)?,
             state_root: resolve_state_root_with_env(&mut lookup)?,
             data_root: resolve_data_root_with_env(&mut lookup)?,
             cache_root: resolve_cache_root_with_env(&mut lookup)?,
             runtime_root: resolve_runtime_root_with_env(&mut lookup),
-            network_state_root,
         })
     }
 
@@ -57,7 +45,6 @@ impl MachineRootLayout {
             data_root: PathBuf::from("/var/lib/nimbus/machine/data"),
             cache_root: PathBuf::from("/var/lib/nimbus/machine/cache"),
             runtime_root,
-            network_state_root: PathBuf::from("/var/lib/nimbus/control"),
         }
     }
 
@@ -70,19 +57,11 @@ impl MachineRootLayout {
     ) -> Self {
         Self {
             config_root,
-            network_state_root: state_root.clone(),
             state_root,
             data_root,
             cache_root,
             runtime_root,
         }
-    }
-
-    /// Override the shared node-local network authority at a composition root.
-    #[must_use]
-    pub fn with_network_state_root(mut self, network_state_root: impl Into<PathBuf>) -> Self {
-        self.network_state_root = network_state_root.into();
-        self
     }
 
     pub fn from_sibling_roots(
@@ -153,6 +132,7 @@ impl MachineRootLayout {
             efi_variable_store_path: data_dir.join("efi-variable-store"),
             api_forward_pid_path: runtime_dir.join(format!("{name}-api-forward.pid")),
             gvproxy_pid_path: runtime_dir.join(format!("{name}-gvproxy.pid")),
+            gvproxy_process_identity_path: runtime_dir.join(format!("{name}-gvproxy-process.json")),
             vmm_pid_path: runtime_dir.join(format!("{name}-vmm.pid")),
             api_forward_log_path: runtime_dir.join(format!("{name}-api-forward.log")),
             machine_log_path: runtime_dir.join(format!("{name}.log")),
@@ -168,7 +148,7 @@ mod tests {
     use std::ffi::OsString;
     use std::path::PathBuf;
 
-    use super::{DEFAULT_NETWORK_STATE_ROOT, MachineRootLayout, NETWORK_STATE_ROOT_ENV};
+    use super::MachineRootLayout;
     use crate::paths::{DEFAULT_MACHINE_RUNTIME_ROOT, MACHINE_RUNTIME_ROOT_ENV};
 
     #[test]
@@ -183,7 +163,31 @@ mod tests {
 
         assert_eq!(layout.data_root, PathBuf::from("root/data"));
         assert_eq!(layout.cache_root, PathBuf::from("root/cache"));
-        assert_eq!(layout.network_state_root, PathBuf::from("root/state"));
+        assert_eq!(
+            serde_json::to_value(&layout).expect("machine roots should serialize"),
+            serde_json::json!({
+                "config_root": "root/config",
+                "state_root": "root/state",
+                "data_root": "root/data",
+                "cache_root": "root/cache",
+                "runtime_root": "root/runtime",
+            }),
+            "machine roots must contain artifacts only"
+        );
+
+        let mut obsolete_mixed_root =
+            serde_json::to_value(&layout).expect("machine roots should serialize");
+        obsolete_mixed_root
+            .as_object_mut()
+            .expect("machine roots wire should be an object")
+            .insert(
+                "network_state_root".to_owned(),
+                serde_json::json!("root/state"),
+            );
+        assert!(
+            serde_json::from_value::<MachineRootLayout>(obsolete_mixed_root).is_err(),
+            "the removed mixed-root field must not be admitted as compatibility data"
+        );
     }
 
     #[test]
@@ -222,7 +226,7 @@ mod tests {
             ("XDG_DATA_HOME", "/xdg/data"),
             ("XDG_CACHE_HOME", "/xdg/cache"),
             (MACHINE_RUNTIME_ROOT_ENV, "/run/nimbus-machine"),
-            (NETWORK_STATE_ROOT_ENV, "/var/lib/nimbus/control"),
+            ("NIMBUS_CONTROL_DATA_DIR", "/must/not/become/a/machine/root"),
         ]))
         .expect("xdg roots should resolve");
 
@@ -240,9 +244,11 @@ mod tests {
             PathBuf::from("/xdg/cache/nimbus/machine")
         );
         assert_eq!(layout.runtime_root, PathBuf::from("/run/nimbus-machine"));
-        assert_eq!(
-            layout.network_state_root,
-            PathBuf::from("/var/lib/nimbus/control")
+        assert!(
+            !serde_json::to_string(&layout)
+                .expect("machine roots should serialize")
+                .contains("network"),
+            "network authority must not enter the artifact-root record"
         );
     }
 
@@ -270,10 +276,6 @@ mod tests {
         assert_eq!(
             layout.runtime_root,
             PathBuf::from(DEFAULT_MACHINE_RUNTIME_ROOT)
-        );
-        assert_eq!(
-            layout.network_state_root,
-            PathBuf::from(DEFAULT_NETWORK_STATE_ROOT)
         );
     }
 

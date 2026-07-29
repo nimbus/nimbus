@@ -46,6 +46,7 @@ fn machine_ssh_prefers_existing_machine_name_before_guest_command() {
                 disk_gib: DEFAULT_MACHINE_DISK_GIB,
             },
             volumes: Vec::new(),
+            network_authority: test_network_authority_record(temp_dir.path(), "team-a"),
             roots: layout.clone(),
         },
     )

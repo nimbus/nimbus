@@ -34,8 +34,8 @@ use crate::compose::process::{
 };
 use crate::machine::{
     MachineApiClient, MachineApiListenMode, MachineApiState, bind_direct_listener,
-    default_guest_helper_binary_dirs, machine_api_node_workload_facade_from_sandbox_backend,
-    serve_machine_api,
+    default_guest_helper_binary_dirs, machine_api_node_workload_facade_from_container_backend,
+    machine_api_node_workload_facade_from_sandbox_backend, serve_machine_api,
 };
 
 mod forwarded_api;

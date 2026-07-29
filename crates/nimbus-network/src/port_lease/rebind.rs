@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 
+use super::plan_batch::authenticate_complete_plan_batch_if_present;
 use super::{
     LocalPortLeaseAuthority, PortLeaseBinding, PortLeaseError, PortLeaseLifetime,
     PortLeaseLifetimeGuard, PortLeaseOperation, PortLeaseOperationError, PortLeasePhase,
@@ -111,6 +112,12 @@ impl LocalPortLeaseAuthority {
         required_lifetimes: Option<&BTreeMap<PortLeaseId, PortLeaseLifetime>>,
     ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
         self.transaction(|state| {
+            let planned = bindings
+                .iter()
+                .map(|(request, _)| request)
+                .collect::<Vec<_>>();
+            authenticate_complete_plan_batch_if_present(state, &planned)?;
+
             let mut distinct =
                 BTreeMap::<PortLeaseId, (&PortLeaseRequest, &PortLeaseBinding)>::new();
             for (request, expected_binding) in bindings {
@@ -259,6 +266,9 @@ impl LocalPortLeaseAuthority {
         requests: &[PortLeaseRequest],
     ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
         self.transaction(|state| {
+            let planned = requests.iter().collect::<Vec<_>>();
+            authenticate_complete_plan_batch_if_present(state, &planned)?;
+
             let mut distinct = BTreeMap::<PortLeaseId, &PortLeaseRequest>::new();
             let mut retained = 0usize;
             let mut released_lease_id = None;

@@ -194,6 +194,24 @@ define_stable_resource_id!(
     NetworkPlanId,
     "netplan"
 );
+
+impl NetworkPlanId {
+    /// Derive one tenant-qualified network plan for a workload incarnation.
+    ///
+    /// The workload incarnation key is intentionally generic: an upper layer
+    /// may include service identity, provider generation, or another stable
+    /// replacement fence without coupling this transport-free crate to that
+    /// vocabulary. Equal tenant and incarnation inputs replay the same plan;
+    /// changing either input creates a separate authority domain.
+    pub fn for_tenant_workload_plan(tenant_id: &TenantId, workload_incarnation_key: &str) -> Self {
+        Self(derive_stable_id(
+            Self::PREFIX,
+            b"nimbus.network.tenant-workload-plan.v1",
+            &[tenant_id.as_str(), workload_incarnation_key],
+        ))
+    }
+}
+
 define_stable_resource_id!(
     /// Stable identity of one workload incarnation's named network attachment.
     ///
@@ -644,6 +662,28 @@ mod tests {
             NetworkAttachmentId::for_workload_attachment("a", "bc"),
             "length framing must prevent component-boundary ambiguity"
         );
+    }
+
+    #[test]
+    fn workload_plan_identity_is_tenant_qualified_and_incarnation_stable() {
+        let tenant_a = TenantId::new("tenant-a").expect("tenant should validate");
+        let tenant_b = TenantId::new("tenant-b").expect("tenant should validate");
+        let first = NetworkPlanId::for_tenant_workload_plan(&tenant_a, "sandbox-incarnation-a");
+        let replay = NetworkPlanId::for_tenant_workload_plan(&tenant_a, "sandbox-incarnation-a");
+        let replacement =
+            NetworkPlanId::for_tenant_workload_plan(&tenant_a, "sandbox-incarnation-b");
+        let other_tenant =
+            NetworkPlanId::for_tenant_workload_plan(&tenant_b, "sandbox-incarnation-a");
+
+        assert_eq!(first, replay);
+        assert_ne!(first, replacement);
+        assert_ne!(first, other_tenant);
+        assert_eq!(
+            first.as_str(),
+            "netplan_55CXJYABRZ8ADW7PAC31KYGQAR",
+            "the tenant/workload derivation is durable wire authority"
+        );
+        assert_eq!(first.as_str().parse::<NetworkPlanId>(), Ok(first));
     }
 
     #[test]

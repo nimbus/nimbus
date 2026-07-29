@@ -7,12 +7,15 @@ use std::process::{Child, Command, Stdio};
 
 use flate2::read::GzDecoder;
 use nimbus::Error;
+use nimbus_machine::{MachineBootAuthorityEvidence, MachineForwarderAuthority};
 use reqwest::blocking::Client as BlockingClient;
 use tempfile::NamedTempFile;
 
 use crate::cli_ux;
 
-use super::super::bootstrap::{GUEST_NIMBUS_BIN, GUEST_NIMBUS_SOCKET};
+use super::super::bootstrap::{
+    GUEST_MACHINE_API_AUTHORITY_PATH, GUEST_NIMBUS_BIN, GUEST_NIMBUS_SOCKET,
+};
 use super::super::{
     MachineBootstrapMode, MachineConfigRecord, MachinePaths, MachineStateRecord,
     machine_bootstrap_mode,
@@ -217,30 +220,38 @@ pub(super) fn requires_bootc_machine_config(config: &MachineConfigRecord) -> boo
         && machine_bootstrap_mode(config) == MachineBootstrapMode::BootcMachineConfig
 }
 
+pub(super) struct GuestMachineApiProcesses<'a> {
+    pub(super) vmm: &'a mut Option<Child>,
+    pub(super) gvproxy: &'a mut Option<Child>,
+    pub(super) api_forward: &'a mut Option<Child>,
+}
+
 pub(super) fn ensure_guest_machine_api_ready(
     paths: &MachinePaths,
     config: &MachineConfigRecord,
+    forwarder_authority: &MachineForwarderAuthority,
     ssh_port: u16,
-    vmm_child: &mut Option<Child>,
-    gvproxy_child: &mut Option<Child>,
-    api_forward_child: &mut Option<Child>,
+    processes: GuestMachineApiProcesses<'_>,
     startup_signals: &StartupSignalMonitor,
 ) -> Result<(), Error> {
     if !config.provider.uses_managed_applehv_guest() || config.guest.ssh_identity_path.is_none() {
         return Ok(());
     }
 
+    stop_guest_machine_api(config, ssh_port)?;
     if requires_host_guest_nimbus_sync(config) {
         sync_guest_nimbus_binary(paths, config, ssh_port)?;
     }
+    install_guest_machine_api_authority(config, forwarder_authority, ssh_port)?;
+    start_guest_machine_api(config, ssh_port)?;
 
     super::emit_machine_progress("Waiting for forwarded machine API");
     wait_for_machine_api_ready(
         paths,
         resolve_machine_api_ready_wait_timeout(),
-        required_child(vmm_child, "machine VMM")?,
-        required_child(gvproxy_child, "gvproxy")?,
-        required_child(api_forward_child, "machine API forward")?,
+        required_child(processes.vmm, "machine VMM")?,
+        required_child(processes.gvproxy, "gvproxy")?,
+        required_child(processes.api_forward, "machine API forward")?,
         startup_signals,
     )
 }
@@ -272,13 +283,88 @@ fn sync_guest_nimbus_binary(
         )?;
     }
 
-    run_guest_ssh_shell_capture(config, ssh_port, &ensure_guest_nimbus_socket_shell_script())?;
     Ok(())
 }
 
-pub(super) fn ensure_guest_nimbus_socket_shell_script() -> String {
+fn install_guest_machine_api_authority(
+    config: &MachineConfigRecord,
+    forwarder_authority: &MachineForwarderAuthority,
+    ssh_port: u16,
+) -> Result<(), Error> {
+    let evidence =
+        MachineBootAuthorityEvidence::new(config.name.clone(), forwarder_authority.clone())
+            .map_err(|error| {
+                Error::Internal(format!(
+                    "failed to build parent-issued machine boot authority for '{}': {error}",
+                    config.name
+                ))
+            })?;
+    let mut authority_file = NamedTempFile::new().map_err(|error| {
+        Error::Internal(format!(
+            "failed to create temporary machine boot-authority file: {error}"
+        ))
+    })?;
+    serde_json::to_writer(authority_file.as_file_mut(), &evidence).map_err(|error| {
+        Error::Internal(format!(
+            "failed to serialize machine boot-authority evidence: {error}"
+        ))
+    })?;
+    authority_file.as_file_mut().flush().map_err(|error| {
+        Error::Internal(format!(
+            "failed to flush temporary machine boot-authority file: {error}"
+        ))
+    })?;
+    let expected_sha256 = compute_sha256(authority_file.path())?;
+    stream_guest_file_over_ssh(
+        config,
+        ssh_port,
+        authority_file.path(),
+        &format!(
+            "set -eu; destination=\"{destination}\"; install_dir=\"$(dirname \"$destination\")\"; \
+             tmp_path=\"$install_dir/.machine-api-authority.$$.tmp\"; sudo mkdir -p \
+             \"$install_dir\"; cat | sudo tee \"$tmp_path\" >/dev/null; sudo chmod 0600 \
+             \"$tmp_path\"; sudo mv \"$tmp_path\" \"$destination\"",
+            destination = GUEST_MACHINE_API_AUTHORITY_PATH,
+        ),
+    )?;
+    let observed_sha256 = run_guest_ssh_shell_capture(
+        config,
+        ssh_port,
+        &format!(
+            "set -eu; set -- $(sudo sha256sum \"{path}\"); printf '%s' \"$1\"",
+            path = GUEST_MACHINE_API_AUTHORITY_PATH,
+        ),
+    )?;
+    if observed_sha256.trim() != expected_sha256 {
+        return Err(Error::Internal(
+            "guest machine boot-authority digest did not match the parent artifact".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn stop_guest_machine_api(config: &MachineConfigRecord, ssh_port: u16) -> Result<(), Error> {
+    run_guest_ssh_shell_capture(config, ssh_port, stop_guest_nimbus_service_shell_script())?;
+    Ok(())
+}
+
+pub(super) fn stop_guest_nimbus_service_shell_script() -> &'static str {
+    "set -eu; sudo systemctl daemon-reload; \
+     sudo systemctl stop nimbus.service >/dev/null 2>&1 || true; \
+     sudo systemctl reset-failed nimbus.service >/dev/null 2>&1 || true"
+}
+
+fn start_guest_machine_api(config: &MachineConfigRecord, ssh_port: u16) -> Result<(), Error> {
+    run_guest_ssh_shell_capture(config, ssh_port, &start_guest_nimbus_service_shell_script())?;
+    Ok(())
+}
+
+pub(super) fn start_guest_nimbus_service_shell_script() -> String {
     format!(
-        "set -eu; sudo systemctl daemon-reload; sudo systemctl stop nimbus.service nimbus.socket >/dev/null 2>&1 || true; sudo systemctl reset-failed nimbus.service nimbus.socket >/dev/null 2>&1 || true; sudo rm -f \"{socket}\"; sudo systemctl enable nimbus.socket >/dev/null 2>&1 || true; sudo systemctl start nimbus.socket; sudo systemctl is-active nimbus.socket >/dev/null; printf '%s' ok",
+        "set -eu; sudo rm -f \"{socket}\"; sudo systemctl restart nimbus.service; \
+         for attempt in $(seq 1 100); do if [ -S \"{socket}\" ]; then break; fi; \
+         sleep 0.05; done; test -S \"{socket}\"; sudo chcon -t container_var_run_t \
+         \"{socket}\"; sudo systemctl is-active nimbus.service >/dev/null; printf '%s' ok",
         socket = GUEST_NIMBUS_SOCKET
     )
 }

@@ -198,7 +198,7 @@ pub(super) fn stream_guest_file_over_ssh(
 ) -> Result<(), Error> {
     let input = fs::File::open(source_path).map_err(|error| {
         Error::Internal(format!(
-            "failed to open guest nimbus binary {}: {error}",
+            "failed to open guest file {}: {error}",
             source_path.display()
         ))
     })?;
@@ -210,7 +210,7 @@ pub(super) fn stream_guest_file_over_ssh(
         .status()
         .map_err(|error| {
             Error::Internal(format!(
-                "failed to stream guest nimbus binary over SSH to localhost:{ssh_port}: {error}"
+                "failed to stream guest file over SSH to localhost:{ssh_port}: {error}"
             ))
         })?;
     if status.success() {
@@ -218,7 +218,7 @@ pub(super) fn stream_guest_file_over_ssh(
     }
 
     Err(Error::Internal(format!(
-        "guest nimbus binary sync failed on localhost:{ssh_port} with status {status}"
+        "guest file transfer failed on localhost:{ssh_port} with status {status}"
     )))
 }
 

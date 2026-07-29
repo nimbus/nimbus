@@ -2,8 +2,14 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
+#[cfg(test)]
+use std::sync::Mutex;
+#[cfg(test)]
+use std::{collections::BTreeMap, collections::btree_map::Entry};
 
 use axum::http::StatusCode;
+#[cfg(test)]
+use nimbus::TenantId;
 use nimbus::{
     Error, SandboxBackend, SandboxBackendKind, SandboxHandle, SandboxId, SandboxSpec, SandboxStatus,
 };
@@ -12,7 +18,12 @@ use nimbus_node::{
     HostLifecycleStatus, NodeAgent, NodeAgentAssignment, NodeAssignmentDisposition,
     NodeBackendCapabilitySource, RunnerSpec, StatusEvidenceWriter, TenantWorkloadPhase,
 };
-use nimbus_sandbox::backends::container::{ContainerSandboxBackend, ContainerSandboxStateView};
+use nimbus_sandbox::{
+    MachinePortForwardReceipt,
+    backends::container::{
+        ContainerSandboxBackend, ContainerSandboxStateView, MachinePortAbsenceEvidence,
+    },
+};
 use nimbus_workloads::{LocalEnforcementBinding, TenantWorkloadSpec};
 
 use crate::node_workload_executor::admit_workload_spec;
@@ -33,12 +44,24 @@ pub(crate) trait MachineApiNodeWorkloadFacade: Send + Sync {
     fn service_execution_blockers(&self) -> Vec<String> {
         Vec::new()
     }
-    fn start<'a>(&'a self, spec: SandboxSpec) -> MachineApiServiceFuture<'a, SandboxHandle>;
+    fn start<'a>(
+        &'a self,
+        sandbox_id: SandboxId,
+        spec: SandboxSpec,
+    ) -> MachineApiServiceFuture<'a, SandboxHandle>;
     fn inspect<'a>(
         &'a self,
         id: &'a SandboxId,
     ) -> MachineApiServiceFuture<'a, Option<SandboxHandle>>;
     fn stop<'a>(&'a self, id: &'a SandboxId) -> MachineApiServiceFuture<'a, ()>;
+    fn exposed_machine_port_receipts<'a>(
+        &'a self,
+        id: &'a SandboxId,
+    ) -> MachineApiServiceFuture<'a, Vec<MachinePortForwardReceipt>>;
+    fn absent_machine_port_receipts<'a>(
+        &'a self,
+        id: &'a SandboxId,
+    ) -> MachineApiServiceFuture<'a, Option<MachinePortAbsenceEvidence>>;
 }
 
 pub(crate) struct GuestNodeWorkloadService<B, W> {
@@ -98,7 +121,11 @@ where
         blockers
     }
 
-    fn start<'a>(&'a self, spec: SandboxSpec) -> MachineApiServiceFuture<'a, SandboxHandle> {
+    fn start<'a>(
+        &'a self,
+        sandbox_id: SandboxId,
+        spec: SandboxSpec,
+    ) -> MachineApiServiceFuture<'a, SandboxHandle> {
         Box::pin(async move {
             let service_name = spec
                 .service_name()
@@ -111,7 +138,7 @@ where
             let resources = spec.resources.clone();
             let prepared = self
                 .bundle_materializer
-                .prepare_plan_only_service_workload(spec)
+                .prepare_plan_only_service_workload_with_id(spec, sandbox_id)
                 .map_err(sandbox_error_to_http_error)?;
             let status = self
                 .reconcile_service_workload(
@@ -206,6 +233,28 @@ where
                 .await
                 .map_err(sandbox_error_to_http_error)?;
             Ok(())
+        })
+    }
+
+    fn exposed_machine_port_receipts<'a>(
+        &'a self,
+        id: &'a SandboxId,
+    ) -> MachineApiServiceFuture<'a, Vec<MachinePortForwardReceipt>> {
+        Box::pin(async move {
+            self.bundle_materializer
+                .exposed_machine_port_receipts(id)
+                .map_err(sandbox_error_to_http_error)
+        })
+    }
+
+    fn absent_machine_port_receipts<'a>(
+        &'a self,
+        id: &'a SandboxId,
+    ) -> MachineApiServiceFuture<'a, Option<MachinePortAbsenceEvidence>> {
+        Box::pin(async move {
+            self.bundle_materializer
+                .absent_machine_port_evidence(id)
+                .map_err(sandbox_error_to_http_error)
         })
     }
 }
@@ -421,12 +470,32 @@ fn core_error_to_http(error: Error) -> MachineApiHttpError {
 pub(crate) fn machine_api_node_workload_facade_from_sandbox_backend(
     backend: Arc<dyn nimbus::SandboxBackend>,
 ) -> Arc<dyn MachineApiNodeWorkloadFacade> {
-    Arc::new(TestSandboxBackendNodeWorkloadFacade { backend })
+    Arc::new(TestSandboxBackendNodeWorkloadFacade {
+        backend,
+        identities: Mutex::new(BTreeMap::new()),
+    })
 }
 
 #[cfg(test)]
 struct TestSandboxBackendNodeWorkloadFacade {
     backend: Arc<dyn nimbus::SandboxBackend>,
+    identities: Mutex<BTreeMap<String, TestSandboxIdentity>>,
+}
+
+#[cfg(test)]
+#[derive(Clone)]
+struct TestSandboxIdentity {
+    backend_id: SandboxId,
+    tenant_id: TenantId,
+    has_publication_bindings: bool,
+    observed_publication: TestPublicationObservation,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TestPublicationObservation {
+    Exposed,
+    Absent,
 }
 
 #[cfg(test)]
@@ -435,12 +504,221 @@ impl MachineApiNodeWorkloadFacade for TestSandboxBackendNodeWorkloadFacade {
         self.backend.kind()
     }
 
-    fn start<'a>(&'a self, spec: SandboxSpec) -> MachineApiServiceFuture<'a, SandboxHandle> {
+    fn start<'a>(
+        &'a self,
+        sandbox_id: SandboxId,
+        spec: SandboxSpec,
+    ) -> MachineApiServiceFuture<'a, SandboxHandle> {
         Box::pin(async move {
-            self.backend
+            let tenant_id = spec.tenant_id.clone();
+            let has_publication_bindings = !spec.port_bindings.is_empty();
+            let mut handle = self
+                .backend
                 .start(spec)
                 .await
-                .map_err(sandbox_error_to_http_error)
+                .map_err(sandbox_error_to_http_error)?;
+            let backend_id = handle.id.clone();
+            match self
+                .identities
+                .lock()
+                .expect("test sandbox identity lock")
+                .entry(sandbox_id.as_str().to_owned())
+            {
+                Entry::Vacant(entry) => {
+                    entry.insert(TestSandboxIdentity {
+                        backend_id,
+                        tenant_id,
+                        has_publication_bindings,
+                        observed_publication: TestPublicationObservation::Exposed,
+                    });
+                }
+                Entry::Occupied(_) => {
+                    return Err(MachineApiHttpError {
+                        status: StatusCode::CONFLICT,
+                        message: format!(
+                            "test sandbox facade already owns caller-selected identity {sandbox_id}"
+                        ),
+                    });
+                }
+            }
+            handle.id = sandbox_id;
+            Ok(handle)
+        })
+    }
+
+    fn inspect<'a>(
+        &'a self,
+        id: &'a SandboxId,
+    ) -> MachineApiServiceFuture<'a, Option<SandboxHandle>> {
+        Box::pin(async move {
+            let backend_id = self
+                .identities
+                .lock()
+                .expect("test sandbox identity lock")
+                .get(id.as_str())
+                .map(|identity| identity.backend_id.clone())
+                .unwrap_or_else(|| id.clone());
+            let mut handle = self
+                .backend
+                .inspect(&backend_id)
+                .await
+                .map_err(sandbox_error_to_http_error)?;
+            if let Some(handle) = &mut handle {
+                handle.id = id.clone();
+            }
+            Ok(handle)
+        })
+    }
+
+    fn stop<'a>(&'a self, id: &'a SandboxId) -> MachineApiServiceFuture<'a, ()> {
+        Box::pin(async move {
+            let backend_id = self
+                .identities
+                .lock()
+                .expect("test sandbox identity lock")
+                .get(id.as_str())
+                .map(|identity| identity.backend_id.clone())
+                .unwrap_or_else(|| id.clone());
+            self.backend
+                .stop(&backend_id)
+                .await
+                .map_err(sandbox_error_to_http_error)?;
+            if let Some(identity) = self
+                .identities
+                .lock()
+                .expect("test sandbox identity lock")
+                .get_mut(id.as_str())
+            {
+                identity.observed_publication = TestPublicationObservation::Absent;
+            }
+            Ok(())
+        })
+    }
+
+    fn exposed_machine_port_receipts<'a>(
+        &'a self,
+        id: &'a SandboxId,
+    ) -> MachineApiServiceFuture<'a, Vec<MachinePortForwardReceipt>> {
+        Box::pin(async move {
+            self.empty_receipts_for_observed_fixture(id, TestPublicationObservation::Exposed)
+        })
+    }
+
+    fn absent_machine_port_receipts<'a>(
+        &'a self,
+        id: &'a SandboxId,
+    ) -> MachineApiServiceFuture<'a, Option<MachinePortAbsenceEvidence>> {
+        Box::pin(async move {
+            let tenant_id = self
+                .identities
+                .lock()
+                .expect("test sandbox identity lock")
+                .get(id.as_str())
+                .map(|identity| identity.tenant_id.clone());
+            let Some(tenant_id) = tenant_id else {
+                return Ok(None);
+            };
+            let receipts =
+                self.empty_receipts_for_observed_fixture(id, TestPublicationObservation::Absent)?;
+            Ok(Some(MachinePortAbsenceEvidence {
+                tenant_id,
+                sandbox_id: id.clone(),
+                receipts,
+            }))
+        })
+    }
+}
+
+#[cfg(test)]
+impl TestSandboxBackendNodeWorkloadFacade {
+    fn empty_receipts_for_observed_fixture(
+        &self,
+        id: &SandboxId,
+        expected: TestPublicationObservation,
+    ) -> Result<Vec<MachinePortForwardReceipt>, MachineApiHttpError> {
+        let identities = self.identities.lock().expect("test sandbox identity lock");
+        let Some(identity) = identities.get(id.as_str()) else {
+            return Err(MachineApiHttpError {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                message: format!(
+                    "test sandbox facade has no caller-selected identity record for {id}"
+                ),
+            });
+        };
+        if identity.has_publication_bindings {
+            return Err(MachineApiHttpError {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                message: format!(
+                    "test sandbox facade cannot fabricate durable provider receipts for {id}"
+                ),
+            });
+        }
+        if identity.observed_publication != expected {
+            return Err(MachineApiHttpError {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                message: format!(
+                    "test sandbox facade has no exact observed publication phase for {id}"
+                ),
+            });
+        }
+        Ok(Vec::new())
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn machine_api_node_workload_facade_from_container_backend(
+    backend: Arc<ContainerSandboxBackend>,
+) -> Arc<dyn MachineApiNodeWorkloadFacade> {
+    Arc::new(TestContainerBackendNodeWorkloadFacade {
+        backend,
+        zero_binding_observations: Mutex::new(BTreeMap::new()),
+    })
+}
+
+#[cfg(test)]
+struct TestContainerBackendNodeWorkloadFacade {
+    backend: Arc<ContainerSandboxBackend>,
+    zero_binding_observations: Mutex<BTreeMap<String, TestZeroBindingObservation>>,
+}
+
+#[cfg(test)]
+#[derive(Clone)]
+struct TestZeroBindingObservation {
+    tenant_id: TenantId,
+    phase: TestPublicationObservation,
+}
+
+#[cfg(test)]
+impl MachineApiNodeWorkloadFacade for TestContainerBackendNodeWorkloadFacade {
+    fn kind(&self) -> SandboxBackendKind {
+        SandboxBackendKind::Container
+    }
+
+    fn start<'a>(
+        &'a self,
+        sandbox_id: SandboxId,
+        spec: SandboxSpec,
+    ) -> MachineApiServiceFuture<'a, SandboxHandle> {
+        Box::pin(async move {
+            let tenant_id = spec.tenant_id.clone();
+            let has_publication_bindings = !spec.port_bindings.is_empty();
+            let prepared = self
+                .backend
+                .prepare_plan_only_service_workload_with_id(spec, sandbox_id)
+                .map_err(sandbox_error_to_http_error)?;
+            if !has_publication_bindings {
+                self.zero_binding_observations
+                    .lock()
+                    .expect("test zero-binding observation lock")
+                    .insert(
+                        prepared.handle.id.as_str().to_owned(),
+                        TestZeroBindingObservation {
+                            tenant_id,
+                            phase: TestPublicationObservation::Exposed,
+                        },
+                    );
+            }
+            Ok(prepared.handle)
         })
     }
 
@@ -461,6 +739,75 @@ impl MachineApiNodeWorkloadFacade for TestSandboxBackendNodeWorkloadFacade {
             self.backend
                 .stop(id)
                 .await
+                .map_err(sandbox_error_to_http_error)?;
+            if let Some(observation) = self
+                .zero_binding_observations
+                .lock()
+                .expect("test zero-binding observation lock")
+                .get_mut(id.as_str())
+            {
+                observation.phase = TestPublicationObservation::Absent;
+            }
+            Ok(())
+        })
+    }
+
+    fn exposed_machine_port_receipts<'a>(
+        &'a self,
+        id: &'a SandboxId,
+    ) -> MachineApiServiceFuture<'a, Vec<MachinePortForwardReceipt>> {
+        Box::pin(async move {
+            if let Some(observation) = self
+                .zero_binding_observations
+                .lock()
+                .expect("test zero-binding observation lock")
+                .get(id.as_str())
+                .cloned()
+            {
+                if observation.phase != TestPublicationObservation::Exposed {
+                    return Err(MachineApiHttpError {
+                        status: StatusCode::INTERNAL_SERVER_ERROR,
+                        message: format!(
+                            "test container facade has no exact exposed observation for {id}"
+                        ),
+                    });
+                }
+                return Ok(Vec::new());
+            }
+            self.backend
+                .exposed_machine_port_receipts(id)
+                .map_err(sandbox_error_to_http_error)
+        })
+    }
+
+    fn absent_machine_port_receipts<'a>(
+        &'a self,
+        id: &'a SandboxId,
+    ) -> MachineApiServiceFuture<'a, Option<MachinePortAbsenceEvidence>> {
+        Box::pin(async move {
+            if let Some(observation) = self
+                .zero_binding_observations
+                .lock()
+                .expect("test zero-binding observation lock")
+                .get(id.as_str())
+                .cloned()
+            {
+                if observation.phase != TestPublicationObservation::Absent {
+                    return Err(MachineApiHttpError {
+                        status: StatusCode::INTERNAL_SERVER_ERROR,
+                        message: format!(
+                            "test container facade has no exact absent observation for {id}"
+                        ),
+                    });
+                }
+                return Ok(Some(MachinePortAbsenceEvidence {
+                    tenant_id: observation.tenant_id,
+                    sandbox_id: id.clone(),
+                    receipts: Vec::new(),
+                }));
+            }
+            self.backend
+                .absent_machine_port_evidence(id)
                 .map_err(sandbox_error_to_http_error)
         })
     }
@@ -642,8 +989,13 @@ mod tests {
         .with_cpu_count(2)
         .with_memory_limit_bytes(64 * 1024 * 1024);
 
-        let handle = service.start(spec).await.expect("start should reconcile");
+        let sandbox_id = SandboxId::new("service-api-01selected");
+        let handle = service
+            .start(sandbox_id.clone(), spec)
+            .await
+            .expect("start should reconcile");
 
+        assert_eq!(handle.id, sandbox_id);
         assert_eq!(handle.status, SandboxStatus::Ready);
         let summary = service
             .state_view
@@ -720,8 +1072,13 @@ mod tests {
             SandboxRootSpec::rootfs("/tmp/rootfs"),
             SandboxProcessSpec::new(["/bin/server"]),
         );
-        let handle = service.start(spec).await.expect("start should reconcile");
+        let sandbox_id = SandboxId::new("service-api-02selected");
+        let handle = service
+            .start(sandbox_id.clone(), spec)
+            .await
+            .expect("start should reconcile");
 
+        assert_eq!(handle.id, sandbox_id);
         backend.mark_workload_missing();
 
         let inspected = service

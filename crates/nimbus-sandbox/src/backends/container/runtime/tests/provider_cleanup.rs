@@ -1045,6 +1045,17 @@ fn machine_forwarder_unexpose_attempts_every_binding_and_retries_only_failures()
         &manifest.spec.port_bindings[0],
         &manifest_forwarder,
     );
+    let absent_receipts = backend
+        .absent_machine_port_receipts(&manifest.handle.id)
+        .expect("the converged retry must publish one complete absence batch");
+    assert_eq!(
+        absent_receipts
+            .iter()
+            .map(|receipt| receipt.binding.clone())
+            .collect::<Vec<_>>(),
+        manifest.spec.port_bindings,
+        "retry convergence must preserve the original canonical binding order"
+    );
     assert_manifest_port_leases_released(&manifest.runner_config.network_state_root, &manifest);
 }
 

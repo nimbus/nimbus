@@ -6,7 +6,7 @@ use std::num::NonZeroU16;
 use nimbus_core::TenantId;
 
 use super::{PortLeasePhase, PortLeaseRequest};
-use crate::{NetworkResourceId, PortBindingMismatch, PortLeaseId, PortRange};
+use crate::{NetworkPlanId, NetworkResourceId, PortBindingMismatch, PortLeaseId, PortRange};
 
 /// Expected and rejected immutable requests carried by a stale-fence error.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,6 +58,8 @@ pub enum PortLeaseOperation {
     PrepareRebindAfterConfirmedStop,
     /// Fence new use.
     Withdraw,
+    /// Release an unadopted provider claim after exact absence.
+    ReleaseProviderClaimWithoutEffect,
     /// Confirm terminal release.
     Release,
     /// Release an exact restart-retained reservation after confirmed stop.
@@ -81,6 +83,9 @@ impl Display for PortLeaseOperation {
             Self::PrepareRebindAfterOwnerDeath => "prepare rebind after process-owner death",
             Self::PrepareRebindAfterConfirmedStop => "prepare rebind after confirmed provider stop",
             Self::Withdraw => "withdraw",
+            Self::ReleaseProviderClaimWithoutEffect => {
+                "release provider claim after confirmed absence"
+            }
             Self::Release => "release",
             Self::ReleaseAfterConfirmedStop => "release after confirmed provider stop",
         })
@@ -97,6 +102,12 @@ pub(super) enum PortLeaseOperationError {
     },
     IdentityConflict {
         lease_id: PortLeaseId,
+    },
+    PlanRequired {
+        lease_id: PortLeaseId,
+    },
+    PlanMembershipConflict {
+        plan_id: NetworkPlanId,
     },
     TenantAttributionRequired {
         lease_id: PortLeaseId,

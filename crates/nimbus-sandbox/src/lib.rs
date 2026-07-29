@@ -16,6 +16,7 @@ mod process;
 mod spec;
 pub mod volume;
 
+pub use crate::backends::oci::network::{MachinePortForwardOutcome, MachinePortForwardReceipt};
 pub use crate::backends::oci::network::{OciNetworkProcess, OciNetworkProcessError};
 pub use backend::{SandboxBackend, SandboxBackendKind, SandboxFuture};
 pub use error::{Result, SandboxError};

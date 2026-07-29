@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "source_head": "129a06ea2620e0c250de7e6ed496b143431a2511",
+  "source_head": "8468ddce3b5afc001356ea2a3ee099d29781957c",
   "scope": {
     "production_network": "Every Rust production TCP/UDP allocation, availability probe, bind, provider bind request, pre-bound listener consumer, and inherited socket found by the recorded scans.",
     "local_ipc": "Production Unix-domain binds and inherited descriptors are classified separately because a host TCP/UDP PortLease must not absorb filesystem-path ownership.",
@@ -20,7 +20,7 @@
       "verification": "source-occurrence",
       "category": "allocation-authority",
       "path": "crates/nimbus-network/src/port_lease.rs",
-      "line": 691,
+      "line": 739,
       "symbol": "LocalPortLeaseAuthority::reserve_port",
       "authority_kinds": [
         "suspicious-port-allocation-definition"
@@ -172,7 +172,7 @@
       "verification": "source-occurrence",
       "category": "socket-bind",
       "path": "crates/nimbus-cli/src/start/boot.rs",
-      "line": 728,
+      "line": 800,
       "symbol": "start_listener",
       "authority_kinds": [
         "tcp-bind"
@@ -192,7 +192,7 @@
       "verification": "source-occurrence",
       "category": "inherited-socket",
       "path": "crates/nimbus-cli/src/start/boot.rs",
-      "line": 789,
+      "line": 861,
       "symbol": "activated_systemd_listener",
       "authority_kinds": [
         "listener-return-handoff",
@@ -424,7 +424,7 @@
       "verification": "source-occurrence",
       "category": "provider-bind-request",
       "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
-      "line": 184,
+      "line": 217,
       "symbol": "machine_port_forward_request",
       "authority_kinds": [
         "machine-forwarder-port-request"
@@ -444,7 +444,7 @@
       "verification": "source-occurrence",
       "category": "provider-bind-request",
       "path": "crates/nimbus-cli/src/machine/manager/launch.rs",
-      "line": 237,
+      "line": 279,
       "symbol": "build_gvproxy_args",
       "authority_kinds": [
         "gvproxy-ssh-port-request"
@@ -464,7 +464,7 @@
       "verification": "source-occurrence",
       "category": "unix-pre-bound-consumer",
       "path": "crates/nimbus-cli/src/machine/api.rs",
-      "line": 211,
+      "line": 182,
       "symbol": "serve_machine_api",
       "authority_kinds": [
         "listener-ownership-slot",
@@ -479,10 +479,10 @@
         "crates/nimbus-cli/src/machine/api/listener.rs"
       ],
       "current_owner": "nimbus-cli machine API",
-      "current_truth": "Resolves either the direct or systemd-owned Unix listener and transfers that exact descriptor into the machine API serve loop without asserting TCP/UDP port authority.",
+      "current_truth": "Resolves the guest-manager-owned direct Unix listener and transfers that exact descriptor into the machine API serve loop without asserting TCP/UDP port authority.",
       "disposition": "local-ipc-exempt",
       "target_owner": "remain machine-owned filesystem IPC and descriptor handoff",
-      "owner_item": "NNC0.1"
+      "owner_item": "NNC0.1, NNC4.6e"
     },
     {
       "id": "machine-api-unix-direct",
@@ -490,7 +490,7 @@
       "verification": "source-occurrence",
       "category": "unix-bind",
       "path": "crates/nimbus-cli/src/machine/api/listener.rs",
-      "line": 41,
+      "line": 30,
       "symbol": "bind_direct_listener",
       "authority_kinds": [
         "listener-return-handoff",
@@ -504,30 +504,22 @@
       "current_truth": "Binds a filesystem Unix socket after stale-path cleanup and converts the same descriptor to Tokio.",
       "disposition": "local-ipc-exempt",
       "target_owner": "remain machine-owned filesystem IPC, outside host TCP/UDP PortLease authority",
-      "owner_item": "NNC0.1"
+      "owner_item": "NNC0.1, NNC4.6e"
     },
     {
       "id": "machine-api-unix-systemd",
-      "status": "active",
-      "verification": "source-occurrence",
+      "status": "retired",
+      "verification": "retired",
       "category": "unix-inherited-socket",
       "path": "crates/nimbus-cli/src/machine/api/listener.rs",
-      "line": 111,
-      "symbol": "tokio_listener_from_inherited_fd",
-      "authority_kinds": [
-        "listener-return-handoff",
-        "unix-from-raw-fd",
-        "unix-from-std"
-      ],
-      "authority_symbols": [
-        "inherited_systemd_listener",
-        "tokio_listener_from_inherited_fd"
-      ],
-      "current_owner": "systemd plus nimbus-cli machine API",
-      "current_truth": "Validates and consumes one inherited Unix descriptor and converts it to Tokio without asserting TCP/UDP port authority.",
-      "disposition": "local-ipc-exempt",
-      "target_owner": "remain machine-owned inherited filesystem IPC",
-      "owner_item": "NNC0.1"
+      "line": 1,
+      "symbol": "deleted inherited_systemd_listener and tokio_listener_from_inherited_fd",
+      "current_owner": "deleted from production",
+      "current_truth": "Machine API startup is guest-manager-first and direct-listener-only; no inherited listener can bypass guest authority composition.",
+      "disposition": "retired",
+      "target_owner": "guest manager retains listener sequencing; systemd transient units remain workload lifecycle effects",
+      "owner_item": "NNC4.6e",
+      "retired_item": "NNC4.6e"
     },
     {
       "id": "machine-ready-unix-listener",
@@ -535,7 +527,7 @@
       "verification": "source-occurrence",
       "category": "unix-bind",
       "path": "crates/nimbus-cli/src/machine/manager/readiness.rs",
-      "line": 201,
+      "line": 206,
       "symbol": "bind_ready_listener",
       "authority_kinds": [
         "listener-return-handoff",
@@ -556,7 +548,7 @@
       "verification": "source-occurrence",
       "category": "unix-bind",
       "path": "crates/nimbus-cli/src/machine/manager/readiness.rs",
-      "line": 227,
+      "line": 232,
       "symbol": "serve_ignition_file",
       "authority_kinds": [
         "unix-bind",
@@ -587,7 +579,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "serve_machine_api",
       "ordinal": 1,
-      "line": 211
+      "line": 182
     },
     {
       "site_id": "machine-api-unix-consumer",
@@ -595,7 +587,7 @@
       "kind": "listener-return-handoff",
       "symbol": "resolve_machine_api_listener",
       "ordinal": 1,
-      "line": 7
+      "line": 5
     },
     {
       "site_id": "machine-api-unix-direct",
@@ -603,7 +595,7 @@
       "kind": "listener-return-handoff",
       "symbol": "bind_direct_listener",
       "ordinal": 1,
-      "line": 21
+      "line": 10
     },
     {
       "site_id": "machine-api-unix-direct",
@@ -611,7 +603,7 @@
       "kind": "unix-bind",
       "symbol": "bind_direct_listener",
       "ordinal": 1,
-      "line": 41
+      "line": 30
     },
     {
       "site_id": "machine-api-unix-direct",
@@ -622,44 +614,12 @@
       "line": 53
     },
     {
-      "site_id": "machine-api-unix-systemd",
-      "path": "crates/nimbus-cli/src/machine/api/listener.rs",
-      "kind": "listener-return-handoff",
-      "symbol": "inherited_systemd_listener",
-      "ordinal": 1,
-      "line": 61
-    },
-    {
-      "site_id": "machine-api-unix-systemd",
-      "path": "crates/nimbus-cli/src/machine/api/listener.rs",
-      "kind": "listener-return-handoff",
-      "symbol": "tokio_listener_from_inherited_fd",
-      "ordinal": 1,
-      "line": 106
-    },
-    {
-      "site_id": "machine-api-unix-systemd",
-      "path": "crates/nimbus-cli/src/machine/api/listener.rs",
-      "kind": "unix-from-raw-fd",
-      "symbol": "tokio_listener_from_inherited_fd",
-      "ordinal": 1,
-      "line": 111
-    },
-    {
-      "site_id": "machine-api-unix-systemd",
-      "path": "crates/nimbus-cli/src/machine/api/listener.rs",
-      "kind": "unix-from-std",
-      "symbol": "tokio_listener_from_inherited_fd",
-      "ordinal": 1,
-      "line": 118
-    },
-    {
       "site_id": "machine-gvproxy-ssh-bind",
       "path": "crates/nimbus-cli/src/machine/manager/launch.rs",
       "kind": "gvproxy-ssh-port-request",
       "symbol": "build_gvproxy_args",
       "ordinal": 1,
-      "line": 237
+      "line": 279
     },
     {
       "site_id": "machine-ready-unix-listener",
@@ -667,7 +627,7 @@
       "kind": "listener-return-handoff",
       "symbol": "bind_ready_listener",
       "ordinal": 1,
-      "line": 199
+      "line": 204
     },
     {
       "site_id": "machine-ready-unix-listener",
@@ -675,7 +635,7 @@
       "kind": "unix-bind",
       "symbol": "bind_ready_listener",
       "ordinal": 1,
-      "line": 201
+      "line": 206
     },
     {
       "site_id": "machine-ignition-unix-listener",
@@ -683,7 +643,7 @@
       "kind": "unix-bind",
       "symbol": "serve_ignition_file",
       "ordinal": 1,
-      "line": 227
+      "line": 232
     },
     {
       "site_id": "machine-ignition-unix-listener",
@@ -691,7 +651,7 @@
       "kind": "unix-from-std",
       "symbol": "serve_ignition_file",
       "ordinal": 1,
-      "line": 252
+      "line": 257
     },
     {
       "site_id": "node-systemd-socket-unit",
@@ -707,7 +667,7 @@
       "kind": "tcp-bind",
       "symbol": "start_listener",
       "ordinal": 1,
-      "line": 797
+      "line": 800
     },
     {
       "site_id": "cli-main-systemd-listener",
@@ -715,7 +675,7 @@
       "kind": "listener-return-handoff",
       "symbol": "activated_systemd_listener",
       "ordinal": 1,
-      "line": 858
+      "line": 861
     },
     {
       "site_id": "cli-main-systemd-listener",
@@ -723,7 +683,7 @@
       "kind": "tcp-from-raw-fd",
       "symbol": "activated_systemd_listener",
       "ordinal": 1,
-      "line": 905
+      "line": 908
     },
     {
       "site_id": "cli-main-systemd-listener",
@@ -731,7 +691,7 @@
       "kind": "tcp-from-std",
       "symbol": "activated_systemd_listener",
       "ordinal": 1,
-      "line": 907
+      "line": 910
     },
     {
       "site_id": "cli-main-systemd-listener",
@@ -739,7 +699,7 @@
       "kind": "listener-return-handoff",
       "symbol": "activated_systemd_listener",
       "ordinal": 2,
-      "line": 911
+      "line": 914
     },
     {
       "site_id": "kv-direct-listener",
@@ -803,7 +763,7 @@
       "kind": "suspicious-port-allocation-definition",
       "symbol": "reserve_port",
       "ordinal": 1,
-      "line": 691
+      "line": 739
     },
     {
       "site_id": "pep-listener-bind",
@@ -851,7 +811,7 @@
       "kind": "machine-forwarder-port-request",
       "symbol": "machine_port_forward_request",
       "ordinal": 1,
-      "line": 184
+      "line": 217
     },
     {
       "site_id": "netavark-port-mapping-effect",
@@ -1276,7 +1236,15 @@
       "kind": "authority-shaped-macro",
       "symbol": "unexpose_machine_port_proxy_publications",
       "ordinal": 1,
-      "line": 801,
+      "line": 836,
+      "reason": "Formats a failed-withdrawal diagnostic from an existing binding; the classified forwarder call owns the provider effect."
+    },
+    {
+      "path": "crates/nimbus-sandbox/src/backends/container/runtime/machine_ports.rs",
+      "kind": "authority-shaped-macro",
+      "symbol": "unexpose_machine_port_proxy_publications",
+      "ordinal": 2,
+      "line": 842,
       "reason": "Formats a failed-withdrawal diagnostic from an existing binding; the classified forwarder call owns the provider effect."
     },
     {
@@ -1308,7 +1276,7 @@
       "kind": "authority-shaped-macro",
       "symbol": "machine_port_forward_request",
       "ordinal": 1,
-      "line": 192,
+      "line": 225,
       "reason": "Serializes one already-admitted binding into the classified MachinePortForwardRequest provider effect; it performs no bind or allocation."
     },
     {
@@ -1316,7 +1284,7 @@
       "kind": "authority-shaped-macro",
       "symbol": "machine_forward_local",
       "ordinal": 1,
-      "line": 220,
+      "line": 254,
       "reason": "Formats the exact admitted host endpoint used for provider request and inspection identity; it performs no bind or allocation."
     },
     {
@@ -1324,7 +1292,7 @@
       "kind": "authority-shaped-macro",
       "symbol": "ambiguous_forwarder_error",
       "ordinal": 1,
-      "line": 235,
+      "line": 269,
       "reason": "Formats a fail-closed diagnostic for an already-classified provider request or withdrawal attempt; it does not bind, allocate, or release authority."
     },
     {
@@ -1332,7 +1300,7 @@
       "kind": "authority-shaped-macro",
       "symbol": "machine_forward_remote",
       "ordinal": 1,
-      "line": 459,
+      "line": 493,
       "reason": "Formats an admitted host port as the remote endpoint consumed by the classified forwarder request; it is not an allocator or socket owner."
     },
     {
@@ -1507,15 +1475,15 @@
   ],
   "summary": {
     "production_sites": 26,
-    "active_production_sites": 24,
-    "retired_production_sites": 2,
-    "authority_occurrences": 66,
-    "non_authority_occurrences": 35,
+    "active_production_sites": 23,
+    "retired_production_sites": 3,
+    "authority_occurrences": 62,
+    "non_authority_occurrences": 36,
     "portable_owner_sites": 6,
     "trust_inputs_not_network_authorities": 3,
     "unclassified_production_sites": 0,
     "production_tcp_bind_occurrences": 6,
     "production_udp_bind_occurrences": 0,
-    "local_ipc_occurrences": 7
+    "local_ipc_occurrences": 5
   }
 }

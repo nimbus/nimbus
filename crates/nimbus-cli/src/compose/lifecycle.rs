@@ -5,7 +5,7 @@ use nimbus_sandbox::backends::krun::KrunSandboxStateView;
 use serde::Serialize;
 
 use crate::compose::discovery::ResolvedComposeSelection;
-use crate::machine::MachineApiClient;
+use crate::machine::{HostMachineNetworkAuthority, MachineApiClient};
 
 use super::{
     ComposeDownCommand, ComposeUpCommand, LocalKrunExecutionSurface,
@@ -87,6 +87,7 @@ pub(super) async fn service_up_outcomes_for_selection(
     host_platform: super::ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
     local_krun: Option<LocalKrunExecutionSurface>,
+    network: Option<&HostMachineNetworkAuthority>,
 ) -> Result<Vec<ServiceLifecycleOutcome>, Error> {
     let context = super::load_compose_project_context_for_selection(selection, control_data_dir)?;
     let tenant = command
@@ -104,6 +105,7 @@ pub(super) async fn service_up_outcomes_for_selection(
         host_platform,
         machine_api_client,
         local_krun,
+        network,
     )? {
         super::ServiceExecutionSurface::Krun {
             state_view,
@@ -198,6 +200,7 @@ pub(super) async fn service_down_outcomes_for_selection(
     host_platform: super::ServiceHostPlatform,
     machine_api_client: Option<MachineApiClient>,
     local_krun: Option<LocalKrunExecutionSurface>,
+    network: Option<&HostMachineNetworkAuthority>,
 ) -> Result<Vec<ServiceLifecycleOutcome>, Error> {
     let context = super::load_compose_project_context_for_selection(selection, control_data_dir)?;
     let tenant = command
@@ -212,6 +215,7 @@ pub(super) async fn service_down_outcomes_for_selection(
         host_platform,
         machine_api_client,
         local_krun,
+        network,
     )? {
         super::ServiceExecutionSurface::Krun {
             state_view,

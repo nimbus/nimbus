@@ -551,6 +551,11 @@ async fn record_machine_state_projects_machine_listener_and_port_documents() {
         fixture.data_dir().join("cache"),
         fixture.data_dir().join("run"),
     );
+    let provider_instance = nimbus_network::NetworkProviderHandle::new(
+        nimbus_network::NetworkProviderId::for_registration_key("system-test-machine-gvproxy"),
+        "system-projection-fixture",
+    )
+    .expect("fixture provider handle should validate");
     let config = nimbus_machine::MachineConfigRecord {
         version: nimbus_machine::CURRENT_MACHINE_CONFIG_VERSION,
         name: "default".to_string(),
@@ -572,6 +577,11 @@ async fn record_machine_state_projects_machine_listener_and_port_documents() {
         },
         volumes: vec![],
         roots,
+        network_authority: nimbus_machine::MachineNetworkAuthorityRecord::new(
+            fixture.data_dir().join("network-authority"),
+            provider_instance.clone(),
+        )
+        .expect("fixture network authority should validate"),
     };
     let mut state = nimbus_machine::MachineStateRecord::initialized();
 
@@ -608,6 +618,10 @@ async fn record_machine_state_projects_machine_listener_and_port_documents() {
         ssh_listener_id: nimbus_network::ListenerId::for_workload_listener(
             "system-projection-fixture",
             "ssh-forward",
+        ),
+        forwarder_authority: nimbus_machine::MachineForwarderAuthority::new(
+            provider_instance,
+            nimbus_network::NetworkResourceGeneration::new(1),
         ),
         ssh_port: 2222,
         rest_uri: "unix:///tmp/nimbus/default-krunkit.sock".to_string(),

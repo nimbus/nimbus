@@ -24,7 +24,7 @@ use nimbus_network::{PortBindAttempt, PortBindFailure, PortBindFailureKind};
 use ulid::Ulid;
 
 use super::{MACHINE_PORT_MAX, MACHINE_PORT_MIN, MachineRuntimeState};
-use crate::machine::{MachineRootLayout, MachineStateRecord};
+use crate::machine::MachineStateRecord;
 
 const MACHINE_SSH_PROVIDER_KEY: &str = "nimbus-cli.machine-gvproxy-ssh";
 const MACHINE_SSH_LISTENER_NAME: &str = "ssh-forward";
@@ -50,14 +50,10 @@ pub(super) struct PreparedMachineSshPortLease {
 
 impl PreparedMachineSshPortLease {
     pub(super) fn prepare(
-        roots: &MachineRootLayout,
+        authority: LocalPortLeaseAuthority,
         machine_name: &str,
         state: &MachineStateRecord,
     ) -> Result<Self, Error> {
-        let authority =
-            LocalPortLeaseAuthority::open(&roots.network_state_root).map_err(|error| {
-                network_error("failed to open the machine SSH port authority", error)
-            })?;
         let listener_id = reusable_listener_id(&authority, state)?
             .unwrap_or_else(|| fresh_listener_id(machine_name));
         let request = machine_ssh_request(&listener_id)?;
@@ -242,14 +238,30 @@ pub(super) struct MachineSshPortCleanup {
     recovery: PortLeaseRecoveryGuard,
 }
 
+/// Return whether durable SSH authority already carries exact provider
+/// absence from a prior stop attempt.
+///
+/// A stale pid file can be reused by an unrelated process. Once the exact
+/// provider generation is durably confirmed stopped, reconciliation must trust
+/// the fenced lease evidence and must not signal whatever process a leftover
+/// pid file happens to name.
+pub(super) fn machine_ssh_port_provider_absence_confirmed(
+    authority: &LocalPortLeaseAuthority,
+    runtime: &MachineRuntimeState,
+) -> Result<bool, Error> {
+    let request = machine_ssh_request(&runtime.ssh_listener_id)?;
+    Ok(exact_record(authority, &request)?
+        .confirmed_stopped_binding()
+        .is_some())
+}
+
 /// Fence an active machine SSH listener before any provider stop effect.
 pub(super) fn withdraw_machine_ssh_port(
-    roots: &MachineRootLayout,
+    authority: &LocalPortLeaseAuthority,
     runtime: &MachineRuntimeState,
 ) -> Result<Option<MachineSshPortCleanup>, Error> {
-    let authority = open_authority(roots)?;
     let request = machine_ssh_request(&runtime.ssh_listener_id)?;
-    let record = exact_record(&authority, &request)?;
+    let record = exact_record(authority, &request)?;
     match record.phase() {
         PortLeasePhase::Active | PortLeasePhase::Withdrawing | PortLeasePhase::CleanupPending => {
             let binding = record.binding().cloned().ok_or_else(|| {
@@ -289,7 +301,7 @@ pub(super) fn withdraw_machine_ssh_port(
                     )
                 })?;
             Ok(Some(MachineSshPortCleanup {
-                authority,
+                authority: authority.clone(),
                 request,
                 binding,
                 recovery,
@@ -329,13 +341,12 @@ pub(super) fn retain_machine_ssh_port_after_confirmed_stop(
 
 /// Release a stopped machine's retained SSH port before deleting its records.
 pub(super) fn release_machine_ssh_port(
-    roots: &MachineRootLayout,
+    authority: &LocalPortLeaseAuthority,
     state: &MachineStateRecord,
 ) -> Result<(), Error> {
     let Some(runtime) = state.runtime.as_ref() else {
         return Ok(());
     };
-    let authority = open_authority(roots)?;
     let request = machine_ssh_request(&runtime.ssh_listener_id)?;
     let Some(record) = authority
         .inspect(request.lease_id())
@@ -425,11 +436,6 @@ fn machine_ssh_request(listener_id: &ListenerId) -> Result<PortLeaseRequest, Err
             mode,
         ),
     ))
-}
-
-fn open_authority(roots: &MachineRootLayout) -> Result<LocalPortLeaseAuthority, Error> {
-    LocalPortLeaseAuthority::open(&roots.network_state_root)
-        .map_err(|error| network_error("failed to open the machine SSH port authority", error))
 }
 
 fn exact_record(

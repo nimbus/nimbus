@@ -1,5 +1,48 @@
 use super::*;
 
+const TEST_NETWORK_AUTHORITY_ROOT: &str = "manager-network-authority";
+
+pub(super) fn test_network_authority_root(base_root: &Path) -> PathBuf {
+    base_root.join(TEST_NETWORK_AUTHORITY_ROOT)
+}
+
+pub(super) fn test_port_authority(base_root: &Path) -> LocalPortLeaseAuthority {
+    LocalPortLeaseAuthority::open(test_network_authority_root(base_root))
+        .expect("test machine port authority should open")
+}
+
+pub(super) fn test_machine_network_lifecycle(
+    base_root: &Path,
+) -> crate::machine::network_composition::MachineNetworkLifecycleHandle {
+    crate::machine::network_composition::MachineNetworkLifecycleHandle::from_port_leases_for_test(
+        test_port_authority(base_root),
+    )
+    .expect("test machine network lifecycle handle should open")
+}
+
+pub(super) fn test_network_authority_record(
+    base_root: &Path,
+    machine_name: &str,
+) -> MachineNetworkAuthorityRecord {
+    let authority_root = test_network_authority_root(base_root);
+    let provider_instance = OciMachinePortForwarderConfig::gvproxy_provider_handle(format!(
+        "manager-test:{machine_name}"
+    ))
+    .expect("test gvproxy provider identity should validate");
+    MachineNetworkAuthorityRecord::new(
+        LocalNetworkStateStore::authority_path_for(authority_root),
+        provider_instance,
+    )
+    .expect("test machine network authority should validate")
+}
+
+pub(super) fn test_forwarder_authority(config: &MachineConfigRecord) -> MachineForwarderAuthority {
+    MachineForwarderAuthority::new(
+        config.network_authority.provider_instance().clone(),
+        NetworkResourceGeneration::new(1),
+    )
+}
+
 pub(super) fn sample_config(image: &Path) -> MachineConfigRecord {
     let base_root = image
         .parent()
@@ -32,6 +75,7 @@ pub(super) fn sample_config(image: &Path) -> MachineConfigRecord {
             base_root.join("state-root"),
             base_root.join("runtime-root"),
         ),
+        network_authority: test_network_authority_record(base_root, "default"),
     }
 }
 

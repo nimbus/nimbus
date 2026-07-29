@@ -26,7 +26,9 @@ mod test_support;
 
 pub(crate) use egress_pin::pin_netns_egress_to_own_proxy;
 pub(crate) use finality::{TerminalNetworkAuthoritySet, TerminalNetworkFinalityEvidence};
-pub use forwarding::OciMachinePortForwarderConfig;
+pub use forwarding::{
+    MachinePortForwardOutcome, MachinePortForwardReceipt, OciMachinePortForwarderConfig,
+};
 pub(crate) use forwarding::{expose_machine_ports, unexpose_machine_ports};
 #[cfg(test)]
 pub(crate) use ipam::allocate_container_ips;

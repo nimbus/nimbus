@@ -520,6 +520,11 @@ mod tests {
         roots: MachineRootLayout,
         lifecycle: nimbus_machine::MachineLifecycle,
     ) -> MachineLifecycleSnapshot {
+        let provider_instance = nimbus_network::NetworkProviderHandle::new(
+            nimbus_network::NetworkProviderId::for_registration_key("local-server-fixture-gvproxy"),
+            format!("local-server-fixture:{name}"),
+        )
+        .expect("fixture provider handle should validate");
         let config = nimbus_machine::MachineConfigRecord {
             version: nimbus_machine::CURRENT_MACHINE_CONFIG_VERSION,
             name: name.to_owned(),
@@ -541,6 +546,11 @@ mod tests {
             },
             volumes: Vec::new(),
             roots: roots.clone(),
+            network_authority: nimbus_machine::MachineNetworkAuthorityRecord::new(
+                roots.state_root.join("network-authority"),
+                provider_instance.clone(),
+            )
+            .expect("fixture network authority should validate"),
         };
         let paths = roots.paths(name);
         let state = nimbus_machine::MachineStateRecord {
@@ -562,6 +572,10 @@ mod tests {
                 ssh_listener_id: nimbus_network::ListenerId::for_workload_listener(
                     "local-server-fixture",
                     "ssh-forward",
+                ),
+                forwarder_authority: nimbus_machine::MachineForwarderAuthority::new(
+                    provider_instance,
+                    nimbus_network::NetworkResourceGeneration::new(1),
                 ),
                 ssh_port: 10022,
                 rest_uri: format!("unix://{}", paths.api_socket_path.display()),

@@ -13,7 +13,10 @@ use libc::SIGKILL;
 use oci_client::manifest::{OCI_IMAGE_INDEX_MEDIA_TYPE, OCI_IMAGE_MEDIA_TYPE};
 use tempfile::TempDir;
 
-use super::guest::{ensure_guest_nimbus_socket_shell_script, guest_nimbus_archive_name};
+use super::guest::{
+    guest_nimbus_archive_name, start_guest_nimbus_service_shell_script,
+    stop_guest_nimbus_service_shell_script,
+};
 use super::helper_env_guard::write_helper_stub;
 use super::helper_paths::{
     bundled_helper_candidates_for_executable, known_helper_candidates, resolve_gvproxy_binary,
@@ -49,7 +52,14 @@ use crate::machine::{
     default_machine_image_for_provider, describe_machine_image_source,
     machine_image_reference_repository,
 };
-use nimbus_network::ListenerId;
+use nimbus::{EndpointProtocol, SandboxPortBinding, TenantId};
+use nimbus_machine::{MachineForwarderAuthority, MachineNetworkAuthorityRecord};
+use nimbus_network::{
+    ListenerId, LocalNetworkStateStore, LocalPortLeaseAuthority, NetworkProviderHandle,
+    NetworkResourceGeneration, PortBindClaim, PortBindingProvenance, PortBoundEndpoint,
+    PortLeaseBinding, PortLeasePhase,
+};
+use nimbus_sandbox::backends::container::OciMachinePortForwarderConfig;
 
 fn fixture_machine_ssh_listener_id(scope: &str) -> ListenerId {
     ListenerId::for_workload_listener("nimbus-cli-machine-test", scope)

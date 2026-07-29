@@ -9,6 +9,7 @@ use tempfile::NamedTempFile;
 
 use super::DEFAULT_MACHINE_NAME;
 use super::manager::refresh_machine_state;
+use super::network_composition::HostMachineNetworkAuthority;
 use super::record::{MachineConfigRecord, MachinePaths, MachineRootLayout, MachineStateRecord};
 
 pub(super) fn write_json_file<T: Serialize>(path: &Path, value: &T) -> Result<(), Error> {
@@ -240,6 +241,7 @@ pub(super) fn load_machine_state_if_exists(
 
 pub(super) fn load_initialized_machine(
     roots: &MachineRootLayout,
+    network: &HostMachineNetworkAuthority,
     machine_name: &str,
 ) -> Result<(MachinePaths, MachineConfigRecord, MachineStateRecord), Error> {
     let paths = roots.paths(machine_name);
@@ -249,11 +251,34 @@ pub(super) fn load_initialized_machine(
             machine_name
         ))
     })?;
+    authenticate_machine_config(network, &config, roots)?;
     let mut state = load_machine_state_if_exists(&paths.state_path)?
         .unwrap_or_else(MachineStateRecord::initialized);
     refresh_machine_state(&paths, &mut state)?;
     write_json_file(&paths.state_path, &state)?;
     Ok((paths, config, state))
+}
+
+pub(super) fn authenticate_initialized_machine_if_exists(
+    roots: &MachineRootLayout,
+    network: &HostMachineNetworkAuthority,
+    machine_name: &str,
+) -> Result<(), Error> {
+    let paths = roots.paths(machine_name);
+    let Some(config) = load_machine_config_if_exists(&paths.config_path)? else {
+        return Ok(());
+    };
+    authenticate_machine_config(network, &config, roots)
+}
+
+fn authenticate_machine_config(
+    network: &HostMachineNetworkAuthority,
+    config: &MachineConfigRecord,
+    roots: &MachineRootLayout,
+) -> Result<(), Error> {
+    network
+        .authenticate_config(config, roots)
+        .map_err(|error| Error::PreconditionFailed(error.to_string()))
 }
 
 pub(super) fn remove_dir_if_exists(path: &Path) -> Result<(), Error> {
@@ -280,11 +305,25 @@ pub(super) fn with_machine_lock<T>(
     operation()
 }
 
-pub(super) fn with_default_machine_lock<T>(
+pub(super) fn with_authenticated_machine_lock<T>(
     roots: &MachineRootLayout,
+    network: &HostMachineNetworkAuthority,
+    machine_name: &str,
     operation: impl FnOnce() -> Result<T, Error>,
 ) -> Result<T, Error> {
-    with_machine_lock(roots, DEFAULT_MACHINE_NAME, operation)
+    authenticate_initialized_machine_if_exists(roots, network, machine_name)?;
+    with_machine_lock(roots, machine_name, || {
+        authenticate_initialized_machine_if_exists(roots, network, machine_name)?;
+        operation()
+    })
+}
+
+pub(super) fn with_authenticated_default_machine_lock<T>(
+    roots: &MachineRootLayout,
+    network: &HostMachineNetworkAuthority,
+    operation: impl FnOnce() -> Result<T, Error>,
+) -> Result<T, Error> {
+    with_authenticated_machine_lock(roots, network, DEFAULT_MACHINE_NAME, operation)
 }
 
 fn lock_machine_records(
@@ -358,8 +397,9 @@ pub(super) fn remove_file_if_exists(path: &Path) -> Result<(), Error> {
 ///
 /// These are the runtime endpoints a fresh launch must never inherit from a
 /// previous run: the readiness/ignition/API control sockets, the gvproxy
-/// datagram sockets, the VMM REST endpoint, and the three helper pid files. A
-/// stop removes them outright; a full teardown removes them alongside the
+/// datagram sockets, the VMM REST endpoint, the three helper pid files, and the
+/// exact gvproxy process-birth receipt. A stop removes them outright; a full
+/// teardown removes them alongside the
 /// [logs](machine_runtime_log_paths). Returned owned because
 /// [`krunkit_gvproxy_socket_path`](MachinePaths::krunkit_gvproxy_socket_path)
 /// derives its path rather than storing one, so a borrow would dangle.
@@ -373,6 +413,7 @@ pub(super) fn machine_runtime_socket_and_pid_paths(paths: &MachinePaths) -> Vec<
         paths.vmm_endpoint_path.clone(),
         paths.api_forward_pid_path.clone(),
         paths.gvproxy_pid_path.clone(),
+        paths.gvproxy_process_identity_path.clone(),
         paths.vmm_pid_path.clone(),
     ]
 }

@@ -292,6 +292,10 @@ fn machine_os_upgrade_plan_uses_supported_stream_target() {
             disk_gib: DEFAULT_MACHINE_DISK_GIB,
         },
         volumes: Vec::new(),
+        network_authority: test_network_authority_record(
+            Path::new("/tmp/nimbus-machine-os-tests"),
+            DEFAULT_MACHINE_NAME,
+        ),
         roots: MachineRootLayout::test_sibling_roots(
             PathBuf::from("/tmp/config"),
             PathBuf::from("/tmp/state"),
@@ -340,6 +344,10 @@ fn default_macos_stream_uses_nimbus_bootc_contract() {
             disk_gib: DEFAULT_MACHINE_DISK_GIB,
         },
         volumes: Vec::new(),
+        network_authority: test_network_authority_record(
+            Path::new("/tmp/nimbus-machine-os-tests"),
+            DEFAULT_MACHINE_NAME,
+        ),
         roots: MachineRootLayout::test_sibling_roots(
             PathBuf::from("/tmp/config"),
             PathBuf::from("/tmp/state"),
@@ -375,6 +383,10 @@ fn explicit_podman_override_does_not_get_rewritten_to_default_digest() {
             disk_gib: DEFAULT_MACHINE_DISK_GIB,
         },
         volumes: Vec::new(),
+        network_authority: test_network_authority_record(
+            Path::new("/tmp/nimbus-machine-os-tests"),
+            DEFAULT_MACHINE_NAME,
+        ),
         roots: MachineRootLayout::test_sibling_roots(
             PathBuf::from("/tmp/config"),
             PathBuf::from("/tmp/state"),
@@ -422,6 +434,10 @@ fn machine_os_upgrade_handles_digest_pinned_supported_streams() {
             disk_gib: DEFAULT_MACHINE_DISK_GIB,
         },
         volumes: Vec::new(),
+        network_authority: test_network_authority_record(
+            Path::new("/tmp/nimbus-machine-os-tests"),
+            DEFAULT_MACHINE_NAME,
+        ),
         roots: MachineRootLayout::test_sibling_roots(
             PathBuf::from("/tmp/config"),
             PathBuf::from("/tmp/state"),
@@ -480,6 +496,10 @@ fn vfkit_matches_krunkit_for_host_managed_applehv_paths() {
             disk_gib: DEFAULT_MACHINE_DISK_GIB,
         },
         volumes: Vec::new(),
+        network_authority: test_network_authority_record(
+            Path::new("/tmp/nimbus-machine-os-tests"),
+            DEFAULT_MACHINE_NAME,
+        ),
         roots: MachineRootLayout::test_sibling_roots(
             PathBuf::from("/tmp/config"),
             PathBuf::from("/tmp/state"),

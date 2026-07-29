@@ -137,17 +137,26 @@ fn start_command_default_uses_production_tenant_isolation() {
 }
 
 #[test]
+#[serial_test::serial]
 fn production_start_compose_manager_rejects_tag_only_image_before_backend_setup() {
     let tempdir = tempfile::tempdir().expect("tempdir should build");
     let compose = tempdir.path().join("compose.yaml");
     fs::write(&compose, "services:\n  api:\n    image: busybox:latest\n")
         .expect("compose fixture should write");
     let selection = crate::compose::discovery::ResolvedComposeSelection::explicit(compose);
+    let manager = nimbus_network::LocalNetworkManager::open(
+        tempdir.path().join("network"),
+        nimbus_network::NetworkCapabilityRegistry::new([])
+            .expect("empty fixture registry should validate"),
+    )
+    .expect("fixture network manager should open");
+    let network = crate::machine::HostMachineNetworkAuthority::injected(manager.authority());
 
     let error = match super::boot::load_service_manager(
         Some(&selection),
         &tempdir.path().join("control"),
         nimbus_tenant::TenantIsolationMode::Production,
+        &network,
     ) {
         Ok(_) => panic!("production compose manager should reject tag-only images"),
         Err(error) => error,

@@ -3,12 +3,15 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use hyper::{Body, Request, StatusCode};
-use nimbus::{Error, SandboxHandle, SandboxId, SandboxRootSpec, SandboxSpec, TenantId};
+use nimbus::{
+    Error, SandboxHandle, SandboxId, SandboxPortBinding, SandboxRootSpec, SandboxSpec, TenantId,
+};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::UnixStream;
 
+use nimbus_machine::MachineForwarderAuthority;
 use nimbus_machine::api::{
     MACHINE_API_BOOTC_ROLLBACK_PATH, MACHINE_API_BOOTC_STATUS_PATH, MACHINE_API_BOOTC_SWITCH_PATH,
     MACHINE_API_BOOTC_UPGRADE_PATH, MACHINE_API_CAPABILITIES_PATH, MACHINE_API_HEALTH_PATH,
@@ -20,12 +23,13 @@ use nimbus_machine::api::{
     MachineApiServiceSandboxBuildStartRequest, MachineApiServiceSandboxImageStartRequest,
     MachineApiServiceSandboxInspectResponse, MachineApiServiceSandboxListResponse,
     MachineApiServiceSandboxLogChunkResponse, MachineApiServiceSandboxLookupResponse,
-    MachineApiServiceSandboxStartResponse, MachineApiServiceSandboxStopResponse,
-    MachineApiServiceSandboxSummary, PROTOCOL_VERSION, machine_api_current_service_sandbox_path,
-    machine_api_service_sandbox_list_path, machine_api_service_sandbox_logs_path,
-    machine_api_service_sandbox_path, machine_api_service_sandbox_process_snapshot_path,
-    machine_api_service_sandbox_stop_path,
+    MachineApiServiceSandboxStartResponse, MachineApiServiceSandboxStopRequest,
+    MachineApiServiceSandboxStopResponse, MachineApiServiceSandboxSummary, PROTOCOL_VERSION,
+    machine_api_current_service_sandbox_path, machine_api_service_sandbox_list_path,
+    machine_api_service_sandbox_logs_path, machine_api_service_sandbox_path,
+    machine_api_service_sandbox_process_snapshot_path, machine_api_service_sandbox_stop_path,
 };
+use nimbus_sandbox::MachinePortForwardOutcome;
 
 const SOCKET_IO_TIMEOUT: Duration = Duration::from_secs(2);
 const SOCKET_MUTATION_IO_TIMEOUT: Duration = Duration::from_secs(30);
@@ -39,6 +43,8 @@ const LOCAL_GUEST_BINARY_HELP_TEXT: &str = "set `NIMBUS_MACHINE_GUEST_BINARY` on
 pub(crate) struct MachineApiClient {
     socket_path: PathBuf,
     io_timeout: Duration,
+    mutation_io_timeout: Duration,
+    forwarder_authority: Option<MachineForwarderAuthority>,
 }
 
 #[allow(dead_code)]
@@ -47,6 +53,8 @@ impl MachineApiClient {
         Self {
             socket_path: socket_path.into(),
             io_timeout: SOCKET_IO_TIMEOUT,
+            mutation_io_timeout: SOCKET_MUTATION_IO_TIMEOUT,
+            forwarder_authority: None,
         }
     }
 
@@ -55,7 +63,20 @@ impl MachineApiClient {
         Self {
             socket_path: socket_path.into(),
             io_timeout: SOCKET_IO_TIMEOUT_TEST,
+            mutation_io_timeout: SOCKET_MUTATION_IO_TIMEOUT,
+            forwarder_authority: None,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_mutation_io_timeout_for_test(mut self, timeout: Duration) -> Self {
+        self.mutation_io_timeout = timeout;
+        self
+    }
+
+    pub(crate) fn with_forwarder_authority(mut self, authority: MachineForwarderAuthority) -> Self {
+        self.forwarder_authority = Some(authority);
+        self
     }
 
     pub(crate) fn socket_path(&self) -> &Path {
@@ -90,46 +111,88 @@ impl MachineApiClient {
 
     pub(crate) fn bootc_switch(
         &self,
-        request: MachineApiBootcSwitchRequest,
+        image: String,
+        transport: Option<String>,
     ) -> Result<MachineApiBootcOperationResponse, Error> {
+        let request = MachineApiBootcSwitchRequest {
+            forwarder_authority: self.service_forwarder_authority()?.clone(),
+            image,
+            transport,
+        };
         self.post_json(MACHINE_API_BOOTC_SWITCH_PATH, &request)
     }
 
     pub(crate) fn bootc_upgrade(
         &self,
-        request: MachineApiBootcUpgradeRequest,
+        check: bool,
+        tag: Option<String>,
     ) -> Result<MachineApiBootcOperationResponse, Error> {
+        let request = MachineApiBootcUpgradeRequest {
+            forwarder_authority: self.service_forwarder_authority()?.clone(),
+            check,
+            tag,
+        };
         self.post_json(MACHINE_API_BOOTC_UPGRADE_PATH, &request)
     }
 
-    pub(crate) fn bootc_rollback(
-        &self,
-        request: MachineApiBootcRollbackRequest,
-    ) -> Result<MachineApiBootcOperationResponse, Error> {
+    pub(crate) fn bootc_rollback(&self) -> Result<MachineApiBootcOperationResponse, Error> {
+        let request = MachineApiBootcRollbackRequest {
+            forwarder_authority: self.service_forwarder_authority()?.clone(),
+        };
         self.post_json(MACHINE_API_BOOTC_ROLLBACK_PATH, &request)
     }
 
     pub(crate) fn start_service_sandbox_from_image(
         &self,
+        sandbox_id: SandboxId,
         spec: SandboxSpec,
-    ) -> Result<SandboxHandle, Error> {
-        self.post_json(
+    ) -> Result<MachineApiServiceSandboxStartResponse, Error> {
+        let authority = self.service_forwarder_authority()?.clone();
+        let expected_tenant = spec.tenant_id.clone();
+        let expected_bindings = spec.port_bindings.clone();
+        let response: MachineApiServiceSandboxStartResponse = self.post_json(
             MACHINE_API_SERVICE_SANDBOX_IMAGE_START_PATH,
-            &MachineApiServiceSandboxImageStartRequest { spec },
-        )
-        .map(|response: MachineApiServiceSandboxStartResponse| response.handle)
+            &MachineApiServiceSandboxImageStartRequest {
+                sandbox_id: sandbox_id.clone(),
+                forwarder_authority: authority.clone(),
+                spec,
+            },
+        )?;
+        validate_start_response(
+            &response,
+            &sandbox_id,
+            &expected_tenant,
+            &authority,
+            &expected_bindings,
+        )?;
+        Ok(response)
     }
 
     pub(crate) fn start_service_sandbox_from_build(
         &self,
+        sandbox_id: SandboxId,
         spec: SandboxSpec,
-    ) -> Result<SandboxHandle, Error> {
+    ) -> Result<MachineApiServiceSandboxStartResponse, Error> {
         let spec = normalize_guest_visible_build_spec(spec);
-        self.post_json(
+        let authority = self.service_forwarder_authority()?.clone();
+        let expected_tenant = spec.tenant_id.clone();
+        let expected_bindings = spec.port_bindings.clone();
+        let response: MachineApiServiceSandboxStartResponse = self.post_json(
             MACHINE_API_SERVICE_SANDBOX_BUILD_START_PATH,
-            &MachineApiServiceSandboxBuildStartRequest { spec },
-        )
-        .map(|response: MachineApiServiceSandboxStartResponse| response.handle)
+            &MachineApiServiceSandboxBuildStartRequest {
+                sandbox_id: sandbox_id.clone(),
+                forwarder_authority: authority.clone(),
+                spec,
+            },
+        )?;
+        validate_start_response(
+            &response,
+            &sandbox_id,
+            &expected_tenant,
+            &authority,
+            &expected_bindings,
+        )?;
+        Ok(response)
     }
 
     pub(crate) fn inspect_service_sandbox(
@@ -142,18 +205,40 @@ impl MachineApiClient {
         .map(|response| response.handle)
     }
 
-    pub(crate) fn stop_service_sandbox(&self, sandbox_id: &SandboxId) -> Result<(), Error> {
-        let response = self.post_empty::<MachineApiServiceSandboxStopResponse>(
+    pub(crate) fn stop_service_sandbox(
+        &self,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        expected_bindings: &[SandboxPortBinding],
+    ) -> Result<MachineApiServiceSandboxStopResponse, Error> {
+        let authority = self.service_forwarder_authority()?.clone();
+        let response: MachineApiServiceSandboxStopResponse = self.post_json(
             &machine_api_service_sandbox_stop_path(sandbox_id.as_str()),
+            &MachineApiServiceSandboxStopRequest {
+                forwarder_authority: authority.clone(),
+            },
         )?;
-        if response.stopped {
-            Ok(())
-        } else {
-            Err(Error::Internal(format!(
-                "machine API stop acknowledged false for sandbox {}",
-                sandbox_id
-            )))
-        }
+        validate_stop_response(
+            &response,
+            tenant_id,
+            sandbox_id,
+            &authority,
+            expected_bindings,
+        )?;
+        Ok(response)
+    }
+
+    fn service_forwarder_authority(&self) -> Result<&MachineForwarderAuthority, Error> {
+        self.forwarder_authority.as_ref().ok_or_else(|| {
+            Error::PreconditionFailed(format!(
+                "machine API client for {} has no parent-issued forwarder authority",
+                self.socket_path.display()
+            ))
+        })
+    }
+
+    pub(super) fn forwarder_authority(&self) -> Result<&MachineForwarderAuthority, Error> {
+        self.service_forwarder_authority()
     }
 
     pub(crate) fn list_service_sandboxes(
@@ -230,7 +315,7 @@ impl MachineApiClient {
             "POST",
             path,
             Some(&encoded),
-            SOCKET_MUTATION_IO_TIMEOUT,
+            self.mutation_io_timeout,
         )?;
         let body = extract_machine_api_json_body(status, &response, &self.socket_path, path)?;
         serde_json::from_slice(body).map_err(|error| {
@@ -251,7 +336,7 @@ impl MachineApiClient {
             "POST",
             path,
             None,
-            SOCKET_MUTATION_IO_TIMEOUT,
+            self.mutation_io_timeout,
         )?;
         let body = extract_machine_api_json_body(status, &response, &self.socket_path, path)?;
         serde_json::from_slice(body).map_err(|error| {
@@ -272,6 +357,74 @@ fn normalize_guest_visible_build_spec(mut spec: SandboxSpec) -> SandboxSpec {
         build.context_path = normalize_guest_visible_host_path(&build.context_path);
     }
     spec
+}
+
+fn validate_start_response(
+    response: &MachineApiServiceSandboxStartResponse,
+    sandbox_id: &SandboxId,
+    tenant_id: &TenantId,
+    authority: &MachineForwarderAuthority,
+    expected_bindings: &[SandboxPortBinding],
+) -> Result<(), Error> {
+    if response.handle.id == *sandbox_id
+        && response.handle.tenant_id == *tenant_id
+        && response.forwarder_authority == *authority
+        && response.publication_evidence.len() == expected_bindings.len()
+        && response
+            .publication_evidence
+            .iter()
+            .zip(expected_bindings)
+            .all(|(receipt, expected)| {
+                receipt.outcome == MachinePortForwardOutcome::Exposed
+                    && receipt.tenant_id == *tenant_id
+                    && receipt.sandbox_id == *sandbox_id
+                    && receipt.binding == *expected
+                    && receipt.provider_instance == *authority.provider_instance()
+                    && receipt.provider_generation == authority.generation()
+            })
+    {
+        return Ok(());
+    }
+    Err(Error::Internal(format!(
+        "machine API start response did not authenticate the exact sandbox identity, provider \
+         generation, and complete publication set for {sandbox_id}; the outcome remains ambiguous"
+    )))
+}
+
+fn validate_stop_response(
+    response: &MachineApiServiceSandboxStopResponse,
+    tenant_id: &TenantId,
+    sandbox_id: &SandboxId,
+    authority: &MachineForwarderAuthority,
+    expected_bindings: &[SandboxPortBinding],
+) -> Result<(), Error> {
+    if response.stopped
+        && response.tenant_id == *tenant_id
+        && response.sandbox_id == *sandbox_id
+        && response.forwarder_authority == *authority
+        && response.confirmed_absent_evidence.len() == expected_bindings.len()
+        && response
+            .confirmed_absent_evidence
+            .iter()
+            .zip(expected_bindings)
+            .all(|(receipt, expected)| {
+                matches!(
+                    receipt.outcome,
+                    MachinePortForwardOutcome::Withdrawn
+                        | MachinePortForwardOutcome::ExactAlreadyAbsent
+                ) && receipt.tenant_id == *tenant_id
+                    && receipt.sandbox_id == *sandbox_id
+                    && receipt.binding == *expected
+                    && receipt.provider_instance == *authority.provider_instance()
+                    && receipt.provider_generation == authority.generation()
+            })
+    {
+        return Ok(());
+    }
+    Err(Error::Internal(format!(
+        "machine API stop response did not authenticate the exact sandbox identity, provider \
+         generation, and complete absence set for {sandbox_id}; the outcome remains ambiguous"
+    )))
 }
 
 fn normalize_guest_visible_host_path(path: &Path) -> PathBuf {
@@ -534,9 +687,12 @@ mod tests {
         SandboxHandle, SandboxId, SandboxOwnerSpec, SandboxPortBinding, SandboxProcessSpec,
         SandboxRootSpec, SandboxSpec, SandboxStatus, TenantId,
     };
+    use nimbus_machine::MachineForwarderAuthority;
+    use nimbus_network::{NetworkPlanId, NetworkResourceGeneration};
     use nimbus_sandbox::SandboxFuture;
     use nimbus_sandbox::backends::container::{
         ContainerSandboxBackend, ContainerSandboxBackendConfig, ContainerStartMode,
+        OciMachinePortForwarderConfig,
     };
     use tempfile::{Builder, TempDir};
 
@@ -545,8 +701,8 @@ mod tests {
     };
     use crate::machine::api::{
         MachineApiListenMode, MachineApiState, bind_direct_listener,
-        default_guest_helper_binary_dirs, machine_api_node_workload_facade_from_sandbox_backend,
-        serve_machine_api,
+        default_guest_helper_binary_dirs, machine_api_node_workload_facade_from_container_backend,
+        machine_api_node_workload_facade_from_sandbox_backend, serve_machine_api,
     };
     use nimbus_machine::api::{
         MachineApiHealthResponse, MachineApiServiceExecutionDriver, MachineApiServiceExecutionMode,
@@ -565,6 +721,7 @@ mod tests {
             helper_binary_dirs: default_guest_helper_binary_dirs(),
             service_workloads: None,
             machine_port_forwarder: None,
+            forwarder_authority: None,
         };
         write_fake_runtime_binaries(temp_dir.path());
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
@@ -736,6 +893,7 @@ mod tests {
         let temp_dir = short_socket_tempdir();
         let socket_path = temp_dir.path().join("nimbus.sock");
         let listener = bind_direct_listener(&socket_path).expect("listener should bind");
+        let authority = test_forwarder_authority();
         let state = MachineApiState {
             control_data_dir: temp_dir.path().join("control"),
             listen_mode: MachineApiListenMode::DirectSocket,
@@ -745,6 +903,7 @@ mod tests {
                 Arc::new(StubMachineApiSandboxBackend::default()),
             )),
             machine_port_forwarder: None,
+            forwarder_authority: Some(authority.clone()),
         };
         write_fake_runtime_binaries(temp_dir.path());
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
@@ -752,7 +911,8 @@ mod tests {
         let server = tokio::spawn(serve_machine_api(listener, state, async move {
             let _ = shutdown_rx.await;
         }));
-        let client = MachineApiClient::new_for_test(socket_path);
+        let client =
+            MachineApiClient::new_for_test(socket_path).with_forwarder_authority(authority);
         let _ = wait_for_health(&client);
 
         let capabilities = client
@@ -781,17 +941,20 @@ mod tests {
         );
 
         let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+        let image_spec =
+            without_port_bindings(image_spec(&tenant_id, "db", "docker://busybox:latest"));
+        let image_bindings = image_spec.port_bindings.clone();
         let image_handle = client
-            .start_service_sandbox_from_image(image_spec(
-                &tenant_id,
-                "db",
-                "docker://busybox:latest",
-            ))
-            .expect("image-backed sandbox should start");
+            .start_service_sandbox_from_image(
+                parent_selected_sandbox_id(&tenant_id, "client-image-sandbox"),
+                image_spec,
+            )
+            .expect("image-backed sandbox should start")
+            .handle;
         assert_eq!(image_handle.name, "db");
         assert_eq!(image_handle.backend, SandboxBackendKind::Container);
         assert_eq!(image_handle.status, SandboxStatus::Ready);
-        assert_eq!(image_handle.published_endpoints.len(), 1);
+        assert!(image_handle.published_endpoints.is_empty());
 
         let inspected = client
             .inspect_service_sandbox(&image_handle.id)
@@ -800,7 +963,7 @@ mod tests {
         assert_eq!(inspected, image_handle);
 
         client
-            .stop_service_sandbox(&image_handle.id)
+            .stop_service_sandbox(&tenant_id, &image_handle.id, &image_bindings)
             .expect("stop should succeed");
         assert!(
             client
@@ -811,14 +974,18 @@ mod tests {
         );
 
         let build_handle = client
-            .start_service_sandbox_from_build(build_spec(
-                &tenant_id,
-                "api",
-                "api-image",
-                "/Users/jack/src/github.com/nimbus/nimbus/Dockerfile",
-                "/Users/jack/src/github.com/nimbus/nimbus",
-            ))
-            .expect("build-backed sandbox should start");
+            .start_service_sandbox_from_build(
+                parent_selected_sandbox_id(&tenant_id, "client-build-sandbox"),
+                without_port_bindings(build_spec(
+                    &tenant_id,
+                    "api",
+                    "api-image",
+                    "/Users/jack/src/github.com/nimbus/nimbus/Dockerfile",
+                    "/Users/jack/src/github.com/nimbus/nimbus",
+                )),
+            )
+            .expect("build-backed sandbox should start")
+            .handle;
         assert_eq!(build_handle.name, "api");
 
         let _ = shutdown_tx.send(());
@@ -842,15 +1009,18 @@ mod tests {
             control_data_dir.join("service-sandboxes").join("container"),
         );
         backend_config.start_mode = ContainerStartMode::PlanOnly;
+        let authority = test_forwarder_authority();
+        backend_config.machine_port_forwarder = Some(test_forwarder_config());
         let state = MachineApiState {
             control_data_dir,
             listen_mode: MachineApiListenMode::DirectSocket,
             binary_lookup_path: Some(temp_dir.path().as_os_str().to_owned()),
             helper_binary_dirs: default_guest_helper_binary_dirs(),
-            service_workloads: Some(machine_api_node_workload_facade_from_sandbox_backend(
+            service_workloads: Some(machine_api_node_workload_facade_from_container_backend(
                 Arc::new(ContainerSandboxBackend::new(backend_config)),
             )),
             machine_port_forwarder: None,
+            forwarder_authority: Some(authority.clone()),
         };
         write_fake_runtime_binaries(temp_dir.path());
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
@@ -858,17 +1028,18 @@ mod tests {
         let server = tokio::spawn(serve_machine_api(listener, state, async move {
             let _ = shutdown_rx.await;
         }));
-        let client = MachineApiClient::new_for_test(socket_path);
+        let client =
+            MachineApiClient::new_for_test(socket_path).with_forwarder_authority(authority);
         let _ = wait_for_health(&client);
 
         let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
         let started = client
-            .start_service_sandbox_from_image(image_spec(
-                &tenant_id,
-                "db",
-                "docker://busybox:latest",
-            ))
-            .expect("fixture sandbox should start through the machine API");
+            .start_service_sandbox_from_image(
+                parent_selected_sandbox_id(&tenant_id, "client-list-sandbox"),
+                without_port_bindings(image_spec(&tenant_id, "db", "docker://busybox:latest")),
+            )
+            .expect("fixture sandbox should start through the machine API")
+            .handle;
         let sandbox_id = started.id;
         let container_dir = manifest_state_root
             .join("tenants")
@@ -927,15 +1098,18 @@ mod tests {
             control_data_dir.join("service-sandboxes").join("container"),
         );
         backend_config.start_mode = ContainerStartMode::PlanOnly;
+        let authority = test_forwarder_authority();
+        backend_config.machine_port_forwarder = Some(test_forwarder_config());
         let state = MachineApiState {
             control_data_dir,
             listen_mode: MachineApiListenMode::DirectSocket,
             binary_lookup_path: Some(temp_dir.path().as_os_str().to_owned()),
             helper_binary_dirs: default_guest_helper_binary_dirs(),
-            service_workloads: Some(machine_api_node_workload_facade_from_sandbox_backend(
+            service_workloads: Some(machine_api_node_workload_facade_from_container_backend(
                 Arc::new(ContainerSandboxBackend::new(backend_config)),
             )),
             machine_port_forwarder: None,
+            forwarder_authority: Some(authority.clone()),
         };
         write_fake_runtime_binaries(temp_dir.path());
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
@@ -943,18 +1117,23 @@ mod tests {
         let server = tokio::spawn(serve_machine_api(listener, state, async move {
             let _ = shutdown_rx.await;
         }));
-        let client = MachineApiClient::new_for_test(socket_path);
+        let client =
+            MachineApiClient::new_for_test(socket_path).with_forwarder_authority(authority);
         let _ = wait_for_health(&client);
 
         let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
         let service_name = "db & cache=1/path";
         let started = client
-            .start_service_sandbox_from_image(image_spec(
-                &tenant_id,
-                service_name,
-                "docker://busybox:latest",
-            ))
-            .expect("fixture sandbox should start through the machine API");
+            .start_service_sandbox_from_image(
+                parent_selected_sandbox_id(&tenant_id, "client-query-sandbox"),
+                without_port_bindings(image_spec(
+                    &tenant_id,
+                    service_name,
+                    "docker://busybox:latest",
+                )),
+            )
+            .expect("fixture sandbox should start through the machine API")
+            .handle;
 
         let current = client
             .inspect_current_service_sandbox(&tenant_id, service_name)
@@ -1028,6 +1207,8 @@ mod tests {
         let client = MachineApiClient {
             socket_path,
             io_timeout: Duration::from_millis(50),
+            mutation_io_timeout: Duration::from_millis(50),
+            forwarder_authority: None,
         };
 
         let health = client
@@ -1058,6 +1239,8 @@ mod tests {
         let client = MachineApiClient {
             socket_path,
             io_timeout: Duration::from_millis(50),
+            mutation_io_timeout: Duration::from_millis(50),
+            forwarder_authority: None,
         };
 
         let error = client
@@ -1094,6 +1277,8 @@ mod tests {
         let client = MachineApiClient {
             socket_path,
             io_timeout: Duration::from_secs(2),
+            mutation_io_timeout: Duration::from_secs(2),
+            forwarder_authority: None,
         };
 
         let error = client
@@ -1167,12 +1352,22 @@ mod tests {
     }
 
     #[test]
-    fn stop_service_sandbox_sends_a_content_length_zero_post_request() {
+    fn stop_service_sandbox_sends_parent_authority_json_request() {
         let temp_dir = short_socket_tempdir();
         let socket_path = temp_dir.path().join("nimbus.sock");
         let listener = StdUnixListener::bind(&socket_path).expect("listener should bind");
         let expected_path = "/v1/machine-api/service-sandboxes/db-1/stop";
-        let response_body = "{\"sandbox_id\":\"db-1\",\"stopped\":true}".to_string();
+        let tenant_id = TenantId::new("tenant").expect("tenant should validate");
+        let sandbox_id = SandboxId::new("db-1");
+        let authority = test_forwarder_authority();
+        let response_body = serde_json::json!({
+            "tenant_id": tenant_id.clone(),
+            "sandbox_id": sandbox_id.clone(),
+            "stopped": true,
+            "forwarder_authority": authority.clone(),
+            "confirmed_absent_evidence": [],
+        })
+        .to_string();
         let server = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("request should connect");
             stream
@@ -1213,9 +1408,10 @@ mod tests {
             String::from_utf8(request).expect("request should be valid utf-8")
         });
 
-        let client = MachineApiClient::new_for_test(socket_path);
+        let client =
+            MachineApiClient::new_for_test(socket_path).with_forwarder_authority(authority.clone());
         client
-            .stop_service_sandbox(&SandboxId::new("db-1"))
+            .stop_service_sandbox(&tenant_id, &sandbox_id, &[])
             .expect("stop should succeed");
 
         let request = server.join().expect("server should join");
@@ -1224,12 +1420,12 @@ mod tests {
             "{request}"
         );
         assert!(
-            request.contains("content-length: 0\r\n"),
-            "bodyless stop request should advertise content-length: 0: {request}"
+            request.contains("content-type: application/json\r\n"),
+            "typed stop request should advertise JSON: {request}"
         );
         assert!(
-            !request.contains("{}"),
-            "bodyless stop request should not send a JSON stub body: {request}"
+            request.contains("\"forwarder_authority\""),
+            "typed stop request must carry parent-issued authority: {request}"
         );
     }
 
@@ -1330,14 +1526,24 @@ mod tests {
     #[test]
     fn stop_log_and_ps_paths_encode_hostile_id_segment() {
         // stop: reserved space + percent literal in the id.
-        let stop_request = capture_machine_api_request_line(
-            "{\"sandbox_id\":\"a b%c\",\"stopped\":true}",
-            |client| {
-                client
-                    .stop_service_sandbox(&SandboxId::new("a b%c"))
-                    .expect("stop should succeed");
-            },
-        );
+        let tenant_id = TenantId::new("tenant").expect("tenant should validate");
+        let sandbox_id = SandboxId::new("a b%c");
+        let authority = test_forwarder_authority();
+        let stop_response = serde_json::json!({
+            "tenant_id": tenant_id.clone(),
+            "sandbox_id": sandbox_id.clone(),
+            "stopped": true,
+            "forwarder_authority": authority.clone(),
+            "confirmed_absent_evidence": [],
+        })
+        .to_string();
+        let stop_request = capture_machine_api_request_line(&stop_response, move |client| {
+            client
+                .clone()
+                .with_forwarder_authority(authority)
+                .stop_service_sandbox(&tenant_id, &sandbox_id, &[])
+                .expect("stop should succeed");
+        });
         assert!(
             stop_request
                 .starts_with("POST /v1/machine-api/service-sandboxes/a%20b%25c/stop HTTP/1.1\r\n"),
@@ -1449,11 +1655,42 @@ mod tests {
         spec
     }
 
+    fn without_port_bindings(mut spec: SandboxSpec) -> SandboxSpec {
+        spec.port_bindings.clear();
+        spec
+    }
+
+    fn parent_selected_sandbox_id(tenant_id: &TenantId, workload: &str) -> SandboxId {
+        SandboxId::new(format!(
+            "machine-api:{}",
+            NetworkPlanId::for_tenant_workload_plan(tenant_id, workload)
+        ))
+    }
+
     fn short_socket_tempdir() -> TempDir {
         Builder::new()
             .prefix("nimbus-mac-")
             .tempdir_in("/tmp")
             .expect("short temp dir should exist")
+    }
+
+    fn test_forwarder_authority() -> MachineForwarderAuthority {
+        let forwarder = test_forwarder_config();
+        MachineForwarderAuthority::new(
+            forwarder.provider_instance().clone(),
+            forwarder.provider_generation(),
+        )
+    }
+
+    fn test_forwarder_config() -> OciMachinePortForwarderConfig {
+        OciMachinePortForwarderConfig::for_provider_instance(
+            "127.0.0.1",
+            65_001,
+            "/services/forwarder",
+            "machine-client-test-provider",
+            NetworkResourceGeneration::new(1),
+        )
+        .expect("test forwarder config should validate")
     }
 
     #[derive(Default)]

@@ -1,10 +1,11 @@
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
+use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use nimbus::Error;
+use nimbus_network::LocalPortLeaseAuthority;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use signal_hook_registry::{SigId, register as register_signal, unregister as unregister_signal};
@@ -18,6 +19,7 @@ mod helper_paths;
 mod image;
 mod launch;
 mod ports;
+mod process_identity;
 mod readiness;
 mod ssh;
 mod stop;
@@ -34,8 +36,8 @@ use self::stop::{cleanup_runtime_artifacts, handle_start_machine_error, remove_f
 
 pub(super) use super::record::{MachineHelperBinaryPaths, MachineRuntimeState};
 use super::{
-    MachineConfigRecord, MachineLifecycle, MachineManagerState, MachinePaths, MachineRootLayout,
-    MachineStateRecord, write_json_file,
+    MachineConfigRecord, MachineLifecycle, MachineManagerState, MachinePaths, MachineStateRecord,
+    write_json_file,
 };
 
 const DEFAULT_KRUNKIT_BINARY: &str = "krunkit";
@@ -210,19 +212,34 @@ fn emit_machine_warning(message: impl AsRef<str>) {
 }
 
 pub(super) fn start_machine(
+    network: &super::network_composition::HostMachineNetworkAuthority,
+    paths: &MachinePaths,
+    config: &mut MachineConfigRecord,
+    state: &mut MachineStateRecord,
+) -> Result<(), Error> {
+    start_machine_with_lifecycle(&network.lifecycle_handle()?, paths, config, state)
+}
+
+pub(super) fn start_machine_with_lifecycle(
+    network: &super::network_composition::MachineNetworkLifecycleHandle,
     paths: &MachinePaths,
     config: &mut MachineConfigRecord,
     state: &mut MachineStateRecord,
 ) -> Result<(), Error> {
     emit_machine_progress(format!("Starting machine \"{}\"", config.name));
     ensure_machine_can_start(paths, config, state)?;
+    super::publication_authority::ensure_no_fenced_machine_publications(
+        &network.machine_publications(),
+        config.network_authority.provider_instance(),
+    )?;
     converge_machine_image_contract(paths, config, state)?;
     ensure_machine_bootstrap_identity(paths, config)?;
     validate_machine_bootstrap_contract(config)?;
 
     let startup_signals = StartupSignalMonitor::install()?;
     cleanup_runtime_artifacts(paths)?;
-    let launch_plan = MachineLaunchPlan::build(paths, config, state)?;
+    let port_authority = network.port_leases();
+    let launch_plan = MachineLaunchPlan::build(&port_authority, paths, config, state)?;
 
     state.lifecycle = MachineLifecycle::Starting;
     state.manager = MachineManagerState::Launching;
@@ -360,13 +377,16 @@ pub(super) fn start_machine(
             api_forward_child.as_mut(),
         );
     }
-    if let Err(error) = ensure_guest_machine_api_ready(
+    if let Err(error) = self::guest::ensure_guest_machine_api_ready(
         paths,
         config,
+        &launch_plan.runtime().forwarder_authority,
         launch_plan.runtime().ssh_port,
-        &mut vmm_child,
-        &mut gvproxy_child,
-        &mut api_forward_child,
+        self::guest::GuestMachineApiProcesses {
+            vmm: &mut vmm_child,
+            gvproxy: &mut gvproxy_child,
+            api_forward: &mut api_forward_child,
+        },
         &startup_signals,
     ) {
         return handle_start_machine_error(
@@ -495,26 +515,6 @@ fn requires_bootc_machine_config(config: &MachineConfigRecord) -> bool {
     self::guest::requires_bootc_machine_config(config)
 }
 
-fn ensure_guest_machine_api_ready(
-    paths: &MachinePaths,
-    config: &MachineConfigRecord,
-    ssh_port: u16,
-    vmm_child: &mut Option<Child>,
-    gvproxy_child: &mut Option<Child>,
-    api_forward_child: &mut Option<Child>,
-    startup_signals: &StartupSignalMonitor,
-) -> Result<(), Error> {
-    self::guest::ensure_guest_machine_api_ready(
-        paths,
-        config,
-        ssh_port,
-        vmm_child,
-        gvproxy_child,
-        api_forward_child,
-        startup_signals,
-    )
-}
-
 pub(super) fn inspect_desired_guest_nimbus_binary(
     paths: &MachinePaths,
 ) -> DesiredGuestNimbusBinaryStatus {
@@ -534,18 +534,19 @@ fn resolve_guest_nimbus_binary(paths: &MachinePaths) -> Result<PathBuf, Error> {
 }
 
 pub(super) fn stop_machine(
+    network: &super::network_composition::HostMachineNetworkAuthority,
     paths: &MachinePaths,
     config: &MachineConfigRecord,
     state: &mut MachineStateRecord,
 ) -> Result<(), Error> {
-    self::stop::stop_machine(paths, config, state)
+    self::stop::stop_machine(&network.lifecycle_handle()?, paths, config, state)
 }
 
 pub(super) fn release_machine_ssh_port(
-    roots: &MachineRootLayout,
+    port_authority: &LocalPortLeaseAuthority,
     state: &MachineStateRecord,
 ) -> Result<(), Error> {
-    self::ports::release_machine_ssh_port(roots, state)
+    self::ports::release_machine_ssh_port(port_authority, state)
 }
 
 pub(super) fn refresh_machine_state(

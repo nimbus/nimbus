@@ -1,4 +1,6 @@
 use super::*;
+use nimbus_machine::MachineForwarderAuthority;
+use nimbus_network::{NetworkProviderHandle, NetworkProviderId, NetworkResourceGeneration};
 
 #[test]
 fn require_krun_backend_rejects_container_only_projects() {
@@ -59,6 +61,7 @@ services:
             Arc::new(StubMachineApiSandboxBackend),
         )),
         machine_port_forwarder: None,
+        forwarder_authority: None,
     };
     write_fake_runtime_binaries(temp_dir.path());
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
@@ -105,6 +108,7 @@ async fn host_loader_accepts_default_projects_with_ready_forwarded_machine_api_o
             Arc::new(StubMachineApiSandboxBackend),
         )),
         machine_port_forwarder: None,
+        forwarder_authority: None,
     };
     write_fake_runtime_binaries(temp_dir.path());
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
@@ -152,6 +156,7 @@ services:
         helper_binary_dirs: default_guest_helper_binary_dirs(),
         service_workloads: None,
         machine_port_forwarder: None,
+        forwarder_authority: None,
     };
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let server = tokio::spawn(serve_machine_api(listener, state, async move {
@@ -205,6 +210,7 @@ services:
     let control_data_dir = temp_dir.path().join("control");
     let socket_path = temp_dir.path().join("default-api.sock");
     let listener = bind_direct_listener(&socket_path).expect("listener should bind");
+    let forwarder_authority = fixture_forwarder_authority();
     let state = MachineApiState {
         control_data_dir: temp_dir.path().join("machine-control"),
         listen_mode: MachineApiListenMode::DirectSocket,
@@ -214,13 +220,14 @@ services:
             Arc::new(StubMachineApiSandboxBackend),
         )),
         machine_port_forwarder: None,
+        forwarder_authority: Some(forwarder_authority.clone()),
     };
     write_fake_runtime_binaries(temp_dir.path());
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let server = tokio::spawn(serve_machine_api(listener, state, async move {
         let _ = shutdown_rx.await;
     }));
-    let client = MachineApiClient::new(socket_path);
+    let client = MachineApiClient::new(socket_path).with_forwarder_authority(forwarder_authority);
     wait_for_machine_api_health(&client);
 
     let rendered_up = render_service_up_for_platform(
@@ -240,7 +247,8 @@ services:
         "{rendered_up}"
     );
     assert!(
-        rendered_up.contains("db: started (sandbox db-01stub, status ready)"),
+        rendered_up.contains("db: started (sandbox machine-api:netplan_")
+            && rendered_up.contains(", status ready)"),
         "{rendered_up}"
     );
 
@@ -258,6 +266,7 @@ async fn macos_service_up_uses_forwarded_machine_api_for_default_projects() {
     let control_data_dir = temp_dir.path().join("control");
     let socket_path = temp_dir.path().join("default-api.sock");
     let listener = bind_direct_listener(&socket_path).expect("listener should bind");
+    let forwarder_authority = fixture_forwarder_authority();
     let state = MachineApiState {
         control_data_dir: temp_dir.path().join("machine-control"),
         listen_mode: MachineApiListenMode::DirectSocket,
@@ -267,13 +276,14 @@ async fn macos_service_up_uses_forwarded_machine_api_for_default_projects() {
             Arc::new(StubMachineApiSandboxBackend),
         )),
         machine_port_forwarder: None,
+        forwarder_authority: Some(forwarder_authority.clone()),
     };
     write_fake_runtime_binaries(temp_dir.path());
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let server = tokio::spawn(serve_machine_api(listener, state, async move {
         let _ = shutdown_rx.await;
     }));
-    let client = MachineApiClient::new(socket_path);
+    let client = MachineApiClient::new(socket_path).with_forwarder_authority(forwarder_authority);
     wait_for_machine_api_health(&client);
 
     let rendered_up = render_service_up_for_platform(
@@ -293,7 +303,8 @@ async fn macos_service_up_uses_forwarded_machine_api_for_default_projects() {
         "{rendered_up}"
     );
     assert!(
-        rendered_up.contains("db: started (sandbox db-01stub, status ready)"),
+        rendered_up.contains("db: started (sandbox machine-api:netplan_")
+            && rendered_up.contains(", status ready)"),
         "{rendered_up}"
     );
 
@@ -327,6 +338,7 @@ services:
         Some("db"),
         "compose up",
         ServiceHostPlatform::Macos,
+        None,
         None,
         None,
     )
@@ -424,48 +436,60 @@ services:
             .join("container"),
     );
     backend_config.start_mode = ContainerStartMode::PlanOnly;
+    let forwarder_authority = fixture_forwarder_authority();
+    backend_config.machine_port_forwarder = Some(
+        nimbus_sandbox::backends::container::OciMachinePortForwarderConfig::gvproxy_for_provider_instance(
+            forwarder_authority
+                .provider_instance()
+                .expose_to_provider(),
+            forwarder_authority.generation(),
+        )
+        .expect("fixture machine forwarder authority should reconstruct"),
+    );
     let state = MachineApiState {
         control_data_dir: machine_control_data_dir.clone(),
         listen_mode: MachineApiListenMode::DirectSocket,
         binary_lookup_path: Some(temp_dir.path().as_os_str().to_owned()),
         helper_binary_dirs: default_guest_helper_binary_dirs(),
-        service_workloads: Some(machine_api_node_workload_facade_from_sandbox_backend(
+        service_workloads: Some(machine_api_node_workload_facade_from_container_backend(
             Arc::new(ContainerSandboxBackend::new(backend_config)),
         )),
         machine_port_forwarder: None,
+        forwarder_authority: Some(forwarder_authority.clone()),
     };
     write_fake_runtime_binaries(temp_dir.path());
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let server = tokio::spawn(serve_machine_api(listener, state, async move {
         let _ = shutdown_rx.await;
     }));
-    let client = MachineApiClient::new(socket_path);
+    let client = MachineApiClient::new(socket_path).with_forwarder_authority(forwarder_authority);
     wait_for_machine_api_health(&client);
-    let fixture_spec = SandboxSpec::new(
-        context.control_plane.local_tenant_id.clone(),
-        SandboxOwnerSpec::service("db"),
-        SandboxBackendKind::Container,
-        SandboxRootSpec::oci_image_reference("docker://busybox:latest"),
-        SandboxProcessSpec::new(["sleep", "60"]),
+    let rendered_up = render_service_up_for_platform(
+        &ComposeUpCommand {
+            service: Some("db".to_owned()),
+            file: vec![compose_path.clone()],
+            tenant: None,
+        },
+        &control_data_dir,
+        ServiceHostPlatform::Macos,
+        Some(client.clone()),
+    )
+    .await
+    .expect("compose up should create the parent publication intent");
+    assert!(
+        rendered_up.contains("db: started (sandbox machine-api:netplan_")
+            && rendered_up.contains(", status starting)"),
+        "{rendered_up}"
     );
-    let fixture_handle = client
-        .start_service_sandbox_from_image(fixture_spec)
-        .expect("fixture sandbox should start through the machine API");
-    let container_dir = machine_control_data_dir
-        .join("service-sandboxes")
-        .join("container")
-        .join("state")
-        .join("tenants")
-        .join(context.control_plane.local_tenant_id.as_str())
-        .join("sandboxes")
-        .join(fixture_handle.id.as_str())
-        .join("state")
-        .join("containers")
-        .join(fixture_handle.id.as_str());
-    fs::write(container_dir.join("ctr.log"), "guest log line\n")
-        .expect("guest ctr.log should write");
-    fs::write(container_dir.join("pidfile"), "2002\n").expect("pidfile should write");
-    fs::write(container_dir.join("conmon.pid"), "1001\n").expect("conmon pidfile should write");
+    let current = client
+        .inspect_current_service_sandbox(&context.control_plane.local_tenant_id, "db")
+        .expect("current sandbox lookup should succeed")
+        .details
+        .expect("current sandbox should exist");
+    let fixture_sandbox_id = current.summary.sandbox_id.clone();
+    fs::write(&current.log_paths.ctr_log, "guest log line\n").expect("guest ctr.log should write");
+    fs::write(current.state_dir.join("pidfile"), "2002\n").expect("pidfile should write");
+    fs::write(current.state_dir.join("conmon.pid"), "1001\n").expect("conmon pidfile should write");
 
     let rendered_list = render_service_list_for_platform(
         &ComposePsCommand {
@@ -504,11 +528,6 @@ services:
     );
     assert!(rendered_inspect.contains("ctr.log"), "{rendered_inspect}");
 
-    let current = client
-        .inspect_current_service_sandbox(&context.control_plane.local_tenant_id, "db")
-        .expect("current sandbox lookup should succeed")
-        .details
-        .expect("current sandbox should exist");
     fs::write(&current.log_paths.ctr_log, "guest log line\n").expect("guest ctr.log should write");
     fs::write(current.state_dir.join("pidfile"), "4294967294\n").expect("pidfile should write");
     fs::write(current.state_dir.join("conmon.pid"), "4294967295\n")
@@ -559,7 +578,7 @@ services:
     assert!(
         rendered_down.contains(&format!(
             "db: stopped (sandbox {}, status stopped)",
-            fixture_handle.id
+            fixture_sandbox_id
         )),
         "{rendered_down}"
     );
@@ -629,4 +648,15 @@ services:
         error.to_string(),
         "invalid input: service db in compose project demo-app selects sandbox backend container, but nimbus compose up only supports the krun backend today"
     );
+}
+
+fn fixture_forwarder_authority() -> MachineForwarderAuthority {
+    MachineForwarderAuthority::new(
+        NetworkProviderHandle::new(
+            NetworkProviderId::for_registration_key("compose-forwarded-api"),
+            "fixture-machine-provider",
+        )
+        .expect("fixture provider handle should validate"),
+        NetworkResourceGeneration::new(7),
+    )
 }

@@ -14,14 +14,15 @@ use nimbus_core::TenantId;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    LocalNetworkStateStore, NetworkLeaseEpoch, NetworkReservationClaim, NetworkResourceGeneration,
-    NetworkResourceId, NetworkStatePartition, PortLeaseId,
+    LocalNetworkStateStore, NetworkLeaseEpoch, NetworkPlanId, NetworkReservationClaim,
+    NetworkResourceGeneration, NetworkResourceId, NetworkStatePartition, PortLeaseId,
 };
 
 mod binding;
 mod error;
 mod lifetime;
 mod operation;
+mod plan_batch;
 mod rebind;
 mod request;
 mod reservation_lifetime;
@@ -33,9 +34,9 @@ pub use binding::{
 };
 pub use error::PortLeaseError;
 pub use lifetime::{
-    PortLeaseEffectScope, PortLeaseLifetime, PortLeaseLifetimeGeneration, PortLeaseLifetimeGuard,
-    PortLeaseLifetimeReconciliation, PortLeaseRecoveryAttempt, PortLeaseRecoveryGuard,
-    PortLeaseReservationWithLifetime,
+    PortLeaseBatchReservationWithLifetimes, PortLeaseEffectScope, PortLeaseLifetime,
+    PortLeaseLifetimeGeneration, PortLeaseLifetimeGuard, PortLeaseLifetimeReconciliation,
+    PortLeaseRecoveryAttempt, PortLeaseRecoveryGuard, PortLeaseReservationWithLifetime,
 };
 use operation::PortLeaseOperationError;
 pub use operation::{PortLeaseFenceMismatch, PortLeaseOperation};
@@ -157,6 +158,8 @@ impl PortLeaseFence {
 pub struct PortLeaseRequest {
     lease_id: PortLeaseId,
     owner_id: NetworkResourceId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    plan_id: Option<NetworkPlanId>,
     tenant_id: Option<TenantId>,
     generation: NetworkResourceGeneration,
     lease_epoch: NetworkLeaseEpoch,
@@ -179,6 +182,7 @@ impl PortLeaseRequest {
         Self {
             lease_id,
             owner_id,
+            plan_id: None,
             tenant_id,
             generation: fence.generation(),
             lease_epoch: fence.lease_epoch(),
@@ -196,6 +200,22 @@ impl PortLeaseRequest {
     /// Stable resource that owns this reservation.
     pub fn owner_id(&self) -> &NetworkResourceId {
         &self.owner_id
+    }
+
+    /// Durable exact-batch identity, when this lease belongs to one plan.
+    pub fn plan_id(&self) -> Option<&NetworkPlanId> {
+        self.plan_id.as_ref()
+    }
+
+    /// Attach this request to one durable exact-membership network plan.
+    ///
+    /// Standalone infrastructure leases deliberately omit this identity.
+    /// Provider-managed publication batches set it before their first
+    /// reservation so every later transition can authenticate the complete
+    /// durable member set.
+    pub fn with_plan_id(mut self, plan_id: NetworkPlanId) -> Self {
+        self.plan_id = Some(plan_id);
+        self
     }
 
     /// Tenant attribution, when the upper admission decision is tenant-scoped.
@@ -316,7 +336,7 @@ impl PortLeaseRecord {
     }
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PortLeaseState {
     leases: BTreeMap<PortLeaseId, PortLeaseRecord>,
@@ -364,6 +384,10 @@ impl PortLeaseState {
     fn validate(&self) -> Result<(), PortLeaseOperationError> {
         let mut live_ports =
             BTreeMap::<(PortProtocol, NonZeroU16), Vec<(&PortLeaseId, &PortLeaseRecord)>>::new();
+        let mut plan_fences = BTreeMap::<
+            NetworkPlanId,
+            (TenantId, NetworkResourceGeneration, NetworkLeaseEpoch),
+        >::new();
 
         for (lease_id, record) in &self.leases {
             if lease_id != record.request.lease_id() {
@@ -392,6 +416,30 @@ impl PortLeaseState {
                          {detail}"
                     ),
                 });
+            }
+            if let Some(plan_id) = record.request.plan_id() {
+                let tenant_id = record.request.tenant_id().ok_or_else(|| {
+                    PortLeaseOperationError::CorruptAuthority {
+                        reason: format!(
+                            "planned lease {lease_id} omits tenant-qualified plan authority"
+                        ),
+                    }
+                })?;
+                let fence = (
+                    tenant_id.clone(),
+                    record.request.generation(),
+                    record.request.lease_epoch(),
+                );
+                if let Some(existing) = plan_fences.insert(plan_id.clone(), fence.clone())
+                    && existing != fence
+                {
+                    return Err(PortLeaseOperationError::CorruptAuthority {
+                        reason: format!(
+                            "network plan {plan_id} combines divergent tenant, generation, or \
+                             epoch authority"
+                        ),
+                    });
+                }
             }
 
             if record.bind_claim.is_some()
@@ -742,6 +790,16 @@ impl LocalPortLeaseAuthority {
         Self::from_store(LocalNetworkStateStore::open(state_root).map_err(PortLeaseError::Store)?)
     }
 
+    /// Canonical node state root shared by this lease authority.
+    pub fn state_root(&self) -> &Path {
+        self.store.state_root()
+    }
+
+    /// Canonical durable authority file used by diagnostics and proof tools.
+    pub fn authority_path(&self) -> &Path {
+        self.store.authority_path()
+    }
+
     /// Atomically reserve an exact/range slot or provider-assigned identity.
     ///
     /// Replaying the same immutable unclaimed request returns its existing
@@ -753,7 +811,10 @@ impl LocalPortLeaseAuthority {
     /// available slot in their complete overlap domain. Provider-assigned
     /// requests acquire a numeric fence only during adoption.
     pub fn reserve(&self, request: PortLeaseRequest) -> Result<PortLeaseRecord, PortLeaseError> {
-        self.transaction(|state| state.reserve_request(request, None))
+        self.transaction(|state| {
+            plan_batch::authenticate_scalar_plan_if_present(state, &request)?;
+            state.reserve_request(request, None)
+        })
     }
 
     /// Reserve one request for an attempt-unique launch coordinator.
@@ -764,7 +825,10 @@ impl LocalPortLeaseAuthority {
         request: PortLeaseRequest,
         reservation_claim: &NetworkReservationClaim,
     ) -> Result<PortLeaseRecord, PortLeaseError> {
-        self.transaction(|state| state.reserve_request(request, Some(reservation_claim)))
+        self.transaction(|state| {
+            plan_batch::authenticate_scalar_plan_if_present(state, &request)?;
+            state.reserve_request(request, Some(reservation_claim))
+        })
     }
 
     /// Atomically reserve an ordered group of listener requests.
@@ -833,6 +897,8 @@ impl LocalPortLeaseAuthority {
         reservation_claim: &NetworkReservationClaim,
     ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
         self.transaction(|state| {
+            let planned = requests.iter().collect::<Vec<_>>();
+            plan_batch::authenticate_complete_plan_batch_if_present(state, &planned)?;
             let mut distinct = BTreeMap::<PortLeaseId, &PortLeaseRequest>::new();
             for request in requests {
                 if let Some(previous) = distinct.insert(request.lease_id().clone(), request)
@@ -909,6 +975,8 @@ impl LocalPortLeaseAuthority {
     ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
         let reservation_claim = lifetime.claim();
         self.transaction(|state| {
+            let planned = requests.iter().collect::<Vec<_>>();
+            plan_batch::authenticate_complete_plan_batch_if_present(state, &planned)?;
             for request in requests {
                 let record = exact_record(state, request)?;
                 if record.reservation_claim.as_ref() != Some(reservation_claim) {
@@ -979,6 +1047,11 @@ impl LocalPortLeaseAuthority {
         reservation_claim: Option<&NetworkReservationClaim>,
     ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
         self.transaction(|state| {
+            let planned = claims
+                .iter()
+                .map(|(request, _)| request)
+                .collect::<Vec<_>>();
+            plan_batch::authenticate_complete_plan_batch_if_present(state, &planned)?;
             let mut distinct = BTreeMap::<PortLeaseId, (&PortLeaseRequest, &PortBindClaim)>::new();
             for (request, claim) in claims {
                 if let Some((existing_request, existing_claim)) =
@@ -1037,6 +1110,11 @@ impl LocalPortLeaseAuthority {
         reservation_claim: Option<&NetworkReservationClaim>,
     ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
         self.transaction(|state| {
+            let planned = claims
+                .iter()
+                .map(|(request, _)| request)
+                .collect::<Vec<_>>();
+            plan_batch::authenticate_complete_plan_batch_if_present(state, &planned)?;
             let mut distinct = BTreeMap::<PortLeaseId, (&PortLeaseRequest, &PortBindClaim)>::new();
             for (request, claim) in claims {
                 if let Some((existing_request, existing_claim)) =
@@ -1223,6 +1301,12 @@ impl LocalPortLeaseAuthority {
                 }
             }
 
+            let requested = distinct
+                .values()
+                .map(|(request, _, _)| *request)
+                .collect::<Vec<_>>();
+            plan_batch::authenticate_complete_plan_batch_if_present(state, &requested)?;
+
             let prospective = distinct.values().copied().collect::<Vec<_>>();
             for (index, (request, _, binding)) in prospective.iter().enumerate() {
                 for (existing_request, _, existing_binding) in &prospective[..index] {
@@ -1263,6 +1347,7 @@ impl LocalPortLeaseAuthority {
         binding: PortLeaseBinding,
     ) -> Result<PortLeaseRecord, PortLeaseError> {
         self.transaction(|state| {
+            plan_batch::authenticate_scalar_plan_if_present(state, request)?;
             let existing = exact_record(state, request)?;
             if existing.active_lifetime.is_some() {
                 return Err(PortLeaseOperationError::LifetimeMismatch {
@@ -1397,6 +1482,7 @@ impl LocalPortLeaseAuthority {
         required_lifetime: Option<PortLeaseLifetime>,
     ) -> Result<PortLeaseRecord, PortLeaseError> {
         self.transaction(|state| {
+            plan_batch::authenticate_scalar_plan_if_present(state, request)?;
             let existing = exact_record(state, request)?;
             if required_lifetime.is_none() && existing.active_lifetime.is_some() {
                 return Err(PortLeaseOperationError::LifetimeMismatch {
@@ -1491,6 +1577,7 @@ impl LocalPortLeaseAuthority {
         claim: &PortBindClaim,
     ) -> Result<PortLeaseRecord, PortLeaseError> {
         self.transaction(|state| {
+            plan_batch::authenticate_scalar_plan_if_present(state, request)?;
             let record = exact_record_mut(state, request)?;
             if record.active_lifetime.is_some() {
                 return Err(PortLeaseOperationError::LifetimeMismatch {
@@ -1530,6 +1617,7 @@ impl LocalPortLeaseAuthority {
     /// Fence new use and enter withdrawal.
     pub fn withdraw(&self, request: &PortLeaseRequest) -> Result<PortLeaseRecord, PortLeaseError> {
         self.transaction(|state| {
+            plan_batch::authenticate_scalar_plan_if_present(state, request)?;
             let record = exact_record_mut(state, request)?;
             match record.phase {
                 PortLeasePhase::Reserved if record.reservation_claim.is_some() => {
@@ -1568,6 +1656,7 @@ impl LocalPortLeaseAuthority {
     /// before any production effect owner is allowed to rely on reuse.
     pub fn release(&self, request: &PortLeaseRequest) -> Result<PortLeaseRecord, PortLeaseError> {
         self.transaction(|state| {
+            plan_batch::authenticate_scalar_plan_if_present(state, request)?;
             let record = exact_record_mut(state, request)?;
             match record.phase {
                 PortLeasePhase::Withdrawing if record.active_lifetime.is_some() => {
@@ -1600,6 +1689,23 @@ impl LocalPortLeaseAuthority {
     ) -> Result<Option<PortLeaseRecord>, PortLeaseError> {
         let state = self.load_state()?;
         Ok(state.leases.get(lease_id).cloned())
+    }
+
+    /// List every durable member of one network plan in stable lease-ID order.
+    ///
+    /// This is a read-only recovery projection. It neither allocates a port nor
+    /// changes lifecycle, generation, epoch, or process-lifetime authority.
+    pub fn list_plan(
+        &self,
+        plan_id: &NetworkPlanId,
+    ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
+        let state = self.load_state()?;
+        Ok(state
+            .leases
+            .values()
+            .filter(|record| record.request().plan_id() == Some(plan_id))
+            .cloned()
+            .collect())
     }
 
     /// List durable leases in stable ID order.
@@ -1642,6 +1748,8 @@ impl LocalPortLeaseAuthority {
         reservation_claim: Option<&NetworkReservationClaim>,
     ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
         self.transaction(|state| {
+            let planned = requests.iter().collect::<Vec<_>>();
+            plan_batch::authenticate_new_or_exact_plan_batch_if_present(state, &planned)?;
             let mut distinct = BTreeMap::<PortLeaseId, &PortLeaseRequest>::new();
             for request in &requests {
                 validate_request_accounting(request)?;
@@ -1707,9 +1815,13 @@ impl LocalPortLeaseAuthority {
                 }
             }
 
+            for request in &requests {
+                state.reserve_request(request.clone(), reservation_claim)?;
+            }
+            plan_batch::authenticate_complete_plan_batch_if_present(state, &planned)?;
             requests
-                .into_iter()
-                .map(|request| state.reserve_request(request, reservation_claim))
+                .iter()
+                .map(|request| exact_record(state, request).cloned())
                 .collect()
         })
     }

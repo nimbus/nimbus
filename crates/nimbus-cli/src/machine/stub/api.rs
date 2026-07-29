@@ -22,7 +22,6 @@ pub(crate) struct MachineApiState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MachineApiListenMode {
     DirectSocket,
-    SystemdSocketActivation,
 }
 
 impl MachineApiListenMode {
@@ -32,7 +31,6 @@ impl MachineApiListenMode {
     fn as_str(self) -> &'static str {
         match self {
             Self::DirectSocket => "direct-socket",
-            Self::SystemdSocketActivation => "systemd-socket-activation",
         }
     }
 }

@@ -11,6 +11,9 @@ use std::fs::File;
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
+use super::plan_batch::{
+    authenticate_complete_plan_batch_if_present, authenticate_scalar_plan_if_present,
+};
 use super::{
     LocalPortLeaseAuthority, PortBindClaim, PortLeaseBinding, PortLeaseError, PortLeaseOperation,
     PortLeaseOperationError, PortLeasePhase, PortLeaseRecord, PortLeaseRequest, exact_record,
@@ -18,6 +21,9 @@ use super::{
 };
 use crate::state_store::{create_dir_all_owner_only, is_lock_contended, open_owner_file};
 use crate::{NetworkReservationClaim, PortLeaseId};
+
+mod batch_reservation;
+pub use batch_reservation::PortLeaseBatchReservationWithLifetimes;
 
 const LIFETIME_LOCK_DIRECTORY: &str = "port-lease-lifetimes";
 
@@ -226,6 +232,7 @@ impl LocalPortLeaseAuthority {
             });
         }
         self.transaction(|state| {
+            authenticate_scalar_plan_if_present(state, request)?;
             let record = exact_record_mut(state, request)?;
             match record.phase {
                 PortLeasePhase::Withdrawing
@@ -269,6 +276,7 @@ impl LocalPortLeaseAuthority {
         claim: PortBindClaim,
         effect_scope: PortLeaseEffectScope,
     ) -> Result<PortLeaseReservationWithLifetime, PortLeaseError> {
+        self.transaction(|state| authenticate_scalar_plan_if_present(state, &request))?;
         let lock = match self.try_acquire_lifetime_lock(request.lease_id())? {
             LifetimeLockAttempt::Acquired(lock) => lock,
             LifetimeLockAttempt::Contended => {
@@ -278,6 +286,7 @@ impl LocalPortLeaseAuthority {
             }
         };
         let (record, lifetime) = self.transaction(|state| {
+            authenticate_scalar_plan_if_present(state, &request)?;
             state.reserve_request(request.clone(), None)?;
             let record = exact_record_mut(state, &request)?;
             require_reservation_claim(record, None)?;
@@ -329,6 +338,7 @@ impl LocalPortLeaseAuthority {
         claim: PortBindClaim,
         effect_scope: PortLeaseEffectScope,
     ) -> Result<PortLeaseLifetimeGuard, PortLeaseError> {
+        self.transaction(|state| authenticate_scalar_plan_if_present(state, request))?;
         let lock = match self.try_acquire_lifetime_lock(request.lease_id())? {
             LifetimeLockAttempt::Acquired(lock) => lock,
             LifetimeLockAttempt::Contended => {
@@ -338,6 +348,7 @@ impl LocalPortLeaseAuthority {
             }
         };
         let lifetime = self.transaction(|state| {
+            authenticate_scalar_plan_if_present(state, request)?;
             let record = exact_record_mut(state, request)?;
             require_reservation_claim(record, reservation_claim)?;
             if record.phase != PortLeasePhase::Reserved {
@@ -395,6 +406,11 @@ impl LocalPortLeaseAuthority {
                 });
             }
         }
+        let requested = claims
+            .iter()
+            .map(|(request, _)| request)
+            .collect::<Vec<_>>();
+        self.transaction(|state| authenticate_complete_plan_batch_if_present(state, &requested))?;
 
         let mut locks = BTreeMap::new();
         for lease_id in distinct.keys() {
@@ -410,6 +426,7 @@ impl LocalPortLeaseAuthority {
         }
 
         let lifetimes = self.transaction(|state| {
+            authenticate_complete_plan_batch_if_present(state, &requested)?;
             for (request, claim) in distinct.values().copied() {
                 let record = exact_record(state, request)?;
                 require_reservation_claim(record, reservation_claim)?;
@@ -572,6 +589,7 @@ impl LocalPortLeaseAuthority {
             });
         }
         self.transaction(|state| {
+            authenticate_scalar_plan_if_present(state, request)?;
             let record = exact_record_mut(state, request)?;
             require_reservation_claim(record, reservation_claim)?;
             match record.phase {
@@ -618,6 +636,11 @@ impl LocalPortLeaseAuthority {
     ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
         let required_lifetimes = exact_lifetime_batch(claims, lifetimes)?;
         self.transaction(|state| {
+            let planned = claims
+                .iter()
+                .map(|(request, _)| request)
+                .collect::<Vec<_>>();
+            authenticate_complete_plan_batch_if_present(state, &planned)?;
             for (request, claim) in claims {
                 let lifetime = required_lifetimes[request.lease_id()];
                 let record = exact_record(state, request)?;
@@ -757,6 +780,99 @@ impl LocalPortLeaseAuthority {
         }
     }
 
+    /// Acquire every dead lifetime in one exact durable batch.
+    ///
+    /// Locks are acquired in stable lease-ID order and any contention drops all
+    /// earlier locks before returning. Planned callers must present the
+    /// complete immutable member set; standalone callers still receive the same
+    /// exact request and lifetime fencing.
+    pub fn recover_dead_lifetimes(
+        &self,
+        requests: &[PortLeaseRequest],
+    ) -> Result<Vec<PortLeaseRecoveryGuard>, PortLeaseError> {
+        let initial = self.transaction(|state| {
+            let planned = requests.iter().collect::<Vec<_>>();
+            authenticate_complete_plan_batch_if_present(state, &planned)?;
+            let mut distinct = BTreeMap::new();
+            for request in requests {
+                if distinct
+                    .insert(request.lease_id().clone(), request)
+                    .is_some()
+                {
+                    return Err(PortLeaseOperationError::IdentityConflict {
+                        lease_id: request.lease_id().clone(),
+                    });
+                }
+                let record = exact_record(state, request)?;
+                if record.phase().is_terminal() || record.active_lifetime().is_none() {
+                    return Err(PortLeaseOperationError::LifetimeMismatch {
+                        lease_id: request.lease_id().clone(),
+                    });
+                }
+            }
+            requests
+                .iter()
+                .map(|request| exact_record(state, request).cloned())
+                .collect::<Result<Vec<_>, _>>()
+        })?;
+
+        let mut locks = BTreeMap::new();
+        let mut stable_ids = requests
+            .iter()
+            .map(|request| request.lease_id().clone())
+            .collect::<Vec<_>>();
+        stable_ids.sort();
+        stable_ids.dedup();
+        for lease_id in stable_ids {
+            let lock = match self.try_acquire_lifetime_lock(&lease_id)? {
+                LifetimeLockAttempt::Acquired(lock) => lock,
+                LifetimeLockAttempt::Contended => {
+                    return Err(PortLeaseError::LifetimeOwnerLive { lease_id });
+                }
+            };
+            locks.insert(lease_id, lock);
+        }
+
+        let current = self.transaction(|state| {
+            let planned = requests.iter().collect::<Vec<_>>();
+            authenticate_complete_plan_batch_if_present(state, &planned)?;
+            for (request, expected) in requests.iter().zip(&initial) {
+                let record = exact_record(state, request)?;
+                if record.phase().is_terminal()
+                    || record.active_lifetime() != expected.active_lifetime()
+                {
+                    return Err(PortLeaseOperationError::LifetimeMismatch {
+                        lease_id: request.lease_id().clone(),
+                    });
+                }
+            }
+            requests
+                .iter()
+                .map(|request| exact_record(state, request).cloned())
+                .collect::<Result<Vec<_>, _>>()
+        })?;
+
+        requests
+            .iter()
+            .zip(current)
+            .map(|(request, record)| {
+                let lifetime =
+                    record
+                        .active_lifetime()
+                        .ok_or_else(|| PortLeaseError::LifetimeMismatch {
+                            lease_id: request.lease_id().clone(),
+                        })?;
+                Ok(PortLeaseRecoveryGuard {
+                    request: request.clone(),
+                    lifetime,
+                    _lock: locks
+                        .remove(request.lease_id())
+                        .expect("every recovered request owns one stable lock"),
+                })
+            })
+            .collect()
+    }
+
     /// Quarantine every possibly live effect owned by a dead process generation.
     pub fn mark_cleanup_pending_after_owner_death(
         &self,
@@ -764,6 +880,7 @@ impl LocalPortLeaseAuthority {
         recovery: &PortLeaseRecoveryGuard,
     ) -> Result<PortLeaseRecord, PortLeaseError> {
         self.transaction(|state| {
+            authenticate_scalar_plan_if_present(state, request)?;
             let record = exact_record_mut(state, request)?;
             authenticate_recovery(record, request, recovery)?;
             match record.phase {
@@ -810,6 +927,7 @@ impl LocalPortLeaseAuthority {
             });
         }
         let lifetime = self.transaction(|state| {
+            authenticate_scalar_plan_if_present(state, request)?;
             let record = exact_record_mut(state, request)?;
             authenticate_recovery(record, request, &recovery)?;
             if let Some(mismatch) = expected_binding.mismatch(request.binding()) {
@@ -867,6 +985,8 @@ impl LocalPortLeaseAuthority {
     ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
         let recoveries = exact_recovery_batch(requests, recoveries)?;
         self.transaction(|state| {
+            let requested = requests.iter().collect::<Vec<_>>();
+            authenticate_complete_plan_batch_if_present(state, &requested)?;
             for request in requests {
                 let recovery = recoveries[request.lease_id()];
                 let record = exact_record(state, request)?;
@@ -913,6 +1033,11 @@ impl LocalPortLeaseAuthority {
             .collect::<Vec<_>>();
         let recoveries = exact_recovery_batch(&requests, recoveries)?;
         self.transaction(|state| {
+            let requested = bindings
+                .iter()
+                .map(|(request, _)| request)
+                .collect::<Vec<_>>();
+            authenticate_complete_plan_batch_if_present(state, &requested)?;
             for (request, expected_binding) in bindings {
                 let recovery = recoveries[request.lease_id()];
                 if recovery.lifetime.effect_scope != PortLeaseEffectScope::ProviderManaged {
@@ -985,6 +1110,8 @@ impl LocalPortLeaseAuthority {
     ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
         let recoveries = exact_recovery_batch(requests, recoveries)?;
         self.transaction(|state| {
+            let requested = requests.iter().collect::<Vec<_>>();
+            authenticate_complete_plan_batch_if_present(state, &requested)?;
             for request in requests {
                 let recovery = recoveries[request.lease_id()];
                 if recovery.lifetime.effect_scope != PortLeaseEffectScope::ProviderManaged {
@@ -1107,6 +1234,11 @@ impl LocalPortLeaseAuthority {
         }
 
         self.transaction(|state| {
+            let requested = bindings
+                .iter()
+                .map(|(request, _)| request)
+                .collect::<Vec<_>>();
+            authenticate_complete_plan_batch_if_present(state, &requested)?;
             for (request, expected_binding) in distinct.values().copied() {
                 let lifetime = required[request.lease_id()].1;
                 let record = exact_record(state, request)?;
@@ -1182,6 +1314,8 @@ impl LocalPortLeaseAuthority {
     ) -> Result<Vec<PortLeaseRecord>, PortLeaseError> {
         let recoveries = exact_recovery_batch(requests, recoveries)?;
         self.transaction(|state| {
+            let requested = requests.iter().collect::<Vec<_>>();
+            authenticate_complete_plan_batch_if_present(state, &requested)?;
             for request in requests {
                 let recovery = recoveries[request.lease_id()];
                 if recovery.lifetime.effect_scope != PortLeaseEffectScope::ProviderManaged {
@@ -1234,6 +1368,7 @@ impl LocalPortLeaseAuthority {
         recovery: &PortLeaseRecoveryGuard,
     ) -> Result<PortLeaseRecord, PortLeaseError> {
         self.transaction(|state| {
+            authenticate_scalar_plan_if_present(state, request)?;
             let record = exact_record_mut(state, request)?;
             if record.phase == PortLeasePhase::Released
                 && record.active_lifetime.is_none()
@@ -1280,6 +1415,7 @@ impl LocalPortLeaseAuthority {
         recovery: &PortLeaseRecoveryGuard,
     ) -> Result<PortLeaseRecord, PortLeaseError> {
         self.transaction(|state| {
+            authenticate_scalar_plan_if_present(state, request)?;
             let record = exact_record_mut(state, request)?;
             if record.phase == PortLeasePhase::Reserved
                 && record.active_lifetime.is_none()
@@ -1323,7 +1459,10 @@ impl LocalPortLeaseAuthority {
         &self,
         request: &PortLeaseRequest,
     ) -> Result<PortLeaseRecord, PortLeaseError> {
-        self.transaction(|state| exact_record(state, request).cloned())
+        self.transaction(|state| {
+            authenticate_scalar_plan_if_present(state, request)?;
+            exact_record(state, request).cloned()
+        })
     }
 
     fn try_acquire_lifetime_lock(

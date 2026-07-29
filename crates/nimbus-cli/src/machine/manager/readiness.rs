@@ -121,6 +121,11 @@ pub(super) fn pre_start_networking(
     // `wait_for_path` failure still hands the spawned gvproxy back through the
     // start-error cleanup path to be reaped, rather than dropping it un-waited.
     let child = gvproxy_child.insert(launch_plan.gvproxy_command.spawn()?);
+    let receipt = super::process_identity::GvproxyProcessReceipt::capture(
+        child.id(),
+        &launch_plan.runtime().forwarder_authority,
+    )?;
+    super::write_json_file(&paths.gvproxy_process_identity_path, &receipt)?;
     wait_for_path(
         &paths.gvproxy_socket_path,
         GVPROXY_SOCKET_WAIT_TIMEOUT,

@@ -1,20 +1,44 @@
 use super::*;
 
 #[test]
-fn ensure_guest_nimbus_socket_shell_repairs_first_boot_failures() {
-    let script = ensure_guest_nimbus_socket_shell_script();
+fn direct_guest_nimbus_service_start_is_parent_ordered_and_disabled_across_boots() {
+    let script = start_guest_nimbus_service_shell_script();
 
-    assert!(script.contains("systemctl daemon-reload"), "{script}");
-    assert!(
-        script.contains("systemctl stop nimbus.service nimbus.socket"),
-        "{script}"
-    );
-    assert!(
-        script.contains("systemctl reset-failed nimbus.service nimbus.socket"),
-        "{script}"
-    );
-    assert!(script.contains("systemctl start nimbus.socket"), "{script}");
+    let restart = script
+        .find("systemctl restart nimbus.service")
+        .expect("service should start only after parent authority refresh");
+    let socket_ready = script
+        .find("test -S")
+        .expect("direct listener should be proven before publication");
+    let relabel = script
+        .find("chcon -t container_var_run_t")
+        .expect("direct listener should receive the forwarding SELinux label");
+    let active = script
+        .find("systemctl is-active nimbus.service")
+        .expect("service activity should be proven");
+
+    assert!(restart < socket_ready, "{script}");
+    assert!(socket_ready < relabel, "{script}");
+    assert!(relabel < active, "{script}");
+    assert!(!script.contains("enable nimbus.service"), "{script}");
+    assert!(!script.contains("start nimbus.socket"), "{script}");
     assert!(script.contains(GUEST_NIMBUS_SOCKET), "{script}");
+}
+
+#[test]
+fn direct_guest_nimbus_service_stop_has_no_legacy_socket_activation_path() {
+    let script = stop_guest_nimbus_service_shell_script();
+
+    assert!(
+        script.contains("systemctl stop nimbus.service"),
+        "the host should stop only the direct service: {script}"
+    );
+    assert!(
+        script.contains("systemctl reset-failed nimbus.service"),
+        "the direct service failure state should be cleared for an authorized restart: {script}"
+    );
+    assert!(!script.contains("nimbus.socket"), "{script}");
+    assert!(!script.contains("disable"), "{script}");
 }
 
 #[test]
@@ -219,6 +243,7 @@ fn interrupted_start_transitions_to_stopped_and_cleans_runtime_artifacts() {
         efi_variable_store_path: paths.efi_variable_store_path.clone(),
         machine_image_source: describe_machine_image_source(&config.guest.image_source),
         ssh_listener_id: fixture_machine_ssh_listener_id("readiness-interrupted"),
+        forwarder_authority: test_forwarder_authority(&config),
         ssh_port: 20022,
         rest_uri: format!("unix://{}", paths.vmm_endpoint_path.display()),
         ready_vsock_port: READY_VSOCK_PORT,

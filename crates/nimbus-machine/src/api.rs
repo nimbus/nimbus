@@ -1,14 +1,17 @@
 use nimbus_core::TenantId;
 use nimbus_network::PublishedEndpoint;
 use nimbus_sandbox::{
-    SandboxBackendKind, SandboxId, SandboxLifecycleSpec, SandboxPortBinding, SandboxResourceLimits,
-    SandboxStatus,
+    MachinePortForwardReceipt, SandboxBackendKind, SandboxId, SandboxLifecycleSpec,
+    SandboxPortBinding, SandboxResourceLimits, SandboxStatus,
 };
 #[cfg(unix)]
 use nimbus_sandbox::{SandboxHandle, SandboxSpec};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
+
+#[cfg(unix)]
+use crate::MachineForwarderAuthority;
 
 #[cfg(unix)]
 pub const MACHINE_API_PROTOCOL_VERSION: &str = "v1alpha2";
@@ -209,7 +212,9 @@ pub struct MachineApiBootcStatusResponse {
 
 #[cfg(unix)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MachineApiBootcSwitchRequest {
+    pub forwarder_authority: MachineForwarderAuthority,
     pub image: String,
     #[serde(default)]
     pub transport: Option<String>,
@@ -217,7 +222,9 @@ pub struct MachineApiBootcSwitchRequest {
 
 #[cfg(unix)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MachineApiBootcUpgradeRequest {
+    pub forwarder_authority: MachineForwarderAuthority,
     #[serde(default)]
     pub check: bool,
     #[serde(default)]
@@ -226,7 +233,10 @@ pub struct MachineApiBootcUpgradeRequest {
 
 #[cfg(unix)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MachineApiBootcRollbackRequest {}
+#[serde(deny_unknown_fields)]
+pub struct MachineApiBootcRollbackRequest {
+    pub forwarder_authority: MachineForwarderAuthority,
+}
 
 #[cfg(unix)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -260,20 +270,29 @@ impl MachineApiCapabilityResponse {
 
 #[cfg(unix)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MachineApiServiceSandboxImageStartRequest {
+    pub sandbox_id: SandboxId,
+    pub forwarder_authority: MachineForwarderAuthority,
     pub spec: SandboxSpec,
 }
 
 #[cfg(unix)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MachineApiServiceSandboxBuildStartRequest {
+    pub sandbox_id: SandboxId,
+    pub forwarder_authority: MachineForwarderAuthority,
     pub spec: SandboxSpec,
 }
 
 #[cfg(unix)]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct MachineApiServiceSandboxStartResponse {
     pub handle: SandboxHandle,
+    pub forwarder_authority: MachineForwarderAuthority,
+    pub publication_evidence: Vec<MachinePortForwardReceipt>,
 }
 
 #[cfg(unix)]
@@ -285,9 +304,123 @@ pub struct MachineApiServiceSandboxInspectResponse {
 
 #[cfg(unix)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MachineApiServiceSandboxStopRequest {
+    pub forwarder_authority: MachineForwarderAuthority,
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct MachineApiServiceSandboxStopResponse {
+    pub tenant_id: TenantId,
     pub sandbox_id: SandboxId,
     pub stopped: bool,
+    pub forwarder_authority: MachineForwarderAuthority,
+    pub confirmed_absent_evidence: Vec<MachinePortForwardReceipt>,
+}
+
+#[cfg(unix)]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MachineApiServiceSandboxStartResponseWire {
+    handle: SandboxHandle,
+    forwarder_authority: MachineForwarderAuthority,
+    publication_evidence: Vec<MachinePortForwardReceipt>,
+}
+
+#[cfg(unix)]
+impl<'de> Deserialize<'de> for MachineApiServiceSandboxStartResponse {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = MachineApiServiceSandboxStartResponseWire::deserialize(deserializer)?;
+        let mut seen_bindings = Vec::with_capacity(wire.publication_evidence.len());
+        for (index, receipt) in wire.publication_evidence.iter().enumerate() {
+            if receipt.outcome != nimbus_sandbox::MachinePortForwardOutcome::Exposed
+                || receipt.tenant_id != wire.handle.tenant_id
+                || receipt.sandbox_id != wire.handle.id
+                || receipt.provider_instance != *wire.forwarder_authority.provider_instance()
+                || receipt.provider_generation != wire.forwarder_authority.generation()
+            {
+                return Err(serde::de::Error::custom(format!(
+                    "start publication evidence member {index} is crossed, stale, or not an \
+                     exact exposed receipt for the response identity"
+                )));
+            }
+            if seen_bindings
+                .iter()
+                .any(|binding| binding == &receipt.binding)
+            {
+                return Err(serde::de::Error::custom(format!(
+                    "start publication evidence member {index} duplicates a binding already \
+                     present in the exact response set"
+                )));
+            }
+            seen_bindings.push(receipt.binding.clone());
+        }
+        Ok(Self {
+            handle: wire.handle,
+            forwarder_authority: wire.forwarder_authority,
+            publication_evidence: wire.publication_evidence,
+        })
+    }
+}
+
+#[cfg(unix)]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MachineApiServiceSandboxStopResponseWire {
+    tenant_id: TenantId,
+    sandbox_id: SandboxId,
+    stopped: bool,
+    forwarder_authority: MachineForwarderAuthority,
+    confirmed_absent_evidence: Vec<MachinePortForwardReceipt>,
+}
+
+#[cfg(unix)]
+impl<'de> Deserialize<'de> for MachineApiServiceSandboxStopResponse {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = MachineApiServiceSandboxStopResponseWire::deserialize(deserializer)?;
+        let mut seen_bindings = Vec::with_capacity(wire.confirmed_absent_evidence.len());
+        for (index, receipt) in wire.confirmed_absent_evidence.iter().enumerate() {
+            if !matches!(
+                receipt.outcome,
+                nimbus_sandbox::MachinePortForwardOutcome::Withdrawn
+                    | nimbus_sandbox::MachinePortForwardOutcome::ExactAlreadyAbsent
+            ) || receipt.tenant_id != wire.tenant_id
+                || receipt.sandbox_id != wire.sandbox_id
+                || receipt.provider_instance != *wire.forwarder_authority.provider_instance()
+                || receipt.provider_generation != wire.forwarder_authority.generation()
+            {
+                return Err(serde::de::Error::custom(format!(
+                    "stop absence evidence member {index} is crossed, stale, or not an exact \
+                     withdrawn/already-absent receipt for the response identity"
+                )));
+            }
+            if seen_bindings
+                .iter()
+                .any(|binding| binding == &receipt.binding)
+            {
+                return Err(serde::de::Error::custom(format!(
+                    "stop absence evidence member {index} duplicates a binding already present \
+                     in the exact response set"
+                )));
+            }
+            seen_bindings.push(receipt.binding.clone());
+        }
+        Ok(Self {
+            tenant_id: wire.tenant_id,
+            sandbox_id: wire.sandbox_id,
+            stopped: wire.stopped,
+            forwarder_authority: wire.forwarder_authority,
+            confirmed_absent_evidence: wire.confirmed_absent_evidence,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -374,6 +507,13 @@ pub struct MachineApiErrorResponse {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use nimbus_network::{NetworkProviderHandle, NetworkProviderId, NetworkResourceGeneration};
+    #[cfg(unix)]
+    use nimbus_sandbox::{
+        MachinePortForwardOutcome, SandboxOwnerSpec, SandboxProcessSpec, SandboxRootSpec,
+    };
+
     use super::*;
 
     #[test]
@@ -419,6 +559,219 @@ mod tests {
         assert_eq!(
             machine_api_service_sandbox_stop_path("a b%c"),
             "/v1/machine-api/service-sandboxes/a%20b%25c/stop"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn service_sandbox_mutation_dtos_are_strict_and_preserve_exact_evidence() {
+        let sandbox_id = SandboxId::new("sandbox-machine-api-01");
+        let authority = MachineForwarderAuthority::new(
+            NetworkProviderHandle::new(
+                NetworkProviderId::for_registration_key("machine-gvproxy"),
+                "machine-config-01",
+            )
+            .expect("provider fixture should validate"),
+            NetworkResourceGeneration::new(11),
+        );
+        let bindings = vec![
+            SandboxPortBinding::tcp("http", 18_080, 8_080),
+            SandboxPortBinding::tcp("metrics", 19_090, 9_090),
+        ];
+        let spec = SandboxSpec::new(
+            TenantId::new("tenant-machine-api").expect("tenant fixture should validate"),
+            SandboxOwnerSpec::service("api"),
+            SandboxBackendKind::Container,
+            SandboxRootSpec::rootfs("/tmp/rootfs"),
+            SandboxProcessSpec::new(["/bin/service"]),
+        )
+        .with_port_bindings(bindings.clone());
+
+        let image_request = MachineApiServiceSandboxImageStartRequest {
+            sandbox_id: sandbox_id.clone(),
+            forwarder_authority: authority.clone(),
+            spec: spec.clone(),
+        };
+        let build_request = MachineApiServiceSandboxBuildStartRequest {
+            sandbox_id: sandbox_id.clone(),
+            forwarder_authority: authority.clone(),
+            spec: spec.clone(),
+        };
+        assert_strict_authority_request(&image_request, "image start request");
+        assert_strict_authority_request(&build_request, "build start request");
+        let stop_request = MachineApiServiceSandboxStopRequest {
+            forwarder_authority: authority.clone(),
+        };
+        assert_strict_authority_request(&stop_request, "stop request");
+        assert_strict_authority_request(
+            &MachineApiBootcSwitchRequest {
+                forwarder_authority: authority.clone(),
+                image: "ghcr.io/nimbus/machine-os:next".to_owned(),
+                transport: Some("registry".to_owned()),
+            },
+            "bootc switch request",
+        );
+        assert_strict_authority_request(
+            &MachineApiBootcUpgradeRequest {
+                forwarder_authority: authority.clone(),
+                check: false,
+                tag: None,
+            },
+            "bootc upgrade request",
+        );
+        assert_strict_authority_request(
+            &MachineApiBootcRollbackRequest {
+                forwarder_authority: authority.clone(),
+            },
+            "bootc rollback request",
+        );
+
+        let handle = SandboxHandle::new(
+            spec.tenant_id.clone(),
+            sandbox_id.clone(),
+            "api",
+            SandboxBackendKind::Container,
+            SandboxStatus::Ready,
+            Vec::new(),
+        );
+        let exposed = bindings
+            .iter()
+            .map(|binding| MachinePortForwardReceipt {
+                outcome: MachinePortForwardOutcome::Exposed,
+                tenant_id: spec.tenant_id.clone(),
+                sandbox_id: sandbox_id.clone(),
+                binding: binding.clone(),
+                provider_instance: authority.provider_instance().clone(),
+                provider_generation: authority.generation(),
+            })
+            .collect::<Vec<_>>();
+        let start = MachineApiServiceSandboxStartResponse {
+            handle: handle.clone(),
+            forwarder_authority: authority.clone(),
+            publication_evidence: exposed.clone(),
+        };
+        let start_value = serde_json::to_value(&start).expect("start response should serialize");
+        assert_eq!(
+            serde_json::from_value::<MachineApiServiceSandboxStartResponse>(start_value.clone())
+                .expect("start response should deserialize"),
+            start
+        );
+        assert_eq!(start.handle.id, sandbox_id);
+        assert_eq!(start.forwarder_authority, authority);
+        assert_eq!(start.publication_evidence, exposed);
+        assert_unknown_field_rejected::<MachineApiServiceSandboxStartResponse>(
+            start_value,
+            "start response",
+        );
+        let mut nested_unknown =
+            serde_json::to_value(&start).expect("nested unknown fixture should serialize");
+        nested_unknown["publication_evidence"][0]["unexpected"] = serde_json::json!(true);
+        assert!(
+            serde_json::from_value::<MachineApiServiceSandboxStartResponse>(nested_unknown)
+                .is_err(),
+            "strict receipt DTOs must reject unknown provider evidence fields"
+        );
+        let mut crossed_start =
+            serde_json::to_value(&start).expect("crossed start fixture should serialize");
+        crossed_start["publication_evidence"][0]["outcome"] = serde_json::json!("withdrawn");
+        assert!(
+            serde_json::from_value::<MachineApiServiceSandboxStartResponse>(crossed_start).is_err(),
+            "the strict response DTO must reject crossed start outcomes"
+        );
+        let mut duplicate_start =
+            serde_json::to_value(&start).expect("duplicate start fixture should serialize");
+        duplicate_start["publication_evidence"][1] =
+            duplicate_start["publication_evidence"][0].clone();
+        assert!(
+            serde_json::from_value::<MachineApiServiceSandboxStartResponse>(duplicate_start)
+                .is_err(),
+            "the strict response DTO must reject a duplicate binding that substitutes for an \
+             omitted member"
+        );
+
+        let absent = bindings
+            .iter()
+            .map(|binding| MachinePortForwardReceipt {
+                outcome: MachinePortForwardOutcome::ExactAlreadyAbsent,
+                tenant_id: spec.tenant_id.clone(),
+                sandbox_id: sandbox_id.clone(),
+                binding: binding.clone(),
+                provider_instance: authority.provider_instance().clone(),
+                provider_generation: authority.generation(),
+            })
+            .collect::<Vec<_>>();
+        let stop = MachineApiServiceSandboxStopResponse {
+            tenant_id: spec.tenant_id.clone(),
+            sandbox_id: SandboxId::new("sandbox-machine-api-01"),
+            stopped: true,
+            forwarder_authority: authority.clone(),
+            confirmed_absent_evidence: absent.clone(),
+        };
+        let stop_value = serde_json::to_value(&stop).expect("stop response should serialize");
+        assert_eq!(
+            serde_json::from_value::<MachineApiServiceSandboxStopResponse>(stop_value.clone())
+                .expect("stop response should deserialize"),
+            stop
+        );
+        assert_eq!(stop.forwarder_authority, authority);
+        assert_eq!(stop.confirmed_absent_evidence, absent);
+        assert_unknown_field_rejected::<MachineApiServiceSandboxStopResponse>(
+            stop_value,
+            "stop response",
+        );
+        let mut stale_stop =
+            serde_json::to_value(&stop).expect("stale stop fixture should serialize");
+        stale_stop["confirmed_absent_evidence"][0]["provider_generation"] =
+            serde_json::json!(authority.generation().as_u64() + 1);
+        assert!(
+            serde_json::from_value::<MachineApiServiceSandboxStopResponse>(stale_stop).is_err(),
+            "the strict response DTO must reject stale stop provider generations"
+        );
+        let mut duplicate_stop =
+            serde_json::to_value(&stop).expect("duplicate stop fixture should serialize");
+        duplicate_stop["confirmed_absent_evidence"][1] =
+            duplicate_stop["confirmed_absent_evidence"][0].clone();
+        assert!(
+            serde_json::from_value::<MachineApiServiceSandboxStopResponse>(duplicate_stop).is_err(),
+            "the strict response DTO must reject duplicate absence evidence that substitutes for \
+             an omitted member"
+        );
+    }
+
+    #[cfg(unix)]
+    fn assert_strict_authority_request<T>(request: &T, label: &str)
+    where
+        T: Serialize + for<'de> Deserialize<'de> + PartialEq + std::fmt::Debug,
+    {
+        let value = serde_json::to_value(request).expect("request should serialize");
+        let round_trip =
+            serde_json::from_value::<T>(value.clone()).expect("request should deserialize");
+        assert_eq!(&round_trip, request, "{label} must round trip exactly");
+
+        let mut missing = value.clone();
+        missing
+            .as_object_mut()
+            .expect("request wire should be an object")
+            .remove("forwarder_authority");
+        assert!(
+            serde_json::from_value::<T>(missing).is_err(),
+            "{label} must reject a missing authority"
+        );
+        assert_unknown_field_rejected::<T>(value, label);
+    }
+
+    #[cfg(unix)]
+    fn assert_unknown_field_rejected<T>(mut value: serde_json::Value, label: &str)
+    where
+        T: for<'de> Deserialize<'de>,
+    {
+        value
+            .as_object_mut()
+            .expect("wire should be an object")
+            .insert("unexpected".to_owned(), serde_json::json!(true));
+        assert!(
+            serde_json::from_value::<T>(value).is_err(),
+            "{label} must reject unknown fields"
         );
     }
 }
