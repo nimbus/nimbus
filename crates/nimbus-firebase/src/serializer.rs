@@ -477,23 +477,47 @@ fn format_firestore_timestamp(timestamp: Timestamp) -> Result<String, FirestoreP
 /// start of time for pre-epoch instants too, not toward zero.
 fn normalize_firestore_timestamp(value: &str) -> Result<String, FirestoreProtoJsonError> {
     let parsed = OffsetDateTime::parse(value, &Rfc3339)
-        .map_err(|error| invalid_field("timestampValue", format!("invalid timestamp: {error}")))?
-        .to_offset(UtcOffset::UTC);
-    parsed
-        .replace_nanosecond(parsed.nanosecond() - parsed.nanosecond() % 1_000)
-        .map_err(|error| {
-            invalid_field(
-                "timestampValue",
-                format!("failed to truncate timestamp to microseconds: {error}"),
-            )
-        })?
-        .format(&Rfc3339)
-        .map_err(|error| {
-            invalid_field(
-                "timestampValue",
-                format!("failed to format timestamp: {error}"),
-            )
-        })
+        .map_err(|error| invalid_field("timestampValue", format!("invalid timestamp: {error}")))?;
+    // `checked_to_offset` (not `to_offset`) so an instant whose UTC form falls
+    // outside `time`'s representable years surfaces as a rejection instead of
+    // a panic (e.g. `9999-12-31T23:30:00-01:00` is UTC year 10000).
+    let utc = parsed.checked_to_offset(UtcOffset::UTC).ok_or_else(|| {
+        invalid_field(
+            "timestampValue",
+            "timestamp is outside the Firestore range 0001-01-01T00:00:00Z..=9999-12-31T23:59:59.999999999Z once normalized to UTC".to_string(),
+        )
+    })?;
+    // Protobuf `Timestamp` (and therefore Firestore) permits UTC instants from
+    // year 0001 through 9999 only. A parseable local spelling can normalize
+    // outside that range (`0001-01-01T00:00:00+01:00` is UTC year 0000), and
+    // `time` would happily format it.
+    if !(1..=9999).contains(&utc.year()) {
+        return Err(invalid_field(
+            "timestampValue",
+            "timestamp is outside the Firestore range 0001-01-01T00:00:00Z..=9999-12-31T23:59:59.999999999Z once normalized to UTC".to_string(),
+        ));
+    }
+    let micros = utc.nanosecond() / 1_000;
+    // ProtoJSON's canonical `Timestamp` encoding uses fractional widths of
+    // exactly 0, 3, 6, or 9 digits; microsecond truncation caps ours at 6.
+    // `time::Rfc3339` strips trailing zeros (".123400" would become ".1234"),
+    // so the fraction is rendered by hand.
+    let fraction = if micros == 0 {
+        String::new()
+    } else if micros % 1_000 == 0 {
+        format!(".{:03}", micros / 1_000)
+    } else {
+        format!(".{micros:06}")
+    };
+    Ok(format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{fraction}Z",
+        utc.year(),
+        u8::from(utc.month()),
+        utc.day(),
+        utc.hour(),
+        utc.minute(),
+        utc.second(),
+    ))
 }
 
 fn parse_integer_value(value: &Value) -> Result<i64, FirestoreProtoJsonError> {
@@ -779,6 +803,32 @@ mod tests {
             "1960-01-02T03:04:05.123456Z",
             "pre-epoch instants must truncate toward the start of time"
         );
+
+        // ProtoJSON canonical form uses fractional widths of exactly 0, 3, or
+        // 6 digits after microsecond truncation; trailing zeros within the
+        // chosen width are preserved, not stripped.
+        assert_eq!(
+            lowered_timestamp("2024-01-02T03:04:05.123400789Z"),
+            "2024-01-02T03:04:05.123400Z",
+            "six-digit width must keep trailing zeros rather than emitting .1234"
+        );
+        assert_eq!(
+            lowered_timestamp("2024-01-02T03:04:05.120000000Z"),
+            "2024-01-02T03:04:05.120Z",
+            "whole-millisecond fractions must render at three-digit width"
+        );
+
+        // Instants whose UTC normalization leaves the protobuf Timestamp range
+        // (years 0001..=9999) are rejected, not stored.
+        for out_of_range in ["0001-01-01T00:00:00+01:00", "9999-12-31T23:30:00-01:00"] {
+            let error = FirestoreValue::Timestamp(out_of_range.to_string())
+                .into_stored_value()
+                .expect_err("UTC normalization outside years 0001..=9999 must reject");
+            assert!(
+                format!("{error:?}").contains("Firestore range"),
+                "rejection must name the range: {error:?}"
+            );
+        }
 
         // Every spelling of one instant must lower to one stored value.
         let canonical = "2024-01-02T03:04:05Z";

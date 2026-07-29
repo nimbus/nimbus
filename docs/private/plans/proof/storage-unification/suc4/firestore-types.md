@@ -361,3 +361,18 @@ Query contract, both sides:
   so the rejection's justification fails loudly if a projection ever changes.
 - `nimbus-firebase` `parses_reference_values_for_document_id_filters_and_cursors`
   (pre-existing) — `referenceValue` still accepted for `__name__`.
+
+## Review pass 4 dispositions (fixed by orchestrator during agent-lane outage)
+
+- **Accepted (P2) — protobuf range after UTC normalization.** A parseable
+  local spelling can normalize outside protobuf Timestamp's years 0001–9999
+  (`0001-01-01T00:00:00+01:00` → year 0000; `9999-12-31T23:30:00-01:00` →
+  year 10000, which would panic `time`'s unchecked offset conversion).
+  `normalize_firestore_timestamp` now uses `checked_to_offset` and rejects
+  normalized instants outside 0001..=9999 with an error naming the range.
+- **Accepted (P2) — ProtoJSON canonical fractional widths.** `time::Rfc3339`
+  strips trailing zeros (".123400" → ".1234"), violating the proto3 JSON
+  mapping's 0/3/6/9-digit contract. The fraction is now rendered by hand:
+  0 digits when micros == 0, 3 when whole milliseconds, else 6.
+- Tests extended: trailing-zero six-digit width, three-digit millisecond
+  width, and both out-of-range edges rejected by name.
