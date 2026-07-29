@@ -157,9 +157,11 @@ per-backend forwarding impls. The measured accounting:
 
 - Duplicated code deleted from the two providers: **1,331 lines**
   (537 + 530 in `write.rs`, 108 + 108 in `storage.rs`, 24 + 24 in `backend.rs`).
-- `sql/store_core.rs` = **1,490 lines**, of which **~1,149** is the single
-  shared copy of that logic plus both trait declarations, and **341** is the
-  facade macro (signatures and one-line forwards, no logic).
+- `sql/store_core.rs` = **1,490 lines**, of which **~1,148** is the single
+  shared copy of that logic plus both trait declarations, and **342** is the
+  facade macro (lines 943–1284: a 9-line doc comment plus a 333-line
+  `macro_rules!` block containing 40 `pub fn` signatures, each with exactly
+  one trait-qualified forwarding call — declaration only, no logic).
 - Remaining insertions in the provider files are the two forwarding impl
   blocks (`SqlStoreCore` and `SqlWriteTransactionCore`), which are signatures
   only.
@@ -167,10 +169,38 @@ per-backend forwarding impls. The measured accounting:
 So the *logic* went from two copies to one, and every line of the new
 plumbing is signature-shaped. Raw LoC is roughly flat because the plumbing
 cost (facade + forwarding impls ≈ 660 lines) nearly offsets the ~800 lines of
-body deduplication at two providers. The projected reduction materializes in
-step 2: porting libsql and sqlite onto the same core reuses the 1,149-line
-body once more per provider without growing it, and each added provider pays
-only forwarding impls plus one facade invocation.
+body deduplication at two providers.
+
+### Cumulative plan target, recomputed
+
+The −1,150 projection was a step-1 number, and it was wrong for step 1 because
+it assumed the wrapper layer was internal. It is not wrong for the lane as a
+whole — it was simply booked one step early. Two providers is the break-even
+case for this refactor: you pay the shared body once and the plumbing twice.
+Every provider after the second pays plumbing only.
+
+Measured per-provider costs, which are what step 2 should be estimated from:
+
+| Item | Cost |
+| --- | --- |
+| Shared body in `store_core.rs` (paid once, already paid) | ~1,148 |
+| Facade macro (paid once, already paid) | 342 |
+| Per-provider forwarding impls (`SqlStoreCore` + `SqlWriteTransactionCore`) | ~160 |
+| Per-provider facade invocation | 1 |
+| Per-provider duplicated wrapper layer deleted | −530 to −665 |
+
+Step 1 therefore lands at **+153**: 1,490 fixed cost plus ~320 of forwarding,
+against −1,331 deleted. Step 2 adds no fixed cost. Porting libsql and sqlite
+pays ~160 lines of forwarding each and deletes each provider's own wrapper
+layer, so each is worth roughly **−370 to −505**, putting the lane at
+**≈ −590 to −860 cumulative** once all four SQL providers share the core.
+
+That is below the original −1,150, and the gap is the facade: 342 lines that
+exist only because the wrappers are engine-visible public API. Making the two
+traits `pub` and re-exporting them from `lib.rs` would recover it, at the cost
+of publishing `SqlWriteBackend` and `SqlWritePipelineMetrics` — see deviation 1.
+The tradeoff is available at any time and gets cheaper to take in step 2, when
+the same decision would otherwise be re-paid per provider.
 
 ## Verification
 
@@ -180,7 +210,7 @@ lanes; see the caveat below on the fixture-less run.
 | Lane | Result |
 | --- | --- |
 | `NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 cargo nextest run -p nimbus-storage` | 435 run, **435 passed**, 2 skipped |
-| `NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 cargo nextest run -p nimbus-engine` | 659 run, **659 passed**, 5 skipped |
+| `NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 cargo nextest run -p nimbus-engine` | 659 run, **659 passed**, 5 skipped — but see the flake below |
 | Live PostgreSQL lane (official filter, storage + engine) | 76 run, **76 passed**, 1025 skipped |
 | Live MySQL lane (official filter, storage + engine) | 46 run, **46 passed**, 1055 skipped |
 | Live libsql lane — untouched-provider regression | 50 run, **50 passed**, 1051 skipped |
@@ -188,6 +218,41 @@ lanes; see the caveat below on the fixture-less run.
 | `cargo clippy -p nimbus-storage -p nimbus-engine --all-targets -- -D warnings` | clean, exit 0 |
 | `cargo fmt --all --check` | clean |
 | `cargo check --workspace --all-targets` | clean |
+
+### A pre-existing engine flake, bisected to base
+
+Re-running the battery surfaced an intermittent failure that the first pass
+did not hit:
+
+```
+FAIL nimbus-engine tests::mutation_journal::arm_selection::opaque_internal_job_cannot_overtake_ordered_publisher
+crates/nimbus-engine/src/tests/mutation_journal/arm_selection.rs:229:5
+assertion `left == right` failed
+  left: 3
+ right: 2
+```
+
+Line 229 is `assert_eq!(journal.len(), 2)` — a third journal record appears
+where the test expects two. It only fails under full-suite load; run alone
+under `-E test(...)` it passes every time.
+
+**It is not from this change, and that was measured, not inferred.** Detaching
+the same worktree to base `c4adee822` and running the identical full engine
+suite four times reproduced the identical assertion with the identical
+`left: 3, right: 2` on run 1 of 4. On this branch the rate was 2 of 4. Both
+samples are small and the difference between them is not meaningful; what
+matters is that the failure exists at base.
+
+The structural argument agrees: the test builds its engine through
+`Engine::new`, which is `EmbeddedProviderKind::default()` = `Sqlite`. This
+commit changes no line reachable from the SQLite provider — `src/sqlite/` is
+diff-empty, `sql/write_core.rs` is diff-empty, and `sql/store_core.rs` is
+referenced only by the PostgreSQL and MySQL stores.
+
+The flake is out of scope for SUC3.1 and is not fixed here, but it is real and
+should be tracked: a race in which a trigger or schema record lands in the
+journal before the ordered publisher drains, despite the
+`shutdown_trigger_candidates_for_testing` call at the top of the test.
 
 ### The fixture-less storage run is not provider evidence
 
