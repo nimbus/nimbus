@@ -1167,13 +1167,6 @@ pub(super) fn postgres_string_literal(value: &str) -> String {
     quoted
 }
 
-pub(super) fn expect_write_commit(
-    commit: Option<CommitEntry>,
-    expectation: &str,
-) -> Result<CommitEntry> {
-    commit.ok_or_else(|| Error::Internal(expectation.to_string()))
-}
-
 pub(super) fn decode_u64(bytes: &[u8]) -> Result<u64> {
     let bytes: [u8; 8] = bytes
         .try_into()
@@ -1189,23 +1182,6 @@ pub(super) fn default_postgres_read_parallelism() -> usize {
     std::thread::available_parallelism()
         .map(|parallelism| parallelism.get().max(MIN_POSTGRES_READ_PARALLELISM))
         .unwrap_or(MIN_POSTGRES_READ_PARALLELISM)
-}
-
-pub(super) fn apply_schedule_ops_in_transaction(
-    transaction: &mut PostgresWriteTransaction,
-    schedule_ops: &[ResolvedScheduleOp],
-) -> Result<()> {
-    for schedule_op in schedule_ops {
-        match schedule_op {
-            ResolvedScheduleOp::Insert { job } => transaction.insert_scheduled_job(job)?,
-            ResolvedScheduleOp::Cancel { job_id } => {
-                if !transaction.cancel_scheduled_job(job_id)? {
-                    return Err(Error::ScheduledJobNotFound(job_id.clone()));
-                }
-            }
-        }
-    }
-    Ok(())
 }
 
 pub(super) fn map_pool_error(error: PoolError) -> Error {

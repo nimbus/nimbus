@@ -1,7 +1,6 @@
 use std::fmt::Write as _;
 use std::future::Future;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::sync::{Arc, RwLock};
 
 use deadpool_postgres::{
@@ -30,15 +29,13 @@ use tokio_postgres::{AsyncMessage, Config as PostgresConfig, IsolationLevel, NoT
 use crate::RetentionFloor;
 use crate::async_storage::{
     TenantReadStorage, TenantWriteOutcome, TenantWriteStorage, map_executor_join_error,
-    map_executor_permit_error,
 };
 use crate::commit_log::{deserialize_tenant_event_record, serialize_tenant_event_record};
 use crate::runtime_bridge::bridge_tokio_runtime;
 use crate::simulation::{FaultInjector, FaultPoint, NoopFaultInjector};
 use crate::store::{
     DurableJournalBootstrap, DurableJournalPage, JournalProgress, MaterializedJournalSnapshot,
-    PointInTimeRestoreArchive, PointInTimeRestoreTarget, ResolvedScheduleOp, ResolvedWrite,
-    TenantWriteCommit,
+    ResolvedWrite, TenantWriteCommit,
 };
 
 mod backend;
@@ -159,12 +156,12 @@ pub struct PostgresWriteTransaction {
     check_cancel: Box<dyn Fn() -> Result<()> + Send>,
 }
 
-#[derive(Clone)]
-struct PostgresBlockingWriteExecutor {
-    store: Arc<PostgresTenantStore>,
-    permits: Arc<Semaphore>,
-    runtime_handle: TokioRuntimeHandle,
-}
+/// Provider-owned blocking write executor. PostgreSQL keeps its own instead of
+/// the generic `async_storage::write` executor because transaction and session
+/// lifecycles are coupled to the Postgres async client; the bounded-permit
+/// mechanics themselves are shared with MySQL.
+type PostgresBlockingWriteExecutor =
+    crate::sql::store_core::SqlBlockingWriteExecutor<PostgresTenantStore>;
 
 impl PostgresTenantStore {
     fn new(provider: PostgresProvider, registration: PostgresTenantRegistration) -> Self {

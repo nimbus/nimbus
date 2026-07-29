@@ -42,12 +42,12 @@ impl PostgresTenantStore {
             )? != 1
             {
                 return Err(Error::PreconditionFailed(
-                    super::write::FENCED_COMMITTER_LEASE_MARKER.to_string(),
+                    crate::sql::store_core::FENCED_COMMITTER_LEASE_MARKER.to_string(),
                 ));
             }
             transaction.materialize_trigger_invocations(records.as_slice(), cursor)
         });
-        super::write::map_fenced_write_result(result.map(|_| ()), fenced_owner_id, epoch)
+        crate::sql::store_core::map_fenced_write_result(result.map(|_| ()), fenced_owner_id, epoch)
     }
 
     pub fn list_trigger_invocations(&self) -> Result<Vec<TriggerInvocationRecord>> {
@@ -96,12 +96,12 @@ impl PostgresTenantStore {
             )? != 1
             {
                 return Err(Error::PreconditionFailed(
-                    super::write::FENCED_COMMITTER_LEASE_MARKER.to_string(),
+                    crate::sql::store_core::FENCED_COMMITTER_LEASE_MARKER.to_string(),
                 ));
             }
             transaction.save_trigger_invocation(&record)
         });
-        super::write::map_fenced_write_result(result.map(|_| ()), fenced_owner_id, epoch)
+        crate::sql::store_core::map_fenced_write_result(result.map(|_| ()), fenced_owner_id, epoch)
     }
 }
 
