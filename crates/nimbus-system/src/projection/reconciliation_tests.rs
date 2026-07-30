@@ -277,10 +277,14 @@ async fn wait_for_row_count(
                 .tenant_engine_diagnostics(tenant_id)
                 .map(|snapshot| snapshot.mutation_journal);
             let visible_row = projected_row(engine, tenant_id, table).await;
+            let system_diagnostics = system_tenant_id()
+                .ok()
+                .and_then(|system| engine.tenant_engine_diagnostics(&system).ok())
+                .map(|snapshot| snapshot.mutation_journal);
             panic!(
                 "runtime reconciliation should publish without another source mutation: {error:?}; \
                  source_snapshot={source_snapshot:?}; diagnostics={diagnostics:?}; \
-                 visible_row={visible_row:?}"
+                 system_diagnostics={system_diagnostics:?}; visible_row={visible_row:?}"
             );
         }
     }
