@@ -1,41 +1,74 @@
-//! Container launch coordination across segment, IPAM, and port authorities.
+//! Container adapter for the shared OCI attachment lifecycle.
 //!
-//! Provider effects remain in the runtime and OCI adapter modules. This module
-//! owns only the pre-effect reservation ordering and reverse-order
-//! compensation seam shared by execute and runner-owned launches.
+//! Provider effects and their ordering live in the OCI attachment owner.
+//! This module contributes only container launch-time inputs and reconstructs
+//! the exact port authority selected by the persisted execution context.
 
 use nimbus_core::TenantId;
 use nimbus_network::NetworkReservationClaim;
 
 use super::*;
 use crate::backends::oci::network::{
-    OciMachinePortForwarderConfig, OciNetavarkOperation, OciNetworkConfig, OciNetworkDirectEgress,
-    OciNetworkLayout, OciSegmentRealization, ReservedNetworkLaunchAuthority,
-    compensate_reserved_network_launch_after_ports, place_sandbox_on_block,
-    release_reserved_network_launch_after_ports,
+    AttachmentBackendKind, OciAttachmentAdapter, OciAttachmentAuxiliaryListener,
+    OciAttachmentInput, OciHostManagedAttachmentBackend, OciMachineForwardedAttachmentBackend,
+    OciMachinePortForwarderConfig,
 };
-use crate::backends::oci::port_lease::OciPortBindLifetimeBatch;
+use crate::backends::oci::network::{OciAttachmentLifecycle, OciNetworkConfig, OciNetworkLayout};
+
+impl OciHostManagedAttachmentBackend for ContainerSandboxBackend {
+    const ATTACHMENT_BACKEND_KIND: AttachmentBackendKind = AttachmentBackendKind::Container;
+}
+
+impl OciMachineForwardedAttachmentBackend for ContainerSandboxBackend {}
 
 impl ContainerSandboxBackend {
-    /// Build the OCI network config for a specific resolved block segment.
-    fn config_from_segment(
-        &self,
-        segment: &OciSegmentRealization,
-        reservation_claim: &NetworkReservationClaim,
-    ) -> OciNetworkConfig {
-        OciNetworkConfig {
-            netavark_path: self.config.netavark_path.clone(),
-            aardvark_dns_path: self.config.aardvark_dns_path.clone(),
-            network_name: segment.network_name().to_owned(),
-            network_interface: segment.network_interface().to_owned(),
-            network_subnet: segment.cidr().to_string(),
-            segment_id: segment.segment_id().as_str().to_owned(),
-            reservation_claim: reservation_claim.clone(),
-            direct_egress: OciNetworkDirectEgress::Deny,
-            // DNS-off on both backends: host-side PEP resolution owns names and
-            // an in-subnet resolver would be unreachable plus cross-tenant risk.
-            enable_dns: false,
-            network_id: segment.network_id().as_str().to_owned(),
+    pub(super) fn attachment_lifecycle<'a>(
+        &'a self,
+        ports: &'a OciPortLeaseCoordinator,
+    ) -> OciAttachmentLifecycle<'a> {
+        OciAttachmentLifecycle::new(
+            self.segment_allocator.as_ref(),
+            &self.ipam_authority,
+            ports,
+            &self.netavark_port_lifetimes,
+        )
+    }
+
+    pub(super) fn attachment_adapter<'a>(
+        &'a self,
+        manifest: &'a ContainerSandboxManifest,
+        network_config: &'a OciNetworkConfig,
+        hostname: &'a str,
+        machine_port_forwarder: Option<&'a OciMachinePortForwarderConfig>,
+    ) -> OciAttachmentAdapter<'a> {
+        let input = OciAttachmentInput {
+            workload_state_root: &manifest.runner_config.workload_state_root,
+            tenant_id: &manifest.spec.tenant_id,
+            sandbox_id: &manifest.handle.id,
+            display_name: manifest.spec.display_name(),
+            hostname,
+            bindings: &manifest.spec.port_bindings,
+            leases: &manifest.port_leases,
+            auxiliary_listener: manifest.egress_proxy.as_ref().map(|assignment| {
+                OciAttachmentAuxiliaryListener::egress_pep(
+                    &assignment.port_lease,
+                    &assignment.host,
+                    assignment.port,
+                )
+            }),
+            layout: &manifest.network_layout,
+            config: network_config,
+            launch_claim: manifest.launch_reservation_claim.as_ref(),
+        };
+        match machine_port_forwarder {
+            Some(forwarder) => {
+                <Self as OciMachineForwardedAttachmentBackend>::machine_forwarded_attachment_adapter(
+                    input, forwarder,
+                )
+            }
+            None => {
+                <Self as OciHostManagedAttachmentBackend>::host_managed_attachment_adapter(input)
+            }
         }
     }
 
@@ -43,7 +76,12 @@ impl ContainerSandboxBackend {
     pub(super) fn network_config(&self, tenant: &TenantId) -> Result<OciNetworkConfig> {
         let segment = self.segment_allocator.segment_for(tenant)?;
         let reservation_claim = crate::backends::oci::port_lease::new_launch_reservation_claim()?;
-        Ok(self.config_from_segment(&segment, &reservation_claim))
+        Ok(OciAttachmentLifecycle::config_from_segment(
+            self.config.netavark_path.clone(),
+            self.config.aardvark_dns_path.clone(),
+            &segment,
+            &reservation_claim,
+        ))
     }
 
     /// Reserve the attachment before IPAM and resolve its exact block config.
@@ -54,14 +92,15 @@ impl ContainerSandboxBackend {
         sandbox_id: &SandboxId,
         reservation_claim: &NetworkReservationClaim,
     ) -> Result<OciNetworkConfig> {
-        place_sandbox_on_block(
-            self.segment_allocator.as_ref(),
-            &self.ipam_authority,
+        let ports = self.port_lease_coordinator();
+        <Self as OciHostManagedAttachmentBackend>::reserve_attachment_config(
+            &self.attachment_lifecycle(&ports),
             tenant,
             layout,
             sandbox_id,
             reservation_claim,
-            |segment, claim| self.config_from_segment(segment, claim),
+            self.config.netavark_path.clone(),
+            self.config.aardvark_dns_path.clone(),
         )
     }
 
@@ -74,18 +113,15 @@ impl ContainerSandboxBackend {
         reservation_claim: &NetworkReservationClaim,
         planning_error: SandboxError,
     ) -> SandboxError {
-        let manager = self.port_lease_coordinator();
-        compensate_reserved_network_launch_after_ports(
-            ReservedNetworkLaunchAuthority::new(
-                self.segment_allocator.as_ref(),
-                &self.ipam_authority,
-                layout,
-                tenant_id,
-                sandbox_id,
-                reservation_claim,
-            ),
+        let ports = self.port_lease_coordinator();
+        let port_compensation = ports.release_never_bound_launch_claim(reservation_claim);
+        self.attachment_lifecycle(&ports).compensate_reserved(
+            layout,
+            tenant_id,
+            sandbox_id,
+            reservation_claim,
             planning_error,
-            manager.release_never_bound_launch_claim(reservation_claim),
+            port_compensation,
         )
     }
 
@@ -95,138 +131,19 @@ impl ContainerSandboxBackend {
         manifest: &ContainerSandboxManifest,
         reservation_claim: &NetworkReservationClaim,
     ) -> Result<()> {
-        let manager = self.port_lease_coordinator_for_manifest(manifest)?;
-        release_reserved_network_launch_after_ports(
-            ReservedNetworkLaunchAuthority::new(
-                self.segment_allocator.as_ref(),
-                &self.ipam_authority,
-                &manifest.network_layout,
-                &manifest.spec.tenant_id,
-                &manifest.handle.id,
-                reservation_claim,
-            ),
-            manager.release_never_bound_launch_claim(reservation_claim),
+        let ports = self.port_lease_coordinator_for_manifest(manifest)?;
+        let port_compensation = ports.release_never_bound_launch_claim(reservation_claim);
+        self.attachment_lifecycle(&ports).release_reserved(
+            &manifest.network_layout,
+            &manifest.spec.tenant_id,
+            &manifest.handle.id,
+            reservation_claim,
+            port_compensation,
         )
     }
 
-    /// Preserve the primary setup failure and retain the namespace until exact
-    /// generation-authenticated Netavark detach is confirmed.
-    pub(super) fn failed_network_configuration(
-        &self,
-        manifest: &ContainerSandboxManifest,
-        network_config: &OciNetworkConfig,
-        machine_port_forwarder: Option<&OciMachinePortForwarderConfig>,
-        primary: SandboxError,
-    ) -> SandboxError {
-        let cleanup = teardown_container_network(
-            &self.ipam_authority,
-            &OciNetavarkOperation::new(
-                &manifest.network_layout,
-                network_config,
-                &manifest.handle.id,
-                manifest.spec.display_name(),
-                &hostname_for(&manifest.spec),
-                &manifest.spec.port_bindings,
-                machine_port_forwarder,
-            ),
-        )
-        .and_then(|()| remove_persistent_network_namespace(&manifest.network_layout.netns_path));
-        match cleanup {
-            Ok(()) => primary,
-            Err(cleanup) => SandboxError::OperationFailed {
-                message: format!(
-                    "container network configuration failed: {primary}; exact-generation \
-                     detach compensation also failed while the namespace remains fenced: {cleanup}"
-                ),
-            },
-        }
-    }
-
-    /// Compensate a failed Netavark launch while retaining exact live-owner
-    /// authority until provider detach is acknowledged.
-    pub(super) fn failed_netavark_configuration(
-        &self,
-        manifest: &ContainerSandboxManifest,
-        network_config: &OciNetworkConfig,
-        batch: OciPortBindLifetimeBatch,
-        primary: SandboxError,
-    ) -> SandboxError {
-        let cleanup = teardown_container_network(
-            &self.ipam_authority,
-            &OciNetavarkOperation::new(
-                &manifest.network_layout,
-                network_config,
-                &manifest.handle.id,
-                manifest.spec.display_name(),
-                &hostname_for(&manifest.spec),
-                &manifest.spec.port_bindings,
-                None,
-            ),
-        )
-        .and_then(|()| remove_persistent_network_namespace(&manifest.network_layout.netns_path));
-        if let Err(cleanup) = cleanup {
-            return SandboxError::OperationFailed {
-                message: format!(
-                    "container network configuration failed: {primary}; exact-generation \
-                     detach compensation also failed while the lifetime-fenced namespace remains \
-                     recoverable: {cleanup}"
-                ),
-            };
-        }
-
-        let manager = match self.port_lease_coordinator_for_manifest(manifest) {
-            Ok(manager) => manager,
-            Err(cleanup) => {
-                return SandboxError::OperationFailed {
-                    message: format!(
-                        "container network configuration failed: {primary}; detached Netavark \
-                         port-lifetime compensation could not open authority: {cleanup}"
-                    ),
-                };
-            }
-        };
-        let compensation = manager
-            .abandon_netavark_bind_claims_with_lifetimes_without_effect(
-                &manifest.spec.tenant_id,
-                &manifest.handle.id,
-                &manifest.spec.port_bindings,
-                &manifest.port_leases,
-                &batch,
-                manifest.launch_reservation_claim.as_ref(),
-            )
-            .or_else(|abandon_error| {
-                let expected = manager.expected_netavark_bindings(
-                    &manifest.spec.tenant_id,
-                    &manifest.handle.id,
-                    &manifest.spec.port_bindings,
-                    &manifest.port_leases,
-                )?;
-                manager
-                    .prepare_netavark_bindings_for_rebind_with_lifetimes(
-                        &manifest.port_leases,
-                        &expected,
-                        &batch,
-                    )
-                    .map_err(|rebind_error| SandboxError::OperationFailed {
-                        message: format!(
-                            "Netavark claim abandonment failed: {abandon_error}; exact Active \
-                             lifetime compensation also failed: {rebind_error}"
-                        ),
-                    })
-            });
-        match compensation {
-            Ok(()) => primary,
-            Err(cleanup) => SandboxError::OperationFailed {
-                message: format!(
-                    "container network configuration failed: {primary}; detached Netavark \
-                     port-lifetime compensation also failed: {cleanup}"
-                ),
-            },
-        }
-    }
-
-    /// Route the provider setup boundary through the same exact-detach
-    /// compensation used by every later network activation failure.
+    /// Keep the existing focused fail-before harness routed through the shared
+    /// lifecycle owner instead of preserving a container-local compensator.
     #[cfg(test)]
     pub(super) fn complete_network_setup(
         &self,
@@ -235,13 +152,10 @@ impl ContainerSandboxBackend {
         machine_port_forwarder: Option<&OciMachinePortForwarderConfig>,
         setup: Result<Vec<std::net::Ipv4Addr>>,
     ) -> Result<Vec<std::net::Ipv4Addr>> {
-        setup.map_err(|error| {
-            self.failed_network_configuration(
-                manifest,
-                network_config,
-                machine_port_forwarder,
-                error,
-            )
-        })
+        let ports = self.port_lease_coordinator_for_manifest(manifest)?;
+        let hostname = hostname_for(&manifest.spec);
+        let lifecycle = self.attachment_lifecycle(&ports);
+        self.attachment_adapter(manifest, network_config, &hostname, machine_port_forwarder)
+            .complete_injected_setup(&lifecycle, setup)
     }
 }

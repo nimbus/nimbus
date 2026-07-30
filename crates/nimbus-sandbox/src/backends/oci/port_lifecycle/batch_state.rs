@@ -7,6 +7,61 @@
 use super::*;
 
 impl OciPortLeaseCoordinator {
+    /// Authenticate the exact tenant-scoped private egress listener assignment.
+    pub(crate) fn require_internal_listener_authority(
+        &self,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        bind_addr: SocketAddr,
+        request: &PortLeaseRequest,
+    ) -> Result<()> {
+        require_listener_authority(
+            self.authority()?,
+            ExpectedListenerAuthority::egress_pep(tenant_id, sandbox_id, bind_addr)?,
+            request,
+        )?;
+        Ok(())
+    }
+
+    /// Authenticate one internal listener retained after a confirmed provider
+    /// stop and before a restart may recreate effects.
+    pub(crate) fn require_restart_retained_internal_listener(
+        &self,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        bind_addr: SocketAddr,
+        request: &PortLeaseRequest,
+        provider: OciPortProvider,
+    ) -> Result<()> {
+        self.require_internal_listener_authority(tenant_id, sandbox_id, bind_addr, request)?;
+        let records = self.port_lease_records_snapshot(
+            std::slice::from_ref(request),
+            "restart-retained internal listener",
+        )?;
+        let record = records
+            .into_iter()
+            .next()
+            .expect("one requested internal listener must yield one record");
+        let expected_binding = provider_binding(request, bind_addr, provider)?;
+        let retained = record.phase() == PortLeasePhase::Reserved
+            && record.reservation_claim().is_none()
+            && record.bind_claim().is_none()
+            && record.binding().is_none()
+            && record.active_lifetime().is_none()
+            && record.failure().is_none()
+            && record.confirmed_stopped_binding() == Some(&expected_binding);
+        if retained {
+            return Ok(());
+        }
+        Err(SandboxError::OperationFailed {
+            message: format!(
+                "internal port lease {} is not exact confirmed-stop authority for {provider:?}; \
+                 retaining every fence for reconciliation",
+                request.lease_id()
+            ),
+        })
+    }
+
     /// Classify one Netavark publication batch for terminal cleanup.
     ///
     /// Initial launch compensation remains fenced by its exact reservation
@@ -37,7 +92,19 @@ impl OciPortLeaseCoordinator {
                         })
                         && record.active_lifetime().is_some()
                 });
-            if !recovering_claim_batch {
+            // Final cleanup replay may still carry its historical launch claim
+            // after the exact listener batch reached a terminal phase. Let the
+            // provider-specific terminal classifier below authenticate every
+            // released/failed record instead of misrouting terminal evidence
+            // through live launch recovery.
+            let terminal_candidate_batch = !records.is_empty()
+                && records.iter().all(|record| {
+                    matches!(
+                        record.phase(),
+                        PortLeasePhase::Released | PortLeasePhase::Failed
+                    )
+                });
+            if !recovering_claim_batch && !terminal_candidate_batch {
                 return self.classify_launch_port_batch(leases, reservation_claim);
             }
         }

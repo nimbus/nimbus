@@ -48,16 +48,16 @@ use crate::backends::oci::egress::{
 };
 use crate::backends::oci::materializer::{OciImageMaterializer, PreparedMaterializedImageLaunch};
 use crate::backends::oci::network::{
-    MachinePortPreparationReleaseAuthority, MachinePortProxyLifetimeRegistry, OciIpamAuthority,
-    OciNetavarkOperation, OciNetworkLayout, OciNetworkProcess, OciSegmentAllocator,
-    authenticate_container_network_generation,
-    authenticate_container_network_generation_for_cleanup, create_persistent_network_namespace,
-    default_network_attachment_id, expose_machine_ports, pin_netns_egress_to_own_proxy,
-    purge_legacy_nimbus0_once, remove_persistent_network_namespace, setup_container_network,
-    teardown_container_network,
+    AttachmentAttachAuthority, MachinePortPreparationReleaseAuthority,
+    MachinePortProxyLifetimeRegistry, OciIpamAuthority, OciNetworkLayout, OciNetworkProcess,
+    OciSegmentAllocator, default_network_attachment_id, expose_machine_ports,
+    pin_netns_egress_to_own_proxy,
 };
 #[cfg(test)]
-use crate::backends::oci::network::{MachinePortProxyEntry, MachinePortProxyRegistration};
+use crate::backends::oci::network::{
+    MachinePortProxyEntry, MachinePortProxyRegistration, OciNetavarkOperation,
+    authenticate_container_network_generation_for_cleanup, setup_container_network,
+};
 use crate::backends::oci::port_lease::new_launch_reservation_claim;
 use crate::backends::oci::port_lifecycle::{
     NetavarkPortLifetimeRegistry, OciPortLeaseCoordinator, ReservedLaunchPorts,
@@ -1116,7 +1116,11 @@ impl ContainerSandboxBackend {
             Some(claim) => MachinePortPreparationReleaseAuthority::FreshLaunch(claim),
             None => MachinePortPreparationReleaseAuthority::Retain,
         };
-        self.configure_network(manifest, listener_release_authority)?;
+        let attachment_authority = reservation_claim.as_ref().map_or(
+            AttachmentAttachAuthority::RestartRetained,
+            AttachmentAttachAuthority::FreshLaunch,
+        );
+        self.configure_network(manifest, attachment_authority, listener_release_authority)?;
         self.ensure_egress_proxy_running_with_release_authority(
             manifest,
             match reservation_claim.as_ref() {
@@ -1258,178 +1262,47 @@ impl ContainerSandboxBackend {
     fn configure_network(
         &self,
         manifest: &ContainerSandboxManifest,
+        attachment_authority: AttachmentAttachAuthority<'_>,
         listener_release_authority: MachinePortPreparationReleaseAuthority<'_>,
     ) -> Result<()> {
-        // Validate attachment authority before any provider or filesystem
-        // effect. PlanOnly manifests carry `None` and can never reach Netavark.
         let network_config = manifest.require_network_config()?.clone();
-        authenticate_container_network_generation(
-            &self.ipam_authority,
-            &manifest.network_layout,
-            &network_config,
-            &manifest.handle.id,
-        )?;
         self.validate_manifest_execution_context(manifest)?;
         let runner_config = &manifest.runner_config;
-        // One-shot: drop the legacy shared nimbus0 bridge before the first
-        // per-tenant setup (pre-launch migration, breaking).
-        purge_legacy_nimbus0_once(&runner_config.workload_state_root.join("networks"))?;
-        let port_lease_coordinator = self.port_lease_coordinator_for_manifest(manifest)?;
-        port_lease_coordinator.require_binding_leases(
-            &manifest.spec.tenant_id,
-            &manifest.handle.id,
-            &manifest.spec.port_bindings,
-            &manifest.port_leases,
-        )?;
-        // Reuse the config resolved + persisted at manifest-prepare; never
-        // reassign it so setup and teardown agree on the bridge.
-        create_persistent_network_namespace(&manifest.network_layout.netns_path)?;
-        let mut netavark_lifetimes = if runner_config.machine_port_forwarder.is_none() {
-            match port_lease_coordinator.claim_netavark_bindings_with_lifetimes(
-                &manifest.spec.tenant_id,
-                &manifest.handle.id,
-                &manifest.spec.port_bindings,
-                &manifest.port_leases,
-            ) {
-                Ok(batch) => Some(batch),
-                Err(error) => {
-                    let _ =
-                        remove_persistent_network_namespace(&manifest.network_layout.netns_path);
-                    return Err(error);
-                }
+        let ports = self.port_lease_coordinator_for_manifest(manifest)?;
+        let hostname = hostname_for(&manifest.spec);
+        let lifecycle = self.attachment_lifecycle(&ports);
+        self.attachment_adapter(
+            manifest,
+            &network_config,
+            &hostname,
+            runner_config.machine_port_forwarder.as_ref(),
+        )
+        .attach(&lifecycle, attachment_authority, |assigned_ips| {
+            // The shared host-managed lifecycle deliberately leaves the
+            // sandbox-specific PEP fence and machine publication adapters
+            // at this composition boundary.
+            if let Some(proxy) = manifest.egress_proxy.as_ref() {
+                pin_netns_egress_to_own_proxy(&manifest.network_layout, proxy)?;
             }
-        } else {
-            None
-        };
-        let setup = setup_container_network(
-            &self.ipam_authority,
-            &OciNetavarkOperation::new(
-                &manifest.network_layout,
-                &network_config,
-                &manifest.handle.id,
-                manifest.spec.display_name(),
-                &hostname_for(&manifest.spec),
-                &manifest.spec.port_bindings,
-                runner_config.machine_port_forwarder.as_ref(),
-            ),
-        );
-        let assigned_ips = match setup {
-            Ok(assigned_ips) => assigned_ips,
-            Err(error) => {
-                return Err(match netavark_lifetimes.take() {
-                    Some(batch) => {
-                        self.failed_netavark_configuration(manifest, &network_config, batch, error)
-                    }
-                    None => self.failed_network_configuration(
-                        manifest,
-                        &network_config,
-                        runner_config.machine_port_forwarder.as_ref(),
-                        error,
-                    ),
-                });
-            }
-        };
-        if let Some(batch) = netavark_lifetimes.as_ref()
-            && let Err(error) = port_lease_coordinator.activate_netavark_bindings_with_lifetimes(
-                &manifest.spec.tenant_id,
-                &manifest.handle.id,
-                &manifest.spec.port_bindings,
-                &manifest.port_leases,
-                batch,
-            )
-        {
-            return Err(self.failed_netavark_configuration(
-                manifest,
-                &network_config,
-                netavark_lifetimes
-                    .take()
-                    .expect("Netavark activation branch retains its lifetime batch"),
-                error,
-            ));
-        }
-        // Pin the netns so the ONLY reachable egress is this sandbox's own PEP.
-        // The netavark deny is route-based, but the shared bridge gateway is
-        // on-link and every sibling sandbox's PEP listens on it at a distinct
-        // port; without this pin an execute-mode container could egress through
-        // a sibling tenant's proxy and its injected credentials (audit H1).
-        // Fail-closed: tear the namespace back down so the workload never
-        // launches into an unpinned netns.
-        if let Some(proxy) = manifest.egress_proxy.as_ref()
-            && let Err(error) = pin_netns_egress_to_own_proxy(&manifest.network_layout, proxy)
-        {
-            return Err(match netavark_lifetimes.take() {
-                Some(batch) => {
-                    self.failed_netavark_configuration(manifest, &network_config, batch, error)
-                }
-                None => self.failed_network_configuration(
+            if let Some(forwarder) = runner_config.machine_port_forwarder.as_ref() {
+                self.ensure_machine_port_proxies_running_with_publication(
+                    &manifest.handle.id,
+                    assigned_ips,
                     manifest,
-                    &network_config,
-                    runner_config.machine_port_forwarder.as_ref(),
-                    error,
-                ),
-            });
-        }
-        if let Some(forwarder) = runner_config.machine_port_forwarder.as_ref()
-            && let Err(error) = self.ensure_machine_port_proxies_running_with_publication(
-                &manifest.handle.id,
-                &assigned_ips,
-                manifest,
-                listener_release_authority,
-                || {
-                    let receipts = expose_machine_ports(
-                        forwarder,
-                        &manifest.spec.tenant_id,
-                        &manifest.handle.id,
-                        &manifest.spec.port_bindings,
-                    )?;
-                    self.persist_exposed_machine_port_receipts(manifest, receipts)
-                },
-            )
-        {
-            return Err(self.failed_network_configuration(
-                manifest,
-                &network_config,
-                runner_config.machine_port_forwarder.as_ref(),
-                error,
-            ));
-        }
-        if let Some(batch) = netavark_lifetimes.take()
-            && let Err((error, batch)) = self.netavark_port_lifetimes.insert(
-                &manifest.spec.tenant_id,
-                &manifest.handle.id,
-                batch,
-            )
-        {
-            return Err(self.failed_netavark_configuration(
-                manifest,
-                &network_config,
-                batch,
-                error,
-            ));
-        }
-        // Take the tenant's refcount hold now the netns is up and pinned; the
-        // reaper frees the index + bridge when the last hold releases.
-        if let Err(error) = self.segment_allocator.acquire(
-            &manifest.spec.tenant_id,
-            &default_network_attachment_id(&manifest.handle.id),
-        ) {
-            return Err(
-                match self
-                    .netavark_port_lifetimes
-                    .take(&manifest.spec.tenant_id, &manifest.handle.id)?
-                {
-                    Some(batch) => {
-                        self.failed_netavark_configuration(manifest, &network_config, batch, error)
-                    }
-                    None => self.failed_network_configuration(
-                        manifest,
-                        &network_config,
-                        runner_config.machine_port_forwarder.as_ref(),
-                        error,
-                    ),
-                },
-            );
-        }
+                    listener_release_authority,
+                    || {
+                        let receipts = expose_machine_ports(
+                            forwarder,
+                            &manifest.spec.tenant_id,
+                            &manifest.handle.id,
+                            &manifest.spec.port_bindings,
+                        )?;
+                        self.persist_exposed_machine_port_receipts(manifest, receipts)
+                    },
+                )?;
+            }
+            Ok(())
+        })?;
         Ok(())
     }
 

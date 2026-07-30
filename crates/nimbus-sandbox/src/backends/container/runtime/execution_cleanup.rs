@@ -1,15 +1,18 @@
-//! Provider-backed container teardown and launch-failure compensation.
+//! Container-specific teardown prerequisites and machine-provider cleanup.
 //!
-//! This module owns the ordered withdraw/stop/detach/release state machine.
-//! The runtime composition root delegates here so lifecycle fencing and retry
-//! evidence remain colocated and independently testable.
+//! Host-managed Netavark, netns, IPAM, segment, and port-lifetime ordering is
+//! delegated to the shared OCI attachment lifecycle. Machine-forwarded
+//! publication remains explicit here because it has a distinct provider and
+//! durable receipt contract.
 
 use super::*;
 use crate::backends::conmon::lifecycle::delete_runtime_and_confirm_absent as delete_conmon_runtime_and_confirm_absent;
 use crate::backends::oci::network::{
-    OciNetavarkOperation, deallocate_container_ips_after_confirmed_detach,
-    quarantine_network_segment_hold, release_network_segment_hold,
-    remove_persistent_network_namespace,
+    AttachmentAuxiliaryDisposition, AttachmentDetachFailure, AttachmentDetachFailureStage,
+    AttachmentTeardownMode, OciNetavarkOperation,
+    authenticate_container_network_generation_for_cleanup,
+    deallocate_container_ips_after_confirmed_detach, quarantine_network_segment_hold,
+    release_network_segment_hold, remove_persistent_network_namespace, teardown_container_network,
 };
 use crate::backends::oci::port_lifecycle::LaunchPortBatchState;
 
@@ -31,7 +34,77 @@ impl ContainerSandboxBackend {
             });
         }
         self.validate_manifest_execution_context(manifest)?;
-        let network_config = manifest.require_network_config()?;
+        let network_config = manifest.require_network_config()?.clone();
+        if manifest.runner_config.machine_port_forwarder.is_none() {
+            return self.release_host_managed_execution_artifacts(manifest, &network_config);
+        }
+        self.release_machine_forwarded_execution_artifacts(manifest, &network_config)
+    }
+
+    fn release_host_managed_execution_artifacts(
+        &self,
+        manifest: &mut ContainerSandboxManifest,
+        network_config: &crate::backends::oci::network::OciNetworkConfig,
+    ) -> Result<()> {
+        let mut errors = Vec::new();
+        if let Err(error) = self.remove_runner_manifest_pointer(manifest) {
+            errors.push(error.to_string());
+        }
+        let ports = self.port_lease_coordinator_for_manifest(manifest)?;
+        let hostname = hostname_for(&manifest.spec);
+        let lifecycle = self.attachment_lifecycle(&ports);
+        let detach: std::result::Result<(), AttachmentDetachFailure> = self
+            .attachment_adapter(manifest, network_config, &hostname, None)
+            .detach_host_managed(&lifecycle, AttachmentTeardownMode::Final, |auxiliary| {
+                delete_runtime_and_confirm_absent(manifest)?;
+                if auxiliary == AttachmentAuxiliaryDisposition::ProviderOwned {
+                    self.stop_egress_proxy(
+                        &manifest.spec.tenant_id,
+                        &manifest.handle.id,
+                        manifest.egress_proxy.as_ref(),
+                    )?;
+                }
+                Ok(())
+            });
+        match detach {
+            Ok(()) => manifest.launch_reservation_claim = None,
+            Err(failure) => {
+                let stage = failure.stage();
+                errors.push(failure.into_error().to_string());
+                if stage == AttachmentDetachFailureStage::BeforeProviderDetach {
+                    return Err(SandboxError::OperationFailed {
+                        message: format!(
+                            "failed to clean up container sandbox {} before provider detach: {}",
+                            manifest.handle.id,
+                            errors.join("; ")
+                        ),
+                    });
+                }
+            }
+        }
+        match self.cleanup_manifest_launch_artifacts(manifest) {
+            Ok(()) => manifest.launch_artifact = None,
+            Err(error) => errors.push(error.to_string()),
+        }
+        if errors.is_empty() {
+            manifest.network_cleanup_complete = true;
+            Ok(())
+        } else {
+            Err(SandboxError::OperationFailed {
+                message: format!(
+                    "failed to clean up container sandbox {}: {}",
+                    manifest.handle.id,
+                    errors.join("; ")
+                ),
+            })
+        }
+    }
+
+    fn release_machine_forwarded_execution_artifacts(
+        &self,
+        manifest: &mut ContainerSandboxManifest,
+        network_config: &crate::backends::oci::network::OciNetworkConfig,
+    ) -> Result<()> {
         let adoption_receipt = network_config.reservation_claim.clone();
         authenticate_container_network_generation_for_cleanup(
             &self.ipam_authority,
@@ -46,31 +119,17 @@ impl ContainerSandboxBackend {
         }
         let port_lease_coordinator = self.port_lease_coordinator_for_manifest(manifest)?;
         let launch_claim = manifest.launch_reservation_claim.clone();
-        let machine_port_mode = manifest.start_mode == ContainerStartMode::Execute
-            && manifest.runner_config.machine_port_forwarder.is_some();
-        let published_batch_state = if machine_port_mode {
-            launch_claim.as_ref().map_or_else(
-                || {
-                    port_lease_coordinator.classify_machine_cleanup_batch(
-                        &manifest.spec.tenant_id,
-                        &manifest.handle.id,
-                        &manifest.spec.port_bindings,
-                        &manifest.port_leases,
-                    )
-                },
-                |claim| {
-                    port_lease_coordinator.classify_launch_port_batch(&manifest.port_leases, claim)
-                },
-            )
-        } else {
-            port_lease_coordinator.classify_netavark_cleanup_batch(
-                &manifest.spec.tenant_id,
-                &manifest.handle.id,
-                &manifest.spec.port_bindings,
-                &manifest.port_leases,
-                launch_claim.as_ref(),
-            )
-        };
+        let published_batch_state = launch_claim.as_ref().map_or_else(
+            || {
+                port_lease_coordinator.classify_machine_cleanup_batch(
+                    &manifest.spec.tenant_id,
+                    &manifest.handle.id,
+                    &manifest.spec.port_bindings,
+                    &manifest.port_leases,
+                )
+            },
+            |claim| port_lease_coordinator.classify_launch_port_batch(&manifest.port_leases, claim),
+        );
         let pep_requests = manifest
             .egress_proxy
             .as_ref()
@@ -99,58 +158,19 @@ impl ContainerSandboxBackend {
             errors.push(error.to_string());
         }
         let mut machine_port_cleanup = None;
-        let mut netavark_port_cleanup = None;
-        let mut netavark_claim_recoveries = None;
-        if manifest.start_mode == ContainerStartMode::Execute
-            && matches!(
-                &published_batch_state,
-                Ok(LaunchPortBatchState::ProviderOwned)
-            )
-        {
-            if machine_port_mode {
-                match self.begin_machine_port_proxy_release_for_manifest(manifest) {
-                    Ok(cleanup) => machine_port_cleanup = cleanup,
-                    Err(error) => {
-                        detach_confirmed = false;
-                        errors.push(error.to_string());
-                    }
-                }
-            } else {
-                match port_lease_coordinator.begin_netavark_cleanup(
-                    &self.netavark_port_lifetimes,
-                    &manifest.spec.tenant_id,
-                    &manifest.handle.id,
-                    &manifest.spec.port_bindings,
-                    &manifest.port_leases,
-                ) {
-                    Ok(cleanup) => netavark_port_cleanup = cleanup,
-                    Err(error) => {
-                        detach_confirmed = false;
-                        errors.push(error.to_string());
-                    }
-                }
-            }
-        }
-        if manifest.start_mode == ContainerStartMode::Execute
-            && !machine_port_mode
-            && let Ok(LaunchPortBatchState::NetavarkClaimed(claims)) = &published_batch_state
-        {
-            match port_lease_coordinator.recover_netavark_claims_after_owner_death(
-                &manifest.spec.tenant_id,
-                &manifest.handle.id,
-                &manifest.spec.port_bindings,
-                &manifest.port_leases,
-                claims,
-            ) {
-                Ok(recoveries) => netavark_claim_recoveries = Some(recoveries),
+        if matches!(
+            &published_batch_state,
+            Ok(LaunchPortBatchState::ProviderOwned)
+        ) {
+            match self.begin_machine_port_proxy_release_for_manifest(manifest) {
+                Ok(cleanup) => machine_port_cleanup = cleanup,
                 Err(error) => {
                     detach_confirmed = false;
                     errors.push(error.to_string());
                 }
             }
         }
-        if manifest.start_mode == ContainerStartMode::Execute
-            && let Some(forwarder) = manifest.runner_config.machine_port_forwarder.as_ref()
+        if let Some(forwarder) = manifest.runner_config.machine_port_forwarder.as_ref()
             && let Some(cleanup) = machine_port_cleanup.as_ref()
             && let Err(error) = self.unexpose_machine_port_proxy_publications(cleanup, forwarder)
         {
@@ -162,14 +182,6 @@ impl ContainerSandboxBackend {
             errors.push(error.to_string());
         }
         if !detach_confirmed {
-            if let Err(error) = port_lease_coordinator.retain_ambiguous_netavark_cleanup(
-                &self.netavark_port_lifetimes,
-                &manifest.spec.tenant_id,
-                &manifest.handle.id,
-                netavark_port_cleanup.take(),
-            ) {
-                errors.push(error.to_string());
-            }
             return Err(SandboxError::OperationFailed {
                 message: format!(
                     "failed to clean up container sandbox {} before provider detach: {}",
@@ -216,48 +228,10 @@ impl ContainerSandboxBackend {
             detach_confirmed = false;
             errors.push(error.to_string());
         }
-        if detach_confirmed
-            && manifest.start_mode == ContainerStartMode::Execute
-            && !machine_port_mode
-            && matches!(
-                &published_batch_state,
-                Ok(LaunchPortBatchState::ProviderOwned)
-            )
-        {
-            match port_lease_coordinator.complete_netavark_cleanup(
-                &manifest.port_leases,
-                netavark_port_cleanup.as_ref(),
-                true,
-            ) {
-                Ok(()) => netavark_port_cleanup = None,
-                Err(error) => {
-                    detach_confirmed = false;
-                    errors.push(error.to_string());
-                }
-            }
-        }
-        if detach_confirmed
-            && let Some(recoveries) = netavark_claim_recoveries.take()
-            && let Err(error) = port_lease_coordinator
-                .release_recovered_netavark_bindings(&manifest.port_leases, &recoveries)
-        {
-            detach_confirmed = false;
-            errors.push(error.to_string());
-        }
-        if !detach_confirmed
-            && let Err(error) = port_lease_coordinator.retain_ambiguous_netavark_cleanup(
-                &self.netavark_port_lifetimes,
-                &manifest.spec.tenant_id,
-                &manifest.handle.id,
-                netavark_port_cleanup.take(),
-            )
-        {
-            errors.push(error.to_string());
-        }
         // Final teardown (not restart): release the quarantined hold only after
         // provider and persistent-netns deletion are confirmed. On the last
         // hold, bridge cleanup must also succeed before allocation finalization.
-        if detach_confirmed && manifest.start_mode == ContainerStartMode::Execute {
+        if detach_confirmed {
             match published_batch_state {
                 Ok(LaunchPortBatchState::NeverBound) => {
                     if let Some(claim) = launch_claim.as_ref()
@@ -273,21 +247,12 @@ impl ContainerSandboxBackend {
                     // receipt completed this terminal release above.
                 }
                 Ok(LaunchPortBatchState::RestartRetained) => {
-                    let release = if machine_port_mode {
-                        port_lease_coordinator.release_restart_retained_machine_bindings(
-                            &manifest.spec.tenant_id,
-                            &manifest.handle.id,
-                            &manifest.spec.port_bindings,
-                            &manifest.port_leases,
-                        )
-                    } else {
-                        port_lease_coordinator.release_restart_retained_bindings(
-                            &manifest.spec.tenant_id,
-                            &manifest.handle.id,
-                            &manifest.spec.port_bindings,
-                            &manifest.port_leases,
-                        )
-                    };
+                    let release = port_lease_coordinator.release_restart_retained_machine_bindings(
+                        &manifest.spec.tenant_id,
+                        &manifest.handle.id,
+                        &manifest.spec.port_bindings,
+                        &manifest.port_leases,
+                    );
                     if let Err(error) = release {
                         detach_confirmed = false;
                         errors.push(error.to_string());
@@ -295,15 +260,9 @@ impl ContainerSandboxBackend {
                 }
                 Ok(LaunchPortBatchState::TerminalNoEffect) => {}
                 Ok(LaunchPortBatchState::ProviderOwned) => {
-                    let release_result = if machine_port_mode {
-                        machine_port_cleanup.as_ref().map_or(Ok(()), |cleanup| {
-                            self.complete_machine_port_proxy_cleanup(cleanup)
-                        })
-                    } else {
-                        // The lifetime-authenticated Netavark release completed
-                        // immediately after exact provider and netns absence.
-                        Ok(())
-                    };
+                    let release_result = machine_port_cleanup.as_ref().map_or(Ok(()), |cleanup| {
+                        self.complete_machine_port_proxy_cleanup(cleanup)
+                    });
                     if let Err(error) = release_result {
                         detach_confirmed = false;
                         errors.push(error.to_string());

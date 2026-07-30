@@ -1458,6 +1458,7 @@ fn execute_manifest_without_attachment_config_fails_before_network_effects() {
     let error = backend
         .configure_network(
             &manifest,
+            AttachmentAttachAuthority::FreshLaunch(&claim),
             MachinePortPreparationReleaseAuthority::FreshLaunch(&claim),
         )
         .expect_err("missing attachment config must fail before Netavark");

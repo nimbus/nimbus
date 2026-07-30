@@ -3,11 +3,7 @@ use super::start::{ensure_guest_user_helper_available, hostname_for};
 use super::*;
 use crate::backends::conmon::lifecycle::{DetectedRuntimeStatus, RuntimeStateObservation};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum NetworkArtifactTeardownMode {
-    Restart,
-    Final,
-}
+pub(super) type NetworkArtifactTeardownMode = AttachmentTeardownMode;
 
 const KRUN_LIFECYCLE_LOCK_FILE: &str = ".nimbus-krun-lifecycle.lock";
 const KRUN_LIFECYCLE_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
@@ -53,12 +49,6 @@ impl KrunLifecycleLockTestProbe {
 
 pub(super) struct KrunLifecycleGuard {
     _lock: std::fs::File,
-}
-
-impl NetworkArtifactTeardownMode {
-    fn releases_authority(self) -> bool {
-        self == Self::Final
-    }
 }
 
 impl KrunSandboxBackend {
@@ -423,25 +413,20 @@ impl KrunSandboxBackend {
                 false
             }
         };
-        let network_released = if artifact_released {
-            let compensation = match reservations {
-                Some(reservations) => {
-                    self.release_unpublished_reserved_launch(manifest, reservations)
-                }
-                None => self.release_reserved_launch(manifest),
-            };
-            match compensation {
-                Ok(()) => true,
-                Err(error) => {
-                    secondary.push(format!(
-                        "exact krun launch reservation compensation failed: {error}"
-                    ));
-                    false
-                }
-            }
-        } else {
+        // Artifact and reservation authority are independent. A failed
+        // materialization cleanup must not strand a safely releasable
+        // never-bound network generation.
+        let network_released = match reservations {
+            Some(reservations) => self.release_unpublished_reserved_launch(manifest, reservations),
+            None => self.release_reserved_launch(manifest),
+        }
+        .map(|()| true)
+        .unwrap_or_else(|error| {
+            secondary.push(format!(
+                "exact krun launch reservation compensation failed: {error}"
+            ));
             false
-        };
+        });
         if network_released && artifact_released {
             manifest.launch_authority = KrunLaunchAuthority::Released;
             synchronize_handle_status(manifest, SandboxStatus::Failed);
@@ -662,9 +647,13 @@ impl KrunSandboxBackend {
             return self.write_manifest(manifest);
         }
 
+        let attachment_authority = reservation_claim.as_ref().map_or(
+            AttachmentAttachAuthority::RestartRetained,
+            AttachmentAttachAuthority::FreshLaunch,
+        );
         let provider_launch = ensure_linux_host("krun")
             .and_then(|()| ensure_guest_user_helper_available(&self.config, manifest))
-            .and_then(|()| self.configure_network(manifest))
+            .and_then(|()| self.configure_network(manifest, attachment_authority))
             .and_then(|()| {
                 self.launch_into_network(manifest, clear_last_exit_code, reservation_claim.as_ref())
             });
@@ -965,81 +954,17 @@ impl KrunSandboxBackend {
     /// down so the VMM is never launched into an unconfigured or unpinned netns.
     /// Reuses the container backend's shared netns free-functions; no
     /// netns/netavark/IPAM logic is forked here.
-    pub(super) fn configure_network(&self, manifest: &KrunSandboxManifest) -> Result<()> {
-        // Validate attachment authority before any provider or filesystem
-        // effect. PlanOnly manifests carry `None` and can never reach Netavark.
-        let network_config = manifest.require_network_config()?.clone();
-        authenticate_container_network_generation(
-            &self.ipam_authority,
-            &manifest.network_layout,
-            &network_config,
-            &manifest.handle.id,
-        )?;
-        // One-shot: drop the legacy shared nimbus0 bridge before the first
-        // per-tenant setup (pre-launch migration, breaking).
-        purge_legacy_nimbus0_once(&self.config.workload_state_root.join("networks"))?;
-        let port_lease_coordinator = self.port_lease_coordinator();
-        port_lease_coordinator.require_binding_leases(
-            &manifest.spec.tenant_id,
-            &manifest.handle.id,
-            &manifest.spec.port_bindings,
-            &manifest.port_leases,
-        )?;
-        // Reuse the config resolved + persisted at manifest-prepare; never
-        // reassign it so setup and teardown agree on the bridge.
-        create_persistent_network_namespace(&manifest.network_layout.netns_path)?;
-        let mut netavark_lifetimes = match port_lease_coordinator
-            .claim_netavark_bindings_with_lifetimes(
-                &manifest.spec.tenant_id,
-                &manifest.handle.id,
-                &manifest.spec.port_bindings,
-                &manifest.port_leases,
-            ) {
-            Ok(batch) => Some(batch),
-            Err(error) => {
-                let _ = remove_persistent_network_namespace(&manifest.network_layout.netns_path);
-                return Err(error);
-            }
-        };
-        if let Err(error) = setup_container_network(
-            &self.ipam_authority,
-            &OciNetavarkOperation::new(
-                &manifest.network_layout,
-                &network_config,
-                &manifest.handle.id,
-                manifest.spec.display_name(),
-                &hostname_for(&manifest.spec),
-                &manifest.spec.port_bindings,
-                None,
-            ),
-        ) {
-            return Err(self.failed_netavark_configuration(
-                manifest,
-                &network_config,
-                netavark_lifetimes
-                    .take()
-                    .expect("Krun Netavark setup retains its lifetime batch"),
-                error,
-            ));
-        }
-        if let Err(error) = port_lease_coordinator.activate_netavark_bindings_with_lifetimes(
-            &manifest.spec.tenant_id,
-            &manifest.handle.id,
-            &manifest.spec.port_bindings,
-            &manifest.port_leases,
-            netavark_lifetimes
-                .as_ref()
-                .expect("Krun Netavark activation retains its lifetime batch"),
-        ) {
-            return Err(self.failed_netavark_configuration(
-                manifest,
-                &network_config,
-                netavark_lifetimes
-                    .take()
-                    .expect("Krun Netavark activation retains its lifetime batch"),
-                error,
-            ));
-        }
+    pub(super) fn configure_network(
+        &self,
+        manifest: &KrunSandboxManifest,
+        attachment_authority: AttachmentAttachAuthority<'_>,
+    ) -> Result<()> {
+        let network_config = manifest.require_network_config()?;
+        let ports = self.port_lease_coordinator();
+        let hostname = hostname_for(&manifest.spec);
+        let lifecycle = self.attachment_lifecycle(&ports);
+        let adapter = self.attachment_adapter(manifest, network_config, &hostname);
+
         // Pin the netns so the ONLY reachable egress is this sandbox's own PEP.
         // The netavark deny is route-based, but the shared bridge gateway is
         // on-link and every sibling sandbox's PEP listens on it at a distinct
@@ -1049,59 +974,19 @@ impl KrunSandboxBackend {
         // process inside the netns, so the output-hook pin governs the guest
         // exactly as it governs a container. Tear the namespace back down on
         // failure so the VMM never launches into an unpinned netns.
-        if let Some(proxy) = manifest.egress_proxy.as_ref()
-            && let Err(error) = pin_netns_egress_to_own_proxy(&manifest.network_layout, proxy)
-        {
-            return Err(self.failed_netavark_configuration(
-                manifest,
-                &network_config,
-                netavark_lifetimes
-                    .take()
-                    .expect("Krun Netavark pin retains its lifetime batch"),
-                error,
-            ));
-        }
-        if let Some(batch) = netavark_lifetimes.take()
-            && let Err((error, batch)) = self.netavark_port_lifetimes.insert(
-                &manifest.spec.tenant_id,
-                &manifest.handle.id,
-                batch,
-            )
-        {
-            return Err(self.failed_netavark_configuration(
-                manifest,
-                &network_config,
-                batch,
-                error,
-            ));
-        }
-        // Take the tenant's refcount hold now the netns is up and pinned; the
-        // reaper frees the index + bridge when the last hold releases.
-        if let Err(error) = self.segment_allocator.acquire(
-            &manifest.spec.tenant_id,
-            &default_network_attachment_id(&manifest.handle.id),
-        ) {
-            let batch = self
-                .netavark_port_lifetimes
-                .take(&manifest.spec.tenant_id, &manifest.handle.id)?
-                .ok_or_else(|| SandboxError::OperationFailed {
-                    message: format!(
-                        "Krun Netavark segment-hold failure for {} lost its exact live lifetime \
-                         batch",
-                        manifest.handle.id
-                    ),
-                })?;
-            return Err(self.failed_netavark_configuration(
-                manifest,
-                &network_config,
-                batch,
-                error,
-            ));
-        }
-        Ok(())
+        adapter
+            .attach(&lifecycle, attachment_authority, |_| {
+                if let Some(proxy) = manifest.egress_proxy.as_ref() {
+                    pin_netns_egress_to_own_proxy(&manifest.network_layout, proxy)?;
+                }
+                Ok(())
+            })
+            .map(|_| ())
     }
 
-    /// Compensate one failed provider setup under its exact live lifetime.
+    /// Preserve the focused fault fixture while routing its compensation
+    /// through the shared OCI attachment lifecycle.
+    #[cfg(test)]
     pub(super) fn failed_netavark_configuration(
         &self,
         manifest: &KrunSandboxManifest,
@@ -1109,68 +994,11 @@ impl KrunSandboxBackend {
         batch: crate::backends::oci::port_lease::OciPortBindLifetimeBatch,
         primary: SandboxError,
     ) -> SandboxError {
-        let cleanup = teardown_container_network(
-            &self.ipam_authority,
-            &OciNetavarkOperation::new(
-                &manifest.network_layout,
-                network_config,
-                &manifest.handle.id,
-                manifest.spec.display_name(),
-                &hostname_for(&manifest.spec),
-                &manifest.spec.port_bindings,
-                None,
-            ),
-        )
-        .and_then(|()| remove_persistent_network_namespace(&manifest.network_layout.netns_path));
-        if let Err(cleanup) = cleanup {
-            return SandboxError::OperationFailed {
-                message: format!(
-                    "krun network configuration failed: {primary}; exact-generation detach \
-                     compensation also failed while the lifetime-fenced namespace remains \
-                     recoverable: {cleanup}"
-                ),
-            };
-        }
-
-        let port_lease_coordinator = self.port_lease_coordinator();
-        let compensation = port_lease_coordinator
-            .abandon_netavark_bind_claims_with_lifetimes_without_effect(
-                &manifest.spec.tenant_id,
-                &manifest.handle.id,
-                &manifest.spec.port_bindings,
-                &manifest.port_leases,
-                &batch,
-                manifest.reservation_claim(),
-            )
-            .or_else(|abandon_error| {
-                let expected = port_lease_coordinator.expected_netavark_bindings(
-                    &manifest.spec.tenant_id,
-                    &manifest.handle.id,
-                    &manifest.spec.port_bindings,
-                    &manifest.port_leases,
-                )?;
-                port_lease_coordinator
-                    .prepare_netavark_bindings_for_rebind_with_lifetimes(
-                        &manifest.port_leases,
-                        &expected,
-                        &batch,
-                    )
-                    .map_err(|rebind_error| SandboxError::OperationFailed {
-                        message: format!(
-                            "Netavark claim abandonment failed: {abandon_error}; exact Active \
-                             lifetime compensation also failed: {rebind_error}"
-                        ),
-                    })
-            });
-        match compensation {
-            Ok(()) => primary,
-            Err(cleanup) => SandboxError::OperationFailed {
-                message: format!(
-                    "krun network configuration failed: {primary}; detached Netavark \
-                     port-lifetime compensation also failed: {cleanup}"
-                ),
-            },
-        }
+        let ports = self.port_lease_coordinator();
+        let hostname = hostname_for(&manifest.spec);
+        let lifecycle = self.attachment_lifecycle(&ports);
+        self.attachment_adapter(manifest, network_config, &hostname)
+            .compensate_injected_host_setup_failure(&lifecycle, batch, primary)
     }
 
     /// Fail-closed readiness gate evaluated immediately before the VMM launches.
@@ -1324,287 +1152,32 @@ impl KrunSandboxBackend {
                 ),
             });
         }
+
         let network_config = manifest.require_network_config()?;
-        authenticate_container_network_generation_for_cleanup(
-            &self.ipam_authority,
-            &manifest.network_layout,
-            network_config,
-            &manifest.handle.id,
-        )?;
-        let mut errors = Vec::new();
-        let mut detach_confirmed = true;
-        let port_lease_coordinator = self.port_lease_coordinator();
-        let launch_claim = manifest.reservation_claim();
-        let published_batch_state = if manifest.start_mode == KrunStartMode::Execute {
-            port_lease_coordinator.classify_netavark_cleanup_batch(
-                &manifest.spec.tenant_id,
-                &manifest.handle.id,
-                &manifest.spec.port_bindings,
-                &manifest.port_leases,
-                launch_claim,
-            )
-        } else {
-            Ok(LaunchPortBatchState::TerminalNoEffect)
-        };
-        let pep_requests = manifest
-            .egress_proxy
-            .as_ref()
-            .map(|assignment| vec![assignment.port_lease.clone()])
-            .unwrap_or_default();
-        let pep_batch_state = if mode.releases_authority()
-            && let Some(claim) = launch_claim
-        {
-            port_lease_coordinator.classify_launch_port_batch(&pep_requests, claim)
-        } else {
-            Ok(LaunchPortBatchState::ProviderOwned)
-        };
-        if let Err(error) = &published_batch_state {
-            detach_confirmed = false;
-            errors.push(error.to_string());
-        }
-        if let Err(error) = &pep_batch_state {
-            detach_confirmed = false;
-            errors.push(error.to_string());
-        }
-        if mode.releases_authority()
-            && let Err(error) = quarantine_network_segment_hold(
-                self.segment_allocator.as_ref(),
-                &manifest.spec.tenant_id,
-                &manifest.handle.id,
-                &network_config.reservation_claim,
-            )
-        {
-            detach_confirmed = false;
-            errors.push(error.to_string());
-        }
-        let mut netavark_port_cleanup = None;
-        let mut netavark_claim_recoveries = None;
-        if manifest.start_mode == KrunStartMode::Execute
-            && matches!(
-                &published_batch_state,
-                Ok(LaunchPortBatchState::ProviderOwned)
-            )
-        {
-            match port_lease_coordinator.begin_netavark_cleanup(
-                &self.netavark_port_lifetimes,
-                &manifest.spec.tenant_id,
-                &manifest.handle.id,
-                &manifest.spec.port_bindings,
-                &manifest.port_leases,
-            ) {
-                Ok(cleanup) => netavark_port_cleanup = cleanup,
-                Err(error) => {
-                    detach_confirmed = false;
-                    errors.push(error.to_string());
-                }
-            }
-        }
-        if manifest.start_mode == KrunStartMode::Execute
-            && let Ok(LaunchPortBatchState::NetavarkClaimed(claims)) = &published_batch_state
-        {
-            match port_lease_coordinator.recover_netavark_claims_after_owner_death(
-                &manifest.spec.tenant_id,
-                &manifest.handle.id,
-                &manifest.spec.port_bindings,
-                &manifest.port_leases,
-                claims,
-            ) {
-                Ok(recoveries) => netavark_claim_recoveries = Some(recoveries),
-                Err(error) => {
-                    detach_confirmed = false;
-                    errors.push(error.to_string());
-                }
-            }
-        }
-        if matches!(&pep_batch_state, Ok(LaunchPortBatchState::ProviderOwned)) {
-            let stop_pep = if mode.releases_authority() {
-                self.egress_proxies.stop_with_assignment(
-                    &manifest.spec.tenant_id,
-                    &manifest.handle.id,
-                    manifest.egress_proxy.as_ref(),
-                )
-            } else {
-                self.egress_proxies.stop_for_restart(
-                    &manifest.spec.tenant_id,
-                    &manifest.handle.id,
-                    manifest.egress_proxy.as_ref(),
-                )
-            };
-            if let Err(error) = stop_pep {
-                detach_confirmed = false;
-                errors.push(error.to_string());
-            }
-        }
-        let mut netavark_detach_confirmed = if detach_confirmed {
-            match manifest
-                .require_network_config()
-                .and_then(|network_config| {
-                    teardown_container_network(
-                        &self.ipam_authority,
-                        &OciNetavarkOperation::new(
-                            &manifest.network_layout,
-                            network_config,
+        let ports = self.port_lease_coordinator();
+        let hostname = hostname_for(&manifest.spec);
+        let lifecycle = self.attachment_lifecycle(&ports);
+        self.attachment_adapter(manifest, network_config, &hostname)
+            .detach_host_managed(&lifecycle, mode, |auxiliary| match auxiliary {
+                AttachmentAuxiliaryDisposition::ProviderOwned => {
+                    if mode.releases_authority() {
+                        self.egress_proxies.stop_with_assignment(
+                            &manifest.spec.tenant_id,
                             &manifest.handle.id,
-                            manifest.spec.display_name(),
-                            &hostname_for(&manifest.spec),
-                            &manifest.spec.port_bindings,
-                            None,
-                        ),
-                    )
-                }) {
-                Ok(()) => true,
-                Err(error) => {
-                    detach_confirmed = false;
-                    errors.push(error.to_string());
-                    false
-                }
-            }
-        } else {
-            false
-        };
-        if netavark_detach_confirmed
-            && detach_confirmed
-            && let Err(error) =
-                remove_persistent_network_namespace(&manifest.network_layout.netns_path)
-        {
-            netavark_detach_confirmed = false;
-            detach_confirmed = false;
-            errors.push(error.to_string());
-        }
-        if netavark_detach_confirmed
-            && manifest.start_mode == KrunStartMode::Execute
-            && matches!(
-                &published_batch_state,
-                Ok(LaunchPortBatchState::ProviderOwned)
-            )
-        {
-            match port_lease_coordinator.complete_netavark_cleanup(
-                &manifest.port_leases,
-                netavark_port_cleanup.as_ref(),
-                mode.releases_authority(),
-            ) {
-                Ok(()) => netavark_port_cleanup = None,
-                Err(error) => {
-                    detach_confirmed = false;
-                    errors.push(error.to_string());
-                }
-            }
-        }
-        if netavark_detach_confirmed
-            && let Some(recoveries) = netavark_claim_recoveries.take()
-            && let Err(error) = if mode.releases_authority() {
-                port_lease_coordinator
-                    .release_recovered_netavark_bindings(&manifest.port_leases, &recoveries)
-            } else {
-                port_lease_coordinator.prepare_recovered_netavark_claims_for_rebind(
-                    &manifest.port_leases,
-                    &recoveries,
-                )
-            }
-        {
-            detach_confirmed = false;
-            errors.push(error.to_string());
-        }
-        if !netavark_detach_confirmed
-            && let Err(error) = port_lease_coordinator.retain_ambiguous_netavark_cleanup(
-                &self.netavark_port_lifetimes,
-                &manifest.spec.tenant_id,
-                &manifest.handle.id,
-                netavark_port_cleanup.take(),
-            )
-        {
-            detach_confirmed = false;
-            errors.push(error.to_string());
-        }
-        // Drop the quarantined hold only after provider and persistent-netns
-        // deletion are confirmed. A failed bridge cleanup leaves the allocation
-        // cleanup-pending and unavailable.
-        if detach_confirmed {
-            if mode.releases_authority() && manifest.start_mode == KrunStartMode::Execute {
-                match published_batch_state {
-                    Ok(LaunchPortBatchState::NeverBound) => {
-                        if let Some(claim) = launch_claim
-                            && let Err(error) = port_lease_coordinator
-                                .release_never_bound_requests(&manifest.port_leases, claim)
-                        {
-                            detach_confirmed = false;
-                            errors.push(error.to_string());
-                        }
+                            manifest.egress_proxy.as_ref(),
+                        )
+                    } else {
+                        self.egress_proxies.stop_for_restart(
+                            &manifest.spec.tenant_id,
+                            &manifest.handle.id,
+                            manifest.egress_proxy.as_ref(),
+                        )
                     }
-                    Ok(LaunchPortBatchState::NetavarkClaimed(_)) => {
-                        // Dead-owner recovery plus exact provider absence
-                        // completed the terminal release above.
-                    }
-                    Ok(LaunchPortBatchState::RestartRetained) => {
-                        if let Err(error) = port_lease_coordinator
-                            .release_restart_retained_bindings(
-                                &manifest.spec.tenant_id,
-                                &manifest.handle.id,
-                                &manifest.spec.port_bindings,
-                                &manifest.port_leases,
-                            )
-                        {
-                            detach_confirmed = false;
-                            errors.push(error.to_string());
-                        }
-                    }
-                    Ok(LaunchPortBatchState::ProviderOwned) => {
-                        // Exact Netavark provider absence already completed the
-                        // lifetime-authenticated release above.
-                    }
-                    Ok(LaunchPortBatchState::TerminalNoEffect) => {
-                        // Every exact lease already carries terminal proof that
-                        // no provider effect remains. Cleanup replay has no port
-                        // mutation left to perform.
-                    }
-                    Err(_) => {}
                 }
-                if detach_confirmed
-                    && matches!(&pep_batch_state, Ok(LaunchPortBatchState::NeverBound))
-                    && let Some(claim) = launch_claim
-                    && let Err(error) =
-                        port_lease_coordinator.release_never_bound_requests(&pep_requests, claim)
-                {
-                    detach_confirmed = false;
-                    errors.push(error.to_string());
-                }
-                if detach_confirmed
-                    && let Ok(network_config) = manifest.require_network_config()
-                    && let Err(error) = deallocate_container_ips_after_confirmed_detach(
-                        &self.ipam_authority,
-                        &manifest.network_layout,
-                        &manifest.handle.id,
-                        &network_config.reservation_claim,
-                    )
-                {
-                    detach_confirmed = false;
-                    errors.push(error.to_string());
-                }
-            }
-            if mode.releases_authority() && detach_confirmed {
-                errors.extend(
-                    release_network_segment_hold(
-                        self.segment_allocator.as_ref(),
-                        &manifest.spec.tenant_id,
-                        &manifest.handle.id,
-                        &network_config.reservation_claim,
-                    )
-                    .into_iter()
-                    .map(|error| error.to_string()),
-                );
-            }
-        }
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(SandboxError::OperationFailed {
-                message: format!(
-                    "failed to release krun sandbox {} network artifacts: {}",
-                    manifest.handle.id,
-                    errors.join("; ")
-                ),
+                AttachmentAuxiliaryDisposition::NoEffect
+                | AttachmentAuxiliaryDisposition::Unknown => Ok(()),
             })
-        }
+            .map_err(Into::into)
     }
 
     pub(super) fn reset_runtime_for_restart(&self, manifest: &KrunSandboxManifest) -> Result<()> {

@@ -10,7 +10,8 @@ use nimbus_network::{
 use std::sync::Arc;
 
 use crate::backends::oci::network::{
-    OciSegmentAllocator, RecordingSegmentAllocator, default_network_attachment_id,
+    AttachmentAttachAuthority, OciSegmentAllocator, RecordingSegmentAllocator,
+    default_network_attachment_id,
 };
 use crate::backends::oci::port_lease::{OciPortProvider, claim_bind_attempts};
 use crate::error::SandboxError;
@@ -224,7 +225,14 @@ fn netavark_endpoint_effect_requires_complete_current_port_leases() {
         .expect("legacy purge should be skipped by marker");
 
     let error = backend
-        .configure_network(&manifest)
+        .configure_network(
+            &manifest,
+            AttachmentAttachAuthority::FreshLaunch(
+                manifest
+                    .reservation_claim()
+                    .expect("execute manifest should retain its launch claim"),
+            ),
+        )
         .expect_err("provider setup without the complete lease set must fail");
     assert!(
         error
@@ -1174,6 +1182,70 @@ fn pre_provider_failure_compensates_unstarted_ports_and_segment_hold() {
     assert!(
         segments.is_empty(),
         "pre-provider compensation must finalize the unrealized segment hold: {segments:?}"
+    );
+}
+
+#[test]
+fn artifact_cleanup_failure_does_not_suppress_never_bound_network_release() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let config = KrunSandboxBackendConfig::under_root(temp_dir.path().to_path_buf());
+    let state_root = config.network_state_root.clone();
+    let backend = KrunSandboxBackend::new(config);
+    let spec = sample_spec();
+    let sandbox_id = SandboxId::new("krun-independent-compensation");
+    let artifact_path = temp_dir.path().join("rootfs-shaped-file");
+    fs::write(&artifact_path, b"not a directory")
+        .expect("artifact cleanup blocker should be a regular file");
+    let launch_artifact = super::super::KrunLaunchArtifact::Rootfs(MaterializedImageRootfs {
+        image_reference: "registry.example.com/acme/api:independent-cleanup".to_owned(),
+        rootfs_path: artifact_path.clone(),
+    });
+    let mut manifest = backend
+        .plan_start_with_id(&spec, &sandbox_id, None, Some(launch_artifact))
+        .expect("execute planning should reserve artifact and network authority")
+        .manifest;
+
+    let error = backend.persist_unstarted_launch_failure(
+        &mut manifest,
+        SandboxError::BackendUnavailable {
+            message: "forced pre-provider rejection".to_owned(),
+        },
+    );
+    let message = error.to_string();
+    assert!(
+        message.contains("forced pre-provider rejection")
+            && message.contains("krun launch artifact compensation failed"),
+        "the primary and independent artifact failure must both survive: {message}"
+    );
+    assert!(
+        artifact_path.exists() && manifest.launch_artifact.is_some(),
+        "failed artifact cleanup must retain its exact retry evidence"
+    );
+
+    let records = LocalPortLeaseAuthority::open(&state_root)
+        .expect("port authority should reopen")
+        .list()
+        .expect("port leases should list");
+    assert_eq!(
+        records.len(),
+        manifest.port_leases.len() + usize::from(manifest.egress_proxy.is_some())
+    );
+    assert!(
+        records
+            .iter()
+            .all(|record| record.phase() == PortLeasePhase::Released),
+        "independent safe network compensation must release every never-bound lease despite the \
+         artifact failure: {records:?}"
+    );
+    let segments = backend
+        .segment_allocator
+        .inspect_segments(&spec.tenant_id)
+        .expect("segment authority should inspect")
+        .unwrap_or_default();
+    assert!(
+        segments.is_empty(),
+        "independent safe network compensation must finalize the unrealized segment hold despite \
+         the artifact failure: {segments:?}"
     );
 }
 

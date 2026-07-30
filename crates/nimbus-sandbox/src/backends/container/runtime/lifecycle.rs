@@ -137,6 +137,12 @@ fn netavark_endpoint_effect_requires_complete_current_port_leases() {
     let error = backend
         .configure_network(
             &manifest,
+            AttachmentAttachAuthority::FreshLaunch(
+                manifest
+                    .launch_reservation_claim
+                    .as_ref()
+                    .expect("planned launch should retain coordinator claim"),
+            ),
             MachinePortPreparationReleaseAuthority::FreshLaunch(
                 manifest
                     .launch_reservation_claim

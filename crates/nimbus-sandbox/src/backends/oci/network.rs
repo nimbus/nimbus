@@ -6,6 +6,7 @@ use nimbus_network::{NetworkAttachmentId, NetworkSegmentAllocator};
 use crate::error::SandboxError;
 use crate::instance::SandboxId;
 
+mod attachment_lifecycle;
 mod cluster;
 mod dto;
 mod egress_pin;
@@ -24,6 +25,12 @@ mod segment;
 #[cfg(test)]
 mod test_support;
 
+pub(crate) use attachment_lifecycle::{
+    AttachmentAttachAuthority, AttachmentAuxiliaryDisposition, AttachmentBackendKind,
+    AttachmentDetachFailure, AttachmentDetachFailureStage, AttachmentTeardownMode,
+    OciAttachmentAdapter, OciAttachmentAuxiliaryListener, OciAttachmentInput,
+    OciAttachmentLifecycle, OciHostManagedAttachmentBackend, OciMachineForwardedAttachmentBackend,
+};
 pub(crate) use egress_pin::pin_netns_egress_to_own_proxy;
 pub(crate) use finality::{TerminalNetworkAuthoritySet, TerminalNetworkFinalityEvidence};
 pub use forwarding::{

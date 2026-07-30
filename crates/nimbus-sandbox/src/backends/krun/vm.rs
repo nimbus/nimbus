@@ -44,23 +44,20 @@ use crate::backends::oci::materializer::{
     MaterializedImageRootfs, OciImageMaterializer, PreparedMaterializedImageLaunch,
 };
 use crate::backends::oci::network::{
-    ConfiguredSegmentAllocator, DEFAULT_AARDVARK_DNS_BINARY, DEFAULT_NETAVARK_BINARY,
-    DEFAULT_NETWORK_INTERFACE, DEFAULT_NETWORK_NAME, DEFAULT_NETWORK_SUBNET, DEFAULT_TENANT_PREFIX,
-    OciIpamAuthority, OciNetavarkOperation, OciNetworkConfig, OciNetworkDirectEgress,
-    OciNetworkLayout, OciNetworkProcess, OciSegmentAllocator, OciSegmentRealization,
-    ReservedNetworkLaunchAuthority, TerminalNetworkAuthoritySet, TerminalNetworkFinalityEvidence,
-    authenticate_container_network_generation,
-    authenticate_container_network_generation_for_cleanup, create_persistent_network_namespace,
-    deallocate_container_ips_after_confirmed_detach, default_network_attachment_id,
-    pin_netns_egress_to_own_proxy, place_sandbox_on_block, purge_legacy_nimbus0_once,
-    quarantine_network_segment_hold, reconcile_startup_network_state, release_network_segment_hold,
-    release_reserved_network_launch_after_ports, remove_persistent_network_namespace,
-    retire_terminal_container_ipam_release, setup_container_network, teardown_container_network,
+    AttachmentAttachAuthority, AttachmentAuxiliaryDisposition, AttachmentBackendKind,
+    AttachmentTeardownMode, ConfiguredSegmentAllocator, DEFAULT_AARDVARK_DNS_BINARY,
+    DEFAULT_NETAVARK_BINARY, DEFAULT_NETWORK_INTERFACE, DEFAULT_NETWORK_NAME,
+    DEFAULT_NETWORK_SUBNET, DEFAULT_TENANT_PREFIX, OciAttachmentAdapter,
+    OciAttachmentAuxiliaryListener, OciAttachmentInput, OciAttachmentLifecycle,
+    OciHostManagedAttachmentBackend, OciIpamAuthority, OciNetworkConfig, OciNetworkLayout,
+    OciNetworkProcess, OciSegmentAllocator, TerminalNetworkAuthoritySet,
+    TerminalNetworkFinalityEvidence, default_network_attachment_id, pin_netns_egress_to_own_proxy,
+    reconcile_startup_network_state, retire_terminal_container_ipam_release,
 };
 use crate::backends::oci::port_lease::new_launch_reservation_claim;
 use crate::backends::oci::port_lifecycle::{
-    DEFAULT_MAX_PORTS_PER_TENANT, LaunchPortBatchState, NetavarkPortLifetimeRegistry,
-    OciPortLeaseCoordinator, ReservedLaunchPorts, SandboxLaunchPortPlan,
+    DEFAULT_MAX_PORTS_PER_TENANT, NetavarkPortLifetimeRegistry, OciPortLeaseCoordinator,
+    ReservedLaunchPorts, SandboxLaunchPortPlan,
 };
 use crate::backends::oci::resource_quota::ResourceQuotaManager;
 use crate::error::{Result, SandboxError};
@@ -77,6 +74,10 @@ mod lifecycle;
 mod manifest_publication;
 mod network_composition;
 mod readiness;
+
+impl OciHostManagedAttachmentBackend for KrunSandboxBackend {
+    const ATTACHMENT_BACKEND_KIND: AttachmentBackendKind = AttachmentBackendKind::Krun;
+}
 mod root_authentication;
 mod start;
 
@@ -412,30 +413,45 @@ impl KrunSandboxBackend {
         self
     }
 
-    /// Build the OCI network config for a specific resolved block segment. Shared
-    /// by the primary-block `network_config` and block-aware `place_sandbox_config`
-    /// (MTN6).
-    fn config_from_segment(
-        &self,
-        segment: &OciSegmentRealization,
-        reservation_claim: &NetworkReservationClaim,
-    ) -> OciNetworkConfig {
-        OciNetworkConfig {
-            netavark_path: self.config.netavark_path.clone(),
-            aardvark_dns_path: self.config.aardvark_dns_path.clone(),
-            network_name: segment.network_name().to_owned(),
-            network_interface: segment.network_interface().to_owned(),
-            network_subnet: segment.cidr().to_string(),
-            segment_id: segment.segment_id().as_str().to_owned(),
-            reservation_claim: reservation_claim.clone(),
-            direct_egress: OciNetworkDirectEgress::Deny,
-            // The deny-by-default microVM guest resolves names through the host
-            // PEP (`HTTP_PROXY`), never a local resolver, so netavark must not
-            // start an aardvark-dns stub on the bridge gateway `:53`. That stub
-            // is the residual DNS-exfil channel KME5 flagged.
-            enable_dns: false,
-            network_id: segment.network_id().as_str().to_owned(),
-        }
+    fn attachment_lifecycle<'a>(
+        &'a self,
+        ports: &'a OciPortLeaseCoordinator,
+    ) -> OciAttachmentLifecycle<'a> {
+        OciAttachmentLifecycle::new(
+            self.segment_allocator.as_ref(),
+            &self.ipam_authority,
+            ports,
+            &self.netavark_port_lifetimes,
+        )
+    }
+
+    fn attachment_adapter<'a>(
+        &'a self,
+        manifest: &'a KrunSandboxManifest,
+        network_config: &'a OciNetworkConfig,
+        hostname: &'a str,
+    ) -> OciAttachmentAdapter<'a> {
+        <Self as OciHostManagedAttachmentBackend>::host_managed_attachment_adapter(
+            OciAttachmentInput {
+                workload_state_root: &self.config.workload_state_root,
+                tenant_id: &manifest.spec.tenant_id,
+                sandbox_id: &manifest.handle.id,
+                display_name: manifest.spec.display_name(),
+                hostname,
+                bindings: &manifest.spec.port_bindings,
+                leases: &manifest.port_leases,
+                auxiliary_listener: manifest.egress_proxy.as_ref().map(|assignment| {
+                    OciAttachmentAuxiliaryListener::egress_pep(
+                        &assignment.port_lease,
+                        &assignment.host,
+                        assignment.port,
+                    )
+                }),
+                layout: &manifest.network_layout,
+                config: network_config,
+                launch_claim: manifest.reservation_claim(),
+            },
+        )
     }
 
     #[cfg(test)]
@@ -443,7 +459,12 @@ impl KrunSandboxBackend {
         // Per-tenant PRIMARY block: distinct subnet + bridge identity (audit M1).
         let segment = self.segment_allocator.segment_for(tenant)?;
         let reservation_claim = crate::backends::oci::port_lease::new_launch_reservation_claim()?;
-        Ok(self.config_from_segment(&segment, &reservation_claim))
+        Ok(OciAttachmentLifecycle::config_from_segment(
+            self.config.netavark_path.clone(),
+            self.config.aardvark_dns_path.clone(),
+            &segment,
+            &reservation_claim,
+        ))
     }
 
     /// Block-aware placement (MTN6): resolve + reserve the block bridge that will
@@ -456,30 +477,28 @@ impl KrunSandboxBackend {
         sandbox_id: &SandboxId,
         reservation_claim: &NetworkReservationClaim,
     ) -> Result<OciNetworkConfig> {
-        place_sandbox_on_block(
-            self.segment_allocator.as_ref(),
-            &self.ipam_authority,
+        let ports = self.port_lease_coordinator();
+        <Self as OciHostManagedAttachmentBackend>::reserve_attachment_config(
+            &self.attachment_lifecycle(&ports),
             tenant,
             layout,
             sandbox_id,
             reservation_claim,
-            |segment, claim| self.config_from_segment(segment, claim),
+            self.config.netavark_path.clone(),
+            self.config.aardvark_dns_path.clone(),
         )
     }
 
     fn release_reserved_launch(&self, manifest: &KrunSandboxManifest) -> Result<()> {
         let reservation_claim = manifest.require_reserved_claim()?;
-        let manager = self.port_lease_coordinator();
-        release_reserved_network_launch_after_ports(
-            ReservedNetworkLaunchAuthority::new(
-                self.segment_allocator.as_ref(),
-                &self.ipam_authority,
-                &manifest.network_layout,
-                &manifest.spec.tenant_id,
-                &manifest.handle.id,
-                reservation_claim,
-            ),
-            manager.release_never_bound_launch_claim(reservation_claim),
+        let ports = self.port_lease_coordinator();
+        let port_compensation = ports.release_never_bound_launch_claim(reservation_claim);
+        self.attachment_lifecycle(&ports).release_reserved(
+            &manifest.network_layout,
+            &manifest.spec.tenant_id,
+            &manifest.handle.id,
+            reservation_claim,
+            port_compensation,
         )
     }
 
@@ -489,17 +508,15 @@ impl KrunSandboxBackend {
         reservations: &ReservedLaunchPorts,
     ) -> Result<()> {
         let reservation_claim = manifest.require_reserved_claim()?;
-        let manager = self.port_lease_coordinator();
-        release_reserved_network_launch_after_ports(
-            ReservedNetworkLaunchAuthority::new(
-                self.segment_allocator.as_ref(),
-                &self.ipam_authority,
-                &manifest.network_layout,
-                &manifest.spec.tenant_id,
-                &manifest.handle.id,
-                reservation_claim,
-            ),
-            manager.release_unpublished_launch_ports(reservations, reservation_claim),
+        let ports = self.port_lease_coordinator();
+        let port_compensation =
+            ports.release_unpublished_launch_ports(reservations, reservation_claim);
+        self.attachment_lifecycle(&ports).release_reserved(
+            &manifest.network_layout,
+            &manifest.spec.tenant_id,
+            &manifest.handle.id,
+            reservation_claim,
+            port_compensation,
         )
     }
 

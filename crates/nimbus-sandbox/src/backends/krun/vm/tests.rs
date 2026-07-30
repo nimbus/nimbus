@@ -18,8 +18,8 @@ use support::*;
 use std::sync::Arc;
 
 use crate::backends::oci::network::{
-    OciSegmentAllocator, RecordingSegmentAllocator, SegmentAllocatorOperation,
-    allocate_container_ips, default_network_attachment_id,
+    AttachmentAttachAuthority, OciSegmentAllocator, RecordingSegmentAllocator,
+    SegmentAllocatorOperation, allocate_container_ips, default_network_attachment_id,
 };
 use nimbus_egress::{EGRESS_CA_BUNDLE_ENV, EGRESS_NODE_EXTRA_CA_CERTS_ENV, EGRESS_PROXY_URL_ENV};
 use nimbus_network::{LocalPortLeaseAuthority, NetworkSegmentAllocator};
@@ -1042,9 +1042,11 @@ fn execute_manifest_without_attachment_config_fails_before_network_effects() {
         KrunStartMode::Execute,
     );
     manifest.network_config = None;
+    let claim = crate::backends::oci::port_lease::new_launch_reservation_claim()
+        .expect("missing-config test claim should mint");
 
     let error = backend
-        .configure_network(&manifest)
+        .configure_network(&manifest, AttachmentAttachAuthority::FreshLaunch(&claim))
         .expect_err("missing attachment config must fail before Netavark");
     assert!(
         error.to_string().contains("no reserved network attachment"),
