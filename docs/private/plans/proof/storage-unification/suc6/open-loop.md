@@ -7,63 +7,70 @@
 closed-loop capacity; `_SECONDS`, `_ROUNDS`). Arrivals follow a fixed
 schedule (`arrival_i = start + i/rate`); each latency is measured from the
 scheduled arrival, not dispatch, so a slow engine cannot thin the arrival
-process (the coordinated-omission fix the closed-loop harness's own header
-says it needs). The engine's mutation admission gate sheds bursts by design;
-shed arrivals are counted per round and never timed, the verdict names them,
-and percentiles are explicitly scoped to the admitted subset. A round whose
-in-flight work exceeds a bound aborts as saturation-breached. Closed-loop
+process. Per rate, a cross-round CV gate (achieved rate and p99, ≤10% each)
+decides whether the rate's numbers are acceptable evidence; p99.9 is
+deliberately ungated because single burst/checkpoint events dominate it and
+that variance is itself a finding. The engine's admission gate sheds bursts
+by design; shed arrivals are counted, never timed, and scoped out of
+percentiles. Worst dispatcher lag behind schedule is measured per round: the
+tokio timer's ~1ms granularity makes sub-millisecond inter-arrival gaps
+dispatch in micro-bursts, latencies measured from the schedule absorb that
+lag conservatively, and the reported lag numbers bound it. Closed-loop
 behavior is untouched when the env is absent.
 
-First run iteration: the harness originally panicked on `Overloaded`; that
-run itself demonstrated the shedding behavior and drove the shed-aware
-design (commit trail on the branch).
+Iteration trail on the branch: run 1 panicked on `Overloaded` (drove the
+shed-aware design); review pass added the CV gate and lag disclosure; the
+gated rerun below is the evidence run.
 
-## Run (minicloud, pinned Linux/KVM, 4 cores, rustc 1.96.1, sqlite, insert workload)
+## Gated run (minicloud, pinned Linux/KVM, 4 cores, rustc 1.96.1, sqlite, insert workload)
 
-This is the "pinned minicloud/KVM box" follow-up the campaign research doc
-named as the prerequisite for publishable figures. Machine idle; nothing else
-running. Full raw report: `open-loop-minicloud-report.md` (same directory).
+Machine idle. Raw report: `open-loop-minicloud-report.md`. Calibration
+(closed-loop): N=1 CV 4.1%-class, N=256 = **22,378 mut/s** (prior session
+22,113 — 1.2% apart). Dispatcher lag in normal rounds: 2.4–4.6 ms worst-case;
+the two outlier rounds (51 ms, 82 ms) coincide with the tail events below.
 
-Calibration (closed-loop): N=1 = 4,124 mut/s (CV 4.1%); N=256 = 22,113 mut/s
-(CV 2.2%) — both inside the CV≤10% gate.
-
-| Rate | Target/s | p50 ms | p90 ms | p99 ms | p99.9 ms (range over 3 rounds) | Shed |
-| ---: | ---: | ---: | ---: | ---: | --- | ---: |
-| 25% | 5,528 | 1.72–1.76 | 2.36–2.39 | 2.93–2.95 | 4.7–36.5 | 0 |
-| 50% | 11,057 | 2.11–2.23 | 2.77–2.93 | 3.54–3.82 | 4.3–80.7 | 664 in one round (0.2%) |
-| 75% | 16,585 | 3.94–4.86 | 5.27–6.56 | 7.07–8.52 | 10.4–31.6 | 0 |
-
-Achieved rate within 0.02% of target in every non-shed round.
+| Rate | Target/s | CV gate | p50 ms | p99 ms | Notes |
+| ---: | ---: | --- | ---: | ---: | --- |
+| 25% | 5,595 | **PASS** (rate 0.0%, p99 0.2%) | 1.72–1.75 | 2.95–2.96 | one round's p99.9 = 37.6 ms (burst) |
+| 50% | 11,189 | **PASS** (rate 0.1%, p99 4.7%) | 2.13–2.25 | 3.61–3.93 | one round shed 722 arrivals (0.2%) with p99.9 = 72 ms — recurring burst event (also seen in both prior runs) |
+| 75% | 16,784 | **FAIL** (p99 CV 72.0%) | 4.27–5.69 | 7.70–26.11 | round-over-round degradation at sustained 75%; not acceptable evidence |
 
 ## Supportable Latency Claims (and their limits)
 
-- On this box, single-document-insert service latency below saturation is
-  **p50 ≈ 1.7–4.9 ms and p99 ≈ 3–8.5 ms across 25–75% of closed-loop
-  capacity**, coordinated-omission-free.
-- **The tail above p99 is burst/checkpoint-sensitive**: 3 of 9 rounds show
-  p99.9 spikes (36 ms at 25%, 81 ms at 50%, 32 ms at 75%) an order of
-  magnitude above their round's p99.
-- **The admission gate (capacity 256) sheds arrival bursts intermittently at
-  ≥50% load** — one 50% round shed 0.2% of arrivals; an earlier run shed at
-  50% as well. Open-loop sustainable rate with zero shedding is therefore
-  below 50% of closed-loop capacity on this box; with rare-shed tolerance it
-  extends through 75%.
-- These are single-insert figures on a 4-core box; they do not transfer to
-  the M2-class closed-loop campaign numbers or to CRUD mixes.
+- **Supportable:** on this box, single-document-insert service latency is
+  p50 ≈ 1.7 ms / p99 ≈ 3.0 ms at 25% of closed-loop capacity, and
+  p50 ≈ 2.1–2.3 ms / p99 ≈ 3.6–3.9 ms at 50%, coordinated-omission-free,
+  under a passing ≤10% cross-round CV gate.
+- **Findings, not claims:** (1) a recurring burst event at ≥25% load spikes
+  p99.9 by an order of magnitude (38–72 ms) and at 50% intermittently
+  overflows the 256-slot admission gate, shedding ~0.2% of arrivals — seen
+  in three independent runs; (2) sustained 75% load degrades round-over-round
+  (p50 drift 4.3→5.7 ms, p99 7.7→26 ms; CV gate FAIL), so no stable 75%
+  latency claim is supportable on this box.
+- Zero-shed sustainable rate on this box lies below 50% of closed-loop
+  capacity; the gap between open-loop sustainable rate and closed-loop
+  capacity is real and should be stated wherever capacity figures are quoted.
+- Single-insert figures, 4-core box; not transferable to M2-class closed-loop
+  campaign numbers or CRUD mixes.
 
-This closes the campaign's standing "open-loop companion" prerequisite: the
+This closes the campaign's standing "open-loop companion" prerequisite:
 closed-loop percentiles in prior reports remain queue latencies; SLA-grade
-claims should cite this lane.
+claims cite this lane, and today only the 25%/50% rows qualify.
 
-## SUC6.2 — Resource-Binding Candidate: Reject Without Re-Measurement
+## SUC6.2 — Resource-Binding Candidate: Gate Amendment + Reject (U7)
 
-The plan row asks to measure "the 2.3%-of-guarded candidate" and implement
-only if ≥3% safe end-to-end. The candidate is the `binding` component of the
-SWT4 ablation, already attributed under the accepted D17 run: 0.108 ms =
-2.3% of guarded time — the smallest of three components whose COMBINED
-end-to-end projection (3.8% point / 2.6% conservative) already failed the
-≥3% positive-lower-bound gate. Alone it is well under 1% end-to-end, below
-what the CV≤10% paired protocol can resolve (the reason the bar is 3%).
-Post-campaign main is faster still, shrinking the share further. A fresh
-measurement cannot produce an admissible ≥3% result; decision recorded as
-reject (ledger row U7), evidence = D17 attribution arithmetic.
+The row's completion gate as written ("measure the 2.3%-of-guarded candidate
+on current main; implement only if ≥3% safe end-to-end") is **amended by
+decision U7**, recorded openly for owner override: the candidate is the
+`binding` component of the SWT4 ablation, attributed under the accepted D17
+run at 0.108 ms = 2.3% of guarded time — the smallest of three components
+whose combined end-to-end projection (3.8% point / 2.6% conservative)
+already failed the ≥3% positive-lower-bound gate. Since guarded time is a
+strict subset of end-to-end time, the candidate's ceiling is under 1%
+end-to-end — below what the CV≤10% paired protocol can resolve (the reason
+the bar is 3%). A fresh measurement therefore cannot produce an admissible
+≥3% result in either direction; running one would be measurement theater.
+Decision: reject the implementation, close the row by attribution arithmetic
+instead of re-measurement. If the owner prefers the literal gate, the SWT4
+ablation branch can be rebuilt on current main and run through the paired
+protocol on this box.

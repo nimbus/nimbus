@@ -8,8 +8,8 @@ Latency percentiles are closed-loop (queue) latency — not SLA service time at 
 
 | N | throughput mut/s (mean) | 95% CI | median | CV% | speedup | p50 µs | p95 µs | p99 µs | N≈X·R |
 |---|---|---|---|---|---|---|---|---|---|
-| 1 | 4124 | [3913, 4335] | 4143 | 4.1 | 1.00× | 232.2 | 305.6 | 376.3 | 1.0 |
-| 256 | 22113 | [21505, 22721] | 22064 | 2.2 | 5.36× | 11254.4 | 15261.1 | 17547.4 | 253.0 |
+| 1 | 4164 | [4134, 4194] | 4160 | 0.6 | 1.00× | 230.4 | 293.2 | 483.6 | 1.0 |
+| 256 | 22378 | [22106, 22650] | 22481 | 1.0 | 5.37× | 11113.0 | 15234.1 | 17584.0 | 252.6 |
 
 ## Raw measured-round samples
 
@@ -17,23 +17,36 @@ These durable-mutation throughput samples are the exact round inputs to the summ
 
 | N | measured mut/s samples |
 |---:|---|
-| 1 | 4142.724, 4170.832, 3918.283, 4021.310, 4369.164 |
-| 256 | 22063.962, 22716.568, 21386.936, 22038.229, 22359.375 |
+| 1 | 4172.697, 4159.826, 4135.738, 4200.042, 4152.914 |
+| 256 | 22136.954, 22550.139, 22145.368, 22480.572, 22577.116 |
 
-**Peak:** 22113 mut/s at N=256 — 5.36× the sequential (N=1) baseline of 4124 mut/s.
+**Peak:** 22378 mut/s at N=256 — 5.37× the sequential (N=1) baseline of 4164 mut/s.
 
 ## Open-loop service latency (SUC6.1)
 
-Calibrated closed-loop capacity at the top rung: **22113 mut/s**. Each round drives single-document inserts on a fixed arrival schedule for 30s; latency is measured from the scheduled arrival (coordinated-omission-free). A saturation-breached round means the offered rate was not sustainable and its numbers are not service-latency evidence; a round with shed arrivals means the admission gate rejected bursts at this rate, so its percentiles describe only the admitted subset.
+Calibrated closed-loop capacity at the top rung: **22378 mut/s**. Each round drives single-document inserts on a fixed arrival schedule for 30s; latency is measured from the scheduled arrival (coordinated-omission-free). A saturation-breached round means the offered rate was not sustainable and its numbers are not service-latency evidence; a round with shed arrivals means the admission gate rejected bursts at this rate, so its percentiles describe only the admitted subset.
 
-| Fraction | Target mut/s | Round | Sched | Done | Shed | Achieved | p50 ms | p90 ms | p99 ms | p99.9 ms | max ms | Verdict |
-| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| 0.25 | 5528 | 1 | 165847 | 165847 | 0 | 5528 | 1.72 | 2.36 | 2.93 | 36.46 | 58.90 | ok |
-| 0.25 | 5528 | 2 | 165847 | 165847 | 0 | 5528 | 1.75 | 2.39 | 2.95 | 4.66 | 9.73 | ok |
-| 0.25 | 5528 | 3 | 165847 | 165847 | 0 | 5528 | 1.76 | 2.39 | 2.95 | 6.27 | 11.65 | ok |
-| 0.5 | 11057 | 1 | 331695 | 331695 | 0 | 11056 | 2.11 | 2.77 | 3.54 | 13.83 | 21.08 | ok |
-| 0.5 | 11057 | 2 | 331695 | 331695 | 0 | 11056 | 2.18 | 2.85 | 3.60 | 4.27 | 10.04 | ok |
-| 0.5 | 11057 | 3 | 331695 | 331695 | 664 | 11034 | 2.23 | 2.93 | 3.82 | 80.73 | 104.67 | SHED — rate not absorbed |
-| 0.75 | 16585 | 1 | 497542 | 497542 | 0 | 16583 | 3.94 | 5.27 | 7.07 | 31.60 | 40.99 | ok |
-| 0.75 | 16585 | 2 | 497542 | 497542 | 0 | 16583 | 4.47 | 6.06 | 7.98 | 13.31 | 19.68 | ok |
-| 0.75 | 16585 | 3 | 497542 | 497542 | 0 | 16583 | 4.86 | 6.56 | 8.52 | 10.38 | 14.00 | ok |
+
+**Fraction 0.25: cross-round CV gate PASS** (achieved-rate CV 0.0%, p99 CV 0.2%, gate ≤10% each; p99.9 ungated by design).
+
+| Fraction | Target mut/s | Round | Sched | Done | Shed | Achieved | p50 ms | p90 ms | p99 ms | p99.9 ms | max ms | max disp lag ms | Verdict |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 0.25 | 5595 | 1 | 167835 | 167835 | 0 | 5594 | 1.72 | 2.37 | 2.95 | 37.61 | 60.52 | 50.98 | ok |
+| 0.25 | 5595 | 2 | 167835 | 167835 | 0 | 5594 | 1.74 | 2.38 | 2.96 | 4.67 | 9.16 | 3.23 | ok |
+| 0.25 | 5595 | 3 | 167835 | 167835 | 0 | 5594 | 1.75 | 2.39 | 2.95 | 5.64 | 11.21 | 3.02 | ok |
+
+**Fraction 0.5: cross-round CV gate PASS** (achieved-rate CV 0.1%, p99 CV 4.7%, gate ≤10% each; p99.9 ungated by design).
+
+| Fraction | Target mut/s | Round | Sched | Done | Shed | Achieved | p50 ms | p90 ms | p99 ms | p99.9 ms | max ms | max disp lag ms | Verdict |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 0.5 | 11189 | 1 | 335670 | 335670 | 0 | 11188 | 2.13 | 2.81 | 3.61 | 19.32 | 31.11 | 4.45 | ok |
+| 0.5 | 11189 | 2 | 335670 | 335670 | 0 | 11188 | 2.22 | 2.91 | 3.65 | 4.31 | 6.34 | 2.40 | ok |
+| 0.5 | 11189 | 3 | 335670 | 335670 | 722 | 11164 | 2.25 | 2.98 | 3.93 | 72.38 | 104.77 | 82.03 | SHED — rate not absorbed |
+
+**Fraction 0.75: cross-round CV gate FAIL** (achieved-rate CV 0.0%, p99 CV 72.0%, gate ≤10% each; p99.9 ungated by design).
+
+| Fraction | Target mut/s | Round | Sched | Done | Shed | Achieved | p50 ms | p90 ms | p99 ms | p99.9 ms | max ms | max disp lag ms | Verdict |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 0.75 | 16784 | 1 | 503505 | 503505 | 0 | 16782 | 4.27 | 5.82 | 7.70 | 25.55 | 33.34 | 4.26 | ok |
+| 0.75 | 16784 | 2 | 503505 | 503505 | 0 | 16782 | 5.06 | 6.89 | 9.00 | 11.01 | 17.42 | 4.55 | ok |
+| 0.75 | 16784 | 3 | 503505 | 503505 | 0 | 16782 | 5.69 | 7.92 | 26.11 | 55.22 | 64.97 | 6.59 | ok |
