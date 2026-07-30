@@ -1059,6 +1059,12 @@ async fn run() -> String {
         let capacity = top.mean_tps;
         let duration = Duration::from_secs(env_usize("NIMBUS_CWB_OPEN_LOOP_SECONDS", 30) as u64);
         let rounds = env_usize("NIMBUS_CWB_OPEN_LOOP_ROUNDS", 3);
+        // env_usize floors both knobs at 1, but one round cannot carry a
+        // cross-round stability gate — refuse to render PASS on vacuous CVs.
+        assert!(
+            rounds >= 2,
+            "NIMBUS_CWB_OPEN_LOOP_ROUNDS must be >= 2: the cross-round CV gate is meaningless on a single round"
+        );
         let mut rounds_per_rate = Vec::with_capacity(fractions.len());
         for fraction in &fractions {
             let rate = capacity * fraction;

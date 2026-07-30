@@ -25,7 +25,7 @@ gated rerun below is the evidence run.
 ## Gated run (minicloud, pinned Linux/KVM, 4 cores, rustc 1.96.1, sqlite, insert workload)
 
 Machine idle. Raw report: `open-loop-minicloud-report.md`. Calibration
-(closed-loop): N=1 CV 4.1%-class, N=256 = **22,378 mut/s** (prior session
+(closed-loop): N=1 CV 0.6%, N=256 = **22,378 mut/s** CV 2.0% (prior session
 22,113 — 1.2% apart). Dispatcher lag in normal rounds: 2.4–4.6 ms worst-case;
 the two outlier rounds (51 ms, 82 ms) coincide with the tail events below.
 
