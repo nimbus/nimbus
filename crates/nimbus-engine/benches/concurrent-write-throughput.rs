@@ -748,6 +748,11 @@ struct OpenLoopRound {
     completed: usize,
     shed: usize,
     saturation_breached: bool,
+    /// Worst dispatcher lag behind the arrival schedule. The tokio timer has
+    /// ~1ms granularity, so sub-millisecond inter-arrival gaps dispatch in
+    /// micro-bursts; latencies are measured from the SCHEDULE, so this lag
+    /// inflates them (conservative) rather than thinning arrivals.
+    max_dispatch_lag_ns: u64,
     latencies_ns: Vec<u64>,
 }
 
@@ -780,9 +785,14 @@ async fn run_open_loop_round(
         }
         *completed += 1;
     };
+    let mut max_dispatch_lag_ns = 0u64;
     for i in 0..total {
         let scheduled = start + Duration::from_secs_f64(i as f64 / rate);
         tokio::time::sleep_until(tokio::time::Instant::from_std(scheduled)).await;
+        let lag = Instant::now()
+            .saturating_duration_since(scheduled)
+            .as_nanos() as u64;
+        max_dispatch_lag_ns = max_dispatch_lag_ns.max(lag);
         // Drain finished work without blocking the arrival schedule.
         while let Some(joined) = set.try_join_next() {
             absorb(
@@ -834,6 +844,7 @@ async fn run_open_loop_round(
         completed,
         shed,
         saturation_breached,
+        max_dispatch_lag_ns,
         latencies_ns: latencies,
     }
 }
@@ -852,15 +863,50 @@ fn render_open_loop_section(
         "Calibrated closed-loop capacity at the top rung: **{capacity:.0} mut/s**. Each round drives single-document inserts on a fixed arrival schedule for {}s; latency is measured from the scheduled arrival (coordinated-omission-free). A saturation-breached round means the offered rate was not sustainable and its numbers are not service-latency evidence; a round with shed arrivals means the admission gate rejected bursts at this rate, so its percentiles describe only the admitted subset.\n",
         duration.as_secs()
     );
-    let _ = writeln!(
-        out,
-        "| Fraction | Target mut/s | Round | Sched | Done | Shed | Achieved | p50 ms | p90 ms | p99 ms | p99.9 ms | max ms | Verdict |"
-    );
-    let _ = writeln!(
-        out,
-        "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"
-    );
     for (fraction, rounds) in rates.iter().zip(rounds_per_rate) {
+        // Cross-round stability gate: CV of achieved rate and of p99 across
+        // the rate's measured rounds. p99.9 is deliberately ungated — single
+        // checkpoint/burst events dominate it and that variance is itself the
+        // finding — but a rate whose p99 or throughput is unstable is not
+        // acceptable evidence.
+        let cv = |values: &[f64]| -> f64 {
+            if values.len() < 2 {
+                return 0.0;
+            }
+            let m = values.iter().sum::<f64>() / values.len() as f64;
+            if m == 0.0 {
+                return 0.0;
+            }
+            let var =
+                values.iter().map(|v| (v - m).powi(2)).sum::<f64>() / (values.len() - 1) as f64;
+            var.sqrt() / m * 100.0
+        };
+        let rate_cv = cv(&rounds.iter().map(|r| r.achieved_rate).collect::<Vec<_>>());
+        let p99_cv = cv(&rounds
+            .iter()
+            .map(|r| {
+                let mut sorted = r.latencies_ns.clone();
+                sorted.sort_unstable();
+                percentile_ns(&sorted, 99.0)
+            })
+            .collect::<Vec<_>>());
+        let gate = if rate_cv <= 10.0 && p99_cv <= 10.0 {
+            "PASS"
+        } else {
+            "FAIL"
+        };
+        let _ = writeln!(
+            out,
+            "\n**Fraction {fraction}: cross-round CV gate {gate}** (achieved-rate CV {rate_cv:.1}%, p99 CV {p99_cv:.1}%, gate ≤10% each; p99.9 ungated by design).\n"
+        );
+        let _ = writeln!(
+            out,
+            "| Fraction | Target mut/s | Round | Sched | Done | Shed | Achieved | p50 ms | p90 ms | p99 ms | p99.9 ms | max ms | max disp lag ms | Verdict |"
+        );
+        let _ = writeln!(
+            out,
+            "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"
+        );
         for (round_index, round) in rounds.iter().enumerate() {
             let mut sorted = round.latencies_ns.clone();
             sorted.sort_unstable();
@@ -876,7 +922,7 @@ fn render_open_loop_section(
             };
             let _ = writeln!(
                 out,
-                "| {fraction} | {:.0} | {} | {} | {} | {} | {:.0} | {:.2} | {:.2} | {:.2} | {:.2} | {:.2} | {verdict} |",
+                "| {fraction} | {:.0} | {} | {} | {} | {} | {:.0} | {:.2} | {:.2} | {:.2} | {:.2} | {:.2} | {:.2} | {verdict} |",
                 round.target_rate,
                 round_index + 1,
                 round.scheduled,
@@ -888,6 +934,7 @@ fn render_open_loop_section(
                 ms(percentile_ns(&sorted, 99.0)),
                 ms(percentile_ns(&sorted, 99.9)),
                 ms(*sorted.last().unwrap_or(&0) as f64),
+                round.max_dispatch_lag_ns as f64 / 1_000_000.0,
             );
         }
     }
