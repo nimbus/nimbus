@@ -6,6 +6,7 @@ Branch `codex/fu6-seams`, based on `origin/main` @ `22c5cdd62`.
 | --- | --- |
 | `81d0adada` | FU6a — invert the nimbus-fs object manifest seam |
 | `4fc8b9ade` | FU6b — give the libsql replica cache its own sqlite module |
+| `8575bb359` | review follow-up — move the store-coverage claim to a build-time pin |
 
 ---
 
@@ -107,9 +108,10 @@ Mechanical consequences:
   so a non-test build cannot reach them and so they do not trip `-D warnings`
   as dead code; `CommitEntry` and `TenantPointWrite` imports moved behind the
   same gate for that reason.
-- `src/tests/object_meta.rs` seeds through those free functions. Its nine tests
-  are otherwise unchanged and still assert commit sequences, written table
-  names, prefix ordering, bucket isolation, and sqlite reopen persistence.
+- `src/tests/object_meta.rs` seeds through those free functions. Its eight
+  behavioral tests are otherwise unchanged and still assert commit sequences,
+  written table names, prefix ordering, bucket isolation, and sqlite reopen
+  persistence.
 - `docs/private/architecture/runtime/adapter-boundary.md` and the
   `SqliteTenantStore::writer_slot` comment lose their stale references to
   store-level object-manifest writes.
@@ -186,43 +188,92 @@ The sqlite suite is unchanged and green: `-E 'test(sqlite_foundation)'` →
 
 ---
 
+## Review Follow-Up — The Store-Coverage Claim Is a Build-Time Pin
+
+Review raised one accepted P2 against FU6a: the surviving
+`object_meta_read_trait_covers_all_tenant_stores` was a `#[test]` whose body
+only instantiated an empty generic function. That is a compilation check
+wearing a test's clothes, and it violates the repo's "tests verify behavior"
+contract — it can never fail at runtime, and a green tick from it says nothing
+about what any store returns.
+
+The claim itself is worth keeping, so it moved rather than disappeared. It now
+lives as a `const _: () = { ... }` item at the foot of
+`crates/nimbus-storage/src/traits/provider_impls.rs`, directly beneath the
+`impl_object_meta_read!` invocations it guards:
+
+- **It is checked in every build shape**, not only under `cfg(test)` — the
+  release build now carries the same guarantee the test used to claim.
+- **It sits with the impls**, so a dropped macro line and its pin are one
+  screen apart instead of one crate apart.
+- **The remote stores stay feature-gated**, so the claim still tracks the
+  build rather than silently narrowing to the embedded stores.
+
+Fail-before evidence: dropping `SqliteTenantStore` from
+`impl_object_meta_read!(TenantStore, SqliteTenantStore, MemoryTenantStore)`
+turns a clean `cargo check -p nimbus-storage` into
+
+```
+error[E0277]: the trait bound `sqlite::SqliteTenantStore: ObjectMetaRead` is not satisfied
+   --> crates/nimbus-storage/src/traits/provider_impls.rs:767:28
+    |
+767 |     pin_object_meta_read::<SqliteTenantStore>();
+```
+
+with `note: required by a bound in pin_object_meta_read`. The file was restored
+from a saved copy, not `git checkout`, and re-checked clean.
+
+The behavioral verification of the read plane is the other eight
+`tests::object_meta::*` tests, which seed manifests and multipart uploads
+through the `*_direct` helpers and assert concrete commit sequences, written
+table names, prefix ordering and limits, bucket isolation, delete results, and
+sqlite reopen persistence. A comment at the top of the test module points at the
+pin, and the pin's comment points back at the tests.
+
+---
+
 ## Verification
 
-All commands run in `/Users/jack/src/github.com/nimbus/nimbus-fu6-seams` at
-`4fc8b9ade` unless noted.
+All commands run in `/Users/jack/src/github.com/nimbus/nimbus-fu6-seams`.
+Rows marked ✱ were re-run at the review-follow-up commit; the rest are from
+`4fc8b9ade` and are untouched by it.
 
 | Command | Result |
 | --- | --- |
-| `cargo check -p nimbus-storage --all-targets` | clean |
-| `cargo check -p nimbus-storage --all-targets --features libsql,mysql,postgres` | clean |
+| `cargo check -p nimbus-storage --all-targets` ✱ | clean |
+| `cargo check -p nimbus-storage --all-targets --features libsql,mysql,postgres` ✱ | clean |
 | `cargo check -p nimbus-storage --features libsql,test-hooks` | clean |
 | `cargo check -p nimbus-fs -p nimbus-engine --all-targets` | clean |
 | `cargo nextest run -p nimbus-fs` | **62 run, 62 passed** |
-| `cargo nextest run -p nimbus-storage` (provider-free) | 297 run, 296 passed, 2 skipped, **1 failed — pre-existing, see below** |
-| `NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 cargo nextest run -p nimbus-storage --features libsql,mysql,postgres` | 439 run, 438 passed, 2 skipped, **1 failed — same pre-existing test** |
-| `... -E 'test(commit_path_ownership)'` (U4 gates, featured) | **2 run, 2 passed** |
+| `cargo nextest run -p nimbus-storage` (provider-free) ✱ | **296 run, 296 passed, 2 skipped** |
+| `NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 cargo nextest run -p nimbus-storage --features libsql,mysql,postgres` ✱ | **438 run, 438 passed, 2 skipped** |
+| `... -E 'test(object_meta)'`, both shapes ✱ | **8 run, 8 passed** each |
+| `... -E 'test(u4_)'` (U4 gates) ✱ | **2 run, 2 passed** |
 | `... -E 'test(sqlite_foundation)'` | **68 run, 68 passed** |
-| `cargo clippy -p nimbus-storage -p nimbus-fs --all-targets -- -D warnings` | clean |
-| `cargo clippy -p nimbus-storage --all-targets --features libsql,mysql,postgres -- -D warnings` | clean |
-| `cargo fmt --all --check` | clean |
+| `cargo clippy -p nimbus-storage -p nimbus-fs --all-targets -- -D warnings` ✱ | clean |
+| `cargo clippy -p nimbus-storage --all-targets --features libsql,mysql,postgres -- -D warnings` ✱ | clean |
+| `cargo fmt --all --check` ✱ | clean |
 
-The nine `tests::object_meta::*` tests pass in both build shapes, including
-`object_meta_read_trait_covers_all_tenant_stores`, which asserts every tenant
-store compiled into the current build still implements `ObjectMetaRead`.
+Both suite counts drop by one against the earlier run because the compile-only
+test is gone, not because anything was skipped: 297 → 296 provider-free and
+439 → 438 featured. The load-sensitive PITR budget test described below passed
+in both of these runs.
 
-### The one failing test is pre-existing
+### A load-sensitive budget test failed on the earlier runs
 
 `tests::crud_and_journal::redb_storage_engine_quality_performance_budget_covers_latest_historical_cdc_pitr_and_gc`
-fails on the **SEQ13 PITR export/import wall-clock budget** (measured
-`3.116790292s > 1s`) under full-suite parallelism. In isolation it passes with
-`403ms`, well inside the budget.
+failed on the `4fc8b9ade` runs of both suites, on the **SEQ13 PITR
+export/import wall-clock budget** (measured `3.116790292s > 1s`) under
+full-suite parallelism. In isolation it passed with `403ms`, well inside the
+budget.
 
-Confirmed pre-existing by stashing the entire FU6 change set and rerunning the
-provider-free suite on an unmodified `22c5cdd62` worktree: same test, same
-assertion, same failure (296 passed / 1 failed / 2 skipped). It is a
-load-sensitive timing budget, and this checkout was sharing the machine with
+Confirmed pre-existing at the time by stashing the entire FU6 change set and
+rerunning the provider-free suite on an unmodified `22c5cdd62` worktree: same
+test, same assertion, same failure (296 passed / 1 failed / 2 skipped). It is a
+load-sensitive timing budget, and that checkout was sharing the machine with
 four sibling FU worktrees building concurrently. Nothing in FU6 touches the
-redb PITR path.
+redb PITR path. It passed in both review-follow-up runs, once the machine was
+quiet — which is the same diagnosis from the other direction.
 
 ### Featured-run note
 

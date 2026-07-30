@@ -1,10 +1,4 @@
 use super::*;
-#[cfg(feature = "libsql")]
-use crate::LibsqlReplicaTenantStore;
-#[cfg(feature = "mysql")]
-use crate::MySqlTenantStore;
-#[cfg(feature = "postgres")]
-use crate::PostgresTenantStore;
 use crate::traits::{
     delete_multipart_upload_direct, delete_object_manifest_direct, put_multipart_upload_direct,
     put_object_manifest_direct,
@@ -32,24 +26,9 @@ fn manifest(key: &str, blob_hash: &str) -> ObjectManifest {
     ObjectManifest::whole(BUCKET, key, 12, blob_hash, attributes).expect("manifest should be valid")
 }
 
-fn assert_object_meta_read_impl<T: ObjectMetaRead>() {}
-
-/// Every tenant store compiled into this build implements `ObjectMetaRead`.
-/// The embedded stores are always checked; each remote store is checked when
-/// its provider feature is on, so the coverage claim tracks the build rather
-/// than silently narrowing to the embedded pair.
-#[test]
-fn object_meta_read_trait_covers_all_tenant_stores() {
-    assert_object_meta_read_impl::<TenantStore>();
-    assert_object_meta_read_impl::<SqliteTenantStore>();
-    #[cfg(feature = "postgres")]
-    assert_object_meta_read_impl::<PostgresTenantStore>();
-    #[cfg(feature = "mysql")]
-    assert_object_meta_read_impl::<MySqlTenantStore>();
-    #[cfg(feature = "libsql")]
-    assert_object_meta_read_impl::<LibsqlReplicaTenantStore>();
-}
-
+// Which stores implement `ObjectMetaRead` is pinned at build time next to the
+// impls in `traits::provider_impls`; the tests below cover what those reads
+// return.
 #[test]
 fn object_meta_store_round_trips_manifest_through_redb() {
     let store = TenantStore::create_in_memory().expect("store should open");

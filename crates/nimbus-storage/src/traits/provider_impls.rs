@@ -752,6 +752,28 @@ impl_object_meta_read!(MySqlTenantStore);
 #[cfg(feature = "libsql")]
 impl_object_meta_read!(LibsqlReplicaTenantStore);
 
+// Build-time conformance pin. Naming each tenant store as a type argument type-
+// checks its `ObjectMetaRead` bound in every build shape, so dropping a store
+// from the macro invocations above while the store itself survives fails the
+// build instead of silently narrowing the read plane. The remote stores are
+// pinned only when their provider feature is on, so the claim tracks the build.
+// What the trait actually returns is covered behaviorally in
+// `crate::tests::object_meta`, which seeds manifests and multipart uploads and
+// asserts concrete get/list/delete results against redb and SQLite.
+const _: () = {
+    const fn pin_object_meta_read<T: ObjectMetaRead>() {}
+
+    pin_object_meta_read::<TenantStore>();
+    pin_object_meta_read::<SqliteTenantStore>();
+    pin_object_meta_read::<MemoryTenantStore>();
+    #[cfg(feature = "postgres")]
+    pin_object_meta_read::<PostgresTenantStore>();
+    #[cfg(feature = "mysql")]
+    pin_object_meta_read::<MySqlTenantStore>();
+    #[cfg(feature = "libsql")]
+    pin_object_meta_read::<LibsqlReplicaTenantStore>();
+};
+
 impl ControlPlaneUsage for RedbUsageStorage {}
 
 impl KeyProviderSurface for nimbus_crypto::MasterKeyFileProvider {}
