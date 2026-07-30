@@ -234,7 +234,8 @@ fn terminal_finality_rejects_every_reserved_attachment_phase_until_absent() {
     assert_eq!(
         allocator
             .inspect_attachment_reservation(&tenant_id, &attachment_id, &config.reservation_claim,)
-            .expect("attachment should inspect"),
+            .expect("attachment should inspect")
+            .state(),
         NetworkAttachmentReservationState::Absent
     );
     finality(

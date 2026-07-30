@@ -43,7 +43,7 @@ const STORE_DIRECTORY: &str = "control-plane";
 const STORE_FILE: &str = "state.json";
 const LOCK_FILE: &str = "authority.lock";
 const FORMAT_MAGIC: &str = "nimbus-network-state";
-const FORMAT_VERSION: u32 = 1;
+const FORMAT_VERSION: u32 = 2;
 const TEMP_PREFIX: &str = ".nimbus-network-state-";
 const PROBE_PREFIX: &str = ".nimbus-network-probe-";
 #[cfg(unix)]
@@ -1699,8 +1699,8 @@ mod tests {
         assert!(matches!(
             error,
             NetworkStateStoreError::IncompatibleVersion {
-                found: 2,
-                supported: 1,
+                found: 3,
+                supported: 2,
                 ..
             }
         ));

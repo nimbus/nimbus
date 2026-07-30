@@ -525,7 +525,7 @@
       "kind": "primitive-state-store-open",
       "symbol": "open",
       "ordinal": 1,
-      "line": 121,
+      "line": 138,
       "classification": "admitted-cross-process-reconstruction",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"

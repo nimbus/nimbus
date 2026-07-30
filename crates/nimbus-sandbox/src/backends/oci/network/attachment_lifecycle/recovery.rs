@@ -22,9 +22,16 @@ use crate::error::{Result, SandboxError};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum AttachmentProviderObservation {
     Absent,
-    Present { assigned_ips: Vec<Ipv4Addr> },
+    /// The exact IPAM setup attempt is durable, but no namespace or status
+    /// effect has begun. A fresh owner may resume only this same attempt.
+    PreparedSetup,
+    Present {
+        assigned_ips: Vec<Ipv4Addr>,
+    },
     ExactCleanupRequired,
-    Unknown { reason: String },
+    Unknown {
+        reason: String,
+    },
 }
 
 pub(super) enum AttachmentAttachRecovery {
@@ -113,6 +120,18 @@ pub(super) fn inspect_provider(
             };
         }
     };
+    let status_present = match std::fs::symlink_metadata(&context.layout.status_path) {
+        Ok(_) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => {
+            return AttachmentProviderObservation::Unknown {
+                reason: format!(
+                    "cannot inspect provider status {}: {error}",
+                    context.layout.status_path.display()
+                ),
+            };
+        }
+    };
     let ipam_state = match inspect_container_ipam_authority(
         ipam,
         context.layout,
@@ -172,7 +191,15 @@ pub(super) fn inspect_provider(
                         },
                     }
                 }
-                NetavarkProviderOperation::Provisioning { .. }
+                NetavarkProviderOperation::SetupPrepared { .. }
+                    if !namespace_present && !status_present =>
+                {
+                    AttachmentProviderObservation::PreparedSetup
+                }
+                NetavarkProviderOperation::SetupPrepared { .. }
+                | NetavarkProviderOperation::Provisioning { .. }
+                | NetavarkProviderOperation::TeardownPrepared { .. }
+                | NetavarkProviderOperation::NoEffectTeardownPrepared { .. }
                 | NetavarkProviderOperation::Deleting { .. }
                 | NetavarkProviderOperation::DetachedProjectionPending { .. } => {
                     AttachmentProviderObservation::ExactCleanupRequired
@@ -220,6 +247,13 @@ pub(super) fn prepare_attach(
             _ => Err(recovery_error(
                 phase,
                 "confirmed provider absence does not authorize attach retry from this phase",
+            )),
+        },
+        AttachmentProviderObservation::PreparedSetup => match phase {
+            NetworkResourcePhase::Provisioning => Ok(AttachmentAttachRecovery::Create { record }),
+            _ => Err(recovery_error(
+                phase,
+                "a prepared setup attempt can resume only its provisioning attachment",
             )),
         },
         AttachmentProviderObservation::Present { assigned_ips } => match phase {
@@ -365,6 +399,7 @@ pub(super) fn prepare_detach(
                 already_terminal: true,
             }),
             AttachmentProviderObservation::Present { .. }
+            | AttachmentProviderObservation::PreparedSetup
             | AttachmentProviderObservation::ExactCleanupRequired
             | AttachmentProviderObservation::Unknown { .. } => Err(recovery_error(
                 phase,
@@ -375,6 +410,7 @@ pub(super) fn prepare_detach(
     let provider_absent = match observation {
         AttachmentProviderObservation::Absent => true,
         AttachmentProviderObservation::Present { .. }
+        | AttachmentProviderObservation::PreparedSetup
         | AttachmentProviderObservation::ExactCleanupRequired => {
             if phase == NetworkResourcePhase::Reserved {
                 record = durable.transition(

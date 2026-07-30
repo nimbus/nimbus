@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use nimbus_core::TenantId;
 use nimbus_network::{
-    LocalNetworkAttachmentAuthority, NetworkAttachmentReservationState, NetworkReservationClaim,
+    LocalNetworkAttachmentAuthority, NetworkAttachmentSegmentAssociation, NetworkReservationClaim,
     PortLeaseRequest,
 };
 
@@ -21,8 +21,8 @@ use super::{
     authenticate_container_network_generation_for_cleanup,
     compensate_reserved_network_launch_after_ports,
     deallocate_container_ips_after_confirmed_detach, default_network_attachment_id,
-    place_sandbox_on_block, purge_legacy_nimbus0_once, quarantine_network_segment_hold,
-    release_network_segment_hold, release_reserved_network_launch_after_ports,
+    place_sandbox_on_block, quarantine_network_segment_hold, release_network_segment_hold,
+    release_reserved_network_launch_after_ports,
 };
 use crate::backends::oci::port_lease::{OciPortBindLifetimeBatch, OciPortProvider};
 use crate::backends::oci::port_lifecycle::{
@@ -70,10 +70,14 @@ impl AttachmentBackendKind {
     }
 }
 
+mod authority;
 mod host;
+mod machine_forwarded;
 mod recovery;
 mod state;
 
+#[cfg(test)]
+mod test_api;
 #[cfg(test)]
 mod tests;
 
@@ -242,52 +246,19 @@ impl<'a> OciAttachmentAdapter<'a> {
         lifecycle.detach_host_managed(&self.context, mode, before_provider_detach)
     }
 
-    #[cfg(test)]
-    fn attach_with(
-        &self,
-        lifecycle: &OciAttachmentLifecycle<'_>,
-        authority: AttachmentAttachAuthority<'_>,
-        host: &impl AttachmentHostEffects,
-        observer: &mut impl AttachmentPhaseObserver,
-        after_provider_setup: impl FnOnce(&[Ipv4Addr]) -> Result<()>,
-    ) -> Result<Vec<Ipv4Addr>> {
-        lifecycle.attach_with(
-            &self.context,
-            authority,
-            host,
-            observer,
-            after_provider_setup,
-        )
-    }
-
-    #[cfg(test)]
-    fn detach_host_managed_with(
+    pub(crate) fn detach_machine_forwarded<T>(
         &self,
         lifecycle: &OciAttachmentLifecycle<'_>,
         mode: AttachmentTeardownMode,
-        host: &impl AttachmentHostEffects,
-        before_provider_detach: impl FnOnce(AttachmentAuxiliaryDisposition) -> Result<()>,
+        before_provider_detach: impl FnOnce() -> Result<T>,
+        after_provider_detach: impl FnOnce(T) -> Result<()>,
     ) -> AttachmentDetachResult {
-        lifecycle.detach_host_managed_with(&self.context, mode, host, before_provider_detach)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn complete_injected_setup(
-        &self,
-        lifecycle: &OciAttachmentLifecycle<'_>,
-        setup: Result<Vec<Ipv4Addr>>,
-    ) -> Result<Vec<Ipv4Addr>> {
-        lifecycle.complete_injected_setup(&self.context, setup)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn compensate_injected_host_setup_failure(
-        &self,
-        lifecycle: &OciAttachmentLifecycle<'_>,
-        batch: OciPortBindLifetimeBatch,
-        primary: SandboxError,
-    ) -> SandboxError {
-        lifecycle.compensate_injected_host_setup_failure(&self.context, batch, primary)
+        lifecycle.detach_machine_forwarded(
+            &self.context,
+            mode,
+            before_provider_detach,
+            after_provider_detach,
+        )
     }
 }
 
@@ -438,7 +409,7 @@ pub(crate) enum AttachmentAttachPhase {
     GenerationAuthenticated,
     LeasesAuthenticated,
     AuthorityAuthenticated,
-    LegacyBridgePurged,
+    ProviderAttemptAuthenticated,
     NamespaceCreated,
     ListenerClaimsHeld,
     ProviderSetupComplete,
@@ -629,9 +600,10 @@ impl<'a> OciAttachmentLifecycle<'a> {
             context.leases,
         )?;
         observer.checkpoint(AttachmentAttachPhase::LeasesAuthenticated)?;
-        self.authenticate_attach_authority(context, authority)?;
+        let association = self.authenticate_attach_authority(context, authority)?;
         observer.checkpoint(AttachmentAttachPhase::AuthorityAuthenticated)?;
-        let durable = state::OciAttachmentDurableState::compile(self.attachments, context)?;
+        let durable =
+            state::OciAttachmentDurableState::compile(self.attachments, context, association)?;
         let durable_record = durable.reserve()?;
         let recovery = recovery::prepare_attach(
             &durable,
@@ -648,8 +620,12 @@ impl<'a> OciAttachmentLifecycle<'a> {
                 return Ok(assigned_ips);
             }
         };
-        purge_legacy_nimbus0_once(&context.workload_state_root.join("networks"))?;
-        observer.checkpoint(AttachmentAttachPhase::LegacyBridgePurged)?;
+        let mut prepared_setup = if create_provider {
+            Some(host.prepare_provider_setup(self.ipam, context)?)
+        } else {
+            None
+        };
+        observer.checkpoint(AttachmentAttachPhase::ProviderAttemptAuthenticated)?;
 
         if create_provider {
             host.create_namespace(context)?;
@@ -685,7 +661,10 @@ impl<'a> OciAttachmentLifecycle<'a> {
         let assigned_ips = match recovered_ips {
             Some(assigned_ips) => assigned_ips,
             None => {
-                let assigned_ips = match host.setup_provider(self.ipam, context) {
+                let prepared = prepared_setup
+                    .take()
+                    .expect("provider creation requires its durable prepared attempt");
+                let assigned_ips = match host.setup_provider(self.ipam, context, prepared) {
                     Ok(assigned_ips) => assigned_ips,
                     Err(primary) => {
                         let _ = recovery::mark_cleanup_pending(&durable, &durable_record);
@@ -839,33 +818,10 @@ impl<'a> OciAttachmentLifecycle<'a> {
     fn authenticate_attach_authority(
         &self,
         context: &OciAttachmentContext<'_>,
-        authority: AttachmentAttachAuthority<'_>,
-    ) -> Result<()> {
-        let attachment_state = self
-            .allocator
-            .inspect_attachment_reservation(
-                context.tenant_id,
-                &default_network_attachment_id(context.sandbox_id),
-                &context.config.reservation_claim,
-            )
-            .map_err(|error| SandboxError::OperationFailed {
-                message: format!(
-                    "{} attachment {} could not authenticate its exact reservation claim before \
-                     effects: {error}",
-                    context.provider_label, context.sandbox_id
-                ),
-            })?;
-        if attachment_state != NetworkAttachmentReservationState::Adopted {
-            return Err(SandboxError::OperationFailed {
-                message: format!(
-                    "{} attachment {} requires an adopted exact reservation before effects, got \
-                     {attachment_state:?}",
-                    context.provider_label, context.sandbox_id
-                ),
-            });
-        }
-
-        match authority {
+        attach_authority: AttachmentAttachAuthority<'_>,
+    ) -> Result<NetworkAttachmentSegmentAssociation> {
+        let association = authority::authenticate_attach_association(self.allocator, context)?;
+        let port_authority: Result<()> = match attach_authority {
             AttachmentAttachAuthority::FreshLaunch(claim) => {
                 let Some(context_claim) = context.launch_claim else {
                     return Err(SandboxError::OperationFailed {
@@ -948,7 +904,9 @@ impl<'a> OciAttachmentLifecycle<'a> {
                 }
                 Ok(())
             }
-        }
+        };
+        port_authority?;
+        Ok(association)
     }
 
     fn take_registered_lifetime(
@@ -989,29 +947,6 @@ impl<'a> OciAttachmentLifecycle<'a> {
                 ),
             },
         }
-    }
-
-    /// Route an injected provider result through the canonical compensation
-    /// seam without manufacturing a live Netavark lifetime batch.
-    #[cfg(test)]
-    fn complete_injected_setup(
-        &self,
-        context: &OciAttachmentContext<'_>,
-        setup: Result<Vec<Ipv4Addr>>,
-    ) -> Result<Vec<Ipv4Addr>> {
-        setup.map_err(|primary| self.compensate_setup_failure(context, None, primary))
-    }
-
-    /// Preserve legacy fault-fixture access while keeping the executable
-    /// compensation algorithm in this single lifecycle owner.
-    #[cfg(test)]
-    fn compensate_injected_host_setup_failure(
-        &self,
-        context: &OciAttachmentContext<'_>,
-        batch: OciPortBindLifetimeBatch,
-        primary: SandboxError,
-    ) -> SandboxError {
-        self.compensate_setup_failure(context, Some(batch), primary)
     }
 
     /// Detach a host-managed attachment after the backend proves that its
@@ -1058,8 +993,16 @@ impl<'a> OciAttachmentLifecycle<'a> {
             context.sandbox_id,
         )
         .map_err(recovery::before_provider_detach_failure)?;
-        let durable = state::OciAttachmentDurableState::compile(self.attachments, context)
-            .map_err(recovery::before_provider_detach_failure)?;
+        let association = authority::authenticate_detach_association(
+            self.attachments,
+            self.allocator,
+            context,
+            mode,
+        )
+        .map_err(recovery::before_provider_detach_failure)?;
+        let durable =
+            state::OciAttachmentDurableState::compile(self.attachments, context, association)
+                .map_err(recovery::before_provider_detach_failure)?;
         let durable_record = durable
             .inspect()
             .map_err(recovery::before_provider_detach_failure)?;
@@ -1156,10 +1099,6 @@ impl<'a> OciAttachmentLifecycle<'a> {
             }
         };
 
-        if let Err(error) = before_provider_detach(auxiliary_disposition) {
-            detach_permitted = false;
-            errors.push(error.to_string());
-        }
         if !detach_permitted {
             return Err(recovery::before_provider_detach_failure(
                 recovery::detach_error(context, errors),
@@ -1178,6 +1117,22 @@ impl<'a> OciAttachmentLifecycle<'a> {
         debug_assert!(!durable_detach.already_terminal);
         let durable_record = durable_detach.record;
         let provider_was_absent = durable_detach.provider_absent;
+        let prepared_teardown = if provider_was_absent {
+            None
+        } else {
+            match host.prepare_provider_teardown(self.ipam, context) {
+                Ok(prepared) => Some(prepared),
+                Err(error) => {
+                    let _ = recovery::mark_cleanup_pending(&durable, &durable_record);
+                    return Err(recovery::before_provider_detach_failure(error));
+                }
+            }
+        };
+
+        if let Err(error) = before_provider_detach(auxiliary_disposition) {
+            let _ = recovery::mark_cleanup_pending(&durable, &durable_record);
+            return Err(recovery::before_provider_detach_failure(error));
+        }
 
         if mode.releases_authority()
             && let Err(error) = quarantine_network_segment_hold(
@@ -1241,8 +1196,9 @@ impl<'a> OciAttachmentLifecycle<'a> {
         }
 
         let mut provider_detached = provider_was_absent;
-        if !provider_was_absent {
-            provider_detached = match host.teardown_provider(self.ipam, context) {
+        if let Some(prepared_teardown) = prepared_teardown {
+            provider_detached = match host.teardown_provider(self.ipam, context, prepared_teardown)
+            {
                 Ok(()) => true,
                 Err(error) => {
                     errors.push(error.to_string());
@@ -1324,16 +1280,6 @@ impl<'a> OciAttachmentLifecycle<'a> {
         }
     }
 
-    #[cfg(test)]
-    fn compensate_setup_failure(
-        &self,
-        context: &OciAttachmentContext<'_>,
-        batch: Option<OciPortBindLifetimeBatch>,
-        primary: SandboxError,
-    ) -> SandboxError {
-        self.compensate_setup_failure_with(context, &RealAttachmentHostEffects, batch, primary)
-    }
-
     fn compensate_namespace_failure(
         &self,
         context: &OciAttachmentContext<'_>,
@@ -1360,7 +1306,8 @@ impl<'a> OciAttachmentLifecycle<'a> {
         primary: SandboxError,
     ) -> SandboxError {
         let cleanup = host
-            .teardown_provider(self.ipam, context)
+            .prepare_provider_teardown(self.ipam, context)
+            .and_then(|prepared| host.teardown_provider(self.ipam, context, prepared))
             .and_then(|()| host.remove_namespace(context));
         if let Err(cleanup) = cleanup {
             return SandboxError::OperationFailed {

@@ -23,7 +23,7 @@ impl KrunSandboxBackend {
             &attachment_id,
             &reservation_claim,
         )?;
-        match observed {
+        match observed.state() {
             NetworkAttachmentReservationState::Absent
             | NetworkAttachmentReservationState::Reserved
             | NetworkAttachmentReservationState::ReservationCleanupPending => {

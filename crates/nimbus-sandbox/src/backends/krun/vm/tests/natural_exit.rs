@@ -68,6 +68,10 @@ fn natural_execute_exit_releases_exact_network_authority_before_terminal_status(
     assert_eq!(
         &recorder.operations()[before_cleanup..],
         [
+            SegmentAllocatorOperation::InspectAttachment(
+                manifest.spec.tenant_id.clone(),
+                default_network_attachment_id(&manifest.handle.id),
+            ),
             SegmentAllocatorOperation::Quarantine(
                 manifest.spec.tenant_id.clone(),
                 default_network_attachment_id(&manifest.handle.id),

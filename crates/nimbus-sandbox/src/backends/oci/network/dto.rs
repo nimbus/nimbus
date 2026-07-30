@@ -106,7 +106,13 @@ pub(super) struct IpamAllocation {
 pub(super) enum NetavarkProviderOperation {
     /// No Netavark effect has begun for this IPAM generation.
     Reserved,
-    /// Setup may be in flight or may have completed without acknowledgement.
+    /// One exact setup attempt is durable and no provider effect is authorized
+    /// yet. A fresh owner may adopt this attempt, but cannot mint a sibling.
+    SetupPrepared {
+        operation_attempt: NetworkProviderHandle,
+    },
+    /// The exact setup attempt crossed its final pre-effect fence. A process
+    /// loss from this phase is ambiguous and must never rerun setup blindly.
     Provisioning {
         operation_attempt: NetworkProviderHandle,
     },
@@ -114,7 +120,22 @@ pub(super) enum NetavarkProviderOperation {
     Ready {
         setup_attempt: NetworkProviderHandle,
     },
-    /// Teardown may be in flight or may have completed without acknowledgement.
+    /// One exact teardown attempt is durable and no provider delete effect is
+    /// authorized yet. A fresh owner may adopt this attempt.
+    TeardownPrepared {
+        /// Exact setup generation whose provider effects will be removed.
+        setup_attempt: NetworkProviderHandle,
+        operation_attempt: NetworkProviderHandle,
+    },
+    /// Cleanup is durable for a setup attempt that never crossed its provider
+    /// pre-effect fence. Namespace and listener compensation may proceed, but
+    /// Netavark delete must never be invoked.
+    NoEffectTeardownPrepared {
+        setup_attempt: NetworkProviderHandle,
+        operation_attempt: NetworkProviderHandle,
+    },
+    /// The exact teardown attempt crossed its final pre-effect fence. A process
+    /// loss from this phase requires inspection before any further delete.
     Deleting {
         /// Exact setup generation whose provider effects are being removed.
         setup_attempt: NetworkProviderHandle,
@@ -134,8 +155,11 @@ impl NetavarkProviderOperation {
     pub(super) const fn label(&self) -> &'static str {
         match self {
             Self::Reserved => "reserved",
+            Self::SetupPrepared { .. } => "setup_prepared",
             Self::Provisioning { .. } => "provisioning",
             Self::Ready { .. } => "ready",
+            Self::TeardownPrepared { .. } => "teardown_prepared",
+            Self::NoEffectTeardownPrepared { .. } => "no_effect_teardown_prepared",
             Self::Deleting { .. } => "deleting",
             Self::DetachedProjectionPending { .. } => "detached_projection_pending",
             Self::Detached => "detached",

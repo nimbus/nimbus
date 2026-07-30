@@ -22,13 +22,15 @@ use super::forwarding::OciMachinePortForwarderConfig;
 use super::ipam::{
     NetavarkSetupClaim, NetavarkTeardownPlan, OciIpamAuthority,
     authenticate_container_network_generation_for_cleanup as authenticate_ipam_generation_for_cleanup,
-    begin_netavark_setup, begin_netavark_teardown, complete_netavark_setup,
-    complete_netavark_teardown, confirm_netavark_provider_detached, load_container_ips_for_segment,
-    parse_ipv4_subnet_and_gateway,
+    begin_netavark_setup, begin_netavark_setup_execution, begin_netavark_teardown,
+    begin_netavark_teardown_execution, complete_netavark_setup, complete_netavark_teardown,
+    confirm_netavark_absent_without_effect, confirm_netavark_provider_detached,
+    load_container_ips_for_segment, parse_ipv4_subnet_and_gateway,
 };
 use super::layout::{OciNetworkConfig, OciNetworkLayout};
 use super::{
     DEFAULT_CONTAINER_INTERFACE_NAME, NETAVARK_OPTION_ISOLATE, NETAVARK_OPTION_NO_DEFAULT_ROUTE,
+    default_network_attachment_id,
 };
 
 #[cfg(test)]
@@ -94,28 +96,169 @@ impl<'a> OciNetavarkOperation<'a> {
     }
 }
 
-pub(crate) fn setup_container_network(
+/// Exact durable setup attempt prepared before the first attachment effect.
+///
+/// The IPAM journal owns this capability. Namespace, listener, and Netavark
+/// adapters may execute only the attempt selected here; they cannot mint a
+/// replacement after an earlier host effect.
+pub(super) struct PreparedNetavarkSetup {
+    assigned_ips: Vec<Ipv4Addr>,
+    claim: NetavarkSetupClaim,
+}
+
+impl PreparedNetavarkSetup {
+    #[cfg(test)]
+    pub(super) fn assigned_ips(&self) -> &[Ipv4Addr] {
+        &self.assigned_ips
+    }
+
+    #[cfg(test)]
+    pub(super) fn claim(&self) -> &NetavarkSetupClaim {
+        &self.claim
+    }
+}
+
+pub(super) fn prepare_container_network_setup(
     ipam_authority: &OciIpamAuthority,
     operation: &OciNetavarkOperation<'_>,
-) -> Result<Vec<Ipv4Addr>> {
-    setup_container_network_with_runner(
+) -> Result<PreparedNetavarkSetup> {
+    let (assigned_ips, claim) = begin_netavark_setup(
         ipam_authority,
         operation.layout,
         operation.config,
         operation.sandbox_id,
+    )?;
+    Ok(PreparedNetavarkSetup {
+        assigned_ips,
+        claim,
+    })
+}
+
+/// Exact durable teardown attempt prepared before attachment cleanup effects.
+///
+/// Runtime, PEP, machine-forwarding, namespace, and Netavark cleanup may begin
+/// only after the IPAM journal has selected this plan. Execution cannot mint a
+/// replacement attempt.
+pub(super) struct PreparedNetavarkTeardown {
+    plan: NetavarkTeardownPlan,
+}
+
+pub(super) fn prepare_container_network_teardown(
+    ipam_authority: &OciIpamAuthority,
+    operation: &OciNetavarkOperation<'_>,
+) -> Result<PreparedNetavarkTeardown> {
+    begin_netavark_teardown(
+        ipam_authority,
+        operation.layout,
+        operation.config,
+        operation.sandbox_id,
+        None,
+    )
+    .map(|plan| PreparedNetavarkTeardown { plan })
+}
+
+pub(super) fn execute_prepared_container_network_teardown(
+    ipam_authority: &OciIpamAuthority,
+    operation: &OciNetavarkOperation<'_>,
+    prepared: PreparedNetavarkTeardown,
+) -> Result<()> {
+    execute_prepared_container_network_teardown_with_runner(
+        ipam_authority,
+        operation.layout,
+        prepared.plan,
         |action, assigned_ips| run_netavark(action, operation, assigned_ips),
     )
 }
 
-fn setup_container_network_with_runner(
+fn execute_prepared_container_network_teardown_with_runner(
+    ipam_authority: &OciIpamAuthority,
+    layout: &OciNetworkLayout,
+    plan: NetavarkTeardownPlan,
+    mut runner: impl FnMut(&str, &[Ipv4Addr]) -> Result<Value>,
+) -> Result<()> {
+    execute_teardown_plan(ipam_authority, layout, plan, &mut runner)
+}
+
+#[cfg(test)]
+pub(super) fn execute_prepared_container_network_teardown_for_test(
+    ipam_authority: &OciIpamAuthority,
+    layout: &OciNetworkLayout,
+    prepared: PreparedNetavarkTeardown,
+) -> Result<()> {
+    execute_prepared_container_network_teardown_with_runner(
+        ipam_authority,
+        layout,
+        prepared.plan,
+        |_, _| Ok(Value::Null),
+    )
+}
+
+#[cfg(test)]
+pub(super) fn execute_prepared_container_network_teardown_ambiguously_for_test(
+    ipam_authority: &OciIpamAuthority,
+    layout: &OciNetworkLayout,
+    prepared: PreparedNetavarkTeardown,
+    message: &str,
+) -> Result<()> {
+    execute_prepared_container_network_teardown_with_runner(
+        ipam_authority,
+        layout,
+        prepared.plan,
+        |_, _| {
+            Err(SandboxError::OperationFailed {
+                message: message.to_owned(),
+            })
+        },
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn setup_container_network(
+    ipam_authority: &OciIpamAuthority,
+    operation: &OciNetavarkOperation<'_>,
+) -> Result<Vec<Ipv4Addr>> {
+    let prepared = prepare_container_network_setup(ipam_authority, operation)?;
+    execute_prepared_container_network_setup(ipam_authority, operation, prepared)
+}
+
+pub(super) fn execute_prepared_container_network_setup(
+    ipam_authority: &OciIpamAuthority,
+    operation: &OciNetavarkOperation<'_>,
+    prepared: PreparedNetavarkSetup,
+) -> Result<Vec<Ipv4Addr>> {
+    execute_prepared_container_network_setup_with_runner(
+        ipam_authority,
+        operation.layout,
+        operation.config,
+        operation.sandbox_id,
+        prepared,
+        |action, assigned_ips| run_netavark(action, operation, assigned_ips),
+    )
+}
+
+fn execute_prepared_container_network_setup_with_runner(
     ipam_authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     config: &OciNetworkConfig,
     sandbox_id: &SandboxId,
+    prepared: PreparedNetavarkSetup,
     mut runner: impl FnMut(&str, &[Ipv4Addr]) -> Result<Value>,
 ) -> Result<Vec<Ipv4Addr>> {
-    let (assigned_ips, setup_claim) =
-        begin_netavark_setup(ipam_authority, layout, config, sandbox_id)?;
+    let PreparedNetavarkSetup {
+        assigned_ips,
+        claim: setup_claim,
+    } = prepared;
+    let authenticated_ips =
+        begin_netavark_setup_execution(ipam_authority, layout, config, sandbox_id, &setup_claim)?;
+    if authenticated_ips != assigned_ips {
+        return Err(SandboxError::OperationFailed {
+            message: format!(
+                "prepared Netavark setup for attachment {} carries addresses that differ from \
+                 its exact durable IPAM generation",
+                default_network_attachment_id(sandbox_id)
+            ),
+        });
+    }
     let setup = (|| {
         let response = runner("setup", &assigned_ips)?;
         let rendered = serde_json::to_vec_pretty(&response).map_err(|error| {
@@ -156,19 +299,38 @@ fn setup_container_network_with_runner(
     Ok(assigned_ips)
 }
 
+#[cfg(test)]
+fn setup_container_network_with_runner(
+    ipam_authority: &OciIpamAuthority,
+    layout: &OciNetworkLayout,
+    config: &OciNetworkConfig,
+    sandbox_id: &SandboxId,
+    runner: impl FnMut(&str, &[Ipv4Addr]) -> Result<Value>,
+) -> Result<Vec<Ipv4Addr>> {
+    let (assigned_ips, claim) = begin_netavark_setup(ipam_authority, layout, config, sandbox_id)?;
+    execute_prepared_container_network_setup_with_runner(
+        ipam_authority,
+        layout,
+        config,
+        sandbox_id,
+        PreparedNetavarkSetup {
+            assigned_ips,
+            claim,
+        },
+        runner,
+    )
+}
+
+#[cfg(test)]
 pub(crate) fn teardown_container_network(
     ipam_authority: &OciIpamAuthority,
     operation: &OciNetavarkOperation<'_>,
 ) -> Result<()> {
-    teardown_container_network_with_runner(
-        ipam_authority,
-        operation.layout,
-        operation.config,
-        operation.sandbox_id,
-        |action, assigned_ips| run_netavark(action, operation, assigned_ips),
-    )
+    let prepared = prepare_container_network_teardown(ipam_authority, operation)?;
+    execute_prepared_container_network_teardown(ipam_authority, operation, prepared)
 }
 
+#[cfg(test)]
 fn teardown_container_network_with_runner(
     ipam_authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
@@ -209,13 +371,47 @@ fn execute_teardown_plan(
             require_netavark_status_absent(&layout.status_path)?;
             return Ok(());
         }
+        NetavarkTeardownPlan::ConfirmNoEffect { claim } => {
+            require_netavark_status_absent(&layout.status_path)?;
+            confirm_netavark_absent_without_effect(ipam_authority, layout, &claim)?;
+            claim
+        }
         NetavarkTeardownPlan::RemoveProjection { claim } => claim,
+        NetavarkTeardownPlan::InspectDeleting { claim } => {
+            match fs::symlink_metadata(&layout.netns_path) {
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    confirm_netavark_provider_detached(ipam_authority, layout, &claim)?;
+                }
+                Err(error) => {
+                    return Err(SandboxError::OperationFailed {
+                        message: format!(
+                            "failed to inspect persistent network namespace {} before reconciling \
+                             an ambiguous delete: {error}",
+                            layout.netns_path.display()
+                        ),
+                    });
+                }
+                Ok(_) => {
+                    return Err(SandboxError::OperationFailed {
+                        message: format!(
+                            "Netavark teardown for attachment {} already crossed its pre-effect \
+                             fence while provider evidence remains present; refusing a duplicate \
+                             delete",
+                            claim.attachment_id()
+                        ),
+                    });
+                }
+            }
+            claim
+        }
         NetavarkTeardownPlan::Run {
             assigned_ips,
             claim,
         } => {
             match fs::symlink_metadata(&layout.netns_path) {
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    confirm_netavark_absent_without_effect(ipam_authority, layout, &claim)?;
+                }
                 Err(error) => {
                     return Err(SandboxError::OperationFailed {
                         message: format!(
@@ -226,10 +422,11 @@ fn execute_teardown_plan(
                     });
                 }
                 Ok(_) => {
+                    begin_netavark_teardown_execution(ipam_authority, layout, &claim)?;
                     let _ = runner("teardown", &assigned_ips)?;
+                    confirm_netavark_provider_detached(ipam_authority, layout, &claim)?;
                 }
             }
-            confirm_netavark_provider_detached(ipam_authority, layout, &claim)?;
             claim
         }
     };

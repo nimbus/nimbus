@@ -2,13 +2,17 @@
 
 use nimbus_core::TenantId;
 use nimbus_network::{
-    NetworkAttachmentId, NetworkAttachmentReservationState, NetworkReservationClaim,
-    NetworkSegmentId, NetworkSegmentReleaseOutcome,
+    NetworkAttachmentId, NetworkAttachmentReservationObservation,
+    NetworkAttachmentSegmentAssociation, NetworkReservationClaim, NetworkSegmentId,
+    NetworkSegmentReleaseOutcome,
 };
 
 use crate::error::{Result, SandboxError};
 
 use super::{OciSegmentRealization, SegmentAttachmentState, SingleNodeSegmentAllocator};
+
+#[cfg(test)]
+use nimbus_network::NetworkAttachmentReservationState;
 
 impl SingleNodeSegmentAllocator {
     pub(super) fn inspect_attachment_reservation_inner(
@@ -16,51 +20,71 @@ impl SingleNodeSegmentAllocator {
         tenant: &TenantId,
         attachment_id: &NetworkAttachmentId,
         reservation_claim: &NetworkReservationClaim,
-    ) -> Result<NetworkAttachmentReservationState> {
+    ) -> Result<NetworkAttachmentReservationObservation> {
         let supernet = self.installed()?.clone();
         let Some(state) = self.read_state()? else {
-            return Ok(NetworkAttachmentReservationState::Absent);
+            return Ok(NetworkAttachmentReservationObservation::absent());
         };
         self.ensure_supernet_matches(&supernet, &state)?;
         let Some(entry) = state.tenants.get(tenant.as_str()) else {
-            return Ok(NetworkAttachmentReservationState::Absent);
+            return Ok(NetworkAttachmentReservationObservation::absent());
         };
         if entry.attachments.is_empty() && entry.allocation_cleanup_pending {
             return match entry.pending_reservation_cleanup_claim.as_ref() {
                 Some(existing) if existing == reservation_claim => {
-                    Ok(NetworkAttachmentReservationState::ReservationCleanupPending)
+                    Ok(NetworkAttachmentReservationObservation::unplaced_cleanup_pending())
                 }
                 Some(_) => Err(reservation_claim_conflict(attachment_id)),
-                None => Ok(NetworkAttachmentReservationState::Absent),
+                None => Ok(NetworkAttachmentReservationObservation::absent()),
             };
         }
         let Some(attachment) = entry.attachments.get(attachment_id.as_str()) else {
-            return Ok(NetworkAttachmentReservationState::Absent);
+            return Ok(NetworkAttachmentReservationObservation::absent());
+        };
+        let association = |segment_id: &NetworkSegmentId| {
+            NetworkAttachmentSegmentAssociation::new(
+                reservation_claim.clone(),
+                segment_id.clone(),
+                supernet.epoch,
+            )
         };
         match attachment {
             SegmentAttachmentState::UnplacedReserved {
                 reservation_claim: existing,
+            } if existing == reservation_claim => {
+                Ok(NetworkAttachmentReservationObservation::unplaced_reserved())
             }
-            | SegmentAttachmentState::Reserved {
+            SegmentAttachmentState::Reserved {
                 reservation_claim: existing,
-                ..
-            } if existing == reservation_claim => Ok(NetworkAttachmentReservationState::Reserved),
+                segment_id,
+            } if existing == reservation_claim => Ok(
+                NetworkAttachmentReservationObservation::bound_reserved(association(segment_id)),
+            ),
             SegmentAttachmentState::ReservationCleanupPending {
                 reservation_claim: existing,
-                ..
-            } if existing == reservation_claim => {
-                Ok(NetworkAttachmentReservationState::ReservationCleanupPending)
-            }
+                segment_id,
+            } if existing == reservation_claim => match segment_id {
+                Some(segment_id) => Ok(
+                    NetworkAttachmentReservationObservation::bound_cleanup_pending(association(
+                        segment_id,
+                    )),
+                ),
+                None => Ok(NetworkAttachmentReservationObservation::unplaced_cleanup_pending()),
+            },
             SegmentAttachmentState::Held {
                 adoption_receipt: Some(existing),
-                ..
-            } if existing == reservation_claim => Ok(NetworkAttachmentReservationState::Adopted),
+                segment_id,
+            } if existing == reservation_claim => Ok(
+                NetworkAttachmentReservationObservation::adopted(association(segment_id)),
+            ),
             SegmentAttachmentState::CleanupPending {
                 adoption_receipt: Some(existing),
-                ..
-            } if existing == reservation_claim => {
-                Ok(NetworkAttachmentReservationState::ProviderCleanupPending)
-            }
+                segment_id,
+            } if existing == reservation_claim => Ok(
+                NetworkAttachmentReservationObservation::provider_cleanup_pending(association(
+                    segment_id,
+                )),
+            ),
             SegmentAttachmentState::UnplacedReserved { .. }
             | SegmentAttachmentState::Reserved { .. }
             | SegmentAttachmentState::ReservationCleanupPending { .. }
@@ -634,7 +658,8 @@ mod tests {
         assert_eq!(
             allocator
                 .inspect_attachment_reservation(&tenant, &attachment, &owner)
-                .expect("missing authority should inspect"),
+                .expect("missing authority should inspect")
+                .state(),
             NetworkAttachmentReservationState::Absent
         );
         reserve_primary(&allocator, &tenant, &attachment, &owner);
@@ -643,7 +668,8 @@ mod tests {
         assert_eq!(
             allocator
                 .inspect_attachment_reservation(&tenant, &attachment, &owner)
-                .expect("exact reservation should inspect"),
+                .expect("exact reservation should inspect")
+                .state(),
             NetworkAttachmentReservationState::Reserved
         );
         assert!(
@@ -664,7 +690,8 @@ mod tests {
         assert_eq!(
             allocator
                 .inspect_attachment_reservation(&tenant, &attachment, &owner)
-                .expect("adoption receipt should inspect"),
+                .expect("adoption receipt should inspect")
+                .state(),
             NetworkAttachmentReservationState::Adopted
         );
         allocator
@@ -673,7 +700,8 @@ mod tests {
         assert_eq!(
             allocator
                 .inspect_attachment_reservation(&tenant, &attachment, &owner)
-                .expect("provider cleanup fence should inspect"),
+                .expect("provider cleanup fence should inspect")
+                .state(),
             NetworkAttachmentReservationState::ProviderCleanupPending
         );
     }

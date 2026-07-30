@@ -569,7 +569,8 @@ fn adopting_stop_promotes_exact_allocator_adoption_before_cleanup() {
                 &default_network_attachment_id(&manifest.handle.id),
                 &claim,
             )
-            .expect("exact allocator state should inspect"),
+            .expect("exact allocator state should inspect")
+            .state(),
         nimbus_network::NetworkAttachmentReservationState::Adopted
     );
 

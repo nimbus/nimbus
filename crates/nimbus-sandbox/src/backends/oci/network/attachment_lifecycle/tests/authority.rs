@@ -23,7 +23,6 @@ pub(super) fn stale_provenance_fails_before_effects(backend: ContractBackend) {
         "stale generation diagnostic must identify the fence: {error}"
     );
     assert_eq!(fixture.allocator.operations(), before);
-    assert!(!fixture.legacy_purge_marker().exists());
     assert!(!fixture.layout.netns_path.exists());
 
     let foreign_root = fixture
@@ -53,10 +52,7 @@ pub(super) fn stale_provenance_fails_before_effects(backend: ContractBackend) {
         )
         .expect_err("foreign tenant/root provenance must fail");
     assert!(
-        !foreign_root
-            .join("networks")
-            .join(".legacy-nimbus0-purged")
-            .exists(),
+        !foreign_root.exists(),
         "foreign workload provenance must fail before filesystem effects"
     );
 
@@ -125,7 +121,6 @@ pub(super) fn stale_provenance_fails_before_effects(backend: ContractBackend) {
             ) && after.len() == before.len() + 1,
             "claim authentication may inspect but must not mutate attachment authority: {after:?}"
         );
-        assert!(!fixture.legacy_purge_marker().exists());
         assert!(!fixture.layout.netns_path.exists());
     }
 
@@ -182,7 +177,6 @@ pub(super) fn stale_provenance_fails_before_effects(backend: ContractBackend) {
         ]
     );
     assert!(host.operations().is_empty());
-    assert!(!fixture.legacy_purge_marker().exists());
     assert!(!fixture.layout.netns_path.exists());
 
     // Restart evidence must bind the exact persisted assignment, not merely a
@@ -265,6 +259,5 @@ pub(super) fn stale_provenance_fails_before_effects(backend: ContractBackend) {
         ]
     );
     assert!(host.operations().is_empty());
-    assert!(!fixture.legacy_purge_marker().exists());
     assert!(!fixture.layout.netns_path.exists());
 }

@@ -13,7 +13,8 @@ use serde_json::Value;
 use tempfile::tempdir;
 
 use super::super::ipam::{
-    allocate_container_ips, begin_netavark_setup, begin_netavark_teardown, complete_netavark_setup,
+    allocate_container_ips, begin_netavark_setup, begin_netavark_setup_execution,
+    begin_netavark_teardown, begin_netavark_teardown_execution, complete_netavark_setup,
     complete_netavark_teardown, confirm_netavark_provider_detached,
     deallocate_container_ips_after_confirmed_detach, inspect_netavark_provider_operation,
 };
@@ -71,6 +72,14 @@ fn stale_setup_claim_cannot_take_over_deleting_or_detached_projection_cleanup() 
 
     let (_, stale_setup_claim) = begin_netavark_setup(&ipam_authority, &layout, &config, &sandbox)
         .expect("first setup should begin");
+    begin_netavark_setup_execution(
+        &ipam_authority,
+        &layout,
+        &config,
+        &sandbox,
+        &stale_setup_claim,
+    )
+    .expect("first setup execution should authenticate");
     complete_netavark_setup(&ipam_authority, &layout, &stale_setup_claim)
         .expect("first setup should publish Ready");
     let first_teardown =
@@ -80,6 +89,8 @@ fn stale_setup_claim_cannot_take_over_deleting_or_detached_projection_cleanup() 
             NetavarkTeardownPlan::Run { claim, .. } => claim,
             _ => panic!("Ready authority must begin provider teardown"),
         };
+    begin_netavark_teardown_execution(&ipam_authority, &layout, &first_teardown)
+        .expect("first teardown execution should authenticate");
     confirm_netavark_provider_detached(&ipam_authority, &layout, &first_teardown)
         .expect("first provider absence should publish");
     complete_netavark_teardown(&ipam_authority, &layout, &first_teardown)
@@ -88,6 +99,14 @@ fn stale_setup_claim_cannot_take_over_deleting_or_detached_projection_cleanup() 
     let (_, current_setup_claim) =
         begin_netavark_setup(&ipam_authority, &layout, &config, &sandbox)
             .expect("second setup should begin");
+    begin_netavark_setup_execution(
+        &ipam_authority,
+        &layout,
+        &config,
+        &sandbox,
+        &current_setup_claim,
+    )
+    .expect("second setup execution should authenticate");
     complete_netavark_setup(&ipam_authority, &layout, &current_setup_claim)
         .expect("second setup should publish Ready");
     let current_teardown =
@@ -97,6 +116,8 @@ fn stale_setup_claim_cannot_take_over_deleting_or_detached_projection_cleanup() 
             NetavarkTeardownPlan::Run { claim, .. } => claim,
             _ => panic!("current Ready authority must begin provider teardown"),
         };
+    begin_netavark_teardown_execution(&ipam_authority, &layout, &current_teardown)
+        .expect("current teardown execution should authenticate");
 
     let deleting = inspect_netavark_provider_operation(&ipam_authority, &layout, &config, &sandbox)
         .expect("Deleting authority should inspect");
@@ -226,8 +247,16 @@ fn reopened_provisioning_compensates_the_exact_attempt_without_duplicate_setup()
     let config = OciNetworkConfig::default();
     allocate_container_ips(&ipam_authority, &layout, &config, &sandbox)
         .expect("current generation should reserve IPAM");
-    let _lost_setup_claim = begin_netavark_setup(&ipam_authority, &layout, &config, &sandbox)
+    let (_, lost_setup_claim) = begin_netavark_setup(&ipam_authority, &layout, &config, &sandbox)
         .expect("first owner should durably publish Provisioning");
+    begin_netavark_setup_execution(
+        &ipam_authority,
+        &layout,
+        &config,
+        &sandbox,
+        &lost_setup_claim,
+    )
+    .expect("lost setup must cross its exact pre-effect fence");
     std::fs::write(&layout.netns_path, b"provider-created-before-response-loss")
         .expect("provider effect marker should exist");
 
@@ -310,13 +339,21 @@ fn netavark_response_loss_crash_child() {
         &setup_sandbox,
     )
     .expect("setup case should reserve exact IPAM");
-    begin_netavark_setup(
+    let (_, setup_claim) = begin_netavark_setup(
         &ipam_authority,
         &setup_layout,
         &setup_config,
         &setup_sandbox,
     )
     .expect("setup attempt should become durable before provider effect");
+    begin_netavark_setup_execution(
+        &ipam_authority,
+        &setup_layout,
+        &setup_config,
+        &setup_sandbox,
+        &setup_claim,
+    )
+    .expect("setup response-loss cut must cross the pre-effect fence");
     std::fs::write(&setup_layout.netns_path, b"setup-effect-created")
         .expect("setup provider namespace should exist");
     write_provider_evidence(
@@ -356,14 +393,20 @@ fn netavark_response_loss_crash_child() {
     .expect("delete case should publish Ready provider authority");
     std::fs::write(&delete_layout.netns_path, b"delete-effect-started")
         .expect("delete provider namespace should exist");
-    begin_netavark_teardown(
+    let delete_claim = match begin_netavark_teardown(
         &ipam_authority,
         &delete_layout,
         &delete_config,
         &delete_sandbox,
         None,
     )
-    .expect("delete attempt should become durable before provider effect");
+    .expect("delete attempt should become durable before provider effect")
+    {
+        NetavarkTeardownPlan::Run { claim, .. } => claim,
+        _ => panic!("ready provider authority must prepare exact delete"),
+    };
+    begin_netavark_teardown_execution(&ipam_authority, &delete_layout, &delete_claim)
+        .expect("delete response-loss cut must cross the pre-effect fence");
     remove_provider_marker(&delete_layout.netns_path);
     write_provider_evidence(
         &root,
@@ -475,6 +518,7 @@ fn recover_case(
         .expect("fresh process should derive exact teardown reconciliation");
     let claim = match &plan {
         NetavarkTeardownPlan::Run { claim, .. } => claim,
+        NetavarkTeardownPlan::InspectDeleting { claim } => claim,
         _ => panic!("pending provider operation must reconcile through exact teardown"),
     };
     match &evidence.operation {

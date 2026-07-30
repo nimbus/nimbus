@@ -138,7 +138,7 @@ impl<'a> TerminalNetworkAuthoritySet<'a> {
             &attachment_id,
             &network_config.reservation_claim,
         )?;
-        if attachment_state != NetworkAttachmentReservationState::Absent {
+        if attachment_state.state() != NetworkAttachmentReservationState::Absent {
             return Err(SandboxError::OperationFailed {
                 message: format!(
                     "terminal network finality rejected for {}: attachment {} remains \

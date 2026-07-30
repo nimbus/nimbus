@@ -180,12 +180,12 @@ impl NetworkSegmentAllocator for ClusterSegmentAllocator {
         tenant: &TenantId,
         attachment_id: &NetworkAttachmentId,
         reservation_claim: &NetworkReservationClaim,
-    ) -> Result<nimbus_network::NetworkAttachmentReservationState> {
+    ) -> Result<nimbus_network::NetworkAttachmentReservationObservation> {
         match self.cleanup_inner()? {
             Some(cleanup) => {
                 cleanup.inspect_attachment_reservation(tenant, attachment_id, reservation_claim)
             }
-            None => Ok(nimbus_network::NetworkAttachmentReservationState::Absent),
+            None => Ok(nimbus_network::NetworkAttachmentReservationObservation::absent()),
         }
     }
 

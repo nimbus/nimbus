@@ -5,8 +5,9 @@ use super::*;
 
 use nimbus_core::TenantId;
 use nimbus_network::{
-    LocalNetworkAttachmentAuthority, NetworkLeaseEpoch, NetworkPlan, NetworkPlanContentDigest,
-    NetworkPlanId, NetworkProviderId, NetworkResourceGeneration,
+    LocalNetworkAttachmentAuthority, NetworkAttachmentSegmentAssociation, NetworkLeaseEpoch,
+    NetworkPlan, NetworkPlanContentDigest, NetworkPlanId, NetworkProviderId,
+    NetworkResourceGeneration, NetworkSegmentId,
 };
 use tempfile::TempDir;
 
@@ -14,6 +15,7 @@ use crate::backends::capabilities::{
     SandboxAttachmentRegistrationKind, host_managed_attachment_requirements,
 };
 use crate::backends::oci::network::{OciNetworkLayout, default_network_attachment_id};
+use crate::backends::oci::port_lease::new_launch_reservation_claim;
 
 fn foreign_plan(tenant_id: &TenantId, sandbox_id: &SandboxId) -> NetworkPlan {
     NetworkPlan::new(
@@ -21,6 +23,14 @@ fn foreign_plan(tenant_id: &TenantId, sandbox_id: &SandboxId) -> NetworkPlan {
         NetworkResourceGeneration::new(1),
         NetworkPlanContentDigest::sha256(b"foreign-container-attachment-plan"),
         host_managed_attachment_requirements(SandboxAttachmentRegistrationKind::Container),
+    )
+}
+
+fn foreign_association() -> NetworkAttachmentSegmentAssociation {
+    NetworkAttachmentSegmentAssociation::new(
+        new_launch_reservation_claim().expect("foreign claim should generate"),
+        NetworkSegmentId::generate(),
+        NetworkLeaseEpoch::new(1),
     )
 }
 
@@ -38,7 +48,7 @@ fn fresh_container_backend_reopens_attachment_authority_on_its_production_route(
             NetworkProviderId::for_registration_key("nimbus.test.foreign-container"),
             &foreign_plan(&spec.tenant_id, &sandbox_id),
             default_network_attachment_id(&sandbox_id),
-            NetworkLeaseEpoch::new(1),
+            foreign_association(),
         )
         .expect("foreign selected-provider fixture should persist");
     drop(authority);
@@ -75,13 +85,8 @@ fn fresh_container_backend_reopens_attachment_authority_on_its_production_route(
     );
     assert!(
         !manifest.network_layout.netns_path.exists()
-            && !manifest.network_layout.status_path.exists()
-            && !reopened
-                .config
-                .workload_state_root
-                .join("networks/.legacy-nimbus0-purged")
-                .exists(),
-        "durable authority authentication must precede namespace, provider, and migration effects"
+            && !manifest.network_layout.status_path.exists(),
+        "durable authority authentication must precede namespace and provider effects"
     );
 }
 
@@ -99,7 +104,7 @@ fn corrupt_attachment_store_fences_container_construction_before_network_work() 
             NetworkProviderId::for_registration_key("nimbus.test.corrupt-container"),
             &foreign_plan(&spec.tenant_id, &sandbox_id),
             default_network_attachment_id(&sandbox_id),
-            NetworkLeaseEpoch::new(1),
+            foreign_association(),
         )
         .expect("container corruption fixture should create an owner-mode state file");
     let authority_path = authority.authority_path().to_path_buf();
@@ -131,12 +136,7 @@ fn corrupt_attachment_store_fences_container_construction_before_network_work() 
         "constructor and refused planning must not rewrite corrupt authority"
     );
     assert!(
-        !layout.netns_path.exists()
-            && !layout.status_path.exists()
-            && !config
-                .workload_state_root
-                .join("networks/.legacy-nimbus0-purged")
-                .exists(),
-        "corrupt construction must fail before namespace, provider, or migration effects"
+        !layout.netns_path.exists() && !layout.status_path.exists(),
+        "corrupt construction must fail before namespace or provider effects"
     );
 }

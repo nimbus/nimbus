@@ -91,10 +91,10 @@ cannot reactivate.
 
 Filesystem-only orphan discovery no longer releases holds. Missing netns
 evidence durably quarantines the matching attachment and keeps every covered
-segment location unavailable. The later NNC5.2a/NNC8.3 evidence-aware
-reconciler remains responsible for classifying desired intent, provider
-attempts/effects, generations, manifests, and unknown inspection before
-detach/release.
+segment location unavailable. NNC5.2a supplies exact association and
+attempt-before-effect evidence; NNC5.2b classifies desired intent, provider
+attempts/effects, generations, manifests, and unknown inspection; NNC8.3 owns
+repeated detach/release convergence.
 
 ## Sandbox Effect Ordering
 

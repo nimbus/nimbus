@@ -1,12 +1,11 @@
-//! Tenant-bridge reaper + legacy shared-bridge migration.
+//! Tenant-bridge reaper and identity-fenced allocation finalization.
 //!
 //! netavark creates the per-tenant bridge on first-sandbox setup but does NOT
 //! remove it on last-sandbox teardown, so the crash-safe reaper removes the
 //! bridge after the last attachment hold releases into durable
 //! cleanup-pending state, then identity-fenced finalization frees the
-//! allocation. The one-shot legacy purge removes the pre-MTN shared `nimbus0`
-//! bridge before the first per-tenant setup, since the routed per-tenant model
-//! deletes the shared bridge (pre-launch, breaking — no compat path).
+//! allocation. Obsolete shared-bridge migration is deliberately absent: this
+//! pre-launch tree supports only the per-tenant routed model.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -358,31 +357,6 @@ fn live_netns_holds(
         }
     }
     Ok(holds)
-}
-
-/// One-shot migration: remove the legacy shared `nimbus0` bridge from the pre-MTN
-/// single-bridge scheme, guarded by a marker under `<networks_root>` so it runs
-/// at most once per node. Best-effort / idempotent.
-pub(crate) fn purge_legacy_nimbus0_once(networks_root: &Path) -> Result<()> {
-    let marker = networks_root.join(".legacy-nimbus0-purged");
-    if marker.exists() {
-        return Ok(());
-    }
-    delete_bridge(super::DEFAULT_NETWORK_INTERFACE)?;
-    std::fs::create_dir_all(networks_root).map_err(|error| SandboxError::OperationFailed {
-        message: format!(
-            "failed to create networks root {} for the legacy-purge marker: {error}",
-            networks_root.display()
-        ),
-    })?;
-    std::fs::write(&marker, b"legacy nimbus0 bridge purged by MTN migration\n").map_err(|error| {
-        SandboxError::OperationFailed {
-            message: format!(
-                "failed to write legacy-purge marker {}: {error}",
-                marker.display()
-            ),
-        }
-    })
 }
 
 #[cfg(target_os = "linux")]

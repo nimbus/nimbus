@@ -1702,11 +1702,15 @@ fn restart_network_teardown_retains_exact_segment_hold() {
         .read_manifest(&handle.id)
         .expect("manifest read should succeed")
         .expect("planned manifest should exist");
-    manifest.network_config = Some(
-        backend
-            .network_config(&manifest.spec.tenant_id)
-            .expect("execute-shaped network config should resolve"),
-    );
+    let network_config = backend
+        .network_config(&manifest.spec.tenant_id)
+        .expect("execute-shaped network config should resolve");
+    let reservation_claim = network_config.reservation_claim.clone();
+    let segment_id = network_config
+        .segment_id
+        .parse()
+        .expect("execute-shaped segment identity should parse");
+    manifest.network_config = Some(network_config);
     allocate_container_ips(
         &backend.ipam_authority,
         &manifest.network_layout,
@@ -1718,11 +1722,27 @@ fn restart_network_teardown_retains_exact_segment_hold() {
     )
     .expect("execute-shaped fixture should persist its generation-fenced IPAM");
     recorder
-        .acquire(
+        .reserve_attachment_for_coordinator(
             &manifest.spec.tenant_id,
             &default_network_attachment_id(&manifest.handle.id),
+            &reservation_claim,
         )
-        .expect("execute-shaped fixture should acquire its exact segment hold");
+        .expect("execute-shaped fixture should reserve its exact attachment");
+    recorder
+        .bind_reserved_attachment_to_segment(
+            &manifest.spec.tenant_id,
+            &default_network_attachment_id(&manifest.handle.id),
+            &segment_id,
+            &reservation_claim,
+        )
+        .expect("execute-shaped fixture should bind its exact segment");
+    recorder
+        .adopt_reserved_attachment(
+            &manifest.spec.tenant_id,
+            &default_network_attachment_id(&manifest.handle.id),
+            &reservation_claim,
+        )
+        .expect("execute-shaped fixture should adopt its exact segment association");
     manifest.launch_authority = KrunLaunchAuthority::ProviderOwned;
     let before_restart = recorder.operations().len();
 
@@ -1735,8 +1755,12 @@ fn restart_network_teardown_retains_exact_segment_hold() {
 
     assert_eq!(
         &recorder.operations()[before_restart..],
-        [],
-        "restart teardown must retain the exact segment hold while the persisted network config will be reused"
+        [SegmentAllocatorOperation::InspectAttachment(
+            manifest.spec.tenant_id.clone(),
+            default_network_attachment_id(&manifest.handle.id),
+        )],
+        "restart teardown may authenticate but must not mutate the exact segment hold while the \
+         persisted network config will be reused"
     );
     backend
         .release_network_artifacts(
@@ -1747,6 +1771,14 @@ fn restart_network_teardown_retains_exact_segment_hold() {
     assert_eq!(
         &recorder.operations()[before_restart..],
         [
+            SegmentAllocatorOperation::InspectAttachment(
+                manifest.spec.tenant_id.clone(),
+                default_network_attachment_id(&manifest.handle.id),
+            ),
+            SegmentAllocatorOperation::InspectAttachment(
+                manifest.spec.tenant_id.clone(),
+                default_network_attachment_id(&manifest.handle.id),
+            ),
             SegmentAllocatorOperation::Quarantine(
                 manifest.spec.tenant_id.clone(),
                 default_network_attachment_id(&manifest.handle.id),

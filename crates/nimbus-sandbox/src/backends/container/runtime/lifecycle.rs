@@ -125,15 +125,6 @@ fn netavark_endpoint_effect_requires_complete_current_port_leases() {
     assert_eq!(manifest.port_leases.len(), 1);
     manifest.port_leases.clear();
 
-    let legacy_marker = backend
-        .config
-        .workload_state_root
-        .join("networks/.legacy-nimbus0-purged");
-    std::fs::create_dir_all(legacy_marker.parent().expect("marker parent"))
-        .expect("legacy marker parent should create");
-    std::fs::write(&legacy_marker, b"test precondition\n")
-        .expect("legacy purge should be skipped by marker");
-
     let error = backend
         .configure_network(
             &manifest,
@@ -179,15 +170,6 @@ fn pre_netavark_setup_failure_preserves_no_effect_authority() {
         )
         .expect("execute manifest should reserve complete network authority")
         .manifest;
-    let legacy_marker = backend
-        .config
-        .workload_state_root
-        .join("networks/.legacy-nimbus0-purged");
-    std::fs::create_dir_all(legacy_marker.parent().expect("marker parent"))
-        .expect("legacy marker parent should create");
-    std::fs::write(&legacy_marker, b"test precondition\n")
-        .expect("legacy purge should be skipped by marker");
-
     let claims = backend
         .port_lease_coordinator()
         .claim_netavark_bindings(

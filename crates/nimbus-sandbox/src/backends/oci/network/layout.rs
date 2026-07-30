@@ -122,8 +122,9 @@ pub(crate) struct OciNetworkConfig {
     #[serde(default = "default_enable_dns")]
     pub enable_dns: bool,
     /// The netavark network id. Per-tenant segments MUST carry a distinct id or
-    /// two tenants' bridges alias onto one netavark network (audit M1). Defaults
-    /// to the legacy shared id for older state that predates per-tenant segments.
+    /// two tenants' bridges alias onto one netavark network (audit M1). Direct
+    /// construction gets a deterministic placeholder; placement replaces it
+    /// with the selected segment's provider-local identity.
     #[serde(default = "default_network_id")]
     pub network_id: String,
 }

@@ -4,8 +4,13 @@ use std::net::Ipv4Addr;
 
 use super::{OciAttachmentContext, OciIpamAuthority, recovery};
 use crate::backends::oci::network::{
-    create_persistent_network_namespace, remove_persistent_network_namespace,
-    setup_container_network, teardown_container_network,
+    create_persistent_network_namespace,
+    netavark::{
+        PreparedNetavarkSetup, PreparedNetavarkTeardown, execute_prepared_container_network_setup,
+        execute_prepared_container_network_teardown, prepare_container_network_setup,
+        prepare_container_network_teardown,
+    },
+    remove_persistent_network_namespace,
 };
 use crate::error::Result;
 
@@ -24,16 +29,30 @@ pub(super) trait AttachmentHostEffects {
 
     fn create_namespace(&self, context: &OciAttachmentContext<'_>) -> Result<()>;
 
+    fn prepare_provider_setup(
+        &self,
+        ipam: &OciIpamAuthority,
+        context: &OciAttachmentContext<'_>,
+    ) -> Result<PreparedNetavarkSetup>;
+
     fn setup_provider(
         &self,
         ipam: &OciIpamAuthority,
         context: &OciAttachmentContext<'_>,
+        prepared: PreparedNetavarkSetup,
     ) -> Result<Vec<Ipv4Addr>>;
+
+    fn prepare_provider_teardown(
+        &self,
+        ipam: &OciIpamAuthority,
+        context: &OciAttachmentContext<'_>,
+    ) -> Result<PreparedNetavarkTeardown>;
 
     fn teardown_provider(
         &self,
         ipam: &OciIpamAuthority,
         context: &OciAttachmentContext<'_>,
+        prepared: PreparedNetavarkTeardown,
     ) -> Result<()>;
 
     fn remove_namespace(&self, context: &OciAttachmentContext<'_>) -> Result<()>;
@@ -46,20 +65,38 @@ impl AttachmentHostEffects for RealAttachmentHostEffects {
         create_persistent_network_namespace(&context.layout.netns_path)
     }
 
+    fn prepare_provider_setup(
+        &self,
+        ipam: &OciIpamAuthority,
+        context: &OciAttachmentContext<'_>,
+    ) -> Result<PreparedNetavarkSetup> {
+        prepare_container_network_setup(ipam, &context.operation())
+    }
+
     fn setup_provider(
         &self,
         ipam: &OciIpamAuthority,
         context: &OciAttachmentContext<'_>,
+        prepared: PreparedNetavarkSetup,
     ) -> Result<Vec<Ipv4Addr>> {
-        setup_container_network(ipam, &context.operation())
+        execute_prepared_container_network_setup(ipam, &context.operation(), prepared)
+    }
+
+    fn prepare_provider_teardown(
+        &self,
+        ipam: &OciIpamAuthority,
+        context: &OciAttachmentContext<'_>,
+    ) -> Result<PreparedNetavarkTeardown> {
+        prepare_container_network_teardown(ipam, &context.operation())
     }
 
     fn teardown_provider(
         &self,
         ipam: &OciIpamAuthority,
         context: &OciAttachmentContext<'_>,
+        prepared: PreparedNetavarkTeardown,
     ) -> Result<()> {
-        teardown_container_network(ipam, &context.operation())
+        execute_prepared_container_network_teardown(ipam, &context.operation(), prepared)
     }
 
     fn remove_namespace(&self, context: &OciAttachmentContext<'_>) -> Result<()> {

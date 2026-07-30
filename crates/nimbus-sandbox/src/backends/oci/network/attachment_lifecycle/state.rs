@@ -2,10 +2,10 @@
 
 use nimbus_network::{
     DurableNetworkAttachmentState, LocalNetworkAttachmentAuthority, NetworkAttachmentId,
-    NetworkAttachmentStateError, NetworkLeaseEpoch, NetworkPlan, NetworkPlanContentDigest,
-    NetworkPlanId, NetworkProviderHandle, NetworkProviderId, NetworkResourceGeneration,
-    NetworkResourcePhase, NetworkResourceVersion, NetworkStateTransition,
-    NetworkTransitionEvidence,
+    NetworkAttachmentSegmentAssociation, NetworkAttachmentStateError, NetworkPlan,
+    NetworkPlanContentDigest, NetworkPlanId, NetworkProviderHandle, NetworkProviderId,
+    NetworkResourceGeneration, NetworkResourcePhase, NetworkResourceVersion,
+    NetworkStateTransition, NetworkTransitionEvidence,
 };
 
 use super::{AttachmentBackendKind, OciAttachmentContext};
@@ -18,7 +18,6 @@ use crate::error::{Result, SandboxError};
 
 const TRANSITIONAL_ATTACHMENT_GENERATION: NetworkResourceGeneration =
     NetworkResourceGeneration::new(1);
-const TRANSITIONAL_ATTACHMENT_LEASE_EPOCH: NetworkLeaseEpoch = NetworkLeaseEpoch::new(1);
 const CONTENT_DOMAIN: &[u8] = b"nimbus.sandbox.oci.attachment-plan.v1\0";
 
 pub(super) struct OciAttachmentDurableState<'a> {
@@ -26,6 +25,7 @@ pub(super) struct OciAttachmentDurableState<'a> {
     tenant_id: &'a nimbus_core::TenantId,
     plan: NetworkPlan,
     attachment_id: NetworkAttachmentId,
+    association: NetworkAttachmentSegmentAssociation,
     provider_id: NetworkProviderId,
     stable_handle: NetworkProviderHandle,
 }
@@ -34,6 +34,7 @@ impl<'a> OciAttachmentDurableState<'a> {
     pub(super) fn compile(
         authority: Option<&'a LocalNetworkAttachmentAuthority>,
         context: &'a OciAttachmentContext<'_>,
+        association: NetworkAttachmentSegmentAssociation,
     ) -> Result<Self> {
         let authority = authority.ok_or_else(|| SandboxError::OperationFailed {
             message: format!(
@@ -73,6 +74,7 @@ impl<'a> OciAttachmentDurableState<'a> {
             tenant_id: context.tenant_id,
             plan,
             attachment_id,
+            association,
             provider_id,
             stable_handle,
         })
@@ -85,7 +87,7 @@ impl<'a> OciAttachmentDurableState<'a> {
                 self.provider_id.clone(),
                 &self.plan,
                 self.attachment_id.clone(),
-                TRANSITIONAL_ATTACHMENT_LEASE_EPOCH,
+                self.association.clone(),
             )
             .map_err(attachment_state_error)
     }
@@ -108,10 +110,18 @@ impl<'a> OciAttachmentDurableState<'a> {
                 ),
             });
         }
+        if record.association() != &self.association {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "durable attachment authority rejected the exact allocator association for {}",
+                    self.attachment_id
+                ),
+            });
+        }
         let expected = NetworkResourceVersion::for_plan(
             &self.plan,
             self.attachment_id.clone().into(),
-            TRANSITIONAL_ATTACHMENT_LEASE_EPOCH,
+            self.association.lease_epoch(),
         );
         record
             .resource()

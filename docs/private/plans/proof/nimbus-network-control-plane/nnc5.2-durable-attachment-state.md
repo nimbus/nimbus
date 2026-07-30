@@ -147,9 +147,11 @@ NNC5.2a remains the sole owner of:
 - durable coordinator reservation plus exact attachment-to-segment
   association in the canonical record;
 - provider operation attempt before the first namespace/provider effect;
-- closing the namespace-created-before-attempt crash interval;
-- replacing filename-only orphan inference;
-- the eight-row hold/desired/effect/manifest/stale/unknown orphan matrix.
+- closing the namespace-created-before-attempt crash interval.
+
+NNC5.2b depends on that evidence and remains the sole owner of replacing
+filename-only startup inference plus the eight-row
+hold/desired/effect/manifest/stale/unknown orphan matrix.
 
 NNC5.3 remains the sole owner of complete readiness beyond coarse provider
 presence. NNC5.4 owns real process-kill crash cuts. NNC5.6 and NNC6 own
@@ -181,8 +183,9 @@ Before correcting production behavior, capture failures for:
 10. store corruption or lock failure occurring before provider inspection and
     effects.
 
-NNC5.2a's eight orphan rows and first-effect attempt proof remain explicitly
-red. NNC5.4's real subprocess kill-at-Nth-effect cuts remain explicitly red.
+NNC5.2a's first-effect association/attempt proof and NNC5.2b's eight orphan
+rows remain explicitly red. NNC5.4's real subprocess kill-at-Nth-effect cuts
+remain explicitly red.
 
 ## Owned Paths
 
@@ -249,8 +252,8 @@ NNC5.2 is complete only when:
 10. terminal records perform zero provider effects;
 11. store/schema/lock failures occur before provider inspection/effects;
 12. no provider effect or new workspace edge enters `nimbus-network`;
-13. NNC5.2a, NNC5.3, NNC5.4, NNC5.6, and NNC6 boundaries remain red and
-    unduplicated;
+13. NNC5.2a, NNC5.2b, NNC5.3, NNC5.4, NNC5.6, and NNC6 boundaries remain red
+    and unduplicated;
 14. every touched production module satisfies the repository modularity rule;
 15. focused suites, full affected suites, all-target/all-feature check, strict
     Clippy, warning-denied rustdoc, format/diff, dependency/effect verifier, and
@@ -355,11 +358,11 @@ cluster-transport owner.
 - No second attachment phase record was added to Container/Krun manifests.
   Manifests and IPAM attempts remain supporting/provider evidence, not desired
   attachment authority.
-- NNC5.2a still owns durable exact attachment-to-segment association, the
-  attempt-before-first-effect interval, and filename-independent orphan
-  classification. NNC5.3 owns complete readiness; NNC5.4 owns process-kill
-  cuts; NNC5.6 owns side-effect-free workload inspection; NNC6 owns the
-  cross-domain saga.
+- NNC5.2a still owns durable exact attachment-to-segment association and the
+  attempt-before-first-effect interval. NNC5.2b owns filename-independent
+  orphan classification. NNC5.3 owns complete readiness; NNC5.4 owns
+  process-kill cuts; NNC5.6 owns side-effect-free workload inspection; NNC6
+  owns the cross-domain saga.
 
 ## Exact Candidate Paths
 
@@ -503,9 +506,10 @@ All seventeen written criteria are green. The final proof set is:
   `fb7838cab3bd63940d8c6d41dc414e876ca522e1c53d33feea9bef22ce7fe0b7`
   over the executable subset of the exact 32-path staged candidate.
 
-NNC5.2a durable exact attachment-to-segment association and attempt-before-
-first-effect/orphan convergence, NNC5.3 complete readiness, NNC5.4 real
-process-kill cuts, NNC5.5 band-wide locality, NNC5.6 side-effect-free workload
-inspection, and NNC6 workload/network saga coordination remain intentionally
-red in their canonical owners. The exact local NNC5.2 item commit is the only
-remaining durability action; no push or PR is authorized.
+NNC5.2a durable exact attachment-to-segment association and
+attempt-before-first-effect ordering, NNC5.2b startup orphan classification,
+NNC5.3 complete readiness, NNC5.4 real process-kill cuts, NNC5.5 band-wide
+locality, NNC5.6 side-effect-free workload inspection, and NNC6
+workload/network saga coordination remain intentionally red in their canonical
+owners. The exact local NNC5.2 item commit is the only remaining durability
+action; no push or PR is authorized.

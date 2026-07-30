@@ -215,15 +215,6 @@ fn netavark_endpoint_effect_requires_complete_current_port_leases() {
     assert_eq!(manifest.port_leases.len(), 2);
     manifest.port_leases.clear();
 
-    let legacy_marker = backend
-        .config
-        .workload_state_root
-        .join("networks/.legacy-nimbus0-purged");
-    fs::create_dir_all(legacy_marker.parent().expect("marker parent"))
-        .expect("legacy marker parent should create");
-    fs::write(&legacy_marker, b"test precondition\n")
-        .expect("legacy purge should be skipped by marker");
-
     let error = backend
         .configure_network(
             &manifest,
@@ -787,9 +778,9 @@ fn failed_krun_activation_teardown_retains_retry_evidence_until_confirmed_detach
     assert!(
         cleanup_error
             .to_string()
-            .contains("forced exact teardown retry failure"),
-        "outer cleanup must retry the exact durable delete attempt and preserve its failure: \
-         {cleanup_error}"
+            .contains("refusing a duplicate delete"),
+        "outer cleanup must inspect the exact durable delete attempt without replaying its \
+         ambiguous provider effect: {cleanup_error}"
     );
     assert!(
         manifest.network_layout.netns_path.exists(),
@@ -797,9 +788,10 @@ fn failed_krun_activation_teardown_retains_retry_evidence_until_confirmed_detach
     );
     assert_eq!(
         fs::read_to_string(&netavark_count)
-            .expect("second teardown invocation should be recorded")
+            .expect("the sole teardown invocation should remain recorded")
             .trim(),
-        "2"
+        "1",
+        "ambiguous teardown retry must never invoke the provider a second time"
     );
     let deleting_after_retry = network_store
         .read::<serde_json::Value>(&NetworkStatePartition::TenantIpam(
@@ -837,17 +829,20 @@ fn failed_krun_activation_teardown_retains_retry_evidence_until_confirmed_detach
         assert_eq!(record.phase(), PortLeasePhase::CleanupPending);
     }
 
+    fs::remove_file(&manifest.network_layout.netns_path)
+        .expect("provider absence fixture should remove the exact namespace projection");
     backend
         .release_network_artifacts(
             &manifest,
             super::super::lifecycle::NetworkArtifactTeardownMode::Final,
         )
-        .expect("the next exact teardown retry should confirm detach and converge cleanup");
+        .expect("exact observed absence should confirm detach and converge cleanup");
     assert_eq!(
         fs::read_to_string(&netavark_count)
-            .expect("third teardown invocation should be recorded")
+            .expect("the sole teardown invocation should remain recorded")
             .trim(),
-        "3"
+        "1",
+        "absence confirmation must not replay the already ambiguous provider effect"
     );
     #[cfg(target_os = "linux")]
     assert!(

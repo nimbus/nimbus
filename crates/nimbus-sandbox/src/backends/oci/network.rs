@@ -48,9 +48,10 @@ pub(crate) use layout::{
 };
 pub(crate) use netavark::{
     OciNetavarkOperation, authenticate_container_network_generation,
-    authenticate_container_network_generation_for_cleanup, setup_container_network,
-    teardown_container_network,
+    authenticate_container_network_generation_for_cleanup,
 };
+#[cfg(test)]
+pub(crate) use netavark::{setup_container_network, teardown_container_network};
 pub(crate) use netns::{create_persistent_network_namespace, remove_persistent_network_namespace};
 pub(crate) use placement::place_sandbox_on_block;
 pub(crate) use process::{
@@ -71,7 +72,7 @@ pub(crate) use proxy::{
 pub(crate) use realization::OciSegmentRealization;
 pub(crate) use reaper::{
     ReservedNetworkLaunchAuthority, compensate_reserved_network_launch_after_ports,
-    purge_legacy_nimbus0_once, quarantine_network_segment_hold, reconcile_network_segment_orphans,
+    quarantine_network_segment_hold, reconcile_network_segment_orphans,
     release_network_segment_hold, release_reserved_network_launch_after_ports,
 };
 #[cfg(test)]

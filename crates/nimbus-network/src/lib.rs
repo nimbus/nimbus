@@ -77,9 +77,10 @@ pub use readiness::{
     NetworkReadinessRequirementError,
 };
 pub use segment::{
-    AllocatedSegment, NetworkAttachmentReservationState, NetworkSegmentAllocator,
-    NetworkSegmentCleanup, NetworkSegmentFinalizeOutcome, NetworkSegmentGrowth,
-    NetworkSegmentQuarantineOutcome, NetworkSegmentReleaseOutcome,
+    AllocatedSegment, NetworkAttachmentReservationObservation, NetworkAttachmentReservationState,
+    NetworkAttachmentSegmentAssociation, NetworkSegmentAllocator, NetworkSegmentCleanup,
+    NetworkSegmentFinalizeOutcome, NetworkSegmentGrowth, NetworkSegmentQuarantineOutcome,
+    NetworkSegmentReleaseOutcome,
 };
 pub use state::{
     DurableNetworkResourceState, NetworkResourceId, NetworkResourcePhase, NetworkResourceVersion,

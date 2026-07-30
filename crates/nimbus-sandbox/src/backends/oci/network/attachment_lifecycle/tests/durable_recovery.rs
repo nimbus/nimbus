@@ -9,6 +9,11 @@ use nimbus_network::{
 use super::*;
 use crate::backends::oci::network::attachment_lifecycle::recovery::AttachmentProviderObservation;
 use crate::backends::oci::network::attachment_lifecycle::state::OciAttachmentDurableState;
+use crate::backends::oci::network::netavark::{
+    PreparedNetavarkSetup, PreparedNetavarkTeardown,
+    execute_prepared_container_network_teardown_for_test, prepare_container_network_setup,
+    prepare_container_network_teardown,
+};
 
 const PHASES: [NetworkResourcePhase; 11] = [
     NetworkResourcePhase::Reserved,
@@ -50,6 +55,7 @@ impl ObservationKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RecoveryOperation {
     Inspect,
+    ProviderAttemptPrepared,
     NamespaceCreated,
     ProviderSetup,
     BackendPublication,
@@ -63,7 +69,6 @@ struct RecoveryHostEffects<'a> {
     operations: Mutex<Vec<RecoveryOperation>>,
     allocator: &'a RecordingSegmentAllocator,
     allocator_before_inspection: Vec<SegmentAllocatorOperation>,
-    legacy_purge_marker: PathBuf,
 }
 
 impl<'a> RecoveryHostEffects<'a> {
@@ -77,7 +82,6 @@ impl<'a> RecoveryHostEffects<'a> {
             operations: Mutex::new(Vec::new()),
             allocator: &fixture.allocator,
             allocator_before_inspection,
-            legacy_purge_marker: fixture.legacy_purge_marker(),
         }
     }
 
@@ -118,10 +122,6 @@ impl AttachmentHostEffects for RecoveryHostEffects<'_> {
             "provider inspection must follow only read-only attachment authentication and precede \
              segment quarantine, release, or reacquisition: {allocator_operations:?}"
         );
-        assert!(
-            !self.legacy_purge_marker.exists(),
-            "provider inspection must precede filesystem migration effects"
-        );
         self.record(RecoveryOperation::Inspect);
         self.observation.observation()
     }
@@ -131,22 +131,51 @@ impl AttachmentHostEffects for RecoveryHostEffects<'_> {
         Ok(())
     }
 
+    fn prepare_provider_setup(
+        &self,
+        ipam: &OciIpamAuthority,
+        context: &OciAttachmentContext<'_>,
+    ) -> Result<PreparedNetavarkSetup> {
+        let prepared = prepare_container_network_setup(ipam, &context.operation())?;
+        self.record(RecoveryOperation::ProviderAttemptPrepared);
+        Ok(prepared)
+    }
+
     fn setup_provider(
         &self,
-        _ipam: &OciIpamAuthority,
-        _context: &OciAttachmentContext<'_>,
+        ipam: &OciIpamAuthority,
+        context: &OciAttachmentContext<'_>,
+        prepared: PreparedNetavarkSetup,
     ) -> Result<Vec<Ipv4Addr>> {
+        let assigned_ips = prepared.assigned_ips().to_vec();
+        begin_netavark_setup_execution(
+            ipam,
+            context.layout,
+            context.config,
+            context.sandbox_id,
+            prepared.claim(),
+        )?;
+        complete_netavark_setup(ipam, context.layout, prepared.claim())?;
         self.record(RecoveryOperation::ProviderSetup);
-        Ok(vec![Ipv4Addr::new(127, 92, 0, 2)])
+        Ok(assigned_ips)
     }
 
     fn teardown_provider(
         &self,
-        _ipam: &OciIpamAuthority,
-        _context: &OciAttachmentContext<'_>,
+        ipam: &OciIpamAuthority,
+        context: &OciAttachmentContext<'_>,
+        prepared: PreparedNetavarkTeardown,
     ) -> Result<()> {
         self.record(RecoveryOperation::ProviderTeardown);
-        Ok(())
+        execute_prepared_container_network_teardown_for_test(ipam, context.layout, prepared)
+    }
+
+    fn prepare_provider_teardown(
+        &self,
+        ipam: &OciIpamAuthority,
+        context: &OciAttachmentContext<'_>,
+    ) -> Result<PreparedNetavarkTeardown> {
+        prepare_container_network_teardown(ipam, &context.operation())
     }
 
     fn remove_namespace(&self, _context: &OciAttachmentContext<'_>) -> Result<()> {
@@ -161,8 +190,23 @@ fn seed_phase(
     phase: NetworkResourcePhase,
 ) -> DurableNetworkAttachmentState {
     let adapter = fixture.host_adapter(fixture.backend, config, &[], &[]);
-    let durable = OciAttachmentDurableState::compile(Some(&fixture.attachments), &adapter.context)
-        .expect("durable attachment state should compile");
+    let association = fixture
+        .allocator
+        .inspect_attachment_reservation(
+            &fixture.tenant_id,
+            &default_network_attachment_id(&fixture.sandbox_id),
+            &config.reservation_claim,
+        )
+        .expect("allocator association should inspect")
+        .association()
+        .expect("adopted attachment should have an association")
+        .clone();
+    let durable = OciAttachmentDurableState::compile(
+        Some(&fixture.attachments),
+        &adapter.context,
+        association,
+    )
+    .expect("durable attachment state should compile");
     let reserved = durable.reserve().expect("attachment should reserve");
     if phase == NetworkResourcePhase::Reserved {
         return reserved;
@@ -507,8 +551,8 @@ fn corrupt_store_fails_before_provider_inspection_for_both_backend_routes() {
             "{backend:?} must not inspect or execute provider effects after store corruption"
         );
         assert!(
-            !fixture.legacy_purge_marker().exists(),
-            "{backend:?} must fail before filesystem migration effects"
+            !fixture.layout.netns_path.exists(),
+            "{backend:?} must fail before namespace effects"
         );
     }
 }

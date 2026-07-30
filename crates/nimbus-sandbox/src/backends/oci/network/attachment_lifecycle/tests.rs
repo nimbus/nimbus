@@ -16,9 +16,13 @@ use super::*;
 use crate::backends::container::ContainerSandboxBackend;
 use crate::backends::krun::KrunSandboxBackend;
 use crate::backends::oci::network::ipam::{
-    NetavarkTeardownPlan, begin_netavark_setup, begin_netavark_teardown, complete_netavark_setup,
-    complete_netavark_teardown, confirm_netavark_provider_detached,
-    inspect_netavark_provider_operation,
+    begin_netavark_setup_execution, complete_netavark_setup, inspect_netavark_provider_operation,
+};
+use crate::backends::oci::network::netavark::{
+    PreparedNetavarkSetup, PreparedNetavarkTeardown,
+    execute_prepared_container_network_teardown_ambiguously_for_test,
+    execute_prepared_container_network_teardown_for_test, prepare_container_network_setup,
+    prepare_container_network_teardown,
 };
 use crate::backends::oci::network::{
     RecordingSegmentAllocator, SegmentAllocatorOperation, allocate_container_ips,
@@ -39,6 +43,8 @@ use crate::spec::SandboxPortBinding;
 
 mod authority;
 mod durable_recovery;
+mod effect_order;
+mod real_adapters;
 
 use authority::stale_provenance_fails_before_effects;
 
@@ -257,6 +263,31 @@ impl ContractFixture {
         backend.adapter(input)
     }
 
+    fn machine_adapter<'a>(
+        &'a self,
+        config: &'a OciNetworkConfig,
+        forwarder: &'a OciMachinePortForwarderConfig,
+        bindings: &'a [SandboxPortBinding],
+        leases: &'a [nimbus_network::PortLeaseRequest],
+    ) -> OciAttachmentAdapter<'a> {
+        let input = OciAttachmentInput {
+            workload_state_root: &self.layout.workload_state_root,
+            tenant_id: &self.tenant_id,
+            sandbox_id: &self.sandbox_id,
+            display_name: "NNC5.2a machine contract workload",
+            hostname: "nnc52a-machine-contract",
+            bindings,
+            leases,
+            auxiliary_listener: None,
+            layout: &self.layout,
+            config,
+            launch_claim: Some(&self.claim),
+        };
+        <ContainerSandboxBackend as OciMachineForwardedAttachmentBackend>::machine_forwarded_attachment_adapter(
+            input, forwarder,
+        )
+    }
+
     fn attachment_state(
         &self,
         claim: &NetworkReservationClaim,
@@ -268,13 +299,7 @@ impl ContractFixture {
                 claim,
             )
             .expect("contract attachment state should inspect")
-    }
-
-    fn legacy_purge_marker(&self) -> PathBuf {
-        self.layout
-            .workload_state_root
-            .join("networks")
-            .join(".legacy-nimbus0-purged")
+            .state()
     }
 }
 
@@ -289,6 +314,8 @@ fn reservation_claim(label: &str) -> NetworkReservationClaim {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ContractHostOperation {
+    ProviderAttemptPrepared,
+    ProviderTeardownPrepared,
     NamespaceCreated,
     ProviderSetup,
     ProviderTeardown,
@@ -346,15 +373,32 @@ impl AttachmentHostEffects for ContractHostEffects {
         Ok(())
     }
 
+    fn prepare_provider_setup(
+        &self,
+        ipam: &OciIpamAuthority,
+        context: &OciAttachmentContext<'_>,
+    ) -> Result<PreparedNetavarkSetup> {
+        let prepared = prepare_container_network_setup(ipam, &context.operation())?;
+        self.record(ContractHostOperation::ProviderAttemptPrepared);
+        Ok(prepared)
+    }
+
     fn setup_provider(
         &self,
         ipam: &OciIpamAuthority,
         context: &OciAttachmentContext<'_>,
+        prepared: PreparedNetavarkSetup,
     ) -> Result<Vec<std::net::Ipv4Addr>> {
-        let (assigned_ips, claim) =
-            begin_netavark_setup(ipam, context.layout, context.config, context.sandbox_id)?;
+        let assigned_ips = prepared.assigned_ips().to_vec();
+        begin_netavark_setup_execution(
+            ipam,
+            context.layout,
+            context.config,
+            context.sandbox_id,
+            prepared.claim(),
+        )?;
         self.record(ContractHostOperation::ProviderSetup);
-        complete_netavark_setup(ipam, context.layout, &claim)?;
+        complete_netavark_setup(ipam, context.layout, prepared.claim())?;
         Ok(assigned_ips)
     }
 
@@ -362,30 +406,28 @@ impl AttachmentHostEffects for ContractHostEffects {
         &self,
         ipam: &OciIpamAuthority,
         context: &OciAttachmentContext<'_>,
+        prepared: PreparedNetavarkTeardown,
     ) -> Result<()> {
-        let plan = begin_netavark_teardown(
-            ipam,
-            context.layout,
-            context.config,
-            context.sandbox_id,
-            None,
-        )?;
         self.record(ContractHostOperation::ProviderTeardown);
         if self.fail_teardown_after_intent {
-            return Err(SandboxError::OperationFailed {
-                message: "injected ambiguous provider teardown after durable intent".to_owned(),
-            });
+            return execute_prepared_container_network_teardown_ambiguously_for_test(
+                ipam,
+                context.layout,
+                prepared,
+                "injected ambiguous provider teardown after durable intent",
+            );
         }
-        match plan {
-            NetavarkTeardownPlan::AlreadyDetached => Ok(()),
-            NetavarkTeardownPlan::RemoveProjection { claim } => {
-                complete_netavark_teardown(ipam, context.layout, &claim)
-            }
-            NetavarkTeardownPlan::Run { claim, .. } => {
-                confirm_netavark_provider_detached(ipam, context.layout, &claim)?;
-                complete_netavark_teardown(ipam, context.layout, &claim)
-            }
-        }
+        execute_prepared_container_network_teardown_for_test(ipam, context.layout, prepared)
+    }
+
+    fn prepare_provider_teardown(
+        &self,
+        ipam: &OciIpamAuthority,
+        context: &OciAttachmentContext<'_>,
+    ) -> Result<PreparedNetavarkTeardown> {
+        let prepared = prepare_container_network_teardown(ipam, &context.operation())?;
+        self.record(ContractHostOperation::ProviderTeardownPrepared);
+        Ok(prepared)
     }
 
     fn remove_namespace(&self, context: &OciAttachmentContext<'_>) -> Result<()> {
@@ -468,7 +510,7 @@ const ATTACH_PHASES: [AttachmentAttachPhase; 11] = [
     AttachmentAttachPhase::GenerationAuthenticated,
     AttachmentAttachPhase::LeasesAuthenticated,
     AttachmentAttachPhase::AuthorityAuthenticated,
-    AttachmentAttachPhase::LegacyBridgePurged,
+    AttachmentAttachPhase::ProviderAttemptAuthenticated,
     AttachmentAttachPhase::NamespaceCreated,
     AttachmentAttachPhase::ListenerClaimsHeld,
     AttachmentAttachPhase::ProviderSetupComplete,
@@ -496,7 +538,6 @@ fn plan_only_has_zero_attachment_effects(backend: ContractBackend) {
             .is_empty(),
         "constructing the real adapter must not reserve ports"
     );
-    assert!(!fixture.legacy_purge_marker().exists());
     assert!(!fixture.layout.netns_path.exists());
 }
 
@@ -597,8 +638,8 @@ fn generation_and_leases_precede_effects(backend: ContractBackend) {
         "lease authentication must not mutate attachment authority"
     );
     assert!(
-        !fixture.legacy_purge_marker().exists() && !fixture.layout.netns_path.exists(),
-        "lease authentication must precede legacy-purge and netns filesystem effects"
+        !fixture.layout.netns_path.exists(),
+        "lease authentication must precede netns filesystem effects"
     );
 }
 
@@ -630,6 +671,7 @@ fn happy_attach_has_one_canonical_trace(backend: ContractBackend) {
     assert_eq!(
         host.operations(),
         vec![
+            ContractHostOperation::ProviderAttemptPrepared,
             ContractHostOperation::NamespaceCreated,
             ContractHostOperation::ProviderSetup,
         ]
@@ -673,7 +715,9 @@ fn represented_attach_failures_reverse_compensate(backend: ContractBackend) {
         );
         assert!(
             !fixture.layout.netns_path.exists(),
-            "{phase:?} compensation must remove only a completed namespace phase"
+            "{phase:?} compensation must remove only a completed namespace phase; error={error}; \
+             operations={:?}",
+            host.operations()
         );
         assert_eq!(
             fixture.attachment_state(&fixture.claim),
@@ -692,6 +736,11 @@ fn represented_attach_failures_reverse_compensate(backend: ContractBackend) {
             let operations = host.operations();
             assert_eq!(
                 operations.first(),
+                Some(&ContractHostOperation::ProviderAttemptPrepared),
+                "{phase:?} must use the durable provider attempt selected before effects"
+            );
+            assert_eq!(
+                operations.get(1),
                 Some(&ContractHostOperation::NamespaceCreated),
                 "{phase:?} must compensate only after namespace creation"
             );
@@ -699,6 +748,12 @@ fn represented_attach_failures_reverse_compensate(backend: ContractBackend) {
                 operations.last(),
                 Some(&ContractHostOperation::NamespaceRemoved),
                 "{phase:?} must finish reverse compensation at namespace removal"
+            );
+        } else if phase == AttachmentAttachPhase::ProviderAttemptAuthenticated {
+            assert_eq!(
+                host.operations(),
+                vec![ContractHostOperation::ProviderAttemptPrepared],
+                "the attempt checkpoint follows its durable write but precedes host effects"
             );
         } else {
             assert!(
@@ -780,6 +835,7 @@ fn primary_failure_survives_cleanup(backend: ContractBackend) {
         assert_eq!(
             host.operations(),
             vec![
+                ContractHostOperation::ProviderAttemptPrepared,
                 ContractHostOperation::NamespaceCreated,
                 ContractHostOperation::ProviderSetup,
             ],
@@ -829,11 +885,13 @@ fn ambiguous_compensation_retains_fences(backend: ContractBackend) {
     assert_eq!(
         host.operations(),
         vec![
+            ContractHostOperation::ProviderAttemptPrepared,
             ContractHostOperation::NamespaceCreated,
             ContractHostOperation::ProviderSetup,
+            ContractHostOperation::ProviderTeardownPrepared,
             ContractHostOperation::ProviderTeardown,
         ],
-        "an ambiguous teardown must not claim namespace removal"
+        "an ambiguous teardown must retain the prepared attempt and not claim namespace removal"
     );
     assert!(
         format!(
@@ -847,7 +905,7 @@ fn ambiguous_compensation_retains_fences(backend: ContractBackend) {
             .expect("ambiguous provider operation should inspect")
         )
         .contains("Deleting"),
-        "ambiguous teardown must retain the exact provider attempt"
+        "ambiguous provider effect must retain the exact executing attempt"
     );
     assert_eq!(
         inspect_container_ips(&fixture.ipam, &fixture.layout, &fixture.sandbox_id)
@@ -917,6 +975,13 @@ fn retry_is_idempotent(backend: ContractBackend) {
     assert_eq!(
         host.operations()
             .iter()
+            .filter(|operation| **operation == ContractHostOperation::ProviderAttemptPrepared)
+            .count(),
+        2
+    );
+    assert_eq!(
+        host.operations()
+            .iter()
             .filter(|operation| **operation == ContractHostOperation::NamespaceCreated)
             .count(),
         2
@@ -938,7 +1003,7 @@ fn retry_is_idempotent(backend: ContractBackend) {
 }
 
 // Row 9: live/unknown runtime evidence cannot begin provider or authority cleanup.
-fn runtime_absence_precedes_detach(backend: ContractBackend) {
+fn durable_attempt_precedes_runtime_cleanup(backend: ContractBackend) {
     let fixture = ContractFixture::new(backend, "runtime-fence");
     let config = fixture.reserve_and_adopt();
     let reserved = fixture.reserve_published_binding();
@@ -992,15 +1057,29 @@ fn runtime_absence_precedes_detach(backend: ContractBackend) {
             .to_string()
             .contains("runtime remains live or unknown")
     );
+    let after = fixture.allocator.operations();
     assert_eq!(
-        fixture.allocator.operations(),
-        before,
-        "runtime absence must be proven before quarantine or release authority mutates"
+        &after[..before.len()],
+        before.as_slice(),
+        "runtime fencing must preserve all pre-existing allocator operations"
+    );
+    assert!(
+        matches!(
+            after.get(before.len()),
+            Some(SegmentAllocatorOperation::InspectAttachment(..))
+        ) && after.len() == before.len() + 1,
+        "runtime absence may follow exact read-only association authentication but must precede \
+         quarantine or release authority mutation: {after:?}"
     );
     assert_eq!(
         host.operations(),
-        before_host,
-        "runtime absence must be proven before provider or namespace teardown"
+        [
+            before_host,
+            vec![ContractHostOperation::ProviderTeardownPrepared],
+        ]
+        .concat(),
+        "the exact teardown attempt must be durable before runtime cleanup, while provider and \
+         namespace effects remain untouched"
     );
     assert_eq!(
         authority
@@ -1233,7 +1312,6 @@ fn machine_forwarding_capability_is_explicit(backend: ContractBackend) {
             );
         }
     }
-    assert!(!fixture.legacy_purge_marker().exists());
     assert!(!fixture.layout.netns_path.exists());
 }
 
@@ -1295,77 +1373,6 @@ fn repeated_cleanup_is_idempotent(backend: ContractBackend) {
     );
 }
 
-// Row 15: the two real manifest adapters route through this same contract owner.
-fn real_adapters_share_the_contract_owner(backend: ContractBackend) {
-    let fixture = ContractFixture::new(backend, "real-adapter-compensation");
-    let config = fixture.reserve_and_adopt();
-    let adapter = fixture.host_adapter(backend, &config, &[], &[]);
-    assert_eq!(adapter.context.backend, backend.kind());
-    assert_eq!(adapter.context.provider_label, backend.label());
-    assert!(matches!(
-        adapter.context.publication,
-        AttachmentPublicationMode::HostManaged
-    ));
-    let host = ContractHostEffects::default();
-    let mut observer = ContractPhaseObserver::recording();
-    let error = adapter
-        .attach_with(
-            &fixture.lifecycle(),
-            AttachmentAttachAuthority::FreshLaunch(&fixture.claim),
-            &host,
-            &mut observer,
-            |_| {
-                Err(SandboxError::OperationFailed {
-                    message: "real adapter callback sentinel".to_owned(),
-                })
-            },
-        )
-        .expect_err("the real adapter must route callback failure through compensation");
-    assert!(error.to_string().contains("real adapter callback sentinel"));
-    assert_eq!(
-        host.operations(),
-        vec![
-            ContractHostOperation::NamespaceCreated,
-            ContractHostOperation::ProviderSetup,
-            ContractHostOperation::ProviderTeardown,
-            ContractHostOperation::NamespaceRemoved,
-        ],
-        "the concrete adapter must enter the shared reverse-compensation owner"
-    );
-
-    let fixture = ContractFixture::new(backend, "real-adapter-detach");
-    let config = fixture.reserve_and_adopt();
-    let adapter = fixture.host_adapter(backend, &config, &[], &[]);
-    let host = ContractHostEffects::default();
-    let mut observer = ContractPhaseObserver::recording();
-    adapter
-        .attach_with(
-            &fixture.lifecycle(),
-            AttachmentAttachAuthority::FreshLaunch(&fixture.claim),
-            &host,
-            &mut observer,
-            |_| Ok(()),
-        )
-        .expect("the real adapter should attach through the shared owner");
-    let detach_callback_seen = AtomicBool::new(false);
-    adapter
-        .detach_host_managed_with(
-            &fixture.lifecycle(),
-            AttachmentTeardownMode::Final,
-            &host,
-            |_| {
-                detach_callback_seen.store(true, Ordering::SeqCst);
-                Ok(())
-            },
-        )
-        .expect("the real adapter should detach through the shared owner");
-    assert!(detach_callback_seen.load(Ordering::SeqCst));
-    assert_eq!(
-        fixture.attachment_state(&fixture.claim),
-        NetworkAttachmentReservationState::Absent
-    );
-}
-
 macro_rules! shared_contract_row {
     ($container:ident, $krun:ident, $case:ident) => {
         #[test]
@@ -1421,9 +1428,9 @@ shared_contract_row!(
     retry_is_idempotent
 );
 shared_contract_row!(
-    container_09_runtime_absence_precedes_detach,
-    krun_09_runtime_absence_precedes_detach,
-    runtime_absence_precedes_detach
+    container_09_durable_attempt_precedes_runtime_cleanup,
+    krun_09_durable_attempt_precedes_runtime_cleanup,
+    durable_attempt_precedes_runtime_cleanup
 );
 shared_contract_row!(
     container_10_restart_detach_retains_authority,
@@ -1449,9 +1456,4 @@ shared_contract_row!(
     container_14_repeated_cleanup_is_idempotent,
     krun_14_repeated_cleanup_is_idempotent,
     repeated_cleanup_is_idempotent
-);
-shared_contract_row!(
-    container_15_real_adapters_share_the_contract_owner,
-    krun_15_real_adapters_share_the_contract_owner,
-    real_adapters_share_the_contract_owner
 );

@@ -74,7 +74,7 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC5.2 complete; NNC5.2a
+- `nimbus-network-control-plane-plan.md` - `active; NNC5.2a complete; NNC5.2b
   in progress`. The Linux sovereignty tripwire is complete with a root-safe,
   raw-artifact-derived evidence contract, 70/70 deterministic tests, 62/62
   adversarial verifier cases, fully dispositioned full+narrow Sol reviews, and
@@ -88,15 +88,20 @@ extension-registry seam before the second concern edits `extensions.rs`.
   backend lane passes 332/332, and affected crates pass 1003/1003 with 24
   declared skips. Its full review's sole proof gap is corrected by four
   constructor/private-route tests and the one narrow correction review is
-  clean at 0.99. Machine
-  forwarding, runtime absence, workload status, readiness persistence, and
-  inspect/restart policy stay in their existing or later owners. The
-  No further NNC5.2 review ran or is warranted. NNC5.2a now owns the read-only
-  association/effect-order/orphan audit before it persists exact attachment-
-  to-segment association and provider attempt before first effects. Sole owner
-  for the
-  transport-free
-  connectivity-resource control plane: portable network identities and plans,
+  clean at 0.99. No further NNC5.2 review ran or is warranted. NNC5.2a is now
+  complete: exact attachment-to-segment association and one sandbox-owned
+  provider-attempt journal precede every attachment effect across Container,
+  Krun, and machine-forwarded routes. Its full and sole narrow Sol reviews
+  found two final-detach recovery defects; both have exact fail-before proofs,
+  corrected retry behavior, and full affected gates. Final lifecycle is
+  41/41, portable 233/233 with one subprocess skip, backend 332/332, sandbox
+  785/785 with 24 declared skips, verifier 18/18 plus 67/67 adversarial cases,
+  docs 108, and site 17/17. NNC5.2b next owns durable-evidence startup
+  classification and its eight-row orphan matrix. Machine forwarding obeys
+  NNC5.2a's common lifecycle; runtime absence, workload status, readiness persistence,
+  cleanup convergence, and inspect/restart policy stay in their named later
+  owners. Sole owner for the transport-free connectivity-resource control
+  plane: portable network identities and plans,
   crash-safe segment and cross-process host-port lease authority,
   generation/epoch fencing, capability satisfaction, reconciliation, exact
   provision/teardown choreography, and sovereignty proof. It must stay below

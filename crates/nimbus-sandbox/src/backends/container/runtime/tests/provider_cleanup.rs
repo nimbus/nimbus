@@ -249,6 +249,18 @@ fn failed_restart_teardown_retains_runtime_receipts_for_retry() {
         .plan_start_with_id(&sample_spec(), &sandbox_id(), None, None)
         .expect("execute manifest should plan")
         .manifest;
+    let claim = manifest
+        .launch_reservation_claim
+        .as_ref()
+        .expect("planned restart fixture should retain its exact claim");
+    backend
+        .segment_allocator
+        .adopt_reserved_attachment(
+            &manifest.spec.tenant_id,
+            &default_network_attachment_id(&manifest.handle.id),
+            claim,
+        )
+        .expect("restart fixture should adopt its exact attachment association");
     manifest.conmon_launch.delete_command = CommandSpec::new("/usr/bin/false");
     let receipts = [
         (&manifest.conmon_layout.exit_status_file, b"42\n".as_slice()),
@@ -448,6 +460,32 @@ fn terminal_cleanup_uses_manifest_machine_forwarder_after_backend_config_drift()
     assert!(
         manifest.launch_reservation_claim.is_none(),
         "terminal cleanup must retire the exact launch coordinator"
+    );
+    let attachment = nimbus_network::LocalNetworkAttachmentAuthority::open(
+        &manifest.runner_config.network_state_root,
+    )
+    .expect("attachment authority should reopen")
+    .get(
+        &manifest.spec.tenant_id,
+        &default_network_attachment_id(&manifest.handle.id),
+    )
+    .expect("machine-forwarded attachment should inspect")
+    .expect("machine-forwarded cleanup should retain its durable terminal record");
+    assert_eq!(
+        attachment.resource().phase(),
+        nimbus_network::NetworkResourcePhase::Released,
+        "machine-forwarded final cleanup must converge through the shared durable attachment lifecycle"
+    );
+    let network_config = manifest
+        .require_network_config()
+        .expect("terminal manifest should retain immutable network identity");
+    assert_eq!(
+        attachment.association().reservation_claim(),
+        &network_config.reservation_claim
+    );
+    assert_eq!(
+        attachment.association().segment_id().as_str(),
+        network_config.segment_id
     );
 }
 
@@ -1215,6 +1253,17 @@ fn release_execution_artifacts_uses_quarantine_release_finalize_order() {
         .expect("plan should lower")
         .manifest;
     mark_runtime_absent_for_cleanup(&mut manifest);
+    backend
+        .segment_allocator
+        .adopt_reserved_attachment(
+            &manifest.spec.tenant_id,
+            &default_network_attachment_id(&manifest.handle.id),
+            manifest
+                .launch_reservation_claim
+                .as_ref()
+                .expect("provider cleanup fixture should retain its exact claim"),
+        )
+        .expect("provider cleanup fixture must adopt its bound segment association");
 
     backend
         .release_execution_artifacts(&mut manifest)

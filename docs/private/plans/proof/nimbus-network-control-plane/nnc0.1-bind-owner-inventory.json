@@ -404,7 +404,7 @@
       "verification": "source-occurrence",
       "category": "provider-bind-request",
       "path": "crates/nimbus-sandbox/src/backends/oci/network/netavark.rs",
-      "line": 374,
+      "line": 571,
       "symbol": "build_netavark_request",
       "authority_kinds": [
         "netavark-port-mapping-request"
@@ -819,7 +819,7 @@
       "kind": "netavark-port-mapping-request",
       "symbol": "build_netavark_request",
       "ordinal": 1,
-      "line": 374
+      "line": 571
     },
     {
       "site_id": "machine-port-proxy-bind",

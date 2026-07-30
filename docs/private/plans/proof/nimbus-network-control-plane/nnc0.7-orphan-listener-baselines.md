@@ -49,9 +49,10 @@ netns when no desired attachment/provider attempt owns them
  right: "fully-removed"
 ```
 
-NNC5.2a owns persisting desired attachment/provider-attempt evidence before
-effects and replacing filename-only classification. NNC8.3 owns restart
-convergence and cleanup/quarantine.
+NNC5.2a owns persisting exact desired attachment association plus the sandbox
+provider attempt before effects. NNC5.2b owns replacing filename-only startup
+classification with durable evidence. NNC8.3 owns repeated cleanup/release
+convergence.
 
 ### Complete orphan evidence matrix
 

@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 
 use nimbus_core::{Cidr, TenantId};
+use serde::{Deserialize, Serialize};
 
 use crate::{NetworkAttachmentId, NetworkLeaseEpoch, NetworkReservationClaim, NetworkSegmentId};
 
@@ -175,6 +176,130 @@ pub enum NetworkAttachmentReservationState {
     ProviderCleanupPending,
 }
 
+/// Immutable allocator association authenticated before attachment effects.
+///
+/// The reservation claim proves which launch coordinator owns compensation,
+/// the segment ID proves the exact selected allocation, and the lease epoch
+/// fences reuse of that stable segment identity. The CIDR and provider-local
+/// realization are deliberately absent: neither is workload identity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NetworkAttachmentSegmentAssociation {
+    reservation_claim: NetworkReservationClaim,
+    segment_id: NetworkSegmentId,
+    lease_epoch: NetworkLeaseEpoch,
+}
+
+impl NetworkAttachmentSegmentAssociation {
+    /// Bind one exact coordinator claim to its selected segment and epoch.
+    pub fn new(
+        reservation_claim: NetworkReservationClaim,
+        segment_id: NetworkSegmentId,
+        lease_epoch: NetworkLeaseEpoch,
+    ) -> Self {
+        Self {
+            reservation_claim,
+            segment_id,
+            lease_epoch,
+        }
+    }
+
+    /// Attempt-unique coordinator claim that owns this association.
+    pub fn reservation_claim(&self) -> &NetworkReservationClaim {
+        &self.reservation_claim
+    }
+
+    /// Stable selected segment identity, independent of its CIDR.
+    pub fn segment_id(&self) -> &NetworkSegmentId {
+        &self.segment_id
+    }
+
+    /// Allocation epoch that fences replacement or reuse.
+    pub fn lease_epoch(&self) -> NetworkLeaseEpoch {
+        self.lease_epoch
+    }
+}
+
+/// Read-only durable observation of one exact attachment reservation.
+///
+/// `association` is present whenever the allocator has durably bound the
+/// reservation to a segment, including adopted and cleanup-pending states.
+/// It is absent only for an absent or still-unplaced reservation. The
+/// observation reports authority state; it does not prove provider effects.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkAttachmentReservationObservation {
+    state: NetworkAttachmentReservationState,
+    association: Option<NetworkAttachmentSegmentAssociation>,
+}
+
+impl NetworkAttachmentReservationObservation {
+    /// Observe that no exact reservation exists.
+    pub fn absent() -> Self {
+        Self {
+            state: NetworkAttachmentReservationState::Absent,
+            association: None,
+        }
+    }
+
+    /// Observe a coordinator reservation not yet bound to a segment.
+    pub fn unplaced_reserved() -> Self {
+        Self {
+            state: NetworkAttachmentReservationState::Reserved,
+            association: None,
+        }
+    }
+
+    /// Observe cleanup of a coordinator reservation never bound to a segment.
+    pub fn unplaced_cleanup_pending() -> Self {
+        Self {
+            state: NetworkAttachmentReservationState::ReservationCleanupPending,
+            association: None,
+        }
+    }
+
+    /// Observe a coordinator reservation bound to one exact segment.
+    pub fn bound_reserved(association: NetworkAttachmentSegmentAssociation) -> Self {
+        Self {
+            state: NetworkAttachmentReservationState::Reserved,
+            association: Some(association),
+        }
+    }
+
+    /// Observe cleanup of a reservation bound to one exact segment.
+    pub fn bound_cleanup_pending(association: NetworkAttachmentSegmentAssociation) -> Self {
+        Self {
+            state: NetworkAttachmentReservationState::ReservationCleanupPending,
+            association: Some(association),
+        }
+    }
+
+    /// Observe an exact reservation adopted into provider lifecycle authority.
+    pub fn adopted(association: NetworkAttachmentSegmentAssociation) -> Self {
+        Self {
+            state: NetworkAttachmentReservationState::Adopted,
+            association: Some(association),
+        }
+    }
+
+    /// Observe an adopted hold quarantined pending provider cleanup.
+    pub fn provider_cleanup_pending(association: NetworkAttachmentSegmentAssociation) -> Self {
+        Self {
+            state: NetworkAttachmentReservationState::ProviderCleanupPending,
+            association: Some(association),
+        }
+    }
+
+    /// Durable reservation lifecycle state.
+    pub fn state(&self) -> NetworkAttachmentReservationState {
+        self.state
+    }
+
+    /// Exact bound association, or `None` when absent or still unplaced.
+    pub fn association(&self) -> Option<&NetworkAttachmentSegmentAssociation> {
+        self.association.as_ref()
+    }
+}
+
 /// Result of compare-and-swap-fenced segment growth.
 ///
 /// A placement coordinator first observes the tenant's complete ordered block
@@ -236,13 +361,15 @@ pub trait NetworkSegmentAllocator: Send + Sync {
     ///
     /// Implementations must authenticate the tenant, stable attachment ID, and
     /// attempt-unique reservation claim. A foreign or unauthenticated hold
-    /// fails closed rather than being reported as absent.
+    /// fails closed rather than being reported as absent. A bound, adopted, or
+    /// bound cleanup-pending reservation reports its exact immutable
+    /// association. Only absent or still-unplaced authority omits it.
     fn inspect_attachment_reservation(
         &self,
         tenant: &TenantId,
         attachment_id: &NetworkAttachmentId,
         reservation_claim: &NetworkReservationClaim,
-    ) -> Result<NetworkAttachmentReservationState, Self::Error>;
+    ) -> Result<NetworkAttachmentReservationObservation, Self::Error>;
 
     /// Durably reserve one unplaced attachment for an attempt-unique launch
     /// coordinator.
@@ -400,6 +527,7 @@ mod tests {
     use std::convert::Infallible;
 
     use super::*;
+    use crate::{NetworkProviderHandle, NetworkProviderId};
 
     fn segment_id(value: &str) -> NetworkSegmentId {
         value.parse().expect("fixture segment id should parse")
@@ -442,6 +570,7 @@ mod tests {
 
     struct FixedAllocator {
         segment: AllocatedSegment,
+        association: NetworkAttachmentSegmentAssociation,
     }
 
     impl NetworkSegmentAllocator for FixedAllocator {
@@ -468,8 +597,10 @@ mod tests {
             _tenant: &TenantId,
             _attachment_id: &NetworkAttachmentId,
             _reservation_claim: &NetworkReservationClaim,
-        ) -> Result<NetworkAttachmentReservationState, Self::Error> {
-            Ok(NetworkAttachmentReservationState::Reserved)
+        ) -> Result<NetworkAttachmentReservationObservation, Self::Error> {
+            Ok(NetworkAttachmentReservationObservation::bound_reserved(
+                self.association.clone(),
+            ))
         }
 
         fn reserve_attachment_for_coordinator(
@@ -592,6 +723,18 @@ mod tests {
     fn allocator_contract_is_object_safe_with_adapter_owned_types() {
         let tenant = TenantId::new("tenant-a").expect("tenant should parse");
         let attachment = NetworkAttachmentId::generate();
+        let claim = NetworkReservationClaim::new(
+            NetworkProviderHandle::new(
+                NetworkProviderId::for_registration_key("nimbus.test.coordinator"),
+                "launch-attempt-a",
+            )
+            .expect("claim handle should validate"),
+        );
+        let association = NetworkAttachmentSegmentAssociation::new(
+            claim.clone(),
+            segment_id("netsegment_01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            NetworkLeaseEpoch::new(1),
+        );
         let allocator: &dyn NetworkSegmentAllocator<Segment = AllocatedSegment, Error = Infallible> =
             &FixedAllocator {
                 segment: AllocatedSegment::new(
@@ -600,6 +743,7 @@ mod tests {
                     Cidr::parse("10.7.0.0/24").expect("CIDR should parse"),
                     NetworkLeaseEpoch::new(1),
                 ),
+                association: association.clone(),
             };
 
         assert_eq!(
@@ -627,6 +771,25 @@ mod tests {
             observed,
             "inspection remains available independently of allocating lookup"
         );
+        let reservation_observation = allocator
+            .inspect_attachment_reservation(&tenant, &attachment, &claim)
+            .expect("infallible reservation inspection");
+        assert_eq!(
+            reservation_observation.state(),
+            NetworkAttachmentReservationState::Reserved
+        );
+        assert_eq!(
+            reservation_observation.association(),
+            Some(&association),
+            "bound inspection reports the exact claim, segment, and epoch"
+        );
+        assert_eq!(
+            allocator
+                .inspect_attachment_reservation(&tenant, &attachment, &claim)
+                .expect("repeated inspection remains infallible"),
+            reservation_observation,
+            "read-only inspection must not mutate or synthesize another association"
+        );
         assert!(matches!(
             allocator
                 .grow_block_if_current(&tenant, &observed)
@@ -645,6 +808,60 @@ mod tests {
                 .finalize_release(&cleanup)
                 .expect("infallible allocator"),
             NetworkSegmentFinalizeOutcome::Released
+        );
+    }
+
+    #[test]
+    fn allocator_observation_reports_exact_bound_segment_and_epoch_without_mutation() {
+        let tenant = TenantId::new("tenant-observation").expect("tenant should parse");
+        let attachment = NetworkAttachmentId::generate();
+        let claim = NetworkReservationClaim::new(
+            NetworkProviderHandle::new(
+                NetworkProviderId::for_registration_key("nimbus.test.coordinator"),
+                "launch-attempt-observation",
+            )
+            .expect("claim handle should validate"),
+        );
+        let association = NetworkAttachmentSegmentAssociation::new(
+            claim.clone(),
+            segment_id("netsegment_01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            NetworkLeaseEpoch::new(41),
+        );
+        let allocator = FixedAllocator {
+            segment: AllocatedSegment::new(
+                association.segment_id().clone(),
+                tenant.clone(),
+                Cidr::parse("10.41.0.0/24").expect("CIDR should parse"),
+                association.lease_epoch(),
+            ),
+            association: association.clone(),
+        };
+
+        let before = allocator
+            .inspect_attachment_reservation(&tenant, &attachment, &claim)
+            .expect("first inspection should succeed");
+        let after = allocator
+            .inspect_attachment_reservation(&tenant, &attachment, &claim)
+            .expect("second inspection should succeed");
+
+        assert_eq!(
+            before, after,
+            "inspection must be read-only and deterministic"
+        );
+        assert_eq!(after.association(), Some(&association));
+        assert_eq!(
+            after
+                .association()
+                .expect("bound reservation must carry association")
+                .segment_id(),
+            allocator.segment.segment_id()
+        );
+        assert_eq!(
+            after
+                .association()
+                .expect("bound reservation must carry association")
+                .lease_epoch(),
+            allocator.segment.lease_epoch()
         );
     }
 }

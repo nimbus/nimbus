@@ -15,10 +15,11 @@ use nimbus_core::TenantId;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    DurableNetworkResourceState, LocalNetworkStateStore, NetworkAttachmentId, NetworkLeaseEpoch,
-    NetworkPlan, NetworkProviderHandle, NetworkProviderId, NetworkResourceId,
-    NetworkResourceVersion, NetworkStateError, NetworkStateMutation, NetworkStatePartition,
-    NetworkStateStoreError, NetworkStateTransactionError, NetworkStateTransition,
+    DurableNetworkResourceState, LocalNetworkStateStore, NetworkAttachmentId,
+    NetworkAttachmentSegmentAssociation, NetworkPlan, NetworkProviderHandle, NetworkProviderId,
+    NetworkResourceId, NetworkResourceVersion, NetworkStateError, NetworkStateMutation,
+    NetworkStatePartition, NetworkStateStoreError, NetworkStateTransactionError,
+    NetworkStateTransition,
 };
 
 /// Tenant-qualified durable attachment lifecycle record.
@@ -27,6 +28,7 @@ use crate::{
 pub struct DurableNetworkAttachmentState {
     tenant_id: TenantId,
     selected_provider_id: NetworkProviderId,
+    association: NetworkAttachmentSegmentAssociation,
     resource: DurableNetworkResourceState,
 }
 
@@ -39,6 +41,11 @@ impl DurableNetworkAttachmentState {
     /// Provider registration selected before effects.
     pub fn selected_provider_id(&self) -> &NetworkProviderId {
         &self.selected_provider_id
+    }
+
+    /// Exact allocator reservation, selected segment, and fencing epoch.
+    pub fn association(&self) -> &NetworkAttachmentSegmentAssociation {
+        &self.association
     }
 
     /// Portable resource version, phase, and opaque provider handle.
@@ -59,6 +66,16 @@ impl DurableNetworkAttachmentState {
 
     fn validate(&self) -> Result<(), NetworkAttachmentStateError> {
         let attachment_id = self.attachment_id()?;
+        if self.association.lease_epoch() != self.resource.version().lease_epoch() {
+            return Err(NetworkAttachmentStateError::CorruptAuthority {
+                reason: format!(
+                    "attachment {} association epoch {} does not match resource epoch {}",
+                    attachment_id,
+                    self.association.lease_epoch().as_u64(),
+                    self.resource.version().lease_epoch().as_u64()
+                ),
+            });
+        }
         if let Some(handle) = self.resource.provider_handle()
             && handle.provider_id() != &self.selected_provider_id
         {
@@ -139,11 +156,13 @@ impl LocalNetworkAttachmentAuthority {
         selected_provider_id: NetworkProviderId,
         plan: &NetworkPlan,
         attachment_id: NetworkAttachmentId,
-        lease_epoch: NetworkLeaseEpoch,
+        association: NetworkAttachmentSegmentAssociation,
     ) -> Result<DurableNetworkAttachmentState, NetworkAttachmentStateError> {
+        let lease_epoch = association.lease_epoch();
         let candidate = DurableNetworkAttachmentState {
             tenant_id: tenant_id.clone(),
             selected_provider_id,
+            association,
             resource: DurableNetworkResourceState::reserve(
                 plan,
                 NetworkResourceId::Attachment(attachment_id.clone()),
@@ -166,6 +185,11 @@ impl LocalNetworkAttachmentAuthority {
                         attachment_id: attachment_id.clone(),
                         expected: existing.selected_provider_id.clone(),
                         candidate: candidate.selected_provider_id.clone(),
+                    });
+                }
+                if existing.association != candidate.association {
+                    return Err(NetworkAttachmentStateError::AssociationConflict {
+                        attachment_id: attachment_id.clone(),
                     });
                 }
                 existing
@@ -343,6 +367,8 @@ pub enum NetworkAttachmentStateError {
         expected: NetworkProviderId,
         candidate: NetworkProviderId,
     },
+    /// An existing attachment was replayed with another claim, segment, or epoch.
+    AssociationConflict { attachment_id: NetworkAttachmentId },
     /// An opaque handle did not belong to the selected provider.
     HandleProviderConflict {
         attachment_id: NetworkAttachmentId,
@@ -395,6 +421,10 @@ impl Display for NetworkAttachmentStateError {
             } => write!(
                 formatter,
                 "attachment {attachment_id} selected provider {expected}, not {candidate}"
+            ),
+            Self::AssociationConflict { attachment_id, .. } => write!(
+                formatter,
+                "attachment {attachment_id} has a different immutable segment association"
             ),
             Self::HandleProviderConflict {
                 attachment_id,

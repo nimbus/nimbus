@@ -81,7 +81,7 @@ impl DurableSegmentCleanupAuthority {
         tenant: &TenantId,
         attachment_id: &NetworkAttachmentId,
         reservation_claim: &NetworkReservationClaim,
-    ) -> Result<nimbus_network::NetworkAttachmentReservationState> {
+    ) -> Result<nimbus_network::NetworkAttachmentReservationObservation> {
         self.inner
             .inspect_attachment_reservation(tenant, attachment_id, reservation_claim)
     }

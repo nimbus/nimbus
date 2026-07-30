@@ -130,7 +130,8 @@ fn krun_attachment_recovery_child() {
                 &default_network_attachment_id(&reserved.handle.id),
                 &reserved_claim,
             )
-            .expect("reserved allocator outcome should inspect"),
+            .expect("reserved allocator outcome should inspect")
+            .state(),
         NetworkAttachmentReservationState::Reserved
     );
     reserved_backend
@@ -153,7 +154,8 @@ fn krun_attachment_recovery_child() {
                 &default_network_attachment_id(&adopted.handle.id),
                 &adopted_claim,
             )
-            .expect("adopted allocator outcome should inspect"),
+            .expect("adopted allocator outcome should inspect")
+            .state(),
         NetworkAttachmentReservationState::ProviderCleanupPending,
         "fresh backend startup may quarantine the orphaned adopted hold, but the exact claim must \
          continue to prove the adopted side of the crash cut"

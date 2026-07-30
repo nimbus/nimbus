@@ -795,7 +795,7 @@ impl NetworkSegmentAllocator for SingleNodeSegmentAllocator {
         tenant: &TenantId,
         attachment_id: &NetworkAttachmentId,
         reservation_claim: &NetworkReservationClaim,
-    ) -> Result<nimbus_network::NetworkAttachmentReservationState> {
+    ) -> Result<nimbus_network::NetworkAttachmentReservationObservation> {
         self.inspect_attachment_reservation_inner(tenant, attachment_id, reservation_claim)
     }
 
@@ -1295,7 +1295,7 @@ impl NetworkSegmentAllocator for ConfiguredSegmentAllocator {
         tenant: &TenantId,
         attachment_id: &NetworkAttachmentId,
         reservation_claim: &NetworkReservationClaim,
-    ) -> Result<nimbus_network::NetworkAttachmentReservationState> {
+    ) -> Result<nimbus_network::NetworkAttachmentReservationObservation> {
         self.allocator()?
             .inspect_attachment_reservation(tenant, attachment_id, reservation_claim)
     }

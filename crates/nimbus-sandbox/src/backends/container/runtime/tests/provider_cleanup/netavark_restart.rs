@@ -20,6 +20,18 @@ fn confirmed_netavark_restart_detach_prepares_published_leases_for_rebind() {
         )
         .expect("execute manifest should reserve the published listener")
         .manifest;
+    let claim = manifest
+        .launch_reservation_claim
+        .as_ref()
+        .expect("restart fixture should retain its exact claim");
+    backend
+        .segment_allocator
+        .adopt_reserved_attachment(
+            &manifest.spec.tenant_id,
+            &default_network_attachment_id(&manifest.handle.id),
+            claim,
+        )
+        .expect("restart fixture should adopt its exact attachment association");
     manifest.conmon_launch.delete_command = CommandSpec::new("/usr/bin/true");
     manifest.conmon_launch.state_command =
         explicitly_absent_runtime_state_command(&manifest.handle.id);
@@ -124,6 +136,18 @@ fn already_absent_runtime_is_a_successful_restart_delete_replay() {
         )
         .expect("execute manifest should reserve its network launch")
         .manifest;
+    let claim = manifest
+        .launch_reservation_claim
+        .as_ref()
+        .expect("restart replay fixture should retain its exact claim");
+    backend
+        .segment_allocator
+        .adopt_reserved_attachment(
+            &manifest.spec.tenant_id,
+            &default_network_attachment_id(&manifest.handle.id),
+            claim,
+        )
+        .expect("restart replay fixture should adopt its exact attachment association");
     manifest.egress_proxy = None;
     manifest.conmon_launch.delete_command = CommandSpec::new("/usr/bin/false");
     manifest.conmon_launch.state_command =
@@ -266,10 +290,36 @@ fn restart_cleanup_retains_network_and_listeners_until_runtime_absence_is_observ
         error.to_string().contains("remains \"running\""),
         "runtime-presence evidence must remain the primary diagnostic: {error}"
     );
-    assert!(
-        std::fs::read(&authority_path).expect("fenced authority should remain readable")
-            == authority_before,
-        "unconfirmed runtime absence must leave every durable network authority byte unchanged"
+    let authority_after =
+        std::fs::read(&authority_path).expect("fenced authority should remain readable");
+    assert_ne!(
+        authority_after, authority_before,
+        "cleanup intent must become durable before the runtime cleanup callback"
+    );
+    let attachment =
+        nimbus_network::LocalNetworkAttachmentAuthority::open(&backend.config.network_state_root)
+            .expect("attachment authority should reopen")
+            .get(
+                &manifest.spec.tenant_id,
+                &default_network_attachment_id(&manifest.handle.id),
+            )
+            .expect("attachment authority should inspect")
+            .expect("the failed callback must retain exact attachment authority");
+    assert_eq!(
+        attachment.resource().phase(),
+        nimbus_network::NetworkResourcePhase::CleanupPending,
+        "ambiguous runtime cleanup must preserve a durable retry fence"
+    );
+    let network_config = manifest
+        .require_network_config()
+        .expect("manifest should retain its immutable network generation");
+    assert_eq!(
+        attachment.association().reservation_claim(),
+        &network_config.reservation_claim
+    );
+    assert_eq!(
+        attachment.association().segment_id().as_str(),
+        network_config.segment_id
     );
     assert_eq!(
         backend

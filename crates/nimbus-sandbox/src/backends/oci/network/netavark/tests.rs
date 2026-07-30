@@ -1,21 +1,30 @@
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Duration;
 
 use nimbus_core::TenantId;
-use nimbus_network::LocalNetworkStateStore;
+use nimbus_network::{LocalNetworkStateStore, NetworkProviderHandle, NetworkProviderId};
 use serde_json::Value;
 use tempfile::tempdir;
 
 use super::super::ipam::{
     allocate_container_ips, begin_netavark_setup, deallocate_container_ips_after_confirmed_detach,
+    inspect_netavark_provider_operation,
 };
 use super::super::layout::{OciNetworkConfig, OciNetworkLayout};
 use super::*;
 use crate::backends::oci::network::direct_test_ipam_authority;
 
 const BARRIER_TIMEOUT: Duration = Duration::from_secs(5);
+
+fn foreign_provider_attempt(label: &str) -> NetworkProviderHandle {
+    NetworkProviderHandle::new(
+        NetworkProviderId::for_registration_key("nimbus-sandbox.netavark-substitution-test"),
+        format!("attempt:{label}"),
+    )
+    .expect("foreign provider attempt should validate")
+}
 
 #[test]
 fn reserved_teardown_with_precreated_namespace_never_calls_netavark_or_rewrites_ipam() {
@@ -57,6 +66,49 @@ fn reserved_teardown_with_precreated_namespace_never_calls_netavark_or_rewrites_
         std::fs::read(&layout.netns_path).expect("namespace sentinel should remain"),
         b"nimbus-owned-namespace",
         "Netavark no-effect classification must not absorb namespace ownership"
+    );
+}
+
+#[test]
+fn prepared_setup_cleanup_never_calls_netavark_even_when_namespace_exists() {
+    let temp_dir = tempdir().expect("temporary directory should create");
+    let tenant =
+        TenantId::new("tenant-netavark-prepared-setup-no-effect").expect("tenant should validate");
+    let sandbox = SandboxId::new("netavark-prepared-setup-no-effect");
+    let layout = OciNetworkLayout::under_root(temp_dir.path(), &tenant, &sandbox);
+    let ipam_authority = direct_test_ipam_authority(&layout);
+    layout
+        .ensure_directories()
+        .expect("network layout should create");
+    let config = OciNetworkConfig::default();
+    allocate_container_ips(&ipam_authority, &layout, &config, &sandbox)
+        .expect("current generation should reserve IPAM");
+    begin_netavark_setup(&ipam_authority, &layout, &config, &sandbox)
+        .expect("setup attempt should become durable");
+    std::fs::write(&layout.netns_path, b"namespace-created-before-provider")
+        .expect("namespace checkpoint should exist");
+    let calls = AtomicUsize::new(0);
+
+    teardown_container_network_with_runner(&ipam_authority, &layout, &config, &sandbox, |_, _| {
+        calls.fetch_add(1, Ordering::SeqCst);
+        Ok(Value::Null)
+    })
+    .expect("prepared-only setup must converge without a provider delete");
+
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        0,
+        "namespace presence must not manufacture a Netavark effect after prepared-only setup"
+    );
+    assert!(matches!(
+        inspect_netavark_provider_operation(&ipam_authority, &layout, &config, &sandbox)
+            .expect("no-effect teardown should inspect"),
+        super::super::dto::NetavarkProviderOperation::Detached
+    ));
+    assert_eq!(
+        std::fs::read(&layout.netns_path).expect("namespace remains separately owned"),
+        b"namespace-created-before-provider",
+        "provider no-effect confirmation must not absorb namespace ownership"
     );
 }
 
@@ -287,7 +339,7 @@ fn teardown_operation_claim_blocks_release_and_replacement_during_provider_effec
 }
 
 #[test]
-fn reopened_pending_setup_fails_closed_without_rerunning_provider() {
+fn reopened_prepared_setup_reuses_exact_attempt_once() {
     let temp_dir = tempdir().expect("temporary directory should create");
     let tenant = TenantId::new("tenant-netavark-reopen").expect("tenant identity should validate");
     let sandbox = SandboxId::new("netavark-reopen");
@@ -299,44 +351,172 @@ fn reopened_pending_setup_fails_closed_without_rerunning_provider() {
     let config = OciNetworkConfig::default();
     allocate_container_ips(&ipam_authority, &layout, &config, &sandbox)
         .expect("current generation should reserve IPAM");
-    let _abandoned = begin_netavark_setup(&ipam_authority, &layout, &config, &sandbox)
+    let (_, abandoned) = begin_netavark_setup(&ipam_authority, &layout, &config, &sandbox)
         .expect("setup claim should persist");
 
-    let provider_ran = Arc::new(AtomicBool::new(false));
-    let observed_provider_ran = Arc::clone(&provider_ran);
-    let error = setup_container_network_with_runner(
+    let provider_calls = Arc::new(AtomicUsize::new(0));
+    let observed_provider_calls = Arc::clone(&provider_calls);
+    setup_container_network_with_runner(
         &ipam_authority,
         &layout,
         &config,
         &sandbox,
         move |_, _| {
-            observed_provider_ran.store(true, Ordering::SeqCst);
+            observed_provider_calls.fetch_add(1, Ordering::SeqCst);
             Ok(Value::Null)
         },
     )
-    .expect_err("a reopened pending claim must require inspect-before-retry");
-    assert!(
-        error.to_string().contains("inspect-before-retry")
-            && error.to_string().contains("provisioning"),
-        "reopen rejection must retain exact recovery guidance: {error}"
+    .expect("a fresh owner should resume the exact prepared setup");
+    assert_eq!(
+        provider_calls.load(Ordering::SeqCst),
+        1,
+        "the retained attempt must execute exactly once"
     );
-    assert!(
-        !provider_ran.load(Ordering::SeqCst),
-        "pending durable authority must reject before invoking the provider"
-    );
+    assert!(matches!(
+        inspect_netavark_provider_operation(&ipam_authority, &layout, &config, &sandbox)
+            .expect("ready setup should inspect"),
+        super::super::dto::NetavarkProviderOperation::Ready { setup_attempt }
+            if &setup_attempt == abandoned.operation_attempt()
+    ));
     let release_error = deallocate_container_ips_after_confirmed_detach(
         &ipam_authority,
         &layout,
         &sandbox,
         &config.reservation_claim,
     )
-    .expect_err("pending setup must survive reopen and fence replacement");
+    .expect_err("ready setup must continue to fence replacement before detach");
     assert!(
         release_error
             .to_string()
-            .contains("Netavark provider operation remains provisioning"),
-        "durable pending state must be visible to release: {release_error}"
+            .contains("Netavark provider operation remains ready"),
+        "durable ready state must be visible to release: {release_error}"
     );
+}
+
+#[test]
+fn substituted_setup_and_teardown_attempts_fail_before_provider_effect() {
+    let temp_dir = tempdir().expect("temporary directory should create");
+    let tenant =
+        TenantId::new("tenant-netavark-attempt-substitution").expect("tenant should validate");
+    let sandbox = SandboxId::new("netavark-attempt-substitution");
+    let layout = OciNetworkLayout::under_root(temp_dir.path(), &tenant, &sandbox);
+    let ipam_authority = direct_test_ipam_authority(&layout);
+    layout
+        .ensure_directories()
+        .expect("network layout should create");
+    let config = OciNetworkConfig::default();
+    allocate_container_ips(&ipam_authority, &layout, &config, &sandbox)
+        .expect("current generation should reserve IPAM");
+    let (assigned_ips, setup_claim) =
+        begin_netavark_setup(&ipam_authority, &layout, &config, &sandbox)
+            .expect("setup attempt should prepare");
+    assert!(matches!(
+        inspect_netavark_provider_operation(&ipam_authority, &layout, &config, &sandbox)
+            .expect("prepared setup should inspect"),
+        super::super::dto::NetavarkProviderOperation::SetupPrepared {
+            operation_attempt
+        } if &operation_attempt == setup_claim.operation_attempt()
+    ));
+    let authority_path = LocalNetworkStateStore::authority_path_for(temp_dir.path());
+    let setup_bytes = std::fs::read(&authority_path).expect("setup authority should read");
+    let setup_calls = AtomicUsize::new(0);
+    let substituted_setup = PreparedNetavarkSetup {
+        assigned_ips: assigned_ips.clone(),
+        claim: setup_claim
+            .with_operation_attempt_for_test(foreign_provider_attempt("foreign-setup")),
+    };
+    let setup_error = execute_prepared_container_network_setup_with_runner(
+        &ipam_authority,
+        &layout,
+        &config,
+        &sandbox,
+        substituted_setup,
+        |_, _| {
+            setup_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Value::Null)
+        },
+    )
+    .expect_err("a substituted setup capability must fail before the provider");
+    assert!(
+        setup_error.to_string().contains("does not own"),
+        "setup rejection must name the exact operation capability: {setup_error}"
+    );
+    assert_eq!(setup_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        std::fs::read(&authority_path).expect("setup authority should reread"),
+        setup_bytes,
+        "substituted setup must preserve exact authority bytes"
+    );
+
+    execute_prepared_container_network_setup_with_runner(
+        &ipam_authority,
+        &layout,
+        &config,
+        &sandbox,
+        PreparedNetavarkSetup {
+            assigned_ips,
+            claim: setup_claim.clone(),
+        },
+        |action, _| {
+            assert_eq!(action, "setup");
+            setup_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Value::Null)
+        },
+    )
+    .expect("the exact setup capability should execute");
+    assert_eq!(setup_calls.load(Ordering::SeqCst), 1);
+
+    std::fs::write(&layout.netns_path, b"provider-present")
+        .expect("provider namespace marker should exist");
+    let (delete_ips, delete_claim) =
+        match begin_netavark_teardown(&ipam_authority, &layout, &config, &sandbox, None)
+            .expect("delete attempt should prepare")
+        {
+            NetavarkTeardownPlan::Run {
+                assigned_ips,
+                claim,
+            } => (assigned_ips, claim),
+            _ => panic!("ready provider authority must prepare one delete"),
+        };
+    let delete_bytes = std::fs::read(&authority_path).expect("delete authority should read");
+    let delete_calls = AtomicUsize::new(0);
+    let substituted_delete = NetavarkTeardownPlan::Run {
+        assigned_ips: delete_ips.clone(),
+        claim: delete_claim
+            .with_operation_attempt_for_test(foreign_provider_attempt("foreign-delete")),
+    };
+    let delete_error =
+        execute_teardown_plan(&ipam_authority, &layout, substituted_delete, &mut |_, _| {
+            delete_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Value::Null)
+        })
+        .expect_err("a substituted delete capability must fail before the provider");
+    assert!(
+        delete_error.to_string().contains("does not own"),
+        "delete rejection must name the exact operation capability: {delete_error}"
+    );
+    assert_eq!(delete_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        std::fs::read(&authority_path).expect("delete authority should reread"),
+        delete_bytes,
+        "substituted delete must preserve exact authority bytes"
+    );
+
+    execute_teardown_plan(
+        &ipam_authority,
+        &layout,
+        NetavarkTeardownPlan::Run {
+            assigned_ips: delete_ips,
+            claim: delete_claim,
+        },
+        &mut |action, _| {
+            assert_eq!(action, "teardown");
+            delete_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Value::Null)
+        },
+    )
+    .expect("the exact delete capability should execute");
+    assert_eq!(delete_calls.load(Ordering::SeqCst), 1);
 }
 
 #[test]

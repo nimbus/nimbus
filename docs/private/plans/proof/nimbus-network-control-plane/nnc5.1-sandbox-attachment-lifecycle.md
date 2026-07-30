@@ -439,8 +439,9 @@ the deliberately separate machine-forwarded provider adapter.
 
 Later ownership remains honestly red:
 
-- NNC5.2/NNC5.2a still lack one durable cross-backend phase/provider-attempt
-  record and the complete orphan matrix;
+- NNC5.2/NNC5.2a still lack the complete durable cross-backend
+  phase/association/provider-attempt contract; NNC5.2b still lacks the
+  complete orphan matrix;
 - NNC5.3 still lacks the complete cross-provider readiness record;
 - NNC5.4 still lacks named crash cuts after every effect;
 - NNC5.5 remains the later band-wide locality proof, although the current

@@ -77,8 +77,8 @@ timeout 900 cargo test -p nimbus-sandbox --lib \
 ```
 
 The three ignored cases are the two named NNC0.7 fail-before cases owned by
-NNC5.2a/NNC8.3 and the explicit NNC0.9 scale characterization. They are not
-counted as NNC2.7 evidence.
+NNC5.2a/NNC5.2b/NNC8.3 and the explicit NNC0.9 scale characterization. They
+are not counted as NNC2.7 evidence.
 
 The 71 executed tests include:
 

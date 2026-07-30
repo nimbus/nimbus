@@ -21,10 +21,15 @@ SOURCE_CONTRACT_HELPER="scripts/verify-nimbus-network-source-contract.mjs"
 BIND_CENSUS_HELPER="scripts/verify-nimbus-network-bind-census.mjs"
 COMPOSITION_CENSUS_HELPER="scripts/verify-nimbus-network-composition-census.mjs"
 SOVEREIGNTY_TRIPWIRE_HELPER="${NIMBUS_NETWORK_VERIFY_SOVEREIGNTY_HELPER:-scripts/verify-nimbus-network-sovereignty-tripwire.py}"
+NNC52A_ATTACHMENT_ORDERING_HELPER="scripts/verify-nimbus-network-attachment-ordering.mjs"
 COMPOSITION_CENSUS="${NIMBUS_NETWORK_VERIFY_COMPOSITION_CENSUS:-docs/private/plans/proof/nimbus-network-control-plane/nnc4.6f-production-network-authority-census.json}"
 COMPOSITION_CENSUS_SELF_TESTS="scripts/nimbus-network-control-plane/composition-census-self-tests.sh"
 BIND_EXEMPTION_SELF_TESTS="scripts/nimbus-network-control-plane/bind-exemption-self-tests.sh"
 SOVEREIGNTY_TRIPWIRE_SELF_TESTS="scripts/nimbus-network-control-plane/sovereignty-tripwire-self-tests.sh"
+NNC52A_ATTACHMENT_ORDERING_CONTRACT="scripts/nimbus-network-control-plane/attachment-ordering-contract.sh"
+
+# shellcheck source=scripts/nimbus-network-control-plane/attachment-ordering-contract.sh
+. "${NNC52A_ATTACHMENT_ORDERING_CONTRACT}"
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -794,7 +799,7 @@ NODE
   elif ! grep -q '^FAIL NNCV005 no-duplicate-port-allocation-authority' "${temporary}/legacy-port-authority.out" ||
     grep -q '^PASS NNCV005 no-duplicate-port-allocation-authority' "${temporary}/legacy-port-authority.out" ||
     [ "$(grep -c '^FAIL ' "${temporary}/legacy-port-authority.out")" -ne 1 ] ||
-    ! grep -q '^Summary: 16 passed, 1 failed$' "${temporary}/legacy-port-authority.out"; then
+    ! grep -q '^Summary: 17 passed, 1 failed$' "${temporary}/legacy-port-authority.out"; then
     printf 'SELFTEST FAIL legacy port authority did not produce an exclusive NNCV005 failure\n'
     self_fail=$((self_fail + 1))
   else
@@ -1442,11 +1447,19 @@ NODE
     printf 'SELFTEST PASS sovereignty-tripwire mutation suite passes 70 tests\n'
   fi
 
+  if declare -F run_nnc52a_attachment_ordering_self_tests >/dev/null 2>&1; then
+    run_nnc52a_attachment_ordering_self_tests "${script}" "${temporary}" ||
+      self_fail=$((self_fail + $?))
+  else
+    printf 'SELFTEST FAIL attachment-ordering contract helper is missing\n'
+    self_fail=$((self_fail + 1))
+  fi
+
   if [ "${self_fail}" -ne 0 ]; then
     printf 'self-test: %d failed\n' "${self_fail}"
     exit 1
   fi
-  printf 'self-test: 62 passed, 0 failed\n'
+  printf 'self-test: 67 passed, 0 failed\n'
 }
 
 if [ "${1:-}" = "--self-test" ]; then
@@ -1478,6 +1491,7 @@ verify_single_network_definition_owner
 verify_address_is_not_network_identity
 verify_local_network_composition_census
 verify_sovereignty_tripwire_contract
+verify_nnc52a_attachment_effect_ordering
 
 printf '\nSummary: %d passed, %d failed\n' "${PASS_COUNT}" "${FAIL_COUNT}"
 if [ "${FAIL_COUNT}" -ne 0 ]; then

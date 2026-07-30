@@ -7,8 +7,9 @@ use tempfile::TempDir;
 use super::*;
 use crate::capability::test_requirements;
 use crate::{
-    LocalNetworkStateStoreOptions, NetworkPlanContentDigest, NetworkPlanId,
-    NetworkResourceGeneration, NetworkResourcePhase, NetworkSegmentId, NetworkTransitionEvidence,
+    LocalNetworkStateStoreOptions, NetworkAttachmentSegmentAssociation, NetworkLeaseEpoch,
+    NetworkPlanContentDigest, NetworkPlanId, NetworkReservationClaim, NetworkResourceGeneration,
+    NetworkResourcePhase, NetworkSegmentId, NetworkTransitionEvidence,
 };
 
 fn tenant(label: &str) -> TenantId {
@@ -21,6 +22,33 @@ fn attachment(label: &str) -> NetworkAttachmentId {
 
 fn provider(label: &str) -> NetworkProviderId {
     NetworkProviderId::for_registration_key(label)
+}
+
+fn segment_id(value: &str) -> NetworkSegmentId {
+    value.parse().expect("segment fixture should parse")
+}
+
+fn association(
+    claim_label: &str,
+    segment_id: NetworkSegmentId,
+    lease_epoch: u64,
+) -> NetworkAttachmentSegmentAssociation {
+    NetworkAttachmentSegmentAssociation::new(
+        NetworkReservationClaim::new(
+            NetworkProviderHandle::new(provider("nimbus.test.attachment-coordinator"), claim_label)
+                .expect("reservation claim should validate"),
+        ),
+        segment_id,
+        NetworkLeaseEpoch::new(lease_epoch),
+    )
+}
+
+fn association_fixture() -> NetworkAttachmentSegmentAssociation {
+    association(
+        "launch-attempt-a",
+        segment_id("netsegment_01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+        11,
+    )
 }
 
 fn plan(tenant_id: &TenantId, workload: &str, generation: u64, content: &[u8]) -> NetworkPlan {
@@ -43,7 +71,7 @@ fn reserve_fixture(
             provider("nimbus.test.attachment"),
             &plan(tenant_id, "workload-a", 7, b"desired-a"),
             attachment_id.clone(),
-            NetworkLeaseEpoch::new(11),
+            association_fixture(),
         )
         .expect("attachment should reserve")
 }
@@ -70,6 +98,26 @@ fn assert_authority_bytes(
         expected,
         "{substitution} must not change authority bytes"
     );
+}
+
+#[test]
+fn reopen_preserves_exact_attachment_segment_association() {
+    let root = TempDir::new().expect("temporary state root should exist");
+    let tenant_id = tenant("tenant-association");
+    let attachment_id = attachment("workload-association");
+    let authority =
+        LocalNetworkAttachmentAuthority::open(root.path()).expect("authority should open");
+    let expected = reserve_fixture(&authority, &tenant_id, &attachment_id);
+    drop(authority);
+
+    let reopened =
+        LocalNetworkAttachmentAuthority::open(root.path()).expect("authority should reopen");
+    let actual = reopened
+        .get(&tenant_id, &attachment_id)
+        .expect("inspection should succeed")
+        .expect("attachment should remain");
+    assert_eq!(actual.association(), &association_fixture());
+    assert_eq!(actual, expected);
 }
 
 #[test]
@@ -132,7 +180,7 @@ fn real_store_reopen_preserves_tenant_version_phase_provider_and_redacted_handle
 }
 
 #[test]
-fn substitutions_fail_without_changing_authority_bytes() {
+fn attachment_association_substitutions_preserve_authority_bytes() {
     let root = TempDir::new().expect("temporary state root should exist");
     let tenant_id = tenant("tenant-a");
     let attachment_id = attachment("workload-a");
@@ -141,12 +189,24 @@ fn substitutions_fail_without_changing_authority_bytes() {
     let record = reserve_fixture(&authority, &tenant_id, &attachment_id);
     let reserved_bytes = authority_bytes(&authority);
 
+    let exact_replay = authority
+        .reserve(
+            &tenant_id,
+            provider("nimbus.test.attachment"),
+            &plan(&tenant_id, "workload-a", 7, b"desired-a"),
+            attachment_id.clone(),
+            association_fixture(),
+        )
+        .expect("exact association replay should be idempotent");
+    assert_eq!(exact_replay, record);
+    assert_authority_bytes(&authority, &reserved_bytes, "exact association replay");
+
     let wrong_provider = authority.reserve(
         &tenant_id,
         provider("nimbus.test.other"),
         &plan(&tenant_id, "workload-a", 7, b"desired-a"),
         attachment_id.clone(),
-        NetworkLeaseEpoch::new(11),
+        association_fixture(),
     );
     assert!(matches!(
         wrong_provider,
@@ -163,7 +223,7 @@ fn substitutions_fail_without_changing_authority_bytes() {
         provider("nimbus.test.attachment"),
         &plan(&tenant_id, "workload-b", 7, b"desired-a"),
         attachment_id.clone(),
-        NetworkLeaseEpoch::new(11),
+        association_fixture(),
     );
     assert!(matches!(
         wrong_plan,
@@ -178,7 +238,7 @@ fn substitutions_fail_without_changing_authority_bytes() {
         provider("nimbus.test.attachment"),
         &plan(&tenant_id, "workload-a", 6, b"desired-a"),
         attachment_id.clone(),
-        NetworkLeaseEpoch::new(11),
+        association_fixture(),
     );
     assert!(matches!(
         stale_generation,
@@ -193,7 +253,7 @@ fn substitutions_fail_without_changing_authority_bytes() {
         provider("nimbus.test.attachment"),
         &plan(&tenant_id, "workload-a", 8, b"desired-a"),
         attachment_id.clone(),
-        NetworkLeaseEpoch::new(11),
+        association_fixture(),
     );
     assert!(matches!(
         wrong_generation,
@@ -208,7 +268,7 @@ fn substitutions_fail_without_changing_authority_bytes() {
         provider("nimbus.test.attachment"),
         &plan(&tenant_id, "workload-a", 7, b"desired-b"),
         attachment_id.clone(),
-        NetworkLeaseEpoch::new(11),
+        association_fixture(),
     );
     assert!(matches!(
         wrong_digest,
@@ -223,13 +283,15 @@ fn substitutions_fail_without_changing_authority_bytes() {
         provider("nimbus.test.attachment"),
         &plan(&tenant_id, "workload-a", 7, b"desired-a"),
         attachment_id.clone(),
-        NetworkLeaseEpoch::new(10),
+        association(
+            "launch-attempt-a",
+            segment_id("netsegment_01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            10,
+        ),
     );
     assert!(matches!(
         stale_epoch,
-        Err(NetworkAttachmentStateError::State(
-            NetworkStateError::StaleLeaseEpoch { .. }
-        ))
+        Err(NetworkAttachmentStateError::AssociationConflict { .. })
     ));
     assert_authority_bytes(&authority, &reserved_bytes, "stale lease epoch");
 
@@ -238,15 +300,55 @@ fn substitutions_fail_without_changing_authority_bytes() {
         provider("nimbus.test.attachment"),
         &plan(&tenant_id, "workload-a", 7, b"desired-a"),
         attachment_id.clone(),
-        NetworkLeaseEpoch::new(12),
+        association(
+            "launch-attempt-a",
+            segment_id("netsegment_01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            12,
+        ),
     );
     assert!(matches!(
         wrong_epoch,
-        Err(NetworkAttachmentStateError::State(
-            NetworkStateError::FutureLeaseEpoch { .. }
-        ))
+        Err(NetworkAttachmentStateError::AssociationConflict { .. })
     ));
     assert_authority_bytes(&authority, &reserved_bytes, "future lease epoch");
+
+    let wrong_claim = authority.reserve(
+        &tenant_id,
+        provider("nimbus.test.attachment"),
+        &plan(&tenant_id, "workload-a", 7, b"desired-a"),
+        attachment_id.clone(),
+        association(
+            "launch-attempt-b",
+            segment_id("netsegment_01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            11,
+        ),
+    );
+    assert!(matches!(
+        wrong_claim,
+        Err(NetworkAttachmentStateError::AssociationConflict { .. })
+    ));
+    assert_authority_bytes(
+        &authority,
+        &reserved_bytes,
+        "reservation claim substitution",
+    );
+
+    let wrong_segment = authority.reserve(
+        &tenant_id,
+        provider("nimbus.test.attachment"),
+        &plan(&tenant_id, "workload-a", 7, b"desired-a"),
+        attachment_id.clone(),
+        association(
+            "launch-attempt-a",
+            segment_id("netsegment_01ARZ3NDEKTSV4RRFFQ69G5FAW"),
+            11,
+        ),
+    );
+    assert!(matches!(
+        wrong_segment,
+        Err(NetworkAttachmentStateError::AssociationConflict { .. })
+    ));
+    assert_authority_bytes(&authority, &reserved_bytes, "segment identity substitution");
 
     let wrong_tenant = tenant("tenant-b");
     let wrong_tenant_result = authority.apply_transition(
@@ -427,6 +529,107 @@ fn checksum_valid_attachment_schema_extension_is_rejected_on_reopen() {
         fs::read(store.authority_path()).expect("rejected authority bytes should remain readable"),
         before,
         "schema rejection must not rewrite the checksum-valid invalid authority"
+    );
+}
+
+#[test]
+fn missing_or_conflicting_attachment_association_is_rejected_on_reopen() {
+    for corruption in ["missing", "conflicting-epoch"] {
+        let root = TempDir::new().expect("temporary state root should exist");
+        let tenant_id = tenant("tenant-association-corruption");
+        let attachment_id = attachment(corruption);
+        let authority =
+            LocalNetworkAttachmentAuthority::open(root.path()).expect("authority should open");
+        reserve_fixture(&authority, &tenant_id, &attachment_id);
+        authority
+            .store
+            .transaction(
+                &NetworkStatePartition::AttachmentStates,
+                |payload: &mut serde_json::Value| -> Result<(), ()> {
+                    let records = payload["records"]
+                        .as_object_mut()
+                        .expect("attachment record map should exist");
+                    let record = records
+                        .values_mut()
+                        .next()
+                        .and_then(serde_json::Value::as_object_mut)
+                        .expect("attachment record should exist");
+                    match corruption {
+                        "missing" => {
+                            record.remove("association");
+                        }
+                        "conflicting-epoch" => {
+                            record
+                                .get_mut("association")
+                                .and_then(serde_json::Value::as_object_mut)
+                                .expect("association should exist")
+                                .insert("lease_epoch".to_owned(), serde_json::json!(12));
+                        }
+                        other => panic!("unknown corruption fixture {other}"),
+                    }
+                    Ok(())
+                },
+            )
+            .expect("test should write checksum-valid corrupt association");
+        let before = authority_bytes(&authority);
+        drop(authority);
+
+        let error = LocalNetworkAttachmentAuthority::open(root.path())
+            .expect_err("invalid durable association must refuse reopen");
+        match corruption {
+            "missing" => assert!(matches!(
+                error,
+                NetworkAttachmentStateError::Store(NetworkStateStoreError::Corrupt { .. })
+            )),
+            "conflicting-epoch" => assert!(matches!(
+                error,
+                NetworkAttachmentStateError::CorruptAuthority { .. }
+            )),
+            other => panic!("unknown corruption fixture {other}"),
+        }
+        assert_eq!(
+            fs::read(LocalNetworkStateStore::authority_path_for(root.path()))
+                .expect("rejected authority bytes should remain readable"),
+            before,
+            "{corruption} rejection must preserve durable authority bytes"
+        );
+    }
+}
+
+#[test]
+fn prelaunch_v1_store_is_rejected_without_a_compatibility_path() {
+    let root = TempDir::new().expect("temporary state root should exist");
+    let tenant_id = tenant("tenant-v1");
+    let attachment_id = attachment("workload-v1");
+    let authority =
+        LocalNetworkAttachmentAuthority::open(root.path()).expect("authority should open");
+    reserve_fixture(&authority, &tenant_id, &attachment_id);
+    let mut envelope: serde_json::Value =
+        serde_json::from_slice(&authority_bytes(&authority)).expect("authority should parse");
+    envelope["version"] = serde_json::json!(1);
+    fs::write(
+        authority.authority_path(),
+        serde_json::to_vec_pretty(&envelope).expect("v1 fixture should render"),
+    )
+    .expect("v1 fixture should write");
+    let before = authority_bytes(&authority);
+    drop(authority);
+
+    assert!(matches!(
+        LocalNetworkAttachmentAuthority::open(root.path()),
+        Err(NetworkAttachmentStateError::Store(
+            NetworkStateStoreError::IncompatibleVersion {
+                found: 1,
+                supported: 2,
+                ..
+            }
+        ))
+    ));
+    assert_eq!(
+        fs::read(LocalNetworkStateStore::authority_path_for(root.path()))
+            .expect("rejected v1 authority should remain readable"),
+        before,
+        "v1 rejection must not rewrite or migrate the authority"
     );
 }
 
