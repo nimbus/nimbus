@@ -54,6 +54,20 @@
 //!   NIMBUS_CWB_SPLIT_PHASES=1                   add plan-CPU/apply/fsync phase shares (default off)
 //!   NIMBUS_CWB_WAL_CHECKPOINT_OBSERVATION=1     add SQLite checkpoint diagnostics (default off)
 //!   NIMBUS_CWB_OUT=<path>                      also write the markdown report to <path>
+//!
+//! Open-loop mode (SUC6.1) — coordinated-omission-free service latency:
+//!   NIMBUS_CWB_OPEN_LOOP_RATES=0.5,0.75        run open-loop after the ladder; each value is a
+//!                                              fraction of the top rung's measured closed-loop
+//!                                              capacity, used as a constant arrival rate
+//!   NIMBUS_CWB_OPEN_LOOP_SECONDS=30            duration of each open-loop round
+//!   NIMBUS_CWB_OPEN_LOOP_ROUNDS=3              measured rounds per rate (CV gate applies)
+//!
+//! Open-loop rounds drive single-document inserts on a fixed arrival schedule
+//! (arrival_i = start + i/rate) and measure each latency FROM THE SCHEDULED
+//! ARRIVAL, not from dispatch — a slow engine cannot slow the arrival process,
+//! so percentiles are service-latency SLAs, unlike the closed-loop queue
+//! latencies above. A round aborts as saturation-breached if in-flight work
+//! exceeds a bound, rather than reporting numbers from an unstable regime.
 
 use std::hint::black_box;
 use std::path::Path;
@@ -727,6 +741,131 @@ fn phase_totals(snapshot: CommitPhaseMetricsSnapshot) -> PhaseTotals {
     }
 }
 
+struct OpenLoopRound {
+    target_rate: f64,
+    achieved_rate: f64,
+    scheduled: usize,
+    completed: usize,
+    saturation_breached: bool,
+    latencies_ns: Vec<u64>,
+}
+
+/// One constant-rate open-loop round: `rate` inserts/second for `duration`.
+/// Latency is measured from each arrival's SCHEDULED instant, so dispatcher or
+/// engine lag inflates the recorded latency instead of thinning the arrivals
+/// (the coordinated-omission fix). In-flight work above `max_in_flight` means
+/// the offered rate is not sustainable at this margin; the round is flagged
+/// rather than trusted.
+async fn run_open_loop_round(
+    engine: &Arc<Engine>,
+    tenant: &TenantId,
+    table: &TableName,
+    rate: f64,
+    duration: Duration,
+    max_in_flight: usize,
+) -> OpenLoopRound {
+    let total = (rate * duration.as_secs_f64()).floor() as usize;
+    let start = Instant::now() + Duration::from_millis(50);
+    let mut set: JoinSet<u64> = JoinSet::new();
+    let mut latencies = Vec::with_capacity(total);
+    let mut saturation_breached = false;
+    let mut completed = 0usize;
+    for i in 0..total {
+        let scheduled = start + Duration::from_secs_f64(i as f64 / rate);
+        tokio::time::sleep_until(tokio::time::Instant::from_std(scheduled)).await;
+        // Drain finished work without blocking the arrival schedule.
+        while let Some(joined) = set.try_join_next() {
+            latencies.push(joined.expect("open-loop worker should not panic"));
+            completed += 1;
+        }
+        if set.len() >= max_in_flight {
+            saturation_breached = true;
+            break;
+        }
+        let engine = engine.clone();
+        let tenant = tenant.clone();
+        let table = table.clone();
+        set.spawn(async move {
+            engine
+                .insert_document_async(tenant, table, insert_fields(i))
+                .await
+                .expect("open-loop insert should succeed");
+            scheduled.elapsed().as_nanos() as u64
+        });
+    }
+    let scheduled_count = if saturation_breached {
+        completed + set.len()
+    } else {
+        total
+    };
+    while let Some(joined) = set.join_next().await {
+        latencies.push(joined.expect("open-loop worker should not panic"));
+        completed += 1;
+    }
+    let wall = start.elapsed().as_secs_f64();
+    OpenLoopRound {
+        target_rate: rate,
+        achieved_rate: completed as f64 / wall,
+        scheduled: scheduled_count,
+        completed,
+        saturation_breached,
+        latencies_ns: latencies,
+    }
+}
+
+fn render_open_loop_section(
+    capacity: f64,
+    rates: &[f64],
+    rounds_per_rate: &[Vec<OpenLoopRound>],
+    duration: Duration,
+) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    let _ = writeln!(out, "\n## Open-loop service latency (SUC6.1)\n");
+    let _ = writeln!(
+        out,
+        "Calibrated closed-loop capacity at the top rung: **{capacity:.0} mut/s**. Each round drives single-document inserts on a fixed arrival schedule for {}s; latency is measured from the scheduled arrival (coordinated-omission-free). A saturation-breached round means the offered rate was not sustainable and its numbers are not service-latency evidence.\n",
+        duration.as_secs()
+    );
+    let _ = writeln!(
+        out,
+        "| Fraction | Target mut/s | Round | Sched | Done | Achieved | p50 ms | p90 ms | p99 ms | p99.9 ms | max ms | Verdict |"
+    );
+    let _ = writeln!(
+        out,
+        "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"
+    );
+    for (fraction, rounds) in rates.iter().zip(rounds_per_rate) {
+        for (round_index, round) in rounds.iter().enumerate() {
+            let mut sorted = round.latencies_ns.clone();
+            sorted.sort_unstable();
+            let ms = |v: f64| v / 1_000_000.0;
+            let verdict = if round.saturation_breached {
+                "SATURATION BREACH"
+            } else if (round.achieved_rate - round.target_rate).abs() / round.target_rate > 0.02 {
+                "rate drift >2%"
+            } else {
+                "ok"
+            };
+            let _ = writeln!(
+                out,
+                "| {fraction} | {:.0} | {} | {} | {} | {:.0} | {:.2} | {:.2} | {:.2} | {:.2} | {:.2} | {verdict} |",
+                round.target_rate,
+                round_index + 1,
+                round.scheduled,
+                round.completed,
+                round.achieved_rate,
+                ms(percentile_ns(&sorted, 50.0)),
+                ms(percentile_ns(&sorted, 90.0)),
+                ms(percentile_ns(&sorted, 99.0)),
+                ms(percentile_ns(&sorted, 99.9)),
+                ms(*sorted.last().unwrap_or(&0) as f64),
+            );
+        }
+    }
+    out
+}
+
 async fn run() -> String {
     let ladder = ladder();
     let base_units = env_usize("NIMBUS_CWB_OPS_PER_WORKER", 300);
@@ -827,7 +966,47 @@ async fn run() -> String {
         stats.push(summarize(&rung));
     }
 
-    let report = render_report(&stats, backend, &cfg, workload);
+    let mut report = render_report(&stats, backend, &cfg, workload);
+
+    if let Ok(raw) = std::env::var("NIMBUS_CWB_OPEN_LOOP_RATES") {
+        let fractions: Vec<f64> = raw
+            .split(',')
+            .filter_map(|v| v.trim().parse::<f64>().ok())
+            .filter(|v| *v > 0.0 && *v < 1.0)
+            .collect();
+        assert!(
+            !fractions.is_empty(),
+            "NIMBUS_CWB_OPEN_LOOP_RATES must contain fractions in (0, 1)"
+        );
+        let top = stats
+            .last()
+            .expect("open-loop mode requires at least one closed-loop rung");
+        let capacity = top.mean_tps;
+        let duration = Duration::from_secs(env_usize("NIMBUS_CWB_OPEN_LOOP_SECONDS", 30) as u64);
+        let rounds = env_usize("NIMBUS_CWB_OPEN_LOOP_ROUNDS", 3);
+        let mut rounds_per_rate = Vec::with_capacity(fractions.len());
+        for fraction in &fractions {
+            let rate = capacity * fraction;
+            let mut collected = Vec::with_capacity(rounds);
+            for round_index in 0..rounds {
+                eprintln!(
+                    "[cwb] open-loop fraction={fraction} rate={rate:.0}/s round {}/{rounds}…",
+                    round_index + 1
+                );
+                collected.push(
+                    run_open_loop_round(&engine, &tenant, &table, rate, duration, 10_000).await,
+                );
+            }
+            rounds_per_rate.push(collected);
+        }
+        report.push_str(&render_open_loop_section(
+            capacity,
+            &fractions,
+            &rounds_per_rate,
+            duration,
+        ));
+    }
+
     if let Ok(path) = std::env::var("NIMBUS_CWB_OUT") {
         if let Err(e) = std::fs::write(&path, &report) {
             eprintln!("[cwb] could not write report to {path}: {e}");
