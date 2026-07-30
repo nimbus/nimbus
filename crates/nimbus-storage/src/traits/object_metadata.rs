@@ -1,11 +1,18 @@
 //! Object metadata-plane storage capability and DTOs.
 
-use nimbus_core::{CommitEntry, Document, DocumentId, Result, TableName};
+use nimbus_core::{Document, DocumentId, Result, TableName};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
-use super::{TenantPointRead, TenantPointWrite, TenantRangeScan};
+use super::{TenantPointRead, TenantRangeScan};
+// Commit entries and point writes appear only on the test-only `*_direct`
+// seeding helpers: the metadata plane's production writer is the engine
+// committer, not this crate.
+#[cfg(test)]
+use super::TenantPointWrite;
+#[cfg(test)]
+use nimbus_core::CommitEntry;
 
 /// Reserved table where object manifests are stored.
 ///
@@ -547,27 +554,31 @@ impl ObjectMultipartUpload {
     }
 }
 
-/// Metadata-plane capability for named object manifests.
-pub trait ObjectMetaStore {
-    fn put_object_manifest(&self, manifest: &ObjectManifest) -> Result<CommitEntry>;
+/// Metadata-plane read capability for named object manifests and multipart
+/// uploads.
+///
+/// Reads only, by design. Object metadata is published exclusively by the
+/// engine's committer-sequenced object commit path (`nimbus-engine`'s
+/// `TenantObjectMeta`), which writes the manifest/upload rows as ordinary
+/// documents through the tenant write log: the journal sequence is assigned
+/// inside the committer actor under the committer lease, persistence goes
+/// through the fenced provider batch, and the commit advances the engine's
+/// durable/applied watermarks and fans out to subscriptions.
+///
+/// A store-level write entry point would bypass all of that — assigning a
+/// commit sequence outside the committer, leaving watermarks stale, skipping
+/// the provider fence, and letting two writers on the same key interleave — so
+/// this trait deliberately has no write half and no publicly reachable
+/// substitute exists in this crate (SUC2.2, closed by FU6a).
+pub trait ObjectMetaRead {
     fn get_object_manifest(&self, bucket: &str, key: &str) -> Result<Option<ObjectManifest>>;
-    fn delete_object_manifest(
-        &self,
-        bucket: &str,
-        key: &str,
-    ) -> Result<Option<(CommitEntry, ObjectManifest)>>;
     fn list_object_manifests(
         &self,
         bucket: &str,
         prefix: &str,
         limit: usize,
     ) -> Result<Vec<ObjectManifest>>;
-    fn put_multipart_upload(&self, upload: &ObjectMultipartUpload) -> Result<CommitEntry>;
     fn get_multipart_upload(&self, upload_id: &str) -> Result<Option<ObjectMultipartUpload>>;
-    fn delete_multipart_upload(
-        &self,
-        upload_id: &str,
-    ) -> Result<Option<(CommitEntry, ObjectMultipartUpload)>>;
     fn list_multipart_uploads(
         &self,
         bucket: &str,
@@ -727,7 +738,16 @@ fn required_u64(document: &Document, field: &str) -> Result<u64> {
     }
 }
 
-pub(super) fn put_object_manifest_for_store<S>(
+/// Writes a manifest row straight to `store`, outside the engine committer.
+///
+/// Test-only, and the four `*_direct` helpers below are the crate's only
+/// object-metadata writers. Production publishes object metadata through the
+/// engine's committer-sequenced commit path — see [`ObjectMetaRead`] for why a
+/// store-level write entry point is unsafe. A test owns its whole tenant with
+/// a single writer, so it may seed the metadata plane directly to exercise the
+/// read half against each provider.
+#[cfg(test)]
+pub(crate) fn put_object_manifest_direct<S>(
     store: &S,
     manifest: &ObjectManifest,
 ) -> Result<CommitEntry>
@@ -761,7 +781,9 @@ where
         .transpose()
 }
 
-pub(super) fn delete_object_manifest_for_store<S>(
+/// Test-only direct delete; see [`put_object_manifest_direct`].
+#[cfg(test)]
+pub(crate) fn delete_object_manifest_direct<S>(
     store: &S,
     bucket: &str,
     key: &str,
@@ -805,7 +827,9 @@ where
     Ok(manifests)
 }
 
-pub(super) fn put_multipart_upload_for_store<S>(
+/// Test-only direct write; see [`put_object_manifest_direct`].
+#[cfg(test)]
+pub(crate) fn put_multipart_upload_direct<S>(
     store: &S,
     upload: &ObjectMultipartUpload,
 ) -> Result<CommitEntry>
@@ -838,7 +862,9 @@ where
         .transpose()
 }
 
-pub(super) fn delete_multipart_upload_for_store<S>(
+/// Test-only direct delete; see [`put_object_manifest_direct`].
+#[cfg(test)]
+pub(crate) fn delete_multipart_upload_direct<S>(
     store: &S,
     upload_id: &str,
 ) -> Result<Option<(CommitEntry, ObjectMultipartUpload)>>

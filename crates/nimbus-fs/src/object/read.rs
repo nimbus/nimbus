@@ -34,7 +34,7 @@ impl ObjectRwBackend {
     fn read_key(&self, key: &str) -> FsResult<Bytes> {
         let manifest = self
             .manifests
-            .get_object_manifest(&self.bucket, key)
+            .get_manifest(&self.bucket, key)
             .map_err(core_error)?
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("object {key}")))?;
         self.read_manifest(&manifest)
@@ -86,14 +86,14 @@ impl ObjectRwBackend {
         let key = key_for_path(path)?;
         Ok(self
             .manifests
-            .get_object_manifest(&self.bucket, &key)
+            .get_manifest(&self.bucket, &key)
             .map_err(core_error)?)
     }
 
     pub(super) fn list_prefix(&self, prefix: &str, limit: usize) -> FsResult<Vec<ObjectManifest>> {
         Ok(self
             .manifests
-            .list_object_manifests(&self.bucket, prefix, limit)
+            .list_manifests(&self.bucket, prefix, limit)
             .map_err(core_error)?)
     }
 

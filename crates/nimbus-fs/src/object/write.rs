@@ -52,9 +52,7 @@ impl ObjectRwBackend {
         let attrs = ObjectManifestAttributes::new(format!("\"{hash_hex}\""), now_millis()?);
         let manifest =
             ObjectManifest::whole(&self.bucket, key, size, hash_hex, attrs).map_err(core_error)?;
-        self.manifests
-            .put_object_manifest(&manifest)
-            .map_err(core_error)?;
+        self.manifests.put_manifest(&manifest).map_err(core_error)?;
         self.record_parent_dirs_for_key(key)?;
         Ok(manifest)
     }
@@ -100,7 +98,7 @@ impl ObjectRwBackend {
         }
         if let Some(manifest) = self.manifest_for_path(&path)? {
             self.manifests
-                .delete_object_manifest(&manifest.bucket, &manifest.key)
+                .delete_manifest(&manifest.bucket, &manifest.key)
                 .map_err(core_error)?;
             return Ok(());
         }
@@ -115,7 +113,7 @@ impl ObjectRwBackend {
         if recursive {
             for manifest in manifests {
                 self.manifests
-                    .delete_object_manifest(&manifest.bucket, &manifest.key)
+                    .delete_manifest(&manifest.bucket, &manifest.key)
                     .map_err(core_error)?;
             }
         }

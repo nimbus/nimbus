@@ -282,9 +282,9 @@ pub struct SqliteTenantStore {
     /// and return it only after a clean COMMIT or ROLLBACK; every error path
     /// drops the connection instead so the next writer reopens from scratch.
     /// The mutex guards only the take/put itself and is never held across a
-    /// transaction, so non-committer writers (object manifests, replica
-    /// reconciliation) coexist exactly as before: a concurrent writer finds
-    /// the slot empty and opens its own connection.
+    /// transaction, so non-committer writers (replica reconciliation) coexist
+    /// exactly as before: a concurrent writer finds the slot empty and opens
+    /// its own connection.
     writer_slot: Arc<Mutex<Option<Connection>>>,
     schema_cache: Arc<RwLock<Schema>>,
     pub(crate) retention_floor: Arc<RetentionFloor>,

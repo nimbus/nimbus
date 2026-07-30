@@ -155,7 +155,7 @@ pub use traits::{
     ControlPlaneUsage, DurableJournal, KeyProviderSurface, KvBatchOp, KvBatchOutcome, KvEntry,
     KvMutation, KvPut, KvScanPage, KvStorageEngine, KvSweepOutcome, MaterializedRebuild,
     OBJECT_MANIFEST_TABLE, OBJECT_MULTIPART_TABLE, ObjectBlobLayout, ObjectChecksums,
-    ObjectChunkRef, ObjectManifest, ObjectManifestAttributes, ObjectMetaStore, ObjectMultipartPart,
+    ObjectChunkRef, ObjectManifest, ObjectManifestAttributes, ObjectMetaRead, ObjectMultipartPart,
     ObjectMultipartUpload, ReadCapabilities, ResourcePathScan, ResourcePathSnapshot,
     SchedulerStore, StorageEngine, TenantKvStore, TenantLifecycle, TenantPointRead,
     TenantPointWrite, TenantRangeScan, multipart_upload_document_id, object_manifest_document_id,
