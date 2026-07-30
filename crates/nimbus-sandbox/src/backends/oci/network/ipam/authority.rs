@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use nimbus_core::TenantId;
 use nimbus_network::{
     LocalNetworkAuthority, LocalNetworkStateStore, NetworkStatePartition,
     NetworkStateTransactionError,
@@ -196,6 +197,22 @@ impl OciIpamAuthority {
             .map(Option::unwrap_or_default)
     }
 
+    /// List every typed tenant-IPAM partition under the one retained store.
+    pub(super) fn tenant_ipam_tenants(&self) -> Result<Vec<TenantId>> {
+        self.state_store()?
+            .tenant_ipam_tenants()
+            .map_err(super::ipam_store_error)
+    }
+
+    /// Read one enumerated tenant partition without reconstructing a layout
+    /// from provider artifacts.
+    pub(super) fn read_tenant(&self, tenant_id: &TenantId) -> Result<IpamState> {
+        self.state_store()?
+            .read(&NetworkStatePartition::TenantIpam(tenant_id.clone()))
+            .map_err(super::ipam_store_error)
+            .map(Option::unwrap_or_default)
+    }
+
     /// Canonical root selected by the injected process authority.
     pub(crate) fn state_root(&self) -> &Path {
         match &self.state_store {
@@ -262,6 +279,7 @@ mod tests {
         let parent = tempdir().expect("temporary parent should create");
         let workload_root = parent.path().join("workloads");
         let canonical_root = parent.path().join("network-state");
+        fs::create_dir_all(&workload_root).expect("workload root should create");
         fs::create_dir_all(&canonical_root).expect("canonical network root should create");
         let alias_root = parent.path().join("network-state-alias");
         symlink(&canonical_root, &alias_root).expect("network root alias should create");
@@ -283,6 +301,7 @@ mod tests {
             &aliased_layout,
             &sandbox,
             &config.reservation_claim,
+            config.provider_kind(),
         )
         .expect("the canonical alias should publish terminal IPAM evidence");
 

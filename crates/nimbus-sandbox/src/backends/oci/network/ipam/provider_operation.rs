@@ -6,17 +6,33 @@
 
 use std::net::Ipv4Addr;
 
+use nimbus_core::TenantId;
 use nimbus_network::{
     NetworkAttachmentId, NetworkProviderHandle, NetworkProviderId, NetworkReservationClaim,
+    NetworkSegmentId,
 };
+use sha2::{Digest, Sha256};
 use ulid::Ulid;
 
 use super::{OciIpamAuthority, read_ipam_state, validate_ipam_generation, with_ipam_state};
 use crate::backends::oci::network::default_network_attachment_id;
 use crate::backends::oci::network::dto::{IpamAllocation, IpamState, NetavarkProviderOperation};
 use crate::backends::oci::network::layout::{OciNetworkConfig, OciNetworkLayout};
+use crate::backends::oci::network::provider_locator::OciAttachmentProviderLocator;
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxId;
+
+const NETAVARK_OPERATION_PROVIDER_KEY: &str = "nimbus-sandbox.oci.netavark-operation";
+const NETAVARK_GENERATION_DOMAIN: &[u8] = b"nimbus.sandbox.oci.netavark-operation-generation.v1\0";
+
+/// Exact durable generation to which one provider attempt is confined.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NetavarkOperationGeneration {
+    attachment_id: NetworkAttachmentId,
+    reservation_claim: NetworkReservationClaim,
+    segment_id: NetworkSegmentId,
+    provider_locator: OciAttachmentProviderLocator,
+}
 
 /// Attempt-specific capability for completing one durable Netavark setup.
 ///
@@ -25,8 +41,7 @@ use crate::instance::SandboxId;
 /// so a concurrent or restarted caller cannot execute the provider twice.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::backends::oci::network) struct NetavarkSetupClaim {
-    attachment_id: NetworkAttachmentId,
-    reservation_claim: NetworkReservationClaim,
+    generation: NetavarkOperationGeneration,
     operation_attempt: NetworkProviderHandle,
 }
 
@@ -42,8 +57,7 @@ impl NetavarkSetupClaim {
         operation_attempt: NetworkProviderHandle,
     ) -> Self {
         Self {
-            attachment_id: self.attachment_id.clone(),
-            reservation_claim: self.reservation_claim.clone(),
+            generation: self.generation.clone(),
             operation_attempt,
         }
     }
@@ -52,15 +66,14 @@ impl NetavarkSetupClaim {
 /// Attempt-specific capability for completing one durable Netavark teardown.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::backends::oci::network) struct NetavarkTeardownClaim {
-    attachment_id: NetworkAttachmentId,
-    reservation_claim: NetworkReservationClaim,
+    generation: NetavarkOperationGeneration,
     setup_attempt: NetworkProviderHandle,
     operation_attempt: NetworkProviderHandle,
 }
 
 impl NetavarkTeardownClaim {
     pub(in crate::backends::oci::network) fn attachment_id(&self) -> &NetworkAttachmentId {
-        &self.attachment_id
+        &self.generation.attachment_id
     }
 
     #[cfg(test)]
@@ -79,8 +92,7 @@ impl NetavarkTeardownClaim {
         operation_attempt: NetworkProviderHandle,
     ) -> Self {
         Self {
-            attachment_id: self.attachment_id.clone(),
-            reservation_claim: self.reservation_claim.clone(),
+            generation: self.generation.clone(),
             setup_attempt: self.setup_attempt.clone(),
             operation_attempt,
         }
@@ -126,9 +138,18 @@ pub(in crate::backends::oci::network) fn begin_netavark_setup(
                 ),
             })?;
         let assigned_ips = validate_ipam_generation(config, &attachment_id, allocation)?;
+        authenticate_provider_locator(layout, config, sandbox_id, &attachment_id, allocation)?;
+        validate_netavark_provider_operation_evidence(
+            &layout.tenant_id,
+            &attachment_id,
+            allocation,
+        )?;
+        let generation =
+            netavark_operation_generation(&layout.tenant_id, &attachment_id, allocation)?;
         let operation_attempt = match &allocation.provider_operation {
             NetavarkProviderOperation::Reserved | NetavarkProviderOperation::Detached => {
-                let operation_attempt = new_netavark_operation_attempt("setup", &attachment_id)?;
+                let operation_attempt =
+                    new_netavark_operation_attempt("setup", &layout.tenant_id, &generation)?;
                 allocation.provider_operation = NetavarkProviderOperation::SetupPrepared {
                     operation_attempt: operation_attempt.clone(),
                 };
@@ -144,8 +165,7 @@ pub(in crate::backends::oci::network) fn begin_netavark_setup(
         Ok((
             assigned_ips,
             NetavarkSetupClaim {
-                attachment_id,
-                reservation_claim: config.reservation_claim.clone(),
+                generation,
                 operation_attempt,
             },
         ))
@@ -164,8 +184,9 @@ pub(in crate::backends::oci::network) fn begin_netavark_setup_execution(
     let attachment_id = default_network_attachment_id(sandbox_id);
     validate_setup_claim_identity(claim, &attachment_id, &config.reservation_claim)?;
     with_ipam_state(authority, layout, |state| {
-        let allocation = exact_live_allocation_for_setup_claim(state, claim)?;
+        let allocation = exact_live_allocation_for_setup_claim(state, layout, claim)?;
         let assigned_ips = validate_ipam_generation(config, &attachment_id, allocation)?;
+        authenticate_provider_locator(layout, config, sandbox_id, &attachment_id, allocation)?;
         match &allocation.provider_operation {
             NetavarkProviderOperation::SetupPrepared { operation_attempt }
                 if operation_attempt == &claim.operation_attempt =>
@@ -176,7 +197,7 @@ pub(in crate::backends::oci::network) fn begin_netavark_setup_execution(
                 Ok(assigned_ips)
             }
             current => Err(netavark_claim_mismatch(
-                &claim.attachment_id,
+                &claim.generation.attachment_id,
                 "setup execution",
                 current,
             )),
@@ -212,6 +233,8 @@ pub(in crate::backends::oci::network) fn inspect_netavark_provider_operation(
             ),
         })?;
     validate_ipam_generation(config, &attachment_id, allocation)?;
+    authenticate_provider_locator(layout, config, sandbox_id, &attachment_id, allocation)?;
+    validate_netavark_provider_operation_evidence(&layout.tenant_id, &attachment_id, allocation)?;
     Ok(allocation.provider_operation.clone())
 }
 
@@ -221,7 +244,7 @@ pub(in crate::backends::oci::network) fn complete_netavark_setup(
     claim: &NetavarkSetupClaim,
 ) -> Result<()> {
     with_ipam_state(authority, layout, |state| {
-        let allocation = exact_live_allocation_for_setup_claim(state, claim)?;
+        let allocation = exact_live_allocation_for_setup_claim(state, layout, claim)?;
         match &allocation.provider_operation {
             NetavarkProviderOperation::Provisioning { operation_attempt }
                 if operation_attempt == &claim.operation_attempt =>
@@ -237,7 +260,7 @@ pub(in crate::backends::oci::network) fn complete_netavark_setup(
                 Ok(())
             }
             current => Err(netavark_claim_mismatch(
-                &claim.attachment_id,
+                &claim.generation.attachment_id,
                 "setup completion",
                 current,
             )),
@@ -268,9 +291,40 @@ pub(in crate::backends::oci::network) fn begin_netavark_teardown(
                     ),
                 })?;
             validate_ipam_generation(config, &attachment_id, released)?;
+            authenticate_provider_locator(layout, config, sandbox_id, &attachment_id, released)?;
+            validate_netavark_provider_operation_evidence(
+                &layout.tenant_id,
+                &attachment_id,
+                released,
+            )?;
+            if !released.provider_operation.permits_terminal_ipam_release() {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "terminal OCI IPAM generation for attachment {} carries provider phase {}; refusing to treat a possibly live provider effect as detached",
+                        attachment_id.as_str(),
+                        released.provider_operation.label()
+                    ),
+                });
+            }
             return Ok(NetavarkTeardownPlan::AlreadyDetached);
         };
         let assigned_ips = validate_ipam_generation(config, &attachment_id, allocation)?;
+        authenticate_provider_locator(layout, config, sandbox_id, &attachment_id, allocation)?;
+        validate_netavark_provider_operation_evidence(
+            &layout.tenant_id,
+            &attachment_id,
+            allocation,
+        )?;
+        let generation =
+            netavark_operation_generation(&layout.tenant_id, &attachment_id, allocation)?;
+        if let Some(setup_claim) = setup_claim
+            && setup_claim.generation != generation
+        {
+            return Err(netavark_generation_mismatch(
+                &attachment_id,
+                "setup compensation",
+            ));
+        }
         match &allocation.provider_operation {
             NetavarkProviderOperation::Reserved => Ok(NetavarkTeardownPlan::AlreadyDetached),
             NetavarkProviderOperation::Ready { setup_attempt } => {
@@ -286,8 +340,8 @@ pub(in crate::backends::oci::network) fn begin_netavark_teardown(
                 prepare_teardown(
                     allocation,
                     assigned_ips,
-                    &attachment_id,
-                    &config.reservation_claim,
+                    &layout.tenant_id,
+                    &generation,
                     setup_attempt.clone(),
                 )
             }
@@ -303,8 +357,8 @@ pub(in crate::backends::oci::network) fn begin_netavark_teardown(
                 }
                 prepare_no_effect_teardown(
                     allocation,
-                    &attachment_id,
-                    &config.reservation_claim,
+                    &layout.tenant_id,
+                    &generation,
                     operation_attempt.clone(),
                 )
             }
@@ -321,8 +375,8 @@ pub(in crate::backends::oci::network) fn begin_netavark_teardown(
                 prepare_teardown(
                     allocation,
                     assigned_ips,
-                    &attachment_id,
-                    &config.reservation_claim,
+                    &layout.tenant_id,
+                    &generation,
                     operation_attempt.clone(),
                 )
             }
@@ -342,8 +396,7 @@ pub(in crate::backends::oci::network) fn begin_netavark_teardown(
                 Ok(NetavarkTeardownPlan::Run {
                     assigned_ips,
                     claim: teardown_claim(
-                        &attachment_id,
-                        &config.reservation_claim,
+                        &generation,
                         setup_attempt.clone(),
                         operation_attempt.clone(),
                     ),
@@ -364,8 +417,7 @@ pub(in crate::backends::oci::network) fn begin_netavark_teardown(
                 }
                 Ok(NetavarkTeardownPlan::ConfirmNoEffect {
                     claim: teardown_claim(
-                        &attachment_id,
-                        &config.reservation_claim,
+                        &generation,
                         setup_attempt.clone(),
                         operation_attempt.clone(),
                     ),
@@ -386,8 +438,7 @@ pub(in crate::backends::oci::network) fn begin_netavark_teardown(
                 }
                 Ok(NetavarkTeardownPlan::InspectDeleting {
                     claim: teardown_claim(
-                        &attachment_id,
-                        &config.reservation_claim,
+                        &generation,
                         setup_attempt.clone(),
                         operation_attempt.clone(),
                     ),
@@ -408,8 +459,7 @@ pub(in crate::backends::oci::network) fn begin_netavark_teardown(
                 }
                 Ok(NetavarkTeardownPlan::RemoveProjection {
                     claim: teardown_claim(
-                        &attachment_id,
-                        &config.reservation_claim,
+                        &generation,
                         setup_attempt.clone(),
                         operation_attempt.clone(),
                     ),
@@ -423,56 +473,44 @@ pub(in crate::backends::oci::network) fn begin_netavark_teardown(
 fn prepare_teardown(
     allocation: &mut IpamAllocation,
     assigned_ips: Vec<Ipv4Addr>,
-    attachment_id: &NetworkAttachmentId,
-    reservation_claim: &NetworkReservationClaim,
+    tenant_id: &TenantId,
+    generation: &NetavarkOperationGeneration,
     setup_attempt: NetworkProviderHandle,
 ) -> Result<NetavarkTeardownPlan> {
-    let operation_attempt = new_netavark_operation_attempt("teardown", attachment_id)?;
+    let operation_attempt = new_netavark_operation_attempt("teardown", tenant_id, generation)?;
     allocation.provider_operation = NetavarkProviderOperation::TeardownPrepared {
         setup_attempt: setup_attempt.clone(),
         operation_attempt: operation_attempt.clone(),
     };
     Ok(NetavarkTeardownPlan::Run {
         assigned_ips,
-        claim: teardown_claim(
-            attachment_id,
-            reservation_claim,
-            setup_attempt,
-            operation_attempt,
-        ),
+        claim: teardown_claim(generation, setup_attempt, operation_attempt),
     })
 }
 
 fn prepare_no_effect_teardown(
     allocation: &mut IpamAllocation,
-    attachment_id: &NetworkAttachmentId,
-    reservation_claim: &NetworkReservationClaim,
+    tenant_id: &TenantId,
+    generation: &NetavarkOperationGeneration,
     setup_attempt: NetworkProviderHandle,
 ) -> Result<NetavarkTeardownPlan> {
-    let operation_attempt = new_netavark_operation_attempt("teardown", attachment_id)?;
+    let operation_attempt = new_netavark_operation_attempt("teardown", tenant_id, generation)?;
     allocation.provider_operation = NetavarkProviderOperation::NoEffectTeardownPrepared {
         setup_attempt: setup_attempt.clone(),
         operation_attempt: operation_attempt.clone(),
     };
     Ok(NetavarkTeardownPlan::ConfirmNoEffect {
-        claim: teardown_claim(
-            attachment_id,
-            reservation_claim,
-            setup_attempt,
-            operation_attempt,
-        ),
+        claim: teardown_claim(generation, setup_attempt, operation_attempt),
     })
 }
 
 fn teardown_claim(
-    attachment_id: &NetworkAttachmentId,
-    reservation_claim: &NetworkReservationClaim,
+    generation: &NetavarkOperationGeneration,
     setup_attempt: NetworkProviderHandle,
     operation_attempt: NetworkProviderHandle,
 ) -> NetavarkTeardownClaim {
     NetavarkTeardownClaim {
-        attachment_id: attachment_id.clone(),
-        reservation_claim: reservation_claim.clone(),
+        generation: generation.clone(),
         setup_attempt,
         operation_attempt,
     }
@@ -486,7 +524,7 @@ pub(in crate::backends::oci::network) fn begin_netavark_teardown_execution(
     claim: &NetavarkTeardownClaim,
 ) -> Result<()> {
     with_ipam_state(authority, layout, |state| {
-        let allocation = exact_live_allocation_for_teardown_claim(state, claim)?;
+        let allocation = exact_live_allocation_for_teardown_claim(state, layout, claim)?;
         match &allocation.provider_operation {
             NetavarkProviderOperation::TeardownPrepared {
                 setup_attempt,
@@ -501,7 +539,7 @@ pub(in crate::backends::oci::network) fn begin_netavark_teardown_execution(
                 Ok(())
             }
             current => Err(netavark_claim_mismatch(
-                &claim.attachment_id,
+                &claim.generation.attachment_id,
                 "teardown execution",
                 current,
             )),
@@ -515,7 +553,7 @@ pub(in crate::backends::oci::network) fn confirm_netavark_absent_without_effect(
     claim: &NetavarkTeardownClaim,
 ) -> Result<()> {
     with_ipam_state(authority, layout, |state| {
-        let allocation = exact_live_allocation_for_teardown_claim(state, claim)?;
+        let allocation = exact_live_allocation_for_teardown_claim(state, layout, claim)?;
         match &allocation.provider_operation {
             NetavarkProviderOperation::TeardownPrepared {
                 setup_attempt,
@@ -535,7 +573,7 @@ pub(in crate::backends::oci::network) fn confirm_netavark_absent_without_effect(
                 Ok(())
             }
             current => Err(netavark_claim_mismatch(
-                &claim.attachment_id,
+                &claim.generation.attachment_id,
                 "no-effect teardown confirmation",
                 current,
             )),
@@ -549,7 +587,7 @@ pub(in crate::backends::oci::network) fn confirm_netavark_provider_detached(
     claim: &NetavarkTeardownClaim,
 ) -> Result<()> {
     with_ipam_state(authority, layout, |state| {
-        let allocation = exact_live_allocation_for_teardown_claim(state, claim)?;
+        let allocation = exact_live_allocation_for_teardown_claim(state, layout, claim)?;
         match &allocation.provider_operation {
             NetavarkProviderOperation::Deleting {
                 setup_attempt,
@@ -573,7 +611,7 @@ pub(in crate::backends::oci::network) fn confirm_netavark_provider_detached(
                 Ok(())
             }
             current => Err(netavark_claim_mismatch(
-                &claim.attachment_id,
+                &claim.generation.attachment_id,
                 "provider-detach confirmation",
                 current,
             )),
@@ -587,7 +625,7 @@ pub(in crate::backends::oci::network) fn complete_netavark_teardown(
     claim: &NetavarkTeardownClaim,
 ) -> Result<()> {
     with_ipam_state(authority, layout, |state| {
-        let allocation = exact_live_allocation_for_teardown_claim(state, claim)?;
+        let allocation = exact_live_allocation_for_teardown_claim(state, layout, claim)?;
         match &allocation.provider_operation {
             NetavarkProviderOperation::DetachedProjectionPending {
                 setup_attempt,
@@ -600,7 +638,7 @@ pub(in crate::backends::oci::network) fn complete_netavark_teardown(
             }
             NetavarkProviderOperation::Detached => Ok(()),
             current => Err(netavark_claim_mismatch(
-                &claim.attachment_id,
+                &claim.generation.attachment_id,
                 "teardown completion",
                 current,
             )),
@@ -610,34 +648,28 @@ pub(in crate::backends::oci::network) fn complete_netavark_teardown(
 
 fn exact_live_allocation_for_setup_claim<'a>(
     state: &'a mut IpamState,
+    layout: &OciNetworkLayout,
     claim: &NetavarkSetupClaim,
 ) -> Result<&'a mut IpamAllocation> {
-    exact_live_allocation_for_operation(
-        state,
-        &claim.attachment_id,
-        &claim.reservation_claim,
-        "setup",
-    )
+    exact_live_allocation_for_operation(state, layout, &claim.generation, "setup")
 }
 
 fn exact_live_allocation_for_teardown_claim<'a>(
     state: &'a mut IpamState,
+    layout: &OciNetworkLayout,
     claim: &NetavarkTeardownClaim,
 ) -> Result<&'a mut IpamAllocation> {
-    exact_live_allocation_for_operation(
-        state,
-        &claim.attachment_id,
-        &claim.reservation_claim,
-        "teardown",
-    )
+    exact_live_allocation_for_operation(state, layout, &claim.generation, "teardown")
 }
 
 fn exact_live_allocation_for_operation<'a>(
     state: &'a mut IpamState,
-    attachment_id: &NetworkAttachmentId,
-    reservation_claim: &NetworkReservationClaim,
+    layout: &OciNetworkLayout,
+    generation: &NetavarkOperationGeneration,
     operation: &str,
 ) -> Result<&'a mut IpamAllocation> {
+    authenticate_claim_layout(layout, generation, operation)?;
+    let attachment_id = &generation.attachment_id;
     let allocation = state
         .allocations
         .get_mut(attachment_id.as_str())
@@ -647,14 +679,12 @@ fn exact_live_allocation_for_operation<'a>(
                 attachment_id.as_str()
             ),
         })?;
-    if &allocation.reservation_claim != reservation_claim {
-        return Err(SandboxError::OperationFailed {
-            message: format!(
-                "OCI Netavark {operation} claim for attachment {} belongs to a stale launch coordinator",
-                attachment_id.as_str()
-            ),
-        });
+    let durable_generation =
+        netavark_operation_generation(&layout.tenant_id, attachment_id, allocation)?;
+    if durable_generation != *generation {
+        return Err(netavark_generation_mismatch(attachment_id, operation));
     }
+    validate_netavark_provider_operation_evidence(&layout.tenant_id, attachment_id, allocation)?;
     Ok(allocation)
 }
 
@@ -663,7 +693,9 @@ fn validate_setup_claim_identity(
     attachment_id: &NetworkAttachmentId,
     reservation_claim: &NetworkReservationClaim,
 ) -> Result<()> {
-    if &claim.attachment_id == attachment_id && &claim.reservation_claim == reservation_claim {
+    if &claim.generation.attachment_id == attachment_id
+        && &claim.generation.reservation_claim == reservation_claim
+    {
         return Ok(());
     }
     Err(SandboxError::OperationFailed {
@@ -676,18 +708,270 @@ fn validate_setup_claim_identity(
 
 fn new_netavark_operation_attempt(
     action: &str,
-    attachment_id: &NetworkAttachmentId,
+    tenant_id: &TenantId,
+    generation: &NetavarkOperationGeneration,
 ) -> Result<NetworkProviderHandle> {
+    let generation_digest = netavark_generation_digest(tenant_id, generation);
     NetworkProviderHandle::new(
-        NetworkProviderId::for_registration_key("nimbus-sandbox.oci.netavark-operation"),
-        format!("{action}:{}:{}", attachment_id.as_str(), Ulid::new()),
+        NetworkProviderId::for_registration_key(NETAVARK_OPERATION_PROVIDER_KEY),
+        format!(
+            "v1:{action}:{}:{}:{generation_digest}:{}",
+            tenant_id.as_str(),
+            generation.attachment_id.as_str(),
+            Ulid::new()
+        ),
     )
     .map_err(|error| SandboxError::OperationFailed {
         message: format!(
             "failed to mint Netavark {action} operation capability for attachment {}: {error}",
+            generation.attachment_id.as_str()
+        ),
+    })
+}
+
+pub(in crate::backends::oci::network) fn validate_netavark_provider_operation_evidence(
+    tenant_id: &TenantId,
+    attachment_id: &NetworkAttachmentId,
+    allocation: &IpamAllocation,
+) -> Result<()> {
+    let generation = netavark_operation_generation(tenant_id, attachment_id, allocation)?;
+    match &allocation.provider_operation {
+        NetavarkProviderOperation::Reserved | NetavarkProviderOperation::Detached => Ok(()),
+        NetavarkProviderOperation::SetupPrepared { operation_attempt }
+        | NetavarkProviderOperation::Provisioning { operation_attempt } => {
+            validate_netavark_operation_attempt(operation_attempt, "setup", tenant_id, &generation)
+        }
+        NetavarkProviderOperation::Ready { setup_attempt } => {
+            validate_netavark_operation_attempt(setup_attempt, "setup", tenant_id, &generation)
+        }
+        NetavarkProviderOperation::TeardownPrepared {
+            setup_attempt,
+            operation_attempt,
+        }
+        | NetavarkProviderOperation::NoEffectTeardownPrepared {
+            setup_attempt,
+            operation_attempt,
+        }
+        | NetavarkProviderOperation::Deleting {
+            setup_attempt,
+            operation_attempt,
+        }
+        | NetavarkProviderOperation::DetachedProjectionPending {
+            setup_attempt,
+            operation_attempt,
+        } => {
+            validate_netavark_operation_attempt(setup_attempt, "setup", tenant_id, &generation)?;
+            validate_netavark_operation_attempt(
+                operation_attempt,
+                "teardown",
+                tenant_id,
+                &generation,
+            )
+        }
+    }
+}
+
+fn validate_netavark_operation_attempt(
+    attempt: &NetworkProviderHandle,
+    expected_action: &str,
+    tenant_id: &TenantId,
+    generation: &NetavarkOperationGeneration,
+) -> Result<()> {
+    let attachment_id = &generation.attachment_id;
+    let expected_provider =
+        NetworkProviderId::for_registration_key(NETAVARK_OPERATION_PROVIDER_KEY);
+    if attempt.provider_id() != &expected_provider {
+        return Err(invalid_netavark_operation_attempt(
+            expected_action,
+            tenant_id,
+            attachment_id,
+            "foreign provider identity",
+        ));
+    }
+    let mut parts = attempt.expose_to_provider().split(':');
+    let version = parts.next();
+    let action = parts.next();
+    let tenant = parts.next();
+    let attachment = parts.next();
+    let generation_digest = parts.next();
+    let attempt_id = parts.next();
+    let expected_generation_digest = netavark_generation_digest(tenant_id, generation);
+    if parts.next().is_some()
+        || version != Some("v1")
+        || action != Some(expected_action)
+        || tenant != Some(tenant_id.as_str())
+        || attachment != Some(attachment_id.as_str())
+        || generation_digest != Some(expected_generation_digest.as_str())
+        || attempt_id
+            .and_then(|value| Ulid::from_string(value).ok())
+            .is_none()
+    {
+        return Err(invalid_netavark_operation_attempt(
+            expected_action,
+            tenant_id,
+            attachment_id,
+            "version, action, tenant, attachment, generation binding, or attempt identity mismatch",
+        ));
+    }
+    Ok(())
+}
+
+fn netavark_operation_generation(
+    tenant_id: &TenantId,
+    attachment_id: &NetworkAttachmentId,
+    allocation: &IpamAllocation,
+) -> Result<NetavarkOperationGeneration> {
+    allocation.provider_locator.validate()?;
+    if allocation.provider_locator.tenant_id() != tenant_id {
+        return Err(SandboxError::OperationFailed {
+            message: format!(
+                "OCI Netavark generation binding for attachment {} carries provider locator tenant {} instead of {}",
+                attachment_id.as_str(),
+                allocation.provider_locator.tenant_id().as_str(),
+                tenant_id.as_str()
+            ),
+        });
+    }
+    let expected_attachment =
+        default_network_attachment_id(allocation.provider_locator.sandbox_id());
+    if &expected_attachment != attachment_id {
+        return Err(SandboxError::OperationFailed {
+            message: format!(
+                "OCI Netavark generation binding for attachment {} does not match provider locator sandbox {} derived attachment {}",
+                attachment_id.as_str(),
+                allocation.provider_locator.sandbox_id().as_str(),
+                expected_attachment.as_str()
+            ),
+        });
+    }
+    let segment_id =
+        allocation
+            .segment_id
+            .parse::<NetworkSegmentId>()
+            .map_err(|error| SandboxError::OperationFailed {
+                message: format!(
+                    "OCI Netavark generation binding for attachment {} contains invalid segment identity {:?}: {error}",
+                    attachment_id.as_str(),
+                    allocation.segment_id
+                ),
+            })?;
+    Ok(NetavarkOperationGeneration {
+        attachment_id: attachment_id.clone(),
+        reservation_claim: allocation.reservation_claim.clone(),
+        segment_id,
+        provider_locator: allocation.provider_locator.clone(),
+    })
+}
+
+fn netavark_generation_digest(
+    tenant_id: &TenantId,
+    generation: &NetavarkOperationGeneration,
+) -> String {
+    let mut digest = Sha256::new();
+    digest.update(NETAVARK_GENERATION_DOMAIN);
+    for component in [
+        tenant_id.as_str(),
+        generation.attachment_id.as_str(),
+        generation
+            .reservation_claim
+            .coordinator_attempt()
+            .provider_id()
+            .as_str(),
+        generation
+            .reservation_claim
+            .coordinator_attempt()
+            .expose_to_provider(),
+        generation.segment_id.as_str(),
+        generation.provider_locator.tenant_id().as_str(),
+        generation.provider_locator.sandbox_id().as_str(),
+        generation.provider_locator.provider_kind().as_str(),
+        generation.provider_locator.artifact_realm_id().as_str(),
+    ] {
+        digest.update(
+            u64::try_from(component.len())
+                .expect("a Rust string length always fits u64 on supported targets")
+                .to_be_bytes(),
+        );
+        digest.update(component.as_bytes());
+    }
+    digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn authenticate_provider_locator(
+    layout: &OciNetworkLayout,
+    config: &OciNetworkConfig,
+    sandbox_id: &SandboxId,
+    attachment_id: &NetworkAttachmentId,
+    allocation: &IpamAllocation,
+) -> Result<()> {
+    let expected = OciAttachmentProviderLocator::new(
+        &layout.workload_state_root,
+        &layout.tenant_id,
+        sandbox_id,
+        config.provider_kind,
+    )?;
+    if allocation.provider_locator == expected {
+        return Ok(());
+    }
+    Err(SandboxError::OperationFailed {
+        message: format!(
+            "OCI Netavark provider locator for attachment {} does not authenticate the supplied tenant, sandbox, artifact realm, and provider kind",
             attachment_id.as_str()
         ),
     })
+}
+
+fn authenticate_claim_layout(
+    layout: &OciNetworkLayout,
+    generation: &NetavarkOperationGeneration,
+    operation: &str,
+) -> Result<()> {
+    let locator = &generation.provider_locator;
+    let expected_attachment = default_network_attachment_id(locator.sandbox_id());
+    let authenticates_root = locator.authenticates_workload_root(&layout.workload_state_root)?;
+    if locator.tenant_id() == &layout.tenant_id
+        && generation.attachment_id == expected_attachment
+        && authenticates_root
+    {
+        return Ok(());
+    }
+    Err(SandboxError::OperationFailed {
+        message: format!(
+            "OCI Netavark {operation} provider locator for attachment {} does not authenticate the supplied tenant and artifact realm",
+            generation.attachment_id.as_str()
+        ),
+    })
+}
+
+fn netavark_generation_mismatch(
+    attachment_id: &NetworkAttachmentId,
+    operation: &str,
+) -> SandboxError {
+    SandboxError::OperationFailed {
+        message: format!(
+            "OCI Netavark {operation} for attachment {} carries a foreign generation binding",
+            attachment_id.as_str()
+        ),
+    }
+}
+
+fn invalid_netavark_operation_attempt(
+    action: &str,
+    tenant_id: &TenantId,
+    attachment_id: &NetworkAttachmentId,
+    reason: &str,
+) -> SandboxError {
+    SandboxError::OperationFailed {
+        message: format!(
+            "OCI Netavark {action} attempt for tenant {} attachment {} has {reason}",
+            tenant_id.as_str(),
+            attachment_id.as_str()
+        ),
+    }
 }
 
 fn netavark_operation_pending(

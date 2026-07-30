@@ -128,6 +128,7 @@ fn terminal_manifest_publication_rejects_a_retained_port_lease() {
             &manifest.spec.tenant_id,
             &manifest.handle.id,
             &network_config.reservation_claim,
+            network_config.provider_kind(),
         ),
         Ok(()),
     )

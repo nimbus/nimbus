@@ -525,7 +525,7 @@
       "kind": "primitive-state-store-open",
       "symbol": "open",
       "ordinal": 1,
-      "line": 138,
+      "line": 143,
       "classification": "admitted-cross-process-reconstruction",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -595,7 +595,7 @@
       "kind": "primitive-state-store-open-declaration",
       "symbol": "open",
       "ordinal": 1,
-      "line": 130,
+      "line": 159,
       "classification": "admitted-cross-process-reconstruction",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -605,7 +605,7 @@
       "kind": "primitive-state-store-open-declaration",
       "symbol": "open_with_options",
       "ordinal": 1,
-      "line": 139,
+      "line": 168,
       "classification": "admitted-cross-process-reconstruction",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -795,7 +795,7 @@
       "kind": "ipam-direct-reconstruction-declaration",
       "symbol": "reconstruct_direct",
       "ordinal": 1,
-      "line": 50,
+      "line": 51,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -805,7 +805,7 @@
       "kind": "ipam-runner-reconstruction-declaration",
       "symbol": "reconstruct_for_runner",
       "ordinal": 1,
-      "line": 55,
+      "line": 56,
       "classification": "admitted-cross-process-reconstruction",
       "os_node_realm": "current-os-node-child",
       "evidence": "nnc4.6c"
@@ -815,7 +815,7 @@
       "kind": "primitive-state-store-open",
       "symbol": "reconstruct",
       "ordinal": 1,
-      "line": 65,
+      "line": 66,
       "classification": "admitted-cross-process-reconstruction",
       "os_node_realm": "current-os-node",
       "evidence": "nnc4.6c"

@@ -78,6 +78,7 @@ impl ContainerSandboxBackend {
         let segment = self.segment_allocator.segment_for(tenant)?;
         let reservation_claim = crate::backends::oci::port_lease::new_launch_reservation_claim()?;
         Ok(OciAttachmentLifecycle::config_from_segment(
+            AttachmentBackendKind::Container,
             self.config.netavark_path.clone(),
             self.config.aardvark_dns_path.clone(),
             &segment,
@@ -115,14 +116,13 @@ impl ContainerSandboxBackend {
         planning_error: SandboxError,
     ) -> SandboxError {
         let ports = self.port_lease_coordinator();
-        let port_compensation = ports.release_never_bound_launch_claim(reservation_claim);
         self.attachment_lifecycle(&ports).compensate_reserved(
+            AttachmentBackendKind::Container,
             layout,
             tenant_id,
             sandbox_id,
             reservation_claim,
             planning_error,
-            port_compensation,
         )
     }
 
@@ -135,6 +135,7 @@ impl ContainerSandboxBackend {
         let ports = self.port_lease_coordinator_for_manifest(manifest)?;
         let port_compensation = ports.release_never_bound_launch_claim(reservation_claim);
         self.attachment_lifecycle(&ports).release_reserved(
+            AttachmentBackendKind::Container,
             &manifest.network_layout,
             &manifest.spec.tenant_id,
             &manifest.handle.id,

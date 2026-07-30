@@ -24,6 +24,7 @@ use crate::backends::oci::network::netavark::{
     execute_prepared_container_network_teardown_for_test, prepare_container_network_setup,
     prepare_container_network_teardown,
 };
+use crate::backends::oci::network::provider_locator::OciAttachmentProviderKind;
 use crate::backends::oci::network::{
     RecordingSegmentAllocator, SegmentAllocatorOperation, allocate_container_ips,
     bridge_gateway_addr, default_network_attachment_id, direct_test_ipam_authority,
@@ -301,6 +302,33 @@ impl ContractFixture {
             .expect("contract attachment state should inspect")
             .state()
     }
+}
+
+fn type_bound_backend_route_persists_exact_provider_kind(backend: ContractBackend) {
+    let fixture = ContractFixture::new(backend, "nnc52b-provider-kind");
+    let config = fixture.reserve_config();
+    let expected = match backend {
+        ContractBackend::Container => OciAttachmentProviderKind::Container,
+        ContractBackend::Krun => OciAttachmentProviderKind::Krun,
+    };
+    assert_eq!(
+        config.provider_kind_label(),
+        backend.label(),
+        "the type-bound backend route must construct the matching provider config"
+    );
+    let evidence = fixture
+        .ipam
+        .get_attachment_provider_evidence(
+            &fixture.tenant_id,
+            &default_network_attachment_id(&fixture.sandbox_id),
+        )
+        .expect("type-bound provider evidence should inspect")
+        .expect("type-bound provider evidence should persist");
+    assert_eq!(
+        evidence.provider_kind(),
+        expected,
+        "the production associated-constant route must survive durable IPAM serialization"
+    );
 }
 
 fn reservation_claim(label: &str) -> NetworkReservationClaim {
@@ -1391,6 +1419,11 @@ shared_contract_row!(
     container_01_plan_only_has_zero_attachment_effects,
     krun_01_plan_only_has_zero_attachment_effects,
     plan_only_has_zero_attachment_effects
+);
+shared_contract_row!(
+    container_nnc5_2b_type_bound_route_persists_exact_provider_kind,
+    krun_nnc5_2b_type_bound_route_persists_exact_provider_kind,
+    type_bound_backend_route_persists_exact_provider_kind
 );
 shared_contract_row!(
     container_02_claim_precedes_all_reservations,

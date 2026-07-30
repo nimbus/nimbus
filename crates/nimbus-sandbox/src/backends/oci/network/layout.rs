@@ -16,6 +16,7 @@ use crate::instance::SandboxId;
 
 use super::DEFAULT_NETWORK_ID;
 use super::ipam::{parse_ipv4_address, parse_ipv4_subnet_and_gateway};
+use super::provider_locator::OciAttachmentProviderKind;
 #[cfg(test)]
 use super::{
     DEFAULT_AARDVARK_DNS_BINARY, DEFAULT_NETAVARK_BINARY, DEFAULT_NETWORK_INTERFACE,
@@ -111,6 +112,8 @@ pub(crate) struct OciNetworkConfig {
     /// teardown, projection, and confirmed-detach work cannot target a
     /// replacement generation that reuses the same sandbox and segment IDs.
     pub reservation_claim: NetworkReservationClaim,
+    /// Sandbox-owned provider family persisted into the IPAM evidence locator.
+    pub(super) provider_kind: OciAttachmentProviderKind,
     pub direct_egress: OciNetworkDirectEgress,
     /// Whether netavark starts the in-subnet aardvark-dns stub bound to the
     /// bridge gateway `:53`. The container backend leaves this on so workloads
@@ -127,6 +130,20 @@ pub(crate) struct OciNetworkConfig {
     /// with the selected segment's provider-local identity.
     #[serde(default = "default_network_id")]
     pub network_id: String,
+}
+
+impl OciNetworkConfig {
+    pub(crate) const fn provider_kind(&self) -> OciAttachmentProviderKind {
+        self.provider_kind
+    }
+
+    #[cfg(test)]
+    pub(crate) fn provider_kind_label(&self) -> &'static str {
+        match self.provider_kind {
+            OciAttachmentProviderKind::Container => "container",
+            OciAttachmentProviderKind::Krun => "krun",
+        }
+    }
 }
 
 pub(super) fn default_enable_dns() -> bool {
@@ -149,6 +166,7 @@ impl Default for OciNetworkConfig {
             segment_id: NetworkSegmentId::generate().as_str().to_owned(),
             reservation_claim: crate::backends::oci::port_lease::new_launch_reservation_claim()
                 .expect("test network config claim should validate"),
+            provider_kind: OciAttachmentProviderKind::Container,
             direct_egress: OciNetworkDirectEgress::Deny,
             enable_dns: default_enable_dns(),
             network_id: default_network_id(),

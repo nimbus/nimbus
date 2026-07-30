@@ -43,6 +43,7 @@ fn stale_krun_cleanup_cannot_mutate_replacement_network_generation() {
         &layout,
         &manifest.handle.id,
         &stale_config.reservation_claim,
+        stale_config.provider_kind(),
     )
     .expect("first generation should release exact IPAM");
     let mut replacement_config = stale_config.clone();

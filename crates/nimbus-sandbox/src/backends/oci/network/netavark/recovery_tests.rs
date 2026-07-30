@@ -576,6 +576,7 @@ fn recover_case(
         &layout,
         &sandbox,
         &config.reservation_claim,
+        config.provider_kind(),
     )
     .expect("terminal provider absence should release exact IPAM");
 }

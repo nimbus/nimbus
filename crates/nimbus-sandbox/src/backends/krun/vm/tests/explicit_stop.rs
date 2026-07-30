@@ -284,6 +284,7 @@ fn terminal_ipam_retirement_failure_is_not_manifest_acknowledgement_loss() {
         &terminal.network_layout,
         &sandbox_id,
         &network_config.reservation_claim,
+        network_config.provider_kind(),
     )
     .expect("fixture should persist the exact terminal witness");
     terminal.network_config = Some(network_config);

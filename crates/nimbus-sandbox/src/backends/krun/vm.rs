@@ -473,6 +473,7 @@ impl KrunSandboxBackend {
         let segment = self.segment_allocator.segment_for(tenant)?;
         let reservation_claim = crate::backends::oci::port_lease::new_launch_reservation_claim()?;
         Ok(OciAttachmentLifecycle::config_from_segment(
+            AttachmentBackendKind::Krun,
             self.config.netavark_path.clone(),
             self.config.aardvark_dns_path.clone(),
             &segment,
@@ -507,6 +508,7 @@ impl KrunSandboxBackend {
         let ports = self.port_lease_coordinator();
         let port_compensation = ports.release_never_bound_launch_claim(reservation_claim);
         self.attachment_lifecycle(&ports).release_reserved(
+            AttachmentBackendKind::Krun,
             &manifest.network_layout,
             &manifest.spec.tenant_id,
             &manifest.handle.id,
@@ -525,6 +527,7 @@ impl KrunSandboxBackend {
         let port_compensation =
             ports.release_unpublished_launch_ports(reservations, reservation_claim);
         self.attachment_lifecycle(&ports).release_reserved(
+            AttachmentBackendKind::Krun,
             &manifest.network_layout,
             &manifest.spec.tenant_id,
             &manifest.handle.id,

@@ -16,8 +16,17 @@ mod ipam;
 mod layout;
 mod netavark;
 mod netns;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "NNC5.2b stages the read-only collector consumed by NNC5.2d startup fencing"
+    )
+)]
+mod orphan_evidence;
 mod placement;
 mod process;
+mod provider_locator;
 mod proxy;
 mod realization;
 mod reaper;
@@ -53,7 +62,7 @@ pub(crate) use netavark::{
 #[cfg(test)]
 pub(crate) use netavark::{setup_container_network, teardown_container_network};
 pub(crate) use netns::{create_persistent_network_namespace, remove_persistent_network_namespace};
-pub(crate) use placement::place_sandbox_on_block;
+pub(crate) use placement::{OciPlacementProvider, place_sandbox_on_block};
 pub(crate) use process::{
     MachinePortProxyCleanupDisposition, MachinePortProxyCleanupState, MachinePortProxyEntries,
     MachinePortProxyEntry, MachinePortProxyKey, MachinePortProxyLeaseAuthority,
@@ -785,6 +794,7 @@ mod tests {
             &layout,
             &sandbox_id,
             &config.reservation_claim,
+            config.provider_kind(),
         )
         .expect("completed teardown may publish exact terminal IPAM evidence");
         teardown_container_network(
@@ -930,6 +940,7 @@ mod tests {
             &layout,
             &sandbox_id,
             &stale.reservation_claim,
+            stale.provider_kind(),
         )
         .expect("first generation should release exact IPAM");
         let mut current = stale.clone();
@@ -1206,6 +1217,7 @@ mod tests {
             &layout,
             &sandbox_id,
             &config.reservation_claim,
+            config.provider_kind(),
         )
         .expect("deallocation should succeed");
         assert!(

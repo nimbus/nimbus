@@ -5,6 +5,8 @@ use std::collections::BTreeMap;
 use nimbus_network::{NetworkProviderHandle, NetworkReservationClaim, NetworkResourceGeneration};
 use serde::{Deserialize, Serialize};
 
+use super::provider_locator::OciAttachmentProviderLocator;
+
 #[derive(Debug, Serialize)]
 pub(super) struct NetavarkRequest {
     pub(super) container_id: String,
@@ -74,6 +76,7 @@ pub(super) struct NetavarkErrorResponse {
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct IpamState {
     pub(super) allocations: BTreeMap<String, IpamAllocation>,
     /// Last terminal generation for an attachment whose provider detach was
@@ -89,9 +92,11 @@ pub(super) struct IpamState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct IpamAllocation {
     pub(super) segment_id: String,
     pub(super) reservation_claim: NetworkReservationClaim,
+    pub(super) provider_locator: OciAttachmentProviderLocator,
     pub(super) ips: Vec<String>,
     pub(super) provider_operation: NetavarkProviderOperation,
 }
@@ -103,7 +108,7 @@ pub(super) struct IpamAllocation {
 /// replace the attachment before evidence-aware reconciliation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "phase", rename_all = "snake_case")]
-pub(super) enum NetavarkProviderOperation {
+pub(in crate::backends::oci::network) enum NetavarkProviderOperation {
     /// No Netavark effect has begun for this IPAM generation.
     Reserved,
     /// One exact setup attempt is durable and no provider effect is authorized
@@ -152,6 +157,10 @@ pub(super) enum NetavarkProviderOperation {
 }
 
 impl NetavarkProviderOperation {
+    pub(super) const fn permits_terminal_ipam_release(&self) -> bool {
+        matches!(self, Self::Reserved | Self::Detached)
+    }
+
     pub(super) const fn label(&self) -> &'static str {
         match self {
             Self::Reserved => "reserved",

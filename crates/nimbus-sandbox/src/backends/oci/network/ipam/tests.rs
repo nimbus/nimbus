@@ -21,6 +21,326 @@ fn fixture() -> (
 }
 
 #[test]
+fn nnc5_2b_ipam_persists_reversible_provider_locator_before_effects() {
+    let (_dir, layout, authority, config, sandbox) = fixture();
+    allocate_container_ips(&authority, &layout, &config, &sandbox)
+        .expect("IPAM reservation should commit before provider effects");
+
+    let authority_path = LocalNetworkStateStore::authority_path_for(&layout.network_state_root);
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&fs::read(authority_path).expect("authority should read"))
+            .expect("authority should parse");
+    let allocation = &envelope["body"]["records"]["tenant-ipam/tenant-original"]["allocations"]
+        [default_network_attachment_id(&sandbox).as_str()];
+    let locator = &allocation["provider_locator"];
+
+    assert_eq!(
+        locator["tenant_id"], "tenant-original",
+        "the provider journal must authenticate its exact tenant partition"
+    );
+    assert_eq!(
+        locator["sandbox_id"],
+        serde_json::json!(sandbox),
+        "the provider journal must retain the source sandbox needed to locate artifacts"
+    );
+    assert_eq!(
+        locator["provider_kind"], "container",
+        "the locator must authenticate the OCI provider family"
+    );
+    assert!(
+        locator["artifact_realm_id"]
+            .as_str()
+            .is_some_and(|realm| realm.starts_with("oci-artifact-realm-v2-sha256:")),
+        "the locator must carry a process-mappable artifact realm, not an inferred path: {locator}"
+    );
+}
+
+#[test]
+fn nnc5_2b_locator_replay_reopen_and_substitution_are_exact_and_byte_stable() {
+    use super::super::provider_locator::OciAttachmentProviderKind;
+
+    let (_dir, layout, authority, config, sandbox) = fixture();
+    let first = allocate_container_ips(&authority, &layout, &config, &sandbox)
+        .expect("first reservation should persist its locator");
+    let authority_path = LocalNetworkStateStore::authority_path_for(&layout.network_state_root);
+    let committed = fs::read(&authority_path).expect("authority bytes should read");
+
+    assert_eq!(
+        allocate_container_ips(&authority, &layout, &config, &sandbox)
+            .expect("exact replay should adopt"),
+        first
+    );
+    assert_eq!(
+        fs::read(&authority_path).expect("replayed authority should read"),
+        committed,
+        "exact replay must preserve locator and authority bytes"
+    );
+
+    let reopened = OciIpamAuthority::reconstruct_for_direct_test(&layout)
+        .expect("fresh authority handle should reopen");
+    let attachment_id = default_network_attachment_id(&sandbox);
+    let original_evidence = authority
+        .get_attachment_provider_evidence(&layout.tenant_id, &attachment_id)
+        .expect("original evidence should inspect")
+        .expect("original evidence should exist");
+    let reopened_evidence = reopened
+        .get_attachment_provider_evidence(&layout.tenant_id, &attachment_id)
+        .expect("reopened evidence should inspect")
+        .expect("reopened evidence should exist");
+    assert_eq!(
+        reopened_evidence, original_evidence,
+        "reopen must reconstruct the exact locator and provider attempt"
+    );
+    assert_eq!(
+        fs::read(&authority_path).expect("reopened authority should read"),
+        committed,
+        "reopen must not rewrite authority"
+    );
+
+    let mut backend_substitution = config.clone();
+    backend_substitution.provider_kind = OciAttachmentProviderKind::Krun;
+    let backend_error =
+        allocate_container_ips(&authority, &layout, &backend_substitution, &sandbox)
+            .expect_err("backend substitution must fail");
+    assert!(
+        backend_error
+            .to_string()
+            .contains("different provider locator")
+    );
+    assert_eq!(
+        fs::read(&authority_path).expect("backend rejection should preserve state"),
+        committed
+    );
+
+    let substituted_workload_root = layout
+        .workload_state_root
+        .parent()
+        .expect("fixture workload root should have a parent")
+        .join("substituted-workload-root");
+    fs::create_dir_all(&substituted_workload_root).expect("substituted workload root should exist");
+    let substituted_layout = OciNetworkLayout::with_roots(
+        &substituted_workload_root,
+        &layout.network_state_root,
+        &layout.tenant_id,
+        &sandbox,
+    );
+    let root_error = allocate_container_ips(&authority, &substituted_layout, &config, &sandbox)
+        .expect_err("artifact realm substitution must fail");
+    assert!(
+        root_error
+            .to_string()
+            .contains("different provider locator")
+    );
+    assert_eq!(
+        fs::read(&authority_path).expect("realm rejection should preserve state"),
+        committed
+    );
+
+    let mut segment_substitution = config.clone();
+    segment_substitution.segment_id = NetworkSegmentId::generate().as_str().to_owned();
+    let segment_error =
+        allocate_container_ips(&authority, &layout, &segment_substitution, &sandbox)
+            .expect_err("segment substitution must fail");
+    assert!(
+        segment_error
+            .to_string()
+            .contains("outside its current ordered tenant block set")
+    );
+    assert_eq!(
+        fs::read(&authority_path).expect("segment rejection should preserve state"),
+        committed
+    );
+
+    let mut claim_substitution = config.clone();
+    claim_substitution.reservation_claim = test_reservation_claim("locator-foreign-claim");
+    let claim_error = allocate_container_ips_on_first_available(
+        &authority,
+        &layout,
+        std::slice::from_ref(&claim_substitution),
+        &sandbox,
+        &claim_substitution.reservation_claim,
+    )
+    .expect_err("claim substitution must fail");
+    assert!(
+        claim_error
+            .to_string()
+            .contains("different launch coordinator")
+    );
+    assert_eq!(
+        fs::read(&authority_path).expect("claim rejection should preserve state"),
+        committed
+    );
+}
+
+#[test]
+fn terminal_ipam_release_rejects_a_substituted_artifact_realm_without_mutation() {
+    let (dir, layout, authority, config, sandbox) = fixture();
+    allocate_container_ips(&authority, &layout, &config, &sandbox)
+        .expect("exact reserved IPAM should exist");
+    let authority_path = LocalNetworkStateStore::authority_path_for(&layout.network_state_root);
+    let before = fs::read(&authority_path).expect("authority bytes should read");
+    let foreign_workload_root = dir.path().join("foreign-workload-root");
+    fs::create_dir_all(&foreign_workload_root).expect("foreign workload root should exist");
+    let foreign_layout = OciNetworkLayout::with_roots(
+        foreign_workload_root,
+        &layout.network_state_root,
+        &layout.tenant_id,
+        &sandbox,
+    );
+
+    let error = deallocate_container_ips_after_confirmed_detach(
+        &authority,
+        &foreign_layout,
+        &sandbox,
+        &config.reservation_claim,
+        config.provider_kind(),
+    )
+    .expect_err("a foreign artifact realm must not publish terminal IPAM authority");
+    assert!(
+        error.to_string().contains("provider locator"),
+        "terminal release must name the exact locator fence: {error}"
+    );
+    assert_eq!(
+        fs::read(&authority_path).expect("authority bytes should reread"),
+        before,
+        "foreign-root rejection must not mutate live or terminal IPAM authority"
+    );
+}
+
+#[test]
+fn terminal_ipam_transition_replay_and_retirement_authenticate_realm_and_backend_for_both_safe_phases()
+ {
+    use super::super::provider_locator::OciAttachmentProviderKind;
+
+    for detached in [false, true] {
+        let phase = if detached { "detached" } else { "reserved" };
+        let (dir, layout, authority, config, sandbox) = fixture();
+        allocate_container_ips(&authority, &layout, &config, &sandbox)
+            .expect("exact IPAM generation should reserve");
+        if detached {
+            let (_, setup) = begin_netavark_setup(&authority, &layout, &config, &sandbox)
+                .expect("setup should prepare");
+            begin_netavark_setup_execution(&authority, &layout, &config, &sandbox, &setup)
+                .expect("setup execution should fence");
+            complete_netavark_setup(&authority, &layout, &setup)
+                .expect("setup should become ready");
+            let teardown =
+                match begin_netavark_teardown(&authority, &layout, &config, &sandbox, None)
+                    .expect("teardown should prepare")
+                {
+                    NetavarkTeardownPlan::Run { claim, .. } => claim,
+                    _ => panic!("ready provider should require teardown"),
+                };
+            begin_netavark_teardown_execution(&authority, &layout, &teardown)
+                .expect("teardown execution should fence");
+            confirm_netavark_provider_detached(&authority, &layout, &teardown)
+                .expect("provider absence should confirm");
+            complete_netavark_teardown(&authority, &layout, &teardown)
+                .expect("teardown should become detached");
+        }
+
+        let authority_path = LocalNetworkStateStore::authority_path_for(&layout.network_state_root);
+        let foreign_workload_root = dir.path().join(format!("foreign-{phase}-workload-root"));
+        fs::create_dir_all(&foreign_workload_root).expect("foreign workload root should exist");
+        let foreign_layout = OciNetworkLayout::with_roots(
+            foreign_workload_root,
+            &layout.network_state_root,
+            &layout.tenant_id,
+            &sandbox,
+        );
+
+        for (label, candidate_layout, candidate_kind) in [
+            (
+                "foreign realm",
+                &foreign_layout,
+                OciAttachmentProviderKind::Container,
+            ),
+            ("foreign backend", &layout, OciAttachmentProviderKind::Krun),
+        ] {
+            let before = fs::read(&authority_path).expect("live authority bytes should read");
+            let error = deallocate_container_ips_after_confirmed_detach(
+                &authority,
+                candidate_layout,
+                &sandbox,
+                &config.reservation_claim,
+                candidate_kind,
+            )
+            .expect_err("substituted terminal transition must fail");
+            assert!(
+                error.to_string().contains("provider locator"),
+                "{phase} {label} transition must name its locator fence: {error}"
+            );
+            assert_eq!(
+                fs::read(&authority_path).expect("live authority bytes should reread"),
+                before,
+                "{phase} {label} transition rejection must be byte-preserving"
+            );
+        }
+
+        deallocate_container_ips_after_confirmed_detach(
+            &authority,
+            &layout,
+            &sandbox,
+            &config.reservation_claim,
+            config.provider_kind(),
+        )
+        .expect("exact terminal transition should succeed");
+
+        for (label, candidate_layout, candidate_kind) in [
+            (
+                "foreign realm",
+                &foreign_layout,
+                OciAttachmentProviderKind::Container,
+            ),
+            ("foreign backend", &layout, OciAttachmentProviderKind::Krun),
+        ] {
+            let before = fs::read(&authority_path).expect("terminal authority bytes should read");
+            let replay = deallocate_container_ips_after_confirmed_detach(
+                &authority,
+                candidate_layout,
+                &sandbox,
+                &config.reservation_claim,
+                candidate_kind,
+            )
+            .expect_err("substituted terminal replay must fail");
+            assert!(
+                replay.to_string().contains("provider locator"),
+                "{phase} {label} replay must name its locator fence: {replay}"
+            );
+            let retirement = retire_terminal_container_ipam_release(
+                &authority,
+                candidate_layout,
+                &sandbox,
+                &config.reservation_claim,
+                candidate_kind,
+            )
+            .expect_err("substituted terminal retirement must fail");
+            assert!(
+                retirement.to_string().contains("provider locator"),
+                "{phase} {label} retirement must name its locator fence: {retirement}"
+            );
+            assert_eq!(
+                fs::read(&authority_path).expect("terminal authority bytes should reread"),
+                before,
+                "{phase} {label} replay/retirement rejection must be byte-preserving"
+            );
+        }
+
+        assert!(
+            retire_terminal_container_ipam_release(
+                &authority,
+                &layout,
+                &sandbox,
+                &config.reservation_claim,
+                config.provider_kind(),
+            )
+            .expect("exact terminal retirement should inspect"),
+            "exact {phase} terminal witness should retire once"
+        );
+    }
+}
+
+#[test]
 fn torn_ipam_state_fails_closed_with_the_authority_path() {
     let (_dir, layout, authority, config, sandbox) = fixture();
     allocate_container_ips(&authority, &layout, &config, &sandbox)
@@ -103,8 +423,14 @@ fn stale_claim_cannot_load_or_delete_reallocated_same_attachment_ipam() {
         &first_claim,
     )
     .expect("first generation should reserve IPAM");
-    deallocate_container_ips_for_claim(&authority, &layout, &sandbox, &first_claim)
-        .expect("first generation should compare-delete its own IPAM");
+    deallocate_container_ips_for_claim(
+        &authority,
+        &layout,
+        &sandbox,
+        &first_claim,
+        config.provider_kind(),
+    )
+    .expect("first generation should compare-delete its own IPAM");
     let mut replacement_config = config.clone();
     replacement_config.reservation_claim = second_claim.clone();
     let second = allocate_container_ips_on_first_available(
@@ -124,9 +450,14 @@ fn stale_claim_cannot_load_or_delete_reallocated_same_attachment_ipam() {
             .contains("different launch coordinator"),
         "the rejected provider observation must name its generation fence: {stale_load}"
     );
-    let stale_error =
-        deallocate_container_ips_for_claim(&authority, &layout, &sandbox, &first_claim)
-            .expect_err("stale first-generation cleanup must not delete replacement IPAM");
+    let stale_error = deallocate_container_ips_for_claim(
+        &authority,
+        &layout,
+        &sandbox,
+        &first_claim,
+        config.provider_kind(),
+    )
+    .expect_err("stale first-generation cleanup must not delete replacement IPAM");
     assert!(
         stale_error.to_string().contains("stale launch coordinator"),
         "the rejected ABA cleanup must name its generation fence: {stale_error}"
@@ -136,6 +467,7 @@ fn stale_claim_cannot_load_or_delete_reallocated_same_attachment_ipam() {
         &layout,
         &sandbox,
         &first_claim,
+        config.provider_kind(),
     )
     .expect_err("stale confirmed-detach cleanup must not delete replacement IPAM");
     assert!(
@@ -155,8 +487,14 @@ fn stale_claim_cannot_load_or_delete_reallocated_same_attachment_ipam() {
         "the ABA proof must reuse the same address so IP can never masquerade as generation identity"
     );
 
-    deallocate_container_ips_after_confirmed_detach(&authority, &layout, &sandbox, &second_claim)
-        .expect("replacement generation should publish exact terminal evidence");
+    deallocate_container_ips_after_confirmed_detach(
+        &authority,
+        &layout,
+        &sandbox,
+        &second_claim,
+        replacement_config.provider_kind(),
+    )
+    .expect("replacement generation should publish exact terminal evidence");
     assert!(
         authenticate_container_network_generation_for_cleanup(
             &authority,
@@ -178,13 +516,25 @@ fn stale_claim_cannot_load_or_delete_reallocated_same_attachment_ipam() {
             .contains("different launch coordinator"),
         "terminal ABA rejection must name its generation fence: {stale_terminal}"
     );
-    deallocate_container_ips_after_confirmed_detach(&authority, &layout, &sandbox, &first_claim)
-        .expect_err("stale cleanup must not accept a replacement terminal tombstone");
+    deallocate_container_ips_after_confirmed_detach(
+        &authority,
+        &layout,
+        &sandbox,
+        &first_claim,
+        config.provider_kind(),
+    )
+    .expect_err("stale cleanup must not accept a replacement terminal tombstone");
     let authority_path = LocalNetworkStateStore::authority_path_for(&layout.network_state_root);
     let before_retirement = fs::read(&authority_path).expect("authority bytes should read");
     assert!(
-        !retire_terminal_container_ipam_release(&authority, &layout, &sandbox, &first_claim)
-            .expect("stale retirement should inspect"),
+        !retire_terminal_container_ipam_release(
+            &authority,
+            &layout,
+            &sandbox,
+            &first_claim,
+            config.provider_kind(),
+        )
+        .expect("stale retirement should inspect"),
         "a stale generation must not retire replacement terminal evidence"
     );
     assert_eq!(
@@ -193,8 +543,14 @@ fn stale_claim_cannot_load_or_delete_reallocated_same_attachment_ipam() {
         "rejected retirement must leave replacement authority byte-for-byte unchanged"
     );
     assert!(
-        retire_terminal_container_ipam_release(&authority, &layout, &sandbox, &second_claim)
-            .expect("exact terminal retirement should succeed")
+        retire_terminal_container_ipam_release(
+            &authority,
+            &layout,
+            &sandbox,
+            &second_claim,
+            replacement_config.provider_kind(),
+        )
+        .expect("exact terminal retirement should succeed")
     );
 }
 
@@ -212,19 +568,37 @@ fn newer_never_realized_claim_supersedes_older_terminal_generation() {
         &first_claim,
     )
     .expect("first generation should reserve IPAM");
-    deallocate_container_ips_after_confirmed_detach(&authority, &layout, &sandbox, &first_claim)
-        .expect("first generation should publish terminal evidence");
+    deallocate_container_ips_after_confirmed_detach(
+        &authority,
+        &layout,
+        &sandbox,
+        &first_claim,
+        config.provider_kind(),
+    )
+    .expect("first generation should publish terminal evidence");
 
-    deallocate_container_ips_for_claim(&authority, &layout, &sandbox, &second_claim)
-        .expect("authenticated newer no-effect cleanup should supersede old terminal evidence");
+    deallocate_container_ips_for_claim(
+        &authority,
+        &layout,
+        &sandbox,
+        &second_claim,
+        config.provider_kind(),
+    )
+    .expect("authenticated newer no-effect cleanup should supersede old terminal evidence");
     let state = read_ipam_state(&authority, &layout).expect("IPAM authority should inspect");
     assert!(state.allocations.is_empty());
     assert!(
         state.released_allocations.is_empty(),
         "the newer generation never committed IPAM and must not inherit old retry history"
     );
-    deallocate_container_ips_for_claim(&authority, &layout, &sandbox, &second_claim)
-        .expect("no-effect cleanup replay should be idempotent");
+    deallocate_container_ips_for_claim(
+        &authority,
+        &layout,
+        &sandbox,
+        &second_claim,
+        config.provider_kind(),
+    )
+    .expect("no-effect cleanup replay should be idempotent");
 }
 
 #[test]
@@ -249,11 +623,23 @@ fn completed_unique_attachment_churn_does_not_accumulate_terminal_ipam() {
             &claim,
         )
         .expect("churn generation should reserve IPAM");
-        deallocate_container_ips_after_confirmed_detach(&authority, &layout, &sandbox, &claim)
-            .expect("provider-confirmed detach should publish retry evidence");
+        deallocate_container_ips_after_confirmed_detach(
+            &authority,
+            &layout,
+            &sandbox,
+            &claim,
+            config.provider_kind(),
+        )
+        .expect("provider-confirmed detach should publish retry evidence");
         assert!(
-            retire_terminal_container_ipam_release(&authority, &layout, &sandbox, &claim)
-                .expect("durably final lifecycle should retire exact evidence")
+            retire_terminal_container_ipam_release(
+                &authority,
+                &layout,
+                &sandbox,
+                &claim,
+                config.provider_kind(),
+            )
+            .expect("durably final lifecycle should retire exact evidence")
         );
         let state = read_ipam_state(&authority, &layout).expect("IPAM authority should inspect");
         assert!(state.allocations.is_empty());
@@ -275,6 +661,9 @@ fn startup_reconciliation_retires_only_terminal_manifest_ipam_evidence() {
         &tenant,
         &sandbox,
     );
+    layout
+        .ensure_directories()
+        .expect("split workload artifact root should exist before locator authentication");
     let authority = OciIpamAuthority::reconstruct_for_direct_test(&layout)
         .expect("direct test authority should open");
     let mut config = OciNetworkConfig::default();
@@ -288,8 +677,14 @@ fn startup_reconciliation_retires_only_terminal_manifest_ipam_evidence() {
         &claim,
     )
     .expect("generation should reserve IPAM");
-    deallocate_container_ips_after_confirmed_detach(&authority, &layout, &sandbox, &claim)
-        .expect("provider detach should publish terminal retry evidence");
+    deallocate_container_ips_after_confirmed_detach(
+        &authority,
+        &layout,
+        &sandbox,
+        &claim,
+        config.provider_kind(),
+    )
+    .expect("provider detach should publish terminal retry evidence");
     let manifest_path = crate::artifact_paths::manifest_path(
         &layout.workload_state_root,
         &layout.tenant_id,
@@ -346,8 +741,14 @@ fn startup_reconciliation_retains_ipam_until_explicit_network_cleanup_finality()
         &claim,
     )
     .expect("generation should reserve IPAM");
-    deallocate_container_ips_after_confirmed_detach(&authority, &layout, &sandbox, &claim)
-        .expect("provider detach should publish terminal retry evidence");
+    deallocate_container_ips_after_confirmed_detach(
+        &authority,
+        &layout,
+        &sandbox,
+        &claim,
+        config.provider_kind(),
+    )
+    .expect("provider detach should publish terminal retry evidence");
     let manifest_path = crate::artifact_paths::manifest_path(
         &layout.workload_state_root,
         &layout.tenant_id,
@@ -414,6 +815,7 @@ fn startup_reconciliation_rejects_cross_root_manifest_without_mutation() {
         &foreign_layout,
         &sandbox,
         &claim,
+        config.provider_kind(),
     )
     .expect("foreign detach should publish terminal evidence");
     let authority_path = LocalNetworkStateStore::authority_path_for(foreign.path());

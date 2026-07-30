@@ -167,6 +167,7 @@ impl ContainerSandboxBackend {
                 &manifest.network_layout,
                 &manifest.handle.id,
                 &network_config.reservation_claim,
+                network_config.provider_kind(),
             )?;
         }
         Ok(())

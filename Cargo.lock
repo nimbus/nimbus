@@ -7160,6 +7160,7 @@ version = "0.1.45"
 dependencies = [
  "async-trait",
  "bytes",
+ "cap-std",
  "flate2",
  "fs2",
  "futures",

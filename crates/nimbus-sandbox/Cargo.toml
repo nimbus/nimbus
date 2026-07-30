@@ -14,6 +14,7 @@ flate2 = "1"
 libc.workspace = true
 async-trait = "0.1"
 bytes = "1"
+cap-std = "4.0.2"
 fs2.workspace = true
 nimbus-blob = { path = "../nimbus-blob" }
 nimbus-core = { path = "../nimbus-core" }

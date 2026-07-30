@@ -74,7 +74,7 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC5.2a complete; NNC5.2b
+- `nimbus-network-control-plane-plan.md` - `active; NNC5.2b complete; NNC5.2c
   in progress`. The Linux sovereignty tripwire is complete with a root-safe,
   raw-artifact-derived evidence contract, 70/70 deterministic tests, 62/62
   adversarial verifier cases, fully dispositioned full+narrow Sol reviews, and
@@ -96,8 +96,26 @@ extension-registry seam before the second concern edits `extensions.rs`.
   corrected retry behavior, and full affected gates. Final lifecycle is
   41/41, portable 233/233 with one subprocess skip, backend 332/332, sandbox
   785/785 with 24 declared skips, verifier 18/18 plus 67/67 adversarial cases,
-  docs 108, and site 17/17. NNC5.2b next owns durable-evidence startup
-  classification and its eight-row orphan matrix. Machine forwarding obeys
+  docs 108, and site 17/17. Before executable work, the original NNC5.2b scope
+  was prospectively split into three acceptance-bearing items: exact durable
+  evidence/candidate enumeration (`NNC5.2b`), the pure eight-row classifier
+  (`NNC5.2c`), and exact startup quarantine plus filename-authority deletion
+  (`NNC5.2d`). NNC5.2b is complete. One tenant-qualified
+  sandbox/provider/artifact-realm locator and exact generation-bound
+  provider-attempt identity persist before effects; typed IPAM partition
+  enumeration validates every durable key; least-authority reader adapters
+  form a deterministic desired/provider union with exact claim-qualified
+  allocator observations and untrusted present/absent/unknown artifact
+  evidence. Provider evidence authenticates the pinned directory capability,
+  and terminal transition/replay/retirement authenticate exact realm/backend
+  for both safe phases. The full review's four and sole narrow review's two
+  accepted defects are corrected with exact fail-before proofs; no third
+  review ran. Final orphan evidence passes 18/18, the focused lane passes
+  88/88, affected crates pass 1048/1048 with 26 skips, verifier passes 18/18
+  plus 67/67 adversarial cases, and docs/site gates pass. NNC5.2c now owns only
+  the pure classifier; classification side effects, quarantine, and startup
+  wiring stay in NNC5.2d, while cleanup/release/reuse stays in NNC8.3. Machine
+  forwarding obeys
   NNC5.2a's common lifecycle; runtime absence, workload status, readiness persistence,
   cleanup convergence, and inspect/restart policy stay in their named later
   owners. Sole owner for the transport-free connectivity-resource control

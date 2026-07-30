@@ -18,7 +18,28 @@ use super::{
     OciNetworkConfig, OciNetworkLayout, OciSegmentAllocator, OciSegmentRealization,
     default_network_attachment_id,
     ipam::{OciIpamAuthority, allocate_container_ips_on_first_available},
+    provider_locator::OciAttachmentProviderKind,
 };
+
+/// Provider identity paired with the backend-local realization builder.
+///
+/// Placement uses the same identity both to validate every generated config
+/// and to compensate an exact pre-effect reservation. Keeping those values
+/// together prevents the rollback authority from drifting from the provider
+/// authority persisted by IPAM.
+pub(crate) struct OciPlacementProvider<F> {
+    kind: OciAttachmentProviderKind,
+    build_config: F,
+}
+
+impl<F> OciPlacementProvider<F>
+where
+    F: Fn(&OciSegmentRealization, &NetworkReservationClaim) -> OciNetworkConfig,
+{
+    pub(crate) fn new(kind: OciAttachmentProviderKind, build_config: F) -> Self {
+        Self { kind, build_config }
+    }
+}
 
 /// Reserve and return the network config of the block bridge that will host
 /// `sandbox_id`. One IPAM transaction scans the tenant's complete ordered block
@@ -31,15 +52,18 @@ use super::{
 /// `build_config` turns a resolved block segment into the backend's
 /// `OciNetworkConfig` (identical DNS-off/deny bodies differing only in binary
 /// paths), keeping this loop backend-agnostic.
-pub(crate) fn place_sandbox_on_block(
+pub(crate) fn place_sandbox_on_block<F>(
     allocator: &OciSegmentAllocator,
     ipam_authority: &OciIpamAuthority,
     tenant: &TenantId,
     layout: &OciNetworkLayout,
     sandbox_id: &SandboxId,
     reservation_claim: &NetworkReservationClaim,
-    build_config: impl Fn(&OciSegmentRealization, &NetworkReservationClaim) -> OciNetworkConfig,
-) -> Result<OciNetworkConfig> {
+    provider: OciPlacementProvider<F>,
+) -> Result<OciNetworkConfig>
+where
+    F: Fn(&OciSegmentRealization, &NetworkReservationClaim) -> OciNetworkConfig,
+{
     let attachment_id = default_network_attachment_id(sandbox_id);
     let placement = (|| {
         allocator.reserve_attachment_for_coordinator(tenant, &attachment_id, reservation_claim)?;
@@ -48,7 +72,7 @@ pub(crate) fn place_sandbox_on_block(
             let observed_block_count = segments.len();
             let configs = segments
                 .iter()
-                .map(|segment| build_config(segment, reservation_claim))
+                .map(|segment| (provider.build_config)(segment, reservation_claim))
                 .collect::<Vec<_>>();
             if configs
                 .iter()
@@ -58,6 +82,17 @@ pub(crate) fn place_sandbox_on_block(
                     message: format!(
                         "OCI placement config reservation claim diverged from the authoritative \
                          launch coordinator for sandbox {sandbox_id} before IPAM"
+                    ),
+                });
+            }
+            if configs
+                .iter()
+                .any(|config| config.provider_kind() != provider.kind)
+            {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "OCI placement config provider kind diverged from the authoritative \
+                         backend for sandbox {sandbox_id} before IPAM"
                     ),
                 });
             }
@@ -116,6 +151,7 @@ pub(crate) fn place_sandbox_on_block(
                 tenant,
                 sandbox_id,
                 reservation_claim,
+                provider.kind,
             ),
             error,
         )
@@ -182,7 +218,7 @@ mod tests {
             layout,
             sandbox_id,
             &reservation_claim(sandbox_id.as_str()),
-            build_config,
+            OciPlacementProvider::new(OciAttachmentProviderKind::Container, build_config),
         )
     }
 
@@ -216,10 +252,13 @@ mod tests {
             &layout,
             &sandbox_id,
             &claim,
-            move |segment, reservation_claim| {
-                build_count_for_call.fetch_add(1, Ordering::SeqCst);
-                config_for_segment(segment, reservation_claim)
-            },
+            OciPlacementProvider::new(
+                OciAttachmentProviderKind::Container,
+                move |segment, reservation_claim| {
+                    build_count_for_call.fetch_add(1, Ordering::SeqCst);
+                    config_for_segment(segment, reservation_claim)
+                },
+            ),
         )
         .expect_err("ambiguous initial reservation must enter exact compensation");
 
@@ -294,7 +333,9 @@ mod tests {
             &layout,
             &sandbox_id,
             &claim,
-            move |segment, _| config_for_segment(segment, &foreign_claim),
+            OciPlacementProvider::new(OciAttachmentProviderKind::Container, move |segment, _| {
+                config_for_segment(segment, &foreign_claim)
+            }),
         )
         .expect_err("foreign config authority must fail before IPAM mutation");
 
@@ -306,6 +347,47 @@ mod tests {
         assert!(
             super::super::ipam::load_container_ips(&ipam_authority, &layout, &sandbox_id).is_err(),
             "foreign config authority must not leave an IPAM reservation"
+        );
+    }
+
+    #[test]
+    fn placement_rejects_a_config_with_foreign_provider_authority_before_ipam() {
+        let dir = tempdir().expect("temp dir should create");
+        let tenant = tenant("tenant-foreign-config-provider");
+        let sandbox_id = SandboxId::new("foreign-config-provider");
+        let claim = reservation_claim("authoritative");
+        let allocator = SingleNodeSegmentAllocator::new(
+            dir.path(),
+            Some(super::super::segment::InstalledSuperNet {
+                cidr: nimbus_core::net::Cidr::parse("10.92.0.0/24")
+                    .expect("super-net should parse"),
+                epoch: NetworkLeaseEpoch::new(1),
+            }),
+            30,
+        )
+        .expect("local network store should open");
+        let layout = OciNetworkLayout::under_root(dir.path(), &tenant, &sandbox_id);
+        let ipam_authority = direct_test_ipam_authority(&layout);
+        layout.ensure_directories().expect("layout should exist");
+
+        let error = super::place_sandbox_on_block(
+            &allocator,
+            &ipam_authority,
+            &tenant,
+            &layout,
+            &sandbox_id,
+            &claim,
+            OciPlacementProvider::new(OciAttachmentProviderKind::Krun, config_for_segment),
+        )
+        .expect_err("foreign config provider authority must fail before IPAM mutation");
+
+        assert!(
+            error.to_string().contains("provider kind") && error.to_string().contains("diverged"),
+            "rejection must name the duplicated provider authority: {error}"
+        );
+        assert!(
+            super::super::ipam::load_container_ips(&ipam_authority, &layout, &sandbox_id).is_err(),
+            "foreign config provider authority must not leave an IPAM reservation"
         );
     }
 
@@ -434,6 +516,7 @@ mod tests {
             &sb2_layout,
             &sb2,
             &secondary.reservation_claim,
+            secondary.provider_kind(),
         )
         .expect("free the secondary block's only container slot");
 
@@ -578,6 +661,7 @@ mod tests {
                 &placements[free_index].1,
                 &placements[free_index].0,
                 &placements[free_index].2.reservation_claim,
+                placements[free_index].2.provider_kind(),
             )
             .expect("selected block should deallocate");
 

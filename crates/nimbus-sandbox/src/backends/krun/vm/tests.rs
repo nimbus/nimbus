@@ -1564,13 +1564,18 @@ fn launch_network_config_denies_direct_bridge_egress() {
     ));
 
     let tenant = nimbus_core::TenantId::new("deny-tenant").expect("tenant should parse");
+    let network_config = backend
+        .network_config(&tenant)
+        .expect("network config should resolve");
     assert_eq!(
-        backend
-            .network_config(&tenant)
-            .expect("network config should resolve")
-            .direct_egress,
+        network_config.direct_egress,
         crate::backends::oci::network::OciNetworkDirectEgress::Deny,
         "krun VMMs must run inside a deny-by-default bridge with no ambient egress route"
+    );
+    assert_eq!(
+        network_config.provider_kind_label(),
+        "krun",
+        "the real krun composition path must persist krun-owned provider evidence"
     );
 }
 

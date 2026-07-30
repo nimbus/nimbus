@@ -81,6 +81,35 @@ impl NetworkStatePartition {
             Self::PortLeases => "port-leases".to_owned(),
         }
     }
+
+    fn from_key(key: &str) -> Result<Self, String> {
+        match key {
+            "segment-allocations" => Ok(Self::SegmentAllocations),
+            "attachment-states" => Ok(Self::AttachmentStates),
+            "port-leases" => Ok(Self::PortLeases),
+            _ => {
+                let tenant = key
+                    .strip_prefix("tenant-ipam/")
+                    .ok_or_else(|| format!("unknown network state partition key {key:?}"))?;
+                if tenant.is_empty() {
+                    return Err("tenant IPAM partition has an empty tenant identity".to_owned());
+                }
+                let tenant_id = TenantId::new(tenant).map_err(|error| {
+                    format!(
+                        "tenant IPAM partition key {key:?} contains an invalid tenant identity: \
+                         {error}"
+                    )
+                })?;
+                let partition = Self::TenantIpam(tenant_id);
+                if partition.key() != key {
+                    return Err(format!(
+                        "tenant IPAM partition key {key:?} is not in canonical form"
+                    ));
+                }
+                Ok(partition)
+            }
+        }
+    }
 }
 
 impl Display for NetworkStatePartition {
@@ -220,6 +249,32 @@ impl LocalNetworkStateStore {
                 })
             })
             .transpose()
+    }
+
+    /// Enumerate every durable tenant-IPAM partition in deterministic order.
+    ///
+    /// Enumeration validates all durable partition keys while holding the same
+    /// process and cross-process lock used by reads and transactions. Unknown
+    /// or malformed keys are corruption: silently skipping one could hide
+    /// provider-attempt authority from startup reconciliation.
+    pub fn tenant_ipam_tenants(&self) -> Result<Vec<TenantId>, NetworkStateStoreError> {
+        let _lock = self.acquire_lock()?;
+        let body = self.load_body()?;
+        let mut tenants = Vec::new();
+        for key in body.records.keys() {
+            match NetworkStatePartition::from_key(key).map_err(|reason| {
+                NetworkStateStoreError::Corrupt {
+                    path: self.state_path.clone(),
+                    reason,
+                }
+            })? {
+                NetworkStatePartition::TenantIpam(tenant_id) => tenants.push(tenant_id),
+                NetworkStatePartition::SegmentAllocations
+                | NetworkStatePartition::AttachmentStates
+                | NetworkStatePartition::PortLeases => {}
+            }
+        }
+        Ok(tenants)
     }
 
     /// Atomically read, mutate, checksum, and publish one typed partition.
@@ -1471,6 +1526,96 @@ mod tests {
             !store.filesystem_kind().is_empty(),
             "startup must record the detected filesystem kind"
         );
+    }
+
+    #[test]
+    fn tenant_ipam_inventory_is_deterministic_and_read_only_across_reopen() {
+        let root = tempdir().expect("state root");
+        let store = LocalNetworkStateStore::open(root.path()).expect("store should open");
+        for tenant in ["tenant-z", "tenant-a", "tenant-m"] {
+            let partition = NetworkStatePartition::TenantIpam(
+                TenantId::new(tenant).expect("fixture tenant should parse"),
+            );
+            store
+                .transaction(&partition, |state: &mut FixtureState| {
+                    state.owner = Some(tenant.to_owned());
+                    Ok::<_, Infallible>(())
+                })
+                .expect("tenant IPAM partition should commit");
+        }
+        let before = fs::read(store.authority_path()).expect("authority should read");
+
+        let expected = ["tenant-a", "tenant-m", "tenant-z"];
+        assert_eq!(
+            store
+                .tenant_ipam_tenants()
+                .expect("inventory should validate")
+                .iter()
+                .map(TenantId::as_str)
+                .collect::<Vec<_>>(),
+            expected
+        );
+        assert_eq!(
+            fs::read(store.authority_path()).expect("authority should reread"),
+            before,
+            "partition enumeration must not rewrite authority"
+        );
+
+        let reopened =
+            LocalNetworkStateStore::open(root.path()).expect("store should reopen cleanly");
+        assert_eq!(
+            reopened
+                .tenant_ipam_tenants()
+                .expect("reopened inventory should validate")
+                .iter()
+                .map(TenantId::as_str)
+                .collect::<Vec<_>>(),
+            expected
+        );
+        assert_eq!(
+            fs::read(reopened.authority_path()).expect("reopened authority should read"),
+            before,
+            "fresh-process-style reopen must preserve inventory bytes"
+        );
+    }
+
+    #[test]
+    fn tenant_ipam_inventory_rejects_unknown_and_malformed_partition_keys() {
+        for invalid_key in ["future-network-authority", "tenant-ipam/"] {
+            let root = tempdir().expect("state root");
+            let store = LocalNetworkStateStore::open(root.path()).expect("store should open");
+            store
+                .transaction(&fixture_partition(), |state: &mut FixtureState| {
+                    state.owner = Some("seed".to_owned());
+                    Ok::<_, Infallible>(())
+                })
+                .expect("seed should commit");
+            let mut envelope: StoreEnvelope =
+                serde_json::from_slice(&fs::read(store.authority_path()).expect("authority"))
+                    .expect("authority envelope should parse");
+            envelope
+                .body
+                .records
+                .insert(invalid_key.to_owned(), serde_json::json!({}));
+            envelope.checksum =
+                checksum_body(&envelope.body).expect("tampered checksum should render");
+            let bytes =
+                serde_json::to_vec_pretty(&envelope).expect("tampered envelope should render");
+            fs::write(store.authority_path(), &bytes).expect("tampered authority should write");
+
+            let error = store
+                .tenant_ipam_tenants()
+                .expect_err("invalid partition keys must fail closed");
+            assert!(
+                matches!(error, NetworkStateStoreError::Corrupt { .. }),
+                "invalid partition key {invalid_key:?} produced {error:?}"
+            );
+            assert_eq!(
+                fs::read(store.authority_path()).expect("rejected authority should remain"),
+                bytes,
+                "rejected inventory must not mutate checksum-valid bad state"
+            );
+        }
     }
 
     #[test]

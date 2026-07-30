@@ -1319,6 +1319,7 @@ fn stale_container_cleanup_cannot_mutate_replacement_network_generation() {
         &stale.network_layout,
         &stale.handle.id,
         &stale_network_config.reservation_claim,
+        stale_network_config.provider_kind(),
     )
     .expect("first IPAM generation should release exactly");
     let mut replacement_network_config = stale_network_config.clone();
@@ -1392,6 +1393,7 @@ fn stale_container_cleanup_cannot_mutate_replacement_network_generation() {
         &stale.network_layout,
         &stale.handle.id,
         &replacement_network_config.reservation_claim,
+        replacement_network_config.provider_kind(),
     )
     .expect("replacement IPAM should release exactly for fixture cleanup");
     crate::backends::oci::network::allocate_container_ips(
@@ -1525,6 +1527,11 @@ fn natural_exit_preserves_terminal_ipam_until_segment_cleanup_finalizes() {
                 .as_ref()
                 .expect("terminal manifest should retain generation identity")
                 .reservation_claim,
+            terminal
+                .network_config
+                .as_ref()
+                .expect("terminal manifest should retain generation identity")
+                .provider_kind(),
         )
         .expect("terminal retirement replay should inspect"),
         "manifest publication must already have retired the exact terminal retry witness"
@@ -1551,6 +1558,7 @@ fn terminal_stop_replay_retries_ipam_receipt_retirement() {
         &manifest.network_layout,
         &id,
         &network_config.reservation_claim,
+        network_config.provider_kind(),
     )
     .expect("fixture should persist terminal IPAM retry evidence");
     manifest.shutdown_requested = true;
@@ -1584,6 +1592,7 @@ fn terminal_stop_replay_retries_ipam_receipt_retirement() {
             &manifest.network_layout,
             &id,
             &network_config.reservation_claim,
+            network_config.provider_kind(),
         )
         .expect("retirement replay should inspect"),
         "same-process terminal replay must already have retired the exact receipt"

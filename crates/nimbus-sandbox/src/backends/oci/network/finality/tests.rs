@@ -165,6 +165,7 @@ fn terminal_finality_rejects_every_reserved_attachment_phase_until_absent() {
         &layout,
         &sandbox_id,
         &config.reservation_claim,
+        config.provider_kind(),
     )
     .expect("IPAM should become a terminal witness");
 
@@ -292,6 +293,7 @@ fn terminal_finality_rejects_adopted_and_provider_cleanup_pending_attachments() 
         &layout,
         &sandbox_id,
         &config.reservation_claim,
+        config.provider_kind(),
     )
     .expect("IPAM should become a terminal witness");
 

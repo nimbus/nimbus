@@ -15,11 +15,23 @@ use crate::instance::{SandboxId, SandboxStatus};
 use super::default_network_attachment_id;
 use super::dto::{IpamAllocation, IpamState, NetavarkProviderOperation};
 use super::layout::{OciNetworkConfig, OciNetworkLayout};
+use super::provider_locator::{OciAttachmentProviderKind, OciAttachmentProviderLocator};
 
 mod authority;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "NNC5.2b stages typed evidence fields consumed by NNC5.2c classification"
+    )
+)]
+mod evidence;
 mod provider_operation;
 
 pub(crate) use authority::OciIpamAuthority;
+pub(in crate::backends::oci::network) use evidence::OciAttachmentProviderEvidence;
+#[cfg(test)]
+pub(in crate::backends::oci::network) use evidence::OciIpamEvidenceLifecycle;
 #[cfg(test)]
 pub(crate) use provider_operation::begin_netavark_setup_without_ack_for_test;
 pub(super) use provider_operation::{
@@ -172,12 +184,39 @@ pub(super) fn allocate_container_ips_on_first_available(
     }
 
     let attachment_id = default_network_attachment_id(sandbox_id);
+    let provider_kind = configs[0].provider_kind;
+    if configs
+        .iter()
+        .any(|config| config.provider_kind != provider_kind)
+    {
+        return Err(SandboxError::OperationFailed {
+            message: format!(
+                "OCI IPAM configs disagree on provider family for attachment {}",
+                attachment_id.as_str()
+            ),
+        });
+    }
+    let provider_locator = OciAttachmentProviderLocator::new(
+        &layout.workload_state_root,
+        &layout.tenant_id,
+        sandbox_id,
+        provider_kind,
+    )?;
     with_ipam_state(authority, layout, |state| {
         if let Some(assigned) = state.allocations.get(attachment_id.as_str()) {
             if &assigned.reservation_claim != reservation_claim {
                 return Err(SandboxError::OperationFailed {
                     message: format!(
                         "existing OCI IPAM reservation for attachment {} belongs to a different launch coordinator; refusing cross-generation adoption",
+                        attachment_id.as_str()
+                    ),
+                });
+            }
+            if assigned.provider_locator != provider_locator {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "existing OCI IPAM reservation for attachment {} belongs to a different \
+                         provider locator; refusing artifact-realm or backend substitution",
                         attachment_id.as_str()
                     ),
                 });
@@ -235,6 +274,7 @@ pub(super) fn allocate_container_ips_on_first_available(
                         IpamAllocation {
                             segment_id: segment_id.as_str().to_owned(),
                             reservation_claim: reservation_claim.clone(),
+                            provider_locator: provider_locator.clone(),
                             ips: vec![ip.to_string()],
                             provider_operation: NetavarkProviderOperation::Reserved,
                         },
@@ -433,6 +473,7 @@ pub(crate) fn deallocate_container_ips_after_confirmed_detach(
     layout: &OciNetworkLayout,
     sandbox_id: &SandboxId,
     reservation_claim: &NetworkReservationClaim,
+    provider_kind: OciAttachmentProviderKind,
 ) -> Result<()> {
     let attachment_id = default_network_attachment_id(sandbox_id);
     with_ipam_state(authority, layout, |state| {
@@ -446,6 +487,9 @@ pub(crate) fn deallocate_container_ips_after_confirmed_detach(
                 });
             }
             ensure_netavark_release_ready(
+                layout,
+                sandbox_id,
+                provider_kind,
                 &attachment_id,
                 allocation,
                 "confirmed-detach IPAM release",
@@ -459,7 +503,14 @@ pub(crate) fn deallocate_container_ips_after_confirmed_detach(
                 .insert(attachment_id.as_str().to_owned(), allocation);
             return Ok(());
         }
-        authenticate_terminal_ipam_release(state, &attachment_id, reservation_claim)
+        authenticate_terminal_ipam_release(
+            state,
+            layout,
+            sandbox_id,
+            provider_kind,
+            &attachment_id,
+            reservation_claim,
+        )
     })
 }
 
@@ -468,6 +519,7 @@ pub(super) fn deallocate_container_ips_for_claim(
     layout: &OciNetworkLayout,
     sandbox_id: &SandboxId,
     reservation_claim: &NetworkReservationClaim,
+    provider_kind: OciAttachmentProviderKind,
 ) -> Result<()> {
     let attachment_id = default_network_attachment_id(sandbox_id);
     with_ipam_state(authority, layout, |state| {
@@ -481,6 +533,9 @@ pub(super) fn deallocate_container_ips_for_claim(
                 });
             }
             ensure_netavark_release_ready(
+                layout,
+                sandbox_id,
+                provider_kind,
                 &attachment_id,
                 allocation,
                 "never-realized IPAM release",
@@ -497,6 +552,14 @@ pub(super) fn deallocate_container_ips_for_claim(
         let Some(released) = state.released_allocations.get(attachment_id.as_str()) else {
             return Ok(());
         };
+        ensure_netavark_release_ready(
+            layout,
+            sandbox_id,
+            provider_kind,
+            &attachment_id,
+            released,
+            "never-realized terminal IPAM reconciliation",
+        )?;
         if &released.reservation_claim == reservation_claim {
             return Ok(());
         }
@@ -520,6 +583,7 @@ pub(crate) fn retire_terminal_container_ipam_release(
     layout: &OciNetworkLayout,
     sandbox_id: &SandboxId,
     reservation_claim: &NetworkReservationClaim,
+    provider_kind: OciAttachmentProviderKind,
 ) -> Result<bool> {
     let attachment_id = default_network_attachment_id(sandbox_id);
     let observed = read_ipam_state(authority, layout)?;
@@ -540,6 +604,18 @@ pub(crate) fn retire_terminal_container_ipam_release(
             .get(attachment_id.as_str())
             .is_some_and(|released| &released.reservation_claim == reservation_claim)
         {
+            let released = state
+                .released_allocations
+                .get(attachment_id.as_str())
+                .expect("terminal allocation inspected under the same transaction");
+            ensure_netavark_release_ready(
+                layout,
+                sandbox_id,
+                provider_kind,
+                &attachment_id,
+                released,
+                "terminal IPAM retirement",
+            )?;
             state.released_allocations.remove(attachment_id.as_str());
             return Ok(true);
         }
@@ -768,6 +844,7 @@ pub(crate) fn reconcile_terminal_container_ipam_releases(
             &network_layout,
             &sandbox_id,
             &network_config.reservation_claim,
+            network_config.provider_kind(),
         )?);
     }
     Ok(retired)
@@ -775,6 +852,9 @@ pub(crate) fn reconcile_terminal_container_ipam_releases(
 
 fn authenticate_terminal_ipam_release(
     state: &IpamState,
+    layout: &OciNetworkLayout,
+    sandbox_id: &SandboxId,
+    provider_kind: OciAttachmentProviderKind,
     attachment_id: &nimbus_network::NetworkAttachmentId,
     reservation_claim: &NetworkReservationClaim,
 ) -> Result<()> {
@@ -792,18 +872,45 @@ fn authenticate_terminal_ipam_release(
             ),
         });
     }
+    ensure_netavark_release_ready(
+        layout,
+        sandbox_id,
+        provider_kind,
+        attachment_id,
+        released,
+        "terminal IPAM release replay",
+    )?;
     Ok(())
 }
 
 fn ensure_netavark_release_ready(
+    layout: &OciNetworkLayout,
+    sandbox_id: &SandboxId,
+    provider_kind: OciAttachmentProviderKind,
     attachment_id: &NetworkAttachmentId,
     allocation: &IpamAllocation,
     operation: &str,
 ) -> Result<()> {
-    if matches!(
-        &allocation.provider_operation,
-        NetavarkProviderOperation::Reserved | NetavarkProviderOperation::Detached
-    ) {
+    let expected_locator = OciAttachmentProviderLocator::new(
+        &layout.workload_state_root,
+        &layout.tenant_id,
+        sandbox_id,
+        provider_kind,
+    )?;
+    if allocation.provider_locator != expected_locator {
+        return Err(SandboxError::OperationFailed {
+            message: format!(
+                "{operation} for attachment {} carries a different provider locator; refusing \
+                 terminal IPAM mutation through a substituted tenant, sandbox, artifact realm, or \
+                 backend",
+                attachment_id.as_str()
+            ),
+        });
+    }
+    if allocation
+        .provider_operation
+        .permits_terminal_ipam_release()
+    {
         return Ok(());
     }
     Err(SandboxError::OperationFailed {

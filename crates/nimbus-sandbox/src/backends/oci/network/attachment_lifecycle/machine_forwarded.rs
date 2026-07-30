@@ -181,6 +181,7 @@ impl OciAttachmentLifecycle<'_> {
                 context.layout,
                 context.sandbox_id,
                 &context.config.reservation_claim,
+                context.config.provider_kind(),
             ) {
                 errors.push(error.to_string());
             } else {

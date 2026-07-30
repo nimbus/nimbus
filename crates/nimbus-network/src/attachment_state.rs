@@ -53,7 +53,12 @@ impl DurableNetworkAttachmentState {
         &self.resource
     }
 
-    fn attachment_id(&self) -> Result<&NetworkAttachmentId, NetworkAttachmentStateError> {
+    /// Stable attachment identity carried by this exact resource version.
+    ///
+    /// The accessor validates that the durable collection did not admit a
+    /// different resource kind before exposing the identifier to read-only
+    /// reconciliation.
+    pub fn attachment_id(&self) -> Result<&NetworkAttachmentId, NetworkAttachmentStateError> {
         match self.resource.version().resource_id() {
             NetworkResourceId::Attachment(attachment_id) => Ok(attachment_id),
             resource_id => Err(NetworkAttachmentStateError::CorruptAuthority {

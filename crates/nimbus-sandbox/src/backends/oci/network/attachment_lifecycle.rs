@@ -14,10 +14,12 @@ use nimbus_network::{
     PortLeaseRequest,
 };
 
+use super::provider_locator::OciAttachmentProviderKind;
 use super::{
     OciIpamAuthority, OciMachinePortForwarderConfig, OciNetavarkOperation, OciNetworkConfig,
-    OciNetworkDirectEgress, OciNetworkLayout, OciSegmentAllocator, OciSegmentRealization,
-    ReservedNetworkLaunchAuthority, authenticate_container_network_generation,
+    OciNetworkDirectEgress, OciNetworkLayout, OciPlacementProvider, OciSegmentAllocator,
+    OciSegmentRealization, ReservedNetworkLaunchAuthority,
+    authenticate_container_network_generation,
     authenticate_container_network_generation_for_cleanup,
     compensate_reserved_network_launch_after_ports,
     deallocate_container_ips_after_confirmed_detach, default_network_attachment_id,
@@ -66,6 +68,13 @@ impl AttachmentBackendKind {
         match self {
             Self::Container => "container",
             Self::Krun => "krun",
+        }
+    }
+
+    pub(crate) fn provider_kind(self) -> OciAttachmentProviderKind {
+        match self {
+            Self::Container => OciAttachmentProviderKind::Container,
+            Self::Krun => OciAttachmentProviderKind::Krun,
         }
     }
 }
@@ -321,8 +330,11 @@ pub(crate) trait OciHostManagedAttachmentBackend {
             layout,
             sandbox_id,
             reservation_claim,
-            netavark_path,
-            aardvark_dns_path,
+            OciAttachmentProviderConfig {
+                backend: Self::ATTACHMENT_BACKEND_KIND,
+                netavark_path,
+                aardvark_dns_path,
+            },
         )
     }
 
@@ -335,6 +347,12 @@ pub(crate) trait OciHostManagedAttachmentBackend {
             AttachmentPublicationMode::HostManaged,
         )
     }
+}
+
+struct OciAttachmentProviderConfig {
+    backend: AttachmentBackendKind,
+    netavark_path: PathBuf,
+    aardvark_dns_path: PathBuf,
 }
 
 /// Machine-forwarded publication is a container-only backend capability.
@@ -460,6 +478,7 @@ impl<'a> OciAttachmentLifecycle<'a> {
     /// Build provider-local realization without leaking it into the portable
     /// allocation contract.
     pub(crate) fn config_from_segment(
+        backend: AttachmentBackendKind,
         netavark_path: PathBuf,
         aardvark_dns_path: PathBuf,
         segment: &OciSegmentRealization,
@@ -473,6 +492,7 @@ impl<'a> OciAttachmentLifecycle<'a> {
             network_subnet: segment.cidr().to_string(),
             segment_id: segment.segment_id().as_str().to_owned(),
             reservation_claim: reservation_claim.clone(),
+            provider_kind: backend.provider_kind(),
             direct_egress: OciNetworkDirectEgress::Deny,
             // Both host-managed OCI backends resolve names through the host PEP.
             // A bridge-local DNS stub would be unreachable and create a
@@ -483,14 +503,13 @@ impl<'a> OciAttachmentLifecycle<'a> {
     }
 
     /// Reserve the attachment before IPAM and bind it to one exact segment.
-    pub(crate) fn reserve_config(
+    fn reserve_config(
         &self,
         tenant_id: &TenantId,
         layout: &OciNetworkLayout,
         sandbox_id: &SandboxId,
         reservation_claim: &NetworkReservationClaim,
-        netavark_path: PathBuf,
-        aardvark_dns_path: PathBuf,
+        provider: OciAttachmentProviderConfig,
     ) -> Result<OciNetworkConfig> {
         place_sandbox_on_block(
             self.allocator,
@@ -499,14 +518,15 @@ impl<'a> OciAttachmentLifecycle<'a> {
             layout,
             sandbox_id,
             reservation_claim,
-            move |segment, claim| {
+            OciPlacementProvider::new(provider.backend.provider_kind(), move |segment, claim| {
                 Self::config_from_segment(
-                    netavark_path.clone(),
-                    aardvark_dns_path.clone(),
+                    provider.backend,
+                    provider.netavark_path.clone(),
+                    provider.aardvark_dns_path.clone(),
                     segment,
                     claim,
                 )
-            },
+            }),
         )
     }
 
@@ -514,13 +534,16 @@ impl<'a> OciAttachmentLifecycle<'a> {
     /// exact reserved attachment in reverse order.
     pub(crate) fn compensate_reserved(
         &self,
+        backend: AttachmentBackendKind,
         layout: &OciNetworkLayout,
         tenant_id: &TenantId,
         sandbox_id: &SandboxId,
         reservation_claim: &NetworkReservationClaim,
         primary: SandboxError,
-        port_compensation: Result<()>,
     ) -> SandboxError {
+        let port_compensation = self
+            .ports
+            .release_never_bound_launch_claim(reservation_claim);
         compensate_reserved_network_launch_after_ports(
             ReservedNetworkLaunchAuthority::new(
                 self.allocator,
@@ -529,6 +552,7 @@ impl<'a> OciAttachmentLifecycle<'a> {
                 tenant_id,
                 sandbox_id,
                 reservation_claim,
+                backend.provider_kind(),
             ),
             primary,
             port_compensation,
@@ -538,6 +562,7 @@ impl<'a> OciAttachmentLifecycle<'a> {
     /// Release an exact launch reservation before any provider effect.
     pub(crate) fn release_reserved(
         &self,
+        backend: AttachmentBackendKind,
         layout: &OciNetworkLayout,
         tenant_id: &TenantId,
         sandbox_id: &SandboxId,
@@ -552,6 +577,7 @@ impl<'a> OciAttachmentLifecycle<'a> {
                 tenant_id,
                 sandbox_id,
                 reservation_claim,
+                backend.provider_kind(),
             ),
             port_compensation,
         )
@@ -1417,6 +1443,7 @@ impl<'a> OciAttachmentLifecycle<'a> {
             context.layout,
             context.sandbox_id,
             &context.config.reservation_claim,
+            context.config.provider_kind(),
         ) {
             errors.push(error.to_string());
             return;

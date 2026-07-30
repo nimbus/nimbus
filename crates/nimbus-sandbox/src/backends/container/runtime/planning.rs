@@ -88,6 +88,11 @@ fn container_launch_network_config_denies_direct_egress_for_supervised_processes
         OciNetworkDirectEgress::Deny,
         "process-capable container launches must not keep ambient bridge egress"
     );
+    assert_eq!(
+        network_config.provider_kind_label(),
+        "container",
+        "the real container composition path must persist container-owned provider evidence"
+    );
 }
 
 #[test]

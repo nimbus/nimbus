@@ -213,6 +213,7 @@ fn setup_operation_claim_blocks_release_and_replacement_during_provider_effect()
         &layout,
         &sandbox,
         &current.reservation_claim,
+        current.provider_kind(),
     )
     .expect_err("an in-flight setup claim must fence IPAM release");
     assert!(
@@ -299,6 +300,7 @@ fn teardown_operation_claim_blocks_release_and_replacement_during_provider_effec
         &layout,
         &sandbox,
         &current.reservation_claim,
+        current.provider_kind(),
     )
     .expect_err("an in-flight teardown claim must fence IPAM release");
     assert!(
@@ -326,6 +328,7 @@ fn teardown_operation_claim_blocks_release_and_replacement_during_provider_effec
         &layout,
         &sandbox,
         &current.reservation_claim,
+        current.provider_kind(),
     )
     .expect("confirmed current detach should release IPAM");
     allocate_container_ips(&ipam_authority, &layout, &replacement, &sandbox)
@@ -383,6 +386,7 @@ fn reopened_prepared_setup_reuses_exact_attempt_once() {
         &layout,
         &sandbox,
         &config.reservation_claim,
+        config.provider_kind(),
     )
     .expect_err("ready setup must continue to fence replacement before detach");
     assert!(
@@ -581,6 +585,7 @@ fn projection_retry_does_not_rerun_confirmed_netavark_teardown() {
         &layout,
         &sandbox,
         &config.reservation_claim,
+        config.provider_kind(),
     )
     .expect_err("projection-pending teardown must keep IPAM fenced");
 
@@ -599,6 +604,7 @@ fn projection_retry_does_not_rerun_confirmed_netavark_teardown() {
         &layout,
         &sandbox,
         &config.reservation_claim,
+        config.provider_kind(),
     )
     .expect("completed projection cleanup may release exact IPAM authority");
 }

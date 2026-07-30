@@ -701,6 +701,7 @@ fn final_detach_reopens_after_allocator_finalization_before_portable_completion(
             &fixture.layout,
             &fixture.sandbox_id,
             &fixture.claim,
+            adapter.context.config.provider_kind(),
         )
         .expect("exact provider-absent IPAM should become a terminal witness");
         let cleanup = match fixture
@@ -878,6 +879,7 @@ fn machine_forwarded_final_detach_reopens_after_allocator_finalization() {
         &fixture.layout,
         &fixture.sandbox_id,
         &fixture.claim,
+        adapter.context.config.provider_kind(),
     )
     .expect("exact machine provider-absent IPAM should become a terminal witness");
     let cleanup = match fixture
