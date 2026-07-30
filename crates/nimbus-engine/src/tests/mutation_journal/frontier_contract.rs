@@ -195,8 +195,11 @@ async fn publisher_stall_diagnostics_distinguish_assignment_apply_and_publicatio
     let publication_engine = publication_fixture.engine();
     let publication_tenant =
         publication_fixture.create_tenant("publication-stall", Engine::create_tenant);
+    // The seed commit below dispatches to the trigger-candidate feed, which
+    // would restart a lifecycle-shutdown worker and let its cursor record race
+    // the exact publication-lag and quiescence assertions.
     publication_engine
-        .shutdown_trigger_candidates_for_testing(&publication_tenant)
+        .disable_trigger_candidates_for_testing(&publication_tenant)
         .expect("publication trigger cursor should stop");
     let document_id = publication_engine
         .insert_document_async(
@@ -249,8 +252,12 @@ async fn frontier_diagnostics_remain_ordered_under_concurrent_sampling() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();
     let tenant_id = fixture.create_tenant("concurrent-frontier-sampling", Engine::create_tenant);
+    // The document stream below restarts a lifecycle-shutdown worker on every
+    // commit dispatch, and this test samples the raw frontier rather than
+    // draining through `settled_frontier`. Suppress the producer permanently so
+    // the final quiescent sample cannot race an accepted cursor record.
     engine
-        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .disable_trigger_candidates_for_testing(&tenant_id)
         .expect("trigger cursor should not add unrelated records");
     engine
         .set_table_schema_async(

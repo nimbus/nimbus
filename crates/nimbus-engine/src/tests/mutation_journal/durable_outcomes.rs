@@ -152,16 +152,19 @@ async fn exercise_schema_outcome(operation: SchemaOperation, case: OutcomeCase, 
         }
     }
 
-    let schema_after = engine.get_schema_async(tenant_id.clone()).await.expect(
-        "loading schema after ambiguity should wait for eviction and open a replacement runtime",
-    );
-    assert_ne!(
-        engine
-            .tenant_runtime_identity_for_testing(&tenant_id)
-            .expect("replacement schema runtime identity should load"),
+    super::support::wait_for_replacement_runtime_identity(
+        &engine,
+        &tenant_id,
         runtime_identity_before,
-        "ambiguous schema outcome must replace the tenant runtime"
-    );
+        "ambiguous schema outcome must replace the tenant runtime",
+    )
+    .await;
+    let schema_after = super::support::load_schema_across_runtime_restart(
+        &engine,
+        &tenant_id,
+        "loading schema after ambiguity should open a replacement runtime",
+    )
+    .await;
     assert!(
         !engine.runtime_is_registered_for_testing(&tenant_id, &runtime_before),
         "ambiguous schema outcome must deregister the failed tenant runtime"
@@ -525,20 +528,11 @@ async fn exercise_trigger_cursor_outcome(case: OutcomeCase, tenant: &str) {
         return;
     }
 
-    wait_for_value(
+    super::support::wait_for_replacement_runtime_identity(
+        &engine,
+        &tenant_id,
+        runtime_identity_before,
         "ambiguous trigger-cursor failure should replace the runtime",
-        mutation_journal_progress_timeout(),
-        mutation_journal_poll_interval(),
-        || async {
-            engine
-                .get_schema_async(tenant_id.clone())
-                .await
-                .expect("trigger-cursor replacement schema should load");
-            engine
-                .tenant_runtime_identity_for_testing(&tenant_id)
-                .expect("trigger-cursor replacement runtime identity should load")
-        },
-        |runtime_identity| *runtime_identity != runtime_identity_before,
     )
     .await;
     assert!(

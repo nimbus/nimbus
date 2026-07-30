@@ -147,8 +147,13 @@ async fn projection_provider_schema_refresh_waits_for_journal_frontier() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();
     let tenant_id = fixture.create_tenant("projection-schema-frontier", Engine::create_tenant);
+    // Provider catch-up dispatches the reconciled commits to the
+    // trigger-candidate feed, which restarts a lifecycle-shutdown worker. The
+    // restarted worker commits a zero-write delivery-cursor record that races
+    // the projection token this test reads, so the suppression has to be the
+    // permanent one.
     engine
-        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .disable_trigger_candidates_for_testing(&tenant_id)
         .expect("trigger cursor should not add an unrelated journal record");
     let schema = TableSchema {
         table: tasks_table(),
