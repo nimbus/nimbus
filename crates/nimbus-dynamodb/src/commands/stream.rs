@@ -602,6 +602,24 @@ pub(crate) fn stream_enabled(
         .is_some_and(|spec| spec.stream_enabled))
 }
 
+// Store reads performed on this thread since the last `take_store_reads`.
+//
+// The store-read ceiling documented on `EVENT_EXAMINATION_AMPLIFICATION` is an
+// enforced property, so it needs to be observable rather than argued from the
+// shape of the loop. Thread-local because a GetRecords call runs entirely on
+// its caller's thread: tests running in parallel cannot pollute each other's
+// count.
+#[cfg(test)]
+thread_local! {
+    static STORE_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Returns and clears this thread's store-read count.
+#[cfg(test)]
+pub(crate) fn take_store_reads() -> usize {
+    STORE_READS.with(|reads| reads.replace(0))
+}
+
 /// Read up to `limit` captured events for a table's stream from
 /// `start_sequence`, ascending by sequence.
 ///
@@ -618,6 +636,8 @@ fn read_events_from(
     if limit == 0 {
         return Ok(Vec::new());
     }
+    #[cfg(test)]
+    STORE_READS.with(|reads| reads.set(reads.get() + 1));
     let table = stream_events_table(table_name)?;
     let start_id = sequence_number(start_sequence);
     // The event store is a reserved `_ddb_stream_*` table the adapter owns and
@@ -807,18 +827,34 @@ const MAX_GET_RECORDS: usize = 1000;
 /// principle, so the scan stops once it has examined this multiple of the
 /// requested limit and returns a short page. A short page is safe for
 /// GetRecords in a way it is not for a limit-bearing scan: the call always
-/// returns an advanced `NextShardIterator`, and the iterator advances over
-/// every event examined, so a short page means "poll again" rather than "the
-/// stream is drained" and a re-poll resumes past the events already walked.
+/// returns an advanced `NextShardIterator` that has walked past every event the
+/// fill consumed, so a short page means "poll again" rather than "the stream is
+/// drained" and a re-poll resumes where this one stopped.
 ///
-/// The budget scales with the *requested* limit rather than the maximum page
-/// size, and that is what bounds the amplification. A caller polling for a
-/// single record cannot induce a full-page-sized scan by pointing an iterator
-/// at a dense run of withheld events: one call examines at most
-/// `EVENT_EXAMINATION_AMPLIFICATION * limit` stored events and issues at most
-/// `EVENT_EXAMINATION_AMPLIFICATION` store reads, so the ceiling across all
-/// callers is `4 * MAX_GET_RECORDS` events for a request that also asks for the
-/// largest page DynamoDB allows.
+/// Two properties are enforced here, and both hold for *every* distribution of
+/// authorized, withheld, and expired events — a caller cannot choose a record
+/// layout that escapes either one:
+///
+/// 1. One call examines at most `EVENT_EXAMINATION_AMPLIFICATION * limit`
+///    stored events.
+/// 2. One call issues at most `EVENT_EXAMINATION_AMPLIFICATION` store reads.
+///
+/// The second is the load-bearing one, and it is why each read is sized by the
+/// remaining examination budget rather than by the output slots still to fill.
+/// Sizing by output slots looks tighter but is not: a window that fills all but
+/// one slot leaves the budget nearly untouched, so every later refill asks for
+/// a single event and the budget drains one store scan at a time. Reading a
+/// fixed `limit`-sized chunk instead spends the budget in at most
+/// `EVENT_EXAMINATION_AMPLIFICATION` reads by construction. The cost is that
+/// the last read may fetch events the page has no room for; those are simply
+/// not consumed, the iterator does not advance over them, and the next poll
+/// reads them again.
+///
+/// Both budgets scale with the *requested* limit rather than the maximum page
+/// size, so a caller polling for a single record cannot induce a full-page
+/// scan by pointing an iterator at a dense run of withheld events. The ceiling
+/// across all callers is `4 * MAX_GET_RECORDS` events for a request that also
+/// asks for the largest page DynamoDB allows.
 const EVENT_EXAMINATION_AMPLIFICATION: usize = 4;
 /// Stream record retention window (DynamoDB retains stream records for 24h).
 const STREAM_RETENTION_SECS: i64 = 86_400;
@@ -950,8 +986,8 @@ pub fn get_records(
 
     // Events the caller may not read, and events the retention window has
     // dropped, are consumed without occupying a slot: the page keeps filling
-    // past them. The iterator still advances over every event examined, so a
-    // re-poll never stalls on one it will never return, and the fill stops at
+    // past them. The iterator advances over every event consumed, so a re-poll
+    // never stalls on one it will never return, and the fill stops at
     // `examination_budget` so a dense run of withheld events cannot turn one
     // small poll into a large scan (see EVENT_EXAMINATION_AMPLIFICATION).
     let mut records: Vec<StreamRecord> = Vec::new();
@@ -960,7 +996,11 @@ pub fn get_records(
     let examination_budget = limit.saturating_mul(EVENT_EXAMINATION_AMPLIFICATION);
 
     while records.len() < limit && examined < examination_budget {
-        let wanted = (limit - records.len()).min(examination_budget - examined);
+        // Sized by the budget left, not by the slots left. Every iteration but
+        // the last therefore spends a full `limit` of budget, which caps the
+        // store reads at `EVENT_EXAMINATION_AMPLIFICATION` whatever the mix of
+        // authorized and withheld events the caller has arranged.
+        let wanted = limit.min(examination_budget - examined);
         let window = read_events_from(
             engine,
             context,

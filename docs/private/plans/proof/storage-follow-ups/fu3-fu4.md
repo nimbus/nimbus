@@ -1,16 +1,17 @@
-# FU3 + FU4 + FU-P1..P3 — DynamoDB batch stream fidelity, policy-aware paging, and GetRecords authorization
+# FU3 + FU4 + FU-P1..P4 — DynamoDB batch stream fidelity, policy-aware paging, and GetRecords authorization
 
-Owning plan: `docs/private/plans/storage-follow-ups-plan.md` (FU3, FU4, FU-P1, FU-P2, FU-P3).
+Owning plan: `docs/private/plans/storage-follow-ups-plan.md` (FU3, FU4, FU-P1, FU-P2, FU-P3, FU-P4).
 Prior evidence: `proof/storage-unification/suc4/dynamodb-rmw.md` (FU3 finding),
 `proof/storage-unification/suc5/principal.md` (FU4 finding).
 Branch `codex/fu3-dynamo`, base `origin/main @ 22c5cdd62`.
 
-Five concepts, five commits: the batch transaction (FU3), the starting-at scan
+Six concepts, six commits: the batch transaction (FU3), the starting-at scan
 paging (FU4), stream-record read authorization (FU-P1, raised as a P1 on review
 of the first two), real lifecycle timestamps on stored images (FU-P2, raised as
-a P2 on review of FU-P1), and the three review findings against the GetRecords
-path (FU-P3 — page-fill amplification, no-op MODIFY reconstruction, and timing
-sleeps in the new tests).
+a P2 on review of FU-P1), the three review findings against the GetRecords path
+(FU-P3 — page-fill amplification, no-op MODIFY reconstruction, and timing sleeps
+in the new tests), and the store-read ceiling FU-P3 documented without enforcing
+(FU-P4).
 
 ## FU3 — `batch_write_item` read the prior image outside the write's transaction
 
@@ -558,18 +559,20 @@ let examination_budget = limit.saturating_mul(EVENT_EXAMINATION_AMPLIFICATION);
 while records.len() < limit && examined < examination_budget {
 ```
 
-**The amplification ceiling.** One call examines at most
-`EVENT_EXAMINATION_AMPLIFICATION * limit` stored events and issues at most
-`EVENT_EXAMINATION_AMPLIFICATION` store reads. The worst case across all
-callers is `4 * MAX_GET_RECORDS` = 4,000 events, and reaching it requires
+**The events ceiling.** One call examines at most
+`EVENT_EXAMINATION_AMPLIFICATION * limit` stored events. The worst case across
+all callers is `4 * MAX_GET_RECORDS` = 4,000 events, and reaching it requires
 asking for the largest page DynamoDB allows — a caller asking for one record
-gets a budget of four. Both constants are documented at the definition.
+gets a budget of four.
+
+This bounds the events read but *not* the number of store reads spent reading
+them, which is the gap FU-P4 closes.
 
 Returning a short page is correct here in a way it would not be for a
-limit-bearing scan: GetRecords always returns an advanced `NextShardIterator`,
-and the iterator advances over every event examined, so a short page means
-"poll again" rather than "the stream is drained" and the consumer still drains
-the stream at a bounded rate per poll.
+limit-bearing scan: GetRecords always returns an advanced `NextShardIterator`
+that has walked past every event the fill consumed, so a short page means "poll
+again" rather than "the stream is drained" and the consumer still drains the
+stream at a bounded rate per poll.
 
 ### (2) A no-op MODIFY reconstructed the wrong `_updateTime`
 
@@ -717,13 +720,122 @@ the same field encoding the data path writes, and `shape_record` re-encodes on
 the way out. The stale comment cost real time during this work (it is why the
 image-equality question had to be re-derived from the code), so it is corrected.
 
+## FU-P4 — the store-read ceiling was documented but not enforced
+
+### What was wrong
+
+FU-P3 bounded the *events* one GetRecords call may examine and claimed a second
+bound alongside it: at most `EVENT_EXAMINATION_AMPLIFICATION` store reads. The
+loop did not enforce that. Each read was sized by the output slots still to
+fill:
+
+```rust
+let wanted = (limit - records.len()).min(examination_budget - examined);
+```
+
+`limit - records.len()` is small exactly when the page is nearly full, so a
+caller who arranges for a first window to fill all but one slot and follows it
+with events they may not read drains the budget one event per store read. With
+`Limit=1000`, 999 authorized records in the first window and a withheld tail,
+that is one 1,000-event read followed by ~3,000 single-event reads: **~3,001
+backend scans for one request**, repeatable by replaying the same iterator. An
+authenticated caller with write access to their own table can arrange the
+distribution deliberately.
+
+The events budget held throughout — the pathology was never in how much data
+was read, only in how many round trips it took.
+
+### The fix
+
+Size each read by the budget remaining rather than by the slots remaining:
+
+```rust
+let wanted = limit.min(examination_budget - examined);
+```
+
+Every iteration but the last now spends a full `limit` of budget, so the read
+count is `ceil(budget / limit)` = `EVENT_EXAMINATION_AMPLIFICATION`, by
+construction and independent of how the caller distributes authorized,
+withheld, and expired events.
+
+The cost is that the final read may fetch events the page has no room for.
+Those are simply not consumed: `next_sequence` advances only through the events
+the loop walked, `reclaim_expired_events` still receives `&window[..consumed]`,
+and the next poll reads them again. Over-reading cannot skip a record, and it
+cannot reclaim one the iterator has not passed.
+
+Both properties are now stated at `EVENT_EXAMINATION_AMPLIFICATION` as enforced
+invariants, with the reason the slot-sized form fails recorded there — it is
+the form a reader would otherwise reach for as the tighter one.
+
+### Making the ceiling observable
+
+A read-count bound argued from the shape of a loop is the kind of claim that
+was already wrong once here. `read_events_from` now increments a thread-local
+counter under `#[cfg(test)]`, and `take_store_reads()` returns and clears it.
+Thread-local rather than a global: a GetRecords call runs entirely on its
+caller's thread, so parallel tests cannot pollute each other's count, which
+makes the probe correct under bare `cargo test` as well as nextest.
+
+### Fail-before (RED)
+
+`wanted` was reverted to the slot-sized form with the new test in place:
+
+```
+$ NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 cargo test -p nimbus-dynamodb --lib \
+    -- commands::stream::tests::the_store_read_ceiling commands::stream::tests::a_small_page
+test commands::stream::tests::a_small_page_request_is_bounded_when_records_are_withheld ... ok
+test commands::stream::tests::the_store_read_ceiling_holds_when_a_page_stalls_one_slot_short ... FAILED
+  assertion `left == right` failed: one call must spend its examination budget
+  in 4 store reads; 31 means the reads were sized by the page slots left, not
+  by the budget
+    left: 31
+   right: 4
+test result: FAILED. 1 passed; 1 failed
+```
+
+31 = 1 + 30, the degeneration exactly: one full-sized read, then the remaining
+30 budget spent one event at a time. Scaled from `limit=10` to `limit=1000`
+that is the 3,001 the finding names.
+
+Note the other test **passes** under the defect. `a_small_page_request_is_bounded_when_records_are_withheld`
+polls for one record with everything withheld, and with one output slot the two
+sizings coincide. A uniformly-withheld run cannot expose this; the finding
+lives in the *mixed* distribution, which is why the new test exists rather than
+an assertion added to the old one.
+
+`stream.rs` was restored from a scratchpad copy and verified by SHA-256
+(`72770c26…`, `RESTORE_OK=1`), not with `git checkout`.
+
+### Tests added
+
+`crates/nimbus-dynamodb/src/commands/stream/tests.rs`:
+
+- `the_store_read_ceiling_holds_when_a_page_stalls_one_slot_short` — the
+  adversarial distribution at `limit=10`: nine authorized events, then 40
+  withheld ones, so the first window leaves exactly one slot to fill. Asserts
+  the store-read count is exactly `EVENT_EXAMINATION_AMPLIFICATION`, that the
+  page is the nine-record short page, and that the iterator advanced over all
+  40 consumed events.
+- `a_small_page_request_is_bounded_when_records_are_withheld` also gained a
+  read-count assertion, so both bounding tests now pin work performed rather
+  than only results returned.
+
+Discriminating authorized from withheld events within one stream needed a
+policy on something other than the primary key, so `set_events_read_rule` takes
+a field name and the new `put_tagged` / `admit_only_readable_events` pair writes
+and matches a `tag` attribute. The literal is AttributeValue wire JSON
+(`{"S": "read"}`) because that is how `item_to_fields` persists attributes —
+the same encoding the FU-P3 doc correction was about.
+
 ## Verification
 
 All commands run with `set -o pipefail` so the recorded status is the command's,
 not `tail`'s. macOS, `stable-aarch64-apple-darwin`.
 
-The battery was run four times: after FU3 + FU4, after FU-P1, after FU-P2, and
-after FU-P3. The table records the **final** run, over all five concepts.
+The battery was run five times: after FU3 + FU4, after FU-P1, after FU-P2,
+after FU-P3, and after FU-P4. The table records the **final** run, over all six
+concepts.
 
 Note on the idiom: `${PIPESTATUS[0]}` is bash-only and expands to nothing under
 this shell (zsh), which prints an empty `RC=` that reads like a missing result.
@@ -731,16 +843,16 @@ this shell (zsh), which prints an empty `RC=` that reads like a missing result.
 
 | Command | Result |
 | --- | --- |
-| `NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 cargo nextest run -p nimbus-dynamodb` | **292 run, 292 passed, 0 skipped** — `DDB_RC=0` |
+| `NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 cargo nextest run -p nimbus-dynamodb` | **293 run, 293 passed, 0 skipped** — `DDB_RC=0` |
 | `NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 cargo nextest run -p nimbus-core` | **194 run, 194 passed, 0 skipped** — `CORE_RC=0` |
-| `NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 cargo nextest run -p nimbus-engine` | **665 run, 665 passed (1 slow), 5 skipped** — `ENGINE_RC=0` |
+| `NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 cargo nextest run -p nimbus-engine` | **665 run, 665 passed (2 slow), 5 skipped** — `ENGINE_RC=0` |
 | `NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 cargo nextest run -p nimbus-server -E 'test(dynamodb) or test(ddb)'` | **15 run, 15 passed, 590 skipped** — `SERVER_RC=0` |
 | `make clippy` (workspace, `-D warnings`) | `CLIPPY_RC=0` |
-| `cargo fmt --all --check` | `FMT_RC=0` (after applying `cargo fmt --all`, which touched `commands/stream/tests.rs` only) |
+| `cargo fmt --all --check` | `FMT_RC=0` |
 
-The dynamodb count moves 281 → 283 → 289 → 292: FU-P1 replaced one test with
-three, FU-P2 adds three in-crate plus three integration tests, and FU-P3 adds
-two in-crate plus one integration test.
+The dynamodb count moves 281 → 283 → 289 → 292 → 293: FU-P1 replaced one test
+with three, FU-P2 adds three in-crate plus three integration tests, FU-P3 adds
+two in-crate plus one integration test, and FU-P4 adds one in-crate test.
 
 FU-P3 widened the lint lane from three named crates to `make clippy` over the
 whole workspace. The FU-P2 change to read-filter compilation is on every

@@ -813,6 +813,7 @@ fn a_small_page_request_is_bounded_when_records_are_withheld() {
     .expect("iter");
     let start = iterator_next_sequence(&iterator);
 
+    let _ = take_store_reads();
     let page = get_records(
         &engine,
         &ctx,
@@ -822,6 +823,7 @@ fn a_small_page_request_is_bounded_when_records_are_withheld() {
         },
     )
     .expect("page");
+    let reads = take_store_reads();
     assert!(
         page.records.is_empty(),
         "the policy withholds every record, so the page is empty"
@@ -834,6 +836,88 @@ fn a_small_page_request_is_bounded_when_records_are_withheld() {
         budget,
         "a one-record poll must examine {budget} stored events, not walk the whole run of \
          {written} withheld ones"
+    );
+    assert!(
+        reads <= EVENT_EXAMINATION_AMPLIFICATION,
+        "spending the budget took {reads} store reads, over the ceiling of \
+         {EVENT_EXAMINATION_AMPLIFICATION}"
+    );
+}
+
+/// The store-read ceiling holds for the distribution that most tempts a
+/// slot-sized read: a first window that fills the page to one slot short,
+/// followed by a run the caller may not read.
+///
+/// Sizing each read by the slots left over-fits exactly here. The page needs
+/// one more record, so every refill asks the store for one event and the
+/// examination budget drains a scan at a time — for a full 1000-record page
+/// that is ~3,001 backend scans for a single request, repeatable by replaying
+/// the iterator. Reading budget-sized chunks keeps it at
+/// `EVENT_EXAMINATION_AMPLIFICATION` reads no matter how the caller arranges
+/// the records.
+#[test]
+fn the_store_read_ceiling_holds_when_a_page_stalls_one_slot_short() {
+    let (engine, ctx, _t) = fixture();
+    let arn = streamed_table(&engine, &ctx, "NEW_AND_OLD_IMAGES");
+    let limit = 10usize;
+    // One short of a full page, so the fill cannot finish inside the first
+    // window and must keep refilling with a single slot to place.
+    let readable = limit - 1;
+    for index in 0..readable {
+        put_tagged(&engine, &ctx, &format!("r{index}"), "read");
+    }
+    // Enough withheld events to exhaust the examination budget without the
+    // store running dry, which would end the fill early for the wrong reason.
+    let withheld = limit * EVENT_EXAMINATION_AMPLIFICATION;
+    for index in 0..withheld {
+        put_tagged(&engine, &ctx, &format!("w{index}"), "hide");
+    }
+    admit_only_readable_events(&engine, &ctx);
+
+    let shard = shard_for(&engine, &ctx, &arn);
+    let iterator = get_shard_iterator(
+        &engine,
+        &ctx,
+        GetShardIteratorInput {
+            stream_arn: arn.clone(),
+            shard_id: shard,
+            shard_iterator_type: ShardIteratorType::TrimHorizon,
+            sequence_number: None,
+        },
+    )
+    .expect("iter")
+    .shard_iterator
+    .expect("iter");
+    let start = iterator_next_sequence(&iterator);
+
+    let _ = take_store_reads();
+    let page = get_records(
+        &engine,
+        &ctx,
+        GetRecordsInput {
+            shard_iterator: iterator,
+            limit: Some(i64::try_from(limit).expect("limit fits")),
+        },
+    )
+    .expect("page");
+    let reads = take_store_reads();
+
+    assert_eq!(
+        reads, EVENT_EXAMINATION_AMPLIFICATION,
+        "one call must spend its examination budget in {EVENT_EXAMINATION_AMPLIFICATION} store \
+         reads; {reads} means the reads were sized by the page slots left, not by the budget"
+    );
+    assert_eq!(
+        page.records.len(),
+        readable,
+        "the authorized prefix is returned as a short page"
+    );
+    let advanced = iterator_next_sequence(&page.next_shard_iterator.expect("next"));
+    assert_eq!(
+        advanced - start,
+        i64::try_from(limit * EVENT_EXAMINATION_AMPLIFICATION).expect("budget fits in i64"),
+        "the iterator advances over every event the fill consumed, so the next poll resumes \
+         past them rather than re-walking the withheld run"
     );
 }
 
@@ -1143,7 +1227,7 @@ fn record_authorization(
     }
 }
 
-/// Put a read policy on `events` comparing `pk` against `value` with `op`.
+/// Put a read policy on `events` comparing `field` against `value` with `op`.
 ///
 /// Every caller wants a rule that is restricted without being trivially
 /// unsatisfiable, so authorization neither short-circuits as unrestricted nor
@@ -1151,6 +1235,7 @@ fn record_authorization(
 fn set_events_read_rule(
     engine: &Arc<Engine>,
     context: &TenantIsolationContext,
+    field: &str,
     op: nimbus_core::AccessOperator,
     value: Value,
 ) {
@@ -1166,7 +1251,7 @@ fn set_events_read_rule(
                         require_authenticated: false,
                         predicates: vec![nimbus_core::AccessPredicate {
                             left: nimbus_core::AccessValue::DocumentField {
-                                field: "pk".to_owned(),
+                                field: field.to_owned(),
                             },
                             op,
                             right: nimbus_core::AccessValue::Literal { value },
@@ -1184,6 +1269,7 @@ fn restrict_events_reads(engine: &Arc<Engine>, context: &TenantIsolationContext)
     set_events_read_rule(
         engine,
         context,
+        "pk",
         nimbus_core::AccessOperator::Neq,
         Value::Null,
     );
@@ -1195,9 +1281,41 @@ fn withhold_events_reads(engine: &Arc<Engine>, context: &TenantIsolationContext)
     set_events_read_rule(
         engine,
         context,
+        "pk",
         nimbus_core::AccessOperator::Eq,
         Value::String("no-such-item".to_owned()),
     );
+}
+
+/// A read policy on `events` that admits exactly the items [`put_tagged`] wrote
+/// with `tag = "read"`, so one stream can carry both authorized and withheld
+/// events in an order the test chooses.
+///
+/// The literal is AttributeValue wire JSON because that is how the adapter
+/// persists attributes — see `item_to_fields`.
+fn admit_only_readable_events(engine: &Arc<Engine>, context: &TenantIsolationContext) {
+    set_events_read_rule(
+        engine,
+        context,
+        "tag",
+        nimbus_core::AccessOperator::Eq,
+        json!({"S": "read"}),
+    );
+}
+
+/// Write an item carrying a `tag` attribute [`admit_only_readable_events`] can
+/// discriminate on.
+fn put_tagged(engine: &Arc<Engine>, context: &TenantIsolationContext, pk: &str, tag: &str) {
+    crate::commands::item::put_item(
+        engine,
+        context,
+        serde_json::from_value(json!({
+            "TableName": "events",
+            "Item": { "pk": {"S": pk}, "tag": {"S": tag} },
+        }))
+        .unwrap(),
+    )
+    .expect("put");
 }
 
 /// The item `pk` as the engine currently holds it, lifecycle stamps included.
