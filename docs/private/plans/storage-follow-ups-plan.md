@@ -8,7 +8,7 @@ exercised). Runs autonomously; PRs per concept; same fast-loop merge policy.
 
 | Item | Source | Status |
 | --- | --- | --- |
-| FU1 MySQL `has_scheduled_work` enabled=TRUE outlier | SUC3.1 step 4 | `planned` — real bug; align to the other four backends + regression test; also delete the dead libsql filter alternative in scripts/test-external-providers.sh |
+| FU1 MySQL `has_scheduled_work` outlier | SUC3.1 step 4 | `complete` (PR #264) — cron_jobs counted like the other five backends; six-backend conformance pin covering both halves of the enabled split; dead libsql filter alternative removed (52 selected before/after) |
 | FU2 PPSC ack-loss arm-theft fault-interface fix | SUC3.1 steps 1-3 evidence | `planned` — durable-record identity through the fault check on all dialects (nimbus-storage + nimbus-testing); folds the mysql PPSC flake; the refuted `commit.is_some()` gate is the anti-pattern to avoid |
 | FU3 DynamoDB `batch_write_item` stream-record staleness | SUC4.1 verification | `planned` — route batch writes through `execute_single_item_transaction`; INSERT/MODIFY classification + OldImage freshness tests |
 | FU4 `scan_documents_by_id_starting_at_cancellable` policy-aware paging | SUC5.1 | `planned` — filter-then-fill paging so the limit-bearing scan can enforce ReadAuthorization; keep the adapter-owned stream sidecar's semantics |
