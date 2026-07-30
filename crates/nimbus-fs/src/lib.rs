@@ -46,7 +46,10 @@ pub use cas_ro::{CasBlobChunk, CasManifestEntry, CasReadOnlyBackend, CasReadOnly
 pub use deno_fs::FileSystemRc;
 pub use memfs::MemFsBackend;
 pub use mount::MountTable;
-pub use object::{ExternalFuseObjectMount, ExternalFuseWrite, ObjectRwBackend, ObjectWriteSession};
+pub use object::{
+    ExternalFuseObjectMount, ExternalFuseWrite, ObjectManifestStore, ObjectRwBackend,
+    ObjectWriteSession,
+};
 pub use passthrough::PassthroughBackend;
 pub use resolver::{MountResolver, ResolvedAccess, ResolvedPath};
 pub use wasi::{DirPerms, FilePerms, WasiPreopenBuilder, WasiPreopenDescriptor};

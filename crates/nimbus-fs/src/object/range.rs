@@ -42,7 +42,7 @@ impl ObjectRwBackend {
         let key = key_for_path(&path)?;
         let manifest = self
             .manifests
-            .get_object_manifest(&self.bucket, &key)
+            .get_manifest(&self.bucket, &key)
             .map_err(core_error)?
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("object {key}")))?;
         self.read_manifest_range(&manifest, range)

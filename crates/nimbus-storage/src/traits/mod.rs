@@ -27,6 +27,13 @@ pub use kv::{
 };
 pub use object_metadata::{
     OBJECT_MANIFEST_TABLE, OBJECT_MULTIPART_TABLE, ObjectBlobLayout, ObjectChecksums,
-    ObjectChunkRef, ObjectManifest, ObjectManifestAttributes, ObjectMetaStore, ObjectMultipartPart,
+    ObjectChunkRef, ObjectManifest, ObjectManifestAttributes, ObjectMetaRead, ObjectMultipartPart,
     ObjectMultipartUpload, multipart_upload_document_id, object_manifest_document_id,
+};
+// Object metadata has no production writer in this crate; these seed the
+// metadata plane for the crate's own read-half coverage.
+#[cfg(test)]
+pub(crate) use object_metadata::{
+    delete_multipart_upload_direct, delete_object_manifest_direct, put_multipart_upload_direct,
+    put_object_manifest_direct,
 };

@@ -1,12 +1,12 @@
 use nimbus_core::Result;
-use nimbus_storage::{ObjectManifest, ObjectMetaStore, ObjectMultipartUpload};
+use nimbus_storage::{ObjectManifest, ObjectMetaRead, ObjectMultipartUpload};
 
 use super::TenantPersistence;
 
-/// Read-plane dispatch only. Object-metadata writes are journal commits
-/// sequenced inside the tenant committer actor (`engine::objects`); nothing
-/// in the engine may reach the storage-level `ObjectMetaStore` write methods,
-/// which would assign commit sequences outside the fenced committer path.
+/// Read-plane dispatch only, and storage's `ObjectMetaRead` has no write half
+/// to reach: object-metadata writes are journal commits sequenced inside the
+/// tenant committer actor (`engine::objects`). A store-level write would
+/// assign commit sequences outside the fenced committer path.
 impl TenantPersistence {
     pub(crate) fn get_object_manifest(
         &self,

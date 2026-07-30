@@ -110,8 +110,9 @@ split.
 
 Object storage follows the same adapter-boundary rule:
 
-- `nimbus-storage` owns object manifests and multipart metadata through
-  `ObjectMetaStore`.
+- `nimbus-storage` owns object manifest and multipart metadata reads through
+  `ObjectMetaRead`; that metadata is published only by the engine's
+  committer-sequenced object commit path, so the trait has no write half.
 - `nimbus-blob` owns immutable bytes, local packs, object-store byte legs,
   placement composition, GC, and backup chunks.
 - `nimbus-object-storage` owns placement-policy resolution and provider config.

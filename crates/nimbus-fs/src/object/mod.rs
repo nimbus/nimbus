@@ -1,10 +1,11 @@
 //! Object-storage-backed `FileSystem`: the composition root.
 //!
 //! `ObjectRwBackend` maps a POSIX-shaped filesystem onto the object byte plane
-//! (`BlobStore`) and manifest plane (`ObjectMetaStore`). This module owns the
-//! shared vocabulary — the type definitions, the path algebra, and the trait
-//! dispatch — and routes the actual work to concept-owned children:
+//! (`BlobStore`) and manifest plane ([`ObjectManifestStore`]). This module owns
+//! the shared vocabulary — the type definitions, the path algebra, and the
+//! trait dispatch — and routes the actual work to concept-owned children:
 //!
+//! - [`manifests`]: the manifest-plane capability and its fencing contract.
 //! - [`read`]: whole-object reads, `stat`, directory listing, the reader path.
 //! - [`write`]: commits, directory mutation, copy, write sessions, the writer.
 //! - [`range`]: bounded `get_range` windows shared by both faces.
@@ -23,14 +24,17 @@ use deno_fs::{FileSystem, FsDirEntry, FsFileType, FsReadDirRc, OpenOptions};
 use deno_io::fs::{File, FsError, FsResult, FsStat, FsStatFs};
 use deno_permissions::{CheckedPath, CheckedPathBuf};
 use nimbus_blob::{BlobHash, BlobStore};
-use nimbus_storage::{ObjectManifest, ObjectManifestAttributes, ObjectMetaStore};
+use nimbus_storage::{ObjectManifest, ObjectManifestAttributes};
 
 use crate::ObjectUnsupportedOperation;
 use crate::PlatformStdio;
 
+mod manifests;
 mod range;
 mod read;
 mod write;
+
+pub use manifests::ObjectManifestStore;
 
 const OBJECT_FS_LIST_LIMIT: usize = 10_000;
 
@@ -38,7 +42,7 @@ const OBJECT_FS_LIST_LIMIT: usize = 10_000;
 pub struct ObjectRwBackend {
     bucket: String,
     blobs: Arc<dyn BlobStore>,
-    manifests: Arc<dyn ObjectMetaStore + Send + Sync>,
+    manifests: Arc<dyn ObjectManifestStore>,
     directories: Arc<Mutex<BTreeSet<PathBuf>>>,
 }
 
@@ -88,7 +92,7 @@ impl ObjectRwBackend {
     pub fn new(
         bucket: impl Into<String>,
         blobs: Arc<dyn BlobStore>,
-        manifests: Arc<dyn ObjectMetaStore + Send + Sync>,
+        manifests: Arc<dyn ObjectManifestStore>,
     ) -> FsResult<Self> {
         let bucket = bucket.into();
         validate_bucket(&bucket)?;

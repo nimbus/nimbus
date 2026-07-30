@@ -36,16 +36,14 @@ use crate::{MySqlProvider, MySqlReadSnapshot, MySqlTenantStore};
 use crate::{PostgresProvider, PostgresReadSnapshot, PostgresTenantStore};
 
 use super::object_metadata::{
-    delete_multipart_upload_for_store, delete_object_manifest_for_store,
     get_multipart_upload_for_store, get_object_manifest_for_store,
     list_multipart_uploads_for_store, list_object_manifests_for_store,
-    put_multipart_upload_for_store, put_object_manifest_for_store,
 };
 #[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 use super::{CommitterLease, CommitterLeaseStore};
 use super::{
     CommitterLeaseResult, ControlPlaneUsage, DurableJournal, KeyProviderSurface,
-    MaterializedRebuild, ObjectManifest, ObjectMetaStore, ObjectMultipartUpload, ResourcePathScan,
+    MaterializedRebuild, ObjectManifest, ObjectMetaRead, ObjectMultipartUpload, ResourcePathScan,
     ResourcePathSnapshot, SchedulerStore, StorageEngine, TenantLifecycle, TenantPointRead,
     TenantPointWrite, TenantRangeScan,
 };
@@ -704,28 +702,16 @@ impl_scheduler_store!(MySqlTenantStore);
 #[cfg(feature = "libsql")]
 impl_scheduler_store!(LibsqlReplicaTenantStore);
 
-macro_rules! impl_object_meta_store {
+macro_rules! impl_object_meta_read {
       ($($ty:ty),+ $(,)?) => {
           $(
-              impl ObjectMetaStore for $ty {
-                  fn put_object_manifest(&self, manifest: &ObjectManifest) -> Result<CommitEntry> {
-                      put_object_manifest_for_store(self, manifest)
-                  }
-
+              impl ObjectMetaRead for $ty {
                   fn get_object_manifest(
                       &self,
                       bucket: &str,
                       key: &str,
                   ) -> Result<Option<ObjectManifest>> {
                       get_object_manifest_for_store(self, bucket, key)
-                  }
-
-                  fn delete_object_manifest(
-                      &self,
-                      bucket: &str,
-                      key: &str,
-                  ) -> Result<Option<(CommitEntry, ObjectManifest)>> {
-                      delete_object_manifest_for_store(self, bucket, key)
                   }
 
                   fn list_object_manifests(
@@ -737,25 +723,11 @@ macro_rules! impl_object_meta_store {
                       list_object_manifests_for_store(self, bucket, prefix, limit)
                   }
 
-                  fn put_multipart_upload(
-                      &self,
-                      upload: &ObjectMultipartUpload,
-                  ) -> Result<CommitEntry> {
-                      put_multipart_upload_for_store(self, upload)
-                  }
-
                   fn get_multipart_upload(
                       &self,
                       upload_id: &str,
                   ) -> Result<Option<ObjectMultipartUpload>> {
                       get_multipart_upload_for_store(self, upload_id)
-                  }
-
-                  fn delete_multipart_upload(
-                      &self,
-                      upload_id: &str,
-                  ) -> Result<Option<(CommitEntry, ObjectMultipartUpload)>> {
-                      delete_multipart_upload_for_store(self, upload_id)
                   }
 
                   fn list_multipart_uploads(
@@ -771,14 +743,36 @@ macro_rules! impl_object_meta_store {
       };
   }
 
-impl_object_meta_store!(TenantStore, SqliteTenantStore, MemoryTenantStore);
+impl_object_meta_read!(TenantStore, SqliteTenantStore, MemoryTenantStore);
 
 #[cfg(feature = "postgres")]
-impl_object_meta_store!(PostgresTenantStore);
+impl_object_meta_read!(PostgresTenantStore);
 #[cfg(feature = "mysql")]
-impl_object_meta_store!(MySqlTenantStore);
+impl_object_meta_read!(MySqlTenantStore);
 #[cfg(feature = "libsql")]
-impl_object_meta_store!(LibsqlReplicaTenantStore);
+impl_object_meta_read!(LibsqlReplicaTenantStore);
+
+// Build-time conformance pin. Naming each tenant store as a type argument type-
+// checks its `ObjectMetaRead` bound in every build shape, so dropping a store
+// from the macro invocations above while the store itself survives fails the
+// build instead of silently narrowing the read plane. The remote stores are
+// pinned only when their provider feature is on, so the claim tracks the build.
+// What the trait actually returns is covered behaviorally in
+// `crate::tests::object_meta`, which seeds manifests and multipart uploads and
+// asserts concrete get/list/delete results against redb and SQLite.
+const _: () = {
+    const fn pin_object_meta_read<T: ObjectMetaRead>() {}
+
+    pin_object_meta_read::<TenantStore>();
+    pin_object_meta_read::<SqliteTenantStore>();
+    pin_object_meta_read::<MemoryTenantStore>();
+    #[cfg(feature = "postgres")]
+    pin_object_meta_read::<PostgresTenantStore>();
+    #[cfg(feature = "mysql")]
+    pin_object_meta_read::<MySqlTenantStore>();
+    #[cfg(feature = "libsql")]
+    pin_object_meta_read::<LibsqlReplicaTenantStore>();
+};
 
 impl ControlPlaneUsage for RedbUsageStorage {}
 
@@ -787,13 +781,15 @@ impl KeyProviderSurface for nimbus_crypto::KeyDirectoryProvider {}
 #[cfg(feature = "aws-kms")]
 impl KeyProviderSurface for nimbus_crypto::AwsKmsKeyProvider {}
 
-/// StorageEngine includes ObjectMetaStore so object manifests use the same stores.
+/// StorageEngine includes ObjectMetaRead so object manifests are read from the
+/// same stores; the metadata plane is written by the engine committer, not
+/// through a store-level write method.
 impl<T> StorageEngine for T where
     T: TenantPointRead
         + TenantPointWrite
         + TenantRangeScan
         + DurableJournal
         + SchedulerStore
-        + ObjectMetaStore
+        + ObjectMetaRead
 {
 }

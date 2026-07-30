@@ -17,7 +17,7 @@ use crate::store::{
 };
 
 use super::CommitterLeaseResult;
-use super::object_metadata::ObjectMetaStore;
+use super::object_metadata::ObjectMetaRead;
 
 pub trait TenantLifecycle {
     type OpenedTenant;
@@ -270,6 +270,6 @@ pub trait StorageEngine:
     + TenantRangeScan
     + DurableJournal
     + SchedulerStore
-    + ObjectMetaStore
+    + ObjectMetaRead
 {
 }

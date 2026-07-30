@@ -1,22 +1,81 @@
+use std::collections::BTreeMap;
 use std::ops::Range;
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use bytes::Bytes;
 use deno_fs::sync::MaybeArc;
 use deno_fs::{FileSystem, OpenOptions};
 use nimbus_blob::{BlobHash, BlobStore, ByteStream, MemoryBlobStore};
 use nimbus_core::Result as NimbusResult;
-use nimbus_storage::{
-    ObjectBlobLayout, ObjectChunkRef, ObjectManifest, ObjectManifestAttributes, ObjectMetaStore,
-    TenantStore,
-};
+use nimbus_storage::{ObjectBlobLayout, ObjectChunkRef, ObjectManifest, ObjectManifestAttributes};
 
 use super::{checked, fs_with_mounts, memfs_rc};
-use crate::{ExternalFuseObjectMount, MountTable, ObjectRwBackend};
+use crate::{ExternalFuseObjectMount, MountTable, ObjectManifestStore, ObjectRwBackend};
 
 const BUCKET: &str = "launch-bucket";
+
+/// The manifest plane this suite mounts behind `ObjectRwBackend`.
+///
+/// `ObjectManifestStore` is the inverted seam: the backend declares the
+/// capability it needs and whoever mounts it supplies an implementation.
+/// Production wiring owes an engine-backed, committer-fenced one (see the
+/// trait's fencing contract); a test owns its entire namespace with a single
+/// writer, so this map-backed double is the honest stand-in and keeps the
+/// filesystem suite independent of any storage provider.
+#[derive(Default)]
+struct MemoryObjectManifests {
+    manifests: Mutex<BTreeMap<(String, String), ObjectManifest>>,
+}
+
+impl MemoryObjectManifests {
+    fn entries(&self) -> MutexGuard<'_, BTreeMap<(String, String), ObjectManifest>> {
+        self.manifests
+            .lock()
+            .expect("manifest map lock should not be poisoned")
+    }
+}
+
+impl ObjectManifestStore for MemoryObjectManifests {
+    fn get_manifest(&self, bucket: &str, key: &str) -> NimbusResult<Option<ObjectManifest>> {
+        Ok(self
+            .entries()
+            .get(&(bucket.to_string(), key.to_string()))
+            .cloned())
+    }
+
+    fn list_manifests(
+        &self,
+        bucket: &str,
+        prefix: &str,
+        limit: usize,
+    ) -> NimbusResult<Vec<ObjectManifest>> {
+        // Keyed `(bucket, key)`, so map order already yields ascending keys
+        // within one bucket — the order the trait requires.
+        Ok(self
+            .entries()
+            .iter()
+            .filter(|((entry_bucket, key), _)| entry_bucket == bucket && key.starts_with(prefix))
+            .map(|(_, manifest)| manifest.clone())
+            .take(limit)
+            .collect())
+    }
+
+    fn put_manifest(&self, manifest: &ObjectManifest) -> NimbusResult<()> {
+        self.entries().insert(
+            (manifest.bucket.clone(), manifest.key.clone()),
+            manifest.clone(),
+        );
+        Ok(())
+    }
+
+    fn delete_manifest(&self, bucket: &str, key: &str) -> NimbusResult<()> {
+        self.entries()
+            .remove(&(bucket.to_string(), key.to_string()));
+        Ok(())
+    }
+}
 
 /// Wraps `MemoryBlobStore` and counts body bytes actually transferred
 /// through `get` (whole-blob) and `get_range` (windowed), so tests can prove
@@ -100,7 +159,7 @@ impl BlobStore for TrackingBlobStore {
 /// Returns the reference (concatenated) bytes alongside the tracking store
 /// and manifest plane so tests can assert both correctness and byte counts.
 fn chunked_object(
-    manifests: &TenantStore,
+    manifests: &MemoryObjectManifests,
     key: &str,
 ) -> (Arc<TrackingBlobStore>, Vec<u8>, ObjectManifest) {
     let store = Arc::new(TrackingBlobStore::default());
@@ -131,7 +190,7 @@ fn chunked_object(
     )
     .expect("chunked manifest should validate");
     manifests
-        .put_object_manifest(&manifest)
+        .put_manifest(&manifest)
         .expect("manifest commit should succeed");
     // Reset counters: `put_sync` above goes through the tracking store's
     // `put`, which this suite does not count against the read-path budget.
@@ -142,11 +201,15 @@ fn chunked_object(
     (store, reference, manifest)
 }
 
-fn object_backend() -> (ObjectRwBackend, Arc<MemoryBlobStore>, Arc<TenantStore>) {
+fn object_backend() -> (
+    ObjectRwBackend,
+    Arc<MemoryBlobStore>,
+    Arc<MemoryObjectManifests>,
+) {
     let blobs = Arc::new(MemoryBlobStore::new());
-    let manifests = Arc::new(TenantStore::create_in_memory().expect("tenant store should open"));
+    let manifests = Arc::new(MemoryObjectManifests::default());
     let blob_store: Arc<dyn BlobStore> = blobs.clone();
-    let meta_store: Arc<dyn ObjectMetaStore + Send + Sync> = manifests.clone();
+    let meta_store: Arc<dyn ObjectManifestStore> = manifests.clone();
     (
         ObjectRwBackend::new(BUCKET, blob_store, meta_store).expect("backend should build"),
         blobs,
@@ -172,7 +235,7 @@ fn object_rw_backend_write_file_commits_blob_manifest_and_reads_back() {
 
     assert_eq!(blobs.len(), 1, "object file write stores one content blob");
     let manifest = manifests
-        .get_object_manifest(BUCKET, "reports/launch.txt")
+        .get_manifest(BUCKET, "reports/launch.txt")
         .expect("manifest lookup should succeed")
         .expect("manifest should be committed");
     assert_eq!(manifest.size, 17);
@@ -210,7 +273,7 @@ fn object_rw_backend_visibility_follows_manifest_commit() {
     assert_eq!(blobs.len(), 1, "commit admits the blob exactly once");
     assert_eq!(
         manifests
-            .get_object_manifest(BUCKET, "pending/data.bin")
+            .get_manifest(BUCKET, "pending/data.bin")
             .unwrap()
             .unwrap()
             .size,
@@ -254,7 +317,7 @@ fn external_fuse_mount_reads_and_rejects_non_sequential_write() {
 
     assert_eq!(
         manifests
-            .get_object_manifest(BUCKET, "served/write.txt")
+            .get_manifest(BUCKET, "served/write.txt")
             .unwrap()
             .unwrap()
             .size,
@@ -303,10 +366,10 @@ fn object_rw_backend_lists_manifest_prefixes_as_directories() {
 /// whose byte plane is the tracking store, so `open_sync`/`File` reads flow
 /// through the same in-isolate path production code uses (BRH3).
 fn chunked_backend(key: &str) -> (ObjectRwBackend, Arc<TrackingBlobStore>, Vec<u8>) {
-    let manifests = Arc::new(TenantStore::create_in_memory().expect("tenant store should open"));
+    let manifests = Arc::new(MemoryObjectManifests::default());
     let (store, reference, _manifest) = chunked_object(&manifests, key);
     let blob_store: Arc<dyn BlobStore> = store.clone();
-    let meta_store: Arc<dyn ObjectMetaStore + Send + Sync> = manifests;
+    let meta_store: Arc<dyn ObjectManifestStore> = manifests;
     let backend =
         ObjectRwBackend::new(BUCKET, blob_store, meta_store).expect("backend should build");
     (backend, store, reference)
@@ -319,10 +382,10 @@ fn chunked_backend(key: &str) -> (ObjectRwBackend, Arc<TrackingBlobStore>, Vec<u
 /// open. Proven here rather than merely asserted in a doc comment.
 #[test]
 fn whole_layout_object_reads_lazily_through_get_range_no_eager_special_case() {
-    let manifests = Arc::new(TenantStore::create_in_memory().expect("tenant store should open"));
+    let manifests = Arc::new(MemoryObjectManifests::default());
     let store = Arc::new(TrackingBlobStore::default());
     let blob_store: Arc<dyn BlobStore> = store.clone();
-    let meta_store: Arc<dyn ObjectMetaStore + Send + Sync> = manifests;
+    let meta_store: Arc<dyn ObjectManifestStore> = manifests;
     let backend =
         ObjectRwBackend::new(BUCKET, blob_store, meta_store).expect("backend should build");
 

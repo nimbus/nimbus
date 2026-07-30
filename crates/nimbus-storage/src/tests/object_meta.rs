@@ -1,13 +1,11 @@
 use super::*;
-#[cfg(feature = "libsql")]
-use crate::LibsqlReplicaTenantStore;
-#[cfg(feature = "mysql")]
-use crate::MySqlTenantStore;
-#[cfg(feature = "postgres")]
-use crate::PostgresTenantStore;
+use crate::traits::{
+    delete_multipart_upload_direct, delete_object_manifest_direct, put_multipart_upload_direct,
+    put_object_manifest_direct,
+};
 use crate::{
     OBJECT_MANIFEST_TABLE, OBJECT_MULTIPART_TABLE, ObjectChecksums, ObjectChunkRef, ObjectManifest,
-    ObjectManifestAttributes, ObjectMetaStore, ObjectMultipartPart, ObjectMultipartUpload,
+    ObjectManifestAttributes, ObjectMetaRead, ObjectMultipartPart, ObjectMultipartUpload,
 };
 
 const BUCKET: &str = "launch-bucket";
@@ -28,32 +26,15 @@ fn manifest(key: &str, blob_hash: &str) -> ObjectManifest {
     ObjectManifest::whole(BUCKET, key, 12, blob_hash, attributes).expect("manifest should be valid")
 }
 
-fn assert_object_meta_store_impl<T: ObjectMetaStore>() {}
-
-/// Every tenant store compiled into this build implements `ObjectMetaStore`.
-/// The embedded stores are always checked; each remote store is checked when
-/// its provider feature is on, so the coverage claim tracks the build rather
-/// than silently narrowing to the embedded pair.
-#[test]
-fn object_meta_store_trait_covers_all_tenant_stores() {
-    assert_object_meta_store_impl::<TenantStore>();
-    assert_object_meta_store_impl::<SqliteTenantStore>();
-    #[cfg(feature = "postgres")]
-    assert_object_meta_store_impl::<PostgresTenantStore>();
-    #[cfg(feature = "mysql")]
-    assert_object_meta_store_impl::<MySqlTenantStore>();
-    #[cfg(feature = "libsql")]
-    assert_object_meta_store_impl::<LibsqlReplicaTenantStore>();
-}
-
+// Which stores implement `ObjectMetaRead` is pinned at build time next to the
+// impls in `traits::provider_impls`; the tests below cover what those reads
+// return.
 #[test]
 fn object_meta_store_round_trips_manifest_through_redb() {
     let store = TenantStore::create_in_memory().expect("store should open");
     let first = manifest("photos/2026/launch.txt", "hash-a");
 
-    let commit = store
-        .put_object_manifest(&first)
-        .expect("manifest put should commit");
+    let commit = put_object_manifest_direct(&store, &first).expect("manifest put should commit");
     let fetched = store
         .get_object_manifest(&first.bucket, &first.key)
         .expect("manifest get should succeed")
@@ -73,12 +54,9 @@ fn object_meta_store_updates_existing_manifest_atomically_through_redb() {
     second.size = 99;
     second.etag = "\"etag-2\"".to_string();
 
-    store
-        .put_object_manifest(&first)
-        .expect("initial manifest put should commit");
-    let commit = store
-        .put_object_manifest(&second)
-        .expect("manifest update should commit");
+    put_object_manifest_direct(&store, &first).expect("initial manifest put should commit");
+    let commit =
+        put_object_manifest_direct(&store, &second).expect("manifest update should commit");
     let fetched = store
         .get_object_manifest(&second.bucket, &second.key)
         .expect("manifest get should succeed")
@@ -96,9 +74,9 @@ fn object_meta_store_lists_by_prefix_and_deletes_through_redb() {
     let drop = manifest("alpha/drop.txt", "hash-b");
     let other = manifest("beta/other.txt", "hash-c");
 
-    store.put_object_manifest(&keep).unwrap();
-    store.put_object_manifest(&drop).unwrap();
-    store.put_object_manifest(&other).unwrap();
+    put_object_manifest_direct(&store, &keep).unwrap();
+    put_object_manifest_direct(&store, &drop).unwrap();
+    put_object_manifest_direct(&store, &other).unwrap();
 
     let listed = store
         .list_object_manifests(BUCKET, "alpha/", 10)
@@ -111,8 +89,7 @@ fn object_meta_store_lists_by_prefix_and_deletes_through_redb() {
         vec!["alpha/drop.txt", "alpha/keep.txt"]
     );
 
-    let (commit, deleted) = store
-        .delete_object_manifest(&drop.bucket, &drop.key)
+    let (commit, deleted) = delete_object_manifest_direct(&store, &drop.bucket, &drop.key)
         .expect("manifest delete should succeed")
         .expect("manifest should exist");
     assert_eq!(commit.sequence, SequenceNumber(4));
@@ -132,8 +109,8 @@ fn object_meta_store_isolates_buckets_for_the_same_key() {
     let mut second = manifest("shared/key.txt", "hash-b");
     second.bucket = "archive-bucket".to_string();
 
-    store.put_object_manifest(&first).unwrap();
-    store.put_object_manifest(&second).unwrap();
+    put_object_manifest_direct(&store, &first).unwrap();
+    put_object_manifest_direct(&store, &second).unwrap();
 
     assert_eq!(
         store
@@ -168,9 +145,7 @@ fn object_meta_store_persists_through_sqlite() {
 
     {
         let store = SqliteTenantStore::open(&path).expect("sqlite store should open");
-        store
-            .put_object_manifest(&manifest)
-            .expect("manifest put should commit");
+        put_object_manifest_direct(&store, &manifest).expect("manifest put should commit");
     }
 
     let reopened = SqliteTenantStore::open(&path).expect("sqlite store should reopen");
@@ -272,9 +247,7 @@ fn object_meta_store_round_trips_multipart_upload_through_redb() {
         })
         .expect("first part should insert in order");
 
-    let commit = store
-        .put_multipart_upload(&upload)
-        .expect("multipart put should commit");
+    let commit = put_multipart_upload_direct(&store, &upload).expect("multipart put should commit");
     let fetched = store
         .get_multipart_upload("upload-1")
         .expect("multipart get should succeed")
@@ -291,8 +264,7 @@ fn object_meta_store_round_trips_multipart_upload_through_redb() {
         .expect("multipart list should succeed");
     assert_eq!(listed, vec![upload.clone()]);
 
-    let (commit, deleted) = store
-        .delete_multipart_upload("upload-1")
+    let (commit, deleted) = delete_multipart_upload_direct(&store, "upload-1")
         .expect("multipart delete should succeed")
         .expect("multipart upload should exist");
     assert_eq!(commit.sequence, SequenceNumber(2));
