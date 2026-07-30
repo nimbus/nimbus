@@ -20,9 +20,11 @@ CORE_SOURCE_ROOT="${NIMBUS_NETWORK_VERIFY_CORE_SCAN_ROOT:-crates/nimbus-core/src
 SOURCE_CONTRACT_HELPER="scripts/verify-nimbus-network-source-contract.mjs"
 BIND_CENSUS_HELPER="scripts/verify-nimbus-network-bind-census.mjs"
 COMPOSITION_CENSUS_HELPER="scripts/verify-nimbus-network-composition-census.mjs"
+SOVEREIGNTY_TRIPWIRE_HELPER="${NIMBUS_NETWORK_VERIFY_SOVEREIGNTY_HELPER:-scripts/verify-nimbus-network-sovereignty-tripwire.py}"
 COMPOSITION_CENSUS="${NIMBUS_NETWORK_VERIFY_COMPOSITION_CENSUS:-docs/private/plans/proof/nimbus-network-control-plane/nnc4.6f-production-network-authority-census.json}"
 COMPOSITION_CENSUS_SELF_TESTS="scripts/nimbus-network-control-plane/composition-census-self-tests.sh"
 BIND_EXEMPTION_SELF_TESTS="scripts/nimbus-network-control-plane/bind-exemption-self-tests.sh"
+SOVEREIGNTY_TRIPWIRE_SELF_TESTS="scripts/nimbus-network-control-plane/sovereignty-tripwire-self-tests.sh"
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -696,6 +698,20 @@ verify_local_network_composition_census() {
   fi
 }
 
+verify_sovereignty_tripwire_contract() {
+  if [ ! -f "${SOVEREIGNTY_TRIPWIRE_HELPER}" ]; then
+    fail "NNCV016" "sovereignty-tripwire-contract" "missing ${SOVEREIGNTY_TRIPWIRE_HELPER}"
+    return
+  fi
+  error="$(python3 "${SOVEREIGNTY_TRIPWIRE_HELPER}" 2>&1)"
+  status=$?
+  if [ "${status}" -eq 0 ]; then
+    pass "NNCV016" "sovereignty-tripwire-contract"
+  else
+    fail "NNCV016" "sovereignty-tripwire-contract" "${error}"
+  fi
+}
+
 run_self_test() {
   temporary="$(mktemp -d "${TMPDIR:-/tmp}/nimbus-network-verifier-self-test.XXXXXX")" || {
     printf 'SELFTEST FAIL unable to create temporary directory\n'
@@ -778,7 +794,7 @@ NODE
   elif ! grep -q '^FAIL NNCV005 no-duplicate-port-allocation-authority' "${temporary}/legacy-port-authority.out" ||
     grep -q '^PASS NNCV005 no-duplicate-port-allocation-authority' "${temporary}/legacy-port-authority.out" ||
     [ "$(grep -c '^FAIL ' "${temporary}/legacy-port-authority.out")" -ne 1 ] ||
-    ! grep -q '^Summary: 15 passed, 1 failed$' "${temporary}/legacy-port-authority.out"; then
+    ! grep -q '^Summary: 16 passed, 1 failed$' "${temporary}/legacy-port-authority.out"; then
     printf 'SELFTEST FAIL legacy port authority did not produce an exclusive NNCV005 failure\n'
     self_fail=$((self_fail + 1))
   else
@@ -1397,11 +1413,40 @@ NODE
     self_fail=$((self_fail + composition_self_fail))
   fi
 
+  if NIMBUS_NETWORK_VERIFY_SOVEREIGNTY_HELPER="${temporary}/missing-sovereignty-helper.py" \
+    NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+    "${script}" >"${temporary}/missing-sovereignty-helper.out" 2>&1; then
+    printf 'SELFTEST FAIL missing sovereignty helper did not fail closed\n'
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^FAIL NNCV016 sovereignty-tripwire-contract' "${temporary}/missing-sovereignty-helper.out" ||
+    grep -q '^PASS NNCV016 sovereignty-tripwire-contract' "${temporary}/missing-sovereignty-helper.out"; then
+    printf 'SELFTEST FAIL missing sovereignty helper did not fail NNCV016 exclusively\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS missing sovereignty helper fails closed as NNCV016\n'
+  fi
+
+  if [ ! -f "${SOVEREIGNTY_TRIPWIRE_SELF_TESTS}" ]; then
+    printf 'SELFTEST FAIL sovereignty-tripwire self-test helper is missing: %s\n' "${SOVEREIGNTY_TRIPWIRE_SELF_TESTS}"
+    self_fail=$((self_fail + 1))
+  elif ! timeout 120 bash "${SOVEREIGNTY_TRIPWIRE_SELF_TESTS}" \
+    >"${temporary}/sovereignty-tripwire-self-tests.out" 2>&1; then
+    printf 'SELFTEST FAIL sovereignty-tripwire mutation suite failed\n'
+    sed -n '1,200p' "${temporary}/sovereignty-tripwire-self-tests.out"
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^Ran 70 tests' "${temporary}/sovereignty-tripwire-self-tests.out" ||
+    ! grep -q '^OK$' "${temporary}/sovereignty-tripwire-self-tests.out"; then
+    printf 'SELFTEST FAIL sovereignty-tripwire mutation suite count/result is not exact\n'
+    self_fail=$((self_fail + 1))
+  else
+    printf 'SELFTEST PASS sovereignty-tripwire mutation suite passes 70 tests\n'
+  fi
+
   if [ "${self_fail}" -ne 0 ]; then
     printf 'self-test: %d failed\n' "${self_fail}"
     exit 1
   fi
-  printf 'self-test: 60 passed, 0 failed\n'
+  printf 'self-test: 62 passed, 0 failed\n'
 }
 
 if [ "${1:-}" = "--self-test" ]; then
@@ -1432,6 +1477,7 @@ verify_forbidden_network_dependencies_effects
 verify_single_network_definition_owner
 verify_address_is_not_network_identity
 verify_local_network_composition_census
+verify_sovereignty_tripwire_contract
 
 printf '\nSummary: %d passed, %d failed\n' "${PASS_COUNT}" "${FAIL_COUNT}"
 if [ "${FAIL_COUNT}" -ne 0 ]; then
