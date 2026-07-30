@@ -1,16 +1,22 @@
 use std::ops::Bound;
 
+#[cfg(any(feature = "mysql", feature = "postgres"))]
 use nimbus_core::Result;
 use serde_json::Value;
 
 pub type IndexRangeBound<'a> = Bound<&'a Value>;
 
+// Owning and re-borrowing a range bound is only needed by the PostgreSQL and
+// MySQL backends, which must hold the bound across an `async` statement
+// boundary. Every other backend evaluates the bound within one borrow.
+#[cfg(any(feature = "mysql", feature = "postgres"))]
 #[derive(Clone)]
 pub(crate) struct OwnedIndexRangeBounds {
     pub start: Bound<Value>,
     pub end: Bound<Value>,
 }
 
+#[cfg(any(feature = "mysql", feature = "postgres"))]
 pub(crate) fn clone_index_range_bound(bound: IndexRangeBound<'_>) -> Bound<Value> {
     match bound {
         Bound::Included(value) => Bound::Included(value.clone()),
@@ -19,6 +25,7 @@ pub(crate) fn clone_index_range_bound(bound: IndexRangeBound<'_>) -> Bound<Value
     }
 }
 
+#[cfg(any(feature = "mysql", feature = "postgres"))]
 pub(crate) fn borrow_index_range_bound(bound: &Bound<Value>) -> IndexRangeBound<'_> {
     match bound {
         Bound::Included(value) => Bound::Included(value),
@@ -46,6 +53,7 @@ pub(crate) fn index_range_bound_presence(bound: IndexRangeBound<'_>) -> Bound<()
     }
 }
 
+#[cfg(any(feature = "mysql", feature = "postgres"))]
 pub(crate) fn map_owned_index_range_bound<T>(
     bound: Bound<Value>,
     convert: impl FnOnce(&Value) -> Result<T>,

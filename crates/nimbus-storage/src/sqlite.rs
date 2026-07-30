@@ -69,6 +69,10 @@ use self::scheduler::{
     load_due_scheduled_jobs_from_conn, load_scheduled_job_by_id_from_conn,
     load_scheduled_jobs_from_conn,
 };
+// Rebuilding every index from the loaded schema is a libsql replica-cache
+// operation: it runs when the replica re-syncs. No embedded SQLite path needs
+// it.
+#[cfg(feature = "libsql")]
 pub(crate) use self::schema::rebuild_sqlite_indexes_from_loaded_schema;
 use self::schema::{
     create_sqlite_indexes_for_table_schema, drop_sqlite_indexes_for_table_schema,

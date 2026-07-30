@@ -11,6 +11,7 @@ use nimbus_core::{
     Error, IdSource, MonotonicClock, Result, Schema, TableId, TableName, TenantId, Timestamp,
     WallClock,
 };
+#[cfg(feature = "libsql")]
 use nimbus_storage::LibsqlReplicaFreshnessStats;
 use serde::Serialize;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -54,7 +55,7 @@ mod write_rate;
 pub(crate) use self::trigger_candidates::materialize_trigger_invocations_and_sync;
 
 use self::committer_lease::CommitterLeaseLifecycle;
-#[cfg(test)]
+#[cfg(all(test, any(feature = "libsql", feature = "postgres")))]
 pub(crate) use self::committer_lease::ManualLeaseRenewalClock;
 pub(crate) use self::committer_lease::{LeaseRenewalClock, SystemLeaseRenewalClock};
 #[cfg(test)]
@@ -318,6 +319,7 @@ pub struct TenantEngineDiagnosticsSnapshot {
     pub query_planning: QueryPlanningStats,
     pub commit_phases: CommitPhaseMetricsSnapshot,
     pub tenant_write_rate: TenantWriteRateStats,
+    #[cfg(feature = "libsql")]
     pub libsql_replica_freshness: Option<LibsqlReplicaFreshnessStats>,
     pub provider_write_pipeline: Option<nimbus_storage::ProviderWritePipelineDiagnostic>,
 }
@@ -780,6 +782,7 @@ impl TenantRuntime {
             query_planning: self.query_planning_stats(),
             commit_phases,
             tenant_write_rate: self.write_rate.stats(),
+            #[cfg(feature = "libsql")]
             libsql_replica_freshness: self.store.libsql_replica_freshness_stats(),
             provider_write_pipeline: self.store.provider_write_pipeline_diagnostic(),
         }

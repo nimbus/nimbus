@@ -1,8 +1,13 @@
 use nimbus_core::{Result, SequenceNumber, TriggerInvocationRecord};
 
+#[cfg(feature = "libsql")]
+use crate::LibsqlReplicaTenantStore;
+#[cfg(feature = "mysql")]
+use crate::MySqlTenantStore;
+#[cfg(feature = "postgres")]
+use crate::PostgresTenantStore;
 use crate::{
-    CommitterLeaseError, CommitterLeaseResult, LibsqlReplicaTenantStore, MemoryTenantStore,
-    MySqlTenantStore, PostgresTenantStore, SqliteTenantStore, TenantStore,
+    CommitterLeaseError, CommitterLeaseResult, MemoryTenantStore, SqliteTenantStore, TenantStore,
 };
 
 /// Durable lifecycle-transition seam for one trigger invocation.
@@ -44,6 +49,7 @@ macro_rules! impl_embedded_trigger_invocation_transition_store {
     };
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 macro_rules! impl_provider_trigger_invocation_transition_store {
     ($store:ty) => {
         impl TriggerInvocationTransitionStore for $store {
@@ -76,6 +82,9 @@ macro_rules! impl_provider_trigger_invocation_transition_store {
 impl_embedded_trigger_invocation_transition_store!(TenantStore);
 impl_embedded_trigger_invocation_transition_store!(SqliteTenantStore);
 impl_embedded_trigger_invocation_transition_store!(MemoryTenantStore);
+#[cfg(feature = "postgres")]
 impl_provider_trigger_invocation_transition_store!(PostgresTenantStore);
+#[cfg(feature = "mysql")]
 impl_provider_trigger_invocation_transition_store!(MySqlTenantStore);
+#[cfg(feature = "libsql")]
 impl_provider_trigger_invocation_transition_store!(LibsqlReplicaTenantStore);

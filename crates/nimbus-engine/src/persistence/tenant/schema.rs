@@ -13,9 +13,13 @@ impl TenantPersistence {
 
     pub(crate) fn invalidate_schema_cache(&self) {
         match self {
+            #[cfg(feature = "postgres")]
             Self::Postgres(store) => store.invalidate_schema_cache(),
+            #[cfg(feature = "mysql")]
             Self::MySql(store) => store.invalidate_schema_cache(),
-            Self::Redb(_) | Self::Sqlite(_) | Self::LibsqlReplica(_) => {}
+            Self::Redb(_) | Self::Sqlite(_) => {}
+            #[cfg(feature = "libsql")]
+            Self::LibsqlReplica(_) => {}
             #[cfg(any(test, feature = "test-hooks"))]
             Self::Memory(_) => {}
         }

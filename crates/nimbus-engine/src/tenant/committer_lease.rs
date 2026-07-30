@@ -626,14 +626,14 @@ impl TenantRuntime {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, any(feature = "libsql", feature = "postgres")))]
     pub(crate) fn wake_committer_lease_renewal_for_testing(&self) {
         if let Some(lifecycle) = &self.committer_lease {
             lifecycle.wake_for_testing();
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "postgres"))]
     pub(crate) fn confirm_committer_lease_renewal_not_due_for_testing(
         &self,
         timeout: Duration,
@@ -1019,19 +1019,19 @@ impl CommitterLeaseLifecycle {
         stats
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, any(feature = "libsql", feature = "postgres")))]
     pub(crate) fn wake_for_testing(&self) {
         self.wake.notify();
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "postgres"))]
     pub(crate) fn confirm_not_due_for_testing(&self, timeout: Duration) -> bool {
         self.wake.notify_and_wait_until_not_due(timeout)
     }
 }
 
 impl RenewalWake {
-    #[cfg(test)]
+    #[cfg(all(test, any(feature = "libsql", feature = "postgres")))]
     fn notify(&self) {
         let mut generation = self
             .generation
@@ -1041,7 +1041,7 @@ impl RenewalWake {
         self.ready.notify_all();
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "postgres"))]
     fn notify_and_wait_until_not_due(&self, timeout: Duration) -> bool {
         let expected_generation = {
             let mut generation = self

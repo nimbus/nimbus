@@ -82,6 +82,9 @@ impl SqliteTenantStore {
     }
 }
 
+/// Rebuilds every index from the schema already stored in `conn`. Used by the
+/// libsql replica cache after a re-sync; see the re-export in `sqlite.rs`.
+#[cfg(feature = "libsql")]
 pub(crate) fn rebuild_sqlite_indexes_from_loaded_schema(conn: &Connection) -> Result<()> {
     let schema = load_schema_from_conn(conn)?;
     for table_schema in schema.tables.values() {

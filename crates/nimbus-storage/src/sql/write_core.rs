@@ -14,10 +14,12 @@
 //! entirely inside each backend's own `write.rs`, and the commit boundary is
 //! reached only through [`SqlWriteBackend::commit_transaction`].
 
+#[cfg(any(feature = "mysql", feature = "postgres"))]
+use nimbus_core::SequenceNumber;
 use nimbus_core::{
     CommitEntry, Document, DocumentId, DocumentLocator, Error, ResourcePathBinding, Result,
-    SequenceNumber, TableId, TableName, TenantEventKind, TenantEventRecord, TriggerWriteOrigin,
-    WriteOp, WriteOpType,
+    TableId, TableName, TenantEventKind, TenantEventRecord, TriggerWriteOrigin, WriteOp,
+    WriteOpType,
 };
 
 use crate::simulation::FaultPoint;
@@ -49,6 +51,12 @@ pub(crate) trait SqlWriteBackend {
     fn push_commit_write(&mut self, write: WriteOp);
     fn last_commit_write_mut(&mut self) -> Option<&mut WriteOp>;
     fn take_commit_writes(&mut self) -> Vec<WriteOp>;
+    /// Append a tenant event. Reached only through [`sql_record_tenant_event`],
+    /// whose callers (the schema-event helpers and the PostgreSQL/MySQL write
+    /// transactions) are PostgreSQL/MySQL-only, so the method is gated with
+    /// them. libsql buffers its events through
+    /// [`SqlWriteBackend::prepend_tenant_event`] on the shared commit path.
+    #[cfg(any(feature = "mysql", feature = "postgres"))]
     fn push_tenant_event(&mut self, event: TenantEventKind);
     fn prepend_tenant_event(&mut self, event: TenantEventKind);
     fn tenant_events_is_empty(&self) -> bool;
@@ -111,6 +119,7 @@ pub(crate) trait SqlWriteBackend {
 /// transaction per batch, opened and committed by the store — so it supplies
 /// the store-level wrappers in [`crate::sql::store_core::SqlStoreCore`]
 /// directly instead.
+#[cfg(any(feature = "mysql", feature = "postgres"))]
 pub(crate) trait SqlDurableJournalTransaction: SqlWriteBackend {
     fn applied_sequence(&mut self) -> Result<SequenceNumber>;
     fn load_durable_record(
@@ -147,6 +156,7 @@ pub(crate) fn sql_record_commit_write<B: SqlWriteBackend>(backend: &mut B, mut w
 }
 
 /// Buffer a tenant event for the commit entry.
+#[cfg(any(feature = "mysql", feature = "postgres"))]
 pub(crate) fn sql_record_tenant_event<B: SqlWriteBackend>(backend: &mut B, event: TenantEventKind) {
     backend.push_tenant_event(event);
 }
@@ -159,6 +169,7 @@ pub(crate) fn sql_rollback<B: SqlWriteBackend>(backend: &mut B) {
 /// Idempotently apply a contiguous batch of durable journal records, advancing
 /// the applied-sequence watermark. Records at or below the current watermark are
 /// skipped; a gap is a hard error.
+#[cfg(any(feature = "mysql", feature = "postgres"))]
 pub(crate) fn sql_apply_durable_records_batch<B: SqlDurableJournalTransaction>(
     backend: &mut B,
     records: &[TenantEventRecord],

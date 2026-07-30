@@ -22,13 +22,25 @@ workspace = true
 test-hooks = []
 aws-kms = ["nimbus-crypto/aws-kms", "nimbus-storage/aws-kms"]
 
+# Remote storage providers. Each is opt-in at the bottom of the chain
+# (nimbus-storage defaults to no provider) and forwarded upward one crate at a
+# time, exactly like `v8-pointer-compression`. The binary-facing crates default
+# them on, so `cargo build -p nimbus-bin --no-default-features` is the single
+# switch that drops the PostgreSQL, MySQL and libSQL driver stacks. Every
+# intra-chain dependency below sets `default-features = false` so that switch
+# is not silently re-enabled by a sibling edge.
+default = ["libsql", "mysql", "postgres"]
+libsql = ["nimbus-storage/libsql"]
+mysql = ["nimbus-storage/mysql"]
+postgres = ["nimbus-storage/postgres"]
+
 [dependencies]
 arc-swap.workspace = true
 base64.workspace = true
 futures.workspace = true
 nimbus-core = { path = "../nimbus-core" }
 nimbus-crypto = { path = "../nimbus-crypto" }
-nimbus-storage = { path = "../nimbus-storage" }
+nimbus-storage = { path = "../nimbus-storage", default-features = false }
 rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -37,7 +49,6 @@ hkdf.workspace = true
 imbl.workspace = true
 sha2.workspace = true
 tokio.workspace = true
-tokio-postgres.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
 zeroize.workspace = true
@@ -49,10 +60,11 @@ libsql.workspace = true
 loom = "0.7"
 mysql_async.workspace = true
 nimbus-storage = { path = "../nimbus-storage", features = ["test-hooks"] }
-nimbus-testing = { path = "../nimbus-testing" }
+nimbus-testing = { path = "../nimbus-testing", default-features = false }
 proptest = "1"
 serial_test.workspace = true
 tempfile.workspace = true
+tokio-postgres.workspace = true
 
 [[bench]]
 name = "embedded-provider-benchmarks"
@@ -66,17 +78,26 @@ harness = false
 name = "sqlite-write-overhead"
 harness = false
 
+# Drives a live postgres fixture, so the target only exists when that provider
+# is compiled in.
 [[bench]]
 name = "postgres-provider-benchmarks"
 harness = false
+required-features = ["postgres"]
 
+# Drives a live mysql fixture, so the target only exists when that provider
+# is compiled in.
 [[bench]]
 name = "mysql-provider-benchmarks"
 harness = false
+required-features = ["mysql"]
 
+# Drives a live libsql fixture, so the target only exists when that provider
+# is compiled in.
 [[bench]]
 name = "libsql-replica-provider-benchmarks"
 harness = false
+required-features = ["libsql"]
 
 [[bench]]
 name = "materialized-surface-evaluation"

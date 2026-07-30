@@ -11,20 +11,29 @@ use crate::async_storage::{
     EmbeddedRedbProvider, EmbeddedSqliteProvider, OpenedEmbeddedRedbTenant,
     OpenedEmbeddedSqliteTenant,
 };
+#[cfg(feature = "libsql")]
 use crate::libsql::OpenedLibsqlReplicaTenant;
+#[cfg(feature = "mysql")]
 use crate::mysql::OpenedMySqlTenant;
+#[cfg(feature = "postgres")]
 use crate::postgres::OpenedPostgresTenant;
 use crate::retention::RetentionGcConfig;
+#[cfg(any(feature = "mysql", feature = "postgres"))]
+use crate::sql::read_snapshot::SqlReadSnapshot;
 use crate::store::{
     DurableJournalBootstrap, DurableJournalPage, JournalProgress, PointInTimeRestoreArchive,
     PointInTimeRestoreTarget, TenantReadSnapshot,
 };
+#[cfg(feature = "libsql")]
+use crate::{LibsqlReplicaProvider, LibsqlReplicaTenantStore};
 use crate::{
-    LibsqlReplicaProvider, LibsqlReplicaTenantStore, MemoryTenantProvider, MemoryTenantSnapshot,
-    MemoryTenantStore, MySqlProvider, MySqlReadSnapshot, MySqlTenantStore, OpenedMemoryTenant,
-    PostgresProvider, PostgresReadSnapshot, PostgresTenantStore, RedbUsageStorage,
-    SqliteReadSnapshot, SqliteTenantStore, TenantStore,
+    MemoryTenantProvider, MemoryTenantSnapshot, MemoryTenantStore, OpenedMemoryTenant,
+    RedbUsageStorage, SqliteReadSnapshot, SqliteTenantStore, TenantStore,
 };
+#[cfg(feature = "mysql")]
+use crate::{MySqlProvider, MySqlReadSnapshot, MySqlTenantStore};
+#[cfg(feature = "postgres")]
+use crate::{PostgresProvider, PostgresReadSnapshot, PostgresTenantStore};
 
 use super::object_metadata::{
     delete_multipart_upload_for_store, delete_object_manifest_for_store,
@@ -32,13 +41,18 @@ use super::object_metadata::{
     list_multipart_uploads_for_store, list_object_manifests_for_store,
     put_multipart_upload_for_store, put_object_manifest_for_store,
 };
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
+use super::{CommitterLease, CommitterLeaseStore};
 use super::{
-    CommitterLease, CommitterLeaseResult, CommitterLeaseStore, ControlPlaneUsage, DurableJournal,
-    KeyProviderSurface, MaterializedRebuild, ObjectManifest, ObjectMetaStore,
-    ObjectMultipartUpload, ResourcePathScan, ResourcePathSnapshot, SchedulerStore, StorageEngine,
-    TenantLifecycle, TenantPointRead, TenantPointWrite, TenantRangeScan,
+    CommitterLeaseResult, ControlPlaneUsage, DurableJournal, KeyProviderSurface,
+    MaterializedRebuild, ObjectManifest, ObjectMetaStore, ObjectMultipartUpload, ResourcePathScan,
+    ResourcePathSnapshot, SchedulerStore, StorageEngine, TenantLifecycle, TenantPointRead,
+    TenantPointWrite, TenantRangeScan,
 };
 
+// Only the remote providers hold a committer lease; the embedded backends have
+// process-local tenant authority and report `Unsupported`.
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 macro_rules! impl_committer_lease_store {
     ($($ty:ty),+ $(,)?) => {
         $(
@@ -68,11 +82,12 @@ macro_rules! impl_committer_lease_store {
     };
 }
 
-impl_committer_lease_store!(
-    PostgresTenantStore,
-    MySqlTenantStore,
-    LibsqlReplicaTenantStore
-);
+#[cfg(feature = "postgres")]
+impl_committer_lease_store!(PostgresTenantStore);
+#[cfg(feature = "mysql")]
+impl_committer_lease_store!(MySqlTenantStore);
+#[cfg(feature = "libsql")]
+impl_committer_lease_store!(LibsqlReplicaTenantStore);
 
 trait FencedDurableApply {
     fn fenced_append_and_apply_durable_records_batch(
@@ -84,6 +99,7 @@ trait FencedDurableApply {
     ) -> CommitterLeaseResult<()>;
 }
 
+#[cfg(feature = "postgres")]
 impl FencedDurableApply for PostgresTenantStore {
     fn fenced_append_and_apply_durable_records_batch(
         &self,
@@ -102,6 +118,7 @@ impl FencedDurableApply for PostgresTenantStore {
     }
 }
 
+#[cfg(feature = "libsql")]
 impl FencedDurableApply for LibsqlReplicaTenantStore {
     fn fenced_append_and_apply_durable_records_batch(
         &self,
@@ -120,6 +137,7 @@ impl FencedDurableApply for LibsqlReplicaTenantStore {
     }
 }
 
+#[cfg(feature = "mysql")]
 impl FencedDurableApply for MySqlTenantStore {
     fn fenced_append_and_apply_durable_records_batch(
         &self,
@@ -243,8 +261,11 @@ macro_rules! impl_provider_lifecycle {
     };
 }
 
+#[cfg(feature = "postgres")]
 impl_provider_lifecycle!(PostgresProvider, OpenedPostgresTenant);
+#[cfg(feature = "mysql")]
 impl_provider_lifecycle!(MySqlProvider, OpenedMySqlTenant);
+#[cfg(feature = "libsql")]
 impl_provider_lifecycle!(LibsqlReplicaProvider, OpenedLibsqlReplicaTenant);
 impl_provider_lifecycle!(MemoryTenantProvider, OpenedMemoryTenant);
 
@@ -263,18 +284,28 @@ macro_rules! impl_point_read {
 impl_point_read!(
     TenantStore,
     SqliteTenantStore,
-    PostgresTenantStore,
-    MySqlTenantStore,
-    LibsqlReplicaTenantStore,
     MemoryTenantStore,
     TenantReadSnapshot,
     SqliteReadSnapshot,
-    // The PostgreSQL and MySQL stores share one materialized read snapshot
-    // type, so `PostgresReadSnapshot` covers both; listing `MySqlReadSnapshot`
-    // as well would be a duplicate impl for the same type.
-    PostgresReadSnapshot,
     MemoryTenantSnapshot,
 );
+
+#[cfg(feature = "postgres")]
+impl_point_read!(PostgresTenantStore);
+#[cfg(feature = "mysql")]
+impl_point_read!(MySqlTenantStore);
+#[cfg(feature = "libsql")]
+impl_point_read!(LibsqlReplicaTenantStore);
+// The PostgreSQL and MySQL stores share one materialized read snapshot type:
+// `PostgresReadSnapshot` and `MySqlReadSnapshot` are both aliases for
+// `SqlReadSnapshot`. That makes the impl belong to the shared type, not to
+// either provider, so it is written against the neutral name and gated once on
+// "either provider is on". Gating a copy per provider instead would compile
+// two impls of the same trait for the same type whenever both features are
+// enabled, which is a conflicting-implementation error rather than a
+// duplicate-work smell.
+#[cfg(any(feature = "mysql", feature = "postgres"))]
+impl_point_read!(SqlReadSnapshot);
 
 macro_rules! impl_point_write {
       ($($ty:ty),+ $(,)?) => {
@@ -313,14 +344,14 @@ macro_rules! impl_point_write {
       };
   }
 
-impl_point_write!(
-    TenantStore,
-    SqliteTenantStore,
-    PostgresTenantStore,
-    MySqlTenantStore,
-    LibsqlReplicaTenantStore,
-    MemoryTenantStore,
-);
+impl_point_write!(TenantStore, SqliteTenantStore, MemoryTenantStore);
+
+#[cfg(feature = "postgres")]
+impl_point_write!(PostgresTenantStore);
+#[cfg(feature = "mysql")]
+impl_point_write!(MySqlTenantStore);
+#[cfg(feature = "libsql")]
+impl_point_write!(LibsqlReplicaTenantStore);
 
 macro_rules! impl_range_scan {
       ($($ty:ty),+ $(,)?) => {
@@ -441,18 +472,22 @@ macro_rules! impl_range_scan {
 impl_range_scan!(
     TenantStore,
     SqliteTenantStore,
-    PostgresTenantStore,
-    MySqlTenantStore,
-    LibsqlReplicaTenantStore,
     MemoryTenantStore,
     TenantReadSnapshot,
     SqliteReadSnapshot,
-    // The PostgreSQL and MySQL stores share one materialized read snapshot
-    // type, so `PostgresReadSnapshot` covers both; listing `MySqlReadSnapshot`
-    // as well would be a duplicate impl for the same type.
-    PostgresReadSnapshot,
     MemoryTenantSnapshot,
 );
+
+#[cfg(feature = "postgres")]
+impl_range_scan!(PostgresTenantStore);
+#[cfg(feature = "mysql")]
+impl_range_scan!(MySqlTenantStore);
+#[cfg(feature = "libsql")]
+impl_range_scan!(LibsqlReplicaTenantStore);
+// Shared PostgreSQL/MySQL snapshot type; see the note on `impl_point_read!`
+// for why this is gated once on either provider rather than per provider.
+#[cfg(any(feature = "mysql", feature = "postgres"))]
+impl_range_scan!(SqlReadSnapshot);
 
 macro_rules! impl_durable_journal {
       ($($ty:ty),+ $(,)?) => {
@@ -540,14 +575,14 @@ macro_rules! impl_durable_journal {
       };
   }
 
-impl_durable_journal!(
-    TenantStore,
-    SqliteTenantStore,
-    PostgresTenantStore,
-    MySqlTenantStore,
-    LibsqlReplicaTenantStore,
-    MemoryTenantStore,
-);
+impl_durable_journal!(TenantStore, SqliteTenantStore, MemoryTenantStore);
+
+#[cfg(feature = "postgres")]
+impl_durable_journal!(PostgresTenantStore);
+#[cfg(feature = "mysql")]
+impl_durable_journal!(MySqlTenantStore);
+#[cfg(feature = "libsql")]
+impl_durable_journal!(LibsqlReplicaTenantStore);
 
 macro_rules! impl_resource_path_snapshot {
     ($($ty:ty),+ $(,)?) => {
@@ -561,15 +596,12 @@ macro_rules! impl_resource_path_snapshot {
     };
 }
 
-impl_resource_path_snapshot!(
-    TenantReadSnapshot,
-    SqliteReadSnapshot,
-    // The PostgreSQL and MySQL stores share one materialized read snapshot
-    // type, so `PostgresReadSnapshot` covers both; listing `MySqlReadSnapshot`
-    // as well would be a duplicate impl for the same type.
-    PostgresReadSnapshot,
-    MemoryTenantSnapshot,
-);
+impl_resource_path_snapshot!(TenantReadSnapshot, SqliteReadSnapshot, MemoryTenantSnapshot);
+
+// Shared PostgreSQL/MySQL snapshot type; see the note on `impl_point_read!`
+// for why this is gated once on either provider rather than per provider.
+#[cfg(any(feature = "mysql", feature = "postgres"))]
+impl_resource_path_snapshot!(SqlReadSnapshot);
 
 macro_rules! impl_resource_path_scan {
     ($(($ty:ty, $snapshot:ty)),+ $(,)?) => {
@@ -599,13 +631,20 @@ macro_rules! impl_resource_path_scan {
 impl_resource_path_scan!(
     (TenantStore, TenantReadSnapshot),
     (SqliteTenantStore, SqliteReadSnapshot),
-    (PostgresTenantStore, PostgresReadSnapshot),
-    (MySqlTenantStore, MySqlReadSnapshot),
-    // libsql's local read replica cache is backed by a SQLite store, so its
-    // read snapshot is a `SqliteReadSnapshot` rather than a distinct type.
-    (LibsqlReplicaTenantStore, SqliteReadSnapshot),
     (MemoryTenantStore, MemoryTenantSnapshot),
 );
+
+// These are impls on the store types, which stay distinct per provider even
+// though the two snapshot aliases name one type, so each is gated with its own
+// provider.
+#[cfg(feature = "postgres")]
+impl_resource_path_scan!((PostgresTenantStore, PostgresReadSnapshot));
+#[cfg(feature = "mysql")]
+impl_resource_path_scan!((MySqlTenantStore, MySqlReadSnapshot));
+// libsql's local read replica cache is backed by a SQLite store, so its
+// read snapshot is a `SqliteReadSnapshot` rather than a distinct type.
+#[cfg(feature = "libsql")]
+impl_resource_path_scan!((LibsqlReplicaTenantStore, SqliteReadSnapshot));
 
 macro_rules! impl_materialized_rebuild {
     ($($ty:ty),+ $(,)?) => {
@@ -627,14 +666,14 @@ macro_rules! impl_materialized_rebuild {
     };
 }
 
-impl_materialized_rebuild!(
-    TenantStore,
-    SqliteTenantStore,
-    PostgresTenantStore,
-    MySqlTenantStore,
-    LibsqlReplicaTenantStore,
-    MemoryTenantStore,
-);
+impl_materialized_rebuild!(TenantStore, SqliteTenantStore, MemoryTenantStore);
+
+#[cfg(feature = "postgres")]
+impl_materialized_rebuild!(PostgresTenantStore);
+#[cfg(feature = "mysql")]
+impl_materialized_rebuild!(MySqlTenantStore);
+#[cfg(feature = "libsql")]
+impl_materialized_rebuild!(LibsqlReplicaTenantStore);
 
 macro_rules! impl_scheduler_store {
       ($($ty:ty),+ $(,)?) => {
@@ -656,14 +695,14 @@ macro_rules! impl_scheduler_store {
       };
   }
 
-impl_scheduler_store!(
-    TenantStore,
-    SqliteTenantStore,
-    PostgresTenantStore,
-    MySqlTenantStore,
-    LibsqlReplicaTenantStore,
-    MemoryTenantStore,
-);
+impl_scheduler_store!(TenantStore, SqliteTenantStore, MemoryTenantStore);
+
+#[cfg(feature = "postgres")]
+impl_scheduler_store!(PostgresTenantStore);
+#[cfg(feature = "mysql")]
+impl_scheduler_store!(MySqlTenantStore);
+#[cfg(feature = "libsql")]
+impl_scheduler_store!(LibsqlReplicaTenantStore);
 
 macro_rules! impl_object_meta_store {
       ($($ty:ty),+ $(,)?) => {
@@ -732,14 +771,14 @@ macro_rules! impl_object_meta_store {
       };
   }
 
-impl_object_meta_store!(
-    TenantStore,
-    SqliteTenantStore,
-    PostgresTenantStore,
-    MySqlTenantStore,
-    LibsqlReplicaTenantStore,
-    MemoryTenantStore,
-);
+impl_object_meta_store!(TenantStore, SqliteTenantStore, MemoryTenantStore);
+
+#[cfg(feature = "postgres")]
+impl_object_meta_store!(PostgresTenantStore);
+#[cfg(feature = "mysql")]
+impl_object_meta_store!(MySqlTenantStore);
+#[cfg(feature = "libsql")]
+impl_object_meta_store!(LibsqlReplicaTenantStore);
 
 impl ControlPlaneUsage for RedbUsageStorage {}
 

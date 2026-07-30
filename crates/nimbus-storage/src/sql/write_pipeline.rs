@@ -12,12 +12,17 @@
 //! future is polled after the first ordered error. Dropping the runner drops all
 //! remaining futures; the owning write transaction must then roll back.
 
+// The ordered-runner imports follow `run_ordered_bounded`'s gate.
+#[cfg(any(test, feature = "postgres"))]
 use std::collections::VecDeque;
+#[cfg(any(test, feature = "postgres"))]
 use std::future::Future;
+#[cfg(any(test, feature = "postgres"))]
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
+#[cfg(any(test, feature = "postgres"))]
 use futures::stream::{FuturesOrdered, StreamExt};
 use nimbus_core::{Error, Result, SequenceNumber, TenantEventRecord};
 
@@ -27,9 +32,18 @@ use crate::diagnostics::ProviderWritePipelineDiagnostic;
 /// room below MySQL's prepared-statement parameter limit (two parameters per
 /// journal row). Oversize callers fail before issuing SQL.
 pub(crate) const MAX_JOURNAL_RECORDS_PER_STATEMENT: usize = 4_096;
+/// Per-dialect in-flight ceilings. Each is gated to its own provider: they are
+/// tuning constants for one adapter, not shared policy.
+#[cfg(feature = "postgres")]
 pub(crate) const POSTGRES_MAX_IN_FLIGHT_OPERATIONS: usize = 2;
+#[cfg(feature = "mysql")]
 pub(crate) const MYSQL_MAX_IN_FLIGHT_OPERATIONS: usize = 1;
 
+/// The ordered runner and its future type are PostgreSQL's admission policy --
+/// MySQL stays at one operation and issues its statements directly. `test` is
+/// in the gate because this module's own unit tests cover the runner, so they
+/// still build in a MySQL-only configuration.
+#[cfg(any(test, feature = "postgres"))]
 pub(crate) type OrderedSqlFuture<'a> = Pin<Box<dyn Future<Output = Result<()>> + 'a>>;
 
 /// Serialized, contiguous durable-journal input shared by the PostgreSQL and
@@ -190,6 +204,7 @@ impl Drop for InFlightOperation<'_> {
 /// yielding their results in input order. `FuturesOrdered` is essential here:
 /// an error from a later statement may complete early, but cannot replace an
 /// earlier statement's result.
+#[cfg(any(test, feature = "postgres"))]
 pub(crate) async fn run_ordered_bounded<'a>(
     metrics: &'a SqlWritePipelineMetrics,
     max_in_flight: usize,

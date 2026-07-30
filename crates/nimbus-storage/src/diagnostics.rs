@@ -1,9 +1,15 @@
 use nimbus_core::{HistoricalReadErrorKind, Result, Schema, SequenceNumber};
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "libsql")]
+use crate::LibsqlReplicaTenantStore;
+#[cfg(feature = "mysql")]
+use crate::MySqlTenantStore;
+#[cfg(feature = "postgres")]
+use crate::PostgresTenantStore;
 use crate::{
-    CURRENT_STORAGE_FORMAT_VERSION, JournalProgress, LibsqlReplicaTenantStore, MySqlTenantStore,
-    PostgresTenantStore, SqliteTenantStore, StorageFormatVersion, TableBackendLayout, TenantStore,
+    CURRENT_STORAGE_FORMAT_VERSION, JournalProgress, SqliteTenantStore, StorageFormatVersion,
+    TableBackendLayout, TenantStore,
 };
 use crate::{RetentionGcConfig, RetentionGcWatermarks, RetentionPin};
 
@@ -703,6 +709,7 @@ impl SqliteTenantStore {
     }
 }
 
+#[cfg(feature = "postgres")]
 impl PostgresTenantStore {
     pub fn storage_capabilities(&self) -> StorageCapabilities {
         capabilities(
@@ -714,6 +721,7 @@ impl PostgresTenantStore {
     }
 }
 
+#[cfg(feature = "mysql")]
 impl MySqlTenantStore {
     pub fn storage_capabilities(&self) -> StorageCapabilities {
         capabilities(
@@ -725,6 +733,7 @@ impl MySqlTenantStore {
     }
 }
 
+#[cfg(feature = "libsql")]
 impl LibsqlReplicaTenantStore {
     pub fn storage_capabilities(&self) -> StorageCapabilities {
         capabilities(
@@ -738,8 +747,11 @@ impl LibsqlReplicaTenantStore {
 
 impl_storage_health_diagnostic!(TenantStore);
 impl_storage_health_diagnostic!(SqliteTenantStore);
+#[cfg(feature = "postgres")]
 impl_storage_health_diagnostic!(PostgresTenantStore);
+#[cfg(feature = "mysql")]
 impl_storage_health_diagnostic!(MySqlTenantStore);
+#[cfg(feature = "libsql")]
 impl_storage_health_diagnostic!(LibsqlReplicaTenantStore);
 
 #[cfg(test)]

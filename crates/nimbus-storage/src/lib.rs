@@ -10,11 +10,14 @@ pub mod format;
 pub mod index;
 pub mod keys;
 pub mod kv;
+#[cfg(feature = "libsql")]
 pub mod libsql;
 pub mod materializer;
 pub mod memory;
+#[cfg(feature = "mysql")]
 pub mod mysql;
 pub mod object_placement;
+#[cfg(feature = "postgres")]
 pub mod postgres;
 #[cfg(any(test, feature = "test-hooks"))]
 #[doc(hidden)]
@@ -22,10 +25,14 @@ pub mod provider_test_fixtures;
 pub mod query_read;
 mod range_bound;
 pub mod retention;
+// Bridging a blocking call out of an async runtime is only needed by the remote
+// providers; the embedded backends run on the blocking executor already.
+#[cfg(any(test, feature = "libsql", feature = "mysql", feature = "postgres"))]
 mod runtime_bridge;
 pub mod scheduler;
 pub mod schema_store;
 pub mod simulation;
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 pub(crate) mod sql;
 pub mod sqlite;
 pub mod store;
@@ -64,6 +71,7 @@ pub use format::{
     validate_index_version_storage_format_state, validate_storage_format_version,
 };
 pub use kv::{FJALL_KV_ENGINE_NAME, RedbTenantKvStore, fjall_kv_engine_type_marker};
+#[cfg(feature = "libsql")]
 pub use libsql::{
     LibsqlReplicaBarrierPath, LibsqlReplicaFreshnessStats, LibsqlReplicaProvider,
     LibsqlReplicaProviderConfig, LibsqlReplicaRefreshCause, LibsqlReplicaRefreshPath,
@@ -75,6 +83,7 @@ pub use memory::{
     MemoryTenantProvider, MemoryTenantSnapshot, MemoryTenantStorage, MemoryTenantStore,
     MemoryWriteTransaction, OpenedMemoryTenant,
 };
+#[cfg(feature = "mysql")]
 pub use mysql::{
     MySqlProvider, MySqlProviderConfig, MySqlReadSnapshot, MySqlTenantRegistration,
     MySqlTenantStorage, MySqlTenantStore, MySqlWriteTransaction,
@@ -83,6 +92,7 @@ pub use object_placement::{
     ObjectPlacement, ObjectPlacementStore, ObjectStorePlacementTarget,
     ObjectStoreProviderCredentials, ObjectStoreProviderKind, PlacementPolicy,
 };
+#[cfg(feature = "postgres")]
 pub use postgres::{
     PostgresNotificationListener, PostgresProvider, PostgresProviderConfig,
     PostgresProviderNotification, PostgresReadSnapshot, PostgresTenantRegistration,

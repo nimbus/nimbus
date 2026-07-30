@@ -1379,3 +1379,271 @@ defensively in consequence: no behavior was changed anywhere, the one real
 cross-dialect bug found (`has_scheduled_work`) was documented rather than fixed,
 and three targets were declined with published numbers rather than shipped on
 judgment that no second reader could check.
+
+# SUC3.1 Step 5 — Provider Feature Gates
+
+Brief: make each remote storage provider opt-in at compile time, so a build
+that does not use PostgreSQL, MySQL or libSQL does not pay for its driver
+stack. Follow the `v8-pointer-compression` precedent for the forwarding chain,
+keep the binary-facing crates defaulting the providers on, and make an
+uncompiled provider fail loudly rather than fall through to an embedded engine.
+
+Delivered in full. `cargo build -p nimbus-bin --no-default-features` is now the
+single switch that drops all nine provider dependencies, and it is proved
+two-sided below. This is the last implementation step of the campaign.
+
+## What Changed
+
+**The forwarding chain.** `nimbus-storage` defaults to `[]`; each provider is a
+feature that enables only its own `dep:` edges. Seven crates forward it upward
+one hop at a time — `nimbus-storage` → `nimbus-engine` → {`nimbus-system`,
+`nimbus-server`, `nimbus`, `nimbus-testing`} → `nimbus-cli` → `nimbus-bin` —
+and the binary-facing crates default `["libsql", "mysql", "postgres"]` on.
+Every intra-chain dependency edge sets `default-features = false`, which is
+what keeps a sibling edge from silently re-enabling a provider the operator
+turned off.
+
+**The gate tiers.** Under this workspace's `unused = "deny"` a feature gate is
+viral: gating a provider's types cascades into imports, enum variants, match
+arms, trait methods, and the whole test-support graph. Four gate strings cover
+almost everything: all-three (`any(libsql, mysql, postgres)`), the SQL pair
+(`any(mysql, postgres)`) for the journal write pipeline and materialized read
+snapshot that libSQL does not use, the polling pair (`any(libsql, mysql)`)
+because PostgreSQL is LISTEN/NOTIFY-driven, and single-provider gates for
+suite-specific test helpers.
+
+**Loud failure, structurally.** The `CliTenantProvider` and
+`EnginePersistenceConfig` variants stay under all builds — an operator's config
+must be *rejected*, not unparseable. `build_*_from_plan` uses the paired-
+function cfg shape rather than cfg'd match arms, so "an uncompiled provider
+never falls through to Embedded" is true by construction rather than by
+inspection of arm coverage. Each rejection carries the house wording, e.g.
+`postgres support is not enabled in this build; rebuild with the postgres
+feature`.
+
+**Negative-feature pinning tests.** Three test modules under
+`#[cfg(all(test, not(feature = "...")))]` in `engine/bootstrap.rs` — the only
+builds where the contract is observable — assert that a provider config
+returns that exact rejection instead of building an engine.
+
+Reusable shapes, each documented in-tree at first use: paired functions,
+early-return-plus-shared-tail, a shared guard helper (`lock_sqlite_snapshot`)
+to split or-patterns that `#[cfg]` cannot halve, explicit `let _ = (args);`
+under `cfg(not(any(provider)))`, and `required-features` for whole bench
+targets.
+
+## LoC Delta
+
+| Scope | Delta |
+| --- | --- |
+| `crates/*/src/*` | 52 files, **+1168 −293** |
+| Manifests (`Cargo.toml`, `.config/hakari.toml`) | 11 files, **+169 −47** |
+| `Cargo.lock` | +3 −10 |
+
+The source delta is overwhelmingly `#[cfg]` attributes and the comments that
+explain each non-obvious tier choice, not logic.
+
+## Four Findings
+
+### 1. The hakari exclusion had to cover everything below the gate, not just storage
+
+The approved ruling was to add `nimbus-storage` to `[traversal-excludes]
+workspace-members` so the workspace-hack crate stops folding `hyper` and
+`reqwest` back into a provider-free build. **That was not sufficient.** With
+storage excluded, all three of `hyper`, `reqwest` and `tower-service` were
+still present, reaching storage through `workspace-hack → nimbus-crypto →
+nimbus-storage`.
+
+Resolution: exclude `nimbus-crypto` as well — it is the only other workspace
+crate beneath `nimbus-storage` — and remove its `workspace-hack` dependency
+line. `.config/hakari.toml` records that `nimbus-crypto` is listed *for the
+storage reason, not one of its own*, so a future reader does not "clean up" an
+exclusion that looks unmotivated. The general lesson is in that comment: a
+traversal exclusion has to cover every workspace member below the gate, because
+`[traversal-excludes]` removes the edge only for the crate named.
+
+`cargo hakari manage-deps --dry-run` also wanted to add an unrelated
+`nimbus-workload-identity` edge — pre-existing drift, out of scope. The
+`nimbus-crypto` removal was therefore made by hand rather than by running
+`manage-deps`. CI runs only `cargo hakari generate --diff` (ci.yml:807), which
+is green.
+
+### 2. A no-default build passing does not mean the gates are right
+
+Every gate initially written as the coarse all-three
+`any(libsql, mysql, postgres)` compiled cleanly both with all providers on and
+with all providers off. The three **single-provider** combos are what exposed
+the over-coarse gates: `nimbus-engine[libsql]` 14 errors,
+`nimbus-engine[mysql]` 17, `nimbus-engine[postgres]` 2,
+`nimbus-system[mysql]` 3, `nimbus-system[postgres]` 3.
+
+The cause is that a coarse gate compiles a helper in a build whose only
+consumer is a different provider's suite, and `-D unused` rejects it. Roughly
+18 items were narrowed to their true consumer set by tabulating "flagged unused
+in which feature builds" against the narrowest gate that satisfies all of them.
+
+Resolution: the six single-provider combos are now part of the standing battery
+for this crate family. `#[allow(dead_code)]` was rejected throughout — it is
+warning suppression, which CLAUDE.md forbids, and it would have hidden exactly
+the signal that produced the correct gates. The resulting per-provider gates
+are precise but brittle, in that they encode which suite consumes which helper
+today; the compiler enforces the correction when that changes, and under
+`-D unused` there is no non-suppressing alternative.
+
+### 3. `cargo nextest run -p nimbus-storage` is no longer a full-suite run
+
+Because `nimbus-storage`'s default is now `[]`, a bare `-p nimbus-storage`
+invocation compiles no provider suites and runs **297 of 439** tests — silently,
+and reporting green. The full 439 requires
+`--features libsql,mysql,postgres`.
+
+This does not affect `make test-rust-workspace`, which passes `--workspace`
+where feature unification keeps the providers on. It affects a developer
+reaching for the focused crate command, which is the common case when iterating
+on storage.
+
+Resolution: recorded here and in the verification table below, where both
+counts appear side by side so the difference is visible rather than inferred.
+This is the same class of trap as the repo rule "a skipped provider test is not
+a passing one" — the count moves, nothing goes red.
+
+### 4. "sqlite untouched" does not hold — three files were necessarily gated
+
+The brief's battery included "sqlite untouched". It is **not** satisfied, and
+the difference is reported rather than presented as a pass:
+
+| File | Change |
+| --- | --- |
+| `crates/nimbus-storage/src/sqlite.rs:72` | `#[cfg(feature = "libsql")]` on the `rebuild_sqlite_indexes_from_loaded_schema` re-export |
+| `crates/nimbus-storage/src/sqlite/schema.rs:87` | `#[cfg(feature = "libsql")]` on `rebuild_sqlite_indexes_from_loaded_schema` |
+| `crates/nimbus-storage/src/sqlite/journal.rs:287` | `#[cfg(any(test, feature = "libsql"))]` on `reconcile_replica_durable_records_batch` |
+
+The cause is that these three items are libSQL **replica-cache** functionality
+that happens to live in the sqlite module: rebuilding indexes after a re-sync,
+and reconciling the local cache against a remote head. The embedded SQLite
+provider has no remote head and never calls them, so in a libsql-free build
+they are dead code and `-D unused` rejects them.
+
+`git diff --numstat HEAD -- 'crates/nimbus-storage/src/sqlite*'` is
+`4/0`, `6/0`, `3/0` — **13 lines added, zero removed**, all of them `#[cfg]`
+attributes and the doc comments explaining why. No embedded SQLite logic,
+signature or behavior changed. The honest statement is "sqlite behavior
+untouched; three attributes added", not "sqlite untouched".
+
+`#[allow(dead_code)]` was considered and rejected here for the same reason as
+finding 2. Moving the three items out of the sqlite module into a libsql-owned
+one is the cleaner long-term shape, but it is a structural move with no
+behavior content and was out of scope for a gating step.
+
+## Verification
+
+All lanes re-run against the exact committed tree. Provider lanes ran against
+the three live fixture containers
+(`nimbus-external-provider-tests-{postgres,mysql,libsql}-1`, all
+`Up (healthy)`) with `NIMBUS_REQUIRE_EXTERNAL_PROVIDER_FIXTURES=1` and the
+fixture URLs exported, so a missing fixture panics rather than skipping.
+
+| Lane | Result |
+| --- | --- |
+| `cargo fmt --all --check` | RC=0 |
+| `cargo clippy --workspace --all-targets -- -D warnings` | RC=0 — only third-party `brotli`/`brotli-decompressor` warnings, zero first-party |
+| `cargo clippy -p <crate> --no-default-features --all-targets -- -D warnings`, all 8 chain crates | RC=0 each |
+| `cargo hakari generate --diff` | RC=0 |
+| `make deny` | RC=0 — advisories ok, bans ok, licenses ok, sources ok |
+| `make verify-third-party-attribution` | RC=0 — pass, 4 vendored patches checked |
+| **Live fixtures** — `nimbus-storage --features libsql,mysql,postgres` | **439 run, 439 passed**, 2 skipped (17.7s) |
+| **Live fixtures** — `nimbus-engine` (default build, providers on) | 663 run, **662 passed**, 1 failed, 5 skipped (243.7s) — the ticketed flake, below |
+| **Live fixtures** — `nimbus-system` | **72 run, 72 passed** (39.9s) |
+| **Provider-free** — `nimbus-storage --no-default-features` | **297 run, 297 passed**, 2 skipped — see finding 3 |
+| **Provider-free** — `nimbus-engine --no-default-features` | 596 run, **595 passed**, 1 failed → **596/596 on retry** — same ticketed flake |
+| **Provider-free** — `nimbus-system --no-default-features` | **69 run, 69 passed** |
+| **Provider-free** — `nimbus-cli --no-default-features` | **856 run, 856 passed** |
+| Single-provider combos, `nimbus-{engine,system}` × {libsql, mysql, postgres} | **6/6 RC=0**, zero first-party warnings |
+| Negative-feature pinning tests | **3 run, 3 passed**, 598 skipped |
+| U4 gate (`-E 'test(commit_path_ownership)'`) | **2 run, 2 passed**, 439 skipped — untouched, per ruling 6 |
+
+Every command run with `set -o pipefail`, redirected to a log file, and its
+status read directly rather than through a pipe.
+
+### The nine-dependency absence proof is two-sided
+
+`cargo tree -p nimbus-storage --edges normal`, counting top-level occurrences:
+
+| Dependency | `--no-default-features` | `--features libsql,mysql,postgres` |
+| --- | --- | --- |
+| `deadpool-postgres` | 0 | 1 |
+| `hyper` | 0 | 5 |
+| `libsql` | 0 | 1 |
+| `mysql_async` | 0 | 1 |
+| `native-tls` | 0 | 4 |
+| `reqwest` | 0 | 1 |
+| `tokio-native-tls` | 0 | 3 |
+| `tokio-postgres` | 0 | 2 |
+| `tower-service` | 0 | 8 |
+
+The right-hand column is the point: a table of nine zeros proves nothing on its
+own, since a mis-scoped `cargo tree` invocation also produces nine zeros. An
+earlier attempt scoped the proof to `nimbus-bin --no-default-features` and
+showed all nine *present*, because sibling adapter crates depend on
+`nimbus-engine` with default features. The proof belongs at `nimbus-storage`,
+where the nine are declared as optional dependencies.
+
+`tokio-postgres` additionally moved to `[dev-dependencies]` in `nimbus-engine`
+per ruling 3. Cargo does not support optional dev-dependencies, so
+`nimbus-system`'s plain dev-edges on `libsql`, `mysql_async` and
+`tokio-postgres` remain in test builds regardless of features; the gate story
+is about the production graph, which `--edges normal` is what measures.
+
+### The one failure is the already-ticketed arm-selection flake
+
+`tests::mutation_journal::arm_selection::opaque_internal_job_cannot_overtake_ordered_publisher`
+failed once in the default-build engine run and once in the provider-free run.
+This is the pre-existing flake bisected to base in step 1 and re-confirmed in
+step 3 (see "The arm-selection failure is a pre-existing flake, proven on
+base"). It is not a Step 5 regression, and three independent facts say so:
+
+1. The file is untouched — `git diff --stat HEAD -- crates/nimbus-engine/src/tests/mutation_journal/` is empty.
+2. It fails in a **provider-free** build, where none of this step's gates compile any provider code at all.
+3. Re-running the provider-free suite gave **596/596**.
+
+Soaked in isolation, 10 runs: **pass=9 fail=1**. That is a higher reproduction
+rate than the step-3 soak, which failed to reproduce it in 10 attempts and was
+read then as suite-load sensitivity. It reproducing under isolation is new
+information for the existing ticket: the extra journal record is not purely a
+load artifact.
+
+### The 103-failure scare, and why it was the design working
+
+A first attempt at the storage lane reported **103 failures** in 439. Every
+failure completed in 0.009–0.067s and panicked at
+`provider_test_fixtures.rs:287` with `libSQL storage provider tests require the
+pinned shared fixture; missing non-empty environment variable(s):
+NIMBUS_LIBSQL_URL, NIMBUS_LIBSQL_ADMIN_URL`.
+
+Cause: the invocation was made in a fresh shell without the fixture URLs
+exported. The containers were up and healthy the whole time; each `Bash` call
+in this session starts a new environment, and the exports from the earlier step
+did not survive. Re-running with the fixture environment sourced gives
+439/439.
+
+This is worth recording as a positive result rather than an embarrassment: the
+fixture helper is designed so that a missing fixture is a **loud panic** rather
+than a silent skip, and that is exactly what it did. Under the older
+skip-on-missing behavior the same mistake would have reported green on 336
+tests and produced fraudulent provider evidence.
+
+## Step 5 — Reviewer Outage Disclosure
+
+The structured reviewer could not run for this step, as in steps 3 and 4. The
+Codex engine remains in account credit exhaustion (usage limit, resets
+2026-08-04) and the Claude engine still fails on this host with the
+reviewer-sandbox proxy-CA trust error. Per the review-outage policy this is an
+outage, not a verdict.
+
+The verification bar above stands in for it, and the step was executed to suit:
+the gate assignment was compiler-driven rather than judgment-driven at every
+point (rustc names each item; the narrowest gate that satisfies all six feature
+configurations wins), the dependency-removal claim is proved two-sided rather
+than asserted, and the one place where the brief's own acceptance criterion was
+not met — "sqlite untouched" — is reported as a finding with the exact diff
+rather than quietly satisfied by an `#[allow]`.

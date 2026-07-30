@@ -5,8 +5,11 @@ impl TenantPersistence {
         match self {
             Self::Redb(store) => store.check_fault(point),
             Self::Sqlite(store) => store.check_fault(point),
+            #[cfg(feature = "libsql")]
             Self::LibsqlReplica(store) => store.check_fault(point),
+            #[cfg(feature = "postgres")]
             Self::Postgres(store) => store.check_fault(point),
+            #[cfg(feature = "mysql")]
             Self::MySql(store) => store.check_fault(point),
             #[cfg(any(test, feature = "test-hooks"))]
             Self::Memory(store) => store.check_fault(point),
@@ -19,12 +22,15 @@ impl TenantPersistence {
             Self::Sqlite(store) => store
                 .read_snapshot()
                 .map(|snapshot| TenantPersistenceSnapshot::Sqlite(Arc::new(Mutex::new(snapshot)))),
+            #[cfg(feature = "libsql")]
             Self::LibsqlReplica(store) => store.read_snapshot().map(|snapshot| {
                 TenantPersistenceSnapshot::LibsqlReplica(Arc::new(Mutex::new(snapshot)))
             }),
+            #[cfg(feature = "postgres")]
             Self::Postgres(store) => store
                 .read_snapshot()
                 .map(TenantPersistenceSnapshot::Postgres),
+            #[cfg(feature = "mysql")]
             Self::MySql(store) => store.read_snapshot().map(TenantPersistenceSnapshot::MySql),
             #[cfg(any(test, feature = "test-hooks"))]
             Self::Memory(store) => store.read_snapshot().map(TenantPersistenceSnapshot::Memory),
@@ -39,10 +45,17 @@ impl TenantPersistence {
         match_tenant_persistence!(self, |store| store.table_id(table))
     }
 
+    /// Gated with its provider: the returned statistics type is part of the
+    /// libSQL adapter, so the accessor exists only when that adapter is built.
+    #[cfg(feature = "libsql")]
     pub(crate) fn libsql_replica_freshness_stats(&self) -> Option<LibsqlReplicaFreshnessStats> {
         match self {
             Self::LibsqlReplica(store) => store.replica_freshness_stats().ok(),
-            Self::Redb(_) | Self::Sqlite(_) | Self::Postgres(_) | Self::MySql(_) => None,
+            Self::Redb(_) | Self::Sqlite(_) => None,
+            #[cfg(feature = "postgres")]
+            Self::Postgres(_) => None,
+            #[cfg(feature = "mysql")]
+            Self::MySql(_) => None,
             #[cfg(any(test, feature = "test-hooks"))]
             Self::Memory(_) => None,
         }

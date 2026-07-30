@@ -8,14 +8,19 @@ use nimbus_core::{
 };
 #[cfg(any(test, feature = "test-hooks"))]
 use nimbus_storage::MemoryTenantStore;
+#[cfg(feature = "mysql")]
+use nimbus_storage::MySqlTenantStore;
+#[cfg(feature = "postgres")]
+use nimbus_storage::PostgresTenantStore;
 use nimbus_storage::{
     ChangefeedBootstrap, ChangefeedCursor, ChangefeedPage, DurableJournalBootstrap,
-    DurableJournalPage, FaultPoint, JournalProgress, LibsqlReplicaFreshnessStats,
-    LibsqlReplicaTenantStore, MySqlTenantStore, PointInTimeRestoreArchive,
-    PointInTimeRestoreTarget, PostgresTenantStore, ProviderWritePipelineDiagnostic,
-    ResolvedScheduleOp, RetentionGcConfig, SchedulerWrite, SchedulerWriteOutcomeStore,
-    SchedulerWriteResult, SchedulerWriteStore, SqliteTenantStore, TenantStore as RedbTenantStore,
+    DurableJournalPage, FaultPoint, JournalProgress, PointInTimeRestoreArchive,
+    PointInTimeRestoreTarget, ProviderWritePipelineDiagnostic, ResolvedScheduleOp,
+    RetentionGcConfig, SchedulerWrite, SchedulerWriteOutcomeStore, SchedulerWriteResult,
+    SchedulerWriteStore, SqliteTenantStore, TenantStore as RedbTenantStore,
 };
+#[cfg(feature = "libsql")]
+use nimbus_storage::{LibsqlReplicaFreshnessStats, LibsqlReplicaTenantStore};
 
 use super::{PersistenceProvider, TenantPersistenceExecutor, TenantPersistenceSnapshot};
 
@@ -23,8 +28,11 @@ use super::{PersistenceProvider, TenantPersistenceExecutor, TenantPersistenceSna
 pub(crate) enum TenantPersistence {
     Redb(Arc<RedbTenantStore>),
     Sqlite(Arc<SqliteTenantStore>),
+    #[cfg(feature = "libsql")]
     LibsqlReplica(Arc<LibsqlReplicaTenantStore>),
+    #[cfg(feature = "postgres")]
     Postgres(Arc<PostgresTenantStore>),
+    #[cfg(feature = "mysql")]
     MySql(Arc<MySqlTenantStore>),
     #[cfg(any(test, feature = "test-hooks"))]
     Memory(Arc<MemoryTenantStore>),
@@ -49,8 +57,13 @@ impl TenantPersistence {
     /// session, so their drained state requires no additional step.
     pub(crate) async fn retire_after_drain(&self) -> Result<()> {
         match self {
+            #[cfg(feature = "libsql")]
             Self::LibsqlReplica(store) => store.retire_after_drain().await,
-            Self::Redb(_) | Self::Sqlite(_) | Self::Postgres(_) | Self::MySql(_) => Ok(()),
+            Self::Redb(_) | Self::Sqlite(_) => Ok(()),
+            #[cfg(feature = "postgres")]
+            Self::Postgres(_) => Ok(()),
+            #[cfg(feature = "mysql")]
+            Self::MySql(_) => Ok(()),
             #[cfg(any(test, feature = "test-hooks"))]
             Self::Memory(_) => Ok(()),
         }
@@ -60,9 +73,13 @@ impl TenantPersistence {
         &self,
     ) -> Option<ProviderWritePipelineDiagnostic> {
         match self {
+            #[cfg(feature = "postgres")]
             Self::Postgres(store) => Some(store.write_pipeline_diagnostic()),
+            #[cfg(feature = "mysql")]
             Self::MySql(store) => Some(store.write_pipeline_diagnostic()),
-            Self::Redb(_) | Self::Sqlite(_) | Self::LibsqlReplica(_) => None,
+            Self::Redb(_) | Self::Sqlite(_) => None,
+            #[cfg(feature = "libsql")]
+            Self::LibsqlReplica(_) => None,
             #[cfg(any(test, feature = "test-hooks"))]
             Self::Memory(_) => None,
         }
@@ -79,12 +96,15 @@ impl TenantPersistence {
             (PersistenceProvider::Sqlite(provider), Self::Sqlite(store)) => Ok(
                 TenantPersistenceExecutor::Sqlite(provider.read_storage_for_store(store)),
             ),
+            #[cfg(feature = "libsql")]
             (PersistenceProvider::LibsqlReplica(provider), Self::LibsqlReplica(store)) => Ok(
                 TenantPersistenceExecutor::LibsqlReplica(provider.read_storage_for_store(store)),
             ),
+            #[cfg(feature = "postgres")]
             (PersistenceProvider::Postgres(provider), Self::Postgres(store)) => Ok(
                 TenantPersistenceExecutor::Postgres(provider.read_storage_for_store(store)),
             ),
+            #[cfg(feature = "mysql")]
             (PersistenceProvider::MySql(provider), Self::MySql(store)) => Ok(
                 TenantPersistenceExecutor::MySql(provider.read_storage_for_store(store)),
             ),

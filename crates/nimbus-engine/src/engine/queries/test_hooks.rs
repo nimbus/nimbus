@@ -74,7 +74,7 @@ impl Engine {
         Ok(())
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, any(feature = "libsql", feature = "postgres")))]
     pub(crate) fn wake_committer_lease_renewal_for_testing(
         &self,
         tenant_id: &TenantId,
@@ -84,7 +84,7 @@ impl Engine {
         })
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "postgres"))]
     pub(crate) fn confirm_committer_lease_renewal_not_due_for_testing(
         &self,
         tenant_id: &TenantId,
@@ -95,7 +95,7 @@ impl Engine {
         })
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, any(feature = "libsql", feature = "mysql", feature = "postgres")))]
     pub(crate) fn acquire_committer_lease_for_testing(&self, tenant_id: &TenantId) -> Result<()> {
         let runtime = self.get_existing_tenant(tenant_id)?;
         runtime.ensure_committer_lease_for_assignment()

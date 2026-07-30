@@ -2,12 +2,15 @@ use std::future::Future;
 use std::sync::Arc;
 
 use nimbus_core::Result;
+#[cfg(feature = "libsql")]
+use nimbus_storage::LibsqlReplicaTenantStorage;
 #[cfg(any(test, feature = "test-hooks"))]
 use nimbus_storage::MemoryTenantStorage;
-use nimbus_storage::{
-    LibsqlReplicaTenantStorage, MySqlTenantStorage, PostgresTenantStorage, RedbTenantStorage,
-    SqliteTenantStorage, TenantReadStorage,
-};
+#[cfg(feature = "mysql")]
+use nimbus_storage::MySqlTenantStorage;
+#[cfg(feature = "postgres")]
+use nimbus_storage::PostgresTenantStorage;
+use nimbus_storage::{RedbTenantStorage, SqliteTenantStorage, TenantReadStorage};
 
 use super::TenantPersistence;
 
@@ -15,8 +18,11 @@ use super::TenantPersistence;
 pub(crate) enum TenantPersistenceExecutor {
     Redb(Arc<RedbTenantStorage>),
     Sqlite(Arc<SqliteTenantStorage>),
+    #[cfg(feature = "libsql")]
     LibsqlReplica(Arc<LibsqlReplicaTenantStorage>),
+    #[cfg(feature = "postgres")]
     Postgres(Arc<PostgresTenantStorage>),
+    #[cfg(feature = "mysql")]
     MySql(Arc<MySqlTenantStorage>),
     #[cfg(any(test, feature = "test-hooks"))]
     Memory(Arc<MemoryTenantStorage>),

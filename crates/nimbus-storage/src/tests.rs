@@ -18,26 +18,35 @@ pub(crate) use tokio::time::{Duration, timeout};
 
 pub(crate) use crate::keys::{document_key, prefix_end, table_prefix};
 pub(crate) use crate::{
-    CommitterLeaseError, CommitterLeaseStore, DeterministicHarness, DurableJournal, FaultInjector,
-    FaultOccurrence, FaultPoint, GeneratedTaskHistory, GeneratedTaskHistorySeedCase,
-    GeneratedTaskRecord, HardDeleteDecision, LibsqlReplicaProvider, LibsqlReplicaProviderConfig,
-    MemoryTenantStore, MySqlProvider, MySqlProviderConfig, PostgresProvider,
-    PostgresProviderConfig, RedbTenantStorage, RestartBoundary, RetentionFloor,
-    RetentionParticipant, ScriptedRestartSchedule, SeededFaultInjector, ShadowMaterializer,
-    ShadowMaterializerConfig, ShadowMaterializerManifest, SqliteTenantStorage, SqliteTenantStore,
-    TenantPointRead, TenantReadStorage, TenantStore, TenantWriteOutcome, TenantWriteStorage,
-    UsageStore, VerificationHarnessMode, replay_generated_task_history,
-    selected_generated_task_history_seed_corpus,
+    DeterministicHarness, FaultInjector, FaultOccurrence, FaultPoint, GeneratedTaskHistory,
+    GeneratedTaskHistorySeedCase, GeneratedTaskRecord, HardDeleteDecision, MemoryTenantStore,
+    RedbTenantStorage, RestartBoundary, RetentionFloor, RetentionParticipant,
+    ScriptedRestartSchedule, SeededFaultInjector, ShadowMaterializer, ShadowMaterializerConfig,
+    ShadowMaterializerManifest, SqliteTenantStorage, SqliteTenantStore, TenantReadStorage,
+    TenantStore, TenantWriteOutcome, TenantWriteStorage, UsageStore, VerificationHarnessMode,
+    replay_generated_task_history, selected_generated_task_history_seed_corpus,
 };
+// Reached only from the provider-gated exercisers below.
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
+pub(crate) use crate::{CommitterLeaseError, CommitterLeaseStore, DurableJournal, TenantPointRead};
+#[cfg(feature = "libsql")]
+pub(crate) use crate::{LibsqlReplicaProvider, LibsqlReplicaProviderConfig};
+#[cfg(feature = "mysql")]
+pub(crate) use crate::{MySqlProvider, MySqlProviderConfig};
+#[cfg(feature = "postgres")]
+pub(crate) use crate::{PostgresProvider, PostgresProviderConfig};
 
 mod async_faults;
 mod commit_path_ownership;
 mod crud_and_journal;
 mod generated_history;
+#[cfg(feature = "libsql")]
 mod libsql_provider;
 mod memory_conformance;
+#[cfg(feature = "mysql")]
 mod mysql_provider;
 mod object_meta;
+#[cfg(feature = "postgres")]
 mod postgres_provider;
 mod recovery;
 mod sqlite_foundation;
@@ -46,6 +55,10 @@ mod usage_store;
 
 const BLOCKING_TEST_RELEASE_TIMEOUT: Duration = Duration::from_secs(60);
 
+// Committer-lease and fenced-durable-apply exercisers shared by the three
+// remote-provider test modules. The embedded stores cover these behaviours
+// through their own suites, so the exercisers follow the provider gates.
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 pub(crate) fn exercise_committer_lease_transitions<S>(store: &S)
 where
     S: CommitterLeaseStore,
@@ -104,6 +117,7 @@ where
     );
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 pub(crate) fn exercise_concurrent_committer_lease_acquire<S>(store: S)
 where
     S: CommitterLeaseStore + Clone + Send + Sync + 'static,
@@ -144,6 +158,7 @@ where
     );
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 pub(crate) fn exercise_committer_lease_takeover_after_expiry_under_concurrency<S>(store: S)
 where
     S: CommitterLeaseStore + Clone + Send + Sync + 'static,
@@ -193,6 +208,7 @@ where
     );
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 fn fenced_insert_record(sequence: u64, document: &Document) -> TenantEventRecord {
     TenantEventRecord::new(
         SequenceNumber(sequence),
@@ -212,6 +228,7 @@ fn fenced_insert_record(sequence: u64, document: &Document) -> TenantEventRecord
     .expect("fenced insert record should build")
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 fn assert_fenced(result: crate::CommitterLeaseResult<()>, owner_id: &str, epoch: u64) {
     assert!(matches!(
         result,
@@ -222,6 +239,7 @@ fn assert_fenced(result: crate::CommitterLeaseResult<()>, owner_id: &str, epoch:
     ));
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 pub(crate) fn exercise_fenced_durable_apply_happy_path<S>(store: &S, table_name: &str)
 where
     S: CommitterLeaseStore + DurableJournal + TenantPointRead,
@@ -258,6 +276,7 @@ where
     );
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 pub(crate) fn exercise_fenced_durable_apply_total_rollback<S>(store: &S, table_name: &str)
 where
     S: CommitterLeaseStore + DurableJournal + TenantPointRead,
@@ -293,6 +312,7 @@ where
     assert_eq!(persisted.durable_sequence, SequenceNumber(0));
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 pub(crate) fn exercise_fenced_durable_apply_expired<S>(store: &S, table_name: &str)
 where
     S: CommitterLeaseStore + DurableJournal + TenantPointRead,
@@ -320,6 +340,7 @@ where
     assert_eq!(store.get(&document.table, &document.id).unwrap(), None);
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 pub(crate) fn exercise_fenced_durable_apply_sequence_gap<S>(store: &S, table_name: &str)
 where
     S: CommitterLeaseStore + DurableJournal + TenantPointRead,
@@ -347,6 +368,7 @@ where
     assert_eq!(store.get(&document.table, &document.id).unwrap(), None);
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 pub(crate) fn exercise_fenced_durable_apply_prefix_guard<S>(store: &S, table_name: &str)
 where
     S: CommitterLeaseStore + DurableJournal + TenantPointRead,
@@ -391,6 +413,7 @@ where
     );
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 pub(crate) use crate::provider_test_fixtures::{
     ExternalProviderFixtureMode, external_provider_fixture_mode,
 };

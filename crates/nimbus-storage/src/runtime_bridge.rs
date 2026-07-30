@@ -25,6 +25,10 @@ where
     task()
 }
 
+/// Only the libsql replica needs the local (non-`Send`) bridge; the PostgreSQL
+/// and MySQL stores always cross a thread boundary and use the `Send` form
+/// above.
+#[cfg(any(test, feature = "libsql"))]
 pub(crate) fn bridge_tokio_runtime_local<T, F>(
     handle: &TokioRuntimeHandle,
     current_thread_runtime_message: &'static str,

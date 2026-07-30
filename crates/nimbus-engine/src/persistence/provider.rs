@@ -1,28 +1,42 @@
 use std::sync::Arc;
 
 use nimbus_core::{Result, TenantId};
+#[cfg(feature = "libsql")]
+use nimbus_storage::LibsqlReplicaProvider;
+#[cfg(feature = "mysql")]
+use nimbus_storage::MySqlProvider;
+#[cfg(feature = "postgres")]
+use nimbus_storage::PostgresProvider;
 use nimbus_storage::async_storage::{OpenedEmbeddedRedbTenant, OpenedEmbeddedSqliteTenant};
+#[cfg(feature = "libsql")]
 use nimbus_storage::libsql::OpenedLibsqlReplicaTenant;
+#[cfg(feature = "mysql")]
 use nimbus_storage::mysql::OpenedMySqlTenant;
+#[cfg(feature = "postgres")]
 use nimbus_storage::postgres::OpenedPostgresTenant;
-use nimbus_storage::{
-    EmbeddedRedbProvider, EmbeddedSqliteProvider, LibsqlReplicaProvider, MySqlProvider,
-    PostgresProvider,
-};
+use nimbus_storage::{EmbeddedRedbProvider, EmbeddedSqliteProvider};
 #[cfg(any(test, feature = "test-hooks"))]
 use nimbus_storage::{MemoryTenantProvider, OpenedMemoryTenant};
 
-use super::{
-    LibsqlReplicaRuntimeHooks, MySqlRuntimeHooks, PostgresRuntimeHooks, RuntimeHooks,
-    TenantPersistence, TenantPersistenceExecutor,
-};
+#[cfg(feature = "libsql")]
+use super::LibsqlReplicaRuntimeHooks;
+#[cfg(feature = "mysql")]
+use super::MySqlRuntimeHooks;
+#[cfg(feature = "postgres")]
+use super::PostgresRuntimeHooks;
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
+use super::RuntimeHooks;
+use super::{TenantPersistence, TenantPersistenceExecutor};
 
 #[derive(Clone)]
 pub(crate) enum PersistenceProvider {
     Redb(Arc<EmbeddedRedbProvider>),
     Sqlite(Arc<EmbeddedSqliteProvider>),
+    #[cfg(feature = "libsql")]
     LibsqlReplica(Arc<LibsqlReplicaProvider>),
+    #[cfg(feature = "postgres")]
     Postgres(Arc<PostgresProvider>),
+    #[cfg(feature = "mysql")]
     MySql(Arc<MySqlProvider>),
     #[cfg(any(test, feature = "test-hooks"))]
     Memory(Arc<MemoryTenantProvider>),
@@ -84,16 +98,27 @@ trait OpenedTenantProvider {
 
 impl PersistenceProvider {
     pub(crate) fn owns_tenant_incarnations(&self) -> bool {
-        matches!(
-            self,
-            Self::Postgres(_) | Self::LibsqlReplica(_) | Self::MySql(_)
-        )
+        match self {
+            #[cfg(feature = "postgres")]
+            Self::Postgres(_) => true,
+            #[cfg(feature = "libsql")]
+            Self::LibsqlReplica(_) => true,
+            #[cfg(feature = "mysql")]
+            Self::MySql(_) => true,
+            Self::Redb(_) | Self::Sqlite(_) => false,
+            #[cfg(any(test, feature = "test-hooks"))]
+            Self::Memory(_) => false,
+        }
     }
 
+    #[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
     pub(crate) fn runtime_hooks(&self) -> Option<Box<dyn RuntimeHooks>> {
         match self {
+            #[cfg(feature = "postgres")]
             Self::Postgres(provider) => Some(Box::new(PostgresRuntimeHooks::new(provider.clone()))),
+            #[cfg(feature = "libsql")]
             Self::LibsqlReplica(_) => Some(Box::new(LibsqlReplicaRuntimeHooks)),
+            #[cfg(feature = "mysql")]
             Self::MySql(_) => Some(Box::new(MySqlRuntimeHooks)),
             Self::Redb(_) | Self::Sqlite(_) => None,
             #[cfg(any(test, feature = "test-hooks"))]
@@ -122,8 +147,11 @@ impl PersistenceProvider {
             ));
         }
         let tenant_ids = match self {
+            #[cfg(feature = "postgres")]
             Self::Postgres(provider) => provider.list_tenants_page(after, limit).await,
+            #[cfg(feature = "mysql")]
             Self::MySql(provider) => provider.list_tenants_page(after, limit).await,
+            #[cfg(feature = "libsql")]
             Self::LibsqlReplica(provider) => provider.list_tenants_page(after, limit).await,
             Self::Redb(_) | Self::Sqlite(_) => {
                 let tenants = self.list_tenants().await?;
@@ -173,6 +201,7 @@ impl PersistenceProvider {
         &self,
         tenant_id: &TenantId,
     ) -> Result<Option<OpenedTenantPersistence>> {
+        #[cfg(feature = "libsql")]
         if let Self::LibsqlReplica(provider) = self {
             return provider
                 .open_existing_opened_tenant_with_scheduled_work(tenant_id)
@@ -201,8 +230,13 @@ impl PersistenceProvider {
     /// engine-owned worker has drained.
     pub(crate) async fn retire_after_drain(&self) -> Result<()> {
         match self {
+            #[cfg(feature = "libsql")]
             Self::LibsqlReplica(provider) => provider.retire_after_drain().await,
-            Self::Redb(_) | Self::Sqlite(_) | Self::Postgres(_) | Self::MySql(_) => Ok(()),
+            Self::Redb(_) | Self::Sqlite(_) => Ok(()),
+            #[cfg(feature = "postgres")]
+            Self::Postgres(_) => Ok(()),
+            #[cfg(feature = "mysql")]
+            Self::MySql(_) => Ok(()),
             #[cfg(any(test, feature = "test-hooks"))]
             Self::Memory(_) => Ok(()),
         }
@@ -280,6 +314,7 @@ impl OpenedTenantProvider for EmbeddedSqliteProvider {
     }
 }
 
+#[cfg(feature = "libsql")]
 impl OpenedTenantProvider for LibsqlReplicaProvider {
     type OpenedTenant = OpenedLibsqlReplicaTenant;
 
@@ -295,6 +330,7 @@ impl OpenedTenantProvider for LibsqlReplicaProvider {
     }
 }
 
+#[cfg(feature = "postgres")]
 impl OpenedTenantProvider for PostgresProvider {
     type OpenedTenant = OpenedPostgresTenant;
 
@@ -310,6 +346,7 @@ impl OpenedTenantProvider for PostgresProvider {
     }
 }
 
+#[cfg(feature = "mysql")]
 impl OpenedTenantProvider for MySqlProvider {
     type OpenedTenant = OpenedMySqlTenant;
 
@@ -361,6 +398,7 @@ impl From<OpenedEmbeddedSqliteTenant> for OpenedTenantPersistence {
     }
 }
 
+#[cfg(feature = "libsql")]
 impl From<OpenedLibsqlReplicaTenant> for OpenedTenantPersistence {
     fn from(opened: OpenedLibsqlReplicaTenant) -> Self {
         Self {
@@ -371,6 +409,7 @@ impl From<OpenedLibsqlReplicaTenant> for OpenedTenantPersistence {
     }
 }
 
+#[cfg(feature = "postgres")]
 impl From<OpenedPostgresTenant> for OpenedTenantPersistence {
     fn from(opened: OpenedPostgresTenant) -> Self {
         Self {
@@ -381,6 +420,7 @@ impl From<OpenedPostgresTenant> for OpenedTenantPersistence {
     }
 }
 
+#[cfg(feature = "mysql")]
 impl From<OpenedMySqlTenant> for OpenedTenantPersistence {
     fn from(opened: OpenedMySqlTenant) -> Self {
         Self {

@@ -74,6 +74,7 @@ pub(crate) use mutations::phase_metrics::{
 pub use mutations::{AsyncMutationContext, MutationActor, MutationIsolatePermit};
 pub(crate) use mutations::{begin_definitive_fence_eviction, begin_durable_recovery_eviction};
 pub use objects::TenantObjectMeta;
+#[cfg(any(feature = "libsql", feature = "mysql"))]
 pub(crate) use provider_hints::ProviderPollWorker;
 pub(crate) use queries::{
     evaluate_with_index_cancellable_for_principal, paginate_documents_for_store_with_principal,
@@ -107,6 +108,7 @@ pub struct Engine {
     commit_faults: execution_units::CommitFaultClient,
     storage_fault_injector: Arc<dyn FaultInjector>,
     scheduler_wakeup: Notify,
+    #[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
     provider_hint_worker_started: AtomicBool,
     provider_hint_listener_ready: AtomicBool,
     trigger_invocation_executor: RwLock<Option<SharedTriggerInvocationExecutor>>,
@@ -443,7 +445,7 @@ impl Engine {
 
     /// Creates a provider engine with independent deterministic wall and
     /// monotonic clocks for lease-lifecycle tests.
-    #[cfg(test)]
+    #[cfg(all(test, any(feature = "libsql", feature = "postgres")))]
     pub(crate) async fn new_with_simulation_and_persistence_config_and_lease_clock(
         config: EnginePersistenceConfig,
         clock: Arc<dyn WallClock>,
@@ -475,6 +477,7 @@ impl Engine {
             commit_faults: execution_units::CommitFaultClient::default(),
             storage_fault_injector: parts.storage_fault_injector,
             scheduler_wakeup: Notify::new(),
+            #[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
             provider_hint_worker_started: AtomicBool::new(false),
             provider_hint_listener_ready: AtomicBool::new(false),
             trigger_invocation_executor: RwLock::new(None),

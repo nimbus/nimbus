@@ -3,6 +3,7 @@ pub(crate) use nimbus_core::{
     ManualWallClock, OrderBy, OrderDirection, Page, PaginatedQuery, PrincipalContext, Query,
     SequenceNumber, TableAccessPolicy, TableName, TableSchema, TenantId, Timestamp,
 };
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 pub(crate) use nimbus_testing::ppsc::PpscBackend;
 pub(crate) use nimbus_testing::{
     BlockingFaultInjector, BoundedTestBarrier as Barrier, CountedFaultInjector, EngineFixture,
@@ -50,32 +51,55 @@ mod concurrent_write_phase_split;
 mod concurrent_write_phase_split_tests;
 mod consistency;
 mod embedded_providers;
+#[cfg(feature = "libsql")]
 mod libsql_replica_provider;
 mod materialized_serving;
 mod mutation_journal;
+#[cfg(feature = "mysql")]
 mod mysql_provider;
 mod objects;
 mod policy;
+#[cfg(feature = "postgres")]
 mod postgres_provider;
 mod ppsc;
+// Bounded-timeout helpers for the PostgreSQL suite only; the embedded suites
+// run against local storage and need no such budget, and the other two provider
+// suites bound their own waits.
+#[cfg(feature = "postgres")]
 mod provider_fixtures;
 mod provider_publisher_contract;
 mod queries;
 mod subscriptions;
 
+// Shared exercisers for the three remote-provider suites. They follow the
+// provider gates: the embedded suites cover these behaviours through their own
+// tests, so nothing reaches them in a build without a remote provider.
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 pub(crate) use nimbus_storage::provider_test_fixtures::{
     ExternalProviderFixtureMode, external_provider_fixture_mode,
 };
+#[cfg(feature = "libsql")]
+pub(crate) use ppsc::exercise_ppsc_provider_scenario_differential;
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 pub(crate) use ppsc::{
     exercise_ppsc_provider_authority_extension, exercise_ppsc_provider_retained_differential,
-    exercise_ppsc_provider_scenario_differential,
 };
+#[cfg(feature = "postgres")]
 pub(crate) use provider_fixtures::expect_external_provider_future_within;
+pub(crate) use provider_publisher_contract::exercise_provider_publisher_contract;
+// Narrower than the surrounding provider gate: only the SQL provider suites
+// assert on the write pipeline. The libSQL replica writes through its remote
+// primary, so a libsql-only build has no consumer for this expectation.
+#[cfg(any(feature = "mysql", feature = "postgres"))]
+pub(crate) use provider_publisher_contract::ProviderPipelineExpectation;
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 pub(crate) use provider_publisher_contract::{
-    ProviderPipelineExpectation, exercise_provider_publisher_contract,
     exercise_provider_schedule_only_execution_unit_fence_contract,
     exercise_provider_scheduler_fence_contract,
     exercise_provider_trigger_invocation_fence_contract,
+};
+#[cfg(feature = "postgres")]
+pub(crate) use provider_publisher_contract::{
     exercise_provider_trigger_outcome_acknowledgement_loss_contract,
     exercise_provider_trigger_transition_serialization_contract,
 };

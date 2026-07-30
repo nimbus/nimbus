@@ -13,6 +13,17 @@ doctest = false
 workspace = true
 
 [features]
+# Remote storage providers. Each is opt-in at the bottom of the chain
+# (nimbus-storage defaults to no provider) and forwarded upward one crate at a
+# time, exactly like `v8-pointer-compression`. The binary-facing crates default
+# them on, so `cargo build -p nimbus-bin --no-default-features` is the single
+# switch that drops the PostgreSQL, MySQL and libSQL driver stacks. Every
+# intra-chain dependency below sets `default-features = false` so that switch
+# is not silently re-enabled by a sibling edge.
+default = ["libsql", "mysql", "postgres"]
+libsql = ["nimbus-engine/libsql", "nimbus-storage/libsql"]
+mysql = ["nimbus-engine/mysql", "nimbus-storage/mysql"]
+postgres = ["nimbus-engine/postgres", "nimbus-storage/postgres"]
 bun-jsc-linked-adapter = ["nimbus-runtime/bun-jsc-linked-adapter"]
 # Build the V8 runtime under the single pointer-compression cage, exactly as release binaries ship.
 # Lets server-level tests exercise the cross-profile cage (NodeFull anchor + WebStandard workload)
@@ -43,7 +54,7 @@ nimbus-runtime = { path = "../nimbus-runtime" }
 nimbus-s3 = { path = "../nimbus-s3" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
 nimbus-services = { path = "../nimbus-services" }
-nimbus-storage = { path = "../nimbus-storage" }
+nimbus-storage = { path = "../nimbus-storage", default-features = false }
 nimbus-machine = { path = "../nimbus-machine" }
 nimbus-node = { path = "../nimbus-node" }
 nimbus-object-storage = { path = "../nimbus-object-storage" }
@@ -53,7 +64,7 @@ nimbus-tenant = { path = "../nimbus-tenant" }
 nimbus-workloads = { path = "../nimbus-workloads" }
 nimbus-compute = { path = "../nimbus-compute" }
 nimbus-core = { path = "../nimbus-core" }
-nimbus-engine = { path = "../nimbus-engine" }
+nimbus-engine = { path = "../nimbus-engine", default-features = false }
 nimbus-firebase = { path = "../nimbus-firebase" }
 nimbus-fs = { path = "../nimbus-fs" }
 futures.workspace = true
@@ -108,8 +119,10 @@ aws-sigv4 = "=1.4.3"
 base64.workspace = true
 ring.workspace = true
 nimbus-compute = { path = "../nimbus-compute", features = ["test-hooks"] }
-nimbus-engine = { path = "../nimbus-engine", features = ["test-hooks"] }
-nimbus-testing = { path = "../nimbus-testing" }
+nimbus-engine = { path = "../nimbus-engine", default-features = false, features = [
+    "test-hooks",
+] }
+nimbus-testing = { path = "../nimbus-testing", default-features = false }
 serde_yaml.workspace = true
 tempfile.workspace = true
 tokio-tungstenite.workspace = true

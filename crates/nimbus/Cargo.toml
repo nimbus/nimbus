@@ -10,6 +10,17 @@ publish.workspace = true
 workspace = true
 
 [features]
+# Remote storage providers. Each is opt-in at the bottom of the chain
+# (nimbus-storage defaults to no provider) and forwarded upward one crate at a
+# time, exactly like `v8-pointer-compression`. The binary-facing crates default
+# them on, so `cargo build -p nimbus-bin --no-default-features` is the single
+# switch that drops the PostgreSQL, MySQL and libSQL driver stacks. Every
+# intra-chain dependency below sets `default-features = false` so that switch
+# is not silently re-enabled by a sibling edge.
+default = ["libsql", "mysql", "postgres"]
+libsql = ["nimbus-engine/libsql", "nimbus-server/libsql", "nimbus-storage/libsql"]
+mysql = ["nimbus-engine/mysql", "nimbus-server/mysql", "nimbus-storage/mysql"]
+postgres = ["nimbus-engine/postgres", "nimbus-server/postgres", "nimbus-storage/postgres"]
 aws-kms = ["nimbus-crypto/aws-kms", "nimbus-engine/aws-kms", "nimbus-storage/aws-kms"]
 bun-jsc-linked-adapter = [
     "nimbus-runtime/bun-jsc-linked-adapter",
@@ -26,8 +37,8 @@ nimbus-sandbox = { path = "../nimbus-sandbox" }
 nimbus-object-storage = { path = "../nimbus-object-storage" }
 nimbus-core = { path = "../nimbus-core" }
 nimbus-crypto = { path = "../nimbus-crypto" }
-nimbus-engine = { path = "../nimbus-engine" }
+nimbus-engine = { path = "../nimbus-engine", default-features = false }
 nimbus-license = { path = "../nimbus-license" }
-nimbus-server = { path = "../nimbus-server" }
+nimbus-server = { path = "../nimbus-server", default-features = false }
 nimbus-services = { path = "../nimbus-services" }
-nimbus-storage = { path = "../nimbus-storage" }
+nimbus-storage = { path = "../nimbus-storage", default-features = false }

@@ -571,10 +571,19 @@ fn missing_table_phantom_conflicts_when_table_created_concurrently() {
                 crate::persistence::TenantPersistence::Sqlite(store) => store
                     .stage_hidden_table_identity(&table, &table_id)
                     .expect("hidden table identity should stage"),
-                crate::persistence::TenantPersistence::LibsqlReplica(_)
-                | crate::persistence::TenantPersistence::Postgres(_)
-                | crate::persistence::TenantPersistence::MySql(_)
-                | crate::persistence::TenantPersistence::Memory(_) => {
+                #[cfg(feature = "libsql")]
+                crate::persistence::TenantPersistence::LibsqlReplica(_) => {
+                    panic!("engine fixture should use an embedded persistence provider")
+                }
+                #[cfg(feature = "postgres")]
+                crate::persistence::TenantPersistence::Postgres(_) => {
+                    panic!("engine fixture should use an embedded persistence provider")
+                }
+                #[cfg(feature = "mysql")]
+                crate::persistence::TenantPersistence::MySql(_) => {
+                    panic!("engine fixture should use an embedded persistence provider")
+                }
+                crate::persistence::TenantPersistence::Memory(_) => {
                     panic!("engine fixture should use an embedded persistence provider")
                 }
             }
@@ -891,10 +900,19 @@ fn mutation_execution_unit_write_dependencies_use_snapshot_table_identity() {
                 .activate_hidden_table_identity(&table, &replacement_table_id)
                 .expect("replacement table identity should activate")
         }
-        crate::persistence::TenantPersistence::LibsqlReplica(_)
-        | crate::persistence::TenantPersistence::Postgres(_)
-        | crate::persistence::TenantPersistence::MySql(_)
-        | crate::persistence::TenantPersistence::Memory(_) => {
+        #[cfg(feature = "libsql")]
+        crate::persistence::TenantPersistence::LibsqlReplica(_) => {
+            panic!("engine fixture should use an embedded persistence provider")
+        }
+        #[cfg(feature = "postgres")]
+        crate::persistence::TenantPersistence::Postgres(_) => {
+            panic!("engine fixture should use an embedded persistence provider")
+        }
+        #[cfg(feature = "mysql")]
+        crate::persistence::TenantPersistence::MySql(_) => {
+            panic!("engine fixture should use an embedded persistence provider")
+        }
+        crate::persistence::TenantPersistence::Memory(_) => {
             panic!("engine fixture should use an embedded persistence provider")
         }
     };

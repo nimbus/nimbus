@@ -3,12 +3,18 @@ use nimbus_core::{
 };
 
 use crate::{
-    CommitterLeaseError, CommitterLeaseResult, LibsqlReplicaTenantStore,
-    LibsqlReplicaWriteTransaction, MemoryTenantStore, MemoryWriteTransaction, MySqlTenantStore,
-    MySqlWriteTransaction, PostgresTenantStore, PostgresWriteTransaction, ResolvedScheduleOp,
-    SqliteTenantStore, SqliteWriteTransaction, TenantStore, TenantWriteTransaction,
+    CommitterLeaseError, CommitterLeaseResult, MemoryTenantStore, MemoryWriteTransaction,
+    ResolvedScheduleOp, SqliteTenantStore, SqliteWriteTransaction, TenantStore,
+    TenantWriteTransaction,
 };
+#[cfg(feature = "libsql")]
+use crate::{LibsqlReplicaTenantStore, LibsqlReplicaWriteTransaction};
+#[cfg(feature = "mysql")]
+use crate::{MySqlTenantStore, MySqlWriteTransaction};
+#[cfg(feature = "postgres")]
+use crate::{PostgresTenantStore, PostgresWriteTransaction};
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 const FENCED_SCHEDULER_WRITE_MARKER: &str = "fenced committer lease during scheduler write";
 
 /// One durable scheduler-state transition owned by the tenant committer.
@@ -90,8 +96,11 @@ macro_rules! impl_scheduler_write_transaction {
 
 impl_scheduler_write_transaction!(TenantWriteTransaction);
 impl_scheduler_write_transaction!(SqliteWriteTransaction);
+#[cfg(feature = "libsql")]
 impl_scheduler_write_transaction!(LibsqlReplicaWriteTransaction);
+#[cfg(feature = "postgres")]
 impl_scheduler_write_transaction!(PostgresWriteTransaction);
+#[cfg(feature = "mysql")]
 impl_scheduler_write_transaction!(MySqlWriteTransaction);
 impl_scheduler_write_transaction!(MemoryWriteTransaction);
 
@@ -250,6 +259,7 @@ impl_scheduler_write_store!(TenantStore);
 impl_scheduler_write_store!(SqliteTenantStore);
 impl_scheduler_write_store!(MemoryTenantStore);
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 macro_rules! impl_provider_scheduler_write_store {
     ($store:ty) => {
         impl SchedulerWriteStore for $store {
@@ -366,6 +376,9 @@ macro_rules! impl_provider_scheduler_write_store {
     };
 }
 
+#[cfg(feature = "postgres")]
 impl_provider_scheduler_write_store!(PostgresTenantStore);
+#[cfg(feature = "mysql")]
 impl_provider_scheduler_write_store!(MySqlTenantStore);
+#[cfg(feature = "libsql")]
 impl_provider_scheduler_write_store!(LibsqlReplicaTenantStore);

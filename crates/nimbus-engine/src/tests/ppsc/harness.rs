@@ -9,6 +9,10 @@ pub(super) const PPSC_OBSERVER: &str = "ppsc-scenario-recorder";
 pub(super) enum PpscEngineFactory {
     Memory(PathBuf),
     Embedded(PathBuf, EmbeddedProviderKind),
+    /// Gated with the remote providers: only a provider differential builds an
+    /// engine from a full persistence config. The embedded lanes name their
+    /// backend directly.
+    #[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
     Configured(Box<EnginePersistenceConfig>),
 }
 
@@ -41,6 +45,7 @@ impl PpscEngineFactory {
                         *provider,
                     )
                 }
+                #[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
                 Self::Configured(config) => {
                     Engine::new_with_simulation_clocks_id_source_and_persistence_config(
                         config.as_ref().clone(),
