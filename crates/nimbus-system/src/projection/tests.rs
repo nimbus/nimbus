@@ -533,6 +533,15 @@ async fn projection_observer_cancellation_preserves_newer_token() {
     let recovered = projection_work.stats(&tenant_id);
     assert_eq!(recovered.token_lag_scope_count, 0);
     assert_eq!(recovered.delayed_retry_count, 1);
+    // A publication is classified stale when the durable fence already holds an
+    // equal or newer token. Whether the two publications above were stale
+    // therefore depends on how far the cancelled newer-token task got before the
+    // cancellation landed: if it had already written its fence row, the catch-up
+    // that replays it is a no-op, and so is the older token behind it. Both
+    // orders converge on the durable state asserted above, so the stale replay
+    // below is measured as a delta from here rather than against an absolute
+    // count that would pin one side of that race.
+    let stale_no_ops_before_replay = recovered.stale_no_op_count;
 
     observer.project_tables(tenant_id.clone(), vec![tasks.clone()], older);
     tokio::time::timeout(
@@ -542,13 +551,25 @@ async fn projection_observer_cancellation_preserves_newer_token() {
     .await
     .expect("stale replay should drain as an idempotent no-op");
     let stale = projection_work.stats(&tenant_id);
-    assert_eq!(stale.stale_no_op_count, 1);
+    assert_eq!(
+        stale.stale_no_op_count,
+        stale_no_ops_before_replay + 1,
+        "replaying the older token must publish exactly once and classify it stale"
+    );
     assert_eq!(stale.token_lag_scope_count, 0);
+    assert_eq!(
+        projected_table_source_token(&engine, &tenant_id, &tasks).await,
+        Some(newer),
+        "a stale replay must leave the published token untouched"
+    );
     let diagnostics = engine
         .tenant_engine_diagnostics(&tenant_id)
         .expect("projection diagnostics should load")
         .mutation_journal;
-    assert_eq!(diagnostics.observer_spawned_work_stale_no_op_count, 1);
+    assert_eq!(
+        diagnostics.observer_spawned_work_stale_no_op_count,
+        stale_no_ops_before_replay + 1
+    );
     assert_eq!(diagnostics.observer_spawned_work_token_lag_scope_count, 0);
 }
 

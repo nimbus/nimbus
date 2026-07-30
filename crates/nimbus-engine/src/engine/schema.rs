@@ -19,6 +19,9 @@ impl Engine {
     pub fn set_table_schema(&self, tenant_id: &TenantId, table_schema: TableSchema) -> Result<()> {
         let runtime = self.get_existing_tenant(tenant_id)?;
         let table = table_schema.table.clone();
+        if stored_table_schema_matches(&runtime, &table_schema) {
+            return self.finish_unchanged_table_schema(&runtime, tenant_id);
+        }
         let runtime_for_commit = runtime.clone();
         let tenant_id_for_commit = tenant_id.clone();
         let commit_faults = self.commit_faults.clone();
@@ -43,6 +46,9 @@ impl Engine {
     ) -> Result<()> {
         let runtime = self.get_existing_tenant_async(&tenant_id).await?;
         let table = table_schema.table.clone();
+        if stored_table_schema_matches(&runtime, &table_schema) {
+            return self.finish_unchanged_table_schema(&runtime, &tenant_id);
+        }
         let tenant_id_for_task = tenant_id.clone();
         let runtime_for_task = runtime.clone();
         let commit_faults = self.commit_faults.clone();
@@ -59,6 +65,22 @@ impl Engine {
         let projection_token = runtime.projection_token()?;
         self.notify_table_schema_change_observers(&tenant_id, &table, projection_token);
         Ok(())
+    }
+
+    /// Completes a schema set whose table schema is already the stored one.
+    ///
+    /// Tenant admission and committer-lease ownership are still checked, so a
+    /// caller that has lost the tenant sees the same error the committer path
+    /// would have raised. Nothing else runs: with no schema change there is no
+    /// durable record to append and nothing for schema-change observers to
+    /// re-project.
+    fn finish_unchanged_table_schema(
+        &self,
+        runtime: &Arc<TenantRuntime>,
+        tenant_id: &TenantId,
+    ) -> Result<()> {
+        let _operation = runtime.enter_operation(tenant_id)?;
+        runtime.ensure_committer_lease_for_assignment()
     }
 
     /// Returns the full tenant schema.
@@ -202,6 +224,24 @@ pub(in crate::engine) fn apply_loaded_schema_snapshot(
     }
 
     Ok(changed_schema_tables)
+}
+
+/// Reports whether the tenant already stores exactly this table schema.
+///
+/// Bootstrap paths redeclare a fixed set of schemas on every request. Each
+/// redeclaration otherwise appends a durable schema record and advances the
+/// journal for no state change, serializing behind the tenant's single
+/// committer; the system tenant pays that cost once per system table on every
+/// projection. Answering an unchanged declaration from the in-memory snapshot
+/// keeps the durable log a record of actual schema changes.
+fn stored_table_schema_matches(runtime: &TenantRuntime, table_schema: &TableSchema) -> bool {
+    let schema = runtime.schema();
+    let Some(stored) = schema.get_table(&table_schema.table) else {
+        return false;
+    };
+    let mut candidate = table_schema.clone();
+    candidate.reconcile_index_metadata(Some(stored));
+    candidate == *stored
 }
 
 fn apply_set_table_schema(

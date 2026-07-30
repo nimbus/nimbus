@@ -1100,6 +1100,79 @@ async fn engine_unsubscribe_stops_notifications() {
 }
 
 #[tokio::test]
+async fn engine_skips_the_durable_write_for_an_unchanged_table_schema() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+
+    let durable_head = |label: &str| {
+        engine
+            .tenant_engine_diagnostics(&tenant_id)
+            .unwrap_or_else(|error| panic!("{label} diagnostics should load: {error}"))
+            .mutation_journal
+            .frontiers
+            .durable_head
+    };
+
+    let before_first = durable_head("pre-declaration");
+    engine
+        .set_table_schema(&tenant_id, users_schema())
+        .expect("first schema declaration should save");
+    let after_first = durable_head("first declaration");
+    assert_eq!(
+        after_first.0,
+        before_first.0 + 1,
+        "a new table schema should append exactly one durable record"
+    );
+
+    for _ in 0..5 {
+        engine
+            .set_table_schema(&tenant_id, users_schema())
+            .expect("redeclaring the stored schema should succeed");
+    }
+    assert_eq!(
+        durable_head("redeclaration"),
+        after_first,
+        "redeclaring the stored schema must not append durable records"
+    );
+    assert_eq!(
+        engine
+            .get_table_schema(
+                &tenant_id,
+                &TableName::new("users").expect("table name should be valid")
+            )
+            .expect("stored schema should load"),
+        users_schema(),
+        "the stored schema should survive redeclaration unchanged"
+    );
+
+    let mut widened = users_schema();
+    widened.fields.push(FieldSchema {
+        name: "nickname".to_string(),
+        field_type: FieldType::String,
+        required: false,
+    });
+    engine
+        .set_table_schema(&tenant_id, widened.clone())
+        .expect("changed schema should save");
+    assert_eq!(
+        durable_head("changed declaration").0,
+        after_first.0 + 1,
+        "a changed table schema should still append exactly one durable record"
+    );
+    assert_eq!(
+        engine
+            .get_table_schema(
+                &tenant_id,
+                &TableName::new("users").expect("table name should be valid")
+            )
+            .expect("changed schema should load"),
+        widened,
+        "the changed schema should replace the stored one"
+    );
+}
+
+#[tokio::test]
 async fn engine_validates_insert_against_schema() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();
