@@ -55,3 +55,55 @@ impl ReadAuthorization {
         }
     }
 }
+
+/// A table's read rule resolved for one principal, applicable to documents a
+/// caller assembles itself instead of reading through a scan.
+///
+/// The scan APIs authorize what they read from the store. A caller that hands
+/// back item-level data reconstructed from somewhere else — the DynamoDB
+/// adapter returning stream records built from captured images is the case this
+/// exists for — never passes through those APIs, and so needs the same rule
+/// applied at the point it discloses the data.
+#[derive(Debug, Clone)]
+pub struct DocumentReadFilter {
+    authorization: ReadAuthorization,
+    principal: PrincipalContext,
+}
+
+impl DocumentReadFilter {
+    pub(crate) fn new(authorization: ReadAuthorization, principal: PrincipalContext) -> Self {
+        Self {
+            authorization,
+            principal,
+        }
+    }
+
+    /// Whether the table restricts reads at all. When it does not, every
+    /// document is readable and per-document evaluation can be skipped.
+    #[must_use]
+    pub fn is_unrestricted(&self) -> bool {
+        self.authorization.rule.is_none()
+    }
+
+    /// Whether no document at all can satisfy the rule for this principal —
+    /// an unauthenticated caller against an authenticated-only table, or a rule
+    /// resting on a claim the principal does not carry.
+    #[must_use]
+    pub fn denies_everything(&self) -> bool {
+        self.authorization.impossible
+    }
+
+    /// Whether `document` is readable by the principal this filter resolved for.
+    ///
+    /// The document is evaluated exactly as a scan would evaluate one it read,
+    /// including the `_creationTime` and `_updateTime` lifecycle metadata a rule
+    /// may name — so a caller assembling documents itself owes this method the
+    /// real lifecycle times, not placeholders.
+    ///
+    /// # Errors
+    /// Propagates a rule evaluation error, such as an unorderable comparison.
+    pub fn allows(&self, document: &Document) -> Result<bool> {
+        self.authorization
+            .allows_document(&self.principal, document)
+    }
+}

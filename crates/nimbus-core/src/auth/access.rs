@@ -172,7 +172,7 @@ impl AccessPredicate {
             || self.right.depends_on_missing_principal(principal);
 
         match (left, right) {
-            (Some(left), None) if self.right.is_document_field() => {
+            (Some(left), None) if self.right.is_pushdown_document_field() => {
                 let field = self
                     .right
                     .document_field_name()
@@ -183,7 +183,7 @@ impl AccessPredicate {
                     value: left,
                 }))
             }
-            (None, Some(right)) if self.left.is_document_field() => {
+            (None, Some(right)) if self.left.is_pushdown_document_field() => {
                 let field = self
                     .left
                     .document_field_name()
@@ -326,8 +326,21 @@ impl AccessValue {
         }
     }
 
-    fn is_document_field(&self) -> bool {
-        matches!(self, Self::DocumentField { .. })
+    /// Whether this value names a document field the read planner may push
+    /// down as a [`Filter`].
+    ///
+    /// Lifecycle metadata is deliberately excluded. A planner filter resolves
+    /// its field from the stored field map, where `_id`, `_creationTime`, and
+    /// `_updateTime` do not appear, so pushing one down matches *nothing* —
+    /// a rule naming a lifecycle field would silently deny every row. Left
+    /// residual instead, it is answered by the per-document rule evaluation
+    /// every read path already applies, which resolves those names from the
+    /// document header (see [`document_field_value`]).
+    fn is_pushdown_document_field(&self) -> bool {
+        match self {
+            Self::DocumentField { field } => !is_document_metadata_field(field),
+            _ => false,
+        }
     }
 
     fn document_field_name(&self) -> Option<String> {
@@ -357,6 +370,12 @@ fn invert_filter_op(op: AccessOperator) -> FilterOp {
         AccessOperator::Lt => FilterOp::Gt,
         AccessOperator::Lte => FilterOp::Gte,
     }
+}
+
+/// Whether `field` names document lifecycle metadata rather than a stored
+/// field. Kept beside [`document_field_value`], which is what resolves them.
+fn is_document_metadata_field(field: &str) -> bool {
+    matches!(field, "_id" | "_creationTime" | "_updateTime")
 }
 
 fn document_field_value(document: &Document, field: &str) -> Option<Value> {

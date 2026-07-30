@@ -1,3 +1,15 @@
+//! The stream API surface: DescribeStream, GetShardIterator, ListStreams, and
+//! the shaping and paging half of GetRecords.
+//!
+//! This module also owns the fixtures every stream test builds on — the engine
+//! and tenant, the streamed-table constructors, the write helpers, and the
+//! iterator decoding — so the child modules below can be about one concept each
+//! rather than about their own setup.
+
+mod authorization;
+mod capture;
+mod retention;
+
 use super::*;
 use extenddb_core::types::{AttributeValue, CreateTableInput};
 use nimbus_core::TenantId;
@@ -19,8 +31,11 @@ fn shape_record_rejects_corrupt_event_name() {
         event_name: "UPSERT".to_owned(),
         keys: json!({ "pk": { "S": "k7" } }).as_object().unwrap().clone(),
         old_image: None,
+        old_image_times: None,
         new_image: None,
+        new_image_retained_update: None,
         user_identity: None,
+        committed_at: 0,
     };
 
     let error = shape_record(&event, StreamViewType::KeysOnly)
@@ -255,16 +270,6 @@ fn delete(engine: &Arc<Engine>, context: &TenantIsolationContext, pk: &str) {
     .expect("delete");
 }
 
-fn stored_item(engine: &Arc<Engine>, context: &TenantIsolationContext, pk: &str) -> Option<Item> {
-    let key: Item = [("pk".to_string(), AttributeValue::S(pk.to_owned()))]
-        .into_iter()
-        .collect();
-    let schema = control_plane::load_key_schema(engine, context, "events").unwrap();
-    let id = crate::commands::item::primary_key_id(&key, &schema).unwrap();
-    crate::commands::item::read_item(engine, context, &TableName::new("events").unwrap(), id)
-        .unwrap()
-}
-
 fn seed_stream_event_collision(
     engine: &Arc<Engine>,
     context: &TenantIsolationContext,
@@ -312,8 +317,11 @@ fn seed_raw_stream_event(
             .unwrap()
             .clone(),
         old_image: None,
+        old_image_times: None,
         new_image: None,
+        new_image_retained_update: None,
         user_identity: None,
+        committed_at: 0,
     };
     let document = serde_json::to_value(stored)
         .unwrap()
@@ -338,20 +346,6 @@ fn seed_raw_stream_event(
         .unwrap()
         .execute_atomic_write_batch(batch)
         .unwrap();
-}
-
-fn assert_stream_collision(error: DynamoDbError) {
-    match error {
-        DynamoDbError::InternalServerError(message) => assert!(
-            message.contains("stream sequence allocation exhausted retries"),
-            "unexpected internal error: {message}"
-        ),
-        DynamoDbError::TransactionConflictException(message) => assert!(
-            message.contains("single-item transaction exhausted"),
-            "unexpected transaction conflict: {message}"
-        ),
-        other => panic!("expected stream sequence collision exhaustion, got {other:?}"),
-    }
 }
 
 /// TRIM_HORIZON iterator + GetRecords from the start.
@@ -472,231 +466,6 @@ fn get_records_does_not_decode_events_before_iterator_start() {
     );
 }
 
-/// H3/F3: BatchWriteItem emits stream records (it previously emitted none).
-/// A put of a fresh key is INSERT, a put over an existing key is MODIFY, and
-/// a delete of an existing key is REMOVE — all delivered via GetRecords with
-/// strictly increasing sequence numbers.
-#[test]
-fn batch_write_emits_stream_records() {
-    let (engine, ctx, _t) = fixture();
-    let arn = streamed_table(&engine, &ctx, "NEW_AND_OLD_IMAGES");
-    put(&engine, &ctx, "old", "1"); // seed: will be MODIFY then nothing
-    let input = serde_json::from_value(json!({
-        "RequestItems": { "events": [
-            { "PutRequest": { "Item": { "pk": {"S": "fresh"}, "v": {"N": "1"} } } },
-            { "PutRequest": { "Item": { "pk": {"S": "old"}, "v": {"N": "2"} } } },
-            { "DeleteRequest": { "Key": { "pk": {"S": "fresh"} } } }
-        ] }
-    }))
-    .unwrap();
-    crate::commands::batch::batch_write_item(&engine, &ctx, input).expect("batch write");
-
-    let out = all_records(&engine, &ctx, &arn);
-    // 1 (seed INSERT) + INSERT(fresh) + MODIFY(old) + REMOVE(fresh).
-    let names: Vec<StreamEventName> = out.records.iter().map(|r| r.event_name).collect();
-    assert_eq!(
-        names,
-        vec![
-            StreamEventName::Insert, // seed put
-            StreamEventName::Insert, // batch put fresh
-            StreamEventName::Modify, // batch put over old
-            StreamEventName::Remove, // batch delete fresh
-        ],
-        "BatchWriteItem must emit one stream record per write"
-    );
-    let seqs: Vec<i64> = out
-        .records
-        .iter()
-        .map(|r| r.dynamodb.sequence_number.parse::<i64>().unwrap())
-        .collect();
-    assert!(
-        seqs.windows(2).all(|w| w[1] > w[0]),
-        "sequence numbers strictly increase: {seqs:?}"
-    );
-}
-
-#[test]
-fn single_item_writes_roll_back_when_stream_event_cannot_commit() {
-    {
-        let (engine, ctx, _t) = fixture();
-        streamed_table(&engine, &ctx, "NEW_AND_OLD_IMAGES");
-        seed_stream_event_collision(&engine, &ctx, "events", 0);
-        let err = crate::commands::item::put_item(
-            &engine,
-            &ctx,
-            serde_json::from_value(json!({
-                "TableName": "events",
-                "Item": { "pk": {"S": "put"}, "v": {"N": "1"} }
-            }))
-            .unwrap(),
-        )
-        .expect_err("stream collision rejects put");
-        assert_stream_collision(err);
-        assert!(
-            stored_item(&engine, &ctx, "put").is_none(),
-            "PutItem must not commit without its stream record"
-        );
-    }
-
-    {
-        let (engine, ctx, _t) = fixture();
-        streamed_table(&engine, &ctx, "NEW_AND_OLD_IMAGES");
-        put(&engine, &ctx, "delete", "1");
-        seed_stream_event_collision(&engine, &ctx, "events", 1);
-        let err = crate::commands::item::delete_item(
-            &engine,
-            &ctx,
-            serde_json::from_value(json!({
-                "TableName": "events",
-                "Key": { "pk": {"S": "delete"} }
-            }))
-            .unwrap(),
-        )
-        .expect_err("stream collision rejects delete");
-        assert_stream_collision(err);
-        assert!(
-            stored_item(&engine, &ctx, "delete").is_some(),
-            "DeleteItem must not remove the item without its stream record"
-        );
-    }
-
-    {
-        let (engine, ctx, _t) = fixture();
-        streamed_table(&engine, &ctx, "NEW_AND_OLD_IMAGES");
-        put(&engine, &ctx, "update", "1");
-        seed_stream_event_collision(&engine, &ctx, "events", 1);
-        let err = crate::commands::item::update_item(
-            &engine,
-            &ctx,
-            serde_json::from_value(json!({
-                "TableName": "events",
-                "Key": { "pk": {"S": "update"} },
-                "UpdateExpression": "SET v = :v",
-                "ExpressionAttributeValues": { ":v": {"N": "2"} }
-            }))
-            .unwrap(),
-        )
-        .expect_err("stream collision rejects update");
-        assert_stream_collision(err);
-        assert_eq!(
-            stored_item(&engine, &ctx, "update").and_then(|item| item.get("v").cloned()),
-            Some(AttributeValue::N("1".to_owned())),
-            "UpdateItem must preserve the old item without its stream record"
-        );
-    }
-}
-
-#[test]
-fn batch_write_requests_roll_back_when_stream_event_cannot_commit() {
-    {
-        let (engine, ctx, _t) = fixture();
-        streamed_table(&engine, &ctx, "NEW_AND_OLD_IMAGES");
-        seed_stream_event_collision(&engine, &ctx, "events", 0);
-        let err = crate::commands::batch::batch_write_item(
-            &engine,
-            &ctx,
-            serde_json::from_value(json!({
-                "RequestItems": {
-                    "events": [
-                        { "PutRequest": { "Item": { "pk": {"S": "batch-put"}, "v": {"N": "1"} } } }
-                    ]
-                }
-            }))
-            .unwrap(),
-        )
-        .expect_err("stream collision rejects batch put");
-        assert_stream_collision(err);
-        assert!(
-            stored_item(&engine, &ctx, "batch-put").is_none(),
-            "BatchWriteItem put must not commit without its stream record"
-        );
-    }
-
-    {
-        let (engine, ctx, _t) = fixture();
-        streamed_table(&engine, &ctx, "NEW_AND_OLD_IMAGES");
-        put(&engine, &ctx, "batch-delete", "1");
-        seed_stream_event_collision(&engine, &ctx, "events", 1);
-        let err = crate::commands::batch::batch_write_item(
-            &engine,
-            &ctx,
-            serde_json::from_value(json!({
-                "RequestItems": {
-                    "events": [
-                        { "DeleteRequest": { "Key": { "pk": {"S": "batch-delete"} } } }
-                    ]
-                }
-            }))
-            .unwrap(),
-        )
-        .expect_err("stream collision rejects batch delete");
-        assert_stream_collision(err);
-        assert!(
-            stored_item(&engine, &ctx, "batch-delete").is_some(),
-            "BatchWriteItem delete must not remove the item without its stream record"
-        );
-    }
-}
-
-/// H3/F3: TransactWriteItems emits stream records, folded into the same
-/// atomic commit as the data writes. A put and an update in one transaction
-/// deliver INSERT + INSERT (the update upserts a fresh key) via GetRecords.
-#[test]
-fn transact_write_emits_stream_records() {
-    let (engine, ctx, _t) = fixture();
-    let arn = streamed_table(&engine, &ctx, "NEW_AND_OLD_IMAGES");
-    let input = serde_json::from_value(json!({
-        "TransactItems": [
-            { "Put": { "TableName": "events", "Item": { "pk": {"S": "p1"}, "v": {"N": "1"} } } },
-            { "Update": {
-                "TableName": "events",
-                "Key": { "pk": {"S": "u1"} },
-                "UpdateExpression": "SET v = :v",
-                "ExpressionAttributeValues": { ":v": {"N": "9"} }
-            } }
-        ]
-    }))
-    .unwrap();
-    crate::commands::transact::transact_write_items(&engine, &ctx, input).expect("transact");
-
-    let out = all_records(&engine, &ctx, &arn);
-    let names: Vec<StreamEventName> = out.records.iter().map(|r| r.event_name).collect();
-    assert_eq!(
-        names,
-        vec![StreamEventName::Insert, StreamEventName::Insert],
-        "TransactWriteItems must emit a stream record per write"
-    );
-    let seqs: Vec<i64> = out
-        .records
-        .iter()
-        .map(|r| r.dynamodb.sequence_number.parse::<i64>().unwrap())
-        .collect();
-    assert_eq!(
-        seqs,
-        vec![0, 1],
-        "transacted events get consecutive sequences"
-    );
-}
-
-/// H3/F8: sequence allocation is monotonic and gap-free across writes — the
-/// high-water counter advances atomically in the same batch as each event,
-/// so no two records share a sequence number and none is skipped.
-#[test]
-fn writes_allocate_monotonic_gap_free_sequences() {
-    let (engine, ctx, _t) = fixture();
-    let arn = streamed_table(&engine, &ctx, "NEW_IMAGE");
-    for i in 0..5 {
-        put(&engine, &ctx, &format!("k{i}"), &i.to_string());
-    }
-    let out = all_records(&engine, &ctx, &arn);
-    let seqs: Vec<i64> = out
-        .records
-        .iter()
-        .map(|r| r.dynamodb.sequence_number.parse::<i64>().unwrap())
-        .collect();
-    assert_eq!(seqs, vec![0, 1, 2, 3, 4], "monotonic, gap-free sequences");
-}
-
 #[test]
 fn get_records_keys_only_view_omits_images() {
     let (engine, ctx, _t) = fixture();
@@ -772,32 +541,6 @@ fn get_records_iterator_advances_and_pages() {
 }
 
 #[test]
-fn capture_is_skipped_for_non_stream_tables() {
-    let (engine, ctx, _t) = fixture();
-    // Table without a stream — writes produce no events, and there is no
-    // stream store to read.
-    let input: CreateTableInput = serde_json::from_value(json!({
-        "TableName": "plain",
-        "KeySchema": [{ "AttributeName": "pk", "KeyType": "HASH" }],
-        "AttributeDefinitions": [{ "AttributeName": "pk", "AttributeType": "S" }],
-    }))
-    .unwrap();
-    control_plane::create_table(&engine, &ctx, input).expect("create");
-    crate::commands::item::put_item(
-        &engine,
-        &ctx,
-        serde_json::from_value(json!({ "TableName": "plain", "Item": { "pk": {"S": "a"} } }))
-            .unwrap(),
-    )
-    .expect("put");
-    assert_eq!(
-        next_sequence_value(&engine, &ctx, "plain").unwrap(),
-        0,
-        "no events captured for a non-stream table"
-    );
-}
-
-#[test]
 fn describe_stream_for_missing_table_is_resource_not_found() {
     let (engine, ctx, _t) = fixture();
     let err = describe_stream(
@@ -863,46 +606,6 @@ fn list(
         },
     )
     .expect("list streams")
-}
-
-/// Persist a stream event directly with a chosen sequence/timestamp, so
-/// retention can be tested without waiting out the 24h window.
-fn inject_event(
-    engine: &Arc<Engine>,
-    context: &TenantIsolationContext,
-    table_name: &str,
-    seq: i64,
-    created: i64,
-) {
-    let event = StoredEvent {
-        seq,
-        created,
-        event_name: "INSERT".to_owned(),
-        keys: json!({ "pk": { "S": format!("k{seq}") } })
-            .as_object()
-            .unwrap()
-            .clone(),
-        old_image: None,
-        new_image: Some(
-            json!({ "pk": { "S": format!("k{seq}") }, "v": { "N": "1" } })
-                .as_object()
-                .unwrap()
-                .clone(),
-        ),
-        user_identity: None,
-    };
-    let Value::Object(fields) = serde_json::to_value(&event).unwrap() else {
-        panic!("event serializes to an object");
-    };
-    let id = DocumentId::from_key(sequence_number(seq)).unwrap();
-    engine
-        .insert_document_with_id(
-            context.tenant_id(),
-            stream_events_table(table_name).unwrap(),
-            id,
-            fields,
-        )
-        .expect("inject event");
 }
 
 #[test]
@@ -973,87 +676,4 @@ fn list_streams_paginates_with_limit_and_exclusive_start() {
     seen.sort_unstable();
     seen.dedup();
     assert_eq!(seen.len(), 3, "all three streams, no duplicates");
-}
-
-#[test]
-fn get_records_skips_expired_events_and_reclaims_their_storage() {
-    let (engine, ctx, _t) = fixture();
-    let arn = create_streamed_named(&engine, &ctx, "events");
-    let now = epoch_seconds();
-    inject_event(
-        &engine,
-        &ctx,
-        "events",
-        0,
-        now - STREAM_RETENTION_SECS - 100,
-    ); // expired
-    inject_event(&engine, &ctx, "events", 1, now); // fresh
-    assert_eq!(read_events(&engine, &ctx, "events").unwrap().len(), 2);
-
-    let out = all_records(&engine, &ctx, &arn);
-    assert_eq!(out.records.len(), 1, "the expired event is not returned");
-    assert_eq!(
-        out.records[0].dynamodb.keys.get("pk"),
-        Some(&extenddb_core::types::AttributeValue::S("k1".into())),
-        "the surviving record is the fresh one"
-    );
-    let next = out.next_shard_iterator.expect("iterator advances");
-    assert_eq!(
-        iterator_next_sequence(&next),
-        2,
-        "the iterator advances past the expired event so re-polling never stalls"
-    );
-    assert_eq!(
-        read_events(&engine, &ctx, "events").unwrap().len(),
-        1,
-        "the expired event's storage is reclaimed on poll"
-    );
-}
-
-#[test]
-fn reclaiming_expired_events_preserves_the_monotonic_sequence() {
-    let (engine, ctx, _t) = fixture();
-    let arn = create_streamed_named(&engine, &ctx, "events");
-    let now = epoch_seconds();
-    // Two events that have both aged out of the retention window, with the
-    // sequence counter advanced past them (as real capture would leave it).
-    inject_event(
-        &engine,
-        &ctx,
-        "events",
-        0,
-        now - STREAM_RETENTION_SECS - 100,
-    );
-    inject_event(
-        &engine,
-        &ctx,
-        "events",
-        1,
-        now - STREAM_RETENTION_SECS - 100,
-    );
-    set_sequence_value(&engine, &ctx, "events", 2).expect("counter");
-
-    // A poll returns nothing (all expired) and reclaims both event docs.
-    let out = all_records(&engine, &ctx, &arn);
-    assert!(out.records.is_empty(), "all events expired");
-    assert_eq!(
-        read_events(&engine, &ctx, "events").unwrap().len(),
-        0,
-        "expired storage reclaimed"
-    );
-
-    // The high-water mark is preserved: the next captured event keeps
-    // climbing rather than colliding with a consumer's advanced iterator.
-    assert_eq!(
-        next_sequence_value(&engine, &ctx, "events").unwrap(),
-        2,
-        "reclamation does not reset the counter"
-    );
-    put(&engine, &ctx, "z", "9");
-    let fresh = read_events(&engine, &ctx, "events").unwrap();
-    assert_eq!(fresh.len(), 1);
-    assert_eq!(
-        fresh[0].seq, 2,
-        "the new event continues past the reclaimed sequences"
-    );
 }

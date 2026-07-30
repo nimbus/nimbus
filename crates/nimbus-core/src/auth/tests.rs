@@ -64,6 +64,55 @@ fn read_rule_compiles_principal_equality_into_filter() {
     );
 }
 
+/// A rule naming document lifecycle metadata must stay residual rather than
+/// compile to a planner filter.
+///
+/// A planner filter resolves its field from the stored field map, where
+/// `_creationTime` never appears — pushing one down would match no row at all,
+/// turning a rule every real document satisfies into a rule that denies
+/// everything. Residual evaluation resolves it from the document header, which
+/// is the value a rule-level comparison sees.
+#[test]
+fn read_rule_keeps_lifecycle_metadata_predicates_residual() {
+    let rule = AccessRule {
+        require_authenticated: true,
+        predicates: vec![AccessPredicate {
+            left: AccessValue::DocumentField {
+                field: "_creationTime".to_string(),
+            },
+            op: AccessOperator::Gt,
+            right: AccessValue::Literal { value: json!(0) },
+        }],
+    };
+
+    let compiled = rule
+        .compile_read_filters(&owner_principal("ada"))
+        .expect("policy should compile");
+    assert!(!compiled.impossible);
+    assert!(
+        compiled.planner_filters.is_empty(),
+        "a lifecycle-metadata predicate pushed down as a planner filter would match no stored \
+         field and silently deny every row: {:?}",
+        compiled.planner_filters
+    );
+
+    let mut document = owner_document("ada");
+    document.creation_time = crate::Timestamp(7);
+    assert!(
+        rule.allows(&owner_principal("ada"), Some(&document), None)
+            .expect("policy evaluation should succeed"),
+        "residual evaluation must read _creationTime from the document header"
+    );
+
+    document.creation_time = crate::Timestamp(0);
+    assert!(
+        !rule
+            .allows(&owner_principal("ada"), Some(&document), None)
+            .expect("policy evaluation should succeed"),
+        "the predicate must still discriminate: a zero creation time fails `> 0`"
+    );
+}
+
 #[test]
 fn read_rule_becomes_impossible_without_required_claim() {
     let compiled = owner_policy()

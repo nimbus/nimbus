@@ -14,9 +14,9 @@ mod verification;
 
 pub use engine::{
     AsyncMutationContext, CommitPhaseMetricsSnapshot, CommittedMutationEvent,
-    CommittedMutationObserver, CommittedMutationObserverWorkStats, EncryptionStatus, Engine,
-    InitializedKeyProvider, MutationActor, MutationExecutionUnit, MutationIsolatePermit,
-    ProjectionReconciliationSnapshot, ProjectionToken, SubscribeOptions,
+    CommittedMutationObserver, CommittedMutationObserverWorkStats, DocumentReadFilter,
+    EncryptionStatus, Engine, InitializedKeyProvider, MutationActor, MutationExecutionUnit,
+    MutationIsolatePermit, ProjectionReconciliationSnapshot, ProjectionToken, SubscribeOptions,
     SubscriptionBootstrapCancellation, TableSchemaChangeEvent, TableSchemaChangeObserver,
     TenantAdmissionOutcome, TenantDeletionLease, TenantObjectMeta, TenantRuntimeLoadedEvent,
     TenantRuntimeObserver, TenantRuntimeObserverIdentity,

@@ -18,7 +18,8 @@ use nimbus_tenant::TenantIsolationContext;
 
 use crate::attribute_value::{item_to_fields, validate_item};
 use crate::commands::item::{
-    delete_atomic_write, overwrite_atomic_write, primary_key_id, read_item,
+    SingleItemTransactionPlan, delete_atomic_write, execute_single_item_transaction,
+    overwrite_atomic_write, primary_key_id, read_item, read_old_image_in_transaction,
 };
 use crate::commands::{control_plane, stream};
 use crate::error::map_core_error;
@@ -98,6 +99,13 @@ pub fn batch_get_item(
 /// throttling). Note: unlike TransactWriteItems this is **not** atomic — a
 /// later validation error leaves earlier writes applied (DynamoDB semantics).
 ///
+/// Each op runs in its own single-item transaction, which is what keeps the
+/// ops independent while still reading the prior image inside the transaction
+/// that replaces it. Put and Delete are whole-item operations, so racing them
+/// is last-writer-wins by contract; the transaction is here for the emitted
+/// stream record, whose INSERT/MODIFY classification and `OldImage` must
+/// describe the state this write actually replaced.
+///
 /// # Errors
 /// `ValidationException` for an empty request, more than 25 ops, or a
 /// `WriteRequest` without exactly one of Put/Delete; `ResourceNotFoundException`
@@ -125,63 +133,81 @@ pub fn batch_write_item(
         for request in requests {
             match (&request.put_request, &request.delete_request) {
                 (Some(put), None) => {
-                    // Read the prior image first so the stream record is a
-                    // correct INSERT vs MODIFY with the right old image.
                     validate_item(&put.item)?;
                     let id = primary_key_id(&put.item, &key_schema)?;
-                    let old = read_item(engine, context, &table, id.clone())?;
-                    let write = overwrite_atomic_write(
-                        table.clone(),
-                        id,
-                        item_to_fields(&put.item)?,
-                        WritePrecondition::default(),
-                    );
+                    let fields = item_to_fields(&put.item)?;
                     let keys = extract_key(&put.item, &key_schema);
-                    let change = stream::StreamChange::new(
-                        table_name.clone(),
-                        if old.is_some() {
-                            StreamEventName::Modify
-                        } else {
-                            StreamEventName::Insert
-                        },
-                        keys,
-                        old,
-                        Some(put.item.clone()),
-                        None,
-                    );
-                    stream::execute_atomic_write_batch_with_streams(
-                        engine,
-                        context,
-                        vec![write],
-                        &[change],
-                        map_core_error,
-                    )?;
+                    execute_single_item_transaction(engine, context, |token, principal| {
+                        let old = read_old_image_in_transaction(
+                            engine,
+                            context,
+                            token,
+                            principal,
+                            &table,
+                            id.clone(),
+                        )?;
+                        let change = stream::StreamChange::new(
+                            table_name.clone(),
+                            if old.is_some() {
+                                StreamEventName::Modify
+                            } else {
+                                StreamEventName::Insert
+                            },
+                            keys.clone(),
+                            old,
+                            Some(put.item.clone()),
+                            None,
+                        );
+                        Ok(SingleItemTransactionPlan {
+                            output: (),
+                            writes: vec![overwrite_atomic_write(
+                                table.clone(),
+                                id.clone(),
+                                fields.clone(),
+                                WritePrecondition::exists(change.old_image.is_some()),
+                            )],
+                            changes: vec![change],
+                        })
+                    })?;
                 }
                 (None, Some(delete)) => {
                     let id = primary_key_id(&delete.key, &key_schema)?;
-                    let old = read_item(engine, context, &table, id.clone())?;
-                    // DynamoDB emits a REMOVE record only when an item was
-                    // actually deleted.
-                    if let Some(old_image) = old {
-                        let write =
-                            delete_atomic_write(table.clone(), id, WritePrecondition::default());
-                        let keys = extract_key(&delete.key, &key_schema);
-                        let change = stream::StreamChange::new(
-                            table_name.clone(),
-                            StreamEventName::Remove,
-                            keys,
-                            Some(old_image),
-                            None,
-                            None,
-                        );
-                        stream::execute_atomic_write_batch_with_streams(
+                    let keys = extract_key(&delete.key, &key_schema);
+                    execute_single_item_transaction(engine, context, |token, principal| {
+                        let old = read_old_image_in_transaction(
                             engine,
                             context,
-                            vec![write],
-                            &[change],
-                            map_core_error,
+                            token,
+                            principal,
+                            &table,
+                            id.clone(),
                         )?;
-                    }
+                        // DynamoDB emits a REMOVE record only when an item was
+                        // actually deleted.
+                        let (writes, changes) = match old {
+                            Some(old_image) => (
+                                vec![delete_atomic_write(
+                                    table.clone(),
+                                    id.clone(),
+                                    WritePrecondition::exists(true),
+                                )],
+                                vec![stream::StreamChange::new(
+                                    table_name.clone(),
+                                    StreamEventName::Remove,
+                                    keys.clone(),
+                                    Some(old_image),
+                                    None,
+                                    None,
+                                )],
+                            ),
+                            None => (Vec::new(), Vec::new()),
+                        };
+                        Ok(SingleItemTransactionPlan {
+                            output: (),
+                            writes,
+                            changes,
+                        })
+                    })?;
                 }
                 _ => {
                     return Err(DynamoDbError::ValidationException(
@@ -203,9 +229,14 @@ pub fn batch_write_item(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use extenddb_core::types::{AttributeValue, CreateTableInput};
+    use extenddb_core::types::{
+        AttributeValue, CreateTableInput, DescribeStreamInput, GetRecordsInput,
+        GetShardIteratorInput, ShardIteratorType, StreamRecord,
+    };
     use nimbus_core::TenantId;
+    use nimbus_engine::commit_fault_labels;
     use serde_json::json;
+    use std::time::Duration;
 
     fn fixture() -> (Arc<Engine>, TenantIsolationContext, tempfile::TempDir) {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -410,5 +441,249 @@ mod tests {
         let err =
             batch_write(&engine, &ctx, json!({ "RequestItems": {} })).expect_err("empty rejected");
         assert!(matches!(err, DynamoDbError::ValidationException(_)));
+    }
+
+    // ---- FU3: stream-record fidelity under concurrency ----
+    //
+    // BatchWriteItem's Put and Delete are whole-item, so racing them is
+    // last-writer-wins by contract and there is no lost update to prove. What a
+    // stale prior image corrupts is the *stream record*: the INSERT vs MODIFY
+    // classification and the `OldImage`. Both tests below pin the record
+    // against a write that lands after the batch op's read would have run.
+
+    /// Create a stream-enabled `Orders` table and return its stream ARN.
+    fn create_streamed_orders(engine: &Arc<Engine>, context: &TenantIsolationContext) -> String {
+        let input: CreateTableInput = serde_json::from_value(json!({
+            "TableName": "Orders",
+            "KeySchema": [{ "AttributeName": "pk", "KeyType": "HASH" }],
+            "AttributeDefinitions": [{ "AttributeName": "pk", "AttributeType": "S" }],
+            "StreamSpecification": {
+                "StreamEnabled": true,
+                "StreamViewType": "NEW_AND_OLD_IMAGES"
+            },
+        }))
+        .unwrap();
+        control_plane::create_table(engine, context, input)
+            .expect("create streamed table")
+            .table_description
+            .latest_stream_arn
+            .expect("stream arn")
+    }
+
+    /// Every captured stream record, oldest first, read through the public
+    /// GetRecords surface a client would use.
+    fn stream_records(
+        engine: &Arc<Engine>,
+        context: &TenantIsolationContext,
+        arn: &str,
+    ) -> Vec<StreamRecord> {
+        let shard = stream::describe_stream(
+            engine,
+            context,
+            DescribeStreamInput {
+                stream_arn: arn.to_owned(),
+                limit: None,
+                exclusive_start_shard_id: None,
+            },
+        )
+        .expect("describe stream")
+        .stream_description
+        .shards
+        .swap_remove(0)
+        .shard_id;
+        let iterator = stream::get_shard_iterator(
+            engine,
+            context,
+            GetShardIteratorInput {
+                stream_arn: arn.to_owned(),
+                shard_id: shard,
+                shard_iterator_type: ShardIteratorType::TrimHorizon,
+                sequence_number: None,
+            },
+        )
+        .expect("shard iterator")
+        .shard_iterator
+        .expect("shard iterator");
+        stream::get_records(
+            engine,
+            context,
+            GetRecordsInput {
+                shard_iterator: iterator,
+                limit: None,
+            },
+        )
+        .expect("get records")
+        .records
+    }
+
+    fn attribute<'a>(image: Option<&'a Item>, name: &str) -> Option<&'a AttributeValue> {
+        image.and_then(|image| image.get(name))
+    }
+
+    /// A batch Put that reads its prior image outside the transaction that
+    /// replaces it classifies the record from a snapshot the write never
+    /// overwrote: it reports INSERT with no `OldImage` even though a concurrent
+    /// writer created the item first, so the record claims the write created an
+    /// item that already existed and hides the image it destroyed.
+    #[test]
+    fn batch_put_stream_record_reflects_the_image_it_actually_replaced() {
+        let (engine, ctx, _t) = fixture();
+        let arn = create_streamed_orders(&engine, &ctx);
+
+        let faults = engine.commit_fault_handle_for_testing();
+        faults.arm(commit_fault_labels::PREPARE_COMPLETE);
+        let batched = std::thread::spawn({
+            let engine = engine.clone();
+            let ctx = ctx.clone();
+            move || {
+                batch_write(
+                    &engine,
+                    &ctx,
+                    json!({
+                        "RequestItems": {
+                            "Orders": [
+                                { "PutRequest": { "Item": { "pk": {"S": "x"}, "v": {"N": "2"} } } }
+                            ]
+                        }
+                    }),
+                )
+            }
+        });
+
+        let entered = faults.wait_until_entered(
+            commit_fault_labels::PREPARE_COMPLETE,
+            Duration::from_secs(5),
+        );
+        if entered {
+            // Lands after the batch op's prior-image read, before its commit.
+            put(&engine, &ctx, "x", "1");
+        }
+        faults.release(commit_fault_labels::PREPARE_COMPLETE);
+        assert!(
+            entered,
+            "the batch put should reach the deterministic commit pause"
+        );
+        batched
+            .join()
+            .expect("batch thread should join")
+            .expect("batch put should retry and commit");
+
+        let records = stream_records(&engine, &ctx, &arn);
+        assert_eq!(
+            records.len(),
+            2,
+            "the concurrent create and the batch put each emit one record: {records:?}"
+        );
+        // Both writers touch the same key, so the batch's record is whichever
+        // one carries the batch's value.
+        let batch_record = records
+            .iter()
+            .find(|record| {
+                attribute(record.dynamodb.new_image.as_ref(), "v")
+                    == Some(&AttributeValue::N("2".into()))
+            })
+            .expect("the batch put's record must be present");
+        assert_eq!(
+            batch_record.event_name,
+            StreamEventName::Modify,
+            "the batch put replaced an item the concurrent writer had already \
+             created, so its record is a MODIFY, not an INSERT: {batch_record:?}"
+        );
+        assert_eq!(
+            attribute(batch_record.dynamodb.old_image.as_ref(), "v"),
+            Some(&AttributeValue::N("1".into())),
+            "the OldImage must be the image the batch put actually replaced: {batch_record:?}"
+        );
+        // The item itself is last-writer-wins, which the batch op won.
+        assert_eq!(
+            read(&engine, &ctx, "x").and_then(|item| item.get("v").cloned()),
+            Some(AttributeValue::N("2".into()))
+        );
+    }
+
+    /// The same staleness on the Delete side: a REMOVE record must carry the
+    /// image the delete actually removed, not an image a later writer replaced.
+    #[test]
+    fn batch_delete_stream_record_carries_the_image_it_actually_removed() {
+        let (engine, ctx, _t) = fixture();
+        let arn = create_streamed_orders(&engine, &ctx);
+        put(&engine, &ctx, "y", "1");
+
+        let faults = engine.commit_fault_handle_for_testing();
+        faults.arm(commit_fault_labels::PREPARE_COMPLETE);
+        let batched = std::thread::spawn({
+            let engine = engine.clone();
+            let ctx = ctx.clone();
+            move || {
+                batch_write(
+                    &engine,
+                    &ctx,
+                    json!({
+                        "RequestItems": {
+                            "Orders": [ { "DeleteRequest": { "Key": { "pk": {"S": "y"} } } } ]
+                        }
+                    }),
+                )
+            }
+        });
+
+        let entered = faults.wait_until_entered(
+            commit_fault_labels::PREPARE_COMPLETE,
+            Duration::from_secs(5),
+        );
+        if entered {
+            put(&engine, &ctx, "y", "2");
+        }
+        faults.release(commit_fault_labels::PREPARE_COMPLETE);
+        assert!(
+            entered,
+            "the batch delete should reach the deterministic commit pause"
+        );
+        batched
+            .join()
+            .expect("batch thread should join")
+            .expect("batch delete should retry and commit");
+
+        let records = stream_records(&engine, &ctx, &arn);
+        let remove = records
+            .iter()
+            .find(|record| record.event_name == StreamEventName::Remove)
+            .expect("the batch delete's REMOVE record must be present");
+        assert_eq!(
+            attribute(remove.dynamodb.old_image.as_ref(), "v"),
+            Some(&AttributeValue::N("2".into())),
+            "the REMOVE must carry the image the delete removed — the concurrent \
+             writer's value — not the stale one read before it landed: {remove:?}"
+        );
+        assert!(
+            read(&engine, &ctx, "y").is_none(),
+            "the delete still wins the race on the item itself"
+        );
+    }
+
+    /// Routing batch ops through single-item transactions must not make the
+    /// batch atomic: a later op's validation failure leaves earlier ops applied.
+    #[test]
+    fn batch_write_ops_stay_independent_of_each_other() {
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
+        let err = batch_write(
+            &engine,
+            &ctx,
+            json!({
+                "RequestItems": {
+                    "Orders": [
+                        { "PutRequest": { "Item": { "pk": {"S": "first"}, "v": {"N": "1"} } } },
+                        { "PutRequest": { "Item": { "v": {"N": "2"} } } }
+                    ]
+                }
+            }),
+        )
+        .expect_err("the second op is missing its partition key");
+        assert!(matches!(err, DynamoDbError::ValidationException(_)));
+        assert!(
+            read(&engine, &ctx, "first").is_some(),
+            "BatchWriteItem is not atomic: the op that succeeded stays applied"
+        );
     }
 }

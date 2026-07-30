@@ -4,11 +4,11 @@ use std::time::{Duration, Instant};
 
 use futures::FutureExt;
 use nimbus_core::{
-    Document, Error, Page, PaginatedQuery, PrincipalContext, Query, Result, SequenceNumber,
-    TableId, TableName, TenantId,
+    Document, DocumentId, Error, Page, PaginatedQuery, PrincipalContext, Query, Result,
+    SequenceNumber, TableId, TableName, TenantId,
 };
 
-use super::authorization::ReadAuthorization;
+use super::authorization::{DocumentReadFilter, ReadAuthorization};
 use super::materialized::{
     evaluate_with_materialized_surface_async_prepared,
     evaluate_with_materialized_surface_cancellable_prepared,
@@ -270,6 +270,30 @@ impl Engine {
         }
     }
 
+    /// Resolves `table`'s read rule for `principal` so a caller can apply it to
+    /// documents it reconstructs itself.
+    ///
+    /// This is for data that never passes through a scan and so cannot be
+    /// authorized by one. The DynamoDB adapter's stream records are the case it
+    /// exists for: a record's images are item contents assembled from the change
+    /// log, and returning them has to answer the same question a read of the
+    /// source table would.
+    ///
+    /// # Errors
+    /// Propagates a tenant load failure or an unresolvable read rule.
+    pub fn document_read_filter(
+        &self,
+        tenant_id: &TenantId,
+        table: &TableName,
+        principal: &PrincipalContext,
+    ) -> Result<DocumentReadFilter> {
+        let LoadedQueryRuntime { runtime, .. } = load_query_runtime(self, tenant_id)?;
+        let _operation = runtime.enter_operation(tenant_id)?;
+        let schema = runtime.schema();
+        let authorization = ReadAuthorization::for_table(schema.get_table(table), principal)?;
+        Ok(DocumentReadFilter::new(authorization, principal.clone()))
+    }
+
     /// Reads the documents whose `DocumentId` begins with `id_prefix` that
     /// `principal` is allowed to read.
     ///
@@ -308,26 +332,78 @@ impl Engine {
             .collect()
     }
 
-    /// Reads at most `limit` documents from `table` whose `DocumentId` is at or
-    /// after `start_id`, in document-id order.
+    /// Reads at most `limit` documents from `table` that `principal` is allowed
+    /// to read, whose `DocumentId` is at or after `start_id`, in document-id
+    /// order.
+    ///
+    /// Like the prefix scan this selects an id range directly rather than
+    /// evaluating a query, so the table's read rule is applied here. Unlike the
+    /// prefix scan it is limit-bearing, so the limit is filled *after*
+    /// authorization: withheld documents do not consume page slots, and the
+    /// scan keeps advancing through the range until the page is full or the
+    /// range is exhausted. Post-filtering a single page would instead hand a
+    /// restricted caller a short page and let it mistake that for the end of
+    /// the range.
     pub fn scan_documents_by_id_starting_at_cancellable(
         &self,
         tenant_id: &TenantId,
         table: &TableName,
         start_id: &str,
         limit: usize,
+        principal: &PrincipalContext,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
         let LoadedQueryRuntime { runtime, .. } = load_query_runtime(self, tenant_id)?;
         let _operation = runtime.enter_operation(tenant_id)?;
-        let documents = runtime.store().scan_table_id_starting_at_cancellable(
-            table,
-            start_id,
-            limit,
-            check_cancel,
-        )?;
-        runtime.cache_documents(&documents);
-        Ok(documents)
+        let schema = runtime.schema();
+        let authorization = ReadAuthorization::for_table(schema.get_table(table), principal)?;
+        if authorization.impossible {
+            return Ok(Vec::new());
+        }
+
+        let mut admitted: Vec<Document> = Vec::new();
+        // The store scan is inclusive of its start id, so a refill re-reads the
+        // document it resumed from. Asking for one extra document and dropping
+        // that repeat keeps every round net-positive, which is what bounds the
+        // loop.
+        let mut resume_from: Option<DocumentId> = None;
+        loop {
+            check_cancel()?;
+            let wanted =
+                (limit - admitted.len()).saturating_add(usize::from(resume_from.is_some()));
+            let scanned = runtime.store().scan_table_id_starting_at_cancellable(
+                table,
+                resume_from.as_ref().map_or(start_id, DocumentId::as_str),
+                wanted,
+                check_cancel,
+            )?;
+            runtime.cache_documents(&scanned);
+            let range_exhausted = scanned.len() < wanted;
+            let last_scanned = scanned.last().map(|document| document.id.clone());
+
+            for document in scanned {
+                if resume_from
+                    .as_ref()
+                    .is_some_and(|resumed| document.id == *resumed)
+                {
+                    continue;
+                }
+                if authorization.allows_document(principal, &document)? {
+                    admitted.push(document);
+                    if admitted.len() == limit {
+                        return Ok(admitted);
+                    }
+                }
+            }
+
+            if range_exhausted {
+                return Ok(admitted);
+            }
+            resume_from = last_scanned;
+        }
     }
 
     /// Evaluates a paginated query for a tenant.
