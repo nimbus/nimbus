@@ -35,16 +35,22 @@ use crate::tenant::caller_principal;
 /// re-reads the item and re-evaluates its condition/update after every conflict.
 const MAX_SINGLE_ITEM_TRANSACTION_ATTEMPTS: usize = 32;
 
-struct SingleItemTransactionPlan<T> {
-    output: T,
-    writes: Vec<AtomicWrite>,
-    changes: Vec<stream::StreamChange>,
+pub(crate) struct SingleItemTransactionPlan<T> {
+    pub(crate) output: T,
+    pub(crate) writes: Vec<AtomicWrite>,
+    pub(crate) changes: Vec<stream::StreamChange>,
 }
 
 /// Execute one DynamoDB single-item operation in an engine transaction. The
 /// item snapshot, condition evaluation, update expression, returned image,
 /// data write, and stream effects share one conflict boundary.
-fn execute_single_item_transaction<T, F>(
+///
+/// `batch.rs` drives each BatchWriteItem op through this too: a batch op is
+/// still independent of its siblings (one transaction each, no cross-item
+/// atomicity), but its prior image has to be read inside the transaction that
+/// replaces it or the emitted stream record describes a state that was never
+/// overwritten.
+pub(crate) fn execute_single_item_transaction<T, F>(
     engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     mut plan: F,
@@ -472,7 +478,7 @@ pub fn update_item(
     })
 }
 
-fn read_item_in_transaction(
+pub(crate) fn read_item_in_transaction(
     engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     token: &TransactionSessionToken,
