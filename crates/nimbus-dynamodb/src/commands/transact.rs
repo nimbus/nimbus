@@ -30,6 +30,7 @@ use crate::expression::{
     apply_update, build_maps, default_limits, evaluate_condition, parse_condition,
     parse_update_expression, project_item, reject_key_updates,
 };
+use crate::tenant::caller_principal;
 
 /// The DynamoDB per-call item limit for TransactGetItems / TransactWriteItems.
 const MAX_TRANSACT_ITEMS: usize = 100;
@@ -57,7 +58,7 @@ pub fn transact_get_items(
         ));
     }
 
-    let principal = PrincipalContext::system();
+    let principal = caller_principal(context);
     let session = engine
         .begin_transaction_session(
             context.tenant_id().clone(),
@@ -150,7 +151,7 @@ pub fn transact_write_items(
         ));
     }
 
-    let principal = PrincipalContext::system();
+    let principal = caller_principal(context);
     let session = engine
         .begin_transaction_session(
             context.tenant_id().clone(),
@@ -559,7 +560,7 @@ mod tests {
     fn fixture() -> (Arc<Engine>, TenantIsolationContext, tempfile::TempDir) {
         let temp = tempfile::tempdir().expect("tempdir");
         let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
-        let context = crate::tenant::tenant_context(TenantId::new("acme").unwrap(), "test");
+        let context = crate::tenant::test_context(TenantId::new("acme").unwrap(), "test");
         crate::tenant::ensure_tenant(&engine, &context).expect("tenant");
         (engine, context, temp)
     }

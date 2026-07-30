@@ -27,7 +27,9 @@ pub mod wire;
 
 pub use error::map_core_error;
 pub use tenant::{
-    AccessKeyRegistry, AuthMode, KeyBinding, ensure_tenant, ensure_tenant_async, tenant_context,
+    ACCESS_KEY_CLAIM, AccessKeyRegistry, AuthMode, KeyBinding, access_key_principal,
+    adapter_principal, caller_principal, ensure_tenant, ensure_tenant_async, maintenance_context,
+    request_context,
 };
 
 pub use attribute_value::{fields_to_item, item_to_fields, validate_item};

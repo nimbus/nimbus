@@ -29,6 +29,7 @@ use crate::expression::{
     project_item, reject_key_updates, updated_attributes,
 };
 use crate::key::encode_key;
+use crate::tenant::caller_principal;
 
 /// Bound retries for a single-item optimistic transaction. A fresh transaction
 /// re-reads the item and re-evaluates its condition/update after every conflict.
@@ -54,7 +55,7 @@ where
         &PrincipalContext,
     ) -> Result<SingleItemTransactionPlan<T>, DynamoDbError>,
 {
-    let principal = PrincipalContext::system();
+    let principal = caller_principal(context);
     for attempt in 1..=MAX_SINGLE_ITEM_TRANSACTION_ATTEMPTS {
         let session = engine
             .begin_transaction_session(
@@ -133,6 +134,10 @@ fn single_item_transaction_should_retry(error: &nimbus_core::Error) -> bool {
 /// live existence state at commit, closing the check-then-write TOCTOU on
 /// conditional writes (F9). Returns the raw core error so the caller can map a
 /// lost existence-precondition race to `ConditionalCheckFailedException`.
+///
+/// `principal` is explicit because this helper serves both user tables (where
+/// the write must be authorized as the calling access key) and the adapter's own
+/// reserved stores (where it must not be).
 pub(crate) fn atomic_overwrite(
     engine: &Arc<Engine>,
     context: &TenantIsolationContext,
@@ -140,6 +145,7 @@ pub(crate) fn atomic_overwrite(
     id: DocumentId,
     fields: serde_json::Map<String, serde_json::Value>,
     precondition: WritePrecondition,
+    principal: PrincipalContext,
 ) -> Result<(), nimbus_core::Error> {
     let batch = AtomicWriteBatch::new(vec![overwrite_atomic_write(
         table,
@@ -148,7 +154,7 @@ pub(crate) fn atomic_overwrite(
         precondition,
     )])?;
     engine
-        .begin_mutation_execution_unit(context.tenant_id().clone(), PrincipalContext::system())?
+        .begin_mutation_execution_unit(context.tenant_id().clone(), principal)?
         .execute_atomic_write_batch(batch)?;
     Ok(())
 }
@@ -488,7 +494,12 @@ pub(crate) fn read_item(
     table: &TableName,
     id: DocumentId,
 ) -> Result<Option<Item>, DynamoDbError> {
-    match engine.get_document(context.tenant_id(), table, id) {
+    match engine.get_document_with_principal(
+        context.tenant_id(),
+        table,
+        id,
+        &caller_principal(context),
+    ) {
         Ok(document) => Ok(Some(fields_to_item(&document.fields)?)),
         Err(nimbus_core::Error::DocumentNotFound(_)) => Ok(None),
         Err(error) => Err(map_core_error(error)),
@@ -548,7 +559,7 @@ mod tests {
     fn fixture() -> (Arc<Engine>, TenantIsolationContext, tempfile::TempDir) {
         let temp = tempfile::tempdir().expect("tempdir");
         let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
-        let context = crate::tenant::tenant_context(TenantId::new("acme").unwrap(), "test");
+        let context = crate::tenant::test_context(TenantId::new("acme").unwrap(), "test");
         crate::tenant::ensure_tenant(&engine, &context).expect("tenant");
         (engine, context, temp)
     }
@@ -747,6 +758,7 @@ mod tests {
             orders_id(&engine, &ctx, "live"),
             pk_fields("live"),
             WritePrecondition::exists(false),
+            caller_principal(&ctx),
         )
         .map_err(map_conditional_write_error)
         .expect_err("stale create must be rejected");
@@ -763,6 +775,7 @@ mod tests {
             orders_id(&engine, &ctx, "ghost"),
             pk_fields("ghost"),
             WritePrecondition::exists(true),
+            caller_principal(&ctx),
         )
         .map_err(map_conditional_write_error)
         .expect_err("stale must-exist update must be rejected");

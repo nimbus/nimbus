@@ -842,6 +842,32 @@ fn application_context_allows_matching_verified_principal_tenant_claim() {
 }
 
 #[test]
+fn application_principal_is_readable_only_from_application_authority() {
+    let principal = principal_with_tenant_claim("tenant_id", "tenant-a");
+    let tenant = TenantId::new("tenant-a").expect("tenant id should parse");
+
+    let application =
+        TenantIsolationContext::application(tenant.clone(), principal.clone(), "test");
+    assert_eq!(
+        application.application_principal(),
+        Some(&principal),
+        "an application context must hand back the caller it authorizes, so adapters can pass \
+         that caller into engine calls that take a principal"
+    );
+
+    // Operator and system authority represent Nimbus acting, not a caller, so
+    // there is no application principal to read back.
+    assert_eq!(
+        TenantIsolationContext::operator(tenant.clone(), "test").application_principal(),
+        None
+    );
+    assert_eq!(
+        TenantIsolationContext::system(tenant, "test").application_principal(),
+        None
+    );
+}
+
+#[test]
 fn application_context_can_require_tenant_claim_for_control_plane_routes() {
     let context = TenantIsolationContext::application(
         TenantId::new("tenant-a").expect("tenant id should parse"),

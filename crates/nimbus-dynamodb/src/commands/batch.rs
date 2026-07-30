@@ -210,7 +210,7 @@ mod tests {
     fn fixture() -> (Arc<Engine>, TenantIsolationContext, tempfile::TempDir) {
         let temp = tempfile::tempdir().expect("tempdir");
         let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
-        let context = crate::tenant::tenant_context(TenantId::new("acme").unwrap(), "test");
+        let context = crate::tenant::test_context(TenantId::new("acme").unwrap(), "test");
         crate::tenant::ensure_tenant(&engine, &context).expect("tenant");
         (engine, context, temp)
     }

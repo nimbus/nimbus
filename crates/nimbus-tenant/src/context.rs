@@ -62,6 +62,19 @@ impl TenantIsolationContext {
         self.deployment_generation
     }
 
+    /// The application principal this context authorizes.
+    ///
+    /// `None` for operator and system authority, which represent Nimbus itself
+    /// acting rather than a caller. Adapters read this back to pass the caller
+    /// into engine calls that take a principal, so a table access policy sees
+    /// who is actually asking.
+    pub fn application_principal(&self) -> Option<&PrincipalContext> {
+        match &self.authority {
+            TenantIsolationAuthority::Application { principal } => Some(principal),
+            TenantIsolationAuthority::Operator | TenantIsolationAuthority::System => None,
+        }
+    }
+
     pub fn ensure_system_or_operator_authority(&self, context: &str) -> Result<()> {
         if self.authority.is_system_or_operator() {
             return Ok(());

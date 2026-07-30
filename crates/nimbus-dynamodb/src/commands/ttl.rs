@@ -15,13 +15,14 @@ use extenddb_core::types::{
     UpdateTimeToLiveOutput, extract_key,
 };
 use nimbus_core::{DocumentId, StructuredQuery, TableName, WritePrecondition};
-use nimbus_engine::Engine;
+use nimbus_engine::{Engine, MutationActor};
 use nimbus_tenant::TenantIsolationContext;
 use serde_json::{Map, Value};
 
 use crate::attribute_value::fields_to_item;
 use crate::commands::{control_plane, item, stream};
 use crate::error::map_core_error;
+use crate::tenant::{adapter_principal, caller_principal};
 
 /// Reserved table holding one TTL-config doc per table (doc id = table name).
 const TTL_TABLE: &str = "_ddb_ttl";
@@ -43,7 +44,12 @@ pub(crate) fn reclaim_for_table(
     context: &TenantIsolationContext,
     table_name: &str,
 ) -> Result<(), DynamoDbError> {
-    match engine.delete_document(context.tenant_id(), ttl_table()?, ttl_id(table_name)?) {
+    match engine.delete_document_with(
+        context.tenant_id(),
+        ttl_table()?,
+        ttl_id(table_name)?,
+        MutationActor::with_principal(&adapter_principal()),
+    ) {
         Ok(()) | Err(nimbus_core::Error::NotFound(_) | nimbus_core::Error::DocumentNotFound(_)) => {
             Ok(())
         }
@@ -58,7 +64,12 @@ fn load_ttl_state(
     context: &TenantIsolationContext,
     table_name: &str,
 ) -> Result<(bool, Option<String>), DynamoDbError> {
-    match engine.get_document(context.tenant_id(), &ttl_table()?, ttl_id(table_name)?) {
+    match engine.get_document_with_principal(
+        context.tenant_id(),
+        &ttl_table()?,
+        ttl_id(table_name)?,
+        &adapter_principal(),
+    ) {
         Ok(document) => {
             let enabled = document
                 .fields
@@ -159,6 +170,7 @@ fn upsert_ttl_state(
         id,
         fields,
         WritePrecondition::default(),
+        adapter_principal(),
     )
     .map_err(map_core_error)
 }
@@ -204,10 +216,14 @@ pub fn sweep_table(
     };
     let key_schema = control_plane::load_key_schema(engine, context, table_name)?;
     let table = TableName::new(table_name).map_err(map_core_error)?;
-    let documents = match engine.query_documents_structured(
+    // A sweep driven by a maintenance context runs as `system`: expiry is the
+    // tenant's own configuration taking effect on a schedule, and must not be
+    // narrowed by a table policy written for interactive callers.
+    let documents = match engine.query_documents_structured_with_principal(
         context.tenant_id(),
         &table,
         &StructuredQuery::default(),
+        &caller_principal(context),
     ) {
         Ok(documents) => documents,
         Err(nimbus_core::Error::NotFound(_) | nimbus_core::Error::DocumentNotFound(_)) => {
@@ -283,7 +299,7 @@ pub fn sweep_all_tenants(
     let mut swept = 0;
     let mut errors = Vec::new();
     for tenant in access_keys.tenants() {
-        let context = crate::tenant::tenant_context(tenant.clone(), "ttl-sweeper");
+        let context = crate::tenant::maintenance_context(tenant.clone(), "ttl-sweeper");
         match sweep_tenant(engine, &context, now) {
             Ok(count) => swept += count,
             Err(error) => errors.push((tenant, error)),
@@ -307,7 +323,7 @@ pub async fn sweep_all_tenants_async(
     let mut swept = 0;
     let mut errors = Vec::new();
     for tenant in access_keys.tenants() {
-        let context = crate::tenant::tenant_context(tenant.clone(), "ttl-sweeper");
+        let context = crate::tenant::maintenance_context(tenant.clone(), "ttl-sweeper");
         let result = match crate::tenant::ensure_tenant_async(engine, &context).await {
             Ok(()) => sweep_tenant(engine, &context, now),
             Err(error) => Err(error),
@@ -330,7 +346,7 @@ mod tests {
     fn fixture() -> (Arc<Engine>, TenantIsolationContext, tempfile::TempDir) {
         let temp = tempfile::tempdir().expect("tempdir");
         let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
-        let context = crate::tenant::tenant_context(TenantId::new("acme").unwrap(), "test");
+        let context = crate::tenant::test_context(TenantId::new("acme").unwrap(), "test");
         crate::tenant::ensure_tenant(&engine, &context).expect("tenant");
         (engine, context, temp)
     }
@@ -485,8 +501,8 @@ mod tests {
     #[test]
     fn ttl_state_is_tenant_isolated() {
         let (engine, _ctx, _t) = fixture();
-        let acme = crate::tenant::tenant_context(TenantId::new("acme").unwrap(), "test");
-        let globex = crate::tenant::tenant_context(TenantId::new("globex").unwrap(), "test");
+        let acme = crate::tenant::test_context(TenantId::new("acme").unwrap(), "test");
+        let globex = crate::tenant::test_context(TenantId::new("globex").unwrap(), "test");
         crate::tenant::ensure_tenant(&engine, &acme).expect("acme");
         crate::tenant::ensure_tenant(&engine, &globex).expect("globex");
         create_table(&engine, &acme, "Sessions");
@@ -599,8 +615,8 @@ mod tests {
     #[test]
     fn sweep_all_tenants_aggregates_and_isolates() {
         let (engine, _ctx, _t) = fixture();
-        let acme = crate::tenant::tenant_context(TenantId::new("acme").unwrap(), "test");
-        let globex = crate::tenant::tenant_context(TenantId::new("globex").unwrap(), "test");
+        let acme = crate::tenant::test_context(TenantId::new("acme").unwrap(), "test");
+        let globex = crate::tenant::test_context(TenantId::new("globex").unwrap(), "test");
         crate::tenant::ensure_tenant(&engine, &acme).expect("acme");
         crate::tenant::ensure_tenant(&engine, &globex).expect("globex");
         let now = 1_700_000_000;

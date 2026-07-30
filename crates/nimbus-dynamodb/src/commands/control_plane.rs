@@ -21,12 +21,13 @@ use extenddb_core::types::{
     TableStatus, UpdateTableInput, UpdateTableOutput,
 };
 use nimbus_core::{Document, DocumentId, StructuredQuery, TableName, WritePrecondition};
-use nimbus_engine::Engine;
+use nimbus_engine::{Engine, MutationActor};
 use nimbus_tenant::TenantIsolationContext;
 use serde_json::Value;
 
 use crate::commands::{item, stream, tag, ttl};
 use crate::error::map_core_error;
+use crate::tenant::adapter_principal;
 
 /// Tenant-scoped table whose documents hold one `TableDescription` per DynamoDB
 /// table. The `_ddb_` prefix is reserved (user table names with it are rejected).
@@ -47,7 +48,12 @@ pub fn create_table(
     crate::tenant::ensure_tenant(engine, context)?;
     let id = catalog_id(&input.table_name)?;
 
-    match engine.get_document(context.tenant_id(), &catalog_table(), id.clone()) {
+    match engine.get_document_with_principal(
+        context.tenant_id(),
+        &catalog_table(),
+        id.clone(),
+        &adapter_principal(),
+    ) {
         Ok(_) => {
             return Err(DynamoDbError::ResourceInUseException(format!(
                 "Table already exists: {}",
@@ -61,7 +67,13 @@ pub fn create_table(
     let description = build_table_description(&input);
     let fields = description_to_fields(&description)?;
     engine
-        .insert_document_with_id(context.tenant_id(), catalog_table(), id, fields)
+        .insert_document_with(
+            context.tenant_id(),
+            catalog_table(),
+            Some(id),
+            fields,
+            MutationActor::with_principal(&adapter_principal()),
+        )
         .map_err(map_core_error)?;
 
     Ok(CreateTableOutput {
@@ -102,7 +114,12 @@ pub fn delete_table(
     tag::reclaim_for_table(engine, context, &input.table_name)?;
     let id = catalog_id(&input.table_name)?;
     engine
-        .delete_document(context.tenant_id(), catalog_table(), id)
+        .delete_document_with(
+            context.tenant_id(),
+            catalog_table(),
+            id,
+            MutationActor::with_principal(&adapter_principal()),
+        )
         .map_err(map_core_error)?;
     description.table_status = TableStatus::Deleting;
     Ok(DeleteTableOutput {
@@ -117,10 +134,11 @@ pub fn list_tables(
     context: &TenantIsolationContext,
     input: ListTablesInput,
 ) -> Result<ListTablesOutput, DynamoDbError> {
-    let documents = match engine.query_documents_structured(
+    let documents = match engine.query_documents_structured_with_principal(
         context.tenant_id(),
         &catalog_table(),
         &StructuredQuery::default(),
+        &adapter_principal(),
     ) {
         Ok(documents) => documents,
         // No tables created yet → the catalog table does not exist.
@@ -223,6 +241,7 @@ pub fn update_table(
         id,
         fields,
         WritePrecondition::default(),
+        adapter_principal(),
     )
     .map_err(map_core_error)?;
 
@@ -371,10 +390,11 @@ pub fn list_table_descriptions(
     engine: &Arc<Engine>,
     context: &TenantIsolationContext,
 ) -> Result<Vec<TableDescription>, DynamoDbError> {
-    let documents = match engine.query_documents_structured(
+    let documents = match engine.query_documents_structured_with_principal(
         context.tenant_id(),
         &catalog_table(),
         &StructuredQuery::default(),
+        &adapter_principal(),
     ) {
         Ok(documents) => documents,
         Err(nimbus_core::Error::NotFound(_) | nimbus_core::Error::DocumentNotFound(_)) => {
@@ -391,7 +411,12 @@ fn load_description(
     table_name: &str,
 ) -> Result<TableDescription, DynamoDbError> {
     let id = catalog_id(table_name)?;
-    match engine.get_document(context.tenant_id(), &catalog_table(), id) {
+    match engine.get_document_with_principal(
+        context.tenant_id(),
+        &catalog_table(),
+        id,
+        &adapter_principal(),
+    ) {
         Ok(document) => description_from_doc(&document),
         Err(nimbus_core::Error::DocumentNotFound(_)) => Err(resource_not_found(table_name)),
         Err(error) => Err(map_core_error(error)),
@@ -403,16 +428,25 @@ fn load_description(
 /// bulk delete the storage-layout decision mandates instead of a physical DROP
 /// TABLE; the same `TableName` D1's item writes target. A data table that was
 /// never materialized (no writes) reclaims nothing. Returns the count reclaimed.
+///
+/// Reclamation runs as the adapter, not as the deleting caller: the table's own
+/// access policy is being torn down with it, and honoring it here would leave
+/// behind exactly the rows the caller cannot see or delete — orphaned storage
+/// that a table later recreated under the same name would inherit. Whether the
+/// caller may delete the table at all is the control-plane question, answered
+/// before this point by the access key's tenant binding.
 fn reclaim_table_items(
     engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     table_name: &str,
 ) -> Result<usize, DynamoDbError> {
     let table = TableName::new(table_name).map_err(map_core_error)?;
-    let documents = match engine.query_documents_structured(
+    let principal = adapter_principal();
+    let documents = match engine.query_documents_structured_with_principal(
         context.tenant_id(),
         &table,
         &StructuredQuery::default(),
+        &principal,
     ) {
         Ok(documents) => documents,
         // The data table may never have been materialized (no items written).
@@ -424,7 +458,12 @@ fn reclaim_table_items(
     let mut reclaimed = 0;
     for document in documents {
         engine
-            .delete_document(context.tenant_id(), table.clone(), document.id)
+            .delete_document_with(
+                context.tenant_id(),
+                table.clone(),
+                document.id,
+                MutationActor::with_principal(&principal),
+            )
             .map_err(map_core_error)?;
         reclaimed += 1;
     }
@@ -753,7 +792,7 @@ mod tests {
     fn fixture() -> (Arc<Engine>, TenantIsolationContext, tempfile::TempDir) {
         let temp = tempfile::tempdir().expect("tempdir");
         let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
-        let context = crate::tenant::tenant_context(TenantId::new("acme").unwrap(), "test");
+        let context = crate::tenant::test_context(TenantId::new("acme").unwrap(), "test");
         crate::tenant::ensure_tenant(&engine, &context).expect("tenant");
         (engine, context, temp)
     }
@@ -1159,8 +1198,8 @@ mod tests {
     fn tenants_are_isolated() {
         let temp = tempfile::tempdir().expect("tempdir");
         let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
-        let acme = crate::tenant::tenant_context(TenantId::new("acme").unwrap(), "test");
-        let globex = crate::tenant::tenant_context(TenantId::new("globex").unwrap(), "test");
+        let acme = crate::tenant::test_context(TenantId::new("acme").unwrap(), "test");
+        let globex = crate::tenant::test_context(TenantId::new("globex").unwrap(), "test");
         crate::tenant::ensure_tenant(&engine, &acme).unwrap();
         crate::tenant::ensure_tenant(&engine, &globex).unwrap();
 

@@ -6,7 +6,7 @@ use serde_json::json;
 fn fixture() -> (Arc<Engine>, TenantIsolationContext, tempfile::TempDir) {
     let temp = tempfile::tempdir().expect("tempdir");
     let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
-    let context = crate::tenant::tenant_context(TenantId::new("acme").unwrap(), "test");
+    let context = crate::tenant::test_context(TenantId::new("acme").unwrap(), "test");
     crate::tenant::ensure_tenant(&engine, &context).expect("tenant");
     (engine, context, temp)
 }
@@ -290,7 +290,7 @@ fn seed_stream_event_collision(
     let batch =
         AtomicWriteBatch::new(vec![stream_event_write(table_name, seq, &change).unwrap()]).unwrap();
     engine
-        .begin_mutation_execution_unit(context.tenant_id().clone(), PrincipalContext::system())
+        .begin_mutation_execution_unit(context.tenant_id().clone(), adapter_principal())
         .unwrap()
         .execute_atomic_write_batch(batch)
         .unwrap();
@@ -334,7 +334,7 @@ fn seed_raw_stream_event(
     }])
     .unwrap();
     engine
-        .begin_mutation_execution_unit(context.tenant_id().clone(), PrincipalContext::system())
+        .begin_mutation_execution_unit(context.tenant_id().clone(), adapter_principal())
         .unwrap()
         .execute_atomic_write_batch(batch)
         .unwrap();
