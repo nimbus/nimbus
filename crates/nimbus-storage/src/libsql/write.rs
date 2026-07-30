@@ -94,6 +94,8 @@ impl SqlStoreCore for LibsqlReplicaTenantStore {
         LibsqlReplicaTenantStore::execute_write(self, task)
     }
 
+    // Gated with the trait method it implements; see `SqlStoreCore`.
+    #[cfg(any(feature = "mysql", feature = "postgres"))]
     fn execute_write_cancellable<T, Check, F>(
         &self,
         check_cancel: Check,
@@ -386,6 +388,8 @@ impl SqlWriteBackend for LibsqlReplicaWriteTransaction {
         std::mem::take(&mut self.commit_writes)
     }
 
+    // Gated with the trait method it implements; see `SqlWriteBackend`.
+    #[cfg(any(feature = "mysql", feature = "postgres"))]
     fn push_tenant_event(&mut self, event: TenantEventKind) {
         self.tenant_events.push(event);
     }

@@ -12,9 +12,22 @@ doctest = false
 [lints]
 workspace = true
 
+[features]
+# Remote storage providers. Each is opt-in at the bottom of the chain
+# (nimbus-storage defaults to no provider) and forwarded upward one crate at a
+# time, exactly like `v8-pointer-compression`. The binary-facing crates default
+# them on, so `cargo build -p nimbus-bin --no-default-features` is the single
+# switch that drops the PostgreSQL, MySQL and libSQL driver stacks. Every
+# intra-chain dependency below sets `default-features = false` so that switch
+# is not silently re-enabled by a sibling edge.
+default = ["libsql", "mysql", "postgres"]
+libsql = ["nimbus-engine/libsql"]
+mysql = ["nimbus-engine/mysql"]
+postgres = ["nimbus-engine/postgres"]
+
 [dependencies]
 nimbus-core = { path = "../nimbus-core" }
-nimbus-engine = { path = "../nimbus-engine" }
+nimbus-engine = { path = "../nimbus-engine", default-features = false }
 nimbus-machine = { path = "../nimbus-machine" }
 nimbus-node = { path = "../nimbus-node" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
@@ -29,9 +42,13 @@ workspace-hack = { version = "0.1", path = "../workspace-hack" }
 [dev-dependencies]
 libsql.workspace = true
 mysql_async.workspace = true
-nimbus-engine = { path = "../nimbus-engine", features = ["test-hooks"] }
+nimbus-engine = { path = "../nimbus-engine", default-features = false, features = [
+    "test-hooks",
+] }
 nimbus-runtime = { path = "../nimbus-runtime" }
-nimbus-storage = { path = "../nimbus-storage", features = ["test-hooks"] }
-nimbus-testing = { path = "../nimbus-testing" }
+nimbus-storage = { path = "../nimbus-storage", default-features = false, features = [
+    "test-hooks",
+] }
+nimbus-testing = { path = "../nimbus-testing", default-features = false }
 tempfile.workspace = true
 tokio-postgres.workspace = true

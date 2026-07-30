@@ -4,10 +4,16 @@ use nimbus_core::{
 };
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "libsql")]
+use crate::LibsqlReplicaTenantStore;
+#[cfg(feature = "mysql")]
+use crate::MySqlTenantStore;
+#[cfg(feature = "postgres")]
+use crate::PostgresTenantStore;
+use crate::SqliteTenantStore;
 use crate::store::{
     DurableJournalBootstrap, DurableJournalPage, MaterializedJournalSnapshot, TenantStore,
 };
-use crate::{LibsqlReplicaTenantStore, MySqlTenantStore, PostgresTenantStore, SqliteTenantStore};
 
 #[cfg(test)]
 mod tests;
@@ -177,10 +183,11 @@ macro_rules! impl_changefeed_journal {
     };
 }
 
-impl_changefeed_journal!(
-    TenantStore,
-    SqliteTenantStore,
-    PostgresTenantStore,
-    MySqlTenantStore,
-    LibsqlReplicaTenantStore,
-);
+impl_changefeed_journal!(TenantStore, SqliteTenantStore);
+
+#[cfg(feature = "postgres")]
+impl_changefeed_journal!(PostgresTenantStore);
+#[cfg(feature = "mysql")]
+impl_changefeed_journal!(MySqlTenantStore);
+#[cfg(feature = "libsql")]
+impl_changefeed_journal!(LibsqlReplicaTenantStore);

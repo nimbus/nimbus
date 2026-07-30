@@ -284,6 +284,12 @@ impl SqliteTenantStore {
     /// missing suffix is appended. This deliberately does not weaken
     /// [`Self::append_durable_records_batch`], which remains the strict primary
     /// append interface.
+    ///
+    /// This is a libsql replica-cache entry point -- the embedded SQLite
+    /// provider never reconciles against a remote head -- so it compiles under
+    /// the `libsql` feature, plus `test` for the SQLite-foundation coverage
+    /// that exercises it directly.
+    #[cfg(any(test, feature = "libsql"))]
     pub(crate) fn reconcile_replica_durable_records_batch(
         &self,
         records: &[TenantEventRecord],

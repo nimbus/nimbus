@@ -7,9 +7,14 @@ use nimbus_crypto::LocalKeyProvider;
 use nimbus_storage::MemoryTenantProvider;
 use nimbus_storage::{
     EmbeddedProviderKind, EmbeddedRedbControlPlaneProvider, EmbeddedRedbProvider,
-    EmbeddedSqliteProvider, FaultInjector, LibsqlReplicaProvider, LibsqlReplicaProviderConfig,
-    MySqlProvider, MySqlProviderConfig, PostgresProvider, PostgresProviderConfig,
+    EmbeddedSqliteProvider, FaultInjector,
 };
+#[cfg(feature = "libsql")]
+use nimbus_storage::{LibsqlReplicaProvider, LibsqlReplicaProviderConfig};
+#[cfg(feature = "mysql")]
+use nimbus_storage::{MySqlProvider, MySqlProviderConfig};
+#[cfg(feature = "postgres")]
+use nimbus_storage::{PostgresProvider, PostgresProviderConfig};
 
 use super::{BackgroundExecutor, Engine, EngineBootstrapParts, encryption};
 use crate::persistence::{ControlPlaneProvider, PersistenceProvider};
@@ -23,6 +28,7 @@ struct EngineSimulationSeams {
     clock: Arc<dyn WallClock>,
     id_source: Arc<dyn IdSource>,
     storage_fault_injector: Arc<dyn FaultInjector>,
+    #[cfg(feature = "libsql")]
     libsql_replica_fault_injector: Option<Arc<dyn FaultInjector>>,
 }
 
@@ -56,10 +62,13 @@ pub(super) async fn build_from_persistence_config_with_libsql_replica_faults(
         .as_ref()
         .map(encryption::InitializedKeyProvider::provider);
 
+    #[cfg(not(feature = "libsql"))]
+    let _ = libsql_replica_fault_injector;
     let simulation = EngineSimulationSeams {
         clock,
         id_source,
         storage_fault_injector,
+        #[cfg(feature = "libsql")]
         libsql_replica_fault_injector,
     };
 
@@ -85,6 +94,7 @@ pub(super) fn build_embedded_engine(
         clock,
         id_source,
         storage_fault_injector,
+        #[cfg(feature = "libsql")]
         libsql_replica_fault_injector: None,
     };
     build_embedded_from_plan(
@@ -271,6 +281,12 @@ fn build_embedded_from_plan(
     }))
 }
 
+/// Builds the PostgreSQL-backed engine. Paired with the `not(feature)`
+/// definition below so the dispatch `match` in
+/// [`build_from_bootstrap_plan_with_encryption`] stays exhaustive and provider
+/// selection cannot silently degrade: an uncompiled provider is an error, never
+/// a fallback to the embedded store.
+#[cfg(feature = "postgres")]
 async fn build_postgres_from_plan(
     engine_data_dir: PathBuf,
     control_data_dir: PathBuf,
@@ -315,6 +331,9 @@ async fn build_postgres_from_plan(
     }))
 }
 
+/// Builds the libSQL-replica-backed engine; see `build_postgres_from_plan` for
+/// the paired-definition contract.
+#[cfg(feature = "libsql")]
 async fn build_libsql_replica_from_plan(
     engine_data_dir: PathBuf,
     control_data_dir: PathBuf,
@@ -370,6 +389,9 @@ async fn build_libsql_replica_from_plan(
     }))
 }
 
+/// Builds the MySQL-backed engine; see `build_postgres_from_plan` for the
+/// paired-definition contract.
+#[cfg(feature = "mysql")]
 async fn build_mysql_from_plan(
     engine_data_dir: PathBuf,
     control_data_dir: PathBuf,
@@ -414,6 +436,49 @@ async fn build_mysql_from_plan(
     }))
 }
 
+#[cfg(not(feature = "postgres"))]
+async fn build_postgres_from_plan(
+    _engine_data_dir: PathBuf,
+    _control_data_dir: PathBuf,
+    _plan: PostgresTenantBootstrapPlan,
+    _encryption_provider: Option<Arc<dyn LocalKeyProvider>>,
+    _simulation: EngineSimulationSeams,
+    _encryption_status: Option<encryption::EncryptionStatus>,
+) -> Result<Engine> {
+    Err(Error::InvalidInput(
+        "postgres support is not enabled in this build; rebuild with the postgres feature"
+            .to_string(),
+    ))
+}
+
+#[cfg(not(feature = "libsql"))]
+async fn build_libsql_replica_from_plan(
+    _engine_data_dir: PathBuf,
+    _control_data_dir: PathBuf,
+    _plan: LibsqlReplicaTenantBootstrapPlan,
+    _encryption_provider: Option<Arc<dyn LocalKeyProvider>>,
+    _simulation: EngineSimulationSeams,
+    _encryption_status: Option<encryption::EncryptionStatus>,
+) -> Result<Engine> {
+    Err(Error::InvalidInput(
+        "libsql support is not enabled in this build; rebuild with the libsql feature".to_string(),
+    ))
+}
+
+#[cfg(not(feature = "mysql"))]
+async fn build_mysql_from_plan(
+    _engine_data_dir: PathBuf,
+    _control_data_dir: PathBuf,
+    _plan: MySqlTenantBootstrapPlan,
+    _encryption_provider: Option<Arc<dyn LocalKeyProvider>>,
+    _simulation: EngineSimulationSeams,
+    _encryption_status: Option<encryption::EncryptionStatus>,
+) -> Result<Engine> {
+    Err(Error::InvalidInput(
+        "mysql support is not enabled in this build; rebuild with the mysql feature".to_string(),
+    ))
+}
+
 fn build_executors() -> Result<(BackgroundExecutor, BackgroundExecutor)> {
     Ok((
         BackgroundExecutor::new("nimbus-engine-bg", 2).map_err(internal_error)?,
@@ -441,4 +506,96 @@ fn build_control_plane_provider(
 
 fn internal_error(error: std::io::Error) -> Error {
     Error::Internal(error.to_string())
+}
+
+/// Pins the "uncompiled provider fails loudly" contract for PostgreSQL.
+///
+/// This module exists only in a build without the feature, which is the only
+/// build where the contract is observable. It is the negative half of the
+/// paired `build_postgres_from_plan` definitions above: the positive half is
+/// covered by the live-fixture provider suite.
+#[cfg(all(test, not(feature = "postgres")))]
+mod postgres_disabled_tests {
+    use super::*;
+    use crate::persistence_config::EnginePersistenceConfig;
+
+    #[tokio::test]
+    async fn postgres_config_is_rejected_rather_than_served_by_an_embedded_engine() {
+        let data_dir = tempfile::tempdir().expect("control-plane data dir should build");
+        let error = Engine::new_with_persistence_config(EnginePersistenceConfig::postgres(
+            data_dir.path(),
+            "postgres://nimbus@127.0.0.1:5432/nimbus",
+        ))
+        .await
+        .err()
+        .expect("a postgres config must not build an engine without the postgres feature");
+        assert!(
+            matches!(
+                &error,
+                Error::InvalidInput(message)
+                    if message == "postgres support is not enabled in this build; rebuild with the postgres feature"
+            ),
+            "expected the postgres build-support rejection, got {error:?}"
+        );
+    }
+}
+
+/// Pins the "uncompiled provider fails loudly" contract for MySQL; see
+/// `postgres_disabled_tests` for the shape.
+#[cfg(all(test, not(feature = "mysql")))]
+mod mysql_disabled_tests {
+    use super::*;
+    use crate::persistence_config::EnginePersistenceConfig;
+
+    #[tokio::test]
+    async fn mysql_config_is_rejected_rather_than_served_by_an_embedded_engine() {
+        let data_dir = tempfile::tempdir().expect("control-plane data dir should build");
+        let error = Engine::new_with_persistence_config(EnginePersistenceConfig::mysql(
+            data_dir.path(),
+            "mysql://nimbus@127.0.0.1:3306/nimbus",
+        ))
+        .await
+        .err()
+        .expect("a mysql config must not build an engine without the mysql feature");
+        assert!(
+            matches!(
+                &error,
+                Error::InvalidInput(message)
+                    if message == "mysql support is not enabled in this build; rebuild with the mysql feature"
+            ),
+            "expected the mysql build-support rejection, got {error:?}"
+        );
+    }
+}
+
+/// Pins the "uncompiled provider fails loudly" contract for the libSQL replica;
+/// see `postgres_disabled_tests` for the shape.
+#[cfg(all(test, not(feature = "libsql")))]
+mod libsql_disabled_tests {
+    use super::*;
+    use crate::persistence_config::EnginePersistenceConfig;
+
+    #[tokio::test]
+    async fn libsql_config_is_rejected_rather_than_served_by_an_embedded_engine() {
+        let data_dir = tempfile::tempdir().expect("control-plane data dir should build");
+        let error = Engine::new_with_persistence_config(EnginePersistenceConfig::libsql_replica(
+            data_dir.path(),
+            "libsql://127.0.0.1:8080",
+            None,
+            "http://127.0.0.1:8081",
+            None,
+            data_dir.path().join("replica-cache"),
+        ))
+        .await
+        .err()
+        .expect("a libsql config must not build an engine without the libsql feature");
+        assert!(
+            matches!(
+                &error,
+                Error::InvalidInput(message)
+                    if message == "libsql support is not enabled in this build; rebuild with the libsql feature"
+            ),
+            "expected the libsql build-support rejection, got {error:?}"
+        );
+    }
 }

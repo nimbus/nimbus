@@ -10,25 +10,45 @@ publish.workspace = true
 workspace = true
 
 [features]
+# The embedded providers (redb, SQLite, memory) are always compiled. Each
+# remote provider is opt-in so a build that does not use one does not pay for
+# its driver stack. `libsql` owns the HTTP/TLS transport crates because the
+# replica client is the only consumer of them in this crate.
+default = []
 aws-kms = ["nimbus-crypto/aws-kms"]
+libsql = [
+    "dep:hyper",
+    "dep:libsql",
+    "dep:native-tls",
+    "dep:reqwest",
+    "dep:tokio-native-tls",
+    "dep:tower-service",
+]
+mysql = ["dep:mysql_async"]
+postgres = ["dep:deadpool-postgres", "dep:tokio-postgres"]
 test-hooks = []
 
 [dependencies]
 aes-gcm-siv.workspace = true
-deadpool-postgres.workspace = true
+deadpool-postgres = { workspace = true, optional = true }
 fjall.workspace = true
 futures.workspace = true
 hex.workspace = true
-hyper = { workspace = true, features = ["client", "server", "http1", "runtime"] }
-libsql.workspace = true
-mysql_async.workspace = true
-native-tls.workspace = true
+hyper = { workspace = true, features = [
+    "client",
+    "server",
+    "http1",
+    "runtime",
+], optional = true }
+libsql = { workspace = true, optional = true }
+mysql_async = { workspace = true, optional = true }
+native-tls = { workspace = true, optional = true }
 nimbus-core = { path = "../nimbus-core" }
 nimbus-crypto = { path = "../nimbus-crypto" }
 parking_lot.workspace = true
 rand.workspace = true
 redb.workspace = true
-reqwest.workspace = true
+reqwest = { workspace = true, optional = true }
 rmp.workspace = true
 rmp-serde.workspace = true
 rusqlite.workspace = true
@@ -37,11 +57,10 @@ serde_json.workspace = true
 sha2.workspace = true
 time.workspace = true
 tokio.workspace = true
-tokio-native-tls.workspace = true
-tokio-postgres.workspace = true
-tower-service.workspace = true
+tokio-native-tls = { workspace = true, optional = true }
+tokio-postgres = { workspace = true, optional = true }
+tower-service = { workspace = true, optional = true }
 tracing.workspace = true
-workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [dev-dependencies]
 base64.workspace = true

@@ -6,9 +6,13 @@ use nimbus_core::{Error, Result, SequenceNumber, TableId};
 use redb::ReadableTable;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    LibsqlReplicaTenantStore, MySqlTenantStore, PostgresTenantStore, SqliteTenantStore, TenantStore,
-};
+#[cfg(feature = "libsql")]
+use crate::LibsqlReplicaTenantStore;
+#[cfg(feature = "mysql")]
+use crate::MySqlTenantStore;
+#[cfg(feature = "postgres")]
+use crate::PostgresTenantStore;
+use crate::{SqliteTenantStore, TenantStore};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -397,8 +401,11 @@ macro_rules! impl_retention_floor_accessors {
 }
 
 impl_retention_floor_accessors!(SqliteTenantStore);
+#[cfg(feature = "postgres")]
 impl_retention_floor_accessors!(PostgresTenantStore);
+#[cfg(feature = "mysql")]
 impl_retention_floor_accessors!(MySqlTenantStore);
+#[cfg(feature = "libsql")]
 impl_retention_floor_accessors!(LibsqlReplicaTenantStore);
 
 fn prune_redb_document_versions_before(

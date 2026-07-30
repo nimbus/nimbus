@@ -79,7 +79,8 @@ pub(crate) async fn run_scheduler_with_interval(
     }
 }
 
-#[cfg(test)]
+// Driven only by the PostgreSQL scheduler suite.
+#[cfg(all(test, feature = "postgres"))]
 pub(crate) async fn tick_async(engine: &Arc<Engine>) -> Result<()> {
     tick_at_async(engine, engine.now()).await
 }

@@ -1,15 +1,23 @@
 use std::collections::BTreeSet;
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 use std::env;
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 use std::sync::Arc;
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 use nimbus_storage::provider_test_fixtures::ProviderLeaseTimeControl;
 use nimbus_testing::ppsc::{
-    PpscBackend, PpscExpectedOutcome, PpscOperation, PpscRoute, PpscScenario, PpscStep,
-    PpscTerminalState, audit_ppsc_history, retained_ppsc_scenarios,
-    retained_provider_authority_scenarios,
+    PpscBackend, PpscScenario, PpscTerminalState, audit_ppsc_history, retained_ppsc_scenarios,
+};
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
+use nimbus_testing::ppsc::{
+    PpscExpectedOutcome, PpscOperation, PpscRoute, PpscStep, retained_provider_authority_scenarios,
 };
 
-use super::{PpscEngineFactory, PpscEngineRunner, provider_takeover_value, record_kind};
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
+use super::{PpscEngineFactory, provider_takeover_value};
+use super::{PpscEngineRunner, record_kind};
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 use crate::EnginePersistenceConfig;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -56,6 +64,7 @@ async fn sqlite_ppsc_seeded_journal_differential() {
     }
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 pub(crate) async fn exercise_ppsc_provider_retained_differential(
     backend: PpscBackend,
     config: EnginePersistenceConfig,
@@ -72,6 +81,7 @@ pub(crate) async fn exercise_ppsc_provider_retained_differential(
     }
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 pub(crate) async fn exercise_ppsc_provider_scenario_differential(
     backend: PpscBackend,
     config: EnginePersistenceConfig,
@@ -92,6 +102,7 @@ pub(crate) async fn exercise_ppsc_provider_scenario_differential(
     assert_ppsc_terminal_matches(backend, &scenario, &oracle.terminal, &provider.terminal);
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 pub(crate) async fn exercise_ppsc_provider_authority_extension(
     backend: PpscBackend,
     first_config: EnginePersistenceConfig,
@@ -121,6 +132,7 @@ pub(crate) async fn exercise_ppsc_provider_authority_extension(
     }
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 fn provider_replay_scenarios(
     defaults: Vec<PpscScenario>,
     requires_provider_authority: bool,
@@ -140,6 +152,7 @@ fn provider_replay_scenarios(
     vec![scenario]
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 fn provider_authority_terminal_oracle(scenario: &PpscScenario) -> PpscScenario {
     let steps = scenario
         .steps

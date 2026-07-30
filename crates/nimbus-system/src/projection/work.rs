@@ -1491,7 +1491,7 @@ impl TableProjectionObserver {
             .project_tables(tenant_id, tables, projection_token);
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, any(feature = "libsql", feature = "mysql", feature = "postgres")))]
     pub(super) fn project_tables_for_testing(
         &self,
         tenant_id: TenantId,
@@ -1501,7 +1501,7 @@ impl TableProjectionObserver {
         self.project_tables(tenant_id, tables, projection_token);
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, any(feature = "libsql", feature = "mysql", feature = "postgres")))]
     pub(super) fn cancel_next_projection_for_testing(&self) {
         self.projection_work.cancel_next_projection();
     }
@@ -1530,7 +1530,7 @@ pub fn install_table_projection_observer(engine: &Arc<Engine>) {
     build_and_install_table_projection_observer(engine);
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(feature = "libsql", feature = "mysql", feature = "postgres")))]
 pub(super) fn install_table_projection_observer_for_testing(
     engine: &Arc<Engine>,
 ) -> Arc<TableProjectionObserver> {

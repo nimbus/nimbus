@@ -27,8 +27,14 @@
 //! only one visible. This mirrors the convention already used by
 //! [`crate::sql::write_core::SqlWriteBackend`].
 
+// `Future`, `Arc`, the atomics and the tokio/executor imports below are used
+// only by the durable-journal wrappers and the blocking-executor section at the
+// end of this file, both of which are PostgreSQL/MySQL-only.
+#[cfg(any(feature = "mysql", feature = "postgres"))]
 use std::future::Future;
+#[cfg(any(feature = "mysql", feature = "postgres"))]
 use std::sync::Arc;
+#[cfg(any(feature = "mysql", feature = "postgres"))]
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 
 use nimbus_core::{
@@ -37,9 +43,12 @@ use nimbus_core::{
     TriggerDeliveryCursor, TriggerInvocationRecord, TriggerWriteOrigin,
 };
 use serde_json::Value;
+#[cfg(any(feature = "mysql", feature = "postgres"))]
 use tokio::runtime::Handle as TokioRuntimeHandle;
+#[cfg(any(feature = "mysql", feature = "postgres"))]
 use tokio::sync::Semaphore;
 
+#[cfg(any(feature = "mysql", feature = "postgres"))]
 use crate::async_storage::{
     TenantWriteOutcome, map_executor_join_error, map_executor_permit_error,
 };
@@ -50,7 +59,10 @@ use crate::sql::commit_effects::{
     CommitTimestampEffect, DocumentWrites, ExecutionDedup, JournalEffect, LeaseEffect, ScheduleOps,
     SqlCommitAdmission, SqlCommitEffects, TriggerOriginEffect, WatermarkEffect, sql_apply_commit,
 };
-use crate::sql::write_core::{SqlDurableJournalTransaction, SqlWriteBackend};
+#[cfg(any(feature = "mysql", feature = "postgres"))]
+use crate::sql::write_core::SqlDurableJournalTransaction;
+use crate::sql::write_core::SqlWriteBackend;
+#[cfg(any(feature = "mysql", feature = "postgres"))]
 use crate::sql::write_pipeline::SqlWritePipelineMetrics;
 use crate::store::{
     JournalProgress, MaterializedJournalSnapshot, PointInTimeRestoreArchive,
@@ -127,7 +139,9 @@ pub(crate) fn apply_schedule_ops_in_transaction<T: SqlWriteTransactionCore>(
 /// statements the store-level wrappers drive: scheduler and cron mutations,
 /// schema replacement, committer-lease fencing, and the validated document
 /// mutations. Journal replay through a write transaction is a narrower
-/// concern and lives in [`SqlDurableJournalTransaction`].
+/// concern and lives in `SqlDurableJournalTransaction` (written as a code span
+/// rather than an intra-doc link because that trait is compiled only for the
+/// PostgreSQL and MySQL builds).
 pub(crate) trait SqlWriteTransactionCore: SqlWriteBackend {
     // Deduplication and per-transaction context.
     fn begin_scheduled_execution(&mut self, execution_id: Option<&str>) -> Result<bool>;
@@ -219,6 +233,13 @@ pub(crate) trait SqlStoreCore: Sized {
         T: Send + 'static,
         F: FnOnce(&mut Self::Transaction) -> Result<T> + Send + 'static;
 
+    /// Cancellable counterpart of [`SqlStoreCore::execute_write`]. Its only
+    /// callers are the fenced durable-journal wrapper and the blocking write
+    /// executor, both PostgreSQL/MySQL-only, so the method is gated with them.
+    /// The libsql replica keeps its own inherent
+    /// `execute_write_cancellable`, which its async storage layer calls
+    /// directly; only this trait-level forwarder disappears.
+    #[cfg(any(feature = "mysql", feature = "postgres"))]
     fn execute_write_cancellable<T, Check, F>(
         &self,
         check_cancel: Check,
@@ -1003,6 +1024,7 @@ pub(crate) trait SqlStoreCore: Sized {
 /// Store-level counterpart of [`SqlDurableJournalTransaction`]: implemented by
 /// the backends whose journal replay runs inside a write transaction, so the
 /// three wrappers below can be shared between them.
+#[cfg(any(feature = "mysql", feature = "postgres"))]
 pub(crate) trait SqlDurableJournalStore: SqlStoreCore
 where
     Self::Transaction: SqlDurableJournalTransaction,
@@ -1012,6 +1034,7 @@ where
 
 /// Shared body of [`SqlStoreCore::append_durable_records_batch`] for
 /// transaction-replay backends.
+#[cfg(any(feature = "mysql", feature = "postgres"))]
 pub(crate) fn sql_store_append_durable_records_batch<S>(
     store: &S,
     records: &[TenantEventRecord],
@@ -1027,6 +1050,7 @@ where
 
 /// Shared body of [`SqlStoreCore::apply_durable_records_batch`] for
 /// transaction-replay backends.
+#[cfg(any(feature = "mysql", feature = "postgres"))]
 pub(crate) fn sql_store_apply_durable_records_batch<S>(
     store: &S,
     records: &[TenantEventRecord],
@@ -1043,6 +1067,7 @@ where
 /// Shared body of
 /// [`SqlStoreCore::fenced_append_and_apply_durable_records_batch_cancellable`]
 /// for transaction-replay backends.
+#[cfg(any(feature = "mysql", feature = "postgres"))]
 pub(crate) fn sql_store_fenced_append_and_apply_durable_records_batch_cancellable<S, Check>(
     store: &S,
     owner_id: &str,
@@ -1494,9 +1519,15 @@ pub(crate) use sql_store_core_facade;
 // transaction and session lifecycles are coupled to their async clients. The
 // generic `async_storage::write` executor is only shared across the embedded
 // blocking-store seam.
+//
+// libsql does not use this section: its reads are served from the local SQLite
+// replica cache and its writes go to the remote primary. Every item below
+// therefore carries the `postgres`-or-`mysql` gate so a libsql-only build does
+// not compile it as dead code.
 // --------------------------------------------------------------------------
 
 /// Acquire a read permit and run `task` on the blocking pool.
+#[cfg(any(feature = "mysql", feature = "postgres"))]
 pub(crate) async fn sql_execute_read<S, T, F>(
     permits: &Arc<Semaphore>,
     runtime_handle: &TokioRuntimeHandle,
@@ -1527,6 +1558,7 @@ where
 /// Cancellable variant of [`sql_execute_read`]. Cancellation short-circuits
 /// before the permit is granted; afterwards it is cooperative, surfacing through
 /// the `check_cancel` handed to the blocking task.
+#[cfg(any(feature = "mysql", feature = "postgres"))]
 pub(crate) async fn sql_execute_read_cancellable<S, T, Fut, Check, F>(
     permits: &Arc<Semaphore>,
     runtime_handle: &TokioRuntimeHandle,
@@ -1576,6 +1608,7 @@ where
 }
 
 /// Semaphore-bounded blocking write executor over a [`SqlStoreCore`] store.
+#[cfg(any(feature = "mysql", feature = "postgres"))]
 pub(crate) struct SqlBlockingWriteExecutor<S> {
     store: Arc<S>,
     permits: Arc<Semaphore>,
@@ -1583,6 +1616,7 @@ pub(crate) struct SqlBlockingWriteExecutor<S> {
     context: &'static str,
 }
 
+#[cfg(any(feature = "mysql", feature = "postgres"))]
 impl<S> Clone for SqlBlockingWriteExecutor<S> {
     fn clone(&self) -> Self {
         Self {
@@ -1594,6 +1628,7 @@ impl<S> Clone for SqlBlockingWriteExecutor<S> {
     }
 }
 
+#[cfg(any(feature = "mysql", feature = "postgres"))]
 impl<S> SqlBlockingWriteExecutor<S>
 where
     S: SqlStoreCore + Send + Sync + 'static,
@@ -1685,6 +1720,7 @@ where
 
 /// A write that reached its commit point must be reported as committed even if
 /// the caller's cancellation raced the response path.
+#[cfg(any(feature = "mysql", feature = "postgres"))]
 fn map_write_result<T>(result: Result<TenantWriteCommit<T>>) -> Result<TenantWriteOutcome<T>> {
     match result {
         Ok(committed) => Ok(TenantWriteOutcome::Committed(committed)),

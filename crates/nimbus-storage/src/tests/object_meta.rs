@@ -1,8 +1,13 @@
 use super::*;
+#[cfg(feature = "libsql")]
+use crate::LibsqlReplicaTenantStore;
+#[cfg(feature = "mysql")]
+use crate::MySqlTenantStore;
+#[cfg(feature = "postgres")]
+use crate::PostgresTenantStore;
 use crate::{
-    LibsqlReplicaTenantStore, MySqlTenantStore, OBJECT_MANIFEST_TABLE, OBJECT_MULTIPART_TABLE,
-    ObjectChecksums, ObjectChunkRef, ObjectManifest, ObjectManifestAttributes, ObjectMetaStore,
-    ObjectMultipartPart, ObjectMultipartUpload, PostgresTenantStore,
+    OBJECT_MANIFEST_TABLE, OBJECT_MULTIPART_TABLE, ObjectChecksums, ObjectChunkRef, ObjectManifest,
+    ObjectManifestAttributes, ObjectMetaStore, ObjectMultipartPart, ObjectMultipartUpload,
 };
 
 const BUCKET: &str = "launch-bucket";
@@ -25,12 +30,19 @@ fn manifest(key: &str, blob_hash: &str) -> ObjectManifest {
 
 fn assert_object_meta_store_impl<T: ObjectMetaStore>() {}
 
+/// Every tenant store compiled into this build implements `ObjectMetaStore`.
+/// The embedded stores are always checked; each remote store is checked when
+/// its provider feature is on, so the coverage claim tracks the build rather
+/// than silently narrowing to the embedded pair.
 #[test]
 fn object_meta_store_trait_covers_all_tenant_stores() {
     assert_object_meta_store_impl::<TenantStore>();
     assert_object_meta_store_impl::<SqliteTenantStore>();
+    #[cfg(feature = "postgres")]
     assert_object_meta_store_impl::<PostgresTenantStore>();
+    #[cfg(feature = "mysql")]
     assert_object_meta_store_impl::<MySqlTenantStore>();
+    #[cfg(feature = "libsql")]
     assert_object_meta_store_impl::<LibsqlReplicaTenantStore>();
 }
 

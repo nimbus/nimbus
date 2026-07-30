@@ -9,17 +9,28 @@ use std::env;
 use std::future::Future;
 use std::pin::Pin;
 
+#[cfg(feature = "libsql")]
 use libsql::Builder;
+#[cfg(feature = "mysql")]
 use mysql_async::prelude::Queryable;
+#[cfg(feature = "mysql")]
 use mysql_async::{Opts, Pool};
-use nimbus_core::{Error, Result, StorageErrorKind, TenantId};
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
+use nimbus_core::Error;
+#[cfg(feature = "libsql")]
+use nimbus_core::StorageErrorKind;
+use nimbus_core::{Result, TenantId};
+#[cfg(feature = "postgres")]
 use tokio_postgres::NoTls;
 
+#[cfg(feature = "libsql")]
 use crate::libsql::libsql_transport_connector;
-use crate::{
-    LibsqlReplicaProvider, LibsqlReplicaProviderConfig, MySqlProvider, MySqlProviderConfig,
-    PostgresProvider, PostgresProviderConfig,
-};
+#[cfg(feature = "libsql")]
+use crate::{LibsqlReplicaProvider, LibsqlReplicaProviderConfig};
+#[cfg(feature = "mysql")]
+use crate::{MySqlProvider, MySqlProviderConfig};
+#[cfg(feature = "postgres")]
+use crate::{PostgresProvider, PostgresProviderConfig};
 
 pub const REQUIRE_EXTERNAL_PROVIDER_FIXTURES_ENV: &str =
     "NIMBUS_REQUIRE_EXTERNAL_PROVIDER_FIXTURES";
@@ -47,17 +58,20 @@ pub trait ProviderLeaseTimeControl: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>>;
 }
 
+#[cfg(feature = "postgres")]
 #[derive(Clone)]
 pub struct PostgresLeaseTimeControl {
     config: PostgresProviderConfig,
 }
 
+#[cfg(feature = "postgres")]
 impl PostgresLeaseTimeControl {
     pub fn new(config: PostgresProviderConfig) -> Self {
         Self { config }
     }
 }
 
+#[cfg(feature = "postgres")]
 impl ProviderLeaseTimeControl for PostgresLeaseTimeControl {
     fn provider_name(&self) -> &'static str {
         "postgres"
@@ -88,17 +102,20 @@ impl ProviderLeaseTimeControl for PostgresLeaseTimeControl {
     }
 }
 
+#[cfg(feature = "mysql")]
 #[derive(Clone)]
 pub struct MySqlLeaseTimeControl {
     config: MySqlProviderConfig,
 }
 
+#[cfg(feature = "mysql")]
 impl MySqlLeaseTimeControl {
     pub fn new(config: MySqlProviderConfig) -> Self {
         Self { config }
     }
 }
 
+#[cfg(feature = "mysql")]
 impl ProviderLeaseTimeControl for MySqlLeaseTimeControl {
     fn provider_name(&self) -> &'static str {
         "mysql"
@@ -135,17 +152,20 @@ impl ProviderLeaseTimeControl for MySqlLeaseTimeControl {
     }
 }
 
+#[cfg(feature = "libsql")]
 #[derive(Clone)]
 pub struct LibsqlLeaseTimeControl {
     config: LibsqlReplicaProviderConfig,
 }
 
+#[cfg(feature = "libsql")]
 impl LibsqlLeaseTimeControl {
     pub fn new(config: LibsqlReplicaProviderConfig) -> Self {
         Self { config }
     }
 }
 
+#[cfg(feature = "libsql")]
 impl ProviderLeaseTimeControl for LibsqlLeaseTimeControl {
     fn provider_name(&self) -> &'static str {
         "libsql"
@@ -182,6 +202,7 @@ impl ProviderLeaseTimeControl for LibsqlLeaseTimeControl {
     }
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 fn require_single_expired_row(provider: &str, tenant_id: &TenantId, updated: u64) -> Result<()> {
     if updated == 1 {
         Ok(())
@@ -192,10 +213,12 @@ fn require_single_expired_row(provider: &str, tenant_id: &TenantId, updated: u64
     }
 }
 
+#[cfg(any(feature = "mysql", feature = "postgres"))]
 fn internal_error(error: impl std::fmt::Display) -> Error {
     Error::Internal(error.to_string())
 }
 
+#[cfg(feature = "libsql")]
 fn storage_error(error: impl std::fmt::Display) -> Error {
     Error::storage(StorageErrorKind::Other, error.to_string())
 }
@@ -293,6 +316,10 @@ mod tests {
         }
     }
 
+    /// Guards the adapter set only when all three providers are compiled in;
+    /// the claim it makes ("three real adapters") is not meaningful in a
+    /// single-provider build.
+    #[cfg(all(feature = "libsql", feature = "mysql", feature = "postgres"))]
     #[test]
     fn provider_lease_time_control_has_three_real_adapters() {
         let controls: Vec<Box<dyn ProviderLeaseTimeControl>> = vec![

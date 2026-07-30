@@ -1,10 +1,13 @@
 use nimbus_core::{CronJob, DocumentId, Result, ScheduledJob, ScheduledJobResult, Timestamp};
 
 use super::{SchedulerWrite, SchedulerWriteResult};
-use crate::{
-    LibsqlReplicaTenantStore, MemoryTenantStore, MySqlTenantStore, PostgresTenantStore,
-    ResolvedScheduleOp, SqliteTenantStore, TenantStore,
-};
+#[cfg(feature = "libsql")]
+use crate::LibsqlReplicaTenantStore;
+#[cfg(feature = "mysql")]
+use crate::MySqlTenantStore;
+#[cfg(feature = "postgres")]
+use crate::PostgresTenantStore;
+use crate::{MemoryTenantStore, ResolvedScheduleOp, SqliteTenantStore, TenantStore};
 
 /// Durable scheduler state needed to decide whether a failed write committed.
 ///
@@ -454,8 +457,11 @@ macro_rules! impl_scheduler_state_reader {
 impl_scheduler_state_reader!(TenantStore);
 impl_scheduler_state_reader!(SqliteTenantStore);
 impl_scheduler_state_reader!(MemoryTenantStore);
+#[cfg(feature = "postgres")]
 impl_scheduler_state_reader!(PostgresTenantStore);
+#[cfg(feature = "mysql")]
 impl_scheduler_state_reader!(MySqlTenantStore);
+#[cfg(feature = "libsql")]
 impl_scheduler_state_reader!(LibsqlReplicaTenantStore);
 
 #[cfg(test)]

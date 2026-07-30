@@ -3,12 +3,21 @@ use nimbus_storage::{DurableJournalPage, JournalProgress};
 
 use super::*;
 
+/// Gated with the polling providers: only their hint worker plans a refresh.
+/// PostgreSQL is notification-driven and never asks for a plan.
+#[cfg(any(feature = "libsql", feature = "mysql"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TenantProviderRefreshPlan {
     pub refresh_schema: bool,
     pub refresh_journal: bool,
 }
 
+// Several methods below dispatch as "PostgreSQL has a native async path;
+// every other store goes through the blocking read executor". They are written
+// as an exhaustive `match` whose PostgreSQL arm returns early and whose
+// remaining arms are empty, with the shared body after the match. That keeps
+// the dispatch exhaustive -- a new provider variant still has to be classified
+// -- while letting each arm carry its own `cfg` without duplicating the body.
 impl TenantPersistence {
     /// True when this runtime is the only process that can assign tenant
     /// sequences. Shared provider backends receive foreign commits through
@@ -17,7 +26,12 @@ impl TenantPersistence {
     pub(crate) fn has_process_local_sequence_authority(&self) -> bool {
         match self {
             Self::Redb(_) | Self::Sqlite(_) => true,
-            Self::Postgres(_) | Self::LibsqlReplica(_) | Self::MySql(_) => false,
+            #[cfg(feature = "postgres")]
+            Self::Postgres(_) => false,
+            #[cfg(feature = "libsql")]
+            Self::LibsqlReplica(_) => false,
+            #[cfg(feature = "mysql")]
+            Self::MySql(_) => false,
             #[cfg(any(test, feature = "test-hooks"))]
             Self::Memory(_) => true,
         }
@@ -28,13 +42,17 @@ impl TenantPersistence {
         read_storage: &TenantPersistenceExecutor,
     ) -> Result<Schema> {
         match self {
-            Self::Postgres(store) => store.load_schema_async().await,
-            Self::Redb(_) | Self::Sqlite(_) | Self::LibsqlReplica(_) | Self::MySql(_) => {
-                read_storage.execute(|store| store.load_schema()).await
-            }
+            #[cfg(feature = "postgres")]
+            Self::Postgres(store) => return store.load_schema_async().await,
+            Self::Redb(_) | Self::Sqlite(_) => {}
+            #[cfg(feature = "libsql")]
+            Self::LibsqlReplica(_) => {}
+            #[cfg(feature = "mysql")]
+            Self::MySql(_) => {}
             #[cfg(any(test, feature = "test-hooks"))]
-            Self::Memory(_) => read_storage.execute(|store| store.load_schema()).await,
+            Self::Memory(_) => {}
         }
+        read_storage.execute(|store| store.load_schema()).await
     }
 
     pub(crate) async fn journal_progress_async(
@@ -42,13 +60,17 @@ impl TenantPersistence {
         read_storage: &TenantPersistenceExecutor,
     ) -> Result<JournalProgress> {
         match self {
-            Self::Postgres(store) => store.journal_progress_async().await,
-            Self::Redb(_) | Self::Sqlite(_) | Self::LibsqlReplica(_) | Self::MySql(_) => {
-                read_storage.execute(|store| store.journal_progress()).await
-            }
+            #[cfg(feature = "postgres")]
+            Self::Postgres(store) => return store.journal_progress_async().await,
+            Self::Redb(_) | Self::Sqlite(_) => {}
+            #[cfg(feature = "libsql")]
+            Self::LibsqlReplica(_) => {}
+            #[cfg(feature = "mysql")]
+            Self::MySql(_) => {}
             #[cfg(any(test, feature = "test-hooks"))]
-            Self::Memory(_) => read_storage.execute(|store| store.journal_progress()).await,
+            Self::Memory(_) => {}
         }
+        read_storage.execute(|store| store.journal_progress()).await
     }
 
     pub(crate) async fn recover_durable_journal_async(
@@ -56,19 +78,19 @@ impl TenantPersistence {
         read_storage: &TenantPersistenceExecutor,
     ) -> Result<JournalProgress> {
         match self {
-            Self::Postgres(store) => store.recover_durable_journal_async().await,
-            Self::Redb(_) | Self::Sqlite(_) | Self::LibsqlReplica(_) | Self::MySql(_) => {
-                read_storage
-                    .execute(|store| store.recover_durable_journal())
-                    .await
-            }
+            #[cfg(feature = "postgres")]
+            Self::Postgres(store) => return store.recover_durable_journal_async().await,
+            Self::Redb(_) | Self::Sqlite(_) => {}
+            #[cfg(feature = "libsql")]
+            Self::LibsqlReplica(_) => {}
+            #[cfg(feature = "mysql")]
+            Self::MySql(_) => {}
             #[cfg(any(test, feature = "test-hooks"))]
-            Self::Memory(_) => {
-                read_storage
-                    .execute(|store| store.recover_durable_journal())
-                    .await
-            }
+            Self::Memory(_) => {}
         }
+        read_storage
+            .execute(|store| store.recover_durable_journal())
+            .await
     }
 
     pub(crate) async fn read_durable_journal_from_async(
@@ -77,19 +99,21 @@ impl TenantPersistence {
         next_sequence: SequenceNumber,
     ) -> Result<Vec<TenantEventRecord>> {
         match self {
-            Self::Postgres(store) => store.read_durable_journal_from_async(next_sequence).await,
-            Self::Redb(_) | Self::Sqlite(_) | Self::LibsqlReplica(_) | Self::MySql(_) => {
-                read_storage
-                    .execute(move |store| store.read_durable_journal_from(next_sequence))
-                    .await
+            #[cfg(feature = "postgres")]
+            Self::Postgres(store) => {
+                return store.read_durable_journal_from_async(next_sequence).await;
             }
+            Self::Redb(_) | Self::Sqlite(_) => {}
+            #[cfg(feature = "libsql")]
+            Self::LibsqlReplica(_) => {}
+            #[cfg(feature = "mysql")]
+            Self::MySql(_) => {}
             #[cfg(any(test, feature = "test-hooks"))]
-            Self::Memory(_) => {
-                read_storage
-                    .execute(move |store| store.read_durable_journal_from(next_sequence))
-                    .await
-            }
+            Self::Memory(_) => {}
         }
+        read_storage
+            .execute(move |store| store.read_durable_journal_from(next_sequence))
+            .await
     }
 
     /// Reads one bounded page of the provider's journal after `after`.
@@ -104,19 +128,19 @@ impl TenantPersistence {
         limit: usize,
     ) -> Result<DurableJournalPage> {
         match self {
-            Self::Postgres(store) => store.stream_durable_journal_async(after, limit).await,
-            Self::Redb(_) | Self::Sqlite(_) | Self::LibsqlReplica(_) | Self::MySql(_) => {
-                read_storage
-                    .execute(move |store| store.stream_durable_journal(after, limit))
-                    .await
-            }
+            #[cfg(feature = "postgres")]
+            Self::Postgres(store) => return store.stream_durable_journal_async(after, limit).await,
+            Self::Redb(_) | Self::Sqlite(_) => {}
+            #[cfg(feature = "libsql")]
+            Self::LibsqlReplica(_) => {}
+            #[cfg(feature = "mysql")]
+            Self::MySql(_) => {}
             #[cfg(any(test, feature = "test-hooks"))]
-            Self::Memory(_) => {
-                read_storage
-                    .execute(move |store| store.stream_durable_journal(after, limit))
-                    .await
-            }
+            Self::Memory(_) => {}
         }
+        read_storage
+            .execute(move |store| store.stream_durable_journal(after, limit))
+            .await
     }
 
     /// Recovers a provider's raw journal tail as unflattened records, kept
@@ -145,21 +169,22 @@ impl TenantPersistence {
         read_storage: &TenantPersistenceExecutor,
     ) -> Result<bool> {
         match self {
-            Self::Postgres(store) => store.has_scheduled_work_async().await,
-            Self::Redb(_) | Self::Sqlite(_) | Self::LibsqlReplica(_) | Self::MySql(_) => {
-                read_storage
-                    .execute(|store| store.has_scheduled_work())
-                    .await
-            }
+            #[cfg(feature = "postgres")]
+            Self::Postgres(store) => return store.has_scheduled_work_async().await,
+            Self::Redb(_) | Self::Sqlite(_) => {}
+            #[cfg(feature = "libsql")]
+            Self::LibsqlReplica(_) => {}
+            #[cfg(feature = "mysql")]
+            Self::MySql(_) => {}
             #[cfg(any(test, feature = "test-hooks"))]
-            Self::Memory(_) => {
-                read_storage
-                    .execute(|store| store.has_scheduled_work())
-                    .await
-            }
+            Self::Memory(_) => {}
         }
+        read_storage
+            .execute(|store| store.has_scheduled_work())
+            .await
     }
 
+    #[cfg(any(feature = "libsql", feature = "mysql"))]
     pub(crate) async fn plan_loaded_runtime_refresh_async(
         &self,
         read_storage: &TenantPersistenceExecutor,
@@ -167,6 +192,7 @@ impl TenantPersistence {
         durable_head: SequenceNumber,
         applied_head: SequenceNumber,
     ) -> Result<TenantProviderRefreshPlan> {
+        #[cfg(feature = "mysql")]
         if matches!(self, Self::MySql(_)) {
             self.invalidate_schema_cache();
         }
@@ -183,13 +209,16 @@ impl TenantPersistence {
         &self,
         records: &[TenantEventRecord],
     ) -> Result<SequenceNumber> {
+        // Only the libSQL replica derives its applied head from the batch.
+        #[cfg(not(feature = "libsql"))]
+        let _ = records;
+        #[cfg(feature = "libsql")]
         if matches!(self, Self::LibsqlReplica(_)) {
-            Ok(records
+            return Ok(records
                 .last()
                 .expect("non-empty durable batch should have a last record")
-                .sequence)
-        } else {
-            self.applied_sequence()
+                .sequence);
         }
+        self.applied_sequence()
     }
 }

@@ -29,6 +29,7 @@ pub use self::engine::{EmbeddedProviderKind, EmbeddedRedbProvider, OpenedEmbedde
 pub(crate) use self::read::BlockingReadExecutor;
 pub use self::read::{RedbTenantStorage, RedbUsageStorage};
 pub use self::sqlite::{EmbeddedSqliteProvider, OpenedEmbeddedSqliteTenant, SqliteTenantStorage};
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 pub(crate) use self::task_error::{map_executor_join_error, map_executor_permit_error};
 pub use self::traits::{TenantReadStorage, TenantWriteOutcome, TenantWriteStorage, UsageStorage};
 pub(crate) use self::write::{BlockingWriteExecutor, BlockingWriteStore};

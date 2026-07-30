@@ -27,10 +27,21 @@ platforms = [
 [traversal-excludes]
 # Keep architecture-invariant crates out of Hakari dependency management:
 # nimbus-core remains zero-I/O, nimbus-runtime must have zero workspace
-# dependencies, and the nimbus facade should not grow a workspace-hack edge in
-# its public embedder surface.
+# dependencies, the nimbus facade should not grow a workspace-hack edge in its
+# public embedder surface, and nimbus-storage's provider feature gates must not
+# be defeated by workspace feature unification -- a workspace-hack edge would
+# pull the HTTP/TLS transport stack back into a `--no-default-features` build
+# and silently undo the `postgres`/`mysql`/`libsql` opt-in.
+#
+# `nimbus-crypto` is listed for the storage reason, not one of its own: it is
+# the only other workspace crate beneath `nimbus-storage`, so a workspace-hack
+# edge on it reaches storage transitively and reintroduces `hyper`, `reqwest`
+# and `tower-service` into a provider-free build. Excluding storage alone is
+# not sufficient; the exclusion has to cover everything below the gate.
 workspace-members = [
     "nimbus-core",
+    "nimbus-crypto",
     "nimbus-runtime",
     "nimbus",
+    "nimbus-storage",
 ]

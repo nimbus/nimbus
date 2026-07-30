@@ -22,10 +22,14 @@ mod pressure;
 mod scenarios;
 mod seed_farm;
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 pub(crate) use differential::{
     exercise_ppsc_provider_authority_extension, exercise_ppsc_provider_retained_differential,
-    exercise_ppsc_provider_scenario_differential,
 };
+// Only the libSQL suite replays a single named scenario; the other two drive
+// the retained corpus through `exercise_ppsc_provider_retained_differential`.
+#[cfg(feature = "libsql")]
+pub(crate) use differential::exercise_ppsc_provider_scenario_differential;
 use harness::*;
 use scenarios::*;
 
@@ -106,6 +110,9 @@ impl PpscEngineRunner {
         .await
     }
 
+    /// Gated with the remote providers: an embedded-only build has no
+    /// provider backend to configure.
+    #[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
     async fn new_configured_provider(
         backend: PpscBackend,
         scenario: &PpscScenario,
@@ -286,6 +293,7 @@ impl PpscEngineRunner {
         self.run_with_cleanup(scenario, false).await
     }
 
+    #[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
     async fn run_with_provider_cleanup(self, scenario: PpscScenario) -> PpscHistory {
         self.run_with_cleanup(scenario, true).await
     }

@@ -34,11 +34,13 @@ impl Drop for ArmedJournalPause {
     }
 }
 
+#[cfg(feature = "postgres")]
 struct ArmedBlockingFaultPause {
     pause: Arc<BlockingFaultInjector>,
     released: bool,
 }
 
+#[cfg(feature = "postgres")]
 impl ArmedBlockingFaultPause {
     fn new(pause: Arc<BlockingFaultInjector>) -> Self {
         Self {
@@ -55,6 +57,7 @@ impl ArmedBlockingFaultPause {
     }
 }
 
+#[cfg(feature = "postgres")]
 impl Drop for ArmedBlockingFaultPause {
     fn drop(&mut self) {
         self.release();
@@ -558,6 +561,7 @@ pub(crate) async fn exercise_provider_publisher_contract(
 
 /// Proves that scheduler-only state changes participate in provider lease
 /// fencing even though they do not advance the durable journal sequence.
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 pub(crate) async fn exercise_provider_scheduler_fence_contract<Expire, ExpireFuture>(
     engine_a: Arc<Engine>,
     engine_b: Arc<Engine>,
@@ -664,6 +668,7 @@ pub(crate) async fn exercise_provider_scheduler_fence_contract<Expire, ExpireFut
 
 /// Runs the schedule-only `MutationExecutionUnit` lease contract through the
 /// same public Engine interface for every external provider adapter.
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 pub(crate) async fn exercise_provider_schedule_only_execution_unit_fence_contract(
     engine_a: Arc<Engine>,
     engine_b: Arc<Engine>,
@@ -791,6 +796,7 @@ pub(crate) async fn exercise_provider_schedule_only_execution_unit_fence_contrac
     engine_b.quiesce().await;
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 fn pending_provider_trigger_invocation(
     registration_id: &str,
     event_id: &str,
@@ -824,12 +830,14 @@ fn pending_provider_trigger_invocation(
     )
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 struct BlockingProviderTriggerExecutor {
     started: Mutex<Option<std::sync::mpsc::SyncSender<()>>>,
     release: Mutex<std::sync::mpsc::Receiver<()>>,
     calls: Arc<std::sync::atomic::AtomicU64>,
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 impl crate::TriggerInvocationExecutor for BlockingProviderTriggerExecutor {
     fn execute_invocation(
         &self,
@@ -856,10 +864,12 @@ impl crate::TriggerInvocationExecutor for BlockingProviderTriggerExecutor {
     }
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 struct CompletingProviderTriggerExecutor {
     calls: Arc<std::sync::atomic::AtomicU64>,
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 impl crate::TriggerInvocationExecutor for CompletingProviderTriggerExecutor {
     fn execute_invocation(
         &self,
@@ -871,12 +881,14 @@ impl crate::TriggerInvocationExecutor for CompletingProviderTriggerExecutor {
     }
 }
 
+#[cfg(feature = "postgres")]
 struct BlockingCompletingProviderTriggerExecutor {
     started: Mutex<Option<std::sync::mpsc::SyncSender<()>>>,
     release: Mutex<std::sync::mpsc::Receiver<()>>,
     calls: Arc<std::sync::atomic::AtomicU64>,
 }
 
+#[cfg(feature = "postgres")]
 impl crate::TriggerInvocationExecutor for BlockingCompletingProviderTriggerExecutor {
     fn execute_invocation(
         &self,
@@ -903,6 +915,7 @@ impl crate::TriggerInvocationExecutor for BlockingCompletingProviderTriggerExecu
     }
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 async fn wait_for_provider_trigger_state(
     engine: &Arc<Engine>,
     tenant_id: &TenantId,
@@ -937,6 +950,7 @@ async fn wait_for_provider_trigger_state(
 /// Both handlers may run across takeover (the documented at-least-once
 /// boundary), but only the current lease holder may durably transition the
 /// invocation record.
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 pub(crate) async fn exercise_provider_trigger_invocation_fence_contract(
     engine_a: Arc<Engine>,
     engine_b: Arc<Engine>,
@@ -1071,6 +1085,7 @@ pub(crate) async fn exercise_provider_trigger_invocation_fence_contract(
 /// observing the durable head; the journal write must remain queued until the
 /// transition finishes, then advance the head without falsely fencing the
 /// still-current trigger worker.
+#[cfg(feature = "postgres")]
 pub(crate) async fn exercise_provider_trigger_transition_serialization_contract(
     engine: Arc<Engine>,
     tenant_id: TenantId,
@@ -1171,6 +1186,7 @@ pub(crate) async fn exercise_provider_trigger_transition_serialization_contract(
 
 /// Proves that losing the provider acknowledgement for a completed trigger
 /// transition retries the exact record without invoking the handler again.
+#[cfg(feature = "postgres")]
 pub(crate) async fn exercise_provider_trigger_outcome_acknowledgement_loss_contract(
     engine: Arc<Engine>,
     tenant_id: TenantId,

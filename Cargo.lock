@@ -6786,7 +6786,6 @@ dependencies = [
  "tokio",
  "tracing",
  "windows-sys 0.61.2",
- "workspace-hack",
  "zeroize",
 ]
 
@@ -7299,7 +7298,6 @@ dependencies = [
  "tower-service",
  "tracing",
  "windows-sys 0.61.2",
- "workspace-hack",
 ]
 
 [[package]]
@@ -13547,12 +13545,7 @@ version = "0.1.45"
 dependencies = [
  "allocator-api2",
  "arrayvec",
- "aws-credential-types",
  "aws-lc-rs",
- "aws-smithy-async",
- "aws-smithy-runtime",
- "aws-smithy-runtime-api",
- "aws-smithy-types",
  "axum",
  "axum-core",
  "bitflags 2.11.0",
@@ -13561,7 +13554,6 @@ dependencies = [
  "chrono",
  "crossbeam-utils",
  "crypto-common 0.1.7",
- "deadpool",
  "deranged",
  "digest 0.10.7",
  "digest 0.11.2",
@@ -13575,7 +13567,6 @@ dependencies = [
  "futures-core",
  "futures-io",
  "futures-sink",
- "futures-task",
  "futures-util",
  "getrandom 0.2.17",
  "getrandom 0.4.2",
@@ -13613,7 +13604,10 @@ dependencies = [
  "quote",
  "rand 0.10.1",
  "rand 0.8.5",
+ "rand 0.9.3",
+ "rand_chacha 0.9.0",
  "rand_core 0.6.4",
+ "rand_core 0.9.5",
  "regex",
  "regex-automata",
  "regex-syntax",
@@ -13622,7 +13616,6 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "rustls-webpki",
- "security-framework-sys",
  "serde",
  "serde_core",
  "serde_json",

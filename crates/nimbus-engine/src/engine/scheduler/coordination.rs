@@ -28,6 +28,8 @@ impl Engine {
     }
 
     /// Returns the earliest due scheduled or cron work across all loaded tenants asynchronously.
+    // Read only by the polling providers' hint worker.
+    #[cfg(any(feature = "libsql", feature = "mysql"))]
     pub(crate) async fn next_loaded_scheduled_work_at_async(
         self: &Arc<Self>,
     ) -> Result<Option<Timestamp>> {

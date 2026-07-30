@@ -1,40 +1,56 @@
 use std::sync::Arc;
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+#[cfg(feature = "libsql")]
 use libsql::Builder;
+#[cfg(feature = "mysql")]
 use mysql_async::prelude::Queryable;
-use nimbus_core::{
-    Document, DocumentId, FieldSchema, FieldType, Filter, FilterOp, Query, SequenceNumber,
-    TableName, TableSchema, TenantId,
-};
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
+use nimbus_core::SequenceNumber;
+use nimbus_core::{Document, DocumentId, TableName, TenantId};
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
+use nimbus_core::{FieldSchema, FieldType, Filter, FilterOp, Query, TableSchema};
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 use nimbus_engine::{
     ControlPlaneConfig, EnginePersistenceConfig, LocalEncryptionConfig, PersistenceDialect,
     PersistenceTopology, PoolConfig, ProviderCredentials, TenantProviderConfig,
     TenantRoutingConfig,
 };
 use nimbus_engine::{Engine, ProjectionToken};
+#[cfg(feature = "libsql")]
+use nimbus_storage::NoopFaultInjector;
+#[cfg(feature = "libsql")]
 use nimbus_storage::libsql::libsql_transport_connector;
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 use nimbus_storage::provider_test_fixtures::{
     ExternalProviderFixtureMode, external_provider_fixture_mode,
 };
-use nimbus_storage::{
-    FaultInjector, FaultPoint, LibsqlReplicaProvider, LibsqlReplicaProviderConfig, MySqlProvider,
-    MySqlProviderConfig, NoopFaultInjector, PostgresProvider, PostgresProviderConfig,
-};
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
+use nimbus_storage::{FaultInjector, FaultPoint};
+#[cfg(feature = "libsql")]
+use nimbus_storage::{LibsqlReplicaProvider, LibsqlReplicaProviderConfig};
+#[cfg(feature = "mysql")]
+use nimbus_storage::{MySqlProvider, MySqlProviderConfig};
+#[cfg(feature = "postgres")]
+use nimbus_storage::{PostgresProvider, PostgresProviderConfig};
 use serde_json::{Value, json};
 use tempfile::tempdir;
 
 use super::install_table_projection_observer;
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 use super::publication::{
     ProjectionPublication, ProjectionPublicationOutcome, publish_table_projection_async,
 };
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 use super::work::install_table_projection_observer_for_testing;
 use crate::identity::system_tenant_id;
 use crate::keys::table_document_id;
 use crate::records::{ensure_system_tenant_async, record_table_state_for_generation_async};
 use crate::schema::{PROJECTION_FENCE_TABLE, SystemTable};
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 struct ArmedProjectionAcknowledgementLoss {
     armed: AtomicBool,
     fired: AtomicBool,
@@ -43,6 +59,7 @@ struct ArmedProjectionAcknowledgementLoss {
     target_projection_epoch: Option<String>,
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 impl ArmedProjectionAcknowledgementLoss {
     fn process_wide() -> Self {
         Self {
@@ -54,6 +71,7 @@ impl ArmedProjectionAcknowledgementLoss {
         }
     }
 
+    #[cfg(feature = "libsql")]
     fn for_projection_publication(
         target_tenant: TenantId,
         target_table: TableName,
@@ -76,6 +94,7 @@ impl ArmedProjectionAcknowledgementLoss {
     }
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 impl FaultInjector for ArmedProjectionAcknowledgementLoss {
     fn check(&self, point: FaultPoint) -> nimbus_core::Result<()> {
         if point == FaultPoint::StorageCommitAfterVisibilityBeforeReturn
@@ -145,6 +164,7 @@ impl FaultInjector for ArmedProjectionAcknowledgementLoss {
     }
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 fn value_schema(table: &TableName, include_note: bool) -> TableSchema {
     let mut fields = vec![FieldSchema {
         name: "value".to_string(),
@@ -196,6 +216,7 @@ async fn fence_row(
         .ok()
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 async fn indexed_projected_rows(
     engine: &Arc<Engine>,
     tenant_id: &TenantId,
@@ -265,6 +286,7 @@ async fn wait_for_row_count(
     }
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 async fn wait_for_schema(
     engine: &Arc<Engine>,
     tenant_id: &TenantId,
@@ -289,6 +311,7 @@ async fn wait_for_schema(
     .expect("schema projection should converge");
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 async fn wait_for_deleted_fence(
     engine: &Arc<Engine>,
     tenant_id: &TenantId,
@@ -309,6 +332,7 @@ async fn wait_for_deleted_fence(
     .expect("table deletion should leave a durable private fence")
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 async fn prepare_two_engine_projection_contract(
     engine_a: &Arc<Engine>,
     tenant_id: &TenantId,
@@ -357,6 +381,7 @@ async fn prepare_two_engine_projection_contract(
     (first_document, old_token)
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 async fn prepare_unprojected_provider_restart_scope(
     engine: &Arc<Engine>,
     tenant_id: &TenantId,
@@ -392,6 +417,7 @@ async fn prepare_unprojected_provider_restart_scope(
     source_token
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 fn stop_old_engine_lease_renewal(engine: &Engine, tenant_id: &TenantId) {
     engine
         .pause_committer_lease_renewal_for_testing(tenant_id)
@@ -403,6 +429,7 @@ fn stop_old_engine_lease_renewal(engine: &Engine, tenant_id: &TenantId) {
         .expect("old system-tenant lease renewal should stop before forced takeover");
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 async fn assert_provider_restart_reconciles_scope(
     engine: &Arc<Engine>,
     tenant_id: &TenantId,
@@ -449,6 +476,7 @@ async fn assert_provider_restart_reconciles_scope(
     assert!(fence_row(engine, tenant_id, table).await.is_some());
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 async fn finish_two_engine_projection_contract(
     engine_b: &Arc<Engine>,
     acknowledgement_loss: &ArmedProjectionAcknowledgementLoss,
@@ -749,6 +777,7 @@ async fn finish_two_engine_projection_contract(
     assert!(diagnostics.observer_spawned_work_delayed_retry_count >= 1);
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 async fn assert_provider_same_id_recreation_advances_projection_incarnation(
     engine: &Arc<Engine>,
     tenant_id: &TenantId,
@@ -950,6 +979,7 @@ async fn projection_deleted_table_tombstone_reconciles_on_reload() {
     .expect("restart reconciliation must retain the durable deletion tombstone");
 }
 
+#[cfg(feature = "postgres")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn projection_provider_restart_reconciles_cancelled_scope() {
     let Some(connection_string) = postgres_connection_string() else {
@@ -1051,6 +1081,7 @@ async fn projection_provider_restart_reconciles_cancelled_scope() {
         .unwrap();
 }
 
+#[cfg(feature = "libsql")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn projection_libsql_two_engine_takeover_rejects_late_old_document_schema_and_delete() {
     let Some((primary_url, admin_api_url, auth_token, admin_auth_header)) =
@@ -1180,6 +1211,7 @@ async fn projection_libsql_two_engine_takeover_rejects_late_old_document_schema_
         .expect("libSQL projection namespaces should clean up");
 }
 
+#[cfg(feature = "mysql")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn projection_mysql_two_engine_takeover_rejects_late_old_document_schema_and_delete() {
     let Some(connection_string) = mysql_connection_string() else {
@@ -1285,6 +1317,7 @@ async fn projection_mysql_two_engine_takeover_rejects_late_old_document_schema_a
         .expect("MySQL projection databases should clean up");
 }
 
+#[cfg(feature = "libsql")]
 fn libsql_connection_settings() -> Option<(String, String, Option<String>, Option<String>)> {
     match external_provider_fixture_mode(
         "libsql",
@@ -1303,6 +1336,7 @@ fn libsql_connection_settings() -> Option<(String, String, Option<String>, Optio
     }
 }
 
+#[cfg(feature = "mysql")]
 fn mysql_connection_string() -> Option<String> {
     match external_provider_fixture_mode(
         "mysql",
@@ -1316,6 +1350,7 @@ fn mysql_connection_string() -> Option<String> {
     }
 }
 
+#[cfg(feature = "postgres")]
 fn postgres_connection_string() -> Option<String> {
     match external_provider_fixture_mode(
         "postgres",
@@ -1330,6 +1365,7 @@ fn postgres_connection_string() -> Option<String> {
     }
 }
 
+#[cfg(feature = "postgres")]
 async fn expire_postgres_lease(config: &PostgresProviderConfig, tenant_id: &TenantId) {
     let provider = PostgresProvider::connect(config.clone()).await.unwrap();
     let schema = provider.tenant_schema_name(tenant_id).unwrap();
@@ -1348,6 +1384,7 @@ async fn expire_postgres_lease(config: &PostgresProviderConfig, tenant_id: &Tena
     connection.abort();
 }
 
+#[cfg(feature = "libsql")]
 async fn expire_libsql_lease(config: &LibsqlReplicaProviderConfig, tenant_id: &TenantId) {
     let provider = LibsqlReplicaProvider::connect(config.clone())
         .await
@@ -1379,6 +1416,7 @@ async fn expire_libsql_lease(config: &LibsqlReplicaProviderConfig, tenant_id: &T
     );
 }
 
+#[cfg(feature = "mysql")]
 async fn expire_mysql_lease(config: &MySqlProviderConfig, tenant_id: &TenantId) {
     let provider = MySqlProvider::connect(config.clone())
         .await

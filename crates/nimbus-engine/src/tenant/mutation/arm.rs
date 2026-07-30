@@ -22,8 +22,11 @@ enum PersistenceAdapter {
     Memory,
     Redb,
     Sqlite,
+    #[cfg(feature = "libsql")]
     Libsql,
+    #[cfg(feature = "postgres")]
     Postgres,
+    #[cfg(feature = "mysql")]
     MySql,
 }
 
@@ -32,8 +35,11 @@ impl PersistenceAdapter {
         match persistence {
             TenantPersistence::Redb(_) => Self::Redb,
             TenantPersistence::Sqlite(_) => Self::Sqlite,
+            #[cfg(feature = "libsql")]
             TenantPersistence::LibsqlReplica(_) => Self::Libsql,
+            #[cfg(feature = "postgres")]
             TenantPersistence::Postgres(_) => Self::Postgres,
+            #[cfg(feature = "mysql")]
             TenantPersistence::MySql(_) => Self::MySql,
             #[cfg(any(test, feature = "test-hooks"))]
             TenantPersistence::Memory(_) => Self::Memory,
@@ -69,12 +75,18 @@ mod tests {
 
     #[test]
     fn all_production_persistence_adapters_select_ordered_publisher() {
+        // The provider adapters appear only when their feature builds them, so
+        // the assertion covers exactly the adapters this build can select
+        // rather than naming variants that do not exist.
         for adapter in [
             PersistenceAdapter::Memory,
             PersistenceAdapter::Redb,
             PersistenceAdapter::Sqlite,
+            #[cfg(feature = "libsql")]
             PersistenceAdapter::Libsql,
+            #[cfg(feature = "postgres")]
             PersistenceAdapter::Postgres,
+            #[cfg(feature = "mysql")]
             PersistenceAdapter::MySql,
         ] {
             assert_eq!(

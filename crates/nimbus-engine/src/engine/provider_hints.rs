@@ -1,48 +1,75 @@
 use std::sync::Arc;
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 use std::sync::atomic::Ordering;
+// The reconnect/poll delays and the shared `sleep_or_stop` helper they drive
+// exist only for the remote-provider workers below.
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 use std::time::Duration;
 
 use nimbus_core::{Result, SequenceNumber, TenantEventRecord, TenantId};
+#[cfg(feature = "postgres")]
 use nimbus_storage::{PostgresProvider, PostgresProviderNotification};
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, warn};
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
+use tracing::debug;
+#[cfg(any(test, feature = "libsql", feature = "mysql", feature = "postgres"))]
+use tracing::warn;
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 use crate::persistence::WorkerContext;
 use crate::tenant::TenantRuntime;
 
 use super::Engine;
 use super::mutations::document_bearing_commit_identity;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "postgres"))]
 const POSTGRES_HINT_RECONNECT_DELAY: Duration = Duration::from_secs(1);
-#[cfg(not(test))]
+#[cfg(all(not(test), feature = "postgres"))]
 const POSTGRES_HINT_RECONNECT_DELAY: Duration = Duration::from_millis(250);
+#[cfg(any(feature = "libsql", feature = "mysql"))]
 const POLLING_PROVIDER_INTERVAL: Duration = Duration::from_millis(500);
+#[cfg(any(feature = "libsql", feature = "mysql"))]
 const PROVIDER_TENANT_SWEEP_PAGE_SIZE: usize = 8;
 
+/// Which polling provider a hint worker serves. PostgreSQL is absent by
+/// design: it is driven by `LISTEN`/`NOTIFY` rather than polling, so it has its
+/// own listener path below.
+#[cfg(any(feature = "libsql", feature = "mysql"))]
 #[derive(Clone, Copy)]
 pub(crate) enum ProviderPollWorker {
+    #[cfg(feature = "mysql")]
     MySql,
+    #[cfg(feature = "libsql")]
     LibsqlReplica,
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql"))]
 impl ProviderPollWorker {
     pub(crate) fn task_name(self) -> &'static str {
         match self {
+            #[cfg(feature = "mysql")]
             Self::MySql => "mysql_provider_poll",
+            #[cfg(feature = "libsql")]
             Self::LibsqlReplica => "libsql_replica_provider_poll",
         }
     }
 
     fn failure_message(self) -> &'static str {
         match self {
+            #[cfg(feature = "mysql")]
             Self::MySql => "failed to poll MySQL provider state",
+            #[cfg(feature = "libsql")]
             Self::LibsqlReplica => "failed to poll replica-connected SQLite provider state",
         }
     }
 }
 
 impl Engine {
+    /// Starts the one background worker the configured remote provider needs.
+    /// Paired with the no-provider definition below: an embedded-only build has
+    /// no hint worker to start, so the call sites stay unconditional.
+    #[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
     pub(crate) fn ensure_provider_background_tasks_started(self: &Arc<Self>) {
         let Some(runtime_hooks) = self.persistence_provider.runtime_hooks() else {
             return;
@@ -74,6 +101,10 @@ impl Engine {
         }
     }
 
+    #[cfg(not(any(feature = "libsql", feature = "mysql", feature = "postgres")))]
+    pub(crate) fn ensure_provider_background_tasks_started(self: &Arc<Self>) {}
+
+    #[cfg(feature = "postgres")]
     pub(crate) async fn run_provider_notification_listener(
         self: Arc<Self>,
         provider: Arc<PostgresProvider>,
@@ -139,6 +170,7 @@ impl Engine {
         }
     }
 
+    #[cfg(feature = "postgres")]
     async fn handle_postgres_provider_notification(
         self: &Arc<Self>,
         notification: PostgresProviderNotification,
@@ -158,6 +190,7 @@ impl Engine {
         Ok(())
     }
 
+    #[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
     fn loaded_runtime(&self, tenant_id: &TenantId) -> Option<Arc<TenantRuntime>> {
         self.tenants
             .read()
@@ -166,6 +199,7 @@ impl Engine {
             .cloned()
     }
 
+    #[cfg(feature = "postgres")]
     async fn refresh_loaded_postgres_tenant_async(
         &self,
         runtime: Arc<TenantRuntime>,
@@ -257,6 +291,10 @@ impl Engine {
 
         Ok(())
     }
+    // PostgreSQL's listener is the production caller, but the engine tests also
+    // drive this catch-up directly against embedded fixtures, so it is built for
+    // every test configuration.
+    #[cfg(any(test, feature = "postgres"))]
     async fn catch_up_postgres_provider_after_listener_attach(self: &Arc<Self>) -> Result<()> {
         let loaded = self
             .tenants
@@ -308,6 +346,7 @@ impl Engine {
             .await
     }
 
+    #[cfg(any(feature = "libsql", feature = "mysql"))]
     pub(crate) async fn run_provider_poll_worker(
         self: Arc<Self>,
         worker: ProviderPollWorker,
@@ -337,6 +376,7 @@ impl Engine {
         }
     }
 
+    #[cfg(any(feature = "libsql", feature = "mysql"))]
     async fn poll_provider_once(
         self: &Arc<Self>,
         last_next_due: Option<nimbus_core::Timestamp>,
@@ -432,6 +472,7 @@ impl Engine {
     }
 }
 
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
 async fn sleep_or_stop(delay: Duration, shutdown: &CancellationToken) -> bool {
     tokio::select! {
         _ = shutdown.cancelled() => true,

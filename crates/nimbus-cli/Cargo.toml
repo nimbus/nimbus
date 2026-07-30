@@ -11,6 +11,17 @@ license-file.workspace = true
 workspace = true
 
 [features]
+# Remote storage providers. Each is opt-in at the bottom of the chain
+# (nimbus-storage defaults to no provider) and forwarded upward one crate at a
+# time, exactly like `v8-pointer-compression`. The binary-facing crates default
+# them on, so `cargo build -p nimbus-bin --no-default-features` is the single
+# switch that drops the PostgreSQL, MySQL and libSQL driver stacks. Every
+# intra-chain dependency below sets `default-features = false` so that switch
+# is not silently re-enabled by a sibling edge.
+default = ["libsql", "mysql", "postgres"]
+libsql = ["nimbus/libsql", "nimbus-server/libsql"]
+mysql = ["nimbus/mysql", "nimbus-server/mysql"]
+postgres = ["nimbus/postgres", "nimbus-server/postgres"]
 # LR12: opt-in lane for the live hidden node workload executor integration
 # test against session systemd (mirrors nimbus-node's systemd-dbus-integration-tests).
 node-workload-executor-integration-tests = []
@@ -29,7 +40,7 @@ fs2.workspace = true
 hyper = { workspace = true, features = ["client", "http1", "runtime"] }
 indicatif.workspace = true
 libc.workspace = true
-nimbus = { path = "../nimbus", features = ["aws-kms"] }
+nimbus = { path = "../nimbus", default-features = false, features = ["aws-kms"] }
 nimbus-assets = { path = "../nimbus-assets", features = ["js-packages", "templates"] }
 nimbus-convex = { path = "../nimbus-convex" }
 nimbus-core = { path = "../nimbus-core" }
@@ -39,7 +50,7 @@ nimbus-kv = { path = "../nimbus-kv" }
 nimbus-machine = { path = "../nimbus-machine" }
 nimbus-node = { path = "../nimbus-node" }
 nimbus-operator = { path = "../nimbus-operator" }
-nimbus-server = { path = "../nimbus-server" }
+nimbus-server = { path = "../nimbus-server", default-features = false }
 nimbus-services = { path = "../nimbus-services" }
 nimbus-sandbox = { path = "../nimbus-sandbox" }
 nimbus-system = { path = "../nimbus-system" }
@@ -71,7 +82,9 @@ workspace-hack = { version = "0.1", path = "../workspace-hack" }
 serde_json.workspace = true
 
 [dev-dependencies]
-nimbus-engine = { path = "../nimbus-engine", features = ["test-hooks"] }
-nimbus-testing = { path = "../nimbus-testing" }
+nimbus-engine = { path = "../nimbus-engine", default-features = false, features = [
+    "test-hooks",
+] }
+nimbus-testing = { path = "../nimbus-testing", default-features = false }
 serial_test.workspace = true
 tempfile.workspace = true
