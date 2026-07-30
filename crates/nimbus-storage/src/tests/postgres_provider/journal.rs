@@ -39,28 +39,8 @@ async fn postgres_batch_journal_insert_uses_one_provider_statement() {
             .create_opened_tenant(&tenant)
             .await
             .expect("tenant should create and open");
-        let records = postgres_pipeline_barriers(8);
-
-        opened
-            .store
-            .append_durable_records_batch(&records)
-            .expect("batch append should succeed");
-
-        let diagnostic = opened.store.write_pipeline_diagnostic();
-        assert_eq!(diagnostic.batch_attempt_count, 1);
-        assert_eq!(diagnostic.journal_record_count, 8);
-        assert_eq!(diagnostic.journal_statement_count, 1);
-        assert_eq!(diagnostic.provider_operation_count, 1);
-        assert_eq!(diagnostic.max_observed_in_flight, 1);
-        assert_eq!(
-            opened
-                .store
-                .journal_progress()
-                .expect("progress should read"),
-            crate::store::JournalProgress {
-                durable_head: SequenceNumber(8),
-                applied_head: SequenceNumber(0),
-            }
+        crate::tests::sql_pair_scenarios::exercise_batch_journal_insert_uses_one_provider_statement(
+            opened.store.as_ref(),
         );
     })
     .await;
@@ -223,57 +203,8 @@ async fn postgres_sql_pipeline_cancellation_rolls_back() {
             .create_opened_tenant(&tenant)
             .await
             .expect("tenant should create and open");
-        let lease = opened
-            .store
-            .acquire_committer_lease("cancel-owner", std::time::Duration::from_secs(30))
-            .expect("lease should be acquired");
-        let records = postgres_pipeline_barriers(3);
-        let checks = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let checks_for_cancel = checks.clone();
-
-        let error = opened
-            .store
-            .fenced_append_and_apply_durable_records_batch_cancellable(
-                &lease.owner_id,
-                lease.epoch,
-                SequenceNumber(0),
-                &records,
-                move || {
-                    if checks_for_cancel.fetch_add(1, Ordering::SeqCst) >= 3 {
-                        Err(Error::Cancelled)
-                    } else {
-                        Ok(())
-                    }
-                },
-            )
-            .expect_err("cancellation should abort the provider transaction");
-        assert!(matches!(
-            error,
-            crate::CommitterLeaseError::Storage(Error::Cancelled)
-        ));
-        assert!(checks.load(Ordering::SeqCst) >= 4);
-        let diagnostic = opened.store.write_pipeline_diagnostic();
-        assert_eq!(diagnostic.journal_statement_count, 1);
-        assert_eq!(diagnostic.cancellation_count, 1);
-        assert_eq!(diagnostic.error_count, 1);
-        assert_eq!(
-            opened
-                .store
-                .journal_progress()
-                .expect("progress should read"),
-            crate::store::JournalProgress {
-                durable_head: SequenceNumber(0),
-                applied_head: SequenceNumber(0),
-            }
-        );
-        assert_eq!(
-            opened
-                .store
-                .read_committer_lease()
-                .expect("lease should read")
-                .expect("lease should exist")
-                .durable_sequence,
-            SequenceNumber(0)
+        crate::tests::sql_pair_scenarios::exercise_sql_pipeline_cancellation_rolls_back(
+            opened.store.as_ref(),
         );
     })
     .await;
@@ -427,72 +358,7 @@ async fn postgres_direct_writes_dedupe_and_journal_progress_round_trip() {
             .create_opened_tenant(&tenant)
             .await
             .expect("tenant should create and open");
-        let document = crate::tests::sample_document("tasks", "First");
-
-        let first_commit = opened
-            .store
-            .insert_once(&document, Some("exec-1"))
-            .expect("first deduplicated insert should succeed")
-            .expect("first deduplicated insert should commit");
-        assert_eq!(first_commit.sequence, SequenceNumber(1));
-        assert!(
-            opened
-                .store
-                .insert_once(&document, Some("exec-1"))
-                .expect("duplicate deduplicated insert should succeed")
-                .is_none()
-        );
-
-        let updated_title = "Renamed";
-        let second_commit = opened
-            .store
-            .update_validated(
-                &document.table,
-                &document.id,
-                &serde_json::Map::from_iter([(
-                    "title".to_string(),
-                    serde_json::json!(updated_title),
-                )]),
-                |_, _| Ok(()),
-            )
-            .expect("update should succeed");
-        assert_eq!(second_commit.sequence, SequenceNumber(2));
-
-        let updated = opened
-            .store
-            .get(&document.table, &document.id)
-            .expect("document lookup should succeed")
-            .expect("updated document should exist");
-        assert_eq!(
-            updated.fields.get("title").and_then(|value| value.as_str()),
-            Some(updated_title)
-        );
-
-        let (third_commit, removed) = opened
-            .store
-            .delete_validated_returning_document(&document.table, &document.id, |_| Ok(()))
-            .expect("delete should succeed");
-        assert_eq!(third_commit.sequence, SequenceNumber(3));
-        assert_eq!(removed.id, document.id);
-        assert_eq!(
-            opened
-                .store
-                .journal_progress()
-                .expect("journal progress should read"),
-            crate::store::JournalProgress {
-                durable_head: SequenceNumber(3),
-                applied_head: SequenceNumber(3),
-            }
-        );
-
-        let commits = opened
-            .store
-            .read_commit_log_from(SequenceNumber(1))
-            .expect("commit log should read");
-        assert_eq!(commits.len(), 3);
-        assert_eq!(commits[0].writes[0].op_type, WriteOpType::Insert);
-        assert_eq!(commits[1].writes[0].op_type, WriteOpType::Update);
-        assert_eq!(commits[2].writes[0].op_type, WriteOpType::Delete);
+        crate::tests::sql_pair_scenarios::exercise_direct_writes_dedupe_and_journal_progress_round_trip(opened.store.as_ref());
     })
     .await;
 }
@@ -505,92 +371,8 @@ async fn postgres_durable_journal_recovery_applies_pending_records() {
             .create_opened_tenant(&tenant)
             .await
             .expect("tenant should create and open");
-        let first = crate::tests::sample_document("tasks", "First");
-        let second = crate::tests::sample_document("tasks", "Second");
-        let table_id = TableId::new();
-        let records = vec![
-            TenantEventRecord::new(
-                SequenceNumber(1),
-                Timestamp(100),
-                vec![WriteOp {
-                    table: first.table.clone(),
-                    table_id: table_id.clone(),
-                    op_type: WriteOpType::Insert,
-                    doc_id: first.id.clone(),
-                    resource_path_binding: None,
-                    trigger_write_origin: None,
-                    previous: None,
-                    current: Some(first.clone()),
-                }],
-                None,
-            )
-            .expect("first durable record should build"),
-            TenantEventRecord::new(
-                SequenceNumber(2),
-                Timestamp(200),
-                vec![WriteOp {
-                    table: second.table.clone(),
-                    table_id: table_id.clone(),
-                    op_type: WriteOpType::Insert,
-                    doc_id: second.id.clone(),
-                    resource_path_binding: None,
-                    trigger_write_origin: None,
-                    previous: None,
-                    current: Some(second.clone()),
-                }],
-                None,
-            )
-            .expect("second durable record should build"),
-        ];
-
-        opened
-            .store
-            .append_durable_records_batch(&records)
-            .expect("durable append should succeed");
-        assert_eq!(
-            opened
-                .store
-                .journal_progress()
-                .expect("journal progress should read"),
-            crate::store::JournalProgress {
-                durable_head: SequenceNumber(2),
-                applied_head: SequenceNumber(0),
-            }
-        );
-        assert!(
-            opened
-                .store
-                .get(&first.table, &first.id)
-                .expect("first lookup should succeed")
-                .is_none()
-        );
-
-        let progress = opened
-            .store
-            .recover_durable_journal()
-            .expect("recovery should apply pending durable records");
-        assert_eq!(
-            progress,
-            crate::store::JournalProgress {
-                durable_head: SequenceNumber(2),
-                applied_head: SequenceNumber(2),
-            }
-        );
-        assert_eq!(
-            opened
-                .store
-                .get(&first.table, &first.id)
-                .expect("first lookup should succeed")
-                .as_ref(),
-            Some(&first)
-        );
-        assert_eq!(
-            opened
-                .store
-                .get(&second.table, &second.id)
-                .expect("second lookup should succeed")
-                .as_ref(),
-            Some(&second)
+        crate::tests::sql_pair_scenarios::exercise_durable_journal_recovery_applies_pending_records(
+            opened.store.as_ref(),
         );
     })
     .await;

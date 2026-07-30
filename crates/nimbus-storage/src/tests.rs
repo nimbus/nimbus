@@ -48,7 +48,13 @@ mod mysql_provider;
 mod object_meta;
 #[cfg(feature = "postgres")]
 mod postgres_provider;
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
+mod provider_scenarios;
+#[cfg(any(feature = "libsql", feature = "mysql", feature = "postgres"))]
+mod provider_support;
 mod recovery;
+#[cfg(any(feature = "mysql", feature = "postgres"))]
+mod sql_pair_scenarios;
 mod sqlite_foundation;
 mod store_basics;
 mod usage_store;
