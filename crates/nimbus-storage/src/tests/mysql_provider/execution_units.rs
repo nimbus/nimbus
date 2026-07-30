@@ -8,46 +8,7 @@ async fn mysql_resource_path_bindings_round_trip_without_table_name_delimiter_tr
             .create_opened_tenant(&tenant)
             .await
             .expect("tenant should create and open");
-        let bindings = vec![
-            binding("reserved_store", "loc_reserved", &["__meta__", "doc-1"]),
-            binding("dotted_store", "loc_dotted", &["cities.v2", "SF"]),
-            binding("unicode_store", "loc_unicode", &["日本語", "東京"]),
-            binding("deep_store", "loc_deep", &["a", "1", "b", "2", "c", "3"]),
-        ];
-
-        for binding in &bindings {
-            opened
-                .store
-                .upsert_resource_path_binding(binding)
-                .expect("binding should persist");
-        }
-
-        for binding in &bindings {
-            assert_eq!(
-                opened
-                    .store
-                    .resource_path_binding(&binding.locator)
-                    .expect("binding lookup should succeed"),
-                Some(binding.clone())
-            );
-            assert_eq!(
-                opened
-                    .store
-                    .locator_for_document_path(&binding.document_path)
-                    .expect("path lookup should succeed"),
-                Some(binding.locator.clone())
-            );
-        }
-
-        assert_eq!(
-            opened
-                .store
-                .scan_collection_group_bindings(
-                    &CollectionName::new("c").expect("collection group should parse"),
-                )
-                .expect("collection-group scan should succeed"),
-            vec![bindings[3].clone()]
-        );
+        crate::tests::sql_pair_scenarios::exercise_resource_path_bindings_round_trip_without_table_name_delimiter_tricks(opened.store.as_ref());
     })
     .await;
 }
@@ -60,28 +21,8 @@ async fn mysql_trigger_delivery_cursor_round_trips_in_metadata() {
             .create_opened_tenant(&tenant)
             .await
             .expect("tenant should create and open");
-
-        assert_eq!(
-            opened
-                .store
-                .trigger_delivery_cursor()
-                .expect("cursor should load"),
-            nimbus_core::TriggerDeliveryCursor::default()
-        );
-
-        opened
-            .store
-            .set_trigger_delivery_cursor(nimbus_core::TriggerDeliveryCursor::new(SequenceNumber(
-                23,
-            )))
-            .expect("cursor should persist");
-
-        assert_eq!(
-            opened
-                .store
-                .trigger_delivery_cursor()
-                .expect("cursor should round trip"),
-            nimbus_core::TriggerDeliveryCursor::new(SequenceNumber(23))
+        crate::tests::sql_pair_scenarios::exercise_trigger_delivery_cursor_round_trips_in_metadata(
+            opened.store.as_ref(),
         );
     })
     .await;
@@ -234,65 +175,7 @@ async fn mysql_execution_unit_batch_persists_and_removes_resource_path_bindings_
             .create_opened_tenant(&tenant)
             .await
             .expect("tenant should create and open");
-        let table = TableName::new("landmarks_store").expect("table name should parse");
-        let document = crate::tests::sample_document("landmarks_store", "golden-gate");
-        let binding = ResourcePathBinding::new(
-            DocumentLocator::new(table.clone(), document.id.clone()),
-            DocumentPath::from_segments(["cities", "SF", "landmarks", "golden-gate"])
-                .expect("document path should parse"),
-        );
-
-        let commit = opened
-            .store
-            .apply_execution_unit_batch(
-                &[ResolvedWrite::Insert {
-                    document: document.clone(),
-                    indexes: Vec::new(),
-                    resource_path_binding: Some(binding.clone()),
-                }],
-                &[],
-            )
-            .expect("insert batch should succeed")
-            .expect("insert batch should emit a commit");
-        assert_eq!(commit.sequence, SequenceNumber(1));
-        assert_eq!(
-            opened
-                .store
-                .locator_for_document_path(&binding.document_path)
-                .expect("path lookup should succeed"),
-            Some(binding.locator.clone())
-        );
-
-        let delete_commit = opened
-            .store
-            .apply_execution_unit_batch(
-                &[ResolvedWrite::Delete {
-                    previous: document,
-                    indexes: Vec::new(),
-                }],
-                &[],
-            )
-            .expect("delete batch should succeed")
-            .expect("delete batch should emit a commit");
-        assert_eq!(delete_commit.sequence, SequenceNumber(2));
-        assert!(
-            opened
-                .store
-                .resource_path_binding(&binding.locator)
-                .expect("binding lookup should succeed")
-                .is_none(),
-            "delete batch should remove the sidecar binding in the same transaction"
-        );
-        assert!(
-            opened
-                .store
-                .scan_collection_group_bindings(
-                    &CollectionName::new("landmarks").expect("collection group should parse"),
-                )
-                .expect("collection-group scan should succeed")
-                .is_empty(),
-            "delete batch should remove collection-group metadata too"
-        );
+        crate::tests::sql_pair_scenarios::exercise_execution_unit_batch_persists_and_removes_resource_path_bindings_atomically(opened.store.as_ref());
     })
     .await;
 }

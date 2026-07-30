@@ -96,38 +96,7 @@ async fn libsql_document_versions_storage_diagnostic_reports_format_and_range() 
             .create_opened_tenant(&tenant)
             .await
             .expect("tenant should create and open");
-        let document = crate::tests::sample_document("versioned_diagnostic_tasks", "v1");
-        let insert = opened
-            .store
-            .insert(&document)
-            .expect("insert should succeed");
-        let update = opened
-            .store
-            .update_validated(
-                &document.table,
-                &document.id,
-                &serde_json::Map::from_iter([("title".to_string(), serde_json::json!("v2"))]),
-                |_, _| Ok(()),
-            )
-            .expect("update should succeed");
-        let (delete, _) = opened
-            .store
-            .delete_validated_returning_document(&document.table, &document.id, |_| Ok(()))
-            .expect("delete should succeed");
-
-        let health = opened
-            .store
-            .storage_health_diagnostic()
-            .expect("health diagnostic should load");
-
-        assert_eq!(
-            health.document_versions.format_version,
-            Some(crate::CURRENT_DOCUMENT_VERSION_STORAGE_FORMAT)
-        );
-        assert_eq!(health.document_versions.version_count, 3);
-        assert_eq!(health.document_versions.min_sequence, Some(insert.sequence));
-        assert_eq!(health.document_versions.max_sequence, Some(delete.sequence));
-        assert!(update.sequence.0 > insert.sequence.0);
+        crate::tests::provider_scenarios::exercise_document_versions_storage_diagnostic_reports_format_and_range(opened.store.as_ref());
     })
     .await;
 }
@@ -141,116 +110,13 @@ async fn libsql_document_versions_are_materialized_during_durable_recovery() {
             .create_opened_tenant(&tenant)
             .await
             .expect("tenant should create and open");
-        let table = TableName::new("versioned_replay_tasks").expect("table name should be valid");
-        let table_id = TableId::new();
-        let inserted = crate::tests::sample_document("versioned_replay_tasks", "v1");
-        let mut updated = inserted.clone();
-        updated
-            .fields
-            .insert("title".to_string(), serde_json::json!("v2"));
-        updated.update_time = Timestamp(updated.update_time.0.saturating_add(1));
-        let records = vec![
-            TenantEventRecord::new(
-                SequenceNumber(1),
-                Timestamp(100),
-                vec![WriteOp {
-                    table: table.clone(),
-                    table_id: table_id.clone(),
-                    op_type: WriteOpType::Insert,
-                    doc_id: inserted.id.clone(),
-                    resource_path_binding: None,
-                    trigger_write_origin: None,
-                    previous: None,
-                    current: Some(inserted.clone()),
-                }],
-                None,
-            )
-            .expect("insert durable record should build"),
-            TenantEventRecord::new(
-                SequenceNumber(2),
-                Timestamp(101),
-                vec![WriteOp {
-                    table: table.clone(),
-                    table_id: table_id.clone(),
-                    op_type: WriteOpType::Update,
-                    doc_id: inserted.id.clone(),
-                    resource_path_binding: None,
-                    trigger_write_origin: None,
-                    previous: Some(inserted.clone()),
-                    current: Some(updated.clone()),
-                }],
-                None,
-            )
-            .expect("update durable record should build"),
-            TenantEventRecord::new(
-                SequenceNumber(3),
-                Timestamp(102),
-                vec![WriteOp {
-                    table: table.clone(),
-                    table_id: table_id.clone(),
-                    op_type: WriteOpType::Delete,
-                    doc_id: inserted.id.clone(),
-                    resource_path_binding: None,
-                    trigger_write_origin: None,
-                    previous: Some(updated.clone()),
-                    current: None,
-                }],
-                None,
-            )
-            .expect("delete durable record should build"),
-        ];
+        let fixture =
+            crate::tests::provider_scenarios::exercise_document_versions_are_materialized_during_durable_recovery(
+                opened.store.as_ref(),
+            );
 
-        opened
-            .store
-            .append_durable_records_batch(&records)
-            .expect("durable append should succeed");
-        assert!(
-            opened
-                .store
-                .get_document_version_at(&table, &table_id, &inserted.id, SequenceNumber(3))
-                .expect("unapplied version lookup should succeed")
-                .is_none(),
-            "durable-only records must not materialize historical versions before recovery"
-        );
-
-        opened
-            .store
-            .recover_durable_journal()
-            .expect("durable recovery should succeed");
-
-        let at_insert = opened
-            .store
-            .get_document_version_at(&table, &table_id, &inserted.id, SequenceNumber(1))
-            .expect("insert replay version should load")
-            .expect("insert replay version should exist");
-        let at_update = opened
-            .store
-            .get_document_version_at(&table, &table_id, &inserted.id, SequenceNumber(2))
-            .expect("update replay version should load")
-            .expect("update replay version should exist");
-        let at_delete = opened
-            .store
-            .get_document_version_at(&table, &table_id, &inserted.id, SequenceNumber(3))
-            .expect("delete replay version should load");
-
-        assert_eq!(
-            at_insert.fields.get("title"),
-            Some(&serde_json::json!("v1"))
-        );
-        assert_eq!(
-            at_update.fields.get("title"),
-            Some(&serde_json::json!("v2"))
-        );
-        assert_eq!(at_delete, None);
-        assert!(
-            opened
-                .store
-                .get(&table, &inserted.id)
-                .expect("current row get should succeed")
-                .is_none(),
-            "replayed current row should still reflect latest delete"
-        );
-
+        // The replica cache must carry the replayed versions too, not just the
+        // remote primary the shared body asserted against.
         let replica_path = provider
             .refresh_tenant_snapshot(&tenant)
             .await
@@ -258,7 +124,12 @@ async fn libsql_document_versions_are_materialized_during_durable_recovery() {
         let local = SqliteTenantStore::open(&replica_path)
             .expect("refreshed local replica cache should open");
         let local_at_insert = local
-            .get_document_version_at(&table, &table_id, &inserted.id, SequenceNumber(1))
+            .get_document_version_at(
+                &fixture.table,
+                &fixture.table_id,
+                &fixture.document_id,
+                SequenceNumber(1),
+            )
             .expect("local cache insert version should load")
             .expect("local cache insert version should exist");
         assert_eq!(
@@ -279,12 +150,12 @@ async fn libsql_index_versions_track_direct_write_history_and_snapshot_cache() {
             .await
             .expect("tenant should create and open");
         let table = TableName::new("indexed_versioned_tasks").expect("table name should be valid");
-        let (schema, index) = libsql_indexed_rank_schema(&table);
+        let (schema, index) = indexed_rank_schema(&table);
         opened
             .store
             .replace_table_schema(&schema)
             .expect("schema should persist");
-        let document = libsql_ranked_document(&table, "v1", 1);
+        let document = ranked_document(&table, "v1", 1);
         let insert = opened
             .store
             .insert(&document)
@@ -352,7 +223,7 @@ async fn libsql_index_versions_are_materialized_during_durable_recovery() {
             .await
             .expect("tenant should create and open");
         let table = TableName::new("indexed_replay_tasks").expect("table name should be valid");
-        let (schema, index) = libsql_indexed_rank_schema(&table);
+        let (schema, index) = indexed_rank_schema(&table);
         opened
             .store
             .replace_table_schema(&schema)
@@ -361,8 +232,8 @@ async fn libsql_index_versions_are_materialized_during_durable_recovery() {
             .store
             .table_identity_diagnostics()
             .expect("table identity diagnostics should load");
-        let table_id = libsql_active_table_id_for_diagnostic(&diagnostics, &table);
-        let inserted = libsql_ranked_document(&table, "v1", 1);
+        let table_id = active_table_id_for_diagnostic(&diagnostics, &table);
+        let inserted = ranked_document(&table, "v1", 1);
         let mut updated = inserted.clone();
         updated
             .fields
@@ -372,7 +243,7 @@ async fn libsql_index_versions_are_materialized_during_durable_recovery() {
             .insert("rank".to_string(), serde_json::json!(2));
         updated.update_time = Timestamp(updated.update_time.0.saturating_add(1));
         let records = vec![
-            libsql_durable_write_record(
+            durable_write_record(
                 SequenceNumber(2),
                 Timestamp(100),
                 &table,
@@ -382,7 +253,7 @@ async fn libsql_index_versions_are_materialized_during_durable_recovery() {
                 None,
                 Some(inserted.clone()),
             ),
-            libsql_durable_write_record(
+            durable_write_record(
                 SequenceNumber(3),
                 Timestamp(101),
                 &table,
@@ -392,7 +263,7 @@ async fn libsql_index_versions_are_materialized_during_durable_recovery() {
                 Some(inserted.clone()),
                 Some(updated.clone()),
             ),
-            libsql_durable_write_record(
+            durable_write_record(
                 SequenceNumber(4),
                 Timestamp(102),
                 &table,
@@ -444,114 +315,8 @@ async fn libsql_historical_index_scan_eq_and_range_use_versioned_visibility() {
             .create_opened_tenant(&tenant)
             .await
             .expect("tenant should create and open");
-        let table = TableName::new("historical_indexed_tasks").expect("table name should be valid");
-        let (schema, _) = libsql_indexed_rank_schema(&table);
-        opened
-            .store
-            .replace_table_schema(&schema)
-            .expect("schema should persist");
-        let document = libsql_ranked_document(&table, "v1", 1);
-        let insert = opened
-            .store
-            .insert(&document)
-            .expect("insert should succeed");
-        let table_id = insert.writes[0].table_id.clone();
-        let update = opened
-            .store
-            .update_validated(
-                &document.table,
-                &document.id,
-                &serde_json::Map::from_iter([
-                    ("title".to_string(), serde_json::json!("v2")),
-                    ("rank".to_string(), serde_json::json!(2)),
-                ]),
-                |_, _| Ok(()),
-            )
-            .expect("update should succeed");
-        let (delete, _) = opened
-            .store
-            .delete_validated_returning_document(&document.table, &document.id, |_| Ok(()))
-            .expect("delete should succeed");
-
-        let at_insert = libsql_historical_read_shape(&table, &table_id, &schema, insert.sequence);
-        let rank_one = opened
-            .store
-            .historical_index_scan_eq_cancellable(
-                &at_insert,
-                "by_rank",
-                &serde_json::json!(1),
-                &mut || Ok(()),
-            )
-            .expect("historical rank=1 scan should succeed");
-        assert_eq!(libsql_document_titles(&rank_one), vec!["v1"]);
-        assert_eq!(
-            libsql_document_title_strings(&rank_one),
-            libsql_rank_full_scan_oracle_titles(
-                &opened.store,
-                &table,
-                &table_id,
-                &[&document],
-                insert.sequence,
-                1
-            )
-        );
-        assert!(
-            opened
-                .store
-                .historical_index_scan_eq_cancellable(
-                    &at_insert,
-                    "by_rank",
-                    &serde_json::json!(2),
-                    &mut || Ok(())
-                )
-                .expect("historical rank=2 scan should succeed")
-                .is_empty()
-        );
-
-        let at_update = libsql_historical_read_shape(&table, &table_id, &schema, update.sequence);
-        let rank_two = opened
-            .store
-            .historical_index_scan_range_cancellable(
-                &at_update,
-                "by_rank",
-                Bound::Included(&serde_json::json!(2)),
-                Bound::Included(&serde_json::json!(2)),
-                &mut || Ok(()),
-            )
-            .expect("historical rank range scan should succeed");
-        assert_eq!(libsql_document_titles(&rank_two), vec!["v2"]);
-        assert_eq!(
-            libsql_document_title_strings(&rank_two),
-            libsql_rank_full_scan_oracle_titles(
-                &opened.store,
-                &table,
-                &table_id,
-                &[&document],
-                update.sequence,
-                2
-            )
-        );
-
-        let at_delete = libsql_historical_read_shape(&table, &table_id, &schema, delete.sequence);
-        let deleted_rank_two = opened
-            .store
-            .historical_index_scan_eq_cancellable(
-                &at_delete,
-                "by_rank",
-                &serde_json::json!(2),
-                &mut || Ok(()),
-            )
-            .expect("historical deleted rank scan should succeed");
-        assert_eq!(
-            libsql_document_title_strings(&deleted_rank_two),
-            libsql_rank_full_scan_oracle_titles(
-                &opened.store,
-                &table,
-                &table_id,
-                &[&document],
-                delete.sequence,
-                2
-            )
+        crate::tests::provider_scenarios::exercise_historical_index_scan_eq_and_range_use_versioned_visibility(
+            opened.store.as_ref(),
         );
     })
     .await;
@@ -566,126 +331,8 @@ async fn libsql_historical_index_prefix_composite_range_and_pagination_are_stabl
             .create_opened_tenant(&tenant)
             .await
             .expect("tenant should create and open");
-        let table =
-            TableName::new("historical_composite_tasks").expect("table name should be valid");
-        let schema = libsql_status_rank_schema(&table);
-        opened
-            .store
-            .replace_table_schema(&schema)
-            .expect("schema should persist");
-        let first = libsql_status_rank_document(&table, "first", "open", 1);
-        let second = libsql_status_rank_document(&table, "second", "open", 2);
-        let third = libsql_status_rank_document(&table, "third", "closed", 3);
-        let first_insert = opened
-            .store
-            .insert(&first)
-            .expect("first insert should succeed");
-        let table_id = first_insert.writes[0].table_id.clone();
-        opened
-            .store
-            .insert(&second)
-            .expect("second insert should succeed");
-        let third_insert = opened
-            .store
-            .insert(&third)
-            .expect("third insert should succeed");
-
-        let read_shape =
-            libsql_historical_read_shape(&table, &table_id, &schema, third_insert.sequence);
-        let open_docs = opened
-            .store
-            .historical_index_scan_prefix_cancellable(
-                &read_shape,
-                "by_status_rank",
-                &[serde_json::json!("open")],
-                &mut || Ok(()),
-            )
-            .expect("historical prefix scan should succeed");
-        assert_eq!(libsql_document_titles(&open_docs), vec!["first", "second"]);
-        assert_eq!(
-            libsql_document_title_strings(&open_docs),
-            libsql_status_rank_full_scan_oracle_titles(
-                &opened.store,
-                &table_id,
-                &[&first, &second, &third],
-                third_insert.sequence,
-                "open",
-                None,
-                None
-            )
-        );
-
-        let exact_rank_two = opened
-            .store
-            .historical_index_scan_composite_range_cancellable(
-                &read_shape,
-                "by_status_rank",
-                &[serde_json::json!("open")],
-                Bound::Included(&serde_json::json!(2)),
-                Bound::Included(&serde_json::json!(2)),
-                &mut || Ok(()),
-            )
-            .expect("historical composite range scan should succeed");
-        assert_eq!(libsql_document_titles(&exact_rank_two), vec!["second"]);
-        assert_eq!(
-            libsql_document_title_strings(&exact_rank_two),
-            libsql_status_rank_full_scan_oracle_titles(
-                &opened.store,
-                &table_id,
-                &[&first, &second, &third],
-                third_insert.sequence,
-                "open",
-                Some(2),
-                Some(2)
-            )
-        );
-
-        let first_page = opened
-            .store
-            .historical_index_scan_prefix_page_cancellable(
-                &read_shape,
-                "by_status_rank",
-                &[serde_json::json!("open")],
-                None,
-                1,
-                &mut || Ok(()),
-            )
-            .expect("first historical page should succeed");
-        assert_eq!(libsql_document_titles(&first_page.documents), vec!["first"]);
-        let cursor = first_page
-            .next_cursor
-            .as_ref()
-            .expect("first page should return a cursor");
-        let second_page = opened
-            .store
-            .historical_index_scan_prefix_page_cancellable(
-                &read_shape,
-                "by_status_rank",
-                &[serde_json::json!("open")],
-                Some(cursor),
-                1,
-                &mut || Ok(()),
-            )
-            .expect("second historical page should succeed");
-        assert_eq!(
-            libsql_document_titles(&second_page.documents),
-            vec!["second"]
-        );
-
-        let mismatch = opened
-            .store
-            .historical_index_scan_prefix_page_cancellable(
-                &read_shape,
-                "by_status_rank",
-                &[serde_json::json!("closed")],
-                Some(cursor),
-                1,
-                &mut || Ok(()),
-            )
-            .expect_err("cursor from a different prefix must fail closed");
-        assert_eq!(
-            mismatch.historical_read_kind(),
-            Some(nimbus_core::HistoricalReadErrorKind::CursorMismatch)
+        crate::tests::provider_scenarios::exercise_historical_index_prefix_composite_range_and_pagination_are_stable(
+            opened.store.as_ref(),
         );
     })
     .await;
