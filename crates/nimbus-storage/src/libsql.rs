@@ -46,10 +46,8 @@ use crate::async_storage::{
 use crate::commit_log::{deserialize_tenant_event_record, serialize_tenant_event_record};
 use crate::runtime_bridge::{bridge_tokio_runtime, bridge_tokio_runtime_local};
 use crate::simulation::{FaultInjector, NoopFaultInjector};
-use crate::sqlite::{
-    SQLITE_INIT_SQL, SqliteReadSnapshot, SqliteTenantStore,
-    rebuild_sqlite_indexes_from_loaded_schema, scheduled_run_at_key,
-};
+use crate::sqlite::replica_cache::rebuild_sqlite_indexes_from_loaded_schema;
+use crate::sqlite::{SQLITE_INIT_SQL, SqliteReadSnapshot, SqliteTenantStore, scheduled_run_at_key};
 use crate::store::{
     APPLIED_SEQUENCE_KEY, DurableJournalBootstrap, DurableJournalPage, HistoricalIndexDocumentPage,
     JournalProgress, MAX_DURABLE_JOURNAL_STREAM_LIMIT, MaterializedJournalSnapshot,

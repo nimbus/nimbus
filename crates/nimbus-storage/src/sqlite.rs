@@ -36,6 +36,11 @@ pub mod encryption;
 mod index_versions;
 mod journal;
 mod read;
+// The libsql replica cache is the only reason these SQLite operations exist;
+// `test` keeps the reconciliation path compiled for the SQLite-foundation
+// coverage that exercises it directly.
+#[cfg(any(test, feature = "libsql"))]
+pub(crate) mod replica_cache;
 mod resource_paths;
 mod scheduler;
 mod schema;
@@ -69,11 +74,6 @@ use self::scheduler::{
     load_due_scheduled_jobs_from_conn, load_scheduled_job_by_id_from_conn,
     load_scheduled_jobs_from_conn,
 };
-// Rebuilding every index from the loaded schema is a libsql replica-cache
-// operation: it runs when the replica re-syncs. No embedded SQLite path needs
-// it.
-#[cfg(feature = "libsql")]
-pub(crate) use self::schema::rebuild_sqlite_indexes_from_loaded_schema;
 use self::schema::{
     create_sqlite_indexes_for_table_schema, drop_sqlite_indexes_for_table_schema,
     index_fields_for_cached_schema, load_schema_from_conn, load_table_schema_from_conn,
