@@ -310,6 +310,15 @@ delegated jobs. Diagnose a suspected hang with `sample <pid>` before killing
 it: hours of elapsed time with near-zero accumulated CPU is a hard block, not
 slow work, and the stack names the culprit frame.
 
+### Feature-gated storage tests
+
+`cargo nextest run -p nimbus-storage` with no flags runs only the ~297
+embedded-provider tests and reports green: the crate's default features are
+empty, so every postgres/mysql/libsql test silently doesn't exist. The full
+~439 need `--features libsql,mysql,postgres` (plus live fixtures for the
+provider lanes). `make` entrypoints and `--workspace` runs are unaffected
+(workspace feature unification turns the providers on).
+
 ### GitHub CLI auth under sandbox
 
 If `gh` reports an invalid token or auth failure inside the sandbox, retry the
