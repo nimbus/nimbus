@@ -264,6 +264,14 @@ fn sqlite_scheduler_state_round_trips_results_crons_and_recovery() {
 }
 
 #[test]
+fn sqlite_disabled_cron_job_still_reports_scheduled_work() {
+    let dir = tempdir().expect("temporary directory should create");
+    let store = SqliteTenantStore::open(dir.path().join("tenant.sqlite3"))
+        .expect("sqlite tenant store should open");
+    crate::tests::exercise_disabled_cron_job_still_reports_scheduled_work(&store);
+}
+
+#[test]
 fn sqlite_claim_due_jobs_includes_u64_max_boundary() {
     let dir = tempdir().expect("temporary directory should create");
     let store = SqliteTenantStore::open(dir.path().join("tenant.sqlite3"))

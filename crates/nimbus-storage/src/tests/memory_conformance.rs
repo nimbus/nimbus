@@ -221,6 +221,17 @@ fn memory_tenant_store_durable_journal_conformance() {
 }
 
 #[test]
+fn redb_disabled_cron_job_still_reports_scheduled_work() {
+    let store = TenantStore::create_in_memory().expect("redb store should open");
+    exercise_disabled_cron_job_still_reports_scheduled_work(&store);
+}
+
+#[test]
+fn memory_disabled_cron_job_still_reports_scheduled_work() {
+    exercise_disabled_cron_job_still_reports_scheduled_work(&MemoryTenantStore::new());
+}
+
+#[test]
 fn memory_pending_prefix_blocks_generic_zero_write() {
     let store = MemoryTenantStore::new();
     exercise_pending_prefix_blocks_generic_zero_write(&store, "memory_pending_prefix", || {

@@ -57,7 +57,7 @@ run_mysql() {
 run_libsql() {
   require_env NIMBUS_LIBSQL_URL
   require_env NIMBUS_LIBSQL_ADMIN_URL
-  run_provider_filter '((package(nimbus-storage) or package(nimbus-engine)) and (test(/^(tests::)?libsql_/) or test(/^(tests::)?libsql_replica_provider::/))) or (package(nimbus-system) and test(projection_libsql_two_engine_takeover_rejects_late_old_document_schema_and_delete))'
+  run_provider_filter '((package(nimbus-storage) or package(nimbus-engine)) and test(/^(tests::)?libsql_/)) or (package(nimbus-system) and test(projection_libsql_two_engine_takeover_rejects_late_old_document_schema_and_delete))'
 }
 
 case "${NIMBUS_PROVIDER_FILTER:-all}" in
