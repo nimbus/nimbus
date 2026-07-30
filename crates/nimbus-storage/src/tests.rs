@@ -61,6 +61,82 @@ mod usage_store;
 
 const BLOCKING_TEST_RELEASE_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// A disabled cron job is still scheduler state the tenant owns, so every
+/// backend must report `has_scheduled_work` for it.
+///
+/// The scheduler gates tenant load on `has_scheduled_work`
+/// (`nimbus-engine/src/engine/scheduler/coordination.rs`). A backend that
+/// filters disabled crons out of that answer never loads a tenant whose only
+/// scheduled work is currently disabled, and re-enabling the job cannot wake
+/// it. `next_scheduled_work_at` is the surface that legitimately skips
+/// disabled crons: it answers "when is the next due wake", not "does this
+/// tenant own scheduler state at all".
+///
+/// This exerciser pins the split across all six backends, so the two
+/// questions cannot drift apart on one dialect again.
+pub(crate) fn exercise_disabled_cron_job_still_reports_scheduled_work<S>(store: &S)
+where
+    S: crate::SchedulerStore + crate::SchedulerWriteStore,
+{
+    assert!(
+        !store
+            .has_scheduled_work()
+            .expect("empty scheduler state should read"),
+        "a tenant with no scheduler rows owns no scheduled work"
+    );
+
+    let cron = nimbus_core::CronJob {
+        name: "disabled-heartbeat".to_string(),
+        schedule: nimbus_core::CronSchedule::Interval { seconds: 10 },
+        mutation: nimbus_core::Mutation::Insert {
+            table: TableName::new("tasks").expect("table name should be valid"),
+            id: None,
+            fields: serde_json::Map::from_iter([("title".to_string(), json!("heartbeat"))]),
+        },
+        enabled: false,
+        last_run: None,
+        next_run: Timestamp(9_000),
+        created_at: Timestamp(500),
+    };
+    assert_eq!(
+        store
+            .scheduler_write_cancellable(crate::SchedulerWrite::SaveCron(cron.clone()), || Ok(()))
+            .expect("disabled cron save should commit"),
+        crate::SchedulerWriteResult::Unit
+    );
+
+    assert!(
+        store
+            .has_scheduled_work()
+            .expect("scheduler state should read after the disabled cron save"),
+        "a disabled cron job must count as scheduled work; hiding it strands the \
+         tenant unloaded so re-enabling the job can never wake it"
+    );
+    assert_eq!(
+        store
+            .next_scheduled_work_at()
+            .expect("next scheduled work should read"),
+        None,
+        "a disabled cron job has no due time, so it contributes no wake instant"
+    );
+
+    assert_eq!(
+        store
+            .scheduler_write_cancellable(
+                crate::SchedulerWrite::DeleteCron(cron.name.clone()),
+                || Ok(())
+            )
+            .expect("cron delete should commit"),
+        crate::SchedulerWriteResult::Unit
+    );
+    assert!(
+        !store
+            .has_scheduled_work()
+            .expect("scheduler state should read after the cron delete"),
+        "deleting the only cron job clears the tenant's scheduled work"
+    );
+}
+
 // Committer-lease and fenced-durable-apply exercisers shared by the three
 // remote-provider test modules. The embedded stores cover these behaviours
 // through their own suites, so the exercisers follow the provider gates.

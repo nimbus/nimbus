@@ -38,6 +38,22 @@ async fn libsql_trigger_delivery_cursor_round_trips_in_remote_metadata() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
+async fn libsql_disabled_cron_job_still_reports_scheduled_work() {
+    with_test_provider(|provider, _config| async move {
+        let tenant = TenantId::new("disabled-cron").expect("tenant id should build");
+        let opened = provider
+            .create_opened_tenant(&tenant)
+            .await
+            .expect("tenant should create and open");
+        crate::tests::exercise_disabled_cron_job_still_reports_scheduled_work(
+            opened.store.as_ref(),
+        );
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
 async fn libsql_execution_unit_batch_and_scheduler_state_round_trip() {
     with_test_provider(|provider, _config| async move {
         let tenant = TenantId::new("batch").expect("tenant id should build");

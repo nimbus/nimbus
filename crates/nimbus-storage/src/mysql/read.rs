@@ -586,20 +586,17 @@ impl MySqlTenantStore {
         let database_name = self.database_name.clone();
         self.block_on(async move {
             let mut conn = provider.conn().await?;
-            if table_has_entries(&mut conn, &database_name, "scheduled_jobs").await?
-                || table_has_entries(&mut conn, &database_name, "running_scheduled_jobs").await?
-            {
-                return Ok(true);
-            }
-            let query = format!(
-                "SELECT 1 FROM {} WHERE enabled = TRUE LIMIT 1",
-                qualified_table(&database_name, "cron_jobs")
-            );
-            Ok(conn
-                .query_first::<Row, _>(query)
-                .await
-                .map_err(map_mysql_error)?
-                .is_some())
+            // A disabled cron job still counts: the scheduler gates tenant
+            // load on this answer, so filtering on `enabled` would leave a
+            // tenant whose only cron job is disabled permanently unloaded and
+            // unable to wake when the job is re-enabled. `enabled` belongs to
+            // `next_scheduled_work_at`, which computes the next due instant.
+            Ok(
+                table_has_entries(&mut conn, &database_name, "scheduled_jobs").await?
+                    || table_has_entries(&mut conn, &database_name, "running_scheduled_jobs")
+                        .await?
+                    || table_has_entries(&mut conn, &database_name, "cron_jobs").await?,
+            )
         })
     }
 
