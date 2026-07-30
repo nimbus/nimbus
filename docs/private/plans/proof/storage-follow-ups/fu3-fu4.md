@@ -1,17 +1,17 @@
-# FU3 + FU4 + FU-P1..P4 — DynamoDB batch stream fidelity, policy-aware paging, and GetRecords authorization
+# FU3 + FU4 + FU-P1..P5 — DynamoDB batch stream fidelity, policy-aware paging, and GetRecords authorization
 
-Owning plan: `docs/private/plans/storage-follow-ups-plan.md` (FU3, FU4, FU-P1, FU-P2, FU-P3, FU-P4).
+Owning plan: `docs/private/plans/storage-follow-ups-plan.md` (FU3, FU4, FU-P1, FU-P2, FU-P3, FU-P4, FU-P5).
 Prior evidence: `proof/storage-unification/suc4/dynamodb-rmw.md` (FU3 finding),
 `proof/storage-unification/suc5/principal.md` (FU4 finding).
 Branch `codex/fu3-dynamo`, base `origin/main @ 22c5cdd62`.
 
-Six concepts, six commits: the batch transaction (FU3), the starting-at scan
-paging (FU4), stream-record read authorization (FU-P1, raised as a P1 on review
-of the first two), real lifecycle timestamps on stored images (FU-P2, raised as
-a P2 on review of FU-P1), the three review findings against the GetRecords path
+Seven commits: the batch transaction (FU3), the starting-at scan paging (FU4),
+stream-record read authorization (FU-P1, raised as a P1 on review of the first
+two), real lifecycle timestamps on stored images (FU-P2, raised as a P2 on
+review of FU-P1), the three review findings against the GetRecords path
 (FU-P3 — page-fill amplification, no-op MODIFY reconstruction, and timing sleeps
-in the new tests), and the store-read ceiling FU-P3 documented without enforcing
-(FU-P4).
+in the new tests), the store-read ceiling FU-P3 documented without enforcing
+(FU-P4), and the test-module split those five passes made necessary (FU-P5).
 
 ## FU3 — `batch_write_item` read the prior image outside the write's transaction
 
@@ -828,14 +828,47 @@ and matches a `tag` attribute. The literal is AttributeValue wire JSON
 (`{"S": "read"}`) because that is how `item_to_fields` persists attributes —
 the same encoding the FU-P3 doc correction was about.
 
+## FU-P5 — splitting the stream test module
+
+Five passes of tests took `commands/stream/tests.rs` to 1,541 lines, past the
+1,500-line threshold at which CLAUDE.md wants either a split or a justification
+in the owning plan. It is split, by concept rather than by line count:
+
+| Module | Lines | Owns |
+| --- | --- | --- |
+| `stream/tests.rs` | 679 | The stream API surface — DescribeStream, GetShardIterator, ListStreams, GetRecords shaping and paging — plus the fixtures every child builds on |
+| `stream/tests/capture.rs` | 282 | What a write records: emission from every write path, and rollback when the event cannot commit |
+| `stream/tests/retention.rs` | 133 | What the store forgets: the 24h window, reclamation, and the sequence high-water mark surviving it |
+| `stream/tests/authorization.rs` | 482 | Who may read a record: the source table's read rule, the lifecycle times images are rebuilt with, and the budget bounding a fill |
+
+The parent keeps the shared fixtures rather than pushing them down, because
+every child needs the engine, the streamed-table constructors, and the write
+helpers; a child reaches them through `use super::*`. Helpers used by exactly
+one concept moved with it — `inject_event` to retention, the read-rule builders
+and clock waits to authorization, `stored_item` and the collision seeders to
+capture.
+
+Authorization is one module rather than three because its three subjects are
+one question. A record is item-level information, so it is answered against the
+source table's read rule; that rule may name `_creationTime`/`_updateTime`,
+which is why image lifecycle times live here; and answering it means walking
+past records that fail it, which is why the fill budget lives here too.
+Splitting those apart would separate a mechanism from the reason it exists.
+
+No test was added, removed, or rewritten. The suite is 293 before and after,
+which is the evidence that this was a move.
+
 ## Verification
 
 All commands run with `set -o pipefail` so the recorded status is the command's,
 not `tail`'s. macOS, `stable-aarch64-apple-darwin`.
 
-The battery was run five times: after FU3 + FU4, after FU-P1, after FU-P2,
-after FU-P3, and after FU-P4. The table records the **final** run, over all six
-concepts.
+The full battery was run five times: after FU3 + FU4, after FU-P1, after
+FU-P2, after FU-P3, and after FU-P4. The table records that final full run.
+FU-P5 moves test code between modules without changing any of it, so it was
+verified with the adapter suite, fmt, and clippy rather than a sixth full
+battery: 293 tests before and 293 after, `DDB_RC=0`, `FMT_RC=0`,
+`CLIPPY_RC=0`.
 
 Note on the idiom: `${PIPESTATUS[0]}` is bash-only and expands to nothing under
 this shell (zsh), which prints an empty `RC=` that reads like a missing result.
