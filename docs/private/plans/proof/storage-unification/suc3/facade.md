@@ -590,3 +590,380 @@ post-visibility fault (and records-scoped equivalents) on an actual visible
 commit, alongside the harness half (PPSC `check_for_durable_records`
 discriminating on records). Landing it there keeps step 2 reviewable as a
 pure port and fixes the class once, in the code that will own it.
+
+# Step 3 — Commit Witness, Ownership Gate, Fault Gating
+
+Three deliverables were dispatched: the U5 commit witness, the U4
+commit-path ownership gate, and the arm-theft fault gating assigned by the
+step-2 review. The first two shipped. **The third was implemented, refuted by
+the engine suite, and reverted** — the section below is the evidence for that
+call, because the refutation is the useful result.
+
+## Arm-Theft Fault Gating: Implemented, Refuted, Reverted
+
+### What was tried
+
+The brief specified gating the post-visibility fault point on a visible commit:
+
+```rust
+if commit.is_some() {
+    backend.check_fault(FaultPoint::StorageCommitAfterVisibilityBeforeReturn)?;
+}
+```
+
+The stated rationale was that `StorageCommitAfterVisibilityBeforeReturn` models
+a lost acknowledgement of a commit the caller must assume landed, so a
+transaction that published nothing has no acknowledgement to lose — and that
+checking it unconditionally let a no-op transaction consume the one-shot,
+tenant-keyed arm meant for a concurrent durable batch.
+
+The change was made, and three dialect regression tests were written and shown
+to fail without it.
+
+### Why it is wrong
+
+`commit.is_some()` does not mean "this transaction changed something durable".
+It means "this transaction appended a commit entry". Reading `sql_commit`:
+`commit` is `None` whenever there is no prepared record *and* no buffered
+tenant event. A transaction can write rows and still land there.
+
+Three real cases do exactly that, and all three are load-bearing:
+
+| Case | Writes durably | `commit` |
+| --- | --- | --- |
+| Schedule-only execution unit | scheduled-job rows | `None` |
+| Trigger outcome without re-execution | outcome / dedup rows | `None` |
+| Fenced durable journal batch (PPSC) | journal records, applied | `None` |
+
+For each of these, an acknowledgement lost between visibility and return is
+precisely the ambiguity the engine must escalate to crash-and-replay. Gating
+the check on `commit.is_some()` silently removes fault coverage for all of
+them. It does not merely fail to fix the arm theft; it disables the injection
+site the arm was aimed at.
+
+### Fail-after evidence
+
+The full-workspace run with all three live fixtures surfaced seven
+`nimbus-engine` failures. Re-run in isolation, away from suite load, all seven
+reproduce deterministically:
+
+```
+Summary [81.134s] 11 tests run: 4 passed (2 slow), 7 failed, 657 skipped
+```
+
+```
+FAIL mysql_ppsc_seeded_journal_differential
+FAIL mysql ppsc_provider_takeover_extension_matches_postgres_mysql_and_libsql
+FAIL postgres_schedule_only_execution_unit_reconciles_acknowledgement_loss
+FAIL postgres_trigger_outcome_reconciles_acknowledgement_loss_without_reexecution
+FAIL postgres_provider_publisher_ack_loss_is_classified_before_retry_fence
+FAIL postgres_ppsc_seeded_journal_differential
+FAIL postgres ppsc_provider_takeover_extension_matches_postgres_mysql_and_libsql
+```
+
+The panics name the mechanism directly:
+
+```
+the post-visibility acknowledgement-loss fault must fire exactly once
+a lost provider acknowledgement must be terminally ambiguous: ()
+PPSC atomic provider acknowledgement loss must require crash-and-replay;
+  fault snapshot: PpscStorageFaultSnapshot { active: true, visits: 0, fires: 0 }
+```
+
+`visits: 0` is the decisive number. The PPSC arm was armed and never even
+*visited*, which means the durable batch the arm targets is itself a
+`commit == None` transaction. The premise of the brief fails on its own
+intended target.
+
+These seven were not attributed to the known flake. Only
+`mysql_ppsc_seeded_journal_differential` was previously ticketed as an
+arm-theft flake (step 2); the other six are new, deterministic, and
+attributable to this one-line change alone.
+
+### What was reverted
+
+`sql_commit` is back to the unconditional check, with a comment recording why
+it must stay unconditional. The three dialect regression tests
+(`{postgres,mysql,libsql}_no_op_transaction_preserves_acknowledgement_loss_arm`)
+and the shared `ArmedAcknowledgementLossFault` /
+`exercise_no_op_transaction_preserves_acknowledgement_loss_arm` helpers were
+removed with them: they assert the reverted behavior, so keeping them would
+encode the defect as a requirement. `git diff` against `597d5d823` confirms the
+three `journal.rs` files and the `tests.rs` helper region are byte-identical to
+base; the only surviving `tests.rs` change is the `mod commit_path_ownership;`
+line for the U4 gate.
+
+### The real fix shape (not taken — needs a decision)
+
+The arm theft is real, but neither half can discriminate today:
+
+- **Product side.** The honest predicate is "this transaction performed at
+  least one durable mutation", and no such signal exists at the `sql_commit`
+  seam. Schedule-op, lease, and job-claim writes go through provider-specific
+  inherent methods that are not on `SqlWriteBackend`, so a `mutated` flag would
+  have to be set in each provider — reintroducing exactly the per-dialect
+  divergence U4 exists to prevent, with a silent-fault-disable failure mode if
+  any site is missed.
+- **Harness side.** `PpscStorageFaultInjector::check_for_tenant` and
+  `check_for_durable_records` both funnel into one `check_tenant`, so the
+  injector cannot tell the two apart. A `records.is_empty()` guard would be a
+  provable no-op: libsql always passes exactly one record via
+  `std::slice::from_ref`, and PostgreSQL/MySQL reach the post-visibility point
+  through `check_for_tenant` with no records in hand at all.
+
+Making the harness half work therefore *requires* the product to pass durable
+records (or an equivalent batch identity) into the post-visibility check on all
+three dialects. That is a fault-interface change spanning
+`nimbus-storage` and `nimbus-testing`, not a one-liner, and it is a design
+decision above this step's scope. Recommended as its own ticket; the existing
+`mysql_ppsc_seeded_journal_differential` flake ticket should be folded into it.
+
+## U5 — The Commit Witness
+
+`crates/nimbus-storage/src/sql/commit_effects.rs` adds `SqlCommitEffects` and
+the single entry point `sql_apply_commit`. The struct has no `Default` and no
+`Option` field, so a commit path must name every effect, including the ones it
+does not perform:
+
+```rust
+pub(crate) struct SqlCommitEffects {
+    pub(crate) dedup: ExecutionDedup,
+    pub(crate) lease: LeaseEffect,
+    pub(crate) trigger_origin: TriggerOriginEffect,
+    pub(crate) commit_timestamp: CommitTimestampEffect,
+    pub(crate) documents: DocumentWrites,
+    pub(crate) schedule_ops: ScheduleOps,
+    pub(crate) journal: JournalEffect,
+    pub(crate) watermark: WatermarkEffect,
+}
+
+pub(crate) fn sql_apply_commit<T: SqlWriteTransactionCore>(
+    transaction: &mut T,
+    effects: SqlCommitEffects,
+) -> Result<SqlCommitAdmission>;
+```
+
+Every "skip" is a named variant a reviewer can see: `LeaseEffect::NotFenced`,
+`ExecutionDedup::NotDeduplicated`, `ScheduleOps::NoScheduleOps`,
+`WatermarkEffect::NotAdvanced`,
+`JournalEffect::CommitEntryFromBufferedWrites`,
+`TriggerOriginEffect::TransactionDefault`,
+`CommitTimestampEffect::ProviderAssigned`. Adding a field breaks all three
+construction sites, which is the mechanism the brief asked for.
+
+`sql_apply_commit` also fixes the effect *order* in one place — gate, fence,
+documents, schedule rows, prepared record — where previously each path retyped
+it. That ordering was already drifting: `insert_once` runs the dedup gate
+before setting the commit timestamp while `insert_with_indexes_once_at` sets
+the timestamp first.
+
+Refactored onto it: `apply_prepared_write_batch`,
+`fenced_apply_prepared_write_batch`, and
+`apply_execution_unit_batch_with_origin`.
+
+### Deviation 1: five enums, not the five named
+
+The brief named document writes / version effects / journal / watermark /
+lease. **Version and index effects are not separately supplied at this seam**,
+so fields for them would be fiction: they are executed inside the document-write
+statements (`apply_durable_record`, `apply_resolved_write` in `write_core.rs`),
+which is precisely what keeps them in the same storage transaction as the
+document row, per the atomicity invariant. All three paths would set them to
+the same value, and `sql_apply_commit` would have nothing to do with them. Each
+`DocumentWrites` variant documents which version and index effects it carries
+instead. The witness carries eight fields, of which every one is executed.
+
+### Deviation 2: the direct path is not on the witness
+
+The brief listed a fourth path. It is excluded, for a type-system reason rather
+than a scheduling one. The direct writes carry caller validators
+(`FnOnce(&Document, &Document) -> Result<()>`) and return payloads that differ
+by operation — `()` for insert, the removed `Document` for delete. Putting them
+behind the same exhaustive, data-only enum requires either a `Default` bound on
+the payload (which the brief forbids) or erasing the document strategy into a
+boxed closure (which destroys the reviewer-visible variant that is the whole
+point). The composite paths have no such problem: their payload is uniformly
+`bool`.
+
+The six direct `execute_write` sites are therefore unchanged. This is a
+decision for the lead, not a deferral: extending the witness to them means
+accepting one of those two costs.
+
+### Coherence check
+
+`DocumentWrites`, `JournalEffect` and `WatermarkEffect` are declared separately
+for reviewer visibility but are not independent — the document strategy implies
+the other two. `check_effect_coherence` rejects the four mismatched pairings
+before any statement runs, rather than letting them produce a wrong commit
+entry or a stalled watermark. Covered by
+`effect_coherence_accepts_only_the_pairings_the_document_strategy_implies`,
+which asserts both accepted pairings and all four rejections.
+
+## U4 — Commit-Path Ownership Gate
+
+`crates/nimbus-storage/src/tests/commit_path_ownership.rs` adds
+`u4_commit_sequence_fault_points_live_only_in_the_shared_sql_core`. It walks
+`src/{postgres,mysql,libsql}/` recursively and fails on any occurrence of
+`StorageCommitBeforeVisibility` or `StorageCommitAfterVisibilityBeforeReturn`,
+with a message naming `sql/write_core.rs` as where the check belongs. Needles
+are matched without a path prefix, so `FaultPoint::X`, `crate::FaultPoint::X`
+and a bare imported `X` are all caught.
+
+Anti-vacuousness, following the established `reachability_lint.rs` idiom: a
+scanned-file floor (50 files today, floor 45) and a positive check that both
+needles still exist in `write_core.rs`, so the gate fails loudly if the commit
+sequence moves rather than passing by scanning nothing.
+
+Proof it bites — appending
+`// GATE PROBE: FaultPoint::StorageCommitBeforeVisibility` to
+`postgres/read.rs`:
+
+```
+U4 violation — a provider checks a write-transaction commit-sequence fault
+point outside the shared core. ... ["postgres/read.rs checks
+StorageCommitBeforeVisibility"]
+Summary: 1 test run: 0 passed, 1 failed
+```
+
+Restored from a saved copy afterwards.
+
+### Deviation 3: `Journal*` is not gated, and the brief's premise was wrong
+
+The dispatch stated the fault points already live only in the shared core
+post-step-2 and asked the gate to cover `FaultPoint::StorageCommit*` **and**
+`Journal*`. `StorageCommit*` is indeed core-only. `Journal*` is not, and should
+not be:
+
+| location | points | why it is there |
+| --- | --- | --- |
+| `postgres/write_pipeline.rs` (4) | append, flush | pipelined append/apply pair; progress reported once both complete |
+| `mysql/write_pipeline.rs` (2) | append, flush | separate statements; progress at batch admission |
+| `libsql/write.rs` (2) | append, flush | append and flush to the primary are one statement batch |
+
+Journal fault-point placement is a genuine dialect axis — it follows where each
+dialect's journal write physically happens — not forked shared logic.
+`SqlDurableJournalTransaction::append_and_apply_fenced_durable_batch` already
+documents these accounting boundaries as intentionally not unified. Gating
+`Journal*` would require allowlisting all three files, which enforces nothing.
+The gate's doc comment records this and says to extend it if journal batching
+is ever unified.
+
+Two further `StorageCommitAfterVisibilityBeforeReturn` checks sit in
+`libsql.rs` (the module root, outside the gated directories) on the replica's
+remote durable-batch round-trips. These are a different surface from the write
+transaction — they are not part of the `sql_commit` sequence the gate owns — so
+leaving them outside its scope is correct rather than an exemption.
+
+## Sub-task 4 — libsql Journal Fault Scoping: No Change Needed
+
+The follow-up list carried "libsql `JournalFlushBeforeVisibility` tenant-scoped
+vs siblings records-scoped" as an asymmetry to fix if base intent was clear.
+Base intent is clear, and it points the other way — the description had the
+asymmetry backwards:
+
+| dialect | `JournalAppendBeforeDurableFlush` | `JournalFlushBeforeVisibility` |
+| --- | --- | --- |
+| postgres | tenant-scoped | tenant-scoped |
+| mysql | tenant-scoped | tenant-scoped |
+| libsql | records-scoped when a prepared record exists | tenant-scoped |
+
+The flush point is **consistently tenant-scoped across all three dialects** —
+correct, since a flush is a session-level event with no single record to
+attribute it to. The outlier is libsql's *append*, which is records-scoped, and
+that is a deliberate refinement: libsql's append happens on the write
+transaction with a prepared record in hand, so it can discriminate, while
+PostgreSQL and MySQL append inside a pipeline handling batches. This matches
+base (`b4924264e`) exactly. **No code change; the follow-up item is closed as
+correct-as-is rather than deferred.**
+
+## Step 3 — Verification
+
+All lanes run against the three live fixture containers
+(`nimbus-external-provider-tests-{postgres,mysql,libsql}-1`) with
+`NIMBUS_REQUIRE_EXTERNAL_PROVIDER_FIXTURES=1`, so a missing fixture panics
+rather than skipping silently. Every command used `set -o pipefail` and its own
+exit code was captured directly, never through a trailing `grep` or `tail`.
+
+| Lane | Command | Result |
+| --- | --- | --- |
+| Format | `cargo fmt --all --check` | rc 0 |
+| Clippy | `cargo clippy -p nimbus-storage -p nimbus-engine -p nimbus-testing --all-targets -- -D warnings` | rc 0 |
+| Storage suite | `cargo nextest run -p nimbus-storage` | 438 passed, 2 skipped, rc 0 |
+| Focused: async faults, U4 gate, witness coherence | `-E 'test(async_faults) + test(commit_path_ownership) + test(commit_effects)'` | 7 passed, rc 0 |
+| Engine ack-loss / PPSC set | `-p nimbus-engine -E 'test(ppsc_seeded_journal_differential) + test(ppsc_provider_takeover_extension) + test(reconciles_acknowledgement_loss) + test(ack_loss_is_classified_before_retry_fence)'` | 11 passed, rc 0 |
+| libsql PPSC repeat | `libsql_ppsc_seeded_journal_differential` × 10, `--test-threads 1` | 10/10 passed, rc 0 each |
+
+The libsql PPSC repeat is 10-for-10 green, but that is *not* evidence the arm
+theft was fixed — nothing in this step changed arm consumption. It is the
+pre-existing flake failing to reproduce in 10 attempts, which is consistent
+with how it was characterised in step 2.
+
+### The seven-failure detour
+
+The first full-workspace run of this step was taken with the (now reverted)
+`commit.is_some()` gating in place and reported 290 failures. Most were the
+known bare-macOS `nimbus-runtime` `node_compat` lane, but seven were
+`nimbus-engine` acknowledgement-loss tests — the exact semantics the change
+touched. Those seven were **not** written off as suite-load flakes. Re-running
+them in isolation reproduced all seven deterministically, which is what refuted
+the change and produced the revert documented above. After the revert the same
+filter is 11-for-11 green.
+
+### sqlite untouched
+
+```
+git diff --name-only 597d5d823 -- \
+  crates/nimbus-storage/src/sqlite crates/nimbus-storage/src/sqlite.rs \
+  crates/nimbus-storage/src/async_storage/sqlite.rs \
+  crates/nimbus-storage/src/tests/sqlite_foundation \
+  crates/nimbus-storage/src/tests/sqlite_foundation.rs
+```
+
+Empty. All five real sqlite paths are byte-identical to base.
+
+### Full workspace run
+
+```
+cargo nextest run --workspace --no-fail-fast
+Summary [1301.398s] 6015 tests run: 5704 passed (10 slow, 5 leaky),
+                    283 failed, 28 timed out, 322 skipped
+```
+
+The whole workspace was run rather than a name-filtered subset, because the U4
+gate is a new fail-closed gate and a filtered run cannot show its blast radius.
+
+Failure attribution, every non-`nimbus-runtime` failure named:
+
+| Failing test | Crate | Attribution |
+| --- | --- | --- |
+| 610 `node_compat` fixtures + 28 timeouts | `nimbus-runtime` | Known bare-macOS lane; CI is the evidence for these. Was 612 on the previous run — noise, not signal. |
+| `embedded_nodefull_anchor_installs_from_committed_blob` | `nimbus-runtime::embedded_anchor` | Fails identically on the previous run of this same tree; pre-existing, unrelated. |
+| `opaque_internal_job_cannot_overtake_ordered_publisher` | `nimbus-engine` | Pre-existing flake — see below. |
+
+`nimbus-storage` had **zero** failures. So did every other workspace crate.
+
+#### The arm-selection failure is a pre-existing flake, proven on base
+
+`tests::mutation_journal::arm_selection::opaque_internal_job_cannot_overtake_ordered_publisher`
+failed once with `journal.len()` of 3 against an expected 2. It was not written
+off:
+
+1. **It is non-deterministic.** 8 isolated runs on this tree: 1 failed, 7 passed.
+2. **It reproduces on base.** The step-3 change was detached with
+   `git stash push --include-untracked` (verified: `git diff --stat 597d5d823`
+   empty), and the test run 12 times at base `597d5d823`: 1 failed, 11 passed —
+   the same rate and the same assertion. The change was then restored, and all
+   seven step-3 files verified byte-identical to copies saved beforehand.
+3. **The change cannot reach it.** The test builds its engine with
+   `Engine::new(path)`, which uses the sqlite-backed store. `SqlStoreCore` is
+   implemented by exactly three types — `PostgresTenantStore`,
+   `MySqlTenantStore`, `LibsqlReplicaTenantStore` — and the sqlite modules
+   contain no reference to `SqlStoreCore`, `sql_store_core_facade`, or
+   `sql::store_core`. There is no causal path from this step's edits to that
+   test.
+4. **It did not fail in the previous full run** of a strictly more perturbed
+   tree.
+
+Recommend a separate flake ticket: the extra journal record points at a
+background commit racing `shutdown_trigger_candidates_for_testing`, which is
+engine-side and unrelated to storage unification.

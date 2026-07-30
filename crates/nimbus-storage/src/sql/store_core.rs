@@ -46,6 +46,10 @@ use crate::async_storage::{
 use crate::retention::{
     RetentionFloor, RetentionGcConfig, RetentionGcSummary, RetentionGcWatermarks,
 };
+use crate::sql::commit_effects::{
+    CommitTimestampEffect, DocumentWrites, ExecutionDedup, JournalEffect, LeaseEffect, ScheduleOps,
+    SqlCommitAdmission, SqlCommitEffects, TriggerOriginEffect, WatermarkEffect, sql_apply_commit,
+};
 use crate::sql::write_core::{SqlDurableJournalTransaction, SqlWriteBackend};
 use crate::sql::write_pipeline::SqlWritePipelineMetrics;
 use crate::store::{
@@ -53,6 +57,26 @@ use crate::store::{
     PointInTimeRestoreTarget, ResolvedScheduleOp, ResolvedWrite, TenantWriteCommit,
 };
 use crate::traits::{CommitterLeaseError, CommitterLeaseResult};
+
+/// Map a caller's optional scheduled-execution id onto the witness's dedup
+/// effect. Both variants consult the gate, matching the behavior of passing the
+/// `Option` straight through; only [`ExecutionDedup::NotDeduplicated`] skips it.
+fn execution_dedup(scheduled_execution_id: Option<String>) -> ExecutionDedup {
+    match scheduled_execution_id {
+        Some(execution_id) => ExecutionDedup::ScheduledExecution(execution_id),
+        None => ExecutionDedup::NoExecutionId,
+    }
+}
+
+/// Describe a commit's scheduler effect, so the witness says what this commit
+/// actually does rather than leaving an empty batch to stand for "none".
+fn schedule_ops_effect(schedule_ops: Vec<ResolvedScheduleOp>) -> ScheduleOps {
+    if schedule_ops.is_empty() {
+        ScheduleOps::NoScheduleOps
+    } else {
+        ScheduleOps::Apply(schedule_ops)
+    }
+}
 
 /// Sentinel carried through `Error::PreconditionFailed` so a fencing failure
 /// discovered inside a write closure can be re-classified as
@@ -209,13 +233,17 @@ pub(crate) trait SqlStoreCore: Sized {
         let schedule_ops = schedule_ops.to_vec();
         let scheduled_execution_id = scheduled_execution_id.map(str::to_string);
         let committed = self.execute_write(move |transaction| {
-            if !transaction.begin_scheduled_execution(scheduled_execution_id.as_deref())? {
-                return Ok(false);
-            }
-            transaction.apply_durable_record(&record)?;
-            apply_schedule_ops_in_transaction(transaction, &schedule_ops)?;
-            transaction.set_prepared_record(record);
-            Ok(true)
+            let effects = SqlCommitEffects {
+                dedup: execution_dedup(scheduled_execution_id),
+                lease: LeaseEffect::NotFenced,
+                trigger_origin: TriggerOriginEffect::TransactionDefault,
+                commit_timestamp: CommitTimestampEffect::ProviderAssigned,
+                documents: DocumentWrites::PreparedDurableRecord(record),
+                schedule_ops: schedule_ops_effect(schedule_ops),
+                journal: JournalEffect::PreparedRecord,
+                watermark: WatermarkEffect::AdvancedByRecordApply,
+            };
+            Ok(sql_apply_commit(transaction, effects)? == SqlCommitAdmission::Committed)
         })?;
         Ok(committed.value.then_some(committed.commit).flatten())
     }
@@ -241,24 +269,23 @@ pub(crate) trait SqlStoreCore: Sized {
         let schedule_ops = schedule_ops.to_vec();
         let scheduled_execution_id = scheduled_execution_id.map(str::to_string);
         let result = self.execute_write(move |transaction| {
-            if !transaction.begin_scheduled_execution(scheduled_execution_id.as_deref())? {
-                return Ok(false);
-            }
-            if transaction.advance_fenced_committer_lease(
-                &owner_id,
-                epoch,
-                expected_previous,
-                record.sequence,
-            )? != 1
-            {
-                return Err(Error::PreconditionFailed(
-                    FENCED_COMMITTER_LEASE_MARKER.to_string(),
-                ));
-            }
-            transaction.apply_durable_record(&record)?;
-            apply_schedule_ops_in_transaction(transaction, &schedule_ops)?;
-            transaction.set_prepared_record(record);
-            Ok(true)
+            let durable_sequence = record.sequence;
+            let effects = SqlCommitEffects {
+                dedup: execution_dedup(scheduled_execution_id),
+                lease: LeaseEffect::Fenced {
+                    owner_id,
+                    epoch,
+                    expected_previous,
+                    durable_sequence,
+                },
+                trigger_origin: TriggerOriginEffect::TransactionDefault,
+                commit_timestamp: CommitTimestampEffect::ProviderAssigned,
+                documents: DocumentWrites::PreparedDurableRecord(record),
+                schedule_ops: schedule_ops_effect(schedule_ops),
+                journal: JournalEffect::PreparedRecord,
+                watermark: WatermarkEffect::AdvancedByRecordApply,
+            };
+            Ok(sql_apply_commit(transaction, effects)? == SqlCommitAdmission::Committed)
         });
         match result {
             Ok(committed) => Ok(committed.value.then_some(committed.commit).flatten()),
@@ -563,12 +590,23 @@ pub(crate) trait SqlStoreCore: Sized {
         let schedule_ops = schedule_ops.to_vec();
         let trigger_write_origin = trigger_write_origin.cloned();
         let committed = self.execute_write(move |transaction| {
-            transaction.set_trigger_write_origin(trigger_write_origin.clone());
-            transaction.set_commit_timestamp(commit_timestamp);
-            for write in &writes {
-                transaction.apply_resolved_write(write)?;
-            }
-            apply_schedule_ops_in_transaction(transaction, &schedule_ops)?;
+            let effects = SqlCommitEffects {
+                dedup: ExecutionDedup::NotDeduplicated,
+                lease: LeaseEffect::NotFenced,
+                trigger_origin: match trigger_write_origin {
+                    Some(origin) => TriggerOriginEffect::Explicit(origin),
+                    None => TriggerOriginEffect::TransactionDefault,
+                },
+                commit_timestamp: match commit_timestamp {
+                    Some(timestamp) => CommitTimestampEffect::Explicit(timestamp),
+                    None => CommitTimestampEffect::ProviderAssigned,
+                },
+                documents: DocumentWrites::ResolvedExecutionUnit(writes),
+                schedule_ops: schedule_ops_effect(schedule_ops),
+                journal: JournalEffect::CommitEntryFromBufferedWrites,
+                watermark: WatermarkEffect::NotAdvanced,
+            };
+            sql_apply_commit(transaction, effects)?;
             Ok(())
         })?;
         Ok(committed.commit)

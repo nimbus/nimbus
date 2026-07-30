@@ -31,6 +31,7 @@ pub(crate) use crate::{
 };
 
 mod async_faults;
+mod commit_path_ownership;
 mod crud_and_journal;
 mod generated_history;
 mod libsql_provider;

@@ -363,6 +363,14 @@ pub(crate) fn sql_commit<B: SqlWriteBackend>(mut backend: B) -> Result<Option<Co
     // The fault check precedes the hook: this point stands in for a crash
     // between visibility and return, which cannot have run any local
     // post-commit bookkeeping.
+    //
+    // It is deliberately unconditional. A `None` commit means the transaction
+    // appended no commit entry, not that it changed nothing durable:
+    // schedule-only execution units, trigger outcomes, and fenced durable
+    // journal batches all reach here with `None` while having written rows the
+    // caller must assume landed. Gating this check on `commit.is_some()` was
+    // tried and reverted; see the Step 3 section of
+    // docs/private/plans/proof/storage-unification/suc3/facade.md.
     backend.check_fault(FaultPoint::StorageCommitAfterVisibilityBeforeReturn)?;
     backend.after_visibility(commit.as_ref());
     Ok(commit)
