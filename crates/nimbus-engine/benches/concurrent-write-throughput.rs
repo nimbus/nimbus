@@ -890,7 +890,10 @@ fn render_open_loop_section(
                 percentile_ns(&sorted, 99.0)
             })
             .collect::<Vec<_>>());
-        let gate = if rate_cv <= 10.0 && p99_cv <= 10.0 {
+        let breached = rounds.iter().any(|round| round.saturation_breached);
+        let gate = if breached {
+            "FAIL — saturation breach"
+        } else if rate_cv <= 10.0 && p99_cv <= 10.0 {
             "PASS"
         } else {
             "FAIL"
