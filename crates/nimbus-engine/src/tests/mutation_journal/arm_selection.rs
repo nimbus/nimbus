@@ -22,7 +22,7 @@ async fn run_static_arm_workload(arm: crate::tenant::CommitterArm) -> (Vec<u8>, 
         .await
         .expect("static-arm tenant should create");
     engine
-        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .disable_trigger_candidates_for_testing(&tenant_id)
         .expect("background cursor commits should be disabled for byte comparison");
     engine
         .set_prepared_table_id_for_testing(
@@ -154,8 +154,11 @@ async fn opaque_internal_job_cannot_overtake_ordered_publisher() {
     let fixture = EngineFixture::new(|path| Engine::new(path));
     let engine = fixture.engine();
     let tenant_id = fixture.create_tenant("static-arm-serial-order", Engine::create_tenant);
+    // Disable rather than shut down: a lifecycle shutdown is undone by the
+    // very next document commit, which restarts the worker and lets its
+    // zero-write cursor advance race the journal read below.
     engine
-        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .disable_trigger_candidates_for_testing(&tenant_id)
         .expect("trigger cursor should not add unrelated records");
     let faults = engine.commit_fault_handle_for_testing();
     let pause = crate::engine::commit_fault_labels::DURABLE_BEFORE_PUBLISH;
@@ -258,11 +261,13 @@ async fn ordered_publisher_serializes_queued_direct_and_execution_unit_paths() {
         )
         .await
         .expect("seed write should establish a stable table identity");
-    // A document write restarts the trigger-candidate worker. Stop and drain
-    // it after the seed so its cursor job cannot occupy the actor while this
-    // test measures the three mutation-path handoffs.
+    // A document write restarts the trigger-candidate worker, so a lifecycle
+    // shutdown here would be undone by the queued write below. Disable it
+    // permanently and drain the seed's cursor job so no cursor commit can
+    // occupy the actor while this test measures the three mutation-path
+    // handoffs.
     engine
-        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .disable_trigger_candidates_for_testing(&tenant_id)
         .expect("seed trigger cursor should stop");
     engine
         .flush_tenant_committer_for_testing(&tenant_id)
@@ -405,7 +410,7 @@ async fn run_seeded_history(arm: crate::tenant::CommitterArm) -> SeededHistorySn
         .await
         .expect("seeded-history tenant should create");
     engine
-        .shutdown_trigger_candidates_for_testing(&tenant_id)
+        .disable_trigger_candidates_for_testing(&tenant_id)
         .expect("trigger cursor should not add nondeterministic records");
     engine
         .set_prepared_table_id_for_testing(
