@@ -1,16 +1,18 @@
 //! Dialect-shared write-transaction orchestration.
 //!
-//! The MySQL and PostgreSQL write transactions run the same commit/apply logic;
-//! only the SQL dialect and a few backend-specific concerns (PostgreSQL
-//! `LISTEN/NOTIFY`, timestamp encoding) differ. [`SqlWriteBackend`] captures the
-//! dialect axes each backend must supply, and the free functions below implement
-//! the six orchestration methods that are functionally identical across both
-//! backends exactly once against that seam.
+//! The MySQL, PostgreSQL and libsql-replica write transactions run the same
+//! commit/apply logic; only the SQL dialect and a few backend-specific concerns
+//! (PostgreSQL `LISTEN/NOTIFY`, timestamp encoding, the libsql replica's
+//! cache-refresh bookkeeping) differ. [`SqlWriteBackend`] captures the dialect
+//! axes each backend must supply, and the free functions below implement the
+//! orchestration that is functionally identical across all of them exactly once
+//! against that seam.
 //!
 //! Storage atomicity is preserved: these functions only reorganize where the
 //! shared logic lives. They perform no transaction control beyond what the
-//! original per-backend methods did — the `BEGIN`/`COMMIT`/lock boundaries stay
-//! entirely inside each backend's own `write.rs`.
+//! original per-backend methods did — `BEGIN` and the lock boundaries stay
+//! entirely inside each backend's own `write.rs`, and the commit boundary is
+//! reached only through [`SqlWriteBackend::commit_transaction`].
 
 use nimbus_core::{
     CommitEntry, Document, DocumentId, DocumentLocator, Error, ResourcePathBinding, Result,
@@ -24,7 +26,7 @@ use crate::store::ResolvedWrite;
 /// Dialect seam implemented by each SQL write transaction. Methods fall into
 /// three groups: primitive buffer/state accessors, dialect statement execution
 /// (`*_document_row`, `insert_document`, resource-path bindings), and lifecycle
-/// hooks (`enqueue_notification`, `batch_execute`).
+/// hooks (`enqueue_notification`, `commit_transaction`, `after_visibility`).
 ///
 /// Several methods share a name with an inherent method on the implementing
 /// transaction type (for example `load_document`). Inside a trait `impl` those
@@ -35,7 +37,12 @@ use crate::store::ResolvedWrite;
 pub(crate) trait SqlWriteBackend {
     fn check_cancel(&self) -> Result<()>;
     fn check_fault(&self, point: FaultPoint) -> Result<()>;
-    fn batch_execute(&mut self, sql: &str) -> Result<()>;
+    /// Reach the visibility boundary. PostgreSQL and MySQL issue `COMMIT` on
+    /// the session; the libsql replica consumes its owned `Transaction`.
+    fn commit_transaction(&mut self) -> Result<()>;
+    /// Abandon the transaction. Runs only on failure paths, so it cannot report
+    /// an error: a dead session already implies the transaction did not commit.
+    fn rollback_transaction(&mut self);
 
     // Commit-write and tenant-event buffers.
     fn trigger_write_origin(&self) -> Option<TriggerWriteOrigin>;
@@ -48,14 +55,8 @@ pub(crate) trait SqlWriteBackend {
     fn take_tenant_events(&mut self) -> Vec<TenantEventKind>;
     fn take_prepared_record(&mut self) -> Option<TenantEventRecord>;
 
-    // Durable-journal application.
-    fn applied_sequence(&mut self) -> Result<SequenceNumber>;
-    fn load_durable_record(
-        &mut self,
-        sequence: SequenceNumber,
-    ) -> Result<Option<TenantEventRecord>>;
+    /// Materialize one durable journal record into the tenant's tables.
     fn apply_durable_record(&mut self, record: &TenantEventRecord) -> Result<()>;
-    fn write_applied_sequence(&mut self, sequence: SequenceNumber) -> Result<()>;
 
     // Commit-entry append, notification, schema-cache invalidation.
     fn append_commit_entry(
@@ -64,11 +65,27 @@ pub(crate) trait SqlWriteBackend {
         events: Vec<TenantEventKind>,
     ) -> Result<CommitEntry>;
     fn append_prepared_record(&mut self, record: &TenantEventRecord) -> Result<CommitEntry>;
-    /// PostgreSQL enqueues a `LISTEN/NOTIFY` payload here; MySQL has no
-    /// notification channel and implements this as a no-op.
-    fn enqueue_notification(&mut self) -> Result<()>;
-    fn schema_cache_changed(&self) -> bool;
-    fn invalidate_schema_cache(&self);
+    /// PostgreSQL enqueues a `LISTEN/NOTIFY` payload here. Backends with no
+    /// notification channel (MySQL, the libsql replica) keep the default.
+    fn enqueue_notification(&mut self) -> Result<()> {
+        Ok(())
+    }
+    /// Whether this transaction changed schema that a process-local cache
+    /// mirrors. The libsql replica has no such cache and keeps the default;
+    /// its cache barrier is recorded in [`SqlWriteBackend::after_visibility`].
+    fn schema_cache_changed(&self) -> bool {
+        false
+    }
+    fn invalidate_schema_cache(&self) {}
+    /// Local bookkeeping once the commit is durable, run after the
+    /// after-visibility fault point so an injected crash there skips it. The
+    /// libsql replica records its cache-refresh barrier here.
+    ///
+    /// This runs after the visibility boundary, so it must never read back from
+    /// storage: a libsql Hrana session can serve a post-commit read from an
+    /// older snapshot (see the `progress_after_successful_durable_apply` note in
+    /// `nimbus-engine`'s `tenant/committer_lease.rs`). Local state only.
+    fn after_visibility(&mut self, _commit: Option<&CommitEntry>) {}
 
     // Document/table statement execution for `apply_resolved_write`.
     fn load_document(&mut self, table: &TableName, id: &DocumentId) -> Result<Option<Document>>;
@@ -85,6 +102,41 @@ pub(crate) trait SqlWriteBackend {
     ) -> Result<Option<ResourcePathBinding>>;
 }
 
+/// Durable-journal seam for backends that replay the journal *through a write
+/// transaction*: PostgreSQL and MySQL append, apply and advance the watermark
+/// on the same session that later commits.
+///
+/// The libsql replica does not implement this. Its journal batches are issued
+/// as dedicated remote round-trips against the primary — one `Immediate`
+/// transaction per batch, opened and committed by the store — so it supplies
+/// the store-level wrappers in [`crate::sql::store_core::SqlStoreCore`]
+/// directly instead.
+pub(crate) trait SqlDurableJournalTransaction: SqlWriteBackend {
+    fn applied_sequence(&mut self) -> Result<SequenceNumber>;
+    fn load_durable_record(
+        &mut self,
+        sequence: SequenceNumber,
+    ) -> Result<Option<TenantEventRecord>>;
+    fn write_applied_sequence(&mut self, sequence: SequenceNumber) -> Result<()>;
+
+    fn append_durable_records_batch(&mut self, records: &[TenantEventRecord]) -> Result<()>;
+    fn apply_durable_records_batch(&mut self, records: &[TenantEventRecord]) -> Result<()>;
+    /// Append and apply one fenced durable batch.
+    ///
+    /// `on_pipeline_progress` is invoked at the provider's own pipeline
+    /// accounting boundary, which differs by dialect and is deliberately not
+    /// unified: PostgreSQL pipelines the append and the apply as one ordered
+    /// pair and reports progress once both have completed, while MySQL issues
+    /// them as separate statements and reports progress at batch admission.
+    /// The fenced wrapper uses it only to decide whether an outer-boundary
+    /// cancellation has already been accounted for by the provider.
+    fn append_and_apply_fenced_durable_batch(
+        &mut self,
+        records: &[TenantEventRecord],
+        on_pipeline_progress: &mut dyn FnMut(),
+    ) -> Result<()>;
+}
+
 /// Attach the transaction's trigger-write origin (when the caller did not set
 /// one) and buffer the write for the commit entry.
 pub(crate) fn sql_record_commit_write<B: SqlWriteBackend>(backend: &mut B, mut write: WriteOp) {
@@ -99,17 +151,15 @@ pub(crate) fn sql_record_tenant_event<B: SqlWriteBackend>(backend: &mut B, event
     backend.push_tenant_event(event);
 }
 
-/// Roll the transaction back, discarding buffered writes. Errors are ignored:
-/// rollback runs on the failure path and a dead connection already implies the
-/// transaction did not commit.
+/// Roll the transaction back, discarding buffered writes.
 pub(crate) fn sql_rollback<B: SqlWriteBackend>(backend: &mut B) {
-    let _ = backend.batch_execute("ROLLBACK");
+    backend.rollback_transaction();
 }
 
 /// Idempotently apply a contiguous batch of durable journal records, advancing
 /// the applied-sequence watermark. Records at or below the current watermark are
 /// skipped; a gap is a hard error.
-pub(crate) fn sql_apply_durable_records_batch<B: SqlWriteBackend>(
+pub(crate) fn sql_apply_durable_records_batch<B: SqlDurableJournalTransaction>(
     backend: &mut B,
     records: &[TenantEventRecord],
 ) -> Result<()> {
@@ -265,10 +315,10 @@ pub(crate) fn sql_apply_resolved_write<B: SqlWriteBackend>(
 
 /// Finalize the transaction: fold buffered document writes into a leading
 /// `DocumentWrite` event, append the commit entry when anything changed, flush
-/// the notification, then `COMMIT` and invalidate the schema cache if touched.
-/// Every error before the visibility boundary explicitly rolls the transaction
-/// back. Consumes the transaction so no further statements can run after
-/// commit.
+/// the notification, then commit, invalidate the schema cache if touched, and
+/// run the backend's post-visibility bookkeeping. Every error before the
+/// visibility boundary explicitly rolls the transaction back. Consumes the
+/// transaction so no further statements can run after commit.
 pub(crate) fn sql_commit<B: SqlWriteBackend>(mut backend: B) -> Result<Option<CommitEntry>> {
     let before_visibility = (|| -> Result<Option<CommitEntry>> {
         backend.check_cancel()?;
@@ -300,16 +350,20 @@ pub(crate) fn sql_commit<B: SqlWriteBackend>(mut backend: B) -> Result<Option<Co
             return Err(error);
         }
     };
-    if let Err(error) = backend.batch_execute("COMMIT") {
-        // A provider error at COMMIT may be ambiguous to the caller. ROLLBACK
-        // cannot undo a transaction that landed, but it does close any still-
-        // open transaction before the pooled connection is reused.
+    if let Err(error) = backend.commit_transaction() {
+        // A provider error at the commit boundary may be ambiguous to the
+        // caller. Rollback cannot undo a transaction that landed, but it does
+        // close any still-open transaction before the session is reused.
         sql_rollback(&mut backend);
         return Err(error);
     }
     if backend.schema_cache_changed() {
         backend.invalidate_schema_cache();
     }
+    // The fault check precedes the hook: this point stands in for a crash
+    // between visibility and return, which cannot have run any local
+    // post-commit bookkeeping.
     backend.check_fault(FaultPoint::StorageCommitAfterVisibilityBeforeReturn)?;
+    backend.after_visibility(commit.as_ref());
     Ok(commit)
 }

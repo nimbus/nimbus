@@ -7,6 +7,7 @@ use super::{
     map_libsql_error, take_single_remote_row,
 };
 use crate::CommitterLeaseResult;
+use crate::sql::store_core::map_fenced_write_result;
 
 impl LibsqlReplicaTenantStore {
     pub fn materialize_trigger_invocations(
@@ -47,7 +48,7 @@ impl LibsqlReplicaTenantStore {
             }
             transaction.materialize_trigger_invocations(records.as_slice(), cursor)
         });
-        super::write::map_fenced_write_result(result.map(|_| ()), fenced_owner_id, epoch)
+        map_fenced_write_result(result.map(|_| ()), fenced_owner_id, epoch)
     }
 
     pub fn list_trigger_invocations(&self) -> Result<Vec<TriggerInvocationRecord>> {
@@ -133,7 +134,7 @@ impl LibsqlReplicaTenantStore {
             }
             transaction.save_trigger_invocation(&record)
         });
-        super::write::map_fenced_write_result(result.map(|_| ()), fenced_owner_id, epoch)
+        map_fenced_write_result(result.map(|_| ()), fenced_owner_id, epoch)
     }
 }
 

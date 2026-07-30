@@ -46,7 +46,7 @@ use crate::async_storage::{
 use crate::retention::{
     RetentionFloor, RetentionGcConfig, RetentionGcSummary, RetentionGcWatermarks,
 };
-use crate::sql::write_core::SqlWriteBackend;
+use crate::sql::write_core::{SqlDurableJournalTransaction, SqlWriteBackend};
 use crate::sql::write_pipeline::SqlWritePipelineMetrics;
 use crate::store::{
     JournalProgress, MaterializedJournalSnapshot, PointInTimeRestoreArchive,
@@ -101,8 +101,9 @@ pub(crate) fn apply_schedule_ops_in_transaction<T: SqlWriteTransactionCore>(
 ///
 /// This extends the in-transaction seam ([`SqlWriteBackend`]) with the
 /// statements the store-level wrappers drive: scheduler and cron mutations,
-/// schema replacement, durable-journal append/apply, committer-lease fencing,
-/// and the validated document mutations.
+/// schema replacement, committer-lease fencing, and the validated document
+/// mutations. Journal replay through a write transaction is a narrower
+/// concern and lives in [`SqlDurableJournalTransaction`].
 pub(crate) trait SqlWriteTransactionCore: SqlWriteBackend {
     // Deduplication and per-transaction context.
     fn begin_scheduled_execution(&mut self, execution_id: Option<&str>) -> Result<bool>;
@@ -119,24 +120,6 @@ pub(crate) trait SqlWriteTransactionCore: SqlWriteBackend {
         expected_previous: SequenceNumber,
         durable_sequence: SequenceNumber,
     ) -> Result<u64>;
-
-    // Durable journal.
-    fn append_durable_records_batch(&mut self, records: &[TenantEventRecord]) -> Result<()>;
-    fn apply_durable_records_batch(&mut self, records: &[TenantEventRecord]) -> Result<()>;
-    /// Append and apply one fenced durable batch.
-    ///
-    /// `on_pipeline_progress` is invoked at the provider's own pipeline
-    /// accounting boundary, which differs by dialect and is deliberately not
-    /// unified: PostgreSQL pipelines the append and the apply as one ordered
-    /// pair and reports progress once both have completed, while MySQL issues
-    /// them as separate statements and reports progress at batch admission.
-    /// The fenced wrapper uses it only to decide whether an outer-boundary
-    /// cancellation has already been accounted for by the provider.
-    fn append_and_apply_fenced_durable_batch(
-        &mut self,
-        records: &[TenantEventRecord],
-        on_pipeline_progress: &mut dyn FnMut(),
-    ) -> Result<()>;
 
     // Schema.
     fn replace_table_schema(&mut self, table_schema: &TableSchema) -> Result<()>;
@@ -203,7 +186,6 @@ pub(crate) trait SqlStoreCore: Sized {
         F: FnOnce(&mut Self::Transaction) -> Result<T> + Send + 'static;
 
     fn retention_floor(&self) -> &RetentionFloor;
-    fn pipeline_metrics(&self) -> &SqlWritePipelineMetrics;
     fn journal_progress(&self) -> Result<JournalProgress>;
     fn read_durable_journal_from(&self, sequence: SequenceNumber)
     -> Result<Vec<TenantEventRecord>>;
@@ -465,17 +447,14 @@ pub(crate) trait SqlStoreCore: Sized {
 
     // --------------------------------------------------------- durable journal
 
-    fn append_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
-        let records = records.to_vec();
-        self.execute_write(move |transaction| transaction.append_durable_records_batch(&records))?;
-        Ok(())
-    }
+    /// Durable-journal append. Backends that replay through a write transaction
+    /// forward to [`sql_store_append_durable_records_batch`]; the libsql replica
+    /// issues its own remote batch instead.
+    fn append_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()>;
 
-    fn apply_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
-        let records = records.to_vec();
-        self.execute_write(move |transaction| transaction.apply_durable_records_batch(&records))?;
-        Ok(())
-    }
+    /// Durable-journal apply. See [`SqlStoreCore::append_durable_records_batch`]
+    /// for why this is not a shared default.
+    fn apply_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()>;
 
     fn fenced_append_and_apply_durable_records_batch(
         &self,
@@ -493,6 +472,9 @@ pub(crate) trait SqlStoreCore: Sized {
         )
     }
 
+    /// Fenced durable append-and-apply. See
+    /// [`SqlStoreCore::append_durable_records_batch`] for why this is not a
+    /// shared default.
     fn fenced_append_and_apply_durable_records_batch_cancellable<Check>(
         &self,
         owner_id: &str,
@@ -502,64 +484,7 @@ pub(crate) trait SqlStoreCore: Sized {
         check_cancel: Check,
     ) -> CommitterLeaseResult<()>
     where
-        Check: Fn() -> Result<()> + Send + 'static,
-    {
-        if records.is_empty() {
-            return Err(Error::InvalidInput(
-                "fenced durable apply requires at least one record".to_string(),
-            )
-            .into());
-        }
-        let owner_id = owner_id.to_string();
-        let fenced_owner_id = owner_id.clone();
-        let records = records.to_vec();
-        let pipeline_progressed = Arc::new(AtomicBool::new(false));
-        let pipeline_progressed_in_transaction = pipeline_progressed.clone();
-        let result = self.execute_write_cancellable(check_cancel, move |transaction| {
-            let durable_sequence = records
-                .last()
-                .expect("non-empty fenced durable apply batch")
-                .sequence;
-            if transaction.advance_fenced_committer_lease(
-                &owner_id,
-                epoch,
-                expected_previous,
-                durable_sequence,
-            )? != 1
-            {
-                return Err(Error::PreconditionFailed(
-                    FENCED_COMMITTER_LEASE_MARKER.to_string(),
-                ));
-            }
-            crate::commit_log::ensure_applied_prefix_precedes(
-                transaction.applied_sequence()?,
-                records[0].sequence,
-            )?;
-            transaction.append_and_apply_fenced_durable_batch(&records, &mut || {
-                pipeline_progressed_in_transaction.store(true, AtomicOrdering::Release);
-            })
-        });
-        if let Err(error @ Error::Cancelled) = &result
-            && pipeline_progressed.load(AtomicOrdering::Acquire)
-        {
-            // The provider's own pipeline accounting records errors it observes.
-            // A cancellation can still arrive at the transaction's final
-            // pre-commit check after the provider has passed its progress
-            // boundary, so record only that outer-boundary case and avoid
-            // double-counting an inner cancellation.
-            self.pipeline_metrics().record_error(error);
-        }
-        match result {
-            Ok(_) => Ok(()),
-            Err(Error::PreconditionFailed(message)) if message == FENCED_COMMITTER_LEASE_MARKER => {
-                Err(CommitterLeaseError::Fenced {
-                    owner_id: fenced_owner_id,
-                    epoch,
-                })
-            }
-            Err(error) => Err(error.into()),
-        }
-    }
+        Check: Fn() -> Result<()> + Send + 'static;
 
     // --------------------------------------------------------------- scheduler
 
@@ -939,6 +864,119 @@ pub(crate) trait SqlStoreCore: Sized {
         } else {
             None
         })
+    }
+}
+
+/// Store-level counterpart of [`SqlDurableJournalTransaction`]: implemented by
+/// the backends whose journal replay runs inside a write transaction, so the
+/// three wrappers below can be shared between them.
+pub(crate) trait SqlDurableJournalStore: SqlStoreCore
+where
+    Self::Transaction: SqlDurableJournalTransaction,
+{
+    fn pipeline_metrics(&self) -> &SqlWritePipelineMetrics;
+}
+
+/// Shared body of [`SqlStoreCore::append_durable_records_batch`] for
+/// transaction-replay backends.
+pub(crate) fn sql_store_append_durable_records_batch<S>(
+    store: &S,
+    records: &[TenantEventRecord],
+) -> Result<()>
+where
+    S: SqlDurableJournalStore,
+    S::Transaction: SqlDurableJournalTransaction,
+{
+    let records = records.to_vec();
+    store.execute_write(move |transaction| transaction.append_durable_records_batch(&records))?;
+    Ok(())
+}
+
+/// Shared body of [`SqlStoreCore::apply_durable_records_batch`] for
+/// transaction-replay backends.
+pub(crate) fn sql_store_apply_durable_records_batch<S>(
+    store: &S,
+    records: &[TenantEventRecord],
+) -> Result<()>
+where
+    S: SqlDurableJournalStore,
+    S::Transaction: SqlDurableJournalTransaction,
+{
+    let records = records.to_vec();
+    store.execute_write(move |transaction| transaction.apply_durable_records_batch(&records))?;
+    Ok(())
+}
+
+/// Shared body of
+/// [`SqlStoreCore::fenced_append_and_apply_durable_records_batch_cancellable`]
+/// for transaction-replay backends.
+pub(crate) fn sql_store_fenced_append_and_apply_durable_records_batch_cancellable<S, Check>(
+    store: &S,
+    owner_id: &str,
+    epoch: u64,
+    expected_previous: SequenceNumber,
+    records: &[TenantEventRecord],
+    check_cancel: Check,
+) -> CommitterLeaseResult<()>
+where
+    S: SqlDurableJournalStore,
+    S::Transaction: SqlDurableJournalTransaction,
+    Check: Fn() -> Result<()> + Send + 'static,
+{
+    if records.is_empty() {
+        return Err(Error::InvalidInput(
+            "fenced durable apply requires at least one record".to_string(),
+        )
+        .into());
+    }
+    let owner_id = owner_id.to_string();
+    let fenced_owner_id = owner_id.clone();
+    let records = records.to_vec();
+    let pipeline_progressed = Arc::new(AtomicBool::new(false));
+    let pipeline_progressed_in_transaction = pipeline_progressed.clone();
+    let result = store.execute_write_cancellable(check_cancel, move |transaction| {
+        let durable_sequence = records
+            .last()
+            .expect("non-empty fenced durable apply batch")
+            .sequence;
+        if transaction.advance_fenced_committer_lease(
+            &owner_id,
+            epoch,
+            expected_previous,
+            durable_sequence,
+        )? != 1
+        {
+            return Err(Error::PreconditionFailed(
+                FENCED_COMMITTER_LEASE_MARKER.to_string(),
+            ));
+        }
+        crate::commit_log::ensure_applied_prefix_precedes(
+            transaction.applied_sequence()?,
+            records[0].sequence,
+        )?;
+        transaction.append_and_apply_fenced_durable_batch(&records, &mut || {
+            pipeline_progressed_in_transaction.store(true, AtomicOrdering::Release);
+        })
+    });
+    if let Err(error @ Error::Cancelled) = &result
+        && pipeline_progressed.load(AtomicOrdering::Acquire)
+    {
+        // The provider's own pipeline accounting records errors it observes.
+        // A cancellation can still arrive at the transaction's final pre-commit
+        // check after the provider has passed its progress boundary, so record
+        // only that outer-boundary case and avoid double-counting an inner
+        // cancellation.
+        store.pipeline_metrics().record_error(error);
+    }
+    match result {
+        Ok(_) => Ok(()),
+        Err(Error::PreconditionFailed(message)) if message == FENCED_COMMITTER_LEASE_MARKER => {
+            Err(CommitterLeaseError::Fenced {
+                owner_id: fenced_owner_id,
+                epoch,
+            })
+        }
+        Err(error) => Err(error.into()),
     }
 }
 

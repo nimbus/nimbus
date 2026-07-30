@@ -9,21 +9,6 @@ use crate::table_identity::{
     DEFAULT_TABLE_NAMESPACE, deleting_table_namespace, hidden_table_namespace,
 };
 
-pub(super) fn apply_schedule_ops_in_libsql_transaction(
-    transaction: &mut LibsqlReplicaWriteTransaction,
-    schedule_ops: &[ResolvedScheduleOp],
-) -> Result<()> {
-    for op in schedule_ops {
-        match op {
-            ResolvedScheduleOp::Insert { job } => transaction.insert_scheduled_job(job)?,
-            ResolvedScheduleOp::Cancel { job_id } => {
-                transaction.cancel_scheduled_job(job_id)?;
-            }
-        }
-    }
-    Ok(())
-}
-
 /// Reads an optional scalar/unique query result and consumes the cursor's end
 /// marker before returning.
 ///

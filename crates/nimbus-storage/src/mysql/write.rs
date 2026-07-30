@@ -8,7 +8,13 @@ use super::write_schema_events::{
     durable_record_changes_schema_cache, record_mysql_schema_set_events,
 };
 use super::*;
-use crate::sql::store_core::{SqlStoreCore, SqlWriteTransactionCore, sql_store_core_facade};
+use crate::CommitterLeaseResult;
+use crate::sql::store_core::{
+    SqlDurableJournalStore, SqlStoreCore, SqlWriteTransactionCore,
+    sql_store_append_durable_records_batch, sql_store_apply_durable_records_batch,
+    sql_store_core_facade, sql_store_fenced_append_and_apply_durable_records_batch_cancellable,
+};
+use crate::sql::write_core::SqlDurableJournalTransaction;
 use crate::sql::write_pipeline::SqlWritePipelineMetrics;
 
 sql_store_core_facade!(MySqlTenantStore);
@@ -88,10 +94,6 @@ impl SqlStoreCore for MySqlTenantStore {
         self.retention_floor.as_ref()
     }
 
-    fn pipeline_metrics(&self) -> &SqlWritePipelineMetrics {
-        self.pipeline_metrics.as_ref()
-    }
-
     fn journal_progress(&self) -> Result<JournalProgress> {
         MySqlTenantStore::journal_progress(self)
     }
@@ -109,6 +111,41 @@ impl SqlStoreCore for MySqlTenantStore {
 
     fn export_materialized_journal_snapshot(&self) -> Result<MaterializedJournalSnapshot> {
         MySqlTenantStore::export_materialized_journal_snapshot(self)
+    }
+
+    fn append_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
+        sql_store_append_durable_records_batch(self, records)
+    }
+
+    fn apply_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
+        sql_store_apply_durable_records_batch(self, records)
+    }
+
+    fn fenced_append_and_apply_durable_records_batch_cancellable<Check>(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        expected_previous: SequenceNumber,
+        records: &[TenantEventRecord],
+        check_cancel: Check,
+    ) -> CommitterLeaseResult<()>
+    where
+        Check: Fn() -> Result<()> + Send + 'static,
+    {
+        sql_store_fenced_append_and_apply_durable_records_batch_cancellable(
+            self,
+            owner_id,
+            epoch,
+            expected_previous,
+            records,
+            check_cancel,
+        )
+    }
+}
+
+impl SqlDurableJournalStore for MySqlTenantStore {
+    fn pipeline_metrics(&self) -> &SqlWritePipelineMetrics {
+        self.pipeline_metrics.as_ref()
     }
 }
 
@@ -145,30 +182,6 @@ impl SqlWriteTransactionCore for MySqlWriteTransaction {
             expected_previous,
             durable_sequence,
         )
-    }
-
-    fn append_durable_records_batch(&mut self, records: &[TenantEventRecord]) -> Result<()> {
-        MySqlWriteTransaction::append_durable_records_batch(self, records)
-    }
-
-    fn apply_durable_records_batch(&mut self, records: &[TenantEventRecord]) -> Result<()> {
-        MySqlWriteTransaction::apply_durable_records_batch(self, records)
-    }
-
-    /// MySQL holds a single mutable connection operation at a time, so the
-    /// journal insert and the apply are separate statements and pipeline
-    /// progress is reported when the batch is admitted.
-    fn append_and_apply_fenced_durable_batch(
-        &mut self,
-        records: &[TenantEventRecord],
-        on_pipeline_progress: &mut dyn FnMut(),
-    ) -> Result<()> {
-        MySqlWriteTransaction::append_durable_records_batch_with_admission(
-            self,
-            records,
-            on_pipeline_progress,
-        )?;
-        MySqlWriteTransaction::apply_durable_records_batch(self, records)
     }
 
     fn replace_table_schema(&mut self, table_schema: &TableSchema) -> Result<()> {
@@ -1204,8 +1217,12 @@ impl crate::sql::write_core::SqlWriteBackend for MySqlWriteTransaction {
             .check_for_tenant(point, &self.tenant_id)
     }
 
-    fn batch_execute(&mut self, sql: &str) -> Result<()> {
-        MySqlWriteTransaction::batch_execute(self, sql)
+    fn commit_transaction(&mut self) -> Result<()> {
+        MySqlWriteTransaction::batch_execute(self, "COMMIT")
+    }
+
+    fn rollback_transaction(&mut self) {
+        let _ = MySqlWriteTransaction::batch_execute(self, "ROLLBACK");
     }
 
     fn trigger_write_origin(&self) -> Option<TriggerWriteOrigin> {
@@ -1244,23 +1261,8 @@ impl crate::sql::write_core::SqlWriteBackend for MySqlWriteTransaction {
         self.prepared_record.take()
     }
 
-    fn applied_sequence(&mut self) -> Result<SequenceNumber> {
-        MySqlWriteTransaction::applied_sequence(self)
-    }
-
-    fn load_durable_record(
-        &mut self,
-        sequence: SequenceNumber,
-    ) -> Result<Option<TenantEventRecord>> {
-        MySqlWriteTransaction::load_durable_record(self, sequence)
-    }
-
     fn apply_durable_record(&mut self, record: &TenantEventRecord) -> Result<()> {
         MySqlWriteTransaction::apply_durable_record(self, record)
-    }
-
-    fn write_applied_sequence(&mut self, sequence: SequenceNumber) -> Result<()> {
-        MySqlWriteTransaction::write_applied_sequence(self, sequence)
     }
 
     fn append_commit_entry(
@@ -1273,11 +1275,6 @@ impl crate::sql::write_core::SqlWriteBackend for MySqlWriteTransaction {
 
     fn append_prepared_record(&mut self, record: &TenantEventRecord) -> Result<CommitEntry> {
         MySqlWriteTransaction::append_prepared_record(self, record)
-    }
-
-    fn enqueue_notification(&mut self) -> Result<()> {
-        // MySQL has no LISTEN/NOTIFY channel; there is nothing to flush.
-        Ok(())
     }
 
     fn schema_cache_changed(&self) -> bool {
@@ -1355,6 +1352,47 @@ impl crate::sql::write_core::SqlWriteBackend for MySqlWriteTransaction {
         locator: &nimbus_core::DocumentLocator,
     ) -> Result<Option<ResourcePathBinding>> {
         MySqlWriteTransaction::remove_resource_path_binding(self, locator)
+    }
+}
+
+impl SqlDurableJournalTransaction for MySqlWriteTransaction {
+    fn applied_sequence(&mut self) -> Result<SequenceNumber> {
+        MySqlWriteTransaction::applied_sequence(self)
+    }
+
+    fn load_durable_record(
+        &mut self,
+        sequence: SequenceNumber,
+    ) -> Result<Option<TenantEventRecord>> {
+        MySqlWriteTransaction::load_durable_record(self, sequence)
+    }
+
+    fn write_applied_sequence(&mut self, sequence: SequenceNumber) -> Result<()> {
+        MySqlWriteTransaction::write_applied_sequence(self, sequence)
+    }
+
+    fn append_durable_records_batch(&mut self, records: &[TenantEventRecord]) -> Result<()> {
+        MySqlWriteTransaction::append_durable_records_batch(self, records)
+    }
+
+    fn apply_durable_records_batch(&mut self, records: &[TenantEventRecord]) -> Result<()> {
+        MySqlWriteTransaction::apply_durable_records_batch(self, records)
+    }
+
+    /// MySQL holds a single mutable connection operation at a time, so the
+    /// journal insert and the apply are separate statements and pipeline
+    /// progress is reported when the batch is admitted.
+    fn append_and_apply_fenced_durable_batch(
+        &mut self,
+        records: &[TenantEventRecord],
+        on_pipeline_progress: &mut dyn FnMut(),
+    ) -> Result<()> {
+        MySqlWriteTransaction::append_durable_records_batch_with_admission(
+            self,
+            records,
+            on_pipeline_progress,
+        )?;
+        MySqlWriteTransaction::apply_durable_records_batch(self, records)
     }
 }
 
