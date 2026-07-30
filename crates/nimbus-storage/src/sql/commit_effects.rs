@@ -1,5 +1,5 @@
-//! U5 commit witness: one entry point that every composite SQL commit path
-//! goes through, and one type that names every effect such a commit can have.
+//! U5 commit witness: one entry point shared by the three composite SQL commit
+//! paths, and one type that names every effect such a commit can have.
 //!
 //! Before this seam existed, each commit path open-coded its own sequence of
 //! effects inside its `execute_write` closure. Nothing tied those sequences
@@ -10,14 +10,44 @@
 //! did not apply.
 //!
 //! [`SqlCommitEffects`] closes that gap by construction. It has no `Default`
-//! and no field is an `Option`, so a commit path must name every effect —
-//! including the ones it does not perform, each of which has an explicit
-//! variant that says so. Adding a new effect to this struct breaks every
-//! construction site, which is the point: a new commit effect cannot be
-//! introduced without each existing path stating its position on it.
+//! and no field is an `Option`, so a witnessed commit path must name every
+//! effect — including the ones it does not perform, each of which has an
+//! explicit variant that says so.
 //!
-//! Scope: this covers the composite paths, where effects genuinely compose.
-//! Version rows and index effects are not fields here because they are not
+//! # What is witnessed
+//!
+//! Exactly three paths, all in [`super::store_core`]:
+//!
+//! - `apply_prepared_write_batch`
+//! - `fenced_apply_prepared_write_batch`
+//! - `apply_execution_unit_batch_with_origin`
+//!
+//! Adding a field to [`SqlCommitEffects`] breaks all three construction sites,
+//! which is the point: a new commit effect cannot be introduced without each of
+//! those paths stating its position on it.
+//!
+//! # What is not witnessed, and what that costs
+//!
+//! The **direct path** — the `execute_write` call sites performing a single
+//! insert, update, delete, or schema operation — is deliberately excluded
+//! (decision U8). Both available encodings destroy the property the witness
+//! exists for. Giving [`SqlCommitEffects`] a `Default` so a direct call can
+//! name only the fields it cares about reintroduces exactly the silence the
+//! witness removes: an unstated effect becomes indistinguishable from a
+//! considered one. Erasing the direct path's caller validators and
+//! per-operation return payloads behind boxed closures reaches the witness only
+//! by replacing reviewer-visible variants with opaque callbacks. The direct
+//! path therefore keeps its own per-operation validators.
+//!
+//! The accepted trade, stated plainly so it is not rediscovered as a surprise:
+//! **adding a field here does not force the direct path to declare a position
+//! on it.** Three of the four commit-log paths are compiler-linked to this
+//! type; the fourth is not, and a new effect that also applies to single
+//! operations must be carried there by hand.
+//!
+//! # Effects that are not fields
+//!
+//! Version rows and index effects are not fields because they are not
 //! independently selectable at this seam — they are executed inside the
 //! document-write statements themselves (`apply_durable_record` and
 //! `apply_resolved_write` in [`super::write_core`]), which is also what keeps

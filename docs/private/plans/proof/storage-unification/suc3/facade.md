@@ -967,3 +967,92 @@ off:
 Recommend a separate flake ticket: the extra journal record points at a
 background commit racing `shutdown_trigger_candidates_for_testing`, which is
 engine-side and unrelated to storage unification.
+
+## Step 3 — Review Disposition
+
+Structured review of `dfebd1a6f` returned three findings. Two accepted with
+modification and fixed in the follow-up commit; one rejected.
+
+### Accepted 1 — `commit_effects.rs` module doc overclaimed its coverage
+
+The module doc opened by calling `sql_apply_commit` "one entry point that every
+composite SQL commit path goes through". That is false under U8: the direct
+path is excluded by decision, so the witness covers three of the four
+commit-log paths, not all of them. Left as written, the doc would have led a
+future reader to assume a new `SqlCommitEffects` field forces every commit path
+to declare a position on it.
+
+Rewritten to name the three witnessed paths explicitly
+(`apply_prepared_write_batch`, `fenced_apply_prepared_write_batch`,
+`apply_execution_unit_batch_with_origin` — verified as exactly the three
+`SqlCommitEffects` construction sites in the crate), to state the U8 exclusion
+with its rationale, and to make the trade explicit: **adding a field here does
+not force direct-path declaration.** That cost is the accepted price of keeping
+the variants reviewer-visible, and it is now visible too.
+
+### Accepted 2 — `Journal*` needed a pin gate, not nothing
+
+The step-3 gate banned `StorageCommit*` outside the shared core and left
+`Journal*` entirely ungated, on the argument that an allowlist "enforces
+nothing". The reviewer's allowlist shape is the better call: an exact-count pin
+per owner file does enforce something real — that journal fault-point placement
+cannot change silently — without pretending the placement is shared.
+
+`u4_journal_fault_points_stay_with_their_pinned_owners` pins the three owners
+inside the scanned provider directories:
+
+| Owner (relative to `src`) | Pinned token count |
+| --- | --- |
+| `postgres/write_pipeline.rs` | 4 |
+| `mysql/write_pipeline.rs` | 2 |
+| `libsql/write.rs` | 2 |
+
+Counted needles are all three journal fault points
+(`JournalAppendBeforeDurableFlush`, `JournalFlushBeforeVisibility`,
+`JournalDurableAppendBeforeApply`); all eight occurrences today are real check
+sites, none in comments. `sql/write_core.rs` holds zero journal tokens and is
+intentionally absent from the pin list — the shared commit sequence does not
+observe the journal. `libsql.rs` at the module root stays outside the scan, as
+it does for the sibling gate.
+
+Three failure modes, each with its own message: a **new** file holding a
+journal token, a **count drift** in a pinned file, and a **pinned owner that
+the scan no longer finds** (file renamed or moved). The message states the gate
+is a pin rather than a ban and tells the reader to update `JOURNAL_OWNERS` in
+the same commit when the change is intentional. The `StorageCommit*`
+ban-needles are unchanged, and both gates now share one scan helper with the
+same 45-file vacuousness floor.
+
+#### Fail-before evidence, both pin shapes
+
+New unpinned file — one journal token appended to `postgres/read.rs`:
+
+```
+Unpinned: ["postgres/read.rs holds 1 journal fault-point token(s) but is not a pinned owner"]
+Drifted: []
+Summary: 1 test run: 0 passed, 1 failed
+```
+
+Count drift — one token appended to a pinned file:
+
+```
+Unpinned: []
+Drifted: ["mysql/write_pipeline.rs holds 3 journal fault-point token(s), pinned at 2"]
+Summary: 1 test run: 0 passed, 1 failed
+```
+
+Both probe files were restored from copies saved before the probe, never via
+`git checkout -- <file>`; `git diff` against base for both is empty. With them
+restored, both gates pass: `2 tests run: 2 passed`.
+
+### Rejected — "the arm theft is left unresolved"
+
+Correct as a statement of state, not a defect in this step. The arm theft is
+real and remains open, but the fix assigned for it was refuted with
+deterministic evidence (seven engine tests, `visits: 0` on the arm's own
+target), and the reason no replacement shipped here is that neither the product
+nor the harness half can discriminate without a fault-interface change spanning
+`nimbus-storage` and `nimbus-testing`. That ticket is open and folds in the
+`mysql_ppsc_seeded_journal_differential` flake. Shipping a second wrong gate to
+avoid leaving the item open would trade a known-open bug for a silent loss of
+fault coverage — the exact trade the first attempt made.
