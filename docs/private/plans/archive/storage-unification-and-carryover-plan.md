@@ -1,6 +1,6 @@
 # Storage Unification And Carry-Over Closeout Control Plane
 
-Status: `COMPLETE — all phases closed (PRs #248–#261); U1–U9 recorded; U7 owner-override standing offer; see archive`
+Status: `ARCHIVED 2026-07-30 — campaign complete (PRs #248–#261; decisions U1–U9; U7 owner-override standing offer). Provenance: combined plan drafted 2026-07-29 from the storage architecture review + six carry-over items; superseded no plan; successor work lives in the Follow-Up Tickets table below`
 
 Owner: this plan, and no other plan
 

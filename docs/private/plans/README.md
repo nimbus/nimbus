@@ -137,7 +137,6 @@ extension-registry seam before the second concern edits `extensions.rs`.
   crash/replay and differential verification, and pinned external Elle
   evidence. FINAL recorded all readiness dimensions `PASS` and all closeout
   verdicts `SAFE`.
-- `storage-unification-and-carryover-plan.md` - `active`. Sole owner for
   the 2026-07-29 storage review's ranked wins (CommitTransaction witness,
   objects/KV/scheduler onto a real commit path, provider facade extraction,
   DynamoDB principal) plus every carry-over: main full-CI triage (RED at
