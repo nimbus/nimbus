@@ -4,11 +4,11 @@ use super::document_versions::{
 use super::index_versions::{
     prune_index_versions_before_in_session, record_index_versions_for_events_in_session,
 };
-use super::write_schema_events::{
-    durable_record_changes_schema_cache, record_postgres_schema_set_events,
-};
 use super::*;
 use crate::CommitterLeaseResult;
+use crate::sql::schema_events::{
+    durable_record_changes_schema_cache, sql_record_schema_set_events,
+};
 use crate::sql::store_core::{
     SqlDurableJournalStore, SqlStoreCore, SqlWriteTransactionCore,
     sql_store_append_durable_records_batch, sql_store_apply_durable_records_batch,
@@ -199,6 +199,35 @@ impl SqlWriteTransactionCore for PostgresWriteTransaction {
             expected_previous,
             durable_sequence,
         )
+    }
+
+    fn validate_fenced_committer_lease(
+        &mut self,
+        owner_id: &str,
+        epoch: u64,
+        durable_sequence: SequenceNumber,
+    ) -> Result<u64> {
+        PostgresWriteTransaction::validate_fenced_committer_lease(
+            self,
+            owner_id,
+            epoch,
+            durable_sequence,
+        )
+    }
+
+    fn materialize_trigger_invocations(
+        &mut self,
+        records: &[nimbus_core::TriggerInvocationRecord],
+        cursor: TriggerDeliveryCursor,
+    ) -> Result<()> {
+        PostgresWriteTransaction::materialize_trigger_invocations(self, records, cursor)
+    }
+
+    fn save_trigger_invocation(
+        &mut self,
+        record: &nimbus_core::TriggerInvocationRecord,
+    ) -> Result<()> {
+        PostgresWriteTransaction::save_trigger_invocation(self, record)
     }
 
     fn replace_table_schema(&mut self, table_schema: &TableSchema) -> Result<()> {
@@ -400,7 +429,7 @@ impl PostgresWriteTransaction {
         self.create_table_indexes(&table_schema)?;
         self.notification.schema_changed = true;
         self.schema_cache_changed = true;
-        record_postgres_schema_set_events(self, table_id, previous, &table_schema);
+        sql_record_schema_set_events(self, table_id, previous, &table_schema);
         Ok(())
     }
 
@@ -624,63 +653,7 @@ impl PostgresWriteTransaction {
     }
 
     pub fn claim_due_jobs(&mut self, now: Timestamp, max_jobs: usize) -> Result<Vec<ScheduledJob>> {
-        self.check_cancel()?;
-        if max_jobs == 0 {
-            return Ok(Vec::new());
-        }
-        // PG claim relies on the per-tenant advisory transaction lock to serialize
-        // claimers, so it omits the `FOR UPDATE` row lock MySQL uses. Dialect lock
-        // mode is load-bearing — not unified with the write core, see CO6.
-        let query = format!(
-            "SELECT data_json FROM {} WHERE run_at <= $1 ORDER BY run_at, id LIMIT $2",
-            qualified_table(&self.schema_name, "scheduled_jobs")
-        );
-        let run_at = claim_due_jobs_upper_bound(now);
-        let max_jobs = i64::try_from(max_jobs).unwrap_or(i64::MAX);
-        let client = self.session()?;
-        let due = self.block_on(async move {
-            let rows = client
-                .query(query.as_str(), &[&run_at, &max_jobs])
-                .await
-                .map_err(map_postgres_error)?;
-            rows.into_iter()
-                .map(|row| deserialize_json::<ScheduledJob>(row.get::<_, String>(0).as_str()))
-                .collect::<Result<Vec<_>>>()
-        })?;
-
-        if due.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let delete_query = format!(
-            "DELETE FROM {} WHERE id = $1",
-            qualified_table(&self.schema_name, "scheduled_jobs")
-        );
-        let insert_query = format!(
-            "INSERT INTO {} (id, data_json) VALUES ($1, $2)",
-            qualified_table(&self.schema_name, "running_scheduled_jobs")
-        );
-        for job in &due {
-            self.check_cancel()?;
-            let job_id = job.id.to_string();
-            let data_json = serialize_json(job)?;
-            let delete_query = delete_query.clone();
-            let insert_query = insert_query.clone();
-            let client = self.session()?;
-            self.block_on(async move {
-                client
-                    .execute(delete_query.as_str(), &[&job_id])
-                    .await
-                    .map_err(map_postgres_error)?;
-                client
-                    .execute(insert_query.as_str(), &[&job_id, &data_json])
-                    .await
-                    .map_err(map_postgres_error)?;
-                Ok(())
-            })?;
-        }
-        self.notification.scheduler_changed = true;
-        Ok(due)
+        crate::sql::scheduler_core::sql_claim_due_jobs(self, now, max_jobs)
     }
 
     pub fn complete_scheduled_job(&mut self, job_id: &DocumentId) -> Result<()> {
@@ -790,48 +763,7 @@ impl PostgresWriteTransaction {
     }
 
     pub fn recover_running_jobs(&mut self, now: Timestamp) -> Result<()> {
-        self.check_cancel()?;
-        let running_jobs = self.load_running_jobs()?;
-        let delete_query = format!(
-            "DELETE FROM {} WHERE id = $1",
-            qualified_table(&self.schema_name, "running_scheduled_jobs")
-        );
-        let insert_query = format!(
-            "INSERT INTO {} (id, run_at, data_json) VALUES ($1, $2, $3)",
-            qualified_table(&self.schema_name, "scheduled_jobs")
-        );
-        for mut job in running_jobs {
-            self.check_cancel()?;
-            // A recovered running job was already DUE when it was claimed
-            // (claim only takes run_at <= now), so keep its original due
-            // time instead of re-stamping the recovery instant: stamping
-            // `now` artificially delays the job and — under wall-clock
-            // regression (e.g. NTP slew) between recovery and the next
-            // tick — can push it past that tick's `now`, silently
-            // deferring recovery (flaked scheduler_recovery_campaign on
-            // CI). min() keeps any older due time intact and never moves
-            // a job into the future.
-            job.run_at = job.run_at.min(now);
-            let job_id = job.id.to_string();
-            let run_at = i64_from_timestamp(job.run_at)?;
-            let data_json = serialize_json(&job)?;
-            let insert_query = insert_query.clone();
-            let delete_query = delete_query.clone();
-            let client = self.session()?;
-            self.block_on(async move {
-                client
-                    .execute(insert_query.as_str(), &[&job_id, &run_at, &data_json])
-                    .await
-                    .map_err(map_postgres_error)?;
-                client
-                    .execute(delete_query.as_str(), &[&job_id])
-                    .await
-                    .map_err(map_postgres_error)?;
-                Ok(())
-            })?;
-        }
-        self.notification.scheduler_changed = true;
-        Ok(())
+        crate::sql::scheduler_core::sql_recover_running_jobs(self, now)
     }
 
     pub fn apply_durable_records_batch(&mut self, records: &[TenantEventRecord]) -> Result<()> {
@@ -1211,6 +1143,89 @@ impl PostgresWriteTransaction {
                 .map_err(map_postgres_error)?;
             Ok(())
         })
+    }
+}
+
+impl crate::sql::scheduler_core::SqlSchedulerTransaction for PostgresWriteTransaction {
+    fn select_due_jobs(&mut self, now: Timestamp, max_jobs: usize) -> Result<Vec<ScheduledJob>> {
+        // PG claim relies on the per-tenant advisory transaction lock to serialize
+        // claimers, so it omits the `FOR UPDATE` row lock MySQL uses. Dialect lock
+        // mode is load-bearing — not unified with the write core, see CO6.
+        let query = format!(
+            "SELECT data_json FROM {} WHERE run_at <= $1 ORDER BY run_at, id LIMIT $2",
+            qualified_table(&self.schema_name, "scheduled_jobs")
+        );
+        let run_at = claim_due_jobs_upper_bound(now);
+        let max_jobs = i64::try_from(max_jobs).unwrap_or(i64::MAX);
+        let client = self.session()?;
+        self.block_on(async move {
+            let rows = client
+                .query(query.as_str(), &[&run_at, &max_jobs])
+                .await
+                .map_err(map_postgres_error)?;
+            rows.into_iter()
+                .map(|row| deserialize_json::<ScheduledJob>(row.get::<_, String>(0).as_str()))
+                .collect::<Result<Vec<_>>>()
+        })
+    }
+
+    fn move_job_to_running(&mut self, job: &ScheduledJob) -> Result<()> {
+        let delete_query = format!(
+            "DELETE FROM {} WHERE id = $1",
+            qualified_table(&self.schema_name, "scheduled_jobs")
+        );
+        let insert_query = format!(
+            "INSERT INTO {} (id, data_json) VALUES ($1, $2)",
+            qualified_table(&self.schema_name, "running_scheduled_jobs")
+        );
+        let job_id = job.id.to_string();
+        let data_json = serialize_json(job)?;
+        let client = self.session()?;
+        self.block_on(async move {
+            client
+                .execute(delete_query.as_str(), &[&job_id])
+                .await
+                .map_err(map_postgres_error)?;
+            client
+                .execute(insert_query.as_str(), &[&job_id, &data_json])
+                .await
+                .map_err(map_postgres_error)?;
+            Ok(())
+        })
+    }
+
+    fn load_running_jobs(&mut self) -> Result<Vec<ScheduledJob>> {
+        self.load_running_jobs()
+    }
+
+    fn move_job_to_pending(&mut self, job: &ScheduledJob) -> Result<()> {
+        let delete_query = format!(
+            "DELETE FROM {} WHERE id = $1",
+            qualified_table(&self.schema_name, "running_scheduled_jobs")
+        );
+        let insert_query = format!(
+            "INSERT INTO {} (id, run_at, data_json) VALUES ($1, $2, $3)",
+            qualified_table(&self.schema_name, "scheduled_jobs")
+        );
+        let job_id = job.id.to_string();
+        let run_at = i64_from_timestamp(job.run_at)?;
+        let data_json = serialize_json(job)?;
+        let client = self.session()?;
+        self.block_on(async move {
+            client
+                .execute(insert_query.as_str(), &[&job_id, &run_at, &data_json])
+                .await
+                .map_err(map_postgres_error)?;
+            client
+                .execute(delete_query.as_str(), &[&job_id])
+                .await
+                .map_err(map_postgres_error)?;
+            Ok(())
+        })
+    }
+
+    fn mark_scheduler_changed(&mut self) {
+        self.notification.scheduler_changed = true;
     }
 }
 

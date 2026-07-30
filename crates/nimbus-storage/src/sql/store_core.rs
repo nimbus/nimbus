@@ -34,7 +34,7 @@ use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use nimbus_core::{
     CommitEntry, CronJob, Document, DocumentId, Error, IndexDefinition, Result, ScheduledJob,
     ScheduledJobResult, SequenceNumber, TableName, TableSchema, TenantEventRecord, Timestamp,
-    TriggerWriteOrigin,
+    TriggerDeliveryCursor, TriggerInvocationRecord, TriggerWriteOrigin,
 };
 use serde_json::Value;
 use tokio::runtime::Handle as TokioRuntimeHandle;
@@ -144,6 +144,26 @@ pub(crate) trait SqlWriteTransactionCore: SqlWriteBackend {
         expected_previous: SequenceNumber,
         durable_sequence: SequenceNumber,
     ) -> Result<u64>;
+    /// Confirms the lease without advancing the durable sequence. PostgreSQL
+    /// reuses the advancing CAS with an unchanged sequence; MySQL cannot (a
+    /// no-op `UPDATE` reports zero changed rows) and locks the lease row
+    /// instead, so this stays a dialect method rather than a default.
+    fn validate_fenced_committer_lease(
+        &mut self,
+        owner_id: &str,
+        epoch: u64,
+        durable_sequence: SequenceNumber,
+    ) -> Result<u64>;
+
+    // Trigger invocations. Row encoding and upsert syntax are dialect-owned
+    // (`ON CONFLICT ... DO UPDATE` vs `ON DUPLICATE KEY UPDATE`); only the
+    // store-level fencing wrappers below are shared.
+    fn materialize_trigger_invocations(
+        &mut self,
+        records: &[TriggerInvocationRecord],
+        cursor: TriggerDeliveryCursor,
+    ) -> Result<()>;
+    fn save_trigger_invocation(&mut self, record: &TriggerInvocationRecord) -> Result<()>;
 
     // Schema.
     fn replace_table_schema(&mut self, table_schema: &TableSchema) -> Result<()>;
@@ -561,6 +581,81 @@ pub(crate) trait SqlStoreCore: Sized {
     fn recover_running_jobs(&self, now: Timestamp) -> Result<()> {
         self.execute_write(move |transaction| transaction.recover_running_jobs(now))?;
         Ok(())
+    }
+
+    // ------------------------------------------------------ trigger invocations
+
+    fn materialize_trigger_invocations(
+        &self,
+        records: &[TriggerInvocationRecord],
+        cursor: TriggerDeliveryCursor,
+    ) -> Result<()> {
+        let records = records.to_vec();
+        self.execute_write(move |transaction| {
+            transaction.materialize_trigger_invocations(records.as_slice(), cursor)
+        })?;
+        Ok(())
+    }
+
+    fn fenced_materialize_trigger_invocations(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        expected_previous: SequenceNumber,
+        records: &[TriggerInvocationRecord],
+        cursor: TriggerDeliveryCursor,
+    ) -> CommitterLeaseResult<()> {
+        let owner_id = owner_id.to_string();
+        let fenced_owner_id = owner_id.clone();
+        let records = records.to_vec();
+        let durable_sequence = SequenceNumber(expected_previous.0.saturating_add(1));
+        let result = self.execute_write(move |transaction| {
+            if transaction.advance_fenced_committer_lease(
+                &owner_id,
+                epoch,
+                expected_previous,
+                durable_sequence,
+            )? != 1
+            {
+                return Err(Error::PreconditionFailed(
+                    FENCED_COMMITTER_LEASE_MARKER.to_string(),
+                ));
+            }
+            transaction.materialize_trigger_invocations(records.as_slice(), cursor)
+        });
+        map_fenced_write_result(result.map(|_| ()), fenced_owner_id, epoch)
+    }
+
+    fn save_trigger_invocation(&self, record: &TriggerInvocationRecord) -> Result<()> {
+        let record = record.clone();
+        self.execute_write(move |transaction| transaction.save_trigger_invocation(&record))?;
+        Ok(())
+    }
+
+    fn fenced_save_trigger_invocation(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        expected_durable_sequence: SequenceNumber,
+        record: &TriggerInvocationRecord,
+    ) -> CommitterLeaseResult<()> {
+        let owner_id = owner_id.to_string();
+        let fenced_owner_id = owner_id.clone();
+        let record = record.clone();
+        let result = self.execute_write(move |transaction| {
+            if transaction.validate_fenced_committer_lease(
+                &owner_id,
+                epoch,
+                expected_durable_sequence,
+            )? != 1
+            {
+                return Err(Error::PreconditionFailed(
+                    FENCED_COMMITTER_LEASE_MARKER.to_string(),
+                ));
+            }
+            transaction.save_trigger_invocation(&record)
+        });
+        map_fenced_write_result(result.map(|_| ()), fenced_owner_id, epoch)
     }
 
     // ---------------------------------------------------------- execution unit
@@ -1171,6 +1266,39 @@ macro_rules! sql_store_core_facade {
 
             pub fn recover_running_jobs(&self, now: nimbus_core::Timestamp) -> nimbus_core::Result<()> {
                 <Self as crate::sql::store_core::SqlStoreCore>::recover_running_jobs(self, now)
+            }
+
+            pub fn materialize_trigger_invocations(
+                &self,
+                records: &[nimbus_core::TriggerInvocationRecord],
+                cursor: nimbus_core::TriggerDeliveryCursor,
+            ) -> nimbus_core::Result<()> {
+                <Self as crate::sql::store_core::SqlStoreCore>::materialize_trigger_invocations(self, records, cursor)
+            }
+
+            pub fn fenced_materialize_trigger_invocations(
+                &self,
+                owner_id: &str,
+                epoch: u64,
+                expected_previous: nimbus_core::SequenceNumber,
+                records: &[nimbus_core::TriggerInvocationRecord],
+                cursor: nimbus_core::TriggerDeliveryCursor,
+            ) -> crate::traits::CommitterLeaseResult<()> {
+                <Self as crate::sql::store_core::SqlStoreCore>::fenced_materialize_trigger_invocations(self, owner_id, epoch, expected_previous, records, cursor)
+            }
+
+            pub fn save_trigger_invocation(&self, record: &nimbus_core::TriggerInvocationRecord) -> nimbus_core::Result<()> {
+                <Self as crate::sql::store_core::SqlStoreCore>::save_trigger_invocation(self, record)
+            }
+
+            pub fn fenced_save_trigger_invocation(
+                &self,
+                owner_id: &str,
+                epoch: u64,
+                expected_durable_sequence: nimbus_core::SequenceNumber,
+                record: &nimbus_core::TriggerInvocationRecord,
+            ) -> crate::traits::CommitterLeaseResult<()> {
+                <Self as crate::sql::store_core::SqlStoreCore>::fenced_save_trigger_invocation(self, owner_id, epoch, expected_durable_sequence, record)
             }
 
             pub fn apply_execution_unit_batch(

@@ -269,8 +269,10 @@ impl_point_read!(
     MemoryTenantStore,
     TenantReadSnapshot,
     SqliteReadSnapshot,
+    // The PostgreSQL and MySQL stores share one materialized read snapshot
+    // type, so `PostgresReadSnapshot` covers both; listing `MySqlReadSnapshot`
+    // as well would be a duplicate impl for the same type.
     PostgresReadSnapshot,
-    MySqlReadSnapshot,
     MemoryTenantSnapshot,
 );
 
@@ -445,8 +447,10 @@ impl_range_scan!(
     MemoryTenantStore,
     TenantReadSnapshot,
     SqliteReadSnapshot,
+    // The PostgreSQL and MySQL stores share one materialized read snapshot
+    // type, so `PostgresReadSnapshot` covers both; listing `MySqlReadSnapshot`
+    // as well would be a duplicate impl for the same type.
     PostgresReadSnapshot,
-    MySqlReadSnapshot,
     MemoryTenantSnapshot,
 );
 
@@ -560,8 +564,10 @@ macro_rules! impl_resource_path_snapshot {
 impl_resource_path_snapshot!(
     TenantReadSnapshot,
     SqliteReadSnapshot,
+    // The PostgreSQL and MySQL stores share one materialized read snapshot
+    // type, so `PostgresReadSnapshot` covers both; listing `MySqlReadSnapshot`
+    // as well would be a duplicate impl for the same type.
     PostgresReadSnapshot,
-    MySqlReadSnapshot,
     MemoryTenantSnapshot,
 );
 

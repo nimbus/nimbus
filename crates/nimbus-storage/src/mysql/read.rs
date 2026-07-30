@@ -47,6 +47,14 @@ impl MySqlTenantStore {
     }
 
     pub fn read_snapshot(&self) -> Result<MySqlReadSnapshot> {
+        Ok(self.read_snapshot_with_journal_floor()?.0)
+    }
+
+    /// Reads the snapshot together with the durable journal cursor floor,
+    /// captured inside the same `REPEATABLE READ` transaction so the pair is
+    /// consistent. Journal bootstrap needs both; every other read drops the
+    /// floor through [`Self::read_snapshot`].
+    fn read_snapshot_with_journal_floor(&self) -> Result<(MySqlReadSnapshot, SequenceNumber)> {
         let provider = self.provider.clone();
         let database_name = self.database_name.clone();
         self.block_on(async move {
@@ -73,15 +81,17 @@ impl MySqlTenantStore {
             let scheduled_execution_ids =
                 load_scheduled_execution_ids_from_session(&mut transaction, &database_name).await?;
             transaction.commit().await.map_err(map_mysql_error)?;
-            Ok(MySqlReadSnapshot {
-                schema,
-                progress,
+            Ok((
+                MySqlReadSnapshot {
+                    schema,
+                    progress,
+                    table_identities,
+                    documents,
+                    resource_path_bindings,
+                    scheduled_execution_ids,
+                },
                 journal_cursor_floor,
-                table_identities,
-                documents,
-                resource_path_bindings,
-                scheduled_execution_ids,
-            })
+            ))
         })
     }
 
@@ -275,24 +285,14 @@ impl MySqlTenantStore {
     ) -> Result<Vec<Document>> {
         let table_schema = self.load_table_schema(table)?;
         let index_fields = index_fields_for_table_schema(&table_schema, index_name)?;
-        if exact_prefix.len() > index_fields.len() {
-            return Err(Error::InvalidInput(format!(
-                "index prefix length {} exceeds index '{}' field count {}",
-                exact_prefix.len(),
-                index_name,
-                index_fields.len()
-            )));
-        }
-        if (!matches!(start, std::ops::Bound::Unbounded)
-            || !matches!(end, std::ops::Bound::Unbounded))
-            && exact_prefix.len() >= index_fields.len()
-        {
-            return Err(Error::InvalidInput(format!(
-                "composite range prefix length {} leaves no range field for index '{}'",
-                exact_prefix.len(),
-                index_name
-            )));
-        }
+        validate_index_prefix_len(index_name, exact_prefix.len(), index_fields.len())?;
+        validate_index_range_prefix(
+            index_name,
+            exact_prefix.len(),
+            index_fields.len(),
+            start,
+            end,
+        )?;
 
         let provider = self.provider.clone();
         let database_name = self.database_name.clone();
@@ -418,7 +418,14 @@ impl MySqlTenantStore {
     }
 
     pub fn export_durable_journal_bootstrap(&self) -> Result<DurableJournalBootstrap> {
-        self.read_snapshot()?.export_durable_journal_bootstrap()
+        let (snapshot, cursor_floor) = self.read_snapshot_with_journal_floor()?;
+        let snapshot = snapshot.export_materialized_journal_snapshot()?;
+        Ok(DurableJournalBootstrap {
+            resume_after: snapshot.applied_sequence,
+            bootstrap_cut: snapshot.durable_head,
+            snapshot,
+            cursor_floor,
+        })
     }
 
     pub fn export_materialized_journal_snapshot(&self) -> Result<MaterializedJournalSnapshot> {
@@ -625,324 +632,5 @@ impl MySqlTenantStore {
                 (None, None) => None,
             })
         })
-    }
-}
-
-impl MySqlReadSnapshot {
-    pub fn load_schema(&self) -> Result<Schema> {
-        Ok(self.schema.clone())
-    }
-
-    pub fn latest_sequence(&self) -> Result<SequenceNumber> {
-        Ok(self.progress.durable_head)
-    }
-
-    pub fn applied_sequence(&self) -> Result<SequenceNumber> {
-        Ok(self.progress.applied_head)
-    }
-
-    pub fn journal_progress(&self) -> Result<JournalProgress> {
-        Ok(self.progress)
-    }
-
-    pub fn table_identities(&self) -> Result<Vec<crate::TableIdentitySnapshotEntry>> {
-        Ok(self.table_identities.clone())
-    }
-
-    pub fn export_materialized_journal_snapshot(&self) -> Result<MaterializedJournalSnapshot> {
-        Ok(MaterializedJournalSnapshot {
-            version: MATERIALIZED_JOURNAL_SNAPSHOT_VERSION,
-            applied_sequence: self.progress.applied_head,
-            durable_head: self.progress.durable_head,
-            table_identities: self.table_identities.clone(),
-            schema: self.schema.clone(),
-            documents: self.documents.clone(),
-            scheduled_execution_ids: self.scheduled_execution_ids.clone(),
-        })
-    }
-
-    pub fn get(&self, table: &TableName, id: &DocumentId) -> Result<Option<Document>> {
-        Ok(self
-            .documents
-            .iter()
-            .find(|document| &document.table == table && &document.id == id)
-            .cloned())
-    }
-
-    pub fn table_id(&self, table: &TableName) -> Result<Option<TableId>> {
-        Ok(self
-            .table_identities
-            .iter()
-            .find(|identity| {
-                identity.namespace == crate::table_identity::DEFAULT_TABLE_NAMESPACE
-                    && &identity.table == table
-            })
-            .map(|identity| identity.table_id.clone()))
-    }
-
-    pub fn table_identity_diagnostics(
-        &self,
-        backend_layout: crate::TableBackendLayout,
-    ) -> Result<Vec<crate::TableIdentityDiagnostic>> {
-        Ok(self
-            .table_identities
-            .iter()
-            .map(|identity| {
-                let document_count = (identity.namespace
-                    == crate::table_identity::DEFAULT_TABLE_NAMESPACE)
-                    .then(|| {
-                        self.documents
-                            .iter()
-                            .filter(|document| document.table == identity.table)
-                            .count() as u64
-                    });
-                crate::TableIdentityDiagnostic::from_snapshot_entry(
-                    identity,
-                    backend_layout,
-                    document_count,
-                )
-            })
-            .collect())
-    }
-
-    pub fn scan_table_matching_cancellable<F>(
-        &self,
-        table: &TableName,
-        check_cancel: &mut dyn FnMut() -> Result<()>,
-        include_document: F,
-    ) -> Result<Vec<Document>>
-    where
-        F: FnMut(&Document) -> Result<bool>,
-    {
-        self.scan_table_matching_with_filters_cancellable(
-            table,
-            &[],
-            check_cancel,
-            include_document,
-        )
-    }
-
-    pub fn scan_table_matching_with_filters_cancellable<F>(
-        &self,
-        table: &TableName,
-        filters: &[Filter],
-        check_cancel: &mut dyn FnMut() -> Result<()>,
-        mut include_document: F,
-    ) -> Result<Vec<Document>>
-    where
-        F: FnMut(&Document) -> Result<bool>,
-    {
-        let mut documents = Vec::new();
-        for document in self
-            .documents
-            .iter()
-            .filter(|document| &document.table == table)
-        {
-            check_cancel()?;
-            if matches_filters(document, filters)? && include_document(document)? {
-                documents.push(document.clone());
-            }
-        }
-        Ok(documents)
-    }
-
-    pub fn scan_table_id_prefix_cancellable(
-        &self,
-        table: &TableName,
-        id_prefix: &str,
-        check_cancel: &mut dyn FnMut() -> Result<()>,
-    ) -> Result<Vec<Document>> {
-        let mut documents = Vec::new();
-        for document in self
-            .documents
-            .iter()
-            .filter(|document| &document.table == table)
-        {
-            check_cancel()?;
-            if document.id.as_str().starts_with(id_prefix) {
-                documents.push(document.clone());
-            }
-        }
-        Ok(documents)
-    }
-
-    pub fn scan_table_id_starting_at_cancellable(
-        &self,
-        table: &TableName,
-        start_id: &str,
-        limit: usize,
-        check_cancel: &mut dyn FnMut() -> Result<()>,
-    ) -> Result<Vec<Document>> {
-        let mut documents = Vec::new();
-        for document in self
-            .documents
-            .iter()
-            .filter(|document| &document.table == table)
-            .filter(|document| document.id.as_str() >= start_id)
-            .take(limit)
-        {
-            check_cancel()?;
-            documents.push(document.clone());
-        }
-        Ok(documents)
-    }
-
-    pub fn index_scan_eq_cancellable(
-        &self,
-        table: &TableName,
-        index_name: &str,
-        value: &Value,
-        check_cancel: &mut dyn FnMut() -> Result<()>,
-    ) -> Result<Vec<Document>> {
-        self.index_scan_prefix_cancellable(
-            table,
-            index_name,
-            std::slice::from_ref(value),
-            check_cancel,
-        )
-    }
-
-    pub fn index_scan_prefix_cancellable(
-        &self,
-        table: &TableName,
-        index_name: &str,
-        prefix_values: &[Value],
-        check_cancel: &mut dyn FnMut() -> Result<()>,
-    ) -> Result<Vec<Document>> {
-        let index_fields = self.index_fields(table, index_name)?;
-        if prefix_values.len() > index_fields.len() {
-            return Err(Error::InvalidInput(format!(
-                "index prefix length {} exceeds index '{}' field count {}",
-                prefix_values.len(),
-                index_name,
-                index_fields.len()
-            )));
-        }
-        self.filter_index_documents(
-            table,
-            &index_fields,
-            prefix_values,
-            std::ops::Bound::Unbounded,
-            std::ops::Bound::Unbounded,
-            check_cancel,
-        )
-    }
-
-    pub fn index_scan_range_cancellable(
-        &self,
-        table: &TableName,
-        index_name: &str,
-        start: IndexRangeBound<'_>,
-        end: IndexRangeBound<'_>,
-        check_cancel: &mut dyn FnMut() -> Result<()>,
-    ) -> Result<Vec<Document>> {
-        let index_fields = self.index_fields(table, index_name)?;
-        self.filter_index_documents(table, &index_fields, &[], start, end, check_cancel)
-    }
-
-    pub fn index_scan_composite_range_cancellable(
-        &self,
-        table: &TableName,
-        index_name: &str,
-        exact_prefix: &[Value],
-        start: IndexRangeBound<'_>,
-        end: IndexRangeBound<'_>,
-        check_cancel: &mut dyn FnMut() -> Result<()>,
-    ) -> Result<Vec<Document>> {
-        let index_fields = self.index_fields(table, index_name)?;
-        if exact_prefix.len() >= index_fields.len() {
-            return Err(Error::InvalidInput(format!(
-                "composite range prefix length {} leaves no range field for index '{}'",
-                exact_prefix.len(),
-                index_name
-            )));
-        }
-        self.filter_index_documents(table, &index_fields, exact_prefix, start, end, check_cancel)
-    }
-
-    pub fn stream_durable_journal(
-        &self,
-        after: SequenceNumber,
-        limit: usize,
-    ) -> Result<DurableJournalPage> {
-        validate_durable_journal_stream_limit(limit)?;
-        let latest_sequence = self.latest_sequence()?;
-        if after.0 < self.journal_cursor_floor.0 {
-            return Err(Error::InvalidInput(format!(
-                "journal cursor {} is behind the retention floor {}",
-                after.0, self.journal_cursor_floor.0
-            )));
-        }
-        if after.0 > latest_sequence.0 {
-            return Err(Error::InvalidInput(format!(
-                "journal cursor {} is ahead of the latest durable sequence {}",
-                after.0, latest_sequence.0
-            )));
-        }
-        Ok(DurableJournalPage {
-            records: Vec::new(),
-            next_cursor: after,
-            latest_sequence,
-            cursor_floor: self.journal_cursor_floor,
-            has_more: false,
-        })
-    }
-
-    pub fn export_durable_journal_bootstrap(&self) -> Result<DurableJournalBootstrap> {
-        let snapshot = self.export_materialized_journal_snapshot()?;
-        Ok(DurableJournalBootstrap {
-            resume_after: snapshot.applied_sequence,
-            bootstrap_cut: snapshot.durable_head,
-            snapshot,
-            cursor_floor: self.journal_cursor_floor,
-        })
-    }
-
-    fn index_fields(&self, table: &TableName, index_name: &str) -> Result<Vec<String>> {
-        let table_schema = self
-            .schema
-            .get_table(table)
-            .ok_or_else(|| Error::SchemaNotFound(table.clone()))?;
-        let index = table_schema
-            .queryable_indexes()
-            .find(|index| index.name == index_name)
-            .ok_or_else(|| {
-                Error::InvalidInput(format!(
-                    "index '{}' not found for table '{}'",
-                    index_name,
-                    table.as_str()
-                ))
-            })?;
-        Ok(index.fields.clone())
-    }
-
-    fn filter_index_documents(
-        &self,
-        table: &TableName,
-        index_fields: &[String],
-        exact_prefix: &[Value],
-        start: IndexRangeBound<'_>,
-        end: IndexRangeBound<'_>,
-        check_cancel: &mut dyn FnMut() -> Result<()>,
-    ) -> Result<Vec<Document>> {
-        let range_field = index_fields.get(exact_prefix.len());
-        let mut documents = Vec::new();
-        for document in self
-            .documents
-            .iter()
-            .filter(|document| &document.table == table)
-        {
-            check_cancel()?;
-            if !document_matches_exact_prefix(document, index_fields, exact_prefix) {
-                continue;
-            }
-            if let Some(range_field) = range_field
-                && !document_matches_range_bounds(document, range_field, start, end)?
-            {
-                continue;
-            }
-            documents.push(document.clone());
-        }
-        Ok(documents)
     }
 }

@@ -8,13 +8,12 @@ use deadpool_postgres::{
     Runtime,
 };
 use nimbus_core::{
-    CommitEntry, CronJob, Document, DocumentId, Error, FieldType, Filter, HistoricalIndexCursor,
-    HistoricalIndexTuple, HistoricalReadShape, IdSource, IndexDefinition, IndexLifecycleEvent,
-    ResourcePathBinding, Result, ScheduledJob, ScheduledJobResult, Schema, SchemaChangeEvent,
-    SequenceNumber, StorageErrorKind, SystemIdSource, SystemWallClock, TableId,
-    TableLifecycleEvent, TableName, TableSchema, TableState, TenantEventKind, TenantEventRecord,
-    TenantId, Timestamp, TriggerDeliveryCursor, TriggerWriteOrigin, WallClock, WriteOp,
-    WriteOpType,
+    CommitEntry, CronJob, Document, DocumentId, Error, FieldType, Filter, HistoricalIndexTuple,
+    HistoricalReadShape, IdSource, IndexDefinition, ResourcePathBinding, Result, ScheduledJob,
+    ScheduledJobResult, Schema, SchemaChangeEvent, SequenceNumber, StorageErrorKind,
+    SystemIdSource, SystemWallClock, TableId, TableLifecycleEvent, TableName, TableSchema,
+    TableState, TenantEventKind, TenantEventRecord, TenantId, Timestamp, TriggerDeliveryCursor,
+    TriggerWriteOrigin, WallClock, WriteOp, WriteOpType,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -55,7 +54,6 @@ mod trigger_delivery;
 mod trigger_invocations;
 mod write;
 mod write_pipeline;
-mod write_schema_events;
 
 use self::backend::*;
 pub use self::config::PostgresProviderConfig;
@@ -74,8 +72,6 @@ use self::table_catalog::*;
 const POSTGRES_IDENTIFIER_LIMIT: usize = 63;
 const TARGET_TENANT_HASH_HEX_LEN: usize = 40;
 const MIN_TENANT_HASH_HEX_LEN: usize = 16;
-const MATERIALIZED_JOURNAL_SNAPSHOT_VERSION: u16 =
-    crate::store::MATERIALIZED_JOURNAL_SNAPSHOT_VERSION;
 const MIN_POSTGRES_READ_PARALLELISM: usize = 2;
 const POSTGRES_TENANT_WRITE_PARALLELISM: usize = 1;
 const APPLIED_SEQUENCE_KEY: &str = "applied_sequence";
@@ -121,15 +117,10 @@ pub struct PostgresTenantStore {
     pub(crate) retention_floor: Arc<RetentionFloor>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct PostgresReadSnapshot {
-    schema: Schema,
-    progress: JournalProgress,
-    table_identities: Vec<crate::TableIdentitySnapshotEntry>,
-    documents: Vec<Document>,
-    resource_path_bindings: Vec<ResourcePathBinding>,
-    scheduled_execution_ids: Vec<String>,
-}
+/// PostgreSQL's materialized read snapshot. Once the rows are loaded there is
+/// nothing dialect-specific left, so the type and every accessor on it are
+/// shared with MySQL; only the transaction that fills it stays per-backend.
+pub type PostgresReadSnapshot = crate::sql::read_snapshot::SqlReadSnapshot;
 
 #[derive(Clone)]
 pub struct PostgresTenantStorage {
