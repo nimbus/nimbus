@@ -8,6 +8,7 @@
 //! it ([`store_core`]). Dialect-load-bearing logic (placeholder style,
 //! lock/retry order, notifications) stays in each backend's own `write.rs`.
 
+pub(crate) mod commit_effects;
 pub(crate) mod row;
 pub(crate) mod store_core;
 pub(crate) mod write_core;
