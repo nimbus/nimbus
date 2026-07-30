@@ -195,13 +195,111 @@ fn unrecognized_client() -> DynamoDbError {
     )
 }
 
-/// Build the tenant isolation context for a DynamoDB request scoped to `tenant`.
+/// Claim naming the SigV4 access-key id a request authenticated with. A table
+/// access policy writes `PrincipalClaim { principal: Identity, claim:
+/// "aws_access_key_id" }` against it to name a specific DynamoDB caller.
+pub const ACCESS_KEY_CLAIM: &str = "aws_access_key_id";
+
+/// Claim under which the caller's bound tenant is recorded. `nimbus-tenant`
+/// reads it back through `require_matching_principal_claim`, so a principal can
+/// never be paired with a context for a different tenant.
+const TENANT_CLAIM: &str = "tenant_id";
+
+/// The principal for a request authenticated as `access_key_id`, bound to
+/// `tenant`.
 ///
-/// The principal is `system` — the adapter has already authenticated the request
-/// by access key (D0.5/D7) before scoping the engine call to this tenant.
+/// The access-key id is the only caller identity a DynamoDB request carries, so
+/// it is what the principal asserts — mirroring the MongoDB adapter, which
+/// builds its principal from the SCRAM username. The bound tenant goes in
+/// `verified_claims` because the registry established it, not the client.
 #[must_use]
-pub fn tenant_context(tenant: TenantId, surface: &'static str) -> TenantIsolationContext {
-    TenantIsolationContext::application(tenant, PrincipalContext::system(), surface)
+pub fn access_key_principal(access_key_id: &str, tenant: &TenantId) -> PrincipalContext {
+    let mut claims = serde_json::Map::new();
+    let subject = serde_json::Value::String(access_key_id.to_owned());
+    claims.insert("subject".to_owned(), subject.clone());
+    claims.insert("sub".to_owned(), subject.clone());
+    claims.insert(ACCESS_KEY_CLAIM.to_owned(), subject);
+    claims.insert(
+        "provider".to_owned(),
+        serde_json::Value::String("dynamodb".to_owned()),
+    );
+
+    let verified_claims = serde_json::Map::from_iter([(
+        TENANT_CLAIM.to_owned(),
+        serde_json::Value::String(tenant.as_str().to_owned()),
+    )]);
+
+    PrincipalContext {
+        authenticated: true,
+        claims,
+        verified_claims,
+    }
+}
+
+/// Build the tenant isolation context for an authenticated DynamoDB request.
+///
+/// The context carries the *caller* — the access key the request authenticated
+/// with — so every engine call the adapter makes on the caller's behalf is
+/// authorized as that caller rather than as Nimbus itself.
+///
+/// # Errors
+/// `AccessDeniedException` if the principal's bound tenant is not the tenant
+/// being scoped to. Callers build both from the same registry binding, so this
+/// is an enforced internal invariant rather than a reachable client error.
+pub fn request_context(
+    tenant: TenantId,
+    principal: PrincipalContext,
+    surface: &'static str,
+) -> Result<TenantIsolationContext, DynamoDbError> {
+    let context = TenantIsolationContext::application(tenant, principal, surface);
+    context
+        .require_matching_principal_claim("DynamoDB request")
+        .map_err(map_core_error)?;
+    Ok(context)
+}
+
+/// Build the tenant isolation context for adapter-owned background work with no
+/// caller — today only the TTL sweeper, which expires items on a schedule the
+/// tenant configured rather than on anyone's request.
+#[must_use]
+pub fn maintenance_context(tenant: TenantId, surface: &'static str) -> TenantIsolationContext {
+    TenantIsolationContext::system(tenant, surface)
+}
+
+/// The principal to run an engine call on user data under.
+///
+/// A request context yields its caller; a maintenance context has none, so its
+/// work runs as `system` — the sweeper must be able to expire items regardless
+/// of the table's access policy.
+#[must_use]
+pub fn caller_principal(context: &TenantIsolationContext) -> PrincipalContext {
+    context
+        .application_principal()
+        .cloned()
+        .unwrap_or_else(PrincipalContext::system)
+}
+
+/// The principal for the adapter's own reserved stores — the `_ddb_catalog`
+/// table metadata, `_ddb_ttl` configuration, `_ddb_tags`, the `_ddb_stream_*`
+/// sidecars, and the `_nimbus_ddb_system` access-key store.
+///
+/// Those rows are the adapter's, not the caller's: client requests cannot name
+/// the tables, and control-plane bookkeeping must not become answerable to a
+/// user-authored access policy. They run as `system` explicitly rather than
+/// inheriting whatever principal happens to be at hand.
+#[must_use]
+pub fn adapter_principal() -> PrincipalContext {
+    PrincipalContext::system()
+}
+
+/// A request context for in-crate tests, shaped exactly like a live request:
+/// application authority carrying an access-key principal bound to `tenant`.
+/// Tests use it so command handlers run the same authorization path production
+/// does, instead of the permissive system authority.
+#[cfg(test)]
+pub(crate) fn test_context(tenant: TenantId, surface: &'static str) -> TenantIsolationContext {
+    let principal = access_key_principal("AKIATEST", &tenant);
+    request_context(tenant, principal, surface).expect("test principal is bound to its own tenant")
 }
 
 /// Ensure the context's tenant runtime is ready (idempotent), mapping engine
@@ -326,8 +424,8 @@ mod tests {
     }
 
     #[test]
-    fn tenant_context_scopes_to_the_bound_tenant() {
-        let context = tenant_context(tenant("acme"), "DynamoDB test");
+    fn request_context_scopes_to_the_bound_tenant() {
+        let context = test_context(tenant("acme"), "DynamoDB test");
         assert_eq!(context.tenant_id().as_str(), "acme");
         // A request for a different tenant must be rejected by the context guard.
         assert!(
@@ -338,10 +436,49 @@ mod tests {
     }
 
     #[test]
+    fn request_context_carries_the_calling_access_key() {
+        // The whole point of the request context: engine calls made on this
+        // request's behalf are authorized as the access key, not as Nimbus.
+        let context = request_context(
+            tenant("acme"),
+            access_key_principal("AKIAACME", &tenant("acme")),
+            "DynamoDB test",
+        )
+        .expect("principal is bound to its own tenant");
+        let principal = caller_principal(&context);
+        assert!(principal.authenticated);
+        assert_eq!(
+            principal.claims.get(ACCESS_KEY_CLAIM),
+            Some(&serde_json::Value::String("AKIAACME".to_owned()))
+        );
+        assert_ne!(principal, PrincipalContext::system());
+    }
+
+    #[test]
+    fn request_context_refuses_a_principal_bound_to_another_tenant() {
+        // Defense in depth against a mis-wired call site: the principal's
+        // registry-established tenant must equal the context's tenant.
+        let error = request_context(
+            tenant("acme"),
+            access_key_principal("AKIAGLOBEX", &tenant("globex")),
+            "DynamoDB test",
+        )
+        .expect_err("mismatched tenant must be refused");
+        assert!(matches!(error, DynamoDbError::AccessDeniedException(_)));
+    }
+
+    #[test]
+    fn maintenance_context_has_no_caller_and_runs_as_system() {
+        let context = maintenance_context(tenant("acme"), "ttl-sweeper");
+        assert_eq!(context.application_principal(), None);
+        assert_eq!(caller_principal(&context), PrincipalContext::system());
+    }
+
+    #[test]
     fn ensure_tenant_is_idempotent() {
         let temp = tempfile::tempdir().expect("tempdir");
         let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
-        let context = tenant_context(tenant("acme"), "DynamoDB test");
+        let context = test_context(tenant("acme"), "DynamoDB test");
         ensure_tenant(&engine, &context).expect("first create");
         ensure_tenant(&engine, &context).expect("idempotent second create");
     }

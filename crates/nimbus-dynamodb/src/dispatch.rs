@@ -34,7 +34,8 @@ use crate::commands::{batch, control_plane, discovery, item, query, stream, tag,
 use crate::error::map_core_error;
 use crate::key_management;
 use crate::tenant::{
-    AccessKeyRegistry, AuthMode, ensure_tenant, ensure_tenant_async, tenant_context,
+    AccessKeyRegistry, AuthMode, access_key_principal, ensure_tenant, ensure_tenant_async,
+    request_context,
 };
 use crate::wire::{self, WireResponse};
 
@@ -284,7 +285,10 @@ fn finish_authentication(
         verify::verify_signature(parsed, &secret, "POST", "/", "", headers, body)?;
     }
 
-    Ok(tenant_context(tenant, DISPATCH_SURFACE))
+    // The authenticated access key is the caller. Everything a handler does on
+    // this request's behalf runs as that caller, not as Nimbus.
+    let principal = access_key_principal(&parsed.access_key_id, &tenant);
+    request_context(tenant, principal, DISPATCH_SURFACE)
 }
 
 /// Resolve an access-key id to its `(tenant, secret)` binding. The static

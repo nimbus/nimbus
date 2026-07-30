@@ -12,12 +12,13 @@ use extenddb_core::types::{
     ListTagsOfResourceInput, ListTagsOfResourceOutput, Tag, TagResourceInput, UntagResourceInput,
 };
 use nimbus_core::{DocumentId, TableName};
-use nimbus_engine::Engine;
+use nimbus_engine::{Engine, MutationActor};
 use nimbus_tenant::TenantIsolationContext;
 use serde_json::{Map, Value};
 
 use crate::commands::control_plane;
 use crate::error::map_core_error;
+use crate::tenant::adapter_principal;
 
 /// Reserved table holding one tag-set doc per table (doc id = table name).
 const TAGS_TABLE: &str = "_ddb_tags";
@@ -41,7 +42,12 @@ pub(crate) fn reclaim_for_table(
     context: &TenantIsolationContext,
     table_name: &str,
 ) -> Result<(), DynamoDbError> {
-    match engine.delete_document(context.tenant_id(), tags_table()?, tags_id(table_name)?) {
+    match engine.delete_document_with(
+        context.tenant_id(),
+        tags_table()?,
+        tags_id(table_name)?,
+        MutationActor::with_principal(&adapter_principal()),
+    ) {
         Ok(()) | Err(nimbus_core::Error::NotFound(_) | nimbus_core::Error::DocumentNotFound(_)) => {
             Ok(())
         }
@@ -64,7 +70,12 @@ fn load_tags(
     context: &TenantIsolationContext,
     table_name: &str,
 ) -> Result<Vec<Tag>, DynamoDbError> {
-    match engine.get_document(context.tenant_id(), &tags_table()?, tags_id(table_name)?) {
+    match engine.get_document_with_principal(
+        context.tenant_id(),
+        &tags_table()?,
+        tags_id(table_name)?,
+        &adapter_principal(),
+    ) {
         Ok(document) => {
             let raw = document.fields.get("tags").cloned().unwrap_or(Value::Null);
             if raw.is_null() {
@@ -97,15 +108,28 @@ fn store_tags(
             DynamoDbError::InternalServerError(format!("failed to serialize tags: {error}"))
         })?,
     );
-    match engine.get_document(context.tenant_id(), &table, id.clone()) {
+    let principal = adapter_principal();
+    match engine.get_document_with_principal(context.tenant_id(), &table, id.clone(), &principal) {
         Ok(_) => {
             engine
-                .update_document(context.tenant_id(), table, id, fields)
+                .update_document_with(
+                    context.tenant_id(),
+                    table,
+                    id,
+                    fields,
+                    MutationActor::with_principal(&principal),
+                )
                 .map_err(map_core_error)?;
         }
         Err(nimbus_core::Error::NotFound(_) | nimbus_core::Error::DocumentNotFound(_)) => {
             engine
-                .insert_document_with_id(context.tenant_id(), table, id, fields)
+                .insert_document_with(
+                    context.tenant_id(),
+                    table,
+                    Some(id),
+                    fields,
+                    MutationActor::with_principal(&principal),
+                )
                 .map_err(map_core_error)?;
         }
         Err(error) => return Err(map_core_error(error)),
@@ -222,7 +246,7 @@ mod tests {
     fn fixture() -> (Arc<Engine>, TenantIsolationContext, tempfile::TempDir) {
         let temp = tempfile::tempdir().expect("tempdir");
         let engine = Arc::new(Engine::new(temp.path()).expect("engine"));
-        let context = crate::tenant::tenant_context(TenantId::new("acme").unwrap(), "test");
+        let context = crate::tenant::test_context(TenantId::new("acme").unwrap(), "test");
         crate::tenant::ensure_tenant(&engine, &context).expect("tenant");
         (engine, context, temp)
     }
@@ -396,8 +420,8 @@ mod tests {
     #[test]
     fn tags_are_tenant_isolated() {
         let (engine, _ctx, _t) = fixture();
-        let acme = crate::tenant::tenant_context(TenantId::new("acme").unwrap(), "test");
-        let globex = crate::tenant::tenant_context(TenantId::new("globex").unwrap(), "test");
+        let acme = crate::tenant::test_context(TenantId::new("acme").unwrap(), "test");
+        let globex = crate::tenant::test_context(TenantId::new("globex").unwrap(), "test");
         crate::tenant::ensure_tenant(&engine, &acme).expect("acme");
         crate::tenant::ensure_tenant(&engine, &globex).expect("globex");
         let acme_arn = create_table(&engine, &acme, "Orders");

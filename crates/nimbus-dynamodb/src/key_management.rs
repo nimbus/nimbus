@@ -22,13 +22,13 @@ use std::sync::Arc;
 
 use extenddb_core::error::DynamoDbError;
 use nimbus_core::{DocumentId, StructuredQuery, TableName, TenantId};
-use nimbus_engine::Engine;
+use nimbus_engine::{Engine, MutationActor};
 use nimbus_tenant::TenantIsolationContext;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::map_core_error;
-use crate::tenant::{ensure_tenant, ensure_tenant_async, tenant_context};
+use crate::tenant::{adapter_principal, ensure_tenant, ensure_tenant_async, maintenance_context};
 
 /// Reserved system tenant that owns the global access-key store.
 const KEY_STORE_TENANT: &str = "_nimbus_ddb_system";
@@ -74,8 +74,11 @@ impl RedactedAccessKey {
     }
 }
 
+/// The key store is Nimbus's own, in a reserved tenant no access key can bind
+/// to, and it is read on the authentication path *before* any caller identity
+/// exists. It is therefore system-authority work, never a caller's.
 fn store_context() -> Result<TenantIsolationContext, DynamoDbError> {
-    Ok(tenant_context(
+    Ok(maintenance_context(
         TenantId::new(KEY_STORE_TENANT).map_err(map_core_error)?,
         KEY_STORE_SURFACE,
     ))
@@ -107,16 +110,28 @@ fn write_record(
             ));
         }
     };
+    let principal = adapter_principal();
     if engine
-        .get_document(context.tenant_id(), &table, id.clone())
+        .get_document_with_principal(context.tenant_id(), &table, id.clone(), &principal)
         .is_ok()
     {
         engine
-            .delete_document(context.tenant_id(), table.clone(), id.clone())
+            .delete_document_with(
+                context.tenant_id(),
+                table.clone(),
+                id.clone(),
+                MutationActor::with_principal(&principal),
+            )
             .map_err(map_core_error)?;
     }
     engine
-        .insert_document_with_id(context.tenant_id(), table, id, fields)
+        .insert_document_with(
+            context.tenant_id(),
+            table,
+            Some(id),
+            fields,
+            MutationActor::with_principal(&principal),
+        )
         .map_err(map_core_error)?;
     Ok(())
 }
@@ -206,9 +221,15 @@ pub fn delete_access_key(engine: &Arc<Engine>, access_key_id: &str) -> Result<()
     let context = store_context()?;
     let table = store_table()?;
     let id = key_id(access_key_id)?;
-    match engine.get_document(context.tenant_id(), &table, id.clone()) {
+    let principal = adapter_principal();
+    match engine.get_document_with_principal(context.tenant_id(), &table, id.clone(), &principal) {
         Ok(_) => engine
-            .delete_document(context.tenant_id(), table, id)
+            .delete_document_with(
+                context.tenant_id(),
+                table,
+                id,
+                MutationActor::with_principal(&principal),
+            )
             .map_err(map_core_error),
         Err(
             nimbus_core::Error::NotFound(_)
@@ -229,7 +250,12 @@ pub fn lookup(
     access_key_id: &str,
 ) -> Result<Option<StoredAccessKey>, DynamoDbError> {
     let context = store_context()?;
-    match engine.get_document(context.tenant_id(), &store_table()?, key_id(access_key_id)?) {
+    match engine.get_document_with_principal(
+        context.tenant_id(),
+        &store_table()?,
+        key_id(access_key_id)?,
+        &adapter_principal(),
+    ) {
         Ok(document) => {
             let record = serde_json::from_value(Value::Object(document.fields.clone())).map_err(
                 |error| DynamoDbError::InternalServerError(format!("corrupt access key: {error}")),
@@ -294,10 +320,11 @@ pub fn list_access_keys(
     engine: &Arc<Engine>,
 ) -> Result<Vec<(String, RedactedAccessKey)>, DynamoDbError> {
     let context = store_context()?;
-    let documents = match engine.query_documents_structured(
+    let documents = match engine.query_documents_structured_with_principal(
         context.tenant_id(),
         &store_table()?,
         &StructuredQuery::default(),
+        &adapter_principal(),
     ) {
         Ok(documents) => documents,
         Err(

@@ -31,6 +31,7 @@ use crate::expression::{
     parse_key_condition_expression, project_item,
 };
 use crate::key::{encode_key, sortable_key};
+use crate::tenant::caller_principal;
 
 /// Query a single partition with an optional sort-key range.
 ///
@@ -399,10 +400,11 @@ pub(crate) fn enumerate(
     context: &TenantIsolationContext,
     table: &TableName,
 ) -> Result<Vec<Item>, DynamoDbError> {
-    let documents = match engine.query_documents_structured(
+    let documents = match engine.query_documents_structured_with_principal(
         context.tenant_id(),
         table,
         &StructuredQuery::default(),
+        &caller_principal(context),
     ) {
         Ok(documents) => documents,
         Err(nimbus_core::Error::NotFound(_) | nimbus_core::Error::DocumentNotFound(_)) => {
@@ -441,6 +443,7 @@ fn enumerate_query_partition(
             context.tenant_id(),
             table,
             &id_prefix,
+            &caller_principal(context),
             &mut || Ok(()),
         )
         .map_err(map_core_error)?;

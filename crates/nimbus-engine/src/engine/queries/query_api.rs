@@ -8,6 +8,7 @@ use nimbus_core::{
     TableId, TableName, TenantId,
 };
 
+use super::authorization::ReadAuthorization;
 use super::materialized::{
     evaluate_with_materialized_surface_async_prepared,
     evaluate_with_materialized_surface_cancellable_prepared,
@@ -269,22 +270,42 @@ impl Engine {
         }
     }
 
-    /// Reads documents whose `DocumentId` begins with `id_prefix`.
+    /// Reads the documents whose `DocumentId` begins with `id_prefix` that
+    /// `principal` is allowed to read.
+    ///
+    /// The prefix selects a contiguous id range rather than evaluating a query,
+    /// so the table's read rule is applied to the scanned documents here. There
+    /// is no result limit, so filtering cannot truncate a page.
     pub fn scan_documents_by_id_prefix_cancellable(
         &self,
         tenant_id: &TenantId,
         table: &TableName,
         id_prefix: &str,
+        principal: &PrincipalContext,
         check_cancel: &mut dyn FnMut() -> Result<()>,
     ) -> Result<Vec<Document>> {
         let LoadedQueryRuntime { runtime, .. } = load_query_runtime(self, tenant_id)?;
         let _operation = runtime.enter_operation(tenant_id)?;
+        let schema = runtime.schema();
+        let authorization = ReadAuthorization::for_table(schema.get_table(table), principal)?;
+        if authorization.impossible {
+            return Ok(Vec::new());
+        }
         let documents =
             runtime
                 .store()
                 .scan_table_id_prefix_cancellable(table, id_prefix, check_cancel)?;
         runtime.cache_documents(&documents);
-        Ok(documents)
+        documents
+            .into_iter()
+            .filter_map(
+                |document| match authorization.allows_document(principal, &document) {
+                    Ok(true) => Some(Ok(document)),
+                    Ok(false) => None,
+                    Err(error) => Some(Err(error)),
+                },
+            )
+            .collect()
     }
 
     /// Reads at most `limit` documents from `table` whose `DocumentId` is at or

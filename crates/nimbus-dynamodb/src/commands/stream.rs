@@ -19,10 +19,10 @@ use extenddb_core::types::{
     UserIdentity,
 };
 use nimbus_core::{
-    AtomicWrite, AtomicWriteBatch, DocumentId, DocumentLocator, PrincipalContext, StructuredQuery,
-    TableName, WriteKey, WritePrecondition, WriteSetMode,
+    AtomicWrite, AtomicWriteBatch, DocumentId, DocumentLocator, StructuredQuery, TableName,
+    WriteKey, WritePrecondition, WriteSetMode,
 };
-use nimbus_engine::Engine;
+use nimbus_engine::{Engine, MutationActor};
 use nimbus_tenant::TenantIsolationContext;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -30,6 +30,7 @@ use serde_json::{Map, Value};
 use crate::attribute_value::{fields_to_item, item_to_fields};
 use crate::commands::{control_plane, item};
 use crate::error::map_core_error;
+use crate::tenant::{adapter_principal, caller_principal};
 
 /// A captured change event, persisted as one document in the stream store. Keys
 /// and images are stored in AttributeValue wire-JSON (like data items).
@@ -88,10 +89,12 @@ fn delete_all(
     context: &TenantIsolationContext,
     table: &TableName,
 ) -> Result<(), DynamoDbError> {
-    let documents = match engine.query_documents_structured(
+    let principal = adapter_principal();
+    let documents = match engine.query_documents_structured_with_principal(
         context.tenant_id(),
         table,
         &StructuredQuery::default(),
+        &principal,
     ) {
         Ok(documents) => documents,
         Err(nimbus_core::Error::NotFound(_) | nimbus_core::Error::DocumentNotFound(_)) => {
@@ -101,7 +104,12 @@ fn delete_all(
     };
     for document in documents {
         engine
-            .delete_document(context.tenant_id(), table.clone(), document.id)
+            .delete_document_with(
+                context.tenant_id(),
+                table.clone(),
+                document.id,
+                MutationActor::with_principal(&principal),
+            )
             .map_err(map_core_error)?;
     }
     Ok(())
@@ -131,10 +139,11 @@ pub(crate) fn next_sequence_value(
     context: &TenantIsolationContext,
     table_name: &str,
 ) -> Result<i64, DynamoDbError> {
-    match engine.get_document(
+    match engine.get_document_with_principal(
         context.tenant_id(),
         &stream_seq_table(table_name)?,
         seq_counter_id()?,
+        &adapter_principal(),
     ) {
         Ok(document) => Ok(document
             .fields
@@ -161,15 +170,28 @@ fn set_sequence_value(
     let id = seq_counter_id()?;
     let mut fields = Map::new();
     fields.insert("next".to_owned(), Value::from(next));
-    match engine.get_document(context.tenant_id(), &table, id.clone()) {
+    let principal = adapter_principal();
+    match engine.get_document_with_principal(context.tenant_id(), &table, id.clone(), &principal) {
         Ok(_) => {
             engine
-                .update_document(context.tenant_id(), table, id, fields)
+                .update_document_with(
+                    context.tenant_id(),
+                    table,
+                    id,
+                    fields,
+                    MutationActor::with_principal(&principal),
+                )
                 .map_err(map_core_error)?;
         }
         Err(nimbus_core::Error::NotFound(_) | nimbus_core::Error::DocumentNotFound(_)) => {
             engine
-                .insert_document_with_id(context.tenant_id(), table, id, fields)
+                .insert_document_with(
+                    context.tenant_id(),
+                    table,
+                    Some(id),
+                    fields,
+                    MutationActor::with_principal(&principal),
+                )
                 .map_err(map_core_error)?;
         }
         Err(error) => return Err(map_core_error(error)),
@@ -418,7 +440,7 @@ where
         }
         let batch = AtomicWriteBatch::new(writes).map_err(map_core_error)?;
         match engine
-            .begin_mutation_execution_unit(context.tenant_id().clone(), PrincipalContext::system())
+            .begin_mutation_execution_unit(context.tenant_id().clone(), caller_principal(context))
             .map_err(map_core_error)?
             .execute_atomic_write_batch(batch)
         {
@@ -448,7 +470,7 @@ fn stage_base_writes(
     }
     let batch = AtomicWriteBatch::new(base_writes)?;
     engine
-        .begin_mutation_execution_unit(context.tenant_id().clone(), PrincipalContext::system())?
+        .begin_mutation_execution_unit(context.tenant_id().clone(), caller_principal(context))?
         .stage_atomic_write_batch(batch)?;
     Ok(())
 }
@@ -610,7 +632,7 @@ fn reclaim_expired_events(
     }
     let batch = AtomicWriteBatch::new(writes).map_err(map_core_error)?;
     engine
-        .begin_mutation_execution_unit(context.tenant_id().clone(), PrincipalContext::system())
+        .begin_mutation_execution_unit(context.tenant_id().clone(), adapter_principal())
         .map_err(map_core_error)?
         .execute_atomic_write_batch(batch)
         .map_err(map_core_error)?;

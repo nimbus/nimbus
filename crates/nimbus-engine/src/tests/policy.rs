@@ -466,3 +466,95 @@ async fn policy_revision_changes_terminate_active_authorized_subscriptions() {
         0
     );
 }
+
+/// The id-prefix scan reads the store directly rather than going through the
+/// query planner, so it has to apply `ReadAuthorization` itself. The DynamoDB
+/// adapter drives every Query over a partition through it; before this filter
+/// existed, a table read policy was simply absent on that path.
+#[test]
+fn engine_read_policy_filters_the_id_prefix_scan() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let table = messages_table("messages_prefix");
+
+    engine
+        .set_table_schema(
+            &tenant_id,
+            messages_schema(
+                "messages_prefix",
+                Vec::new(),
+                Some(read_only_owner_policy()),
+            ),
+        )
+        .expect("schema should save");
+
+    for (id, owner, body) in [
+        ("part-a#1", "user-123", "Ada"),
+        ("part-a#2", "user-456", "Grace"),
+        ("part-b#1", "user-123", "Hedy"),
+    ] {
+        engine
+            .insert_document_with_id(
+                &tenant_id,
+                table.clone(),
+                DocumentId::from_key(id).expect("document id should be valid"),
+                serde_json::Map::from_iter([
+                    ("owner".to_string(), json!(owner)),
+                    ("body".to_string(), json!(body)),
+                ]),
+            )
+            .expect("fixture insert should succeed");
+    }
+
+    // Within the scanned prefix the owner sees only their own row, and the
+    // other owner's row is withheld rather than merely reordered.
+    let owner = principal_with_subject("user-123");
+    let visible = engine
+        .scan_documents_by_id_prefix_cancellable(&tenant_id, &table, "part-a#", &owner, &mut || {
+            Ok(())
+        })
+        .expect("authorized prefix scan should succeed");
+    let bodies: Vec<&str> = visible
+        .iter()
+        .filter_map(|document| {
+            document
+                .fields
+                .get("body")
+                .and_then(serde_json::Value::as_str)
+        })
+        .collect();
+    assert_eq!(bodies, vec!["Ada"]);
+
+    // A principal the policy denies outright gets nothing, not the partition.
+    let stranger = principal_with_subject("user-789");
+    let denied = engine
+        .scan_documents_by_id_prefix_cancellable(
+            &tenant_id,
+            &table,
+            "part-a#",
+            &stranger,
+            &mut || Ok(()),
+        )
+        .expect("denied prefix scan should succeed with no rows");
+    assert!(
+        denied.is_empty(),
+        "unauthorized prefix scan must return no documents, got {denied:?}"
+    );
+
+    // An unauthenticated caller fails the policy's require_authenticated gate.
+    let anonymous = PrincipalContext::anonymous();
+    let unauthenticated = engine
+        .scan_documents_by_id_prefix_cancellable(
+            &tenant_id,
+            &table,
+            "part-a#",
+            &anonymous,
+            &mut || Ok(()),
+        )
+        .expect("anonymous prefix scan should succeed with no rows");
+    assert!(
+        unauthenticated.is_empty(),
+        "anonymous prefix scan must return no documents, got {unauthenticated:?}"
+    );
+}
