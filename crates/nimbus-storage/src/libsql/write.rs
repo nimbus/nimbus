@@ -5,693 +5,16 @@ use super::index_versions::{
     prune_index_versions_before_remote, record_index_versions_for_events_remote,
 };
 use super::*;
+use nimbus_core::ResourcePathBinding;
+
+use crate::FaultPoint;
+use crate::sql::store_core::{SqlStoreCore, SqlWriteTransactionCore, sql_store_core_facade};
+use crate::sql::write_core::{SqlWriteBackend, sql_apply_resolved_write, sql_commit, sql_rollback};
 use crate::{CommitterLeaseError, CommitterLeaseResult};
 
+sql_store_core_facade!(LibsqlReplicaTenantStore);
+
 impl LibsqlReplicaTenantStore {
-    pub fn apply_prepared_write_batch(
-        &self,
-        record: &TenantEventRecord,
-        schedule_ops: &[ResolvedScheduleOp],
-        scheduled_execution_id: Option<&str>,
-    ) -> Result<Option<CommitEntry>> {
-        if record.writes.is_empty() {
-            return Err(Error::Internal(
-                "prepared write batch must contain at least one document write".to_string(),
-            ));
-        }
-        let record = record.clone();
-        let schedule_ops = schedule_ops.to_vec();
-        let scheduled_execution_id = scheduled_execution_id.map(str::to_string);
-        let committed = self.execute_write(move |transaction| {
-            if !transaction.begin_scheduled_execution(scheduled_execution_id.as_deref())? {
-                return Ok(false);
-            }
-            transaction
-                .store
-                .block_on(super::backend::apply_durable_record_in_remote_conn(
-                    transaction.session()?,
-                    &record,
-                ))?;
-            apply_schedule_ops_in_libsql_transaction(transaction, &schedule_ops)?;
-            transaction.set_prepared_record(record);
-            Ok(true)
-        })?;
-        Ok(committed.value.then_some(committed.commit).flatten())
-    }
-
-    pub fn fenced_apply_prepared_write_batch(
-        &self,
-        owner_id: &str,
-        epoch: u64,
-        expected_previous: SequenceNumber,
-        record: &TenantEventRecord,
-        schedule_ops: &[ResolvedScheduleOp],
-        scheduled_execution_id: Option<&str>,
-    ) -> CommitterLeaseResult<Option<CommitEntry>> {
-        if record.writes.is_empty() {
-            return Err(Error::Internal(
-                "prepared write batch must contain at least one document write".to_string(),
-            )
-            .into());
-        }
-        let owner_id = owner_id.to_string();
-        let fenced_owner_id = owner_id.clone();
-        let record = record.clone();
-        let schedule_ops = schedule_ops.to_vec();
-        let scheduled_execution_id = scheduled_execution_id.map(str::to_string);
-        let result = self.execute_write(move |transaction| {
-            if !transaction.begin_scheduled_execution(scheduled_execution_id.as_deref())? {
-                return Ok(false);
-            }
-            if transaction.advance_fenced_committer_lease(
-                &owner_id,
-                epoch,
-                expected_previous,
-                record.sequence,
-            )? != 1
-            {
-                return Err(Error::PreconditionFailed(
-                    FENCED_COMMITTER_LEASE_MARKER.to_string(),
-                ));
-            }
-            transaction
-                .store
-                .block_on(super::backend::apply_durable_record_in_remote_conn(
-                    transaction.session()?,
-                    &record,
-                ))?;
-            apply_schedule_ops_in_libsql_transaction(transaction, &schedule_ops)?;
-            transaction.set_prepared_record(record);
-            Ok(true)
-        });
-        match result {
-            Ok(committed) => Ok(committed.value.then_some(committed.commit).flatten()),
-            Err(Error::PreconditionFailed(message)) if message == FENCED_COMMITTER_LEASE_MARKER => {
-                Err(CommitterLeaseError::Fenced {
-                    owner_id: fenced_owner_id,
-                    epoch,
-                })
-            }
-            Err(error) => Err(error.into()),
-        }
-    }
-
-    pub fn retention_gc_watermarks(
-        &self,
-        config: crate::RetentionGcConfig,
-    ) -> Result<crate::RetentionGcWatermarks> {
-        Ok(self
-            .retention_floor
-            .gc_watermarks(self.journal_progress()?.applied_head, config))
-    }
-
-    pub fn compact_retained_versions(
-        &self,
-        config: crate::RetentionGcConfig,
-    ) -> Result<crate::RetentionGcSummary> {
-        let watermarks = self.retention_gc_watermarks(config)?;
-        let document_prune_before = watermarks.document_versions.safe_prune_before;
-        let index_prune_before = watermarks.index_versions.safe_prune_before;
-        let committed = self.execute_write(move |transaction| {
-            transaction.prune_retained_versions(document_prune_before, index_prune_before)
-        })?;
-        debug_assert!(committed.commit.is_none());
-        Ok(crate::RetentionGcSummary {
-            watermarks,
-            document_versions_pruned: committed.value.0,
-            index_versions_pruned: committed.value.1,
-        })
-    }
-
-    pub fn export_point_in_time_restore_archive(
-        &self,
-        target: PointInTimeRestoreTarget,
-        retention_config: crate::RetentionGcConfig,
-    ) -> Result<PointInTimeRestoreArchive> {
-        let records = self.read_durable_journal_from(SequenceNumber(1))?;
-        let progress = self.journal_progress()?;
-        let watermarks = self.retention_gc_watermarks(retention_config)?;
-        crate::store::build_point_in_time_restore_archive(
-            target,
-            records,
-            progress.durable_head,
-            watermarks.document_versions.safe_prune_before,
-        )
-    }
-
-    pub fn import_point_in_time_restore_archive(
-        &self,
-        archive: &PointInTimeRestoreArchive,
-    ) -> Result<JournalProgress> {
-        crate::store::validate_point_in_time_archive_for_journal_replay_import(archive)?;
-        let current = self.export_materialized_journal_snapshot()?;
-        crate::store::validate_materialized_journal_replay_base_is_empty(&current)?;
-        self.append_durable_records_batch(&archive.journal_tail)?;
-        let progress = self.recover_durable_journal()?;
-        let restored_fingerprint = self
-            .export_materialized_journal_snapshot()?
-            .canonical_fingerprint()?;
-        if restored_fingerprint != archive.target_fingerprint {
-            return Err(Error::storage(
-                nimbus_core::StorageErrorKind::Corruption,
-                format!(
-                    "point-in-time restore fingerprint mismatch: restored {} expected {}",
-                    restored_fingerprint, archive.target_fingerprint
-                ),
-            ));
-        }
-        Ok(progress)
-    }
-
-    pub fn fenced_import_point_in_time_restore_archive(
-        &self,
-        owner_id: &str,
-        epoch: u64,
-        expected_previous: SequenceNumber,
-        archive: &PointInTimeRestoreArchive,
-    ) -> CommitterLeaseResult<JournalProgress> {
-        crate::store::validate_point_in_time_archive_for_journal_replay_import(archive)?;
-        let current = self.export_materialized_journal_snapshot()?;
-        crate::store::validate_materialized_journal_replay_base_is_empty(&current)?;
-        if archive.journal_tail.is_empty() {
-            return self
-                .import_point_in_time_restore_archive(archive)
-                .map_err(Into::into);
-        }
-        self.fenced_append_and_apply_durable_records_batch(
-            owner_id,
-            epoch,
-            expected_previous,
-            &archive.journal_tail,
-        )?;
-        let progress = self.journal_progress()?;
-        let restored_fingerprint = self
-            .export_materialized_journal_snapshot()?
-            .canonical_fingerprint()?;
-        if restored_fingerprint != archive.target_fingerprint {
-            return Err(Error::storage(
-                nimbus_core::StorageErrorKind::Corruption,
-                format!(
-                    "point-in-time restore fingerprint mismatch: restored {} expected {}",
-                    restored_fingerprint, archive.target_fingerprint
-                ),
-            )
-            .into());
-        }
-        Ok(progress)
-    }
-
-    pub fn replace_table_schema(&self, table_schema: &TableSchema) -> Result<()> {
-        let table_schema = table_schema.clone();
-        self.execute_write(move |transaction| transaction.replace_table_schema(&table_schema))?;
-        Ok(())
-    }
-
-    pub fn fenced_replace_table_schema(
-        &self,
-        owner_id: &str,
-        epoch: u64,
-        expected_previous: SequenceNumber,
-        table_schema: &TableSchema,
-    ) -> CommitterLeaseResult<()> {
-        let owner_id = owner_id.to_string();
-        let fenced_owner_id = owner_id.clone();
-        let table_schema = table_schema.clone();
-        let durable_sequence = SequenceNumber(expected_previous.0.saturating_add(1));
-        let result = self.execute_write(move |transaction| {
-            if transaction.advance_fenced_committer_lease(
-                &owner_id,
-                epoch,
-                expected_previous,
-                durable_sequence,
-            )? != 1
-            {
-                return Err(Error::PreconditionFailed(
-                    FENCED_COMMITTER_LEASE_MARKER.to_string(),
-                ));
-            }
-            transaction.replace_table_schema(&table_schema)
-        });
-        map_fenced_write_result(result.map(|_| ()), fenced_owner_id, epoch)
-    }
-
-    pub fn delete_table_schema(&self, table: &TableName) -> Result<()> {
-        let table = table.clone();
-        self.execute_write(move |transaction| transaction.delete_table_schema(&table))?;
-        Ok(())
-    }
-
-    pub fn fenced_delete_table_schema(
-        &self,
-        owner_id: &str,
-        epoch: u64,
-        expected_previous: SequenceNumber,
-        table: &TableName,
-    ) -> CommitterLeaseResult<()> {
-        let owner_id = owner_id.to_string();
-        let fenced_owner_id = owner_id.clone();
-        let table = table.clone();
-        let durable_sequence = SequenceNumber(expected_previous.0.saturating_add(1));
-        let result = self.execute_write(move |transaction| {
-            if transaction.advance_fenced_committer_lease(
-                &owner_id,
-                epoch,
-                expected_previous,
-                durable_sequence,
-            )? != 1
-            {
-                return Err(Error::PreconditionFailed(
-                    FENCED_COMMITTER_LEASE_MARKER.to_string(),
-                ));
-            }
-            transaction.delete_table_schema(&table)
-        });
-        map_fenced_write_result(result.map(|_| ()), fenced_owner_id, epoch)
-    }
-
-    pub fn append_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
-        if records.is_empty() {
-            return Ok(());
-        }
-        let records = records.to_vec();
-        self.block_on(self.append_remote_durable_records_batch(records.as_slice()))?;
-        Ok(())
-    }
-
-    pub fn apply_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
-        if records.is_empty() {
-            return Ok(());
-        }
-        let records = records.to_vec();
-        let applied_head =
-            self.block_on(self.apply_remote_durable_records_batch(records.as_slice()))?;
-        self.note_required_cache_sequence_with_cause(
-            applied_head,
-            LibsqlReplicaRefreshCause::DurableJournalReplay,
-        );
-        Ok(())
-    }
-
-    pub fn fenced_append_and_apply_durable_records_batch(
-        &self,
-        owner_id: &str,
-        epoch: u64,
-        expected_previous: SequenceNumber,
-        records: &[TenantEventRecord],
-    ) -> CommitterLeaseResult<()> {
-        let fenced_owner_id = owner_id.to_string();
-        let result = self.block_on(self.fenced_append_and_apply_remote_durable_records_batch(
-            owner_id,
-            epoch,
-            expected_previous,
-            records,
-        ));
-        let applied_head = match result {
-            Ok(applied_head) => applied_head,
-            Err(Error::PreconditionFailed(message)) if message == FENCED_COMMITTER_LEASE_MARKER => {
-                return Err(CommitterLeaseError::Fenced {
-                    owner_id: fenced_owner_id,
-                    epoch,
-                });
-            }
-            Err(error) => return Err(error.into()),
-        };
-        self.note_required_cache_sequence_with_cause(
-            applied_head,
-            LibsqlReplicaRefreshCause::DurableJournalReplay,
-        );
-        Ok(())
-    }
-
-    pub fn insert_scheduled_job(&self, job: &ScheduledJob) -> Result<()> {
-        let job = job.clone();
-        self.execute_write(move |transaction| transaction.insert_scheduled_job(&job))?;
-        Ok(())
-    }
-
-    pub fn claim_due_jobs(&self, now: Timestamp, max_jobs: usize) -> Result<Vec<ScheduledJob>> {
-        Ok(self
-            .execute_write(move |transaction| transaction.claim_due_jobs(now, max_jobs))?
-            .value)
-    }
-
-    pub fn complete_scheduled_job(&self, job_id: &DocumentId) -> Result<()> {
-        let job_id = job_id.clone();
-        self.execute_write(move |transaction| transaction.complete_scheduled_job(&job_id))?;
-        Ok(())
-    }
-
-    pub fn cancel_scheduled_job(&self, job_id: &DocumentId) -> Result<bool> {
-        let job_id = job_id.clone();
-        Ok(self
-            .execute_write(move |transaction| transaction.cancel_scheduled_job(&job_id))?
-            .value)
-    }
-
-    pub fn record_scheduled_job_result(&self, result: &ScheduledJobResult) -> Result<()> {
-        let result = result.clone();
-        self.execute_write(move |transaction| transaction.record_scheduled_job_result(&result))?;
-        Ok(())
-    }
-
-    pub fn save_cron_job(&self, cron: &CronJob) -> Result<()> {
-        let cron = cron.clone();
-        self.execute_write(move |transaction| transaction.save_cron_job(&cron))?;
-        Ok(())
-    }
-
-    pub fn delete_cron_job(&self, name: &str) -> Result<()> {
-        let name = name.to_string();
-        self.execute_write(move |transaction| transaction.delete_cron_job(name.as_str()))?;
-        Ok(())
-    }
-
-    pub fn recover_running_jobs(&self, now: Timestamp) -> Result<()> {
-        self.execute_write(move |transaction| transaction.recover_running_jobs(now))?;
-        Ok(())
-    }
-
-    pub fn insert(&self, document: &Document) -> Result<CommitEntry> {
-        self.insert_once(document, None)?
-            .ok_or_else(|| Error::Internal("non-deduplicated insert should commit".to_string()))
-    }
-
-    pub fn insert_with_indexes(
-        &self,
-        document: &Document,
-        _indexes: &[nimbus_core::IndexDefinition],
-    ) -> Result<CommitEntry> {
-        self.insert(document)
-    }
-
-    pub fn insert_once(
-        &self,
-        document: &Document,
-        execution_id: Option<&str>,
-    ) -> Result<Option<CommitEntry>> {
-        let document = document.clone();
-        let execution_id = execution_id.map(ToOwned::to_owned);
-        let committed = self.execute_write(move |transaction| {
-            if !transaction.begin_scheduled_execution(execution_id.as_deref())? {
-                return Ok(false);
-            }
-            transaction.insert_document(&document)?;
-            Ok(true)
-        })?;
-        Ok(if committed.value {
-            Some(expect_write_commit(
-                committed.commit,
-                "deduplicated insert should record a commit entry",
-            )?)
-        } else {
-            None
-        })
-    }
-
-    pub fn insert_with_indexes_once(
-        &self,
-        document: &Document,
-        _indexes: &[nimbus_core::IndexDefinition],
-        execution_id: Option<&str>,
-    ) -> Result<Option<CommitEntry>> {
-        self.insert_once(document, execution_id)
-    }
-
-    pub fn insert_with_indexes_once_at(
-        &self,
-        document: &Document,
-        assignment: crate::DirectWriteAssignment<'_>,
-    ) -> Result<Option<CommitEntry>> {
-        let document = document.clone();
-        let execution_id = assignment.execution_id.map(ToOwned::to_owned);
-        let committed = self.execute_write(move |transaction| {
-            transaction.set_commit_timestamp(Some(assignment.commit_timestamp));
-            if !transaction.begin_scheduled_execution(execution_id.as_deref())? {
-                return Ok(false);
-            }
-            transaction.insert_document(&document)?;
-            Ok(true)
-        })?;
-        Ok(if committed.value {
-            Some(expect_write_commit(
-                committed.commit,
-                "deduplicated insert should record a commit entry",
-            )?)
-        } else {
-            None
-        })
-    }
-
-    pub fn update_validated<F>(
-        &self,
-        table: &TableName,
-        id: &DocumentId,
-        patch: &serde_json::Map<String, serde_json::Value>,
-        validate: F,
-    ) -> Result<CommitEntry>
-    where
-        F: FnOnce(&Document, &Document) -> Result<()> + Send + 'static,
-    {
-        self.update_validated_once(table, id, patch, None, validate)?
-            .ok_or_else(|| Error::Internal("non-deduplicated update should commit".to_string()))
-    }
-
-    pub fn update_validated_once<F>(
-        &self,
-        table: &TableName,
-        id: &DocumentId,
-        patch: &serde_json::Map<String, serde_json::Value>,
-        execution_id: Option<&str>,
-        validate: F,
-    ) -> Result<Option<CommitEntry>>
-    where
-        F: FnOnce(&Document, &Document) -> Result<()> + Send + 'static,
-    {
-        let table = table.clone();
-        let id = id.clone();
-        let patch = patch.clone();
-        let execution_id = execution_id.map(ToOwned::to_owned);
-        let committed = self.execute_write(move |transaction| {
-            if !transaction.begin_scheduled_execution(execution_id.as_deref())? {
-                return Ok(false);
-            }
-            transaction.update_document_validated(&table, &id, &patch, validate)?;
-            Ok(true)
-        })?;
-        Ok(if committed.value {
-            Some(expect_write_commit(
-                committed.commit,
-                "deduplicated update should record a commit entry",
-            )?)
-        } else {
-            None
-        })
-    }
-
-    pub fn update_with_indexes_validated<F>(
-        &self,
-        table: &TableName,
-        id: &DocumentId,
-        patch: &serde_json::Map<String, serde_json::Value>,
-        _indexes: &[nimbus_core::IndexDefinition],
-        validate: F,
-    ) -> Result<CommitEntry>
-    where
-        F: FnOnce(&Document, &Document) -> Result<()> + Send + 'static,
-    {
-        self.update_validated(table, id, patch, validate)
-    }
-
-    pub fn update_with_indexes_validated_once<F>(
-        &self,
-        table: &TableName,
-        id: &DocumentId,
-        patch: &serde_json::Map<String, serde_json::Value>,
-        _indexes: &[nimbus_core::IndexDefinition],
-        execution_id: Option<&str>,
-        validate: F,
-    ) -> Result<Option<CommitEntry>>
-    where
-        F: FnOnce(&Document, &Document) -> Result<()> + Send + 'static,
-    {
-        self.update_validated_once(table, id, patch, execution_id, validate)
-    }
-
-    pub fn update_with_indexes_validated_once_at<F>(
-        &self,
-        table: &TableName,
-        id: &DocumentId,
-        patch: &serde_json::Map<String, serde_json::Value>,
-        assignment: crate::DirectWriteAssignment<'_>,
-        validate: F,
-    ) -> Result<Option<CommitEntry>>
-    where
-        F: FnOnce(&Document, &Document) -> Result<()> + Send + 'static,
-    {
-        let table = table.clone();
-        let id = id.clone();
-        let patch = patch.clone();
-        let execution_id = assignment.execution_id.map(ToOwned::to_owned);
-        let committed = self.execute_write(move |transaction| {
-            transaction.set_commit_timestamp(Some(assignment.commit_timestamp));
-            if !transaction.begin_scheduled_execution(execution_id.as_deref())? {
-                return Ok(false);
-            }
-            transaction.update_document_validated(&table, &id, &patch, validate)?;
-            Ok(true)
-        })?;
-        Ok(if committed.value {
-            Some(expect_write_commit(
-                committed.commit,
-                "deduplicated update should record a commit entry",
-            )?)
-        } else {
-            None
-        })
-    }
-
-    pub fn delete_validated_returning_document<F>(
-        &self,
-        table: &TableName,
-        id: &DocumentId,
-        validate: F,
-    ) -> Result<(CommitEntry, Document)>
-    where
-        F: FnOnce(&Document) -> Result<()> + Send + 'static,
-    {
-        self.delete_validated_once(table, id, None, validate)?
-            .ok_or_else(|| Error::Internal("non-deduplicated delete should commit".to_string()))
-    }
-
-    pub fn delete_validated_once<F>(
-        &self,
-        table: &TableName,
-        id: &DocumentId,
-        execution_id: Option<&str>,
-        validate: F,
-    ) -> Result<Option<(CommitEntry, Document)>>
-    where
-        F: FnOnce(&Document) -> Result<()> + Send + 'static,
-    {
-        let table = table.clone();
-        let id = id.clone();
-        let execution_id = execution_id.map(ToOwned::to_owned);
-        let committed = self.execute_write(move |transaction| {
-            if !transaction.begin_scheduled_execution(execution_id.as_deref())? {
-                return Ok(None);
-            }
-            let removed_document = transaction.delete_document_validated(&table, &id, validate)?;
-            Ok(Some(removed_document))
-        })?;
-        Ok(if let Some(removed_document) = committed.value {
-            Some((
-                expect_write_commit(
-                    committed.commit,
-                    "deduplicated delete should record a commit entry",
-                )?,
-                removed_document,
-            ))
-        } else {
-            None
-        })
-    }
-
-    pub fn delete_with_indexes_validated_returning_document<F>(
-        &self,
-        table: &TableName,
-        id: &DocumentId,
-        _indexes: &[nimbus_core::IndexDefinition],
-        validate: F,
-    ) -> Result<(CommitEntry, Document)>
-    where
-        F: FnOnce(&Document) -> Result<()> + Send + 'static,
-    {
-        self.delete_validated_returning_document(table, id, validate)
-    }
-
-    pub fn delete_with_indexes_validated_once<F>(
-        &self,
-        table: &TableName,
-        id: &DocumentId,
-        _indexes: &[nimbus_core::IndexDefinition],
-        execution_id: Option<&str>,
-        validate: F,
-    ) -> Result<Option<(CommitEntry, Document)>>
-    where
-        F: FnOnce(&Document) -> Result<()> + Send + 'static,
-    {
-        self.delete_validated_once(table, id, execution_id, validate)
-    }
-
-    pub fn delete_with_indexes_validated_once_at<F>(
-        &self,
-        table: &TableName,
-        id: &DocumentId,
-        assignment: crate::DirectWriteAssignment<'_>,
-        validate: F,
-    ) -> Result<Option<(CommitEntry, Document)>>
-    where
-        F: FnOnce(&Document) -> Result<()> + Send + 'static,
-    {
-        let table = table.clone();
-        let id = id.clone();
-        let execution_id = assignment.execution_id.map(ToOwned::to_owned);
-        let committed = self.execute_write(move |transaction| {
-            transaction.set_commit_timestamp(Some(assignment.commit_timestamp));
-            if !transaction.begin_scheduled_execution(execution_id.as_deref())? {
-                return Ok(None);
-            }
-            let removed_document = transaction.delete_document_validated(&table, &id, validate)?;
-            Ok(Some(removed_document))
-        })?;
-        Ok(if let Some(removed_document) = committed.value {
-            Some((
-                expect_write_commit(
-                    committed.commit,
-                    "deduplicated delete should record a commit entry",
-                )?,
-                removed_document,
-            ))
-        } else {
-            None
-        })
-    }
-
-    pub fn apply_execution_unit_batch(
-        &self,
-        writes: &[ResolvedWrite],
-        schedule_ops: &[ResolvedScheduleOp],
-    ) -> Result<Option<CommitEntry>> {
-        self.apply_execution_unit_batch_with_origin(writes, schedule_ops, None, None)
-    }
-
-    pub fn apply_execution_unit_batch_with_origin(
-        &self,
-        writes: &[ResolvedWrite],
-        schedule_ops: &[ResolvedScheduleOp],
-        trigger_write_origin: Option<&TriggerWriteOrigin>,
-        commit_timestamp: Option<Timestamp>,
-    ) -> Result<Option<CommitEntry>> {
-        if writes.is_empty() && schedule_ops.is_empty() {
-            return Err(Error::Internal(
-                "execution-unit batch must contain at least one change".to_string(),
-            ));
-        }
-        let writes = writes.to_vec();
-        let schedule_ops = schedule_ops.to_vec();
-        let trigger_write_origin = trigger_write_origin.cloned();
-        let committed = self.execute_write(move |transaction| {
-            transaction.set_trigger_write_origin(trigger_write_origin.clone());
-            transaction.set_commit_timestamp(commit_timestamp);
-            for write in &writes {
-                transaction.apply_resolved_write(write)?;
-            }
-            apply_schedule_ops_in_libsql_transaction(transaction, &schedule_ops)?;
-            Ok(())
-        })?;
-        Ok(committed.commit)
-    }
-
     pub fn execute_write<T, F>(&self, task: F) -> Result<TenantWriteCommit<T>>
     where
         T: Send + 'static,
@@ -752,17 +75,416 @@ impl LibsqlReplicaTenantStore {
     }
 }
 
-pub(super) fn map_fenced_write_result<T>(
-    result: Result<T>,
-    owner_id: String,
-    epoch: u64,
-) -> CommitterLeaseResult<T> {
-    match result {
-        Ok(value) => Ok(value),
-        Err(Error::PreconditionFailed(message)) if message == FENCED_COMMITTER_LEASE_MARKER => {
-            Err(CommitterLeaseError::Fenced { owner_id, epoch })
+/// Wire the libsql replica into the shared store-level wrapper layer. The write
+/// bridge and the journal reads stay here; every wrapper built on them lives
+/// once in [`crate::sql::store_core`].
+///
+/// The durable-journal batch methods are the replica's own: unlike PostgreSQL
+/// and MySQL it does not replay through the write transaction opened above.
+/// Each batch is a dedicated remote round-trip against the primary, after which
+/// the local cache barrier is advanced.
+impl SqlStoreCore for LibsqlReplicaTenantStore {
+    type Transaction = LibsqlReplicaWriteTransaction;
+
+    fn execute_write<T, F>(&self, task: F) -> Result<TenantWriteCommit<T>>
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut LibsqlReplicaWriteTransaction) -> Result<T> + Send + 'static,
+    {
+        LibsqlReplicaTenantStore::execute_write(self, task)
+    }
+
+    fn execute_write_cancellable<T, Check, F>(
+        &self,
+        check_cancel: Check,
+        task: F,
+    ) -> Result<TenantWriteCommit<T>>
+    where
+        T: Send + 'static,
+        Check: Fn() -> Result<()> + Send + 'static,
+        F: FnOnce(&mut LibsqlReplicaWriteTransaction) -> Result<T> + Send + 'static,
+    {
+        LibsqlReplicaTenantStore::execute_write_cancellable(self, check_cancel, task)
+    }
+
+    fn retention_floor(&self) -> &RetentionFloor {
+        self.retention_floor.as_ref()
+    }
+
+    fn journal_progress(&self) -> Result<JournalProgress> {
+        LibsqlReplicaTenantStore::journal_progress(self)
+    }
+
+    fn read_durable_journal_from(
+        &self,
+        sequence: SequenceNumber,
+    ) -> Result<Vec<TenantEventRecord>> {
+        LibsqlReplicaTenantStore::read_durable_journal_from(self, sequence)
+    }
+
+    fn recover_durable_journal(&self) -> Result<JournalProgress> {
+        LibsqlReplicaTenantStore::recover_durable_journal(self)
+    }
+
+    fn export_materialized_journal_snapshot(&self) -> Result<MaterializedJournalSnapshot> {
+        LibsqlReplicaTenantStore::export_materialized_journal_snapshot(self)
+    }
+
+    fn append_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
+        if records.is_empty() {
+            return Ok(());
         }
-        Err(error) => Err(error.into()),
+        let records = records.to_vec();
+        self.block_on(self.append_remote_durable_records_batch(records.as_slice()))?;
+        Ok(())
+    }
+
+    fn apply_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
+        if records.is_empty() {
+            return Ok(());
+        }
+        let records = records.to_vec();
+        let applied_head =
+            self.block_on(self.apply_remote_durable_records_batch(records.as_slice()))?;
+        self.note_required_cache_sequence_with_cause(
+            applied_head,
+            LibsqlReplicaRefreshCause::DurableJournalReplay,
+        );
+        Ok(())
+    }
+
+    /// The remote batch is a single round-trip, so cancellation is observed
+    /// once before it is issued rather than between records.
+    fn fenced_append_and_apply_durable_records_batch_cancellable<Check>(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        expected_previous: SequenceNumber,
+        records: &[TenantEventRecord],
+        check_cancel: Check,
+    ) -> CommitterLeaseResult<()>
+    where
+        Check: Fn() -> Result<()> + Send + 'static,
+    {
+        check_cancel().map_err(CommitterLeaseError::from)?;
+        let fenced_owner_id = owner_id.to_string();
+        let result = self.block_on(self.fenced_append_and_apply_remote_durable_records_batch(
+            owner_id,
+            epoch,
+            expected_previous,
+            records,
+        ));
+        let applied_head = match result {
+            Ok(applied_head) => applied_head,
+            Err(Error::PreconditionFailed(message)) if message == FENCED_COMMITTER_LEASE_MARKER => {
+                return Err(CommitterLeaseError::Fenced {
+                    owner_id: fenced_owner_id,
+                    epoch,
+                });
+            }
+            Err(error) => return Err(error.into()),
+        };
+        self.note_required_cache_sequence_with_cause(
+            applied_head,
+            LibsqlReplicaRefreshCause::DurableJournalReplay,
+        );
+        Ok(())
+    }
+}
+
+/// Transaction-side seam for the shared wrappers. Each method forwards to the
+/// inherent method of the same name, which wins method-call resolution.
+impl SqlWriteTransactionCore for LibsqlReplicaWriteTransaction {
+    fn begin_scheduled_execution(&mut self, execution_id: Option<&str>) -> Result<bool> {
+        LibsqlReplicaWriteTransaction::begin_scheduled_execution(self, execution_id)
+    }
+
+    fn set_prepared_record(&mut self, record: TenantEventRecord) {
+        LibsqlReplicaWriteTransaction::set_prepared_record(self, record)
+    }
+
+    fn set_trigger_write_origin(&mut self, trigger_write_origin: Option<TriggerWriteOrigin>) {
+        LibsqlReplicaWriteTransaction::set_trigger_write_origin(self, trigger_write_origin)
+    }
+
+    fn set_commit_timestamp(&mut self, commit_timestamp: Option<Timestamp>) {
+        LibsqlReplicaWriteTransaction::set_commit_timestamp(self, commit_timestamp)
+    }
+
+    fn advance_fenced_committer_lease(
+        &mut self,
+        owner_id: &str,
+        epoch: u64,
+        expected_previous: SequenceNumber,
+        durable_sequence: SequenceNumber,
+    ) -> Result<u64> {
+        LibsqlReplicaWriteTransaction::advance_fenced_committer_lease(
+            self,
+            owner_id,
+            epoch,
+            expected_previous,
+            durable_sequence,
+        )
+    }
+
+    fn replace_table_schema(&mut self, table_schema: &TableSchema) -> Result<()> {
+        LibsqlReplicaWriteTransaction::replace_table_schema(self, table_schema)
+    }
+
+    fn delete_table_schema(&mut self, table: &TableName) -> Result<()> {
+        LibsqlReplicaWriteTransaction::delete_table_schema(self, table)
+    }
+
+    fn insert_scheduled_job(&mut self, job: &ScheduledJob) -> Result<()> {
+        LibsqlReplicaWriteTransaction::insert_scheduled_job(self, job)
+    }
+
+    fn claim_due_jobs(&mut self, now: Timestamp, max_jobs: usize) -> Result<Vec<ScheduledJob>> {
+        LibsqlReplicaWriteTransaction::claim_due_jobs(self, now, max_jobs)
+    }
+
+    fn complete_scheduled_job(&mut self, job_id: &DocumentId) -> Result<()> {
+        LibsqlReplicaWriteTransaction::complete_scheduled_job(self, job_id)
+    }
+
+    fn cancel_scheduled_job(&mut self, job_id: &DocumentId) -> Result<bool> {
+        LibsqlReplicaWriteTransaction::cancel_scheduled_job(self, job_id)
+    }
+
+    fn record_scheduled_job_result(&mut self, result: &ScheduledJobResult) -> Result<()> {
+        LibsqlReplicaWriteTransaction::record_scheduled_job_result(self, result)
+    }
+
+    fn save_cron_job(&mut self, cron: &CronJob) -> Result<()> {
+        LibsqlReplicaWriteTransaction::save_cron_job(self, cron)
+    }
+
+    fn delete_cron_job(&mut self, name: &str) -> Result<()> {
+        LibsqlReplicaWriteTransaction::delete_cron_job(self, name)
+    }
+
+    fn recover_running_jobs(&mut self, now: Timestamp) -> Result<()> {
+        LibsqlReplicaWriteTransaction::recover_running_jobs(self, now)
+    }
+
+    fn apply_resolved_write(&mut self, write: &ResolvedWrite) -> Result<()> {
+        sql_apply_resolved_write(self, write)
+    }
+
+    fn update_document_validated<F>(
+        &mut self,
+        table: &TableName,
+        id: &DocumentId,
+        patch: &serde_json::Map<String, serde_json::Value>,
+        validate: F,
+    ) -> Result<()>
+    where
+        F: FnOnce(&Document, &Document) -> Result<()> + Send + 'static,
+    {
+        LibsqlReplicaWriteTransaction::update_document_validated(self, table, id, patch, validate)
+    }
+
+    fn delete_document_validated<F>(
+        &mut self,
+        table: &TableName,
+        id: &DocumentId,
+        validate: F,
+    ) -> Result<Document>
+    where
+        F: FnOnce(&Document) -> Result<()> + Send + 'static,
+    {
+        LibsqlReplicaWriteTransaction::delete_document_validated(self, table, id, validate)
+    }
+
+    fn prune_retained_versions(
+        &mut self,
+        document_prune_before: SequenceNumber,
+        index_prune_before: SequenceNumber,
+    ) -> Result<(u64, u64)> {
+        LibsqlReplicaWriteTransaction::prune_retained_versions(
+            self,
+            document_prune_before,
+            index_prune_before,
+        )
+    }
+}
+
+impl SqlWriteBackend for LibsqlReplicaWriteTransaction {
+    fn check_cancel(&self) -> Result<()> {
+        LibsqlReplicaWriteTransaction::check_cancel(self)
+    }
+
+    /// A prepared-record commit reports the record it is about to make durable,
+    /// so a records-scoped injector can target this transaction specifically.
+    fn check_fault(&self, point: FaultPoint) -> Result<()> {
+        match self.prepared_record_for_fault.as_ref() {
+            Some(record) => self
+                .store
+                .check_durable_records_fault(point, std::slice::from_ref(record)),
+            None => self.store.check_fault(point),
+        }
+    }
+
+    fn commit_transaction(&mut self) -> Result<()> {
+        let tx = self.tx.take().ok_or_else(|| {
+            Error::Internal("libsql replica write transaction already closed".to_string())
+        })?;
+        self.store
+            .block_on(async move { tx.commit().await.map_err(map_libsql_error) })
+    }
+
+    fn rollback_transaction(&mut self) {
+        if let Some(tx) = self.tx.take() {
+            let _ = self
+                .store
+                .block_on(async move { tx.rollback().await.map_err(map_libsql_error) });
+        }
+    }
+
+    fn trigger_write_origin(&self) -> Option<TriggerWriteOrigin> {
+        self.trigger_write_origin.clone()
+    }
+
+    fn push_commit_write(&mut self, write: WriteOp) {
+        self.commit_writes.push(write);
+    }
+
+    fn last_commit_write_mut(&mut self) -> Option<&mut WriteOp> {
+        self.commit_writes.last_mut()
+    }
+
+    fn take_commit_writes(&mut self) -> Vec<WriteOp> {
+        std::mem::take(&mut self.commit_writes)
+    }
+
+    fn push_tenant_event(&mut self, event: TenantEventKind) {
+        self.tenant_events.push(event);
+    }
+
+    fn prepend_tenant_event(&mut self, event: TenantEventKind) {
+        self.tenant_events.insert(0, event);
+    }
+
+    fn tenant_events_is_empty(&self) -> bool {
+        self.tenant_events.is_empty()
+    }
+
+    fn take_tenant_events(&mut self) -> Vec<TenantEventKind> {
+        std::mem::take(&mut self.tenant_events)
+    }
+
+    fn take_prepared_record(&mut self) -> Option<TenantEventRecord> {
+        self.prepared_record.take()
+    }
+
+    fn apply_durable_record(&mut self, record: &TenantEventRecord) -> Result<()> {
+        self.store
+            .block_on(super::backend::apply_durable_record_in_remote_conn(
+                self.session()?,
+                record,
+            ))
+    }
+
+    fn append_commit_entry(
+        &mut self,
+        writes: Vec<WriteOp>,
+        events: Vec<TenantEventKind>,
+    ) -> Result<CommitEntry> {
+        LibsqlReplicaWriteTransaction::append_commit_entry(self, writes, events)
+    }
+
+    fn append_prepared_record(&mut self, record: &TenantEventRecord) -> Result<CommitEntry> {
+        LibsqlReplicaWriteTransaction::append_prepared_record(self, record)
+    }
+
+    /// Record the cache-refresh barrier the next replica read must clear. This
+    /// is local state only: reading back from the remote session here could
+    /// observe an older Hrana snapshot than the commit just made durable.
+    fn after_visibility(&mut self, commit: Option<&CommitEntry>) {
+        match (commit, self.refresh_cache_after_commit) {
+            (Some(commit), true) => {
+                self.store.refresh_needed.store(true, Ordering::Release);
+                self.store.note_required_cache_sequence_with_cause(
+                    commit.sequence,
+                    LibsqlReplicaRefreshCause::SchemaWrite,
+                );
+            }
+            (Some(commit), false) => {
+                self.store.note_required_cache_sequence_with_cause(
+                    commit.sequence,
+                    LibsqlReplicaRefreshCause::CommitBarrier,
+                );
+            }
+            (None, true) => {
+                self.store.refresh_needed.store(true, Ordering::Release);
+                self.store
+                    .freshness_metrics
+                    .note_refresh_request(LibsqlReplicaRefreshCause::SchemaWrite);
+                self.store.schedule_background_refresh();
+            }
+            (None, false) => {}
+        }
+    }
+
+    fn load_document(&mut self, table: &TableName, id: &DocumentId) -> Result<Option<Document>> {
+        LibsqlReplicaWriteTransaction::load_document(self, table, id)
+    }
+
+    fn load_table_id(&mut self, table: &TableName) -> Result<Option<TableId>> {
+        self.store
+            .block_on(load_remote_table_id_from_session(self.session()?, table))
+    }
+
+    fn insert_document(&mut self, document: &Document) -> Result<()> {
+        LibsqlReplicaWriteTransaction::insert_document(self, document)
+    }
+
+    fn update_document_row(&mut self, table_id: &TableId, current: &Document) -> Result<()> {
+        let data_json = serialize_document_fields(current)?;
+        let typed_fields_json = serialize_document_typed_fields(current)?;
+        self.store.block_on(async {
+            self.session()?
+                .execute(
+                    "UPDATE documents
+                     SET data_json = ?3, typed_fields_json = ?4, creation_time = ?5, update_time = ?6
+                     WHERE table_id = ?1 AND id = ?2",
+                    libsql::params![
+                        table_id.as_str(),
+                        current.id.to_string(),
+                        data_json,
+                        typed_fields_json,
+                        i64_from_u64(current.creation_time.0)?,
+                        i64_from_u64(current.update_time.0)?
+                    ],
+                )
+                .await
+                .map_err(map_libsql_error)?;
+            Ok(())
+        })
+    }
+
+    fn delete_document_row(&mut self, table_id: &TableId, id: &DocumentId) -> Result<()> {
+        self.store.block_on(async {
+            self.session()?
+                .execute(
+                    "DELETE FROM documents WHERE table_id = ?1 AND id = ?2",
+                    libsql::params![table_id.as_str(), id.to_string()],
+                )
+                .await
+                .map_err(map_libsql_error)?;
+            Ok(())
+        })
+    }
+
+    fn upsert_resource_path_binding(&mut self, binding: &ResourcePathBinding) -> Result<()> {
+        LibsqlReplicaWriteTransaction::upsert_resource_path_binding(self, binding)
+    }
+
+    fn remove_resource_path_binding(
+        &mut self,
+        locator: &nimbus_core::DocumentLocator,
+    ) -> Result<Option<ResourcePathBinding>> {
+        LibsqlReplicaWriteTransaction::remove_resource_path_binding(self, locator)
     }
 }
 
@@ -783,6 +505,7 @@ impl LibsqlReplicaWriteTransaction {
             commit_writes: Vec::new(),
             tenant_events: Vec::new(),
             prepared_record: None,
+            prepared_record_for_fault: None,
             trigger_write_origin: None,
             commit_timestamp: None,
             check_cancel: Box::new(check_cancel),
@@ -1269,144 +992,6 @@ impl LibsqlReplicaWriteTransaction {
         Ok(())
     }
 
-    pub fn apply_resolved_write(&mut self, write: &ResolvedWrite) -> Result<()> {
-        match write {
-            ResolvedWrite::Insert {
-                document,
-                resource_path_binding,
-                ..
-            } => {
-                self.check_cancel()?;
-                if self.load_document(&document.table, &document.id)?.is_some() {
-                    return Err(Error::conflict(format!(
-                        "document {} changed before transaction commit",
-                        document.id
-                    )));
-                }
-                self.insert_document(document)?;
-                if let Some(resource_path_binding) = resource_path_binding.as_ref() {
-                    if let Some(write) = self.commit_writes.last_mut() {
-                        write.resource_path_binding = Some(resource_path_binding.clone());
-                    }
-                    self.upsert_resource_path_binding(resource_path_binding)?;
-                }
-                Ok(())
-            }
-            ResolvedWrite::Update {
-                previous,
-                current,
-                resource_path_binding,
-                ..
-            } => {
-                self.check_cancel()?;
-                let existing =
-                    self.load_document(&current.table, &current.id)?
-                        .ok_or(Error::conflict(format!(
-                            "document {} changed before transaction commit",
-                            current.id
-                        )))?;
-                if existing != *previous {
-                    return Err(Error::conflict(format!(
-                        "document {} changed before transaction commit",
-                        current.id
-                    )));
-                }
-                let data_json = serialize_document_fields(current)?;
-                let typed_fields_json = serialize_document_typed_fields(current)?;
-                let table_id = self.store.block_on(async {
-                    load_remote_table_id_from_session(self.session()?, &current.table)
-                        .await?
-                        .ok_or(Error::conflict(format!(
-                            "document {} changed before transaction commit",
-                            current.id
-                        )))
-                })?;
-                let write_table_id = table_id.clone();
-                self.store.block_on(async {
-                    self.session()?
-                        .execute(
-                            "UPDATE documents
-                             SET data_json = ?3, typed_fields_json = ?4, creation_time = ?5, update_time = ?6
-                             WHERE table_id = ?1 AND id = ?2",
-                            libsql::params![
-                                table_id.as_str(),
-                                current.id.to_string(),
-                                data_json,
-                                typed_fields_json,
-                                i64_from_u64(current.creation_time.0)?,
-                                i64_from_u64(current.update_time.0)?
-                            ],
-                        )
-                        .await
-                        .map_err(map_libsql_error)?;
-                    Ok(())
-                })?;
-                self.record_commit_write(WriteOp {
-                    table: current.table.clone(),
-                    table_id: write_table_id,
-                    op_type: WriteOpType::Update,
-                    doc_id: current.id.clone(),
-                    resource_path_binding: resource_path_binding.clone(),
-                    trigger_write_origin: None,
-                    previous: Some(previous.clone()),
-                    current: Some(current.clone()),
-                });
-                if let Some(resource_path_binding) = resource_path_binding.as_ref() {
-                    self.upsert_resource_path_binding(resource_path_binding)?;
-                }
-                Ok(())
-            }
-            ResolvedWrite::Delete { previous, .. } => {
-                self.check_cancel()?;
-                let existing =
-                    self.load_document(&previous.table, &previous.id)?
-                        .ok_or(Error::conflict(format!(
-                            "document {} changed before transaction commit",
-                            previous.id
-                        )))?;
-                if existing != *previous {
-                    return Err(Error::conflict(format!(
-                        "document {} changed before transaction commit",
-                        previous.id
-                    )));
-                }
-                let table_id = self.store.block_on(async {
-                    load_remote_table_id_from_session(self.session()?, &previous.table)
-                        .await?
-                        .ok_or(Error::conflict(format!(
-                            "document {} changed before transaction commit",
-                            previous.id
-                        )))
-                })?;
-                let write_table_id = table_id.clone();
-                self.store.block_on(async {
-                    self.session()?
-                        .execute(
-                            "DELETE FROM documents WHERE table_id = ?1 AND id = ?2",
-                            libsql::params![table_id.as_str(), previous.id.to_string()],
-                        )
-                        .await
-                        .map_err(map_libsql_error)?;
-                    Ok(())
-                })?;
-                let resource_path_binding = self.remove_resource_path_binding(
-                    &nimbus_core::DocumentLocator::new(previous.table.clone(), previous.id.clone()),
-                )?;
-                self.record_commit_write(WriteOp {
-                    table: previous.table.clone(),
-                    table_id: write_table_id,
-                    op_type: WriteOpType::Delete,
-                    doc_id: previous.id.clone(),
-                    resource_path_binding,
-                    trigger_write_origin: None,
-                    previous: Some(previous.clone()),
-                    current: None,
-                });
-                Ok(())
-            }
-        }
-    }
-
     pub(crate) fn set_prepared_record(&mut self, record: TenantEventRecord) {
         self.commit_writes = record.writes.clone();
         self.tenant_events = record
@@ -1415,89 +1000,18 @@ impl LibsqlReplicaWriteTransaction {
             .filter(|event| !matches!(event, TenantEventKind::DocumentWrite { .. }))
             .cloned()
             .collect();
+        // Retained past `take_prepared_record` so the commit-path fault checks
+        // can stay records-scoped; see `SqlWriteBackend::check_fault`.
+        self.prepared_record_for_fault = Some(record.clone());
         self.prepared_record = Some(record);
     }
 
-    pub fn commit(mut self) -> Result<Option<CommitEntry>> {
-        self.check_cancel()?;
-        let prepared_record_for_fault = self.prepared_record.clone();
-        let writes = std::mem::take(&mut self.commit_writes);
-        if !writes.is_empty() {
-            self.tenant_events.insert(
-                0,
-                TenantEventKind::DocumentWrite {
-                    writes: writes.clone(),
-                },
-            );
-        }
-        let commit = if let Some(record) = self.prepared_record.take() {
-            crate::store::validate_prepared_record_shape(&record, &writes, &self.tenant_events)?;
-            Some(self.append_prepared_record(&record)?)
-        } else if self.tenant_events.is_empty() {
-            None
-        } else {
-            let events = std::mem::take(&mut self.tenant_events);
-            Some(self.append_commit_entry(writes, events)?)
-        };
-        if commit.is_some() {
-            if let Some(record) = prepared_record_for_fault.as_ref() {
-                self.store.check_durable_records_fault(
-                    crate::FaultPoint::JournalAppendBeforeDurableFlush,
-                    std::slice::from_ref(record),
-                )?;
-            } else {
-                self.store
-                    .check_fault(crate::FaultPoint::JournalAppendBeforeDurableFlush)?;
-            }
-            self.store
-                .check_fault(crate::FaultPoint::JournalFlushBeforeVisibility)?;
-        }
-        let tx = self.tx.take().ok_or_else(|| {
-            Error::Internal("libsql replica write transaction already closed".to_string())
-        })?;
-        self.store.block_on(async move {
-            tx.commit().await.map_err(map_libsql_error)?;
-            Ok(())
-        })?;
-        if let Some(record) = prepared_record_for_fault.as_ref() {
-            self.store.check_durable_records_fault(
-                crate::FaultPoint::StorageCommitAfterVisibilityBeforeReturn,
-                std::slice::from_ref(record),
-            )?;
-        } else {
-            self.store
-                .check_fault(crate::FaultPoint::StorageCommitAfterVisibilityBeforeReturn)?;
-        }
-        if let Some(commit) = &commit {
-            if self.refresh_cache_after_commit {
-                self.store.refresh_needed.store(true, Ordering::Release);
-                self.store.note_required_cache_sequence_with_cause(
-                    commit.sequence,
-                    LibsqlReplicaRefreshCause::SchemaWrite,
-                );
-            } else {
-                self.store.note_required_cache_sequence_with_cause(
-                    commit.sequence,
-                    LibsqlReplicaRefreshCause::CommitBarrier,
-                );
-            }
-        } else if self.refresh_cache_after_commit {
-            self.store.refresh_needed.store(true, Ordering::Release);
-            self.store
-                .freshness_metrics
-                .note_refresh_request(LibsqlReplicaRefreshCause::SchemaWrite);
-            self.store.schedule_background_refresh();
-        }
-        Ok(commit)
+    pub fn commit(self) -> Result<Option<CommitEntry>> {
+        sql_commit(self)
     }
 
-    pub fn rollback(mut self) {
-        if let Some(tx) = self.tx.take() {
-            let _ = self.store.block_on(async move {
-                tx.rollback().await.map_err(map_libsql_error)?;
-                Ok(())
-            });
-        }
+    pub fn rollback(&mut self) {
+        sql_rollback(self)
     }
 
     pub(super) fn session(&self) -> Result<&Transaction> {
@@ -1599,7 +1113,19 @@ impl LibsqlReplicaWriteTransaction {
             put_remote_metadata_u64(self.session()?, APPLIED_SEQUENCE_KEY, sequence.0).await?;
             Ok(())
         })?;
+        self.check_journal_append_faults()?;
         Ok(entry)
+    }
+
+    /// The replica's journal append and its flush to the primary are the same
+    /// statement batch, so both journal fault points are observed here — the
+    /// only place a write transaction produces a commit entry. The append point
+    /// is records-scoped when this commit carries a prepared record; the flush
+    /// point stays tenant-scoped, matching every other dialect.
+    fn check_journal_append_faults(&self) -> Result<()> {
+        self.check_fault(FaultPoint::JournalAppendBeforeDurableFlush)?;
+        self.store
+            .check_fault(FaultPoint::JournalFlushBeforeVisibility)
     }
 
     fn append_prepared_record(&self, record: &TenantEventRecord) -> Result<CommitEntry> {
@@ -1643,6 +1169,7 @@ impl LibsqlReplicaWriteTransaction {
                 .await?;
             Ok(())
         })?;
+        self.check_journal_append_faults()?;
         Ok(record.as_commit_entry())
     }
 }

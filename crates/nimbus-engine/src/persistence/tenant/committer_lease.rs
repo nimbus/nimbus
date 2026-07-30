@@ -81,15 +81,14 @@ impl TenantPersistence {
                     records,
                     check_cancel,
                 ),
-            Self::LibsqlReplica(store) => {
-                check_cancel().map_err(CommitterLeaseError::from)?;
-                store.fenced_append_and_apply_durable_records_batch(
+            Self::LibsqlReplica(store) => store
+                .fenced_append_and_apply_durable_records_batch_cancellable(
                     owner_id,
                     epoch,
                     expected_previous,
                     records,
-                )
-            }
+                    check_cancel,
+                ),
             Self::MySql(store) => store.fenced_append_and_apply_durable_records_batch_cancellable(
                 owner_id,
                 epoch,

@@ -53,11 +53,10 @@ use crate::sqlite::{
 use crate::store::{
     APPLIED_SEQUENCE_KEY, DurableJournalBootstrap, DurableJournalPage, HistoricalIndexDocumentPage,
     JournalProgress, MAX_DURABLE_JOURNAL_STREAM_LIMIT, MaterializedJournalSnapshot,
-    NEXT_SEQUENCE_KEY, PointInTimeRestoreArchive, PointInTimeRestoreTarget, ResolvedScheduleOp,
-    ResolvedWrite, TRIGGER_DELIVERY_CURSOR_KEY, TenantWriteCommit,
+    NEXT_SEQUENCE_KEY, ResolvedWrite, TRIGGER_DELIVERY_CURSOR_KEY, TenantWriteCommit,
 };
 
-const FENCED_COMMITTER_LEASE_MARKER: &str = "fenced committer lease during durable apply";
+use crate::sql::store_core::FENCED_COMMITTER_LEASE_MARKER;
 
 mod backend;
 mod committer_lease;
@@ -380,6 +379,9 @@ pub struct LibsqlReplicaWriteTransaction {
     commit_writes: Vec<WriteOp>,
     tenant_events: Vec<TenantEventKind>,
     prepared_record: Option<TenantEventRecord>,
+    /// Kept after `prepared_record` is consumed so the commit-path fault checks
+    /// stay scoped to the record this transaction is making durable.
+    prepared_record_for_fault: Option<TenantEventRecord>,
     trigger_write_origin: Option<TriggerWriteOrigin>,
     commit_timestamp: Option<Timestamp>,
     check_cancel: Box<dyn Fn() -> Result<()> + Send>,
@@ -1265,10 +1267,6 @@ fn map_write_result<T>(result: Result<TenantWriteCommit<T>>) -> Result<TenantWri
         Err(Error::Cancelled) => Ok(TenantWriteOutcome::CancelledBeforeCommit),
         Err(error) => Err(error),
     }
-}
-
-fn expect_write_commit(commit: Option<CommitEntry>, expectation: &str) -> Result<CommitEntry> {
-    commit.ok_or_else(|| Error::Internal(expectation.to_string()))
 }
 
 fn validate_durable_journal_stream_limit(limit: usize) -> Result<()> {

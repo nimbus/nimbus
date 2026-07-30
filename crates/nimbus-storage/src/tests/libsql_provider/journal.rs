@@ -1,3 +1,5 @@
+use std::sync::atomic::AtomicBool;
+
 use super::support::*;
 use crate::tests::{
     exercise_durable_update_guard_is_corruption, exercise_pending_prefix_blocks_generic_zero_write,
@@ -873,6 +875,139 @@ async fn libsql_durable_replay_retires_recreated_table_identity() {
                 && diagnostic.state == TableState::Deleting
                 && diagnostic.document_count.is_none()
         }));
+    })
+    .await;
+}
+
+/// Fires `StorageCommitBeforeVisibility` exactly once, and only once armed, so
+/// tenant bootstrap and baseline writes cannot consume the occurrence.
+struct ArmedCommitBeforeVisibilityFault {
+    armed: AtomicBool,
+    fired: AtomicBool,
+}
+
+impl ArmedCommitBeforeVisibilityFault {
+    fn new() -> Self {
+        Self {
+            armed: AtomicBool::new(false),
+            fired: AtomicBool::new(false),
+        }
+    }
+
+    fn arm(&self) {
+        self.armed.store(true, Ordering::Release);
+    }
+
+    fn fired(&self) -> bool {
+        self.fired.load(Ordering::Acquire)
+    }
+}
+
+impl FaultInjector for ArmedCommitBeforeVisibilityFault {
+    fn check(&self, point: FaultPoint) -> Result<(), Error> {
+        if point == FaultPoint::StorageCommitBeforeVisibility
+            && self.armed.load(Ordering::Acquire)
+            && !self.fired.swap(true, Ordering::AcqRel)
+        {
+            return Err(Error::Internal(
+                "injected libsql commit-before-visibility fault".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// The replica reaches `StorageCommitBeforeVisibility` on the write-transaction
+/// commit path, and a fault there leaves nothing visible. The replica only
+/// gained this fault point when it joined the shared `sql_commit` seam, so this
+/// covers both the new observation and the explicit rollback that follows it.
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn libsql_pre_visibility_fault_rolls_back_and_leaves_the_store_writable() {
+    let faults = Arc::new(ArmedCommitBeforeVisibilityFault::new());
+    let armed = faults.clone();
+    with_test_provider_with_faults(faults, |provider, _config| async move {
+        let tenant = TenantId::new("pre-visibility-rollback").expect("tenant id should build");
+        let opened = provider
+            .create_opened_tenant(&tenant)
+            .await
+            .expect("tenant should create and open");
+        let baseline = crate::tests::sample_document("tasks", "baseline");
+        opened
+            .store
+            .insert(&baseline)
+            .expect("baseline insert should succeed before the fault is armed");
+        // The remote primary owns commit state. `applied_sequence` reads the
+        // local replica cache instead, so it tracks cache freshness rather than
+        // what committed and is not an oracle for a rolled-back write.
+        let durable_head_before = opened
+            .store
+            .latest_sequence()
+            .expect("remote durable head should read before the fault");
+
+        armed.arm();
+        let faulted = crate::tests::sample_document("tasks", "rolled-back");
+        let error = opened
+            .store
+            .insert(&faulted)
+            .expect_err("the armed pre-visibility fault must fail the write");
+        assert!(
+            matches!(&error, Error::Internal(message) if message
+                .contains("injected libsql commit-before-visibility fault")),
+            "the replica must surface the pre-visibility fault: {error}"
+        );
+        assert!(
+            armed.fired(),
+            "the replica must observe StorageCommitBeforeVisibility on the commit path"
+        );
+
+        assert_eq!(
+            opened
+                .store
+                .get(&faulted.table, &faulted.id)
+                .expect("read should succeed after the rolled-back write"),
+            None,
+            "a pre-visibility fault must leave the write invisible"
+        );
+        assert_eq!(
+            opened
+                .store
+                .latest_sequence()
+                .expect("remote durable head should read after the rollback"),
+            durable_head_before,
+            "a pre-visibility fault must not advance the remote durable head"
+        );
+        assert_eq!(
+            opened
+                .store
+                .read_durable_journal_from(SequenceNumber(1))
+                .expect("durable journal should read after the rollback")
+                .len(),
+            1,
+            "the rolled-back write must leave no commit-log record behind"
+        );
+
+        opened
+            .store
+            .insert(&faulted)
+            .expect("the store must stay writable after the rollback");
+        assert_eq!(
+            opened
+                .store
+                .get(&faulted.table, &faulted.id)
+                .expect("retried document should load")
+                .as_ref(),
+            Some(&faulted)
+        );
+        assert_eq!(
+            opened
+                .store
+                .get(&baseline.table, &baseline.id)
+                .expect("baseline document should load")
+                .as_ref(),
+            Some(&baseline),
+            "the rollback must not disturb the record committed before it"
+        );
     })
     .await;
 }

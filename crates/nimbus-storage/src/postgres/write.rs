@@ -8,7 +8,13 @@ use super::write_schema_events::{
     durable_record_changes_schema_cache, record_postgres_schema_set_events,
 };
 use super::*;
-use crate::sql::store_core::{SqlStoreCore, SqlWriteTransactionCore, sql_store_core_facade};
+use crate::CommitterLeaseResult;
+use crate::sql::store_core::{
+    SqlDurableJournalStore, SqlStoreCore, SqlWriteTransactionCore,
+    sql_store_append_durable_records_batch, sql_store_apply_durable_records_batch,
+    sql_store_core_facade, sql_store_fenced_append_and_apply_durable_records_batch_cancellable,
+};
+use crate::sql::write_core::SqlDurableJournalTransaction;
 use crate::sql::write_pipeline::SqlWritePipelineMetrics;
 
 sql_store_core_facade!(PostgresTenantStore);
@@ -105,10 +111,6 @@ impl SqlStoreCore for PostgresTenantStore {
         self.retention_floor.as_ref()
     }
 
-    fn pipeline_metrics(&self) -> &SqlWritePipelineMetrics {
-        self.pipeline_metrics.as_ref()
-    }
-
     fn journal_progress(&self) -> Result<JournalProgress> {
         PostgresTenantStore::journal_progress(self)
     }
@@ -126,6 +128,41 @@ impl SqlStoreCore for PostgresTenantStore {
 
     fn export_materialized_journal_snapshot(&self) -> Result<MaterializedJournalSnapshot> {
         PostgresTenantStore::export_materialized_journal_snapshot(self)
+    }
+
+    fn append_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
+        sql_store_append_durable_records_batch(self, records)
+    }
+
+    fn apply_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
+        sql_store_apply_durable_records_batch(self, records)
+    }
+
+    fn fenced_append_and_apply_durable_records_batch_cancellable<Check>(
+        &self,
+        owner_id: &str,
+        epoch: u64,
+        expected_previous: SequenceNumber,
+        records: &[TenantEventRecord],
+        check_cancel: Check,
+    ) -> CommitterLeaseResult<()>
+    where
+        Check: Fn() -> Result<()> + Send + 'static,
+    {
+        sql_store_fenced_append_and_apply_durable_records_batch_cancellable(
+            self,
+            owner_id,
+            epoch,
+            expected_previous,
+            records,
+            check_cancel,
+        )
+    }
+}
+
+impl SqlDurableJournalStore for PostgresTenantStore {
+    fn pipeline_metrics(&self) -> &SqlWritePipelineMetrics {
+        self.pipeline_metrics.as_ref()
     }
 }
 
@@ -162,27 +199,6 @@ impl SqlWriteTransactionCore for PostgresWriteTransaction {
             expected_previous,
             durable_sequence,
         )
-    }
-
-    fn append_durable_records_batch(&mut self, records: &[TenantEventRecord]) -> Result<()> {
-        PostgresWriteTransaction::append_durable_records_batch(self, records)
-    }
-
-    fn apply_durable_records_batch(&mut self, records: &[TenantEventRecord]) -> Result<()> {
-        PostgresWriteTransaction::apply_durable_records_batch(self, records)
-    }
-
-    /// PostgreSQL pipelines the journal insert and the apply as one ordered pair
-    /// on a shared connection, so pipeline progress is reported once both have
-    /// completed.
-    fn append_and_apply_fenced_durable_batch(
-        &mut self,
-        records: &[TenantEventRecord],
-        on_pipeline_progress: &mut dyn FnMut(),
-    ) -> Result<()> {
-        PostgresWriteTransaction::append_and_apply_durable_records_batch(self, records)?;
-        on_pipeline_progress();
-        Ok(())
     }
 
     fn replace_table_schema(&mut self, table_schema: &TableSchema) -> Result<()> {
@@ -1209,8 +1225,12 @@ impl crate::sql::write_core::SqlWriteBackend for PostgresWriteTransaction {
             .check_for_tenant(point, &self.tenant_id)
     }
 
-    fn batch_execute(&mut self, sql: &str) -> Result<()> {
-        PostgresWriteTransaction::batch_execute(self, sql)
+    fn commit_transaction(&mut self) -> Result<()> {
+        PostgresWriteTransaction::batch_execute(self, "COMMIT")
+    }
+
+    fn rollback_transaction(&mut self) {
+        let _ = PostgresWriteTransaction::batch_execute(self, "ROLLBACK");
     }
 
     fn trigger_write_origin(&self) -> Option<TriggerWriteOrigin> {
@@ -1249,23 +1269,8 @@ impl crate::sql::write_core::SqlWriteBackend for PostgresWriteTransaction {
         self.prepared_record.take()
     }
 
-    fn applied_sequence(&mut self) -> Result<SequenceNumber> {
-        PostgresWriteTransaction::applied_sequence(self)
-    }
-
-    fn load_durable_record(
-        &mut self,
-        sequence: SequenceNumber,
-    ) -> Result<Option<TenantEventRecord>> {
-        PostgresWriteTransaction::load_durable_record(self, sequence)
-    }
-
     fn apply_durable_record(&mut self, record: &TenantEventRecord) -> Result<()> {
         PostgresWriteTransaction::apply_durable_record(self, record)
-    }
-
-    fn write_applied_sequence(&mut self, sequence: SequenceNumber) -> Result<()> {
-        PostgresWriteTransaction::write_applied_sequence(self, sequence)
     }
 
     fn append_commit_entry(
@@ -1361,5 +1366,43 @@ impl crate::sql::write_core::SqlWriteBackend for PostgresWriteTransaction {
         locator: &nimbus_core::DocumentLocator,
     ) -> Result<Option<ResourcePathBinding>> {
         PostgresWriteTransaction::remove_resource_path_binding(self, locator)
+    }
+}
+
+impl SqlDurableJournalTransaction for PostgresWriteTransaction {
+    fn applied_sequence(&mut self) -> Result<SequenceNumber> {
+        PostgresWriteTransaction::applied_sequence(self)
+    }
+
+    fn load_durable_record(
+        &mut self,
+        sequence: SequenceNumber,
+    ) -> Result<Option<TenantEventRecord>> {
+        PostgresWriteTransaction::load_durable_record(self, sequence)
+    }
+
+    fn write_applied_sequence(&mut self, sequence: SequenceNumber) -> Result<()> {
+        PostgresWriteTransaction::write_applied_sequence(self, sequence)
+    }
+
+    fn append_durable_records_batch(&mut self, records: &[TenantEventRecord]) -> Result<()> {
+        PostgresWriteTransaction::append_durable_records_batch(self, records)
+    }
+
+    fn apply_durable_records_batch(&mut self, records: &[TenantEventRecord]) -> Result<()> {
+        PostgresWriteTransaction::apply_durable_records_batch(self, records)
+    }
+
+    /// PostgreSQL pipelines the journal insert and the apply as one ordered pair
+    /// on a shared connection, so pipeline progress is reported once both have
+    /// completed.
+    fn append_and_apply_fenced_durable_batch(
+        &mut self,
+        records: &[TenantEventRecord],
+        on_pipeline_progress: &mut dyn FnMut(),
+    ) -> Result<()> {
+        PostgresWriteTransaction::append_and_apply_durable_records_batch(self, records)?;
+        on_pipeline_progress();
+        Ok(())
     }
 }

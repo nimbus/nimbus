@@ -291,3 +291,288 @@ truth and re-runs these lanes in its service containers.
 `git diff --stat c4adee822..HEAD -- crates/nimbus-storage/src/sqlite crates/nimbus-storage/src/libsql crates/nimbus-storage/tests/sqlite_foundation crates/nimbus-storage/src/tests/sqlite_foundation`
 prints nothing: zero files changed under any of those paths. The live libsql
 lane above passing 50/50 is the behavioral confirmation.
+
+---
+
+# SUC3.1 Step 2 — libsql Joins The Seam
+
+Branch `codex/suc3-step2-libsql`, based on `origin/main` @ `b4924264e`
+(step 1 is in main). Scope: libsql only. sqlite stays byte-untouched, and
+PostgreSQL/MySQL change only where the shared seam had to grow to admit a third
+dialect.
+
+## What Changed
+
+`libsql/write.rs` carried the same store-level wrapper layer that step 1
+deleted from PostgreSQL and MySQL — roughly 680 lines of `execute_write(|tx|
+…)` wrappers plus its own `map_fenced_write_result`, `expect_write_commit`,
+`apply_schedule_ops_in_libsql_transaction`, and `apply_resolved_write`. All of
+it is gone, replaced by `sql_store_core_facade!(LibsqlReplicaTenantStore)` and
+three trait impls: `SqlStoreCore`, `SqlWriteTransactionCore`, and
+`SqlWriteBackend`. `LibsqlReplicaWriteTransaction::commit` and `rollback` are
+now two lines each, delegating to the shared `sql_commit` / `sql_rollback`.
+
+| file | base | now | delta |
+| --- | --- | --- | --- |
+| `libsql/write.rs` | 1692 | 1219 | **−473** |
+| `libsql.rs` | 1282 | 1280 | −2 |
+| `libsql/backend.rs` | — | — | −15 |
+| `sql/store_core.rs` | 1490 | 1528 | +38 |
+| `sql/write_core.rs` | 315 | 368 | +53 |
+| `postgres/write.rs` | 1365 | 1408 | +43 |
+| `mysql/write.rs` | 1366 | 1404 | +38 |
+
+Net across the nine production files: **751 insertions, 1069 deletions
+(−318 lines)**. The new libsql test adds 135 lines, so the commit as a whole is
+886/1069.
+
+### Two seam changes libsql forced
+
+1. **`commit_transaction` / `rollback_transaction` on `SqlWriteBackend`.**
+   PostgreSQL and MySQL commit by issuing `batch_execute("COMMIT")` against a
+   session. libsql owns a `libsql::Transaction` value that is *consumed* by
+   `commit()`. `sql_commit` could not keep emitting a SQL string, so the
+   commit and rollback verbs became seam methods. pg/mysql implement them with
+   the same `batch_execute` they used before.
+
+   One signature change falls out of this:
+   `LibsqlReplicaWriteTransaction::rollback` was `pub fn rollback(mut self)`
+   and is now `pub fn rollback(&mut self)`, matching the shape pg and MySQL
+   already had. It has exactly one caller — the error arm of
+   `libsql/write.rs:59`, which returns immediately after — and a second
+   rollback would be a no-op anyway because `rollback_transaction` takes the
+   `Option<Transaction>`.
+2. **`pipeline_metrics` moved off `SqlStoreCore` into a new
+   `SqlDurableJournalStore` supertrait**, implemented only by PostgreSQL and
+   MySQL. The libsql store has no write-pipeline metrics object because it has
+   no write pipeline: each durable-journal batch is a dedicated remote
+   round-trip against the primary, not a replay through the write transaction.
+   For the same reason libsql overrides the three store-level durable methods
+   and does not implement `SqlDurableJournalTransaction`.
+
+### What deliberately did not move
+
+The remote-session layer (`libsql/remote.rs`), the replica cache and its
+freshness machinery, the Hrana transport, and the three async remote
+batch functions in `libsql.rs` are all unchanged. Per-dialect pipeline
+constants are untouched. **No shared path gained a read-after-commit**: the
+replica's Hrana session snapshot semantics mean a post-commit read can observe
+an older snapshot, so `after_visibility` does local bookkeeping only — it
+advances `required_cache_sequence` and sets `refresh_needed`, and reads
+nothing.
+
+## Behavior Changes
+
+Three, all deliberate. The first was specified by the brief; the other two are
+consequences of adopting shared code that was already correct for the other
+dialects.
+
+Fault semantics are otherwise byte-for-byte what libsql had before, which is a
+constraint rather than an accident — see "Fault semantics held to base" below
+for the two candidate changes that were implemented and then reverted.
+
+### 1. libsql gains `FaultPoint::StorageCommitBeforeVisibility`
+
+The replica's hand-rolled commit checked `JournalAppendBeforeDurableFlush`,
+`JournalFlushBeforeVisibility`, and `StorageCommitAfterVisibilityBeforeReturn`,
+but never `StorageCommitBeforeVisibility` — PostgreSQL, MySQL and SQLite all
+had it. Joining `sql_commit` closes that gap.
+
+New coverage:
+`tests::libsql_provider::journal::libsql_pre_visibility_fault_rolls_back_and_leaves_the_store_writable`
+arms the point through the store's own injector, asserts the fault is observed,
+asserts the write is invisible and the remote durable head and commit log did
+not move, and then asserts the store still commits a retry. Fail-before check:
+with the single line `backend.check_fault(FaultPoint::StorageCommitBeforeVisibility)?`
+removed from `sql_commit`, the test fails at the `expect_err`; restored from a
+saved copy, it passes. The removal was an experiment on a saved copy and
+`write_core.rs` was verified byte-identical afterwards.
+
+Note that the assertion deliberately uses `latest_sequence()` and
+`read_durable_journal_from`, not `journal_progress()`. `journal_progress`
+mixes a remote `durable_head` with an `applied_head` read from the *local
+replica cache*, so `applied_head` tracks cache freshness, not commit state: a
+committed write leaves it stale until some later read crosses the barrier and
+refreshes. That is pre-existing replica behavior, not a defect, but it makes
+`journal_progress` the wrong oracle for "did this roll back".
+
+### 2. A libsql cancel of a missing scheduled job now errors
+
+`apply_schedule_ops_in_libsql_transaction` discarded the bool from
+`cancel_scheduled_job`. The shared `apply_schedule_ops_in_transaction` raises
+`Error::ScheduledJobNotFound(job_id)` instead. libsql now matches
+PostgreSQL, MySQL and SQLite.
+
+### 3. Errors before visibility roll the transaction back explicitly
+
+The old code relied on `libsql::Transaction`'s drop. `sql_commit` calls
+`sql_rollback` on the error path.
+
+## Fault Semantics Held To Base
+
+Two further changes were implemented, then reverted to hold libsql's existing
+fault semantics exactly. Step 2's only sanctioned fault-semantics change is the
+addition of `StorageCommitBeforeVisibility` in §1.
+
+**`after_visibility` ordering.** Adopting `sql_commit` initially ran the
+post-visibility hook *before* the `StorageCommitAfterVisibilityBeforeReturn`
+check, so a fired fault still recorded the replica cache barrier. Base libsql
+checks the fault first and skips the bookkeeping when it fires. `sql_commit`
+now does the same, and carries a comment saying why: the point stands in for a
+crash between visibility and return, which cannot have run local bookkeeping.
+PostgreSQL, MySQL and SQLite are unaffected — their `after_visibility` is the
+no-op default.
+
+**`JournalFlushBeforeVisibility` scoping.** A single unified `check_fault` on
+the libsql backend made every commit-path point records-scoped whenever the
+transaction carried a prepared record. That matches base for
+`JournalAppendBeforeDurableFlush` and `StorageCommitAfterVisibilityBeforeReturn`,
+which base already records-scopes, but not for `JournalFlushBeforeVisibility`,
+which base leaves tenant-scoped. `check_journal_append_faults` now calls the
+store's tenant-scoped `check_fault` directly for the flush point. The asymmetry
+looks unintentional and is worth revisiting, but not inside a refactor step.
+
+Neither revert is observable through the PPSC injector: its
+`check_for_durable_records` delegates straight to `check_tenant`, so
+records-scoping and tenant-scoping are the same call for it today.
+
+## Deviations From The Brief
+
+**The engine's libsql special case was collapsed, which the brief did not ask
+for.** `TenantPersistence::fenced_append_and_apply_durable_records_batch_cancellable`
+had a libsql arm that called `check_cancel()` and then the *non*-cancellable
+store method, because libsql had no cancellable variant. The new
+`SqlStoreCore` impl supplies one whose body is the old wrapper verbatim with
+`check_cancel()` moved inside, so the arm now matches PostgreSQL and MySQL.
+This is the only nimbus-engine change in the commit (9 lines).
+
+**One test was added.** The brief framed step 2 as a refactor plus one declared
+behavior change, and did not ask for new tests. A newly reachable fault point
+with no test exercising it is not a verified behavior change, so the test in §1
+above was written to cover it.
+
+## Verification
+
+All commands run with `set -o pipefail`; none gate on a trailing `grep` or
+`tail`. Docker was available, so all three provider fixtures ran locally
+rather than deferring PostgreSQL and MySQL to hosted CI. Fixture ports were
+overridden (`15432` PostgreSQL, `13306` MySQL, `18080`/`18081` libsql) because
+a system PostgreSQL already holds 5432.
+
+| lane | result |
+| --- | --- |
+| `cargo fmt --all --check` | clean |
+| `cargo clippy -p nimbus-storage -p nimbus-engine --all-features --all-targets -- -D warnings` | RC=0 |
+| storage + engine, **fixture-less** (`NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1`) | **1097 run, 1097 passed, 7 skipped**, RC=0 |
+| storage + engine, **all three fixtures live** | **1097 run, 1097 passed, 7 skipped**, RC=0 (258s) |
+| `tests::async_faults` | 5 run, 5 passed, RC=0 |
+| `libsql_provider::journal` + `libsql_replica_provider::ppsc` | 18 run, 18 passed, RC=0 |
+| `libsql_provider::journal` + `libsql_replica_provider`, 10× repeat | **10/10 clean, 31/31 each run**, RC=0 each |
+| `bash scripts/check-docs.sh` | PASS — 108 pages link-clean |
+
+The fixture-less run is recorded separately on purpose, and it is **not**
+provider evidence: the disable flag makes each provider test print
+`omitting … execution` and return, so those tests count as run without
+touching a server. The all-fixtures row is the provider evidence.
+
+One trap worth recording, because it cost a full suite run. Omitting the
+disable flag does *not* silently skip the provider lanes — `provider_test_fixtures.rs:264`
+panics with `tests require the pinned shared fixture; missing non-empty
+environment variable(s): …`, producing 174 failures that look like a
+regression across all three dialects at once. That fail-loud is the harness
+enforcing "a skipped provider test is not a passing one". A fixture-less run
+must pass the flag; a provider run must export
+`NIMBUS_REQUIRE_EXTERNAL_PROVIDER_FIXTURES=1` plus the four URLs.
+
+`cargo check --workspace --all-features --all-targets` does not complete on
+this machine for reasons unrelated to the diff: `nimbus-runtime`'s build
+script rejects the shared `target/debug/gn_out` prebuilt V8 as
+non-pointer-compression, and `fuser` cannot find a system `fuse.pc`. The
+scoped `-p nimbus-storage -p nimbus-engine --all-targets` check is green.
+
+sqlite is byte-untouched. Note the paths: `nimbus-storage` has no `tests/`
+directory at all — its test tree lives under `src/tests/` — so a diff naming
+`crates/nimbus-storage/tests/sqlite_foundation.rs` is vacuously empty and
+proves nothing. The five real paths:
+
+```
+$ git diff --stat b4924264e..HEAD -- \
+    crates/nimbus-storage/src/sqlite \
+    crates/nimbus-storage/src/sqlite.rs \
+    crates/nimbus-storage/src/async_storage/sqlite.rs \
+    crates/nimbus-storage/src/tests/sqlite_foundation \
+    crates/nimbus-storage/src/tests/sqlite_foundation.rs
+(no output)
+$ … | wc -l
+0
+```
+
+## The libsql PPSC Flake Is The Already-Ticketed Arm Theft
+
+Repeat full-suite runs surfaced intermittent failures in the libsql PPSC
+suite. Every one of them is the **same assertion** — `ppsc.rs:477`,
+`PPSC atomic provider acknowledgement loss must require crash-and-replay;
+fault snapshot: PpscStorageFaultSnapshot { active: false, visits: 1, fires: 1 }`
+— carried by whichever seeded scenario happened to hit the timing window
+(`libsql_ppsc_seed_97_diagnostic` in one run,
+`libsql_ppsc_seeded_journal_differential` in another).
+
+It did not reproduce on the final branch state: the 10× repeat of
+`libsql_provider::journal` + `libsql_replica_provider` (which contains the PPSC
+suite) was 10/10 clean at 31/31. Ten runs cannot clear a defect whose observed
+rate is roughly 1 in 10, so this is consistency evidence, not an all-clear —
+the argument that step 2 is not implicated is the structural one below, not
+the run count.
+
+This is a known defect, root-caused and ticketed on main at `2969a881e`
+before step 2 began:
+
+> **PPSC ack-loss arm theft (libsql lane flake root cause)** — SUC3.1 step-1
+> CI + 40-run bisection — one-shot arm keys on tenant, so a concurrent
+> `commit == None` transaction consumes it (unconditional
+> `StorageCommitAfterVisibilityBeforeReturn` check), the real batch then
+> commits clean on retry and the test asserts a crash that correctly never
+> happened; fix: make `check_for_durable_records` discriminate on records and
+> stop no-journal commits consuming the arm.
+
+Step 2 cannot have caused or worsened it, and three independent checks say so:
+
+1. **The new fault point is unreachable from PPSC.**
+   `storage_fault_point_unchecked` maps `AcknowledgementLoss` to
+   `StorageCommitAfterVisibilityBeforeReturn`, `ProviderTransient` to
+   `JournalAppendBeforeDurableFlush`, and `DurableBeforePublish` /
+   `PanicAfterDurable` to `None`. No `PpscInjectedFault` maps to
+   `StorageCommitBeforeVisibility`, so it can neither be armed nor consume an
+   arm.
+
+2. **Records-scoping is a no-op for this injector.** The PPSC injector
+   overrides `check_for_durable_records` but its body is `self.check_tenant(point, tenant_id)`
+   — identical to the tenant-scoped path. So no scoping choice this step could
+   have made, including the one it reverted, changes which arms are consumed.
+   Discriminating on records is exactly the harness-side half of the ticket's
+   fix, and it is still open.
+
+3. **Visit counts are unchanged.** `sql_commit` checks
+   `StorageCommitAfterVisibilityBeforeReturn` unconditionally once per commit,
+   exactly as libsql's hand-rolled commit did. The journal points moved into
+   `append_commit_entry` / `append_prepared_record`, whose only callers are the
+   two call sites inside `sql_commit`, so those are still one visit per commit.
+
+The failure also predates any libsql change. During the step-1 CI
+investigation the same assertion in the same test appeared 1/10 on the step-1
+branch and 0/10 both at its base and merged. The raw ratio looks incriminating
+until you note that step 1's diff does not touch libsql at all (`d2a3596ff`:
+"sqlite, and libsql are untouched") — it added the shared seam that libsql did
+not yet use. A diff that cannot reach libsql's commit path cannot have caused a
+libsql commit-path failure, which is what motivated the 40-run bisection the
+ticket cites, and that bisection landed on arm theft rather than on either
+diff.
+
+**Verdict: pre-existing harness defect, already owned by the ticket above. Not
+a step-2 regression, and not fixed here** — the recorded fix lands in
+`nimbus-testing`'s PPSC injector and changes arm consumption for the
+PostgreSQL and MySQL lanes too, which is a different change with its own blast
+radius.
+
+The unrelated `arm_selection::opaque_internal_job_cannot_overtake_ordered_publisher`
+load-flake (also ticketed) appeared once in the base sweep.
