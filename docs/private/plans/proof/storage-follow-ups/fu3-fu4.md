@@ -1,14 +1,16 @@
-# FU3 + FU4 + FU-P1 — DynamoDB batch stream fidelity, policy-aware paging, and GetRecords authorization
+# FU3 + FU4 + FU-P1..P3 — DynamoDB batch stream fidelity, policy-aware paging, and GetRecords authorization
 
-Owning plan: `docs/private/plans/storage-follow-ups-plan.md` (FU3, FU4, FU-P1).
+Owning plan: `docs/private/plans/storage-follow-ups-plan.md` (FU3, FU4, FU-P1, FU-P2, FU-P3).
 Prior evidence: `proof/storage-unification/suc4/dynamodb-rmw.md` (FU3 finding),
 `proof/storage-unification/suc5/principal.md` (FU4 finding).
 Branch `codex/fu3-dynamo`, base `origin/main @ 22c5cdd62`.
 
-Four concepts, four commits: the batch transaction (FU3), the starting-at scan
+Five concepts, five commits: the batch transaction (FU3), the starting-at scan
 paging (FU4), stream-record read authorization (FU-P1, raised as a P1 on review
-of the first two), and real lifecycle timestamps on stored images (FU-P2, raised
-as a P2 on review of FU-P1).
+of the first two), real lifecycle timestamps on stored images (FU-P2, raised as
+a P2 on review of FU-P1), and the three review findings against the GetRecords
+path (FU-P3 — page-fill amplification, no-op MODIFY reconstruction, and timing
+sleeps in the new tests).
 
 ## FU3 — `batch_write_item` read the prior image outside the write's transaction
 
@@ -531,25 +533,218 @@ the test was wrong; the fix was to make the second write a real modification, no
 to weaken the assertion.
 
 
+## FU-P3 — three findings from the review of FU-P2
+
+The review of FU-P2 accepted three findings against the GetRecords path. All
+three are fixed here in one commit: they are one review pass over one surface.
+
+### (1) The page-fill loop permitted severe request amplification
+
+Filling a page walks *past* records the caller may not read, so the loop needed
+a bound. The bound it had was `MAX_EVENTS_EXAMINED = 10 * MAX_GET_RECORDS`, a
+constant tied to the maximum page size rather than to what the caller asked
+for. That made a dense run of withheld events into an amplification lever: a
+caller polling for a **single** record could induce a scan of up to 10,000
+stored events, and because each poll re-scans from its own iterator, it could
+do so on every poll. Reading one event at a time — `wanted` is the number of
+records still needed — that is also up to 10,000 store reads for one call.
+
+The budget is now relative to the requested limit:
+
+```rust
+const EVENT_EXAMINATION_AMPLIFICATION: usize = 4;
+...
+let examination_budget = limit.saturating_mul(EVENT_EXAMINATION_AMPLIFICATION);
+while records.len() < limit && examined < examination_budget {
+```
+
+**The amplification ceiling.** One call examines at most
+`EVENT_EXAMINATION_AMPLIFICATION * limit` stored events and issues at most
+`EVENT_EXAMINATION_AMPLIFICATION` store reads. The worst case across all
+callers is `4 * MAX_GET_RECORDS` = 4,000 events, and reaching it requires
+asking for the largest page DynamoDB allows — a caller asking for one record
+gets a budget of four. Both constants are documented at the definition.
+
+Returning a short page is correct here in a way it would not be for a
+limit-bearing scan: GetRecords always returns an advanced `NextShardIterator`,
+and the iterator advances over every event examined, so a short page means
+"poll again" rather than "the stream is drained" and the consumer still drains
+the stream at a bounded rate per poll.
+
+### (2) A no-op MODIFY reconstructed the wrong `_updateTime`
+
+FU-P2 stamped the reconstructed new image with the event's commit timestamp
+unconditionally. That is right for a real modification and wrong for a write
+that changes nothing — and this repo's own FU-P2 investigation had already
+recorded that a PutItem rewriting identical content leaves `update_time`
+untouched. The consequence is a reconstruction that disagrees with what a table
+read returns, so a lifecycle rule reaches a different verdict for the record
+than for the item it describes: under `_creationTime == _updateTime` the item
+is admitted and its MODIFY record is withheld.
+
+**Where the suppression actually happens.** This was located rather than
+guessed. It is not in the storage backends —
+`nimbus-storage/src/sqlite/write.rs:583` and
+`nimbus-storage/src/memory/documents.rs:372` both assign `update_time`
+unconditionally. It is in the execution-unit write path, which is the path the
+DynamoDB adapter uses, at
+`crates/nimbus-engine/src/engine/execution_units/batch.rs:857`:
+
+```rust
+fn preserve_document_lifecycle_times(existing, current, update_time) {
+    if let Some(existing) = existing {
+        current.creation_time = existing.creation_time;
+        current.update_time =
+            if existing.fields == current.fields && existing.typed_fields == current.typed_fields {
+                existing.update_time
+            } else {
+                update_time
+            };
+```
+
+So the engine's rule is exactly field-map equality **and** typed-field-map
+equality. That makes this a predicate to mirror, not a heuristic to invent.
+
+**Why capture, not reconstruction.** Reconstruction can compare the two stored
+images, but that is not the same predicate: it cannot see the replaced
+document's typed fields, and the stored old image is a `fields → item → fields`
+round trip of the real one. Both gaps fail in the *disclosure* direction — they
+would report "unchanged" where the engine stamped a new time, admitting a
+record the table read denies. Capture has no such gap: it holds the replaced
+`Document` and the fields about to be written. `OldImage` now carries them, and
+
+```rust
+fn retains_update_time(&self, new_fields: &Map<String, Value>) -> bool {
+    self.typed_fields_empty && self.fields == *new_fields
+}
+```
+
+mirrors the engine rule directly (every DynamoDB write sets an empty
+typed-field map, so a replaced document that had typed fields is necessarily
+modified). `event_fields` records the answer as `new_image_retained_update:
+Option<u64>` — `Some(retained_time)` for a lifecycle no-op, `None` when the new
+image takes the commit timestamp, which `committed_at` already recovers on
+read.
+
+This is team-lead's "better" option and it is **not** circular. Capture never
+needs to know the commit timestamp: in the retained case the resulting
+`_updateTime` is the old one, which capture has; in every other case the reader
+derives it from the event document's own creation stamp.
+
+### (3) Raw separation sleeps replaced with bounded semantic waits
+
+Three `std::thread::sleep(Duration::from_millis(5))` calls stood between writes
+that had to land in different milliseconds. Five milliseconds is a guess about
+a clock: a coarse or adjusted clock, or a loaded machine, can defeat it, and
+the test then fails despite correct behavior.
+
+Both files now wait on the observable quantity with a 5s deadline and a loud
+assertion on timeout. The in-crate helper waits past a stamp read from the
+stored document itself:
+
+```rust
+fn wait_for_commit_clock_past(stamp: Timestamp) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while now_millis() <= stamp.0 {
+        assert!(Instant::now() < deadline, "...");
+        std::thread::yield_now();
+    }
+}
+```
+
+The integration test has no direct document access, so
+`wait_for_next_commit_millisecond()` marks the clock immediately after a write
+returns — at or past that write's stamp — and waits for the clock to pass it.
+Commit stamps are `max(now, previous)`, so a wall clock past the mark puts
+every later commit past it too. The existing diagnostic assertions (the
+`Scan` `Count` mirror, the `assert_ne!` on the stored document's stamps) are
+kept: they are what fails loudly if a clock never advances.
+
+### Fail-before (RED)
+
+Both production behaviors were reverted at once — `updated: event.committed_at`
+and `EVENT_EXAMINATION_AMPLIFICATION = 10 * MAX_GET_RECORDS` — and the three
+new tests run against that tree:
+
+```
+Summary [0.841s] 3 tests run: 0 passed, 3 failed, 289 skipped
+  FAIL principal_authorization get_records_admits_a_no_op_rewrite_the_table_read_still_admits
+  FAIL commands::stream::tests::a_no_op_write_reconstructs_the_retained_update_time
+  FAIL commands::stream::tests::a_small_page_request_is_bounded_when_records_are_withheld
+       assertion `left == right` failed: a one-record poll must examine 10000
+       stored events, not walk the whole run of 40 withheld ones
+         left: 40
+        right: 10000
+```
+
+The amplification failure is the clearest statement of the finding: under the
+old cap a one-record poll walked every one of the 40 withheld events, and would
+have walked 10,000 had they been there.
+
+`stream.rs` was restored from a scratchpad copy and verified by SHA-256
+(`8238ef88…`, `RESTORE_OK=1`), not with `git checkout`.
+
+### Tests added
+
+`crates/nimbus-dynamodb/src/commands/stream/tests.rs`:
+
+- `a_small_page_request_is_bounded_when_records_are_withheld` — 40 events, all
+  withheld by a real per-document predicate, polled with `Limit: 1`. Asserts the
+  page is empty *and* that the returned iterator advanced by exactly
+  `EVENT_EXAMINATION_AMPLIFICATION`. Pinning the advance, not just the page
+  size, is what makes this a statement about work performed.
+- `a_no_op_write_reconstructs_the_retained_update_time` — writes identical
+  content twice in different milliseconds, asserts the stored document's stamps
+  are still equal, that the rewrite still emitted a MODIFY, and that **both**
+  reconstructed images carry the stored document's times.
+
+`crates/nimbus-dynamodb/tests/principal_authorization.rs`:
+
+- `get_records_admits_a_no_op_rewrite_the_table_read_still_admits` — the
+  converse of `get_records_evaluates_lifecycle_times_against_the_real_document_history`.
+  Under `_creationTime == _updateTime` the `Scan` mirror must return `Count` 2
+  and the stream must return `["a", "a", "b"]`, so record and item verdicts are
+  asserted to agree rather than each being checked alone.
+
+Two helpers were generalized rather than duplicated: `restrict_events_reads`
+and the new `withhold_events_reads` now share `set_events_read_rule`.
+
+### One incidental doc correction
+
+`StoredEvent`'s comment said keys and images are stored "in AttributeValue
+wire-JSON". They are not — `event_fields` stores `item_to_fields(...)` output,
+the same field encoding the data path writes, and `shape_record` re-encodes on
+the way out. The stale comment cost real time during this work (it is why the
+image-equality question had to be re-derived from the code), so it is corrected.
+
 ## Verification
 
 All commands run with `set -o pipefail` so the recorded status is the command's,
 not `tail`'s. macOS, `stable-aarch64-apple-darwin`.
 
-The battery was run three times: after FU3 + FU4, after FU-P1, and after FU-P2.
-The table records the **final** run, over all four concepts.
+The battery was run four times: after FU3 + FU4, after FU-P1, after FU-P2, and
+after FU-P3. The table records the **final** run, over all five concepts.
+
+Note on the idiom: `${PIPESTATUS[0]}` is bash-only and expands to nothing under
+this shell (zsh), which prints an empty `RC=` that reads like a missing result.
+`set -o pipefail` plus plain `$?` is the form used here.
 
 | Command | Result |
 | --- | --- |
-| `NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 cargo nextest run -p nimbus-dynamodb` | **289 run, 289 passed, 0 skipped** — `DDB_RC=0` |
+| `NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 cargo nextest run -p nimbus-dynamodb` | **292 run, 292 passed, 0 skipped** — `DDB_RC=0` |
 | `NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 cargo nextest run -p nimbus-core` | **194 run, 194 passed, 0 skipped** — `CORE_RC=0` |
-| `NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 cargo nextest run -p nimbus-engine` | **665 run, 665 passed (2 slow), 5 skipped** — `ENGINE_RC=0` |
-| `NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 cargo nextest run -p nimbus-server -E 'test(dynamodb) or test(ddb)'` | **15 run, 15 passed, 590 skipped** — `rc=0` |
-| `cargo clippy -p nimbus-dynamodb -p nimbus-engine -p nimbus-core --all-targets -- -D warnings` | `CLIPPY_RC=0` |
-| `cargo fmt --all --check` | `FMT_RC=0` (after applying `cargo fmt --all`, which touched `commands/item.rs` only) |
+| `NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 cargo nextest run -p nimbus-engine` | **665 run, 665 passed (1 slow), 5 skipped** — `ENGINE_RC=0` |
+| `NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 cargo nextest run -p nimbus-server -E 'test(dynamodb) or test(ddb)'` | **15 run, 15 passed, 590 skipped** — `SERVER_RC=0` |
+| `make clippy` (workspace, `-D warnings`) | `CLIPPY_RC=0` |
+| `cargo fmt --all --check` | `FMT_RC=0` (after applying `cargo fmt --all`, which touched `commands/stream/tests.rs` only) |
 
-The dynamodb count moves 281 → 283 → 289: FU-P1 replaced one test with three,
-and FU-P2 adds three in-crate plus three integration tests.
+The dynamodb count moves 281 → 283 → 289 → 292: FU-P1 replaced one test with
+three, FU-P2 adds three in-crate plus three integration tests, and FU-P3 adds
+two in-crate plus one integration test.
+
+FU-P3 widened the lint lane from three named crates to `make clippy` over the
+whole workspace. The FU-P2 change to read-filter compilation is on every
+adapter's read path, so a crate-scoped lint was narrower than the change.
 
 **nimbus-core joins the battery from FU-P2 on**, and not as a formality. That
 commit changes read-filter compilation, which every scan and query on every
@@ -601,7 +796,7 @@ so change capture is exercised end-to-end through the wire, not only in-crate.
 
 ### Restoration discipline
 
-All four fail-before captures reverted production code temporarily, and so did
+All five fail-before captures reverted production code temporarily, and so did
 two of the three flake attributions. Every time, the files were restored from
 copies saved to the session scratchpad and then compared byte-for-byte — never
 with `git checkout -- <file>`, which restores from HEAD and would have destroyed
@@ -612,6 +807,10 @@ test files in the tree, and `git stash pop` to restore. Ten files were then
 verified byte-identical against copies saved beforehand (`RESTORE_OK=1`); the
 stash was chosen over per-file copying because eight interdependent files had to
 move together and back together.
+
+FU-P3's revert was a single file (`stream.rs`) carrying both reverted
+behaviors, so a plain scratchpad copy sufficed; restoration was confirmed by
+SHA-256 equality with the pre-probe file rather than by `cmp` alone.
 
 The FU-P1 revert used `git show HEAD:crates/nimbus-dynamodb/src/commands/stream.rs`
 rather than hand-editing the changed arms back. Under `-D unused` a partial

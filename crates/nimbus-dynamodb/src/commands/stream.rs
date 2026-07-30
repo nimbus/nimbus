@@ -55,7 +55,9 @@ impl DocumentTimes {
 }
 
 /// A captured change event, persisted as one document in the stream store. Keys
-/// and images are stored in AttributeValue wire-JSON (like data items).
+/// and images are stored decoded into the same field encoding the data path
+/// writes, and are re-encoded as AttributeValue wire-JSON when a record is
+/// shaped for the caller.
 #[derive(Serialize, Deserialize)]
 struct StoredEvent {
     seq: i64,
@@ -71,6 +73,16 @@ struct StoredEvent {
     old_image_times: Option<DocumentTimes>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     new_image: Option<Map<String, Value>>,
+    /// The new image's `_updateTime` when the write did *not* advance it —
+    /// `None` whenever the new image takes the mutation's commit timestamp,
+    /// which `committed_at` recovers on read.
+    ///
+    /// A write that leaves the document's contents unchanged is a lifecycle
+    /// no-op: the engine keeps the previous `_updateTime` while still emitting
+    /// a MODIFY record. Only capture can distinguish that case, so it records
+    /// the retained value here rather than leaving the reader to guess (see
+    /// [`OldImage::retains_update_time`]).
+    new_image_retained_update: Option<u64>,
     /// Set for service-originated changes (TTL deletions carry the DynamoDB
     /// service principal — D6.2). Absent for ordinary client writes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -303,6 +315,14 @@ fn event_name_from_str(value: &str) -> Result<StreamEventName, DynamoDbError> {
 pub(crate) struct OldImage {
     pub(crate) item: Item,
     pub(crate) times: DocumentTimes,
+    /// The replaced document's field map as the engine holds it, kept beside
+    /// the encoded item so capture can answer [`Self::retains_update_time`].
+    fields: Map<String, Value>,
+    /// Whether the replaced document carried no typed fields. DynamoDB writes
+    /// always set an empty typed-field map, so a replaced document that had
+    /// typed fields is necessarily modified by this write however its stored
+    /// fields compare.
+    typed_fields_empty: bool,
 }
 
 impl OldImage {
@@ -314,9 +334,24 @@ impl OldImage {
                 Ok(Self {
                     item: fields_to_item(&document.fields)?,
                     times: DocumentTimes::of(document),
+                    fields: document.fields.clone(),
+                    typed_fields_empty: document.typed_fields.is_empty(),
                 })
             })
             .transpose()
+    }
+
+    /// Whether a write of `new_fields` over this document leaves its
+    /// `_updateTime` untouched.
+    ///
+    /// This mirrors `preserve_document_lifecycle_times` in `nimbus-engine`,
+    /// which retains the previous `_updateTime` when a write leaves both the
+    /// field map and the typed-field map unchanged. A PutItem that rewrites
+    /// identical content is therefore a lifecycle no-op even though it still
+    /// emits a MODIFY record, and capture is the only place that can tell:
+    /// it holds the replaced document and the fields about to be written.
+    fn retains_update_time(&self, new_fields: &Map<String, Value>) -> bool {
+        self.typed_fields_empty && self.fields == *new_fields
     }
 }
 
@@ -382,6 +417,15 @@ const MAX_SEQUENCE_RETRIES: usize = 32;
 
 /// Serialize a [`StoredEvent`] at sequence `seq` to its stored field map.
 fn event_fields(change: &ChangeEvent<'_>, seq: i64) -> Result<Map<String, Value>, DynamoDbError> {
+    let new_image = change.new_image.map(item_to_fields).transpose()?;
+    // The fields about to be written and the document being replaced are both
+    // in hand here, and nowhere else, so this is where a lifecycle no-op is
+    // decided.
+    let new_image_retained_update = change
+        .old_image
+        .zip(new_image.as_ref())
+        .filter(|(old, new_fields)| old.retains_update_time(new_fields))
+        .map(|(old, _)| old.times.updated);
     let event = StoredEvent {
         seq,
         created: epoch_seconds(),
@@ -392,7 +436,8 @@ fn event_fields(change: &ChangeEvent<'_>, seq: i64) -> Result<Map<String, Value>
             .map(|old| item_to_fields(&old.item))
             .transpose()?,
         old_image_times: change.old_image.map(|old| old.times),
-        new_image: change.new_image.map(item_to_fields).transpose()?,
+        new_image,
+        new_image_retained_update,
         user_identity: change.user_identity.clone(),
         // Assigned by the engine at commit; recovered on read from the event
         // document's creation stamp.
@@ -705,10 +750,12 @@ impl RecordAuthorization {
     ///
     /// - The **old** image carries the times captured with it, read from the
     ///   document the write replaced.
-    /// - The **new** image's `_updateTime` is the commit timestamp of the
-    ///   mutation that produced the event, and its `_creationTime` is the old
-    ///   document's when the write replaced one — the same inheritance the
-    ///   engine applies when it stamps an update.
+    /// - The **new** image's `_creationTime` is the old document's when the
+    ///   write replaced one — the same inheritance the engine applies when it
+    ///   stamps an update. Its `_updateTime` is the commit timestamp of the
+    ///   mutation that produced the event, except for a write that left the
+    ///   contents unchanged, where capture recorded the `_updateTime` the
+    ///   engine kept instead.
     fn documents_for(&self, event: &StoredEvent) -> Result<Vec<Document>, DynamoDbError> {
         let mut documents = Vec::with_capacity(2);
         if let Some(image) = &event.old_image {
@@ -724,7 +771,9 @@ impl RecordAuthorization {
                 created: event
                     .old_image_times
                     .map_or(event.committed_at, |old| old.created),
-                updated: event.committed_at,
+                updated: event
+                    .new_image_retained_update
+                    .unwrap_or(event.committed_at),
             };
             documents.push(self.document_for(image, times)?);
         }
@@ -751,15 +800,26 @@ impl RecordAuthorization {
 
 /// The DynamoDB per-call record cap for GetRecords.
 const MAX_GET_RECORDS: usize = 1000;
-/// The cap on stored events one GetRecords call will read while filling a page.
+/// How many stored events one GetRecords call may examine per record the caller
+/// asked for.
 ///
-/// Filling a page past withheld records is unbounded work in principle, so the
-/// scan stops here and returns a short page. That is safe for GetRecords in a
-/// way it is not for a limit-bearing scan: the call always returns an advanced
-/// `NextShardIterator`, so a short page is a signal to poll again rather than a
-/// claim that the stream is drained. The cap is a multiple of the record cap so
-/// a heavily filtered stream can still fill a full page in one call.
-const MAX_EVENTS_EXAMINED: usize = 10 * MAX_GET_RECORDS;
+/// Filling a page past withheld or expired events is unbounded work in
+/// principle, so the scan stops once it has examined this multiple of the
+/// requested limit and returns a short page. A short page is safe for
+/// GetRecords in a way it is not for a limit-bearing scan: the call always
+/// returns an advanced `NextShardIterator`, and the iterator advances over
+/// every event examined, so a short page means "poll again" rather than "the
+/// stream is drained" and a re-poll resumes past the events already walked.
+///
+/// The budget scales with the *requested* limit rather than the maximum page
+/// size, and that is what bounds the amplification. A caller polling for a
+/// single record cannot induce a full-page-sized scan by pointing an iterator
+/// at a dense run of withheld events: one call examines at most
+/// `EVENT_EXAMINATION_AMPLIFICATION * limit` stored events and issues at most
+/// `EVENT_EXAMINATION_AMPLIFICATION` store reads, so the ceiling across all
+/// callers is `4 * MAX_GET_RECORDS` events for a request that also asks for the
+/// largest page DynamoDB allows.
+const EVENT_EXAMINATION_AMPLIFICATION: usize = 4;
 /// Stream record retention window (DynamoDB retains stream records for 24h).
 const STREAM_RETENTION_SECS: i64 = 86_400;
 /// The DynamoDB per-call cap for ListStreams.
@@ -891,13 +951,16 @@ pub fn get_records(
     // Events the caller may not read, and events the retention window has
     // dropped, are consumed without occupying a slot: the page keeps filling
     // past them. The iterator still advances over every event examined, so a
-    // re-poll never stalls on one it will never return.
+    // re-poll never stalls on one it will never return, and the fill stops at
+    // `examination_budget` so a dense run of withheld events cannot turn one
+    // small poll into a large scan (see EVENT_EXAMINATION_AMPLIFICATION).
     let mut records: Vec<StreamRecord> = Vec::new();
     let mut next_sequence = iterator.next_sequence;
     let mut examined = 0usize;
+    let examination_budget = limit.saturating_mul(EVENT_EXAMINATION_AMPLIFICATION);
 
-    while records.len() < limit && examined < MAX_EVENTS_EXAMINED {
-        let wanted = (limit - records.len()).min(MAX_EVENTS_EXAMINED - examined);
+    while records.len() < limit && examined < examination_budget {
+        let wanted = (limit - records.len()).min(examination_budget - examined);
         let window = read_events_from(
             engine,
             context,

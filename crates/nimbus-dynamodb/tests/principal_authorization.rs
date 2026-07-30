@@ -226,6 +226,40 @@ fn read_only_unmodified() -> TableAccessPolicy {
     }
 }
 
+/// Wall-clock milliseconds since the epoch, the unit commit timestamps use.
+fn now_millis() -> u64 {
+    let since_epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("the system clock is after the unix epoch");
+    u64::try_from(since_epoch.as_millis()).expect("milliseconds since the epoch fit in u64")
+}
+
+/// Block until the wall clock leaves the millisecond a just-completed write was
+/// stamped in, so the next write is stamped strictly later.
+///
+/// Commit timestamps are wall-clock milliseconds assigned as
+/// `max(now, previous)`, so two writes inside one millisecond share a stamp and
+/// "modified after creation" stops being observable. Called straight after a
+/// write returns, the mark read here is at or past that write's stamp, so
+/// waiting for the clock to pass it puts every later commit past it too.
+///
+/// Waiting on the clock rather than sleeping a fixed span keeps this correct on
+/// a coarse clock or a loaded machine, where a fixed span is only a guess, and
+/// the deadline turns a clock that never advances into a loud failure rather
+/// than a hang.
+fn wait_for_next_commit_millisecond() {
+    let mark = now_millis();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while now_millis() <= mark {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the wall clock did not advance past {mark}ms within 5s, so a later write cannot be \
+             told apart from the one before it"
+        );
+        std::thread::yield_now();
+    }
+}
+
 /// Create `name` with a single `pk` and a NEW_AND_OLD_IMAGES stream, returning
 /// the stream ARN.
 fn create_streamed_table(engine: &Arc<Engine>, registry: &AccessKeyRegistry, name: &str) -> String {
@@ -711,17 +745,15 @@ fn get_records_evaluates_lifecycle_times_against_the_real_document_history() {
         );
         assert_eq!(status, 200, "put {pk}: {body}");
     };
-    // Commit timestamps have millisecond resolution and are assigned as
-    // `max(now, previous)`, so two writes inside one millisecond would share a
-    // timestamp. Separating them is what makes "modified after creation"
-    // observable at all; the scan assertion below fails loudly if it did not
-    // take effect, rather than passing vacuously. The second write to `a` must
-    // also change the item: rewriting identical content leaves the document
-    // unmodified, update time and all.
+    // Separating the writes into distinct milliseconds is what makes "modified
+    // after creation" observable at all; the scan assertion below fails loudly
+    // if it did not take effect, rather than passing vacuously. The second
+    // write to `a` must also change the item: rewriting identical content
+    // leaves the document unmodified, update time and all.
     put("a", "1");
-    std::thread::sleep(std::time::Duration::from_millis(5));
+    wait_for_next_commit_millisecond();
     put("a", "2");
-    std::thread::sleep(std::time::Duration::from_millis(5));
+    wait_for_next_commit_millisecond();
     put("b", "1");
 
     // Before any policy exists, the stream carries all three changes. This is
@@ -758,6 +790,65 @@ fn get_records_evaluates_lifecycle_times_against_the_real_document_history() {
         "the INSERT of a and the INSERT of b describe documents whose creation and update \
          times are equal, but a's MODIFY carries a new image updated after it was created — \
          reconstructing that image with placeholder times would have returned all three"
+    );
+}
+
+/// A rewrite that changes nothing is a lifecycle no-op: the engine keeps the
+/// document's update time, so a rule over lifecycle times must reach the same
+/// verdict for the MODIFY record as for the item it describes.
+///
+/// This is the converse of the test above. There, stamping the new image with
+/// the commit timestamp was right and placeholder times were wrong; here the
+/// commit did not restamp the document, so stamping the reconstruction with the
+/// commit timestamp would withhold a record whose item the very same rule
+/// admits — visible below as a stream result that disagrees with the scan.
+#[test]
+fn get_records_admits_a_no_op_rewrite_the_table_read_still_admits() {
+    let (engine, registry, _temp) = fixture();
+    let stream_arn = create_streamed_table(&engine, &registry, "Rewrites");
+    let put = |pk: &str| {
+        let (status, body) = call(
+            &engine,
+            &registry,
+            OWNER_KEY,
+            "PutItem",
+            &json!({
+                "TableName": "Rewrites",
+                "Item": { "pk": { "S": pk }, "revision": { "S": "1" } },
+            }),
+        );
+        assert_eq!(status, 200, "put {pk}: {body}");
+    };
+    // The rewrite lands in a later millisecond than the insert, so a
+    // reconstruction that took the commit timestamp would visibly diverge from
+    // the stored document rather than coincidentally agreeing with it.
+    put("a");
+    wait_for_next_commit_millisecond();
+    put("a");
+    put("b");
+
+    set_policy(&engine, "Rewrites", read_only_unmodified());
+    let (_status, scan) = call(
+        &engine,
+        &registry,
+        OWNER_KEY,
+        "Scan",
+        &json!({ "TableName": "Rewrites" }),
+    );
+    assert_eq!(
+        scan["Count"], 2,
+        "rewriting a with identical content leaves it unmodified, so the table read admits both \
+         items — this is the verdict the stream records must agree with: {scan}"
+    );
+
+    let iterator = trim_horizon_iterator(&engine, &registry, OWNER_KEY, &stream_arn);
+    let (records, _next) = get_records(&engine, &registry, OWNER_KEY, &iterator, None);
+    assert_eq!(
+        records,
+        vec!["a", "a", "b"],
+        "a's INSERT, a's no-op MODIFY, and b's INSERT all describe documents whose creation and \
+         update times are equal — withholding the MODIFY would deny a record for an item the \
+         same rule admits"
     );
 }
 

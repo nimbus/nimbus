@@ -21,6 +21,7 @@ fn shape_record_rejects_corrupt_event_name() {
         old_image: None,
         old_image_times: None,
         new_image: None,
+        new_image_retained_update: None,
         user_identity: None,
         committed_at: 0,
     };
@@ -316,6 +317,7 @@ fn seed_raw_stream_event(
         old_image: None,
         old_image_times: None,
         new_image: None,
+        new_image_retained_update: None,
         user_identity: None,
         committed_at: 0,
     };
@@ -775,6 +777,66 @@ fn get_records_iterator_advances_and_pages() {
     assert_eq!(page2.records.len(), 1, "the iterator advanced past page 1");
 }
 
+/// The work one GetRecords call performs is bounded by what the caller asked
+/// for, not by the maximum page size.
+///
+/// Filling a page walks past records the caller may not read, so a dense run of
+/// withheld events is an amplification lever: without a limit-relative budget a
+/// caller could poll for a single record and make the server scan a full page's
+/// worth of events, every poll. The budget caps one call at
+/// `EVENT_EXAMINATION_AMPLIFICATION` events examined per record requested, and
+/// the returned iterator advances over exactly those — a short page means
+/// "poll again", so the stream still drains.
+#[test]
+fn a_small_page_request_is_bounded_when_records_are_withheld() {
+    let (engine, ctx, _t) = fixture();
+    let arn = streamed_table(&engine, &ctx, "NEW_AND_OLD_IMAGES");
+    let written = 40;
+    for index in 0..written {
+        put(&engine, &ctx, &format!("k{index}"), "1");
+    }
+    withhold_events_reads(&engine, &ctx);
+
+    let shard = shard_for(&engine, &ctx, &arn);
+    let iterator = get_shard_iterator(
+        &engine,
+        &ctx,
+        GetShardIteratorInput {
+            stream_arn: arn.clone(),
+            shard_id: shard,
+            shard_iterator_type: ShardIteratorType::TrimHorizon,
+            sequence_number: None,
+        },
+    )
+    .expect("iter")
+    .shard_iterator
+    .expect("iter");
+    let start = iterator_next_sequence(&iterator);
+
+    let page = get_records(
+        &engine,
+        &ctx,
+        GetRecordsInput {
+            shard_iterator: iterator,
+            limit: Some(1),
+        },
+    )
+    .expect("page");
+    assert!(
+        page.records.is_empty(),
+        "the policy withholds every record, so the page is empty"
+    );
+
+    let advanced = iterator_next_sequence(&page.next_shard_iterator.expect("next"));
+    let budget = i64::try_from(EVENT_EXAMINATION_AMPLIFICATION).expect("budget fits in i64");
+    assert_eq!(
+        advanced - start,
+        budget,
+        "a one-record poll must examine {budget} stored events, not walk the whole run of \
+         {written} withheld ones"
+    );
+}
+
 #[test]
 fn capture_is_skipped_for_non_stream_tables() {
     let (engine, ctx, _t) = fixture();
@@ -894,6 +956,7 @@ fn inject_event(
                 .unwrap()
                 .clone(),
         ),
+        new_image_retained_update: None,
         user_identity: None,
         committed_at: 0,
     };
@@ -1080,10 +1143,17 @@ fn record_authorization(
     }
 }
 
-/// Put a read policy on `events` that is restricted but satisfiable by every
-/// real item, so authorization neither short-circuits as unrestricted nor as
-/// impossible and every verdict comes from evaluating an actual image.
-fn restrict_events_reads(engine: &Arc<Engine>, context: &TenantIsolationContext) {
+/// Put a read policy on `events` comparing `pk` against `value` with `op`.
+///
+/// Every caller wants a rule that is restricted without being trivially
+/// unsatisfiable, so authorization neither short-circuits as unrestricted nor
+/// as impossible and every verdict comes from evaluating an actual image.
+fn set_events_read_rule(
+    engine: &Arc<Engine>,
+    context: &TenantIsolationContext,
+    op: nimbus_core::AccessOperator,
+    value: Value,
+) {
     engine
         .set_table_schema(
             context.tenant_id(),
@@ -1098,8 +1168,8 @@ fn restrict_events_reads(engine: &Arc<Engine>, context: &TenantIsolationContext)
                             left: nimbus_core::AccessValue::DocumentField {
                                 field: "pk".to_owned(),
                             },
-                            op: nimbus_core::AccessOperator::Neq,
-                            right: nimbus_core::AccessValue::Literal { value: Value::Null },
+                            op,
+                            right: nimbus_core::AccessValue::Literal { value },
                         }],
                     },
                     ..nimbus_core::TableAccessPolicy::default()
@@ -1107,6 +1177,72 @@ fn restrict_events_reads(engine: &Arc<Engine>, context: &TenantIsolationContext)
             },
         )
         .expect("policy should be storable");
+}
+
+/// A read policy on `events` that every real item satisfies.
+fn restrict_events_reads(engine: &Arc<Engine>, context: &TenantIsolationContext) {
+    set_events_read_rule(
+        engine,
+        context,
+        nimbus_core::AccessOperator::Neq,
+        Value::Null,
+    );
+}
+
+/// A read policy on `events` that no item written by these tests satisfies,
+/// while still being a real predicate the filter has to evaluate per document.
+fn withhold_events_reads(engine: &Arc<Engine>, context: &TenantIsolationContext) {
+    set_events_read_rule(
+        engine,
+        context,
+        nimbus_core::AccessOperator::Eq,
+        Value::String("no-such-item".to_owned()),
+    );
+}
+
+/// The item `pk` as the engine currently holds it, lifecycle stamps included.
+fn stored_document(engine: &Arc<Engine>, ctx: &TenantIsolationContext, pk: &str) -> Document {
+    let key: Item = [("pk".to_string(), AttributeValue::S(pk.to_owned()))]
+        .into_iter()
+        .collect();
+    let key_schema = control_plane::load_key_schema(engine, ctx, "events").unwrap();
+    let id = crate::commands::item::primary_key_id(&key, &key_schema).unwrap();
+    engine
+        .get_document(ctx.tenant_id(), &TableName::new("events").unwrap(), id)
+        .expect("the item is stored")
+}
+
+/// Wall-clock milliseconds since the epoch, the unit the engine stamps commits
+/// in.
+fn now_millis() -> u64 {
+    let since_epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("the system clock is after the unix epoch");
+    u64::try_from(since_epoch.as_millis()).expect("milliseconds since the epoch fit in u64")
+}
+
+/// Block until the commit clock has left `stamp` behind, so the next write is
+/// stamped strictly later.
+///
+/// Commit timestamps are wall-clock milliseconds, so two writes inside one
+/// millisecond share a stamp and `_updateTime` stays equal to `_creationTime`
+/// — which would make the lifecycle behaviour under test unobservable. Waiting
+/// on the observable quantity rather than sleeping a fixed span stays correct
+/// on a coarse clock or a loaded machine, where a fixed span is a guess; the
+/// deadline turns a clock that never advances into a loud failure instead of a
+/// hang. The engine takes `max(now, previous)` for a commit stamp, so a wall
+/// clock past `stamp` puts every later commit past it too.
+fn wait_for_commit_clock_past(stamp: Timestamp) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while now_millis() <= stamp.0 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the commit clock did not advance past {} within 5s, so a later write cannot be \
+             told apart from the one before it",
+            stamp.0
+        );
+        std::thread::yield_now();
+    }
 }
 
 /// The images an event carries are rebuilt with the lifecycle times the engine
@@ -1122,24 +1258,10 @@ fn reconstructed_image_times_match_the_engine_document_times() {
     let (engine, ctx, _temp) = fixture();
     streamed_table(&engine, &ctx, "NEW_AND_OLD_IMAGES");
     put(&engine, &ctx, "a", "1");
-    // Commit timestamps are milliseconds, so writes inside one millisecond
-    // share a stamp; separating them is what makes creation and update times
-    // distinguishable at all. The assertion below fails loudly if it did not.
-    std::thread::sleep(std::time::Duration::from_millis(5));
+    wait_for_commit_clock_past(stored_document(&engine, &ctx, "a").creation_time);
     put(&engine, &ctx, "a", "2");
 
-    let key: Item = [("pk".to_string(), AttributeValue::S("a".to_owned()))]
-        .into_iter()
-        .collect();
-    let key_schema = control_plane::load_key_schema(&engine, &ctx, "events").unwrap();
-    let id = crate::commands::item::primary_key_id(&key, &key_schema).unwrap();
-    let stored = engine
-        .get_document(
-            ctx.tenant_id(),
-            &TableName::new("events").unwrap(),
-            id.clone(),
-        )
-        .expect("the item survives both writes");
+    let stored = stored_document(&engine, &ctx, "a");
     assert_ne!(
         stored.creation_time, stored.update_time,
         "the second write must land in a later millisecond, or this test cannot tell a \
@@ -1173,6 +1295,56 @@ fn reconstructed_image_times_match_the_engine_document_times() {
     );
 }
 
+/// A PutItem that rewrites identical content emits a MODIFY record, but the
+/// engine leaves `_updateTime` where it was — so the reconstructed new image
+/// must keep the retained stamp rather than take the commit timestamp.
+///
+/// Taking the commit timestamp here would make the reconstructed document
+/// disagree with what a read of the table returns, and a rule over lifecycle
+/// times would then reach a different verdict for the record than for the item
+/// it describes.
+#[test]
+fn a_no_op_write_reconstructs_the_retained_update_time() {
+    let (engine, ctx, _temp) = fixture();
+    streamed_table(&engine, &ctx, "NEW_AND_OLD_IMAGES");
+    put(&engine, &ctx, "a", "1");
+    let created = stored_document(&engine, &ctx, "a").creation_time;
+    // Without the wait the rewrite could land in the creating millisecond and
+    // the stamps would match for the uninteresting reason.
+    wait_for_commit_clock_past(created);
+    put(&engine, &ctx, "a", "1");
+
+    let stored = stored_document(&engine, &ctx, "a");
+    assert_eq!(
+        (stored.creation_time, stored.update_time),
+        (created, created),
+        "rewriting identical content is a lifecycle no-op: the engine keeps the update time"
+    );
+
+    let authorization = record_authorization(&engine, &ctx);
+    let events = read_events(&engine, &ctx, "events").unwrap();
+    assert_eq!(
+        events.len(),
+        2,
+        "the no-op rewrite still emits a MODIFY record"
+    );
+    assert_eq!(
+        events[1].event_name, "MODIFY",
+        "the second event is the rewrite"
+    );
+
+    let modified = authorization.documents_for(&events[1]).unwrap();
+    assert_eq!(modified.len(), 2, "a MODIFY carries both images");
+    for (index, image) in modified.iter().enumerate() {
+        assert_eq!(
+            (image.creation_time, image.update_time),
+            (stored.creation_time, stored.update_time),
+            "image {index} of a no-op rewrite must match the stored document, which the commit \
+             did not restamp"
+        );
+    }
+}
+
 /// An event carrying neither image is unreadable rather than public.
 ///
 /// Authorization is a statement about the images an event discloses. One with
@@ -1201,6 +1373,7 @@ fn a_record_carrying_neither_image_is_withheld() {
         old_image: None,
         old_image_times: None,
         new_image: None,
+        new_image_retained_update: None,
         user_identity: None,
         committed_at: 0,
     };
@@ -1235,6 +1408,7 @@ fn an_old_image_without_lifecycle_times_is_rejected() {
         ),
         old_image_times: None,
         new_image: None,
+        new_image_retained_update: None,
         user_identity: None,
         committed_at: 0,
     };
