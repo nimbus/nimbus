@@ -1,6 +1,6 @@
 # Storage Unification And Carry-Over Closeout Control Plane
 
-Status: `active — SUC0–SUC2 + SUC4 complete (PRs #248–#253); SUC3.1 step 2/5 in_progress; SUC5.1 complete (PR #255); SUC6.1 running on minicloud; SUC6.3 closed`
+Status: `active — SUC0–SUC2 + SUC4 complete (PRs #248–#253); SUC3.1 step 2/5 in_progress; SUC5.1 complete (PR #255); SUC6.1 complete (PR #256); SUC6.2 closed by U7; SUC6.3 closed`
 
 Owner: this plan, and no other plan
 
@@ -58,8 +58,8 @@ Proof root: `proof/storage-unification/`
 | SUC4.2 Firestore Timestamp+GeoPoint writes (HIGH) | `complete` (PR #253; #231 pre-fixed document fields, this closed array transforms + query contract + wire canonicalization; 7-pass review trail in proof) | rejected typed writes accepted with round-trip fidelity | conformance + adapter tests | `suc4/firestore-types.md` | independent; parallel-capable |
 | SUC4.3 Egress HTTPS CONNECT rule (HIGH) | `complete` (PR #252; fix landed earlier in #231 — gate deferral + forced interception — verified + regression-pinned) | method-path rule denying all CONNECT fixed with policy tests | egress policy suite + proxy integration test | `suc4/egress-connect.md` | independent; parallel-capable |
 | SUC5.1 Real DynamoDB principal | `complete` (PR #255; found worse than planned: split system/anonymous execution + a real read-authz bypass in the id-prefix scan reachable via DynamoDB Query — all closed; fail-before 4/5 RED) | end DynamoDB executing as `system()`; storage-specific half only (generic `TenantBindingRegistry` stays out of scope) | requests carry a real principal; authz tests | `suc5/principal.md` | after SUC4.1 |
-| SUC6.1 Open-loop latency companion | `planned` | constant-rate below-saturation harness (e.g. 50%/75% of measured N=256 capacity), coordinated-omission-free percentiles; publishes the campaign's standing prerequisite | accepted CV-gated runs at two rates; doc stating what latency claims are now supportable | `suc6/open-loop.md` | needs quiet windows |
-| SUC6.2 Resource-binding cleanup decision | `planned` | measure the 2.3%-of-guarded candidate on current main; implement only if ≥3% safe end-to-end (expected: reject) | decision row either way | `suc6/binding-decision.md` | measurement-only first |
+| SUC6.1 Open-loop latency companion | `complete` (PR #256; minicloud gated evidence: p99 ≈3.0ms @25% / ≈3.6–3.9ms @50% CO-free; 75% fails stability gate; recurring ≥50% burst/shed finding) | constant-rate below-saturation harness (e.g. 50%/75% of measured N=256 capacity), coordinated-omission-free percentiles; publishes the campaign's standing prerequisite | accepted CV-gated runs at two rates; doc stating what latency claims are now supportable | `suc6/open-loop.md` | needs quiet windows |
+| SUC6.2 Resource-binding cleanup decision | `complete — rejected by U7 gate amendment (owner may override)` | measure the 2.3%-of-guarded candidate on current main; implement only if ≥3% safe end-to-end (expected: reject) | decision row either way | `suc6/binding-decision.md` | measurement-only first |
 | SUC6.3 Hot-key/OCC formal closure | `complete` (decision row below) | close D15's Engine-owned follow-up: record moot-by-SWT2 with the +190% valid-pair evidence, or open a successor item if any regression is ever measured | decision row; D15 thread ended | `suc6/hotkey-closure.md` | decision-only |
 
 ## Explicitly Rejected
@@ -101,6 +101,7 @@ canonical CRUD/layered/hot-key protocols with D18/D19 as recorded.
 | U4 | 2026-07-29 | Fault-point exact-parity assertion deferred to SUC3 | the site survey shows three structurally different flows; SUC3's facade deletes the triplication that permits drift, making per-provider parity tests redundant rather than writing them against code scheduled for deletion |
 | U5 | 2026-07-29 | Provider-side CommitTransaction witness rides with SUC3 | the witness requires touching all four providers' apply paths — code SUC3.1 deletes; the facade's single apply signature (every effect a required argument) is the witness (same rationale as U4) |
 | U6 | 2026-07-29 | D15 hot-key/OCC follow-up closed as moot-by-SWT2 | SWT2's committer changes lifted valid-pair throughput +190% on the hot-key lane with no measured OCC regression across the campaign's accepted runs (archive: sqlite-write-throughput plan, D15/D18 rows); no Engine-owned successor item; reopen only if a future lane measures an OCC hot-key regression |
+| U7 | 2026-07-29 | SUC6.2 completion gate amended: reject-by-attribution, no re-measurement | the candidate (D17 `binding`, 0.108ms = 2.3% of guarded) has an end-to-end ceiling <1%, below the CV≤10% paired protocol's resolution; the full ablation already failed the ≥3% bar (3.8%/2.6%). Flagged for owner override; the SWT4 ablation branch can be rebuilt on current main if the literal gate is preferred |
 
 ## Open Blockers
 
