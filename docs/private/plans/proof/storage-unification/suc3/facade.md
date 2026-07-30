@@ -1056,3 +1056,16 @@ nor the harness half can discriminate without a fault-interface change spanning
 `mysql_ppsc_seeded_journal_differential` flake. Shipping a second wrong gate to
 avoid leaving the item open would trade a known-open bug for a silent loss of
 fault coverage — the exact trade the first attempt made.
+
+## Step 3 — Reviewer Outage Disclosure
+
+After the fix round (commit 14d51dee0), the structured reviewer could not be
+re-run: the Codex engine hit account credit exhaustion (usage limit, resets
+2026-08-04 — probe transcript captured), and the Claude engine fails on this
+host with the known reviewer-sandbox proxy-CA trust error ("Self-signed
+certificate detected"). Per the review-outage policy this is an outage, not a
+verdict. The branch's substantive review pass DID run (two findings, both
+fixed with red-probed gates and full re-verification); the shipped delta
+beyond that reviewed tree is exactly those two fixes. Steps 4–5 of this lane
+will face the same outage; each will disclose it and lean on verification +
+CI lanes until an engine returns.
