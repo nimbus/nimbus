@@ -86,6 +86,7 @@ use status::{running_status, synchronize_handle_status, visible_published_endpoi
 pub struct ContainerSandboxBackend {
     config: ContainerSandboxBackendConfig,
     segment_allocator: Arc<OciSegmentAllocator>,
+    attachment_authority: Option<nimbus_network::LocalNetworkAttachmentAuthority>,
     ipam_authority: OciIpamAuthority,
     port_lease_coordinator: OciPortLeaseCoordinator,
     egress_proxies: EgressProxyRegistry,

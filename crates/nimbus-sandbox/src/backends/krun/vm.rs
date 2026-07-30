@@ -217,6 +217,7 @@ impl Default for KrunSandboxBackendConfig {
 pub struct KrunSandboxBackend {
     config: KrunSandboxBackendConfig,
     segment_allocator: Arc<OciSegmentAllocator>,
+    attachment_authority: Option<nimbus_network::LocalNetworkAttachmentAuthority>,
     ipam_authority: OciIpamAuthority,
     port_lease_coordinator: OciPortLeaseCoordinator,
     egress_proxies: EgressProxyRegistry,
@@ -314,6 +315,10 @@ impl KrunSandboxBackend {
         segment_allocator: Arc<OciSegmentAllocator>,
         network_process: Option<Arc<OciNetworkProcess>>,
     ) -> Self {
+        let attachment_authority = network_process.as_ref().map_or_else(
+            || nimbus_network::LocalNetworkAttachmentAuthority::open(&config.network_state_root),
+            |process| Ok(process.attachment_authority()),
+        );
         let ipam_authority = network_process.as_ref().map_or_else(
             || OciIpamAuthority::reconstruct_direct(&config.network_state_root),
             |process| process.ipam_authority(),
@@ -333,13 +338,19 @@ impl KrunSandboxBackend {
                 )
             },
         );
-        let startup_network_reconciliation_error = reconcile_startup_network_state(
-            &config.workload_state_root,
-            &ipam_authority,
-            segment_allocator.as_ref(),
-        )
-        .err()
-        .map(|error| Arc::<str>::from(error.to_string()));
+        let startup_network_reconciliation_error = attachment_authority
+            .as_ref()
+            .err()
+            .map(|error| Arc::<str>::from(error.to_string()))
+            .or_else(|| {
+                reconcile_startup_network_state(
+                    &config.workload_state_root,
+                    &ipam_authority,
+                    segment_allocator.as_ref(),
+                )
+                .err()
+                .map(|error| Arc::<str>::from(error.to_string()))
+            });
         let egress_proxies = match network_process.as_ref() {
             Some(process) => process.egress_registry(
                 egress_decision_log_root(&config.workload_state_root),
@@ -360,6 +371,7 @@ impl KrunSandboxBackend {
         Self {
             config,
             segment_allocator,
+            attachment_authority: attachment_authority.ok(),
             ipam_authority,
             port_lease_coordinator,
             egress_proxies,
@@ -419,6 +431,7 @@ impl KrunSandboxBackend {
     ) -> OciAttachmentLifecycle<'a> {
         OciAttachmentLifecycle::new(
             self.segment_allocator.as_ref(),
+            self.attachment_authority.as_ref(),
             &self.ipam_authority,
             ports,
             &self.netavark_port_lifetimes,

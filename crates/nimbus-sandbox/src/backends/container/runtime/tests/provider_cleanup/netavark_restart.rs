@@ -187,6 +187,10 @@ fn restart_cleanup_retains_network_and_listeners_until_runtime_absence_is_observ
             &manifest.port_leases,
         )
         .expect("fixture should claim the published listener");
+    std::fs::create_dir_all(&manifest.network_layout.netns_root)
+        .expect("fixture namespace root should exist");
+    std::fs::write(&manifest.network_layout.netns_path, b"fixture-live-netns\n")
+        .expect("fixture should retain the namespace created before Netavark setup");
     setup_container_network(
         &backend.ipam_authority,
         &OciNetavarkOperation::new(

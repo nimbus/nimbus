@@ -1402,6 +1402,16 @@ fn failed_netavark_setup_claims_reconcile_only_after_confirmed_detach() {
         "fixture must exercise a claimed publication"
     );
     drop(lifetimes);
+    crate::backends::oci::network::begin_netavark_setup_without_ack_for_test(
+        &backend.ipam_authority,
+        &manifest.network_layout,
+        manifest
+            .network_config
+            .as_ref()
+            .expect("execute manifest should persist its network config"),
+        &manifest.handle.id,
+    )
+    .expect("fixture must durably begin its exact setup attempt before the ambiguous effect");
     std::fs::create_dir_all(
         manifest
             .network_layout

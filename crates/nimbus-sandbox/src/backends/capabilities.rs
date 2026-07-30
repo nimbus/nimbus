@@ -7,9 +7,11 @@ use std::sync::Arc;
 
 use nimbus_network::{
     NetworkAddressFamily, NetworkAttachmentCapabilitySet, NetworkAttachmentMode,
-    NetworkAttachmentProviderRegistration, NetworkControlPlaneLocality, NetworkIsolationMode,
-    NetworkLifecycleCapabilitySet, NetworkLifecycleFeature, NetworkManagementMode,
-    NetworkProviderId, NetworkSovereigntyCapabilities,
+    NetworkAttachmentProviderRegistration, NetworkCapabilityRequirements,
+    NetworkControlPlaneLocality, NetworkEndpointCapabilitySet, NetworkForwardingCapabilitySet,
+    NetworkIngressCapabilitySet, NetworkIsolationMode, NetworkLifecycleCapabilitySet,
+    NetworkLifecycleFeature, NetworkManagementMode, NetworkProviderId,
+    NetworkSovereigntyCapabilities, NetworkSovereigntyRequirements,
 };
 use thiserror::Error;
 
@@ -58,7 +60,7 @@ pub(crate) enum SandboxAttachmentRegistrationKind {
 }
 
 impl SandboxAttachmentRegistrationKind {
-    const fn provider_key(self) -> &'static str {
+    pub(crate) const fn provider_key(self) -> &'static str {
         match self {
             Self::Container => CONTAINER_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY,
             Self::Krun => KRUN_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY,
@@ -74,6 +76,48 @@ impl SandboxAttachmentRegistrationKind {
             ],
         }
     }
+}
+
+fn host_managed_attachment_capabilities(
+    kind: SandboxAttachmentRegistrationKind,
+) -> NetworkAttachmentCapabilitySet {
+    NetworkAttachmentCapabilitySet::new(
+        NetworkManagementMode::NimbusHostManaged,
+        kind.attachment_modes().iter().copied(),
+        [
+            NetworkIsolationMode::WorkloadNamespace,
+            NetworkIsolationMode::TenantSegment,
+        ],
+    )
+}
+
+fn host_managed_lifecycle_capabilities() -> NetworkLifecycleCapabilitySet {
+    NetworkLifecycleCapabilitySet::new([
+        NetworkLifecycleFeature::DurableInspect,
+        NetworkLifecycleFeature::Reconcile,
+        NetworkLifecycleFeature::Delete,
+    ])
+}
+
+pub(crate) fn host_managed_attachment_provider_id(
+    kind: SandboxAttachmentRegistrationKind,
+) -> NetworkProviderId {
+    NetworkProviderId::for_registration_key(kind.provider_key())
+}
+
+/// Provider-neutral desired requirements corresponding to one admitted
+/// host-managed attachment registration.
+pub(crate) fn host_managed_attachment_requirements(
+    kind: SandboxAttachmentRegistrationKind,
+) -> NetworkCapabilityRequirements {
+    NetworkCapabilityRequirements::new(
+        host_managed_attachment_capabilities(kind),
+        NetworkEndpointCapabilitySet::new([NetworkAddressFamily::Ipv4], [], [], [], []),
+        NetworkIngressCapabilitySet::new([]),
+        NetworkForwardingCapabilitySet::new([]),
+        host_managed_lifecycle_capabilities(),
+        NetworkSovereigntyRequirements::new(NetworkControlPlaneLocality::LocalOnly, [], true),
+    )
 }
 
 pub(crate) fn host_managed_attachment_registration(
@@ -125,21 +169,10 @@ fn host_managed_attachment_registration_for_target(
     }
 
     Ok(NetworkAttachmentProviderRegistration::new(
-        NetworkProviderId::for_registration_key(provider_key),
-        NetworkAttachmentCapabilitySet::new(
-            NetworkManagementMode::NimbusHostManaged,
-            kind.attachment_modes().iter().copied(),
-            [
-                NetworkIsolationMode::WorkloadNamespace,
-                NetworkIsolationMode::TenantSegment,
-            ],
-        ),
+        host_managed_attachment_provider_id(kind),
+        host_managed_attachment_capabilities(kind),
         [NetworkAddressFamily::Ipv4],
-        NetworkLifecycleCapabilitySet::new([
-            NetworkLifecycleFeature::DurableInspect,
-            NetworkLifecycleFeature::Reconcile,
-            NetworkLifecycleFeature::Delete,
-        ]),
+        host_managed_lifecycle_capabilities(),
         NetworkSovereigntyCapabilities::new(NetworkControlPlaneLocality::LocalOnly, [], true),
     ))
 }

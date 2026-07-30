@@ -2,15 +2,16 @@
 //!
 //! [`LocalNetworkManagerBootstrap`] claims the process composition before
 //! dependent adapters are assembled. It exposes one paired
-//! [`LocalNetworkAuthority`] over the canonical node root, durable store, and
-//! port authority. Consuming the bootstrap then freezes one immutable
+//! [`LocalNetworkAuthority`] over the canonical node root, durable store,
+//! attachment authority, and port authority. Consuming the bootstrap then freezes one immutable
 //! capability registry into [`LocalNetworkManager`]. None owns provider
 //! effects.
 //!
-//! Primitive [`LocalNetworkStateStore`] and [`LocalPortLeaseAuthority`] handles
-//! remain independently openable: they are transaction adapters over the same
-//! process mutex and OS file lock. The manager prevents a second independent
-//! *composition* from silently selecting another root or capability view.
+//! Primitive [`LocalNetworkStateStore`], [`LocalNetworkAttachmentAuthority`],
+//! and [`LocalPortLeaseAuthority`] handles remain independently openable: they
+//! are transaction adapters over the same process mutex and OS file lock. The
+//! manager prevents a second independent *composition* from silently selecting
+//! another root or capability view.
 
 use std::error::Error as StdError;
 use std::fmt::{self, Display, Formatter};
@@ -19,8 +20,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use crate::{
-    LocalNetworkStateStore, LocalPortLeaseAuthority, NetworkCapabilityRegistry,
-    NetworkStateStoreError, PortLeaseError,
+    LocalNetworkAttachmentAuthority, LocalNetworkStateStore, LocalPortLeaseAuthority,
+    NetworkAttachmentStateError, NetworkCapabilityRegistry, NetworkStateStoreError, PortLeaseError,
 };
 
 static PROCESS_COMPOSITION: OnceLock<Mutex<Weak<LocalNetworkComposition>>> = OnceLock::new();
@@ -29,6 +30,7 @@ struct LocalNetworkComposition {
     state_root: PathBuf,
     authority_path: PathBuf,
     state_store: LocalNetworkStateStore,
+    attachments: LocalNetworkAttachmentAuthority,
     port_leases: LocalPortLeaseAuthority,
 }
 
@@ -56,6 +58,11 @@ impl LocalNetworkAuthority {
     /// Deliberate handle to the one store/lock domain.
     pub fn state_store(&self) -> LocalNetworkStateStore {
         self.composition.state_store.clone()
+    }
+
+    /// Deliberate attachment-lifecycle handle derived from the same store.
+    pub fn attachments(&self) -> LocalNetworkAttachmentAuthority {
+        self.composition.attachments.clone()
     }
 
     /// Deliberate port-lifecycle handle derived from the same store.
@@ -184,12 +191,15 @@ impl LocalNetworkManager {
             LocalNetworkStateStore::open(&state_root).map_err(LocalNetworkManagerError::Store)?
         };
         let authority_path = LocalNetworkStateStore::authority_path_for(&state_root);
+        let attachments = LocalNetworkAttachmentAuthority::from_store(state_store.clone())
+            .map_err(LocalNetworkManagerError::AttachmentState)?;
         let port_leases = LocalPortLeaseAuthority::from_store(state_store.clone())
             .map_err(LocalNetworkManagerError::PortLease)?;
         let composition = Arc::new(LocalNetworkComposition {
             state_root,
             authority_path,
             state_store,
+            attachments,
             port_leases,
         });
         *active = Arc::downgrade(&composition);
@@ -230,6 +240,11 @@ impl LocalNetworkManager {
         self.authority.state_store()
     }
 
+    /// Deliberate attachment-lifecycle handle derived from the manager's store.
+    pub fn attachments(&self) -> LocalNetworkAttachmentAuthority {
+        self.authority.attachments()
+    }
+
     /// Deliberate port-lifecycle handle derived from the manager's store.
     pub fn port_leases(&self) -> LocalPortLeaseAuthority {
         self.authority.port_leases()
@@ -263,6 +278,8 @@ pub enum LocalNetworkManagerError {
     },
     /// The node-local store could not be initialized safely.
     Store(NetworkStateStoreError),
+    /// The durable attachment partition violates attachment invariants.
+    AttachmentState(NetworkAttachmentStateError),
     /// The durable port partition was invalid when the shared handle opened.
     PortLease(PortLeaseError),
 }
@@ -284,6 +301,10 @@ impl Display for LocalNetworkManagerError {
             Self::Store(error) => {
                 write!(formatter, "failed to initialize network manager: {error}")
             }
+            Self::AttachmentState(error) => write!(
+                formatter,
+                "failed to initialize the network manager attachment authority: {error}"
+            ),
             Self::PortLease(error) => write!(
                 formatter,
                 "failed to initialize the network manager port authority: {error}"
@@ -297,6 +318,7 @@ impl StdError for LocalNetworkManagerError {
         match self {
             Self::DuplicateProcessComposition { .. } => None,
             Self::Store(error) => Some(error),
+            Self::AttachmentState(error) => Some(error),
             Self::PortLease(error) => Some(error),
         }
     }

@@ -64,6 +64,8 @@ const WINDOWS_ERROR_LOCK_VIOLATION: i32 = 33;
 pub enum NetworkStatePartition {
     /// Portable tenant-segment assignments and holds.
     SegmentAllocations,
+    /// Tenant-qualified durable attachment lifecycle records.
+    AttachmentStates,
     /// Provider-adjacent IP allocation state for one tenant.
     TenantIpam(TenantId),
     /// Host-global port lease lifecycle records.
@@ -74,6 +76,7 @@ impl NetworkStatePartition {
     fn key(&self) -> String {
         match self {
             Self::SegmentAllocations => "segment-allocations".to_owned(),
+            Self::AttachmentStates => "attachment-states".to_owned(),
             Self::TenantIpam(tenant_id) => format!("tenant-ipam/{}", tenant_id.as_str()),
             Self::PortLeases => "port-leases".to_owned(),
         }

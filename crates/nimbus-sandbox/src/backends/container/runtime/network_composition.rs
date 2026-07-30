@@ -2,6 +2,8 @@
 
 use std::sync::Arc;
 
+use nimbus_network::LocalNetworkAttachmentAuthority;
+
 use crate::backends::oci::egress::{
     EgressProxyRegistry, egress_decision_log_root, egress_trust_anchor_root,
 };
@@ -156,17 +158,26 @@ impl ContainerSandboxBackend {
         egress_proxies: EgressProxyRegistry,
         network_process: Option<Arc<OciNetworkProcess>>,
     ) -> Self {
-        let startup_reconciliation_error =
-            reconcile_startup_manifest_publications(&config.workload_state_root)
-                .and_then(|()| {
-                    reconcile_startup_network_state(
-                        &config.workload_state_root,
-                        &ipam_authority,
-                        segment_allocator.as_ref(),
-                    )
-                })
-                .err()
-                .map(|error| Arc::<str>::from(error.to_string()));
+        let attachment_authority = network_process.as_ref().map_or_else(
+            || LocalNetworkAttachmentAuthority::open(&config.network_state_root),
+            |process| Ok(process.attachment_authority()),
+        );
+        let startup_reconciliation_error = attachment_authority
+            .as_ref()
+            .err()
+            .map(|error| Arc::<str>::from(error.to_string()))
+            .or_else(|| {
+                reconcile_startup_manifest_publications(&config.workload_state_root)
+                    .and_then(|()| {
+                        reconcile_startup_network_state(
+                            &config.workload_state_root,
+                            &ipam_authority,
+                            segment_allocator.as_ref(),
+                        )
+                    })
+                    .err()
+                    .map(|error| Arc::<str>::from(error.to_string()))
+            });
         let netavark_port_lifetimes = network_process
             .as_ref()
             .map_or_else(NetavarkPortLifetimeRegistry::default, |process| {
@@ -180,6 +191,7 @@ impl ContainerSandboxBackend {
         Self {
             config,
             segment_allocator,
+            attachment_authority: attachment_authority.ok(),
             ipam_authority,
             port_lease_coordinator,
             egress_proxies,

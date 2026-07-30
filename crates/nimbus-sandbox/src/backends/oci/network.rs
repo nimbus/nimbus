@@ -37,12 +37,12 @@ pub use forwarding::{
     MachinePortForwardOutcome, MachinePortForwardReceipt, OciMachinePortForwarderConfig,
 };
 pub(crate) use forwarding::{expose_machine_ports, unexpose_machine_ports};
-#[cfg(test)]
-pub(crate) use ipam::allocate_container_ips;
 pub(crate) use ipam::{
     OciIpamAuthority, deallocate_container_ips_after_confirmed_detach,
     reconcile_terminal_container_ipam_releases, retire_terminal_container_ipam_release,
 };
+#[cfg(test)]
+pub(crate) use ipam::{allocate_container_ips, begin_netavark_setup_without_ack_for_test};
 pub(crate) use layout::{
     OciNetworkConfig, OciNetworkDirectEgress, OciNetworkLayout, bridge_gateway_addr,
 };

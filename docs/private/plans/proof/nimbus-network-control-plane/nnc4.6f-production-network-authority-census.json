@@ -53,10 +53,10 @@
     }
   },
   "summary": {
-    "occurrences": 105,
+    "occurrences": 106,
     "owning_managers": 22,
     "manager_derived_handles": 37,
-    "admitted_cross_process_reconstructions": 23,
+    "admitted_cross_process_reconstructions": 24,
     "test_fixtures": 23
   },
   "occurrences": [
@@ -521,11 +521,21 @@
       "evidence": "source-contract"
     },
     {
+      "path": "crates/nimbus-network/src/attachment_state.rs",
+      "kind": "primitive-state-store-open",
+      "symbol": "open",
+      "ordinal": 1,
+      "line": 121,
+      "classification": "admitted-cross-process-reconstruction",
+      "os_node_realm": "current-os-node",
+      "evidence": "source-contract"
+    },
+    {
       "path": "crates/nimbus-network/src/manager.rs",
       "kind": "manager-bootstrap-declaration",
       "symbol": "bootstrap",
       "ordinal": 1,
-      "line": 150,
+      "line": 157,
       "classification": "owning-manager",
       "os_node_realm": "current-os-node",
       "evidence": "nnc4.6"
@@ -535,7 +545,7 @@
       "kind": "primitive-state-store-open",
       "symbol": "bootstrap",
       "ordinal": 1,
-      "line": 168,
+      "line": 175,
       "classification": "owning-manager",
       "os_node_realm": "current-os-node",
       "evidence": "nnc4.6"
@@ -545,7 +555,7 @@
       "kind": "primitive-state-store-open",
       "symbol": "bootstrap",
       "ordinal": 2,
-      "line": 184,
+      "line": 191,
       "classification": "owning-manager",
       "os_node_realm": "current-os-node",
       "evidence": "nnc4.6"
@@ -555,7 +565,7 @@
       "kind": "manager-open-declaration",
       "symbol": "open",
       "ordinal": 1,
-      "line": 206,
+      "line": 216,
       "classification": "owning-manager",
       "os_node_realm": "current-os-node",
       "evidence": "nnc4.6"
@@ -585,7 +595,7 @@
       "kind": "primitive-state-store-open-declaration",
       "symbol": "open",
       "ordinal": 1,
-      "line": 127,
+      "line": 130,
       "classification": "admitted-cross-process-reconstruction",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -595,7 +605,7 @@
       "kind": "primitive-state-store-open-declaration",
       "symbol": "open_with_options",
       "ordinal": 1,
-      "line": 136,
+      "line": 139,
       "classification": "admitted-cross-process-reconstruction",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -615,7 +625,7 @@
       "kind": "attachment-registration-construction",
       "symbol": "host_managed_attachment_registration_for_target",
       "ordinal": 1,
-      "line": 127,
+      "line": 171,
       "classification": "manager-derived-handle",
       "os_node_realm": "current-os-node",
       "evidence": "nnc4.6c"
@@ -625,7 +635,7 @@
       "kind": "direct-container-backend-constructor-declaration",
       "symbol": "new",
       "ordinal": 1,
-      "line": 40,
+      "line": 42,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -635,7 +645,7 @@
       "kind": "segment-direct-reconstruction",
       "symbol": "new",
       "ordinal": 1,
-      "line": 42,
+      "line": 44,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -645,7 +655,7 @@
       "kind": "manager-derived-container-backend-constructor-declaration",
       "symbol": "with_network_process",
       "ordinal": 1,
-      "line": 58,
+      "line": 60,
       "classification": "manager-derived-handle",
       "os_node_realm": "current-os-node",
       "evidence": "nnc4.6c"
@@ -655,7 +665,7 @@
       "kind": "ipam-direct-reconstruction",
       "symbol": "with_segment_allocator_and_process",
       "ordinal": 1,
-      "line": 81,
+      "line": 83,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -665,7 +675,7 @@
       "kind": "port-coordinator-direct-reconstruction",
       "symbol": "with_segment_allocator_and_process",
       "ordinal": 1,
-      "line": 86,
+      "line": 88,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -675,7 +685,7 @@
       "kind": "container-runner-reconstruction-declaration",
       "symbol": "reconstruct_for_runner",
       "ordinal": 1,
-      "line": 122,
+      "line": 124,
       "classification": "admitted-cross-process-reconstruction",
       "os_node_realm": "current-os-node-child",
       "evidence": "nnc4.6c"
@@ -685,7 +695,7 @@
       "kind": "segment-runner-reconstruction",
       "symbol": "reconstruct_for_runner",
       "ordinal": 1,
-      "line": 124,
+      "line": 126,
       "classification": "admitted-cross-process-reconstruction",
       "os_node_realm": "current-os-node-child",
       "evidence": "nnc4.6c"
@@ -695,7 +705,7 @@
       "kind": "ipam-runner-reconstruction",
       "symbol": "reconstruct_for_runner",
       "ordinal": 1,
-      "line": 129,
+      "line": 131,
       "classification": "admitted-cross-process-reconstruction",
       "os_node_realm": "current-os-node-child",
       "evidence": "nnc4.6c"
@@ -705,7 +715,7 @@
       "kind": "port-coordinator-runner-reconstruction",
       "symbol": "reconstruct_for_runner",
       "ordinal": 1,
-      "line": 130,
+      "line": 132,
       "classification": "admitted-cross-process-reconstruction",
       "os_node_realm": "current-os-node-child",
       "evidence": "nnc4.6c"
@@ -715,7 +725,7 @@
       "kind": "direct-krun-backend-constructor-declaration",
       "symbol": "new",
       "ordinal": 1,
-      "line": 295,
+      "line": 296,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -725,7 +735,7 @@
       "kind": "segment-direct-reconstruction",
       "symbol": "new",
       "ordinal": 1,
-      "line": 297,
+      "line": 298,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -735,7 +745,7 @@
       "kind": "ipam-direct-reconstruction",
       "symbol": "with_segment_allocator_and_process",
       "ordinal": 1,
-      "line": 318,
+      "line": 323,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -745,7 +755,7 @@
       "kind": "port-coordinator-direct-reconstruction",
       "symbol": "with_segment_allocator_and_process",
       "ordinal": 1,
-      "line": 323,
+      "line": 328,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"

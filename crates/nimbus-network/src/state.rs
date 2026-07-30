@@ -172,6 +172,10 @@ impl NetworkResourcePhase {
                 Self::Deleting | Self::CleanupPending,
                 Self::Released,
                 NetworkTransitionEvidence::DeletionConfirmed
+            ) | (
+                Self::Deleting | Self::CleanupPending,
+                Self::Provisioning,
+                NetworkTransitionEvidence::DeletionConfirmedForReprovision
             )
         )
     }
@@ -190,6 +194,12 @@ pub enum NetworkTransitionEvidence {
     AmbiguousEffect,
     /// Inspection confirms the provider effect is absent and reuse is safe.
     DeletionConfirmed,
+    /// Inspection confirms the provider effect is absent while the same desired
+    /// resource generation remains admitted and must be realized again.
+    ///
+    /// This never grants resurrection from `Released` or `Failed`; it only
+    /// returns an in-progress delete/cleanup cycle to `Provisioning`.
+    DeletionConfirmedForReprovision,
 }
 
 /// Immutable identity and fencing token for one durable resource generation.
@@ -323,6 +333,18 @@ impl DurableNetworkResourceState {
     /// Opaque provider handle when one has been durably adopted.
     pub fn provider_handle(&self) -> Option<&NetworkProviderHandle> {
         self.provider_handle.as_ref()
+    }
+
+    /// Authenticate an exact resource version without changing phase or handle.
+    ///
+    /// Concrete durable authorities use this before returning an idempotent
+    /// replay. Keeping the comparison here prevents concept stores from
+    /// reimplementing generation, digest, and lease-epoch fencing.
+    pub fn authenticate_version(
+        &self,
+        candidate: &NetworkResourceVersion,
+    ) -> Result<(), NetworkStateError> {
+        self.validate_version(candidate)
     }
 
     /// Apply a generation-, digest-, resource-, and epoch-scoped phase change.
@@ -590,11 +612,12 @@ mod tests {
         NetworkResourcePhase::Released,
         NetworkResourcePhase::Failed,
     ];
-    const EVIDENCE: [NetworkTransitionEvidence; 4] = [
+    const EVIDENCE: [NetworkTransitionEvidence; 5] = [
         NetworkTransitionEvidence::Progress,
         NetworkTransitionEvidence::ConfirmedNoEffect,
         NetworkTransitionEvidence::AmbiguousEffect,
         NetworkTransitionEvidence::DeletionConfirmed,
+        NetworkTransitionEvidence::DeletionConfirmedForReprovision,
     ];
 
     fn plan_id(value: &str) -> NetworkPlanId {
@@ -650,7 +673,7 @@ mod tests {
             NetworkResourcePhase,
             NetworkResourcePhase,
             NetworkTransitionEvidence,
-        ); 24] = [
+        ); 26] = [
             (
                 NetworkResourcePhase::Reserved,
                 NetworkResourcePhase::Provisioning,
@@ -770,6 +793,16 @@ mod tests {
                 NetworkResourcePhase::CleanupPending,
                 NetworkResourcePhase::Released,
                 NetworkTransitionEvidence::DeletionConfirmed,
+            ),
+            (
+                NetworkResourcePhase::Deleting,
+                NetworkResourcePhase::Provisioning,
+                NetworkTransitionEvidence::DeletionConfirmedForReprovision,
+            ),
+            (
+                NetworkResourcePhase::CleanupPending,
+                NetworkResourcePhase::Provisioning,
+                NetworkTransitionEvidence::DeletionConfirmedForReprovision,
             ),
         ];
         EDGES.contains(&(from, to, evidence))
@@ -828,6 +861,34 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn deletion_confirmed_reprovision_retains_the_exact_resource_version_and_handle() {
+        let mut state = state();
+        let version = state.version().clone();
+        state.phase = NetworkResourcePhase::Deleting;
+        state.provider_handle = Some(
+            NetworkProviderHandle::new(
+                provider_id("netprovider_01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+                "stable-attachment-handle",
+            )
+            .expect("provider handle should validate"),
+        );
+        let before_version = state.version().clone();
+        let before_handle = state.provider_handle().cloned();
+
+        assert_eq!(
+            state.apply_transition(&NetworkStateTransition::new(
+                version,
+                NetworkResourcePhase::Provisioning,
+                NetworkTransitionEvidence::DeletionConfirmedForReprovision,
+            )),
+            Ok(NetworkStateMutation::Applied)
+        );
+        assert_eq!(state.phase(), NetworkResourcePhase::Provisioning);
+        assert_eq!(state.version(), &before_version);
+        assert_eq!(state.provider_handle(), before_handle.as_ref());
     }
 
     #[test]

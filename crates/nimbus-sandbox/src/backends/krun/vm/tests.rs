@@ -1,3 +1,4 @@
+mod attachment_authority;
 mod attachment_recovery;
 mod creator_recovery;
 mod egress_readiness;

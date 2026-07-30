@@ -7,7 +7,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use nimbus_core::{Cidr, CidrError};
-use nimbus_network::{LocalNetworkAuthority, LocalNetworkAuthorityRootMismatch};
+use nimbus_network::{
+    LocalNetworkAttachmentAuthority, LocalNetworkAuthority, LocalNetworkAuthorityRootMismatch,
+};
 
 use crate::backends::oci::egress::{EgressProxyProcess, EgressProxyRegistry};
 use crate::backends::oci::network::ipam::OciIpamAuthority;
@@ -151,6 +153,10 @@ impl OciNetworkProcess {
 
     pub(crate) fn ipam_authority(&self) -> OciIpamAuthority {
         self.ipam.clone()
+    }
+
+    pub(crate) fn attachment_authority(&self) -> LocalNetworkAttachmentAuthority {
+        self.authority.attachments()
     }
 
     pub(crate) fn netavark_port_lifetimes(&self) -> NetavarkPortLifetimeRegistry {

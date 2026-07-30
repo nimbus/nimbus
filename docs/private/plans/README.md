@@ -74,28 +74,27 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC5.1 complete; NNC5.2
+- `nimbus-network-control-plane-plan.md` - `active; NNC5.2 complete; NNC5.2a
   in progress`. The Linux sovereignty tripwire is complete with a root-safe,
   raw-artifact-derived evidence contract, 70/70 deterministic tests, 62/62
   adversarial verifier cases, fully dispositioned full+narrow Sol reviews, and
   two source-matched LinuxKit PASS runs whose ordered pair proves fresh-process
-  cleanup/re-entry. NNC5.1 is complete: one
-  crate-private OCI attachment lifecycle owns the common container/krun
-  host-managed setup/compensation/detach algorithm. Adapter construction is
-  private; actual Container/Krun backend types implement the host-managed
-  route, only Container implements machine forwarding, and exact auxiliary PEP
-  tenant/sandbox/address/provider identity authenticates before effects. Its
-  identical two-profile contract passes 30/30 with real live-listener
-  restart/release/replay evidence; affected/full sandbox, quality, dependency,
-  and verifier gates are green; docs pass 108 pages and site validation passes
-  17/17. Machine
+  cleanup/re-entry. NNC5.2 is complete: one manager-derived, tenant-qualified
+  attachment authority persists exact resource version, generation, digest,
+  lease epoch, phase, selected provider, and stable opaque handle. Both actual
+  Container/Krun production routes authenticate that durable owner plus
+  provider inspection before effects. The final production routes pass 4/4,
+  portable authority/state passes 15/15, lifecycle/routes pass 38/38, the
+  backend lane passes 332/332, and affected crates pass 1003/1003 with 24
+  declared skips. Its full review's sole proof gap is corrected by four
+  constructor/private-route tests and the one narrow correction review is
+  clean at 0.99. Machine
   forwarding, runtime absence, workload status, readiness persistence, and
   inspect/restart policy stay in their existing or later owners. The
-  one full item review and sole narrow Sol/xhigh correction review produced six
-  accepted findings; all reproduced, were corrected, and are dispositioned.
-  No third review ran or is warranted. NNC5.2 now owns the read-only
-  substitution/durability audit for shared attachment phase, generation, and
-  provider-attempt evidence. Sole owner for the
+  No further NNC5.2 review ran or is warranted. NNC5.2a now owns the read-only
+  association/effect-order/orphan audit before it persists exact attachment-
+  to-segment association and provider attempt before first effects. Sole owner
+  for the
   transport-free
   connectivity-resource control plane: portable network identities and plans,
   crash-safe segment and cross-process host-port lease authority,

@@ -381,6 +381,15 @@ pub(super) fn begin_netavark_setup(
 }
 
 #[cfg(test)]
+pub(crate) fn begin_netavark_setup_without_ack_for_test(
+    authority: &OciIpamAuthority,
+    layout: &OciNetworkLayout,
+    config: &OciNetworkConfig,
+    sandbox_id: &SandboxId,
+) -> Result<()> {
+    begin_netavark_setup(authority, layout, config, sandbox_id).map(|_| ())
+}
+
 pub(super) fn inspect_netavark_provider_operation(
     authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
@@ -685,7 +694,7 @@ pub(super) fn inspect_container_ipam_authority(
     Ok(ContainerIpamAuthorityState::Absent)
 }
 
-fn load_container_ips_for_segment_if_present(
+pub(super) fn load_container_ips_for_segment_if_present(
     authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
     config: &OciNetworkConfig,

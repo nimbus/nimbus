@@ -10,7 +10,8 @@ use std::path::{Path, PathBuf};
 
 use nimbus_core::TenantId;
 use nimbus_network::{
-    NetworkAttachmentReservationState, NetworkReservationClaim, PortLeaseRequest,
+    LocalNetworkAttachmentAuthority, NetworkAttachmentReservationState, NetworkReservationClaim,
+    PortLeaseRequest,
 };
 
 use super::{
@@ -18,11 +19,10 @@ use super::{
     OciNetworkDirectEgress, OciNetworkLayout, OciSegmentAllocator, OciSegmentRealization,
     ReservedNetworkLaunchAuthority, authenticate_container_network_generation,
     authenticate_container_network_generation_for_cleanup,
-    compensate_reserved_network_launch_after_ports, create_persistent_network_namespace,
+    compensate_reserved_network_launch_after_ports,
     deallocate_container_ips_after_confirmed_detach, default_network_attachment_id,
     place_sandbox_on_block, purge_legacy_nimbus0_once, quarantine_network_segment_hold,
     release_network_segment_hold, release_reserved_network_launch_after_ports,
-    remove_persistent_network_namespace, setup_container_network, teardown_container_network,
 };
 use crate::backends::oci::port_lease::{OciPortBindLifetimeBatch, OciPortProvider};
 use crate::backends::oci::port_lifecycle::{
@@ -70,8 +70,14 @@ impl AttachmentBackendKind {
     }
 }
 
+mod host;
+mod recovery;
+mod state;
+
 #[cfg(test)]
 mod tests;
+
+use host::{AttachmentHostEffects, RealAttachmentHostEffects};
 
 /// Explicit authority disposition for one confirmed provider detach.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -454,61 +460,10 @@ impl AttachmentPhaseObserver for NoopAttachmentPhaseObserver {
     }
 }
 
-/// Narrow host-effect port used by the one attachment algorithm.
-///
-/// Allocation, IPAM, port authority, and compensation policy remain concrete
-/// lifecycle dependencies. Only privileged namespace/Netavark effects are
-/// substitutable so the same algorithm can be exercised deterministically on
-/// non-Linux test hosts.
-trait AttachmentHostEffects {
-    fn create_namespace(&self, context: &OciAttachmentContext<'_>) -> Result<()>;
-
-    fn setup_provider(
-        &self,
-        ipam: &OciIpamAuthority,
-        context: &OciAttachmentContext<'_>,
-    ) -> Result<Vec<Ipv4Addr>>;
-
-    fn teardown_provider(
-        &self,
-        ipam: &OciIpamAuthority,
-        context: &OciAttachmentContext<'_>,
-    ) -> Result<()>;
-
-    fn remove_namespace(&self, context: &OciAttachmentContext<'_>) -> Result<()>;
-}
-
-struct RealAttachmentHostEffects;
-
-impl AttachmentHostEffects for RealAttachmentHostEffects {
-    fn create_namespace(&self, context: &OciAttachmentContext<'_>) -> Result<()> {
-        create_persistent_network_namespace(&context.layout.netns_path)
-    }
-
-    fn setup_provider(
-        &self,
-        ipam: &OciIpamAuthority,
-        context: &OciAttachmentContext<'_>,
-    ) -> Result<Vec<Ipv4Addr>> {
-        setup_container_network(ipam, &context.operation())
-    }
-
-    fn teardown_provider(
-        &self,
-        ipam: &OciIpamAuthority,
-        context: &OciAttachmentContext<'_>,
-    ) -> Result<()> {
-        teardown_container_network(ipam, &context.operation())
-    }
-
-    fn remove_namespace(&self, context: &OciAttachmentContext<'_>) -> Result<()> {
-        remove_persistent_network_namespace(&context.layout.netns_path)
-    }
-}
-
 /// Deep OCI attachment composition over the already-earned local authorities.
 pub(crate) struct OciAttachmentLifecycle<'a> {
     allocator: &'a OciSegmentAllocator,
+    attachments: Option<&'a LocalNetworkAttachmentAuthority>,
     ipam: &'a OciIpamAuthority,
     ports: &'a OciPortLeaseCoordinator,
     lifetimes: &'a NetavarkPortLifetimeRegistry,
@@ -517,12 +472,14 @@ pub(crate) struct OciAttachmentLifecycle<'a> {
 impl<'a> OciAttachmentLifecycle<'a> {
     pub(crate) fn new(
         allocator: &'a OciSegmentAllocator,
+        attachments: Option<&'a LocalNetworkAttachmentAuthority>,
         ipam: &'a OciIpamAuthority,
         ports: &'a OciPortLeaseCoordinator,
         lifetimes: &'a NetavarkPortLifetimeRegistry,
     ) -> Self {
         Self {
             allocator,
+            attachments,
             ipam,
             ports,
             lifetimes,
@@ -674,12 +631,31 @@ impl<'a> OciAttachmentLifecycle<'a> {
         observer.checkpoint(AttachmentAttachPhase::LeasesAuthenticated)?;
         self.authenticate_attach_authority(context, authority)?;
         observer.checkpoint(AttachmentAttachPhase::AuthorityAuthenticated)?;
+        let durable = state::OciAttachmentDurableState::compile(self.attachments, context)?;
+        let durable_record = durable.reserve()?;
+        let recovery = recovery::prepare_attach(
+            &durable,
+            durable_record,
+            host.inspect_provider(self.ipam, context),
+        )?;
+        let (mut durable_record, create_provider, recovered_ips) = match recovery {
+            recovery::AttachmentAttachRecovery::Create { record } => (record, true, None),
+            recovery::AttachmentAttachRecovery::ResumePublication {
+                record,
+                assigned_ips,
+            } => (record, false, Some(assigned_ips)),
+            recovery::AttachmentAttachRecovery::AlreadyActive { assigned_ips } => {
+                return Ok(assigned_ips);
+            }
+        };
         purge_legacy_nimbus0_once(&context.workload_state_root.join("networks"))?;
         observer.checkpoint(AttachmentAttachPhase::LegacyBridgePurged)?;
 
-        host.create_namespace(context)?;
-        if let Err(primary) = observer.checkpoint(AttachmentAttachPhase::NamespaceCreated) {
-            return Err(self.compensate_namespace_failure(context, host, primary));
+        if create_provider {
+            host.create_namespace(context)?;
+            if let Err(primary) = observer.checkpoint(AttachmentAttachPhase::NamespaceCreated) {
+                return Err(self.compensate_namespace_failure(context, host, primary));
+            }
         }
         let mut netavark_lifetimes = if context.publication.owns_netavark_bindings() {
             match self.ports.claim_netavark_bindings_with_lifetimes(
@@ -706,9 +682,49 @@ impl<'a> OciAttachmentLifecycle<'a> {
             ));
         }
 
-        let assigned_ips = match host.setup_provider(self.ipam, context) {
-            Ok(assigned_ips) => assigned_ips,
+        let assigned_ips = match recovered_ips {
+            Some(assigned_ips) => assigned_ips,
+            None => {
+                let assigned_ips = match host.setup_provider(self.ipam, context) {
+                    Ok(assigned_ips) => assigned_ips,
+                    Err(primary) => {
+                        let _ = recovery::mark_cleanup_pending(&durable, &durable_record);
+                        return Err(self.compensate_setup_failure_with(
+                            context,
+                            host,
+                            netavark_lifetimes.take(),
+                            primary,
+                        ));
+                    }
+                };
+                durable_record = match recovery::mark_provider_ready(&durable, &durable_record) {
+                    Ok(record) => record,
+                    Err(primary) => {
+                        let _ = recovery::mark_cleanup_pending(&durable, &durable_record);
+                        return Err(self.compensate_setup_failure_with(
+                            context,
+                            host,
+                            netavark_lifetimes.take(),
+                            primary,
+                        ));
+                    }
+                };
+                assigned_ips
+            }
+        };
+        if let Err(primary) = observer.checkpoint(AttachmentAttachPhase::ProviderSetupComplete) {
+            let _ = recovery::mark_cleanup_pending(&durable, &durable_record);
+            return Err(self.compensate_setup_failure_with(
+                context,
+                host,
+                netavark_lifetimes.take(),
+                primary,
+            ));
+        }
+        durable_record = match recovery::mark_publishing(&durable, &durable_record) {
+            Ok(record) => record,
             Err(primary) => {
+                let _ = recovery::mark_cleanup_pending(&durable, &durable_record);
                 return Err(self.compensate_setup_failure_with(
                     context,
                     host,
@@ -717,14 +733,6 @@ impl<'a> OciAttachmentLifecycle<'a> {
                 ));
             }
         };
-        if let Err(primary) = observer.checkpoint(AttachmentAttachPhase::ProviderSetupComplete) {
-            return Err(self.compensate_setup_failure_with(
-                context,
-                host,
-                netavark_lifetimes.take(),
-                primary,
-            ));
-        }
 
         if let Some(batch) = netavark_lifetimes.as_ref()
             && let Err(primary) = self.ports.activate_netavark_bindings_with_lifetimes(
@@ -735,6 +743,7 @@ impl<'a> OciAttachmentLifecycle<'a> {
                 batch,
             )
         {
+            let _ = recovery::mark_cleanup_pending(&durable, &durable_record);
             return Err(self.compensate_setup_failure_with(
                 context,
                 host,
@@ -743,6 +752,7 @@ impl<'a> OciAttachmentLifecycle<'a> {
             ));
         }
         if let Err(primary) = observer.checkpoint(AttachmentAttachPhase::ListenerBindingsActive) {
+            let _ = recovery::mark_cleanup_pending(&durable, &durable_record);
             return Err(self.compensate_setup_failure_with(
                 context,
                 host,
@@ -752,6 +762,7 @@ impl<'a> OciAttachmentLifecycle<'a> {
         }
 
         if let Err(primary) = after_provider_setup(&assigned_ips) {
+            let _ = recovery::mark_cleanup_pending(&durable, &durable_record);
             return Err(self.compensate_setup_failure_with(
                 context,
                 host,
@@ -761,6 +772,7 @@ impl<'a> OciAttachmentLifecycle<'a> {
         }
         if let Err(primary) = observer.checkpoint(AttachmentAttachPhase::BackendPublicationComplete)
         {
+            let _ = recovery::mark_cleanup_pending(&durable, &durable_record);
             return Err(self.compensate_setup_failure_with(
                 context,
                 host,
@@ -774,9 +786,11 @@ impl<'a> OciAttachmentLifecycle<'a> {
                 self.lifetimes
                     .insert(context.tenant_id, context.sandbox_id, batch)
         {
+            let _ = recovery::mark_cleanup_pending(&durable, &durable_record);
             return Err(self.compensate_setup_failure_with(context, host, Some(batch), primary));
         }
         if let Err(primary) = observer.checkpoint(AttachmentAttachPhase::LifetimeRegistered) {
+            let _ = recovery::mark_cleanup_pending(&durable, &durable_record);
             return Err(self.compensate_registered_failure(
                 context,
                 host,
@@ -792,6 +806,7 @@ impl<'a> OciAttachmentLifecycle<'a> {
             context.tenant_id,
             &default_network_attachment_id(context.sandbox_id),
         ) {
+            let _ = recovery::mark_cleanup_pending(&durable, &durable_record);
             return Err(self.compensate_registered_failure(
                 context,
                 host,
@@ -800,10 +815,20 @@ impl<'a> OciAttachmentLifecycle<'a> {
             ));
         }
         if let Err(primary) = observer.checkpoint(AttachmentAttachPhase::AttachmentConfirmed) {
+            let _ = recovery::mark_cleanup_pending(&durable, &durable_record);
             return Err(self.compensate_registered_failure(
                 context,
                 host,
                 "attachment confirmation",
+                primary,
+            ));
+        }
+        if let Err(primary) = recovery::mark_active(&durable, &durable_record) {
+            let _ = recovery::mark_cleanup_pending(&durable, &durable_record);
+            return Err(self.compensate_registered_failure(
+                context,
+                host,
+                "durable active checkpoint",
                 primary,
             ));
         }
@@ -1014,9 +1039,9 @@ impl<'a> OciAttachmentLifecycle<'a> {
     ) -> AttachmentDetachResult {
         context
             .validate_backend_publication()
-            .map_err(Self::before_provider_detach_failure)?;
+            .map_err(recovery::before_provider_detach_failure)?;
         if !context.publication.owns_netavark_bindings() {
-            return Err(Self::before_provider_detach_failure(
+            return Err(recovery::before_provider_detach_failure(
                 SandboxError::OperationFailed {
                     message: format!(
                         "{} attachment {} cannot use host-managed detach for machine-forwarded \
@@ -1032,7 +1057,53 @@ impl<'a> OciAttachmentLifecycle<'a> {
             context.config,
             context.sandbox_id,
         )
-        .map_err(Self::before_provider_detach_failure)?;
+        .map_err(recovery::before_provider_detach_failure)?;
+        let durable = state::OciAttachmentDurableState::compile(self.attachments, context)
+            .map_err(recovery::before_provider_detach_failure)?;
+        let durable_record = durable
+            .inspect()
+            .map_err(recovery::before_provider_detach_failure)?;
+        let provider_observation = host.inspect_provider(self.ipam, context);
+        if durable_record
+            .as_ref()
+            .is_some_and(|record| record.resource().phase().is_terminal())
+        {
+            let terminal = recovery::prepare_detach(
+                &durable,
+                durable_record.expect("terminal attachment record was just authenticated"),
+                provider_observation,
+            )
+            .map_err(recovery::before_provider_detach_failure)?;
+            debug_assert!(terminal.already_terminal);
+            return Ok(());
+        }
+        if matches!(
+            &provider_observation,
+            recovery::AttachmentProviderObservation::Unknown { .. }
+        ) {
+            let Some(record) = durable_record else {
+                return Err(recovery::before_provider_detach_failure(
+                    SandboxError::OperationFailed {
+                        message: format!(
+                            "{} attachment {} has ambiguous provider evidence without durable \
+                             attachment authority; refusing teardown",
+                            context.provider_label, context.sandbox_id
+                        ),
+                    },
+                ));
+            };
+            let rejection = match recovery::prepare_detach(&durable, record, provider_observation) {
+                Ok(_) => SandboxError::OperationFailed {
+                    message: format!(
+                        "{} attachment {} unexpectedly authorized teardown from ambiguous \
+                             provider evidence",
+                        context.provider_label, context.sandbox_id
+                    ),
+                },
+                Err(error) => error,
+            };
+            return Err(recovery::before_provider_detach_failure(rejection));
+        }
 
         let mut errors = Vec::new();
         let mut detach_permitted = true;
@@ -1066,7 +1137,7 @@ impl<'a> OciAttachmentLifecycle<'a> {
         }
         if mode == AttachmentTeardownMode::Restart
             && let Ok(state) = &published_batch_state
-            && let Err(error) = Self::validate_restart_publication_state(context, state)
+            && let Err(error) = recovery::validate_restart_publication_state(context, state)
         {
             detach_permitted = false;
             errors.push(error.to_string());
@@ -1090,10 +1161,23 @@ impl<'a> OciAttachmentLifecycle<'a> {
             errors.push(error.to_string());
         }
         if !detach_permitted {
-            return Err(Self::before_provider_detach_failure(
-                self.detach_error(context, errors),
+            return Err(recovery::before_provider_detach_failure(
+                recovery::detach_error(context, errors),
             ));
         }
+
+        let durable_record = match durable_record {
+            Some(record) => record,
+            None => durable
+                .reserve()
+                .map_err(recovery::before_provider_detach_failure)?,
+        };
+        let durable_detach =
+            recovery::prepare_detach(&durable, durable_record, provider_observation)
+                .map_err(recovery::before_provider_detach_failure)?;
+        debug_assert!(!durable_detach.already_terminal);
+        let durable_record = durable_detach.record;
+        let provider_was_absent = durable_detach.provider_absent;
 
         if mode.releases_authority()
             && let Err(error) = quarantine_network_segment_hold(
@@ -1151,21 +1235,24 @@ impl<'a> OciAttachmentLifecycle<'a> {
             ) {
                 errors.push(error.to_string());
             }
-            return Err(Self::before_provider_detach_failure(
-                self.detach_error(context, errors),
+            return Err(recovery::before_provider_detach_failure(
+                recovery::detach_error(context, errors),
             ));
         }
 
-        let mut provider_detached = match host.teardown_provider(self.ipam, context) {
-            Ok(()) => true,
-            Err(error) => {
+        let mut provider_detached = provider_was_absent;
+        if !provider_was_absent {
+            provider_detached = match host.teardown_provider(self.ipam, context) {
+                Ok(()) => true,
+                Err(error) => {
+                    errors.push(error.to_string());
+                    false
+                }
+            };
+            if provider_detached && let Err(error) = host.remove_namespace(context) {
+                provider_detached = false;
                 errors.push(error.to_string());
-                false
             }
-        };
-        if provider_detached && let Err(error) = host.remove_namespace(context) {
-            provider_detached = false;
-            errors.push(error.to_string());
         }
 
         if provider_detached
@@ -1201,6 +1288,7 @@ impl<'a> OciAttachmentLifecycle<'a> {
         }
 
         if !provider_detached {
+            let _ = recovery::mark_cleanup_pending(&durable, &durable_record);
             if let Err(error) = self.ports.retain_ambiguous_netavark_cleanup(
                 self.lifetimes,
                 context.tenant_id,
@@ -1209,9 +1297,9 @@ impl<'a> OciAttachmentLifecycle<'a> {
             ) {
                 errors.push(error.to_string());
             }
-            return Err(Self::cleanup_pending_failure(
-                self.detach_error(context, errors),
-            ));
+            return Err(recovery::cleanup_pending_failure(recovery::detach_error(
+                context, errors,
+            )));
         }
 
         if mode.releases_authority() {
@@ -1225,48 +1313,14 @@ impl<'a> OciAttachmentLifecycle<'a> {
         }
 
         if errors.is_empty() {
-            Ok(())
+            recovery::finish_detach(&durable, &durable_record, mode)
+                .map(|_| ())
+                .map_err(recovery::cleanup_pending_failure)
         } else {
-            Err(Self::cleanup_pending_failure(
-                self.detach_error(context, errors),
-            ))
-        }
-    }
-
-    fn validate_restart_publication_state(
-        context: &OciAttachmentContext<'_>,
-        state: &LaunchPortBatchState,
-    ) -> Result<()> {
-        if context.backend == AttachmentBackendKind::Krun
-            || matches!(
-                state,
-                LaunchPortBatchState::ProviderOwned
-                    | LaunchPortBatchState::RestartRetained
-                    | LaunchPortBatchState::TerminalNoEffect
-            )
-            || matches!(state, LaunchPortBatchState::NeverBound) && context.leases.is_empty()
-        {
-            return Ok(());
-        }
-        Err(SandboxError::OperationFailed {
-            message: format!(
-                "{} restart cannot detach Netavark from published-listener authority {state:?}",
-                context.provider_label
-            ),
-        })
-    }
-
-    fn before_provider_detach_failure(error: SandboxError) -> AttachmentDetachFailure {
-        AttachmentDetachFailure {
-            stage: AttachmentDetachFailureStage::BeforeProviderDetach,
-            error,
-        }
-    }
-
-    fn cleanup_pending_failure(error: SandboxError) -> AttachmentDetachFailure {
-        AttachmentDetachFailure {
-            stage: AttachmentDetachFailureStage::CleanupPending,
-            error,
+            let _ = recovery::mark_cleanup_pending(&durable, &durable_record);
+            Err(recovery::cleanup_pending_failure(recovery::detach_error(
+                context, errors,
+            )))
         }
     }
 
@@ -1430,20 +1484,5 @@ impl<'a> OciAttachmentLifecycle<'a> {
             .into_iter()
             .map(|error| error.to_string()),
         );
-    }
-
-    fn detach_error(
-        &self,
-        context: &OciAttachmentContext<'_>,
-        errors: Vec<String>,
-    ) -> SandboxError {
-        SandboxError::OperationFailed {
-            message: format!(
-                "failed to release {} attachment {}: {}",
-                context.provider_label,
-                context.sandbox_id,
-                errors.join("; ")
-            ),
-        }
     }
 }

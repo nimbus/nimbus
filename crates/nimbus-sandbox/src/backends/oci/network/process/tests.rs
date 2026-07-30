@@ -110,6 +110,12 @@ fn oci_network_process_contract_has_exactly_one_concurrent_winner() {
 
     let process =
         OciNetworkProcess::new(authority.clone(), topology, 24).expect("first process should open");
+    assert_eq!(
+        process.attachment_authority().authority_path(),
+        authority.attachments().authority_path(),
+        "OCI backends must receive the manager-derived attachment authority from the one process \
+         composition"
+    );
 
     #[cfg(unix)]
     {

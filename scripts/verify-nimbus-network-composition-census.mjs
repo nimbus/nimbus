@@ -78,6 +78,7 @@ const approvedPrimitiveManagerOccurrences = new Set([
   "crates/nimbus-network/src/manager.rs|primitive-state-store-open|bootstrap|2",
 ]);
 const approvedPrimitiveReconstructionOccurrences = new Set([
+  "crates/nimbus-network/src/attachment_state.rs|primitive-state-store-open|open|1",
   "crates/nimbus-network/src/port_lease.rs|primitive-port-authority-open-declaration|open|1",
   "crates/nimbus-network/src/port_lease.rs|primitive-state-store-open|open|1",
   "crates/nimbus-network/src/state_store.rs|primitive-state-store-open-declaration|open|1",

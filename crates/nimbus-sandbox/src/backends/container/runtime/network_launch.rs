@@ -28,6 +28,7 @@ impl ContainerSandboxBackend {
     ) -> OciAttachmentLifecycle<'a> {
         OciAttachmentLifecycle::new(
             self.segment_allocator.as_ref(),
+            self.attachment_authority.as_ref(),
             &self.ipam_authority,
             ports,
             &self.netavark_port_lifetimes,

@@ -38,6 +38,7 @@ use crate::instance::SandboxId;
 use crate::spec::SandboxPortBinding;
 
 mod authority;
+mod durable_recovery;
 
 use authority::stale_provenance_fails_before_effects;
 
@@ -117,6 +118,7 @@ struct ContractFixture {
     sandbox_id: SandboxId,
     layout: OciNetworkLayout,
     ipam: OciIpamAuthority,
+    attachments: LocalNetworkAttachmentAuthority,
     ports: OciPortLeaseCoordinator,
     lifetimes: NetavarkPortLifetimeRegistry,
     claim: NetworkReservationClaim,
@@ -134,6 +136,8 @@ impl ContractFixture {
             .ensure_directories()
             .expect("contract network layout should exist");
         let ipam = direct_test_ipam_authority(&layout);
+        let attachments = LocalNetworkAttachmentAuthority::open(temp_dir.path())
+            .expect("contract attachment authority should open");
         let ports = OciPortLeaseCoordinator::new(temp_dir.path(), 32_000..=32_099);
         let allocator = RecordingSegmentAllocator::new(tenant_id.clone(), "127.92.0.0/24", 92);
         let claim = reservation_claim(&format!("{}-{row}", backend.label()));
@@ -144,6 +148,7 @@ impl ContractFixture {
             sandbox_id,
             layout,
             ipam,
+            attachments,
             ports,
             lifetimes: NetavarkPortLifetimeRegistry::default(),
             claim,
@@ -152,7 +157,13 @@ impl ContractFixture {
     }
 
     fn lifecycle(&self) -> OciAttachmentLifecycle<'_> {
-        OciAttachmentLifecycle::new(&self.allocator, &self.ipam, &self.ports, &self.lifetimes)
+        OciAttachmentLifecycle::new(
+            &self.allocator,
+            Some(&self.attachments),
+            &self.ipam,
+            &self.ports,
+            &self.lifetimes,
+        )
     }
 
     fn reserve_config(&self) -> OciNetworkConfig {
@@ -532,7 +543,10 @@ fn claim_precedes_all_reservations(backend: ContractBackend) {
         });
     let lifetimes = NetavarkPortLifetimeRegistry::default();
     let claim = reservation_claim(&format!("{}-claim-order", backend.label()));
-    let lifecycle = OciAttachmentLifecycle::new(&allocator, &ipam, &ports, &lifetimes);
+    let attachments = LocalNetworkAttachmentAuthority::open(temp_dir.path())
+        .expect("attachment authority should open");
+    let lifecycle =
+        OciAttachmentLifecycle::new(&allocator, Some(&attachments), &ipam, &ports, &lifetimes);
 
     backend
         .reserve_config(&lifecycle, &tenant_id, &layout, &sandbox_id, &claim)
