@@ -8,7 +8,7 @@ use nimbus_core::{
     SequenceNumber, TableId, TableName, TenantId,
 };
 
-use super::authorization::ReadAuthorization;
+use super::authorization::{DocumentReadFilter, ReadAuthorization};
 use super::materialized::{
     evaluate_with_materialized_surface_async_prepared,
     evaluate_with_materialized_surface_cancellable_prepared,
@@ -268,6 +268,30 @@ impl Engine {
                 Ok(documents)
             }
         }
+    }
+
+    /// Resolves `table`'s read rule for `principal` so a caller can apply it to
+    /// documents it reconstructs itself.
+    ///
+    /// This is for data that never passes through a scan and so cannot be
+    /// authorized by one. The DynamoDB adapter's stream records are the case it
+    /// exists for: a record's images are item contents assembled from the change
+    /// log, and returning them has to answer the same question a read of the
+    /// source table would.
+    ///
+    /// # Errors
+    /// Propagates a tenant load failure or an unresolvable read rule.
+    pub fn document_read_filter(
+        &self,
+        tenant_id: &TenantId,
+        table: &TableName,
+        principal: &PrincipalContext,
+    ) -> Result<DocumentReadFilter> {
+        let LoadedQueryRuntime { runtime, .. } = load_query_runtime(self, tenant_id)?;
+        let _operation = runtime.enter_operation(tenant_id)?;
+        let schema = runtime.schema();
+        let authorization = ReadAuthorization::for_table(schema.get_table(table), principal)?;
+        Ok(DocumentReadFilter::new(authorization, principal.clone()))
     }
 
     /// Reads the documents whose `DocumentId` begins with `id_prefix` that

@@ -17,6 +17,7 @@ mod objects;
 mod occ_retry;
 mod provider_hints;
 mod queries;
+pub use queries::DocumentReadFilter;
 mod scheduler;
 mod schema;
 mod subscriptions;

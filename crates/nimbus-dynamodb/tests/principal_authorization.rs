@@ -161,6 +161,137 @@ fn read_only_policy(key: &str) -> TableAccessPolicy {
     }
 }
 
+/// A read rule `key` satisfies only for items whose `owner` attribute names it.
+///
+/// The literal is written in AttributeValue wire form (`{"S": ...}`) because
+/// that is how the adapter persists every attribute — `Document.fields` holds
+/// the wire JSON, not a bare scalar — so a policy on a DynamoDB-surfaced table
+/// compares against the wire shape.
+fn read_only_owned_by(key: &str) -> TableAccessPolicy {
+    let mut read = only_access_key(key);
+    read.predicates.push(AccessPredicate {
+        left: AccessValue::DocumentField {
+            field: "owner".to_owned(),
+        },
+        op: AccessOperator::Eq,
+        right: AccessValue::Literal {
+            value: json!({ "S": key }),
+        },
+    });
+    TableAccessPolicy {
+        read,
+        ..TableAccessPolicy::default()
+    }
+}
+
+/// Create `name` with a single `pk` and a NEW_AND_OLD_IMAGES stream, returning
+/// the stream ARN.
+fn create_streamed_table(engine: &Arc<Engine>, registry: &AccessKeyRegistry, name: &str) -> String {
+    let mut table = hash_only_table(name);
+    table["StreamSpecification"] = json!({
+        "StreamEnabled": true,
+        "StreamViewType": "NEW_AND_OLD_IMAGES",
+    });
+    let (status, created) = call(engine, registry, OWNER_KEY, "CreateTable", &table);
+    assert_eq!(status, 200, "create table: {created}");
+    created["TableDescription"]["LatestStreamArn"]
+        .as_str()
+        .expect("a stream-enabled table has a stream ARN")
+        .to_owned()
+}
+
+/// A TRIM_HORIZON shard iterator for `stream_arn`, obtained as `key`.
+fn trim_horizon_iterator(
+    engine: &Arc<Engine>,
+    registry: &AccessKeyRegistry,
+    key: &str,
+    stream_arn: &str,
+) -> String {
+    let (status, described) = call(
+        engine,
+        registry,
+        key,
+        "DescribeStream",
+        &json!({ "StreamArn": stream_arn }),
+    );
+    assert_eq!(status, 200, "describe stream as {key}: {described}");
+    let shard_id = described["StreamDescription"]["Shards"][0]["ShardId"]
+        .as_str()
+        .expect("the single shard must be described")
+        .to_owned();
+    let (status, iterator) = call(
+        engine,
+        registry,
+        key,
+        "GetShardIterator",
+        &json!({
+            "StreamArn": stream_arn,
+            "ShardId": shard_id,
+            "ShardIteratorType": "TRIM_HORIZON",
+        }),
+    );
+    assert_eq!(status, 200, "get shard iterator as {key}: {iterator}");
+    iterator["ShardIterator"]
+        .as_str()
+        .expect("an open shard always yields an iterator")
+        .to_owned()
+}
+
+/// GetRecords as `key`, returning the `pk` of each returned record and the
+/// iterator to resume from.
+fn get_records(
+    engine: &Arc<Engine>,
+    registry: &AccessKeyRegistry,
+    key: &str,
+    iterator: &str,
+    limit: Option<i64>,
+) -> (Vec<String>, String) {
+    let mut request = json!({ "ShardIterator": iterator });
+    if let Some(limit) = limit {
+        request["Limit"] = json!(limit);
+    }
+    let (status, body) = call(engine, registry, key, "GetRecords", &request);
+    assert_eq!(status, 200, "get records as {key}: {body}");
+    let keys = body["Records"]
+        .as_array()
+        .expect("Records is an array")
+        .iter()
+        .map(|record| {
+            record["dynamodb"]["Keys"]["pk"]["S"]
+                .as_str()
+                .expect("every record carries its key")
+                .to_owned()
+        })
+        .collect();
+    let next = body["NextShardIterator"]
+        .as_str()
+        .expect("the single shard never closes, so an iterator is always returned")
+        .to_owned();
+    (keys, next)
+}
+
+/// Put `pk` into `table` with an `owner` attribute, as `key`.
+fn put_owned(
+    engine: &Arc<Engine>,
+    registry: &AccessKeyRegistry,
+    key: &str,
+    table: &str,
+    pk: &str,
+    owner: &str,
+) {
+    let (status, body) = call(
+        engine,
+        registry,
+        key,
+        "PutItem",
+        &json!({
+            "TableName": table,
+            "Item": { "pk": { "S": pk }, "owner": { "S": owner } },
+        }),
+    );
+    assert_eq!(status, 200, "put {pk}: {body}");
+}
+
 #[test]
 fn get_item_runs_as_the_calling_access_key() {
     let (engine, registry, _temp) = fixture();
@@ -326,28 +457,19 @@ fn put_item_runs_as_the_calling_access_key() {
     );
 }
 
-/// The stream event store is a reserved `_ddb_stream_*` table the adapter owns,
-/// so GetRecords reads it as the adapter — not as the calling access key, and
-/// not filtered by the *user* table's read policy. Making the underlying
-/// limit-bearing scan policy-aware (FU4) must not change that: a table policy
-/// governs who reads the table's items, and pushing it onto the adapter's own
-/// bookkeeping would silently break change capture for every caller the policy
-/// does not name.
+/// A stream record carries the item contents that changed, so GetRecords has to
+/// answer the same question a read of the source table would. DynamoDB grants
+/// stream access as its own IAM resource; Nimbus has no stream-permission
+/// surface, so an access key's rights come from its tenant binding and the
+/// table's policies — and a stream that ignored them would be a side door around
+/// the table's read policy for any authenticated key on the tenant.
+///
+/// The adapter still reaches its own `_ddb_stream_*` event store as the adapter
+/// principal. What is authorized here is the *returned records*.
 #[test]
-fn get_records_reads_the_adapter_owned_event_store_as_the_adapter() {
+fn get_records_authorizes_returned_records_against_the_source_table() {
     let (engine, registry, _temp) = fixture();
-    let mut table = hash_only_table("Streamed");
-    table["StreamSpecification"] = json!({
-        "StreamEnabled": true,
-        "StreamViewType": "NEW_AND_OLD_IMAGES",
-    });
-    let (status, created) = call(&engine, &registry, OWNER_KEY, "CreateTable", &table);
-    assert_eq!(status, 200, "create table: {created}");
-    let stream_arn = created["TableDescription"]["LatestStreamArn"]
-        .as_str()
-        .expect("a stream-enabled table has a stream ARN")
-        .to_owned();
-
+    let stream_arn = create_streamed_table(&engine, &registry, "Streamed");
     for pk in ["a", "b", "c"] {
         let (status, body) = call(
             &engine,
@@ -361,59 +483,31 @@ fn get_records_reads_the_adapter_owned_event_store_as_the_adapter() {
     // A read policy naming OWNER_KEY: OTHER_KEY cannot read the table's items.
     set_policy(&engine, "Streamed", read_only_policy(OWNER_KEY));
 
-    let event_keys = |key: &str| -> Vec<String> {
-        let (_status, described) = call(
-            &engine,
-            &registry,
-            key,
-            "DescribeStream",
-            &json!({ "StreamArn": stream_arn }),
-        );
-        let shard_id = described["StreamDescription"]["Shards"][0]["ShardId"]
-            .as_str()
-            .expect("the single shard must be described")
-            .to_owned();
-        let (_status, iterator) = call(
-            &engine,
-            &registry,
-            key,
-            "GetShardIterator",
-            &json!({
-                "StreamArn": stream_arn,
-                "ShardId": shard_id,
-                "ShardIteratorType": "TRIM_HORIZON",
-            }),
-        );
-        let (status, records) = call(
-            &engine,
-            &registry,
-            key,
-            "GetRecords",
-            &json!({ "ShardIterator": iterator["ShardIterator"] }),
-        );
-        assert_eq!(status, 200, "get records as {key}: {records}");
-        records["Records"]
-            .as_array()
-            .expect("Records is an array")
-            .iter()
-            .map(|record| record["dynamodb"]["Keys"]["pk"]["S"].to_string())
-            .collect()
-    };
-
-    let owner_view = event_keys(OWNER_KEY);
+    let owner_iterator = trim_horizon_iterator(&engine, &registry, OWNER_KEY, &stream_arn);
+    let (owner_view, _next) = get_records(&engine, &registry, OWNER_KEY, &owner_iterator, None);
     assert_eq!(
-        owner_view.len(),
-        3,
-        "every seeded write is captured on the stream: {owner_view:?}"
-    );
-    assert_eq!(
-        event_keys(OTHER_KEY),
         owner_view,
-        "the event store is adapter-owned, so the user table's read policy must not \
-         filter change capture for a caller it does not name"
+        vec!["a", "b", "c"],
+        "the caller the policy names reads every captured change"
     );
 
-    // The policy is real: it does gate the table's own items.
+    // DescribeStream and GetShardIterator stay open to any authenticated key on
+    // the tenant: they return stream metadata and a position, never item data.
+    // The records themselves are where the policy has to bite.
+    let other_iterator = trim_horizon_iterator(&engine, &registry, OTHER_KEY, &stream_arn);
+    let (other_view, other_next) =
+        get_records(&engine, &registry, OTHER_KEY, &other_iterator, None);
+    assert!(
+        other_view.is_empty(),
+        "a caller the table's read policy withholds items from must not receive those items \
+         back as stream records: {other_view:?}"
+    );
+    assert_ne!(
+        other_next, other_iterator,
+        "withheld records must still advance the iterator, or the caller re-reads them forever"
+    );
+
+    // The policy is real: it gates the table's items by the same rule.
     let (_status, other_scan) = call(
         &engine,
         &registry,
@@ -423,7 +517,92 @@ fn get_records_reads_the_adapter_owned_event_store_as_the_adapter() {
     );
     assert_eq!(
         other_scan["Count"], 0,
-        "the same policy still withholds the table's items from that caller: {other_scan}"
+        "the same policy withholds the table's items from that caller: {other_scan}"
+    );
+}
+
+/// Withheld records must not consume page slots. A caller asking for `Limit`
+/// records gets `Limit` records it may read, not a short page it would mistake
+/// for the end of the stream.
+#[test]
+fn get_records_fills_pages_from_the_records_the_caller_may_read() {
+    let (engine, registry, _temp) = fixture();
+    let stream_arn = create_streamed_table(&engine, &registry, "Interleaved");
+    // Alternating owners, so no raw page of two consecutive events ever holds
+    // two the caller may read.
+    for (index, owner) in [OWNER_KEY, OTHER_KEY].iter().cycle().take(6).enumerate() {
+        put_owned(
+            &engine,
+            &registry,
+            OWNER_KEY,
+            "Interleaved",
+            &format!("i{index}"),
+            owner,
+        );
+    }
+    set_policy(&engine, "Interleaved", read_only_owned_by(OWNER_KEY));
+
+    let iterator = trim_horizon_iterator(&engine, &registry, OWNER_KEY, &stream_arn);
+    let (first, iterator) = get_records(&engine, &registry, OWNER_KEY, &iterator, Some(2));
+    assert_eq!(
+        first,
+        vec!["i0", "i2"],
+        "the page must be filled with readable records, skipping the interleaved ones a \
+         policy-blind read would have returned (i0, i1)"
+    );
+
+    let (second, iterator) = get_records(&engine, &registry, OWNER_KEY, &iterator, Some(2));
+    assert_eq!(
+        second,
+        vec!["i4"],
+        "the returned iterator must resume after the last record handed back, not after the \
+         last event examined: a page short only because the stream ran out"
+    );
+
+    let (third, _iterator) = get_records(&engine, &registry, OWNER_KEY, &iterator, Some(2));
+    assert!(
+        third.is_empty(),
+        "a drained stream returns nothing further: {third:?}"
+    );
+}
+
+/// A record pairs the image it replaced with the image it wrote, so either half
+/// discloses the other. When the two straddle the policy, the conservative
+/// answer — withhold unless *both* are readable — is the only one that does not
+/// leak.
+#[test]
+fn get_records_withholds_a_record_whose_images_straddle_the_policy() {
+    let (engine, registry, _temp) = fixture();
+    let stream_arn = create_streamed_table(&engine, &registry, "Handover");
+    // x is created owned by OTHER_KEY, then handed to OWNER_KEY: the MODIFY's
+    // new image is readable by OWNER_KEY but its old image is not.
+    put_owned(&engine, &registry, OWNER_KEY, "Handover", "x", OTHER_KEY);
+    put_owned(&engine, &registry, OWNER_KEY, "Handover", "x", OWNER_KEY);
+    put_owned(&engine, &registry, OWNER_KEY, "Handover", "y", OWNER_KEY);
+    set_policy(&engine, "Handover", read_only_owned_by(OWNER_KEY));
+
+    let iterator = trim_horizon_iterator(&engine, &registry, OWNER_KEY, &stream_arn);
+    let (records, _next) = get_records(&engine, &registry, OWNER_KEY, &iterator, None);
+    assert_eq!(
+        records,
+        vec!["y"],
+        "only the record whose every image is readable may be returned; authorizing on the \
+         new image alone would have handed back x's handover record and with it the old \
+         image of an item owned by someone else"
+    );
+
+    // The caller can read x's current state — the withheld record is about where
+    // that state came from, not about x being invisible.
+    let (_status, scan) = call(
+        &engine,
+        &registry,
+        OWNER_KEY,
+        "Scan",
+        &json!({ "TableName": "Handover" }),
+    );
+    assert_eq!(
+        scan["Count"], 2,
+        "both items are currently owned by the caller and readable: {scan}"
     );
 }
 

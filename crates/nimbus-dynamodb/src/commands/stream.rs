@@ -13,16 +13,16 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use extenddb_core::error::DynamoDbError;
 use extenddb_core::types::{
     DescribeStreamInput, DescribeStreamOutput, GetRecordsInput, GetRecordsOutput,
-    GetShardIteratorInput, GetShardIteratorOutput, Item, ListStreamsInput, ListStreamsOutput,
-    SequenceNumberRange, Shard, ShardIteratorType, StreamDescription, StreamEventName,
-    StreamRecord, StreamRecordData, StreamStatus, StreamSummary, StreamViewType, TableDescription,
-    UserIdentity,
+    GetShardIteratorInput, GetShardIteratorOutput, Item, KeySchemaElement, ListStreamsInput,
+    ListStreamsOutput, SequenceNumberRange, Shard, ShardIteratorType, StreamDescription,
+    StreamEventName, StreamRecord, StreamRecordData, StreamStatus, StreamSummary, StreamViewType,
+    TableDescription, UserIdentity,
 };
 use nimbus_core::{
-    AtomicWrite, AtomicWriteBatch, DocumentId, DocumentLocator, StructuredQuery, TableName,
-    WriteKey, WritePrecondition, WriteSetMode,
+    AtomicWrite, AtomicWriteBatch, Document, DocumentId, DocumentLocator, StructuredQuery,
+    TableName, Timestamp, WriteKey, WritePrecondition, WriteSetMode,
 };
-use nimbus_engine::{Engine, MutationActor};
+use nimbus_engine::{DocumentReadFilter, Engine, MutationActor};
 use nimbus_tenant::TenantIsolationContext;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -488,8 +488,12 @@ pub(crate) fn stream_enabled(
         .is_some_and(|spec| spec.stream_enabled))
 }
 
-/// Read captured events for a table's stream from `start_sequence`, ascending
-/// by sequence and capped to one GetRecords page.
+/// Read up to `limit` captured events for a table's stream from
+/// `start_sequence`, ascending by sequence.
+///
+/// This is the raw store read. Whether the caller may *see* a given event is a
+/// separate question, answered by [`RecordAuthorization`] at the point
+/// `get_records` returns records.
 fn read_events_from(
     engine: &Arc<Engine>,
     context: &TenantIsolationContext,
@@ -541,8 +545,124 @@ fn read_events(
     read_events_from(engine, context, table_name, 0, usize::MAX)
 }
 
+/// Authorization for the records a GetRecords page hands back.
+///
+/// A stream record carries the item contents that changed, so returning one
+/// discloses what a read of the source table would. DynamoDB grants stream
+/// access as its own resource — a stream ARN is named separately in an IAM
+/// policy — but Nimbus has no stream-permission surface: an access key's rights
+/// come from its tenant binding and the source table's policies. So the source
+/// table's read rule has to hold at the record-return boundary, or streams are a
+/// side door around it.
+///
+/// This is distinct from the principal the sidecar uses to reach its own
+/// storage. The `_ddb_stream_*` event store stays adapter-owned and is read as
+/// [`adapter_principal`]; what changes here is who the *returned records* are
+/// authorized for.
+struct RecordAuthorization {
+    filter: DocumentReadFilter,
+    table: TableName,
+    key_schema: Vec<KeySchemaElement>,
+}
+
+impl RecordAuthorization {
+    /// Resolve the source table's read rule for the calling principal.
+    fn resolve(
+        engine: &Arc<Engine>,
+        context: &TenantIsolationContext,
+        description: &TableDescription,
+    ) -> Result<Self, DynamoDbError> {
+        let table = TableName::new(&description.table_name).map_err(map_core_error)?;
+        let filter = engine
+            .document_read_filter(context.tenant_id(), &table, &caller_principal(context))
+            .map_err(map_core_error)?;
+        Ok(Self {
+            filter,
+            table,
+            key_schema: description.key_schema.clone(),
+        })
+    }
+
+    /// Whether `event` may be disclosed to the caller.
+    ///
+    /// The rule is deliberately conservative: **every** image the event carries
+    /// must be readable. A MODIFY that moves an item between owners has one
+    /// image the caller may read and one it may not, and either half is enough
+    /// to reveal the other — the record pairs them. Withholding the whole record
+    /// is the only answer that does not leak, and it is also the only one that
+    /// stays correct as the view type changes.
+    ///
+    /// Authorization uses the stored images even when the configured view type
+    /// would not return them. A KEYS_ONLY record still names an item that
+    /// changed, which is itself item-level information, so it is held to the
+    /// same standard as the images behind it.
+    fn allows(&self, event: &StoredEvent) -> Result<bool, DynamoDbError> {
+        if self.filter.is_unrestricted() {
+            return Ok(true);
+        }
+        if self.filter.denies_everything() {
+            return Ok(false);
+        }
+        // A document rebuilt from a captured image carries no engine lifecycle
+        // timestamps, so a rule that can turn on `_creationTime`/`_updateTime`
+        // cannot be evaluated faithfully here. Withhold rather than authorize
+        // against a value we would have to invent.
+        if self.filter.depends_on_document_timestamps() {
+            return Ok(false);
+        }
+
+        let images = [event.old_image.as_ref(), event.new_image.as_ref()]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+        // A captured event always carries at least the image it wrote or the one
+        // it removed. One that carries neither is unreadable rather than public.
+        if images.is_empty() {
+            return Ok(false);
+        }
+        for image in images {
+            if !self
+                .filter
+                .allows(&self.document_for(image)?)
+                .map_err(map_core_error)?
+            {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Rebuild the source-table document an image describes, so the read rule
+    /// evaluates against the same shape it would have seen in the table.
+    ///
+    /// Images are stored in the field encoding the data path writes, and the
+    /// document id is derived from the key schema exactly as the write derived
+    /// it, so `_id` and every stored field are faithful. The timestamps are not
+    /// recoverable, which is why a rule that can depend on them withholds above
+    /// instead of reaching this.
+    fn document_for(&self, image: &Map<String, Value>) -> Result<Document, DynamoDbError> {
+        let item = fields_to_item(image)?;
+        let id = item::primary_key_id(&item, &self.key_schema)?;
+        Ok(Document::with_id_at(
+            id,
+            self.table.clone(),
+            image.clone(),
+            Timestamp(0),
+        ))
+    }
+}
+
 /// The DynamoDB per-call record cap for GetRecords.
 const MAX_GET_RECORDS: usize = 1000;
+/// The cap on stored events one GetRecords call will read while filling a page.
+///
+/// Filling a page past withheld records is unbounded work in principle, so the
+/// scan stops here and returns a short page. That is safe for GetRecords in a
+/// way it is not for a limit-bearing scan: the call always returns an advanced
+/// `NextShardIterator`, so a short page is a signal to poll again rather than a
+/// claim that the stream is drained. The cap is a multiple of the record cap so
+/// a heavily filtered stream can still fill a full page in one call.
+const MAX_EVENTS_EXAMINED: usize = 10 * MAX_GET_RECORDS;
 /// Stream record retention window (DynamoDB retains stream records for 24h).
 const STREAM_RETENTION_SECS: i64 = 86_400;
 /// The DynamoDB per-call cap for ListStreams.
@@ -669,31 +789,56 @@ pub fn get_records(
         .map(|limit| (limit as usize).min(MAX_GET_RECORDS))
         .unwrap_or(MAX_GET_RECORDS);
     let cutoff = epoch_seconds() - STREAM_RETENTION_SECS;
-    let window = read_events_from(
-        engine,
-        context,
-        &description.table_name,
-        iterator.next_sequence,
-        limit,
-    )?;
+    let authorization = RecordAuthorization::resolve(engine, context, &description)?;
 
-    // Expired events stay in the fetched window so the iterator still advances
-    // past them — a re-poll never stalls on records the retention window has
-    // dropped.
-    let next_sequence = window
-        .last()
-        .map_or(iterator.next_sequence, |event| event.seq + 1);
+    // Events the caller may not read, and events the retention window has
+    // dropped, are consumed without occupying a slot: the page keeps filling
+    // past them. The iterator still advances over every event examined, so a
+    // re-poll never stalls on one it will never return.
+    let mut records: Vec<StreamRecord> = Vec::new();
+    let mut next_sequence = iterator.next_sequence;
+    let mut examined = 0usize;
 
-    // The returned batch excludes anything past the 24h retention window.
-    let records = window
-        .iter()
-        .filter(|event| event.created >= cutoff)
-        .map(|event| shape_record(event, view_type))
-        .collect::<Result<Vec<_>, _>>()?;
+    while records.len() < limit && examined < MAX_EVENTS_EXAMINED {
+        let wanted = (limit - records.len()).min(MAX_EVENTS_EXAMINED - examined);
+        let window = read_events_from(
+            engine,
+            context,
+            &description.table_name,
+            next_sequence,
+            wanted,
+        )?;
+        let drained = window.len() < wanted;
+        examined += window.len();
 
-    // Reclaim expired event storage from the fetched page (the sequence counter
-    // is a separate store, so the high-water mark is unaffected).
-    reclaim_expired_events(engine, context, &description.table_name, &window, cutoff)?;
+        let mut consumed = 0usize;
+        for event in &window {
+            consumed += 1;
+            next_sequence = event.seq + 1;
+            if event.created < cutoff || !authorization.allows(event)? {
+                continue;
+            }
+            records.push(shape_record(event, view_type)?);
+            if records.len() == limit {
+                break;
+            }
+        }
+
+        // Reclaim expired storage for the events actually consumed. Stopping at
+        // `consumed` keeps reclamation behind the iterator, so nothing is
+        // deleted that a later poll still has to walk past.
+        reclaim_expired_events(
+            engine,
+            context,
+            &description.table_name,
+            &window[..consumed],
+            cutoff,
+        )?;
+
+        if drained {
+            break;
+        }
+    }
 
     Ok(GetRecordsOutput {
         records,
@@ -797,6 +942,12 @@ fn stream_not_found(stream_arn: &str) -> DynamoDbError {
 /// DescribeStream: return a single-shard description for the stream-enabled
 /// table the ARN refers to.
 ///
+/// Unlike GetRecords this returns no item-level data and so is not filtered by
+/// the source table's read policy: the shape, status, view type, table name, and
+/// key schema are table metadata, carrying attribute *names* and never any
+/// attribute values. A caller that can already address the table through the
+/// same tenant binding can see all of it from DescribeTable.
+///
 /// # Errors
 /// `ResourceNotFoundException` if the ARN does not match an enabled stream.
 pub fn describe_stream(
@@ -840,6 +991,11 @@ pub fn describe_stream(
 
 /// GetShardIterator: return an opaque iterator positioned per the requested
 /// type (TRIM_HORIZON = start, LATEST = end, AT/AFTER = a given sequence).
+///
+/// Also unfiltered, and for the same reason: the iterator is a position, not
+/// content. `LATEST` resolves the stream's high-water sequence, which counts
+/// changes but describes none of them, and holding an iterator grants nothing —
+/// GetRecords authorizes every record it returns.
 ///
 /// # Errors
 /// `ResourceNotFoundException` for an unknown stream or shard;

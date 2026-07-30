@@ -11,6 +11,7 @@ mod structured;
 mod test_hooks;
 mod verification;
 
+pub use authorization::DocumentReadFilter;
 pub(crate) use authorization::ReadAuthorization;
 pub(crate) use materialized::{
     evaluate_with_index_cancellable_for_principal, should_use_materialized_surface_for_query,
