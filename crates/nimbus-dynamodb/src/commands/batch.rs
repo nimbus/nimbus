@@ -12,7 +12,7 @@ use extenddb_core::types::{
     BatchGetItemInput, BatchGetItemOutput, BatchWriteItemInput, BatchWriteItemOutput, Item,
     StreamEventName, extract_key,
 };
-use nimbus_core::{TableName, WritePrecondition};
+use nimbus_core::{DocumentId, TableName, WritePrecondition};
 use nimbus_engine::Engine;
 use nimbus_tenant::TenantIsolationContext;
 
@@ -93,11 +93,47 @@ pub fn batch_get_item(
     })
 }
 
+/// One BatchWriteItem op whose shape has already been checked: its table
+/// resolved, its key schema applied, and its item converted. Building this is
+/// the whole of an op's validation, so a prepared op can no longer fail the
+/// batch for a validation reason.
+struct PreparedWrite {
+    /// The table name as the request spelled it, which is what the emitted
+    /// stream record reports.
+    table_name: String,
+    table: TableName,
+    id: DocumentId,
+    keys: Item,
+    op: PreparedOp,
+}
+
+enum PreparedOp {
+    Put {
+        item: Item,
+        fields: serde_json::Map<String, serde_json::Value>,
+    },
+    Delete,
+}
+
 /// BatchWriteItem: apply up to 25 Put/Delete requests across tables. Each
 /// `WriteRequest` must carry exactly one of `PutRequest`/`DeleteRequest`.
-/// `UnprocessedItems` is always empty (the store applies every op; there is no
-/// throttling). Note: unlike TransactWriteItems this is **not** atomic — a
-/// later validation error leaves earlier writes applied (DynamoDB semantics).
+///
+/// **Validation covers the whole request before any op runs.** DynamoDB
+/// "rejects the entire batch write operation" when an op is malformed — a
+/// request without exactly one of Put/Delete, key attributes that do not match
+/// the table's key schema, a table that does not exist — so a
+/// `ValidationException` from here leaves nothing applied, whatever the
+/// position of the offending op. Execution is a second pass over ops already
+/// known to be well formed.
+///
+/// **Execution is still not atomic**, and that is the other half of the
+/// contract: unlike TransactWriteItems, the ops are independent once they
+/// start. A *runtime* failure part way through leaves the ops that already
+/// committed applied. DynamoDB reports that case — exhausted throughput or an
+/// internal processing failure — in `UnprocessedItems` for the caller to
+/// retry; the Nimbus store neither throttles nor partially processes a healthy
+/// request, so `UnprocessedItems` is always empty here and a genuine runtime
+/// failure surfaces as an error instead.
 ///
 /// Each op runs in its own single-item transaction, which is what keeps the
 /// ops independent while still reading the prior image inside the transaction
@@ -107,8 +143,9 @@ pub fn batch_get_item(
 /// describe the state this write actually replaced.
 ///
 /// # Errors
-/// `ValidationException` for an empty request, more than 25 ops, or a
-/// `WriteRequest` without exactly one of Put/Delete; `ResourceNotFoundException`
+/// `ValidationException` for an empty request, more than 25 ops, a
+/// `WriteRequest` without exactly one of Put/Delete, or an item whose key
+/// attributes do not match the table's key schema; `ResourceNotFoundException`
 /// if a referenced table is absent.
 pub fn batch_write_item(
     engine: &Arc<Engine>,
@@ -127,102 +164,136 @@ pub fn batch_write_item(
         ));
     }
 
-    for (table_name, requests) in &input.request_items {
-        let key_schema = control_plane::load_key_schema(engine, context, table_name)?;
-        let table = TableName::new(table_name).map_err(map_core_error)?;
-        for request in requests {
-            match (&request.put_request, &request.delete_request) {
-                (Some(put), None) => {
-                    validate_item(&put.item)?;
-                    let id = primary_key_id(&put.item, &key_schema)?;
-                    let fields = item_to_fields(&put.item)?;
-                    let keys = extract_key(&put.item, &key_schema);
-                    execute_single_item_transaction(engine, context, |token, principal| {
-                        let old = read_old_image_in_transaction(
-                            engine,
-                            context,
-                            token,
-                            principal,
-                            &table,
-                            id.clone(),
-                        )?;
-                        let change = stream::StreamChange::new(
-                            table_name.clone(),
-                            if old.is_some() {
-                                StreamEventName::Modify
-                            } else {
-                                StreamEventName::Insert
-                            },
-                            keys.clone(),
-                            old,
-                            Some(put.item.clone()),
-                            None,
-                        );
-                        Ok(SingleItemTransactionPlan {
-                            output: (),
-                            writes: vec![overwrite_atomic_write(
-                                table.clone(),
-                                id.clone(),
-                                fields.clone(),
-                                WritePrecondition::exists(change.old_image.is_some()),
-                            )],
-                            changes: vec![change],
-                        })
-                    })?;
-                }
-                (None, Some(delete)) => {
-                    let id = primary_key_id(&delete.key, &key_schema)?;
-                    let keys = extract_key(&delete.key, &key_schema);
-                    execute_single_item_transaction(engine, context, |token, principal| {
-                        let old = read_old_image_in_transaction(
-                            engine,
-                            context,
-                            token,
-                            principal,
-                            &table,
-                            id.clone(),
-                        )?;
-                        // DynamoDB emits a REMOVE record only when an item was
-                        // actually deleted.
-                        let (writes, changes) = match old {
-                            Some(old_image) => (
-                                vec![delete_atomic_write(
-                                    table.clone(),
-                                    id.clone(),
-                                    WritePrecondition::exists(true),
-                                )],
-                                vec![stream::StreamChange::new(
-                                    table_name.clone(),
-                                    StreamEventName::Remove,
-                                    keys.clone(),
-                                    Some(old_image),
-                                    None,
-                                    None,
-                                )],
-                            ),
-                            None => (Vec::new(), Vec::new()),
-                        };
-                        Ok(SingleItemTransactionPlan {
-                            output: (),
-                            writes,
-                            changes,
-                        })
-                    })?;
-                }
-                _ => {
-                    return Err(DynamoDbError::ValidationException(
-                        "Each WriteRequest must contain exactly one of PutRequest or DeleteRequest"
-                            .to_owned(),
-                    ));
-                }
-            }
-        }
+    let prepared = prepare_batch_writes(engine, context, &input)?;
+    for write in &prepared {
+        execute_prepared_write(engine, context, write)?;
     }
 
     Ok(BatchWriteItemOutput {
         unprocessed_items: HashMap::new(),
         consumed_capacity: None,
         item_collection_metrics: None,
+    })
+}
+
+/// Validate every op in the request, resolving each table's key schema once.
+///
+/// # Errors
+/// The first op that fails validation. No caller has applied anything by the
+/// time this returns, which is the whole point — see [`batch_write_item`].
+fn prepare_batch_writes(
+    engine: &Arc<Engine>,
+    context: &TenantIsolationContext,
+    input: &BatchWriteItemInput,
+) -> Result<Vec<PreparedWrite>, DynamoDbError> {
+    let mut prepared = Vec::new();
+    for (table_name, requests) in &input.request_items {
+        let key_schema = control_plane::load_key_schema(engine, context, table_name)?;
+        let table = TableName::new(table_name).map_err(map_core_error)?;
+        for request in requests {
+            // `key_source` is the item the primary key is read from: the whole
+            // item for a Put, the supplied key for a Delete.
+            let (op, key_source) = match (&request.put_request, &request.delete_request) {
+                (Some(put), None) => {
+                    validate_item(&put.item)?;
+                    (
+                        PreparedOp::Put {
+                            item: put.item.clone(),
+                            fields: item_to_fields(&put.item)?,
+                        },
+                        &put.item,
+                    )
+                }
+                (None, Some(delete)) => (PreparedOp::Delete, &delete.key),
+                _ => {
+                    return Err(DynamoDbError::ValidationException(
+                        "Each WriteRequest must contain exactly one of PutRequest or DeleteRequest"
+                            .to_owned(),
+                    ));
+                }
+            };
+            prepared.push(PreparedWrite {
+                table_name: table_name.clone(),
+                table: table.clone(),
+                id: primary_key_id(key_source, &key_schema)?,
+                keys: extract_key(key_source, &key_schema),
+                op,
+            });
+        }
+    }
+    Ok(prepared)
+}
+
+/// Apply one already-validated op in its own single-item transaction.
+///
+/// # Errors
+/// A runtime failure from the engine or the store. Ops that committed before
+/// this one stay applied — see [`batch_write_item`].
+fn execute_prepared_write(
+    engine: &Arc<Engine>,
+    context: &TenantIsolationContext,
+    write: &PreparedWrite,
+) -> Result<(), DynamoDbError> {
+    let PreparedWrite {
+        table_name,
+        table,
+        id,
+        keys,
+        op,
+    } = write;
+    execute_single_item_transaction(engine, context, |token, principal| {
+        let old =
+            read_old_image_in_transaction(engine, context, token, principal, table, id.clone())?;
+        let (writes, changes) = match op {
+            PreparedOp::Put { item, fields } => {
+                let change = stream::StreamChange::new(
+                    table_name.clone(),
+                    if old.is_some() {
+                        StreamEventName::Modify
+                    } else {
+                        StreamEventName::Insert
+                    },
+                    keys.clone(),
+                    old,
+                    Some(item.clone()),
+                    None,
+                );
+                (
+                    vec![overwrite_atomic_write(
+                        table.clone(),
+                        id.clone(),
+                        fields.clone(),
+                        WritePrecondition::exists(change.old_image.is_some()),
+                    )],
+                    vec![change],
+                )
+            }
+            // DynamoDB emits a REMOVE record only when an item was actually
+            // deleted.
+            PreparedOp::Delete => match old {
+                Some(old_image) => (
+                    vec![delete_atomic_write(
+                        table.clone(),
+                        id.clone(),
+                        WritePrecondition::exists(true),
+                    )],
+                    vec![stream::StreamChange::new(
+                        table_name.clone(),
+                        StreamEventName::Remove,
+                        keys.clone(),
+                        Some(old_image),
+                        None,
+                        None,
+                    )],
+                ),
+                None => (Vec::new(), Vec::new()),
+            },
+        };
+        Ok(SingleItemTransactionPlan {
+            output: (),
+            writes,
+            changes,
+        })
     })
 }
 
@@ -411,15 +482,23 @@ mod tests {
             &ctx,
             json!({
                 "RequestItems": {
-                    "Orders": [ {
-                        "PutRequest": { "Item": { "pk": {"S": "a"} } },
-                        "DeleteRequest": { "Key": { "pk": {"S": "a"} } }
-                    } ]
+                    "Orders": [
+                        { "PutRequest": { "Item": { "pk": {"S": "first"} } } },
+                        {
+                            "PutRequest": { "Item": { "pk": {"S": "a"} } },
+                            "DeleteRequest": { "Key": { "pk": {"S": "a"} } }
+                        }
+                    ]
                 }
             }),
         )
         .expect_err("both put and delete rejected");
         assert!(matches!(err, DynamoDbError::ValidationException(_)));
+        assert!(
+            read(&engine, &ctx, "first").is_none(),
+            "the malformed request shape rejects the whole batch, including the \
+             well-formed op ahead of it"
+        );
     }
 
     #[test]
@@ -661,10 +740,14 @@ mod tests {
         );
     }
 
-    /// Routing batch ops through single-item transactions must not make the
-    /// batch atomic: a later op's validation failure leaves earlier ops applied.
+    // ---- FU11: validation is whole-request, execution is per-item ----
+
+    /// DynamoDB rejects the entire batch write operation when an op's key
+    /// attributes do not match the table's key schema. The malformed op is last
+    /// in the request, so the guarantee is only met if validation ran over the
+    /// whole batch before any of it was applied.
     #[test]
-    fn batch_write_ops_stay_independent_of_each_other() {
+    fn batch_write_validation_failure_applies_nothing() {
         let (engine, ctx, _t) = fixture();
         create_orders(&engine, &ctx);
         let err = batch_write(
@@ -680,10 +763,62 @@ mod tests {
             }),
         )
         .expect_err("the second op is missing its partition key");
-        assert!(matches!(err, DynamoDbError::ValidationException(_)));
+        assert!(
+            matches!(err, DynamoDbError::ValidationException(_)),
+            "{err:?}"
+        );
+        assert!(
+            read(&engine, &ctx, "first").is_none(),
+            "a validation error rejects the whole request: the well-formed op \
+             that preceded it must not have been applied"
+        );
+    }
+
+    /// The other half of the contract. Once validation has passed, the batch is
+    /// still not atomic: a runtime failure part way through — DynamoDB's
+    /// throughput-exceeded or internal-error case, which it reports as
+    /// `UnprocessedItems` rather than as a rejection — leaves the ops that
+    /// already committed applied. That per-item independence is what makes
+    /// retrying only the unprocessed ops correct.
+    #[test]
+    fn batch_write_runtime_failure_leaves_earlier_ops_applied() {
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
+
+        // Fail the second op's commit only. Each op commits in its own
+        // single-item transaction, so the second hit of the commit fault is the
+        // second op: the failure lands mid-batch, after the first op is durable.
+        let faults = engine.commit_fault_handle_for_testing();
+        faults.inject_error_on_nth_hit(
+            commit_fault_labels::PREPARE_COMPLETE,
+            2,
+            nimbus_core::Error::Internal("injected storage failure".to_owned()),
+        );
+
+        let err = batch_write(
+            &engine,
+            &ctx,
+            json!({
+                "RequestItems": {
+                    "Orders": [
+                        { "PutRequest": { "Item": { "pk": {"S": "first"}, "v": {"N": "1"} } } },
+                        { "PutRequest": { "Item": { "pk": {"S": "second"}, "v": {"N": "2"} } } }
+                    ]
+                }
+            }),
+        )
+        .expect_err("the second op's commit was failed by the injected fault");
+        assert!(
+            !matches!(err, DynamoDbError::ValidationException(_)),
+            "a storage failure is a runtime error, not a validation error: {err:?}"
+        );
         assert!(
             read(&engine, &ctx, "first").is_some(),
-            "BatchWriteItem is not atomic: the op that succeeded stays applied"
+            "the op that committed before the runtime failure stays applied"
+        );
+        assert!(
+            read(&engine, &ctx, "second").is_none(),
+            "the op whose commit failed applied nothing"
         );
     }
 }
