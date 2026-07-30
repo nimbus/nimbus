@@ -1,6 +1,6 @@
 # Storage Unification And Carry-Over Closeout Control Plane
 
-Status: `active — SUC0–SUC2 + SUC4 complete (PRs #248–#253); SUC3.1 step 1/5 merged (PR #254); SUC5.1 in_progress; SUC6.3 closed`
+Status: `active — SUC0–SUC2 + SUC4 complete (PRs #248–#253); SUC3.1 step 2/5 in_progress; SUC5.1 complete (PR #255); SUC6.1 running on minicloud; SUC6.3 closed`
 
 Owner: this plan, and no other plan
 
@@ -57,7 +57,7 @@ Proof root: `proof/storage-unification/`
 | SUC4.1 DynamoDB non-atomic RMW (HIGH) | `complete` (PR #251; fix landed earlier in #231, verified + regression-pinned; follow-up ticket: batch_write_item stream-record staleness) | atomic read-modify-write with fail-before race test | `suc4/dynamodb-rmw.md` | independent; parallel-capable |
 | SUC4.2 Firestore Timestamp+GeoPoint writes (HIGH) | `complete` (PR #253; #231 pre-fixed document fields, this closed array transforms + query contract + wire canonicalization; 7-pass review trail in proof) | rejected typed writes accepted with round-trip fidelity | conformance + adapter tests | `suc4/firestore-types.md` | independent; parallel-capable |
 | SUC4.3 Egress HTTPS CONNECT rule (HIGH) | `complete` (PR #252; fix landed earlier in #231 — gate deferral + forced interception — verified + regression-pinned) | method-path rule denying all CONNECT fixed with policy tests | egress policy suite + proxy integration test | `suc4/egress-connect.md` | independent; parallel-capable |
-| SUC5.1 Real DynamoDB principal | `in_progress` (`codex/suc5-dynamodb-principal`) | end DynamoDB executing as `system()`; storage-specific half only (generic `TenantBindingRegistry` stays out of scope) | requests carry a real principal; authz tests | `suc5/principal.md` | after SUC4.1 |
+| SUC5.1 Real DynamoDB principal | `complete` (PR #255; found worse than planned: split system/anonymous execution + a real read-authz bypass in the id-prefix scan reachable via DynamoDB Query — all closed; fail-before 4/5 RED) | end DynamoDB executing as `system()`; storage-specific half only (generic `TenantBindingRegistry` stays out of scope) | requests carry a real principal; authz tests | `suc5/principal.md` | after SUC4.1 |
 | SUC6.1 Open-loop latency companion | `planned` | constant-rate below-saturation harness (e.g. 50%/75% of measured N=256 capacity), coordinated-omission-free percentiles; publishes the campaign's standing prerequisite | accepted CV-gated runs at two rates; doc stating what latency claims are now supportable | `suc6/open-loop.md` | needs quiet windows |
 | SUC6.2 Resource-binding cleanup decision | `planned` | measure the 2.3%-of-guarded candidate on current main; implement only if ≥3% safe end-to-end (expected: reject) | decision row either way | `suc6/binding-decision.md` | measurement-only first |
 | SUC6.3 Hot-key/OCC formal closure | `complete` (decision row below) | close D15's Engine-owned follow-up: record moot-by-SWT2 with the +190% valid-pair evidence, or open a successor item if any regression is ever measured | decision row; D15 thread ended | `suc6/hotkey-closure.md` | decision-only |
@@ -87,6 +87,8 @@ canonical CRUD/layered/hot-key protocols with D18/D19 as recorded.
 | --- | --- | --- |
 | DynamoDB `batch_write_item` stream-record staleness | SUC4.1 verification | reads prior images outside a transaction; not a lost-update bug (BatchWriteItem is non-atomic by contract); affects stream INSERT/MODIFY classification and OldImage freshness; fix = route through `execute_single_item_transaction` |
 | Type-aware typed-operand query comparison | SUC4.2 review | filters/cursors compare against the plain projection, so typed operands stay rejected (collision + ordering hazards pinned by tests); accepting them needs StoredValue-aware comparison and index-order design. Supersedes the earlier RFC3339-projection-ordering note: range operands are rejected outright now |
+| Policy-aware filter-then-fill paging for `scan_documents_by_id_starting_at_cancellable` | SUC5.1 | limit-bearing scan stays policy-blind; sole caller is the adapter-owned `_ddb_stream_*` sidecar so no current exposure; policy awareness needs filter-then-fill paging |
+| PPSC ack-loss arm theft (libsql lane flake root cause) | SUC3.1 step-1 CI + 40-run bisection | one-shot arm keys on tenant, so a concurrent `commit == None` transaction consumes it (unconditional `StorageCommitAfterVisibilityBeforeReturn` check), the real batch then commits clean on retry and the test asserts a crash that correctly never happened; fix: make `check_for_durable_records` discriminate on records and stop no-journal commits consuming the arm |
 | `arm_selection::opaque_internal_job_cannot_overtake_ordered_publisher` load-flake | observed 3× this campaign | pre-existing (#226/#229 era); fails only under heavy parallel multi-crate load; 30/30 clean isolated, passes full single-crate runs; timing-sensitive not-finished assertion |
 
 ## Decision Log
