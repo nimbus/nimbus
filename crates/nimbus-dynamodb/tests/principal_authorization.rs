@@ -326,6 +326,107 @@ fn put_item_runs_as_the_calling_access_key() {
     );
 }
 
+/// The stream event store is a reserved `_ddb_stream_*` table the adapter owns,
+/// so GetRecords reads it as the adapter — not as the calling access key, and
+/// not filtered by the *user* table's read policy. Making the underlying
+/// limit-bearing scan policy-aware (FU4) must not change that: a table policy
+/// governs who reads the table's items, and pushing it onto the adapter's own
+/// bookkeeping would silently break change capture for every caller the policy
+/// does not name.
+#[test]
+fn get_records_reads_the_adapter_owned_event_store_as_the_adapter() {
+    let (engine, registry, _temp) = fixture();
+    let mut table = hash_only_table("Streamed");
+    table["StreamSpecification"] = json!({
+        "StreamEnabled": true,
+        "StreamViewType": "NEW_AND_OLD_IMAGES",
+    });
+    let (status, created) = call(&engine, &registry, OWNER_KEY, "CreateTable", &table);
+    assert_eq!(status, 200, "create table: {created}");
+    let stream_arn = created["TableDescription"]["LatestStreamArn"]
+        .as_str()
+        .expect("a stream-enabled table has a stream ARN")
+        .to_owned();
+
+    for pk in ["a", "b", "c"] {
+        let (status, body) = call(
+            &engine,
+            &registry,
+            OWNER_KEY,
+            "PutItem",
+            &json!({ "TableName": "Streamed", "Item": { "pk": { "S": pk } } }),
+        );
+        assert_eq!(status, 200, "seed put {pk}: {body}");
+    }
+    // A read policy naming OWNER_KEY: OTHER_KEY cannot read the table's items.
+    set_policy(&engine, "Streamed", read_only_policy(OWNER_KEY));
+
+    let event_keys = |key: &str| -> Vec<String> {
+        let (_status, described) = call(
+            &engine,
+            &registry,
+            key,
+            "DescribeStream",
+            &json!({ "StreamArn": stream_arn }),
+        );
+        let shard_id = described["StreamDescription"]["Shards"][0]["ShardId"]
+            .as_str()
+            .expect("the single shard must be described")
+            .to_owned();
+        let (_status, iterator) = call(
+            &engine,
+            &registry,
+            key,
+            "GetShardIterator",
+            &json!({
+                "StreamArn": stream_arn,
+                "ShardId": shard_id,
+                "ShardIteratorType": "TRIM_HORIZON",
+            }),
+        );
+        let (status, records) = call(
+            &engine,
+            &registry,
+            key,
+            "GetRecords",
+            &json!({ "ShardIterator": iterator["ShardIterator"] }),
+        );
+        assert_eq!(status, 200, "get records as {key}: {records}");
+        records["Records"]
+            .as_array()
+            .expect("Records is an array")
+            .iter()
+            .map(|record| record["dynamodb"]["Keys"]["pk"]["S"].to_string())
+            .collect()
+    };
+
+    let owner_view = event_keys(OWNER_KEY);
+    assert_eq!(
+        owner_view.len(),
+        3,
+        "every seeded write is captured on the stream: {owner_view:?}"
+    );
+    assert_eq!(
+        event_keys(OTHER_KEY),
+        owner_view,
+        "the event store is adapter-owned, so the user table's read policy must not \
+         filter change capture for a caller it does not name"
+    );
+
+    // The policy is real: it does gate the table's own items.
+    let (_status, other_scan) = call(
+        &engine,
+        &registry,
+        OTHER_KEY,
+        "Scan",
+        &json!({ "TableName": "Streamed" }),
+    );
+    assert_eq!(
+        other_scan["Count"], 0,
+        "the same policy still withholds the table's items from that caller: {other_scan}"
+    );
+}
+
 #[test]
 fn an_unauthenticated_request_never_reaches_the_engine() {
     let (engine, registry, _temp) = fixture();

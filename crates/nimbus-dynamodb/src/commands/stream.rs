@@ -502,11 +502,16 @@ fn read_events_from(
     }
     let table = stream_events_table(table_name)?;
     let start_id = sequence_number(start_sequence);
+    // The event store is a reserved `_ddb_stream_*` table the adapter owns and
+    // callers cannot address, so it reads as the adapter — the same principal
+    // the rest of the sidecar work uses. A caller's principal here would put
+    // the *user* table's read policy in front of the adapter's own bookkeeping.
     let documents = match engine.scan_documents_by_id_starting_at_cancellable(
         context.tenant_id(),
         &table,
         &start_id,
         limit,
+        &adapter_principal(),
         &mut || Ok(()),
     ) {
         Ok(documents) => documents,

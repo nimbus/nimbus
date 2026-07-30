@@ -558,3 +558,174 @@ fn engine_read_policy_filters_the_id_prefix_scan() {
         "anonymous prefix scan must return no documents, got {unauthenticated:?}"
     );
 }
+
+/// The starting-at scan carries a `limit`, so applying the read rule to one
+/// fetched page and returning what survives would hand a restricted caller a
+/// short page — indistinguishable, to the caller, from the end of the range.
+/// The limit has to be filled *after* authorization instead: skip over the
+/// withheld documents and keep scanning.
+#[test]
+fn engine_read_policy_fills_limited_pages_of_the_id_starting_at_scan() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let table = messages_table("messages_paged");
+
+    engine
+        .set_table_schema(
+            &tenant_id,
+            messages_schema("messages_paged", Vec::new(), Some(read_only_owner_policy())),
+        )
+        .expect("schema should save");
+
+    // Interleave owners so a page-sized fetch of the raw range never yields a
+    // full page of authorized rows: every other document is withheld.
+    for index in 0..8u32 {
+        let owner = if index % 2 == 0 {
+            "user-123"
+        } else {
+            "user-456"
+        };
+        engine
+            .insert_document_with_id(
+                &tenant_id,
+                table.clone(),
+                DocumentId::from_key(format!("doc-{index:02}"))
+                    .expect("document id should be valid"),
+                serde_json::Map::from_iter([
+                    ("owner".to_string(), json!(owner)),
+                    ("body".to_string(), json!(format!("body-{index:02}"))),
+                ]),
+            )
+            .expect("fixture insert should succeed");
+    }
+
+    let owner = principal_with_subject("user-123");
+    let page_of = |start: &str| {
+        engine
+            .scan_documents_by_id_starting_at_cancellable(
+                &tenant_id,
+                &table,
+                start,
+                2,
+                &owner,
+                &mut || Ok(()),
+            )
+            .expect("authorized starting-at scan should succeed")
+    };
+
+    // A full page, not the one authorized row that survives filtering the
+    // first two documents in the range.
+    let first = page_of("doc-00");
+    assert_eq!(
+        document_ids(&first),
+        vec!["doc-00", "doc-02"],
+        "the limit must be filled with authorized documents, skipping withheld ones"
+    );
+
+    // Resuming past the last returned id continues where the page left off and
+    // fills again, so the cursor the caller carries still means what it did.
+    let second = page_of("doc-03");
+    assert_eq!(document_ids(&second), vec!["doc-04", "doc-06"]);
+
+    // The tail of the range holds fewer authorized documents than the limit,
+    // which is the only case that legitimately returns a short page.
+    let tail = page_of("doc-07");
+    assert!(
+        tail.is_empty(),
+        "no authorized documents remain past the last one, got {tail:?}"
+    );
+
+    // A principal the policy denies outright gets nothing rather than a page.
+    let stranger = principal_with_subject("user-789");
+    let denied = engine
+        .scan_documents_by_id_starting_at_cancellable(
+            &tenant_id,
+            &table,
+            "doc-00",
+            2,
+            &stranger,
+            &mut || Ok(()),
+        )
+        .expect("denied starting-at scan should succeed with no rows");
+    assert!(
+        denied.is_empty(),
+        "unauthorized starting-at scan must return no documents, got {denied:?}"
+    );
+
+    let anonymous = PrincipalContext::anonymous();
+    let unauthenticated = engine
+        .scan_documents_by_id_starting_at_cancellable(
+            &tenant_id,
+            &table,
+            "doc-00",
+            2,
+            &anonymous,
+            &mut || Ok(()),
+        )
+        .expect("anonymous starting-at scan should succeed with no rows");
+    assert!(
+        unauthenticated.is_empty(),
+        "anonymous starting-at scan must return no documents, got {unauthenticated:?}"
+    );
+}
+
+/// Without a read policy the scan is a plain limited range read: the limit caps
+/// the page, `start_id` is inclusive, and a zero limit reads nothing.
+#[test]
+fn engine_id_starting_at_scan_without_a_policy_is_a_plain_limited_range_read() {
+    let fixture = EngineFixture::new(|path| Engine::new(path));
+    let engine = fixture.engine();
+    let tenant_id = fixture.create_tenant("demo", Engine::create_tenant);
+    let table = messages_table("messages_unguarded");
+
+    for index in 0..4u32 {
+        engine
+            .insert_document_with_id(
+                &tenant_id,
+                table.clone(),
+                DocumentId::from_key(format!("doc-{index:02}"))
+                    .expect("document id should be valid"),
+                serde_json::Map::from_iter([
+                    ("owner".to_string(), json!("user-123")),
+                    ("body".to_string(), json!(format!("body-{index:02}"))),
+                ]),
+            )
+            .expect("fixture insert should succeed");
+    }
+
+    let anonymous = PrincipalContext::anonymous();
+    let scan = |start: &str, limit: usize| {
+        engine
+            .scan_documents_by_id_starting_at_cancellable(
+                &tenant_id,
+                &table,
+                start,
+                limit,
+                &anonymous,
+                &mut || Ok(()),
+            )
+            .expect("unguarded starting-at scan should succeed")
+    };
+
+    assert_eq!(
+        document_ids(&scan("doc-00", 3)),
+        vec!["doc-00", "doc-01", "doc-02"]
+    );
+    assert_eq!(
+        document_ids(&scan("doc-01", 10)),
+        vec!["doc-01", "doc-02", "doc-03"],
+        "a limit past the end of the range returns the rest of it"
+    );
+    assert!(
+        scan("doc-00", 0).is_empty(),
+        "a zero limit reads nothing at all"
+    );
+}
+
+fn document_ids(documents: &[nimbus_core::Document]) -> Vec<&str> {
+    documents
+        .iter()
+        .map(|document| document.id.as_str())
+        .collect()
+}
