@@ -3,22 +3,17 @@
 use nimbus_network::{
     DurableNetworkAttachmentState, LocalNetworkAttachmentAuthority, NetworkAttachmentId,
     NetworkAttachmentSegmentAssociation, NetworkAttachmentStateError, NetworkPlan,
-    NetworkPlanContentDigest, NetworkPlanId, NetworkProviderHandle, NetworkProviderId,
-    NetworkResourceGeneration, NetworkResourcePhase, NetworkResourceVersion,
+    NetworkProviderHandle, NetworkProviderId, NetworkResourcePhase, NetworkResourceVersion,
     NetworkStateTransition, NetworkTransitionEvidence,
 };
 
-use super::{AttachmentBackendKind, OciAttachmentContext};
-use crate::backends::capabilities::{
-    SandboxAttachmentRegistrationKind, host_managed_attachment_provider_id,
-    host_managed_attachment_requirements,
+use super::OciAttachmentContext;
+use super::plan::{
+    oci_attachment_plan, oci_attachment_provider_handle, oci_attachment_registration_kind,
 };
+use crate::backends::capabilities::host_managed_attachment_provider_id;
 use crate::backends::oci::network::default_network_attachment_id;
 use crate::error::{Result, SandboxError};
-
-const TRANSITIONAL_ATTACHMENT_GENERATION: NetworkResourceGeneration =
-    NetworkResourceGeneration::new(1);
-const CONTENT_DOMAIN: &[u8] = b"nimbus.sandbox.oci.attachment-plan.v1\0";
 
 pub(super) struct OciAttachmentDurableState<'a> {
     authority: &'a LocalNetworkAttachmentAuthority,
@@ -43,32 +38,17 @@ impl<'a> OciAttachmentDurableState<'a> {
             ),
         })?;
         let attachment_id = default_network_attachment_id(context.sandbox_id);
-        let registration_kind = match context.backend {
-            AttachmentBackendKind::Container => SandboxAttachmentRegistrationKind::Container,
-            AttachmentBackendKind::Krun => SandboxAttachmentRegistrationKind::Krun,
-        };
+        let registration_kind = oci_attachment_registration_kind(context.backend);
         let provider_id = host_managed_attachment_provider_id(registration_kind);
-        let mut content = Vec::with_capacity(
-            CONTENT_DOMAIN.len() + attachment_id.as_str().len() + context.provider_label.len() + 16,
-        );
-        content.extend_from_slice(CONTENT_DOMAIN);
-        push_framed(&mut content, attachment_id.as_str().as_bytes());
-        push_framed(&mut content, context.provider_label.as_bytes());
-        let plan = NetworkPlan::new(
-            NetworkPlanId::for_tenant_workload_plan(context.tenant_id, context.sandbox_id.as_str()),
-            TRANSITIONAL_ATTACHMENT_GENERATION,
-            NetworkPlanContentDigest::sha256(content),
-            host_managed_attachment_requirements(registration_kind),
-        );
+        let plan = oci_attachment_plan(context.tenant_id, context.sandbox_id, context.backend);
         let stable_handle =
-            stable_attachment_handle(provider_id.clone(), plan.plan_id(), &attachment_id).map_err(
-                |error| SandboxError::OperationFailed {
+            oci_attachment_provider_handle(context.tenant_id, context.sandbox_id, context.backend)
+                .map_err(|error| SandboxError::OperationFailed {
                     message: format!(
                         "{} attachment {} could not construct its stable provider handle: {error}",
                         context.provider_label, context.sandbox_id
                     ),
-                },
-            )?;
+                })?;
         Ok(Self {
             authority,
             tenant_id: context.tenant_id,
@@ -165,19 +145,6 @@ impl<'a> OciAttachmentDurableState<'a> {
     }
 }
 
-fn stable_attachment_handle(
-    provider_id: NetworkProviderId,
-    plan_id: &NetworkPlanId,
-    attachment_id: &NetworkAttachmentId,
-) -> std::result::Result<NetworkProviderHandle, nimbus_network::NetworkProviderHandleError> {
-    NetworkProviderHandle::new(provider_id, format!("attachment:{plan_id}:{attachment_id}"))
-}
-
-fn push_framed(output: &mut Vec<u8>, value: &[u8]) {
-    output.extend_from_slice(&(value.len() as u64).to_be_bytes());
-    output.extend_from_slice(value);
-}
-
 fn attachment_state_error(error: NetworkAttachmentStateError) -> SandboxError {
     SandboxError::OperationFailed {
         message: format!("durable attachment authority rejected operation: {error}"),
@@ -189,21 +156,26 @@ mod tests {
     use nimbus_core::TenantId;
 
     use super::*;
+    use crate::backends::oci::network::attachment_lifecycle::AttachmentBackendKind;
+    use crate::instance::SandboxId;
 
     #[test]
     fn stable_provider_handle_is_tenant_qualified_for_equal_local_attachment_ids() {
         let tenant_a = TenantId::new("tenant-handle-a").expect("tenant A should validate");
         let tenant_b = TenantId::new("tenant-handle-b").expect("tenant B should validate");
-        let attachment_id =
-            NetworkAttachmentId::for_workload_attachment("same-local-workload", "default");
-        let provider_id = NetworkProviderId::for_registration_key("nimbus.test.host-managed");
-        let plan_a = NetworkPlanId::for_tenant_workload_plan(&tenant_a, "same-local-workload");
-        let plan_b = NetworkPlanId::for_tenant_workload_plan(&tenant_b, "same-local-workload");
-
-        let handle_a = stable_attachment_handle(provider_id.clone(), &plan_a, &attachment_id)
-            .expect("tenant A handle should validate");
-        let handle_b = stable_attachment_handle(provider_id, &plan_b, &attachment_id)
-            .expect("tenant B handle should validate");
+        let sandbox_id = SandboxId::new("same-local-workload");
+        let handle_a = oci_attachment_provider_handle(
+            &tenant_a,
+            &sandbox_id,
+            AttachmentBackendKind::Container,
+        )
+        .expect("tenant A handle should validate");
+        let handle_b = oci_attachment_provider_handle(
+            &tenant_b,
+            &sandbox_id,
+            AttachmentBackendKind::Container,
+        )
+        .expect("tenant B handle should validate");
 
         assert_ne!(
             handle_a.expose_to_provider(),

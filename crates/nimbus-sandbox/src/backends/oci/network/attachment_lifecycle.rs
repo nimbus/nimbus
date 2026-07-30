@@ -82,8 +82,13 @@ impl AttachmentBackendKind {
 mod authority;
 mod host;
 mod machine_forwarded;
+mod plan;
 mod recovery;
 mod state;
+
+pub(in crate::backends::oci::network) use plan::{
+    oci_attachment_plan, oci_attachment_provider_handle,
+};
 
 #[cfg(test)]
 mod test_api;

@@ -29,9 +29,9 @@ mod evidence;
 mod provider_operation;
 
 pub(crate) use authority::OciIpamAuthority;
-pub(in crate::backends::oci::network) use evidence::OciAttachmentProviderEvidence;
-#[cfg(test)]
-pub(in crate::backends::oci::network) use evidence::OciIpamEvidenceLifecycle;
+pub(in crate::backends::oci::network) use evidence::{
+    OciAttachmentProviderEvidence, OciIpamEvidenceLifecycle,
+};
 #[cfg(test)]
 pub(crate) use provider_operation::begin_netavark_setup_without_ack_for_test;
 pub(super) use provider_operation::{

@@ -4,20 +4,13 @@ use std::process::Command;
 
 use nimbus_network::{
     LocalNetworkAttachmentAuthority, LocalNetworkStateStore, NetworkAttachmentReservationState,
-    NetworkAttachmentSegmentAssociation, NetworkPlan, NetworkPlanContentDigest, NetworkPlanId,
-    NetworkProviderHandle, NetworkProviderId, NetworkResourceGeneration, NetworkSegmentAllocator,
     NetworkSegmentId, NetworkStatePartition,
 };
 use tempfile::TempDir;
 
+use super::test_support::{EvidenceFixture, netavark_attempt, reservation_claim};
 use super::*;
-use crate::backends::capabilities::{
-    SandboxAttachmentRegistrationKind, host_managed_attachment_provider_id,
-    host_managed_attachment_requirements,
-};
-use crate::backends::oci::network::attachment_lifecycle::{
-    AttachmentBackendKind, OciAttachmentLifecycle,
-};
+use crate::backends::oci::network::attachment_lifecycle::AttachmentBackendKind;
 use crate::backends::oci::network::dto::{IpamState, NetavarkProviderOperation};
 use crate::backends::oci::network::ipam::{
     NetavarkTeardownPlan, OciIpamAuthority, OciIpamEvidenceLifecycle, begin_netavark_setup,
@@ -25,173 +18,8 @@ use crate::backends::oci::network::ipam::{
     complete_netavark_setup, complete_netavark_teardown, confirm_netavark_provider_detached,
 };
 use crate::backends::oci::network::provider_locator::OciAttachmentProviderKind;
-use crate::backends::oci::network::{
-    OciNetworkConfig, OciPlacementProvider, SingleNodeSegmentAllocator,
-    default_network_attachment_id, place_sandbox_on_block,
-};
+use crate::backends::oci::network::{SingleNodeSegmentAllocator, default_network_attachment_id};
 use crate::instance::SandboxId;
-
-struct EvidenceFixture {
-    _temp_dir: TempDir,
-    workload_root: PathBuf,
-    network_root: PathBuf,
-    tenant_id: TenantId,
-    sandbox_id: SandboxId,
-    layout: OciNetworkLayout,
-    ipam: OciIpamAuthority,
-    allocator: SingleNodeSegmentAllocator,
-    attachments: LocalNetworkAttachmentAuthority,
-    claim: NetworkReservationClaim,
-    config: OciNetworkConfig,
-}
-
-impl EvidenceFixture {
-    fn new(label: &str, backend: AttachmentBackendKind, desired_claim_substitution: bool) -> Self {
-        let temp_dir = TempDir::new().expect("temporary evidence root should exist");
-        let workload_root = temp_dir.path().join("workloads");
-        let network_root = temp_dir.path().join("network-authority");
-        fs::create_dir_all(&workload_root).expect("workload root should exist");
-        fs::create_dir_all(&network_root).expect("network root should exist");
-        let tenant_id = TenantId::new(format!("nnc52b-{label}")).expect("tenant should validate");
-        let sandbox_id = SandboxId::new(format!("sandbox-{label}"));
-        let layout =
-            OciNetworkLayout::with_roots(&workload_root, &network_root, &tenant_id, &sandbox_id);
-        layout
-            .ensure_directories()
-            .expect("provider artifact directories should exist");
-        let ipam = OciIpamAuthority::reconstruct_for_direct_test(&layout)
-            .expect("IPAM authority should open");
-        let allocator = SingleNodeSegmentAllocator::single_node_default(&network_root);
-        let attachments = LocalNetworkAttachmentAuthority::open(&network_root)
-            .expect("attachment authority should open");
-        let claim = reservation_claim(&format!("{label}-winner"));
-        let config = place_sandbox_on_block(
-            &allocator,
-            &ipam,
-            &tenant_id,
-            &layout,
-            &sandbox_id,
-            &claim,
-            OciPlacementProvider::new(backend.provider_kind(), |segment, reservation_claim| {
-                OciAttachmentLifecycle::config_from_segment(
-                    backend,
-                    PathBuf::from("netavark-not-executed"),
-                    PathBuf::from("aardvark-not-executed"),
-                    segment,
-                    reservation_claim,
-                )
-            }),
-        )
-        .expect("placement should persist IPAM evidence before effects");
-        let attachment_id = default_network_attachment_id(&sandbox_id);
-        let allocator_association = allocator
-            .inspect_attachment_reservation(&tenant_id, &attachment_id, &claim)
-            .expect("allocator reservation should inspect")
-            .association()
-            .expect("placement should bind the selected segment")
-            .clone();
-        let desired_association = if desired_claim_substitution {
-            NetworkAttachmentSegmentAssociation::new(
-                reservation_claim(&format!("{label}-foreign-desired")),
-                allocator_association.segment_id().clone(),
-                allocator_association.lease_epoch(),
-            )
-        } else {
-            allocator_association
-        };
-        let registration_kind = match backend {
-            AttachmentBackendKind::Container => SandboxAttachmentRegistrationKind::Container,
-            AttachmentBackendKind::Krun => SandboxAttachmentRegistrationKind::Krun,
-        };
-        let plan = NetworkPlan::new(
-            NetworkPlanId::for_tenant_workload_plan(&tenant_id, sandbox_id.as_str()),
-            NetworkResourceGeneration::new(1),
-            NetworkPlanContentDigest::sha256(format!("nnc5.2b:{label}")),
-            host_managed_attachment_requirements(registration_kind),
-        );
-        attachments
-            .reserve(
-                &tenant_id,
-                host_managed_attachment_provider_id(registration_kind),
-                &plan,
-                attachment_id,
-                desired_association,
-            )
-            .expect("desired attachment should reserve");
-        Self {
-            _temp_dir: temp_dir,
-            workload_root,
-            network_root,
-            tenant_id,
-            sandbox_id,
-            layout,
-            ipam,
-            allocator,
-            attachments,
-            claim,
-            config,
-        }
-    }
-
-    fn publish_exact_artifacts(&self) {
-        fs::write(&self.layout.netns_path, b"netns-observation")
-            .expect("netns observation should write");
-        fs::write(&self.layout.status_path, b"status-observation")
-            .expect("status observation should write");
-        let manifest_path = crate::artifact_paths::manifest_path(
-            &self.workload_root,
-            &self.tenant_id,
-            &self.sandbox_id,
-        );
-        fs::create_dir_all(
-            manifest_path
-                .parent()
-                .expect("manifest should have a parent"),
-        )
-        .expect("manifest parent should exist");
-        fs::write(manifest_path, b"manifest-observation")
-            .expect("manifest observation should write");
-    }
-
-    fn authority_bytes(&self) -> Vec<u8> {
-        fs::read(LocalNetworkStateStore::authority_path_for(
-            &self.network_root,
-        ))
-        .expect("authority bytes should read")
-    }
-}
-
-fn reservation_claim(label: &str) -> NetworkReservationClaim {
-    NetworkReservationClaim::new(
-        NetworkProviderHandle::new(
-            NetworkProviderId::for_registration_key(
-                "nimbus-sandbox.network-launch-coordinator.nnc5-2b-test",
-            ),
-            format!("attempt:{label}"),
-        )
-        .expect("reservation claim should validate"),
-    )
-}
-
-fn netavark_attempt(
-    provider_key: &str,
-    version: &str,
-    action: &str,
-    tenant_id: &TenantId,
-    attachment_id: &NetworkAttachmentId,
-    generation_digest: &str,
-    attempt_id: &str,
-) -> NetworkProviderHandle {
-    NetworkProviderHandle::new(
-        NetworkProviderId::for_registration_key(provider_key),
-        format!(
-            "{version}:{action}:{}:{}:{generation_digest}:{attempt_id}",
-            tenant_id.as_str(),
-            attachment_id.as_str()
-        ),
-    )
-    .expect("provider attempt fixture should validate")
-}
 
 #[test]
 fn deterministic_union_reopens_without_mutation_and_never_promotes_artifact_names() {

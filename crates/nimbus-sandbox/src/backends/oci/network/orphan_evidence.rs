@@ -27,6 +27,15 @@ use readers::{
     OciProviderAttemptEvidenceReader,
 };
 
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "NNC5.2c stages pure dispositions consumed by NNC5.2d startup wiring"
+    )
+)]
+mod classifier;
+
 /// Durable authority that supplied a claim-qualified allocator observation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum OciAllocatorEvidenceSource {
@@ -769,5 +778,7 @@ fn corrupt_evidence(reason: impl Into<String>) -> SandboxError {
     }
 }
 
+#[cfg(test)]
+mod test_support;
 #[cfg(test)]
 mod tests;
