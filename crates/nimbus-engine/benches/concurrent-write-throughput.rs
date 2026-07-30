@@ -746,6 +746,7 @@ struct OpenLoopRound {
     achieved_rate: f64,
     scheduled: usize,
     completed: usize,
+    shed: usize,
     saturation_breached: bool,
     latencies_ns: Vec<u64>,
 }
@@ -770,13 +771,26 @@ async fn run_open_loop_round(
     let mut latencies = Vec::with_capacity(total);
     let mut saturation_breached = false;
     let mut completed = 0usize;
+    let mut shed = 0usize;
+    let absorb = |value: u64, latencies: &mut Vec<u64>, completed: &mut usize, shed: &mut usize| {
+        if value == u64::MAX {
+            *shed += 1;
+        } else {
+            latencies.push(value);
+        }
+        *completed += 1;
+    };
     for i in 0..total {
         let scheduled = start + Duration::from_secs_f64(i as f64 / rate);
         tokio::time::sleep_until(tokio::time::Instant::from_std(scheduled)).await;
         // Drain finished work without blocking the arrival schedule.
         while let Some(joined) = set.try_join_next() {
-            latencies.push(joined.expect("open-loop worker should not panic"));
-            completed += 1;
+            absorb(
+                joined.expect("open-loop worker should not panic"),
+                &mut latencies,
+                &mut completed,
+                &mut shed,
+            );
         }
         if set.len() >= max_in_flight {
             saturation_breached = true;
@@ -786,11 +800,17 @@ async fn run_open_loop_round(
         let tenant = tenant.clone();
         let table = table.clone();
         set.spawn(async move {
-            engine
+            // The engine's mutation admission gate sheds load under burst; an
+            // open-loop client sees that as a rejected request, not a panic.
+            // A shed arrival reports u64::MAX and is counted, not timed.
+            match engine
                 .insert_document_async(tenant, table, insert_fields(i))
                 .await
-                .expect("open-loop insert should succeed");
-            scheduled.elapsed().as_nanos() as u64
+            {
+                Ok(_) => scheduled.elapsed().as_nanos() as u64,
+                Err(error) if error.retryability() != Retryability::Terminal => u64::MAX,
+                Err(error) => panic!("open-loop insert failed terminally: {error}"),
+            }
         });
     }
     let scheduled_count = if saturation_breached {
@@ -799,15 +819,20 @@ async fn run_open_loop_round(
         total
     };
     while let Some(joined) = set.join_next().await {
-        latencies.push(joined.expect("open-loop worker should not panic"));
-        completed += 1;
+        absorb(
+            joined.expect("open-loop worker should not panic"),
+            &mut latencies,
+            &mut completed,
+            &mut shed,
+        );
     }
     let wall = start.elapsed().as_secs_f64();
     OpenLoopRound {
         target_rate: rate,
-        achieved_rate: completed as f64 / wall,
+        achieved_rate: latencies.len() as f64 / wall,
         scheduled: scheduled_count,
         completed,
+        shed,
         saturation_breached,
         latencies_ns: latencies,
     }
@@ -824,16 +849,16 @@ fn render_open_loop_section(
     let _ = writeln!(out, "\n## Open-loop service latency (SUC6.1)\n");
     let _ = writeln!(
         out,
-        "Calibrated closed-loop capacity at the top rung: **{capacity:.0} mut/s**. Each round drives single-document inserts on a fixed arrival schedule for {}s; latency is measured from the scheduled arrival (coordinated-omission-free). A saturation-breached round means the offered rate was not sustainable and its numbers are not service-latency evidence.\n",
+        "Calibrated closed-loop capacity at the top rung: **{capacity:.0} mut/s**. Each round drives single-document inserts on a fixed arrival schedule for {}s; latency is measured from the scheduled arrival (coordinated-omission-free). A saturation-breached round means the offered rate was not sustainable and its numbers are not service-latency evidence; a round with shed arrivals means the admission gate rejected bursts at this rate, so its percentiles describe only the admitted subset.\n",
         duration.as_secs()
     );
     let _ = writeln!(
         out,
-        "| Fraction | Target mut/s | Round | Sched | Done | Achieved | p50 ms | p90 ms | p99 ms | p99.9 ms | max ms | Verdict |"
+        "| Fraction | Target mut/s | Round | Sched | Done | Shed | Achieved | p50 ms | p90 ms | p99 ms | p99.9 ms | max ms | Verdict |"
     );
     let _ = writeln!(
         out,
-        "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"
+        "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |"
     );
     for (fraction, rounds) in rates.iter().zip(rounds_per_rate) {
         for (round_index, round) in rounds.iter().enumerate() {
@@ -842,6 +867,8 @@ fn render_open_loop_section(
             let ms = |v: f64| v / 1_000_000.0;
             let verdict = if round.saturation_breached {
                 "SATURATION BREACH"
+            } else if round.shed > 0 {
+                "SHED — rate not absorbed"
             } else if (round.achieved_rate - round.target_rate).abs() / round.target_rate > 0.02 {
                 "rate drift >2%"
             } else {
@@ -849,11 +876,12 @@ fn render_open_loop_section(
             };
             let _ = writeln!(
                 out,
-                "| {fraction} | {:.0} | {} | {} | {} | {:.0} | {:.2} | {:.2} | {:.2} | {:.2} | {:.2} | {verdict} |",
+                "| {fraction} | {:.0} | {} | {} | {} | {} | {:.0} | {:.2} | {:.2} | {:.2} | {:.2} | {:.2} | {verdict} |",
                 round.target_rate,
                 round_index + 1,
                 round.scheduled,
                 round.completed,
+                round.shed,
                 round.achieved_rate,
                 ms(percentile_ns(&sorted, 50.0)),
                 ms(percentile_ns(&sorted, 90.0)),
