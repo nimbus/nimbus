@@ -20,6 +20,9 @@ CORE_SOURCE_ROOT="${NIMBUS_NETWORK_VERIFY_CORE_SCAN_ROOT:-crates/nimbus-core/src
 SOURCE_CONTRACT_HELPER="scripts/verify-nimbus-network-source-contract.mjs"
 BIND_CENSUS_HELPER="scripts/verify-nimbus-network-bind-census.mjs"
 COMPOSITION_CENSUS_HELPER="scripts/verify-nimbus-network-composition-census.mjs"
+COMPOSITION_CENSUS="${NIMBUS_NETWORK_VERIFY_COMPOSITION_CENSUS:-docs/private/plans/proof/nimbus-network-control-plane/nnc4.6f-production-network-authority-census.json}"
+COMPOSITION_CENSUS_SELF_TESTS="scripts/nimbus-network-control-plane/composition-census-self-tests.sh"
+BIND_EXEMPTION_SELF_TESTS="scripts/nimbus-network-control-plane/bind-exemption-self-tests.sh"
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -680,7 +683,11 @@ verify_local_network_composition_census() {
     fail "NNCV015" "local-network-composition-census" "missing ${COMPOSITION_CENSUS_HELPER}"
     return
   fi
-  error="$(node "${COMPOSITION_CENSUS_HELPER}" --inventory "${INVENTORY}" 2>&1)"
+  error="$(
+    node "${COMPOSITION_CENSUS_HELPER}" \
+      --inventory "${INVENTORY}" \
+      --census "${COMPOSITION_CENSUS}" 2>&1
+  )"
   status=$?
   if [ "${status}" -eq 0 ]; then
     pass "NNCV015" "local-network-composition-census"
@@ -1131,29 +1138,16 @@ NODE
     printf 'SELFTEST PASS stale site declaration fails closed as NNCV006\n'
   fi
 
-  invalid_path_exemption="${temporary}/invalid-path-exemption.json"
-  node - "${INVENTORY}" "${invalid_path_exemption}" <<'NODE'
-const fs = require("fs");
-const [source, target] = process.argv.slice(2);
-const inventory = JSON.parse(fs.readFileSync(source, "utf8"));
-const exemption = inventory.non_production_exemptions.find(
-  entry => entry.mechanism === "path-owned-test-module",
-);
-if (!exemption?.files?.[0]) process.exit(1);
-exemption.files[0].module = "lifecycle.*";
-fs.writeFileSync(target, JSON.stringify(inventory, null, 2) + "\n");
-NODE
-  if NIMBUS_NETWORK_VERIFY_INVENTORY="${invalid_path_exemption}" \
-    NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
-    "${script}" >"${temporary}/invalid-path-exemption.out" 2>&1; then
-    printf 'SELFTEST FAIL regex-shaped path exemption unexpectedly exited zero\n'
-    self_fail=$((self_fail + 1))
-  elif ! grep -q '^FAIL NNCV006 unclassified-production-bind' "${temporary}/invalid-path-exemption.out" ||
-    ! grep -q 'path-owned test exemption is not mechanically cfg(test)-owned:' "${temporary}/invalid-path-exemption.out"; then
-    printf 'SELFTEST FAIL regex-shaped path exemption did not fail NNCV006 precisely\n'
+  bind_exemption_self_fail=0
+  if [ ! -f "${BIND_EXEMPTION_SELF_TESTS}" ]; then
+    printf 'SELFTEST FAIL bind-exemption self-test helper is missing: %s\n' "${BIND_EXEMPTION_SELF_TESTS}"
     self_fail=$((self_fail + 1))
   else
-    printf 'SELFTEST PASS regex-shaped path exemption fails closed as NNCV006\n'
+    # shellcheck source=scripts/nimbus-network-control-plane/bind-exemption-self-tests.sh
+    . "${BIND_EXEMPTION_SELF_TESTS}"
+    run_nnc46f_bind_exemption_self_tests "${script}" "${temporary}" "${INVENTORY}" ||
+      bind_exemption_self_fail=$?
+    self_fail=$((self_fail + bind_exemption_self_fail))
   fi
 
   NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
@@ -1384,18 +1378,30 @@ NODE
     printf 'SELFTEST FAIL stale composition classification unexpectedly exited zero\n'
     self_fail=$((self_fail + 1))
   elif ! grep -q '^FAIL NNCV015 local-network-composition-census' "${temporary}/composition-stale-classification.out" ||
-    ! grep -q 'stale local composition authority classification: crates/nimbus-cli/src/network_composition.rs|manager-bootstrap|claim|1' "${temporary}/composition-stale-classification.out"; then
+    ! grep -q 'stale production network authority classification: crates/nimbus-cli/src/network_composition.rs|manager-bootstrap|claim|1' "${temporary}/composition-stale-classification.out"; then
     printf 'SELFTEST FAIL stale composition classification did not fail NNCV015 precisely\n'
     self_fail=$((self_fail + 1))
   else
     printf 'SELFTEST PASS stale composition classification fails closed as NNCV015\n'
   fi
 
+  composition_self_fail=0
+  if [ ! -f "${COMPOSITION_CENSUS_SELF_TESTS}" ]; then
+    printf 'SELFTEST FAIL composition-census self-test helper is missing: %s\n' "${COMPOSITION_CENSUS_SELF_TESTS}"
+    self_fail=$((self_fail + 1))
+  else
+    # shellcheck source=scripts/nimbus-network-control-plane/composition-census-self-tests.sh
+    . "${COMPOSITION_CENSUS_SELF_TESTS}"
+    run_nnc46f_composition_census_self_tests "${script}" "${temporary}" ||
+      composition_self_fail=$?
+    self_fail=$((self_fail + composition_self_fail))
+  fi
+
   if [ "${self_fail}" -ne 0 ]; then
     printf 'self-test: %d failed\n' "${self_fail}"
     exit 1
   fi
-  printf 'self-test: 51 passed, 0 failed\n'
+  printf 'self-test: 60 passed, 0 failed\n'
 }
 
 if [ "${1:-}" = "--self-test" ]; then

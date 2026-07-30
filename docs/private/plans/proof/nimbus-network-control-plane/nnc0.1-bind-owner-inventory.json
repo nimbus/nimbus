@@ -1454,6 +1454,27 @@
           "cfg_owner": "crates/nimbus-sandbox/src/backends/container/runtime.rs",
           "owner_module": "tests",
           "module": "support"
+        },
+        {
+          "path": "crates/nimbus-sandbox/src/backends/container/runtime/launch_cleanup.rs",
+          "declared_from": "crates/nimbus-sandbox/src/backends/container/runtime/lifecycle.rs",
+          "cfg_owner": "crates/nimbus-sandbox/src/backends/container/runtime.rs",
+          "owner_module": "tests",
+          "module": "launch_cleanup"
+        },
+        {
+          "path": "crates/nimbus-sandbox/src/backends/oci/network/segment/configured_handle_tests.rs",
+          "declared_from": "crates/nimbus-sandbox/src/backends/oci/network/segment.rs",
+          "cfg_owner": "crates/nimbus-sandbox/src/backends/oci/network/segment.rs",
+          "owner_module": "configured_handle_tests",
+          "module": "configured_handle_tests"
+        },
+        {
+          "path": "crates/nimbus-sandbox/src/backends/oci/network/test_support.rs",
+          "declared_from": "crates/nimbus-sandbox/src/backends/oci/network.rs",
+          "cfg_owner": "crates/nimbus-sandbox/src/backends/oci/network.rs",
+          "owner_module": "test_support",
+          "module": "test_support"
         }
       ],
       "allowed_shape": "The exact child path is admitted only while its declaration remains inside the mechanically verified #[cfg(test)] tests module and no production mod, path, or include edge reaches it."

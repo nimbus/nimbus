@@ -5,13 +5,14 @@ use std::path::{Path, PathBuf};
 
 use proc_macro2::Span;
 use serde::Serialize;
+use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
 use syn::visit::{self, Visit};
 use syn::{
     Arm, Attribute, Expr, ExprCall, ExprMethodCall, ExprPath, ExprStruct, Field, FieldValue, FnArg,
-    ForeignItem, ForeignItemFn, ImplItem, ImplItemFn, ImplItemType, Item, ItemFn, ItemMod,
-    ItemStruct, ItemType, Lit, LitStr, Macro, ReturnType, Stmt, TraitItem, TraitItemFn,
-    TraitItemType, Type, UseTree, Variant,
+    ForeignItem, ForeignItemFn, ImplItem, ImplItemFn, ImplItemType, Item, ItemFn, ItemImpl,
+    ItemMod, ItemStruct, ItemType, Lit, LitStr, Macro, ReturnType, Stmt, Token, TraitItem,
+    TraitItemFn, TraitItemType, Type, UseTree, Variant,
 };
 
 const FIXTURE_PATH: &str =
@@ -218,6 +219,7 @@ fn scan_source(
     let mut scanner = Scanner {
         path,
         symbols: Vec::new(),
+        impl_types: Vec::new(),
         authorities,
         risks,
         composition,
@@ -460,6 +462,7 @@ fn finish_ordinals(occurrences: &mut Vec<Occurrence>) {
 struct Scanner<'a> {
     path: &'a str,
     symbols: Vec<String>,
+    impl_types: Vec<String>,
     authorities: &'a mut Vec<Occurrence>,
     risks: &'a mut Vec<Occurrence>,
     composition: &'a mut Vec<Occurrence>,
@@ -513,8 +516,12 @@ impl Scanner<'_> {
             line: signature.ident.span().start().line,
         });
         self.symbols.push(name.to_owned());
-        if matches!(name, "reconstruct_direct" | "reconstruct_direct_at") {
-            self.composition("direct-reconstruction-declaration", signature.ident.span());
+        if let Some(kind) = self
+            .impl_types
+            .last()
+            .and_then(|type_name| network_composition_declaration_kind(type_name, name))
+        {
+            self.composition(kind, signature.ident.span());
         }
         scan_port_function_name(name, signature.ident.span(), self);
         visit::visit_signature(self, signature);
@@ -550,6 +557,27 @@ impl<'ast> Visit<'ast> for Scanner<'_> {
             return;
         }
         visit::visit_impl_item(self, item);
+    }
+
+    fn visit_item_impl(&mut self, item: &'ast ItemImpl) {
+        if is_cfg_test(&item.attrs) {
+            return;
+        }
+        let type_name = match item.self_ty.as_ref() {
+            Type::Path(path) => path
+                .path
+                .segments
+                .last()
+                .map(|segment| segment.ident.to_string()),
+            _ => None,
+        };
+        if let Some(type_name) = type_name {
+            self.impl_types.push(type_name);
+            visit::visit_item_impl(self, item);
+            self.impl_types.pop();
+        } else {
+            visit::visit_item_impl(self, item);
+        }
     }
 
     fn visit_trait_item(&mut self, item: &'ast TraitItem) {
@@ -868,8 +896,15 @@ impl<'ast> Visit<'ast> for Scanner<'_> {
 
 fn network_composition_call_kind(receiver: &str, operation: &str) -> Option<&'static str> {
     match (receiver, operation) {
+        ("LocalNodeNetworkRoot", "resolve_for_current_platform") => {
+            Some("local-node-root-resolver")
+        }
         ("LocalNetworkManager", "bootstrap") => Some("manager-bootstrap"),
         ("LocalNetworkManager", "open") => Some("manager-direct-open"),
+        ("LocalNetworkStateStore", "open") => Some("primitive-state-store-open"),
+        ("LocalNetworkStateStore", "open_with_options") => {
+            Some("primitive-state-store-open-with-options")
+        }
         ("LocalPortLeaseAuthority", "open") => Some("primitive-port-authority-open"),
         ("StagedLocalNetworkComposition", "claim") => Some("cli-staged-manager-claim"),
         ("PreparedLocalNetworkComposition", "prepare") => Some("cli-complete-composition"),
@@ -877,6 +912,32 @@ fn network_composition_call_kind(receiver: &str, operation: &str) -> Option<&'st
             Some("cli-attachment-only-composition")
         }
         ("OciNetworkProcess", "new") => Some("oci-process-construction"),
+        ("ConfiguredSegmentAllocator", "reconstruct_direct") => {
+            Some("segment-direct-reconstruction")
+        }
+        ("ConfiguredSegmentAllocator", "reconstruct_for_runner") => {
+            Some("segment-runner-reconstruction")
+        }
+        ("ConfiguredSegmentAllocator", "reconstruct_from_state_root") => {
+            Some("segment-primitive-reconstruction")
+        }
+        ("SingleNodeSegmentAllocator", "reconstruct_for_cluster_lease") => {
+            Some("segment-cluster-lease-reconstruction")
+        }
+        ("SingleNodeSegmentAllocator", "reconstruct_for_cluster_cleanup") => {
+            Some("segment-cluster-cleanup-reconstruction")
+        }
+        ("DurableSegmentCleanupAuthority", "reconstruct_for_cluster_cleanup") => {
+            Some("segment-cleanup-handle-reconstruction")
+        }
+        ("OciIpamAuthority", "reconstruct_direct") => Some("ipam-direct-reconstruction"),
+        ("OciIpamAuthority", "reconstruct_for_runner") => Some("ipam-runner-reconstruction"),
+        ("OciPortLeaseCoordinator", "reconstruct_direct") => {
+            Some("port-coordinator-direct-reconstruction")
+        }
+        ("OciPortLeaseCoordinator", "reconstruct_for_runner") => {
+            Some("port-coordinator-runner-reconstruction")
+        }
         ("KrunSandboxBackend", "new") => Some("direct-krun-backend-construction"),
         ("KrunSandboxBackend", "with_network_process") => {
             Some("manager-derived-krun-backend-construction")
@@ -896,9 +957,29 @@ fn network_composition_call_kind(receiver: &str, operation: &str) -> Option<&'st
         ("ServerListenerLeaseAuthority", "reconstruct_direct") => {
             Some("server-internal-direct-reconstruction")
         }
+        ("ServerListenerLeaseAuthority", "new") => {
+            Some("manager-derived-server-listener-authority")
+        }
+        ("RetainedServerNetworkAuthority", "manager_derived") => {
+            Some("manager-derived-server-primitive-handle")
+        }
         ("RetainedServerNetworkAuthority", "reconstruct_direct") => {
             Some("server-primitive-direct-reconstruction")
         }
+        ("NimbusKvListenerConfig", "from_network_authority") => Some("manager-derived-kv-listener"),
+        ("NimbusKvListenerConfig", "from_network_authority_for_incarnation") => {
+            Some("manager-derived-kv-listener-incarnation")
+        }
+        ("NimbusKvListenerConfig", "reconstruct_direct") => {
+            Some("kv-direct-listener-reconstruction")
+        }
+        ("NimbusKvListenerConfig", "reconstruct_direct_for_incarnation") => {
+            Some("kv-direct-listener-incarnation-reconstruction")
+        }
+        ("HostMachineNetworkAuthority", "injected") => {
+            Some("manager-derived-parent-machine-authority")
+        }
+        ("MachineForwarderAuthority", "new") => Some("machine-forwarder-authority-mint"),
         ("NetworkAttachmentProviderRegistration", "new") => {
             Some("attachment-registration-construction")
         }
@@ -909,14 +990,125 @@ fn network_composition_call_kind(receiver: &str, operation: &str) -> Option<&'st
     }
 }
 
+fn network_composition_declaration_kind(type_name: &str, operation: &str) -> Option<&'static str> {
+    match (type_name, operation) {
+        ("LocalNodeNetworkRoot", "resolve_for_current_platform") => {
+            Some("local-node-root-resolver-declaration")
+        }
+        ("LocalNetworkManager", "bootstrap") => Some("manager-bootstrap-declaration"),
+        ("LocalNetworkManager", "open") => Some("manager-open-declaration"),
+        ("LocalNetworkStateStore", "open" | "open_with_options") => {
+            Some("primitive-state-store-open-declaration")
+        }
+        ("LocalPortLeaseAuthority", "open") => Some("primitive-port-authority-open-declaration"),
+        ("ConfiguredSegmentAllocator", "reconstruct_direct") => {
+            Some("segment-direct-reconstruction-declaration")
+        }
+        ("ConfiguredSegmentAllocator", "reconstruct_for_runner") => {
+            Some("segment-runner-reconstruction-declaration")
+        }
+        ("ConfiguredSegmentAllocator", "reconstruct_from_state_root") => {
+            Some("segment-primitive-reconstruction-declaration")
+        }
+        ("SingleNodeSegmentAllocator", "reconstruct_for_cluster_lease") => {
+            Some("segment-cluster-lease-reconstruction-declaration")
+        }
+        ("SingleNodeSegmentAllocator", "reconstruct_for_cluster_cleanup") => {
+            Some("segment-cluster-cleanup-reconstruction-declaration")
+        }
+        ("DurableSegmentCleanupAuthority", "reconstruct_for_cluster_cleanup") => {
+            Some("segment-cleanup-handle-reconstruction-declaration")
+        }
+        ("OciIpamAuthority", "reconstruct_direct") => {
+            Some("ipam-direct-reconstruction-declaration")
+        }
+        ("OciIpamAuthority", "reconstruct_for_runner") => {
+            Some("ipam-runner-reconstruction-declaration")
+        }
+        ("OciPortLeaseCoordinator", "reconstruct_direct") => {
+            Some("port-coordinator-direct-reconstruction-declaration")
+        }
+        ("OciPortLeaseCoordinator", "reconstruct_for_runner") => {
+            Some("port-coordinator-runner-reconstruction-declaration")
+        }
+        ("ContainerSandboxBackend", "new") => {
+            Some("direct-container-backend-constructor-declaration")
+        }
+        ("ContainerSandboxBackend", "with_network_process") => {
+            Some("manager-derived-container-backend-constructor-declaration")
+        }
+        ("ContainerSandboxBackend", "reconstruct_for_runner") => {
+            Some("container-runner-reconstruction-declaration")
+        }
+        ("KrunSandboxBackend", "new") => Some("direct-krun-backend-constructor-declaration"),
+        ("KrunSandboxBackend", "with_network_process") => {
+            Some("manager-derived-krun-backend-constructor-declaration")
+        }
+        ("PreboundServerListeners", "new") => {
+            Some("manager-derived-prebound-listeners-declaration")
+        }
+        ("PreboundServerListeners", "reconstruct_direct") => {
+            Some("direct-prebound-listener-reconstruction-declaration")
+        }
+        ("ServeOptions", "new") => Some("manager-derived-serve-options-declaration"),
+        ("ServeOptions", "reconstruct_direct" | "reconstruct_direct_at") => {
+            Some("direct-serve-options-reconstruction-declaration")
+        }
+        ("ServerListenerLeaseAuthority", "new") => {
+            Some("manager-derived-server-listener-authority-declaration")
+        }
+        ("ServerListenerLeaseAuthority", "reconstruct_direct") => {
+            Some("server-internal-direct-reconstruction-declaration")
+        }
+        ("RetainedServerNetworkAuthority", "manager_derived") => {
+            Some("manager-derived-server-primitive-handle-declaration")
+        }
+        ("RetainedServerNetworkAuthority", "reconstruct_direct") => {
+            Some("server-primitive-direct-reconstruction-declaration")
+        }
+        ("NimbusKvListenerConfig", "from_network_authority") => {
+            Some("manager-derived-kv-listener-declaration")
+        }
+        ("NimbusKvListenerConfig", "from_network_authority_for_incarnation") => {
+            Some("manager-derived-kv-listener-incarnation-declaration")
+        }
+        ("NimbusKvListenerConfig", "reconstruct_direct") => {
+            Some("kv-direct-listener-reconstruction-declaration")
+        }
+        ("NimbusKvListenerConfig", "reconstruct_direct_for_incarnation") => {
+            Some("kv-direct-listener-incarnation-reconstruction-declaration")
+        }
+        ("HostMachineNetworkComposition", "claim_default" | "claim") => {
+            Some("parent-machine-manager-constructor-declaration")
+        }
+        ("HostMachineNetworkAuthority", "injected") => {
+            Some("manager-derived-parent-machine-authority-declaration")
+        }
+        ("GuestMachineNetworkComposition", "claim") => {
+            Some("guest-machine-manager-constructor-declaration")
+        }
+        ("MachineForwarderAuthority", "new") => {
+            Some("machine-forwarder-authority-mint-declaration")
+        }
+        _ => None,
+    }
+}
+
 fn is_network_composition_type(name: &str) -> bool {
     matches!(
         name,
-        "LocalNetworkManager"
+        "LocalNodeNetworkRoot"
+            | "LocalNetworkManager"
+            | "LocalNetworkStateStore"
             | "LocalPortLeaseAuthority"
             | "StagedLocalNetworkComposition"
             | "PreparedLocalNetworkComposition"
             | "OciNetworkProcess"
+            | "ConfiguredSegmentAllocator"
+            | "SingleNodeSegmentAllocator"
+            | "DurableSegmentCleanupAuthority"
+            | "OciIpamAuthority"
+            | "OciPortLeaseCoordinator"
             | "KrunSandboxBackend"
             | "ContainerSandboxBackend"
             | "PreboundServerListeners"
@@ -927,6 +1119,11 @@ fn is_network_composition_type(name: &str) -> bool {
             | "NetworkIngressProviderRegistration"
             | "NetworkCapabilityBundle"
             | "NetworkCapabilityRegistry"
+            | "NimbusKvListenerConfig"
+            | "HostMachineNetworkComposition"
+            | "HostMachineNetworkAuthority"
+            | "GuestMachineNetworkComposition"
+            | "MachineForwarderAuthority"
     )
 }
 
@@ -1074,12 +1271,31 @@ fn socket_type_info(ty: &Type) -> SocketTypeInfo {
 
 fn is_cfg_test(attributes: &[Attribute]) -> bool {
     attributes.iter().any(|attribute| {
-        attribute.path().is_ident("cfg")
-            && match &attribute.meta {
-                syn::Meta::List(list) => list.tokens.to_string() == "test",
-                _ => false,
-            }
+        if !attribute.path().is_ident("cfg") {
+            return false;
+        }
+        let syn::Meta::List(list) = &attribute.meta else {
+            return false;
+        };
+        syn::parse2::<syn::Meta>(list.tokens.clone())
+            .is_ok_and(|meta| cfg_meta_requires_test(&meta))
     })
+}
+
+fn cfg_meta_requires_test(meta: &syn::Meta) -> bool {
+    match meta {
+        syn::Meta::Path(path) => path.is_ident("test"),
+        syn::Meta::NameValue(_) => false,
+        syn::Meta::List(list) if list.path.is_ident("all") => {
+            let nested = list.parse_args_with(Punctuated::<syn::Meta, Token![,]>::parse_terminated);
+            nested.is_ok_and(|items| items.iter().any(cfg_meta_requires_test))
+        }
+        syn::Meta::List(list) if list.path.is_ident("any") => {
+            let nested = list.parse_args_with(Punctuated::<syn::Meta, Token![,]>::parse_terminated);
+            nested.is_ok_and(|items| !items.is_empty() && items.iter().all(cfg_meta_requires_test))
+        }
+        syn::Meta::List(_) => false,
+    }
 }
 
 fn item_attributes(item: &Item) -> Option<&[Attribute]> {
@@ -1206,285 +1422,4 @@ fn normalized_path(path: &Path) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn scan_fixture(source: &str) -> ScanOutput {
-        scan_fixture_with_exemptions(source, &BTreeSet::new())
-    }
-
-    fn scan_fixture_with_exemptions(source: &str, exempt_paths: &BTreeSet<String>) -> ScanOutput {
-        let mut authorities = Vec::new();
-        let mut risks = Vec::new();
-        let mut declarations = Vec::new();
-        let mut errors = Vec::new();
-        scan_source(
-            FIXTURE_PATH,
-            source,
-            &mut authorities,
-            &mut risks,
-            &mut declarations,
-            &mut errors,
-            exempt_paths,
-        );
-        finish_ordinals(&mut authorities);
-        finish_ordinals(&mut risks);
-        ScanOutput {
-            authorities,
-            risks,
-            declarations,
-            errors,
-        }
-    }
-
-    fn authority_kinds(output: &ScanOutput) -> Vec<&str> {
-        output
-            .authorities
-            .iter()
-            .map(|occurrence| occurrence.kind.as_str())
-            .collect()
-    }
-
-    #[test]
-    fn cfg_test_macro_item_does_not_hide_following_production_bind() {
-        let output = scan_fixture(
-            r#"
-#[cfg(test)]
-fixture! {
-    fn hidden() {
-        let _ = std::net::TcpListener::bind("127.0.0.1:0");
-    }
-}
-
-fn production() {
-    let _ = std::net::TcpListener::bind("127.0.0.1:0");
-}
-"#,
-        );
-
-        assert!(output.errors.is_empty(), "{:?}", output.errors);
-        assert_eq!(authority_kinds(&output), vec!["tcp-bind"]);
-        assert_eq!(output.authorities[0].symbol, "production");
-    }
-
-    #[test]
-    fn unix_datagram_effects_and_owned_tuple_fields_are_structural() {
-        let output = scan_fixture(
-            r#"
-struct Held(pub std::os::unix::net::UnixDatagram);
-
-fn bind() -> std::os::unix::net::UnixDatagram {
-    std::os::unix::net::UnixDatagram::bind("/tmp/nimbus.sock").unwrap()
-}
-
-unsafe fn adopt(fd: std::os::fd::RawFd) -> std::os::unix::net::UnixDatagram {
-    std::os::unix::net::UnixDatagram::from_raw_fd(fd)
-}
-"#,
-        );
-
-        assert!(output.errors.is_empty(), "{:?}", output.errors);
-        assert_eq!(
-            authority_kinds(&output),
-            vec![
-                "listener-ownership-slot",
-                "listener-return-handoff",
-                "unix-datagram-bind",
-                "listener-return-handoff",
-                "unix-datagram-from-raw-fd",
-            ]
-        );
-    }
-
-    #[test]
-    fn shorthand_provider_request_and_multiline_return_are_structural() {
-        let output = scan_fixture(
-            r#"
-struct GenericRequest { host_port: u16 }
-
-fn request(host_port: u16) {
-    let _ = GenericRequest { host_port };
-}
-
-fn handoff()
-    -> Result<
-        std::net::TcpListener,
-        std::io::Error,
-    >
-{
-    std::net::TcpListener::bind("127.0.0.1:0")
-}
-"#,
-        );
-
-        assert!(output.errors.is_empty(), "{:?}", output.errors);
-        assert_eq!(
-            authority_kinds(&output),
-            vec![
-                "provider-port-request",
-                "listener-return-handoff",
-                "tcp-bind",
-            ]
-        );
-        assert!(
-            output
-                .declarations
-                .iter()
-                .any(|declaration| { declaration.name == "handoff" && declaration.line == 8 })
-        );
-    }
-
-    #[test]
-    fn referenced_socket_does_not_hide_owned_socket_in_same_type() {
-        let output = scan_fixture(
-            r#"
-struct Mixed<'a>(&'a std::net::TcpListener, Option<std::net::TcpListener>);
-"#,
-        );
-
-        assert!(output.errors.is_empty(), "{:?}", output.errors);
-        assert_eq!(authority_kinds(&output), vec!["listener-ownership-slot"]);
-    }
-
-    #[test]
-    fn production_reference_to_test_exempt_path_fails_closed() {
-        let output = scan_fixture(
-            r#"
-#[path = "tests/fixture.rs"]
-mod fixture;
-"#,
-        );
-        assert!(
-            output
-                .errors
-                .iter()
-                .any(|error| error
-                    .contains("production module/include references test-exempt source")),
-            "{:?}",
-            output.errors
-        );
-
-        let cfg_only = scan_fixture(
-            r#"
-#[cfg(test)]
-#[path = "tests/fixture.rs"]
-mod fixture;
-"#,
-        );
-        assert!(cfg_only.errors.is_empty(), "{:?}", cfg_only.errors);
-
-        let exempt_paths = BTreeSet::from([format!(
-            "{}/excluded.rs",
-            Path::new(FIXTURE_PATH)
-                .parent()
-                .unwrap_or(Path::new(""))
-                .display()
-        )]);
-        let second_inclusion = scan_fixture_with_exemptions(
-            r#"
-#[path = "./excluded.rs"]
-mod excluded;
-"#,
-            &exempt_paths,
-        );
-        assert!(
-            second_inclusion
-                .errors
-                .iter()
-                .any(|error| error
-                    .contains("production module/include references test-exempt source")),
-            "{:?}",
-            second_inclusion.errors
-        );
-    }
-
-    #[test]
-    fn bind_function_values_imports_and_bare_calls_fail_closed() {
-        let output = scan_fixture(
-            r#"
-use libc::bind;
-
-fn indirect() {
-    let socket_bind = std::net::TcpListener::bind;
-    let _ = socket_bind("127.0.0.1:0");
-}
-
-fn bare() {
-    unsafe { bind(0, std::ptr::null(), 0); }
-}
-"#,
-        );
-
-        assert!(output.errors.is_empty(), "{:?}", output.errors);
-        assert_eq!(authority_kinds(&output), vec!["tcp-bind"]);
-        assert!(
-            output
-                .risks
-                .iter()
-                .any(|risk| risk.kind == "ambiguous-bind-function-import")
-        );
-        assert!(
-            output
-                .risks
-                .iter()
-                .any(|risk| risk.kind == "ambiguous-bare-bind-call")
-        );
-    }
-
-    #[test]
-    fn associated_socket_aliases_fail_closed() {
-        let output = scan_fixture(
-            r#"
-trait ListenerKind {
-    type Listener = std::net::TcpListener;
-}
-
-struct Host;
-impl ListenerKind for Host {
-    type Listener = std::net::TcpListener;
-}
-"#,
-        );
-
-        assert_eq!(
-            output
-                .errors
-                .iter()
-                .filter(|error| {
-                    error.contains("associated socket authority type alias is forbidden")
-                })
-                .count(),
-            2,
-            "{:?}",
-            output.errors
-        );
-    }
-
-    #[test]
-    fn cfg_test_associated_and_statement_nodes_are_skipped_exactly() {
-        let output = scan_fixture(
-            r#"
-struct Fixture;
-
-impl Fixture {
-    #[cfg(test)]
-    fixture! { TcpListener host_port }
-}
-
-fn production() {
-    #[cfg(test)]
-    fixture! { TcpListener host_port }
-    let _ = match 1 {
-        #[cfg(test)]
-        0 => TcpListener::bind("127.0.0.1:0"),
-        _ => TcpListener::bind("127.0.0.1:0"),
-    };
-}
-"#,
-        );
-
-        assert!(output.errors.is_empty(), "{:?}", output.errors);
-        assert_eq!(authority_kinds(&output), vec!["tcp-bind"]);
-        assert!(output.risks.is_empty(), "{:?}", output.risks);
-    }
-}
+mod tests;

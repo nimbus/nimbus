@@ -74,11 +74,11 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC4.6e complete; NNC4.6f
-  in progress`. Parent-host versus guest-node machine authority is complete with its
-  full review, one permitted narrow correction review, and all accepted
-  findings dispositioned. The constructor/root/primitive-handle census is the
-  next owner. Sole owner for the transport-free
+- `nimbus-network-control-plane-plan.md` - `active; NNC4.6f complete; NNC4.7
+  in progress`. The production constructor/root/primitive-handle census is
+  complete with exact source identities, fail-closed mutations, and all full
+  and narrow review findings dispositioned. The Linux sovereignty integration
+  tripwire is the current owner. Sole owner for the transport-free
   connectivity-resource control plane: portable network identities and plans,
   crash-safe segment and cross-process host-port lease authority,
   generation/epoch fencing, capability satisfaction, reconciliation, exact

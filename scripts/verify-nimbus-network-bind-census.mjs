@@ -240,94 +240,193 @@ function validateExemptionPolicy(inventory) {
 
 function validatePathOwnedTestModules(inventory) {
   const exemptions = new Set();
-  for (const exemption of inventory.non_production_exemptions ?? []) {
-    if (exemption.mechanism !== "path-owned-test-module") continue;
-    for (const evidence of exemption.files ?? []) {
-      for (const field of [
-        "path",
-        "declared_from",
-        "cfg_owner",
-        "owner_module",
-        "module",
-      ]) {
-        if (typeof evidence[field] !== "string" || !evidence[field].trim()) {
-          errors.push(`path-owned test exemption lacks ${field}`);
-        }
-      }
-      if (
-        !fs.existsSync(evidence.path) ||
-        !fs.existsSync(evidence.declared_from) ||
-        !fs.existsSync(evidence.cfg_owner)
-      ) {
-        errors.push(
-          `path-owned test exemption evidence missing: ${evidence.path}`,
-        );
-        continue;
-      }
+  const evidenceRows = (inventory.non_production_exemptions ?? [])
+    .filter((entry) => entry.mechanism === "path-owned-test-module")
+    .flatMap((entry) => entry.files ?? []);
+  const evidenceByPath = new Map(
+    evidenceRows.map((evidence) => [
+      normalizedPath(path.normalize(evidence.path ?? "")),
+      evidence,
+    ]),
+  );
 
-      const normalizedEvidencePath = normalizedPath(
-        path.normalize(evidence.path),
-      );
-      const normalizedDeclaration = normalizedPath(
-        path.normalize(evidence.declared_from),
-      );
-      const normalizedOwner = normalizedPath(
-        path.normalize(evidence.cfg_owner),
-      );
-      const ownerStem = path.basename(normalizedOwner, ".rs");
-      const expectedDeclaration = normalizedPath(
-        path.join(
-          path.dirname(normalizedOwner),
-          ownerStem,
-          `${evidence.owner_module}.rs`,
-        ),
-      );
-      const resolvedExemptPath = normalizedPath(
-        path.join(
-          path.dirname(normalizedDeclaration),
-          path.basename(normalizedEvidencePath),
-        ),
-      );
-      if (
-        normalizedDeclaration !== expectedDeclaration ||
-        resolvedExemptPath !== normalizedEvidencePath
-      ) {
-        errors.push(
-          `path-owned test exemption module linkage is inconsistent: ${evidence.path}`,
-        );
-        continue;
-      }
+  function exactExplicitModuleLink(evidence) {
+    if (
+      !evidence ||
+      !fs.existsSync(evidence.path) ||
+      !fs.existsSync(evidence.declared_from)
+    ) {
+      return false;
+    }
+    const relativePath = normalizedPath(
+      path.relative(path.dirname(evidence.declared_from), evidence.path),
+    );
+    if (relativePath.startsWith("../") || path.isAbsolute(relativePath)) {
+      return false;
+    }
+    const declaration = maskCommentsPreserveStrings(
+      fs.readFileSync(evidence.declared_from, "utf8"),
+    );
+    const pattern = new RegExp(
+      `#\\s*\\[\\s*path\\s*=\\s*"${escapeRegExp(relativePath)}"\\s*\\]\\s*` +
+        `mod\\s+${escapeRegExp(evidence.module)}\\s*;`,
+      "g",
+    );
+    return pattern.test(declaration);
+  }
 
-      const declaration = fs.readFileSync(evidence.declared_from, "utf8");
-      const declarationCode = maskNonCode(declaration);
-      const declarationSemantic = maskCommentsPreserveStrings(declaration);
-      const modulePattern = new RegExp(
-        `#\\s*\\[\\s*path\\s*=\\s*"${escapeRegExp(path.basename(evidence.path))}"\\s*\\]\\s*` +
-          `mod\\s+${escapeRegExp(evidence.module)}\\s*;`,
-        "g",
+  function conventionalModuleTargets(evidence) {
+    const declaration = normalizedPath(path.normalize(evidence.declared_from));
+    const directory = path.dirname(declaration);
+    const basename = path.basename(declaration);
+    const parentEvidence = evidenceByPath.get(declaration);
+    const moduleDirectory =
+      basename === "lib.rs" ||
+      basename === "main.rs" ||
+      basename === "mod.rs" ||
+      exactExplicitModuleLink(parentEvidence)
+        ? directory
+        : path.join(directory, path.basename(declaration, ".rs"));
+    return new Set([
+      normalizedPath(path.join(moduleDirectory, `${evidence.module}.rs`)),
+      normalizedPath(path.join(moduleDirectory, evidence.module, "mod.rs")),
+    ]);
+  }
+
+  for (const evidence of evidenceRows) {
+    for (const field of [
+      "path",
+      "declared_from",
+      "cfg_owner",
+      "owner_module",
+      "module",
+    ]) {
+      if (typeof evidence[field] !== "string" || !evidence[field].trim()) {
+        errors.push(`path-owned test exemption lacks ${field}`);
+      }
+    }
+    if (
+      !fs.existsSync(evidence.path) ||
+      !fs.existsSync(evidence.declared_from) ||
+      !fs.existsSync(evidence.cfg_owner)
+    ) {
+      errors.push(
+        `path-owned test exemption evidence missing: ${evidence.path}`,
       );
+      continue;
+    }
+
+    const normalizedEvidencePath = normalizedPath(
+      path.normalize(evidence.path),
+    );
+    const normalizedDeclaration = normalizedPath(
+      path.normalize(evidence.declared_from),
+    );
+    const normalizedOwner = normalizedPath(path.normalize(evidence.cfg_owner));
+    const ownerStem = path.basename(normalizedOwner, ".rs");
+    const expectedNestedDeclaration = normalizedPath(
+      path.join(
+        path.dirname(normalizedOwner),
+        ownerStem,
+        `${evidence.owner_module}.rs`,
+      ),
+    );
+    const relativeEvidencePath = normalizedPath(
+      path.relative(
+        path.dirname(normalizedDeclaration),
+        normalizedEvidencePath,
+      ),
+    );
+    if (
+      relativeEvidencePath.startsWith("../") ||
+      path.isAbsolute(relativeEvidencePath)
+    ) {
+      errors.push(
+        `path-owned test exemption module linkage is inconsistent: ${evidence.path}`,
+      );
+      continue;
+    }
+
+    const declaration = fs.readFileSync(evidence.declared_from, "utf8");
+    const declarationCode = maskNonCode(declaration);
+    const declarationSemantic = maskCommentsPreserveStrings(declaration);
+    const explicitModulePattern = new RegExp(
+      `#\\s*\\[\\s*path\\s*=\\s*"${escapeRegExp(relativeEvidencePath)}"\\s*\\]\\s*` +
+        `mod\\s+${escapeRegExp(evidence.module)}\\s*;`,
+      "g",
+    );
+    const anyExplicitModulePattern = new RegExp(
+      `#\\s*\\[\\s*path\\s*=\\s*"[^"]+"\\s*\\]\\s*` +
+        `mod\\s+${escapeRegExp(evidence.module)}\\s*;`,
+      "g",
+    );
+    const conventionalModulePattern = new RegExp(
+      `\\bmod\\s+${escapeRegExp(evidence.module)}\\s*;`,
+      "g",
+    );
+    let hasExplicitPathOverride = false;
+    let explicitOverrideMatch;
+    while (
+      (explicitOverrideMatch =
+        anyExplicitModulePattern.exec(declarationSemantic)) !== null
+    ) {
+      if (declarationCode[explicitOverrideMatch.index] === "#") {
+        hasExplicitPathOverride = true;
+        break;
+      }
+    }
+    let linkedDeclaration = false;
+    for (const modulePattern of [explicitModulePattern]) {
       let moduleMatch;
-      let linkedDeclaration = false;
       while ((moduleMatch = modulePattern.exec(declarationSemantic)) !== null) {
-        if (declarationCode[moduleMatch.index] === "#") {
+        const codeStart = declarationCode[moduleMatch.index];
+        if (codeStart === "#" || codeStart === "m") {
           linkedDeclaration = true;
           break;
         }
       }
-
-      const owner = maskNonCode(fs.readFileSync(evidence.cfg_owner, "utf8"));
-      const cfgOwnerPattern = new RegExp(
-        `#\\s*\\[\\s*cfg\\s*\\(\\s*test\\s*\\)\\s*\\]\\s*` +
-          `mod\\s+${escapeRegExp(evidence.owner_module)}\\s*;`,
-      );
-      if (!linkedDeclaration || !cfgOwnerPattern.test(owner)) {
-        errors.push(
-          `path-owned test exemption is not mechanically cfg(test)-owned: ${evidence.path}`,
-        );
-        continue;
-      }
-      exemptions.add(normalizedEvidencePath);
+      if (linkedDeclaration) break;
     }
+    if (
+      !linkedDeclaration &&
+      !hasExplicitPathOverride &&
+      conventionalModuleTargets(evidence).has(normalizedEvidencePath)
+    ) {
+      let moduleMatch;
+      while (
+        (moduleMatch = conventionalModulePattern.exec(declarationSemantic)) !==
+        null
+      ) {
+        if (declarationCode[moduleMatch.index] === "m") {
+          linkedDeclaration = true;
+          break;
+        }
+      }
+    }
+
+    const owner = maskNonCode(fs.readFileSync(evidence.cfg_owner, "utf8"));
+    const cfgOwnerPattern = new RegExp(
+      `#\\s*\\[\\s*cfg\\s*\\(\\s*test\\s*\\)\\s*\\]\\s*` +
+        `(?:#\\s*\\[[^\\]]+\\]\\s*)*` +
+        `mod\\s+${escapeRegExp(evidence.owner_module)}\\s*;`,
+    );
+    const directOwner =
+      (normalizedDeclaration === normalizedOwner ||
+        normalizedDeclaration === expectedNestedDeclaration) &&
+      cfgOwnerPattern.test(owner);
+    const parentEvidence = evidenceByPath.get(normalizedDeclaration);
+    const transitiveOwner =
+      parentEvidence &&
+      normalizedPath(path.normalize(parentEvidence.cfg_owner)) ===
+        normalizedOwner &&
+      parentEvidence.owner_module === evidence.owner_module;
+    if (!linkedDeclaration || (!directOwner && !transitiveOwner)) {
+      errors.push(
+        `path-owned test exemption is not mechanically cfg(test)-owned: ${evidence.path}`,
+      );
+      continue;
+    }
+    exemptions.add(normalizedEvidencePath);
   }
   return exemptions;
 }
