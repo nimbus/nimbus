@@ -41,6 +41,11 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
 
 ### Phase 1 - Launch Safety And Egress Trust
 
+- `storage-follow-ups-plan.md` - `active`. FU1-FU8: follow-up bugs and
+  tickets from the archived storage-unification campaign (MySQL scheduler
+  outlier, PPSC fault-interface arm-theft, DynamoDB batch stream staleness,
+  policy-aware scan paging, arm_selection flake, nimbus-fs seam) plus the
+  SUC6.2 literal measurement (U7 override exercised).
 - `architecture-review-2026-07-plan.md` - `active`. Control plane for the
   2026-07 full-workspace architecture review: guarantee/fail-closed repairs
   (storage write-path unification, EgressGateway pairing, decision-log
