@@ -576,3 +576,17 @@ radius.
 
 The unrelated `arm_selection::opaque_internal_job_cannot_overtake_ordered_publisher`
 load-flake (also ticketed) appeared once in the base sweep.
+
+## Step 2 — Review Disposition
+
+One P1: `sql_commit` runs `StorageCommitAfterVisibilityBeforeReturn`
+unconditionally, including for `commit == None` transactions — the shape
+behind the ticketed PPSC arm-theft flake. **Real, pre-existing, and
+deliberately not fixed in this step**: base libsql behaves identically (the
+step-2 contract was behavior preservation, and two of this step's own
+fault-semantics drifts were reverted to honor it). The fix is assigned to
+step 3, which owns commit-path fault-point placement (U4/U5): gate the
+post-visibility fault (and records-scoped equivalents) on an actual visible
+commit, alongside the harness half (PPSC `check_for_durable_records`
+discriminating on records). Landing it there keeps step 2 reviewable as a
+pure port and fixes the class once, in the code that will own it.
