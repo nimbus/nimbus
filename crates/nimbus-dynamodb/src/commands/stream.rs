@@ -32,6 +32,28 @@ use crate::commands::{control_plane, item};
 use crate::error::map_core_error;
 use crate::tenant::{adapter_principal, caller_principal};
 
+/// The engine lifecycle timestamps of a source-table document.
+///
+/// A stream record's images are item attributes only, but a table's read rule
+/// may name `_creationTime` or `_updateTime`, which live on the document rather
+/// than in its fields. Capturing them with the image is what lets authorization
+/// evaluate such a rule against the same values a read of the table would see.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct DocumentTimes {
+    pub(crate) created: u64,
+    pub(crate) updated: u64,
+}
+
+impl DocumentTimes {
+    /// The lifecycle times the engine currently holds for `document`.
+    pub(crate) fn of(document: &Document) -> Self {
+        Self {
+            created: document.creation_time.0,
+            updated: document.update_time.0,
+        }
+    }
+}
+
 /// A captured change event, persisted as one document in the stream store. Keys
 /// and images are stored in AttributeValue wire-JSON (like data items).
 #[derive(Serialize, Deserialize)]
@@ -42,12 +64,26 @@ struct StoredEvent {
     keys: Map<String, Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     old_image: Option<Map<String, Value>>,
+    /// The old image's lifecycle times, `None` exactly when there is no old
+    /// image. Always serialized — a stored event missing the field is corrupt,
+    /// not old, and reading one must fail rather than silently authorize
+    /// against absent metadata.
+    old_image_times: Option<DocumentTimes>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     new_image: Option<Map<String, Value>>,
     /// Set for service-originated changes (TTL deletions carry the DynamoDB
     /// service principal — D6.2). Absent for ordinary client writes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     user_identity: Option<UserIdentity>,
+    /// The commit timestamp of the mutation that captured this event, read back
+    /// from the event document's own creation stamp rather than serialized into
+    /// the payload: the engine assigns it at commit, after the payload is built.
+    ///
+    /// The event document is created in the same `AtomicWriteBatch` as the data
+    /// write, so the engine stamps both from one commit timestamp — which makes
+    /// this exactly the new image's `_updateTime`.
+    #[serde(skip)]
+    committed_at: u64,
 }
 
 /// The `userIdentity` DynamoDB attaches to a TTL-originated REMOVE record.
@@ -258,12 +294,38 @@ fn event_name_from_str(value: &str) -> Result<StreamEventName, DynamoDbError> {
     }
 }
 
+/// The item a write replaced or removed, paired with the lifecycle times the
+/// engine held for it.
+///
+/// The two travel together so a capture site cannot record an old image without
+/// the metadata authorization needs to evaluate it.
+#[derive(Clone)]
+pub(crate) struct OldImage {
+    pub(crate) item: Item,
+    pub(crate) times: DocumentTimes,
+}
+
+impl OldImage {
+    /// The old image for a write over `document`, or `None` when the write
+    /// created the item.
+    pub(crate) fn of(document: Option<&Document>) -> Result<Option<Self>, DynamoDbError> {
+        document
+            .map(|document| {
+                Ok(Self {
+                    item: fields_to_item(&document.fields)?,
+                    times: DocumentTimes::of(document),
+                })
+            })
+            .transpose()
+    }
+}
+
 /// A change to capture on a table's stream. Bundles the per-event inputs so the
 /// capture entrypoint stays a small, readable call.
 pub(crate) struct ChangeEvent<'a> {
     pub event_name: StreamEventName,
     pub keys: &'a Item,
-    pub old_image: Option<&'a Item>,
+    pub old_image: Option<&'a OldImage>,
     pub new_image: Option<&'a Item>,
     /// Set for service-originated changes (TTL deletions); `None` for ordinary
     /// client writes.
@@ -277,7 +339,7 @@ pub(crate) struct StreamChange {
     pub(crate) table_name: String,
     pub(crate) event_name: StreamEventName,
     pub(crate) keys: Item,
-    pub(crate) old_image: Option<Item>,
+    pub(crate) old_image: Option<OldImage>,
     pub(crate) new_image: Option<Item>,
     pub(crate) user_identity: Option<UserIdentity>,
 }
@@ -287,7 +349,7 @@ impl StreamChange {
         table_name: impl Into<String>,
         event_name: StreamEventName,
         keys: Item,
-        old_image: Option<Item>,
+        old_image: Option<OldImage>,
         new_image: Option<Item>,
         user_identity: Option<UserIdentity>,
     ) -> Self {
@@ -325,9 +387,16 @@ fn event_fields(change: &ChangeEvent<'_>, seq: i64) -> Result<Map<String, Value>
         created: epoch_seconds(),
         event_name: event_name_str(change.event_name).to_owned(),
         keys: item_to_fields(change.keys)?,
-        old_image: change.old_image.map(item_to_fields).transpose()?,
+        old_image: change
+            .old_image
+            .map(|old| item_to_fields(&old.item))
+            .transpose()?,
+        old_image_times: change.old_image.map(|old| old.times),
         new_image: change.new_image.map(item_to_fields).transpose()?,
         user_identity: change.user_identity.clone(),
+        // Assigned by the engine at commit; recovered on read from the event
+        // document's creation stamp.
+        committed_at: 0,
     };
     match serde_json::to_value(&event) {
         Ok(Value::Object(map)) => Ok(map),
@@ -527,11 +596,19 @@ fn read_events_from(
     let mut events: Vec<StoredEvent> = documents
         .iter()
         .map(|document| {
-            serde_json::from_value(Value::Object(document.fields.clone())).map_err(|error| {
+            let mut event: StoredEvent = serde_json::from_value(Value::Object(
+                document.fields.clone(),
+            ))
+            .map_err(|error| {
                 DynamoDbError::InternalServerError(format!("corrupt stream event: {error}"))
-            })
+            })?;
+            // The event document is created in the same batch as the data write
+            // it describes, so its creation stamp is that mutation's commit
+            // timestamp — the new image's `_updateTime`.
+            event.committed_at = document.creation_time.0;
+            Ok(event)
         })
-        .collect::<Result<_, _>>()?;
+        .collect::<Result<_, DynamoDbError>>()?;
     events.sort_by_key(|event| event.seq);
     Ok(events)
 }
@@ -603,52 +680,72 @@ impl RecordAuthorization {
         if self.filter.denies_everything() {
             return Ok(false);
         }
-        // A document rebuilt from a captured image carries no engine lifecycle
-        // timestamps, so a rule that can turn on `_creationTime`/`_updateTime`
-        // cannot be evaluated faithfully here. Withhold rather than authorize
-        // against a value we would have to invent.
-        if self.filter.depends_on_document_timestamps() {
-            return Ok(false);
-        }
 
-        let images = [event.old_image.as_ref(), event.new_image.as_ref()]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
+        let images = self.documents_for(event)?;
         // A captured event always carries at least the image it wrote or the one
         // it removed. One that carries neither is unreadable rather than public.
         if images.is_empty() {
             return Ok(false);
         }
-        for image in images {
-            if !self
-                .filter
-                .allows(&self.document_for(image)?)
-                .map_err(map_core_error)?
-            {
+        for image in &images {
+            if !self.filter.allows(image).map_err(map_core_error)? {
                 return Ok(false);
             }
         }
         Ok(true)
     }
 
-    /// Rebuild the source-table document an image describes, so the read rule
-    /// evaluates against the same shape it would have seen in the table.
+    /// Rebuild the source-table documents this event's images describe, so the
+    /// read rule evaluates against the same values a read of the table would.
     ///
     /// Images are stored in the field encoding the data path writes, and the
     /// document id is derived from the key schema exactly as the write derived
-    /// it, so `_id` and every stored field are faithful. The timestamps are not
-    /// recoverable, which is why a rule that can depend on them withholds above
-    /// instead of reaching this.
-    fn document_for(&self, image: &Map<String, Value>) -> Result<Document, DynamoDbError> {
+    /// it, so `_id` and every stored field are faithful. The lifecycle times are
+    /// reconstructed from what the engine itself assigned:
+    ///
+    /// - The **old** image carries the times captured with it, read from the
+    ///   document the write replaced.
+    /// - The **new** image's `_updateTime` is the commit timestamp of the
+    ///   mutation that produced the event, and its `_creationTime` is the old
+    ///   document's when the write replaced one — the same inheritance the
+    ///   engine applies when it stamps an update.
+    fn documents_for(&self, event: &StoredEvent) -> Result<Vec<Document>, DynamoDbError> {
+        let mut documents = Vec::with_capacity(2);
+        if let Some(image) = &event.old_image {
+            let times = event.old_image_times.ok_or_else(|| {
+                DynamoDbError::InternalServerError(
+                    "corrupt stream event: old image without lifecycle times".to_owned(),
+                )
+            })?;
+            documents.push(self.document_for(image, times)?);
+        }
+        if let Some(image) = &event.new_image {
+            let times = DocumentTimes {
+                created: event
+                    .old_image_times
+                    .map_or(event.committed_at, |old| old.created),
+                updated: event.committed_at,
+            };
+            documents.push(self.document_for(image, times)?);
+        }
+        Ok(documents)
+    }
+
+    fn document_for(
+        &self,
+        image: &Map<String, Value>,
+        times: DocumentTimes,
+    ) -> Result<Document, DynamoDbError> {
         let item = fields_to_item(image)?;
         let id = item::primary_key_id(&item, &self.key_schema)?;
-        Ok(Document::with_id_at(
+        let mut document = Document::with_id_at(
             id,
             self.table.clone(),
             image.clone(),
-            Timestamp(0),
-        ))
+            Timestamp(times.created),
+        );
+        document.update_time = Timestamp(times.updated);
+        Ok(document)
     }
 }
 

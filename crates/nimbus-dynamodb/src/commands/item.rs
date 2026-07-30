@@ -233,12 +233,15 @@ pub fn put_item(
     let keys = extract_key(&input.item, &key_schema);
     execute_single_item_transaction(engine, context, |token, principal| {
         let existing =
-            read_item_in_transaction(engine, context, token, principal, &table, id.clone())?;
+            read_old_image_in_transaction(engine, context, token, principal, &table, id.clone())?;
         check_condition(
             input.condition_expression.as_deref(),
             input.expression_attribute_names.as_ref(),
             input.expression_attribute_values.as_ref(),
-            &existing.clone().unwrap_or_default(),
+            &existing
+                .as_ref()
+                .map(|old| old.item.clone())
+                .unwrap_or_default(),
             &limits,
         )?;
 
@@ -247,18 +250,18 @@ pub fn put_item(
         } else {
             StreamEventName::Insert
         };
+        let attributes = match input.return_values {
+            ReturnValues::AllOld => existing.as_ref().map(|old| old.item.clone()),
+            _ => None,
+        };
         let change = stream::StreamChange::new(
             input.table_name.clone(),
             event_name,
             keys.clone(),
-            existing.clone(),
+            existing,
             Some(input.item.clone()),
             None,
         );
-        let attributes = match input.return_values {
-            ReturnValues::AllOld => existing,
-            _ => None,
-        };
         Ok(SingleItemTransactionPlan {
             output: PutItemOutput {
                 attributes,
@@ -347,17 +350,24 @@ pub fn delete_item(
     let keys = extract_key(&input.key, &key_schema);
     execute_single_item_transaction(engine, context, |token, principal| {
         let existing =
-            read_item_in_transaction(engine, context, token, principal, &table, id.clone())?;
+            read_old_image_in_transaction(engine, context, token, principal, &table, id.clone())?;
         check_condition(
             input.condition_expression.as_deref(),
             input.expression_attribute_names.as_ref(),
             input.expression_attribute_values.as_ref(),
-            &existing.clone().unwrap_or_default(),
+            &existing
+                .as_ref()
+                .map(|old| old.item.clone())
+                .unwrap_or_default(),
             &limits,
         )?;
 
-        let (writes, changes) = match &existing {
-            Some(_) => (
+        let attributes = match input.return_values {
+            ReturnValues::AllOld => existing.as_ref().map(|old| old.item.clone()),
+            _ => None,
+        };
+        let (writes, changes) = match existing {
+            Some(existing) => (
                 vec![delete_atomic_write(
                     table.clone(),
                     id.clone(),
@@ -367,16 +377,12 @@ pub fn delete_item(
                     input.table_name.clone(),
                     StreamEventName::Remove,
                     keys.clone(),
-                    existing.clone(),
+                    Some(existing),
                     None,
                     None,
                 )],
             ),
             None => (Vec::new(), Vec::new()),
-        };
-        let attributes = match input.return_values {
-            ReturnValues::AllOld => existing,
-            _ => None,
         };
         Ok(SingleItemTransactionPlan {
             output: DeleteItemOutput {
@@ -424,8 +430,9 @@ pub fn update_item(
     reject_key_updates(&actions, &key_schema, &maps)?;
 
     execute_single_item_transaction(engine, context, |token, principal| {
-        let old_item =
-            read_item_in_transaction(engine, context, token, principal, &table, id.clone())?;
+        let old =
+            read_old_image_in_transaction(engine, context, token, principal, &table, id.clone())?;
+        let old_item = old.as_ref().map(|old| old.item.clone());
         check_condition(
             input.condition_expression.as_deref(),
             input.expression_attribute_names.as_ref(),
@@ -437,7 +444,7 @@ pub fn update_item(
         let mut new_item = old_item.clone().unwrap_or_else(|| input.key.clone());
         apply_update(&actions, &mut new_item, &maps)?;
         let fields = item_to_fields(&new_item)?;
-        let event_name = if old_item.is_some() {
+        let event_name = if old.is_some() {
             StreamEventName::Modify
         } else {
             StreamEventName::Insert
@@ -446,7 +453,7 @@ pub fn update_item(
             input.table_name.clone(),
             event_name,
             extract_key(&new_item, &key_schema),
-            old_item.clone(),
+            old,
             Some(new_item.clone()),
             None,
         );
@@ -478,19 +485,25 @@ pub fn update_item(
     })
 }
 
-pub(crate) fn read_item_in_transaction(
+/// Read the item a write is about to replace or remove, inside that write's
+/// transaction, together with the lifecycle times the engine holds for it.
+///
+/// The times travel with the item because the stream record derived from it has
+/// to be authorizable later: a table read rule may name `_creationTime` or
+/// `_updateTime`, and those are document metadata that the item's attributes do
+/// not carry.
+pub(crate) fn read_old_image_in_transaction(
     engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     token: &TransactionSessionToken,
     principal: &PrincipalContext,
     table: &TableName,
     id: DocumentId,
-) -> Result<Option<Item>, DynamoDbError> {
-    engine
+) -> Result<Option<stream::OldImage>, DynamoDbError> {
+    let document = engine
         .get_document_in_transaction(context.tenant_id(), token, principal, table, id)
-        .map_err(map_core_error)?
-        .map(|document| fields_to_item(&document.fields))
-        .transpose()
+        .map_err(map_core_error)?;
+    stream::OldImage::of(document.as_ref())
 }
 
 /// Read a stored item by id, mapping a missing document to `None`.

@@ -5,9 +5,10 @@ Prior evidence: `proof/storage-unification/suc4/dynamodb-rmw.md` (FU3 finding),
 `proof/storage-unification/suc5/principal.md` (FU4 finding).
 Branch `codex/fu3-dynamo`, base `origin/main @ 22c5cdd62`.
 
-Three concepts, three commits: the batch transaction (FU3), the starting-at scan
-paging (FU4), and stream-record read authorization (FU-P1, raised as a P1 on
-review of the first two).
+Four concepts, four commits: the batch transaction (FU3), the starting-at scan
+paging (FU4), stream-record read authorization (FU-P1, raised as a P1 on review
+of the first two), and real lifecycle timestamps on stored images (FU-P2, raised
+as a P2 on review of FU-P1).
 
 ## FU3 — `batch_write_item` read the prior image outside the write's transaction
 
@@ -224,7 +225,8 @@ sidecar itself.
 - `DocumentReadFilter` (`engine/queries/authorization.rs`) — a table's read rule
   resolved for one principal, applicable to documents a caller assembles itself
   rather than reads through a scan. It exposes `is_unrestricted`,
-  `denies_everything`, `depends_on_document_timestamps`, and `allows(&Document)`.
+  `denies_everything`, `depends_on_document_timestamps` (removed again by FU-P2),
+  and `allows(&Document)`.
 - `Engine::document_read_filter(tenant, table, principal)`
   (`engine/queries/query_api.rs`) — resolves one, entering the tenant operation
   guard the same way the scans do.
@@ -253,15 +255,16 @@ applies the view type at read time, so this is available under KEYS_ONLY too —
 a KEYS_ONLY record still names an item that changed, which is itself item-level
 information, so it is held to the same standard.
 
-Two fail-closed cases fall out and are deliberate:
+Two fail-closed cases fell out of this commit:
 
-- **Rules that can depend on `_creationTime` / `_updateTime`.** A document rebuilt
-  from an image carries no engine lifecycle timestamps. Rather than authorize
-  against an invented value, `depends_on_document_timestamps()` withholds. This
-  gap was not in the ticket; it is real, and failing closed is the only safe
-  reading. (`TIMESTAMP_FIELDS` in the engine names the reserved fields, so the
-  adapter does not have to know them.)
-- **An event carrying neither image** is unreadable rather than public.
+- **Rules naming `_creationTime` / `_updateTime`.** A document rebuilt from an
+  image carried no engine lifecycle timestamps, so rather than authorize against
+  an invented value, `depends_on_document_timestamps()` withheld the record.
+  **FU-P2 below removes this branch entirely** by persisting the real timestamps
+  with each image; it is described here because it is what FU-P1 shipped and what
+  FU-P2's fail-before reverts to.
+- **An event carrying neither image** is unreadable rather than public. This one
+  survives FU-P2 unchanged.
 
 A DynamoDB-surfaced table stores every attribute as AttributeValue wire JSON, so
 a `DocumentField` read rule on such a table compares against `{"S": "..."}`, not
@@ -362,23 +365,197 @@ admits one access key *and* requires `owner == that key`.
   `Scan["Count"] == 2` proves both items are currently readable — the withheld
   record is withheld for its OLD image alone.
 
+## FU-P2 — the timestamp fail-closed branch made the authorization contract knowingly incomplete
+
+### What was wrong
+
+FU-P1's `depends_on_document_timestamps()` withheld any record whose table read
+rule named `_creationTime` or `_updateTime`. Withholding is safe against
+disclosure, but a stream iterator is consumed as it is read: a withheld record
+still advances `next_sequence`, so those records were **permanently skipped**,
+not deferred. A perfectly ordinary policy — `_creationTime > 0`, or any rule that
+merely *mentions* a lifecycle field — silently emptied the stream forever, and
+the reason was that the adapter had thrown the answer away rather than that the
+caller was unauthorized.
+
+### The fix — persist the real times, evaluate every rule
+
+`crates/nimbus-dynamodb/src/commands/stream.rs`
+
+- New `DocumentTimes { created, updated }` records a source document's engine
+  lifecycle stamps, and `StoredEvent` gained `old_image_times: Option<DocumentTimes>`.
+  The field is serialized unconditionally (no `serde(default)`, no
+  `skip_serializing_if`): it is `None` exactly when there is no old image, so an
+  event that has an old image and no times is **corrupt, not old**, and reading
+  one fails with `InternalServerError` instead of authorizing against absent
+  metadata. Pre-launch, changing the stored format directly is the instruction;
+  there is no shim and no migration.
+- New `OldImage { item, times }` replaces the bare `Item` in `ChangeEvent` and
+  `StreamChange`, so the two travel together and a capture site *cannot* record
+  an image without its metadata. `OldImage::of(Option<&Document>)` is the single
+  constructor; all nine capture sites across `item.rs`, `batch.rs`,
+  `transact.rs`, and `ttl.rs` now go through it.
+- `RecordAuthorization::documents_for` rebuilds every image the event carries as
+  a real `Document` with real times, and `allows` evaluates the rule against each.
+  The `depends_on_document_timestamps` branch is deleted; so are
+  `TIMESTAMP_FIELDS` and `names_timestamp_field()` in
+  `crates/nimbus-engine/src/engine/queries/authorization.rs`.
+
+**The both-images conservative rule is unchanged**, and so is the
+neither-image withholding.
+
+### Where the new image's `_updateTime` comes from
+
+The brief's premise held for the old image but not the new one. A capture site
+has the *prior* document in hand, so `creation_time` and `update_time` are
+available there — but the new image's `_updateTime` is the mutation's **commit
+timestamp**, which `assign_commit_timestamp` does not assign until after the
+event payload has been built. It is not knowable at capture, and no amount of
+write-path plumbing makes it so without changing when the clock is read.
+
+It did not need plumbing. The event document is created in the **same
+`AtomicWriteBatch`** as the data write, so the engine stamps both from one commit
+timestamp — which makes the event document's own `creation_time` exactly the new
+image's `_updateTime`. `read_events_from` recovers it into a `#[serde(skip)]`
+`committed_at` field. The new image's `_creationTime` is then the old document's
+when the write replaced one, and `committed_at` when it created one — the same
+inheritance the engine applies when it stamps an update.
+
+This is an identity derived by reading the write path, so it is pinned by a
+test rather than trusted: `reconstructed_image_times_match_the_engine_document_times`
+writes an item twice and asserts the reconstructed times equal the times the
+engine actually holds for the stored document, having first asserted that the two
+writes landed in different milliseconds so the comparison can distinguish them.
+
+### A prerequisite defect in `nimbus-core` — lifecycle rules denied every row
+
+Writing the first timestamp-referencing test surfaced a bug **outside** the
+adapter, and fixing it was load-bearing rather than incidental scope.
+
+`AccessPredicate::compile_read_filter` pushed any `DocumentField op Literal` pair
+down as a planner `Filter`. But a planner filter is resolved by
+`matches_filters` (`nimbus-storage/src/sql/predicate.rs`) via
+`Document::get_field`, which reads the **stored field map** — where `_id`,
+`_creationTime`, and `_updateTime` never appear. A pushed-down lifecycle filter
+therefore matched nothing, so a read policy of `_creationTime > 0` denied **every
+row of every scan and query**.
+
+Left unfixed this would have inverted the property under test: streams would have
+returned records for a policy under which the table itself returned nothing —
+strictly *more* permissive than the source table, the opposite of what FU-P1 and
+FU-P2 exist to establish.
+
+`crates/nimbus-core/src/auth/access.rs` now gates pushdown on
+`is_pushdown_document_field()`, which excludes the three metadata names; such
+predicates stay **residual** and are answered by the per-document rule evaluation
+every read path already applies (`document_field_value` resolves them from the
+document header). No existing test pinned the broken behaviour.
+
+### Fail-before (RED)
+
+The eight source files were stashed with `git stash push -- <paths>`, leaving
+both test files in place; afterwards `git stash pop` restored them and all ten
+modified files were verified byte-identical against copies saved beforehand
+(`RESTORE_OK=1`). `git checkout -- <file>` was not used: it restores from HEAD
+and would have destroyed the FU3/FU4/FU-P1 work still uncommitted in these files.
+
+```
+$ NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 cargo test -p nimbus-core --lib auth::
+  FAILED auth::tests::read_rule_keeps_lifecycle_metadata_predicates_residual
+    panicked at crates/nimbus-core/src/auth/tests.rs:92
+  test result: FAILED. 5 passed; 1 failed
+
+$ NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1     cargo test -p nimbus-dynamodb --test principal_authorization
+  FAIL get_records_fills_pages_under_a_timestamp_referencing_policy
+    principal_authorization.rs:586  left: []  right: ["i0", "i2"]
+  FAIL get_records_withholds_a_straddling_record_under_a_timestamp_policy
+    principal_authorization.rs:644  left: []  right: ["y"]
+  FAIL get_records_evaluates_lifecycle_times_against_the_real_document_history
+    principal_authorization.rs:755  left: []  right: ["a", "b"]
+  test result: FAILED. 8 passed; 3 failed
+```
+
+Every RED is `left: []` — the fail-closed branch withholding the whole stream,
+which is precisely the incompleteness this commit removes. The three in-crate
+`stream/tests.rs` additions fail to *compile* against the old format, which is
+expected and is why they are not listed as assertion failures.
+
+### Tests added
+
+`crates/nimbus-dynamodb/src/commands/stream/tests.rs`
+
+- `reconstructed_image_times_match_the_engine_document_times` — the identity
+  above, against the engine's own stored document.
+- `a_record_carrying_neither_image_is_withheld` — the surviving fail-closed case.
+  It first asserts a *real* record is allowed under the same policy, so the
+  withheld verdict is about the missing images and not about a policy that denies
+  everything.
+- `an_old_image_without_lifecycle_times_is_rejected` — a `Some(old_image)` with
+  `None` times is corrupt and errors rather than authorizing.
+
+`crates/nimbus-dynamodb/tests/principal_authorization.rs` — the paging and
+straddle bodies were extracted into `run_paging_scenario` / `run_straddle_scenario`
+so each runs under two policies: the original, and the same policy with a
+`_creationTime > 0` term appended. The added term must change nothing, which is
+the assertion that records now flow under a timestamp-referencing rule.
+
+- `get_records_evaluates_lifecycle_times_against_the_real_document_history` is
+  the discriminating one. Its policy is `_creationTime == _updateTime` — both
+  sides `DocumentField`, answerable only against real times. A `> 0` probe cannot
+  do this job: under placeholder zeros every image compares equal and passes,
+  whereas under this rule a placeholder implementation returns all three records.
+  Item `a` is created and then modified, item `b` is created and left alone, and
+  `OWNER_KEY` must receive `["a", "b"]` — a's INSERT and b's INSERT, with a's
+  MODIFY withheld because its new image was updated after it was created.
+
+Three things make that test unable to pass vacuously:
+
+- The two writes to `a` are separated by 5ms, because commit timestamps are
+  milliseconds and `max(now, previous)`, so same-millisecond writes would share a
+  stamp.
+- Before any policy is set, the stream is read once and asserted to carry
+  `["a", "a", "b"]`. Were the MODIFY simply absent, the filtered expectation
+  would be identical — this is what makes the filtered read a statement about
+  authorization.
+- A mirror `Scan` under the same policy must return `Count == 1`. The stream
+  verdict is only meaningful if the table reaches the same one.
+
+That mirror assertion is also what caught a **wrong assumption in the test
+itself**, and it is worth recording. The first version wrote `{"pk": "a"}` twice
+with identical content; the Scan returned 2, not 1. An empirical probe (scan
+documents printed beside `Engine::get_document`, then the same run with the
+second write changed) showed why: **a PutItem that rewrites identical content
+leaves the document unmodified, `update_time` and all**, so `a` had never been
+modified and the rule correctly admitted it. The authorization path was right and
+the test was wrong; the fix was to make the second write a real modification, not
+to weaken the assertion.
+
+
 ## Verification
 
 All commands run with `set -o pipefail` so the recorded status is the command's,
 not `tail`'s. macOS, `stable-aarch64-apple-darwin`.
 
-The battery was run twice: once after FU3 + FU4, and again after FU-P1. The
-table records the **final** run, over all three concepts.
+The battery was run three times: after FU3 + FU4, after FU-P1, and after FU-P2.
+The table records the **final** run, over all four concepts.
 
 | Command | Result |
 | --- | --- |
-| `NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 cargo nextest run -p nimbus-dynamodb` | **283 run, 283 passed, 0 skipped** — `PIPELINE_RC=0` |
-| `NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 cargo nextest run -p nimbus-engine` | **665 run, 665 passed (1 slow), 5 skipped** — `ENGINE_RC=0` |
-| `NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 cargo nextest run -p nimbus-server -E 'test(dynamodb) or test(ddb)'` | **15 run, 15 passed, 590 skipped** — `PIPELINE_RC=0` |
-| `cargo clippy -p nimbus-dynamodb -p nimbus-engine --all-targets -- -D warnings` | `CLIPPY_RC=0` |
-| `cargo fmt --all --check` | `FMT_RC=0` (after applying `cargo fmt --all`) |
+| `NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 cargo nextest run -p nimbus-dynamodb` | **289 run, 289 passed, 0 skipped** — `DDB_RC=0` |
+| `NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 cargo nextest run -p nimbus-core` | **194 run, 194 passed, 0 skipped** — `CORE_RC=0` |
+| `NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 cargo nextest run -p nimbus-engine` | **665 run, 665 passed (2 slow), 5 skipped** — `ENGINE_RC=0` |
+| `NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1 cargo nextest run -p nimbus-server -E 'test(dynamodb) or test(ddb)'` | **15 run, 15 passed, 590 skipped** — `rc=0` |
+| `cargo clippy -p nimbus-dynamodb -p nimbus-engine -p nimbus-core --all-targets -- -D warnings` | `CLIPPY_RC=0` |
+| `cargo fmt --all --check` | `FMT_RC=0` (after applying `cargo fmt --all`, which touched `commands/item.rs` only) |
 
-The dynamodb count moves 281 → 283: FU-P1 replaces one test with three.
+The dynamodb count moves 281 → 283 → 289: FU-P1 replaced one test with three,
+and FU-P2 adds three in-crate plus three integration tests.
+
+**nimbus-core joins the battery from FU-P2 on**, and not as a formality. That
+commit changes read-filter compilation, which every scan and query on every
+adapter goes through — the blast radius is the whole read path rather than the
+DynamoDB surface, so the core and engine suites are the load-bearing evidence
+here, not the adapter's.
 
 The server lanes include `tests::dynamodb_wire::dynamodb_wire_streams_event_delivery`
 and `nimbus-server::dynamodb_spec dynamodb_tenant_admission_uses_provider_lifecycle`,
@@ -411,14 +588,30 @@ so change capture is exercised end-to-end through the wire, not only in-crate.
   publication flake alongside FU5's — worth its own ticket. The tree was restored
   and all seven touched files verified byte-identical. The final full engine run
   above is green at 665/665.
+- The FU-P2 engine run showed **1 failure**, a *third* test in the same
+  subsystem:
+  `tests::mutation_journal::durable_outcomes::trigger_cursor_unreadable_progress_evicts_and_replays`.
+  It passed 5/5 in isolation, and the full suite was then rerun against the
+  **byte-identical tree** and came back 665/665. Same tree, different result — so
+  it is nondeterministic by direct evidence, and no revert was needed to
+  attribute it. The circumstances say why: a sibling worktree's `nextest` was
+  saturating the machine during the failing run, and the two flakes above are the
+  same subsystem under the same kind of load. Third sighting; FU5/FU9 should be
+  scoped to cover it.
 
 ### Restoration discipline
 
-All three fail-before captures reverted production code temporarily, and so did
-both flake attributions. Every time, the file was restored from a copy saved to
-the session scratchpad and then `diff`-verified — never with
-`git checkout -- <file>`, which restores from HEAD and would have destroyed the
-rest of the uncommitted work in these files.
+All four fail-before captures reverted production code temporarily, and so did
+two of the three flake attributions. Every time, the files were restored from
+copies saved to the session scratchpad and then compared byte-for-byte — never
+with `git checkout -- <file>`, which restores from HEAD and would have destroyed
+the rest of the uncommitted work in these files.
+
+FU-P2's revert used `git stash push -- <the eight source paths>`, leaving both
+test files in the tree, and `git stash pop` to restore. Ten files were then
+verified byte-identical against copies saved beforehand (`RESTORE_OK=1`); the
+stash was chosen over per-file copying because eight interdependent files had to
+move together and back together.
 
 The FU-P1 revert used `git show HEAD:crates/nimbus-dynamodb/src/commands/stream.rs`
 rather than hand-editing the changed arms back. Under `-D unused` a partial

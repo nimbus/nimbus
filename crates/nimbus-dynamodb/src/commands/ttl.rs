@@ -250,7 +250,7 @@ pub fn sweep_table(
             table_name.to_string(),
             StreamEventName::Remove,
             keys,
-            Some(item),
+            stream::OldImage::of(Some(&document))?,
             None,
             Some(stream::ttl_user_identity()),
         );

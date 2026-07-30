@@ -184,6 +184,48 @@ fn read_only_owned_by(key: &str) -> TableAccessPolicy {
     }
 }
 
+/// `policy` with a term naming a document lifecycle timestamp added to its read
+/// rule.
+///
+/// `_creationTime` is document metadata, not a stored attribute, so this term
+/// can only be answered by a document that carries its real lifecycle times.
+/// Every persisted document satisfies `> 0`, which is what makes it a clean
+/// probe: it changes no outcome unless the evaluator cannot evaluate it at all.
+fn with_creation_time_term(mut policy: TableAccessPolicy) -> TableAccessPolicy {
+    policy.read.predicates.push(AccessPredicate {
+        left: AccessValue::DocumentField {
+            field: "_creationTime".to_owned(),
+        },
+        op: AccessOperator::Gt,
+        right: AccessValue::Literal { value: json!(0) },
+    });
+    policy
+}
+
+/// A read rule admitting only documents never modified since they were created.
+///
+/// Both sides are document metadata, so this is answerable only against real
+/// lifecycle times — and unlike a `> 0` probe it *discriminates*, which is what
+/// distinguishes reconstructed times from placeholder zeros: under placeholders
+/// every image would compare equal and pass.
+fn read_only_unmodified() -> TableAccessPolicy {
+    TableAccessPolicy {
+        read: AccessRule {
+            require_authenticated: true,
+            predicates: vec![AccessPredicate {
+                left: AccessValue::DocumentField {
+                    field: "_creationTime".to_owned(),
+                },
+                op: AccessOperator::Eq,
+                right: AccessValue::DocumentField {
+                    field: "_updateTime".to_owned(),
+                },
+            }],
+        },
+        ..TableAccessPolicy::default()
+    }
+}
+
 /// Create `name` with a single `pk` and a NEW_AND_OLD_IMAGES stream, returning
 /// the stream ARN.
 fn create_streamed_table(engine: &Arc<Engine>, registry: &AccessKeyRegistry, name: &str) -> String {
@@ -521,13 +563,10 @@ fn get_records_authorizes_returned_records_against_the_source_table() {
     );
 }
 
-/// Withheld records must not consume page slots. A caller asking for `Limit`
-/// records gets `Limit` records it may read, not a short page it would mistake
-/// for the end of the stream.
-#[test]
-fn get_records_fills_pages_from_the_records_the_caller_may_read() {
+/// The interleaved-owners paging scenario, run under `policy`.
+fn run_paging_scenario(table: &str, policy: TableAccessPolicy) {
     let (engine, registry, _temp) = fixture();
-    let stream_arn = create_streamed_table(&engine, &registry, "Interleaved");
+    let stream_arn = create_streamed_table(&engine, &registry, table);
     // Alternating owners, so no raw page of two consecutive events ever holds
     // two the caller may read.
     for (index, owner) in [OWNER_KEY, OTHER_KEY].iter().cycle().take(6).enumerate() {
@@ -535,12 +574,12 @@ fn get_records_fills_pages_from_the_records_the_caller_may_read() {
             &engine,
             &registry,
             OWNER_KEY,
-            "Interleaved",
+            table,
             &format!("i{index}"),
             owner,
         );
     }
-    set_policy(&engine, "Interleaved", read_only_owned_by(OWNER_KEY));
+    set_policy(&engine, table, policy);
 
     let iterator = trim_horizon_iterator(&engine, &registry, OWNER_KEY, &stream_arn);
     let (first, iterator) = get_records(&engine, &registry, OWNER_KEY, &iterator, Some(2));
@@ -566,20 +605,39 @@ fn get_records_fills_pages_from_the_records_the_caller_may_read() {
     );
 }
 
-/// A record pairs the image it replaced with the image it wrote, so either half
-/// discloses the other. When the two straddle the policy, the conservative
-/// answer — withhold unless *both* are readable — is the only one that does not
-/// leak.
+/// Withheld records must not consume page slots. A caller asking for `Limit`
+/// records gets `Limit` records it may read, not a short page it would mistake
+/// for the end of the stream.
 #[test]
-fn get_records_withholds_a_record_whose_images_straddle_the_policy() {
+fn get_records_fills_pages_from_the_records_the_caller_may_read() {
+    run_paging_scenario("Interleaved", read_only_owned_by(OWNER_KEY));
+}
+
+/// The same paging contract under a rule that also names `_creationTime`.
+///
+/// A record's images are item attributes; the lifecycle times a rule like this
+/// asks about are document metadata that has to be captured with them. Records
+/// must flow exactly as before — a policy the evaluator cannot answer is a
+/// policy whose records are silently dropped, and the iterator advances past
+/// them for good.
+#[test]
+fn get_records_fills_pages_under_a_timestamp_referencing_policy() {
+    run_paging_scenario(
+        "InterleavedTimed",
+        with_creation_time_term(read_only_owned_by(OWNER_KEY)),
+    );
+}
+
+/// The ownership-handover straddle scenario, run under `policy`.
+fn run_straddle_scenario(table: &str, policy: TableAccessPolicy) {
     let (engine, registry, _temp) = fixture();
-    let stream_arn = create_streamed_table(&engine, &registry, "Handover");
+    let stream_arn = create_streamed_table(&engine, &registry, table);
     // x is created owned by OTHER_KEY, then handed to OWNER_KEY: the MODIFY's
     // new image is readable by OWNER_KEY but its old image is not.
-    put_owned(&engine, &registry, OWNER_KEY, "Handover", "x", OTHER_KEY);
-    put_owned(&engine, &registry, OWNER_KEY, "Handover", "x", OWNER_KEY);
-    put_owned(&engine, &registry, OWNER_KEY, "Handover", "y", OWNER_KEY);
-    set_policy(&engine, "Handover", read_only_owned_by(OWNER_KEY));
+    put_owned(&engine, &registry, OWNER_KEY, table, "x", OTHER_KEY);
+    put_owned(&engine, &registry, OWNER_KEY, table, "x", OWNER_KEY);
+    put_owned(&engine, &registry, OWNER_KEY, table, "y", OWNER_KEY);
+    set_policy(&engine, table, policy);
 
     let iterator = trim_horizon_iterator(&engine, &registry, OWNER_KEY, &stream_arn);
     let (records, _next) = get_records(&engine, &registry, OWNER_KEY, &iterator, None);
@@ -592,17 +650,114 @@ fn get_records_withholds_a_record_whose_images_straddle_the_policy() {
     );
 
     // The caller can read x's current state — the withheld record is about where
-    // that state came from, not about x being invisible.
+    // that state came from, not about x being invisible. This is also what keeps
+    // the two sides comparable: the stream must be no more permissive than the
+    // table read under the very same policy.
     let (_status, scan) = call(
         &engine,
         &registry,
         OWNER_KEY,
         "Scan",
-        &json!({ "TableName": "Handover" }),
+        &json!({ "TableName": table }),
     );
     assert_eq!(
         scan["Count"], 2,
         "both items are currently owned by the caller and readable: {scan}"
+    );
+}
+
+/// A record pairs the image it replaced with the image it wrote, so either half
+/// discloses the other. When the two straddle the policy, the conservative
+/// answer — withhold unless *both* are readable — is the only one that does not
+/// leak.
+#[test]
+fn get_records_withholds_a_record_whose_images_straddle_the_policy() {
+    run_straddle_scenario("Handover", read_only_owned_by(OWNER_KEY));
+}
+
+/// The conservative both-images rule survives a rule that also names a
+/// lifecycle timestamp: evaluating timestamps faithfully must not turn into
+/// evaluating only the new image.
+#[test]
+fn get_records_withholds_a_straddling_record_under_a_timestamp_policy() {
+    run_straddle_scenario(
+        "HandoverTimed",
+        with_creation_time_term(read_only_owned_by(OWNER_KEY)),
+    );
+}
+
+/// The reconstructed images must carry the *real* lifecycle history, not a
+/// placeholder — so a rule that can tell a created-and-untouched document from a
+/// modified one must reach the same verdict on a stream record as on the table.
+///
+/// `_creationTime == _updateTime` is that rule. Under placeholder times both
+/// sides would be equal for every image and every record would flow; under the
+/// real history the MODIFY's new image has an update time later than its
+/// creation time and its record is withheld.
+#[test]
+fn get_records_evaluates_lifecycle_times_against_the_real_document_history() {
+    let (engine, registry, _temp) = fixture();
+    let stream_arn = create_streamed_table(&engine, &registry, "History");
+    let put = |pk: &str, revision: &str| {
+        let (status, body) = call(
+            &engine,
+            &registry,
+            OWNER_KEY,
+            "PutItem",
+            &json!({
+                "TableName": "History",
+                "Item": { "pk": { "S": pk }, "revision": { "S": revision } },
+            }),
+        );
+        assert_eq!(status, 200, "put {pk}: {body}");
+    };
+    // Commit timestamps have millisecond resolution and are assigned as
+    // `max(now, previous)`, so two writes inside one millisecond would share a
+    // timestamp. Separating them is what makes "modified after creation"
+    // observable at all; the scan assertion below fails loudly if it did not
+    // take effect, rather than passing vacuously. The second write to `a` must
+    // also change the item: rewriting identical content leaves the document
+    // unmodified, update time and all.
+    put("a", "1");
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    put("a", "2");
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    put("b", "1");
+
+    // Before any policy exists, the stream carries all three changes. This is
+    // what makes the filtered read below a statement about authorization: were
+    // the MODIFY simply absent, the expected result would be the same.
+    let unfiltered = trim_horizon_iterator(&engine, &registry, OWNER_KEY, &stream_arn);
+    let (all_records, _) = get_records(&engine, &registry, OWNER_KEY, &unfiltered, None);
+    assert_eq!(
+        all_records,
+        vec!["a", "a", "b"],
+        "the stream must carry a's INSERT, a's MODIFY, and b's INSERT"
+    );
+
+    set_policy(&engine, "History", read_only_unmodified());
+    let (_status, scan) = call(
+        &engine,
+        &registry,
+        OWNER_KEY,
+        "Scan",
+        &json!({ "TableName": "History" }),
+    );
+    assert_eq!(
+        scan["Count"], 1,
+        "the table read must admit only b, the item never modified since creation — if it \
+         admits both, the two writes to a shared a commit timestamp and the rest of this test \
+         proves nothing: {scan}"
+    );
+
+    let iterator = trim_horizon_iterator(&engine, &registry, OWNER_KEY, &stream_arn);
+    let (records, _next) = get_records(&engine, &registry, OWNER_KEY, &iterator, None);
+    assert_eq!(
+        records,
+        vec!["a", "b"],
+        "the INSERT of a and the INSERT of b describe documents whose creation and update \
+         times are equal, but a's MODIFY carries a new image updated after it was created — \
+         reconstructing that image with placeholder times would have returned all three"
     );
 }
 

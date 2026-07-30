@@ -321,7 +321,7 @@ fn plan_one(
                 put.table_name.clone(),
                 existed_event(doc.is_some()),
                 extract_key(&put.item, &key_schema),
-                doc.is_some().then(|| current.clone()),
+                stream::OldImage::of(doc.as_ref())?,
                 Some(put.item.clone()),
                 None,
             ));
@@ -362,12 +362,12 @@ fn plan_one(
                 limits,
             )?;
             // DynamoDB emits a REMOVE record only when an item was deleted.
-            let change = doc.as_ref().map(|_| {
+            let change = stream::OldImage::of(doc.as_ref())?.map(|old| {
                 stream::StreamChange::new(
                     delete.table_name.clone(),
                     StreamEventName::Remove,
                     extract_key(&delete.key, &key_schema),
-                    Some(current.clone()),
+                    Some(old),
                     None,
                     None,
                 )
@@ -427,12 +427,13 @@ fn plan_one(
                 apply_update(&actions, &mut new_item, &maps)?;
                 (item_to_fields(&new_item)?, Some(new_item))
             };
+            let old_image = stream::OldImage::of(doc.as_ref())?;
             let change = new_item.map(|new_item| {
                 stream::StreamChange::new(
                     update.table_name.clone(),
                     existed_event(doc.is_some()),
                     extract_key(&new_item, &key_schema),
-                    doc.is_some().then(|| current.clone()),
+                    old_image,
                     Some(new_item),
                     None,
                 )

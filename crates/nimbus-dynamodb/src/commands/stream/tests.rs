@@ -19,8 +19,10 @@ fn shape_record_rejects_corrupt_event_name() {
         event_name: "UPSERT".to_owned(),
         keys: json!({ "pk": { "S": "k7" } }).as_object().unwrap().clone(),
         old_image: None,
+        old_image_times: None,
         new_image: None,
         user_identity: None,
+        committed_at: 0,
     };
 
     let error = shape_record(&event, StreamViewType::KeysOnly)
@@ -312,8 +314,10 @@ fn seed_raw_stream_event(
             .unwrap()
             .clone(),
         old_image: None,
+        old_image_times: None,
         new_image: None,
         user_identity: None,
+        committed_at: 0,
     };
     let document = serde_json::to_value(stored)
         .unwrap()
@@ -883,6 +887,7 @@ fn inject_event(
             .unwrap()
             .clone(),
         old_image: None,
+        old_image_times: None,
         new_image: Some(
             json!({ "pk": { "S": format!("k{seq}") }, "v": { "N": "1" } })
                 .as_object()
@@ -890,6 +895,7 @@ fn inject_event(
                 .clone(),
         ),
         user_identity: None,
+        committed_at: 0,
     };
     let Value::Object(fields) = serde_json::to_value(&event).unwrap() else {
         panic!("event serializes to an object");
@@ -1056,4 +1062,188 @@ fn reclaiming_expired_events_preserves_the_monotonic_sequence() {
         fresh[0].seq, 2,
         "the new event continues past the reclaimed sequences"
     );
+}
+
+/// Resolve record authorization for the `events` table as the test caller.
+fn record_authorization(
+    engine: &Arc<Engine>,
+    context: &TenantIsolationContext,
+) -> RecordAuthorization {
+    let table = TableName::new("events").unwrap();
+    let filter = engine
+        .document_read_filter(context.tenant_id(), &table, &caller_principal(context))
+        .expect("read filter should resolve");
+    RecordAuthorization {
+        filter,
+        table,
+        key_schema: control_plane::load_key_schema(engine, context, "events").unwrap(),
+    }
+}
+
+/// Put a read policy on `events` that is restricted but satisfiable by every
+/// real item, so authorization neither short-circuits as unrestricted nor as
+/// impossible and every verdict comes from evaluating an actual image.
+fn restrict_events_reads(engine: &Arc<Engine>, context: &TenantIsolationContext) {
+    engine
+        .set_table_schema(
+            context.tenant_id(),
+            nimbus_core::TableSchema {
+                table: TableName::new("events").unwrap(),
+                fields: Vec::new(),
+                indexes: Vec::new(),
+                access_policy: Some(nimbus_core::TableAccessPolicy {
+                    read: nimbus_core::AccessRule {
+                        require_authenticated: false,
+                        predicates: vec![nimbus_core::AccessPredicate {
+                            left: nimbus_core::AccessValue::DocumentField {
+                                field: "pk".to_owned(),
+                            },
+                            op: nimbus_core::AccessOperator::Neq,
+                            right: nimbus_core::AccessValue::Literal { value: Value::Null },
+                        }],
+                    },
+                    ..nimbus_core::TableAccessPolicy::default()
+                }),
+            },
+        )
+        .expect("policy should be storable");
+}
+
+/// The images an event carries are rebuilt with the lifecycle times the engine
+/// itself assigned — the old image's captured with it, the new image's from the
+/// commit that produced the event.
+///
+/// This pins the load-bearing claim behind that reconstruction: the event
+/// document is created in the same `AtomicWriteBatch` as the data write, so its
+/// own creation stamp *is* that mutation's commit timestamp, which is the new
+/// image's `_updateTime`.
+#[test]
+fn reconstructed_image_times_match_the_engine_document_times() {
+    let (engine, ctx, _temp) = fixture();
+    streamed_table(&engine, &ctx, "NEW_AND_OLD_IMAGES");
+    put(&engine, &ctx, "a", "1");
+    // Commit timestamps are milliseconds, so writes inside one millisecond
+    // share a stamp; separating them is what makes creation and update times
+    // distinguishable at all. The assertion below fails loudly if it did not.
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    put(&engine, &ctx, "a", "2");
+
+    let key: Item = [("pk".to_string(), AttributeValue::S("a".to_owned()))]
+        .into_iter()
+        .collect();
+    let key_schema = control_plane::load_key_schema(&engine, &ctx, "events").unwrap();
+    let id = crate::commands::item::primary_key_id(&key, &key_schema).unwrap();
+    let stored = engine
+        .get_document(
+            ctx.tenant_id(),
+            &TableName::new("events").unwrap(),
+            id.clone(),
+        )
+        .expect("the item survives both writes");
+    assert_ne!(
+        stored.creation_time, stored.update_time,
+        "the second write must land in a later millisecond, or this test cannot tell a \
+         reconstructed update time from a reconstructed creation time"
+    );
+
+    let authorization = record_authorization(&engine, &ctx);
+    let events = read_events(&engine, &ctx, "events").unwrap();
+    assert_eq!(events.len(), 2, "one INSERT and one MODIFY");
+
+    let inserted = authorization.documents_for(&events[0]).unwrap();
+    assert_eq!(inserted.len(), 1, "an INSERT carries only its new image");
+    assert_eq!(
+        (inserted[0].creation_time, inserted[0].update_time),
+        (stored.creation_time, stored.creation_time),
+        "a created document's creation and update times are both the commit that created it"
+    );
+
+    let modified = authorization.documents_for(&events[1]).unwrap();
+    assert_eq!(modified.len(), 2, "a MODIFY carries both images");
+    assert_eq!(
+        (modified[0].creation_time, modified[0].update_time),
+        (stored.creation_time, stored.creation_time),
+        "the old image is the document as it stood before the update"
+    );
+    assert_eq!(
+        (modified[1].creation_time, modified[1].update_time),
+        (stored.creation_time, stored.update_time),
+        "the new image keeps the original creation time and takes the commit timestamp as its \
+         update time — exactly what the engine stamped on the stored document"
+    );
+}
+
+/// An event carrying neither image is unreadable rather than public.
+///
+/// Authorization is a statement about the images an event discloses. One with
+/// no image to evaluate cannot be shown to satisfy the rule, and a record is
+/// still item-level information even when its images are absent.
+#[test]
+fn a_record_carrying_neither_image_is_withheld() {
+    let (engine, ctx, _temp) = fixture();
+    streamed_table(&engine, &ctx, "NEW_AND_OLD_IMAGES");
+    put(&engine, &ctx, "a", "1");
+    restrict_events_reads(&engine, &ctx);
+
+    let authorization = record_authorization(&engine, &ctx);
+    let real = read_events(&engine, &ctx, "events").unwrap();
+    assert!(
+        authorization.allows(&real[0]).unwrap(),
+        "the policy admits a real item, so a withheld verdict below is about the missing \
+         images and not about the policy denying everything"
+    );
+
+    let imageless = StoredEvent {
+        seq: 99,
+        created: 0,
+        event_name: "MODIFY".to_owned(),
+        keys: json!({ "pk": { "S": "a" } }).as_object().unwrap().clone(),
+        old_image: None,
+        old_image_times: None,
+        new_image: None,
+        user_identity: None,
+        committed_at: 0,
+    };
+    assert!(
+        !authorization.allows(&imageless).unwrap(),
+        "an event with no image to authorize must be withheld"
+    );
+}
+
+/// A stored event carrying an old image but no lifecycle times for it is
+/// corrupt, not old: the format writes them unconditionally. Authorizing
+/// against absent metadata would silently compare a rule to placeholders, so
+/// the read fails instead.
+#[test]
+fn an_old_image_without_lifecycle_times_is_rejected() {
+    let (engine, ctx, _temp) = fixture();
+    streamed_table(&engine, &ctx, "NEW_AND_OLD_IMAGES");
+    put(&engine, &ctx, "a", "1");
+    restrict_events_reads(&engine, &ctx);
+
+    let authorization = record_authorization(&engine, &ctx);
+    let corrupt = StoredEvent {
+        seq: 99,
+        created: 0,
+        event_name: "MODIFY".to_owned(),
+        keys: json!({ "pk": { "S": "a" } }).as_object().unwrap().clone(),
+        old_image: Some(
+            json!({ "pk": { "S": "a" }, "v": { "N": "1" } })
+                .as_object()
+                .unwrap()
+                .clone(),
+        ),
+        old_image_times: None,
+        new_image: None,
+        user_identity: None,
+        committed_at: 0,
+    };
+
+    match authorization.allows(&corrupt) {
+        Err(DynamoDbError::InternalServerError(message)) => assert!(
+            message.contains("old image without lifecycle times"),
+            "unexpected error: {message}"
+        ),
+        other => panic!("expected a corrupt-event error, got {other:?}"),
+    }
 }

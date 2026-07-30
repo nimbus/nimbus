@@ -19,7 +19,7 @@ use nimbus_tenant::TenantIsolationContext;
 use crate::attribute_value::{item_to_fields, validate_item};
 use crate::commands::item::{
     SingleItemTransactionPlan, delete_atomic_write, execute_single_item_transaction,
-    overwrite_atomic_write, primary_key_id, read_item, read_item_in_transaction,
+    overwrite_atomic_write, primary_key_id, read_item, read_old_image_in_transaction,
 };
 use crate::commands::{control_plane, stream};
 use crate::error::map_core_error;
@@ -138,7 +138,7 @@ pub fn batch_write_item(
                     let fields = item_to_fields(&put.item)?;
                     let keys = extract_key(&put.item, &key_schema);
                     execute_single_item_transaction(engine, context, |token, principal| {
-                        let old = read_item_in_transaction(
+                        let old = read_old_image_in_transaction(
                             engine,
                             context,
                             token,
@@ -174,7 +174,7 @@ pub fn batch_write_item(
                     let id = primary_key_id(&delete.key, &key_schema)?;
                     let keys = extract_key(&delete.key, &key_schema);
                     execute_single_item_transaction(engine, context, |token, principal| {
-                        let old = read_item_in_transaction(
+                        let old = read_old_image_in_transaction(
                             engine,
                             context,
                             token,

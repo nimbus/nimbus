@@ -1,11 +1,6 @@
 use nimbus_core::{
-    AccessAction, AccessRule, AccessValue, Document, Filter, PrincipalContext, Query, Result,
-    TableSchema,
+    AccessAction, AccessRule, Document, Filter, PrincipalContext, Query, Result, TableSchema,
 };
-
-/// The reserved document fields a read rule can name that are engine lifecycle
-/// metadata rather than stored fields.
-const TIMESTAMP_FIELDS: [&str; 2] = ["_creationTime", "_updateTime"];
 
 #[derive(Debug, Clone)]
 pub(crate) struct ReadAuthorization {
@@ -98,38 +93,17 @@ impl DocumentReadFilter {
         self.authorization.impossible
     }
 
-    /// Whether the rule's decision can depend on `_creationTime` or
-    /// `_updateTime`.
-    ///
-    /// These are engine lifecycle metadata, not stored fields. A caller
-    /// reconstructing documents from data that does not carry them cannot
-    /// evaluate such a rule faithfully, and should withhold the document rather
-    /// than authorize it against a guessed timestamp.
-    #[must_use]
-    pub fn depends_on_document_timestamps(&self) -> bool {
-        let Some(rule) = &self.authorization.rule else {
-            return false;
-        };
-        rule.predicates.iter().any(|predicate| {
-            names_timestamp_field(&predicate.left) || names_timestamp_field(&predicate.right)
-        })
-    }
-
     /// Whether `document` is readable by the principal this filter resolved for.
+    ///
+    /// The document is evaluated exactly as a scan would evaluate one it read,
+    /// including the `_creationTime` and `_updateTime` lifecycle metadata a rule
+    /// may name — so a caller assembling documents itself owes this method the
+    /// real lifecycle times, not placeholders.
     ///
     /// # Errors
     /// Propagates a rule evaluation error, such as an unorderable comparison.
     pub fn allows(&self, document: &Document) -> Result<bool> {
         self.authorization
             .allows_document(&self.principal, document)
-    }
-}
-
-fn names_timestamp_field(value: &AccessValue) -> bool {
-    match value {
-        AccessValue::DocumentField { field } | AccessValue::ExistingDocumentField { field } => {
-            TIMESTAMP_FIELDS.contains(&field.as_str())
-        }
-        AccessValue::Literal { .. } | AccessValue::PrincipalClaim { .. } => false,
     }
 }
