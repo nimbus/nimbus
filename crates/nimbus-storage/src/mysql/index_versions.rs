@@ -2,15 +2,11 @@ use super::document_versions::get_document_version_at_from_session;
 use super::*;
 use crate::diagnostics::IndexVersionStorageDiagnostic;
 use crate::index::encoded_index_tuple_for_document;
-use crate::index::history_scan::{
-    HistoricalIndexDocumentEntry, HistoricalIndexPageRequest, HistoricalIndexScanPlan,
-    finish_historical_index_page,
-};
-use crate::store::HistoricalIndexDocumentPage;
+use crate::index::history_scan::HistoricalIndexDocumentEntry;
+use crate::sql::index_history::{SqlHistoricalIndexStore, sql_historical_index_facade};
 use crate::{
     CURRENT_INDEX_VERSION_STORAGE_FORMAT, INDEX_VERSION_STORAGE_FORMAT_METADATA_KEY,
-    IndexRangeBound, StorageFormatVersion, storage_format_version_from_u64,
-    validate_index_version_storage_format,
+    StorageFormatVersion, storage_format_version_from_u64, validate_index_version_storage_format,
 };
 
 #[cfg(test)]
@@ -39,206 +35,6 @@ impl MySqlTenantStore {
         })
     }
 
-    pub fn historical_index_scan_eq_cancellable(
-        &self,
-        read_shape: &HistoricalReadShape,
-        index_name: &str,
-        value: &Value,
-        check_cancel: &mut dyn FnMut() -> Result<()>,
-    ) -> Result<Vec<Document>> {
-        Ok(self
-            .historical_index_scan_eq_page_cancellable(
-                read_shape,
-                index_name,
-                value,
-                None,
-                usize::MAX,
-                check_cancel,
-            )?
-            .documents)
-    }
-
-    pub fn historical_index_scan_eq_page_cancellable(
-        &self,
-        read_shape: &HistoricalReadShape,
-        index_name: &str,
-        value: &Value,
-        after: Option<&HistoricalIndexCursor>,
-        limit: usize,
-        check_cancel: &mut dyn FnMut() -> Result<()>,
-    ) -> Result<HistoricalIndexDocumentPage> {
-        let plan = HistoricalIndexScanPlan::equal(read_shape, index_name, value)?;
-        self.historical_index_scan_page_for_plan(
-            read_shape,
-            &plan,
-            HistoricalIndexPageRequest {
-                after,
-                limit,
-                check_cancel,
-            },
-        )
-    }
-
-    pub fn historical_index_scan_prefix_cancellable(
-        &self,
-        read_shape: &HistoricalReadShape,
-        index_name: &str,
-        prefix_values: &[Value],
-        check_cancel: &mut dyn FnMut() -> Result<()>,
-    ) -> Result<Vec<Document>> {
-        Ok(self
-            .historical_index_scan_prefix_page_cancellable(
-                read_shape,
-                index_name,
-                prefix_values,
-                None,
-                usize::MAX,
-                check_cancel,
-            )?
-            .documents)
-    }
-
-    pub fn historical_index_scan_prefix_page_cancellable(
-        &self,
-        read_shape: &HistoricalReadShape,
-        index_name: &str,
-        prefix_values: &[Value],
-        after: Option<&HistoricalIndexCursor>,
-        limit: usize,
-        check_cancel: &mut dyn FnMut() -> Result<()>,
-    ) -> Result<HistoricalIndexDocumentPage> {
-        let plan = HistoricalIndexScanPlan::prefix(read_shape, index_name, prefix_values)?;
-        self.historical_index_scan_page_for_plan(
-            read_shape,
-            &plan,
-            HistoricalIndexPageRequest {
-                after,
-                limit,
-                check_cancel,
-            },
-        )
-    }
-
-    pub fn historical_index_scan_range_cancellable(
-        &self,
-        read_shape: &HistoricalReadShape,
-        index_name: &str,
-        start: IndexRangeBound<'_>,
-        end: IndexRangeBound<'_>,
-        check_cancel: &mut dyn FnMut() -> Result<()>,
-    ) -> Result<Vec<Document>> {
-        Ok(self
-            .historical_index_scan_range_page_cancellable(
-                read_shape,
-                index_name,
-                start,
-                end,
-                HistoricalIndexPageRequest {
-                    after: None,
-                    limit: usize::MAX,
-                    check_cancel,
-                },
-            )?
-            .documents)
-    }
-
-    pub(crate) fn historical_index_scan_range_page_cancellable(
-        &self,
-        read_shape: &HistoricalReadShape,
-        index_name: &str,
-        start: IndexRangeBound<'_>,
-        end: IndexRangeBound<'_>,
-        page: HistoricalIndexPageRequest<'_, '_>,
-    ) -> Result<HistoricalIndexDocumentPage> {
-        let plan = HistoricalIndexScanPlan::range(read_shape, index_name, start, end)?;
-        self.historical_index_scan_page_for_plan(read_shape, &plan, page)
-    }
-
-    pub fn historical_index_scan_composite_range_cancellable(
-        &self,
-        read_shape: &HistoricalReadShape,
-        index_name: &str,
-        exact_prefix: &[Value],
-        start: IndexRangeBound<'_>,
-        end: IndexRangeBound<'_>,
-        check_cancel: &mut dyn FnMut() -> Result<()>,
-    ) -> Result<Vec<Document>> {
-        Ok(self
-            .historical_index_scan_composite_range_page_cancellable(
-                read_shape,
-                index_name,
-                exact_prefix,
-                start,
-                end,
-                HistoricalIndexPageRequest {
-                    after: None,
-                    limit: usize::MAX,
-                    check_cancel,
-                },
-            )?
-            .documents)
-    }
-
-    pub(crate) fn historical_index_scan_composite_range_page_cancellable(
-        &self,
-        read_shape: &HistoricalReadShape,
-        index_name: &str,
-        exact_prefix: &[Value],
-        start: IndexRangeBound<'_>,
-        end: IndexRangeBound<'_>,
-        page: HistoricalIndexPageRequest<'_, '_>,
-    ) -> Result<HistoricalIndexDocumentPage> {
-        let plan = HistoricalIndexScanPlan::composite_range(
-            read_shape,
-            index_name,
-            exact_prefix,
-            start,
-            end,
-        )?;
-        self.historical_index_scan_page_for_plan(read_shape, &plan, page)
-    }
-
-    fn historical_index_scan_page_for_plan(
-        &self,
-        read_shape: &HistoricalReadShape,
-        plan: &HistoricalIndexScanPlan,
-        page: HistoricalIndexPageRequest<'_, '_>,
-    ) -> Result<HistoricalIndexDocumentPage> {
-        let HistoricalIndexPageRequest {
-            after,
-            limit,
-            check_cancel,
-        } = page;
-        plan.validate_page_request(read_shape, after, limit)?;
-        if plan.empty {
-            return finish_historical_index_page(read_shape, plan, after, limit, Vec::new());
-        }
-        let provider = self.provider.clone();
-        let database_name = self.database_name.clone();
-        let read_shape_for_query = read_shape.clone();
-        let index_for_query = plan.index.clone();
-        let match_prefix = plan.match_prefix.clone();
-        let start_key = plan.start_key.clone();
-        let end_key = plan.end_key.clone();
-        let entries = self.block_on(async move {
-            let mut conn = provider.conn().await?;
-            visible_historical_index_entries_for_tuple_bounds(
-                &mut conn,
-                &database_name,
-                &read_shape_for_query,
-                &index_for_query,
-                &match_prefix,
-                start_key.as_deref(),
-                end_key.as_deref(),
-            )
-            .await
-        })?;
-        for _ in &entries {
-            check_cancel()?;
-        }
-        finish_historical_index_page(read_shape, plan, after, limit, entries)
-    }
-
     #[cfg(test)]
     pub(crate) fn index_version_intervals_for_testing(
         &self,
@@ -256,6 +52,43 @@ impl MySqlTenantStore {
         })
     }
 }
+
+// The historical index-scan family is pure plan-then-page orchestration and
+// lives once in `crate::sql::index_history`; only the entry load below is
+// dialect-specific.
+impl SqlHistoricalIndexStore for MySqlTenantStore {
+    fn visible_historical_index_entries(
+        &self,
+        read_shape: &HistoricalReadShape,
+        index: &IndexDefinition,
+        match_prefix: &[u8],
+        start_key: Option<&[u8]>,
+        end_key: Option<&[u8]>,
+    ) -> Result<Vec<HistoricalIndexDocumentEntry>> {
+        let provider = self.provider.clone();
+        let database_name = self.database_name.clone();
+        let read_shape_for_query = read_shape.clone();
+        let index_for_query = index.clone();
+        let match_prefix = match_prefix.to_vec();
+        let start_key = start_key.map(<[u8]>::to_vec);
+        let end_key = end_key.map(<[u8]>::to_vec);
+        self.block_on(async move {
+            let mut conn = provider.conn().await?;
+            visible_historical_index_entries_for_tuple_bounds(
+                &mut conn,
+                &database_name,
+                &read_shape_for_query,
+                &index_for_query,
+                &match_prefix,
+                start_key.as_deref(),
+                end_key.as_deref(),
+            )
+            .await
+        })
+    }
+}
+
+sql_historical_index_facade!(MySqlTenantStore);
 
 async fn visible_historical_index_entries_for_tuple_bounds<C>(
     session: &mut C,

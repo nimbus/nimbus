@@ -5,53 +5,14 @@ use nimbus_core::{
 };
 
 use super::*;
-use crate::CommitterLeaseResult;
 
-// Trigger-invocation persistence stays provider-owned because row encoding,
-// upsert semantics, and session usage are backend-specific. The shared seam is
-// the engine-level trigger contract, not a synthetic cross-database SQL helper.
+// Trigger-invocation row encoding, upsert syntax, and session usage are
+// backend-specific and stay here. The store-level wrappers that were pure
+// `execute_write` + committer-lease fencing now live once in
+// `crate::sql::store_core` and reach this module through
+// `SqlWriteTransactionCore`. The reads below keep their own bodies: each
+// acquires a fresh read connection from its own provider type.
 impl MySqlTenantStore {
-    pub fn materialize_trigger_invocations(
-        &self,
-        records: &[TriggerInvocationRecord],
-        cursor: TriggerDeliveryCursor,
-    ) -> Result<()> {
-        let records = records.to_vec();
-        self.execute_write(move |transaction| {
-            transaction.materialize_trigger_invocations(records.as_slice(), cursor)
-        })?;
-        Ok(())
-    }
-
-    pub fn fenced_materialize_trigger_invocations(
-        &self,
-        owner_id: &str,
-        epoch: u64,
-        expected_previous: SequenceNumber,
-        records: &[TriggerInvocationRecord],
-        cursor: TriggerDeliveryCursor,
-    ) -> CommitterLeaseResult<()> {
-        let owner_id = owner_id.to_string();
-        let fenced_owner_id = owner_id.clone();
-        let records = records.to_vec();
-        let durable_sequence = SequenceNumber(expected_previous.0.saturating_add(1));
-        let result = self.execute_write(move |transaction| {
-            if transaction.advance_fenced_committer_lease(
-                &owner_id,
-                epoch,
-                expected_previous,
-                durable_sequence,
-            )? != 1
-            {
-                return Err(Error::PreconditionFailed(
-                    crate::sql::store_core::FENCED_COMMITTER_LEASE_MARKER.to_string(),
-                ));
-            }
-            transaction.materialize_trigger_invocations(records.as_slice(), cursor)
-        });
-        crate::sql::store_core::map_fenced_write_result(result.map(|_| ()), fenced_owner_id, epoch)
-    }
-
     pub fn list_trigger_invocations(&self) -> Result<Vec<TriggerInvocationRecord>> {
         let provider = self.provider.clone();
         let database_name = self.database_name.clone();
@@ -72,38 +33,6 @@ impl MySqlTenantStore {
             let mut conn = provider.conn().await?;
             load_trigger_invocation_from_session(&mut conn, &database_name, &key).await
         })
-    }
-
-    pub fn save_trigger_invocation(&self, record: &TriggerInvocationRecord) -> Result<()> {
-        let record = record.clone();
-        self.execute_write(move |transaction| transaction.save_trigger_invocation(&record))?;
-        Ok(())
-    }
-
-    pub fn fenced_save_trigger_invocation(
-        &self,
-        owner_id: &str,
-        epoch: u64,
-        expected_durable_sequence: SequenceNumber,
-        record: &TriggerInvocationRecord,
-    ) -> CommitterLeaseResult<()> {
-        let owner_id = owner_id.to_string();
-        let fenced_owner_id = owner_id.clone();
-        let record = record.clone();
-        let result = self.execute_write(move |transaction| {
-            if transaction.validate_fenced_committer_lease(
-                &owner_id,
-                epoch,
-                expected_durable_sequence,
-            )? != 1
-            {
-                return Err(Error::PreconditionFailed(
-                    crate::sql::store_core::FENCED_COMMITTER_LEASE_MARKER.to_string(),
-                ));
-            }
-            transaction.save_trigger_invocation(&record)
-        });
-        crate::sql::store_core::map_fenced_write_result(result.map(|_| ()), fenced_owner_id, epoch)
     }
 }
 

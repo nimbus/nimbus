@@ -315,50 +315,6 @@ impl MySqlWriteTransaction {
     }
 }
 
-impl MySqlReadSnapshot {
-    pub fn scan_resource_path_bindings(&self) -> Result<Vec<ResourcePathBinding>> {
-        let mut bindings = self.resource_path_bindings.clone();
-        bindings.sort_by_key(|binding| document_path_key(&binding.document_path));
-        Ok(bindings)
-    }
-
-    pub fn resource_path_binding(
-        &self,
-        locator: &DocumentLocator,
-    ) -> Result<Option<ResourcePathBinding>> {
-        Ok(self
-            .resource_path_bindings
-            .iter()
-            .find(|binding| &binding.locator == locator)
-            .cloned())
-    }
-
-    pub fn locator_for_document_path(
-        &self,
-        document_path: &DocumentPath,
-    ) -> Result<Option<DocumentLocator>> {
-        Ok(self
-            .resource_path_bindings
-            .iter()
-            .find(|binding| &binding.document_path == document_path)
-            .map(|binding| binding.locator.clone()))
-    }
-
-    pub fn scan_collection_group_bindings(
-        &self,
-        collection_group: &CollectionName,
-    ) -> Result<Vec<ResourcePathBinding>> {
-        let mut bindings = self
-            .resource_path_bindings
-            .iter()
-            .filter(|binding| binding.collection_group() == collection_group)
-            .cloned()
-            .collect::<Vec<_>>();
-        bindings.sort_by_key(|binding| document_path_key(&binding.document_path));
-        Ok(bindings)
-    }
-}
-
 pub(super) async fn load_resource_path_bindings_from_session<C>(
     session: &mut C,
     database_name: &str,

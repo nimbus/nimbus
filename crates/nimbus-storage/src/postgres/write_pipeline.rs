@@ -2,8 +2,8 @@ use super::backend::{
     apply_durable_record_in_session, encode_u64, i64_from_sequence, map_postgres_error,
 };
 use super::config::qualified_table;
-use super::write_schema_events::durable_record_changes_schema_cache;
 use super::*;
+use crate::sql::schema_events::durable_record_changes_schema_cache;
 
 impl PostgresWriteTransaction {
     pub fn append_durable_records_batch(&mut self, records: &[TenantEventRecord]) -> Result<()> {

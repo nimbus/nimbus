@@ -8,13 +8,12 @@ use mysql_async::{
     Conn, Opts, OptsBuilder, Params, Pool, PoolConstraints, Row, Value as MySqlValue,
 };
 use nimbus_core::{
-    CommitEntry, CronJob, Document, DocumentId, Error, FieldType, Filter, HistoricalIndexCursor,
-    HistoricalIndexTuple, HistoricalReadShape, IdSource, IndexDefinition, IndexLifecycleEvent,
-    ResourcePathBinding, Result, ScheduledJob, ScheduledJobResult, Schema, SchemaChangeEvent,
-    SequenceNumber, StorageErrorKind, SystemIdSource, SystemWallClock, TableId,
-    TableLifecycleEvent, TableName, TableSchema, TableState, TenantEventKind, TenantEventRecord,
-    TenantId, Timestamp, TriggerDeliveryCursor, TriggerWriteOrigin, WallClock, WriteOp,
-    WriteOpType,
+    CommitEntry, CronJob, Document, DocumentId, Error, FieldType, Filter, HistoricalIndexTuple,
+    HistoricalReadShape, IdSource, IndexDefinition, ResourcePathBinding, Result, ScheduledJob,
+    ScheduledJobResult, Schema, SchemaChangeEvent, SequenceNumber, StorageErrorKind,
+    SystemIdSource, SystemWallClock, TableId, TableLifecycleEvent, TableName, TableSchema,
+    TableState, TenantEventKind, TenantEventRecord, TenantId, Timestamp, TriggerDeliveryCursor,
+    TriggerWriteOrigin, WallClock, WriteOp, WriteOpType,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -47,7 +46,6 @@ mod trigger_delivery;
 mod trigger_invocations;
 mod write;
 mod write_pipeline;
-mod write_schema_events;
 
 use self::backend::*;
 use self::query_helpers::*;
@@ -63,8 +61,6 @@ const MYSQL_MAX_INDEX_KEY_BYTES: usize = 3072;
 const MYSQL_INDEX_KEY_BYTES_PER_CHAR: usize = 4;
 const APPLIED_SEQUENCE_KEY: &str = "applied_sequence";
 const TRIGGER_DELIVERY_CURSOR_KEY: &str = "trigger_delivery_cursor";
-const MATERIALIZED_JOURNAL_SNAPSHOT_VERSION: u16 =
-    crate::store::MATERIALIZED_JOURNAL_SNAPSHOT_VERSION;
 const MYSQL_INDEX_KEY_VALUE_LEN: usize = 191;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -127,16 +123,10 @@ pub struct MySqlTenantStore {
     pub(crate) retention_floor: Arc<RetentionFloor>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct MySqlReadSnapshot {
-    schema: Schema,
-    progress: JournalProgress,
-    journal_cursor_floor: SequenceNumber,
-    table_identities: Vec<crate::TableIdentitySnapshotEntry>,
-    documents: Vec<Document>,
-    resource_path_bindings: Vec<ResourcePathBinding>,
-    scheduled_execution_ids: Vec<String>,
-}
+/// MySQL's materialized read snapshot, shared with PostgreSQL. The journal
+/// cursor floor MySQL used to keep here now stays with the store; see
+/// [`crate::sql::read_snapshot`].
+pub type MySqlReadSnapshot = crate::sql::read_snapshot::SqlReadSnapshot;
 
 #[derive(Clone)]
 pub struct MySqlTenantStorage {

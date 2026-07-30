@@ -4,11 +4,11 @@ use super::document_versions::{
 use super::index_versions::{
     prune_index_versions_before_in_session, record_index_versions_for_events_in_session,
 };
-use super::write_schema_events::{
-    durable_record_changes_schema_cache, record_mysql_schema_set_events,
-};
 use super::*;
 use crate::CommitterLeaseResult;
+use crate::sql::schema_events::{
+    durable_record_changes_schema_cache, sql_record_schema_set_events,
+};
 use crate::sql::store_core::{
     SqlDurableJournalStore, SqlStoreCore, SqlWriteTransactionCore,
     sql_store_append_durable_records_batch, sql_store_apply_durable_records_batch,
@@ -182,6 +182,35 @@ impl SqlWriteTransactionCore for MySqlWriteTransaction {
             expected_previous,
             durable_sequence,
         )
+    }
+
+    fn validate_fenced_committer_lease(
+        &mut self,
+        owner_id: &str,
+        epoch: u64,
+        durable_sequence: SequenceNumber,
+    ) -> Result<u64> {
+        MySqlWriteTransaction::validate_fenced_committer_lease(
+            self,
+            owner_id,
+            epoch,
+            durable_sequence,
+        )
+    }
+
+    fn materialize_trigger_invocations(
+        &mut self,
+        records: &[nimbus_core::TriggerInvocationRecord],
+        cursor: TriggerDeliveryCursor,
+    ) -> Result<()> {
+        MySqlWriteTransaction::materialize_trigger_invocations(self, records, cursor)
+    }
+
+    fn save_trigger_invocation(
+        &mut self,
+        record: &nimbus_core::TriggerInvocationRecord,
+    ) -> Result<()> {
+        MySqlWriteTransaction::save_trigger_invocation(self, record)
     }
 
     fn replace_table_schema(&mut self, table_schema: &TableSchema) -> Result<()> {
@@ -439,7 +468,7 @@ impl MySqlWriteTransaction {
         self.upsert_table_schema(&table_schema)?;
         self.create_table_indexes(&table_schema)?;
         self.schema_cache_changed = true;
-        record_mysql_schema_set_events(self, table_id, previous, &table_schema);
+        sql_record_schema_set_events(self, table_id, previous, &table_schema);
         Ok(())
     }
 
@@ -654,63 +683,7 @@ impl MySqlWriteTransaction {
     }
 
     pub fn claim_due_jobs(&mut self, now: Timestamp, max_jobs: usize) -> Result<Vec<ScheduledJob>> {
-        self.check_cancel()?;
-        if max_jobs == 0 {
-            return Ok(Vec::new());
-        }
-        let runtime_handle = self.provider.runtime_handle.clone();
-        let database_name = self.database_name.clone();
-        let max_jobs = u64::try_from(max_jobs).unwrap_or(u64::MAX);
-        let due: Vec<ScheduledJob> = {
-            let conn = self.session()?;
-            Self::block_on(&runtime_handle, async move {
-                // MySQL claim uses `FOR UPDATE` row locks to serialize claimers;
-                // PG relies on its advisory transaction lock instead. Dialect
-                // lock mode is load-bearing — not unified with the write core, see CO6.
-                let query = format!(
-                    "SELECT data_json FROM {} WHERE run_at <= ? ORDER BY run_at, id LIMIT ? FOR UPDATE",
-                    qualified_table(&database_name, "scheduled_jobs")
-                );
-                let rows: Vec<Row> = conn
-                    .exec(query, (claim_due_jobs_upper_bound(now), max_jobs))
-                    .await
-                    .map_err(map_mysql_error)?;
-                rows.into_iter()
-                    .map(|row| {
-                        deserialize_json::<ScheduledJob>(
-                            mysql_async::from_row::<(String,)>(row).0.as_str(),
-                        )
-                    })
-                    .collect::<Result<Vec<_>>>()
-            })?
-        };
-        let delete_query = format!(
-            "DELETE FROM {} WHERE id = ?",
-            qualified_table(&self.database_name, "scheduled_jobs")
-        );
-        let insert_query = format!(
-            "INSERT INTO {} (id, data_json) VALUES (?, ?)",
-            qualified_table(&self.database_name, "running_scheduled_jobs")
-        );
-        for job in &due {
-            self.check_cancel()?;
-            let job_id = job.id.to_string();
-            let data_json = serialize_json(job)?;
-            let delete_query = delete_query.clone();
-            let insert_query = insert_query.clone();
-            let runtime_handle = self.provider.runtime_handle.clone();
-            let conn = self.session()?;
-            Self::block_on(&runtime_handle, async move {
-                conn.exec_drop(delete_query.clone(), (job_id.clone(),))
-                    .await
-                    .map_err(map_mysql_error)?;
-                conn.exec_drop(insert_query.clone(), (job_id, data_json))
-                    .await
-                    .map_err(map_mysql_error)?;
-                Ok(())
-            })?;
-        }
-        Ok(due)
+        crate::sql::scheduler_core::sql_claim_due_jobs(self, now, max_jobs)
     }
 
     pub fn complete_scheduled_job(&mut self, job_id: &DocumentId) -> Result<()> {
@@ -801,46 +774,7 @@ impl MySqlWriteTransaction {
     }
 
     pub fn recover_running_jobs(&mut self, now: Timestamp) -> Result<()> {
-        self.check_cancel()?;
-        let running_jobs = self.load_running_jobs()?;
-        let delete_query = format!(
-            "DELETE FROM {} WHERE id = ?",
-            qualified_table(&self.database_name, "running_scheduled_jobs")
-        );
-        let insert_query = format!(
-            "INSERT INTO {} (id, run_at, data_json) VALUES (?, ?, ?)",
-            qualified_table(&self.database_name, "scheduled_jobs")
-        );
-        for mut job in running_jobs {
-            self.check_cancel()?;
-            // A recovered running job was already DUE when it was claimed
-            // (claim only takes run_at <= now), so keep its original due
-            // time instead of re-stamping the recovery instant: stamping
-            // `now` artificially delays the job and — under wall-clock
-            // regression (e.g. NTP slew) between recovery and the next
-            // tick — can push it past that tick's `now`, silently
-            // deferring recovery (flaked scheduler_recovery_campaign on
-            // CI). min() keeps any older due time intact and never moves
-            // a job into the future.
-            job.run_at = job.run_at.min(now);
-            let job_id = job.id.to_string();
-            let run_at = job.run_at.0;
-            let data_json = serialize_json(&job)?;
-            let insert_query = insert_query.clone();
-            let delete_query = delete_query.clone();
-            let runtime_handle = self.provider.runtime_handle.clone();
-            let conn = self.session()?;
-            Self::block_on(&runtime_handle, async move {
-                conn.exec_drop(insert_query.clone(), (job_id.clone(), run_at, data_json))
-                    .await
-                    .map_err(map_mysql_error)?;
-                conn.exec_drop(delete_query.clone(), (job_id,))
-                    .await
-                    .map_err(map_mysql_error)?;
-                Ok(())
-            })?;
-        }
-        Ok(())
+        crate::sql::scheduler_core::sql_recover_running_jobs(self, now)
     }
 
     pub fn apply_durable_records_batch(&mut self, records: &[TenantEventRecord]) -> Result<()> {
@@ -1203,6 +1137,88 @@ impl MySqlWriteTransaction {
 
     pub(super) fn record_tenant_event(&mut self, event: TenantEventKind) {
         crate::sql::write_core::sql_record_tenant_event(self, event)
+    }
+}
+
+impl crate::sql::scheduler_core::SqlSchedulerTransaction for MySqlWriteTransaction {
+    fn select_due_jobs(&mut self, now: Timestamp, max_jobs: usize) -> Result<Vec<ScheduledJob>> {
+        let runtime_handle = self.provider.runtime_handle.clone();
+        let database_name = self.database_name.clone();
+        let max_jobs = u64::try_from(max_jobs).unwrap_or(u64::MAX);
+        let conn = self.session()?;
+        Self::block_on(&runtime_handle, async move {
+            // MySQL claim uses `FOR UPDATE` row locks to serialize claimers;
+            // PG relies on its advisory transaction lock instead. Dialect
+            // lock mode is load-bearing — not unified with the write core, see CO6.
+            let query = format!(
+                "SELECT data_json FROM {} WHERE run_at <= ? ORDER BY run_at, id LIMIT ? FOR UPDATE",
+                qualified_table(&database_name, "scheduled_jobs")
+            );
+            let rows: Vec<Row> = conn
+                .exec(query, (claim_due_jobs_upper_bound(now), max_jobs))
+                .await
+                .map_err(map_mysql_error)?;
+            rows.into_iter()
+                .map(|row| {
+                    deserialize_json::<ScheduledJob>(
+                        mysql_async::from_row::<(String,)>(row).0.as_str(),
+                    )
+                })
+                .collect::<Result<Vec<_>>>()
+        })
+    }
+
+    fn move_job_to_running(&mut self, job: &ScheduledJob) -> Result<()> {
+        let delete_query = format!(
+            "DELETE FROM {} WHERE id = ?",
+            qualified_table(&self.database_name, "scheduled_jobs")
+        );
+        let insert_query = format!(
+            "INSERT INTO {} (id, data_json) VALUES (?, ?)",
+            qualified_table(&self.database_name, "running_scheduled_jobs")
+        );
+        let job_id = job.id.to_string();
+        let data_json = serialize_json(job)?;
+        let runtime_handle = self.provider.runtime_handle.clone();
+        let conn = self.session()?;
+        Self::block_on(&runtime_handle, async move {
+            conn.exec_drop(delete_query, (job_id.clone(),))
+                .await
+                .map_err(map_mysql_error)?;
+            conn.exec_drop(insert_query, (job_id, data_json))
+                .await
+                .map_err(map_mysql_error)?;
+            Ok(())
+        })
+    }
+
+    fn load_running_jobs(&mut self) -> Result<Vec<ScheduledJob>> {
+        self.load_running_jobs()
+    }
+
+    fn move_job_to_pending(&mut self, job: &ScheduledJob) -> Result<()> {
+        let delete_query = format!(
+            "DELETE FROM {} WHERE id = ?",
+            qualified_table(&self.database_name, "running_scheduled_jobs")
+        );
+        let insert_query = format!(
+            "INSERT INTO {} (id, run_at, data_json) VALUES (?, ?, ?)",
+            qualified_table(&self.database_name, "scheduled_jobs")
+        );
+        let job_id = job.id.to_string();
+        let run_at = job.run_at.0;
+        let data_json = serialize_json(job)?;
+        let runtime_handle = self.provider.runtime_handle.clone();
+        let conn = self.session()?;
+        Self::block_on(&runtime_handle, async move {
+            conn.exec_drop(insert_query, (job_id.clone(), run_at, data_json))
+                .await
+                .map_err(map_mysql_error)?;
+            conn.exec_drop(delete_query, (job_id,))
+                .await
+                .map_err(map_mysql_error)?;
+            Ok(())
+        })
     }
 }
 

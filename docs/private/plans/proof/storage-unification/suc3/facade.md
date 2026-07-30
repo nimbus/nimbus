@@ -1069,3 +1069,313 @@ fixed with red-probed gates and full re-verification); the shipped delta
 beyond that reviewed tree is exactly those two fixes. Steps 4–5 of this lane
 will face the same outage; each will disclose it and lean on verification +
 CI lanes until an engine returns.
+
+# SUC3.1 Step 4 — Transaction-Half Twins
+
+Brief: dedupe the postgres↔mysql transaction-half twins across five named
+targets — scheduler transaction ops, table lifecycle, trigger invocations,
+document/index-version orchestration, and the `load_schema` region in `read.rs`
+— behavior-preserving, with dialect placeholders, locking, and type binding
+staying put, and libsql included only where its code is genuinely the same
+shape. Planner estimate ≈ −800.
+
+Delivered: **net −366**. Three of the five targets landed in full, one landed
+in half, and one was measured and declined. Every decline is enumerated below
+with the numbers that produced it.
+
+## What Changed
+
+Five new dialect-free modules under `crates/nimbus-storage/src/sql/`, plus two
+concepts folded into the existing `store_core` seam.
+
+| New shared module | Lines | Replaces |
+| --- | --- | --- |
+| `sql/read_snapshot.rs` | 367 | the whole-tenant read snapshot in both `read.rs` |
+| `sql/index_history.rs` | 315 | the historical index-scan family in both `index_versions.rs` |
+| `sql/predicate.rs` | 246 | filter/ordering/prefix predicates in both `query_helpers.rs` |
+| `sql/scheduler_core.rs` | 108 | the claim loop and running-job recovery in both `write.rs` |
+| `sql/schema_events.rs` | 67 | both `write_schema_events.rs` (files deleted) |
+
+| Provider file | Before | After |
+| --- | --- | --- |
+| `postgres/read.rs` | 912 | 621 |
+| `mysql/read.rs` | 948 | 636 |
+| `postgres/query_helpers.rs` | 271 | 106 |
+| `mysql/query_helpers.rs` | 357 | 194 |
+| `postgres/index_versions.rs` | 718 | 551 |
+| `mysql/index_versions.rs` | 739 | 572 |
+| `postgres/trigger_invocations.rs` | 214 | 143 |
+| `mysql/trigger_invocations.rs` | 222 | 151 |
+| `libsql/trigger_invocations.rs` | 195 | 120 |
+| `postgres/resource_paths.rs` | 443 | 399 |
+| `mysql/resource_paths.rs` | 487 | 443 |
+| `postgres/write_schema_events.rs` | 40 | deleted |
+| `mysql/write_schema_events.rs` | 40 | deleted |
+| `postgres/write.rs` | 1408 | 1423 |
+| `mysql/write.rs` | 1404 | 1420 |
+| `libsql/write.rs` | 1219 | 1248 |
+
+### (a) Scheduler transaction ops — landed, statement SQL held per-dialect
+
+`sql/scheduler_core.rs` declares `SqlSchedulerTransaction: SqlWriteBackend` with
+four statement hooks (`select_due_jobs`, `move_job_to_running`,
+`load_running_jobs`, `move_job_to_pending`) plus a defaulted no-op
+`mark_scheduler_changed`, and owns the orchestration in two free functions:
+
+- `sql_claim_due_jobs` — the batch guard, the `max_jobs == 0` short-circuit, the
+  per-job cancellation checks, and the "empty claim marks nothing changed and
+  issues no move statements" rule.
+- `sql_recover_running_jobs` — the `job.run_at = job.run_at.min(now)` rule and
+  the twelve-line comment explaining it, which had drifted into three copies.
+
+The claim **statement** stays dialect per the CO6 comment: PostgreSQL relies on
+its per-tenant advisory transaction lock and issues a plain `SELECT`; MySQL
+serializes claimers with `FOR UPDATE`. Both live inside each backend's own
+`select_due_jobs`. Timestamp binding also stays at the SQL edge — PostgreSQL
+converts fallibly through `i64_from_timestamp`, MySQL binds raw `u64`
+microseconds.
+
+libsql is **excluded here on evidence, not preference**: its scheduler methods
+have the same shape but a different borrow structure (it re-acquires the session
+inside each `block_on` future rather than holding one across the call) and its
+statements are inline literals with no qualified table names. Forcing it through
+the seam would mean rewriting its transaction plumbing, which is not
+behavior-preserving.
+
+### (c) Trigger invocations — landed, and libsql joined
+
+Two dialect hooks (`materialize_trigger_invocations`, `save_trigger_invocation`)
+were added to `SqlWriteTransactionCore` and four store-level wrappers to
+`SqlStoreCore` — the plain pair plus the fenced pair, which carry the
+lease-CAS-then-write ordering and the `FENCED_COMMITTER_LEASE_MARKER`
+precondition. Row encoding and upsert syntax stay dialect-owned
+(`ON CONFLICT ... DO UPDATE` vs `ON DUPLICATE KEY UPDATE`).
+
+This is the one target where libsql was genuinely the same shape, and it joined:
+`libsql/trigger_invocations.rs` dropped 77 lines against 2 added, with the two
+dialect hook impls landing in `libsql/write.rs`. Because
+`sql_store_core_facade!` is applied to all three stores, libsql picks up the
+shared wrappers automatically.
+
+`validate_fenced_committer_lease` was added as a **dialect method, not a
+default**: PostgreSQL reuses the advancing CAS with an unchanged sequence, and
+MySQL cannot, because a no-op `UPDATE` reports zero changed rows — it locks the
+lease row instead.
+
+### (d) Index-version orchestration — landed
+
+`sql/index_history.rs` declares `SqlHistoricalIndexStore` with **one** hook,
+`visible_historical_index_entries`, and defaults every entry point around it:
+the eq / prefix / range / composite-range families, their paged forms, and the
+single `historical_index_scan_page_for_plan` they all bottom out in. Those eight
+entry points were byte-identical between the two stores; the family reduces to
+plan-then-load-then-page, and only the load touches a database.
+
+Per-backend by design: each store's own
+`visible_historical_index_entries_for_tuple_bounds` (storage-format validation,
+tuple-bound SQL, `ToSql` boxes vs `MySqlValue` binding, row decoding). sqlite is
+out of scope; the libsql replica has no historical index-scan family at all, so
+its exclusion is natural rather than forced.
+
+`sql_historical_index_facade!` re-exposes the **six `pub`** entry points as
+inherent methods, preserving each store's public API exactly. The two
+`*_range_page_cancellable` forms are omitted: they are `pub(crate)`, the trait
+defaults reach them directly, and a grep of every caller confirmed neither has a
+caller outside the family on these two stores (the other hits are sqlite's,
+libsql's, and the memory store's own copies).
+
+**A facade-removal experiment was tried and reverted.** Deleting the 90-line
+facade and importing the trait in the two provider test modules produced 10
+dead-code errors covering the whole family plus each backend's private helpers,
+because as `pub` inherent methods they had been public API and were never dead.
+Removing the facade narrows the crate's public surface, which is outside a
+behavior-preserving dedup. The facade stands.
+
+### (e) `read.rs` — landed as the snapshot, plus the triplicated validators
+
+The `~231-line identical region` in the brief measures, on a normalized diff, as
+two runs: **150 lines** (pg 473–622 ⇄ my 196–345) and **101 lines**
+(pg 122–222 ⇄ my 95–195), totalling 251.
+
+The larger structure behind them is the read snapshot, and it moved:
+`sql/read_snapshot.rs` now owns the materialized whole-tenant image and every
+accessor over it — documents, schema, journal progress, table identities,
+resource-path bindings, scheduled execution ids. `PostgresReadSnapshot` and
+`MySqlReadSnapshot` are aliases for it. How the snapshot is *filled* stays per
+backend (PostgreSQL uses a `read_only` transaction, MySQL a `REPEATABLE READ`
+one). The resource-path accessors folded in here too, which is why both
+`resource_paths.rs` shrank by 44.
+
+`sql/predicate.rs` takes the dialect-free predicates that both `query_helpers.rs`
+carried — `matches_filters`, `compare_values`, `document_matches_exact_prefix`,
+`document_matches_range_bounds`, `index_fields_for_table_schema` — which had
+drifted only in formatting (`Ordering` imported vs spelled out, `matches!` vs
+`==`), never in behavior. It also takes the two index-scan argument validators,
+`validate_index_prefix_len` and `validate_index_range_prefix`, whose **rejection
+messages are observable** and were spelled out identically in both stores *and*
+again in the shared read snapshot — three copies of one user-visible string is
+exactly the drift this campaign exists to prevent.
+
+**The 101-line run did not move, and cannot behavior-preservingly.** It is
+entirely connection acquisition — `get`, `table_id`, `scan_table_*`,
+`load_schema` — where every line is `provider.client().await?` against
+`provider.conn().await?`, `&client` against `&mut conn`. Sharing it needs a
+session abstraction over `&Client` and `&mut Conn`, which is a driver-lifetime
+change, not a dedup. `load_schema` itself is three statements around a cache
+check; the cache publish/read pair is already shared.
+
+## Declined Targets, With Numbers
+
+### (b) `table_lifecycle` — declined, line-additive
+
+`postgres/table_lifecycle.rs` (446) and `mysql/table_lifecycle.rs` (445) have a
+byte-identical store half (lines 6–45) and a transaction half that differs only
+in session plumbing plus PostgreSQL's extra
+`self.notification.schema_changed = true;` inside `hard_delete_table_identity`.
+
+The seam it would need: 4 row hooks, 3 schema forwards, 2 defaulted markers — 9
+hooks. Removing ~100 duplicated lines per backend costs ~60 lines of hook impls
+per backend plus ~105 lines in the shared file. The store half nets ≈ −8. **Total
+≈ +17 — line-additive, for a 9-hook indirection.** Declined.
+
+### (d, document-version half) — declined, nothing to share
+
+`postgres/document_versions.rs` (376) and `mysql/document_versions.rs` (401)
+expose exactly two store methods each — `get_document_version_at` and
+`document_version_storage_diagnostic` — and both are pure connection
+acquisition wrapping an `_in_session` function. There is no shared orchestration
+to extract: everything below them is dialect SQL. The index-version half of this
+target is where the orchestration actually lived, and it landed (above).
+
+## Divergences Found And Held
+
+Behavior-preserving means these were found, documented, and **left alone**.
+
+### LOUD: `has_scheduled_work` disagrees about disabled cron jobs — a real bug
+
+PostgreSQL (`postgres/read.rs:6-16`) asks `table_has_rows_in_session(...,
+"cron_jobs")` — any row. MySQL (`mysql/read.rs:584-600`) issues
+`SELECT 1 FROM cron_jobs WHERE enabled = TRUE LIMIT 1`.
+
+Every other backend agrees with PostgreSQL: `sqlite/read.rs:815-818`,
+`libsql/read.rs:300-304`, `memory/scheduler.rs:240-244`. **MySQL is the sole
+outlier of five.**
+
+This is not cosmetic. A false `has_scheduled_work` means the tenant is never
+loaded into the scheduler (`nimbus-engine/src/engine/scheduler/coordination.rs:96-98`
+and `:205-222`). On MySQL, a tenant whose only scheduled work is a currently
+disabled cron job is invisible to the scheduler, so re-enabling that cron job
+does not wake it. Fixing this is a behavior change and belongs in its own
+change with its own test; it is recorded here, not fixed here.
+
+### Held per-dialect, with reasons
+
+- `export_durable_journal_bootstrap` — PostgreSQL tears the snapshot/floor pair,
+  MySQL captures both atomically. This is why the `journal_cursor_floor` field
+  stayed with the MySQL store rather than moving into the shared snapshot;
+  MySQL keeps its atomic pair via `read_snapshot_with_journal_floor`, and
+  PostgreSQL keeps reading the floor separately.
+- Snapshot transaction mode — PostgreSQL `read_only(true)`, MySQL not.
+- Stream-limit conversion — hard error on PostgreSQL, silent clamp on MySQL.
+- `field_type_for_table_schema` and `validate_durable_journal_stream_limit` —
+  different observable error text per dialect; documented in
+  `sql/predicate.rs`'s module doc rather than unified.
+- `durable_record_changes_schema_cache` — semantically identical private replica
+  at `sqlite/journal.rs:470`, left in place under the sqlite-untouched
+  constraint and noted in `sql/schema_events.rs`.
+- `cancel_scheduled_job` — PostgreSQL reads affected rows from `execute()`,
+  MySQL uses `exec_drop` + `conn.affected_rows()`.
+- `prune_document_versions_before_in_session` — two different algorithms;
+  MySQL additionally reads `SELECT ROW_COUNT()` separately in
+  `prune_index_versions_before_in_session`.
+- MySQL's `index_versions` primary key is on the SHA-256 hash, PostgreSQL's on
+  the raw tuple.
+- PostgreSQL hand-rolls a `row_to_document` that already exists shared in
+  `sql/row.rs` — a real duplicate, but repointing it changes decode behavior at
+  the row edge and is not this step's mandate.
+
+## LoC Delta
+
+`git diff --numstat HEAD -- crates/nimbus-storage`:
+**27 files changed, 1679 insertions(+), 2045 deletions(-)** — net **−366**.
+
+| Bucket | Lines |
+| --- | --- |
+| Duplicated provider lines deleted | −2,037 |
+| New shared modules (5 files) | +1,103 |
+| Per-provider hook impls, facade invocations, import churn | +428 |
+| Growth in existing shared files (`store_core` +129, `sql.rs` +10, `provider_impls` +9) | +148 |
+| **Net** | **−366** |
+
+The ≈ −800 estimate is not reachable behavior-preservingly, and the gap has one
+cause, already diagnosed in step 1: **deduping N lines across exactly two
+backends saves N but costs roughly 100 lines of fixed scaffolding** — trait
+declaration, facade macro, module doc, and per-backend hook impls. The
+`index_history` slice is the clearest instance: it removed 403 duplicated lines
+across the two providers and netted ≈ −18, because preserving each store's
+public API forces a facade whose size approaches the deduped body.
+
+Every target that beat that ratio landed. Every target that did not was measured
+and declined rather than shipped as a line-additive indirection. As in step 1,
+the third backend is where this pays: the trigger-invocation seam already
+absorbed libsql for +29 lines of hooks against −75 of duplication.
+
+## Verification
+
+All lanes re-run against the exact committed tree (not an earlier state), with
+the three provider fixtures live: `nimbus-external-provider-tests-{postgres,mysql,libsql}-1`,
+all `Up (healthy)`.
+
+| Lane | Result |
+| --- | --- |
+| `cargo fmt --all --check` | RC=0 |
+| `cargo check -p nimbus-storage --all-targets` | RC=0 — 0 errors, 0 warnings |
+| `cargo nextest run -p nimbus-storage` | **439 run, 439 passed**, 2 skipped (17.7s) |
+| `cargo nextest run -p nimbus-engine` | **663 run, 663 passed** (5 slow), 5 skipped (244.5s) |
+| U4 gates (`-E 'test(commit_path_ownership)'`) | **2 run, 2 passed**, 439 skipped |
+| PPSC libsql soak, 10× (`-E 'test(libsql_ppsc)'`) | **pass=10 fail=0**, each 2 run / 2 passed |
+| `cargo clippy -p nimbus-storage -p nimbus-engine --all-targets -- -D warnings` | RC=0 |
+| sqlite untouched | `git diff --numstat HEAD -- 'crates/nimbus-storage/src/sqlite*'` → **0 files** |
+
+Every command run with `set -o pipefail`; each battery was redirected to a log
+file and its status read directly rather than through a pipe. (`${PIPESTATUS[0]}`
+is bash-only and reports empty under this zsh shell — it produced blank RC
+echoes earlier in this step until the pattern changed.)
+
+**The U4 pins did not move.** `JOURNAL_OWNERS` needed no edit: the diff of
+`crates/nimbus-storage/src/tests/commit_path_ownership.rs` against HEAD is
+empty, and both gate tests pass unchanged. No pinned owner file moved in this
+step.
+
+Clippy's only two `^warning` lines are third-party — `brotli-decompressor` (3)
+and `brotli` (16). Nothing in workspace code warns.
+
+### A fixture-pollution failure, diagnosed and not papered over
+
+The first engine run reported 4 failures — three in
+`postgres_provider::lease_lifecycle` (`lease_renewal_ignores_backward_wall_clock_step`,
+`lease_renewal_ignores_forward_wall_clock_step`,
+`lease_renewal_shutdown_interrupts_monotonic_wait`) and
+`ordered_arm::hot_tenant_provider_stall_does_not_block_other_tenant` — all with
+`postgres error [SqlState(E42P06)]: schema "tenant_..." already exists`.
+
+Cause: the shared PostgreSQL fixture had accumulated **1,549 leftover
+`tenant_%` schemas** over its uptime, and the deterministic counter+hash naming
+collided. Only the 4 colliding schema names were dropped — not all 1,549, since
+other teammates may share the container. The final full engine run above is
+663/663 with no filter, which is the evidence that this was fixture state and
+not a code defect.
+
+## Step 4 — Reviewer Outage Disclosure
+
+The structured reviewer could not run for this step, as anticipated at the end
+of step 3. The Codex engine remains in account credit exhaustion (usage limit,
+resets 2026-08-04) and the Claude engine still fails on this host with the
+reviewer-sandbox proxy-CA trust error. Per the review-outage policy this is an
+outage, not a verdict.
+
+The verification bar above therefore stands in for it, and this step was scoped
+defensively in consequence: no behavior was changed anywhere, the one real
+cross-dialect bug found (`has_scheduled_work`) was documented rather than fixed,
+and three targets were declined with published numbers rather than shipped on
+judgment that no second reader could check.

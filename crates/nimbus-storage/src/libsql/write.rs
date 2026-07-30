@@ -227,6 +227,35 @@ impl SqlWriteTransactionCore for LibsqlReplicaWriteTransaction {
         )
     }
 
+    fn validate_fenced_committer_lease(
+        &mut self,
+        owner_id: &str,
+        epoch: u64,
+        durable_sequence: SequenceNumber,
+    ) -> Result<u64> {
+        LibsqlReplicaWriteTransaction::validate_fenced_committer_lease(
+            self,
+            owner_id,
+            epoch,
+            durable_sequence,
+        )
+    }
+
+    fn materialize_trigger_invocations(
+        &mut self,
+        records: &[nimbus_core::TriggerInvocationRecord],
+        cursor: nimbus_core::TriggerDeliveryCursor,
+    ) -> Result<()> {
+        LibsqlReplicaWriteTransaction::materialize_trigger_invocations(self, records, cursor)
+    }
+
+    fn save_trigger_invocation(
+        &mut self,
+        record: &nimbus_core::TriggerInvocationRecord,
+    ) -> Result<()> {
+        LibsqlReplicaWriteTransaction::save_trigger_invocation(self, record)
+    }
+
     fn replace_table_schema(&mut self, table_schema: &TableSchema) -> Result<()> {
         LibsqlReplicaWriteTransaction::replace_table_schema(self, table_schema)
     }
