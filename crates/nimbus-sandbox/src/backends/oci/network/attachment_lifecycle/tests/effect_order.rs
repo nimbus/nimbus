@@ -10,6 +10,7 @@ use crate::backends::oci::network::attachment_lifecycle::recovery::AttachmentPro
 use crate::backends::oci::network::dto::NetavarkProviderOperation;
 use crate::backends::oci::network::netavark::{
     PreparedNetavarkSetup, PreparedNetavarkTeardown,
+    execute_prepared_container_network_setup_for_test,
     execute_prepared_container_network_teardown_for_test, prepare_container_network_setup,
     prepare_container_network_teardown,
 };
@@ -92,16 +93,7 @@ impl AttachmentHostEffects for AttemptBeforeEffectHost {
         context: &OciAttachmentContext<'_>,
         prepared: PreparedNetavarkSetup,
     ) -> Result<Vec<std::net::Ipv4Addr>> {
-        let assigned_ips = prepared.assigned_ips().to_vec();
-        begin_netavark_setup_execution(
-            ipam,
-            context.layout,
-            context.config,
-            context.sandbox_id,
-            prepared.claim(),
-        )?;
-        complete_netavark_setup(ipam, context.layout, prepared.claim())?;
-        Ok(assigned_ips)
+        execute_prepared_container_network_setup_for_test(ipam, &context.operation(), prepared)
     }
 
     fn teardown_provider(

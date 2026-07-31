@@ -49,9 +49,9 @@ use crate::backends::oci::egress::{
 use crate::backends::oci::materializer::{OciImageMaterializer, PreparedMaterializedImageLaunch};
 use crate::backends::oci::network::{
     AttachmentAttachAuthority, MachinePortPreparationReleaseAuthority,
-    MachinePortProxyLifetimeRegistry, OciIpamAuthority, OciNetworkLayout, OciNetworkProcess,
-    OciSegmentAllocator, default_network_attachment_id, expose_machine_ports,
-    pin_netns_egress_to_own_proxy,
+    MachinePortProxyLifetimeRegistry, OciAttachmentReadinessState, OciEgressPinProvider,
+    OciIpamAuthority, OciNetworkLayout, OciNetworkProcess, OciSegmentAllocator,
+    default_network_attachment_id, expose_machine_ports,
 };
 #[cfg(test)]
 use crate::backends::oci::network::{
@@ -90,6 +90,7 @@ pub struct ContainerSandboxBackend {
     ipam_authority: OciIpamAuthority,
     port_lease_coordinator: OciPortLeaseCoordinator,
     egress_proxies: EgressProxyRegistry,
+    egress_pin_provider: Arc<dyn OciEgressPinProvider>,
     netavark_port_lifetimes: NetavarkPortLifetimeRegistry,
     machine_port_proxies: MachinePortProxyLifetimeRegistry,
     _network_process: Option<Arc<OciNetworkProcess>>,
@@ -1130,6 +1131,7 @@ impl ContainerSandboxBackend {
             },
         )?;
         self.require_authenticated_egress_readiness(manifest)?;
+        self.require_complete_host_managed_attachment_readiness(manifest)?;
         let runtime_state = self.spawn_creator_and_wait_for_runtime(manifest)?;
         if runtime_state != "running" {
             run_status_checked(&manifest.conmon_launch.start_command)?;
@@ -1195,7 +1197,13 @@ impl ContainerSandboxBackend {
                     self.ensure_egress_proxy_running(manifest)?;
                     readiness = self.authenticated_egress_readiness(manifest)?;
                 }
-                if readiness.is_ready() {
+                let network_ready = if manifest.runner_config.machine_port_forwarder.is_some() {
+                    readiness.is_ready()
+                } else {
+                    self.host_managed_attachment_readiness(manifest, readiness)?
+                        .is_ready()
+                };
+                if network_ready {
                     Ok(application_status)
                 } else {
                     Ok(SandboxStatus::NotReady)
@@ -1283,7 +1291,8 @@ impl ContainerSandboxBackend {
             // sandbox-specific PEP fence and machine publication adapters
             // at this composition boundary.
             if let Some(proxy) = manifest.egress_proxy.as_ref() {
-                pin_netns_egress_to_own_proxy(&manifest.network_layout, proxy)?;
+                self.egress_pin_provider
+                    .apply(&manifest.network_layout, proxy)?;
             }
             if let Some(forwarder) = runner_config.machine_port_forwarder.as_ref() {
                 self.ensure_machine_port_proxies_running_with_publication(
@@ -1360,6 +1369,47 @@ impl ContainerSandboxBackend {
                 message: format!(
                     "container sandbox {} denied launch: egress PEP dependency is not ready: \
                      {reason:?}",
+                    manifest.handle.id
+                ),
+            }),
+        }
+    }
+
+    fn host_managed_attachment_readiness(
+        &self,
+        manifest: &ContainerSandboxManifest,
+        pep: EgressReadinessState,
+    ) -> Result<OciAttachmentReadinessState> {
+        let network_config = manifest.require_network_config()?;
+        let ports = self.port_lease_coordinator_for_manifest(manifest)?;
+        let hostname = hostname_for(&manifest.spec);
+        Ok(self
+            .attachment_adapter(manifest, network_config, &hostname, None)
+            .inspect_host_managed_readiness(
+                &self.attachment_lifecycle(&ports),
+                self.egress_pin_provider.as_ref(),
+                manifest.egress_proxy.as_ref(),
+                pep,
+            ))
+    }
+
+    fn require_complete_host_managed_attachment_readiness(
+        &self,
+        manifest: &ContainerSandboxManifest,
+    ) -> Result<()> {
+        if manifest.runner_config.machine_port_forwarder.is_some() {
+            return Ok(());
+        }
+        let state = self.host_managed_attachment_readiness(
+            manifest,
+            self.authenticated_egress_readiness(manifest)?,
+        )?;
+        match state {
+            OciAttachmentReadinessState::Ready(_) => Ok(()),
+            OciAttachmentReadinessState::NotReady(reason) => Err(SandboxError::OperationFailed {
+                message: format!(
+                    "container sandbox {} denied launch: complete network attachment is not \
+                         ready: {reason:?}",
                     manifest.handle.id
                 ),
             }),

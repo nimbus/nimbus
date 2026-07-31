@@ -46,7 +46,6 @@ pub(in crate::backends::oci::network) struct NetavarkSetupClaim {
 }
 
 impl NetavarkSetupClaim {
-    #[cfg(test)]
     pub(in crate::backends::oci::network) fn operation_attempt(&self) -> &NetworkProviderHandle {
         &self.operation_attempt
     }

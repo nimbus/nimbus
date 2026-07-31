@@ -79,6 +79,22 @@ impl OciPortBindLifetimeBatch {
     pub(crate) fn lifetimes(&self) -> &[PortLeaseLifetimeGuard] {
         &self.lifetimes
     }
+
+    pub(crate) fn from_reclaimed(
+        claims: Vec<PortBindClaim>,
+        lifetimes: Vec<PortLeaseLifetimeGuard>,
+    ) -> Result<Self> {
+        if claims.len() != lifetimes.len() {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "cannot retain {} reclaimed provider lifetimes with {} adoption claims",
+                    lifetimes.len(),
+                    claims.len()
+                ),
+            });
+        }
+        Ok(Self { claims, lifetimes })
+    }
 }
 
 impl ReservedPortLeaseBatch {
@@ -1449,7 +1465,7 @@ pub(crate) fn inspect_exact(
     Ok(record)
 }
 
-fn port_lease_error(error: impl std::fmt::Display) -> SandboxError {
+pub(crate) fn port_lease_error(error: impl std::fmt::Display) -> SandboxError {
     SandboxError::OperationFailed {
         message: format!("sandbox port lease authority rejected the operation: {error}"),
     }

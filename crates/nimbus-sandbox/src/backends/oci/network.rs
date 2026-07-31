@@ -27,13 +27,20 @@ mod startup_reconciliation;
 #[cfg(test)]
 mod test_support;
 
+#[cfg(test)]
+pub(crate) use attachment_lifecycle::OciAttachmentReadinessFailure;
 pub(crate) use attachment_lifecycle::{
     AttachmentAttachAuthority, AttachmentAuxiliaryDisposition, AttachmentBackendKind,
     AttachmentDetachFailure, AttachmentDetachFailureStage, AttachmentTeardownMode,
     OciAttachmentAdapter, OciAttachmentAuxiliaryListener, OciAttachmentInput,
-    OciAttachmentLifecycle, OciHostManagedAttachmentBackend, OciMachineForwardedAttachmentBackend,
+    OciAttachmentLifecycle, OciAttachmentReadinessState, OciHostManagedAttachmentBackend,
+    OciMachineForwardedAttachmentBackend,
 };
-pub(crate) use egress_pin::pin_netns_egress_to_own_proxy;
+#[cfg(test)]
+pub(crate) use egress_pin::FixedOciEgressPinProvider;
+pub(crate) use egress_pin::{
+    OciEgressPinObservation, OciEgressPinProvider, RealOciEgressPinProvider,
+};
 pub(crate) use finality::{TerminalNetworkAuthoritySet, TerminalNetworkFinalityEvidence};
 pub use forwarding::{
     MachinePortForwardOutcome, MachinePortForwardReceipt, OciMachinePortForwarderConfig,

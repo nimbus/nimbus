@@ -125,9 +125,11 @@ requireContains(
   "prepared: PreparedNetavarkTeardown",
 );
 requireOrdered("shared attachment setup", source.lifecycle, [
-  "let association = self.authenticate_attach_authority",
+  "let association = authority::authenticate_attach_association",
+  "let existing_record = durable.inspect()?",
+  "let provider_observation = host.inspect_provider",
+  "self.authenticate_attach_port_authority",
   "let durable_record = durable.reserve()?",
-  "host.inspect_provider",
   "host.prepare_provider_setup",
   "host.create_namespace",
   "claim_netavark_bindings_with_lifetimes",

@@ -112,11 +112,12 @@ fn execute_launch_permits_when_netns_installed_and_pep_ready() {
         .expect("all preconditions satisfied must permit the launch");
 }
 
-/// NNC0.6 fail-before baseline for NNCF6. This captures the exact unsafe
-/// boundary after the persistent namespace path exists but before Netavark has
-/// emitted status and before an attachment phase can prove the egress pin.
+/// NNC0.6 regression for NNCF6. This captures the exact unsafe boundary after
+/// the persistent namespace path exists but before Netavark has emitted status
+/// and before an attachment phase can prove the egress pin. It consumes the
+/// platform-independent half of the production complete-readiness gate so the
+/// same proof runs on Linux and non-Linux hosts.
 #[test]
-#[ignore = "NNC0.6 expected red until NNC5.2 requires complete attachment evidence"]
 fn nnc0_6_krun_rejects_netns_path_without_complete_attachment_evidence() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::under_root(
@@ -150,11 +151,7 @@ fn nnc0_6_krun_rejects_netns_path_without_complete_attachment_evidence() {
         )
         .expect("ready PEP isolates the missing attachment-evidence condition");
 
-    let readiness = backend.ensure_execute_egress_preconditions(
-        &manifest.spec.tenant_id,
-        &manifest.handle.id,
-        &manifest.network_layout.netns_path,
-    );
+    let readiness = backend.ensure_complete_host_managed_attachment_readiness_for_test(&manifest);
 
     assert!(
         readiness.is_err(),

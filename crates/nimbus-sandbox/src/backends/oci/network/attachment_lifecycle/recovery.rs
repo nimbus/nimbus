@@ -6,7 +6,7 @@ use nimbus_network::{
     DurableNetworkAttachmentState, NetworkResourcePhase, NetworkTransitionEvidence,
 };
 
-use super::super::dto::NetavarkProviderOperation;
+use super::super::dto::{NetavarkProviderOperation, NetavarkStatusProjection};
 use super::super::ipam::{
     ContainerIpamAuthorityState, inspect_container_ipam_authority,
     inspect_netavark_provider_operation, load_container_ips_for_segment_if_present,
@@ -108,30 +108,16 @@ pub(super) fn inspect_provider(
     ipam: &OciIpamAuthority,
     context: &OciAttachmentContext<'_>,
 ) -> AttachmentProviderObservation {
-    let namespace_present = match std::fs::symlink_metadata(&context.layout.netns_path) {
-        Ok(_) => true,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
-        Err(error) => {
-            return AttachmentProviderObservation::Unknown {
-                reason: format!(
-                    "cannot inspect namespace {}: {error}",
-                    context.layout.netns_path.display()
-                ),
-            };
-        }
+    let namespace_present = match inspect_regular_artifact(&context.layout.netns_path, "namespace")
+    {
+        Ok(present) => present,
+        Err(reason) => return AttachmentProviderObservation::Unknown { reason },
     };
-    let status_present = match std::fs::symlink_metadata(&context.layout.status_path) {
-        Ok(_) => true,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
-        Err(error) => {
-            return AttachmentProviderObservation::Unknown {
-                reason: format!(
-                    "cannot inspect provider status {}: {error}",
-                    context.layout.status_path.display()
-                ),
-            };
-        }
-    };
+    let status_projection =
+        match inspect_json_artifact(&context.layout.status_path, "provider status") {
+            Ok(projection) => projection,
+            Err(reason) => return AttachmentProviderObservation::Unknown { reason },
+        };
     let ipam_state = match inspect_container_ipam_authority(
         ipam,
         context.layout,
@@ -147,9 +133,10 @@ pub(super) fn inspect_provider(
     };
     match ipam_state {
         ContainerIpamAuthorityState::Absent | ContainerIpamAuthorityState::Released => {
-            if namespace_present {
+            if namespace_present || status_projection.is_some() {
                 AttachmentProviderObservation::Unknown {
-                    reason: "namespace exists without live exact IPAM authority".to_owned(),
+                    reason: "namespace or provider status exists without live exact IPAM authority"
+                        .to_owned(),
                 }
             } else {
                 AttachmentProviderObservation::Absent
@@ -170,16 +157,24 @@ pub(super) fn inspect_provider(
                 }
             };
             match operation {
-                NetavarkProviderOperation::Ready { .. } if namespace_present => {
+                NetavarkProviderOperation::Ready { setup_attempt }
+                    if namespace_present && status_projection.is_some() =>
+                {
                     match load_container_ips_for_segment_if_present(
                         ipam,
                         context.layout,
                         context.config,
                         context.sandbox_id,
                     ) {
-                        Ok(Some(assigned_ips)) => {
-                            AttachmentProviderObservation::Present { assigned_ips }
-                        }
+                        Ok(Some(assigned_ips)) => match authenticate_status_projection(
+                            context,
+                            status_projection.as_ref().expect("guarded as present"),
+                            &setup_attempt,
+                            &assigned_ips,
+                        ) {
+                            Ok(()) => AttachmentProviderObservation::Present { assigned_ips },
+                            Err(reason) => AttachmentProviderObservation::Unknown { reason },
+                        },
                         Ok(None) => AttachmentProviderObservation::Unknown {
                             reason: "ready Netavark operation lost its exact IPAM allocation"
                                 .to_owned(),
@@ -192,7 +187,7 @@ pub(super) fn inspect_provider(
                     }
                 }
                 NetavarkProviderOperation::SetupPrepared { .. }
-                    if !namespace_present && !status_present =>
+                    if !namespace_present && status_projection.is_none() =>
                 {
                     AttachmentProviderObservation::PreparedSetup
                 }
@@ -219,6 +214,66 @@ pub(super) fn inspect_provider(
             }
         }
     }
+}
+
+fn inspect_regular_artifact(
+    path: &std::path::Path,
+    label: &str,
+) -> std::result::Result<bool, String> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_file() => Ok(true),
+        Ok(_) => Err(format!(
+            "{label} {} is not an exact regular provider artifact",
+            path.display()
+        )),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!(
+            "cannot inspect {label} {}: {error}",
+            path.display()
+        )),
+    }
+}
+
+fn inspect_json_artifact(
+    path: &std::path::Path,
+    label: &str,
+) -> std::result::Result<Option<NetavarkStatusProjection>, String> {
+    let present = inspect_regular_artifact(path, label)?;
+    if !present {
+        return Ok(None);
+    }
+    let bytes = std::fs::read(path)
+        .map_err(|error| format!("cannot read {label} {}: {error}", path.display()))?;
+    serde_json::from_slice::<NetavarkStatusProjection>(&bytes)
+        .map(Some)
+        .map_err(|error| {
+            format!(
+                "{label} {} is not an exact attempt-bound provider projection: {error}",
+                path.display()
+            )
+        })
+}
+
+fn authenticate_status_projection(
+    context: &OciAttachmentContext<'_>,
+    projection: &NetavarkStatusProjection,
+    setup_attempt: &nimbus_network::NetworkProviderHandle,
+    assigned_ips: &[Ipv4Addr],
+) -> std::result::Result<(), String> {
+    let attachment_id = super::default_network_attachment_id(context.sandbox_id);
+    if projection.schema_version != NetavarkStatusProjection::SCHEMA_VERSION
+        || &projection.tenant_id != context.tenant_id
+        || projection.attachment_id != attachment_id
+        || &projection.setup_attempt != setup_attempt
+        || projection.assigned_ips != assigned_ips
+    {
+        return Err(format!(
+            "provider status {} does not authenticate the exact current tenant, attachment, \
+             setup attempt, and assigned addresses",
+            context.layout.status_path.display()
+        ));
+    }
+    Ok(())
 }
 
 pub(super) fn prepare_attach(

@@ -1,11 +1,14 @@
 //! Fail-before coverage for PEP dependency withdrawal during live inspection.
 
 use super::support::*;
+use std::sync::Arc;
 
 use crate::backends::oci::egress::{
     PepPreAdoptionReleaseAuthority, ensure_egress_proxy_running_with_release_authority,
 };
-use crate::backends::oci::network::default_network_attachment_id;
+use crate::backends::oci::network::{
+    AttachmentAttachAuthority, FixedOciEgressPinProvider, default_network_attachment_id,
+};
 
 #[test]
 fn krun_inspect_withdraws_ready_projection_when_pep_dependency_is_absent_or_not_ready() {
@@ -16,11 +19,16 @@ fn krun_inspect_withdraws_ready_projection_when_pep_dependency_is_absent_or_not_
         .local_addr()
         .expect("published endpoint fixture should report its address")
         .port();
-    let pep_port = unused_loopback_port();
+    let pep_reservation = TcpListener::bind("127.0.0.1:0").expect("PEP port fixture should bind");
+    let pep_port = pep_reservation
+        .local_addr()
+        .expect("PEP port fixture should report its address")
+        .port();
     let mut config = KrunSandboxBackendConfig::under_root(temp_dir.path().to_path_buf());
     config.node_network_supernet = "127.0.0.0/24".to_owned();
     config.published_port_range = pep_port..=pep_port;
-    let backend = KrunSandboxBackend::new(config);
+    let pin_provider = Arc::new(FixedOciEgressPinProvider::ready());
+    let backend = KrunSandboxBackend::new(config).with_egress_pin_provider(pin_provider.clone());
     let sandbox_id = SandboxId::new("krun-pep-readiness-withdrawal");
     let spec = sample_spec_for_tenant("krun-pep-readiness-withdrawal", "live-runtime")
         .with_port_bindings([SandboxPortBinding::tcp(
@@ -45,6 +53,33 @@ fn krun_inspect_withdraws_ready_projection_when_pep_dependency_is_absent_or_not_
             &launch_claim,
         )
         .expect("fixture should adopt the exact network attachment");
+    let network_config = manifest
+        .require_network_config()
+        .expect("execute manifest should retain network config");
+    let ports = backend.port_lease_coordinator();
+    let hostname = crate::backends::krun::vm::start::hostname_for(&manifest.spec);
+    backend
+        .attachment_adapter(&manifest, network_config, &hostname)
+        .attach_with_test_host(
+            &backend.attachment_lifecycle(&ports),
+            AttachmentAttachAuthority::FreshLaunch(&launch_claim),
+            |_| {
+                backend.egress_pin_provider.apply(
+                    &manifest.network_layout,
+                    manifest
+                        .egress_proxy
+                        .as_ref()
+                        .expect("execute manifest should retain its PEP assignment"),
+                )
+            },
+        )
+        .expect("fixture should realize the complete host-managed attachment");
+    assert_eq!(
+        pin_provider.apply_count(),
+        1,
+        "complete initial attachment should apply the exact egress pin once"
+    );
+    drop(pep_reservation);
     ensure_egress_proxy_running_with_release_authority(
         &backend.egress_proxies,
         &manifest.spec.tenant_id,
@@ -82,6 +117,9 @@ fn krun_inspect_withdraws_ready_projection_when_pep_dependency_is_absent_or_not_
         readiness.is_ready() && readiness.audit_healthy(),
         "precondition: the exact registered PEP must be ready: {readiness:?}"
     );
+    backend
+        .ensure_complete_host_managed_attachment_readiness_for_test(&manifest)
+        .expect("complete evidence should reach the existing VMM-spawn boundary");
     let initially_ready = backend
         .inspect_sync(&manifest.handle.id)
         .expect("live runtime inspection should succeed")
@@ -99,6 +137,39 @@ fn krun_inspect_withdraws_ready_projection_when_pep_dependency_is_absent_or_not_
     let published_endpoint = initially_ready.published_endpoints[0].clone();
     assert_eq!(published_endpoint.name, "published-api");
     assert_eq!(published_endpoint.address.port(), endpoint_port);
+
+    let status_bytes =
+        fs::read(&manifest.network_layout.status_path).expect("exact Netavark status should read");
+    fs::remove_file(&manifest.network_layout.status_path)
+        .expect("Netavark status facet should be removable");
+    let attachment_withdrawn = backend
+        .inspect_sync(&manifest.handle.id)
+        .expect("live runtime with lost attachment evidence should inspect")
+        .expect("live runtime should remain inspectable");
+    assert_eq!(
+        attachment_withdrawn.status,
+        SandboxStatus::NotReady,
+        "losing one required attachment facet must withdraw Ready"
+    );
+    assert!(
+        attachment_withdrawn.published_endpoints.is_empty(),
+        "attachment evidence loss must withdraw every endpoint"
+    );
+    fs::write(&manifest.network_layout.status_path, status_bytes)
+        .expect("exact Netavark status facet should restore");
+    let attachment_restored = backend
+        .inspect_sync(&manifest.handle.id)
+        .expect("restored exact attachment evidence should inspect")
+        .expect("live runtime should remain inspectable");
+    assert_eq!(
+        attachment_restored.status,
+        SandboxStatus::Ready,
+        "restoring exact evidence should permit application readiness to recover"
+    );
+    assert_eq!(
+        attachment_restored.published_endpoints,
+        vec![published_endpoint.clone()]
+    );
 
     backend
         .egress_proxies
@@ -143,12 +214,4 @@ fn krun_inspect_withdraws_ready_projection_when_pep_dependency_is_absent_or_not_
     );
 
     drop(endpoint_listener);
-}
-
-fn unused_loopback_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .expect("ephemeral PEP port should bind")
-        .local_addr()
-        .expect("ephemeral PEP listener should report its address")
-        .port()
 }

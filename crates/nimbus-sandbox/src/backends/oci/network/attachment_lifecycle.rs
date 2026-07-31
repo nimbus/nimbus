@@ -9,10 +9,7 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 
 use nimbus_core::TenantId;
-use nimbus_network::{
-    LocalNetworkAttachmentAuthority, NetworkAttachmentSegmentAssociation, NetworkReservationClaim,
-    PortLeaseRequest,
-};
+use nimbus_network::{LocalNetworkAttachmentAuthority, NetworkReservationClaim, PortLeaseRequest};
 
 use super::provider_locator::OciAttachmentProviderKind;
 use super::{
@@ -79,6 +76,8 @@ impl AttachmentBackendKind {
     }
 }
 
+mod active_reconciliation;
+mod attachment_readiness;
 mod authority;
 mod host;
 mod machine_forwarded;
@@ -95,6 +94,9 @@ mod test_api;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+pub(crate) use attachment_readiness::OciAttachmentReadinessFailure;
+pub(crate) use attachment_readiness::OciAttachmentReadinessState;
 use host::{AttachmentHostEffects, RealAttachmentHostEffects};
 
 /// Explicit authority disposition for one confirmed provider detach.
@@ -249,6 +251,22 @@ impl<'a> OciAttachmentAdapter<'a> {
         after_provider_setup: impl FnOnce(&[Ipv4Addr]) -> Result<()>,
     ) -> Result<Vec<Ipv4Addr>> {
         lifecycle.attach(&self.context, authority, after_provider_setup)
+    }
+
+    pub(crate) fn inspect_host_managed_readiness(
+        &self,
+        lifecycle: &OciAttachmentLifecycle<'_>,
+        pin_provider: &dyn super::OciEgressPinProvider,
+        proxy: Option<&crate::backends::oci::egress::EgressProxyAssignment>,
+        pep: crate::backends::oci::egress::EgressReadinessState,
+    ) -> OciAttachmentReadinessState {
+        attachment_readiness::inspect_host_managed_readiness(
+            lifecycle,
+            &self.context,
+            pin_provider,
+            proxy,
+            pep,
+        )
     }
 
     pub(crate) fn detach_host_managed(
@@ -631,16 +649,29 @@ impl<'a> OciAttachmentLifecycle<'a> {
             context.leases,
         )?;
         observer.checkpoint(AttachmentAttachPhase::LeasesAuthenticated)?;
-        let association = self.authenticate_attach_authority(context, authority)?;
-        observer.checkpoint(AttachmentAttachPhase::AuthorityAuthenticated)?;
+        let association = authority::authenticate_attach_association(self.allocator, context)?;
         let durable =
             state::OciAttachmentDurableState::compile(self.attachments, context, association)?;
+        let existing_record = durable.inspect()?;
+        let provider_observation = host.inspect_provider(self.ipam, context);
+        if let Some(record) = existing_record
+            && record.resource().phase() == nimbus_network::NetworkResourcePhase::Active
+            && let recovery::AttachmentAttachRecovery::AlreadyActive { assigned_ips } =
+                recovery::prepare_attach(&durable, record, provider_observation.clone())?
+        {
+            self.authenticate_active_attach_authority(context, authority)?;
+            observer.checkpoint(AttachmentAttachPhase::AuthorityAuthenticated)?;
+            return self.reconcile_active_attachment(
+                context,
+                observer,
+                assigned_ips,
+                after_provider_setup,
+            );
+        }
+        self.authenticate_attach_port_authority(context, authority)?;
+        observer.checkpoint(AttachmentAttachPhase::AuthorityAuthenticated)?;
         let durable_record = durable.reserve()?;
-        let recovery = recovery::prepare_attach(
-            &durable,
-            durable_record,
-            host.inspect_provider(self.ipam, context),
-        )?;
+        let recovery = recovery::prepare_attach(&durable, durable_record, provider_observation)?;
         let (mut durable_record, create_provider, recovered_ips) = match recovery {
             recovery::AttachmentAttachRecovery::Create { record } => (record, true, None),
             recovery::AttachmentAttachRecovery::ResumePublication {
@@ -648,7 +679,14 @@ impl<'a> OciAttachmentLifecycle<'a> {
                 assigned_ips,
             } => (record, false, Some(assigned_ips)),
             recovery::AttachmentAttachRecovery::AlreadyActive { assigned_ips } => {
-                return Ok(assigned_ips);
+                self.authenticate_active_attach_authority(context, authority)?;
+                observer.checkpoint(AttachmentAttachPhase::AuthorityAuthenticated)?;
+                return self.reconcile_active_attachment(
+                    context,
+                    observer,
+                    assigned_ips,
+                    after_provider_setup,
+                );
             }
         };
         let mut prepared_setup = if create_provider {
@@ -664,22 +702,23 @@ impl<'a> OciAttachmentLifecycle<'a> {
                 return Err(self.compensate_namespace_failure(context, host, primary));
             }
         }
-        let mut netavark_lifetimes = if context.publication.owns_netavark_bindings() {
-            match self.ports.claim_netavark_bindings_with_lifetimes(
-                context.tenant_id,
-                context.sandbox_id,
-                context.bindings,
-                context.leases,
-            ) {
-                Ok(batch) => Some(batch),
-                Err(error) => {
-                    let _ = host.remove_namespace(context);
-                    return Err(error);
+        let mut netavark_lifetimes =
+            if context.publication.owns_netavark_bindings() && !context.leases.is_empty() {
+                match self.ports.claim_netavark_bindings_with_lifetimes(
+                    context.tenant_id,
+                    context.sandbox_id,
+                    context.bindings,
+                    context.leases,
+                ) {
+                    Ok(batch) => Some(batch),
+                    Err(error) => {
+                        let _ = host.remove_namespace(context);
+                        return Err(error);
+                    }
                 }
-            }
-        } else {
-            None
-        };
+            } else {
+                None
+            };
         if let Err(primary) = observer.checkpoint(AttachmentAttachPhase::ListenerClaimsHeld) {
             return Err(self.compensate_setup_failure_with(
                 context,
@@ -846,12 +885,11 @@ impl<'a> OciAttachmentLifecycle<'a> {
         Ok(assigned_ips)
     }
 
-    fn authenticate_attach_authority(
+    fn authenticate_attach_port_authority(
         &self,
         context: &OciAttachmentContext<'_>,
         attach_authority: AttachmentAttachAuthority<'_>,
-    ) -> Result<NetworkAttachmentSegmentAssociation> {
-        let association = authority::authenticate_attach_association(self.allocator, context)?;
+    ) -> Result<()> {
         let port_authority: Result<()> = match attach_authority {
             AttachmentAttachAuthority::FreshLaunch(claim) => {
                 let Some(context_claim) = context.launch_claim else {
@@ -937,27 +975,7 @@ impl<'a> OciAttachmentLifecycle<'a> {
             }
         };
         port_authority?;
-        Ok(association)
-    }
-
-    fn take_registered_lifetime(
-        &self,
-        context: &OciAttachmentContext<'_>,
-        checkpoint: &str,
-    ) -> Result<Option<OciPortBindLifetimeBatch>> {
-        if !context.publication.owns_netavark_bindings() {
-            return Ok(None);
-        }
-        self.lifetimes
-            .take(context.tenant_id, context.sandbox_id)?
-            .map(Some)
-            .ok_or_else(|| SandboxError::OperationFailed {
-                message: format!(
-                    "{} attachment {checkpoint} for {} lost its exact live Netavark lifetime \
-                     batch",
-                    context.provider_label, context.sandbox_id
-                ),
-            })
+        Ok(())
     }
 
     fn compensate_registered_failure(

@@ -59,14 +59,16 @@ use cleanup::PepCleanupProgress;
 mod process;
 pub(crate) use process::EgressProxyProcess;
 mod readiness;
-pub(crate) use readiness::{EgressReadinessState, EgressReloadAttachmentState};
+pub(crate) use readiness::{
+    EgressReadinessFailure, EgressReadinessState, EgressReloadAttachmentState,
+};
 mod assignment;
-#[cfg(test)]
-pub(crate) use assignment::allocate_egress_proxy;
 pub(crate) use assignment::{
     EgressProxyAssignment, egress_listener_reservation, egress_proxy_assignment,
     ensure_egress_proxy_running, ensure_egress_proxy_running_with_release_authority,
 };
+#[cfg(test)]
+pub(crate) use assignment::{allocate_egress_proxy, egress_proxy_assignment_for_test};
 mod reload;
 pub(crate) use reload::EgressPolicyReloadState;
 

@@ -9,7 +9,7 @@ use crate::backends::oci::egress::{
 };
 use crate::backends::oci::network::{
     ConfiguredSegmentAllocator, MachinePortProxyLifetimeRegistry, OciIpamAuthority,
-    OciNetworkProcess, OciNetworkProcessError, OciSegmentAllocator,
+    OciNetworkProcess, OciNetworkProcessError, OciSegmentAllocator, RealOciEgressPinProvider,
     reconcile_startup_network_state,
 };
 use crate::backends::oci::port_lifecycle::{NetavarkPortLifetimeRegistry, OciPortLeaseCoordinator};
@@ -196,6 +196,7 @@ impl ContainerSandboxBackend {
             ipam_authority,
             port_lease_coordinator,
             egress_proxies,
+            egress_pin_provider: Arc::new(RealOciEgressPinProvider),
             netavark_port_lifetimes,
             machine_port_proxies,
             _network_process: network_process,
@@ -209,5 +210,14 @@ impl ContainerSandboxBackend {
             #[cfg(test)]
             post_egress_reload_ack_observer: None,
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn with_egress_pin_provider(
+        mut self,
+        provider: Arc<dyn crate::backends::oci::network::OciEgressPinProvider>,
+    ) -> Self {
+        self.egress_pin_provider = provider;
+        self
     }
 }

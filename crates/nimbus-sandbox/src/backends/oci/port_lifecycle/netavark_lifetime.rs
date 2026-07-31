@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use super::*;
+use crate::backends::oci::port_lease::port_lease_error;
 
 type NetavarkLifetimeKey = (TenantId, SandboxId);
 
@@ -70,6 +71,23 @@ impl NetavarkPortLifetimeRegistry {
             })
             .map(|mut entries| entries.remove(&(tenant_id.clone(), sandbox_id.clone())))
     }
+
+    fn with_batch<R>(
+        &self,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        inspect: impl FnOnce(&OciPortBindLifetimeBatch) -> R,
+    ) -> Result<Option<R>> {
+        let entries = self
+            .inner
+            .lock()
+            .map_err(|_| SandboxError::OperationFailed {
+                message: "Netavark port-lifetime registry lock is poisoned".to_owned(),
+            })?;
+        Ok(entries
+            .get(&(tenant_id.clone(), sandbox_id.clone()))
+            .map(inspect))
+    }
 }
 
 impl OciPortLeaseCoordinator {
@@ -128,6 +146,101 @@ impl OciPortLeaseCoordinator {
                     })
             })
             .collect()
+    }
+
+    /// Read-only proof that every expected Netavark listener is active under
+    /// this process's retained exact lifetime. An explicitly empty publication
+    /// set is ready only when no stray process-local batch exists.
+    pub(crate) fn inspect_active_netavark_bindings_with_lifetimes(
+        &self,
+        registry: &NetavarkPortLifetimeRegistry,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+    ) -> Result<()> {
+        self.require_published_listener_provider(PublishedListenerProvider::Netavark)?;
+        self.require_binding_lease_identities(tenant_id, sandbox_id, bindings, leases)?;
+        let inspected = registry.with_batch(tenant_id, sandbox_id, |batch| {
+            self.require_releasable_netavark_bindings_with_lifetimes(
+                tenant_id, sandbox_id, bindings, leases, batch,
+            )
+            .map(|_| ())
+        })?;
+        match (leases.is_empty(), inspected) {
+            (true, None) => Ok(()),
+            (true, Some(_)) => Err(SandboxError::OperationFailed {
+                message: format!(
+                    "tenant {tenant_id} sandbox {sandbox_id} has no desired Netavark listeners but \
+                     retains a process-lifetime batch"
+                ),
+            }),
+            (false, Some(result)) => result,
+            (false, None) => Err(SandboxError::OperationFailed {
+                message: format!(
+                    "tenant {tenant_id} sandbox {sandbox_id} has no retained exact Netavark \
+                     process-lifetime batch"
+                ),
+            }),
+        }
+    }
+
+    /// Reclaim an exact surviving Netavark publication after its former
+    /// process owner died. Provider presence must be authenticated by the
+    /// attachment lifecycle before entering this method.
+    pub(crate) fn reconcile_active_netavark_bindings_with_lifetimes(
+        &self,
+        registry: &NetavarkPortLifetimeRegistry,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+    ) -> Result<()> {
+        match self.inspect_active_netavark_bindings_with_lifetimes(
+            registry, tenant_id, sandbox_id, bindings, leases,
+        ) {
+            Ok(()) => return Ok(()),
+            Err(error) if leases.is_empty() => return Err(error),
+            Err(_) => {}
+        }
+
+        let records =
+            self.port_lease_records_snapshot(leases, "Netavark active publication reclaim")?;
+        let claims = records
+            .iter()
+            .zip(leases)
+            .map(|(record, request)| {
+                record
+                    .adoption_claim()
+                    .filter(|claim| {
+                        claim.provider_attempt().provider_id()
+                            == &OciPortProvider::Netavark.provider_id()
+                    })
+                    .cloned()
+                    .ok_or_else(|| SandboxError::OperationFailed {
+                        message: format!(
+                            "active Netavark port lease {} lost its exact adopted provider attempt",
+                            request.lease_id()
+                        ),
+                    })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let (expected_bindings, recoveries) = self
+            .recover_netavark_bindings_after_owner_death(tenant_id, sandbox_id, bindings, leases)?;
+        let authority = self.authority()?;
+        let mut lifetimes = Vec::with_capacity(leases.len());
+        for ((request, binding), recovery) in leases.iter().zip(&expected_bindings).zip(recoveries)
+        {
+            lifetimes.push(
+                authority
+                    .reclaim_provider_managed_binding_after_owner_death(request, binding, recovery)
+                    .map_err(port_lease_error)?,
+            );
+        }
+        let batch = OciPortBindLifetimeBatch::from_reclaimed(claims, lifetimes)?;
+        registry
+            .insert(tenant_id, sandbox_id, batch)
+            .map_err(|(error, _batch)| error)
     }
 
     /// Acquire the only valid cleanup capability for one provider-owned batch.

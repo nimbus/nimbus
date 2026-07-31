@@ -534,7 +534,13 @@ impl KrunSandboxBackend {
 
     fn running_status_with_egress(&self, manifest: &KrunSandboxManifest) -> Result<SandboxStatus> {
         let application_status = running_status(manifest);
-        if self.authenticated_egress_readiness(manifest)?.is_ready() {
+        if self
+            .host_managed_attachment_readiness(
+                manifest,
+                self.authenticated_egress_readiness(manifest)?,
+            )?
+            .is_ready()
+        {
             Ok(application_status)
         } else {
             Ok(SandboxStatus::NotReady)
@@ -977,7 +983,8 @@ impl KrunSandboxBackend {
         adapter
             .attach(&lifecycle, attachment_authority, |_| {
                 if let Some(proxy) = manifest.egress_proxy.as_ref() {
-                    pin_netns_egress_to_own_proxy(&manifest.network_layout, proxy)?;
+                    self.egress_pin_provider
+                        .apply(&manifest.network_layout, proxy)?;
                 }
                 Ok(())
             })
@@ -1023,19 +1030,48 @@ impl KrunSandboxBackend {
         // still fails closed because crun/libkrun cannot spawn the VMM without
         // /dev/kvm. Deny on every non-Linux build.
         ensure_linux_host("krun")?;
-        if !manifest.network_layout.netns_path.exists() {
-            return Err(SandboxError::OperationFailed {
+        let state = self.host_managed_attachment_readiness(
+            manifest,
+            self.authenticated_egress_readiness(manifest)?,
+        )?;
+        match state {
+            OciAttachmentReadinessState::Ready(_) => Ok(()),
+            OciAttachmentReadinessState::NotReady(reason) => Err(SandboxError::OperationFailed {
                 message: format!(
-                    "krun sandbox {} denied launch: deny-by-default network namespace {} is not \
-                     installed",
-                    manifest.handle.id,
-                    manifest.network_layout.netns_path.display()
+                    "krun sandbox {} denied launch: complete network attachment is not ready: \
+                         {reason:?}",
+                    manifest.handle.id
                 ),
-            });
+            }),
         }
-        self.require_authenticated_egress_readiness(manifest)
     }
 
+    /// Platform-independent test view of the production attachment-readiness
+    /// decision. The real launch gate adds the host-platform check before this
+    /// exact decision; keeping the platform check out of this test seam lets
+    /// every host prove incomplete network evidence is denied.
+    #[cfg(test)]
+    pub(super) fn ensure_complete_host_managed_attachment_readiness_for_test(
+        &self,
+        manifest: &KrunSandboxManifest,
+    ) -> Result<()> {
+        let state = self.host_managed_attachment_readiness(
+            manifest,
+            self.authenticated_egress_readiness(manifest)?,
+        )?;
+        match state {
+            OciAttachmentReadinessState::Ready(_) => Ok(()),
+            OciAttachmentReadinessState::NotReady(reason) => Err(SandboxError::OperationFailed {
+                message: format!(
+                    "krun sandbox {} denied launch: complete network attachment is not \
+                         ready: {reason:?}",
+                    manifest.handle.id
+                ),
+            }),
+        }
+    }
+
+    #[cfg(test)]
     pub(super) fn require_authenticated_egress_readiness(
         &self,
         manifest: &KrunSandboxManifest,
@@ -1109,6 +1145,24 @@ impl KrunSandboxBackend {
             &manifest.spec.egress,
             None,
         )
+    }
+
+    fn host_managed_attachment_readiness(
+        &self,
+        manifest: &KrunSandboxManifest,
+        pep: EgressReadinessState,
+    ) -> Result<OciAttachmentReadinessState> {
+        let network_config = manifest.require_network_config()?;
+        let ports = self.port_lease_coordinator();
+        let hostname = hostname_for(&manifest.spec);
+        Ok(self
+            .attachment_adapter(manifest, network_config, &hostname)
+            .inspect_host_managed_readiness(
+                &self.attachment_lifecycle(&ports),
+                self.egress_pin_provider.as_ref(),
+                manifest.egress_proxy.as_ref(),
+                pep,
+            ))
     }
 
     fn ensure_egress_proxy_running_with_release_authority(

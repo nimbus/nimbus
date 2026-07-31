@@ -725,7 +725,7 @@
       "kind": "direct-krun-backend-constructor-declaration",
       "symbol": "new",
       "ordinal": 1,
-      "line": 296,
+      "line": 298,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -735,7 +735,7 @@
       "kind": "segment-direct-reconstruction",
       "symbol": "new",
       "ordinal": 1,
-      "line": 298,
+      "line": 300,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -745,7 +745,7 @@
       "kind": "ipam-direct-reconstruction",
       "symbol": "with_segment_allocator_and_process",
       "ordinal": 1,
-      "line": 323,
+      "line": 325,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -755,7 +755,7 @@
       "kind": "port-coordinator-direct-reconstruction",
       "symbol": "with_segment_allocator_and_process",
       "ordinal": 1,
-      "line": 328,
+      "line": 330,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"

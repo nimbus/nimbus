@@ -126,7 +126,7 @@ The missing seam is a narrow application adapter plus both-backend injection.
 | Modularity | The new adapter is 227 lines with a 693-line concept-owned test child. Moving the coherent Krun network-composition group reduced the parent test composition root from 2,030 to 1,552 lines and created a 488-line child with explicit imports; no broad parent-import coupling remains for the moved generation-fencing test. |
 | Candidate freeze | The complete 38-path item was staged at tree `fbf5fb030acd3dfc3abf31ebef3e89fa0bcc5ffb`; its staged diff SHA-256 was `8fe8c14b1a790001787c342a49e76f55cb19ee9feb82a591940efe78f7129a05`. There were no unstaged or untracked paths. |
 | Structured review | The one full GPT-5.6 Sol/xhigh/fast review ran against the complete frozen item in thread `019fb58a-cf6a-7ad3-92c7-d8856064a1cb`. TruffleHog passed. The review returned zero findings, `patch is correct`, and confidence `0.87`; no accepted defect or executable correction exists, so no narrow correction review is warranted. |
-| Exact item commit | Pending. |
+| Exact item commit | Durable at `fc4827b06c672fae7b5f68c9e718100cec3ba83b`, tree `25a7acfb8c9a5bf63f302cd9ac8563266fb7a92d`; 38 paths changed together with no push or PR. |
 
 ## Acceptance ledger
 
@@ -146,7 +146,7 @@ The missing seam is a narrow application adapter plus both-backend injection.
 | 12. Behavioral breadth | `green` | Focused classifier `12/12`, startup state machine `8/8`, and backend startup authority `4/4` cover happy, edge, stale, unknown, unmatched, replay, backend, and no-effect behavior. Final affected behavior passes `1,070/1,070` with 24 declared skips. |
 | 13. Full gates | `green` | All-target/all-feature check, strict Clippy, warning-denied rustdoc, exact `nimbus-network -> nimbus-core` workspace edge, live verifier `19/19`, aggregate mutations `72/72`, corrected multi-tenant verifier `16/16` after real `10/16` fail-before, Bash/Node/ShellCheck, format/diff, docs `108`, and site `17/17` pass. |
 | 14. One candidate-frozen review | `green` | One full GPT-5.6 Sol/xhigh/fast review ran against frozen tree `fbf5fb030acd3dfc3abf31ebef3e89fa0bcc5ffb` and staged diff SHA-256 `8fe8c14b1a790001787c342a49e76f55cb19ee9feb82a591940efe78f7129a05`; thread `019fb58a-cf6a-7ad3-92c7-d8856064a1cb` returned zero findings, `patch is correct`, and confidence `0.87`. No correction review is warranted. |
-| 15. Exact item commit | `pending` | Commit code, tests, verifiers, proof, routing, and recovery ledger together after review. No push or PR. |
+| 15. Exact item commit | `green` | Code, tests, verifiers, proof, routing, and recovery ledger are durable together at `fc4827b06c672fae7b5f68c9e718100cec3ba83b`, tree `25a7acfb8c9a5bf63f302cd9ac8563266fb7a92d`; no push or PR occurred. |
 
 ## Planned ownership
 

@@ -15,11 +15,10 @@ use tempfile::TempDir;
 use super::*;
 use crate::backends::container::ContainerSandboxBackend;
 use crate::backends::krun::KrunSandboxBackend;
-use crate::backends::oci::network::ipam::{
-    begin_netavark_setup_execution, complete_netavark_setup, inspect_netavark_provider_operation,
-};
+use crate::backends::oci::network::ipam::inspect_netavark_provider_operation;
 use crate::backends::oci::network::netavark::{
     PreparedNetavarkSetup, PreparedNetavarkTeardown,
+    execute_prepared_container_network_setup_for_test,
     execute_prepared_container_network_teardown_ambiguously_for_test,
     execute_prepared_container_network_teardown_for_test, prepare_container_network_setup,
     prepare_container_network_teardown,
@@ -42,6 +41,7 @@ use crate::error::SandboxError;
 use crate::instance::SandboxId;
 use crate::spec::SandboxPortBinding;
 
+mod attachment_readiness;
 mod authority;
 mod durable_recovery;
 mod effect_order;
@@ -417,17 +417,8 @@ impl AttachmentHostEffects for ContractHostEffects {
         context: &OciAttachmentContext<'_>,
         prepared: PreparedNetavarkSetup,
     ) -> Result<Vec<std::net::Ipv4Addr>> {
-        let assigned_ips = prepared.assigned_ips().to_vec();
-        begin_netavark_setup_execution(
-            ipam,
-            context.layout,
-            context.config,
-            context.sandbox_id,
-            prepared.claim(),
-        )?;
         self.record(ContractHostOperation::ProviderSetup);
-        complete_netavark_setup(ipam, context.layout, prepared.claim())?;
-        Ok(assigned_ips)
+        execute_prepared_container_network_setup_for_test(ipam, &context.operation(), prepared)
     }
 
     fn teardown_provider(

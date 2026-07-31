@@ -115,6 +115,21 @@ impl<'a> OciAttachmentDurableState<'a> {
         Ok(Some(record))
     }
 
+    pub(super) fn authenticate_stable_handle(
+        &self,
+        record: &DurableNetworkAttachmentState,
+    ) -> Result<()> {
+        if record.resource().provider_handle() != Some(&self.stable_handle) {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "durable attachment {} does not carry its exact stable provider handle",
+                    self.attachment_id
+                ),
+            });
+        }
+        Ok(())
+    }
+
     pub(super) fn transition(
         &self,
         record: &DurableNetworkAttachmentState,

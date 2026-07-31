@@ -74,7 +74,7 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC5.2d complete; NNC5.3
+- `nimbus-network-control-plane-plan.md` - `active; NNC5.3 complete; NNC5.3a
   in progress`. The Linux sovereignty tripwire is complete with a root-safe,
   raw-artifact-derived evidence contract, 70/70 deterministic tests, 62/62
   adversarial verifier cases, fully dispositioned full+narrow Sol reviews, and
@@ -131,10 +131,15 @@ extension-registry seam before the second concern edits `extensions.rs`.
   strict Clippy, warning-denied rustdoc, core-only dependency, verifier 19/19,
   mutations 72/72, multi-tenant verifier 16/16, docs 108, and site 17/17 pass.
   Its single candidate-frozen Sol/xhigh/fast review returned zero findings at
-  confidence 0.87; no repeat review is warranted. NNC5.3 now audits complete
-  readiness evidence so netns existence alone cannot report ready; cleanup,
-  release, finalization, and reuse stay in NNC8.3. Machine
-  forwarding obeys
+  confidence 0.87; no repeat review is warranted. NNC5.3 is complete: one
+  read-only host-managed Container/Krun composer authenticates exact
+  desired/durable attachment, attempt-bound Netavark/IPAM/status,
+  active-table and real-shape nft pin, listener lifetime, and PEP evidence.
+  Its full review's four findings and sole narrow review's two findings have
+  exact fail-before and corrected proofs; focused readiness passes 30/30,
+  sandbox passes 859/859 with 21 skips, and no third review ran. NNC5.3a now
+  audits complete machine-forwarded gvproxy/route/worker/listener evidence.
+  Cleanup, release, finalization, and reuse stay in NNC8.3. Machine forwarding obeys
   NNC5.2a's common lifecycle; runtime absence, workload status, readiness persistence,
   cleanup convergence, and inspect/restart policy stay in their named later
   owners. Sole owner for the transport-free connectivity-resource control

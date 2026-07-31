@@ -49,10 +49,11 @@ use crate::backends::oci::network::{
     DEFAULT_NETAVARK_BINARY, DEFAULT_NETWORK_INTERFACE, DEFAULT_NETWORK_NAME,
     DEFAULT_NETWORK_SUBNET, DEFAULT_TENANT_PREFIX, OciAttachmentAdapter,
     OciAttachmentAuxiliaryListener, OciAttachmentInput, OciAttachmentLifecycle,
-    OciHostManagedAttachmentBackend, OciIpamAuthority, OciNetworkConfig, OciNetworkLayout,
-    OciNetworkProcess, OciSegmentAllocator, TerminalNetworkAuthoritySet,
-    TerminalNetworkFinalityEvidence, default_network_attachment_id, pin_netns_egress_to_own_proxy,
-    reconcile_startup_network_state, retire_terminal_container_ipam_release,
+    OciAttachmentReadinessState, OciEgressPinProvider, OciHostManagedAttachmentBackend,
+    OciIpamAuthority, OciNetworkConfig, OciNetworkLayout, OciNetworkProcess, OciSegmentAllocator,
+    RealOciEgressPinProvider, TerminalNetworkAuthoritySet, TerminalNetworkFinalityEvidence,
+    default_network_attachment_id, reconcile_startup_network_state,
+    retire_terminal_container_ipam_release,
 };
 use crate::backends::oci::port_lease::new_launch_reservation_claim;
 use crate::backends::oci::port_lifecycle::{
@@ -221,6 +222,7 @@ pub struct KrunSandboxBackend {
     ipam_authority: OciIpamAuthority,
     port_lease_coordinator: OciPortLeaseCoordinator,
     egress_proxies: EgressProxyRegistry,
+    egress_pin_provider: Arc<dyn OciEgressPinProvider>,
     netavark_port_lifetimes: NetavarkPortLifetimeRegistry,
     _network_process: Option<Arc<OciNetworkProcess>>,
     startup_network_reconciliation_error: Option<Arc<str>>,
@@ -373,6 +375,7 @@ impl KrunSandboxBackend {
             ipam_authority,
             port_lease_coordinator,
             egress_proxies,
+            egress_pin_provider: Arc::new(RealOciEgressPinProvider),
             netavark_port_lifetimes,
             _network_process: network_process,
             startup_network_reconciliation_error,
@@ -420,6 +423,12 @@ impl KrunSandboxBackend {
     #[cfg(test)]
     fn with_terminal_ipam_retirement_failure(mut self, message: impl Into<Arc<str>>) -> Self {
         self.terminal_ipam_retirement_failure = Some(message.into());
+        self
+    }
+
+    #[cfg(test)]
+    fn with_egress_pin_provider(mut self, provider: Arc<dyn OciEgressPinProvider>) -> Self {
+        self.egress_pin_provider = provider;
         self
     }
 

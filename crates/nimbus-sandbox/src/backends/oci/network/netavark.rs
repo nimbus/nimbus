@@ -106,18 +106,6 @@ pub(super) struct PreparedNetavarkSetup {
     claim: NetavarkSetupClaim,
 }
 
-impl PreparedNetavarkSetup {
-    #[cfg(test)]
-    pub(super) fn assigned_ips(&self) -> &[Ipv4Addr] {
-        &self.assigned_ips
-    }
-
-    #[cfg(test)]
-    pub(super) fn claim(&self) -> &NetavarkSetupClaim {
-        &self.claim
-    }
-}
-
 pub(super) fn prepare_container_network_setup(
     ipam_authority: &OciIpamAuthority,
     operation: &OciNetavarkOperation<'_>,
@@ -236,6 +224,22 @@ pub(super) fn execute_prepared_container_network_setup(
     )
 }
 
+#[cfg(test)]
+pub(super) fn execute_prepared_container_network_setup_for_test(
+    ipam_authority: &OciIpamAuthority,
+    operation: &OciNetavarkOperation<'_>,
+    prepared: PreparedNetavarkSetup,
+) -> Result<Vec<Ipv4Addr>> {
+    execute_prepared_container_network_setup_with_runner(
+        ipam_authority,
+        operation.layout,
+        operation.config,
+        operation.sandbox_id,
+        prepared,
+        |_, _| Ok(Value::Null),
+    )
+}
+
 fn execute_prepared_container_network_setup_with_runner(
     ipam_authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,
@@ -261,7 +265,15 @@ fn execute_prepared_container_network_setup_with_runner(
     }
     let setup = (|| {
         let response = runner("setup", &assigned_ips)?;
-        let rendered = serde_json::to_vec_pretty(&response).map_err(|error| {
+        let projection = super::dto::NetavarkStatusProjection {
+            schema_version: super::dto::NetavarkStatusProjection::SCHEMA_VERSION,
+            tenant_id: layout.tenant_id.clone(),
+            attachment_id: default_network_attachment_id(sandbox_id),
+            setup_attempt: setup_claim.operation_attempt().clone(),
+            assigned_ips: assigned_ips.clone(),
+            response,
+        };
+        let rendered = serde_json::to_vec_pretty(&projection).map_err(|error| {
             SandboxError::OperationFailed {
                 message: format!("failed to serialize netavark status response: {error}"),
             }

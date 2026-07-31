@@ -1,9 +1,14 @@
 //! Serialized DTOs exchanged with netavark, gvproxy, and IPAM state.
 
 use std::collections::BTreeMap;
+use std::net::Ipv4Addr;
 
-use nimbus_network::{NetworkProviderHandle, NetworkReservationClaim, NetworkResourceGeneration};
+use nimbus_core::TenantId;
+use nimbus_network::{
+    NetworkAttachmentId, NetworkProviderHandle, NetworkReservationClaim, NetworkResourceGeneration,
+};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use super::provider_locator::OciAttachmentProviderLocator;
 
@@ -56,6 +61,27 @@ pub(super) struct NetavarkNetwork {
 pub(super) struct NetavarkSubnet {
     pub(super) subnet: String,
     pub(super) gateway: String,
+}
+
+/// Attempt-bound observed projection written only after one exact Netavark
+/// setup effect returns.
+///
+/// The provider response itself does not carry Nimbus attachment identity.
+/// This strict envelope prevents syntactically valid or cross-attempt JSON
+/// from becoming current readiness evidence.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct NetavarkStatusProjection {
+    pub(super) schema_version: u32,
+    pub(super) tenant_id: TenantId,
+    pub(super) attachment_id: NetworkAttachmentId,
+    pub(super) setup_attempt: NetworkProviderHandle,
+    pub(super) assigned_ips: Vec<Ipv4Addr>,
+    pub(super) response: Value,
+}
+
+impl NetavarkStatusProjection {
+    pub(super) const SCHEMA_VERSION: u32 = 1;
 }
 
 #[derive(Debug, Serialize)]

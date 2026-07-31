@@ -819,7 +819,7 @@
       "kind": "netavark-port-mapping-request",
       "symbol": "build_netavark_request",
       "ordinal": 1,
-      "line": 571
+      "line": 583
     },
     {
       "site_id": "machine-port-proxy-bind",

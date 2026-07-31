@@ -130,6 +130,20 @@ pub(crate) fn egress_proxy_assignment(
     })
 }
 
+/// Build an exact persisted assignment from a real reserved listener while
+/// allowing a loopback bind on non-Linux test hosts.
+#[cfg(test)]
+pub(crate) fn egress_proxy_assignment_for_test(
+    host: IpAddr,
+    reservation: ReservedInternalListener,
+) -> EgressProxyAssignment {
+    EgressProxyAssignment {
+        host: host.to_string(),
+        port: reservation.port,
+        port_lease: reservation.lease,
+    }
+}
+
 /// Start the PEP or authenticate the already-running exact assignment.
 pub(crate) fn ensure_egress_proxy_running(
     registry: &EgressProxyRegistry,
