@@ -41,11 +41,6 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
 
 ### Phase 1 - Launch Safety And Egress Trust
 
-- `storage-follow-ups-plan.md` - `active`. FU1-FU8: follow-up bugs and
-  tickets from the archived storage-unification campaign (MySQL scheduler
-  outlier, PPSC fault-interface arm-theft, DynamoDB batch stream staleness,
-  policy-aware scan paging, arm_selection flake, nimbus-fs seam) plus the
-  SUC6.2 literal measurement (U7 override exercised).
 - `architecture-review-2026-07-plan.md` - `active`. Control plane for the
   2026-07 full-workspace architecture review: guarantee/fail-closed repairs
   (storage write-path unification, EgressGateway pairing, decision-log
@@ -142,12 +137,26 @@ extension-registry seam before the second concern edits `extensions.rs`.
   crash/replay and differential verification, and pinned external Elle
   evidence. FINAL recorded all readiness dimensions `PASS` and all closeout
   verdicts `SAFE`.
+- `archive/storage-unification-and-carryover-plan.md` - `complete, archived`
+  (2026-07-30; PRs #248–#261; decisions U1–U10). Delivered
   the 2026-07-29 storage review's ranked wins (CommitTransaction witness,
   objects/KV/scheduler onto a real commit path, provider facade extraction,
   DynamoDB principal) plus every carry-over: main full-CI triage (RED at
   plan creation; gates all phases), the July 21 HIGH-bug triad, the
   open-loop latency companion, the resource-binding decision, and the
   formal hot-key/OCC closure.
+- `archive/storage-follow-ups-plan.md` - `complete, archived` (2026-07-31;
+  PRs #262–#270). Closed every executable follow-up from the
+  storage-unification campaign: the PPSC arm-theft fault-interface fix
+  (`DurableApplyKind`), the MySQL scheduler outlier, DynamoDB batch stream
+  staleness plus stream/scan read-policy bypasses and the GetRecords
+  amplification ceiling, the nimbus-core lifecycle-predicate planner bug,
+  BatchWriteItem validation ordering and rejection rules, the nimbus-fs
+  object-write seam, schema-redeclaration write-amplification, three
+  root-caused flake families, and the SUC6.2 literal measurement (U7
+  override; measured REJECT). FU13 (400 KiB ceiling on the remaining
+  DynamoDB write paths) and FU14 (extenddb nested-collection sizing,
+  upstream) remain scoped open tickets recorded in the archived plan.
 - `archive/sqlite-write-throughput-optimization-plan.md` - `complete, archived`
   (2026-07-28). Campaign PASS in one day: prepared-statement reuse +
   batch-invariant apply context (PR #244), resident writer (PR #245),

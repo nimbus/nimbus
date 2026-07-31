@@ -1,6 +1,6 @@
 # Storage Follow-Ups Closeout
 
-Status: `active — executing all follow-up tickets from the archived storage-unification campaign`
+Status: `complete — all executable tickets closed (PRs #262-#270); FU13/FU14 remain as scoped open tickets`
 
 Owner directive 2026-07-30: "do or clear all the followup items and bugs we
 found with prs", plus run the SUC6.2 literal measurement (U7 override
@@ -9,7 +9,7 @@ exercised). Runs autonomously; PRs per concept; same fast-loop merge policy.
 | Item | Source | Status |
 | --- | --- | --- |
 | FU1 MySQL `has_scheduled_work` outlier | SUC3.1 step 4 | `complete` (PR #264) — cron_jobs counted like the other five backends; six-backend conformance pin covering both halves of the enabled split; dead libsql filter alternative removed (52 selected before/after) |
-| FU2 PPSC ack-loss arm-theft fault-interface fix | SUC3.1 steps 1-3 evidence | `complete` — durable-record identity reaches the fault check on all six backends via `DurableApplyKind`; harness arms fire only on boundaries that name records. 20x seeded differentials green on libsql/mysql/postgres (60/60, zero arm theft); U4 pins unmoved. The loaded A/B/C ablation battery was underpowered and is recorded as an inconclusive negative, not as evidence. Proof: `proof/storage-follow-ups/fu2.md` |
+| FU2 PPSC ack-loss arm-theft fault-interface fix | SUC3.1 steps 1-3 evidence | `complete` (PR #270) — durable-record identity reaches the fault check on all six backends via `DurableApplyKind`; harness arms fire only on boundaries that name records. 20x seeded differentials green on libsql/mysql/postgres (60/60, zero arm theft); U4 pins unmoved. Pre-merge review caught and fixed a sibling instance: the memory backend's deduplicated prepared write named a record it never materialized (`transact_admitted_durable_record` + regression test). The loaded A/B/C ablation battery was underpowered and is recorded as an inconclusive negative, not as evidence. Proof: `proof/storage-follow-ups/fu2.md` |
 | FU3 DynamoDB batch stream staleness | SUC4.1 | `complete` (PR #265) — batch prior images read inside per-op transactions |
 | FU4 policy-aware starting-at scan | SUC5.1 | `complete` (PR #265) — filter-then-fill; fail-before proved a live read-policy bypass at the seam; plus review-driven: stream-record authorization (both-images rule), real lifecycle times in stored events (fixing a nimbus-core planner bug that denied every row under lifecycle-referencing policies on every adapter), and a by-construction GetRecords store-read ceiling closing an authenticated DoS vector |
 | FU5 `arm_selection` flake | 3 campaigns + isolation repro | `complete` (PR #262) — record #3 = trigger worker's zero-write cursor advance; the worker RESTARTS on every commit batch (lifecycle shutdown ≠ suppression); test-side fix via the permanent disable hook, assertion unweakened, 8/100→0/100; 3 sibling latent defects fixed |
