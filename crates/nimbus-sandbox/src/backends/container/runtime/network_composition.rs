@@ -13,6 +13,9 @@ use crate::backends::oci::network::{
     reconcile_startup_network_state,
 };
 use crate::backends::oci::port_lifecycle::{NetavarkPortLifetimeRegistry, OciPortLeaseCoordinator};
+#[cfg(test)]
+use crate::backends::readiness_probe::ReadinessProbeProvider;
+use crate::backends::readiness_probe::SocketReadinessProbeProvider;
 
 use super::manifest::reconcile_startup_manifest_publications;
 use super::{ContainerSandboxBackend, ContainerSandboxBackendConfig};
@@ -197,6 +200,7 @@ impl ContainerSandboxBackend {
             port_lease_coordinator,
             egress_proxies,
             egress_pin_provider: Arc::new(RealOciEgressPinProvider),
+            readiness_probe_provider: Arc::new(SocketReadinessProbeProvider),
             netavark_port_lifetimes,
             machine_port_proxies,
             _network_process: network_process,
@@ -219,5 +223,50 @@ impl ContainerSandboxBackend {
     ) -> Self {
         self.egress_pin_provider = provider;
         self
+    }
+
+    #[cfg(test)]
+    pub(super) fn with_readiness_probe_provider(
+        mut self,
+        provider: Arc<dyn ReadinessProbeProvider>,
+    ) -> Self {
+        self.readiness_probe_provider = provider;
+        self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::SocketAddr;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use crate::backends::readiness_probe::{
+        FixedReadinessProbeProvider, ReadinessProbeObservation, ReadinessProbeTarget,
+    };
+
+    use super::*;
+
+    #[test]
+    fn container_composition_accepts_a_deterministic_readiness_provider() {
+        let temp = tempfile::TempDir::new().expect("temporary root should create");
+        let fixed = Arc::new(FixedReadinessProbeProvider::ready());
+        let backend = ContainerSandboxBackend::new(ContainerSandboxBackendConfig::plan_only(
+            temp.path().join("bundles"),
+            temp.path().join("state"),
+        ))
+        .with_readiness_probe_provider(fixed.clone());
+        let target = ReadinessProbeTarget::Tcp(
+            "127.0.0.1:18080"
+                .parse::<SocketAddr>()
+                .expect("target should parse"),
+        );
+        let timeout = Duration::from_millis(37);
+
+        assert_eq!(
+            backend.readiness_probe_provider.probe(target, timeout),
+            ReadinessProbeObservation::Ready
+        );
+        assert_eq!(fixed.calls(), vec![(target, timeout)]);
     }
 }

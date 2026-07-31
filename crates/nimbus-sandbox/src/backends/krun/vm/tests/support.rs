@@ -24,10 +24,9 @@ pub(super) use super::super::{
     KrunImageMetadata, KrunLaunchAuthority, KrunLifecycleLockTestProbe,
     KrunProviderFailureCleanupState, KrunRuntimeAbsenceProof, KrunSandboxBackend,
     KrunSandboxBackendConfig, KrunSandboxManifest, KrunStartMode, KrunStartPlan,
-    ReadinessProbeTarget, configured_stop_signal, configured_stop_timeout, desired_krun_vm_config,
-    krun_vm_config_path, parse_guest_user, probe_target_ready, readiness_probe_target,
-    restart_backoff_delay, restart_policy_allows_restart, running_status, slugify,
-    visible_published_endpoints,
+    configured_stop_signal, configured_stop_timeout, desired_krun_vm_config, krun_vm_config_path,
+    parse_guest_user, published_endpoints, restart_backoff_delay, restart_policy_allows_restart,
+    running_status, slugify, visible_published_endpoints,
 };
 pub(super) use crate::backend::{SandboxBackend, SandboxBackendKind};
 pub(super) use crate::backends::conmon::lifecycle::RestartLaunchTestProbe;
@@ -37,6 +36,10 @@ pub(super) use crate::backends::oci::buildah::{
 pub(super) use crate::backends::oci::command::CommandSpec;
 pub(super) use crate::backends::oci::materializer::{
     MaterializedImageRootfs, PreparedMaterializedImageLaunch,
+};
+pub(super) use crate::backends::readiness_probe::{
+    FixedReadinessProbeProvider, ReadinessProbeObservation, ReadinessProbeTarget,
+    readiness_probe_target,
 };
 pub(super) use crate::instance::{SandboxId, SandboxStatus};
 pub(super) use crate::spec::{

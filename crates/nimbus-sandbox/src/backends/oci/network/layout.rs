@@ -116,12 +116,11 @@ pub(crate) struct OciNetworkConfig {
     pub(super) provider_kind: OciAttachmentProviderKind,
     pub direct_egress: OciNetworkDirectEgress,
     /// Whether netavark starts the in-subnet aardvark-dns stub bound to the
-    /// bridge gateway `:53`. The container backend leaves this on so workloads
-    /// keep their bridge resolver; the krun microVM backend turns it off
-    /// because the deny-by-default guest resolves names through the host PEP
-    /// (`HTTP_PROXY`), so the bridge resolver is dead weight and a residual
-    /// DNS-exfil channel. Defaults to `true` to preserve container behavior on
-    /// (de)serialization of older state.
+    /// bridge gateway `:53`. Both production host-managed backends disable it:
+    /// workloads resolve names through the host PEP, so the bridge resolver is
+    /// unreachable dead weight and a residual DNS-exfiltration channel. The
+    /// serde default only serves test fixtures and rejects missing production
+    /// launch identity elsewhere in the attachment contract.
     #[serde(default = "default_enable_dns")]
     pub enable_dns: bool,
     /// The netavark network id. Per-tenant segments MUST carry a distinct id or

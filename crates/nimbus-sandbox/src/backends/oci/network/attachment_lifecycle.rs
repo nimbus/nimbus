@@ -258,7 +258,7 @@ impl<'a> OciAttachmentAdapter<'a> {
     pub(crate) fn inspect_host_managed_readiness(
         &self,
         lifecycle: &OciAttachmentLifecycle<'_>,
-        pin_provider: &dyn super::OciEgressPinProvider,
+        pin_provider: &dyn super::OciEgressPinObserver,
         proxy: Option<&crate::backends::oci::egress::EgressProxyAssignment>,
         pep: crate::backends::oci::egress::EgressReadinessState,
     ) -> OciAttachmentReadinessState {
@@ -274,7 +274,7 @@ impl<'a> OciAttachmentAdapter<'a> {
     pub(crate) fn inspect_machine_forwarded_base_readiness(
         &self,
         lifecycle: &OciAttachmentLifecycle<'_>,
-        pin_provider: &dyn super::OciEgressPinProvider,
+        pin_provider: &dyn super::OciEgressPinObserver,
         proxy: Option<&crate::backends::oci::egress::EgressProxyAssignment>,
         pep: crate::backends::oci::egress::EgressReadinessState,
     ) -> OciAttachmentBaseReadinessState {

@@ -3,16 +3,16 @@
 use std::net::Ipv4Addr;
 
 use super::{OciAttachmentContext, OciIpamAuthority, recovery};
-use crate::backends::oci::network::{
-    create_persistent_network_namespace,
-    netavark::{
-        PreparedNetavarkSetup, PreparedNetavarkTeardown, execute_prepared_container_network_setup,
-        execute_prepared_container_network_teardown, prepare_container_network_setup,
-        prepare_container_network_teardown,
-    },
-    remove_persistent_network_namespace,
+use crate::backends::oci::network::netavark::{
+    PreparedNetavarkSetup, PreparedNetavarkTeardown, execute_prepared_container_network_setup,
+    execute_prepared_container_network_teardown, prepare_container_network_setup,
+    prepare_container_network_teardown,
 };
 use crate::error::Result;
+
+use super::super::netns::{
+    create_persistent_network_namespace, remove_persistent_network_namespace,
+};
 
 /// Allocation, IPAM, port authority, and compensation policy remain concrete
 /// lifecycle dependencies. Only privileged namespace/Netavark effects are

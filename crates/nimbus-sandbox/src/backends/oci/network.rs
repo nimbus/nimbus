@@ -39,7 +39,7 @@ pub(crate) use attachment_lifecycle::{
 #[cfg(test)]
 pub(crate) use egress_pin::FixedOciEgressPinProvider;
 pub(crate) use egress_pin::{
-    OciEgressPinObservation, OciEgressPinProvider, RealOciEgressPinProvider,
+    OciEgressPinObservation, OciEgressPinObserver, OciEgressPinProvider, RealOciEgressPinProvider,
 };
 pub(crate) use finality::{TerminalNetworkAuthoritySet, TerminalNetworkFinalityEvidence};
 #[cfg(test)]
@@ -69,7 +69,6 @@ pub(crate) use netavark::{
 };
 #[cfg(test)]
 pub(crate) use netavark::{setup_container_network, teardown_container_network};
-pub(crate) use netns::{create_persistent_network_namespace, remove_persistent_network_namespace};
 pub(crate) use placement::{OciPlacementProvider, place_sandbox_on_block};
 pub(crate) use process::{
     MachineForwardedPublicationInspection, MachineForwardedPublicationReadiness,

@@ -1,3 +1,5 @@
+use std::io::Write;
+
 use super::readiness::{running_status, synchronize_handle_status};
 use super::start::{ensure_guest_user_helper_available, hostname_for};
 use super::*;
@@ -533,7 +535,7 @@ impl KrunSandboxBackend {
     }
 
     fn running_status_with_egress(&self, manifest: &KrunSandboxManifest) -> Result<SandboxStatus> {
-        let application_status = running_status(manifest);
+        let application_status = running_status(manifest, self.readiness_probe_provider.as_ref());
         if self
             .host_managed_attachment_readiness(
                 manifest,

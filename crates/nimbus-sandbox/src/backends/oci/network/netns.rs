@@ -15,7 +15,7 @@ use std::thread;
 
 use crate::error::{Result, SandboxError};
 
-pub(crate) fn create_persistent_network_namespace(path: &Path) -> Result<()> {
+pub(super) fn create_persistent_network_namespace(path: &Path) -> Result<()> {
     #[cfg(not(target_os = "linux"))]
     {
         let _ = path;
@@ -80,7 +80,7 @@ pub(crate) fn create_persistent_network_namespace(path: &Path) -> Result<()> {
     }
 }
 
-pub(crate) fn remove_persistent_network_namespace(path: &Path) -> Result<()> {
+pub(super) fn remove_persistent_network_namespace(path: &Path) -> Result<()> {
     #[cfg(not(target_os = "linux"))]
     {
         let _ = path;

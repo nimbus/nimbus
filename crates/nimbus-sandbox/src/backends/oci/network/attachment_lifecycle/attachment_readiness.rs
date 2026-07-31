@@ -12,7 +12,7 @@ use nimbus_network::{
 };
 
 use super::super::MachineForwardedPublicationReadiness;
-use super::super::{OciEgressPinObservation, OciEgressPinProvider};
+use super::super::{OciEgressPinObservation, OciEgressPinObserver};
 use super::state::OciAttachmentDurableState;
 use super::{OciAttachmentContext, OciAttachmentLifecycle, authority, recovery};
 use crate::backends::oci::egress::{
@@ -110,7 +110,7 @@ impl OciAttachmentReadinessState {
 pub(super) fn inspect_host_managed_readiness(
     lifecycle: &OciAttachmentLifecycle<'_>,
     context: &OciAttachmentContext<'_>,
-    pin_provider: &dyn OciEgressPinProvider,
+    pin_provider: &dyn OciEgressPinObserver,
     proxy: Option<&EgressProxyAssignment>,
     pep: EgressReadinessState,
 ) -> OciAttachmentReadinessState {
@@ -149,7 +149,7 @@ pub(super) fn inspect_host_managed_readiness(
 pub(super) fn inspect_machine_forwarded_base_readiness(
     lifecycle: &OciAttachmentLifecycle<'_>,
     context: &OciAttachmentContext<'_>,
-    pin_provider: &dyn OciEgressPinProvider,
+    pin_provider: &dyn OciEgressPinObserver,
     proxy: Option<&EgressProxyAssignment>,
     pep: EgressReadinessState,
 ) -> OciAttachmentBaseReadinessState {
@@ -199,7 +199,7 @@ pub(super) fn complete_machine_forwarded_readiness(
 fn inspect_common_base(
     lifecycle: &OciAttachmentLifecycle<'_>,
     context: &OciAttachmentContext<'_>,
-    pin_provider: &dyn OciEgressPinProvider,
+    pin_provider: &dyn OciEgressPinObserver,
     proxy: Option<&EgressProxyAssignment>,
     pep: EgressReadinessState,
 ) -> OciAttachmentBaseReadinessState {

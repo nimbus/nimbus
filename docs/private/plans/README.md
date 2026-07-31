@@ -167,10 +167,20 @@ extension-registry seam before the second concern edits `extensions.rs`.
   site 17/17. The sole full Sol/xhigh/fast review's four accepted and two
   rejected findings are dispositioned. Its accepted executable corrections
   warranted one narrow review; that review's sole IPv4-mapped IPv6 defect is
-  corrected and proven. No third review ran or is warranted. NNC5.5 now owns
-  the read-only proof that Netavark, nft, namespace, IPAM, gvproxy, and probe
-  effects remain sandbox-local while `nimbus-network` stays transport-free and
-  dependent only on `nimbus-core`.
+  corrected and proven. No third review ran or is warranted. NNC5.5's
+  implementation and R1-R11 acceptance convergence are complete after the
+  sole full review's five accepted corrections. One shared
+  bounded readiness provider replaces the two direct probe owners; nft
+  readiness has observation-only authority; namespace effects are private to
+  the host adapter; and NNCV004/NNCV012/NNCV022/NNCV023 seal the exact portable
+  boundary, production effect census, and privileged capabilities. Final
+  correction behavior is 1,156/1,156 with 28 declared skips, live verifier
+  24/24, isolated mutations 27/27, and aggregate mutations 139/139. The sole
+  full Sol/xhigh/fast review ran at 0.98; its five findings are corrected and
+  proven. The sole narrow correction review confirmed four corrections and
+  raised one claim about `container/runtime/lifecycle.rs`; exact module routing
+  proves that file is test-only, so the claim is rejected. No third review is
+  warranted. NNC5.5 is complete in one exact checkpoint; no push or PR.
   Cleanup, release, finalization, and reuse stay in NNC8.3. Machine forwarding obeys
   NNC5.2a's common lifecycle; runtime absence, workload status, readiness persistence,
   cleanup convergence, and inspect/restart policy stay in their named later

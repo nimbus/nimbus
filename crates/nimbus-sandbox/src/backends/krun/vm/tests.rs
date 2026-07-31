@@ -1205,7 +1205,7 @@ fn readiness_probe_target_prefers_http_endpoints() {
     let manifest = sample_manifest(spec, KrunStartMode::Execute);
 
     assert_eq!(
-        readiness_probe_target(&manifest),
+        readiness_probe_target(&published_endpoints(&manifest.spec)),
         Some(ReadinessProbeTarget::Http(SocketAddr::from((
             [127, 0, 0, 1],
             18080
@@ -1214,35 +1214,65 @@ fn readiness_probe_target_prefers_http_endpoints() {
 }
 
 #[test]
-fn probe_target_ready_succeeds_for_http_listener() {
-    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener should bind");
-    let address = listener
-        .local_addr()
-        .expect("listener should report local addr");
-    let server = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().expect("listener should accept");
-        let mut request = [0_u8; 256];
-        let _ = stream.read(&mut request);
-        stream
-            .write_all(b"HTTP/1.0 204 No Content\r\nContent-Length: 0\r\n\r\n")
-            .expect("server should write response");
+fn running_status_passes_the_exact_http_target_and_image_timeout_to_the_provider() {
+    let spec = SandboxSpec::new(
+        TenantId::new("tenant").expect("tenant id should be valid"),
+        SandboxOwnerSpec::service("http-service"),
+        SandboxBackendKind::Krun,
+        SandboxRootSpec::Rootfs(SandboxRootfsSpec::new("/srv/rootfs")),
+        SandboxProcessSpec::new(["/bin/service"]),
+    )
+    .with_port_binding(SandboxPortBinding::new(
+        "http",
+        EndpointProtocol::Http,
+        18_080,
+        8080,
+    ));
+    let mut manifest = sample_manifest(spec, KrunStartMode::Execute);
+    manifest.image_metadata.healthcheck = Some(ImageHealthcheck {
+        test: Vec::new(),
+        interval: None,
+        timeout: Some(37_000_000),
+        start_period: None,
+        retries: None,
     });
+    let provider = FixedReadinessProbeProvider::ready();
 
-    assert!(
-        probe_target_ready(ReadinessProbeTarget::Http(address), Duration::from_secs(1)),
-        "expected HTTP readiness probe to pass against local listener"
+    assert_eq!(running_status(&manifest, &provider), SandboxStatus::Ready);
+    assert_eq!(
+        provider.calls(),
+        vec![(
+            ReadinessProbeTarget::Http(SocketAddr::from(([127, 0, 0, 1], 18_080))),
+            Duration::from_millis(37),
+        )]
     );
-    server.join().expect("server thread should join");
+}
+
+#[test]
+fn krun_composition_accepts_a_deterministic_readiness_provider() {
+    let temp = TempDir::new().expect("temporary root should create");
+    let fixed = std::sync::Arc::new(FixedReadinessProbeProvider::ready());
+    let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::plan_only(
+        temp.path().join("bundles"),
+        temp.path().join("state"),
+    ))
+    .with_readiness_probe_provider(fixed.clone());
+    let target = ReadinessProbeTarget::Tcp(
+        "127.0.0.1:18080"
+            .parse::<SocketAddr>()
+            .expect("target should parse"),
+    );
+    let timeout = Duration::from_millis(41);
+
+    assert_eq!(
+        backend.readiness_probe_provider.probe(target, timeout),
+        ReadinessProbeObservation::Ready
+    );
+    assert_eq!(fixed.calls(), vec![(target, timeout)]);
 }
 
 #[test]
 fn running_status_stays_starting_until_probe_passes() {
-    let unused_listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener should bind");
-    let address = unused_listener
-        .local_addr()
-        .expect("listener should report local addr");
-    drop(unused_listener);
-
     let spec = SandboxSpec::new(
         TenantId::new("tenant").expect("tenant id should be valid"),
         SandboxOwnerSpec::service("tcp-service"),
@@ -1250,20 +1280,18 @@ fn running_status_stays_starting_until_probe_passes() {
         SandboxRootSpec::Rootfs(SandboxRootfsSpec::new("/srv/rootfs")),
         SandboxProcessSpec::new(["/bin/service"]),
     )
-    .with_port_binding(SandboxPortBinding::tcp("tcp", address.port(), 8080));
+    .with_port_binding(SandboxPortBinding::tcp("tcp", 18_080, 8080));
     let manifest = sample_manifest(spec, KrunStartMode::Execute);
+    let provider = FixedReadinessProbeProvider::not_ready("connection refused");
 
-    assert_eq!(running_status(&manifest), SandboxStatus::Starting);
+    assert_eq!(
+        running_status(&manifest, &provider),
+        SandboxStatus::Starting
+    );
 }
 
 #[test]
 fn running_status_degrades_ready_sandboxes_to_not_ready_on_probe_failure() {
-    let unused_listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener should bind");
-    let address = unused_listener
-        .local_addr()
-        .expect("listener should report local addr");
-    drop(unused_listener);
-
     let spec = SandboxSpec::new(
         TenantId::new("tenant").expect("tenant id should be valid"),
         SandboxOwnerSpec::service("http-service"),
@@ -1274,7 +1302,7 @@ fn running_status_degrades_ready_sandboxes_to_not_ready_on_probe_failure() {
     .with_port_binding(SandboxPortBinding::new(
         "http",
         EndpointProtocol::Http,
-        address.port(),
+        18_080,
         8080,
     ));
     let mut manifest = sample_manifest(spec, KrunStartMode::Execute);
@@ -1282,25 +1310,16 @@ fn running_status_degrades_ready_sandboxes_to_not_ready_on_probe_failure() {
     manifest.handle.status = SandboxStatus::Ready;
     manifest.handle.published_endpoints =
         visible_published_endpoints(KrunStartMode::Execute, &manifest.spec, SandboxStatus::Ready);
+    let provider = FixedReadinessProbeProvider::unknown("inspection unavailable");
 
-    assert_eq!(running_status(&manifest), SandboxStatus::NotReady);
+    assert_eq!(
+        running_status(&manifest, &provider),
+        SandboxStatus::NotReady
+    );
 }
 
 #[test]
 fn running_status_recovers_not_ready_sandboxes_when_probe_returns() {
-    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener should bind");
-    let address = listener
-        .local_addr()
-        .expect("listener should report local addr");
-    let server = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().expect("listener should accept");
-        let mut request = [0_u8; 256];
-        let _ = stream.read(&mut request);
-        stream
-            .write_all(b"HTTP/1.0 204 No Content\r\nContent-Length: 0\r\n\r\n")
-            .expect("server should write response");
-    });
-
     let spec = SandboxSpec::new(
         TenantId::new("tenant").expect("tenant id should be valid"),
         SandboxOwnerSpec::service("http-service"),
@@ -1311,15 +1330,15 @@ fn running_status_recovers_not_ready_sandboxes_when_probe_returns() {
     .with_port_binding(SandboxPortBinding::new(
         "http",
         EndpointProtocol::Http,
-        address.port(),
+        18_080,
         8080,
     ));
     let mut manifest = sample_manifest(spec, KrunStartMode::Execute);
     manifest.status = SandboxStatus::NotReady;
     manifest.handle.status = SandboxStatus::NotReady;
+    let provider = FixedReadinessProbeProvider::new(ReadinessProbeObservation::Ready);
 
-    assert_eq!(running_status(&manifest), SandboxStatus::Ready);
-    server.join().expect("server thread should join");
+    assert_eq!(running_status(&manifest, &provider), SandboxStatus::Ready);
 }
 
 #[test]

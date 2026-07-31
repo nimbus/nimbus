@@ -1,6 +1,4 @@
 use std::collections::BTreeMap;
-use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpStream};
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -61,13 +59,14 @@ use crate::backends::oci::port_lifecycle::{
     ReservedLaunchPorts, SandboxLaunchPortPlan,
 };
 use crate::backends::oci::resource_quota::ResourceQuotaManager;
+use crate::backends::readiness_probe::{ReadinessProbeProvider, SocketReadinessProbeProvider};
 use crate::error::{Result, SandboxError};
 use crate::instance::{SandboxHandle, SandboxId, SandboxStatus};
 use crate::spec::{
     SandboxOciImageSource, SandboxResourceQuotaPolicy, SandboxRootSpec, SandboxRootfsSpec,
     SandboxSpec, resolve_process_without_image_defaults,
 };
-use nimbus_network::{EndpointProtocol, NetworkReservationClaim, PublishedEndpoint};
+use nimbus_network::{NetworkReservationClaim, PublishedEndpoint};
 
 mod attachment_recovery;
 mod creator;
@@ -85,9 +84,7 @@ mod start;
 #[cfg(test)]
 use self::lifecycle::KrunLifecycleLockTestProbe;
 #[cfg(test)]
-use self::readiness::{
-    probe_target_ready, readiness_probe_target, running_status, visible_published_endpoints,
-};
+use self::readiness::{published_endpoints, running_status, visible_published_endpoints};
 #[cfg(test)]
 use self::start::{desired_krun_vm_config, krun_vm_config_path, parse_guest_user};
 
@@ -99,7 +96,6 @@ const DEFAULT_PUBLISHED_PORT_START: u16 = 15_000;
 const DEFAULT_PUBLISHED_PORT_END: u16 = 16_000;
 const DEFAULT_START_TIMEOUT_SECS: u64 = 10;
 const DEFAULT_STOP_TIMEOUT_SECS: u64 = 5;
-const DEFAULT_READINESS_PROBE_TIMEOUT_MILLIS: u64 = 1_000;
 const KRUN_VM_CONFIG_FILENAME: &str = ".krun_vm.json";
 const GUEST_USER_HELPER_BINARY_NAME: &str = "nimbus-guest-user-switch";
 const GUEST_USER_HELPER_GUEST_ROOT: &str = "/.nimbus";
@@ -223,6 +219,7 @@ pub struct KrunSandboxBackend {
     port_lease_coordinator: OciPortLeaseCoordinator,
     egress_proxies: EgressProxyRegistry,
     egress_pin_provider: Arc<dyn OciEgressPinProvider>,
+    readiness_probe_provider: Arc<dyn ReadinessProbeProvider>,
     netavark_port_lifetimes: NetavarkPortLifetimeRegistry,
     _network_process: Option<Arc<OciNetworkProcess>>,
     startup_network_reconciliation_error: Option<Arc<str>>,
@@ -376,6 +373,7 @@ impl KrunSandboxBackend {
             port_lease_coordinator,
             egress_proxies,
             egress_pin_provider: Arc::new(RealOciEgressPinProvider),
+            readiness_probe_provider: Arc::new(SocketReadinessProbeProvider),
             netavark_port_lifetimes,
             _network_process: network_process,
             startup_network_reconciliation_error,
@@ -429,6 +427,12 @@ impl KrunSandboxBackend {
     #[cfg(test)]
     fn with_egress_pin_provider(mut self, provider: Arc<dyn OciEgressPinProvider>) -> Self {
         self.egress_pin_provider = provider;
+        self
+    }
+
+    #[cfg(test)]
+    fn with_readiness_probe_provider(mut self, provider: Arc<dyn ReadinessProbeProvider>) -> Self {
+        self.readiness_probe_provider = provider;
         self
     }
 
@@ -863,12 +867,6 @@ struct GuestUserIds {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 enum KrunLaunchArtifact {
     Rootfs(MaterializedImageRootfs),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ReadinessProbeTarget {
-    Tcp(SocketAddr),
-    Http(SocketAddr),
 }
 
 #[cfg(test)]

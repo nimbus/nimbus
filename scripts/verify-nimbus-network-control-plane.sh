@@ -35,6 +35,7 @@ NNC52D_STARTUP_ORPHAN_CONTRACT="scripts/nimbus-network-control-plane/startup-orp
 NNC53_ATTACHMENT_READINESS_CONTRACT="scripts/nimbus-network-control-plane/attachment-readiness-contract.sh"
 NNC54_ATTACHMENT_CRASH_CONTRACT="scripts/nimbus-network-control-plane/attachment-crash-convergence-contract.sh"
 NNC54A_MACHINE_BATCH_CONTRACT="scripts/nimbus-network-control-plane/machine-forwarded-batch-convergence-contract.sh"
+NNC55_EFFECT_LOCALITY_CONTRACT="scripts/nimbus-network-control-plane/effect-locality-contract.sh"
 
 # shellcheck source=scripts/nimbus-network-control-plane/attachment-ordering-contract.sh
 . "${NNC52A_ATTACHMENT_ORDERING_CONTRACT}"
@@ -46,6 +47,8 @@ NNC54A_MACHINE_BATCH_CONTRACT="scripts/nimbus-network-control-plane/machine-forw
 . "${NNC54_ATTACHMENT_CRASH_CONTRACT}"
 # shellcheck source=scripts/nimbus-network-control-plane/machine-forwarded-batch-convergence-contract.sh
 . "${NNC54A_MACHINE_BATCH_CONTRACT}"
+# shellcheck source=scripts/nimbus-network-control-plane/effect-locality-contract.sh
+. "${NNC55_EFFECT_LOCALITY_CONTRACT}"
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -365,13 +368,77 @@ verify_network_dependency_contract() {
             process.exit(1);
           }
           const workspaceNames = new Set(metadata.packages.map(candidate => candidate.name));
-          const edges = pkg.dependencies
-            .filter(dep => dep.source === null && workspaceNames.has(dep.name))
-            .map(dep => dep.name + ":" + (dep.kind || "normal"));
-          const invalid = edges.filter(edge => !edge.startsWith("nimbus-core:"));
-          const core = edges.filter(edge => edge.startsWith("nimbus-core:"));
-          if (invalid.length || core.length !== 1 || edges.some(edge => edge.startsWith("nimbus-testing:"))) {
-            process.stdout.write("workspace dependencies must be exactly nimbus-core; found " + (edges.join(", ") || "<none>"));
+          const testCase = process.env.NIMBUS_NETWORK_VERIFY_TEST_DEPENDENCY_CONTRACT_CASE || "";
+          if (testCase === "core-dev") {
+            const core = pkg.dependencies.find(dep => dep.name === "nimbus-core");
+            if (core) core.kind = "dev";
+          } else if (testCase === "core-feature") {
+            const core = pkg.dependencies.find(dep => dep.name === "nimbus-core");
+            if (core) core.features.push("effect-surface");
+          } else if (testCase === "core-no-default") {
+            const core = pkg.dependencies.find(dep => dep.name === "nimbus-core");
+            if (core) core.uses_default_features = false;
+          } else if (testCase === "serde-no-default") {
+            const serde = pkg.dependencies.find(dep => dep.name === "serde");
+            if (serde) serde.uses_default_features = false;
+          } else if (testCase === "tokio") {
+            pkg.dependencies.push({
+              name: "tokio", source: "registry+self-test", kind: null, optional: false,
+              target: null, rename: null, features: [], uses_default_features: true,
+            });
+          } else if (testCase === "windows-networking") {
+            const windows = pkg.dependencies.find(dep => dep.name === "windows-sys");
+            if (windows) windows.features.push("Win32_Networking_WinSock");
+          }
+          const workspaceEdges = pkg.dependencies
+            .filter(dep => dep.source === null && workspaceNames.has(dep.name));
+          const core = workspaceEdges.filter(dep => dep.name === "nimbus-core");
+          const exactCore = core.length === 1 &&
+            core[0].kind === null &&
+            core[0].target === null &&
+            core[0].optional === false &&
+            core[0].rename === null &&
+            core[0].uses_default_features === true &&
+            JSON.stringify([...core[0].features].sort()) === "[]";
+          if (!exactCore || workspaceEdges.length !== 1) {
+            const edges = workspaceEdges.map(dep =>
+              dep.name + ":" + (dep.kind || "normal") + ":" + (dep.target || "all") +
+              (dep.optional ? ":optional" : ""),
+            );
+            process.stdout.write("workspace dependency must be one normal unconditional non-optional nimbus-core edge; found " + (edges.join(", ") || "<none>"));
+            process.exit(1);
+          }
+          const approved = new Map([
+            ["fs2", {kind: null, target: null, features: [], defaultFeatures: true}],
+            ["serde", {kind: null, target: null, features: ["derive"], defaultFeatures: true}],
+            ["serde_json", {kind: null, target: null, features: ["raw_value"], defaultFeatures: true}],
+            ["sha2", {kind: null, target: null, features: [], defaultFeatures: true}],
+            ["ulid", {kind: null, target: null, features: ["serde"], defaultFeatures: true}],
+            ["libc", {kind: null, target: "cfg(unix)", features: [], defaultFeatures: true}],
+            ["windows-sys", {kind: null, target: "cfg(windows)", features: ["Win32_Storage_FileSystem"], defaultFeatures: true}],
+            ["proptest", {kind: "dev", target: null, features: [], defaultFeatures: true}],
+            ["tempfile", {kind: "dev", target: null, features: [], defaultFeatures: true}],
+          ]);
+          const externals = pkg.dependencies.filter(dep => dep.source !== null);
+          const errors = [];
+          for (const dep of externals) {
+            const expected = approved.get(dep.name);
+            const actualFeatures = [...dep.features].sort();
+            if (!expected ||
+                dep.kind !== expected.kind ||
+                dep.target !== expected.target ||
+                dep.optional !== false ||
+                dep.rename !== null ||
+                dep.uses_default_features !== expected.defaultFeatures ||
+                JSON.stringify(actualFeatures) !== JSON.stringify([...expected.features].sort())) {
+              errors.push(dep.name + ":" + (dep.kind || "normal") + ":" +
+                (dep.target || "all") + ":default-features=" +
+                dep.uses_default_features + ":features=" + actualFeatures.join(","));
+            }
+          }
+          if (externals.length !== approved.size || errors.length) {
+            process.stdout.write("nimbus-network dependency envelope changed: " +
+              (errors.join("; ") || "missing approved dependency"));
             process.exit(1);
           }
         });
@@ -815,7 +882,7 @@ NODE
   elif ! grep -q '^FAIL NNCV005 no-duplicate-port-allocation-authority' "${temporary}/legacy-port-authority.out" ||
     grep -q '^PASS NNCV005 no-duplicate-port-allocation-authority' "${temporary}/legacy-port-authority.out" ||
     [ "$(grep -c '^FAIL ' "${temporary}/legacy-port-authority.out")" -ne 1 ] ||
-    ! grep -q '^Summary: 21 passed, 1 failed$' "${temporary}/legacy-port-authority.out"; then
+    ! grep -q '^Summary: 23 passed, 1 failed$' "${temporary}/legacy-port-authority.out"; then
     printf 'SELFTEST FAIL legacy port authority did not produce an exclusive NNCV005 failure\n'
     self_fail=$((self_fail + 1))
   else
@@ -1503,11 +1570,19 @@ NODE
     self_fail=$((self_fail + 1))
   fi
 
+  if declare -F run_nnc55_effect_locality_self_tests >/dev/null 2>&1; then
+    run_nnc55_effect_locality_self_tests "${script}" "${temporary}" ||
+      self_fail=$((self_fail + $?))
+  else
+    printf 'SELFTEST FAIL effect-locality contract helper is missing\n'
+    self_fail=$((self_fail + 1))
+  fi
+
   if [ "${self_fail}" -ne 0 ]; then
     printf 'self-test: %d failed\n' "${self_fail}"
     exit 1
   fi
-  printf 'self-test: 112 passed, 0 failed\n'
+  printf 'self-test: 139 passed, 0 failed\n'
 }
 
 if [ "${1:-}" = "--self-test" ]; then
@@ -1544,6 +1619,8 @@ verify_nnc52d_startup_orphan_reconciliation
 verify_nnc53_attachment_readiness
 verify_nnc54_attachment_crash_convergence
 verify_nnc54a_machine_forwarded_batch_convergence
+verify_nnc55_sandbox_effect_locality
+verify_nnc55_sealed_effect_capabilities
 
 printf '\nSummary: %d passed, %d failed\n' "${PASS_COUNT}" "${FAIL_COUNT}"
 if [ "${FAIL_COUNT}" -ne 0 ]; then

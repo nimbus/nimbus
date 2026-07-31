@@ -64,6 +64,7 @@ use crate::backends::oci::port_lifecycle::{
     SandboxLaunchPortPlan,
 };
 use crate::backends::oci::resource_quota::ResourceQuotaManager;
+use crate::backends::readiness_probe::ReadinessProbeProvider;
 use crate::error::{Result, SandboxError};
 use crate::instance::{SandboxHandle, SandboxId, SandboxStatus};
 use crate::spec::{SandboxOciImageSource, SandboxRootSpec, SandboxSpec};
@@ -92,6 +93,7 @@ pub struct ContainerSandboxBackend {
     port_lease_coordinator: OciPortLeaseCoordinator,
     egress_proxies: EgressProxyRegistry,
     egress_pin_provider: Arc<dyn OciEgressPinProvider>,
+    readiness_probe_provider: Arc<dyn ReadinessProbeProvider>,
     netavark_port_lifetimes: NetavarkPortLifetimeRegistry,
     machine_port_proxies: MachinePortProxyLifetimeRegistry,
     _network_process: Option<Arc<OciNetworkProcess>>,
@@ -1192,7 +1194,8 @@ impl ContainerSandboxBackend {
                 current_status: manifest.status,
             },
             || {
-                let application_status = running_status(manifest);
+                let application_status =
+                    running_status(manifest, self.readiness_probe_provider.as_ref());
                 let mut readiness = self.authenticated_egress_readiness(manifest)?;
                 if readiness.is_missing_registration() {
                     self.ensure_egress_proxy_running(manifest)?;

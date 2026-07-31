@@ -10,11 +10,14 @@ const validModes = new Set([
   "forbidden-dependencies-effects",
   "single-definition-owner",
   "address-is-not-identity",
+  "sandbox-effect-locality",
+  "sealed-effect-capabilities",
 ]);
 if (!validModes.has(mode)) {
   process.stderr.write(
     "usage: verify-nimbus-network-source-contract.mjs " +
-      "[forbidden-dependencies-effects|single-definition-owner|address-is-not-identity]\n",
+      "[forbidden-dependencies-effects|single-definition-owner|address-is-not-identity|" +
+      "sandbox-effect-locality|sealed-effect-capabilities]\n",
   );
   process.exit(2);
 }
@@ -186,8 +189,11 @@ function walkRust(directory) {
 function addFixture(sources, environmentName) {
   const fixture = process.env[environmentName];
   if (process.env.NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD === "1" && fixture) {
+    const configuredPath = process.env[`${environmentName}_PATH`];
     sources.push({
-      file: `__nimbus_network_verifier_self_test__/${environmentName}.rs`,
+      file:
+        configuredPath ||
+        `__nimbus_network_verifier_self_test__/${environmentName}.rs`,
       source: withoutCfgTestItems(fixture),
     });
   }
@@ -286,7 +292,9 @@ function verifyForbiddenDependenciesAndEffects() {
         "quinn",
         "reqwest",
         "rustls",
+        "smol",
         "socket2",
+        "tokio",
         "tokio-tungstenite",
         "tonic",
         "tower",
@@ -310,12 +318,15 @@ function verifyForbiddenDependenciesAndEffects() {
   addFixture(sources, "NIMBUS_NETWORK_VERIFY_TEST_FORBIDDEN_EFFECT");
   const forbiddenPatterns = [
     /\b(?:TcpListener|UdpSocket|UnixListener|TcpSocket|Socket)\s*::\s*bind\s*\(/,
-    /\b(?:TcpStream|UnixStream)\s*::\s*connect\s*\(/,
+    /\b(?:TcpStream|UnixStream)\s*::\s*connect(?:_timeout)?\s*\(/,
     /\b(?:std|tokio)\s*::\s*net\s*::\s*(?:TcpListener|TcpStream|UdpSocket|UnixListener|UnixStream|TcpSocket)\b/,
     /\b(?:std|tokio)\s*::\s*process\s*::\s*Command\b/,
+    /\bCommand\s*::\s*new\s*\(/,
     /\b(?:axum|pingora|netavark|iroh|openraft)\s*::/,
+    /\bnimbus_(?:adapters|bin|cli|cluster|compute|egress|engine|kv|machine|proxy|runtime|sandbox|server|services|storage|system|tenant|testing|workloads)\s*::/,
     /\bnix\s*::\s*(?:sched|mount|net)\s*::/,
-    /\blibc\s*::\s*(?:socket|bind|listen|connect|setns|unshare)\b/,
+    /\blibc\s*::\s*(?:socket|bind|listen|connect|setns|unshare|mount|umount2)\b/,
+    /\btrait\s+(?:NetworkProvider|NetworkAttachmentProvider|ForwardingProvider|IngressProvider|NameProvider|CertificateProvider)\b/,
   ];
   for (const pattern of forbiddenPatterns) {
     const detail = firstMatch(sources, pattern);
@@ -491,12 +502,320 @@ function verifyAddressIsNotIdentity() {
   }
 }
 
+function allMatches(sources, pattern) {
+  const found = [];
+  for (const candidate of sources) {
+    pattern.lastIndex = 0;
+    let match;
+    while ((match = pattern.exec(candidate.source)) !== null) {
+      found.push({
+        file: candidate.file,
+        line: location(candidate.source, match.index),
+        text: match[0].replace(/\s+/g, " ").trim(),
+      });
+      if (!pattern.global) break;
+    }
+  }
+  return found;
+}
+
+function requireExactOwner(sources, label, pattern, allowedFiles, expectedCount) {
+  const found = allMatches(sources, pattern);
+  const misplaced = found.filter((match) => !allowedFiles.has(match.file));
+  if (found.length !== expectedCount || misplaced.length) {
+    errors.push(
+      `${label} owners expected=${expectedCount}, found=${found.length}: ` +
+        (found
+          .map((match) => `${match.file}:${match.line}:${match.text}`)
+          .join(", ") || "<none>"),
+    );
+  }
+}
+
+function verifySandboxEffectLocality() {
+  const sandboxRoot = "crates/nimbus-sandbox/src";
+  if (!fs.existsSync(sandboxRoot)) {
+    errors.push(`sandbox source root missing: ${sandboxRoot}`);
+    return;
+  }
+  const sources = walkRust(sandboxRoot).filter(
+    (candidate) =>
+      !candidate.file.endsWith("_tests.rs") &&
+      !candidate.file.endsWith("/test_api.rs") &&
+      !candidate.file.endsWith("/test_support.rs") &&
+      candidate.file !==
+        "crates/nimbus-sandbox/src/backends/container/runtime/lifecycle.rs",
+  );
+  addFixture(sources, "NIMBUS_NETWORK_VERIFY_TEST_SANDBOX_EFFECT_LOCALITY");
+  const only = (...files) => new Set(files);
+  requireExactOwner(
+    sources,
+    "namespace syscalls",
+    /\blibc\s*::\s*(?:unshare|mount|umount2)\b/g,
+    only("crates/nimbus-sandbox/src/backends/oci/network/netns.rs"),
+    3,
+  );
+  requireExactOwner(
+    sources,
+    "namespace capability call path",
+    /\b(?:create|remove)_persistent_network_namespace\s*\(/g,
+    only(
+      "crates/nimbus-sandbox/src/backends/oci/network/netns.rs",
+      "crates/nimbus-sandbox/src/backends/oci/network/attachment_lifecycle/host.rs",
+    ),
+    5,
+  );
+  requireExactOwner(
+    sources,
+    "Netavark process launch",
+    /\bstd\s*::\s*process\s*::\s*Command\s*::\s*new\s*\(\s*&operation\s*\.\s*config\s*\.\s*netavark_path\s*\)/g,
+    only("crates/nimbus-sandbox/src/backends/oci/network/netavark.rs"),
+    1,
+  );
+  requireExactOwner(
+    sources,
+    "prepared Netavark capability call path",
+    /\b(?:prepare_container_network_(?:setup|teardown)|execute_prepared_container_network_(?:setup|teardown))\s*\(/g,
+    only(
+      "crates/nimbus-sandbox/src/backends/oci/network/netavark.rs",
+      "crates/nimbus-sandbox/src/backends/oci/network/attachment_lifecycle/host.rs",
+    ),
+    8,
+  );
+  requireExactOwner(
+    sources,
+    "sandbox production process launch",
+    /\bCommand\s*::\s*new\s*\(/g,
+    only(
+      "crates/nimbus-sandbox/src/bin/nimbus-guest-user-switch.rs",
+      "crates/nimbus-sandbox/src/backends/conmon/lifecycle.rs",
+      "crates/nimbus-sandbox/src/backends/oci/command.rs",
+      "crates/nimbus-sandbox/src/backends/oci/network/egress_pin.rs",
+      "crates/nimbus-sandbox/src/backends/oci/network/netavark.rs",
+      "crates/nimbus-sandbox/src/backends/oci/network/reaper.rs",
+    ),
+    7,
+  );
+  requireExactOwner(
+    sources,
+    "sandbox network connect effects",
+    /\bTcpStream\s*::\s*connect_timeout\s*\(/g,
+    only(
+      "crates/nimbus-sandbox/src/backends/readiness_probe.rs",
+      "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
+      "crates/nimbus-sandbox/src/backends/oci/network/proxy.rs",
+    ),
+    5,
+  );
+  requireExactOwner(
+    sources,
+    "machine proxy listener bind",
+    /\bTcpListener\s*::\s*bind\s*\(/g,
+    only("crates/nimbus-sandbox/src/backends/oci/network/proxy.rs"),
+    1,
+  );
+  requireExactOwner(
+    sources,
+    "machine proxy byte forwarding",
+    /\bcopy_machine_port_stream\s*\(/g,
+    only("crates/nimbus-sandbox/src/backends/oci/network/proxy.rs"),
+    3,
+  );
+  requireExactOwner(
+    sources,
+    "real machine-forwarding provider",
+    /\bimpl\s+MachinePortForwardingProvider\s+for\s+OciMachinePortForwarderConfig\b/g,
+    only("crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs"),
+    1,
+  );
+  requireExactOwner(
+    sources,
+    "native gvproxy request owner",
+    /\bsend_machine_forwarder_request\s*\(/g,
+    only("crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs"),
+    4,
+  );
+  requireExactOwner(
+    sources,
+    "machine-forwarding mutation caller",
+    /\bprovider\s*\.\s*(?:expose_one|withdraw_one)\s*\(/g,
+    only(
+      "crates/nimbus-sandbox/src/backends/container/runtime/machine_port_publication.rs",
+    ),
+    2,
+  );
+  requireExactOwner(
+    sources,
+    "readiness provider definition",
+    /\btrait\s+ReadinessProbeProvider\b/g,
+    only("crates/nimbus-sandbox/src/backends/readiness_probe.rs"),
+    1,
+  );
+  requireExactOwner(
+    sources,
+    "readiness provider implementation",
+    /\bimpl\s+ReadinessProbeProvider\s+for\s+SocketReadinessProbeProvider\b/g,
+    only("crates/nimbus-sandbox/src/backends/readiness_probe.rs"),
+    1,
+  );
+
+  for (const file of [
+    "crates/nimbus-sandbox/src/backends/container/runtime/status.rs",
+    "crates/nimbus-sandbox/src/backends/container/runtime/network_composition.rs",
+    "crates/nimbus-sandbox/src/backends/container/runtime.rs",
+    "crates/nimbus-sandbox/src/backends/krun/vm/readiness.rs",
+    "crates/nimbus-sandbox/src/backends/krun/vm.rs",
+  ]) {
+    const source = sources.find((candidate) => candidate.file === file)?.source;
+    if (!source) {
+      errors.push(`required readiness consumer missing: ${file}`);
+    } else if (
+      /\b(?:TcpStream|TcpListener|Command)\b/.test(source) ||
+      /\bfn\s+(?:probe_target_ready|probe_http_ready|readiness_probe_target)\b/.test(
+        source,
+      )
+    ) {
+      errors.push(`backend bypasses shared readiness capability: ${file}`);
+    }
+  }
+}
+
+function verifySealedEffectCapabilities() {
+  const sandboxSources = walkRust("crates/nimbus-sandbox/src");
+  addFixture(
+    sandboxSources,
+    "NIMBUS_NETWORK_VERIFY_TEST_SEALED_EFFECT_CAPABILITY",
+  );
+  const networkSources = walkRust(networkSourceRoot);
+  addFixture(
+    networkSources,
+    "NIMBUS_NETWORK_VERIFY_TEST_PORTABLE_EFFECT_CAPABILITY",
+  );
+
+  const requiredSource = (file) => {
+    const source = sandboxSources.find((candidate) => candidate.file === file)?.source;
+    if (!source) errors.push(`required capability owner missing: ${file}`);
+    return source ?? "";
+  };
+  const host = requiredSource(
+    "crates/nimbus-sandbox/src/backends/oci/network/attachment_lifecycle/host.rs",
+  );
+  const netavark = requiredSource(
+    "crates/nimbus-sandbox/src/backends/oci/network/netavark.rs",
+  );
+  const netns = requiredSource(
+    "crates/nimbus-sandbox/src/backends/oci/network/netns.rs",
+  );
+  const networkRoot = requiredSource(
+    "crates/nimbus-sandbox/src/backends/oci/network.rs",
+  );
+  const egressPin = requiredSource(
+    "crates/nimbus-sandbox/src/backends/oci/network/egress_pin.rs",
+  );
+  const readinessFiles = new Set([
+    "crates/nimbus-sandbox/src/backends/oci/network/attachment_lifecycle.rs",
+    "crates/nimbus-sandbox/src/backends/oci/network/attachment_lifecycle/attachment_readiness.rs",
+  ]);
+  const readinessSources = sandboxSources.filter((candidate) =>
+    readinessFiles.has(candidate.file),
+  );
+  for (const file of readinessFiles) requiredSource(file);
+  const readiness = readinessSources
+    .map((candidate) => candidate.source)
+    .join("\n");
+  const forwarding = requiredSource(
+    "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
+  );
+
+  if (!/\bpub\s*\(\s*super\s*\)\s+trait\s+AttachmentHostEffects\b/.test(host)) {
+    errors.push("AttachmentHostEffects must remain lifecycle-private");
+  }
+  if (
+    [...netavark.matchAll(/\bpub\s*\(\s*super\s*\)\s+struct\s+PreparedNetavark(?:Setup|Teardown)\b/g)]
+      .length !== 2
+  ) {
+    errors.push("prepared Netavark capabilities must remain network-private");
+  }
+  if (
+    [...netns.matchAll(/\bpub\s*\(\s*super\s*\)\s+fn\s+(?:create|remove)_persistent_network_namespace\b/g)]
+      .length !== 2
+  ) {
+    errors.push("namespace effects must remain network-private");
+  }
+  if (/\bpub[^{;\n]*\buse\s+netns\b/.test(networkRoot)) {
+    errors.push("namespace effects must not be reexported from the network root");
+  }
+  const widenedSandboxCapability = firstMatch(
+    sandboxSources,
+    /\bpub\s*\(\s*crate\s*\)\s+(?:trait\s+AttachmentHostEffects|struct\s+PreparedNetavark(?:Setup|Teardown)|fn\s+(?:create|remove)_persistent_network_namespace)\b|\bpub[^{;\n]*\buse\s+netns\b/,
+  );
+  if (widenedSandboxCapability) {
+    errors.push(`privileged sandbox capability widened: ${widenedSandboxCapability}`);
+  }
+  if (
+    !/\btrait\s+OciEgressPinObserver\b/.test(egressPin) ||
+    !/\btrait\s+OciEgressPinProvider\s*:\s*OciEgressPinObserver\b/.test(
+      egressPin,
+    )
+  ) {
+    errors.push("egress-pin observation and mutation capabilities are not separated");
+  }
+  if (
+    /\bOciEgressPinProvider\b/.test(readiness) ||
+    readinessSources.length < readinessFiles.size ||
+    readinessSources.some(
+      (candidate) => !/\bOciEgressPinObserver\b/.test(candidate.source),
+    ) ||
+    /\.\s*apply\s*\(/.test(readiness)
+  ) {
+    errors.push(
+      "attachment readiness and its adapter wrappers must receive observation-only egress-pin authority",
+    );
+  }
+  if (
+    !/\bpub\s*\(\s*crate\s*\)\s+trait\s+MachinePortForwardingProvider\b/.test(
+      forwarding,
+    )
+  ) {
+    errors.push("machine-forwarding provider must remain sandbox-private");
+  }
+  const widenedForwardingProvider = firstMatch(
+    sandboxSources,
+    /\bpub\s+trait\s+MachinePortForwardingProvider\b/,
+  );
+  if (widenedForwardingProvider) {
+    errors.push(
+      `machine-forwarding provider widened: ${widenedForwardingProvider}`,
+    );
+  }
+  const injectedSeal =
+    process.env.NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD === "1" &&
+    !process.env.NIMBUS_NETWORK_VERIFY_TEST_SEALED_EFFECT_CAPABILITY_PATH
+      ? process.env.NIMBUS_NETWORK_VERIFY_TEST_SEALED_EFFECT_CAPABILITY ?? ""
+      : "";
+  if (/\bOciEgressPinProvider\b/.test(injectedSeal)) {
+    errors.push("attachment readiness mutation fixture acquired apply authority");
+  }
+
+  const portableCapability = firstMatch(
+    networkSources,
+    /\b(?:NetworkProvider|ForwardingProvider|IngressProvider|NameProvider|CertificateProvider|PreparedNetavark|OciNetwork|netns_path|provider_effect|effect_callback)\b/,
+  );
+  if (portableCapability) {
+    errors.push(`portable crate acquired provider-effect capability: ${portableCapability}`);
+  }
+}
+
 if (mode === "forbidden-dependencies-effects") {
   verifyForbiddenDependenciesAndEffects();
 } else if (mode === "single-definition-owner") {
   verifySingleDefinitionOwner();
-} else {
+} else if (mode === "address-is-not-identity") {
   verifyAddressIsNotIdentity();
+} else if (mode === "sandbox-effect-locality") {
+  verifySandboxEffectLocality();
+} else {
+  verifySealedEffectCapabilities();
 }
 
 if (errors.length) {
