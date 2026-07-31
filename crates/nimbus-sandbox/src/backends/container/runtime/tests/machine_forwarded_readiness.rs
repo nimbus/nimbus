@@ -364,7 +364,6 @@ struct MachineRegistrySnapshot {
     worker_liveness: Vec<bool>,
     live_claims: String,
     live_lifetimes: String,
-    publication_may_exist: bool,
 }
 
 fn snapshot_machine_registry(fixture: &CompleteMachineReadinessFixture) -> MachineRegistrySnapshot {
@@ -399,7 +398,6 @@ fn snapshot_machine_registry(fixture: &CompleteMachineReadinessFixture) -> Machi
             .collect(),
         live_claims: format!("{:?}", live.claims()),
         live_lifetimes: format!("{:?}", live.lifetimes()),
-        publication_may_exist: registration.publication_may_exist,
     }
 }
 
@@ -680,6 +678,12 @@ fn assert_registry_corruption_not_ready(corruption: RegistryCorruption) {
     let mut original_routes = None;
     let mut original_lifetime = None;
     let mut held_worker = None;
+    if matches!(corruption, RegistryCorruption::PublicationAbsent) {
+        fixture
+            .backend
+            .converge_absent_machine_port_publication_for_test(&fixture.manifest)
+            .expect("publication-absence substitution should persist durably");
+    }
     let _stopping_cleanup = if matches!(corruption, RegistryCorruption::Stopping) {
         fixture
             .backend
@@ -693,7 +697,10 @@ fn assert_registry_corruption_not_ready(corruption: RegistryCorruption) {
     } else {
         None
     };
-    if !matches!(corruption, RegistryCorruption::Stopping) {
+    if !matches!(
+        corruption,
+        RegistryCorruption::Stopping | RegistryCorruption::PublicationAbsent
+    ) {
         let mut registry = fixture
             .backend
             .machine_port_proxies
@@ -704,15 +711,7 @@ fn assert_registry_corruption_not_ready(corruption: RegistryCorruption) {
                 removed = registry.remove(&key);
             }
             RegistryCorruption::Stopping => unreachable!("handled before the registry mutation"),
-            RegistryCorruption::PublicationAbsent => {
-                let MachinePortProxyEntry::Running(registration) = registry
-                    .get_mut(&key)
-                    .expect("fixture registration should exist")
-                else {
-                    panic!("fixture registration should be running");
-                };
-                registration.publication_may_exist = false;
-            }
+            RegistryCorruption::PublicationAbsent => unreachable!("handled as durable evidence"),
             RegistryCorruption::WrongIdentity => {
                 let entry = registry
                     .remove(&key)

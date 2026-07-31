@@ -1,7 +1,7 @@
 //! Host-machine port forwarding requests for OCI machine mode.
 
 use std::io::{Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs};
 use std::time::{Duration, Instant};
 
 use nimbus_core::TenantId;
@@ -23,7 +23,9 @@ const MACHINE_FORWARDER_PROVIDER_KEY: &str = "nimbus-sandbox.gvproxy-forwarder";
 const MAX_MACHINE_FORWARDER_RESPONSE_BYTES: usize = 1024 * 1024;
 
 mod receipt;
-pub(crate) use receipt::CurrentMachinePortForwardingObservation;
+pub(crate) use receipt::{
+    CurrentMachinePortForwardingObservation, MachinePortForwardingSlotObservation,
+};
 pub use receipt::{MachinePortForwardOutcome, MachinePortForwardReceipt};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -93,31 +95,20 @@ impl OciMachinePortForwarderConfig {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn expose_machine_ports(
     config: &OciMachinePortForwarderConfig,
     tenant_id: &TenantId,
     sandbox_id: &SandboxId,
     port_bindings: &[SandboxPortBinding],
 ) -> Result<Vec<MachinePortForwardReceipt>> {
-    let mut attempts = Vec::with_capacity(port_bindings.len());
-    for binding in port_bindings {
-        let deadline = Instant::now() + MACHINE_FORWARDER_TIMEOUT;
-        let request = encode_gvproxy_request(&gvproxy_route(binding), binding, "expose")?;
-        attempts.push(send_machine_forwarder_request(
-            config, "POST", "/expose", &request, deadline,
-        ));
-    }
-    let current = inspect_machine_ports(config, tenant_id, sandbox_id, port_bindings);
-    match current {
-        Ok(current) => Ok(current.receipts().to_vec()),
-        Err(inspection_error) => Err(mutation_observation_error(
-            config,
-            "expose",
-            port_bindings,
-            &attempts,
-            inspection_error,
-        )),
-    }
+    converge_machine_ports_without_journal(
+        config,
+        tenant_id,
+        sandbox_id,
+        port_bindings,
+        MachinePortForwardingAction::Expose,
+    )
 }
 
 /// Inspect the complete desired forwarding batch without mutating gvproxy.
@@ -125,8 +116,9 @@ pub(crate) fn expose_machine_ports(
 /// The built-in adapter translates gvproxy's native batch `GET /all` response
 /// into Nimbus-owned evidence under the exact parent-issued provider handle
 /// and generation. `/expose` is never used as an inspection fallback. An
-/// unavailable, unsupported, partial, duplicate, or malformed response leaves
-/// current forwarding unknown.
+/// unavailable, unsupported, truncated, or malformed response leaves current
+/// forwarding unknown. A complete list classifies every desired slot as exact
+/// exposed, exact absent, or conflicting.
 pub(crate) fn inspect_machine_ports(
     config: &OciMachinePortForwarderConfig,
     tenant_id: &TenantId,
@@ -142,38 +134,196 @@ pub(crate) fn inspect_machine_ports(
     }
 
     let deadline = Instant::now() + MACHINE_FORWARDER_TIMEOUT;
-    let response = send_machine_forwarder_request(config, "GET", "/all", &[], deadline)
-        .map_err(|error| current_observation_error(config, error.to_string()))?;
+    let response =
+        send_machine_forwarder_request(config, "GET", "/all", &[], deadline).map_err(|error| {
+            current_observation_error(config.provider_generation, error.to_string())
+        })?;
     if response.status_code != 200 {
         return Err(current_observation_error(
-            config,
+            config.provider_generation,
             format!("gvproxy returned HTTP {}", response.status_code),
         ));
     }
     let routes =
         serde_json::from_slice::<Vec<GvproxyForwardRoute>>(&response.body).map_err(|error| {
             current_observation_error(
-                config,
+                config.provider_generation,
                 format!("gvproxy returned a malformed forwarding list: {error}"),
             )
         })?;
-    let receipts =
-        authenticate_current_routes(config, tenant_id, sandbox_id, port_bindings, &routes)?;
+    let slots = authenticate_current_routes(config, tenant_id, sandbox_id, port_bindings, &routes)?;
     Ok(CurrentMachinePortForwardingObservation::authenticated(
         &config.provider_instance,
         config.provider_generation,
-        receipts,
+        slots,
     ))
 }
 
+#[cfg(test)]
 pub(crate) fn unexpose_machine_ports(
     config: &OciMachinePortForwarderConfig,
     tenant_id: &TenantId,
     sandbox_id: &SandboxId,
     port_bindings: &[SandboxPortBinding],
 ) -> Result<Vec<MachinePortForwardReceipt>> {
-    let mut attempts = Vec::with_capacity(port_bindings.len());
-    for binding in port_bindings {
+    converge_machine_ports_without_journal(
+        config,
+        tenant_id,
+        sandbox_id,
+        port_bindings,
+        MachinePortForwardingAction::Withdraw,
+    )
+}
+
+/// Small sandbox-owned effect capability consumed by the durable publication
+/// coordinator. It deliberately exposes one complete inspection and one exact
+/// mutation at a time; mutation returns are diagnostic, never provider truth.
+pub(crate) trait MachinePortForwardingProvider {
+    fn provider_instance(&self) -> &NetworkProviderHandle;
+    fn provider_generation(&self) -> NetworkResourceGeneration;
+    fn inspect(
+        &self,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        bindings: &[SandboxPortBinding],
+    ) -> Result<CurrentMachinePortForwardingObservation>;
+    fn expose_one(&self, binding: &SandboxPortBinding) -> Result<MachinePortMutationDiagnostic>;
+    fn withdraw_one(&self, binding: &SandboxPortBinding) -> Result<MachinePortMutationDiagnostic>;
+}
+
+/// Deterministic current-provider substitute used by lifecycle tests that own
+/// no native gvproxy process.
+#[cfg(test)]
+pub(crate) struct DeterministicMachinePortForwardingProvider {
+    config: OciMachinePortForwarderConfig,
+    exposed: bool,
+}
+
+#[cfg(test)]
+impl DeterministicMachinePortForwardingProvider {
+    pub(crate) fn exposed(config: &OciMachinePortForwarderConfig) -> Self {
+        Self {
+            config: config.clone(),
+            exposed: true,
+        }
+    }
+
+    pub(crate) fn absent(config: &OciMachinePortForwarderConfig) -> Self {
+        Self {
+            config: config.clone(),
+            exposed: false,
+        }
+    }
+}
+
+#[cfg(test)]
+impl MachinePortForwardingProvider for DeterministicMachinePortForwardingProvider {
+    fn provider_instance(&self) -> &NetworkProviderHandle {
+        self.config.provider_instance()
+    }
+
+    fn provider_generation(&self) -> NetworkResourceGeneration {
+        self.config.provider_generation()
+    }
+
+    fn inspect(
+        &self,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        bindings: &[SandboxPortBinding],
+    ) -> Result<CurrentMachinePortForwardingObservation> {
+        let slots = bindings
+            .iter()
+            .map(|binding| {
+                let receipt = MachinePortForwardReceipt::authenticated(
+                    if self.exposed {
+                        MachinePortForwardOutcome::Exposed
+                    } else {
+                        MachinePortForwardOutcome::ExactAlreadyAbsent
+                    },
+                    tenant_id,
+                    sandbox_id,
+                    binding,
+                    self.provider_instance(),
+                    self.provider_generation(),
+                );
+                if self.exposed {
+                    MachinePortForwardingSlotObservation::Exposed(receipt)
+                } else {
+                    MachinePortForwardingSlotObservation::Absent(receipt)
+                }
+            })
+            .collect();
+        Ok(CurrentMachinePortForwardingObservation::authenticated(
+            self.provider_instance(),
+            self.provider_generation(),
+            slots,
+        ))
+    }
+
+    fn expose_one(&self, _binding: &SandboxPortBinding) -> Result<MachinePortMutationDiagnostic> {
+        Ok(MachinePortMutationDiagnostic {
+            status_accepted: true,
+        })
+    }
+
+    fn withdraw_one(&self, _binding: &SandboxPortBinding) -> Result<MachinePortMutationDiagnostic> {
+        Ok(MachinePortMutationDiagnostic {
+            status_accepted: true,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct MachinePortMutationDiagnostic {
+    status_accepted: bool,
+}
+
+impl MachinePortMutationDiagnostic {
+    fn from_response(response: MachineForwarderHttpResponse) -> Self {
+        Self {
+            status_accepted: response.status_code == 200,
+        }
+    }
+
+    pub(crate) fn status_accepted(self) -> bool {
+        self.status_accepted
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn accepted() -> Self {
+        Self {
+            status_accepted: true,
+        }
+    }
+}
+
+impl MachinePortForwardingProvider for OciMachinePortForwarderConfig {
+    fn provider_instance(&self) -> &NetworkProviderHandle {
+        self.provider_instance()
+    }
+
+    fn provider_generation(&self) -> NetworkResourceGeneration {
+        self.provider_generation()
+    }
+
+    fn inspect(
+        &self,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        bindings: &[SandboxPortBinding],
+    ) -> Result<CurrentMachinePortForwardingObservation> {
+        inspect_machine_ports(self, tenant_id, sandbox_id, bindings)
+    }
+
+    fn expose_one(&self, binding: &SandboxPortBinding) -> Result<MachinePortMutationDiagnostic> {
+        let deadline = Instant::now() + MACHINE_FORWARDER_TIMEOUT;
+        let request = encode_gvproxy_request(&gvproxy_route(binding), binding, "expose")?;
+        send_machine_forwarder_request(self, "POST", "/expose", &request, deadline)
+            .map(MachinePortMutationDiagnostic::from_response)
+    }
+
+    fn withdraw_one(&self, binding: &SandboxPortBinding) -> Result<MachinePortMutationDiagnostic> {
         let deadline = Instant::now() + MACHINE_FORWARDER_TIMEOUT;
         let request = encode_gvproxy_request(
             &GvproxyUnexposeRequest {
@@ -183,89 +333,113 @@ pub(crate) fn unexpose_machine_ports(
             binding,
             "unexpose",
         )?;
-        attempts.push(send_machine_forwarder_request(
-            config,
-            "POST",
-            "/unexpose",
-            &request,
-            deadline,
-        ));
+        send_machine_forwarder_request(self, "POST", "/unexpose", &request, deadline)
+            .map(MachinePortMutationDiagnostic::from_response)
     }
-    if port_bindings.is_empty() {
-        return Ok(Vec::new());
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy)]
+enum MachinePortForwardingAction {
+    Expose,
+    Withdraw,
+}
+
+#[cfg(test)]
+impl MachinePortForwardingAction {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Expose => "expose",
+            Self::Withdraw => "unexpose",
+        }
     }
-    let deadline = Instant::now() + MACHINE_FORWARDER_TIMEOUT;
-    let response = send_machine_forwarder_request(config, "GET", "/all", &[], deadline);
-    let routes = match response {
-        Ok(response) if response.status_code == 200 => {
-            serde_json::from_slice::<Vec<GvproxyForwardRoute>>(&response.body).map_err(|error| {
-                mutation_observation_error(
-                    config,
-                    "unexpose",
-                    port_bindings,
-                    &attempts,
-                    current_observation_error(
-                        config,
-                        format!("gvproxy returned a malformed forwarding list: {error}"),
-                    ),
-                )
-            })?
+
+    fn receipt(
+        self,
+        observation: &MachinePortForwardingSlotObservation,
+    ) -> Option<&MachinePortForwardReceipt> {
+        match self {
+            Self::Expose => observation.exposed_receipt(),
+            Self::Withdraw => observation.absent_receipt(),
         }
-        Ok(response) => {
-            return Err(mutation_observation_error(
-                config,
-                "unexpose",
-                port_bindings,
-                &attempts,
-                current_observation_error(
-                    config,
-                    format!("gvproxy returned HTTP {}", response.status_code),
-                ),
+    }
+}
+
+#[cfg(test)]
+fn converge_machine_ports_without_journal(
+    provider: &impl MachinePortForwardingProvider,
+    tenant_id: &TenantId,
+    sandbox_id: &SandboxId,
+    bindings: &[SandboxPortBinding],
+    action: MachinePortForwardingAction,
+) -> Result<Vec<MachinePortForwardReceipt>> {
+    let mut receipts = Vec::with_capacity(bindings.len());
+    for (index, binding) in bindings.iter().enumerate() {
+        let before = provider.inspect(tenant_id, sandbox_id, bindings)?;
+        authenticate_observation_identity(provider, &before)?;
+        let slot = before.slots().get(index).ok_or_else(|| {
+            current_observation_error(
+                provider.provider_generation(),
+                format!("provider omitted canonical slot {index}"),
+            )
+        })?;
+        if let Some(receipt) = action.receipt(slot) {
+            receipts.push(receipt.clone());
+            continue;
+        }
+        if let Some(detail) = slot.conflict_detail() {
+            return Err(current_observation_error(
+                provider.provider_generation(),
+                detail,
             ));
         }
-        Err(error) => {
-            return Err(mutation_observation_error(
-                config,
-                "unexpose",
-                port_bindings,
-                &attempts,
-                error,
-            ));
-        }
-    };
-    let mut receipts = Vec::with_capacity(port_bindings.len());
-    for (index, binding) in port_bindings.iter().enumerate() {
-        if routes.iter().any(|route| route.occupies(binding)) {
-            return Err(mutation_observation_error(
-                config,
-                "unexpose",
-                port_bindings,
-                &attempts,
-                current_observation_error(
-                    config,
-                    format!(
-                        "gvproxy still lists publication {}:{}",
-                        binding.host_address, binding.host_port
-                    ),
-                ),
-            ));
-        }
-        let outcome = if attempts
-            .get(index)
-            .is_some_and(|attempt| matches!(attempt, Ok(response) if response.status_code == 200))
-        {
-            MachinePortForwardOutcome::Withdrawn
-        } else {
-            MachinePortForwardOutcome::ExactAlreadyAbsent
+
+        let mutation = match action {
+            MachinePortForwardingAction::Expose => provider.expose_one(binding),
+            MachinePortForwardingAction::Withdraw => provider.withdraw_one(binding),
         };
-        receipts.push(MachinePortForwardReceipt::authenticated(
-            outcome,
-            tenant_id,
-            sandbox_id,
-            binding,
-            &config.provider_instance,
-            config.provider_generation,
-        ));
+        let after =
+            provider
+                .inspect(tenant_id, sandbox_id, bindings)
+                .map_err(|inspection_error| {
+                    mutation_observation_error(
+                        provider.provider_generation(),
+                        action.label(),
+                        binding,
+                        mutation.as_ref().ok().copied(),
+                        mutation.as_ref().err(),
+                        inspection_error,
+                    )
+                })?;
+        authenticate_observation_identity(provider, &after)?;
+        let slot = after.slots().get(index).ok_or_else(|| {
+            current_observation_error(
+                provider.provider_generation(),
+                format!("provider omitted canonical slot {index} after mutation"),
+            )
+        })?;
+        let Some(receipt) = action.receipt(slot) else {
+            let detail = slot
+                .conflict_detail()
+                .unwrap_or("provider still reports the pre-mutation slot state");
+            return Err(mutation_observation_error(
+                provider.provider_generation(),
+                action.label(),
+                binding,
+                mutation.as_ref().ok().copied(),
+                mutation.as_ref().err(),
+                current_observation_error(provider.provider_generation(), detail),
+            ));
+        };
+        let mut receipt = receipt.clone();
+        if matches!(action, MachinePortForwardingAction::Withdraw)
+            && mutation
+                .as_ref()
+                .is_ok_and(|diagnostic| diagnostic.status_accepted())
+        {
+            receipt.outcome = MachinePortForwardOutcome::Withdrawn;
+        }
+        receipts.push(receipt);
     }
     Ok(receipts)
 }
@@ -278,12 +452,6 @@ struct GvproxyForwardRoute {
     protocol: String,
 }
 
-impl GvproxyForwardRoute {
-    fn occupies(&self, binding: &SandboxPortBinding) -> bool {
-        self.local == machine_forward_local(binding) && self.protocol == "tcp"
-    }
-}
-
 #[derive(Debug, Serialize)]
 struct GvproxyUnexposeRequest {
     local: String,
@@ -293,6 +461,63 @@ struct GvproxyUnexposeRequest {
 struct MachineForwarderHttpResponse {
     status_code: u16,
     body: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GvproxyLocalEndpoint {
+    NativeWildcard(u16),
+    Socket(SocketAddr),
+}
+
+impl GvproxyLocalEndpoint {
+    fn parse(local: &str) -> std::result::Result<Self, String> {
+        if let Some(port) = local.strip_prefix(':') {
+            return port
+                .parse::<u16>()
+                .map(Self::NativeWildcard)
+                .map_err(|error| error.to_string());
+        }
+        local
+            .parse::<SocketAddr>()
+            .map(Self::Socket)
+            .map_err(|error| error.to_string())
+    }
+
+    const fn port(self) -> u16 {
+        match self {
+            Self::NativeWildcard(port) => port,
+            Self::Socket(address) => address.port(),
+        }
+    }
+
+    fn overlaps(self, desired_address: IpAddr, desired_port: u16) -> bool {
+        self.port() == desired_port
+            && match self {
+                Self::NativeWildcard(_) => true,
+                Self::Socket(actual) => {
+                    let actual = canonical_ip_address(actual.ip());
+                    let desired = canonical_ip_address(desired_address);
+                    actual == desired || actual.is_unspecified() || desired.is_unspecified()
+                }
+            }
+    }
+
+    fn exactly_represents(self, desired_address: IpAddr, desired_port: u16) -> bool {
+        self.port() == desired_port
+            && match self {
+                Self::NativeWildcard(_) => desired_address.is_unspecified(),
+                Self::Socket(actual) => actual.ip() == desired_address,
+            }
+    }
+}
+
+fn canonical_ip_address(address: IpAddr) -> IpAddr {
+    match address {
+        IpAddr::V4(address) => IpAddr::V4(address),
+        IpAddr::V6(address) => address
+            .to_ipv4_mapped()
+            .map_or(IpAddr::V6(address), IpAddr::V4),
+    }
 }
 
 fn gvproxy_route(binding: &SandboxPortBinding) -> GvproxyForwardRoute {
@@ -322,72 +547,134 @@ fn authenticate_current_routes(
     sandbox_id: &SandboxId,
     bindings: &[SandboxPortBinding],
     routes: &[GvproxyForwardRoute],
-) -> Result<Vec<MachinePortForwardReceipt>> {
-    let mut receipts = Vec::with_capacity(bindings.len());
+) -> Result<Vec<MachinePortForwardingSlotObservation>> {
+    let parsed_routes = routes
+        .iter()
+        .filter_map(|route| match route.protocol.as_str() {
+            "tcp" => Some(
+                GvproxyLocalEndpoint::parse(&route.local)
+                    .map(|local| (route, local))
+                    .map_err(|error| {
+                        current_observation_error(
+                            config.provider_generation,
+                            format!(
+                                "gvproxy returned invalid TCP local endpoint {:?}: {error}",
+                                route.local
+                            ),
+                        )
+                    }),
+            ),
+            "udp" | "unix" | "npipe" => None,
+            protocol => Some(Err(current_observation_error(
+                config.provider_generation,
+                format!("gvproxy returned unknown forwarding protocol {protocol:?}"),
+            ))),
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let mut slots = Vec::with_capacity(bindings.len());
     for binding in bindings {
         let expected = gvproxy_route(binding);
-        let slot_routes = routes
+        let slot_routes = parsed_routes
             .iter()
-            .filter(|route| route.occupies(binding))
+            .filter(|(_, local)| local.overlaps(binding.host_address, binding.host_port))
+            .copied()
             .collect::<Vec<_>>();
-        if slot_routes.as_slice() != [&expected] {
-            return Err(current_observation_error(
-                config,
-                format!(
-                    "gvproxy does not list exactly one expected route for {}:{}",
-                    binding.host_address, binding.host_port
+        match slot_routes.as_slice() {
+            [] => slots.push(MachinePortForwardingSlotObservation::Absent(
+                MachinePortForwardReceipt::authenticated(
+                    MachinePortForwardOutcome::ExactAlreadyAbsent,
+                    tenant_id,
+                    sandbox_id,
+                    binding,
+                    &config.provider_instance,
+                    config.provider_generation,
                 ),
-            ));
+            )),
+            [(route, local)]
+                if local.exactly_represents(binding.host_address, binding.host_port)
+                    && route.remote == expected.remote =>
+            {
+                slots.push(MachinePortForwardingSlotObservation::Exposed(
+                    MachinePortForwardReceipt::authenticated(
+                        MachinePortForwardOutcome::Exposed,
+                        tenant_id,
+                        sandbox_id,
+                        binding,
+                        &config.provider_instance,
+                        config.provider_generation,
+                    ),
+                ));
+            }
+            _ => slots.push(MachinePortForwardingSlotObservation::Conflicting {
+                binding: binding.clone(),
+                detail: format!(
+                    "gvproxy lists {} conflicting routes for {}:{}",
+                    slot_routes.len(),
+                    binding.host_address,
+                    binding.host_port
+                ),
+            }),
         }
-        receipts.push(MachinePortForwardReceipt::authenticated(
-            MachinePortForwardOutcome::Exposed,
-            tenant_id,
-            sandbox_id,
-            binding,
-            &config.provider_instance,
-            config.provider_generation,
-        ));
     }
-    Ok(receipts)
+    Ok(slots)
 }
 
-fn machine_forward_local(binding: &SandboxPortBinding) -> String {
-    format!("{}:{}", binding.host_address, binding.host_port)
+#[cfg(test)]
+fn authenticate_observation_identity(
+    provider: &impl MachinePortForwardingProvider,
+    observation: &CurrentMachinePortForwardingObservation,
+) -> Result<()> {
+    if observation.provider_instance() != provider.provider_instance()
+        || observation.provider_generation() != provider.provider_generation()
+    {
+        return Err(current_observation_error(
+            provider.provider_generation(),
+            "provider observation crossed the selected instance or generation",
+        ));
+    }
+    Ok(())
 }
 
 fn current_observation_error(
-    config: &OciMachinePortForwarderConfig,
+    provider_generation: NetworkResourceGeneration,
     detail: impl std::fmt::Display,
 ) -> SandboxError {
     SandboxError::OperationFailed {
         message: format!(
             "machine forwarder current observation is ambiguous at provider generation {}: \
              {detail}",
-            config.provider_generation.as_u64(),
+            provider_generation.as_u64(),
         ),
     }
 }
 
+#[cfg(test)]
 fn mutation_observation_error(
-    config: &OciMachinePortForwarderConfig,
+    provider_generation: NetworkResourceGeneration,
     action: &str,
-    bindings: &[SandboxPortBinding],
-    attempts: &[Result<MachineForwarderHttpResponse>],
+    binding: &SandboxPortBinding,
+    diagnostic: Option<MachinePortMutationDiagnostic>,
+    mutation_error: Option<&SandboxError>,
     inspection_error: SandboxError,
 ) -> SandboxError {
-    let accepted = attempts
-        .iter()
-        .filter(|attempt| matches!(attempt, Ok(response) if response.status_code == 200))
-        .count();
+    let mutation_detail = match (diagnostic, mutation_error) {
+        (Some(diagnostic), _) => format!("native status accepted={}", diagnostic.status_accepted()),
+        (None, Some(error)) => format!("native request failed: {error}"),
+        (None, None) => "native request outcome unavailable".to_owned(),
+    };
     SandboxError::OperationFailed {
         message: format!(
-            "machine forwarder {action} batch is ambiguous at provider generation {}: \
-             {accepted}/{} native mutation responses succeeded and exact current observation \
-             failed: {inspection_error}",
-            config.provider_generation.as_u64(),
-            bindings.len(),
+            "machine forwarder {action} for {}:{} is ambiguous at provider generation {} \
+             ({mutation_detail}); exact current observation failed: {inspection_error}",
+            binding.host_address,
+            binding.host_port,
+            provider_generation.as_u64(),
         ),
     }
+}
+
+fn machine_forward_local(binding: &SandboxPortBinding) -> String {
+    binding.host_socket_addr().to_string()
 }
 
 fn send_machine_forwarder_request(
@@ -612,712 +899,5 @@ fn trim_trailing_slash(path_prefix: &str) -> &str {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::io::{Read as _, Write as _};
-    use std::net::{Ipv4Addr, Shutdown, TcpListener};
-    use std::thread;
-    use std::time::Duration;
-
-    use nimbus_core::TenantId;
-    use nimbus_network::NetworkResourceGeneration;
-
-    use super::{
-        MAX_MACHINE_FORWARDER_RESPONSE_BYTES, MachinePortForwardOutcome, MachinePortForwardReceipt,
-        OciMachinePortForwarderConfig, expose_machine_ports as expose_machine_ports_with_identity,
-        inspect_machine_ports as inspect_machine_ports_with_identity,
-        unexpose_machine_ports as unexpose_machine_ports_with_identity,
-    };
-    use crate::instance::SandboxId;
-    use crate::spec::SandboxPortBinding;
-
-    enum ScriptedResponse {
-        Bytes(Vec<u8>),
-        BytesAllowDisconnect(Vec<u8>),
-        Eof,
-        Delay(Duration),
-    }
-
-    fn config_for(
-        listener: &TcpListener,
-        identity: &str,
-        generation: u64,
-    ) -> OciMachinePortForwarderConfig {
-        OciMachinePortForwarderConfig::for_provider_instance(
-            Ipv4Addr::LOCALHOST.to_string(),
-            listener
-                .local_addr()
-                .expect("test forwarder address should resolve")
-                .port(),
-            "/services/forwarder",
-            identity,
-            NetworkResourceGeneration::new(generation),
-        )
-        .expect("test provider instance should validate")
-    }
-
-    fn binding() -> SandboxPortBinding {
-        SandboxPortBinding::tcp("http", 18080, 8080)
-    }
-
-    fn tenant_id() -> TenantId {
-        TenantId::new("tenant-forwarding-test").expect("test tenant should validate")
-    }
-
-    fn sandbox_id() -> SandboxId {
-        SandboxId::new("machine-api:test-forwarding-plan")
-    }
-
-    fn expose_machine_ports(
-        config: &OciMachinePortForwarderConfig,
-        bindings: &[SandboxPortBinding],
-    ) -> crate::error::Result<Vec<MachinePortForwardReceipt>> {
-        expose_machine_ports_with_identity(config, &tenant_id(), &sandbox_id(), bindings)
-    }
-
-    fn unexpose_machine_ports(
-        config: &OciMachinePortForwarderConfig,
-        bindings: &[SandboxPortBinding],
-    ) -> crate::error::Result<Vec<MachinePortForwardReceipt>> {
-        unexpose_machine_ports_with_identity(config, &tenant_id(), &sandbox_id(), bindings)
-    }
-
-    fn inspect_machine_ports(
-        config: &OciMachinePortForwarderConfig,
-        bindings: &[SandboxPortBinding],
-    ) -> crate::error::Result<super::CurrentMachinePortForwardingObservation> {
-        inspect_machine_ports_with_identity(config, &tenant_id(), &sandbox_id(), bindings)
-    }
-
-    fn http_response(status: &str, body: &[u8]) -> Vec<u8> {
-        let mut response = format!(
-            "HTTP/1.0 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
-            body.len()
-        )
-        .into_bytes();
-        response.extend_from_slice(body);
-        response
-    }
-
-    fn spawn_scripted_forwarder(
-        listener: TcpListener,
-        responses: Vec<ScriptedResponse>,
-    ) -> thread::JoinHandle<Vec<String>> {
-        thread::spawn(move || {
-            let mut requests = Vec::new();
-            for response in responses {
-                let (mut stream, _) = listener.accept().expect("request should arrive");
-                requests.push(read_complete_request(&mut stream));
-                match response {
-                    ScriptedResponse::Bytes(response) => {
-                        stream
-                            .write_all(&response)
-                            .expect("scripted response should write");
-                        stream
-                            .shutdown(Shutdown::Write)
-                            .expect("response EOF should be explicit");
-                        let mut trailing = [0_u8; 64];
-                        while stream
-                            .read(&mut trailing)
-                            .expect("client shutdown should be readable")
-                            != 0
-                        {}
-                    }
-                    ScriptedResponse::BytesAllowDisconnect(response) => {
-                        let _ = stream.write_all(&response);
-                        let _ = stream.shutdown(Shutdown::Write);
-                    }
-                    ScriptedResponse::Eof => {
-                        stream
-                            .shutdown(Shutdown::Write)
-                            .expect("empty response EOF should be explicit");
-                    }
-                    ScriptedResponse::Delay(delay) => thread::sleep(delay),
-                }
-            }
-            requests
-        })
-    }
-
-    fn read_complete_request(stream: &mut std::net::TcpStream) -> String {
-        stream
-            .set_read_timeout(Some(Duration::from_secs(3)))
-            .expect("test request timeout should configure");
-        let mut request = Vec::new();
-        let mut expected_len = None;
-        let mut chunk = [0_u8; 1024];
-        loop {
-            let read = stream
-                .read(&mut chunk)
-                .expect("request bytes should be readable");
-            assert_ne!(read, 0, "request must not close before its complete body");
-            request.extend_from_slice(&chunk[..read]);
-            if expected_len.is_none()
-                && let Some(header_end) =
-                    request.windows(4).position(|window| window == b"\r\n\r\n")
-            {
-                let headers = std::str::from_utf8(&request[..header_end])
-                    .expect("test request headers should be UTF-8");
-                let content_length = headers
-                    .lines()
-                    .find_map(|line| {
-                        let (name, value) = line.split_once(':')?;
-                        name.eq_ignore_ascii_case("content-length")
-                            .then_some(value.trim())
-                    })
-                    .map(|value| {
-                        value
-                            .parse::<usize>()
-                            .expect("test request length should parse")
-                    })
-                    .unwrap_or(0);
-                expected_len = Some(header_end + 4 + content_length);
-            }
-            if expected_len.is_some_and(|expected| request.len() >= expected) {
-                return String::from_utf8(request).expect("test request should be UTF-8");
-            }
-        }
-    }
-
-    fn assert_ambiguous(error: crate::error::SandboxError) {
-        assert!(
-            error.to_string().contains("ambiguous"),
-            "the rejection must preserve the provider effect as ambiguous: {error}"
-        );
-    }
-
-    fn native_routes(bindings: &[SandboxPortBinding]) -> Vec<u8> {
-        serde_json::to_vec(
-            &bindings
-                .iter()
-                .map(|binding| {
-                    serde_json::json!({
-                        "local": format!("{}:{}", binding.host_address, binding.host_port),
-                        "remote": format!(":{}", binding.host_port),
-                        "protocol": "tcp",
-                    })
-                })
-                .collect::<Vec<_>>(),
-        )
-        .expect("native route list should encode")
-    }
-
-    #[test]
-    fn expose_and_unexpose_translate_the_native_protocol_into_fenced_receipts() {
-        let listener =
-            TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("test forwarder should bind");
-        let config = config_for(&listener, "test-native-mutations", 41);
-        let server = spawn_scripted_forwarder(
-            listener,
-            vec![
-                ScriptedResponse::Bytes(http_response("200 OK", &[])),
-                ScriptedResponse::Bytes(http_response("200 OK", &native_routes(&[binding()]))),
-                ScriptedResponse::Bytes(http_response("200 OK", &[])),
-                ScriptedResponse::Bytes(http_response("200 OK", b"[]")),
-            ],
-        );
-
-        let exposed = expose_machine_ports(&config, &[binding()])
-            .expect("native expose plus exact list should authenticate");
-        let withdrawn = unexpose_machine_ports(&config, &[binding()])
-            .expect("native unexpose plus exact absence should authenticate");
-        let requests = server.join().expect("test forwarder should join");
-
-        assert_eq!(
-            exposed,
-            vec![MachinePortForwardReceipt {
-                outcome: MachinePortForwardOutcome::Exposed,
-                tenant_id: tenant_id(),
-                sandbox_id: sandbox_id(),
-                binding: binding(),
-                provider_instance: config.provider_instance().clone(),
-                provider_generation: config.provider_generation(),
-            }]
-        );
-        assert_eq!(withdrawn[0].outcome, MachinePortForwardOutcome::Withdrawn);
-        assert_eq!(requests.len(), 4);
-        assert!(requests[0].starts_with("POST /services/forwarder/expose "));
-        assert!(requests[1].starts_with("GET /services/forwarder/all "));
-        assert!(requests[2].starts_with("POST /services/forwarder/unexpose "));
-        assert!(requests[3].starts_with("GET /services/forwarder/all "));
-        for (index, request) in [requests[0].as_str(), requests[2].as_str()]
-            .into_iter()
-            .enumerate()
-        {
-            let (_, body) = request
-                .split_once("\r\n\r\n")
-                .expect("native mutation should contain a body");
-            let body: serde_json::Value =
-                serde_json::from_str(body).expect("native mutation body should decode");
-            assert_eq!(body["local"], "127.0.0.1:18080");
-            assert_eq!(body["protocol"], "tcp");
-            assert!(
-                body.get("provider_instance").is_none()
-                    && body.get("provider_generation").is_none(),
-                "adapter-only fencing fields must not be sent to gvproxy"
-            );
-            if index == 0 {
-                assert_eq!(body["remote"], ":18080");
-            } else {
-                assert!(body.get("remote").is_none());
-            }
-        }
-    }
-
-    #[test]
-    fn current_inspection_uses_the_gvproxy_native_batch_list_contract() {
-        let listener =
-            TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("test forwarder should bind");
-        let config = config_for(&listener, "test-native-current-inspection", 43);
-        let server = spawn_scripted_forwarder(
-            listener,
-            vec![ScriptedResponse::Bytes(http_response(
-                "200 OK",
-                &native_routes(&[binding()]),
-            ))],
-        );
-
-        let observation = inspect_machine_ports(&config, &[binding()])
-            .expect("the exact native gvproxy route list should authenticate");
-        let requests = server.join().expect("test forwarder should join");
-
-        assert_eq!(observation.provider_instance(), config.provider_instance());
-        assert_eq!(
-            observation.provider_generation(),
-            config.provider_generation()
-        );
-        assert_eq!(observation.receipts().len(), 1);
-        assert_eq!(requests.len(), 1);
-        assert!(
-            requests[0].starts_with("GET /services/forwarder/all HTTP/1.0\r\n"),
-            "current observation must use gvproxy's one supported read-only batch route: \
-             {requests:?}"
-        );
-        assert!(
-            !requests[0].contains("/expose ") && !requests[0].contains("/inspect "),
-            "current observation must neither mutate nor invent a provider route: {requests:?}"
-        );
-    }
-
-    #[test]
-    fn unavailable_or_wrong_current_list_never_replays_expose() {
-        for (label, response) in [
-            (
-                "unsupported",
-                http_response("404 Not Found", b"unsupported"),
-            ),
-            (
-                "wrong-route",
-                http_response(
-                    "200 OK",
-                    &serde_json::to_vec(&vec![serde_json::json!({
-                        "local": "127.0.0.1:18081",
-                        "remote": ":18081",
-                        "protocol": "tcp",
-                    })])
-                    .expect("wrong route should encode"),
-                ),
-            ),
-        ] {
-            let listener =
-                TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("test forwarder should bind");
-            let config = config_for(&listener, label, 42);
-            let server =
-                spawn_scripted_forwarder(listener, vec![ScriptedResponse::Bytes(response)]);
-
-            let error = inspect_machine_ports(&config, &[binding()])
-                .expect_err("unsupported or stale inspection must remain provider-unknown");
-            let requests = server.join().expect("test forwarder should join");
-
-            assert_ambiguous(error);
-            assert_eq!(requests.len(), 1);
-            assert!(
-                requests[0].contains("/all") && !requests[0].contains("/expose "),
-                "inspection failure must not invoke a mutating fallback: {requests:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn current_inspection_substitution_matrix_returns_no_observation_or_mutating_fallback() {
-        for label in [
-            "generic-success",
-            "unsupported",
-            "missing",
-            "wrong-local",
-            "wrong-remote",
-            "wrong-protocol",
-            "duplicate",
-            "conflicting-slot",
-            "malformed",
-            "eof",
-            "oversized",
-        ] {
-            let listener =
-                TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("test forwarder should bind");
-            let config = config_for(&listener, label, 62);
-            let exact = serde_json::json!({
-                "local": "127.0.0.1:18080",
-                "remote": ":18080",
-                "protocol": "tcp",
-            });
-            let response = match label {
-                "generic-success" => ScriptedResponse::Bytes(http_response("200 OK", b"{}")),
-                "unsupported" => {
-                    ScriptedResponse::Bytes(http_response("404 Not Found", b"unsupported"))
-                }
-                "missing" => ScriptedResponse::Bytes(http_response("200 OK", b"[]")),
-                "wrong-local" => {
-                    let mut value = exact.clone();
-                    value["local"] = serde_json::json!("127.0.0.1:18081");
-                    ScriptedResponse::Bytes(http_response(
-                        "200 OK",
-                        &serde_json::to_vec(&vec![value]).expect("response should encode"),
-                    ))
-                }
-                "wrong-remote" => {
-                    let mut value = exact.clone();
-                    value["remote"] = serde_json::json!(":18081");
-                    ScriptedResponse::Bytes(http_response(
-                        "200 OK",
-                        &serde_json::to_vec(&vec![value]).expect("response should encode"),
-                    ))
-                }
-                "wrong-protocol" => {
-                    let mut value = exact.clone();
-                    value["protocol"] = serde_json::json!("udp");
-                    ScriptedResponse::Bytes(http_response(
-                        "200 OK",
-                        &serde_json::to_vec(&vec![value]).expect("response should encode"),
-                    ))
-                }
-                "duplicate" => ScriptedResponse::Bytes(http_response(
-                    "200 OK",
-                    &serde_json::to_vec(&vec![exact.clone(), exact.clone()])
-                        .expect("response should encode"),
-                )),
-                "conflicting-slot" => {
-                    let mut conflicting = exact.clone();
-                    conflicting["remote"] = serde_json::json!(":18081");
-                    ScriptedResponse::Bytes(http_response(
-                        "200 OK",
-                        &serde_json::to_vec(&vec![exact.clone(), conflicting])
-                            .expect("response should encode"),
-                    ))
-                }
-                "malformed" => ScriptedResponse::Bytes(http_response("200 OK", br#"[{"local":"#)),
-                "eof" => ScriptedResponse::Eof,
-                "oversized" => ScriptedResponse::BytesAllowDisconnect(http_response(
-                    "200 OK",
-                    &vec![b'x'; MAX_MACHINE_FORWARDER_RESPONSE_BYTES + 1],
-                )),
-                _ => unreachable!("the substitution labels are closed above"),
-            };
-            let server = spawn_scripted_forwarder(listener, vec![response]);
-
-            let error = inspect_machine_ports(&config, &[binding()])
-                .expect_err("substituted current evidence must return no observation");
-            let requests = server.join().expect("test forwarder should join");
-
-            assert_ambiguous(error);
-            assert_eq!(requests.len(), 1);
-            assert!(
-                requests[0].contains("/all") && !requests[0].contains("/expose "),
-                "{label}: current inspection must have no mutating fallback: {requests:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn current_inspection_partial_timeout_and_refusal_remain_provider_unknown() {
-        let listener =
-            TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("partial forwarder should bind");
-        let config = config_for(&listener, "partial-current-inspection", 63);
-        let second_binding = SandboxPortBinding::tcp("metrics", 19090, 9090);
-        let server = spawn_scripted_forwarder(
-            listener,
-            vec![ScriptedResponse::Bytes(http_response(
-                "200 OK",
-                &native_routes(&[binding()]),
-            ))],
-        );
-
-        let partial_error = inspect_machine_ports(&config, &[binding(), second_binding])
-            .expect_err("a partial current batch must return no observation");
-        let partial_requests = server.join().expect("partial forwarder should join");
-        assert_ambiguous(partial_error);
-        assert_eq!(partial_requests.len(), 1);
-        assert!(
-            partial_requests
-                .iter()
-                .all(|request| request.contains("/all") && !request.contains("/expose "))
-        );
-
-        let timeout_listener =
-            TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("timeout forwarder should bind");
-        let timeout_config = config_for(&timeout_listener, "timeout-current-inspection", 64);
-        let timeout_server = spawn_scripted_forwarder(
-            timeout_listener,
-            vec![ScriptedResponse::Delay(Duration::from_millis(2_100))],
-        );
-        let timeout_error = inspect_machine_ports(&timeout_config, &[binding()])
-            .expect_err("a provider timeout must remain unknown");
-        let timeout_requests = timeout_server
-            .join()
-            .expect("timeout forwarder should join");
-        assert_ambiguous(timeout_error);
-        assert_eq!(timeout_requests.len(), 1);
-        assert!(timeout_requests[0].contains("/all") && !timeout_requests[0].contains("/expose "));
-
-        let refusal_listener =
-            TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("refusal port should bind");
-        let refusal_config = config_for(&refusal_listener, "refused-current-inspection", 65);
-        drop(refusal_listener);
-        assert_ambiguous(
-            inspect_machine_ports(&refusal_config, &[binding()])
-                .expect_err("connection refusal must remain unknown"),
-        );
-    }
-
-    #[test]
-    fn empty_current_inspection_has_no_provider_io_or_forwarding_claim() {
-        let listener =
-            TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("unused provider should bind");
-        let config = config_for(&listener, "test-empty-current-inspection", 43);
-
-        let observation =
-            inspect_machine_ports(&config, &[]).expect("empty desired forwarding should inspect");
-
-        assert_eq!(observation.provider_instance(), config.provider_instance());
-        assert_eq!(
-            observation.provider_generation(),
-            config.provider_generation()
-        );
-        assert!(
-            observation.receipts().is_empty(),
-            "empty desired forwarding must not fabricate a route receipt"
-        );
-        listener
-            .set_nonblocking(true)
-            .expect("provider fixture should become nonblocking");
-        assert!(
-            matches!(
-                listener.accept(),
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
-            ),
-            "empty desired forwarding must perform no provider I/O"
-        );
-    }
-
-    #[test]
-    fn partial_native_observation_returns_no_mutation_success_evidence() {
-        let second_binding = SandboxPortBinding::tcp("metrics", 19090, 9090);
-        let bindings = vec![binding(), second_binding.clone()];
-
-        for action in ["expose", "unexpose"] {
-            let listener =
-                TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("test forwarder should bind");
-            let config = config_for(&listener, action, 51);
-            let observed = if action == "expose" {
-                native_routes(&[binding()])
-            } else {
-                native_routes(std::slice::from_ref(&second_binding))
-            };
-            let server = spawn_scripted_forwarder(
-                listener,
-                vec![
-                    ScriptedResponse::Bytes(http_response("200 OK", &[])),
-                    ScriptedResponse::Bytes(http_response("200 OK", &[])),
-                    ScriptedResponse::Bytes(http_response("200 OK", &observed)),
-                ],
-            );
-
-            let error = if action == "expose" {
-                expose_machine_ports(&config, &bindings)
-                    .expect_err("a partial exposed batch must return no success evidence")
-            } else {
-                unexpose_machine_ports(&config, &bindings)
-                    .expect_err("a partial absent batch must return no success evidence")
-            };
-            let requests = server.join().expect("test forwarder should join");
-
-            assert_eq!(
-                requests.len(),
-                3,
-                "both native mutations and one complete batch observation must run"
-            );
-            assert_ambiguous(error);
-        }
-    }
-
-    #[test]
-    fn generic_http_success_is_not_machine_forwarder_evidence() {
-        let expose_listener =
-            TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("test forwarder should bind");
-        let expose_config = config_for(&expose_listener, "test-generic-expose-status", 6);
-        let expose_server = spawn_scripted_forwarder(
-            expose_listener,
-            vec![
-                ScriptedResponse::Bytes(http_response("200 OK", &[])),
-                ScriptedResponse::Bytes(http_response("200 OK", b"{}")),
-            ],
-        );
-        let expose_error = expose_machine_ports(&expose_config, &[binding()])
-            .expect_err("a generic mutation status without exact list cannot prove exposure");
-        let expose_requests = expose_server.join().expect("test forwarder should join");
-        assert!(
-            expose_requests.len() == 2
-                && expose_requests[0].contains("/expose")
-                && expose_requests[1].contains("/all"),
-            "generic expose status must be followed by exact observation: {expose_requests:?}"
-        );
-        assert_ambiguous(expose_error);
-
-        let listener =
-            TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("test forwarder should bind");
-        let config = config_for(&listener, "test-generic-status", 7);
-        let server = spawn_scripted_forwarder(
-            listener,
-            vec![
-                ScriptedResponse::Bytes(http_response("200 OK", &[])),
-                ScriptedResponse::Bytes(http_response("200 OK", &native_routes(&[binding()]))),
-            ],
-        );
-
-        let error = unexpose_machine_ports(&config, &[binding()])
-            .expect_err("a generic status cannot replace observed provider absence");
-        let requests = server.join().expect("test forwarder should join");
-
-        assert!(
-            requests.len() == 2
-                && requests[0].contains("/unexpose")
-                && requests[1].contains("/all"),
-            "withdrawal must remain fenced while the native list still contains the route: \
-             {requests:?}"
-        );
-        assert_ambiguous(error);
-    }
-
-    #[test]
-    fn failed_unexpose_with_exact_native_absence_is_idempotently_already_absent() {
-        let listener =
-            TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("test forwarder should bind");
-        let config = config_for(&listener, "test-exact-absence", 8);
-        let server = spawn_scripted_forwarder(
-            listener,
-            vec![
-                ScriptedResponse::Bytes(http_response("500 Internal Server Error", b"missing")),
-                ScriptedResponse::Bytes(http_response("200 OK", b"[]")),
-            ],
-        );
-
-        let receipts = unexpose_machine_ports(&config, &[binding()])
-            .expect("exact native absence may settle an ambiguous idempotent withdrawal");
-        let requests = server.join().expect("test forwarder should join");
-
-        assert_eq!(
-            receipts[0].outcome,
-            MachinePortForwardOutcome::ExactAlreadyAbsent
-        );
-        assert_eq!(requests.len(), 2);
-        assert!(requests[0].contains("/unexpose") && requests[1].contains("/all"));
-    }
-
-    #[test]
-    fn successful_unexpose_plus_native_absence_emits_withdrawn_receipt() {
-        let listener =
-            TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("test forwarder should bind");
-        let config = config_for(&listener, "test-native-withdrawal", 9);
-        let server = spawn_scripted_forwarder(
-            listener,
-            vec![
-                ScriptedResponse::Bytes(http_response("200 OK", &[])),
-                ScriptedResponse::Bytes(http_response("200 OK", b"[]")),
-            ],
-        );
-
-        let receipts = unexpose_machine_ports(&config, &[binding()])
-            .expect("native success and exact absence may authorize withdrawal");
-        let requests = server.join().expect("test forwarder should join");
-
-        assert_eq!(receipts[0].outcome, MachinePortForwardOutcome::Withdrawn);
-        assert_eq!(receipts[0].provider_instance, *config.provider_instance());
-        assert_eq!(
-            receipts[0].provider_generation,
-            config.provider_generation()
-        );
-        assert_eq!(requests.len(), 2);
-    }
-
-    #[test]
-    fn native_route_list_cannot_substitute_configured_provider_authority() {
-        let listener =
-            TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("test forwarder should bind");
-        let config = config_for(&listener, "test-configured-authority", 10);
-        let server = spawn_scripted_forwarder(
-            listener,
-            vec![ScriptedResponse::Bytes(http_response(
-                "200 OK",
-                &native_routes(&[binding()]),
-            ))],
-        );
-
-        let observation = inspect_machine_ports(&config, &[binding()])
-            .expect("native route should be translated under configured lifecycle authority");
-        let requests = server.join().expect("test forwarder should join");
-
-        assert_eq!(observation.provider_instance(), config.provider_instance());
-        assert_eq!(
-            observation.provider_generation(),
-            config.provider_generation()
-        );
-        assert_eq!(requests.len(), 1);
-    }
-
-    #[test]
-    fn status_eof_timeout_refusal_and_arbitrary_text_are_provider_unknown() {
-        let binding = binding();
-
-        for (label, first_response) in [
-            (
-                "status",
-                ScriptedResponse::Bytes(http_response("204 No Content", &[])),
-            ),
-            ("eof", ScriptedResponse::Eof),
-            (
-                "text",
-                ScriptedResponse::Bytes(http_response("200 OK", b"withdrawn")),
-            ),
-        ] {
-            let listener =
-                TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("test forwarder should bind");
-            let config = config_for(&listener, label, 11);
-            let server = spawn_scripted_forwarder(listener, vec![first_response]);
-            let error = inspect_machine_ports(&config, std::slice::from_ref(&binding))
-                .expect_err("non-evidence must remain provider-unknown");
-            server.join().expect("test forwarder should join");
-            assert_ambiguous(error);
-        }
-
-        let timeout_listener =
-            TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("timeout forwarder should bind");
-        let timeout_config = config_for(&timeout_listener, "timeout", 12);
-        let timeout_server = spawn_scripted_forwarder(
-            timeout_listener,
-            vec![ScriptedResponse::Delay(Duration::from_secs(3))],
-        );
-        let timeout_error = inspect_machine_ports(&timeout_config, std::slice::from_ref(&binding))
-            .expect_err("timeout must not authorize withdrawal");
-        timeout_server
-            .join()
-            .expect("timeout forwarder should join");
-        assert_ambiguous(timeout_error);
-
-        let refused_listener =
-            TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("refusal port should bind");
-        let refused_config = config_for(&refused_listener, "refused", 13);
-        drop(refused_listener);
-        let refused_error = inspect_machine_ports(&refused_config, std::slice::from_ref(&binding))
-            .expect_err("connection refusal must not authorize withdrawal");
-        assert_ambiguous(refused_error);
-    }
-}
+#[path = "forwarding/tests.rs"]
+mod tests;

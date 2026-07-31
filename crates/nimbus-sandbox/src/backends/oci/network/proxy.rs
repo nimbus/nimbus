@@ -585,12 +585,57 @@ pub(crate) fn prepare_machine_port_proxies_with_release_authority(
             );
         }
     };
-    let bind_authority = port_lease_coordinator.claim_machine_bindings_with_lifetimes(
+    let bind_authority = match port_lease_coordinator.claim_machine_bindings_with_lifetimes(
         tenant_id,
         sandbox_id,
         port_bindings,
         port_leases,
-    )?;
+    ) {
+        Ok(authority) => authority,
+        Err(claim_error) if release_authority == MachinePortPreparationReleaseAuthority::Retain => {
+            let (expected_bindings, recoveries) = port_lease_coordinator
+                .recover_machine_bindings_after_owner_death(
+                    tenant_id,
+                    sandbox_id,
+                    port_bindings,
+                    port_leases,
+                )
+                .map_err(|recovery_error| SandboxError::OperationFailed {
+                    message: format!(
+                        "{claim_error}; exact dead-owner local-listener recovery also failed: \
+                         {recovery_error}"
+                    ),
+                })?;
+            port_lease_coordinator
+                .prepare_recovered_machine_bindings_for_rebind(
+                    port_leases,
+                    &expected_bindings,
+                    &recoveries,
+                )
+                .map_err(|rebind_error| SandboxError::OperationFailed {
+                    message: format!(
+                        "{claim_error}; dead local-listener owner was acquired, but exact rebind \
+                         preparation failed: {rebind_error}"
+                    ),
+                })?;
+            drop(recoveries);
+            port_lease_coordinator
+                .claim_machine_bindings_with_lifetimes(
+                    tenant_id,
+                    sandbox_id,
+                    port_bindings,
+                    port_leases,
+                )
+                .map_err(|retry_error| SandboxError::OperationFailed {
+                    message: format!(
+                        "{claim_error}; exact dead-owner local-listener recovery completed, but \
+                         canonical route rebuild could not claim the retained generation: \
+                         {retry_error}"
+                    ),
+                })?
+        }
+        Err(error) => return Err(error),
+    };
     let mut proxies = Vec::with_capacity(port_bindings.len());
     for ((((binding, lease), route), bind_claim), lifetime) in port_bindings
         .iter()

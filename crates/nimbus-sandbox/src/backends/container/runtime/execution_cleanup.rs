@@ -148,6 +148,23 @@ impl ContainerSandboxBackend {
                                 .classify_launch_port_batch(&manifest.port_leases, claim)
                         },
                     )?;
+                    match &published_batch_state {
+                        LaunchPortBatchState::ProviderOwned
+                        | LaunchPortBatchState::RestartRetained => {
+                            self.prepare_machine_port_publication_withdrawal(manifest)?;
+                        }
+                        LaunchPortBatchState::NeverBound
+                        | LaunchPortBatchState::TerminalNoEffect => {}
+                        LaunchPortBatchState::NetavarkClaimed(_) => {
+                            return Err(SandboxError::OperationFailed {
+                                message: format!(
+                                    "machine-forwarded container sandbox {} retains impossible \
+                                     Netavark listener authority; preserving every network fence",
+                                    manifest.handle.id
+                                ),
+                            });
+                        }
+                    }
                     let pep_requests = manifest
                         .egress_proxy
                         .as_ref()

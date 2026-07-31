@@ -14,7 +14,7 @@ use crate::backends::oci::network::{
     MachinePortProxyCleanupState, MachinePortProxyEntry, MachinePortProxyKey,
     MachinePortProxyLeaseAuthority, MachinePortProxyRegistration, OciMachinePortForwarderConfig,
     machine_port_proxy_routes, prepare_machine_port_proxies_with_release_authority,
-    start_machine_port_proxies_with_recovery, unexpose_machine_ports,
+    start_machine_port_proxies_with_recovery,
 };
 use crate::backends::oci::port_lifecycle::OciPortLeaseCoordinator;
 use crate::error::{Result, SandboxError};
@@ -113,6 +113,7 @@ impl ContainerSandboxBackend {
         assigned_ips: &[Ipv4Addr],
         manifest: &ContainerSandboxManifest,
     ) -> Result<()> {
+        self.ensure_machine_port_publication_attachment_for_test(manifest)?;
         self.ensure_machine_port_proxies_running_with_lifecycle_observers(
             id,
             assigned_ips,
@@ -122,7 +123,7 @@ impl ContainerSandboxBackend {
                 before_activation: || Ok(()),
                 after_activation: || Ok(()),
                 after_active_validation: || {},
-                publish: || Ok(()),
+                publish: || self.converge_exposed_machine_port_publication_for_test(manifest),
             },
         )
     }
@@ -134,6 +135,7 @@ impl ContainerSandboxBackend {
         assigned_ips: &[Ipv4Addr],
         manifest: &ContainerSandboxManifest,
     ) -> Result<()> {
+        self.ensure_machine_port_publication_attachment_for_test(manifest)?;
         self.ensure_machine_port_proxies_running_with_lifecycle_observers(
             id,
             assigned_ips,
@@ -143,7 +145,7 @@ impl ContainerSandboxBackend {
                 before_activation: || Ok(()),
                 after_activation: || Ok(()),
                 after_active_validation: || {},
-                publish: || Ok(()),
+                publish: || self.converge_exposed_machine_port_publication_for_test(manifest),
             },
         )
     }
@@ -287,7 +289,6 @@ impl ContainerSandboxBackend {
                     ),
                 });
             }
-            registration.publication_may_exist = true;
             return publish
                 .take()
                 .expect("publication runs exactly once for a validated provider")(
@@ -395,13 +396,10 @@ impl ContainerSandboxBackend {
                         routes,
                         proxies: running,
                         lease_authority: Some(MachinePortProxyLeaseAuthority::Live(bind_authority)),
-                        publication_may_exist: false,
                     },
                     expected_bindings,
                     withdraw_complete: disposition == MachinePortProxyCleanupDisposition::Restart,
                     provider_stopped: false,
-                    publication_withdrawn: vec![true; manifest.spec.port_bindings.len()],
-                    publication_absence_receipts: vec![None; manifest.spec.port_bindings.len()],
                     durable_transition_complete: false,
                 }));
                 proxies.insert(
@@ -411,7 +409,27 @@ impl ContainerSandboxBackend {
                 drop(proxies);
                 let cleanup = MachinePortProxyCleanup { key, state };
                 let cleanup_result = self
-                    .stop_machine_port_proxy_provider(&cleanup)
+                    .prepare_machine_port_publication_withdrawal(manifest)
+                    .and_then(|()| self.stop_machine_port_proxy_provider(&cleanup))
+                    .and_then(|()| {
+                        let forwarder = manifest
+                            .runner_config
+                            .machine_port_forwarder
+                            .as_ref()
+                            .ok_or_else(|| SandboxError::OperationFailed {
+                                message: format!(
+                                    "partial machine proxy cleanup for tenant {} sandbox {} has \
+                                     no persisted forwarder authority",
+                                    manifest.spec.tenant_id, manifest.handle.id
+                                ),
+                            })?;
+                        self.converge_absent_machine_port_publication(
+                            &manifest.spec.tenant_id,
+                            &manifest.handle.id,
+                            &manifest.spec.port_bindings,
+                            forwarder,
+                        )
+                    })
                     .and_then(|()| self.complete_machine_port_proxy_cleanup(&cleanup));
                 return Err(match cleanup_result {
                     Ok(()) => start_error,
@@ -432,7 +450,6 @@ impl ContainerSandboxBackend {
                 routes,
                 proxies: running,
                 lease_authority: Some(MachinePortProxyLeaseAuthority::Live(bind_authority)),
-                publication_may_exist: true,
             }),
         );
         publish
@@ -502,6 +519,12 @@ impl ContainerSandboxBackend {
         expected_port_bindings: &[SandboxPortBinding],
         expected_port_leases: &[PortLeaseRequest],
     ) -> Result<Option<MachinePortProxyCleanup>> {
+        self.prepare_machine_port_publication_withdrawal_if_exact_manifest(
+            tenant_id,
+            id,
+            expected_port_bindings,
+            expected_port_leases,
+        )?;
         let manager = self.port_lease_coordinator();
         self.begin_machine_port_proxy_cleanup(
             MachinePortProxyCleanupRequest {
@@ -520,6 +543,7 @@ impl ContainerSandboxBackend {
         &self,
         manifest: &ContainerSandboxManifest,
     ) -> Result<Option<MachinePortProxyCleanup>> {
+        self.prepare_machine_port_publication_withdrawal(manifest)?;
         let manager = self.port_lease_coordinator_for_manifest(manifest)?;
         self.begin_machine_port_proxy_cleanup(
             MachinePortProxyCleanupRequest {
@@ -542,6 +566,12 @@ impl ContainerSandboxBackend {
         expected_port_bindings: &[SandboxPortBinding],
         expected_port_leases: &[PortLeaseRequest],
     ) -> Result<Option<MachinePortProxyCleanup>> {
+        self.prepare_machine_port_publication_withdrawal_if_exact_manifest(
+            tenant_id,
+            id,
+            expected_port_bindings,
+            expected_port_leases,
+        )?;
         let manager = self.port_lease_coordinator();
         self.begin_machine_port_proxy_cleanup(
             MachinePortProxyCleanupRequest {
@@ -560,6 +590,7 @@ impl ContainerSandboxBackend {
         &self,
         manifest: &ContainerSandboxManifest,
     ) -> Result<Option<MachinePortProxyCleanup>> {
+        self.prepare_machine_port_publication_withdrawal(manifest)?;
         let manager = self.port_lease_coordinator_for_manifest(manifest)?;
         self.begin_machine_port_proxy_cleanup(
             MachinePortProxyCleanupRequest {
@@ -675,7 +706,6 @@ impl ContainerSandboxBackend {
                         lease_authority: Some(MachinePortProxyLeaseAuthority::Recovered(
                             recoveries,
                         )),
-                        publication_may_exist: true,
                     },
                     expected_bindings,
                     // CleanupPending already fences new use. Process death
@@ -683,8 +713,6 @@ impl ContainerSandboxBackend {
                     // the provider-managed external publication absent.
                     withdraw_complete: true,
                     provider_stopped: true,
-                    publication_withdrawn: vec![false; expected_port_bindings.len()],
-                    publication_absence_receipts: vec![None; expected_port_bindings.len()],
                     durable_transition_complete: false,
                 }))
             } else {
@@ -712,9 +740,6 @@ impl ContainerSandboxBackend {
                 else {
                     unreachable!("running registration was validated under the same lock");
                 };
-                let publication_withdrawn =
-                    vec![!registration.publication_may_exist; registration.port_bindings.len()];
-                let publication_absence_receipts = vec![None; registration.port_bindings.len()];
                 Arc::new(Mutex::new(MachinePortProxyCleanupState {
                     disposition,
                     port_lease_coordinator,
@@ -722,8 +747,6 @@ impl ContainerSandboxBackend {
                     expected_bindings,
                     withdraw_complete: disposition == MachinePortProxyCleanupDisposition::Restart,
                     provider_stopped: false,
-                    publication_withdrawn,
-                    publication_absence_receipts,
                     durable_transition_complete: false,
                 }))
             };
@@ -736,6 +759,26 @@ impl ContainerSandboxBackend {
         let cleanup = MachinePortProxyCleanup { key, state };
         self.stop_machine_port_proxy_provider(&cleanup)?;
         Ok(Some(cleanup))
+    }
+
+    #[cfg(test)]
+    fn prepare_machine_port_publication_withdrawal_if_exact_manifest(
+        &self,
+        tenant_id: &TenantId,
+        id: &SandboxId,
+        expected_port_bindings: &[SandboxPortBinding],
+        expected_port_leases: &[PortLeaseRequest],
+    ) -> Result<()> {
+        let Some(manifest) = self.read_manifest(id)? else {
+            return Ok(());
+        };
+        if manifest.spec.tenant_id == *tenant_id
+            && manifest.spec.port_bindings == expected_port_bindings
+            && manifest.port_leases == expected_port_leases
+        {
+            self.prepare_machine_port_publication_withdrawal(&manifest)?;
+        }
+        Ok(())
     }
 
     fn validate_machine_port_proxy_cleanup(
@@ -821,89 +864,28 @@ impl ContainerSandboxBackend {
         Ok(())
     }
 
+    #[cfg(test)]
+    pub(super) fn stop_machine_port_proxy_provider_for_test(
+        &self,
+        cleanup: &MachinePortProxyCleanup,
+    ) -> Result<()> {
+        self.stop_machine_port_proxy_provider(cleanup)
+    }
+
     pub(super) fn unexpose_machine_port_proxy_publications(
         &self,
         cleanup: &MachinePortProxyCleanup,
         forwarder: &OciMachinePortForwarderConfig,
     ) -> Result<()> {
-        let mut state = self.lock_machine_port_proxy_cleanup(cleanup)?;
-        if state.publication_withdrawn.len() != state.registration.port_bindings.len()
-            || state.publication_absence_receipts.len() != state.registration.port_bindings.len()
-        {
-            return Err(SandboxError::OperationFailed {
-                message: format!(
-                    "machine port publication withdrawal state for tenant {} sandbox {} does \
-                     not cover the exact registered binding batch",
-                    cleanup.key.0, cleanup.key.1
-                ),
-            });
-        }
-        if state
-            .publication_withdrawn
-            .iter()
-            .any(|withdrawn| !withdrawn)
-        {
-            self.authenticate_machine_port_forwarder(
-                &cleanup.key.0,
-                &cleanup.key.1,
-                &state.registration.port_bindings,
-                forwarder,
-            )?;
-        }
-        let mut errors = Vec::new();
-        for index in 0..state.registration.port_bindings.len() {
-            if state.publication_withdrawn[index] {
-                continue;
-            }
-            let binding = state.registration.port_bindings[index].clone();
-            match unexpose_machine_ports(
-                forwarder,
-                &cleanup.key.0,
-                &cleanup.key.1,
-                std::slice::from_ref(&binding),
-            ) {
-                Ok(mut receipts) if receipts.len() == 1 => {
-                    state.publication_absence_receipts[index] = receipts.pop();
-                    state.publication_withdrawn[index] = true;
-                }
-                Ok(receipts) => errors.push(format!(
-                    "{}:{} withdrawal returned {} authenticated receipts instead of exactly one",
-                    binding.host_address,
-                    binding.host_port,
-                    receipts.len()
-                )),
-                Err(error) => errors.push(format!(
-                    "{}:{} withdrawal was unconfirmed: {error}",
-                    binding.host_address, binding.host_port
-                )),
-            }
-        }
-        if !errors.is_empty() {
-            return Err(SandboxError::OperationFailed {
-                message: format!(
-                    "machine port publication withdrawal for tenant {} sandbox {} was \
-                     incomplete: {}",
-                    cleanup.key.0,
-                    cleanup.key.1,
-                    errors.join("; ")
-                ),
-            });
-        }
-        if let Some(receipts) = state
-            .publication_absence_receipts
-            .iter()
-            .cloned()
-            .collect::<Option<Vec<_>>>()
-        {
-            self.persist_absent_machine_port_receipts(
-                &cleanup.key.0,
-                &cleanup.key.1,
-                &state.registration.port_bindings,
-                forwarder,
-                receipts,
-            )?;
-        }
-        Ok(())
+        let state = self.lock_machine_port_proxy_cleanup(cleanup)?;
+        let bindings = state.registration.port_bindings.clone();
+        drop(state);
+        self.converge_absent_machine_port_publication(
+            &cleanup.key.0,
+            &cleanup.key.1,
+            &bindings,
+            forwarder,
+        )
     }
 
     #[cfg(test)]
@@ -911,16 +893,30 @@ impl ContainerSandboxBackend {
         &self,
         cleanup: &MachinePortProxyCleanup,
     ) -> Result<()> {
-        let mut state = self.lock_machine_port_proxy_cleanup(cleanup)?;
-        state.publication_withdrawn.fill(true);
-        state.publication_absence_receipts.fill(None);
-        Ok(())
+        let manifest =
+            self.read_manifest(&cleanup.key.1)?
+                .ok_or_else(|| SandboxError::OperationFailed {
+                    message: format!(
+                        "test machine publication cleanup for tenant {} sandbox {} has no manifest",
+                        cleanup.key.0, cleanup.key.1
+                    ),
+                })?;
+        self.converge_absent_machine_port_publication_for_test(&manifest)
     }
 
     pub(super) fn complete_machine_port_proxy_cleanup(
         &self,
         cleanup: &MachinePortProxyCleanup,
     ) -> Result<()> {
+        let absence = self
+            .absent_machine_port_evidence(&cleanup.key.1)?
+            .ok_or_else(|| SandboxError::OperationFailed {
+                message: format!(
+                    "machine port proxy cleanup for tenant {} sandbox {} cannot complete \
+                     without durable terminal Absent publication evidence",
+                    cleanup.key.0, cleanup.key.1
+                ),
+            })?;
         {
             let mut state = self.lock_machine_port_proxy_cleanup(cleanup)?;
             if !state.provider_stopped {
@@ -932,15 +928,15 @@ impl ContainerSandboxBackend {
                     ),
                 });
             }
-            if state
-                .publication_withdrawn
-                .iter()
-                .any(|withdrawn| !withdrawn)
+            if absence.tenant_id != cleanup.key.0
+                || absence.sandbox_id != cleanup.key.1
+                || absence.receipts.len() != state.registration.port_bindings.len()
             {
                 return Err(SandboxError::OperationFailed {
                     message: format!(
                         "machine port proxy cleanup for tenant {} sandbox {} cannot complete \
-                         before every external publication is withdrawn",
+                         because terminal publication evidence does not cover the exact registered \
+                         binding batch",
                         cleanup.key.0, cleanup.key.1
                     ),
                 });
@@ -1147,7 +1143,6 @@ impl ContainerSandboxBackend {
         registration.proxies = vec![panicking_machine_port_proxy_for_test(
             (Ipv4Addr::LOCALHOST, 0).into(),
         )];
-        registration.publication_may_exist = false;
         let disposition = partial_start_cleanup_disposition(release_authority);
         let state = Arc::new(Mutex::new(MachinePortProxyCleanupState {
             disposition,
@@ -1156,8 +1151,6 @@ impl ContainerSandboxBackend {
             expected_bindings,
             withdraw_complete: disposition == MachinePortProxyCleanupDisposition::Restart,
             provider_stopped: false,
-            publication_withdrawn: vec![true; manifest.spec.port_bindings.len()],
-            publication_absence_receipts: vec![None; manifest.spec.port_bindings.len()],
             durable_transition_complete: false,
         }));
         registrations.insert(

@@ -29,8 +29,8 @@ const sourcePaths = {
     "crates/nimbus-sandbox/src/backends/container/runtime/machine_ports.rs",
   machineLifetime:
     "crates/nimbus-sandbox/src/backends/oci/network/process/machine_proxy_lifetime.rs",
-  machineEvidence:
-    "crates/nimbus-sandbox/src/backends/container/runtime/machine_port_evidence.rs",
+  machinePublication:
+    "crates/nimbus-sandbox/src/backends/container/runtime/machine_port_publication.rs",
 };
 
 function syntheticSources() {
@@ -127,7 +127,6 @@ function syntheticSources() {
       "fn inspect_current_publication() {",
       "  machine_port_proxy_routes();",
       "  MachinePortProxyEntry::Running;",
-      "  publication_may_exist;",
       "  MachinePortProxyLeaseAuthority::Live;",
       "  require_active_machine_bindings_with_lifetimes();",
       "  provider_is_running();",
@@ -135,8 +134,11 @@ function syntheticSources() {
       "  MachineForwardedPublicationReadiness;",
       "}",
     ].join("\n"),
-    machineEvidence:
-      "fn exposed_machine_port_receipts() { MachinePortEvidencePhase::Exposed; }",
+    machinePublication: [
+      "fn exposed_machine_port_receipts() {",
+      "  read_machine_port_receipts(MachinePortPublicationPhase::Exposed);",
+      "}",
+    ].join("\n"),
   };
 }
 
@@ -221,13 +223,12 @@ function loadSources() {
           "exposed_machine_port_receipts();",
           "",
         );
-        sources.machineEvidence = "fn no_exposed_receipt_reader() {}";
+        sources.machinePublication = "fn no_exposed_receipt_reader() {}";
         break;
       case "missing-machine-registry-composition":
         for (const token of [
           "machine_port_proxy_routes();",
           "MachinePortProxyEntry::Running;",
-          "publication_may_exist;",
           "MachinePortProxyLeaseAuthority::Live;",
           "require_active_machine_bindings_with_lifetimes();",
           "provider_is_running();",
@@ -315,7 +316,7 @@ function verify({ sources, errors }) {
   const forwardingReceipt = sources.forwardingReceipt ?? "";
   const machinePorts = sources.machinePorts ?? "";
   const machineLifetime = sources.machineLifetime ?? "";
-  const machineEvidence = sources.machineEvidence ?? "";
+  const machinePublication = sources.machinePublication ?? "";
 
   if (!composition.includes("mod attachment_readiness")) {
     errors.push("OCI attachment lifecycle does not own attachment_readiness");
@@ -511,8 +512,14 @@ function verify({ sources, errors }) {
       "machine forwarding lacks a distinct non-persisted current-observation type",
     );
   }
-  if (!machineEvidence.includes("exposed_machine_port_receipts")) {
-    errors.push("machine readiness lacks the exact durable Exposed receipt reader");
+  for (const token of [
+    "exposed_machine_port_receipts",
+    "read_machine_port_receipts",
+    "MachinePortPublicationPhase::Exposed",
+  ]) {
+    if (!machinePublication.includes(token)) {
+      errors.push(`machine readiness lacks exact durable Exposed evidence: ${token}`);
+    }
   }
   const machinePublicationConsumer = functionBody(
     machinePorts,
@@ -533,7 +540,6 @@ function verify({ sources, errors }) {
   for (const token of [
     "machine_port_proxy_routes",
     "MachinePortProxyEntry::Running",
-    "publication_may_exist",
     "MachinePortProxyLeaseAuthority::Live",
     "require_active_machine_bindings_with_lifetimes",
     "provider_is_running",

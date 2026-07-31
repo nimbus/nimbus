@@ -29,7 +29,6 @@ pub(crate) struct MachinePortProxyRegistration {
     pub(crate) routes: Vec<MachinePortProxyRoute>,
     pub(crate) proxies: Vec<MachinePortProxy>,
     pub(crate) lease_authority: Option<MachinePortProxyLeaseAuthority>,
-    pub(crate) publication_may_exist: bool,
 }
 
 pub(crate) enum MachinePortProxyLeaseAuthority {
@@ -112,8 +111,6 @@ pub(crate) struct MachinePortProxyCleanupState {
     pub(crate) expected_bindings: Vec<PortLeaseBinding>,
     pub(crate) withdraw_complete: bool,
     pub(crate) provider_stopped: bool,
-    pub(crate) publication_withdrawn: Vec<bool>,
-    pub(crate) publication_absence_receipts: Vec<Option<MachinePortForwardReceipt>>,
     pub(crate) durable_transition_complete: bool,
 }
 
@@ -169,15 +166,6 @@ impl MachinePortProxyLifetimeRegistry {
                 message: format!(
                     "container machine port publication for tenant {} sandbox {} does not match \
                      the exact binding, lease, route, and worker generation",
-                    inspection.tenant_id, inspection.sandbox_id
-                ),
-            });
-        }
-        if !registration.publication_may_exist {
-            return Err(SandboxError::OperationFailed {
-                message: format!(
-                    "container machine port publication for tenant {} sandbox {} is not \
-                     currently published",
                     inspection.tenant_id, inspection.sandbox_id
                 ),
             });

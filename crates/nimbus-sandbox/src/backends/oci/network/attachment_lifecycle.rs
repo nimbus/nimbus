@@ -86,9 +86,8 @@ mod plan;
 mod recovery;
 mod state;
 
-pub(in crate::backends::oci::network) use plan::{
-    oci_attachment_plan, oci_attachment_provider_handle,
-};
+pub(crate) use plan::oci_attachment_plan;
+pub(in crate::backends::oci::network) use plan::oci_attachment_provider_handle;
 
 #[cfg(test)]
 mod test_api;
@@ -708,13 +707,6 @@ impl<'a> OciAttachmentLifecycle<'a> {
             state::OciAttachmentDurableState::compile(self.attachments, context, association)?;
         let existing_record = durable.inspect()?;
         let provider_observation = host.inspect_provider(self.ipam, context);
-        if let Some(record) = existing_record.as_ref() {
-            self.authenticate_machine_forwarded_recovery_disposition(
-                context,
-                record,
-                &provider_observation,
-            )?;
-        }
         if let Some(record) = existing_record.clone()
             && matches!(
                 provider_observation,

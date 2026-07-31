@@ -3,10 +3,11 @@
 #![cfg(unix)]
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{Ipv4Addr, SocketAddrV4, TcpListener};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::mpsc;
+use std::thread;
 use std::time::{Duration, Instant};
 
 use nimbus_egress::{EgressPolicy, EgressProtocol, EgressRule};
@@ -690,6 +691,144 @@ fn desired_policy() -> EgressPolicy {
         "example.com",
         443,
     )])
+}
+
+#[test]
+fn reload_egress_policy_updates_running_container_proxy() {
+    let first = TestHttpServer::start("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nfirst");
+    let second = TestHttpServer::start("HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nsecond");
+    let temp_dir = TempDir::new().expect("tempdir should build");
+    let proxy_port = unused_loopback_port();
+    let mut config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
+    config.node_network_supernet = "127.0.0.0/24".to_owned();
+    config.published_port_range = proxy_port..=proxy_port;
+    let backend = ContainerSandboxBackend::new(config);
+    let mut manifest = backend
+        .plan_start_with_id(
+            &sample_spec().with_egress_policy(allow_loopback_http_policy(first.addr.port())),
+            &sandbox_id(),
+            None,
+            None,
+        )
+        .expect("plan should lower")
+        .manifest;
+    backend
+        .write_manifest(&manifest)
+        .expect("manifest should persist before reload");
+    backend
+        .ensure_egress_proxy_running_with_release_authority(
+            &manifest,
+            PepPreAdoptionReleaseAuthority::FreshLaunch(
+                manifest
+                    .launch_reservation_claim
+                    .as_ref()
+                    .expect("execute plan should retain launch claim"),
+            ),
+        )
+        .expect("egress proxy should start on loopback test subnet");
+    manifest.launch_reservation_claim = None;
+    backend
+        .write_manifest(&manifest)
+        .expect("running manifest should publish post-launch authority");
+    let proxy_addr = manifest
+        .egress_proxy
+        .as_ref()
+        .expect("proxy assignment should exist")
+        .bind_addr()
+        .expect("proxy bind address should parse");
+
+    let allowed_first = proxy_request(
+        proxy_addr,
+        format!(
+            "GET http://127.0.0.1:{}/ok HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            first.addr.port()
+        ),
+    );
+    assert!(
+        allowed_first.starts_with("HTTP/1.1 200 OK") && allowed_first.contains("first"),
+        "initial policy should allow first upstream, got: {allowed_first}"
+    );
+
+    backend
+        .reload_egress_policy(
+            &manifest.handle.id,
+            allow_loopback_http_policy(second.addr.port()),
+        )
+        .expect("egress policy reload should update live proxy");
+    let denied_old = proxy_request(
+        proxy_addr,
+        format!(
+            "GET http://127.0.0.1:{}/ok HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            first.addr.port()
+        ),
+    );
+    let allowed_new = proxy_request(
+        proxy_addr,
+        format!(
+            "GET http://127.0.0.1:{}/ok HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            second.addr.port()
+        ),
+    );
+
+    assert!(
+        denied_old.starts_with("HTTP/1.1 403 Forbidden"),
+        "old upstream should be denied after reload, got: {denied_old}"
+    );
+    assert!(
+        allowed_new.starts_with("HTTP/1.1 200 OK") && allowed_new.contains("second"),
+        "new upstream should be allowed after reload, got: {allowed_new}"
+    );
+    let reloaded_manifest = backend
+        .read_manifest(&manifest.handle.id)
+        .expect("manifest read should succeed")
+        .expect("manifest should remain");
+    assert_eq!(
+        reloaded_manifest.spec.egress.rules()[0].port,
+        second.addr.port()
+    );
+}
+
+fn allow_loopback_http_policy(port: u16) -> EgressPolicy {
+    EgressPolicy::new([
+        EgressRule::new("loopback-test", EgressProtocol::Http, "127.0.0.1", port)
+            .allow_internal_ips(true),
+    ])
+}
+
+fn proxy_request(proxy_addr: SocketAddr, request: String) -> String {
+    let mut stream = TcpStream::connect(proxy_addr).expect("client should connect to proxy");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .expect("read timeout should set");
+    stream
+        .write_all(request.as_bytes())
+        .expect("client should write request");
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .expect("client should read response");
+    response
+}
+
+struct TestHttpServer {
+    addr: SocketAddr,
+}
+
+impl TestHttpServer {
+    fn start(response: &'static str) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("upstream should bind");
+        let addr = listener
+            .local_addr()
+            .expect("upstream address should resolve");
+        thread::spawn(move || {
+            while let Ok((mut stream, _)) = listener.accept() {
+                let mut request = [0_u8; 1024];
+                let _ = stream.read(&mut request);
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        Self { addr }
+    }
 }
 
 fn unused_loopback_port() -> u16 {

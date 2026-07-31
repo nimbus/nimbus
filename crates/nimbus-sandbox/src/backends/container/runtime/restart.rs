@@ -119,6 +119,7 @@ impl ContainerSandboxBackend {
                 &lifecycle,
                 AttachmentTeardownMode::Restart,
                 || {
+                    self.prepare_machine_port_publication_withdrawal(manifest)?;
                     delete_runtime_and_confirm_absent(
                         &manifest.conmon_launch.delete_command,
                         &manifest.conmon_launch.state_command,

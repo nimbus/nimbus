@@ -18,40 +18,6 @@ pub(super) struct PresentAttachmentRecovery<'a> {
 }
 
 impl OciAttachmentLifecycle<'_> {
-    /// Keep every partial machine-forwarded publication disposition behind the
-    /// NNC5.4a batch-recovery seam. Only exact Active plus provider-present
-    /// evidence is already complete enough for effect-free idempotent reuse.
-    pub(super) fn authenticate_machine_forwarded_recovery_disposition(
-        &self,
-        context: &OciAttachmentContext<'_>,
-        record: &nimbus_network::DurableNetworkAttachmentState,
-        provider_observation: &recovery::AttachmentProviderObservation,
-    ) -> Result<()> {
-        if context.publication.owns_netavark_bindings()
-            || !matches!(
-                record.resource().phase(),
-                nimbus_network::NetworkResourcePhase::Provisioning
-                    | nimbus_network::NetworkResourcePhase::Ready
-                    | nimbus_network::NetworkResourcePhase::Publishing
-                    | nimbus_network::NetworkResourcePhase::Active
-            )
-            || (record.resource().phase() == nimbus_network::NetworkResourcePhase::Active
-                && matches!(
-                    provider_observation,
-                    recovery::AttachmentProviderObservation::Present { .. }
-                ))
-        {
-            return Ok(());
-        }
-        Err(SandboxError::OperationFailed {
-            message: format!(
-                "{} machine-forwarded attachment {} has partial publication evidence whose exact \
-                 batch recovery belongs to NNC5.4a",
-                context.provider_label, context.sandbox_id
-            ),
-        })
-    }
-
     /// Read-only authentication before fencing cleanup-only or ambiguous
     /// provider evidence. This accepts every exact uniform listener phase but
     /// rejects substituted identities before changing portable attachment
@@ -61,8 +27,15 @@ impl OciAttachmentLifecycle<'_> {
         context: &OciAttachmentContext<'_>,
         attach_authority: AttachmentAttachAuthority<'_>,
     ) -> Result<()> {
-        self.require_host_managed_partial_recovery(context)?;
         self.authenticate_active_attach_authority(context, attach_authority)?;
+        if !context.publication.owns_netavark_bindings() {
+            return self.ports.require_binding_leases(
+                context.tenant_id,
+                context.sandbox_id,
+                context.bindings,
+                context.leases,
+            );
+        }
         self.ports.classify_netavark_cleanup_batch(
             context.tenant_id,
             context.sandbox_id,
@@ -88,8 +61,15 @@ impl OciAttachmentLifecycle<'_> {
         context: &OciAttachmentContext<'_>,
         attach_authority: AttachmentAttachAuthority<'_>,
     ) -> Result<()> {
-        self.require_host_managed_partial_recovery(context)?;
         self.authenticate_active_attach_authority(context, attach_authority)?;
+        if !context.publication.owns_netavark_bindings() {
+            return self.ports.require_binding_leases(
+                context.tenant_id,
+                context.sandbox_id,
+                context.bindings,
+                context.leases,
+            );
+        }
         let state = self.ports.classify_netavark_cleanup_batch(
             context.tenant_id,
             context.sandbox_id,
@@ -124,22 +104,6 @@ impl OciAttachmentLifecycle<'_> {
                 ),
             })
         }
-    }
-
-    fn require_host_managed_partial_recovery(
-        &self,
-        context: &OciAttachmentContext<'_>,
-    ) -> Result<()> {
-        if context.publication.owns_netavark_bindings() {
-            return Ok(());
-        }
-        Err(SandboxError::OperationFailed {
-            message: format!(
-                "{} machine-forwarded attachment {} has partial publication evidence whose \
-                 exact batch recovery belongs to NNC5.4a",
-                context.provider_label, context.sandbox_id
-            ),
-        })
     }
 
     /// Adopt one exact provider-present observation without allowing the
@@ -319,17 +283,16 @@ impl OciAttachmentLifecycle<'_> {
         assigned_ips: Vec<Ipv4Addr>,
         after_provider_setup: impl FnOnce(&[Ipv4Addr]) -> Result<()>,
     ) -> Result<Vec<Ipv4Addr>> {
-        if !context.publication.owns_netavark_bindings() {
-            return Ok(assigned_ips);
+        if context.publication.owns_netavark_bindings() {
+            self.ports
+                .reconcile_active_netavark_bindings_with_lifetimes(
+                    self.lifetimes,
+                    context.tenant_id,
+                    context.sandbox_id,
+                    context.bindings,
+                    context.leases,
+                )?;
         }
-        self.ports
-            .reconcile_active_netavark_bindings_with_lifetimes(
-                self.lifetimes,
-                context.tenant_id,
-                context.sandbox_id,
-                context.bindings,
-                context.leases,
-            )?;
         observer.checkpoint(AttachmentAttachPhase::ListenerBindingsActive)?;
         after_provider_setup(&assigned_ips)?;
         observer.checkpoint(AttachmentAttachPhase::BackendPublicationComplete)?;

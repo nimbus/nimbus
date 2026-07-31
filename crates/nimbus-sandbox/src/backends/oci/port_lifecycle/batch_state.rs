@@ -4,9 +4,68 @@
 //! authority. These classifiers authenticate exact provider bindings and
 //! confirmed-stop receipts before callers choose cleanup or reconciliation.
 
+use std::net::SocketAddr;
+
 use super::*;
 
+fn terminal_failed_has_no_effect(
+    record: &PortLeaseRecord,
+    expected_provider: OciPortProvider,
+) -> bool {
+    record.phase() == PortLeasePhase::Failed
+        && record.reservation_claim().is_some()
+        && record.bind_claim().is_none()
+        && record.binding().is_none()
+        && record.confirmed_stopped_binding().is_none()
+        && record.failure().is_some_and(|failure| {
+            failure.provider_attempt().provider_id() == &expected_provider.provider_id()
+        })
+}
+
 impl OciPortLeaseCoordinator {
+    pub(super) fn require_binding_lease_identities(
+        &self,
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        bindings: &[SandboxPortBinding],
+        leases: &[PortLeaseRequest],
+    ) -> Result<()> {
+        self.binding_lease_records(tenant_id, sandbox_id, bindings, leases)?;
+        Ok(())
+    }
+
+    pub(super) fn require_published_bind_claim_batch(
+        &self,
+        expected_manager: PublishedListenerProvider,
+        expected_provider: OciPortProvider,
+        leases: &[PortLeaseRequest],
+        claims: &[PortBindClaim],
+    ) -> Result<()> {
+        self.require_published_listener_provider(expected_manager)?;
+        if leases.len() != claims.len() {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "sandbox has {} {expected_manager:?} listener leases but {} durable bind claims",
+                    leases.len(),
+                    claims.len()
+                ),
+            });
+        }
+        let expected_provider_id = expected_provider.provider_id();
+        if let Some(foreign) = claims
+            .iter()
+            .find(|claim| claim.provider_attempt().provider_id() != &expected_provider_id)
+        {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "cannot abandon {expected_manager:?} claim from provider {}",
+                    foreign.provider_attempt().provider_id()
+                ),
+            });
+        }
+        Ok(())
+    }
+
     /// Authenticate the exact tenant-scoped private egress listener assignment.
     pub(crate) fn require_internal_listener_authority(
         &self,

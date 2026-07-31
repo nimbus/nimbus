@@ -23,7 +23,7 @@ const CONTENT_DOMAIN: &[u8] = b"nimbus.sandbox.oci.attachment-plan.v1\0";
 /// Startup classification uses the same pure compiler as live attachment
 /// creation so plan ID, generation, and digest cannot drift into a second
 /// recovery-only definition.
-pub(in crate::backends::oci::network) fn oci_attachment_plan(
+pub(crate) fn oci_attachment_plan(
     tenant_id: &TenantId,
     sandbox_id: &SandboxId,
     backend: AttachmentBackendKind,

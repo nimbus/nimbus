@@ -48,6 +48,42 @@ fn composition_kinds(output: &ScanOutput) -> Vec<&str> {
 }
 
 #[test]
+fn machine_forwarder_mutations_are_authority_but_inspection_is_not() {
+    let output = scan_fixture(
+        r#"
+fn effect(config: &Config, request: &[u8], deadline: Deadline) {
+    send_machine_forwarder_request(config, "POST", "/expose", request, deadline);
+    send_machine_forwarder_request(config, "GET", "/all", &[], deadline);
+    send_machine_forwarder_request(config, "POST", "/unexpose", request, deadline);
+}
+"#,
+    );
+
+    assert!(output.errors.is_empty(), "{:?}", output.errors);
+    assert_eq!(
+        authority_kinds(&output),
+        vec![
+            "machine-forwarder-port-request",
+            "machine-forwarder-port-request",
+        ]
+    );
+    assert!(
+        output
+            .authorities
+            .iter()
+            .all(|occurrence| occurrence.symbol == "effect")
+    );
+    assert_eq!(
+        output
+            .authorities
+            .iter()
+            .map(|occurrence| occurrence.line)
+            .collect::<Vec<_>>(),
+        vec![3, 5]
+    );
+}
+
+#[test]
 fn cfg_test_macro_item_does_not_hide_following_production_bind() {
     let output = scan_fixture(
         r#"

@@ -74,7 +74,7 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC5.4 complete; NNC5.4a
+- `nimbus-network-control-plane-plan.md` - `active; NNC5.4a complete; NNC5.5
   in progress`. The Linux sovereignty tripwire is complete with a root-safe,
   raw-artifact-derived evidence contract, 70/70 deterministic tests, 62/62
   adversarial verifier cases, fully dispositioned full+narrow Sol reviews, and
@@ -150,7 +150,27 @@ extension-registry seam before the second concern edits `extensions.rs`.
   lifecycle 59 with five child skips, Sandbox 870/870 with 26 skips, live
   verifier 21/21, adversarial mutations 101/101, and affected quality/docs
   gates are green. No third review ran or is warranted.
-  Machine-forwarded batch ambiguity remains dependency-ordered NNC5.4a work.
+  NNC5.4a is complete. It replaces process-local publication outcomes with one
+  strict durable
+  `Absent -> Exposing -> Exposed -> Withdrawing -> Absent` record, exact
+  per-slot ambiguity, a small real/substitutable provider capability,
+  inspect-before-effect retry, real-process crash cuts, and no-release
+  ordering. Its expected-red packet was exact: the focused command exited
+  101 with 0 passed, 4 failed, 0 ignored, and 896 filtered. Direct
+  expose/withdraw response loss and lifecycle expose/fresh-owner-withdraw
+  cases fail only on duplicate native mutation counts; the lifecycle cases
+  preserved exact durable network authority. The corrected item passes
+  `nnc5_4a_` 17 with one child-only ignore, five real-process parent tests with
+  one child-only ignore, forwarding 20/20, provider cleanup 30/30, Sandbox 898
+  with 27 intentional ignores, verifier 22/22, adversarial mutations 111/111,
+  verifier self-test 112/112, AST 12/12, affected quality gates, docs 108, and
+  site 17/17. The sole full Sol/xhigh/fast review's four accepted and two
+  rejected findings are dispositioned. Its accepted executable corrections
+  warranted one narrow review; that review's sole IPv4-mapped IPv6 defect is
+  corrected and proven. No third review ran or is warranted. NNC5.5 now owns
+  the read-only proof that Netavark, nft, namespace, IPAM, gvproxy, and probe
+  effects remain sandbox-local while `nimbus-network` stays transport-free and
+  dependent only on `nimbus-core`.
   Cleanup, release, finalization, and reuse stay in NNC8.3. Machine forwarding obeys
   NNC5.2a's common lifecycle; runtime absence, workload status, readiness persistence,
   cleanup convergence, and inspect/restart policy stay in their named later

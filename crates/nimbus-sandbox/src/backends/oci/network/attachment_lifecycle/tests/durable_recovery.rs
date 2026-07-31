@@ -579,32 +579,71 @@ fn corrupt_store_fails_before_provider_inspection_for_both_backend_routes() {
 }
 
 #[test]
-fn machine_forwarded_partial_publication_remains_fenced_for_nnc5_4a() {
-    for (row, phase, observation) in [
+fn machine_forwarded_partial_publication_resumes_only_through_container_capability() {
+    for (row, phase, observation, succeeds, expected_phase, invokes_capability) in [
         (
-            "absent-ready",
-            NetworkResourcePhase::Ready,
-            ObservationKind::Absent,
-        ),
-        (
-            "absent-publishing",
-            NetworkResourcePhase::Publishing,
-            ObservationKind::Absent,
-        ),
-        (
-            "absent-active",
+            "present-provisioning",
+            NetworkResourcePhase::Provisioning,
+            ObservationKind::Present,
+            true,
             NetworkResourcePhase::Active,
-            ObservationKind::Absent,
+            true,
+        ),
+        (
+            "present-ready",
+            NetworkResourcePhase::Ready,
+            ObservationKind::Present,
+            true,
+            NetworkResourcePhase::Active,
+            true,
         ),
         (
             "present-publishing",
             NetworkResourcePhase::Publishing,
             ObservationKind::Present,
+            true,
+            NetworkResourcePhase::Active,
+            true,
+        ),
+        (
+            "present-active",
+            NetworkResourcePhase::Active,
+            ObservationKind::Present,
+            true,
+            NetworkResourcePhase::Active,
+            true,
+        ),
+        (
+            "absent-ready",
+            NetworkResourcePhase::Ready,
+            ObservationKind::Absent,
+            false,
+            NetworkResourcePhase::Ready,
+            false,
+        ),
+        (
+            "absent-publishing",
+            NetworkResourcePhase::Publishing,
+            ObservationKind::Absent,
+            false,
+            NetworkResourcePhase::Publishing,
+            false,
+        ),
+        (
+            "absent-active",
+            NetworkResourcePhase::Active,
+            ObservationKind::Absent,
+            false,
+            NetworkResourcePhase::Active,
+            false,
         ),
         (
             "unknown-publishing",
             NetworkResourcePhase::Publishing,
             ObservationKind::Unknown,
+            false,
+            NetworkResourcePhase::CleanupPending,
+            false,
         ),
     ] {
         let fixture = ContractFixture::new(
@@ -622,37 +661,48 @@ fn machine_forwarded_partial_publication_remains_fenced_for_nnc5_4a() {
         )
         .expect("machine forwarder identity should validate");
         let adapter = fixture.machine_adapter(&config, &forwarder, &[], &[]);
-        let authority_path = fixture.attachments.authority_path();
-        let before =
-            std::fs::read(authority_path).expect("portable attachment authority should read");
         let host = RecoveryHostEffects::new(&fixture, observation, fixture.allocator.operations());
         let mut observer = ContractPhaseObserver::recording();
 
-        let error = adapter
-            .attach_with(
-                &fixture.lifecycle(),
-                AttachmentAttachAuthority::FreshLaunch(&fixture.claim),
-                &host,
-                &mut observer,
-                |_| panic!("NNC5.4 must not replay machine-forwarded publication effects"),
-            )
-            .expect_err("machine-forwarded partial publication belongs to NNC5.4a");
-
-        assert!(
-            error.to_string().contains("NNC5.4a")
-                && error.to_string().contains("machine-forwarded"),
-            "failure must name the deferred machine-forwarded owner: {error}"
+        let result = adapter.attach_with(
+            &fixture.lifecycle(),
+            AttachmentAttachAuthority::FreshLaunch(&fixture.claim),
+            &host,
+            &mut observer,
+            |_| {
+                host.record(RecoveryOperation::BackendPublication);
+                Ok(())
+            },
         );
         assert_eq!(
-            std::fs::read(authority_path)
-                .expect("rejected machine recovery authority should remain readable"),
-            before,
-            "NNC5.4 must fail before mutating machine-forwarded partial publication"
+            result.is_ok(),
+            succeeds,
+            "{row} must make the frozen recovery decision: {result:?}"
         );
         assert_eq!(
             host.operations(),
-            vec![RecoveryOperation::Inspect],
-            "rejected machine-forwarded recovery may inspect but cannot execute effects"
+            if invokes_capability {
+                vec![
+                    RecoveryOperation::Inspect,
+                    RecoveryOperation::BackendPublication,
+                ]
+            } else {
+                vec![RecoveryOperation::Inspect]
+            },
+            "{row} must invoke the Container capability only for exact provider-present recovery"
+        );
+        let record = fixture
+            .attachments
+            .get(
+                &fixture.tenant_id,
+                &default_network_attachment_id(&fixture.sandbox_id),
+            )
+            .expect("machine recovery attachment should inspect")
+            .expect("machine recovery attachment should remain durable");
+        assert_eq!(
+            record.resource().phase(),
+            expected_phase,
+            "{row} must retain the exact portable lifecycle decision"
         );
     }
 }

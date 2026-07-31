@@ -10,8 +10,8 @@ mod effect_fence;
 mod egress_reload;
 mod execution_cleanup;
 mod launch;
-mod machine_port_evidence;
-pub use machine_port_evidence::MachinePortAbsenceEvidence;
+mod machine_port_publication;
+pub use machine_port_publication::MachinePortAbsenceEvidence;
 mod machine_ports;
 mod manifest;
 mod network_composition;
@@ -51,7 +51,7 @@ use crate::backends::oci::materializer::{OciImageMaterializer, PreparedMateriali
 use crate::backends::oci::network::{
     AttachmentAttachAuthority, MachinePortPreparationReleaseAuthority,
     MachinePortProxyLifetimeRegistry, OciEgressPinProvider, OciIpamAuthority, OciNetworkLayout,
-    OciNetworkProcess, OciSegmentAllocator, default_network_attachment_id, expose_machine_ports,
+    OciNetworkProcess, OciSegmentAllocator, default_network_attachment_id,
 };
 #[cfg(test)]
 use crate::backends::oci::network::{
@@ -1289,21 +1289,13 @@ impl ContainerSandboxBackend {
                     self.egress_pin_provider
                         .apply(&manifest.network_layout, proxy)?;
                 }
-                if let Some(forwarder) = machine_port_forwarder {
+                if machine_port_forwarder.is_some() {
                     self.ensure_machine_port_proxies_running_with_publication(
                         &manifest.handle.id,
                         assigned_ips,
                         manifest,
                         listener_release_authority,
-                        || {
-                            let receipts = expose_machine_ports(
-                                forwarder,
-                                &manifest.spec.tenant_id,
-                                &manifest.handle.id,
-                                &manifest.spec.port_bindings,
-                            )?;
-                            self.persist_exposed_machine_port_receipts(manifest, receipts)
-                        },
+                        || self.converge_exposed_machine_port_publication(manifest),
                     )?;
                 }
                 Ok(())

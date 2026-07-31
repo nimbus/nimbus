@@ -8,6 +8,7 @@ use std::thread;
 use std::time::Duration;
 
 use crate::backends::oci::network::OciMachinePortForwarderConfig;
+use crate::spec::SandboxPortBinding;
 
 const FORWARDER_OBSERVATION_TIMEOUT: Duration = Duration::from_secs(2);
 static NEXT_COMPLETION_ID: AtomicU64 = AtomicU64::new(1);
@@ -25,18 +26,20 @@ impl ForwarderObserver {
         successful_responses: Vec<bool>,
         expected_requests: usize,
     ) -> Self {
-        Self::spawn_with_provider(listener, None, successful_responses, expected_requests)
+        Self::spawn_with_provider(listener, None, &[], successful_responses, expected_requests)
     }
 
     pub(super) fn spawn_authenticated(
         listener: TcpListener,
         provider: &OciMachinePortForwarderConfig,
+        initially_exposed: &[SandboxPortBinding],
         successful_responses: Vec<bool>,
         expected_requests: usize,
     ) -> Self {
         Self::spawn_with_provider(
             listener,
             Some(provider.clone()),
+            initially_exposed,
             successful_responses,
             expected_requests,
         )
@@ -45,6 +48,7 @@ impl ForwarderObserver {
     fn spawn_with_provider(
         listener: TcpListener,
         _provider: Option<OciMachinePortForwarderConfig>,
+        initially_exposed: &[SandboxPortBinding],
         successful_responses: Vec<bool>,
         expected_requests: usize,
     ) -> Self {
@@ -61,11 +65,22 @@ impl ForwarderObserver {
              Content-Length: 0\r\n\r\n"
         )
         .into_bytes();
+        let initial_publications = initially_exposed
+            .iter()
+            .map(|binding| {
+                (
+                    format!("{}:{}", binding.host_address, binding.host_port),
+                    format!(":{}", binding.host_port),
+                    "tcp".to_owned(),
+                )
+            })
+            .collect();
         let server_completion_request = completion_request.clone();
         let server = thread::spawn(move || {
             observe_requests_until_completion(
                 listener,
                 &server_completion_request,
+                initial_publications,
                 &successful_responses,
             )
         });
@@ -115,10 +130,10 @@ impl Drop for ForwarderObserver {
 fn observe_requests_until_completion(
     listener: TcpListener,
     completion_request: &[u8],
+    mut retained_publications: BTreeSet<(String, String, String)>,
     successful_responses: &[bool],
 ) -> Result<Vec<Vec<u8>>, String> {
     let mut requests = Vec::new();
-    let mut retained_publications = BTreeSet::<(String, String, String)>::new();
     loop {
         let (mut stream, _) = listener
             .accept()

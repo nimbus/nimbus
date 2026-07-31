@@ -34,7 +34,7 @@ pub(crate) use attachment_lifecycle::{
     AttachmentDetachFailure, AttachmentDetachFailureStage, AttachmentTeardownMode,
     OciAttachmentAdapter, OciAttachmentAuxiliaryListener, OciAttachmentBaseReadinessState,
     OciAttachmentInput, OciAttachmentLifecycle, OciAttachmentReadinessState,
-    OciHostManagedAttachmentBackend, OciMachineForwardedAttachmentBackend,
+    OciHostManagedAttachmentBackend, OciMachineForwardedAttachmentBackend, oci_attachment_plan,
 };
 #[cfg(test)]
 pub(crate) use egress_pin::FixedOciEgressPinProvider;
@@ -42,10 +42,15 @@ pub(crate) use egress_pin::{
     OciEgressPinObservation, OciEgressPinProvider, RealOciEgressPinProvider,
 };
 pub(crate) use finality::{TerminalNetworkAuthoritySet, TerminalNetworkFinalityEvidence};
+#[cfg(test)]
+pub(crate) use forwarding::DeterministicMachinePortForwardingProvider;
+pub(crate) use forwarding::{
+    CurrentMachinePortForwardingObservation, MachinePortForwardingProvider,
+    MachinePortForwardingSlotObservation, MachinePortMutationDiagnostic, inspect_machine_ports,
+};
 pub use forwarding::{
     MachinePortForwardOutcome, MachinePortForwardReceipt, OciMachinePortForwarderConfig,
 };
-pub(crate) use forwarding::{expose_machine_ports, inspect_machine_ports, unexpose_machine_ports};
 pub(crate) use ipam::{
     OciIpamAuthority, deallocate_container_ips_after_confirmed_detach,
     retire_terminal_container_ipam_release,

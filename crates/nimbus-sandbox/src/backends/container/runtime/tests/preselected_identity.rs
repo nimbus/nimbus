@@ -232,7 +232,7 @@ fn preselected_service_workloads_keep_distinct_parent_identities() {
 }
 
 #[test]
-fn zero_binding_preselected_workload_has_exact_empty_publication_evidence() {
+fn zero_binding_plan_only_workload_does_not_fabricate_attachment_bound_publication() {
     let temp_dir = TempDir::new().expect("tempdir should build");
     let mut config = split_plan_only_config(temp_dir.path());
     config.machine_port_forwarder = Some(sample_forwarder(65_000));
@@ -244,49 +244,20 @@ fn zero_binding_preselected_workload_has_exact_empty_publication_evidence() {
     let manifest = read_manifest_for(&backend, &id);
 
     assert!(prepared.handle.published_endpoints.is_empty());
-    backend
+    let error = backend
         .persist_exposed_machine_port_receipts(&manifest, Vec::new())
-        .expect("exact empty exposure must have a durable observed commit");
+        .expect_err("plan-only lowering has no attachment authority for publication evidence");
     assert!(
-        backend
-            .exposed_machine_port_receipts(&id)
-            .expect("durable empty exposure should reload as exact observed evidence")
-            .is_empty()
+        error.to_string().contains("no durable attachment"),
+        "the empty batch must not invent an attachment version: {error}"
     );
-    let forwarder = manifest
-        .runner_config
-        .machine_port_forwarder
-        .as_ref()
-        .expect("machine-forwarded fixture should retain provider authority");
-    backend
-        .persist_absent_machine_port_receipts(
-            &manifest.spec.tenant_id,
-            &id,
-            &manifest.spec.port_bindings,
-            forwarder,
-            Vec::new(),
-        )
-        .expect("exact empty absence must have a durable observed commit");
     assert!(
-        backend
-            .absent_machine_port_receipts(&id)
-            .expect("durable empty absence should reload as exact observed evidence")
-            .is_empty()
-    );
-    let absence = backend
-        .absent_machine_port_evidence(&id)
-        .expect("durable empty absence should authenticate")
-        .expect("durable empty absence should remain present");
-    assert_eq!(absence.tenant_id, manifest.spec.tenant_id);
-    assert_eq!(absence.sandbox_id, id);
-    assert!(absence.receipts.is_empty());
-    assert!(
-        manifest
+        !manifest
             .conmon_layout
             .container_state_dir
             .join(".nimbus-machine-port-evidence.json")
-            .is_file(),
-        "an empty observed set still requires a durable authenticated header"
+            .exists(),
+        "a plan-only empty set must remain desired state, not fabricated provider evidence"
     );
 }
 

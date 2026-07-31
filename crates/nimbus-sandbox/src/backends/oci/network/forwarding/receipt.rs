@@ -52,6 +52,44 @@ impl MachinePortForwardReceipt {
     }
 }
 
+/// One slot from a fresh read-only provider batch observation.
+///
+/// A conflicting slot is distinct from transport or parsing failure: the
+/// provider answered completely, but its route set cannot authenticate either
+/// the exact desired publication or exact absence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum MachinePortForwardingSlotObservation {
+    Exposed(MachinePortForwardReceipt),
+    Absent(MachinePortForwardReceipt),
+    Conflicting {
+        binding: SandboxPortBinding,
+        detail: String,
+    },
+}
+
+impl MachinePortForwardingSlotObservation {
+    pub(crate) fn exposed_receipt(&self) -> Option<&MachinePortForwardReceipt> {
+        match self {
+            Self::Exposed(receipt) => Some(receipt),
+            Self::Absent(_) | Self::Conflicting { .. } => None,
+        }
+    }
+
+    pub(crate) fn absent_receipt(&self) -> Option<&MachinePortForwardReceipt> {
+        match self {
+            Self::Absent(receipt) => Some(receipt),
+            Self::Exposed(_) | Self::Conflicting { .. } => None,
+        }
+    }
+
+    pub(crate) fn conflict_detail(&self) -> Option<&str> {
+        match self {
+            Self::Conflicting { detail, .. } => Some(detail),
+            Self::Exposed(_) | Self::Absent(_) => None,
+        }
+    }
+}
+
 /// Fresh, read-only observation of the complete desired forwarding batch.
 ///
 /// This type is deliberately not serializable. Durable operation receipts
@@ -61,18 +99,25 @@ impl MachinePortForwardReceipt {
 pub(crate) struct CurrentMachinePortForwardingObservation {
     provider_instance: NetworkProviderHandle,
     provider_generation: NetworkResourceGeneration,
+    slots: Vec<MachinePortForwardingSlotObservation>,
     receipts: Vec<MachinePortForwardReceipt>,
 }
 
 impl CurrentMachinePortForwardingObservation {
-    pub(super) fn authenticated(
+    pub(crate) fn authenticated(
         provider_instance: &NetworkProviderHandle,
         provider_generation: NetworkResourceGeneration,
-        receipts: Vec<MachinePortForwardReceipt>,
+        slots: Vec<MachinePortForwardingSlotObservation>,
     ) -> Self {
+        let receipts = slots
+            .iter()
+            .filter_map(MachinePortForwardingSlotObservation::exposed_receipt)
+            .cloned()
+            .collect();
         Self {
             provider_instance: provider_instance.clone(),
             provider_generation,
+            slots,
             receipts,
         }
     }
@@ -87,5 +132,9 @@ impl CurrentMachinePortForwardingObservation {
 
     pub(crate) fn receipts(&self) -> &[MachinePortForwardReceipt] {
         &self.receipts
+    }
+
+    pub(crate) fn slots(&self) -> &[MachinePortForwardingSlotObservation] {
+        &self.slots
     }
 }

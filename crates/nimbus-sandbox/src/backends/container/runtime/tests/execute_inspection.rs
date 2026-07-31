@@ -75,3 +75,29 @@ fn execute_inspection_waits_for_lifecycle_owner_and_rejects_stale_manifest() {
         "stale inspection must not overwrite the coordinator's terminal state"
     );
 }
+
+#[test]
+fn detect_runtime_status_marks_stale_pidfiles_as_failed() {
+    let temp_dir = TempDir::new().expect("tempdir should build");
+    let backend =
+        ContainerSandboxBackend::new(ContainerSandboxBackendConfig::under_root(temp_dir.path()));
+    let mut manifest = backend
+        .plan_start_with_id(&sample_spec(), &sandbox_id(), None, None)
+        .expect("plan should lower")
+        .manifest;
+    manifest.conmon_launch.state_command = CommandSpec::new("/bin/sh").args([
+        "-c".to_owned(),
+        format!(
+            "printf '%s\\n' 'container `{0}` does not exist: open `/run/crun/{0}/status`: No such file or directory' >&2; exit 1",
+            manifest.handle.id
+        ),
+    ]);
+    std::fs::write(&manifest.conmon_layout.pidfile, "999999\n").expect("pidfile should write");
+
+    assert_eq!(
+        backend
+            .detect_runtime_status(&manifest)
+            .expect("status should resolve"),
+        SandboxStatus::Failed
+    );
+}

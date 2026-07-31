@@ -778,13 +778,25 @@ impl<'ast> Visit<'ast> for Scanner<'_> {
     fn visit_expr_call(&mut self, call: &'ast ExprCall) {
         if let Expr::Path(function) = &*call.func
             && function.path.segments.len() == 1
-            && function
+        {
+            let operation = function
                 .path
                 .segments
                 .last()
-                .is_some_and(|segment| is_bind_operation(&segment.ident.to_string()))
-        {
-            self.risk("ambiguous-bare-bind-call", call.func.span());
+                .map(|segment| segment.ident.to_string())
+                .unwrap_or_default();
+            if is_bind_operation(&operation) {
+                self.risk("ambiguous-bare-bind-call", call.func.span());
+            }
+            if operation == "send_machine_forwarder_request" {
+                let method = call.args.iter().nth(1).and_then(expr_string_literal);
+                let path = call.args.iter().nth(2).and_then(expr_string_literal);
+                if method.as_deref() == Some("POST")
+                    && matches!(path.as_deref(), Some("/expose" | "/unexpose"))
+                {
+                    self.authority("machine-forwarder-port-request", call.func.span());
+                }
+            }
         }
         visit::visit_expr_call(self, call);
     }
@@ -1211,6 +1223,16 @@ fn is_descriptor_adoption(operation: &str) -> bool {
 
 fn is_bind_operation(operation: &str) -> bool {
     operation == "bind" || is_descriptor_adoption(operation)
+}
+
+fn expr_string_literal(expression: &Expr) -> Option<String> {
+    let Expr::Lit(literal) = expression else {
+        return None;
+    };
+    let Lit::Str(value) = &literal.lit else {
+        return None;
+    };
+    Some(value.value())
 }
 
 fn is_socket_type_name(name: &str) -> bool {
