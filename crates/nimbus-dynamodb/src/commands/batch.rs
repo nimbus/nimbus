@@ -16,7 +16,7 @@ use nimbus_core::{DocumentId, TableName, WritePrecondition};
 use nimbus_engine::Engine;
 use nimbus_tenant::TenantIsolationContext;
 
-use crate::attribute_value::{item_to_fields, validate_item, validate_item_size};
+use crate::attribute_value::{item_to_fields, validate_item};
 use crate::commands::item::{
     SingleItemTransactionPlan, delete_atomic_write, execute_single_item_transaction,
     overwrite_atomic_write, primary_key_id, read_item, read_old_image_in_transaction,
@@ -24,6 +24,7 @@ use crate::commands::item::{
 use crate::commands::{control_plane, stream};
 use crate::error::map_core_error;
 use crate::expression::{default_limits, project_item};
+use crate::item_size::validate_item_size;
 
 /// The DynamoDB per-call key limit for BatchGetItem.
 const MAX_BATCH_GET_KEYS: usize = 100;
@@ -335,7 +336,7 @@ fn execute_prepared_write(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::attribute_value::MAX_ITEM_SIZE_BYTES;
+    use crate::item_size::MAX_ITEM_SIZE_BYTES;
     use extenddb_core::types::{
         AttributeValue, CreateTableInput, DescribeStreamInput, GetRecordsInput,
         GetShardIteratorInput, ShardIteratorType, StreamRecord,
@@ -989,14 +990,46 @@ mod tests {
             }),
         )
         .expect_err("an item over 400 KiB must be rejected");
-        assert!(
-            matches!(err, DynamoDbError::ValidationException(_)),
-            "{err:?}"
-        );
+        assert_eq!(err.error_type(), "ValidationException", "{err:?}");
+        assert_eq!(err.status_code(), 400, "{err:?}");
+        match &err {
+            DynamoDbError::ValidationException(message) => {
+                assert_eq!(message, "Item size has exceeded the maximum allowed size");
+            }
+            other => panic!("expected ValidationException, got {other:?}"),
+        }
         assert!(
             read(&engine, &ctx, "small").is_none(),
             "the oversized item rejects the whole request, including the op ahead of it"
         );
+    }
+
+    /// FU14: the migrated sizing function charges AWS's 1 byte per List/Map
+    /// element, so this item — which `extenddb_core`'s sizing puts at exactly
+    /// the ceiling, and which BatchWriteItem therefore accepted — is now over.
+    #[test]
+    fn batch_write_item_undersized_by_nested_elements_is_rejected() {
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
+        let item = crate::item_size::item_undersized_by_nested_elements("big");
+        // The witness: the dependency sizes this exact item at the ceiling, so
+        // the pre-FU14 path accepted it.
+        assert_eq!(
+            extenddb_core::types::item_size_bytes(&item),
+            MAX_ITEM_SIZE_BYTES
+        );
+        let wire = serde_json::Value::Object(item_to_fields(&item).expect("serialize"));
+        let err = batch_write(
+            &engine,
+            &ctx,
+            json!({
+                "RequestItems": { "Orders": [ { "PutRequest": { "Item": wire } } ] }
+            }),
+        )
+        .expect_err("an item AWS sizes over 400 KiB must be rejected");
+        assert_eq!(err.error_type(), "ValidationException", "{err:?}");
+        assert_eq!(err.status_code(), 400, "{err:?}");
+        assert!(read(&engine, &ctx, "big").is_none());
     }
 
     /// The ceiling is a ceiling, not a rounding: an item just under 400 KiB is

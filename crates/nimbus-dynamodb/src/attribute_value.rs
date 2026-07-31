@@ -6,7 +6,7 @@
 //! expressions, stream images, and TTL sweeps.
 
 use extenddb_core::error::DynamoDbError;
-use extenddb_core::types::{AttributeValue, Item, item_size_bytes};
+use extenddb_core::types::{AttributeValue, Item};
 use serde_json::Value;
 
 /// Serialize a DynamoDB item into the `Document.fields` map the engine persists.
@@ -65,32 +65,6 @@ pub fn validate_item(item: &Item) -> Result<(), DynamoDbError> {
     crate::key::validate_attribute_names(item)?;
     for value in item.values() {
         validate_attribute_value(value)?;
-    }
-    Ok(())
-}
-
-/// DynamoDB's maximum size for a single stored item.
-///
-/// Binary units, per the service quotas: "All size measurements in DynamoDB use
-/// binary-based units. DynamoDB denotes 1 KB = 1024 bytes" — so 400 KB is
-/// 409,600 bytes, not 400,000.
-pub const MAX_ITEM_SIZE_BYTES: usize = 400 * 1024;
-
-/// Reject an item over DynamoDB's 400 KiB ceiling.
-///
-/// The size counted is DynamoDB's own, not the wire encoding's: "The total size
-/// of an item is the sum of the lengths of its attribute names and values",
-/// which is what `item_size_bytes` implements. An item's JSON-over-the-wire
-/// representation can be larger (binary attributes travel base64-encoded) and
-/// is bounded separately by the transport's request-body limit.
-///
-/// # Errors
-/// `ValidationException` if the item exceeds [`MAX_ITEM_SIZE_BYTES`].
-pub fn validate_item_size(item: &Item) -> Result<(), DynamoDbError> {
-    if item_size_bytes(item) > MAX_ITEM_SIZE_BYTES {
-        return Err(DynamoDbError::ValidationException(
-            "Item size has exceeded the maximum allowed size".to_owned(),
-        ));
     }
     Ok(())
 }
