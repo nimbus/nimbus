@@ -4,9 +4,7 @@ use std::collections::BTreeMap;
 use std::net::Ipv4Addr;
 
 use nimbus_core::TenantId;
-use nimbus_network::{
-    NetworkAttachmentId, NetworkProviderHandle, NetworkReservationClaim, NetworkResourceGeneration,
-};
+use nimbus_network::{NetworkAttachmentId, NetworkProviderHandle, NetworkReservationClaim};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -82,18 +80,6 @@ pub(super) struct NetavarkStatusProjection {
 
 impl NetavarkStatusProjection {
     pub(super) const SCHEMA_VERSION: u32 = 1;
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct MachinePortForwardRequest {
-    /// Exact provider incarnation configured by the gvproxy lifecycle owner.
-    pub(super) provider_instance: NetworkProviderHandle,
-    /// Monotonic generation of that provider incarnation.
-    pub(super) provider_generation: NetworkResourceGeneration,
-    pub(super) local: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) remote: Option<String>,
-    pub(super) protocol: String,
 }
 
 #[derive(Debug, Deserialize)]

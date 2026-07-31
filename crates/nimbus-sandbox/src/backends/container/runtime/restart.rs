@@ -58,10 +58,17 @@ impl ContainerSandboxBackend {
     ) -> Result<()> {
         self.validate_manifest_execution_context(manifest)?;
         let network_config = manifest.require_network_config()?;
-        if manifest.runner_config.machine_port_forwarder.is_none() {
-            return self.reset_host_managed_runtime_for_restart(manifest, network_config);
+        match manifest
+            .runner_config
+            .validated_machine_port_forwarder(&manifest.handle.id)?
+        {
+            None => self.reset_host_managed_runtime_for_restart(manifest, network_config),
+            Some(forwarder) => self.reset_machine_forwarded_runtime_for_restart(
+                manifest,
+                network_config,
+                forwarder,
+            ),
         }
-        self.reset_machine_forwarded_runtime_for_restart(manifest, network_config)
     }
 
     fn reset_host_managed_runtime_for_restart(
@@ -102,12 +109,8 @@ impl ContainerSandboxBackend {
         &self,
         manifest: &ContainerSandboxManifest,
         network_config: &crate::backends::oci::network::OciNetworkConfig,
+        forwarder: &crate::backends::oci::network::OciMachinePortForwarderConfig,
     ) -> Result<()> {
-        let forwarder = manifest
-            .runner_config
-            .machine_port_forwarder
-            .as_ref()
-            .expect("machine-forwarded restart route requires its persisted provider");
         let ports = self.port_lease_coordinator_for_manifest(manifest)?;
         let lifecycle = self.attachment_lifecycle(&ports);
         let hostname = hostname_for(&manifest.spec);

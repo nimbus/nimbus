@@ -376,6 +376,13 @@ impl ContainerSandboxManifest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum ContainerNetworkPublicationMode {
+    HostManaged,
+    MachineForwarded,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct ContainerRunnerExecutionConfig {
     /// Exact backend-local root that owns workload manifests and provider
     /// artifacts. A runner must never reconstruct this from process defaults.
@@ -396,6 +403,12 @@ pub(super) struct ContainerRunnerExecutionConfig {
     pub(super) node_tenant_subnet_prefix: u8,
     pub(super) published_port_range: RangeInclusive<u16>,
     pub(super) max_published_ports_per_tenant: Option<usize>,
+    /// Immutable desired publication mode, separate from provider authority.
+    ///
+    /// A missing or corrupted machine forwarder must fail closed rather than
+    /// silently reinterpret the attachment as host-managed. This is required
+    /// even when the desired publication set is empty.
+    pub(super) network_publication_mode: ContainerNetworkPublicationMode,
     pub(super) machine_port_forwarder: Option<OciMachinePortForwarderConfig>,
 }
 
@@ -415,7 +428,43 @@ impl ContainerRunnerExecutionConfig {
             node_tenant_subnet_prefix: config.node_tenant_subnet_prefix,
             published_port_range: config.published_port_range.clone(),
             max_published_ports_per_tenant: config.max_published_ports_per_tenant,
+            network_publication_mode: if config.machine_port_forwarder.is_some() {
+                ContainerNetworkPublicationMode::MachineForwarded
+            } else {
+                ContainerNetworkPublicationMode::HostManaged
+            },
             machine_port_forwarder: config.machine_port_forwarder.clone(),
+        }
+    }
+
+    pub(super) fn validated_machine_port_forwarder(
+        &self,
+        sandbox_id: &crate::instance::SandboxId,
+    ) -> crate::error::Result<Option<&OciMachinePortForwarderConfig>> {
+        match (
+            &self.network_publication_mode,
+            self.machine_port_forwarder.as_ref(),
+        ) {
+            (ContainerNetworkPublicationMode::HostManaged, None) => Ok(None),
+            (ContainerNetworkPublicationMode::MachineForwarded, Some(forwarder)) => {
+                Ok(Some(forwarder))
+            }
+            (ContainerNetworkPublicationMode::HostManaged, Some(_)) => {
+                Err(crate::error::SandboxError::InvalidSpec {
+                    message: format!(
+                        "container sandbox {sandbox_id} declares host-managed publication but \
+                         carries machine forwarder authority"
+                    ),
+                })
+            }
+            (ContainerNetworkPublicationMode::MachineForwarded, None) => {
+                Err(crate::error::SandboxError::InvalidSpec {
+                    message: format!(
+                        "container sandbox {sandbox_id} declares machine-forwarded publication \
+                         but has no machine forwarder authority"
+                    ),
+                })
+            }
         }
     }
 

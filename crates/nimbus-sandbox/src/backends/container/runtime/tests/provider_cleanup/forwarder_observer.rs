@@ -44,7 +44,7 @@ impl ForwarderObserver {
 
     fn spawn_with_provider(
         listener: TcpListener,
-        provider: Option<OciMachinePortForwarderConfig>,
+        _provider: Option<OciMachinePortForwarderConfig>,
         successful_responses: Vec<bool>,
         expected_requests: usize,
     ) -> Self {
@@ -66,7 +66,6 @@ impl ForwarderObserver {
             observe_requests_until_completion(
                 listener,
                 &server_completion_request,
-                provider.as_ref(),
                 &successful_responses,
             )
         });
@@ -116,11 +115,10 @@ impl Drop for ForwarderObserver {
 fn observe_requests_until_completion(
     listener: TcpListener,
     completion_request: &[u8],
-    provider: Option<&OciMachinePortForwarderConfig>,
     successful_responses: &[bool],
 ) -> Result<Vec<Vec<u8>>, String> {
     let mut requests = Vec::new();
-    let mut retained_publications = BTreeSet::new();
+    let mut retained_publications = BTreeSet::<(String, String, String)>::new();
     loop {
         let (mut stream, _) = listener
             .accept()
@@ -137,7 +135,13 @@ fn observe_requests_until_completion(
             let body = serde_json::to_vec(
                 &retained_publications
                     .iter()
-                    .map(|local| serde_json::json!({ "local": local }))
+                    .map(|(local, remote, protocol)| {
+                        serde_json::json!({
+                            "local": local,
+                            "remote": remote,
+                            "protocol": protocol,
+                        })
+                    })
                     .collect::<Vec<_>>(),
             )
             .map_err(|error| format!("inspection response encoding failed: {error}"))?;
@@ -155,32 +159,18 @@ fn observe_requests_until_completion(
             .get(requests.len())
             .copied()
             .unwrap_or(false);
-        let local = request_local(&request)?;
-        if let Some(local) = local.as_ref() {
+        let route = request_route(&request)?;
+        if let Some((local, remote, protocol)) = route.as_ref() {
             if successful {
-                retained_publications.remove(local);
+                retained_publications.retain(|(candidate, _, candidate_protocol)| {
+                    candidate != local || candidate_protocol != protocol
+                });
             } else {
-                retained_publications.insert(local.clone());
+                retained_publications.insert((local.clone(), remote.clone(), protocol.clone()));
             }
         }
         requests.push(request);
-        let response = if successful && let (Some(provider), Some(local)) = (provider, local) {
-            let body = serde_json::to_vec(&serde_json::json!({
-                "outcome": "withdrawn",
-                "provider_instance": provider.provider_instance(),
-                "provider_generation": provider.provider_generation(),
-                "local": local,
-                "protocol": "tcp",
-            }))
-            .map_err(|error| format!("typed withdrawal receipt encoding failed: {error}"))?;
-            let mut response = format!(
-                "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
-                body.len()
-            )
-            .into_bytes();
-            response.extend_from_slice(&body);
-            response
-        } else if successful {
+        let response = if successful {
             b"HTTP/1.0 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec()
         } else {
             b"HTTP/1.0 500 Internal Server Error\r\nContent-Length: 15\r\n\r\nproxy not found"
@@ -195,7 +185,7 @@ fn observe_requests_until_completion(
     }
 }
 
-fn request_local(request: &[u8]) -> Result<Option<String>, String> {
+fn request_route(request: &[u8]) -> Result<Option<(String, String, String)>, String> {
     let Some(body_start) = request.windows(4).position(|window| window == b"\r\n\r\n") else {
         return Ok(None);
     };
@@ -205,10 +195,22 @@ fn request_local(request: &[u8]) -> Result<Option<String>, String> {
     }
     let value: serde_json::Value = serde_json::from_slice(body)
         .map_err(|error| format!("forwarder request body was not JSON: {error}"))?;
-    Ok(value
-        .get("local")
+    let Some(local) = value.get("local").and_then(serde_json::Value::as_str) else {
+        return Ok(None);
+    };
+    let protocol = value
+        .get("protocol")
         .and_then(serde_json::Value::as_str)
-        .map(ToOwned::to_owned))
+        .unwrap_or("tcp");
+    let remote = value
+        .get("remote")
+        .and_then(serde_json::Value::as_str)
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| {
+            let port = local.rsplit_once(':').map_or(local, |(_, port)| port);
+            format!(":{port}")
+        });
+    Ok(Some((local.to_owned(), remote, protocol.to_owned())))
 }
 
 fn signal_completion(address: SocketAddr, completion_request: &[u8]) -> Result<(), String> {

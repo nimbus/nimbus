@@ -42,10 +42,17 @@ impl ContainerSandboxBackend {
         }
         self.validate_manifest_execution_context(manifest)?;
         let network_config = manifest.require_network_config()?.clone();
-        if manifest.runner_config.machine_port_forwarder.is_none() {
-            return self.release_host_managed_execution_artifacts(manifest, &network_config);
+        match manifest
+            .runner_config
+            .validated_machine_port_forwarder(&manifest.handle.id)?
+        {
+            None => self.release_host_managed_execution_artifacts(manifest, &network_config),
+            Some(forwarder) => self.release_machine_forwarded_execution_artifacts(
+                manifest,
+                &network_config,
+                forwarder.clone(),
+            ),
         }
-        self.release_machine_forwarded_execution_artifacts(manifest, &network_config)
     }
 
     fn release_host_managed_execution_artifacts(
@@ -111,21 +118,17 @@ impl ContainerSandboxBackend {
         &self,
         manifest: &mut ContainerSandboxManifest,
         network_config: &crate::backends::oci::network::OciNetworkConfig,
+        forwarder: crate::backends::oci::network::OciMachinePortForwarderConfig,
     ) -> Result<()> {
         let mut errors = Vec::new();
         if let Err(error) = self.remove_runner_manifest_pointer(manifest) {
             errors.push(error.to_string());
         }
         let port_lease_coordinator = self.port_lease_coordinator_for_manifest(manifest)?;
-        let forwarder = manifest
-            .runner_config
-            .machine_port_forwarder
-            .as_ref()
-            .expect("machine-forwarded cleanup route requires its persisted provider");
         let hostname = hostname_for(&manifest.spec);
         let lifecycle = self.attachment_lifecycle(&port_lease_coordinator);
         let detach = self
-            .attachment_adapter(manifest, network_config, &hostname, Some(forwarder))
+            .attachment_adapter(manifest, network_config, &hostname, Some(&forwarder))
             .detach_machine_forwarded(
                 &lifecycle,
                 AttachmentTeardownMode::Final,
@@ -163,7 +166,7 @@ impl ContainerSandboxBackend {
                             None
                         };
                     if let Some(cleanup) = machine_port_cleanup.as_ref() {
-                        self.unexpose_machine_port_proxy_publications(cleanup, forwarder)?;
+                        self.unexpose_machine_port_proxy_publications(cleanup, &forwarder)?;
                     }
                     delete_runtime_and_confirm_absent(manifest)?;
                     if pep_batch_state == LaunchPortBatchState::ProviderOwned {

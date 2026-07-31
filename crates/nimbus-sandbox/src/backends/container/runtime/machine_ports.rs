@@ -9,6 +9,7 @@ use nimbus_network::PortLeaseRequest;
 #[cfg(test)]
 use crate::backends::oci::network::panicking_machine_port_proxy_for_test;
 use crate::backends::oci::network::{
+    MachineForwardedPublicationInspection, MachineForwardedPublicationReadiness,
     MachinePortPreparationReleaseAuthority, MachinePortProxyCleanupDisposition,
     MachinePortProxyCleanupState, MachinePortProxyEntry, MachinePortProxyKey,
     MachinePortProxyLeaseAuthority, MachinePortProxyRegistration, OciMachinePortForwarderConfig,
@@ -73,6 +74,38 @@ fn fresh_machine_port_release_authority(
 }
 
 impl ContainerSandboxBackend {
+    pub(super) fn inspect_machine_forwarded_publication(
+        &self,
+        manifest: &ContainerSandboxManifest,
+        assigned_ips: &[Ipv4Addr],
+    ) -> Result<MachineForwardedPublicationReadiness> {
+        self.validate_manifest_execution_context(manifest)?;
+        let forwarder = manifest
+            .runner_config
+            .machine_port_forwarder
+            .as_ref()
+            .ok_or_else(|| SandboxError::OperationFailed {
+                message: format!(
+                    "container sandbox {} has no machine-forwarded publication authority",
+                    manifest.handle.id
+                ),
+            })?;
+        let durable_receipts = self.exposed_machine_port_receipts(&manifest.handle.id)?;
+        let manager = self.port_lease_coordinator_for_manifest(manifest)?;
+        self.machine_port_proxies.inspect_current_publication(
+            MachineForwardedPublicationInspection {
+                tenant_id: &manifest.spec.tenant_id,
+                sandbox_id: &manifest.handle.id,
+                assigned_ips,
+                bindings: &manifest.spec.port_bindings,
+                leases: &manifest.port_leases,
+                durable_receipts: &durable_receipts,
+                forwarder,
+                port_leases: &manager,
+            },
+        )
+    }
+
     #[cfg(test)]
     pub(super) fn ensure_machine_port_proxies_running(
         &self,

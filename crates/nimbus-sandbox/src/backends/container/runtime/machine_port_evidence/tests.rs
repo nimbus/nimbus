@@ -162,6 +162,25 @@ fn partial_stale_crossed_and_wrong_outcome_batches_never_reach_the_commit_point(
             absent[0].outcome = MachinePortForwardOutcome::Withdrawn;
             absent
         },
+        {
+            let mut crossed_provider = exact.clone();
+            crossed_provider[0].provider_instance =
+                OciMachinePortForwarderConfig::gvproxy_provider_handle("crossed-evidence-provider")
+                    .expect("crossed provider handle should validate");
+            crossed_provider
+        },
+        {
+            let mut crossed_tenant = exact.clone();
+            crossed_tenant[0].tenant_id =
+                TenantId::new("crossed-evidence-tenant").expect("tenant should validate");
+            crossed_tenant
+        },
+        {
+            let mut crossed_sandbox = exact.clone();
+            crossed_sandbox[0].sandbox_id = SandboxId::new("crossed-evidence-sandbox");
+            crossed_sandbox
+        },
+        vec![exact[0].clone(), exact[0].clone()],
     ];
     for candidate in cases {
         let expectation =
@@ -181,6 +200,66 @@ fn partial_stale_crossed_and_wrong_outcome_batches_never_reach_the_commit_point(
         !root.exists(),
         "pre-publication rejection performs no filesystem effects"
     );
+}
+
+#[test]
+fn stale_phase_version_and_header_identity_never_authenticate_as_current_exposure() {
+    let (_temp, _root, _state_dir, tenant_id, sandbox_id, forwarder, bindings) = fixture();
+    let exact = receipts(
+        MachinePortForwardOutcome::Exposed,
+        &tenant_id,
+        &sandbox_id,
+        &forwarder,
+        &bindings,
+    );
+    let expectation =
+        MachinePortEvidenceExpectation::new(&tenant_id, &sandbox_id, &bindings, &forwarder);
+    let canonical = record(
+        MachinePortEvidencePhase::Exposed,
+        MachinePortEvidenceExpectation::new(&tenant_id, &sandbox_id, &bindings, &forwarder),
+        exact,
+    );
+    let crossed_provider =
+        OciMachinePortForwarderConfig::gvproxy_provider_handle("crossed-record-provider")
+            .expect("crossed provider handle should validate");
+    let cases = [
+        {
+            let mut candidate = canonical.clone();
+            candidate.version += 1;
+            candidate
+        },
+        {
+            let mut candidate = canonical.clone();
+            candidate.phase = MachinePortEvidencePhase::Absent;
+            candidate
+        },
+        {
+            let mut candidate = canonical.clone();
+            candidate.tenant_id =
+                TenantId::new("crossed-record-tenant").expect("tenant should validate");
+            candidate
+        },
+        {
+            let mut candidate = canonical.clone();
+            candidate.sandbox_id = SandboxId::new("crossed-record-sandbox");
+            candidate
+        },
+        {
+            let mut candidate = canonical.clone();
+            candidate.provider_instance = crossed_provider;
+            candidate
+        },
+        {
+            let mut candidate = canonical;
+            candidate.provider_generation = NetworkResourceGeneration::new(16);
+            candidate
+        },
+    ];
+
+    for candidate in cases {
+        authenticate_record(&candidate, MachinePortEvidencePhase::Exposed, &expectation)
+            .expect_err("stale or crossed record headers must never authenticate");
+    }
 }
 
 #[test]

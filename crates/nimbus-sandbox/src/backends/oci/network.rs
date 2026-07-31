@@ -32,9 +32,9 @@ pub(crate) use attachment_lifecycle::OciAttachmentReadinessFailure;
 pub(crate) use attachment_lifecycle::{
     AttachmentAttachAuthority, AttachmentAuxiliaryDisposition, AttachmentBackendKind,
     AttachmentDetachFailure, AttachmentDetachFailureStage, AttachmentTeardownMode,
-    OciAttachmentAdapter, OciAttachmentAuxiliaryListener, OciAttachmentInput,
-    OciAttachmentLifecycle, OciAttachmentReadinessState, OciHostManagedAttachmentBackend,
-    OciMachineForwardedAttachmentBackend,
+    OciAttachmentAdapter, OciAttachmentAuxiliaryListener, OciAttachmentBaseReadinessState,
+    OciAttachmentInput, OciAttachmentLifecycle, OciAttachmentReadinessState,
+    OciHostManagedAttachmentBackend, OciMachineForwardedAttachmentBackend,
 };
 #[cfg(test)]
 pub(crate) use egress_pin::FixedOciEgressPinProvider;
@@ -45,7 +45,7 @@ pub(crate) use finality::{TerminalNetworkAuthoritySet, TerminalNetworkFinalityEv
 pub use forwarding::{
     MachinePortForwardOutcome, MachinePortForwardReceipt, OciMachinePortForwarderConfig,
 };
-pub(crate) use forwarding::{expose_machine_ports, unexpose_machine_ports};
+pub(crate) use forwarding::{expose_machine_ports, inspect_machine_ports, unexpose_machine_ports};
 pub(crate) use ipam::{
     OciIpamAuthority, deallocate_container_ips_after_confirmed_detach,
     retire_terminal_container_ipam_release,
@@ -67,6 +67,7 @@ pub(crate) use netavark::{setup_container_network, teardown_container_network};
 pub(crate) use netns::{create_persistent_network_namespace, remove_persistent_network_namespace};
 pub(crate) use placement::{OciPlacementProvider, place_sandbox_on_block};
 pub(crate) use process::{
+    MachineForwardedPublicationInspection, MachineForwardedPublicationReadiness,
     MachinePortProxyCleanupDisposition, MachinePortProxyCleanupState, MachinePortProxyEntries,
     MachinePortProxyEntry, MachinePortProxyKey, MachinePortProxyLeaseAuthority,
     MachinePortProxyLifetimeRegistry, MachinePortProxyRegistration,

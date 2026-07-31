@@ -103,10 +103,11 @@ impl ContainerSandboxBackend {
             .clone()
             .with_range(config.published_port_range.clone())
             .with_max_ports_per_tenant(config.max_published_ports_per_tenant);
-        if config.machine_port_forwarder.is_some() {
-            manager.with_machine_port_proxy_bindings()
-        } else {
-            manager
+        match config.network_publication_mode {
+            super::ContainerNetworkPublicationMode::HostManaged => manager,
+            super::ContainerNetworkPublicationMode::MachineForwarded => {
+                manager.with_machine_port_proxy_bindings()
+            }
         }
     }
 }

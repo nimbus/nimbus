@@ -20,6 +20,7 @@ use crate::error::SandboxError;
 
 mod machine_proxy_lifetime;
 pub(crate) use machine_proxy_lifetime::{
+    MachineForwardedPublicationInspection, MachineForwardedPublicationReadiness,
     MachinePortProxyCleanupDisposition, MachinePortProxyCleanupState, MachinePortProxyEntries,
     MachinePortProxyEntry, MachinePortProxyKey, MachinePortProxyLeaseAuthority,
     MachinePortProxyLifetimeRegistry, MachinePortProxyRegistration,

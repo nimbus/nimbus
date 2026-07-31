@@ -1483,7 +1483,7 @@ NODE
     printf 'self-test: %d failed\n' "${self_fail}"
     exit 1
   fi
-  printf 'self-test: 78 passed, 0 failed\n'
+  printf 'self-test: 92 passed, 0 failed\n'
 }
 
 if [ "${1:-}" = "--self-test" ]; then

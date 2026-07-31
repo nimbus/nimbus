@@ -15,7 +15,7 @@ use forwarder_observer::ForwarderObserver;
 fn assert_machine_unexpose_request(
     request: &[u8],
     binding: &SandboxPortBinding,
-    forwarder: &OciMachinePortForwarderConfig,
+    _forwarder: &OciMachinePortForwarderConfig,
 ) {
     let header_end = request
         .windows(4)
@@ -33,8 +33,6 @@ fn assert_machine_unexpose_request(
     assert_eq!(
         body,
         serde_json::json!({
-            "provider_instance": forwarder.provider_instance(),
-            "provider_generation": forwarder.provider_generation(),
             "local": format!("{}:{}", binding.host_address, binding.host_port),
             "protocol": "tcp",
         }),

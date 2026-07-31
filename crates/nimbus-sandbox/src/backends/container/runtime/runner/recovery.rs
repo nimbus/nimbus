@@ -375,7 +375,11 @@ fn authenticate_present_runner_effects(
     }
 
     let port_lease_coordinator = backend.port_lease_coordinator_for_manifest(manifest)?;
-    if manifest.runner_config.machine_port_forwarder.is_some() {
+    if manifest
+        .runner_config
+        .validated_machine_port_forwarder(&manifest.handle.id)?
+        .is_some()
+    {
         backend.ensure_machine_port_proxies_running_with_publication(
             &manifest.handle.id,
             &assigned_ips,

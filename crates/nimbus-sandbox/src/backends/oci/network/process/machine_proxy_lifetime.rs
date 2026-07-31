@@ -1,13 +1,18 @@
 //! Process-owned lifetime state for provider-managed machine port proxies.
 
 use std::collections::HashMap;
+use std::net::Ipv4Addr;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use nimbus_core::TenantId;
-use nimbus_network::{PortLeaseBinding, PortLeaseRecoveryGuard, PortLeaseRequest};
+use nimbus_network::{
+    NetworkProviderHandle, NetworkResourceGeneration, PortLeaseBinding, PortLeaseRecoveryGuard,
+    PortLeaseRequest,
+};
 
 use crate::backends::oci::network::{
     MachinePortForwardReceipt, MachinePortProxy, MachinePortProxyRoute,
+    OciMachinePortForwarderConfig, inspect_machine_ports, machine_port_proxy_routes,
 };
 use crate::backends::oci::port_lease::OciPortBindLifetimeBatch;
 use crate::backends::oci::port_lifecycle::OciPortLeaseCoordinator;
@@ -35,6 +40,63 @@ pub(crate) enum MachinePortProxyLeaseAuthority {
 pub(crate) enum MachinePortProxyEntry {
     Running(MachinePortProxyRegistration),
     Stopping(Arc<Mutex<MachinePortProxyCleanupState>>),
+}
+
+/// Exact inputs for one read-only machine publication observation.
+pub(crate) struct MachineForwardedPublicationInspection<'a> {
+    pub(crate) tenant_id: &'a TenantId,
+    pub(crate) sandbox_id: &'a SandboxId,
+    pub(crate) assigned_ips: &'a [Ipv4Addr],
+    pub(crate) bindings: &'a [SandboxPortBinding],
+    pub(crate) leases: &'a [PortLeaseRequest],
+    pub(crate) durable_receipts: &'a [MachinePortForwardReceipt],
+    pub(crate) forwarder: &'a OciMachinePortForwarderConfig,
+    pub(crate) port_leases: &'a OciPortLeaseCoordinator,
+}
+
+/// Non-serializable proof that one exact machine publication is current.
+///
+/// The private fields can be constructed only after the process-lifetime
+/// registry, listener leases, local workers, durable receipts, and provider
+/// observation have all authenticated as one generation.
+#[derive(Debug)]
+pub(crate) struct MachineForwardedPublicationReadiness {
+    tenant_id: TenantId,
+    sandbox_id: SandboxId,
+    provider_instance: NetworkProviderHandle,
+    provider_generation: NetworkResourceGeneration,
+}
+
+impl MachineForwardedPublicationReadiness {
+    pub(crate) fn tenant_id(&self) -> &TenantId {
+        &self.tenant_id
+    }
+
+    pub(crate) fn sandbox_id(&self) -> &SandboxId {
+        &self.sandbox_id
+    }
+
+    pub(crate) fn provider_instance(&self) -> &NetworkProviderHandle {
+        &self.provider_instance
+    }
+
+    pub(crate) fn provider_generation(&self) -> NetworkResourceGeneration {
+        self.provider_generation
+    }
+
+    #[cfg(test)]
+    pub(crate) fn exact_for_test(
+        tenant_id: &TenantId,
+        sandbox_id: &SandboxId,
+        forwarder: &OciMachinePortForwarderConfig,
+    ) -> Self {
+        Self {
+            tenant_id: tenant_id.clone(),
+            sandbox_id: sandbox_id.clone(),
+            provider_instance: forwarder.provider_instance().clone(),
+            provider_generation: forwarder.provider_generation(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,6 +130,133 @@ impl MachinePortProxyLifetimeRegistry {
             .map_err(|_| SandboxError::OperationFailed {
                 message: "container machine port proxy registry lock is poisoned".to_owned(),
             })
+    }
+
+    pub(crate) fn inspect_current_publication(
+        &self,
+        inspection: MachineForwardedPublicationInspection<'_>,
+    ) -> Result<MachineForwardedPublicationReadiness> {
+        let expected_routes =
+            machine_port_proxy_routes(inspection.assigned_ips, inspection.bindings)?;
+        let registrations = self.lock()?;
+        let key = (inspection.tenant_id.clone(), inspection.sandbox_id.clone());
+        let registration = match registrations.get(&key) {
+            Some(MachinePortProxyEntry::Running(registration)) => registration,
+            Some(MachinePortProxyEntry::Stopping(_)) => {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "container machine port publication for tenant {} sandbox {} is stopping",
+                        inspection.tenant_id, inspection.sandbox_id
+                    ),
+                });
+            }
+            None => {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "container machine port publication for tenant {} sandbox {} has no live \
+                         process-local registration",
+                        inspection.tenant_id, inspection.sandbox_id
+                    ),
+                });
+            }
+        };
+        if registration.port_bindings != inspection.bindings
+            || registration.port_leases != inspection.leases
+            || registration.routes != expected_routes
+            || registration.proxies.len() != expected_routes.len()
+        {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "container machine port publication for tenant {} sandbox {} does not match \
+                     the exact binding, lease, route, and worker generation",
+                    inspection.tenant_id, inspection.sandbox_id
+                ),
+            });
+        }
+        if !registration.publication_may_exist {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "container machine port publication for tenant {} sandbox {} is not \
+                     currently published",
+                    inspection.tenant_id, inspection.sandbox_id
+                ),
+            });
+        }
+        let live_authority = match registration.lease_authority.as_ref() {
+            Some(MachinePortProxyLeaseAuthority::Live(authority)) => authority,
+            Some(MachinePortProxyLeaseAuthority::Recovered(_)) | None => {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "container machine port publication for tenant {} sandbox {} lacks its \
+                         exact live process lifetime",
+                        inspection.tenant_id, inspection.sandbox_id
+                    ),
+                });
+            }
+        };
+        inspection
+            .port_leases
+            .require_active_machine_bindings_with_lifetimes(
+                inspection.tenant_id,
+                inspection.sandbox_id,
+                inspection.bindings,
+                inspection.leases,
+                live_authority,
+            )?;
+        if registration
+            .proxies
+            .iter()
+            .any(|proxy| !proxy.provider_is_running())
+        {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "container machine port publication for tenant {} sandbox {} has an exited \
+                     local provider worker or listener",
+                    inspection.tenant_id, inspection.sandbox_id
+                ),
+            });
+        }
+
+        // Keep the lifecycle registry locked across the bounded read-only
+        // provider inspection. Cleanup must not withdraw or stop the exact
+        // local generation between its validation and the final observation.
+        let current = inspect_machine_ports(
+            inspection.forwarder,
+            inspection.tenant_id,
+            inspection.sandbox_id,
+            inspection.bindings,
+        )?;
+        if current.provider_instance() != inspection.forwarder.provider_instance()
+            || current.provider_generation() != inspection.forwarder.provider_generation()
+            || current.receipts() != inspection.durable_receipts
+        {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "container machine port publication for tenant {} sandbox {} has crossed, \
+                     stale, or non-current provider evidence",
+                    inspection.tenant_id, inspection.sandbox_id
+                ),
+            });
+        }
+        if registration
+            .proxies
+            .iter()
+            .any(|proxy| !proxy.provider_is_running())
+        {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "container machine port publication for tenant {} sandbox {} lost its local \
+                     provider worker or listener during current inspection",
+                    inspection.tenant_id, inspection.sandbox_id
+                ),
+            });
+        }
+        Ok(MachineForwardedPublicationReadiness {
+            tenant_id: inspection.tenant_id.clone(),
+            sandbox_id: inspection.sandbox_id.clone(),
+            provider_instance: current.provider_instance().clone(),
+            provider_generation: current.provider_generation(),
+        })
     }
 
     #[cfg(test)]

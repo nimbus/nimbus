@@ -51,3 +51,41 @@ impl MachinePortForwardReceipt {
         }
     }
 }
+
+/// Fresh, read-only observation of the complete desired forwarding batch.
+///
+/// This type is deliberately not serializable. Durable operation receipts
+/// cannot be substituted for a provider observation captured by the current
+/// inspection attempt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CurrentMachinePortForwardingObservation {
+    provider_instance: NetworkProviderHandle,
+    provider_generation: NetworkResourceGeneration,
+    receipts: Vec<MachinePortForwardReceipt>,
+}
+
+impl CurrentMachinePortForwardingObservation {
+    pub(super) fn authenticated(
+        provider_instance: &NetworkProviderHandle,
+        provider_generation: NetworkResourceGeneration,
+        receipts: Vec<MachinePortForwardReceipt>,
+    ) -> Self {
+        Self {
+            provider_instance: provider_instance.clone(),
+            provider_generation,
+            receipts,
+        }
+    }
+
+    pub(crate) fn provider_instance(&self) -> &NetworkProviderHandle {
+        &self.provider_instance
+    }
+
+    pub(crate) fn provider_generation(&self) -> NetworkResourceGeneration {
+        self.provider_generation
+    }
+
+    pub(crate) fn receipts(&self) -> &[MachinePortForwardReceipt] {
+        &self.receipts
+    }
+}

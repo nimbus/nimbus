@@ -30,7 +30,21 @@ run_nnc53_attachment_readiness_self_tests() {
     missing-krun-consumer \
     missing-pin-inspection \
     missing-active-reconciliation \
-    readiness-effect-capability; do
+    readiness-effect-capability \
+    missing-machine-current-inspection \
+    machine-inspection-replays-expose \
+    machine-inspection-uses-invented-endpoint \
+    machine-inspection-multiplies-deadline \
+    machine-native-route-leaks-authority \
+    missing-explicit-machine-publication-mode \
+    machine-mode-infers-from-forwarder-option \
+    missing-machine-observation-type \
+    missing-machine-durable-receipt \
+    missing-machine-registry-composition \
+    missing-machine-consumer \
+    missing-machine-mode-completion \
+    forgeable-machine-publication-proof \
+    machine-readiness-effect-capability; do
     output="${temporary}/attachment-readiness-${mutation}.out"
     if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
       NIMBUS_NETWORK_VERIFY_TEST_ATTACHMENT_READINESS_MUTATION="${mutation}" \

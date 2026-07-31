@@ -50,7 +50,7 @@ fn nnc0_6_container_is_not_ready_at_partial_attachment_boundary() {
         )
         .expect("a ready PEP isolates the incomplete attachment condition");
 
-    let readiness = backend.require_complete_host_managed_attachment_readiness(&manifest);
+    let readiness = backend.require_complete_attachment_readiness(&manifest);
 
     assert!(
         readiness.is_err(),
@@ -133,7 +133,7 @@ fn container_live_status_withdraws_and_restores_endpoints_with_attachment_eviden
         )
         .expect("fixture should start the exact desired PEP");
     backend
-        .require_complete_host_managed_attachment_readiness(&manifest)
+        .require_complete_attachment_readiness(&manifest)
         .expect("complete evidence should reach the existing runtime-spawn boundary");
 
     manifest.conmon_launch.state_command = CommandSpec::new("/bin/sh").args([

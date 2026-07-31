@@ -421,22 +421,17 @@
     {
       "id": "machine-forwarder-port-effect",
       "status": "active",
-      "verification": "source-occurrence",
+      "verification": "symbol-presence",
       "category": "provider-bind-request",
       "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
-      "line": 217,
-      "symbol": "machine_port_forward_request",
-      "authority_kinds": [
-        "machine-forwarder-port-request"
-      ],
-      "authority_symbols": [
-        "machine_port_forward_request"
-      ],
+      "line": 96,
+      "symbol": "expose_machine_ports",
+      "declaration_name": "expose_machine_ports",
       "current_owner": "nimbus-sandbox machine-forwarder adapter",
-      "current_truth": "Serializes exact expose requests only after lease-authenticated inert guest listeners exist, and accepts withdrawal only from a typed generation-matching receipt or authenticated exact absence; the external forwarder owns the host publication effect.",
+      "current_truth": "Serializes native gvproxy expose requests only after lease-authenticated inert guest listeners exist, translates one read-only native route-list response into generation-fenced Nimbus observation evidence, and accepts withdrawal only after the native route list proves exact absence; the external forwarder owns the host publication effect.",
       "disposition": "provider-effect",
       "target_owner": "sandbox retains provider effects and exact inspection/delete evidence",
-      "owner_item": "NNC3.4, NNC5.4"
+      "owner_item": "NNC3.4, NNC5.3a, NNC5.4"
     },
     {
       "id": "machine-gvproxy-ssh-bind",
@@ -804,14 +799,6 @@
       "symbol": "accept_loop",
       "ordinal": 1,
       "line": 473
-    },
-    {
-      "site_id": "machine-forwarder-port-effect",
-      "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
-      "kind": "machine-forwarder-port-request",
-      "symbol": "machine_port_forward_request",
-      "ordinal": 1,
-      "line": 217
     },
     {
       "site_id": "netavark-port-mapping-effect",
@@ -1236,7 +1223,7 @@
       "kind": "authority-shaped-macro",
       "symbol": "unexpose_machine_port_proxy_publications",
       "ordinal": 1,
-      "line": 836,
+      "line": 869,
       "reason": "Formats a failed-withdrawal diagnostic from an existing binding; the classified forwarder call owns the provider effect."
     },
     {
@@ -1244,7 +1231,7 @@
       "kind": "authority-shaped-macro",
       "symbol": "unexpose_machine_port_proxy_publications",
       "ordinal": 2,
-      "line": 842,
+      "line": 875,
       "reason": "Formats a failed-withdrawal diagnostic from an existing binding; the classified forwarder call owns the provider effect."
     },
     {
@@ -1274,33 +1261,41 @@
     {
       "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
       "kind": "authority-shaped-macro",
-      "symbol": "machine_port_forward_request",
+      "symbol": "unexpose_machine_ports",
       "ordinal": 1,
-      "line": 225,
-      "reason": "Serializes one already-admitted binding into the classified MachinePortForwardRequest provider effect; it performs no bind or allocation."
+      "line": 246,
+      "reason": "Formats a provider-unknown diagnostic for a native unexpose attempt whose exact absence observation did not settle; it performs no additional bind or allocation."
+    },
+    {
+      "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
+      "kind": "authority-shaped-macro",
+      "symbol": "encode_gvproxy_request",
+      "ordinal": 1,
+      "line": 312,
+      "reason": "Formats a serialization error while lowering an already-admitted binding into a native gvproxy request; it neither chooses a port nor creates or adopts a socket."
+    },
+    {
+      "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
+      "kind": "authority-shaped-macro",
+      "symbol": "authenticate_current_routes",
+      "ordinal": 1,
+      "line": 336,
+      "reason": "Formats a fail-closed diagnostic while translating the read-only native gvproxy route list into Nimbus observation evidence; it performs no bind, allocation, or provider mutation."
     },
     {
       "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
       "kind": "authority-shaped-macro",
       "symbol": "machine_forward_local",
       "ordinal": 1,
-      "line": 254,
+      "line": 355,
       "reason": "Formats the exact admitted host endpoint used for provider request and inspection identity; it performs no bind or allocation."
-    },
-    {
-      "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
-      "kind": "authority-shaped-macro",
-      "symbol": "ambiguous_forwarder_error",
-      "ordinal": 1,
-      "line": 269,
-      "reason": "Formats a fail-closed diagnostic for an already-classified provider request or withdrawal attempt; it does not bind, allocate, or release authority."
     },
     {
       "path": "crates/nimbus-sandbox/src/backends/oci/network/forwarding.rs",
       "kind": "authority-shaped-macro",
       "symbol": "machine_forward_remote",
       "ordinal": 1,
-      "line": 493,
+      "line": 607,
       "reason": "Formats an admitted host port as the remote endpoint consumed by the classified forwarder request; it is not an allocator or socket owner."
     },
     {
@@ -1498,8 +1493,8 @@
     "production_sites": 26,
     "active_production_sites": 23,
     "retired_production_sites": 3,
-    "authority_occurrences": 62,
-    "non_authority_occurrences": 36,
+    "authority_occurrences": 61,
+    "non_authority_occurrences": 37,
     "portable_owner_sites": 6,
     "trust_inputs_not_network_authorities": 3,
     "unclassified_production_sites": 0,

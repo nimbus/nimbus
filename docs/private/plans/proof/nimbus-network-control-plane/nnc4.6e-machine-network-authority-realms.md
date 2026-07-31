@@ -7,6 +7,15 @@ findings are corrected and reproved`
 Owner: NNC4.6e in
 `docs/private/plans/nimbus-network-control-plane-plan.md`.
 
+Protocol supersession note: NNC5.3a verified the official gvproxy client
+contract and corrected an inherited modeling error in this proof. Native
+expose/unexpose responses are status-only and native current observation is
+one `GET /services/forwarder/all`; gvproxy does not echo Nimbus provider
+identity/generation and has no `/inspect`. The sandbox adapter scopes native
+routes under lifecycle-issued authority and mints Nimbus evidence only after
+exact post-effect observation. See
+`nnc5.3a-machine-forwarded-readiness.md`.
+
 This proof is the implementation and closeout contract for host-machine and
 guest-machine network composition. It closes NNCF24 and NNCF25. It does not
 change the product ownership model:
@@ -113,7 +122,7 @@ parent-issued machine provider incarnation
     +-- persisted in machine config/runtime evidence
     +-- supplied to guest boot/config
     +-- authenticated by every Machine API mutation
-    +-- echoed only through exact typed publication receipts
+    +-- scopes adapter-translated native route observations and Nimbus receipts
 
 one guest OS-node manager
   guest control root (network authority)
@@ -179,9 +188,10 @@ generations. It does not construct managers or perform effects.
 11. A Machine API start response is activation evidence only when it
     authenticates the exact requested sandbox ID, provider instance,
     generation, protocol, and complete publication set after the guest
-    forwarding adapter accepted typed `Exposed` receipts. Generic HTTP success,
-    a handle alone, a partial set, mismatched identity, EOF, timeout, or
-    connection refusal is ambiguous and retains the parent fence.
+    forwarding adapter observed the exact native route list and minted
+    generation-scoped `Exposed` receipts. Native gvproxy status alone, a handle
+    alone, a partial set, mismatched identity, EOF, timeout, or connection
+    refusal is ambiguous and retains the parent fence.
 12. Per-workload teardown is parent withdraw, guest stop/unexpose, exact
     `Withdrawn` or `ExactAlreadyAbsent` evidence, then parent release. Any
     missing, partial, stale, untyped, or transport evidence leaves

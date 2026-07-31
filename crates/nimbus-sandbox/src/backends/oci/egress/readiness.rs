@@ -62,18 +62,6 @@ pub(crate) enum EgressReloadAttachmentState {
 }
 
 impl EgressReadinessState {
-    pub(crate) fn is_ready(&self) -> bool {
-        match self {
-            Self::Ready(evidence) => {
-                debug_assert!(!evidence.port_lease_id.to_string().is_empty());
-                debug_assert!(evidence.lifetime.generation().as_u64() > 0);
-                debug_assert!(evidence.policy_generation.get() > 0);
-                true
-            }
-            Self::NotReady(_) => false,
-        }
-    }
-
     pub(crate) const fn is_missing_registration(&self) -> bool {
         matches!(
             self,

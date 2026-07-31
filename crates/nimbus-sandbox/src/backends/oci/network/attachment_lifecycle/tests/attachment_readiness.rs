@@ -6,6 +6,7 @@ use crate::backends::oci::egress::{
     PepPreAdoptionReleaseAuthority, egress_decision_log_root, egress_proxy_assignment_for_test,
     egress_trust_anchor_root, ensure_egress_proxy_running_with_release_authority,
 };
+use crate::backends::oci::network::MachineForwardedPublicationReadiness;
 use crate::backends::oci::network::{
     FixedOciEgressPinProvider, OciAttachmentAuxiliaryListener, OciAttachmentReadinessFailure,
     OciAttachmentReadinessState, OciEgressPinObservation, OciEgressPinProvider,
@@ -602,6 +603,74 @@ fn explicit_empty_listener_set_is_ready_but_machine_publication_is_not_netavark_
             &pin,
             Some(&assignment),
             EgressReadinessState::NotReady(EgressReadinessFailure::MissingRegistration),
+        ),
+        OciAttachmentReadinessState::NotReady(
+            OciAttachmentReadinessFailure::UnsupportedPublicationMode
+        )
+    ));
+}
+
+#[test]
+fn publication_completion_cannot_cross_host_and_machine_modes() {
+    let fixture = ReadinessFixture::active(ContractBackend::Container, "publication-mode-cross");
+    let forwarder = OciMachinePortForwarderConfig::for_provider_instance(
+        "127.0.0.1",
+        80,
+        "/services/forwarder",
+        "publication-mode-provider",
+        NetworkResourceGeneration::new(1),
+    )
+    .expect("machine provider config should validate");
+    let input = ReadinessFixture::input(
+        &fixture.base,
+        &fixture.config,
+        &fixture.bindings,
+        &fixture.leases,
+        &fixture.assignment,
+    );
+    let machine =
+        <ContainerSandboxBackend as OciMachineForwardedAttachmentBackend>::machine_forwarded_attachment_adapter(
+            input,
+            &forwarder,
+        );
+    let base = match machine.inspect_machine_forwarded_base_readiness(
+        &fixture.base.lifecycle(),
+        fixture.pin.as_ref(),
+        Some(&fixture.assignment),
+        fixture.pep(),
+    ) {
+        OciAttachmentBaseReadinessState::Ready(base) => base,
+        OciAttachmentBaseReadinessState::NotReady(reason) => {
+            panic!("the exact common base should be independently ready: {reason:?}")
+        }
+    };
+    let host = fixture.base.backend.adapter(ReadinessFixture::input(
+        &fixture.base,
+        &fixture.config,
+        &fixture.bindings,
+        &fixture.leases,
+        &fixture.assignment,
+    ));
+
+    assert!(matches!(
+        host.inspect_machine_forwarded_base_readiness(
+            &fixture.base.lifecycle(),
+            fixture.pin.as_ref(),
+            Some(&fixture.assignment),
+            fixture.pep(),
+        ),
+        OciAttachmentBaseReadinessState::NotReady(
+            OciAttachmentReadinessFailure::UnsupportedPublicationMode
+        )
+    ));
+    assert!(matches!(
+        host.complete_machine_forwarded_readiness(
+            base,
+            Ok(MachineForwardedPublicationReadiness::exact_for_test(
+                &fixture.base.tenant_id,
+                &fixture.base.sandbox_id,
+                &forwarder,
+            )),
         ),
         OciAttachmentReadinessState::NotReady(
             OciAttachmentReadinessFailure::UnsupportedPublicationMode

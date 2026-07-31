@@ -32,6 +32,8 @@ mod creator_persistence;
 #[path = "tests/execute_inspection.rs"]
 mod execute_inspection;
 mod launch_cleanup;
+#[path = "tests/machine_forwarded_readiness.rs"]
+mod machine_forwarded_readiness;
 #[path = "tests/plan_only_inspection.rs"]
 mod plan_only_inspection;
 #[path = "tests/provider_cleanup.rs"]
@@ -1043,14 +1045,6 @@ fn machine_proxy_restart_waits_for_external_unexpose_before_rebind() {
         .expect("forwarder address should resolve")
         .port();
     let configured_forwarder = sample_forwarder(forwarder_port);
-    let receipt_body = serde_json::to_vec(&serde_json::json!({
-        "outcome": "withdrawn",
-        "provider_instance": configured_forwarder.provider_instance(),
-        "provider_generation": configured_forwarder.provider_generation(),
-        "local": format!("127.0.0.1:{published_port}"),
-        "protocol": "tcp",
-    }))
-    .expect("typed withdrawal receipt should encode");
     let (request_tx, request_rx) = mpsc::channel();
     let (response_tx, response_rx) = mpsc::channel();
     let server = thread::spawn(move || {
@@ -1062,15 +1056,19 @@ fn machine_proxy_restart_waits_for_external_unexpose_before_rebind() {
         response_rx
             .recv_timeout(Duration::from_secs(2))
             .expect("unexpose response should be released");
-        let header = format!(
-            "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n\
-             Content-Length: {}\r\n\r\n",
-            receipt_body.len()
-        );
         unexpose
-            .write_all(header.as_bytes())
-            .and_then(|()| unexpose.write_all(&receipt_body))
-            .expect("typed unexpose response should write");
+            .write_all(b"HTTP/1.0 200 OK\r\nContent-Length: 0\r\n\r\n")
+            .expect("native unexpose response should write");
+        let (mut inspection, _) = listener
+            .accept()
+            .expect("absence inspection should connect");
+        read_complete_http_request(&mut inspection);
+        inspection
+            .write_all(
+                b"HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n\
+                  Content-Length: 2\r\n\r\n[]",
+            )
+            .expect("native absence list should write");
     });
 
     let temp_dir = TempDir::new().expect("tempdir should build");

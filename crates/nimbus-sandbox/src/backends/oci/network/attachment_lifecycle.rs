@@ -96,7 +96,9 @@ mod tests;
 
 #[cfg(test)]
 pub(crate) use attachment_readiness::OciAttachmentReadinessFailure;
-pub(crate) use attachment_readiness::OciAttachmentReadinessState;
+pub(crate) use attachment_readiness::{
+    OciAttachmentBaseReadinessState, OciAttachmentReadinessState,
+};
 use host::{AttachmentHostEffects, RealAttachmentHostEffects};
 
 /// Explicit authority disposition for one confirmed provider detach.
@@ -267,6 +269,30 @@ impl<'a> OciAttachmentAdapter<'a> {
             proxy,
             pep,
         )
+    }
+
+    pub(crate) fn inspect_machine_forwarded_base_readiness(
+        &self,
+        lifecycle: &OciAttachmentLifecycle<'_>,
+        pin_provider: &dyn super::OciEgressPinProvider,
+        proxy: Option<&crate::backends::oci::egress::EgressProxyAssignment>,
+        pep: crate::backends::oci::egress::EgressReadinessState,
+    ) -> OciAttachmentBaseReadinessState {
+        attachment_readiness::inspect_machine_forwarded_base_readiness(
+            lifecycle,
+            &self.context,
+            pin_provider,
+            proxy,
+            pep,
+        )
+    }
+
+    pub(crate) fn complete_machine_forwarded_readiness(
+        &self,
+        base: attachment_readiness::OciAttachmentBaseReadinessEvidence,
+        publication: std::result::Result<super::MachineForwardedPublicationReadiness, String>,
+    ) -> OciAttachmentReadinessState {
+        attachment_readiness::complete_machine_forwarded_readiness(&self.context, base, publication)
     }
 
     pub(crate) fn detach_host_managed(
