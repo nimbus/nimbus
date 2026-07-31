@@ -20,6 +20,7 @@ pub mod config;
 pub mod dispatch;
 pub mod error;
 pub mod expression;
+pub mod item_size;
 pub mod key;
 pub mod key_management;
 pub mod tenant;
@@ -37,6 +38,10 @@ pub use commands::ttl::{sweep_all_tenants, sweep_all_tenants_async};
 pub use config::DynamoDbConfig;
 pub use dispatch::{
     DispatchContext, KNOWN_OPERATIONS, dispatch, dispatch_async, is_known_operation,
+};
+pub use item_size::{
+    MAX_ITEM_SIZE_BYTES, attribute_value_size, item_size_bytes, validate_item_size,
+    validate_updated_item_size,
 };
 pub use key::{
     decode_key, encode_key, is_reserved_attribute_name, sortable_key, validate_attribute_names,

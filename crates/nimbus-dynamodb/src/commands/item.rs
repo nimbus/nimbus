@@ -28,6 +28,7 @@ use crate::expression::{
     apply_update, build_maps, check_condition, default_limits, parse_update_expression,
     project_item, reject_key_updates, updated_attributes,
 };
+use crate::item_size::{validate_item_size, validate_updated_item_size};
 use crate::key::encode_key;
 use crate::tenant::caller_principal;
 
@@ -216,14 +217,16 @@ fn map_conditional_write_error(error: nimbus_core::Error) -> DynamoDbError {
 ///
 /// # Errors
 /// `ResourceNotFoundException` if the table is absent; `ValidationException`
-/// for an invalid item or missing key; `ConditionalCheckFailedException` if the
-/// condition fails; a mapped engine error otherwise.
+/// for an invalid item, a missing key, or an item over the 400 KiB ceiling;
+/// `ConditionalCheckFailedException` if the condition fails; a mapped engine
+/// error otherwise.
 pub fn put_item(
     engine: &Arc<Engine>,
     context: &TenantIsolationContext,
     input: PutItemInput,
 ) -> Result<PutItemOutput, DynamoDbError> {
     validate_item(&input.item)?;
+    validate_item_size(&input.item)?;
     let key_schema = control_plane::load_key_schema(engine, context, &input.table_name)?;
     let id = primary_key_id(&input.item, &key_schema)?;
     let table = TableName::new(&input.table_name).map_err(map_core_error)?;
@@ -405,9 +408,13 @@ pub fn delete_item(
 /// attribute are rejected. UPDATED_OLD/UPDATED_NEW return only the touched
 /// attributes (leaf-wrapped for nested paths) and omit `Attributes` when empty.
 ///
+/// The 400 KiB ceiling is applied to the item the update produces, not to the
+/// request, so a small update that grows a large item past it is rejected.
+///
 /// # Errors
 /// `ResourceNotFoundException` if the table is absent; `ValidationException`
-/// for a missing key, empty/malformed expression, or a key-attribute update;
+/// for a missing key, empty/malformed expression, a key-attribute update, or a
+/// resulting item over the 400 KiB ceiling;
 /// `ConditionalCheckFailedException` if the condition fails.
 pub fn update_item(
     engine: &Arc<Engine>,
@@ -443,6 +450,10 @@ pub fn update_item(
 
         let mut new_item = old_item.clone().unwrap_or_else(|| input.key.clone());
         apply_update(&actions, &mut new_item, &maps)?;
+        // The 400 KiB ceiling applies to the item the update produces, not to
+        // the request: a few bytes of `SET` can push a stored item past it. The
+        // plan is abandoned before it commits, so nothing is applied.
+        validate_updated_item_size(&new_item)?;
         let fields = item_to_fields(&new_item)?;
         let event_name = if old.is_some() {
             StreamEventName::Modify
@@ -1021,6 +1032,87 @@ mod tests {
         assert!(stored(&engine, &ctx, "o1").is_some(), "item not deleted");
     }
 
+    // ---- FU13: the 400 KiB item ceiling on PutItem ----
+
+    /// A `Value` holding `item`'s AttributeValue wire JSON, for embedding in a
+    /// request body.
+    fn wire(item: &Item) -> serde_json::Value {
+        serde_json::Value::Object(item_to_fields(item).expect("serialize"))
+    }
+
+    #[test]
+    fn put_oversized_item_is_validation_error() {
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
+        // Names "pk" (2) and "blob" (4) plus the key's value "big" (3) are 9
+        // bytes, so a blob of MAX - 8 puts the item one byte over the ceiling.
+        let blob = "a".repeat(crate::item_size::MAX_ITEM_SIZE_BYTES - 8);
+        let err = put(
+            &engine,
+            &ctx,
+            json!({
+                "TableName": "Orders",
+                "Item": { "pk": {"S": "big"}, "blob": {"S": blob} },
+            }),
+        )
+        .expect_err("an item over 400 KiB must be rejected");
+
+        assert_eq!(err.error_type(), "ValidationException", "{err:?}");
+        assert_eq!(err.status_code(), 400, "{err:?}");
+        match &err {
+            DynamoDbError::ValidationException(message) => {
+                assert_eq!(message, "Item size has exceeded the maximum allowed size");
+            }
+            other => panic!("expected ValidationException, got {other:?}"),
+        }
+        assert!(
+            stored(&engine, &ctx, "big").is_none(),
+            "a rejected put must write nothing"
+        );
+    }
+
+    /// The ceiling is a ceiling, not a rounding: an item at exactly 400 KiB is
+    /// accepted. Without this the rule could pass by rejecting everything.
+    #[test]
+    fn put_item_at_exactly_the_size_limit_is_accepted() {
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
+        let blob = "a".repeat(crate::item_size::MAX_ITEM_SIZE_BYTES - 9);
+        put(
+            &engine,
+            &ctx,
+            json!({
+                "TableName": "Orders",
+                "Item": { "pk": {"S": "big"}, "blob": {"S": blob} },
+            }),
+        )
+        .expect("an item at exactly the limit is within it");
+        assert!(stored(&engine, &ctx, "big").is_some());
+    }
+
+    /// FU14: an item `extenddb_core`'s sizing puts at exactly the ceiling is
+    /// over it once AWS's 1-byte-per-`List`-element charge is counted.
+    #[test]
+    fn put_item_undersized_by_nested_elements_is_rejected() {
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
+        let item = crate::item_size::item_undersized_by_nested_elements("big");
+        assert_eq!(
+            extenddb_core::types::item_size_bytes(&item),
+            crate::item_size::MAX_ITEM_SIZE_BYTES,
+            "the dependency sizes this item at the ceiling, so it accepted it"
+        );
+
+        let err = put(
+            &engine,
+            &ctx,
+            json!({ "TableName": "Orders", "Item": wire(&item) }),
+        )
+        .expect_err("an item AWS sizes over 400 KiB must be rejected");
+        assert_eq!(err.error_type(), "ValidationException", "{err:?}");
+        assert!(stored(&engine, &ctx, "big").is_none());
+    }
+
     // ---- D1.8: UpdateItem ----
 
     fn update(
@@ -1029,6 +1121,140 @@ mod tests {
         input: serde_json::Value,
     ) -> Result<UpdateItemOutput, DynamoDbError> {
         update_item(engine, context, serde_json::from_value(input).unwrap())
+    }
+
+    // ---- FU13: the 400 KiB ceiling applies to the item an update produces ----
+
+    /// Seed `Orders` with item `big` sized to exactly `MAX - headroom` bytes:
+    /// `pk` (2) + `big` (3) + `blob` (4) + the blob's own length.
+    fn seed_item_below_the_ceiling(
+        engine: &Arc<Engine>,
+        context: &TenantIsolationContext,
+        headroom: usize,
+    ) {
+        let blob = "a".repeat(crate::item_size::MAX_ITEM_SIZE_BYTES - headroom - 9);
+        put(
+            engine,
+            context,
+            json!({
+                "TableName": "Orders",
+                "Item": { "pk": {"S": "big"}, "blob": {"S": blob} },
+            }),
+        )
+        .expect("the seeded item is within the ceiling");
+        assert_eq!(
+            crate::item_size::item_size_bytes(&stored(engine, context, "big").expect("seeded")),
+            crate::item_size::MAX_ITEM_SIZE_BYTES - headroom
+        );
+    }
+
+    #[test]
+    fn update_growing_the_item_past_the_ceiling_is_validation_error() {
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
+        seed_item_below_the_ceiling(&engine, &ctx, 100);
+
+        // 203 bytes of growth — name "pad" (3) plus a 200-byte value — against
+        // 100 bytes of headroom. The request itself is a few hundred bytes.
+        let err = update(
+            &engine,
+            &ctx,
+            json!({
+                "TableName": "Orders",
+                "Key": { "pk": {"S": "big"} },
+                "UpdateExpression": "SET #pad = :p",
+                "ExpressionAttributeNames": { "#pad": "pad" },
+                "ExpressionAttributeValues": { ":p": {"S": "z".repeat(200)} },
+            }),
+        )
+        .expect_err("an update that pushes the item over 400 KiB must be rejected");
+
+        assert_eq!(err.error_type(), "ValidationException", "{err:?}");
+        assert_eq!(err.status_code(), 400, "{err:?}");
+        match &err {
+            DynamoDbError::ValidationException(message) => {
+                assert_eq!(
+                    message,
+                    "Item size to update has exceeded the maximum allowed size"
+                );
+            }
+            other => panic!("expected ValidationException, got {other:?}"),
+        }
+
+        let item = stored(&engine, &ctx, "big").expect("the item survives");
+        assert!(
+            !item.contains_key("pad"),
+            "a rejected update must leave the stored item untouched"
+        );
+        assert_eq!(
+            crate::item_size::item_size_bytes(&item),
+            crate::item_size::MAX_ITEM_SIZE_BYTES - 100
+        );
+    }
+
+    /// The boundary is inclusive on this path too: growth landing at exactly
+    /// 400 KiB is accepted.
+    #[test]
+    fn update_growing_the_item_to_exactly_the_ceiling_is_accepted() {
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
+        seed_item_below_the_ceiling(&engine, &ctx, 100);
+
+        // Name "pad" (3) plus a 97-byte value consumes the headroom exactly.
+        update(
+            &engine,
+            &ctx,
+            json!({
+                "TableName": "Orders",
+                "Key": { "pk": {"S": "big"} },
+                "UpdateExpression": "SET #pad = :p",
+                "ExpressionAttributeNames": { "#pad": "pad" },
+                "ExpressionAttributeValues": { ":p": {"S": "z".repeat(97)} },
+            }),
+        )
+        .expect("an update landing at exactly the limit is within it");
+
+        let item = stored(&engine, &ctx, "big").expect("item present");
+        assert_eq!(
+            crate::item_size::item_size_bytes(&item),
+            crate::item_size::MAX_ITEM_SIZE_BYTES
+        );
+    }
+
+    /// What is measured is the resulting item, not the request. This update's
+    /// payload carries a value larger than the whole ceiling, and is accepted
+    /// because the item it produces is not.
+    #[test]
+    fn update_measures_the_resulting_item_not_the_request_payload() {
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
+        put(
+            &engine,
+            &ctx,
+            json!({ "TableName": "Orders", "Item": { "pk": {"S": "big"} } }),
+        )
+        .expect("seed a 5-byte item");
+
+        // A blob of MAX - 9 replaces nothing and lands the item at exactly the
+        // ceiling, while the request that carries it is larger than the ceiling.
+        let blob = "a".repeat(crate::item_size::MAX_ITEM_SIZE_BYTES - 9);
+        update(
+            &engine,
+            &ctx,
+            json!({
+                "TableName": "Orders",
+                "Key": { "pk": {"S": "big"} },
+                "UpdateExpression": "SET #blob = :b",
+                "ExpressionAttributeNames": { "#blob": "blob" },
+                "ExpressionAttributeValues": { ":b": {"S": blob} },
+            }),
+        )
+        .expect("the request may exceed 400 KiB as long as the resulting item does not");
+
+        assert_eq!(
+            crate::item_size::item_size_bytes(&stored(&engine, &ctx, "big").expect("item present")),
+            crate::item_size::MAX_ITEM_SIZE_BYTES
+        );
     }
 
     #[test]
