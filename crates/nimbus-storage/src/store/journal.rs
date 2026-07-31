@@ -7,7 +7,7 @@ use redb::{ReadableTable, TableError};
 use crate::document_codec::{decode_document_msgpack, encode_document_msgpack};
 use crate::index::table_index_prefix;
 use crate::keys::{document_key, prefix_end, table_prefix};
-use crate::simulation::{FaultInjector, FaultPoint};
+use crate::simulation::{DurableApplyKind, FaultInjector, FaultPoint};
 
 #[cfg(test)]
 mod tests;
@@ -90,11 +90,25 @@ impl TenantStore {
                 .map_err(map_redb_error)?;
         }
 
-        commit_journal_txn(&*self.fault_injector, write_txn)?;
+        commit_journal_txn(&*self.fault_injector, records, write_txn)?;
         Ok(())
     }
 
     pub fn apply_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
+        self.apply_durable_records_batch_as(records, DurableApplyKind::ClientBatch)
+    }
+
+    /// See [`DurableApplyKind::JournalReplay`]: recovery re-applies records that
+    /// are already durable, so this boundary names none.
+    pub fn replay_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
+        self.apply_durable_records_batch_as(records, DurableApplyKind::JournalReplay)
+    }
+
+    fn apply_durable_records_batch_as(
+        &self,
+        records: &[TenantEventRecord],
+        kind: DurableApplyKind,
+    ) -> Result<()> {
         if records.is_empty() {
             return Ok(());
         }
@@ -121,7 +135,7 @@ impl TenantStore {
         if applied_head >= records[0].sequence.0 {
             write_applied_sequence(&write_txn, SequenceNumber(applied_head))?;
         }
-        self.commit_write_txn(write_txn)?;
+        self.commit_write_txn_durable_records(kind.newly_durable_records(records), write_txn)?;
         Ok(())
     }
 
@@ -132,7 +146,7 @@ impl TenantStore {
         }
         let from = SequenceNumber(progress.applied_head.0.saturating_add(1));
         let pending = self.read_durable_journal_from(from)?;
-        self.apply_durable_records_batch(&pending)?;
+        self.replay_durable_records_batch(&pending)?;
         self.journal_progress()
     }
 }
@@ -658,26 +672,35 @@ fn write_next_sequence(write_txn: &redb::WriteTransaction, sequence: u64) -> Res
 
 fn commit_journal_txn(
     fault_injector: &dyn FaultInjector,
+    records: &[TenantEventRecord],
     write_txn: redb::WriteTransaction,
 ) -> Result<()> {
-    fault_injector.check(FaultPoint::JournalAppendBeforeDurableFlush)?;
+    fault_injector.check_durable_records(FaultPoint::JournalAppendBeforeDurableFlush, records)?;
     write_txn.commit().map_err(map_redb_error)?;
-    fault_injector.check(FaultPoint::JournalFlushBeforeVisibility)?;
+    fault_injector.check_durable_records(FaultPoint::JournalFlushBeforeVisibility, records)?;
     Ok(())
 }
 
+/// `records` names the durable journal records this commit makes visible, empty
+/// for a transaction that materializes none. The tenant is already bound into
+/// `fault_injector`; the records are what let a fault armed at one durable batch
+/// avoid being consumed by an unrelated concurrent commit on the same tenant.
 pub(crate) fn commit_write_txn_cancellable<Check>(
     fault_injector: &dyn FaultInjector,
+    records: &[TenantEventRecord],
     check_cancel: Check,
     write_txn: redb::WriteTransaction,
 ) -> Result<()>
 where
     Check: Fn() -> Result<()>,
 {
-    fault_injector.check(FaultPoint::StorageCommitBeforeVisibility)?;
+    fault_injector.check_durable_records(FaultPoint::StorageCommitBeforeVisibility, records)?;
     check_cancel()?;
     write_txn.commit().map_err(map_redb_error)?;
-    fault_injector.check(FaultPoint::StorageCommitAfterVisibilityBeforeReturn)?;
+    fault_injector.check_durable_records(
+        FaultPoint::StorageCommitAfterVisibilityBeforeReturn,
+        records,
+    )?;
     Ok(())
 }
 

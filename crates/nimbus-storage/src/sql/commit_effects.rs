@@ -249,6 +249,11 @@ pub(crate) fn sql_apply_commit<T: SqlWriteTransactionCore>(
     // outlive the apply.
     let prepared_record = match documents {
         DocumentWrites::PreparedDurableRecord(record) => {
+            // The one shared site where a write transaction learns it is
+            // materializing a journal record. Naming it here is what lets the
+            // commit-sequence fault checks tell this transaction apart from a
+            // concurrent same-tenant commit that materializes nothing durable.
+            transaction.note_durable_records_for_fault(std::slice::from_ref(&record));
             transaction.apply_durable_record(&record)?;
             Some(record)
         }

@@ -264,8 +264,19 @@ impl TenantStore {
     }
 
     pub(crate) fn commit_write_txn(&self, write_txn: redb::WriteTransaction) -> Result<()> {
+        self.commit_write_txn_durable_records(&[], write_txn)
+    }
+
+    /// [`TenantStore::commit_write_txn`] for a commit that makes durable journal
+    /// records visible; `records` reaches the commit-sequence fault checks.
+    pub(crate) fn commit_write_txn_durable_records(
+        &self,
+        records: &[nimbus_core::TenantEventRecord],
+        write_txn: redb::WriteTransaction,
+    ) -> Result<()> {
         super::super::journal::commit_write_txn_cancellable(
             &*self.fault_injector,
+            records,
             || Ok(()),
             write_txn,
         )

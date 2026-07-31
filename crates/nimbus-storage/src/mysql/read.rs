@@ -42,7 +42,7 @@ impl MySqlTenantStore {
         }
         let from = SequenceNumber(progress.applied_head.0.saturating_add(1));
         let pending = self.read_durable_journal_from(from)?;
-        self.apply_durable_records_batch(&pending)?;
+        self.replay_durable_records_batch(&pending)?;
         self.journal_progress()
     }
 

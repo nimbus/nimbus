@@ -13,11 +13,23 @@ struct ArmedFaultState {
     fires: u64,
 }
 
+#[derive(Default)]
+struct InjectorState {
+    faults: BTreeMap<(TenantId, PpscInjectedFault), ArmedFaultState>,
+}
+
 /// Observable state for one tenant-scoped PPSC storage fault.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PpscStorageFaultSnapshot {
     pub active: bool,
+    /// Every armed check that reached this fault's tenant and point, whether or
+    /// not it fired. `visits` above `fires` is the deflection count: concurrent
+    /// same-tenant boundaries that made no journal record durable — record-less
+    /// commits and journal replays alike — and so were not allowed to consume
+    /// the arm.
     pub visits: u64,
+    /// Checks that actually failed, each of which was making journal records
+    /// durable.
     pub fires: u64,
 }
 
@@ -31,9 +43,12 @@ pub struct PpscStorageFaultSnapshot {
 /// intentional: an embedded publisher appends the journal and materializes it
 /// in separate transactions, while a provider publisher performs both in one
 /// fenced transaction.
+///
+/// Both faults are additionally scoped to record identity, not just to the
+/// tenant; see [`PpscStorageFaultInjector::check_tenant`].
 #[derive(Default)]
 pub struct PpscStorageFaultInjector {
-    state: Mutex<BTreeMap<(TenantId, PpscInjectedFault), ArmedFaultState>>,
+    state: Mutex<InjectorState>,
 }
 
 impl PpscStorageFaultInjector {
@@ -47,7 +62,7 @@ impl PpscStorageFaultInjector {
             .state
             .lock()
             .map_err(|_| Error::Internal("PPSC storage fault lock poisoned".to_string()))?;
-        let entry = state.entry((tenant_id, fault)).or_default();
+        let entry = state.faults.entry((tenant_id, fault)).or_default();
         if entry.active {
             return Err(Error::InvalidInput(format!(
                 "PPSC storage fault '{}' is already armed",
@@ -64,12 +79,15 @@ impl PpscStorageFaultInjector {
             .state
             .lock()
             .map_err(|_| Error::Internal("PPSC storage fault lock poisoned".to_string()))?;
-        let entry = state.get_mut(&(tenant_id.clone(), fault)).ok_or_else(|| {
-            Error::InvalidInput(format!(
-                "PPSC storage fault '{}' was never armed for tenant '{tenant_id}'",
-                fault.as_str()
-            ))
-        })?;
+        let entry = state
+            .faults
+            .get_mut(&(tenant_id.clone(), fault))
+            .ok_or_else(|| {
+                Error::InvalidInput(format!(
+                    "PPSC storage fault '{}' was never armed for tenant '{tenant_id}'",
+                    fault.as_str()
+                ))
+            })?;
         entry.active = false;
         Ok(())
     }
@@ -85,6 +103,7 @@ impl PpscStorageFaultInjector {
             .lock()
             .map_err(|_| Error::Internal("PPSC storage fault lock poisoned".to_string()))?;
         let current = state
+            .faults
             .get(&(tenant_id.clone(), fault))
             .copied()
             .unwrap_or_default();
@@ -95,19 +114,66 @@ impl PpscStorageFaultInjector {
         })
     }
 
-    fn check_tenant(&self, point: FaultPoint, tenant_id: &TenantId) -> Result<()> {
+    /// Fires an armed fault only for a transaction that is making durable
+    /// journal records visible.
+    ///
+    /// Tenant identity alone does not identify a transaction. Every
+    /// same-tenant commit reaches the same commit-sequence fault points at the
+    /// same time — schedule-only execution units, trigger outcomes, and the
+    /// fenced durable batch itself all arrive with no commit entry — so an arm
+    /// keyed on tenant alone is consumed by whichever of them happens to
+    /// commit first. The durable records are the discriminator, in two steps.
+    ///
+    /// A transaction carrying no records is not the durable batch the scenario
+    /// armed, so it records a visit and passes.
+    ///
+    /// This rests on the product's side of the contract: `records` names what
+    /// *this* boundary makes durable, not merely what passes through it.
+    /// Journal recovery re-applies records that were already durable, through
+    /// the very same commit-sequence boundary, and it therefore presents none
+    /// — see the replay paths in `nimbus-storage`. Before that was true, those
+    /// replays stole the arm. Nothing here can recover the distinction if a
+    /// boundary reports records it did not make durable, so a new fault-checked
+    /// boundary must decide which of the two it is.
+    ///
+    /// Retries keep firing: a batch retried after a transient failure is still
+    /// making its records durable, so it still presents them. That is what
+    /// `ProviderTransient` needs in order to keep failing until the scenario
+    /// releases it.
+    ///
+    /// This is not the refuted `commit.is_some()` gate. That one moved the
+    /// discrimination into the product's commit sequence, where it deleted the
+    /// crash-and-replay coverage the fault exists to test — the fenced durable
+    /// batch commits with no commit entry, so gating on one silenced the fault
+    /// on its own target. Here the product still checks unconditionally; only
+    /// this harness decides, from identity the product now carries, whether
+    /// this is the transaction it armed.
+    fn check_tenant(
+        &self,
+        point: FaultPoint,
+        tenant_id: &TenantId,
+        records: &[TenantEventRecord],
+    ) -> Result<()> {
         let mut state = self
             .state
             .lock()
             .map_err(|_| Error::Internal("PPSC storage fault lock poisoned".to_string()))?;
-        let Some((fault, current)) = state.iter_mut().find(|((candidate_tenant, fault), state)| {
-            candidate_tenant == tenant_id
-                && state.active
-                && storage_fault_point_unchecked(*fault) == Some(point)
-        }) else {
+        let Some((fault, current)) =
+            state
+                .faults
+                .iter_mut()
+                .find(|((candidate_tenant, fault), state)| {
+                    candidate_tenant == tenant_id
+                        && state.active
+                        && storage_fault_point_unchecked(*fault) == Some(point)
+                })
+        else {
             return Ok(());
         };
         current.visits = current.visits.saturating_add(1);
+        if records.is_empty() {
+            return Ok(());
+        }
         current.fires = current.fires.saturating_add(1);
         let fault = fault.1;
         if fault == PpscInjectedFault::AcknowledgementLoss {
@@ -133,17 +199,13 @@ impl FaultInjector for PpscStorageFaultInjector {
         Ok(())
     }
 
-    fn check_for_tenant(&self, point: FaultPoint, tenant_id: &TenantId) -> Result<()> {
-        self.check_tenant(point, tenant_id)
-    }
-
-    fn check_for_durable_records(
+    fn check_for_tenant(
         &self,
         point: FaultPoint,
         tenant_id: &TenantId,
-        _records: &[TenantEventRecord],
+        records: &[TenantEventRecord],
     ) -> Result<()> {
-        self.check_tenant(point, tenant_id)
+        self.check_tenant(point, tenant_id, records)
     }
 }
 

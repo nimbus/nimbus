@@ -89,7 +89,7 @@ impl SqliteTenantStore {
             );
             put_metadata_in_conn(&conn, NEXT_SEQUENCE_KEY, &encode_u64(next))?;
             self.fault_injector
-                .check(FaultPoint::JournalAppendBeforeDurableFlush)?;
+                .check_durable_records(FaultPoint::JournalAppendBeforeDurableFlush, records)?;
         }
         #[cfg(any(test, feature = "test-hooks"))]
         let commit_started = std::time::Instant::now();
@@ -99,7 +99,7 @@ impl SqliteTenantStore {
         self.release_writer_connection(conn);
         if appended {
             self.fault_injector
-                .check(FaultPoint::JournalFlushBeforeVisibility)?;
+                .check_durable_records(FaultPoint::JournalFlushBeforeVisibility, records)?;
         }
         Ok(())
     }

@@ -306,6 +306,10 @@ pub struct SqliteWriteTransaction {
     commit_writes: Vec<WriteOp>,
     tenant_events: Vec<TenantEventKind>,
     prepared_record: Option<TenantEventRecord>,
+    /// Durable journal records this transaction is about to make visible,
+    /// retained past `prepared_record.take()` so the commit-sequence fault
+    /// checks stay records-scoped.
+    durable_records_for_fault: Vec<TenantEventRecord>,
     trigger_write_origin: Option<TriggerWriteOrigin>,
     commit_timestamp: Option<Timestamp>,
     check_cancel: Box<dyn Fn() -> Result<()> + Send>,

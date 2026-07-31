@@ -409,8 +409,11 @@ impl LibsqlReplicaProvider {
         .await?;
         bootstrap_tenant_namespace(&self.primary_url, self.auth_token.as_deref(), &namespace)
             .await?;
-        self.remote_fault_injector
-            .check_for_tenant(crate::FaultPoint::TenantCreateBeforeRegistration, tenant_id)?;
+        self.remote_fault_injector.check_for_tenant(
+            crate::FaultPoint::TenantCreateBeforeRegistration,
+            tenant_id,
+            &[],
+        )?;
         let conn = self.metadata_write_connection()?;
         let transaction = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)

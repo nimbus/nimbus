@@ -10,8 +10,7 @@ use super::*;
 
 #[derive(Default)]
 struct RecordingTenantFaultInjector {
-    tenant_checks: Mutex<Vec<TenantId>>,
-    durable_checks: Mutex<Vec<TenantId>>,
+    checks: Mutex<Vec<(TenantId, usize)>>,
 }
 
 impl FaultInjector for RecordingTenantFaultInjector {
@@ -26,24 +25,12 @@ impl FaultInjector for RecordingTenantFaultInjector {
         &self,
         _point: FaultPoint,
         tenant_id: &TenantId,
+        records: &[TenantEventRecord],
     ) -> nimbus_core::Result<()> {
-        self.tenant_checks
+        self.checks
             .lock()
             .expect("tenant-check recorder should lock")
-            .push(tenant_id.clone());
-        Ok(())
-    }
-
-    fn check_for_durable_records(
-        &self,
-        _point: FaultPoint,
-        tenant_id: &TenantId,
-        _records: &[TenantEventRecord],
-    ) -> nimbus_core::Result<()> {
-        self.durable_checks
-            .lock()
-            .expect("durable-check recorder should lock")
-            .push(tenant_id.clone());
+            .push((tenant_id.clone(), records.len()));
         Ok(())
     }
 }
@@ -54,6 +41,12 @@ fn tenant_scoped_fault_injector_binds_every_check_to_the_store_owner() {
     let unrelated = TenantId::new("unrelated").expect("unrelated tenant should build");
     let recorder = Arc::new(RecordingTenantFaultInjector::default());
     let scoped = tenant_scoped_fault_injector(recorder.clone(), owner.clone());
+    let record = TenantEventRecord::barrier(
+        nimbus_core::SequenceNumber(1),
+        Timestamp(1),
+        "scoped-record".to_string(),
+    )
+    .expect("barrier record should build");
 
     scoped
         .check(FaultPoint::StorageCommitBeforeVisibility)
@@ -62,25 +55,28 @@ fn tenant_scoped_fault_injector_binds_every_check_to_the_store_owner() {
         .check_for_tenant(
             FaultPoint::StorageCommitAfterVisibilityBeforeReturn,
             &unrelated,
+            &[],
         )
         .expect("caller tenant arguments must not override store ownership");
     scoped
-        .check_for_durable_records(FaultPoint::JournalAppendBeforeDurableFlush, &unrelated, &[])
+        .check_durable_records(
+            FaultPoint::JournalAppendBeforeDurableFlush,
+            std::slice::from_ref(&record),
+        )
         .expect("durable-record checks should be tenant scoped");
 
     assert_eq!(
         *recorder
-            .tenant_checks
+            .checks
             .lock()
             .expect("tenant-check recorder should lock"),
-        [owner.clone(), owner.clone()]
-    );
-    assert_eq!(
-        *recorder
-            .durable_checks
-            .lock()
-            .expect("durable-check recorder should lock"),
-        [owner]
+        [
+            (owner.clone(), 0),
+            (owner.clone(), 0),
+            // The bound-tenant entry point forwards record identity intact; a
+            // records-scoped arm depends on it surviving the rebind.
+            (owner, 1),
+        ]
     );
 }
 

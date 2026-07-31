@@ -524,6 +524,16 @@ pub(crate) trait SqlStoreCore: Sized {
     /// for why this is not a shared default.
     fn apply_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()>;
 
+    /// Applies records read back out of the durable journal during recovery.
+    ///
+    /// Materially the same work as [`SqlStoreCore::apply_durable_records_batch`],
+    /// but it makes nothing durable: whatever appended these records already
+    /// did that, and no caller is waiting on an acknowledgement for them. It
+    /// therefore names no durable records to the fault interface, so a fault
+    /// armed for a client batch cannot be consumed by a replay of an older one.
+    /// Recovery is the only correct caller.
+    fn replay_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()>;
+
     fn fenced_append_and_apply_durable_records_batch(
         &self,
         owner_id: &str,
@@ -1044,7 +1054,10 @@ where
     S::Transaction: SqlDurableJournalTransaction,
 {
     let records = records.to_vec();
-    store.execute_write(move |transaction| transaction.append_durable_records_batch(&records))?;
+    store.execute_write(move |transaction| {
+        transaction.note_durable_records_for_fault(&records);
+        transaction.append_durable_records_batch(&records)
+    })?;
     Ok(())
 }
 
@@ -1052,6 +1065,29 @@ where
 /// transaction-replay backends.
 #[cfg(any(feature = "mysql", feature = "postgres"))]
 pub(crate) fn sql_store_apply_durable_records_batch<S>(
+    store: &S,
+    records: &[TenantEventRecord],
+) -> Result<()>
+where
+    S: SqlDurableJournalStore,
+    S::Transaction: SqlDurableJournalTransaction,
+{
+    let records = records.to_vec();
+    store.execute_write(move |transaction| {
+        transaction.note_durable_records_for_fault(&records);
+        transaction.apply_durable_records_batch(&records)
+    })?;
+    Ok(())
+}
+
+/// Shared body of [`SqlStoreCore::replay_durable_records_batch`] for
+/// transaction-replay backends.
+///
+/// Identical to [`sql_store_apply_durable_records_batch`] except that it does
+/// not note the records for the fault interface — a replay makes nothing
+/// durable, so it has no durable records to name.
+#[cfg(any(feature = "mysql", feature = "postgres"))]
+pub(crate) fn sql_store_replay_durable_records_batch<S>(
     store: &S,
     records: &[TenantEventRecord],
 ) -> Result<()>
@@ -1093,6 +1129,7 @@ where
     let pipeline_progressed = Arc::new(AtomicBool::new(false));
     let pipeline_progressed_in_transaction = pipeline_progressed.clone();
     let result = store.execute_write_cancellable(check_cancel, move |transaction| {
+        transaction.note_durable_records_for_fault(&records);
         let durable_sequence = records
             .last()
             .expect("non-empty fenced durable apply batch")
@@ -1236,6 +1273,10 @@ macro_rules! sql_store_core_facade {
 
             pub fn apply_durable_records_batch(&self, records: &[nimbus_core::TenantEventRecord]) -> nimbus_core::Result<()> {
                 <Self as crate::sql::store_core::SqlStoreCore>::apply_durable_records_batch(self, records)
+            }
+
+            pub fn replay_durable_records_batch(&self, records: &[nimbus_core::TenantEventRecord]) -> nimbus_core::Result<()> {
+                <Self as crate::sql::store_core::SqlStoreCore>::replay_durable_records_batch(self, records)
             }
 
             pub fn fenced_append_and_apply_durable_records_batch(

@@ -109,21 +109,12 @@ impl FaultInjector for ArmedProjectionAcknowledgementLoss {
         Ok(())
     }
 
-    fn check_for_tenant(&self, point: FaultPoint, tenant_id: &TenantId) -> nimbus_core::Result<()> {
-        if self
-            .target_tenant
-            .as_ref()
-            .is_some_and(|target| target != tenant_id)
-        {
-            return Ok(());
-        }
-        if self.target_table.is_some() || self.target_projection_epoch.is_some() {
-            return Ok(());
-        }
-        self.check(point)
-    }
-
-    fn check_for_durable_records(
+    /// A table- or epoch-targeted arm requires a matching durable record, so it
+    /// passes over a boundary that carries none — which is also how it declines
+    /// to be consumed by an unrelated concurrent same-tenant commit. An arm
+    /// targeted only at a tenant keeps firing at that tenant's first
+    /// post-visibility boundary regardless of records.
+    fn check_for_tenant(
         &self,
         point: FaultPoint,
         tenant_id: &TenantId,

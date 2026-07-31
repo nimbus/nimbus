@@ -69,7 +69,7 @@ impl PostgresTenantStore {
         }
         let from = SequenceNumber(progress.applied_head.0.saturating_add(1));
         let pending = self.read_durable_journal_from(from)?;
-        self.apply_durable_records_batch(&pending)?;
+        self.replay_durable_records_batch(&pending)?;
         self.journal_progress()
     }
 
@@ -83,7 +83,7 @@ impl PostgresTenantStore {
         let store = self.clone();
         self.provider
             .runtime_handle
-            .spawn_blocking(move || store.apply_durable_records_batch(&pending))
+            .spawn_blocking(move || store.replay_durable_records_batch(&pending))
             .await
             .map_err(|error| map_executor_join_error(POSTGRES_EXECUTOR_CONTEXT, error))??;
         self.journal_progress_async().await

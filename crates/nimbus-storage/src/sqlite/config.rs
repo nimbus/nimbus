@@ -710,6 +710,7 @@ impl SqliteTenantStore {
             commit_writes: Vec::new(),
             tenant_events: Vec::new(),
             prepared_record: None,
+            durable_records_for_fault: Vec::new(),
             trigger_write_origin: None,
             commit_timestamp: None,
             check_cancel: Box::new(check_cancel),

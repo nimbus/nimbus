@@ -6,7 +6,7 @@ use nimbus_core::{
 use crate::MAX_DURABLE_JOURNAL_STREAM_LIMIT;
 use crate::changefeed::{ChangefeedBootstrap, ChangefeedCursor, ChangefeedPage};
 use crate::retention::RetentionGcConfig;
-use crate::simulation::FaultPoint;
+use crate::simulation::{DurableApplyKind, FaultPoint};
 use crate::store::{
     DurableJournalBootstrap, DurableJournalPage, JournalProgress, MaterializedJournalSnapshot,
     PointInTimeRestoreArchive, PointInTimeRestoreTarget,
@@ -399,19 +399,33 @@ impl MemoryTenantStore {
             next.durable_head = record.sequence;
             expected = expected.saturating_add(1);
         }
-        self.check_fault(FaultPoint::JournalAppendBeforeDurableFlush)?;
+        self.check_durable_records_fault(FaultPoint::JournalAppendBeforeDurableFlush, records)?;
         next.revision = state.revision.saturating_add(1);
         *state = next;
         drop(state);
-        self.check_fault(FaultPoint::JournalFlushBeforeVisibility)?;
+        self.check_durable_records_fault(FaultPoint::JournalFlushBeforeVisibility, records)?;
         Ok(())
     }
 
     pub fn apply_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
+        self.apply_durable_records_batch_as(records, DurableApplyKind::ClientBatch)
+    }
+
+    /// See [`DurableApplyKind::JournalReplay`]: recovery re-applies records that
+    /// are already durable, so this boundary names none.
+    pub fn replay_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
+        self.apply_durable_records_batch_as(records, DurableApplyKind::JournalReplay)
+    }
+
+    fn apply_durable_records_batch_as(
+        &self,
+        records: &[TenantEventRecord],
+        kind: DurableApplyKind,
+    ) -> Result<()> {
         if records.is_empty() {
             return Ok(());
         }
-        self.transact(|state| {
+        self.transact_durable_records(kind.newly_durable_records(records), |state| {
             let mut applied_head = state.applied_head.0;
             for record in records {
                 if record.sequence.0 <= applied_head {
@@ -443,7 +457,7 @@ impl MemoryTenantStore {
         }
         let pending = self
             .read_durable_journal_from(SequenceNumber(progress.applied_head.0.saturating_add(1)))?;
-        self.apply_durable_records_batch(&pending)?;
+        self.replay_durable_records_batch(&pending)?;
         self.journal_progress()
     }
 

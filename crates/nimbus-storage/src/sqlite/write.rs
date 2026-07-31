@@ -908,6 +908,10 @@ impl SqliteWriteTransaction {
             .filter(|event| !matches!(event, TenantEventKind::DocumentWrite { .. }))
             .cloned()
             .collect();
+        // Retained past `prepared_record.take()` in `commit` so the
+        // commit-sequence fault checks below can name the record this
+        // transaction is making durable.
+        self.durable_records_for_fault = vec![record.clone()];
         self.prepared_record = Some(record);
     }
 
@@ -955,8 +959,10 @@ impl SqliteWriteTransaction {
                 &self.observation_path,
             )?)
         };
-        self.fault_injector
-            .check(FaultPoint::StorageCommitBeforeVisibility)?;
+        self.fault_injector.check_durable_records(
+            FaultPoint::StorageCommitBeforeVisibility,
+            &self.durable_records_for_fault,
+        )?;
         #[cfg(any(test, feature = "test-hooks"))]
         let commit_started = std::time::Instant::now();
         conn.execute_batch("COMMIT").map_err(map_sqlite_error)?;
@@ -970,8 +976,10 @@ impl SqliteWriteTransaction {
                 .map_err(|_| Error::Internal("sqlite schema cache lock poisoned".to_string()))? =
                 schema;
         }
-        self.fault_injector
-            .check(FaultPoint::StorageCommitAfterVisibilityBeforeReturn)?;
+        self.fault_injector.check_durable_records(
+            FaultPoint::StorageCommitAfterVisibilityBeforeReturn,
+            &self.durable_records_for_fault,
+        )?;
         super::config::return_writer_connection(&self.writer_slot, conn);
         Ok(commit)
     }

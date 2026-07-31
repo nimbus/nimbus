@@ -142,17 +142,11 @@ impl SqlStoreCore for LibsqlReplicaTenantStore {
     }
 
     fn apply_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
-        if records.is_empty() {
-            return Ok(());
-        }
-        let records = records.to_vec();
-        let applied_head =
-            self.block_on(self.apply_remote_durable_records_batch(records.as_slice()))?;
-        self.note_required_cache_sequence_with_cause(
-            applied_head,
-            LibsqlReplicaRefreshCause::DurableJournalReplay,
-        );
-        Ok(())
+        self.apply_remote_batch(records, DurableApplyKind::ClientBatch)
+    }
+
+    fn replay_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
+        self.apply_remote_batch(records, DurableApplyKind::JournalReplay)
     }
 
     /// The remote batch is a single round-trip, so cancellation is observed
@@ -345,15 +339,20 @@ impl SqlWriteBackend for LibsqlReplicaWriteTransaction {
         LibsqlReplicaWriteTransaction::check_cancel(self)
     }
 
-    /// A prepared-record commit reports the record it is about to make durable,
-    /// so a records-scoped injector can target this transaction specifically.
-    fn check_fault(&self, point: FaultPoint) -> Result<()> {
-        match self.prepared_record_for_fault.as_ref() {
-            Some(record) => self
-                .store
-                .check_durable_records_fault(point, std::slice::from_ref(record)),
-            None => self.store.check_fault(point),
-        }
+    fn note_durable_records_for_fault(&mut self, records: &[TenantEventRecord]) {
+        self.durable_records_for_fault = records.to_vec();
+    }
+
+    fn durable_records_for_fault(&self) -> &[TenantEventRecord] {
+        &self.durable_records_for_fault
+    }
+
+    fn check_fault_for_records(
+        &self,
+        point: FaultPoint,
+        records: &[TenantEventRecord],
+    ) -> Result<()> {
+        self.store.check_durable_records_fault(point, records)
     }
 
     fn commit_transaction(&mut self) -> Result<()> {
@@ -538,7 +537,7 @@ impl LibsqlReplicaWriteTransaction {
             commit_writes: Vec::new(),
             tenant_events: Vec::new(),
             prepared_record: None,
-            prepared_record_for_fault: None,
+            durable_records_for_fault: Vec::new(),
             trigger_write_origin: None,
             commit_timestamp: None,
             check_cancel: Box::new(check_cancel),
@@ -1033,9 +1032,6 @@ impl LibsqlReplicaWriteTransaction {
             .filter(|event| !matches!(event, TenantEventKind::DocumentWrite { .. }))
             .cloned()
             .collect();
-        // Retained past `take_prepared_record` so the commit-path fault checks
-        // can stay records-scoped; see `SqlWriteBackend::check_fault`.
-        self.prepared_record_for_fault = Some(record.clone());
         self.prepared_record = Some(record);
     }
 

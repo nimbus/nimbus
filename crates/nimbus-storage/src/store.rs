@@ -172,6 +172,10 @@ pub struct TenantWriteTransaction {
     commit_writes: Vec<WriteOp>,
     tenant_events: Vec<TenantEventKind>,
     prepared_record: Option<nimbus_core::TenantEventRecord>,
+    /// Durable journal records this transaction is about to make visible,
+    /// retained past `prepared_record.take()` so the commit-sequence fault
+    /// checks stay records-scoped.
+    durable_records_for_fault: Vec<nimbus_core::TenantEventRecord>,
     check_cancel: Box<dyn Fn() -> Result<()> + Send>,
 }
 
