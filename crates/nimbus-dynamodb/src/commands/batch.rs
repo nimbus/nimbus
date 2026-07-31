@@ -4,7 +4,7 @@
 //! The Nimbus store is reliable and not throttled, so `UnprocessedKeys` /
 //! `UnprocessedItems` are always empty — every requested key/op is processed.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use extenddb_core::error::DynamoDbError;
@@ -16,7 +16,7 @@ use nimbus_core::{DocumentId, TableName, WritePrecondition};
 use nimbus_engine::Engine;
 use nimbus_tenant::TenantIsolationContext;
 
-use crate::attribute_value::{item_to_fields, validate_item};
+use crate::attribute_value::{item_to_fields, validate_item, validate_item_size};
 use crate::commands::item::{
     SingleItemTransactionPlan, delete_atomic_write, execute_single_item_transaction,
     overwrite_atomic_write, primary_key_id, read_item, read_old_image_in_transaction,
@@ -121,10 +121,17 @@ enum PreparedOp {
 /// **Validation covers the whole request before any op runs.** DynamoDB
 /// "rejects the entire batch write operation" when an op is malformed — a
 /// request without exactly one of Put/Delete, key attributes that do not match
-/// the table's key schema, a table that does not exist — so a
+/// the table's key schema, a table that does not exist, an item over 400 KiB,
+/// more than 25 ops — or when two ops name the same item. A
 /// `ValidationException` from here leaves nothing applied, whatever the
 /// position of the offending op. Execution is a second pass over ops already
 /// known to be well formed.
+///
+/// The one documented rejection cause not checked here is the 16 MB
+/// request ceiling, which bounds the *network payload* rather than the sum of
+/// item sizes and so cannot be reached from 25 items of at most 400 KiB. It is
+/// enforced where the wire bytes exist, by the DynamoDB listener's request-body
+/// limit.
 ///
 /// **Execution is still not atomic**, and that is the other half of the
 /// contract: unlike TransactWriteItems, the ops are independent once they
@@ -144,9 +151,10 @@ enum PreparedOp {
 ///
 /// # Errors
 /// `ValidationException` for an empty request, more than 25 ops, a
-/// `WriteRequest` without exactly one of Put/Delete, or an item whose key
-/// attributes do not match the table's key schema; `ResourceNotFoundException`
-/// if a referenced table is absent.
+/// `WriteRequest` without exactly one of Put/Delete, an item whose key
+/// attributes do not match the table's key schema, an item over 400 KiB, or two
+/// ops naming the same item; `ResourceNotFoundException` if a referenced table
+/// is absent.
 pub fn batch_write_item(
     engine: &Arc<Engine>,
     context: &TenantIsolationContext,
@@ -196,6 +204,7 @@ fn prepare_batch_writes(
             let (op, key_source) = match (&request.put_request, &request.delete_request) {
                 (Some(put), None) => {
                     validate_item(&put.item)?;
+                    validate_item_size(&put.item)?;
                     (
                         PreparedOp::Put {
                             item: put.item.clone(),
@@ -221,7 +230,33 @@ fn prepare_batch_writes(
             });
         }
     }
+    reject_duplicate_items(&prepared)?;
     Ok(prepared)
+}
+
+/// Reject a request that names the same item more than once.
+///
+/// DynamoDB rejects the entire batch write operation when "you try to perform
+/// multiple operations on the same item in the same BatchWriteItem request",
+/// and a put and a delete of one item are two operations on it. The alternative
+/// — applying both and letting the later op win — would make the result depend
+/// on an ordering the request never specified.
+///
+/// An item is identified by its table *and* its full primary key, so the same
+/// key under two table names is two different items.
+///
+/// # Errors
+/// `ValidationException` on the second op to name an already-named item.
+fn reject_duplicate_items(prepared: &[PreparedWrite]) -> Result<(), DynamoDbError> {
+    let mut seen: HashSet<(&str, &DocumentId)> = HashSet::with_capacity(prepared.len());
+    for write in prepared {
+        if !seen.insert((write.table_name.as_str(), &write.id)) {
+            return Err(DynamoDbError::ValidationException(
+                "Provided list of item keys contains duplicates".to_owned(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Apply one already-validated op in its own single-item transaction.
@@ -300,6 +335,7 @@ fn execute_prepared_write(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::attribute_value::MAX_ITEM_SIZE_BYTES;
     use extenddb_core::types::{
         AttributeValue, CreateTableInput, DescribeStreamInput, GetRecordsInput,
         GetShardIteratorInput, ShardIteratorType, StreamRecord,
@@ -317,14 +353,20 @@ mod tests {
         (engine, context, temp)
     }
 
-    fn create_orders(engine: &Arc<Engine>, context: &TenantIsolationContext) {
+    /// Create a `pk`-keyed table. Named tables let the cross-table cases show
+    /// that item identity is per table, not per key.
+    fn create_keyed_table(engine: &Arc<Engine>, context: &TenantIsolationContext, name: &str) {
         let input: CreateTableInput = serde_json::from_value(json!({
-            "TableName": "Orders",
+            "TableName": name,
             "KeySchema": [{ "AttributeName": "pk", "KeyType": "HASH" }],
             "AttributeDefinitions": [{ "AttributeName": "pk", "AttributeType": "S" }],
         }))
         .unwrap();
         control_plane::create_table(engine, context, input).expect("create table");
+    }
+
+    fn create_orders(engine: &Arc<Engine>, context: &TenantIsolationContext) {
+        create_keyed_table(engine, context, "Orders");
     }
 
     fn put(engine: &Arc<Engine>, context: &TenantIsolationContext, pk: &str, v: &str) {
@@ -431,13 +473,22 @@ mod tests {
 
     // ---- D3.2: BatchWriteItem ----
 
-    fn read(engine: &Arc<Engine>, context: &TenantIsolationContext, pk: &str) -> Option<Item> {
+    fn read_from(
+        engine: &Arc<Engine>,
+        context: &TenantIsolationContext,
+        table: &str,
+        pk: &str,
+    ) -> Option<Item> {
         let key: Item = [("pk".to_string(), AttributeValue::S(pk.into()))]
             .into_iter()
             .collect();
-        let schema = control_plane::load_key_schema(engine, context, "Orders").unwrap();
+        let schema = control_plane::load_key_schema(engine, context, table).unwrap();
         let id = primary_key_id(&key, &schema).unwrap();
-        read_item(engine, context, &TableName::new("Orders").unwrap(), id).unwrap()
+        read_item(engine, context, &TableName::new(table).unwrap(), id).unwrap()
+    }
+
+    fn read(engine: &Arc<Engine>, context: &TenantIsolationContext, pk: &str) -> Option<Item> {
+        read_from(engine, context, "Orders", pk)
     }
 
     fn batch_write(
@@ -820,5 +871,155 @@ mod tests {
             read(&engine, &ctx, "second").is_none(),
             "the op whose commit failed applied nothing"
         );
+    }
+
+    // ---- FU12: whole-request rejection rules ----
+    //
+    // Two more of DynamoDB's documented "rejects the entire batch write
+    // operation" causes: "You try to perform multiple operations on the same
+    // item in the same BatchWriteItem request" and "Any individual item in a
+    // batch exceeds 400 KB". Both are validation errors, so they must land in
+    // `prepare_batch_writes` and leave nothing applied.
+
+    #[test]
+    fn batch_write_duplicate_put_keys_is_validation_error() {
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
+        let err = batch_write(
+            &engine,
+            &ctx,
+            json!({
+                "RequestItems": {
+                    "Orders": [
+                        { "PutRequest": { "Item": { "pk": {"S": "dup"}, "v": {"N": "1"} } } },
+                        { "PutRequest": { "Item": { "pk": {"S": "dup"}, "v": {"N": "2"} } } }
+                    ]
+                }
+            }),
+        )
+        .expect_err("two puts of one item must be rejected, not resolved last-writer-wins");
+        match &err {
+            DynamoDbError::ValidationException(message) => assert!(
+                message.contains("duplicates"),
+                "expected DynamoDB's duplicate-key message, got {message:?}"
+            ),
+            other => panic!("expected ValidationException, got {other:?}"),
+        }
+        assert!(
+            read(&engine, &ctx, "dup").is_none(),
+            "the rejected request must apply nothing"
+        );
+    }
+
+    #[test]
+    fn batch_write_put_and_delete_of_same_key_is_validation_error() {
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
+        put(&engine, &ctx, "both", "0");
+        let err = batch_write(
+            &engine,
+            &ctx,
+            json!({
+                "RequestItems": {
+                    "Orders": [
+                        { "PutRequest": { "Item": { "pk": {"S": "both"}, "v": {"N": "1"} } } },
+                        { "DeleteRequest": { "Key": { "pk": {"S": "both"} } } }
+                    ]
+                }
+            }),
+        )
+        .expect_err("a put and a delete of one item are still two operations on that item");
+        assert!(
+            matches!(err, DynamoDbError::ValidationException(_)),
+            "{err:?}"
+        );
+        assert_eq!(
+            read(&engine, &ctx, "both")
+                .and_then(|item| item.get("v").cloned())
+                .expect("the pre-existing item survives a rejected request"),
+            AttributeValue::N("0".into()),
+            "neither the put nor the delete may be applied"
+        );
+    }
+
+    /// The rule is one operation per *item*, and an item is identified by table
+    /// plus key. The same key in two tables names two different items.
+    #[test]
+    fn batch_write_same_key_in_two_tables_is_not_a_duplicate() {
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
+        create_keyed_table(&engine, &ctx, "Invoices");
+        batch_write(
+            &engine,
+            &ctx,
+            json!({
+                "RequestItems": {
+                    "Orders": [
+                        { "PutRequest": { "Item": { "pk": {"S": "shared"}, "v": {"N": "1"} } } }
+                    ],
+                    "Invoices": [
+                        { "PutRequest": { "Item": { "pk": {"S": "shared"}, "v": {"N": "2"} } } }
+                    ]
+                }
+            }),
+        )
+        .expect("one op per item in each table is a well-formed request");
+        assert!(read_from(&engine, &ctx, "Orders", "shared").is_some());
+        assert!(read_from(&engine, &ctx, "Invoices", "shared").is_some());
+    }
+
+    #[test]
+    fn batch_write_oversized_item_is_validation_error() {
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
+        // Just over the 400 KiB ceiling once the attribute names are counted:
+        // DynamoDB sizes an item as the sum of the lengths of its attribute
+        // names and values.
+        let oversized = "a".repeat(MAX_ITEM_SIZE_BYTES);
+        let err = batch_write(
+            &engine,
+            &ctx,
+            json!({
+                "RequestItems": {
+                    "Orders": [
+                        { "PutRequest": { "Item": { "pk": {"S": "small"} } } },
+                        { "PutRequest": { "Item": { "pk": {"S": "big"}, "blob": {"S": oversized} } } }
+                    ]
+                }
+            }),
+        )
+        .expect_err("an item over 400 KiB must be rejected");
+        assert!(
+            matches!(err, DynamoDbError::ValidationException(_)),
+            "{err:?}"
+        );
+        assert!(
+            read(&engine, &ctx, "small").is_none(),
+            "the oversized item rejects the whole request, including the op ahead of it"
+        );
+    }
+
+    /// The ceiling is a ceiling, not a rounding: an item just under 400 KiB is
+    /// accepted. Without this the size rule could pass by rejecting everything.
+    #[test]
+    fn batch_write_item_just_under_the_size_limit_is_accepted() {
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
+        // Names "pk" (2) and "blob" (4) plus the key's value "big" (3) are 9
+        // bytes, so a blob of MAX - 9 puts the item exactly at the limit.
+        let value = "a".repeat(MAX_ITEM_SIZE_BYTES - 9);
+        batch_write(
+            &engine,
+            &ctx,
+            json!({
+                "RequestItems": {
+                    "Orders": [
+                        { "PutRequest": { "Item": { "pk": {"S": "big"}, "blob": {"S": value} } } }
+                    ]
+                }
+            }),
+        )
+        .expect("an item at exactly the limit is within it");
+        assert!(read(&engine, &ctx, "big").is_some());
     }
 }
