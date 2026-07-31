@@ -38,27 +38,32 @@ fn assert_stream_collision(error: DynamoDbError) {
 fn batch_write_emits_stream_records() {
     let (engine, ctx, _t) = fixture();
     let arn = streamed_table(&engine, &ctx, "NEW_AND_OLD_IMAGES");
-    put(&engine, &ctx, "old", "1"); // seed: will be MODIFY then nothing
+    // Seeded so the batch can overwrite one and delete the other. The three
+    // batch ops name three different items, because a request that operates
+    // twice on one item is rejected whole (FU12).
+    put(&engine, &ctx, "old", "1"); // will be MODIFY
+    put(&engine, &ctx, "doomed", "1"); // will be REMOVE
     let input = serde_json::from_value(json!({
         "RequestItems": { "events": [
             { "PutRequest": { "Item": { "pk": {"S": "fresh"}, "v": {"N": "1"} } } },
             { "PutRequest": { "Item": { "pk": {"S": "old"}, "v": {"N": "2"} } } },
-            { "DeleteRequest": { "Key": { "pk": {"S": "fresh"} } } }
+            { "DeleteRequest": { "Key": { "pk": {"S": "doomed"} } } }
         ] }
     }))
     .unwrap();
     crate::commands::batch::batch_write_item(&engine, &ctx, input).expect("batch write");
 
     let out = all_records(&engine, &ctx, &arn);
-    // 1 (seed INSERT) + INSERT(fresh) + MODIFY(old) + REMOVE(fresh).
+    // 2 seed INSERTs + INSERT(fresh) + MODIFY(old) + REMOVE(doomed).
     let names: Vec<StreamEventName> = out.records.iter().map(|r| r.event_name).collect();
     assert_eq!(
         names,
         vec![
-            StreamEventName::Insert, // seed put
+            StreamEventName::Insert, // seed put: old
+            StreamEventName::Insert, // seed put: doomed
             StreamEventName::Insert, // batch put fresh
             StreamEventName::Modify, // batch put over old
-            StreamEventName::Remove, // batch delete fresh
+            StreamEventName::Remove, // batch delete doomed
         ],
         "BatchWriteItem must emit one stream record per write"
     );
