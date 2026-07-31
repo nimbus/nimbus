@@ -1,4 +1,3 @@
-use std::path::Path;
 use std::time::Duration;
 
 use nimbus_network::{NetworkAttachmentId, NetworkSegmentAllocator};
@@ -16,13 +15,6 @@ mod ipam;
 mod layout;
 mod netavark;
 mod netns;
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "NNC5.2b stages the read-only collector consumed by NNC5.2d startup fencing"
-    )
-)]
 mod orphan_evidence;
 mod placement;
 mod process;
@@ -31,6 +23,7 @@ mod proxy;
 mod realization;
 mod reaper;
 mod segment;
+mod startup_reconciliation;
 #[cfg(test)]
 mod test_support;
 
@@ -48,10 +41,13 @@ pub use forwarding::{
 pub(crate) use forwarding::{expose_machine_ports, unexpose_machine_ports};
 pub(crate) use ipam::{
     OciIpamAuthority, deallocate_container_ips_after_confirmed_detach,
-    reconcile_terminal_container_ipam_releases, retire_terminal_container_ipam_release,
+    retire_terminal_container_ipam_release,
 };
 #[cfg(test)]
-pub(crate) use ipam::{allocate_container_ips, begin_netavark_setup_without_ack_for_test};
+pub(crate) use ipam::{
+    allocate_container_ips, begin_netavark_setup_without_ack_for_test,
+    reconcile_terminal_container_ipam_releases,
+};
 pub(crate) use layout::{
     OciNetworkConfig, OciNetworkDirectEgress, OciNetworkLayout, bridge_gateway_addr,
 };
@@ -81,12 +77,13 @@ pub(crate) use proxy::{
 pub(crate) use realization::OciSegmentRealization;
 pub(crate) use reaper::{
     ReservedNetworkLaunchAuthority, compensate_reserved_network_launch_after_ports,
-    quarantine_network_segment_hold, reconcile_network_segment_orphans,
-    release_network_segment_hold, release_reserved_network_launch_after_ports,
+    quarantine_network_segment_hold, release_network_segment_hold,
+    release_reserved_network_launch_after_ports,
 };
 #[cfg(test)]
 pub(crate) use segment::SingleNodeSegmentAllocator;
 pub(crate) use segment::{ConfiguredSegmentAllocator, DEFAULT_TENANT_PREFIX};
+pub(crate) use startup_reconciliation::reconcile_startup_network_state;
 #[cfg(test)]
 pub(crate) use test_support::{
     RecordingSegmentAllocator, SegmentAllocatorOperation, direct_test_ipam_authority,
@@ -105,40 +102,6 @@ pub(crate) const DEFAULT_ATTACHMENT_NAME: &str = "default";
 
 pub(crate) fn default_network_attachment_id(sandbox_id: &SandboxId) -> NetworkAttachmentId {
     NetworkAttachmentId::for_workload_attachment(sandbox_id.as_str(), DEFAULT_ATTACHMENT_NAME)
-}
-
-/// Reconcile every node-local network authority before admitting new work.
-///
-/// Both passes run so independent cleanup can still converge, but any failure
-/// is returned as one fail-closed admission diagnostic. Backends retain that
-/// diagnostic for their lifetime; cleanup and inspection remain available,
-/// while planning and provider launch effects require a fresh backend whose
-/// startup reconciliation completed.
-pub(crate) fn reconcile_startup_network_state(
-    workload_state_root: &Path,
-    ipam_authority: &OciIpamAuthority,
-    allocator: &OciSegmentAllocator,
-) -> crate::error::Result<()> {
-    let mut errors = Vec::new();
-    if let Err(error) =
-        reconcile_terminal_container_ipam_releases(ipam_authority, workload_state_root)
-    {
-        errors.push(error.to_string());
-    }
-    if let Err(error) = reconcile_network_segment_orphans(workload_state_root, allocator) {
-        errors.push(error.to_string());
-    }
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(SandboxError::OperationFailed {
-            message: format!(
-                "startup network reconciliation failed under {}: {}",
-                ipam_authority.state_root().display(),
-                errors.join("; ")
-            ),
-        })
-    }
 }
 
 #[cfg(test)]

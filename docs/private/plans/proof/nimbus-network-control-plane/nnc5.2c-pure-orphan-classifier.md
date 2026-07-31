@@ -1,6 +1,6 @@
 # NNC5.2c Pure Exhaustive Orphan Classifier
 
-Status: `candidate complete; every acceptance criterion green; exact item commit pending`
+Status: `complete; durable at ae29108f3bd2037557727e0036cf0f7ebfc039c0`
 
 Owner: `NNC5.2c`
 
@@ -202,7 +202,7 @@ the classifier and that compiler.
 | Accepted-finding fail-before | With the exact regression and shared pure handle compiler present but before classifier comparison, `timeout 300 cargo test -p nimbus-sandbox --lib substituted_provider_handle_cannot_adopt_current_generation -- --nocapture` exited `101`: `0 passed; 1 failed; 837 filtered out`; actual `Adopt` differed from required `Quarantine(DesiredProviderHandleMismatch)`. |
 | Accepted-finding correction | Live creation and recovery now call one pure `oci_attachment_provider_handle` compiler. Classification compares full provider ID plus opaque value whenever a handle exists, accepts exact/no-handle `Provisioning`, requires presence from `Ready` onward, and gives mismatch its own closed reason. Exact regression passes `1/1`, 837 filtered; the complete classifier and every affected proof above pass. |
 | Narrow correction review | The one permitted GPT-5.6 Sol/xhigh/fast correction review ran as thread `019fb523-fa38-79e1-9c6d-e341f424a6e3`. It found one P2 test-proof gap at confidence `0.99`: the implementation correctly handled all desired phases, but the tests explicitly exercised substituted and missing handles only at `Ready`. Accepted as a proof gap, not a production defect. The final test-only correction proves exact, missing, and substituted handles across `Provisioning`, `Ready`, `Publishing`, and `Active`: exact always adopts; missing adopts only while provisioning; substituted always quarantines. Focused tests pass `1/1` for each new matrix, the classifier passes `10/10`, orphan evidence passes `28/28` plus its declared child skip, and affected crates pass `1,058/1,058` with 26 declared skips. The review cadence is exhausted; no third review ran or is warranted. |
-| Exact item commit | Pending. |
+| Exact item commit | `ae29108f3bd2037557727e0036cf0f7ebfc039c0` (`feat(network): classify OCI orphan evidence`), tree `528b4f10a2dd6c765d986dee4c292b7a63ba7455`; exactly 11 owned paths, no push or PR. |
 
 The first item-local command attempt also exited `101`, but compilation stopped
 on unused imports left by the test-support extraction and expected-red enum
@@ -229,6 +229,6 @@ chunk:
 
 The full item review's only accepted production defect and the narrow
 correction review's test-proof gap are corrected, every affected proof is
-green, and the review cadence is exhausted. The next action is to run the
-final static/documentation convergence checks, stage the exact 11-path item,
-and commit it without push or PR.
+green, and the review cadence is exhausted. The exact 11-path item is durable
+at `ae29108f3bd2037557727e0036cf0f7ebfc039c0`; NNC5.2d now owns startup
+application and filename-authority deletion.

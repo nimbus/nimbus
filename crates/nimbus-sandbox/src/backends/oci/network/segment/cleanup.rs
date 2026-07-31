@@ -138,11 +138,4 @@ impl DurableSegmentCleanupAuthority {
     ) -> Result<NetworkSegmentFinalizeOutcome> {
         self.inner.finalize_release(cleanup)
     }
-
-    pub(crate) fn reconcile_orphans(
-        &self,
-        live: &BTreeSet<(TenantId, NetworkAttachmentId)>,
-    ) -> Result<Vec<OciSegmentRealization>> {
-        self.inner.reconcile_orphans(live)
-    }
 }

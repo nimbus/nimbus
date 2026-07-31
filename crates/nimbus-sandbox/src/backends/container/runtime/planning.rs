@@ -119,11 +119,8 @@ fn container_backend_consumes_the_injected_portable_segment_allocator() {
     assert_eq!(network.network_interface, "nb-73");
     assert_eq!(
         recorder.operations(),
-        [
-            SegmentAllocatorOperation::Reconcile(Default::default()),
-            SegmentAllocatorOperation::SegmentFor(tenant),
-        ],
-        "the container backend must use only the injected capability; startup reconciliation and resolution must not reconstruct or downcast a concrete allocator"
+        [SegmentAllocatorOperation::SegmentFor(tenant)],
+        "the container backend must use only the injected capability; evidence-aware startup inspection and resolution must not reconstruct or downcast a concrete allocator"
     );
 }
 
@@ -159,7 +156,10 @@ fn startup_network_reconciliation_failure_blocks_new_container_planning() {
         error
             .to_string()
             .contains("refuses new durable work because startup reconciliation did not complete")
-            && error.to_string().contains("failed to parse manifest"),
+            && error.to_string().contains("unmatched artifact")
+            && error
+                .to_string()
+                .contains(&corrupt_manifest_path.display().to_string()),
         "admission must preserve the exact observable startup failure: {error}"
     );
     assert_eq!(
@@ -168,6 +168,49 @@ fn startup_network_reconciliation_failure_blocks_new_container_planning() {
         [corrupt_manifest_path],
         "rejected planning must not create a second launch authority"
     );
+}
+
+#[test]
+fn nnc5_2d_container_startup_durably_fences_unmatched_no_hold_evidence() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let config = ContainerSandboxBackendConfig::under_root(temp_dir.path());
+    let unmatched = config
+        .workload_state_root
+        .join("tenants")
+        .join("tenant-unmatched-container")
+        .join("networks")
+        .join("netns")
+        .join("orphan-without-hold");
+    std::fs::create_dir_all(
+        unmatched
+            .parent()
+            .expect("unmatched netns parent should exist"),
+    )
+    .expect("unmatched netns parent should create");
+    std::fs::write(&unmatched, b"persistent-netns")
+        .expect("unmatched durable evidence should write");
+
+    for attempt in 0..2 {
+        let backend = ContainerSandboxBackend::new(config.clone());
+        let error = backend
+            .plan_start_with_id(
+                &sample_spec(),
+                &SandboxId::new(format!("container-admission-{attempt}")),
+                None,
+                None,
+            )
+            .expect_err("unmatched no-hold evidence must fence every fresh backend");
+        let message = error.to_string();
+        assert!(
+            message.contains("startup reconciliation did not complete")
+                && message.contains("unmatched artifact"),
+            "the durable admission fence must name the retained unmatched evidence: {message}"
+        );
+        assert!(
+            unmatched.is_file(),
+            "startup quarantine must preserve unmatched evidence for later cleanup convergence"
+        );
+    }
 }
 
 #[test]

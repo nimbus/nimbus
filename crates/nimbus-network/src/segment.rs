@@ -1,5 +1,3 @@
-use std::collections::BTreeSet;
-
 use nimbus_core::{Cidr, TenantId};
 use serde::{Deserialize, Serialize};
 
@@ -506,16 +504,6 @@ pub trait NetworkSegmentAllocator: Send + Sync {
         observed_segments: &[Self::Segment],
     ) -> Result<NetworkSegmentGrowth<Self::Segment>, Self::Error>;
 
-    /// Reconcile durable holds against the complete live attachment set.
-    ///
-    /// Attachments absent from `live` are quarantined, not released. Filesystem
-    /// evidence alone cannot prove provider deletion; an upper reconciliation
-    /// owner must inspect/detach before calling [`Self::release`].
-    fn reconcile_orphans(
-        &self,
-        live: &BTreeSet<(TenantId, NetworkAttachmentId)>,
-    ) -> Result<Vec<Self::Segment>, Self::Error>;
-
     /// Whether allocation requires an externally committed cluster lease.
     fn requires_cluster_lease(&self) -> bool {
         false
@@ -709,13 +697,6 @@ mod tests {
             _observed_segments: &[Self::Segment],
         ) -> Result<NetworkSegmentGrowth<Self::Segment>, Self::Error> {
             Ok(NetworkSegmentGrowth::Grown(self.segment.clone()))
-        }
-
-        fn reconcile_orphans(
-            &self,
-            _live: &BTreeSet<(TenantId, NetworkAttachmentId)>,
-        ) -> Result<Vec<Self::Segment>, Self::Error> {
-            Ok(Vec::new())
         }
     }
 

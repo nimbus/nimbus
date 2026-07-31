@@ -910,57 +910,6 @@ fn concurrent_acquire_release_across_threads_stays_consistent_under_the_lock() {
 }
 
 #[test]
-fn reconcile_orphans_quarantines_leaked_holds_without_reusing_allocations() {
-    let dir = tempdir().expect("temp dir");
-    let allocator = SingleNodeSegmentAllocator::single_node_default(dir.path());
-    // tenant-a holds two sandboxes; sb-1 will be a crash-leaked hold, sb-2 live.
-    allocator
-        .acquire(&tenant("tenant-a"), &attachment("sb-1"))
-        .expect("acquire a/1");
-    allocator
-        .acquire(&tenant("tenant-a"), &attachment("sb-2"))
-        .expect("acquire a/2");
-    // tenant-b holds one sandbox, fully crash-leaked (nothing live).
-    let b = allocator
-        .acquire(&tenant("tenant-b"), &attachment("sb-b"))
-        .expect("acquire b");
-    assert_eq!(b.cidr().to_string(), "10.0.1.0/24");
-
-    // Only tenant-a/sb-2 is actually live at startup.
-    let mut live = BTreeSet::new();
-    live.insert((tenant("tenant-a"), attachment("sb-2")));
-    let quarantined = allocator.reconcile_orphans(&live).expect("reconcile");
-
-    // tenant-b is fully orphaned, but netns absence alone is not provider
-    // deletion proof: its segment is returned as quarantined and remains held.
-    assert_eq!(
-        quarantined.len(),
-        1,
-        "only the fully-orphaned tenant is quarantined"
-    );
-    assert_eq!(quarantined[0].cidr().to_string(), "10.0.1.0/24");
-    assert!(
-        allocator.has_hold("tenant-b", "sb-b") && allocator.has_pending_hold("tenant-b", "sb-b"),
-        "the uncertain orphan must retain a pending durable hold"
-    );
-    // tenant-a keeps index 0 and tenant-b's quarantined index 1 remains
-    // unavailable, so the next tenant receives index 2.
-    let c = allocator
-        .acquire(&tenant("tenant-c"), &attachment("sb-c"))
-        .expect("acquire c");
-    assert_eq!(c.cidr().to_string(), "10.0.2.0/24");
-    // tenant-a's still-live sandbox keeps its original segment.
-    let a = allocator
-        .acquire(&tenant("tenant-a"), &attachment("sb-2"))
-        .expect("re-acquire a/2");
-    assert_eq!(a.cidr().to_string(), "10.0.0.0/24");
-    assert!(
-        allocator.has_pending_hold("tenant-a", "sb-1"),
-        "the partial orphan is quarantined without disrupting its live sibling"
-    );
-}
-
-#[test]
 fn grow_block_appends_a_distinct_block_and_never_collides_across_tenants() {
     let dir = tempdir().expect("temp dir");
     let allocator = SingleNodeSegmentAllocator::single_node_default(dir.path());
@@ -1238,15 +1187,9 @@ fn durable_segment_authority_rejects_tenant_prefix_substitution() {
         substituted
             .grow_block_if_current(&owner_tenant, &original_observation)
             .expect_err("growth must reject prefix substitution"),
-        substituted
-            .reconcile_orphans(&BTreeSet::new())
-            .expect_err("restart reconciliation must reject prefix substitution"),
         cleanup
             .inspect_segments(&owner_tenant)
             .expect_err("durable cleanup inspection must reject prefix substitution"),
-        cleanup
-            .reconcile_orphans(&BTreeSet::new())
-            .expect_err("durable cleanup reconciliation must reject prefix substitution"),
     ];
     for error in errors {
         let rendered = error.to_string();

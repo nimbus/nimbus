@@ -17,6 +17,109 @@ fn inject_startup_reconciliation_failure(backend: &mut KrunSandboxBackend) {
 }
 
 #[test]
+fn startup_reconciliation_failure_fences_direct_initial_launch_before_effects() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let spec = sample_spec_for_tenant("krun-startup-launch-fence", "api");
+    let recorder = Arc::new(RecordingSegmentAllocator::new(
+        spec.tenant_id.clone(),
+        "10.78.0.0/24",
+        78,
+    ));
+    let injected: Arc<OciSegmentAllocator> = recorder.clone();
+    let mut backend = KrunSandboxBackend::with_segment_allocator(
+        KrunSandboxBackendConfig::under_root(temp_dir.path()),
+        injected,
+    );
+    let mut manifest = backend
+        .plan_start_with_id(
+            &spec,
+            &SandboxId::new("krun-startup-launch-fence"),
+            None,
+            None,
+        )
+        .expect("initial planning should reserve exact launch authority")
+        .manifest;
+    let authority_path = nimbus_network::LocalNetworkStateStore::authority_path_for(
+        &backend.config.network_state_root,
+    );
+    let authority_before = fs::read(&authority_path).expect("reserved authority should be durable");
+    let operations_before = recorder.operations();
+    let manifest_before =
+        serde_json::to_vec(&manifest).expect("unstarted manifest should serialize");
+    inject_startup_reconciliation_failure(&mut backend);
+
+    let error = backend
+        .launch_manifest(&mut manifest, true)
+        .expect_err("retained startup failure must fence direct initial launch");
+
+    assert!(
+        error
+            .to_string()
+            .contains("refuses new network work because startup reconciliation did not complete"),
+        "the retained startup diagnostic must remain primary: {error}"
+    );
+    assert_eq!(
+        serde_json::to_vec(&manifest).expect("fenced manifest should serialize"),
+        manifest_before,
+        "the launch fence must precede in-memory lifecycle mutation"
+    );
+    assert_eq!(
+        fs::read(&authority_path).expect("reserved authority should remain readable"),
+        authority_before,
+        "the launch fence must not mutate portable network authority"
+    );
+    assert_eq!(
+        recorder.operations(),
+        operations_before,
+        "the launch fence must precede allocator or provider effects"
+    );
+    assert!(!manifest.network_layout.netns_path.exists());
+    assert!(!manifest.network_layout.status_path.exists());
+}
+
+#[test]
+fn nnc5_2d_krun_startup_durably_fences_unmatched_no_hold_evidence() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let config = KrunSandboxBackendConfig::under_root(temp_dir.path());
+    let unmatched = config
+        .workload_state_root
+        .join("tenants")
+        .join("tenant-unmatched-krun")
+        .join("networks")
+        .join("netns")
+        .join("orphan-without-hold");
+    fs::create_dir_all(
+        unmatched
+            .parent()
+            .expect("unmatched netns parent should exist"),
+    )
+    .expect("unmatched netns parent should create");
+    fs::write(&unmatched, b"persistent-netns").expect("unmatched durable evidence should write");
+
+    for attempt in 0..2 {
+        let backend = KrunSandboxBackend::new(config.clone());
+        let error = backend
+            .plan_start_with_id(
+                &sample_spec(),
+                &SandboxId::new(format!("krun-admission-{attempt}")),
+                None,
+                None,
+            )
+            .expect_err("unmatched no-hold evidence must fence every fresh backend");
+        let message = error.to_string();
+        assert!(
+            message.contains("startup reconciliation did not complete")
+                && message.contains("unmatched artifact"),
+            "the durable admission fence must name the retained unmatched evidence: {message}"
+        );
+        assert!(
+            unmatched.is_file(),
+            "startup quarantine must preserve unmatched evidence for later cleanup convergence"
+        );
+    }
+}
+
+#[test]
 fn startup_reconciliation_failure_allows_exact_explicit_stop() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let spec = sample_spec_for_tenant("krun-startup-stop-fence", "api");

@@ -74,7 +74,7 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC5.2b complete; NNC5.2c
+- `nimbus-network-control-plane-plan.md` - `active; NNC5.2d complete; NNC5.3
   in progress`. The Linux sovereignty tripwire is complete with a root-safe,
   raw-artifact-derived evidence contract, 70/70 deterministic tests, 62/62
   adversarial verifier cases, fully dispositioned full+narrow Sol reviews, and
@@ -112,9 +112,28 @@ extension-registry seam before the second concern edits `extensions.rs`.
   accepted defects are corrected with exact fail-before proofs; no third
   review ran. Final orphan evidence passes 18/18, the focused lane passes
   88/88, affected crates pass 1048/1048 with 26 skips, verifier passes 18/18
-  plus 67/67 adversarial cases, and docs/site gates pass. NNC5.2c now owns only
-  the pure classifier; classification side effects, quarantine, and startup
-  wiring stay in NNC5.2d, while cleanup/release/reuse stays in NNC8.3. Machine
+  plus 67/67 adversarial cases, and docs/site gates pass. NNC5.2c is complete
+  at `ae29108f3bd2037557727e0036cf0f7ebfc039c0`: its pure total classifier
+  covers the required eight-row matrix, returns only `Adopt` or one of 19
+  named quarantine reasons, and explicitly proves exact, missing, and
+  substituted provider handles across all four desired phases. Classifier
+  tests pass 10/10, orphan evidence passes 28/28 plus one declared child skip,
+  and affected crates pass 1058/1058 with 26 declared skips. Its one full and
+  one narrow Sol/xhigh/fast reviews are fully dispositioned; no third review
+  ran. NNC5.2d is complete: its shared startup adapter,
+  exact desired/allocator quarantine, both real backend admission fences, and
+  filename-authority deletion are implemented. Integration added a
+  deliberately narrow read-only retention row for the legitimate
+  desired-absent, reserved, no-provider-effect restart state; its real
+  fail-before was 0/1 and six unsafe variations remain quarantined. Final
+  classifier, state-machine, and real-backend startup proofs pass 12/12, 8/8,
+  and 4/4. Affected crates pass 1070/1070 with 24 declared skips; check,
+  strict Clippy, warning-denied rustdoc, core-only dependency, verifier 19/19,
+  mutations 72/72, multi-tenant verifier 16/16, docs 108, and site 17/17 pass.
+  Its single candidate-frozen Sol/xhigh/fast review returned zero findings at
+  confidence 0.87; no repeat review is warranted. NNC5.3 now audits complete
+  readiness evidence so netns existence alone cannot report ready; cleanup,
+  release, finalization, and reuse stay in NNC8.3. Machine
   forwarding obeys
   NNC5.2a's common lifecycle; runtime absence, workload status, readiness persistence,
   cleanup convergence, and inspect/restart policy stay in their named later

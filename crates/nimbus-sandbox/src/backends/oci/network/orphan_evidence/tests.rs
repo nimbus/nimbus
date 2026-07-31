@@ -18,8 +18,77 @@ use crate::backends::oci::network::ipam::{
     complete_netavark_setup, complete_netavark_teardown, confirm_netavark_provider_detached,
 };
 use crate::backends::oci::network::provider_locator::OciAttachmentProviderKind;
-use crate::backends::oci::network::{SingleNodeSegmentAllocator, default_network_attachment_id};
+use crate::backends::oci::network::{
+    OciNetworkLayout, SingleNodeSegmentAllocator, default_network_attachment_id,
+};
 use crate::instance::SandboxId;
+
+#[test]
+fn absent_empty_artifact_root_is_known_empty_not_unknown() {
+    let temp_dir = TempDir::new().expect("temporary authority root should exist");
+    let workload_root = temp_dir.path().join("absent-workloads");
+    let network_root = temp_dir.path().join("network-authority");
+    fs::create_dir_all(&network_root).expect("network authority root should exist");
+    let tenant_id = TenantId::new("absent-empty-root").expect("tenant should validate");
+    let sandbox_id = SandboxId::new("absent-empty-root");
+    let layout =
+        OciNetworkLayout::with_roots(&workload_root, &network_root, &tenant_id, &sandbox_id);
+    let attachments = LocalNetworkAttachmentAuthority::open(&network_root)
+        .expect("attachment authority should open");
+    let ipam = OciIpamAuthority::reconstruct_for_direct_test(&layout)
+        .expect("IPAM authority should open without workload artifacts");
+    let allocator = SingleNodeSegmentAllocator::single_node_default(&network_root);
+
+    let report = collect_oci_orphan_evidence(&workload_root, &attachments, &ipam, &allocator)
+        .expect("an absent empty artifact root should collect as known empty");
+
+    assert!(!workload_root.exists());
+    assert!(report.candidates().is_empty());
+    assert!(report.unmatched_provider_evidence().is_empty());
+    assert!(report.unmatched_artifacts().is_empty());
+    assert!(
+        report.artifact_scan_unknowns().is_empty(),
+        "NotFound at the injected root is known empty only when no durable provider evidence claims that realm"
+    );
+}
+
+#[test]
+fn absent_artifact_root_cannot_authenticate_retained_provider_evidence() {
+    let fixture = EvidenceFixture::new(
+        "absent-provider-realm",
+        AttachmentBackendKind::Container,
+        false,
+    );
+    fs::remove_dir_all(&fixture.workload_root).expect("fixture artifact root should remove");
+    let before = fixture.authority_bytes();
+
+    let report = collect_oci_orphan_evidence(
+        &fixture.workload_root,
+        &fixture.attachments,
+        &fixture.ipam,
+        &fixture.allocator,
+    )
+    .expect("absent provider realm should remain reportable");
+
+    let [desired_only] = report.candidates() else {
+        panic!("portable desired authority should remain a candidate");
+    };
+    assert!(desired_only.desired().is_some());
+    assert!(desired_only.provider().is_none());
+    let [unmatched] = report.unmatched_provider_evidence() else {
+        panic!("provider evidence must remain fenced outside an absent realm");
+    };
+    let OciProviderRealmObservation::Unknown(unknown) = unmatched.realm() else {
+        panic!("absent retained provider realm must be typed unknown");
+    };
+    assert!(unknown.message().contains("directory is absent"));
+    assert!(report.artifact_scan_unknowns().is_empty());
+    assert_eq!(
+        fixture.authority_bytes(),
+        before,
+        "absent-realm classification must preserve durable authority bytes"
+    );
+}
 
 #[test]
 fn deterministic_union_reopens_without_mutation_and_never_promotes_artifact_names() {

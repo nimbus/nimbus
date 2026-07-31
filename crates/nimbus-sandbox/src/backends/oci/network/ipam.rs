@@ -630,6 +630,13 @@ pub(crate) fn retire_terminal_container_ipam_release(
 /// krun manifests with `Released` authority qualify. Exact compare-delete
 /// keeps a stale manifest from mutating a replacement live or terminal
 /// generation.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "NNC8.3 owns explicit cleanup convergence; NNC5.2d removes retirement from startup admission"
+    )
+)]
 pub(crate) fn reconcile_terminal_container_ipam_releases(
     authority: &OciIpamAuthority,
     workload_state_root: &Path,

@@ -254,6 +254,38 @@ fn only_candidate(report: &mut OciOrphanEvidenceReport) -> &mut OciOrphanEvidenc
     candidate
 }
 
+fn reserved_pre_effect_report_without_desired(
+    label: &str,
+) -> (EvidenceFixture, OciOrphanEvidenceReport) {
+    let fixture = EvidenceFixture::new(label, AttachmentBackendKind::Container, false);
+    let manifest_path = crate::artifact_paths::manifest_path(
+        &fixture.workload_root,
+        &fixture.tenant_id,
+        &fixture.sandbox_id,
+    );
+    fs::create_dir_all(
+        manifest_path
+            .parent()
+            .expect("pre-effect manifest should have a parent"),
+    )
+    .expect("pre-effect manifest parent should create");
+    fs::write(&manifest_path, b"pre-effect-manifest")
+        .expect("pre-effect manifest should become durable");
+    let mut report = collect_oci_orphan_evidence(
+        &fixture.workload_root,
+        &fixture.attachments,
+        &fixture.ipam,
+        &fixture.allocator,
+    )
+    .expect("pre-effect evidence should collect");
+    let candidate = only_candidate(&mut report);
+    candidate.desired = None;
+    candidate
+        .allocator
+        .retain(|evidence| evidence.source() == OciAllocatorEvidenceSource::ProviderAttempt);
+    (fixture, report)
+}
+
 fn only_disposition(report: &OciOrphanClassificationReport<'_>) -> OciOrphanDisposition {
     let mut dispositions = report
         .candidate_classifications()
@@ -465,6 +497,144 @@ fn nnc5_2c_pure_orphan_classifier_covers_complete_evidence_matrix() {
         mismatches.is_empty(),
         "NNC5.2c must classify every immutable evidence row exactly; mismatches: \
          {mismatches:#?}; complete reports: {cases:#?}"
+    );
+}
+
+#[test]
+fn exact_reserved_pre_effect_generation_is_retained_without_desired_attachment() {
+    let (fixture, report) =
+        reserved_pre_effect_report_without_desired("classifier-reserved-pre-effect");
+    let before = fixture.authority_bytes();
+    let [candidate] = report.candidates() else {
+        panic!("one exact pre-effect candidate should collect");
+    };
+    let provider = candidate
+        .provider()
+        .expect("pre-effect candidate should retain provider authority");
+    assert!(matches!(
+        provider.provider_operation(),
+        NetavarkProviderOperation::Reserved
+    ));
+    assert_eq!(candidate.allocator().len(), 1);
+    assert!(
+        candidate.allocator()[0]
+            .observation()
+            .is_ok_and(|observation| {
+                observation.state() == nimbus_network::NetworkAttachmentReservationState::Reserved
+                    && observation.association().is_some()
+            })
+    );
+    assert!(candidate.artifacts().iter().all(|artifact| {
+        matches!(
+            (artifact.kind(), artifact.state()),
+            (
+                OciArtifactKind::Manifest,
+                OciArtifactObservationState::Present
+            ) | (
+                OciArtifactKind::NetworkNamespace | OciArtifactKind::Status,
+                OciArtifactObservationState::Absent
+            )
+        )
+    }));
+
+    assert_eq!(candidate_disposition(&report), OciOrphanDisposition::Adopt);
+    assert_eq!(
+        fixture.authority_bytes(),
+        before,
+        "retaining an exact pre-effect generation must be read-only"
+    );
+}
+
+#[test]
+fn reserved_pre_effect_retention_requires_complete_no_effect_evidence() {
+    let mut observed = BTreeMap::new();
+
+    let (_fixture, mut missing_manifest) =
+        reserved_pre_effect_report_without_desired("pre-effect-missing-manifest");
+    only_candidate(&mut missing_manifest)
+        .artifacts
+        .iter_mut()
+        .find(|artifact| artifact.kind == OciArtifactKind::Manifest)
+        .expect("manifest observation should exist")
+        .state = OciArtifactObservationState::Absent;
+    observed.insert("missing-manifest", candidate_disposition(&missing_manifest));
+
+    let (_fixture, mut namespace_present) =
+        reserved_pre_effect_report_without_desired("pre-effect-namespace-present");
+    only_candidate(&mut namespace_present)
+        .artifacts
+        .iter_mut()
+        .find(|artifact| artifact.kind == OciArtifactKind::NetworkNamespace)
+        .expect("namespace observation should exist")
+        .state = OciArtifactObservationState::Present;
+    observed.insert(
+        "namespace-present",
+        candidate_disposition(&namespace_present),
+    );
+
+    let (_fixture, mut status_present) =
+        reserved_pre_effect_report_without_desired("pre-effect-status-present");
+    only_candidate(&mut status_present)
+        .artifacts
+        .iter_mut()
+        .find(|artifact| artifact.kind == OciArtifactKind::Status)
+        .expect("status observation should exist")
+        .state = OciArtifactObservationState::Present;
+    observed.insert("status-present", candidate_disposition(&status_present));
+
+    let (_fixture, mut missing_hold) =
+        reserved_pre_effect_report_without_desired("pre-effect-missing-hold");
+    only_candidate(&mut missing_hold).allocator[0].observation =
+        Ok(NetworkAttachmentReservationObservation::absent());
+    observed.insert("missing-hold", candidate_disposition(&missing_hold));
+
+    let (_fixture, mut unplaced_hold) =
+        reserved_pre_effect_report_without_desired("pre-effect-unplaced-hold");
+    only_candidate(&mut unplaced_hold).allocator[0].observation =
+        Ok(NetworkAttachmentReservationObservation::unplaced_reserved());
+    observed.insert("unplaced-hold", candidate_disposition(&unplaced_hold));
+
+    let (_fixture, mut unknown_artifact) =
+        reserved_pre_effect_report_without_desired("pre-effect-unknown-artifact");
+    only_candidate(&mut unknown_artifact)
+        .artifacts
+        .iter_mut()
+        .find(|artifact| artifact.kind == OciArtifactKind::Manifest)
+        .expect("manifest observation should exist")
+        .state = OciArtifactObservationState::Unknown(OciEvidenceUnknown::domain(
+        "inspect exact artifact",
+        "forced pre-effect inspection uncertainty",
+    ));
+    observed.insert("unknown-artifact", candidate_disposition(&unknown_artifact));
+
+    assert_eq!(
+        observed,
+        BTreeMap::from([
+            (
+                "missing-hold",
+                quarantine(OciOrphanQuarantineReason::AllocatorHoldMissing),
+            ),
+            (
+                "missing-manifest",
+                quarantine(OciOrphanQuarantineReason::ArtifactEvidenceIncomplete),
+            ),
+            (
+                "namespace-present",
+                quarantine(OciOrphanQuarantineReason::ProviderEffectIncomplete),
+            ),
+            (
+                "status-present",
+                quarantine(OciOrphanQuarantineReason::ProviderEffectIncomplete),
+            ),
+            (
+                "unknown-artifact",
+                quarantine(OciOrphanQuarantineReason::UnknownInspection),
+            ),
+            (
+                "unplaced-hold",
+                quarantine(OciOrphanQuarantineReason::AllocatorEvidenceIncomplete),
+            ),
+        ])
     );
 }
 

@@ -1190,88 +1190,6 @@ impl NetworkSegmentAllocator for SingleNodeSegmentAllocator {
             None => Ok(NetworkSegmentGrowth::ObservationStale),
         }
     }
-
-    fn reconcile_orphans(
-        &self,
-        live: &BTreeSet<(TenantId, NetworkAttachmentId)>,
-    ) -> Result<Vec<OciSegmentRealization>> {
-        let supernet = self.installed()?.clone();
-        self.with_state(|state| {
-            let live: BTreeSet<(String, String)> = live
-                .iter()
-                .map(|(tenant, attachment)| {
-                    (tenant.as_str().to_owned(), attachment.as_str().to_owned())
-                })
-                .collect();
-            let mut quarantined = Vec::new();
-            let tenants: Vec<String> = state.tenants.keys().cloned().collect();
-            for tenant in tenants {
-                let tenant_id =
-                    TenantId::new(&tenant).map_err(|error| SandboxError::OperationFailed {
-                        message: format!(
-                            "network segment state contains invalid tenant id {tenant:?}: {error}"
-                        ),
-                    })?;
-                let entry = state
-                    .tenants
-                    .get_mut(&tenant)
-                    .expect("tenant key came from the same map");
-                for attachment in entry.attachments.keys() {
-                    attachment.parse::<NetworkAttachmentId>().map_err(|error| {
-                        SandboxError::OperationFailed {
-                            message: format!(
-                                "network segment state contains invalid attachment id: {error}"
-                            ),
-                        }
-                    })?;
-                }
-                let orphaned: Vec<String> = entry
-                    .attachments
-                    .iter()
-                    .filter(|(attachment, attachment_state)| {
-                        !matches!(
-                            attachment_state,
-                            SegmentAttachmentState::UnplacedReserved { .. }
-                                | SegmentAttachmentState::Reserved { .. }
-                                | SegmentAttachmentState::ReservationCleanupPending { .. }
-                        ) && !live.contains(&(tenant.clone(), (*attachment).clone()))
-                    })
-                    .map(|(attachment, _)| attachment.clone())
-                    .collect();
-                for attachment in orphaned {
-                    let attachment_state = entry
-                        .attachments
-                        .get_mut(&attachment)
-                        .expect("orphaned attachment came from the same map");
-                    if let SegmentAttachmentState::Held {
-                        adoption_receipt,
-                        segment_id,
-                    } = attachment_state
-                    {
-                        *attachment_state = SegmentAttachmentState::CleanupPending {
-                            adoption_receipt: adoption_receipt.clone(),
-                            segment_id: segment_id.clone(),
-                        };
-                    }
-                }
-                if entry.attachments.is_empty()
-                    || entry
-                        .attachments
-                        .values()
-                        .all(SegmentAttachmentState::is_cleanup_pending)
-                {
-                    entry.allocation_cleanup_pending = true;
-                    quarantined.extend(
-                        self.cleanup_for(&supernet, &tenant_id, entry)?
-                            .segments()
-                            .iter()
-                            .cloned(),
-                    );
-                }
-            }
-            Ok(quarantined)
-        })
-    }
 }
 
 impl NetworkSegmentAllocator for ConfiguredSegmentAllocator {
@@ -1400,13 +1318,6 @@ impl NetworkSegmentAllocator for ConfiguredSegmentAllocator {
     ) -> Result<NetworkSegmentGrowth<Self::Segment>> {
         self.allocator()?
             .grow_block_if_current(tenant, observed_segments)
-    }
-
-    fn reconcile_orphans(
-        &self,
-        live: &BTreeSet<(TenantId, NetworkAttachmentId)>,
-    ) -> Result<Vec<Self::Segment>> {
-        self.allocator()?.reconcile_orphans(live)
     }
 }
 

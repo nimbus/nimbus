@@ -523,7 +523,9 @@ fn startup_failure_never_becomes_registered_capability() {
         None,
     )))
     .expect_err("cached container startup failure must fence new work");
-    assert_cached_startup_failure(&container_start.to_string());
+    let corrupt_container_manifest =
+        corrupt_manifest_path(&container_root, "startup-container", "corrupt-container");
+    assert_cached_startup_failure(&container_start.to_string(), &corrupt_container_manifest);
     let krun_start = block_on(krun.start(sandbox_spec(
         TenantId::new("startup-krun").expect("fixture tenant should validate"),
         "new-krun-work",
@@ -531,7 +533,8 @@ fn startup_failure_never_becomes_registered_capability() {
         None,
     )))
     .expect_err("cached krun startup failure must fence new work");
-    assert_cached_startup_failure(&krun_start.to_string());
+    let corrupt_krun_manifest = corrupt_manifest_path(&krun_root, "startup-krun", "corrupt-krun");
+    assert_cached_startup_failure(&krun_start.to_string(), &corrupt_krun_manifest);
 
     let container_registration = container.host_managed_attachment_registration();
     let krun_registration = krun.host_managed_attachment_registration();
@@ -548,10 +551,12 @@ fn startup_failure_never_becomes_registered_capability() {
         assert_startup_registration_failure(
             container_registration.expect_err("container registration must fail closed"),
             CONTAINER_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY,
+            &corrupt_container_manifest,
         );
         assert_startup_registration_failure(
             krun_registration.expect_err("krun registration must fail closed"),
             KRUN_HOST_MANAGED_ATTACHMENT_PROVIDER_KEY,
+            &corrupt_krun_manifest,
         );
     }
     #[cfg(not(target_os = "linux"))]
@@ -812,10 +817,11 @@ fn manifest_files(workload_root: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-fn assert_cached_startup_failure(error: &str) {
+fn assert_cached_startup_failure(error: &str, expected_manifest: &Path) {
     assert!(
         error.contains("startup reconciliation did not complete")
-            && error.contains("failed to parse manifest"),
+            && error.contains("unmatched artifact")
+            && error.contains(&expected_manifest.display().to_string()),
         "new work must preserve the cached startup failure: {error}"
     );
 }
@@ -824,6 +830,7 @@ fn assert_cached_startup_failure(error: &str) {
 fn assert_startup_registration_failure(
     error: SandboxAttachmentRegistrationError,
     expected_provider: &'static str,
+    expected_manifest: &Path,
 ) {
     match error {
         SandboxAttachmentRegistrationError::StartupReconciliationFailed {
@@ -831,7 +838,7 @@ fn assert_startup_registration_failure(
             reason,
         } => {
             assert_eq!(provider_key, expected_provider);
-            assert_cached_startup_failure(&reason);
+            assert_cached_startup_failure(&reason, expected_manifest);
         }
         other => panic!("expected cached startup registration refusal, got {other:?}"),
     }

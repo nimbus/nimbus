@@ -22,22 +22,22 @@ use crate::backends::capabilities::{
 };
 use crate::instance::SandboxId;
 
-pub(super) struct EvidenceFixture {
-    pub(super) _temp_dir: TempDir,
-    pub(super) workload_root: PathBuf,
-    pub(super) network_root: PathBuf,
-    pub(super) tenant_id: TenantId,
-    pub(super) sandbox_id: SandboxId,
-    pub(super) layout: OciNetworkLayout,
-    pub(super) ipam: OciIpamAuthority,
-    pub(super) allocator: SingleNodeSegmentAllocator,
-    pub(super) attachments: LocalNetworkAttachmentAuthority,
-    pub(super) claim: NetworkReservationClaim,
-    pub(super) config: OciNetworkConfig,
+pub(in crate::backends::oci::network) struct EvidenceFixture {
+    pub(in crate::backends::oci::network) _temp_dir: TempDir,
+    pub(in crate::backends::oci::network) workload_root: PathBuf,
+    pub(in crate::backends::oci::network) network_root: PathBuf,
+    pub(in crate::backends::oci::network) tenant_id: TenantId,
+    pub(in crate::backends::oci::network) sandbox_id: SandboxId,
+    pub(in crate::backends::oci::network) layout: OciNetworkLayout,
+    pub(in crate::backends::oci::network) ipam: OciIpamAuthority,
+    pub(in crate::backends::oci::network) allocator: SingleNodeSegmentAllocator,
+    pub(in crate::backends::oci::network) attachments: LocalNetworkAttachmentAuthority,
+    pub(in crate::backends::oci::network) claim: NetworkReservationClaim,
+    pub(in crate::backends::oci::network) config: OciNetworkConfig,
 }
 
 impl EvidenceFixture {
-    pub(super) fn new(
+    pub(in crate::backends::oci::network) fn new(
         label: &str,
         backend: AttachmentBackendKind,
         desired_claim_substitution: bool,
@@ -54,7 +54,7 @@ impl EvidenceFixture {
         )
     }
 
-    pub(super) fn new_with_selected_provider(
+    pub(in crate::backends::oci::network) fn new_with_selected_provider(
         label: &str,
         backend: AttachmentBackendKind,
         registration_kind: SandboxAttachmentRegistrationKind,
@@ -141,7 +141,7 @@ impl EvidenceFixture {
         }
     }
 
-    pub(super) fn publish_exact_artifacts(&self) {
+    pub(in crate::backends::oci::network) fn publish_exact_artifacts(&self) {
         fs::write(&self.layout.netns_path, b"netns-observation")
             .expect("netns observation should write");
         fs::write(&self.layout.status_path, b"status-observation")
@@ -161,7 +161,7 @@ impl EvidenceFixture {
             .expect("manifest observation should write");
     }
 
-    pub(super) fn authority_bytes(&self) -> Vec<u8> {
+    pub(in crate::backends::oci::network) fn authority_bytes(&self) -> Vec<u8> {
         fs::read(LocalNetworkStateStore::authority_path_for(
             &self.network_root,
         ))
@@ -169,7 +169,7 @@ impl EvidenceFixture {
     }
 }
 
-pub(super) fn reservation_claim(label: &str) -> NetworkReservationClaim {
+pub(in crate::backends::oci::network) fn reservation_claim(label: &str) -> NetworkReservationClaim {
     NetworkReservationClaim::new(
         NetworkProviderHandle::new(
             NetworkProviderId::for_registration_key(
@@ -181,7 +181,7 @@ pub(super) fn reservation_claim(label: &str) -> NetworkReservationClaim {
     )
 }
 
-pub(super) fn netavark_attempt(
+pub(in crate::backends::oci::network) fn netavark_attempt(
     provider_key: &str,
     version: &str,
     action: &str,

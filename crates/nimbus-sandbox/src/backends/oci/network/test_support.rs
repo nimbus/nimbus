@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
 use nimbus_core::{Cidr, TenantId};
@@ -46,7 +45,6 @@ pub(crate) enum SegmentAllocatorOperation {
     Release(TenantId, NetworkAttachmentId),
     FinalizeRelease(TenantId, Vec<String>),
     GrowBlockIfCurrent(TenantId, Vec<String>),
-    Reconcile(BTreeSet<(TenantId, NetworkAttachmentId)>),
 }
 
 #[derive(Clone)]
@@ -61,7 +59,7 @@ struct RecordingAttachmentReservation {
 pub(crate) struct RecordingSegmentAllocator {
     segment: OciSegmentRealization,
     operations: Arc<Mutex<Vec<SegmentAllocatorOperation>>>,
-    quarantine_failure: Option<String>,
+    quarantine_failure: Arc<Mutex<Option<String>>>,
     release_reserved_failure: Option<String>,
     finalize_release_failure: Arc<Mutex<Option<String>>>,
     reserve_attachment_observer: Option<Arc<ReserveAttachmentObserver>>,
@@ -83,7 +81,7 @@ impl RecordingSegmentAllocator {
         Self {
             segment: OciSegmentRealization::from_local_slot(allocation, local_slot),
             operations: Arc::new(Mutex::new(Vec::new())),
-            quarantine_failure: None,
+            quarantine_failure: Arc::new(Mutex::new(None)),
             release_reserved_failure: None,
             finalize_release_failure: Arc::new(Mutex::new(None)),
             reserve_attachment_observer: None,
@@ -93,9 +91,20 @@ impl RecordingSegmentAllocator {
         }
     }
 
-    pub(crate) fn with_quarantine_failure(mut self, message: impl Into<String>) -> Self {
-        self.quarantine_failure = Some(message.into());
+    pub(crate) fn with_quarantine_failure(self, message: impl Into<String>) -> Self {
+        *self
+            .quarantine_failure
+            .lock()
+            .expect("recording allocator failure lock should not be poisoned") =
+            Some(message.into());
         self
+    }
+
+    pub(crate) fn clear_quarantine_failure(&self) {
+        *self
+            .quarantine_failure
+            .lock()
+            .expect("recording allocator failure lock should not be poisoned") = None;
     }
 
     pub(crate) fn with_reserve_attachment_observer(
@@ -438,7 +447,12 @@ impl NetworkSegmentAllocator for RecordingSegmentAllocator {
             tenant.clone(),
             attachment_id.clone(),
         ));
-        if let Some(message) = self.quarantine_failure.as_ref() {
+        if let Some(message) = self
+            .quarantine_failure
+            .lock()
+            .expect("recording allocator failure lock should not be poisoned")
+            .as_ref()
+        {
             return Err(SandboxError::OperationFailed {
                 message: message.clone(),
             });
@@ -527,13 +541,5 @@ impl NetworkSegmentAllocator for RecordingSegmentAllocator {
                 .collect(),
         ));
         Ok(NetworkSegmentGrowth::Grown(self.segment.clone()))
-    }
-
-    fn reconcile_orphans(
-        &self,
-        live: &BTreeSet<(TenantId, NetworkAttachmentId)>,
-    ) -> Result<Vec<Self::Segment>, Self::Error> {
-        self.record(SegmentAllocatorOperation::Reconcile(live.clone()));
-        Ok(Vec::new())
     }
 }

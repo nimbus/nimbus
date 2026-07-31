@@ -338,19 +338,17 @@ impl KrunSandboxBackend {
                 )
             },
         );
-        let startup_network_reconciliation_error = attachment_authority
-            .as_ref()
+        let startup_network_reconciliation_error = match attachment_authority.as_ref() {
+            Err(error) => Some(Arc::<str>::from(error.to_string())),
+            Ok(attachment_authority) => reconcile_startup_network_state(
+                &config.workload_state_root,
+                attachment_authority,
+                &ipam_authority,
+                segment_allocator.as_ref(),
+            )
             .err()
-            .map(|error| Arc::<str>::from(error.to_string()))
-            .or_else(|| {
-                reconcile_startup_network_state(
-                    &config.workload_state_root,
-                    &ipam_authority,
-                    segment_allocator.as_ref(),
-                )
-                .err()
-                .map(|error| Arc::<str>::from(error.to_string()))
-            });
+            .map(|error| Arc::<str>::from(error.to_string())),
+        };
         let egress_proxies = match network_process.as_ref() {
             Some(process) => process.egress_registry(
                 egress_decision_log_root(&config.workload_state_root),

@@ -775,7 +775,7 @@
       "kind": "segment-cluster-lease-reconstruction",
       "symbol": "live_inner",
       "ordinal": 1,
-      "line": 134,
+      "line": 133,
       "classification": "admitted-cross-process-reconstruction",
       "os_node_realm": "future-cluster-node",
       "evidence": "source-contract"
@@ -785,7 +785,7 @@
       "kind": "segment-cleanup-handle-reconstruction",
       "symbol": "cleanup_inner",
       "ordinal": 1,
-      "line": 152,
+      "line": 151,
       "classification": "admitted-cross-process-reconstruction",
       "os_node_realm": "future-cluster-node",
       "evidence": "source-contract"

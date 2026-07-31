@@ -162,22 +162,23 @@ impl ContainerSandboxBackend {
             || LocalNetworkAttachmentAuthority::open(&config.network_state_root),
             |process| Ok(process.attachment_authority()),
         );
-        let startup_reconciliation_error = attachment_authority
-            .as_ref()
-            .err()
-            .map(|error| Arc::<str>::from(error.to_string()))
-            .or_else(|| {
-                reconcile_startup_manifest_publications(&config.workload_state_root)
-                    .and_then(|()| {
+        let startup_reconciliation_error = match attachment_authority.as_ref() {
+            Err(error) => Some(Arc::<str>::from(error.to_string())),
+            Ok(attachment_authority) => {
+                reconcile_startup_manifest_publications(&config.workload_state_root).and_then(
+                    |()| {
                         reconcile_startup_network_state(
                             &config.workload_state_root,
+                            attachment_authority,
                             &ipam_authority,
                             segment_allocator.as_ref(),
                         )
-                    })
-                    .err()
-                    .map(|error| Arc::<str>::from(error.to_string()))
-            });
+                    },
+                )
+            }
+            .err()
+            .map(|error| Arc::<str>::from(error.to_string())),
+        };
         let netavark_port_lifetimes = network_process
             .as_ref()
             .map_or_else(NetavarkPortLifetimeRegistry::default, |process| {

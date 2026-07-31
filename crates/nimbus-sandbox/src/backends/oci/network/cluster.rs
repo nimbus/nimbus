@@ -28,7 +28,6 @@
 //! mesh join); until then it is exercised only by this module's tests.
 #![allow(dead_code)]
 
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -308,16 +307,6 @@ impl NetworkSegmentAllocator for ClusterSegmentAllocator {
     ) -> Result<NetworkSegmentGrowth<OciSegmentRealization>> {
         self.live_inner()?
             .grow_block_if_current(tenant, observed_segments)
-    }
-
-    fn reconcile_orphans(
-        &self,
-        live: &BTreeSet<(TenantId, NetworkAttachmentId)>,
-    ) -> Result<Vec<OciSegmentRealization>> {
-        match self.cleanup_inner()? {
-            Some(cleanup) => cleanup.reconcile_orphans(live),
-            None => Ok(Vec::new()),
-        }
     }
 
     fn requires_cluster_lease(&self) -> bool {

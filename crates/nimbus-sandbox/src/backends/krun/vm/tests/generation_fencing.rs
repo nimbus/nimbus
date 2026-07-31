@@ -1,7 +1,10 @@
-use super::*;
+use std::sync::Arc;
+
+use super::support::*;
 use crate::backends::krun::vm::lifecycle::NetworkArtifactTeardownMode;
 use crate::backends::oci::network::{
-    OciNetworkConfig, OciNetworkLayout, deallocate_container_ips_after_confirmed_detach,
+    OciNetworkConfig, OciNetworkLayout, OciSegmentAllocator, RecordingSegmentAllocator,
+    allocate_container_ips, deallocate_container_ips_after_confirmed_detach,
 };
 
 #[test]

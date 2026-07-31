@@ -27,14 +27,10 @@ use readers::{
     OciProviderAttemptEvidenceReader,
 };
 
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "NNC5.2c stages pure dispositions consumed by NNC5.2d startup wiring"
-    )
-)]
 mod classifier;
+pub(in crate::backends::oci::network) use classifier::{
+    OciOrphanDisposition, OciOrphanQuarantineReason, classify_oci_orphan_evidence,
+};
 
 /// Durable authority that supplied a claim-qualified allocator observation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -102,6 +98,16 @@ impl OciArtifactObservation {
 
     pub(crate) fn state(&self) -> &OciArtifactObservationState {
         &self.state
+    }
+}
+
+impl OciArtifactKind {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Manifest => "manifest artifact",
+            Self::NetworkNamespace => "network namespace artifact",
+            Self::Status => "provider status artifact",
+        }
     }
 }
 
@@ -254,12 +260,15 @@ struct CandidateBuilder {
 }
 
 /// Collect exact durable and observed evidence without selecting a winner.
-pub(in crate::backends::oci::network) fn collect_oci_orphan_evidence(
+pub(in crate::backends::oci::network) fn collect_oci_orphan_evidence<Allocator>(
     workload_state_root: &Path,
     attachments: &dyn OciDesiredAttachmentEvidenceReader,
     ipam: &dyn OciProviderAttemptEvidenceReader,
-    allocator: &dyn OciExactAllocatorEvidenceReader,
-) -> Result<OciOrphanEvidenceReport> {
+    allocator: &Allocator,
+) -> Result<OciOrphanEvidenceReport>
+where
+    Allocator: OciExactAllocatorEvidenceReader + ?Sized,
+{
     let artifact_realm = PinnedArtifactRealm::open(workload_state_root);
     let mut builders = BTreeMap::<String, CandidateBuilder>::new();
     for desired in attachments.list_desired_attachment_evidence()? {
@@ -440,13 +449,16 @@ fn candidate_identity(builder: &CandidateBuilder) -> Result<(TenantId, NetworkAt
     }
 }
 
-fn inspect_allocator(
-    allocator: &dyn OciExactAllocatorEvidenceReader,
+fn inspect_allocator<Allocator>(
+    allocator: &Allocator,
     source: OciAllocatorEvidenceSource,
     tenant_id: &TenantId,
     attachment_id: &NetworkAttachmentId,
     reservation_claim: &NetworkReservationClaim,
-) -> OciExactAllocatorEvidence {
+) -> OciExactAllocatorEvidence
+where
+    Allocator: OciExactAllocatorEvidenceReader + ?Sized,
+{
     let observation = allocator
         .inspect_exact_attachment_reservation(tenant_id, attachment_id, reservation_claim)
         .map_err(|error| {
@@ -461,14 +473,20 @@ fn inspect_allocator(
 
 struct PinnedArtifactRealm {
     root_path: PathBuf,
-    root: std::result::Result<Dir, OciEvidenceUnknown>,
+    root: std::result::Result<Option<Dir>, OciEvidenceUnknown>,
 }
 
 impl PinnedArtifactRealm {
     fn open(root_path: &Path) -> Self {
-        let root = Dir::open_ambient_dir(root_path, ambient_authority()).map_err(|error| {
-            OciEvidenceUnknown::io("open authenticated artifact realm", root_path, error)
-        });
+        let root = match Dir::open_ambient_dir(root_path, ambient_authority()) {
+            Ok(root) => Ok(Some(root)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(OciEvidenceUnknown::io(
+                "open authenticated artifact realm",
+                root_path,
+                error,
+            )),
+        };
         Self {
             root_path: root_path.to_path_buf(),
             root,
@@ -477,7 +495,7 @@ impl PinnedArtifactRealm {
 
     fn observe(&self, kind: OciArtifactKind, path: PathBuf) -> OciArtifactObservation {
         let state = match &self.root {
-            Ok(root) => {
+            Ok(Some(root)) => {
                 let relative = match path.strip_prefix(&self.root_path) {
                     Ok(relative) => relative,
                     Err(_) => {
@@ -499,22 +517,33 @@ impl PinnedArtifactRealm {
                 };
                 observe_relative_artifact(root, relative, &path, "inspect exact artifact")
             }
+            Ok(None) => OciArtifactObservationState::Absent,
             Err(error) => OciArtifactObservationState::Unknown(error.clone()),
         };
         OciArtifactObservation { kind, path, state }
     }
 
     fn authenticates_provider(&self, provider: &OciAttachmentProviderEvidence) -> Result<bool> {
-        let root = self
-            .root
-            .as_ref()
-            .map_err(|error| SandboxError::OperationFailed {
-                message: format!(
-                    "failed to authenticate pinned OCI artifact realm {}: {}",
-                    self.root_path.display(),
-                    error.message()
-                ),
-            })?;
+        let root = match self.root.as_ref() {
+            Ok(Some(root)) => root,
+            Ok(None) => {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "failed to authenticate pinned OCI artifact realm {}: directory is absent",
+                        self.root_path.display()
+                    ),
+                });
+            }
+            Err(error) => {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "failed to authenticate pinned OCI artifact realm {}: {}",
+                        self.root_path.display(),
+                        error.message()
+                    ),
+                });
+            }
+        };
         provider.authenticates_open_directory(root)
     }
 }
@@ -531,7 +560,8 @@ fn scan_current_root_artifacts(
     let mut artifacts = Vec::new();
     let mut unknowns = Vec::new();
     let root = match &realm.root {
-        Ok(root) => root,
+        Ok(Some(root)) => root,
+        Ok(None) => return (artifacts, unknowns),
         Err(error) => {
             unknowns.push(error.clone());
             return (artifacts, unknowns);
@@ -779,6 +809,6 @@ fn corrupt_evidence(reason: impl Into<String>) -> SandboxError {
 }
 
 #[cfg(test)]
-mod test_support;
+pub(in crate::backends::oci::network) mod test_support;
 #[cfg(test)]
 mod tests;

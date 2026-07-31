@@ -58,6 +58,32 @@ pub(in crate::backends::oci::network) enum OciOrphanQuarantineReason {
     UnmatchedArtifact,
 }
 
+impl OciOrphanQuarantineReason {
+    pub(in crate::backends::oci::network) const fn as_str(self) -> &'static str {
+        match self {
+            Self::DesiredAttachmentMissing => "desired attachment missing",
+            Self::ProviderAttemptMissing => "provider attempt missing",
+            Self::ProviderAttemptTerminal => "provider attempt terminal",
+            Self::ProviderBackendMismatch => "provider backend mismatch",
+            Self::StaleGenerationEvidence => "stale generation evidence",
+            Self::DesiredPhaseNotAdoptable => "desired phase not adoptable",
+            Self::DesiredProviderHandleMissing => "desired provider handle missing",
+            Self::DesiredProviderHandleMismatch => "desired provider handle mismatch",
+            Self::AllocatorEvidenceIncomplete => "allocator evidence incomplete",
+            Self::AllocatorHoldMissing => "allocator hold missing",
+            Self::AllocatorReservationUnadopted => "allocator reservation unadopted",
+            Self::AllocatorCleanupPending => "allocator cleanup pending",
+            Self::ProviderEffectIncomplete => "provider effect incomplete",
+            Self::ArtifactEvidenceIncomplete => "artifact evidence incomplete",
+            Self::NetworkNamespaceMissing => "network namespace missing",
+            Self::ProviderStatusMissing => "provider status missing",
+            Self::UnknownInspection => "unknown inspection",
+            Self::ProviderRealmMismatch => "provider realm mismatch",
+            Self::UnmatchedArtifact => "unmatched artifact",
+        }
+    }
+}
+
 /// One immutable evidence subject paired with its pure disposition.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::backends::oci::network) struct OciEvidenceClassification<'a, Evidence> {
@@ -167,7 +193,7 @@ pub(in crate::backends::oci::network) fn classify_oci_orphan_evidence<'a>(
 
 fn classify_candidate(candidate: &OciOrphanEvidenceCandidate) -> OciOrphanDisposition {
     let Some(desired) = candidate.desired() else {
-        return quarantine(OciOrphanQuarantineReason::DesiredAttachmentMissing);
+        return classify_reserved_pre_effect_without_desired(candidate);
     };
     let Some(provider) = candidate.provider() else {
         return quarantine(OciOrphanQuarantineReason::ProviderAttemptMissing);
@@ -345,6 +371,105 @@ fn classify_candidate(candidate: &OciOrphanEvidenceCandidate) -> OciOrphanDispos
     }
     if matches!(status, OciArtifactObservationState::Absent) {
         return quarantine(OciOrphanQuarantineReason::ProviderStatusMissing);
+    }
+
+    OciOrphanDisposition::Adopt
+}
+
+/// Retain the one legitimate no-desired shape produced before attachment
+/// lifecycle begins.
+///
+/// Planning durably binds an exact allocator reservation and IPAM generation
+/// after publishing the workload manifest, but portable desired attachment
+/// state starts only when provider attachment begins. Treating that
+/// pre-effect interval as an orphan would make a process restart fence every
+/// prepared workload. The interval is safe to retain only while every
+/// authority proves that no provider effect has started.
+fn classify_reserved_pre_effect_without_desired(
+    candidate: &OciOrphanEvidenceCandidate,
+) -> OciOrphanDisposition {
+    let Some(provider) = candidate.provider() else {
+        return quarantine(OciOrphanQuarantineReason::DesiredAttachmentMissing);
+    };
+    if provider.lifecycle() != OciIpamEvidenceLifecycle::Live
+        || !matches!(
+            provider.provider_operation(),
+            NetavarkProviderOperation::Reserved
+        )
+    {
+        return quarantine(OciOrphanQuarantineReason::DesiredAttachmentMissing);
+    }
+    if provider.tenant_id() != candidate.tenant_id()
+        || provider.attachment_id() != candidate.attachment_id()
+        || default_network_attachment_id(provider.sandbox_id()) != *candidate.attachment_id()
+    {
+        return quarantine(OciOrphanQuarantineReason::StaleGenerationEvidence);
+    }
+
+    let [allocator] = candidate.allocator() else {
+        return quarantine(OciOrphanQuarantineReason::AllocatorEvidenceIncomplete);
+    };
+    if allocator.source() != OciAllocatorEvidenceSource::ProviderAttempt {
+        return quarantine(OciOrphanQuarantineReason::AllocatorEvidenceIncomplete);
+    }
+    if allocator.reservation_claim() != provider.reservation_claim() {
+        return quarantine(OciOrphanQuarantineReason::StaleGenerationEvidence);
+    }
+    let observation = match allocator.observation() {
+        Ok(observation) => observation,
+        Err(_) => return quarantine(OciOrphanQuarantineReason::UnknownInspection),
+    };
+    match observation.state() {
+        NetworkAttachmentReservationState::Absent => {
+            return quarantine(OciOrphanQuarantineReason::AllocatorHoldMissing);
+        }
+        NetworkAttachmentReservationState::Reserved => {}
+        NetworkAttachmentReservationState::ReservationCleanupPending
+        | NetworkAttachmentReservationState::Adopted
+        | NetworkAttachmentReservationState::ProviderCleanupPending => {
+            return quarantine(OciOrphanQuarantineReason::StaleGenerationEvidence);
+        }
+    }
+    let Some(association) = observation.association() else {
+        return quarantine(OciOrphanQuarantineReason::AllocatorEvidenceIncomplete);
+    };
+    if association.reservation_claim() != provider.reservation_claim()
+        || association.segment_id() != provider.segment_id()
+    {
+        return quarantine(OciOrphanQuarantineReason::StaleGenerationEvidence);
+    }
+
+    let mut manifest = None;
+    let mut network_namespace = None;
+    let mut status = None;
+    for artifact in candidate.artifacts() {
+        let slot = match artifact.kind() {
+            OciArtifactKind::Manifest => &mut manifest,
+            OciArtifactKind::NetworkNamespace => &mut network_namespace,
+            OciArtifactKind::Status => &mut status,
+        };
+        if slot.replace(artifact.state()).is_some() {
+            return quarantine(OciOrphanQuarantineReason::ArtifactEvidenceIncomplete);
+        }
+    }
+    let (Some(manifest), Some(network_namespace), Some(status)) =
+        (manifest, network_namespace, status)
+    else {
+        return quarantine(OciOrphanQuarantineReason::ArtifactEvidenceIncomplete);
+    };
+    if [manifest, network_namespace, status]
+        .into_iter()
+        .any(|state| matches!(state, OciArtifactObservationState::Unknown(_)))
+    {
+        return quarantine(OciOrphanQuarantineReason::UnknownInspection);
+    }
+    if !matches!(manifest, OciArtifactObservationState::Present) {
+        return quarantine(OciOrphanQuarantineReason::ArtifactEvidenceIncomplete);
+    }
+    if !matches!(network_namespace, OciArtifactObservationState::Absent)
+        || !matches!(status, OciArtifactObservationState::Absent)
+    {
+        return quarantine(OciOrphanQuarantineReason::ProviderEffectIncomplete);
     }
 
     OciOrphanDisposition::Adopt

@@ -7,9 +7,6 @@
 //! allocation. Obsolete shared-bridge migration is deliberately absent: this
 //! pre-launch tree supports only the per-tenant routed model.
 
-use std::collections::BTreeSet;
-use std::path::Path;
-
 use nimbus_core::TenantId;
 use nimbus_network::{
     NetworkReservationClaim, NetworkSegmentFinalizeOutcome, NetworkSegmentQuarantineOutcome,
@@ -313,57 +310,6 @@ fn release_network_segment_hold_with(
         ) => Vec::new(),
         Err(error) => vec![error],
     }
-}
-
-/// Startup orphan scan: quarantine segment holds whose sandbox netns no longer
-/// exists. The live-hold set is read
-/// directly from the persistent-netns tree
-/// (`<state_root>/tenants/<tenant>/networks/netns/<sandbox>`) — a live sandbox has
-/// a netns; absence is only incomplete orphan evidence, not provider-deletion
-/// proof. A crash-leaked hold therefore remains authoritative and unavailable
-/// until the later evidence-aware reconciler inspects/detaches it. Best-effort
-/// and idempotent. Returns the number of provider segment realizations covered
-/// by quarantined allocations (a multi-block tenant contributes each block).
-pub(crate) fn reconcile_network_segment_orphans(
-    state_root: &Path,
-    allocator: &OciSegmentAllocator,
-) -> Result<usize> {
-    let live = live_netns_holds(state_root)?;
-    let quarantined = allocator.reconcile_orphans(&live)?;
-    Ok(quarantined.len())
-}
-
-/// Enumerate the `(tenant_id, sandbox_id)` pairs that currently hold a persistent
-/// netns. A missing tree (fresh node) yields the empty set.
-fn live_netns_holds(
-    state_root: &Path,
-) -> Result<BTreeSet<(TenantId, nimbus_network::NetworkAttachmentId)>> {
-    let mut holds = BTreeSet::new();
-    let tenants_root = state_root.join("tenants");
-    let Ok(tenants) = std::fs::read_dir(&tenants_root) else {
-        return Ok(holds);
-    };
-    for tenant in tenants.flatten() {
-        let netns_dir = tenant.path().join("networks").join("netns");
-        let Ok(sandboxes) = std::fs::read_dir(&netns_dir) else {
-            continue;
-        };
-        let tenant_name = tenant.file_name().to_string_lossy().into_owned();
-        let tenant_id =
-            TenantId::new(&tenant_name).map_err(|error| SandboxError::OperationFailed {
-                message: format!(
-                    "persistent network namespace tree contains invalid tenant id {tenant_name:?}: {error}"
-                ),
-            })?;
-        for sandbox in sandboxes.flatten() {
-            let sandbox_id = sandbox.file_name().to_string_lossy().into_owned();
-            holds.insert((
-                tenant_id.clone(),
-                default_network_attachment_id(&SandboxId::new(sandbox_id)),
-            ));
-        }
-    }
-    Ok(holds)
 }
 
 #[cfg(target_os = "linux")]

@@ -516,7 +516,6 @@ fn reservation_claim_conflict(attachment_id: &NetworkAttachmentId) -> SandboxErr
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
     use std::fs;
 
     use nimbus_network::{
@@ -606,13 +605,6 @@ mod tests {
             );
         }
 
-        assert!(
-            allocator
-                .reconcile_orphans(&BTreeSet::new())
-                .expect("orphan scan should succeed")
-                .is_empty(),
-            "filesystem absence must not quarantine an unadopted claim"
-        );
         let retained = allocator
             .inspect_segments(&tenant)
             .expect("retained segment should inspect")

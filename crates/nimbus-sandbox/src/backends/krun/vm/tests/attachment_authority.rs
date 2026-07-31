@@ -10,9 +10,7 @@ use super::support::*;
 use crate::backends::capabilities::{
     SandboxAttachmentRegistrationKind, host_managed_attachment_requirements,
 };
-use crate::backends::oci::network::{
-    AttachmentAttachAuthority, OciNetworkLayout, default_network_attachment_id,
-};
+use crate::backends::oci::network::{OciNetworkLayout, default_network_attachment_id};
 use crate::backends::oci::port_lease::new_launch_reservation_claim;
 
 fn foreign_plan(tenant_id: &TenantId, sandbox_id: &SandboxId) -> NetworkPlan {
@@ -33,7 +31,7 @@ fn foreign_association() -> NetworkAttachmentSegmentAssociation {
 }
 
 #[test]
-fn fresh_krun_backend_reopens_attachment_authority_on_its_production_route() {
+fn fresh_krun_backend_fences_desired_without_provider_before_planning() {
     let root = TempDir::new().expect("krun authority root should exist");
     let config = KrunSandboxBackendConfig::under_root(root.path().to_path_buf());
     let sandbox_id = SandboxId::new("krun-durable-attachment-reopen");
@@ -49,38 +47,42 @@ fn fresh_krun_backend_reopens_attachment_authority_on_its_production_route() {
             foreign_association(),
         )
         .expect("foreign selected-provider fixture should persist");
+    let authority_path = authority.authority_path().to_path_buf();
+    let authority_before =
+        std::fs::read(&authority_path).expect("foreign desired authority should read");
     drop(authority);
 
+    let layout = OciNetworkLayout::with_roots(
+        &config.workload_state_root,
+        &config.network_state_root,
+        &spec.tenant_id,
+        &sandbox_id,
+    );
+    let manifest_path = crate::artifact_paths::manifest_path(
+        &config.workload_state_root,
+        &spec.tenant_id,
+        &sandbox_id,
+    );
     let reopened = KrunSandboxBackend::new(config);
-    let manifest = reopened
-        .plan_start_with_id(&sample_spec(), &sandbox_id, None, None)
-        .expect("krun execute plan should reserve launch authority")
-        .manifest;
-    let claim = manifest
-        .reservation_claim()
-        .cloned()
-        .expect("krun execute manifest should retain its claim");
-    reopened
-        .segment_allocator
-        .adopt_reserved_attachment(
-            &manifest.spec.tenant_id,
-            &default_network_attachment_id(&manifest.handle.id),
-            &claim,
-        )
-        .expect("krun production route fixture should adopt its exact reservation");
-
     let error = reopened
-        .configure_network(&manifest, AttachmentAttachAuthority::FreshLaunch(&claim))
-        .expect_err("the production route must authenticate reopened provider authority");
+        .plan_start_with_id(&sample_spec(), &sandbox_id, None, None)
+        .expect_err("startup must fence desired authority without provider evidence");
 
     assert!(
-        error.to_string().contains("selected provider"),
-        "the real krun route must observe the reopened provider conflict: {error}"
+        error
+            .to_string()
+            .contains("startup reconciliation did not complete")
+            && error.to_string().contains("provider attempt missing"),
+        "the real krun route must name the incomplete cross-authority generation: {error}"
     );
     assert!(
-        !manifest.network_layout.netns_path.exists()
-            && !manifest.network_layout.status_path.exists(),
-        "durable authority authentication must precede namespace and provider effects"
+        !manifest_path.exists() && !layout.netns_path.exists() && !layout.status_path.exists(),
+        "startup authentication must precede planning, namespace, and provider effects"
+    );
+    assert_eq!(
+        std::fs::read(authority_path).expect("foreign desired authority should re-read"),
+        authority_before,
+        "a reserved desired record without provider authority is preserved for later convergence"
     );
 }
 

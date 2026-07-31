@@ -9,6 +9,63 @@ fn inject_startup_reconciliation_failure(backend: &mut ContainerSandboxBackend) 
 }
 
 #[test]
+fn startup_reconciliation_failure_fences_direct_initial_launch_before_effects() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let spec = sample_spec();
+    let recorder = Arc::new(RecordingSegmentAllocator::new(
+        spec.tenant_id.clone(),
+        "127.0.0.0/24",
+        73,
+    ));
+    let injected: Arc<OciSegmentAllocator> = recorder.clone();
+    let mut backend = ContainerSandboxBackend::with_segment_allocator(
+        ContainerSandboxBackendConfig::under_root(temp_dir.path()),
+        injected,
+    );
+    let mut manifest = backend
+        .plan_start_with_id(&spec, &SandboxId::new("launch-startup-fence"), None, None)
+        .expect("initial planning should reserve exact launch authority")
+        .manifest;
+    let authority_path = nimbus_network::LocalNetworkStateStore::authority_path_for(
+        &backend.config.network_state_root,
+    );
+    let authority_before =
+        std::fs::read(&authority_path).expect("reserved authority should be durable");
+    let operations_before = recorder.operations();
+    let manifest_before =
+        serde_json::to_vec(&manifest).expect("unstarted manifest should serialize");
+    inject_startup_reconciliation_failure(&mut backend);
+
+    let error = backend
+        .launch_manifest(&mut manifest, true)
+        .expect_err("retained startup failure must fence direct initial launch");
+
+    assert!(
+        error
+            .to_string()
+            .contains("refuses new durable work because startup reconciliation did not complete"),
+        "the retained startup diagnostic must remain primary: {error}"
+    );
+    assert_eq!(
+        serde_json::to_vec(&manifest).expect("fenced manifest should serialize"),
+        manifest_before,
+        "the launch fence must precede in-memory lifecycle mutation"
+    );
+    assert_eq!(
+        std::fs::read(&authority_path).expect("reserved authority should remain readable"),
+        authority_before,
+        "the launch fence must not mutate portable network authority"
+    );
+    assert_eq!(
+        recorder.operations(),
+        operations_before,
+        "the launch fence must precede allocator or provider effects"
+    );
+    assert!(!manifest.network_layout.netns_path.exists());
+    assert!(!manifest.network_layout.status_path.exists());
+}
+
+#[test]
 fn startup_reconciliation_failure_allows_exact_plan_only_status_cleanup() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let rootfs_path = temp_dir.path().join("plan-only-startup-fence-rootfs");

@@ -24,10 +24,17 @@ LAYOUT="crates/nimbus-sandbox/src/backends/oci/network/layout.rs"
 NETAVARK="crates/nimbus-sandbox/src/backends/oci/network/netavark.rs"
 NETWORK="crates/nimbus-sandbox/src/backends/oci/network.rs"
 CONTAINER_RT="crates/nimbus-sandbox/src/backends/container/runtime.rs"
+CONTAINER_NETWORK="crates/nimbus-sandbox/src/backends/container/runtime/network_launch.rs"
+CONTAINER_COMPOSITION="crates/nimbus-sandbox/src/backends/container/runtime/network_composition.rs"
+CONTAINER_MANIFEST="crates/nimbus-sandbox/src/backends/container/runtime/manifest.rs"
+CONTAINER_CLEANUP="crates/nimbus-sandbox/src/backends/container/runtime/execution_cleanup.rs"
 KRUN_VM="crates/nimbus-sandbox/src/backends/krun/vm.rs"
 KRUN_LIFECYCLE="crates/nimbus-sandbox/src/backends/krun/vm/lifecycle.rs"
 EGRESS_PROOF="crates/nimbus-sandbox/tests/krun_linux_egress.rs"
 REAPER="crates/nimbus-sandbox/src/backends/oci/network/reaper.rs"
+ATTACHMENT_LIFECYCLE="crates/nimbus-sandbox/src/backends/oci/network/attachment_lifecycle.rs"
+STARTUP_RECONCILIATION="crates/nimbus-sandbox/src/backends/oci/network/startup_reconciliation.rs"
+STARTUP_RECONCILIATION_TESTS="crates/nimbus-sandbox/src/backends/oci/network/startup_reconciliation/tests.rs"
 SCHEDULING="crates/nimbus-workloads/src/scheduling.rs"
 PLACEMENT="crates/nimbus-sandbox/src/backends/oci/network/placement.rs"
 KRUN_START="crates/nimbus-sandbox/src/backends/krun/vm/start.rs"
@@ -95,12 +102,14 @@ fi
 
 # -------- MTN3: tenant-threaded per-tenant segments (M1 dead) ---------------
 
-step 3 "MTN3 network_config(tenant) resolves a per-tenant segment in both backends"
-if grep -qE 'fn network_config\(&self, tenant' "${CONTAINER_RT}" \
-  && grep -qE 'fn network_config\(&self, tenant' "${KRUN_VM}"; then
-  pass "both backends thread tenant through network_config"
+step 3 "MTN3 tenant-qualified placement resolves a per-tenant segment in both backends"
+if grep -qE 'fn place_sandbox_config\(' "${CONTAINER_NETWORK}" \
+  && grep -qE 'fn place_sandbox_config\(' "${KRUN_VM}" \
+  && grep -qE 'self\.place_sandbox_config\(' "${CONTAINER_RT}" \
+  && grep -qE 'self\.place_sandbox_config\(' "${KRUN_START}"; then
+  pass "both backends thread tenant-qualified launch state through the shared placement seam"
 else
-  fail "network_config not tenant-parameterized" "expected fn network_config(&self, tenant ...) in both backends"
+  fail "tenant-qualified placement is not wired" "expected both backend adapters and production launch paths to call place_sandbox_config"
 fi
 
 step 4 "MTN3 per-tenant netavark network_id (no DEFAULT_NETWORK_ID alias)"
@@ -132,26 +141,26 @@ else
 fi
 
 step 7 "MTN4 the resolved network config is persisted in the manifest"
-if grep -rqE 'network_config: OciNetworkConfig' crates/nimbus-sandbox/src/backends/container/ \
-  && grep -rqE 'network_config: OciNetworkConfig' crates/nimbus-sandbox/src/backends/krun/; then
+if grep -qE 'network_config: Option<OciNetworkConfig>' "${CONTAINER_MANIFEST}" \
+  && grep -qE 'network_config: Option<OciNetworkConfig>' "${KRUN_VM}"; then
   pass "both manifests persist the resolved OciNetworkConfig (teardown never re-assigns)"
 else
-  fail "manifest does not persist the segment" "expected network_config: OciNetworkConfig on both manifests"
+  fail "manifest does not persist the segment" "expected network_config: Option<OciNetworkConfig> on both manifests"
 fi
 
 step 8 "MTN4 teardown saga WIRED in both backends (hold, quarantine, detach, release, finalize)"
-# Anchor on each backend's concrete call sites plus the shared reaper composition.
-# An aggregate tree search can pass when only one backend is wired.
-if has_all "${CONTAINER_RT}" '\.acquire\(' 'quarantine_network_segment_hold\(' \
-  'release_network_segment_hold\(' 'purge_legacy_nimbus0_once\(' \
-  && has_all "${KRUN_LIFECYCLE}" '\.acquire\(' 'quarantine_network_segment_hold\(' \
-  'release_network_segment_hold\(' 'purge_legacy_nimbus0_once\(' \
+# NNC5.1 moved lifecycle ordering into one shared deep module. Both actual
+# backends must enter that module; the reaper still owns bridge finalization.
+if has_all "${ATTACHMENT_LIFECYCLE}" 'fn detach_host_managed\(' \
+  'quarantine_network_segment_hold\(' 'release_network_segment_hold\(' \
+  && grep -qE '\.detach_host_managed\(' "${CONTAINER_CLEANUP}" \
+  && grep -qE '\.detach_host_managed\(' "${KRUN_LIFECYCLE}" \
   && has_all "${REAPER}" 'NetworkSegmentReleaseOutcome::CleanupPending' \
   'reap_bridge_interface\(segment\.network_interface\(\)\)' \
   'allocator\.finalize_release\(&cleanup\)'; then
-  pass "container + krun both hold/quarantine/release; shared reaper cleans all blocks and identity-fences finalization"
+  pass "container + krun enter one hold/quarantine/detach/release lifecycle; the reaper identity-fences finalization"
 else
-  fail "MTN4 teardown saga not wired into both backends" "expected hold/quarantine/release/legacy-purge call sites in each backend and reap/finalize composition in reaper.rs"
+  fail "MTN4 teardown saga not wired into both backends" "expected both backend detach adapters, shared quarantine/release lifecycle, and reap/finalize composition"
 fi
 
 # -------- MTN5: host-side inter-tenant isolation + DNS-off -----------------
@@ -164,13 +173,14 @@ else
   fail "MTN5 isolate not wired" "expected the isolate option in build_bridge_network + a test"
 fi
 
-step 10 "MTN5 DNS-off on BOTH backends (no in-subnet aardvark resolver)"
-if grep -qE 'enable_dns: false' "${CONTAINER_RT}" \
-  && grep -qE 'enable_dns: false' "${KRUN_VM}" \
-  && ! grep -qE 'enable_dns: true' "${CONTAINER_RT}" "${KRUN_VM}"; then
-  pass "both backends resolve names via the PEP (enable_dns=false)"
+step 10 "MTN5 DNS-off in the shared config used by BOTH backends"
+if grep -qE 'enable_dns: false' "${ATTACHMENT_LIFECYCLE}" \
+  && grep -qE 'AttachmentBackendKind::Container' "${CONTAINER_NETWORK}" \
+  && grep -qE 'AttachmentBackendKind::Krun' "${KRUN_VM}" \
+  && ! grep -qE 'enable_dns: true' "${ATTACHMENT_LIFECYCLE}" "${CONTAINER_NETWORK}" "${KRUN_VM}"; then
+  pass "the shared backend-qualified config disables the bridge resolver for both backends"
 else
-  fail "MTN5 DNS not off on both backends" "expected enable_dns: false in both network_config methods"
+  fail "MTN5 DNS not off on both backends" "expected one shared enable_dns=false config reached by Container and Krun adapters"
 fi
 
 step 11 "MTN5 two-tenant cross-tenant KVM deny-proof present (with positive control)"
@@ -187,17 +197,23 @@ fi
 
 # -------- MTN6: startup orphan quarantine -----------------------------------
 
-step 12 "MTN6 startup orphan quarantine WIRED into both backends' new()"
-# Netns absence is incomplete deletion evidence: startup may quarantine leaked
-# holds, but only the later evidence-aware reconciler may release/finalize them.
-if grep -qE 'reconcile_network_segment_orphans\(&config\.state_root' "${CONTAINER_RT}" \
-  && grep -qE 'reconcile_network_segment_orphans\(&config\.state_root' "${KRUN_VM}" \
-  && grep -qE 'fn reconcile_orphans' "${SEG}" \
-  && grep -qE 'reconcile_quarantines_holds_whose_netns_is_gone_and_keeps_live_ones' "${REAPER}" \
-  && grep -qE 'absence is only incomplete orphan evidence' "${REAPER}"; then
-  pass "both backends quarantine netns-absent holds without manufacturing provider-deletion proof"
+step 12 "MTN6 evidence-aware startup quarantine is wired into both backends"
+# Startup may apply exact desired/allocator quarantine, but it cannot treat a
+# filename as liveness or gain cleanup/release/finalization authority.
+if has_all "${STARTUP_RECONCILIATION}" 'collect_oci_orphan_evidence\(' \
+  'classify_oci_orphan_evidence\(' 'NetworkTransitionEvidence::AmbiguousEffect' \
+  'allocator\.quarantine\(' \
+  && grep -qE 'reconcile_startup_network_state\(' "${CONTAINER_COMPOSITION}" \
+  && grep -qE 'reconcile_startup_network_state\(' "${KRUN_VM}" \
+  && grep -qE 'missing_namespace_quarantines_exact_authorities_without_cleanup_or_reuse' \
+  "${STARTUP_RECONCILIATION_TESTS}" \
+  && ! grep -qE 'fn reconcile_orphans|reconcile_network_segment_orphans|live_netns_holds' \
+  "${NETWORK_SEGMENT}" "${SEG}" "${REAPER}" "${NETWORK}" \
+  && ! grep -qE 'release_network_segment_hold|finalize_release|reap_bridge_interface' \
+  "${STARTUP_RECONCILIATION}"; then
+  pass "both backends collect/classify once and apply only exact startup quarantine without filename or cleanup authority"
 else
-  fail "MTN6 orphan quarantine not wired" "expected both startup call sites + quarantine test + explicit incomplete-evidence guard"
+  fail "MTN6 orphan quarantine not wired" "expected shared evidence-aware startup quarantine, both backend injections, no-effect proof, and deleted filename authority"
 fi
 
 step 13 "MTN6 remaining-segment dimension on NodeCapacity (fail-closed placement)"
@@ -216,8 +232,8 @@ step 14 "MTN6 block-aware placement wired into BOTH backends (CAS-fenced growth)
 if grep -qE 'fn place_sandbox_on_block' "${PLACEMENT}" \
   && grep -qE 'placement_grows_onto_a_new_block' "${PLACEMENT}" \
   && grep -qE 'fn grow_block_if_current' "${NETWORK_SEGMENT}" \
-  && grep -qE 'place_sandbox_config\(&resolved_spec\.tenant_id' "${CONTAINER_RT}" \
-  && grep -qE 'place_sandbox_config\(&resolved_launch\.spec\.tenant_id' "${KRUN_START}"; then
+  && grep -qE 'self\.place_sandbox_config\(' "${CONTAINER_RT}" \
+  && grep -qE 'self\.place_sandbox_config\(' "${KRUN_START}"; then
   pass "place_sandbox_on_block + CAS-fenced growth contract + both planning call sites + grow test"
 else
   fail "MTN6 multi-block placement not wired" "expected place_sandbox_on_block + grow_block_if_current + both planning call sites + grow test"
