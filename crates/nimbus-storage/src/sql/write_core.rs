@@ -38,7 +38,32 @@ use crate::store::ResolvedWrite;
 /// visible.
 pub(crate) trait SqlWriteBackend {
     fn check_cancel(&self) -> Result<()>;
-    fn check_fault(&self, point: FaultPoint) -> Result<()>;
+
+    /// Name the durable journal records this transaction is about to make
+    /// visible, so the commit-sequence fault checks below carry that identity.
+    ///
+    /// Called from the shared apply and journal-batch paths only. A dialect must
+    /// not call it: identity that one dialect records and another forgets is the
+    /// drift these seams exist to prevent.
+    fn note_durable_records_for_fault(&mut self, records: &[TenantEventRecord]);
+    /// The records recorded by [`SqlWriteBackend::note_durable_records_for_fault`],
+    /// empty for a transaction that materializes no journal record.
+    fn durable_records_for_fault(&self) -> &[TenantEventRecord];
+    /// The dialect's fault check, carrying record identity through to the
+    /// injector.
+    fn check_fault_for_records(
+        &self,
+        point: FaultPoint,
+        records: &[TenantEventRecord],
+    ) -> Result<()>;
+
+    /// The commit-sequence fault check.
+    ///
+    /// Provided, and deliberately so: composing it here is what makes every
+    /// dialect thread identical identity. Do not override it in a dialect.
+    fn check_fault(&self, point: FaultPoint) -> Result<()> {
+        self.check_fault_for_records(point, self.durable_records_for_fault())
+    }
     /// Reach the visibility boundary. PostgreSQL and MySQL issue `COMMIT` on
     /// the session; the libsql replica consumes its owned `Transaction`.
     fn commit_transaction(&mut self) -> Result<()>;
@@ -382,6 +407,10 @@ pub(crate) fn sql_commit<B: SqlWriteBackend>(mut backend: B) -> Result<Option<Co
     // caller must assume landed. Gating this check on `commit.is_some()` was
     // tried and reverted; see the Step 3 section of
     // docs/private/plans/proof/storage-unification/suc3/facade.md.
+    //
+    // A fault targeted at one specific durable batch discriminates on the
+    // records this transaction carries, not on whether it reached this point;
+    // see `SqlWriteBackend::note_durable_records_for_fault`.
     backend.check_fault(FaultPoint::StorageCommitAfterVisibilityBeforeReturn)?;
     backend.after_visibility(commit.as_ref());
     Ok(commit)

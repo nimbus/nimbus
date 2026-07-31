@@ -47,12 +47,16 @@ impl PostgresWriteTransaction {
             })
                 as crate::sql::write_pipeline::OrderedSqlFuture<'_>],
         ))?;
-        self.provider
-            .fault_injector
-            .check_for_tenant(FaultPoint::JournalAppendBeforeDurableFlush, &self.tenant_id)?;
-        self.provider
-            .fault_injector
-            .check_for_tenant(FaultPoint::JournalFlushBeforeVisibility, &self.tenant_id)?;
+        self.provider.fault_injector.check_for_tenant(
+            FaultPoint::JournalAppendBeforeDurableFlush,
+            &self.tenant_id,
+            records,
+        )?;
+        self.provider.fault_injector.check_for_tenant(
+            FaultPoint::JournalFlushBeforeVisibility,
+            &self.tenant_id,
+            records,
+        )?;
         self.notification.journal_changed = true;
         Ok(())
     }
@@ -126,12 +130,16 @@ impl PostgresWriteTransaction {
             check_cancel,
             [append, apply],
         ))?;
-        self.provider
-            .fault_injector
-            .check_for_tenant(FaultPoint::JournalAppendBeforeDurableFlush, &self.tenant_id)?;
-        self.provider
-            .fault_injector
-            .check_for_tenant(FaultPoint::JournalFlushBeforeVisibility, &self.tenant_id)?;
+        self.provider.fault_injector.check_for_tenant(
+            FaultPoint::JournalAppendBeforeDurableFlush,
+            &self.tenant_id,
+            records,
+        )?;
+        self.provider.fault_injector.check_for_tenant(
+            FaultPoint::JournalFlushBeforeVisibility,
+            &self.tenant_id,
+            records,
+        )?;
         self.notification.journal_changed = true;
         self.record_durable_schema_change_effects(changes_schema_cache);
         Ok(())

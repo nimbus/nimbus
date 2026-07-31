@@ -204,3 +204,201 @@ fn shadow_materializer_rejects_corrupted_manifest_recovery_input() {
         .expect_err("corrupted manifest should be rejected");
     assert!(matches!(error, Error::InvalidInput(message) if message.contains("pending count")));
 }
+
+/// Records what every fault-checked commit boundary names as the journal
+/// records it is making durable.
+#[derive(Default)]
+struct DurableRecordFaultRecorder {
+    checks: Mutex<Vec<(FaultPoint, usize)>>,
+}
+
+impl DurableRecordFaultRecorder {
+    fn take(&self) -> Vec<(FaultPoint, usize)> {
+        std::mem::take(&mut *self.checks.lock().expect("fault recorder should lock"))
+    }
+}
+
+impl FaultInjector for DurableRecordFaultRecorder {
+    fn check(&self, point: FaultPoint) -> nimbus_core::Result<()> {
+        self.checks
+            .lock()
+            .expect("fault recorder should lock")
+            .push((point, 0));
+        Ok(())
+    }
+
+    fn check_durable_records(
+        &self,
+        point: FaultPoint,
+        records: &[TenantEventRecord],
+    ) -> nimbus_core::Result<()> {
+        self.checks
+            .lock()
+            .expect("fault recorder should lock")
+            .push((point, records.len()));
+        Ok(())
+    }
+}
+
+fn journal_record(sequence: u64, table: &str, id: &str) -> TenantEventRecord {
+    let document = sample_document(table, id);
+    TenantEventRecord::new(
+        SequenceNumber(sequence),
+        Timestamp(sequence),
+        vec![WriteOp {
+            table: TableName::new(table).expect("table name should be valid"),
+            table_id: TableId::try_from(format!("{table}-id")).expect("table id should be valid"),
+            op_type: WriteOpType::Insert,
+            doc_id: document.id.clone(),
+            resource_path_binding: None,
+            trigger_write_origin: None,
+            previous: None,
+            current: Some(document),
+        }],
+        None,
+    )
+    .expect("journal record should build")
+}
+
+/// The FU2 invariant, exercised through the product rather than through the
+/// harness: durable-journal recovery reaches the very same commit-sequence
+/// fault points as a client batch, so it must name no durable records there.
+/// A replay makes nothing durable — whatever appended those records already
+/// did — and a records-scoped one-shot fault armed for a later batch would
+/// otherwise be consumed by the replay of an earlier one. See
+/// `crate::DurableApplyKind`.
+fn exercise_replay_names_no_durable_records<S>(store: S, recorder: &DurableRecordFaultRecorder)
+where
+    S: crate::DurableJournal,
+{
+    let pending = [
+        journal_record(1, "fu2_replay", "alpha"),
+        journal_record(2, "fu2_replay", "beta"),
+    ];
+    store
+        .append_durable_records_batch(&pending)
+        .expect("durable append should succeed");
+    let appended = recorder.take();
+    assert!(
+        appended
+            .iter()
+            .any(|(_, records)| *records == pending.len()),
+        "the append is what makes these records durable, so it must name them: {appended:?}"
+    );
+
+    assert_eq!(
+        store
+            .recover_durable_journal()
+            .expect("recovery should apply the pending tail"),
+        crate::JournalProgress {
+            durable_head: SequenceNumber(2),
+            applied_head: SequenceNumber(2),
+        }
+    );
+    let replayed = recorder.take();
+    assert!(
+        !replayed.is_empty(),
+        "recovery must still reach the commit-sequence fault points, or this test proves nothing"
+    );
+    assert!(
+        replayed.iter().all(|(_, records)| *records == 0),
+        "replay re-applies already-durable records and must name none: {replayed:?}"
+    );
+
+    let client_batch = [journal_record(3, "fu2_replay", "gamma")];
+    store
+        .apply_durable_records_batch(&client_batch)
+        .expect("client batch should append and apply");
+    let applied = recorder.take();
+    assert!(
+        applied.iter().any(|(point, records)| *point
+            == FaultPoint::StorageCommitAfterVisibilityBeforeReturn
+            && *records == client_batch.len()),
+        "a client batch makes its records durable and must name them at the boundary a lost \
+         acknowledgement is injected from: {applied:?}"
+    );
+}
+
+#[test]
+fn redb_journal_replay_names_no_durable_records() {
+    let recorder = Arc::new(DurableRecordFaultRecorder::default());
+    let store = TenantStore::create_in_memory_with_simulation(
+        Arc::new(ManualWallClock::new(Timestamp(0))),
+        recorder.clone(),
+    )
+    .expect("redb store should open");
+    exercise_replay_names_no_durable_records(store, &recorder);
+}
+
+#[test]
+fn memory_journal_replay_names_no_durable_records() {
+    let recorder = Arc::new(DurableRecordFaultRecorder::default());
+    let store = MemoryTenantStore::with_simulation(
+        Arc::new(ManualWallClock::new(Timestamp(0))),
+        recorder.clone(),
+    );
+    exercise_replay_names_no_durable_records(store, &recorder);
+}
+
+/// The admission-side counterpart to the replay invariant: a deduplicated
+/// scheduled execution reaches the commit-sequence fault points but
+/// materializes nothing durable, so it must name no records there. Only the
+/// memory backend needs this test — the SQL core's dedup returns
+/// `SkippedDuplicateExecution` before `note_durable_records_for_fault`.
+#[test]
+fn memory_deduplicated_prepared_write_names_no_durable_records() {
+    let recorder = Arc::new(DurableRecordFaultRecorder::default());
+    let store = MemoryTenantStore::with_simulation(
+        Arc::new(ManualWallClock::new(Timestamp(0))),
+        recorder.clone(),
+    );
+
+    let admitted = journal_record(1, "fu2_dedup", "alpha");
+    assert!(
+        store
+            .apply_prepared_write_batch(&admitted, &[], Some("fu2-exec"))
+            .expect("first delivery should commit")
+            .is_some(),
+        "the first delivery of a scheduled execution must commit"
+    );
+    let first = recorder.take();
+    assert!(
+        first.iter().any(|(point, records)| *point
+            == FaultPoint::StorageCommitAfterVisibilityBeforeReturn
+            && *records == 1),
+        "the admitted delivery materializes its record and must name it: {first:?}"
+    );
+
+    let duplicate = journal_record(2, "fu2_dedup", "beta");
+    assert!(
+        store
+            .apply_prepared_write_batch(&duplicate, &[], Some("fu2-exec"))
+            .expect("a duplicate delivery is skipped, not an error")
+            .is_none(),
+        "the duplicate delivery must be deduplicated"
+    );
+    let skipped = recorder.take();
+    assert!(
+        !skipped.is_empty(),
+        "the skipped delivery must still reach the commit-sequence fault points, or this test \
+         proves nothing"
+    );
+    assert!(
+        skipped.iter().all(|(_, records)| *records == 0),
+        "a deduplicated scheduled execution makes nothing durable and must name no records: \
+         {skipped:?}"
+    );
+}
+
+#[test]
+fn sqlite_journal_replay_names_no_durable_records() {
+    let directory = tempdir().expect("temp dir should create");
+    let recorder = Arc::new(DurableRecordFaultRecorder::default());
+    let store = SqliteTenantStore::open_with_simulation(
+        directory.path().join("fu2-replay.sqlite3"),
+        Arc::new(ManualWallClock::new(Timestamp(0))),
+        recorder.clone(),
+    )
+    .expect("sqlite store should open");
+    exercise_replay_names_no_durable_records(store, &recorder);
+}

@@ -188,7 +188,7 @@ impl MemoryTenantStore {
                 "prepared write batch must contain at least one document write".to_string(),
             ));
         }
-        self.transact(|state| {
+        self.transact_admitted_durable_record(record, |state| {
             let mut events = Vec::new();
             if !state.begin_scheduled_execution(scheduled_execution_id, &mut events) {
                 return Ok(None);

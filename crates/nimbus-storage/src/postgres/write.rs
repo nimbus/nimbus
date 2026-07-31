@@ -13,6 +13,7 @@ use crate::sql::store_core::{
     SqlDurableJournalStore, SqlStoreCore, SqlWriteTransactionCore,
     sql_store_append_durable_records_batch, sql_store_apply_durable_records_batch,
     sql_store_core_facade, sql_store_fenced_append_and_apply_durable_records_batch_cancellable,
+    sql_store_replay_durable_records_batch,
 };
 use crate::sql::write_core::SqlDurableJournalTransaction;
 use crate::sql::write_pipeline::SqlWritePipelineMetrics;
@@ -136,6 +137,10 @@ impl SqlStoreCore for PostgresTenantStore {
 
     fn apply_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
         sql_store_apply_durable_records_batch(self, records)
+    }
+
+    fn replay_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
+        sql_store_replay_durable_records_batch(self, records)
     }
 
     fn fenced_append_and_apply_durable_records_batch_cancellable<Check>(
@@ -375,6 +380,7 @@ impl PostgresWriteTransaction {
             commit_writes: Vec::new(),
             tenant_events: Vec::new(),
             prepared_record: None,
+            durable_records_for_fault: Vec::new(),
             trigger_write_origin: None,
             commit_timestamp: None,
             notification: PendingPostgresNotification::default(),
@@ -1234,10 +1240,22 @@ impl crate::sql::write_core::SqlWriteBackend for PostgresWriteTransaction {
         PostgresWriteTransaction::check_cancel(self)
     }
 
-    fn check_fault(&self, point: FaultPoint) -> Result<()> {
+    fn note_durable_records_for_fault(&mut self, records: &[TenantEventRecord]) {
+        self.durable_records_for_fault = records.to_vec();
+    }
+
+    fn durable_records_for_fault(&self) -> &[TenantEventRecord] {
+        &self.durable_records_for_fault
+    }
+
+    fn check_fault_for_records(
+        &self,
+        point: FaultPoint,
+        records: &[TenantEventRecord],
+    ) -> Result<()> {
         self.provider
             .fault_injector
-            .check_for_tenant(point, &self.tenant_id)
+            .check_for_tenant(point, &self.tenant_id, records)
     }
 
     fn commit_transaction(&mut self) -> Result<()> {

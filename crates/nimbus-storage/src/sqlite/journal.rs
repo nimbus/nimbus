@@ -7,6 +7,7 @@ use super::config::{
 };
 use super::*;
 use crate::keys::{document_path_key, resource_locator_key};
+use crate::simulation::DurableApplyKind;
 use crate::sqlite::document_versions::{
     record_document_versions_for_events_in_conn, record_document_versions_for_writes_in_conn,
 };
@@ -262,7 +263,7 @@ impl SqliteTenantStore {
         observe_sqlite_cached_statement(&self.path, SqliteWriteStatementConcept::NextSequenceWrite);
         put_metadata_in_conn(&conn, NEXT_SEQUENCE_KEY, &encode_u64(next))?;
         self.fault_injector
-            .check(FaultPoint::JournalAppendBeforeDurableFlush)?;
+            .check_durable_records(FaultPoint::JournalAppendBeforeDurableFlush, records)?;
         #[cfg(any(test, feature = "test-hooks"))]
         let commit_started = std::time::Instant::now();
         conn.execute_batch("COMMIT").map_err(map_sqlite_error)?;
@@ -270,14 +271,29 @@ impl SqliteTenantStore {
         observe_sqlite_foreground_commit(&self.path, &conn, commit_started.elapsed());
         self.release_writer_connection(conn);
         self.fault_injector
-            .check(FaultPoint::JournalFlushBeforeVisibility)?;
+            .check_durable_records(FaultPoint::JournalFlushBeforeVisibility, records)?;
         Ok(())
     }
 
     pub fn apply_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
+        self.apply_durable_records_batch_as(records, DurableApplyKind::ClientBatch)
+    }
+
+    /// See [`DurableApplyKind::JournalReplay`]: recovery re-applies records that
+    /// are already durable, so this boundary names none.
+    pub fn replay_durable_records_batch(&self, records: &[TenantEventRecord]) -> Result<()> {
+        self.apply_durable_records_batch_as(records, DurableApplyKind::JournalReplay)
+    }
+
+    fn apply_durable_records_batch_as(
+        &self,
+        records: &[TenantEventRecord],
+        kind: DurableApplyKind,
+    ) -> Result<()> {
         if records.is_empty() {
             return Ok(());
         }
+        let fault_records = kind.newly_durable_records(records);
 
         let schema_cache_dirty = records.iter().any(durable_record_changes_schema_cache);
         let conn = self.acquire_writer_connection()?;
@@ -336,7 +352,7 @@ impl SqliteTenantStore {
             put_metadata_in_conn(&conn, APPLIED_SEQUENCE_KEY, &encode_u64(applied_head))?;
         }
         self.fault_injector
-            .check(FaultPoint::StorageCommitBeforeVisibility)?;
+            .check_durable_records(FaultPoint::StorageCommitBeforeVisibility, fault_records)?;
         #[cfg(any(test, feature = "test-hooks"))]
         let commit_started = std::time::Instant::now();
         conn.execute_batch("COMMIT").map_err(map_sqlite_error)?;
@@ -346,8 +362,10 @@ impl SqliteTenantStore {
             self.replace_cached_schema(load_schema_from_conn(&conn)?)?;
         }
         self.release_writer_connection(conn);
-        self.fault_injector
-            .check(FaultPoint::StorageCommitAfterVisibilityBeforeReturn)?;
+        self.fault_injector.check_durable_records(
+            FaultPoint::StorageCommitAfterVisibilityBeforeReturn,
+            fault_records,
+        )?;
         Ok(())
     }
 
@@ -358,7 +376,7 @@ impl SqliteTenantStore {
         }
         let from = SequenceNumber(progress.applied_head.0.saturating_add(1));
         let pending = self.read_durable_journal_from(from)?;
-        self.apply_durable_records_batch(&pending)?;
+        self.replay_durable_records_batch(&pending)?;
         self.journal_progress()
     }
 

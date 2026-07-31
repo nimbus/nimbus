@@ -1164,11 +1164,23 @@ fn ppsc_shrinker_retains_minimal_ordered_failure() {
     ));
 }
 
+fn durable_batch(sequence: u64) -> Vec<nimbus_core::TenantEventRecord> {
+    vec![
+        nimbus_core::TenantEventRecord::barrier(
+            nimbus_core::SequenceNumber(sequence),
+            Timestamp(sequence),
+            format!("ppsc-fault-batch-{sequence}"),
+        )
+        .expect("barrier record should build"),
+    ]
+}
+
 #[test]
 fn ppsc_storage_acknowledgement_loss_is_tenant_scoped_and_one_shot() {
     let injector = PpscStorageFaultInjector::new();
     let target = TenantId::new("ppsc-fault-target").expect("target tenant should build");
     let peer = TenantId::new("ppsc-fault-peer").expect("peer tenant should build");
+    let batch = durable_batch(1);
     injector
         .arm(target.clone(), PpscInjectedFault::AcknowledgementLoss)
         .expect("acknowledgement loss should arm");
@@ -1177,12 +1189,17 @@ fn ppsc_storage_acknowledgement_loss_is_tenant_scoped_and_one_shot() {
         .check(FaultPoint::StorageCommitAfterVisibilityBeforeReturn)
         .expect("an unscoped check must not consume a tenant arm");
     injector
-        .check_for_tenant(FaultPoint::StorageCommitAfterVisibilityBeforeReturn, &peer)
+        .check_for_tenant(
+            FaultPoint::StorageCommitAfterVisibilityBeforeReturn,
+            &peer,
+            &batch,
+        )
         .expect("peer work must not consume the target tenant's arm");
     let error = injector
         .check_for_tenant(
             FaultPoint::StorageCommitAfterVisibilityBeforeReturn,
             &target,
+            &batch,
         )
         .expect_err("the target tenant's acknowledgement should be lost once");
     assert_eq!(error.storage_kind(), Some(StorageErrorKind::Transient));
@@ -1190,6 +1207,7 @@ fn ppsc_storage_acknowledgement_loss_is_tenant_scoped_and_one_shot() {
         .check_for_tenant(
             FaultPoint::StorageCommitAfterVisibilityBeforeReturn,
             &target,
+            &batch,
         )
         .expect("the one-shot arm must disarm after its first failure");
 
@@ -1215,21 +1233,85 @@ fn ppsc_storage_acknowledgement_loss_is_tenant_scoped_and_one_shot() {
     );
 }
 
+/// The FU2 regression: a same-tenant boundary that makes no durable record
+/// reaches the very same commit-sequence fault point at the very same time as
+/// the batch the scenario armed. Before record identity reached the fault
+/// interface, whichever arrived first consumed the one-shot arm — the durable
+/// batch then committed clean and the seeded differential asserted a crash that
+/// never happened.
+///
+/// Two kinds of boundary arrive that way. A commit that materializes no journal
+/// record at all (a schedule-only execution unit, a trigger outcome), and a
+/// durable-journal replay, which carries records but makes none of them durable
+/// — recovery re-applies what is already durable. Both present nothing here, so
+/// this one test covers both; that the product reports replay that way is
+/// pinned separately by `nimbus-storage`'s
+/// `*_journal_replay_names_no_durable_records`.
+#[test]
+fn ppsc_storage_acknowledgement_loss_is_not_consumed_by_a_record_less_commit() {
+    let injector = PpscStorageFaultInjector::new();
+    let tenant = TenantId::new("ppsc-arm-theft").expect("tenant should build");
+    injector
+        .arm(tenant.clone(), PpscInjectedFault::AcknowledgementLoss)
+        .expect("acknowledgement loss should arm");
+
+    for _ in 0..3 {
+        injector
+            .check_for_tenant(
+                FaultPoint::StorageCommitAfterVisibilityBeforeReturn,
+                &tenant,
+                &[],
+            )
+            .expect("a commit carrying no durable record must not consume the arm");
+    }
+    assert_eq!(
+        injector
+            .snapshot(&tenant, PpscInjectedFault::AcknowledgementLoss)
+            .expect("armed snapshot should load"),
+        PpscStorageFaultSnapshot {
+            active: true,
+            visits: 3,
+            fires: 0,
+        },
+        "deflected checks must stay visible as visits so arm theft cannot hide"
+    );
+
+    let error = injector
+        .check_for_tenant(
+            FaultPoint::StorageCommitAfterVisibilityBeforeReturn,
+            &tenant,
+            &durable_batch(7),
+        )
+        .expect_err("the durable batch is still the arm's target");
+    assert_eq!(error.storage_kind(), Some(StorageErrorKind::Transient));
+    assert_eq!(
+        injector
+            .snapshot(&tenant, PpscInjectedFault::AcknowledgementLoss)
+            .expect("fired snapshot should load"),
+        PpscStorageFaultSnapshot {
+            active: false,
+            visits: 4,
+            fires: 1,
+        }
+    );
+}
+
 #[test]
 fn ppsc_storage_provider_transient_targets_journal_previsibility_until_release() {
     let injector = PpscStorageFaultInjector::new();
     let tenant = TenantId::new("ppsc-provider-transient").expect("tenant should build");
+    let batch = durable_batch(1);
     injector
         .arm(tenant.clone(), PpscInjectedFault::ProviderTransient)
         .expect("provider transient should arm");
 
     injector
-        .check_for_tenant(FaultPoint::StorageCommitBeforeVisibility, &tenant)
+        .check_for_tenant(FaultPoint::StorageCommitBeforeVisibility, &tenant, &batch)
         .expect("a materialized-apply boundary must not consume the provider fault");
 
     for expected_fire in 1..=3 {
         let error = injector
-            .check_for_tenant(FaultPoint::JournalAppendBeforeDurableFlush, &tenant)
+            .check_for_tenant(FaultPoint::JournalAppendBeforeDurableFlush, &tenant, &batch)
             .unwrap_err();
         assert_eq!(error.storage_kind(), Some(StorageErrorKind::Transient));
         assert!(error.to_string().contains(&format!("fire {expected_fire}")));
@@ -1249,7 +1331,7 @@ fn ppsc_storage_provider_transient_targets_journal_previsibility_until_release()
         .release(&tenant, PpscInjectedFault::ProviderTransient)
         .expect("provider transient should release");
     injector
-        .check_for_tenant(FaultPoint::JournalAppendBeforeDurableFlush, &tenant)
+        .check_for_tenant(FaultPoint::JournalAppendBeforeDurableFlush, &tenant, &batch)
         .expect("released provider transient must stop failing");
     assert!(
         !injector

@@ -45,7 +45,7 @@ use crate::async_storage::{
 };
 use crate::commit_log::{deserialize_tenant_event_record, serialize_tenant_event_record};
 use crate::runtime_bridge::{bridge_tokio_runtime, bridge_tokio_runtime_local};
-use crate::simulation::{FaultInjector, NoopFaultInjector};
+use crate::simulation::{DurableApplyKind, FaultInjector, NoopFaultInjector};
 use crate::sqlite::replica_cache::rebuild_sqlite_indexes_from_loaded_schema;
 use crate::sqlite::{SQLITE_INIT_SQL, SqliteReadSnapshot, SqliteTenantStore, scheduled_run_at_key};
 use crate::store::{
@@ -377,9 +377,11 @@ pub struct LibsqlReplicaWriteTransaction {
     commit_writes: Vec<WriteOp>,
     tenant_events: Vec<TenantEventKind>,
     prepared_record: Option<TenantEventRecord>,
-    /// Kept after `prepared_record` is consumed so the commit-path fault checks
-    /// stay scoped to the record this transaction is making durable.
-    prepared_record_for_fault: Option<TenantEventRecord>,
+    /// Durable journal records this transaction is about to make visible,
+    /// retained past `take_prepared_record` so the commit-sequence fault checks
+    /// stay records-scoped. See
+    /// `SqlWriteBackend::note_durable_records_for_fault`.
+    durable_records_for_fault: Vec<TenantEventRecord>,
     trigger_write_origin: Option<TriggerWriteOrigin>,
     commit_timestamp: Option<Timestamp>,
     check_cancel: Box<dyn Fn() -> Result<()> + Send>,
@@ -446,9 +448,7 @@ impl LibsqlReplicaTenantStore {
     }
 
     pub fn check_fault(&self, point: crate::FaultPoint) -> Result<()> {
-        self.provider
-            .remote_fault_injector
-            .check_for_tenant(point, &self.tenant_id)
+        self.check_durable_records_fault(point, &[])
     }
 
     fn check_durable_records_fault(
@@ -458,7 +458,7 @@ impl LibsqlReplicaTenantStore {
     ) -> Result<()> {
         self.provider
             .remote_fault_injector
-            .check_for_durable_records(point, &self.tenant_id, records)
+            .check_for_tenant(point, &self.tenant_id, records)
     }
 
     pub fn now(&self) -> Timestamp {
@@ -1080,13 +1080,39 @@ impl LibsqlReplicaTenantStore {
             return Err(error);
         }
         tx.commit().await.map_err(map_libsql_error)?;
-        self.check_fault(crate::FaultPoint::StorageCommitAfterVisibilityBeforeReturn)?;
+        self.check_durable_records_fault(
+            crate::FaultPoint::StorageCommitAfterVisibilityBeforeReturn,
+            records,
+        )?;
+        Ok(())
+    }
+
+    /// Applies a remote durable batch and refreshes the replica cache.
+    ///
+    /// `kind` decides what this boundary reports to the fault interface; see
+    /// [`DurableApplyKind`].
+    pub(crate) fn apply_remote_batch(
+        &self,
+        records: &[TenantEventRecord],
+        kind: DurableApplyKind,
+    ) -> Result<()> {
+        if records.is_empty() {
+            return Ok(());
+        }
+        let records = records.to_vec();
+        let applied_head =
+            self.block_on(self.apply_remote_durable_records_batch(records.as_slice(), kind))?;
+        self.note_required_cache_sequence_with_cause(
+            applied_head,
+            LibsqlReplicaRefreshCause::DurableJournalReplay,
+        );
         Ok(())
     }
 
     async fn apply_remote_durable_records_batch(
         &self,
         records: &[TenantEventRecord],
+        kind: DurableApplyKind,
     ) -> Result<SequenceNumber> {
         let conn = self.remote_write_connection()?;
         let tx = conn
@@ -1130,7 +1156,10 @@ impl LibsqlReplicaTenantStore {
             put_remote_metadata_u64(&tx, APPLIED_SEQUENCE_KEY, applied_head.0).await?;
         }
         tx.commit().await.map_err(map_libsql_error)?;
-        self.check_fault(crate::FaultPoint::StorageCommitAfterVisibilityBeforeReturn)?;
+        self.check_durable_records_fault(
+            crate::FaultPoint::StorageCommitAfterVisibilityBeforeReturn,
+            kind.newly_durable_records(records),
+        )?;
         Ok(applied_head)
     }
 

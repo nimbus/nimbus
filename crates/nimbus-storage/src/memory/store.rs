@@ -1,6 +1,9 @@
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use nimbus_core::{Error, IdSource, Result, SystemIdSource, SystemWallClock, Timestamp, WallClock};
+use nimbus_core::{
+    Error, IdSource, Result, SystemIdSource, SystemWallClock, TenantEventRecord, Timestamp,
+    WallClock,
+};
 
 use crate::TenantWriteCommit;
 use crate::async_storage::BlockingWriteStore;
@@ -66,6 +69,18 @@ impl MemoryTenantStore {
         self.fault_injector.check(point)
     }
 
+    /// Fault check naming the durable journal records this boundary is making
+    /// visible, so a records-scoped injector can target one specific batch. The
+    /// store's tenant is already bound into `fault_injector`; see
+    /// `crate::simulation::tenant_scoped_fault_injector`.
+    pub(super) fn check_durable_records_fault(
+        &self,
+        point: FaultPoint,
+        records: &[TenantEventRecord],
+    ) -> Result<()> {
+        self.fault_injector.check_durable_records(point, records)
+    }
+
     pub(super) fn read_state(&self) -> Result<RwLockReadGuard<'_, MemoryState>> {
         self.state
             .read()
@@ -82,16 +97,59 @@ impl MemoryTenantStore {
         &self,
         apply: impl FnOnce(&mut MemoryState) -> Result<T>,
     ) -> Result<T> {
+        self.transact_durable_records(&[], apply)
+    }
+
+    /// [`MemoryTenantStore::transact`] for a transaction that makes durable
+    /// journal records visible. `records` reaches the commit-sequence fault
+    /// checks so a fault armed at one batch is not consumed by an unrelated
+    /// concurrent commit on the same tenant.
+    pub(super) fn transact_durable_records<T>(
+        &self,
+        records: &[TenantEventRecord],
+        apply: impl FnOnce(&mut MemoryState) -> Result<T>,
+    ) -> Result<T> {
         let mut state = self.write_state()?;
         let mut next = state.clone();
         let value = apply(&mut next)?;
-        self.fault_injector
-            .check(FaultPoint::StorageCommitBeforeVisibility)?;
+        self.check_durable_records_fault(FaultPoint::StorageCommitBeforeVisibility, records)?;
         next.revision = state.revision.saturating_add(1);
         *state = next;
         drop(state);
-        self.fault_injector
-            .check(FaultPoint::StorageCommitAfterVisibilityBeforeReturn)?;
+        self.check_durable_records_fault(
+            FaultPoint::StorageCommitAfterVisibilityBeforeReturn,
+            records,
+        )?;
+        Ok(value)
+    }
+
+    /// [`MemoryTenantStore::transact_durable_records`] for a write that only
+    /// materializes its record when the closure admits it. A deduplicated
+    /// scheduled execution returns `None` and makes nothing durable, so it must
+    /// name no records at the commit-sequence fault points — otherwise the
+    /// no-op consumes a one-shot fault armed for the batch that genuinely
+    /// commits. Mirrors the SQL core, where dedup returns before
+    /// `note_durable_records_for_fault`.
+    pub(super) fn transact_admitted_durable_record<T>(
+        &self,
+        record: &TenantEventRecord,
+        apply: impl FnOnce(&mut MemoryState) -> Result<Option<T>>,
+    ) -> Result<Option<T>> {
+        let mut state = self.write_state()?;
+        let mut next = state.clone();
+        let value = apply(&mut next)?;
+        let records: &[TenantEventRecord] = match &value {
+            Some(_) => std::slice::from_ref(record),
+            None => &[],
+        };
+        self.check_durable_records_fault(FaultPoint::StorageCommitBeforeVisibility, records)?;
+        next.revision = state.revision.saturating_add(1);
+        *state = next;
+        drop(state);
+        self.check_durable_records_fault(
+            FaultPoint::StorageCommitAfterVisibilityBeforeReturn,
+            records,
+        )?;
         Ok(value)
     }
 

@@ -55,24 +55,73 @@ impl FaultPoint {
 pub trait FaultInjector: Send + Sync {
     fn check(&self, point: FaultPoint) -> Result<()>;
 
-    /// Checks a fault at a tenant-owned storage boundary. Implementations that
-    /// do not need tenant targeting retain the ordinary process-wide behavior.
-    fn check_for_tenant(&self, point: FaultPoint, tenant_id: &TenantId) -> Result<()> {
-        let _ = tenant_id;
-        self.check(point)
-    }
-
-    /// Checks a fault for one durable-record transaction. This lets a fault
-    /// adapter discriminate the operation it owns without relying on timing or
-    /// visit counts while unrelated tenant work is concurrent.
-    fn check_for_durable_records(
+    /// Checks a fault at a tenant-owned storage boundary, naming the durable
+    /// journal records that boundary is about to make visible.
+    ///
+    /// `records` is empty whenever the boundary materializes no journal record:
+    /// an ordinary document commit, a schedule-only execution unit, a trigger
+    /// outcome. That emptiness is load-bearing, and it is the only signal that
+    /// separates those transactions from a durable batch — every one of them
+    /// reaches the same commit-sequence fault points, on the same tenant, at the
+    /// same time. A fault adapter that arms a one-shot fault at a specific
+    /// durable batch discriminates on `records` so an unrelated concurrent
+    /// transaction cannot consume the arm; see
+    /// `nimbus-testing`'s `PpscStorageFaultInjector`.
+    ///
+    /// Implementations that do not need tenant or record targeting retain the
+    /// ordinary process-wide behavior.
+    fn check_for_tenant(
         &self,
         point: FaultPoint,
         tenant_id: &TenantId,
         records: &[TenantEventRecord],
     ) -> Result<()> {
+        let _ = (tenant_id, records);
+        self.check(point)
+    }
+
+    /// The same check for a store that has already bound its tenant through
+    /// [`tenant_scoped_fault_injector`] and therefore holds no [`TenantId`] at
+    /// the call site — redb, SQLite and Memory reach their commit boundaries
+    /// this way.
+    fn check_durable_records(
+        &self,
+        point: FaultPoint,
+        records: &[TenantEventRecord],
+    ) -> Result<()> {
         let _ = records;
-        self.check_for_tenant(point, tenant_id)
+        self.check(point)
+    }
+}
+
+/// Why a durable batch is being applied, and therefore what the apply boundary
+/// is entitled to name as the records it made durable.
+///
+/// Every backend's `recover_durable_journal` has the same shape — read the
+/// pending records back out of the durable journal, then apply them — and so
+/// reaches the same commit-sequence fault points as a client batch. Without
+/// this distinction a replay looks identical to the batch a scenario armed a
+/// fault for, and consumes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DurableApplyKind {
+    /// A caller is waiting on this batch. The apply is what makes its records
+    /// visible, so they are what this boundary made durable.
+    ClientBatch,
+    /// Recovery re-applying records read back out of the durable journal.
+    /// Whatever appended them already made them durable, and no caller is
+    /// waiting to acknowledge them, so this boundary makes nothing durable.
+    JournalReplay,
+}
+
+impl DurableApplyKind {
+    /// The records this boundary makes durable, which is all the fault
+    /// interface may see. A replay makes none, so a fault armed for a client
+    /// batch cannot be consumed by a replay of an older one.
+    pub fn newly_durable_records(self, records: &[TenantEventRecord]) -> &[TenantEventRecord] {
+        match self {
+            Self::ClientBatch => records,
+            Self::JournalReplay => &[],
+        }
     }
 }
 
@@ -83,21 +132,24 @@ struct TenantScopedFaultInjector {
 
 impl FaultInjector for TenantScopedFaultInjector {
     fn check(&self, point: FaultPoint) -> Result<()> {
-        self.inner.check_for_tenant(point, &self.tenant_id)
+        self.inner.check_for_tenant(point, &self.tenant_id, &[])
     }
 
-    fn check_for_tenant(&self, point: FaultPoint, _tenant_id: &TenantId) -> Result<()> {
-        self.inner.check_for_tenant(point, &self.tenant_id)
-    }
-
-    fn check_for_durable_records(
+    fn check_for_tenant(
         &self,
         point: FaultPoint,
         _tenant_id: &TenantId,
         records: &[TenantEventRecord],
     ) -> Result<()> {
-        self.inner
-            .check_for_durable_records(point, &self.tenant_id, records)
+        self.inner.check_for_tenant(point, &self.tenant_id, records)
+    }
+
+    fn check_durable_records(
+        &self,
+        point: FaultPoint,
+        records: &[TenantEventRecord],
+    ) -> Result<()> {
+        self.inner.check_for_tenant(point, &self.tenant_id, records)
     }
 }
 

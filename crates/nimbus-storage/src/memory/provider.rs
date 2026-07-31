@@ -110,8 +110,11 @@ impl MemoryTenantProvider {
                 "tenant already exists: {tenant_id}"
             )));
         }
-        self.fault_injector
-            .check_for_tenant(crate::FaultPoint::TenantCreateBeforeRegistration, tenant_id)?;
+        self.fault_injector.check_for_tenant(
+            crate::FaultPoint::TenantCreateBeforeRegistration,
+            tenant_id,
+            &[],
+        )?;
         let tenant_faults = crate::simulation::tenant_scoped_fault_injector(
             self.fault_injector.clone(),
             tenant_id.clone(),

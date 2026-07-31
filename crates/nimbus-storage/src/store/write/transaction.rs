@@ -29,6 +29,7 @@ impl TenantWriteTransaction {
             commit_writes: Vec::new(),
             tenant_events: Vec::new(),
             prepared_record: None,
+            durable_records_for_fault: Vec::new(),
             check_cancel: Box::new(check_cancel),
         }
     }
@@ -71,6 +72,10 @@ impl TenantWriteTransaction {
             .filter(|event| !matches!(event, TenantEventKind::DocumentWrite { .. }))
             .cloned()
             .collect();
+        // Retained past `prepared_record.take()` in `commit_with_timestamp` so
+        // the commit-sequence fault checks can name the record this transaction
+        // is making durable.
+        self.durable_records_for_fault = vec![record.clone()];
         self.prepared_record = Some(record);
     }
 
@@ -100,6 +105,7 @@ impl TenantWriteTransaction {
         let commit_writes = std::mem::take(&mut self.commit_writes);
         let mut tenant_events = std::mem::take(&mut self.tenant_events);
         let prepared_record = self.prepared_record.take();
+        let durable_records_for_fault = std::mem::take(&mut self.durable_records_for_fault);
         let check_cancel = self.check_cancel;
 
         if !commit_writes.is_empty() {
@@ -124,7 +130,12 @@ impl TenantWriteTransaction {
                 tenant_events,
             )?)
         };
-        commit_write_txn_cancellable(&*fault_injector, || check_cancel.as_ref()(), write_txn)?;
+        commit_write_txn_cancellable(
+            &*fault_injector,
+            &durable_records_for_fault,
+            || check_cancel.as_ref()(),
+            write_txn,
+        )?;
         Ok(commit)
     }
 

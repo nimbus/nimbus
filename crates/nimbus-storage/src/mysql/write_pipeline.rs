@@ -180,12 +180,16 @@ impl MySqlWriteTransaction {
             }
             result?;
         }
-        self.provider
-            .fault_injector
-            .check_for_tenant(FaultPoint::JournalAppendBeforeDurableFlush, &self.tenant_id)?;
-        self.provider
-            .fault_injector
-            .check_for_tenant(FaultPoint::JournalFlushBeforeVisibility, &self.tenant_id)?;
+        self.provider.fault_injector.check_for_tenant(
+            FaultPoint::JournalAppendBeforeDurableFlush,
+            &self.tenant_id,
+            records,
+        )?;
+        self.provider.fault_injector.check_for_tenant(
+            FaultPoint::JournalFlushBeforeVisibility,
+            &self.tenant_id,
+            records,
+        )?;
         Ok(())
     }
 }

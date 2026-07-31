@@ -146,6 +146,11 @@ pub struct MySqlWriteTransaction {
     commit_writes: Vec<WriteOp>,
     tenant_events: Vec<TenantEventKind>,
     prepared_record: Option<TenantEventRecord>,
+    /// Durable journal records this transaction is about to make visible,
+    /// retained past `take_prepared_record` so the commit-sequence fault checks
+    /// stay records-scoped. See
+    /// `SqlWriteBackend::note_durable_records_for_fault`.
+    durable_records_for_fault: Vec<TenantEventRecord>,
     trigger_write_origin: Option<TriggerWriteOrigin>,
     commit_timestamp: Option<Timestamp>,
     schema_cache_changed: bool,
