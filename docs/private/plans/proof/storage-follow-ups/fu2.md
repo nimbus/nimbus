@@ -584,3 +584,26 @@ Tests: `crates/nimbus-testing/src/ppsc/faults.rs`, `ppsc/tests.rs`,
 `crates/nimbus-storage/src/simulation/tests.rs`,
 `crates/nimbus-storage/src/tests/recovery.rs`,
 `crates/nimbus-system/src/projection/reconciliation_tests.rs`.
+
+## Review finding: memory dedup path named an unmaterialized record
+
+The pre-merge autoreview surfaced (below its P0 threshold, verified real) that
+`MemoryTenantStore::apply_prepared_write_batch` — newly record-naming in this
+change — passed its prepared record to the commit-sequence fault points even
+when `begin_scheduled_execution` deduplicated the delivery and the closure
+returned `Ok(None)`. A deduplicated execution materializes nothing durable, so
+the no-op could consume a one-shot fault armed for the batch that genuinely
+commits: the same arm-theft class this change closes on the replay side. The
+SQL core was verified unaffected — its dedup returns
+`SkippedDuplicateExecution` before `note_durable_records_for_fault`.
+
+Fix: `transact_admitted_durable_record` in `memory/store.rs` names the record
+only when the closure admits the write. Regression test
+`memory_deduplicated_prepared_write_names_no_durable_records` in
+`tests/recovery.rs` asserts the admitted delivery names its record at
+`StorageCommitAfterVisibilityBeforeReturn` and the deduplicated delivery still
+reaches the fault points naming zero records.
+
+Post-fix battery: nimbus-storage (libsql,mysql,postgres) 448 passed / 2
+skipped; nimbus-testing 50/0; nimbus-engine 666 passed / 5 skipped; clippy
+`-D warnings` storage+testing clean; fmt clean.

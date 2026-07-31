@@ -340,6 +340,56 @@ fn memory_journal_replay_names_no_durable_records() {
     exercise_replay_names_no_durable_records(store, &recorder);
 }
 
+/// The admission-side counterpart to the replay invariant: a deduplicated
+/// scheduled execution reaches the commit-sequence fault points but
+/// materializes nothing durable, so it must name no records there. Only the
+/// memory backend needs this test — the SQL core's dedup returns
+/// `SkippedDuplicateExecution` before `note_durable_records_for_fault`.
+#[test]
+fn memory_deduplicated_prepared_write_names_no_durable_records() {
+    let recorder = Arc::new(DurableRecordFaultRecorder::default());
+    let store = MemoryTenantStore::with_simulation(
+        Arc::new(ManualWallClock::new(Timestamp(0))),
+        recorder.clone(),
+    );
+
+    let admitted = journal_record(1, "fu2_dedup", "alpha");
+    assert!(
+        store
+            .apply_prepared_write_batch(&admitted, &[], Some("fu2-exec"))
+            .expect("first delivery should commit")
+            .is_some(),
+        "the first delivery of a scheduled execution must commit"
+    );
+    let first = recorder.take();
+    assert!(
+        first.iter().any(|(point, records)| *point
+            == FaultPoint::StorageCommitAfterVisibilityBeforeReturn
+            && *records == 1),
+        "the admitted delivery materializes its record and must name it: {first:?}"
+    );
+
+    let duplicate = journal_record(2, "fu2_dedup", "beta");
+    assert!(
+        store
+            .apply_prepared_write_batch(&duplicate, &[], Some("fu2-exec"))
+            .expect("a duplicate delivery is skipped, not an error")
+            .is_none(),
+        "the duplicate delivery must be deduplicated"
+    );
+    let skipped = recorder.take();
+    assert!(
+        !skipped.is_empty(),
+        "the skipped delivery must still reach the commit-sequence fault points, or this test \
+         proves nothing"
+    );
+    assert!(
+        skipped.iter().all(|(_, records)| *records == 0),
+        "a deduplicated scheduled execution makes nothing durable and must name no records: \
+         {skipped:?}"
+    );
+}
+
 #[test]
 fn sqlite_journal_replay_names_no_durable_records() {
     let directory = tempdir().expect("temp dir should create");
