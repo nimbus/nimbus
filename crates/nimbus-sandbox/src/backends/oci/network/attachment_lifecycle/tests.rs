@@ -43,6 +43,7 @@ use crate::spec::SandboxPortBinding;
 
 mod attachment_readiness;
 mod authority;
+mod crash_recovery;
 mod durable_recovery;
 mod effect_order;
 mod real_adapters;
@@ -525,7 +526,7 @@ impl AttachmentPhaseObserver for MissingRegisteredLifetimeObserver<'_> {
     }
 }
 
-const ATTACH_PHASES: [AttachmentAttachPhase; 11] = [
+const ATTACH_PHASES: [AttachmentAttachPhase; 13] = [
     AttachmentAttachPhase::GenerationAuthenticated,
     AttachmentAttachPhase::LeasesAuthenticated,
     AttachmentAttachPhase::AuthorityAuthenticated,
@@ -533,10 +534,12 @@ const ATTACH_PHASES: [AttachmentAttachPhase; 11] = [
     AttachmentAttachPhase::NamespaceCreated,
     AttachmentAttachPhase::ListenerClaimsHeld,
     AttachmentAttachPhase::ProviderSetupComplete,
+    AttachmentAttachPhase::Publishing,
     AttachmentAttachPhase::ListenerBindingsActive,
     AttachmentAttachPhase::BackendPublicationComplete,
     AttachmentAttachPhase::LifetimeRegistered,
     AttachmentAttachPhase::AttachmentConfirmed,
+    AttachmentAttachPhase::Active,
 ];
 
 // Row 1: PlanOnly owns rendering only and never enters the attachment seam.

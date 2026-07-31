@@ -2,8 +2,8 @@ use std::net::Ipv4Addr;
 use std::sync::Mutex;
 
 use nimbus_network::{
-    DurableNetworkAttachmentState, LocalNetworkAttachmentAuthority, NetworkResourcePhase,
-    NetworkTransitionEvidence,
+    DurableNetworkAttachmentState, LocalNetworkAttachmentAuthority, NetworkAttachmentId,
+    NetworkResourcePhase, NetworkStateTransition, NetworkTransitionEvidence,
 };
 
 use super::*;
@@ -70,6 +70,35 @@ struct RecoveryHostEffects<'a> {
     operations: Mutex<Vec<RecoveryOperation>>,
     allocator: &'a RecordingSegmentAllocator,
     allocator_before_inspection: Vec<SegmentAllocatorOperation>,
+}
+
+struct CleanupFenceAtAttachmentConfirmedObserver<'a> {
+    authority: &'a LocalNetworkAttachmentAuthority,
+    tenant_id: &'a TenantId,
+    attachment_id: NetworkAttachmentId,
+}
+
+impl AttachmentPhaseObserver for CleanupFenceAtAttachmentConfirmedObserver<'_> {
+    fn checkpoint(&mut self, phase: AttachmentAttachPhase) -> Result<()> {
+        if phase == AttachmentAttachPhase::AttachmentConfirmed {
+            let record = self
+                .authority
+                .get(self.tenant_id, &self.attachment_id)
+                .expect("injected durable attachment should inspect")
+                .expect("injected durable attachment should remain present");
+            self.authority
+                .apply_transition(
+                    self.tenant_id,
+                    &NetworkStateTransition::new(
+                        record.resource().version().clone(),
+                        NetworkResourcePhase::CleanupPending,
+                        NetworkTransitionEvidence::AmbiguousEffect,
+                    ),
+                )
+                .expect("injected cleanup fence should persist");
+        }
+        Ok(())
+    }
 }
 
 impl<'a> RecoveryHostEffects<'a> {
@@ -545,6 +574,219 @@ fn corrupt_store_fails_before_provider_inspection_for_both_backend_routes() {
         assert!(
             !fixture.layout.netns_path.exists(),
             "{backend:?} must fail before namespace effects"
+        );
+    }
+}
+
+#[test]
+fn machine_forwarded_partial_publication_remains_fenced_for_nnc5_4a() {
+    for (row, phase, observation) in [
+        (
+            "absent-ready",
+            NetworkResourcePhase::Ready,
+            ObservationKind::Absent,
+        ),
+        (
+            "absent-publishing",
+            NetworkResourcePhase::Publishing,
+            ObservationKind::Absent,
+        ),
+        (
+            "absent-active",
+            NetworkResourcePhase::Active,
+            ObservationKind::Absent,
+        ),
+        (
+            "present-publishing",
+            NetworkResourcePhase::Publishing,
+            ObservationKind::Present,
+        ),
+        (
+            "unknown-publishing",
+            NetworkResourcePhase::Publishing,
+            ObservationKind::Unknown,
+        ),
+    ] {
+        let fixture = ContractFixture::new(
+            ContractBackend::Container,
+            &format!("machine-partial-{row}"),
+        );
+        let config = fixture.reserve_and_adopt();
+        seed_phase(&fixture, &config, phase);
+        let forwarder = OciMachinePortForwarderConfig::for_provider_instance(
+            "127.0.0.1",
+            1,
+            "/nnc54-machine-partial",
+            format!("nnc54-machine-partial-{row}"),
+            NetworkResourceGeneration::new(1),
+        )
+        .expect("machine forwarder identity should validate");
+        let adapter = fixture.machine_adapter(&config, &forwarder, &[], &[]);
+        let authority_path = fixture.attachments.authority_path();
+        let before =
+            std::fs::read(authority_path).expect("portable attachment authority should read");
+        let host = RecoveryHostEffects::new(&fixture, observation, fixture.allocator.operations());
+        let mut observer = ContractPhaseObserver::recording();
+
+        let error = adapter
+            .attach_with(
+                &fixture.lifecycle(),
+                AttachmentAttachAuthority::FreshLaunch(&fixture.claim),
+                &host,
+                &mut observer,
+                |_| panic!("NNC5.4 must not replay machine-forwarded publication effects"),
+            )
+            .expect_err("machine-forwarded partial publication belongs to NNC5.4a");
+
+        assert!(
+            error.to_string().contains("NNC5.4a")
+                && error.to_string().contains("machine-forwarded"),
+            "failure must name the deferred machine-forwarded owner: {error}"
+        );
+        assert_eq!(
+            std::fs::read(authority_path)
+                .expect("rejected machine recovery authority should remain readable"),
+            before,
+            "NNC5.4 must fail before mutating machine-forwarded partial publication"
+        );
+        assert_eq!(
+            host.operations(),
+            vec![RecoveryOperation::Inspect],
+            "rejected machine-forwarded recovery may inspect but cannot execute effects"
+        );
+    }
+}
+
+#[test]
+fn recovered_publication_active_transition_failure_compensates_effects() {
+    for backend in [ContractBackend::Container, ContractBackend::Krun] {
+        let fixture = ContractFixture::new(backend, "present-active-transition-failure");
+        let config = fixture.reserve_and_adopt();
+        seed_phase(&fixture, &config, NetworkResourcePhase::Publishing);
+        let host = RecoveryHostEffects::new(
+            &fixture,
+            ObservationKind::Present,
+            fixture.allocator.operations(),
+        );
+        let mut observer = CleanupFenceAtAttachmentConfirmedObserver {
+            authority: &fixture.attachments,
+            tenant_id: &fixture.tenant_id,
+            attachment_id: default_network_attachment_id(&fixture.sandbox_id),
+        };
+
+        let error = fixture
+            .host_adapter(backend, &config, &[], &[])
+            .attach_with(
+                &fixture.lifecycle(),
+                AttachmentAttachAuthority::FreshLaunch(&fixture.claim),
+                &host,
+                &mut observer,
+                |_| {
+                    host.record(RecoveryOperation::BackendPublication);
+                    Ok(())
+                },
+            )
+            .expect_err("the injected durable Active transition conflict must fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("illegal network resource transition"),
+            "{backend:?} must retain the durable transition failure as primary: {error}"
+        );
+        assert_eq!(
+            host.operations(),
+            vec![
+                RecoveryOperation::Inspect,
+                RecoveryOperation::BackendPublication,
+                RecoveryOperation::ProviderTeardown,
+                RecoveryOperation::NamespaceRemoved,
+            ],
+            "{backend:?} must compensate every acknowledged publication effect after the durable \
+             Active transition fails"
+        );
+        let final_record = fixture
+            .attachments
+            .get(
+                &fixture.tenant_id,
+                &default_network_attachment_id(&fixture.sandbox_id),
+            )
+            .expect("fenced attachment should inspect")
+            .expect("fenced attachment should remain durable");
+        assert_eq!(
+            final_record.resource().phase(),
+            NetworkResourcePhase::CleanupPending,
+            "{backend:?} must preserve the exact generation under a cleanup fence"
+        );
+    }
+}
+
+#[test]
+fn provider_present_publication_authenticates_auxiliary_listener_before_mutation() {
+    for backend in [ContractBackend::Container, ContractBackend::Krun] {
+        let fixture = ContractFixture::new(backend, "present-foreign-auxiliary");
+        let config = fixture.reserve_and_adopt();
+        seed_phase(&fixture, &config, NetworkResourcePhase::Publishing);
+        let gateway = bridge_gateway_addr(&config).expect("contract gateway should resolve");
+        let foreign_sandbox = SandboxId::new(format!("{}-foreign-auxiliary", fixture.sandbox_id));
+        let reserved =
+            fixture.reserve_auxiliary_listener_for(&foreign_sandbox, std::net::IpAddr::V4(gateway));
+        let auxiliary = reserved
+            .internal_listener
+            .as_ref()
+            .expect("foreign auxiliary listener should be reserved");
+        let host_string = gateway.to_string();
+        let adapter = backend.adapter(OciAttachmentInput {
+            workload_state_root: &fixture.layout.workload_state_root,
+            tenant_id: &fixture.tenant_id,
+            sandbox_id: &fixture.sandbox_id,
+            display_name: "NNC5.4 provider-present auxiliary substitution",
+            hostname: "nnc54-present-auxiliary",
+            bindings: &[],
+            leases: &[],
+            auxiliary_listener: Some(OciAttachmentAuxiliaryListener::egress_pep(
+                &auxiliary.lease,
+                &host_string,
+                auxiliary.port,
+            )),
+            layout: &fixture.layout,
+            config: &config,
+            launch_claim: Some(&fixture.claim),
+        });
+        let authority_path = fixture.attachments.authority_path();
+        let before =
+            std::fs::read(authority_path).expect("portable attachment authority should read");
+        let host = RecoveryHostEffects::new(
+            &fixture,
+            ObservationKind::Present,
+            fixture.allocator.operations(),
+        );
+        let mut observer = ContractPhaseObserver::recording();
+
+        let error = adapter
+            .attach_with(
+                &fixture.lifecycle(),
+                AttachmentAttachAuthority::FreshLaunch(&fixture.claim),
+                &host,
+                &mut observer,
+                |_| panic!("substituted auxiliary authority must fail before publication"),
+            )
+            .expect_err("provider-present recovery must authenticate the exact auxiliary listener");
+
+        assert!(
+            error.to_string().contains("rejected port lease"),
+            "{backend:?} must identify the crossed auxiliary authority: {error}"
+        );
+        assert_eq!(
+            std::fs::read(authority_path)
+                .expect("rejected auxiliary recovery authority should remain readable"),
+            before,
+            "{backend:?} must reject auxiliary substitution before portable mutation"
+        );
+        assert_eq!(
+            host.operations(),
+            vec![RecoveryOperation::Inspect],
+            "{backend:?} may inspect but cannot execute publication effects"
         );
     }
 }

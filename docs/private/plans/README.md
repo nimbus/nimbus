@@ -74,7 +74,7 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC5.3 complete; NNC5.3a
+- `nimbus-network-control-plane-plan.md` - `active; NNC5.4 complete; NNC5.4a
   in progress`. The Linux sovereignty tripwire is complete with a root-safe,
   raw-artifact-derived evidence contract, 70/70 deterministic tests, 62/62
   adversarial verifier cases, fully dispositioned full+narrow Sol reviews, and
@@ -137,8 +137,20 @@ extension-registry seam before the second concern edits `extensions.rs`.
   active-table and real-shape nft pin, listener lifetime, and PEP evidence.
   Its full review's four findings and sole narrow review's two findings have
   exact fail-before and corrected proofs; focused readiness passes 30/30,
-  sandbox passes 859/859 with 21 skips, and no third review ran. NNC5.3a now
-  audits complete machine-forwarded gvproxy/route/worker/listener evidence.
+  sandbox passes 859/859 with 21 skips, and no third review ran. NNC5.3a
+  completed the machine-forwarded gvproxy/route/worker/listener evidence.
+  NNC5.4 now proves real-process convergence at every named shared host-managed
+  attachment create/delete boundary for both Container and Krun. Its complete
+  120-child matrix derives exact attachment/version/association/epoch,
+  provider handle, IPAM, allocator, and listener fences from one synced
+  immutable pre-crash witness. The sole full Sol/xhigh/fast review found four
+  accepted defects and one source-rejected nonexistent phase; the one narrow
+  correction review found three accepted defects. All seven accepted findings
+  have exact fail-before and corrected proof. Durable recovery passes 6/6,
+  lifecycle 59 with five child skips, Sandbox 870/870 with 26 skips, live
+  verifier 21/21, adversarial mutations 101/101, and affected quality/docs
+  gates are green. No third review ran or is warranted.
+  Machine-forwarded batch ambiguity remains dependency-ordered NNC5.4a work.
   Cleanup, release, finalization, and reuse stay in NNC8.3. Machine forwarding obeys
   NNC5.2a's common lifecycle; runtime absence, workload status, readiness persistence,
   cleanup convergence, and inspect/restart policy stay in their named later

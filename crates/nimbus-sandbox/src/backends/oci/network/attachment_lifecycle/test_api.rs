@@ -138,6 +138,23 @@ impl OciAttachmentAdapter<'_> {
         lifecycle.detach_host_managed_with(&self.context, mode, host, before_provider_detach)
     }
 
+    pub(super) fn detach_host_managed_observed_with(
+        &self,
+        lifecycle: &OciAttachmentLifecycle<'_>,
+        mode: AttachmentTeardownMode,
+        host: &impl AttachmentHostEffects,
+        observer: &mut impl AttachmentDetachPhaseObserver,
+        before_provider_detach: impl FnOnce(AttachmentAuxiliaryDisposition) -> Result<()>,
+    ) -> AttachmentDetachResult {
+        lifecycle.detach_host_managed_observed_with(
+            &self.context,
+            mode,
+            host,
+            observer,
+            before_provider_detach,
+        )
+    }
+
     pub(crate) fn complete_injected_setup(
         &self,
         lifecycle: &OciAttachmentLifecycle<'_>,

@@ -28,6 +28,10 @@ pub(super) enum AttachmentProviderObservation {
     Present {
         assigned_ips: Vec<Ipv4Addr>,
     },
+    /// The exact provider attempt is durably detached and its status
+    /// projection is absent, but the persistent namespace artifact still
+    /// requires idempotent removal.
+    DetachedNamespacePending,
     ExactCleanupRequired,
     Unknown {
         reason: String,
@@ -50,6 +54,7 @@ pub(super) enum AttachmentAttachRecovery {
 pub(super) struct AttachmentDetachRecovery {
     pub(super) record: DurableNetworkAttachmentState,
     pub(super) provider_absent: bool,
+    pub(super) namespace_cleanup_required: bool,
     pub(super) already_terminal: bool,
 }
 
@@ -199,8 +204,13 @@ pub(super) fn inspect_provider(
                 | NetavarkProviderOperation::DetachedProjectionPending { .. } => {
                     AttachmentProviderObservation::ExactCleanupRequired
                 }
+                NetavarkProviderOperation::Detached
+                    if namespace_present && status_projection.is_none() =>
+                {
+                    AttachmentProviderObservation::DetachedNamespacePending
+                }
                 NetavarkProviderOperation::Reserved | NetavarkProviderOperation::Detached
-                    if !namespace_present =>
+                    if !namespace_present && status_projection.is_none() =>
                 {
                     AttachmentProviderObservation::Absent
                 }
@@ -356,6 +366,22 @@ pub(super) fn prepare_attach(
                 )),
             }
         }
+        AttachmentProviderObservation::DetachedNamespacePending => {
+            let fenced = mark_cleanup_pending(durable, &record);
+            match fenced {
+                Ok(_) => Err(recovery_error(
+                    phase,
+                    "provider is detached but namespace cleanup must finish before attach retry",
+                )),
+                Err(fence_error) => Err(recovery_error(
+                    phase,
+                    &format!(
+                        "provider is detached but namespace cleanup remains; cleanup fence also \
+                         failed: {fence_error}"
+                    ),
+                )),
+            }
+        }
         AttachmentProviderObservation::Unknown { reason } => {
             let fenced = mark_cleanup_pending(durable, &record);
             match fenced {
@@ -451,10 +477,12 @@ pub(super) fn prepare_detach(
             AttachmentProviderObservation::Absent => Ok(AttachmentDetachRecovery {
                 record,
                 provider_absent: true,
+                namespace_cleanup_required: false,
                 already_terminal: true,
             }),
             AttachmentProviderObservation::Present { .. }
             | AttachmentProviderObservation::PreparedSetup
+            | AttachmentProviderObservation::DetachedNamespacePending
             | AttachmentProviderObservation::ExactCleanupRequired
             | AttachmentProviderObservation::Unknown { .. } => Err(recovery_error(
                 phase,
@@ -462,8 +490,9 @@ pub(super) fn prepare_detach(
             )),
         };
     }
-    let provider_absent = match observation {
-        AttachmentProviderObservation::Absent => true,
+    let (provider_absent, namespace_cleanup_required) = match observation {
+        AttachmentProviderObservation::Absent => (true, false),
+        AttachmentProviderObservation::DetachedNamespacePending => (true, true),
         AttachmentProviderObservation::Present { .. }
         | AttachmentProviderObservation::PreparedSetup
         | AttachmentProviderObservation::ExactCleanupRequired => {
@@ -475,7 +504,7 @@ pub(super) fn prepare_detach(
                 )?;
             }
             record = durable.record_stable_handle(&record)?;
-            false
+            (false, false)
         }
         AttachmentProviderObservation::Unknown { reason } => {
             let _ = mark_cleanup_pending(durable, &record)?;
@@ -517,6 +546,7 @@ pub(super) fn prepare_detach(
     Ok(AttachmentDetachRecovery {
         record,
         provider_absent,
+        namespace_cleanup_required,
         already_terminal: false,
     })
 }

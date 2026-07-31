@@ -323,6 +323,27 @@ pub(super) fn load_container_ips(
         .collect()
 }
 
+#[cfg(test)]
+pub(super) fn load_released_container_ips(
+    authority: &OciIpamAuthority,
+    layout: &OciNetworkLayout,
+    config: &OciNetworkConfig,
+    sandbox_id: &SandboxId,
+) -> Result<Vec<Ipv4Addr>> {
+    let attachment_id = default_network_attachment_id(sandbox_id);
+    let state = read_ipam_state(authority, layout)?;
+    let released = state
+        .released_allocations
+        .get(attachment_id.as_str())
+        .ok_or_else(|| SandboxError::OperationFailed {
+            message: format!(
+                "failed to find released container IPs for attachment {}",
+                attachment_id.as_str()
+            ),
+        })?;
+    validate_ipam_generation(config, &attachment_id, released)
+}
+
 pub(super) fn load_container_ips_for_segment(
     authority: &OciIpamAuthority,
     layout: &OciNetworkLayout,

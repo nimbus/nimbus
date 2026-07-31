@@ -79,6 +79,7 @@ impl AttachmentBackendKind {
 mod active_reconciliation;
 mod attachment_readiness;
 mod authority;
+mod detach_release;
 mod host;
 mod machine_forwarded;
 mod plan;
@@ -480,10 +481,12 @@ pub(crate) enum AttachmentAttachPhase {
     NamespaceCreated,
     ListenerClaimsHeld,
     ProviderSetupComplete,
+    Publishing,
     ListenerBindingsActive,
     BackendPublicationComplete,
     LifetimeRegistered,
     AttachmentConfirmed,
+    Active,
 }
 
 trait AttachmentPhaseObserver {
@@ -496,6 +499,31 @@ impl AttachmentPhaseObserver for NoopAttachmentPhaseObserver {
     fn checkpoint(&mut self, _phase: AttachmentAttachPhase) -> Result<()> {
         Ok(())
     }
+}
+
+/// Ordered durable/effect boundaries in the shared host-managed detach saga.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AttachmentDetachPhase {
+    AttemptPrepared,
+    BackendWithdrawn,
+    SegmentQuarantined,
+    ListenerCleanupPrepared,
+    ProviderDetached,
+    NamespaceRemoved,
+    ListenersSettled,
+    IpamReleased,
+    SegmentReleased,
+    AttachmentTerminal,
+}
+
+trait AttachmentDetachPhaseObserver {
+    fn checkpoint(&mut self, phase: AttachmentDetachPhase);
+}
+
+struct NoopAttachmentDetachPhaseObserver;
+
+impl AttachmentDetachPhaseObserver for NoopAttachmentDetachPhaseObserver {
+    fn checkpoint(&mut self, _phase: AttachmentDetachPhase) {}
 }
 
 /// Deep OCI attachment composition over the already-earned local authorities.
@@ -680,17 +708,56 @@ impl<'a> OciAttachmentLifecycle<'a> {
             state::OciAttachmentDurableState::compile(self.attachments, context, association)?;
         let existing_record = durable.inspect()?;
         let provider_observation = host.inspect_provider(self.ipam, context);
-        if let Some(record) = existing_record
-            && record.resource().phase() == nimbus_network::NetworkResourcePhase::Active
-            && let recovery::AttachmentAttachRecovery::AlreadyActive { assigned_ips } =
-                recovery::prepare_attach(&durable, record, provider_observation.clone())?
-        {
-            self.authenticate_active_attach_authority(context, authority)?;
-            observer.checkpoint(AttachmentAttachPhase::AuthorityAuthenticated)?;
-            return self.reconcile_active_attachment(
+        if let Some(record) = existing_record.as_ref() {
+            self.authenticate_machine_forwarded_recovery_disposition(
                 context,
+                record,
+                &provider_observation,
+            )?;
+        }
+        if let Some(record) = existing_record.clone()
+            && matches!(
+                provider_observation,
+                recovery::AttachmentProviderObservation::ExactCleanupRequired
+                    | recovery::AttachmentProviderObservation::DetachedNamespacePending
+                    | recovery::AttachmentProviderObservation::Unknown { .. }
+            )
+        {
+            self.authenticate_attachment_recovery_authority(context, authority)?;
+            return match recovery::prepare_attach(&durable, record, provider_observation.clone()) {
+                Err(error) => Err(error),
+                Ok(_) => Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "{} attachment {} unexpectedly authorized create from cleanup-only \
+                         provider evidence",
+                        context.provider_label, context.sandbox_id
+                    ),
+                }),
+            };
+        }
+        if let Some(record) = existing_record
+            && matches!(
+                record.resource().phase(),
+                nimbus_network::NetworkResourcePhase::Provisioning
+                    | nimbus_network::NetworkResourcePhase::Ready
+                    | nimbus_network::NetworkResourcePhase::Publishing
+                    | nimbus_network::NetworkResourcePhase::Active
+            )
+            && matches!(
+                provider_observation,
+                recovery::AttachmentProviderObservation::Present { .. }
+            )
+        {
+            return self.recover_present_attachment(
+                context,
+                &durable,
+                active_reconciliation::PresentAttachmentRecovery {
+                    record,
+                    provider_observation,
+                    attach_authority: authority,
+                },
+                host,
                 observer,
-                assigned_ips,
                 after_provider_setup,
             );
         }
@@ -808,6 +875,15 @@ impl<'a> OciAttachmentLifecycle<'a> {
                 ));
             }
         };
+        if let Err(primary) = observer.checkpoint(AttachmentAttachPhase::Publishing) {
+            let _ = recovery::mark_cleanup_pending(&durable, &durable_record);
+            return Err(self.compensate_setup_failure_with(
+                context,
+                host,
+                netavark_lifetimes.take(),
+                primary,
+            ));
+        }
 
         if let Some(batch) = netavark_lifetimes.as_ref()
             && let Err(primary) = self.ports.activate_netavark_bindings_with_lifetimes(
@@ -898,110 +974,29 @@ impl<'a> OciAttachmentLifecycle<'a> {
                 primary,
             ));
         }
-        if let Err(primary) = recovery::mark_active(&durable, &durable_record) {
-            let _ = recovery::mark_cleanup_pending(&durable, &durable_record);
+        let active_record = match recovery::mark_active(&durable, &durable_record) {
+            Ok(record) => record,
+            Err(primary) => {
+                let _ = recovery::mark_cleanup_pending(&durable, &durable_record);
+                return Err(self.compensate_registered_failure(
+                    context,
+                    host,
+                    "durable active checkpoint",
+                    primary,
+                ));
+            }
+        };
+        if let Err(primary) = observer.checkpoint(AttachmentAttachPhase::Active) {
+            let _ = recovery::mark_cleanup_pending(&durable, &active_record);
             return Err(self.compensate_registered_failure(
                 context,
                 host,
-                "durable active checkpoint",
+                "active checkpoint",
                 primary,
             ));
         }
 
         Ok(assigned_ips)
-    }
-
-    fn authenticate_attach_port_authority(
-        &self,
-        context: &OciAttachmentContext<'_>,
-        attach_authority: AttachmentAttachAuthority<'_>,
-    ) -> Result<()> {
-        let port_authority: Result<()> = match attach_authority {
-            AttachmentAttachAuthority::FreshLaunch(claim) => {
-                let Some(context_claim) = context.launch_claim else {
-                    return Err(SandboxError::OperationFailed {
-                        message: format!(
-                            "{} attachment {} is missing its fresh launch reservation claim",
-                            context.provider_label, context.sandbox_id
-                        ),
-                    });
-                };
-                if context_claim != claim || &context.config.reservation_claim != claim {
-                    return Err(SandboxError::OperationFailed {
-                        message: format!(
-                            "{} attachment {} launch reservation claim does not match its exact \
-                             attachment generation",
-                            context.provider_label, context.sandbox_id
-                        ),
-                    });
-                }
-                self.ports
-                    .require_never_bound_launch_batch(context.leases, claim)?;
-                if let Some(auxiliary) = context.auxiliary_listener {
-                    self.ports.require_internal_listener_authority(
-                        context.tenant_id,
-                        context.sandbox_id,
-                        auxiliary.bind_addr()?,
-                        auxiliary.request(),
-                    )?;
-                    self.ports.require_never_bound_launch_batch(
-                        std::slice::from_ref(auxiliary.request()),
-                        claim,
-                    )?;
-                }
-                Ok(())
-            }
-            AttachmentAttachAuthority::RestartRetained => {
-                if context.launch_claim.is_some() {
-                    return Err(SandboxError::OperationFailed {
-                        message: format!(
-                            "{} attachment {} restart still carries a launch reservation claim",
-                            context.provider_label, context.sandbox_id
-                        ),
-                    });
-                }
-                let publication_state = if context.publication.owns_netavark_bindings() {
-                    self.ports.classify_netavark_cleanup_batch(
-                        context.tenant_id,
-                        context.sandbox_id,
-                        context.bindings,
-                        context.leases,
-                        None,
-                    )?
-                } else {
-                    self.ports.classify_machine_cleanup_batch(
-                        context.tenant_id,
-                        context.sandbox_id,
-                        context.bindings,
-                        context.leases,
-                    )?
-                };
-                if publication_state != LaunchPortBatchState::RestartRetained
-                    && !(context.leases.is_empty()
-                        && publication_state == LaunchPortBatchState::TerminalNoEffect)
-                {
-                    return Err(SandboxError::OperationFailed {
-                        message: format!(
-                            "{} attachment {} restart requires confirmed-stop publication \
-                             authority before effects, got {publication_state:?}",
-                            context.provider_label, context.sandbox_id
-                        ),
-                    });
-                }
-                if let Some(auxiliary) = context.auxiliary_listener {
-                    self.ports.require_restart_retained_internal_listener(
-                        context.tenant_id,
-                        context.sandbox_id,
-                        auxiliary.bind_addr()?,
-                        auxiliary.request(),
-                        OciPortProvider::EgressPep,
-                    )?;
-                }
-                Ok(())
-            }
-        };
-        port_authority?;
-        Ok(())
     }
 
     fn compensate_registered_failure(
@@ -1045,6 +1040,23 @@ impl<'a> OciAttachmentLifecycle<'a> {
         context: &OciAttachmentContext<'_>,
         mode: AttachmentTeardownMode,
         host: &impl AttachmentHostEffects,
+        before_provider_detach: impl FnOnce(AttachmentAuxiliaryDisposition) -> Result<()>,
+    ) -> AttachmentDetachResult {
+        self.detach_host_managed_observed_with(
+            context,
+            mode,
+            host,
+            &mut NoopAttachmentDetachPhaseObserver,
+            before_provider_detach,
+        )
+    }
+
+    fn detach_host_managed_observed_with(
+        &self,
+        context: &OciAttachmentContext<'_>,
+        mode: AttachmentTeardownMode,
+        host: &impl AttachmentHostEffects,
+        observer: &mut impl AttachmentDetachPhaseObserver,
         before_provider_detach: impl FnOnce(AttachmentAuxiliaryDisposition) -> Result<()>,
     ) -> AttachmentDetachResult {
         context
@@ -1192,6 +1204,9 @@ impl<'a> OciAttachmentLifecycle<'a> {
         debug_assert!(!durable_detach.already_terminal);
         let durable_record = durable_detach.record;
         let provider_was_absent = durable_detach.provider_absent;
+        let remove_namespace_after_detach =
+            !provider_was_absent || durable_detach.namespace_cleanup_required;
+        observer.checkpoint(AttachmentDetachPhase::AttemptPrepared);
         let prepared_teardown = if provider_was_absent {
             None
         } else {
@@ -1208,6 +1223,7 @@ impl<'a> OciAttachmentLifecycle<'a> {
             let _ = recovery::mark_cleanup_pending(&durable, &durable_record);
             return Err(recovery::before_provider_detach_failure(error));
         }
+        observer.checkpoint(AttachmentDetachPhase::BackendWithdrawn);
 
         if mode.releases_authority()
             && let Err(error) = quarantine_network_segment_hold(
@@ -1219,6 +1235,9 @@ impl<'a> OciAttachmentLifecycle<'a> {
         {
             detach_permitted = false;
             errors.push(error.to_string());
+        }
+        if mode.releases_authority() && detach_permitted {
+            observer.checkpoint(AttachmentDetachPhase::SegmentQuarantined);
         }
 
         let mut cleanup = None;
@@ -1269,6 +1288,7 @@ impl<'a> OciAttachmentLifecycle<'a> {
                 recovery::detach_error(context, errors),
             ));
         }
+        observer.checkpoint(AttachmentDetachPhase::ListenerCleanupPrepared);
 
         let mut provider_detached = provider_was_absent;
         if let Some(prepared_teardown) = prepared_teardown {
@@ -1280,10 +1300,18 @@ impl<'a> OciAttachmentLifecycle<'a> {
                     false
                 }
             };
-            if provider_detached && let Err(error) = host.remove_namespace(context) {
-                provider_detached = false;
-                errors.push(error.to_string());
+            if provider_detached {
+                observer.checkpoint(AttachmentDetachPhase::ProviderDetached);
             }
+        }
+        if provider_detached
+            && remove_namespace_after_detach
+            && let Err(error) = host.remove_namespace(context)
+        {
+            provider_detached = false;
+            errors.push(error.to_string());
+        } else if provider_detached && remove_namespace_after_detach {
+            observer.checkpoint(AttachmentDetachPhase::NamespaceRemoved);
         }
 
         if provider_detached
@@ -1317,6 +1345,9 @@ impl<'a> OciAttachmentLifecycle<'a> {
             provider_detached = false;
             errors.push(error.to_string());
         }
+        if provider_detached {
+            observer.checkpoint(AttachmentDetachPhase::ListenersSettled);
+        }
 
         if !provider_detached {
             let _ = recovery::mark_cleanup_pending(&durable, &durable_record);
@@ -1340,12 +1371,13 @@ impl<'a> OciAttachmentLifecycle<'a> {
                 auxiliary_batch_state,
                 auxiliary_requests,
                 &mut errors,
+                observer,
             );
         }
 
         if errors.is_empty() {
             recovery::finish_detach(&durable, &durable_record, mode)
-                .map(|_| ())
+                .map(|_| observer.checkpoint(AttachmentDetachPhase::AttachmentTerminal))
                 .map_err(recovery::cleanup_pending_failure)
         } else {
             let _ = recovery::mark_cleanup_pending(&durable, &durable_record);
@@ -1437,75 +1469,5 @@ impl<'a> OciAttachmentLifecycle<'a> {
                 ),
             },
         }
-    }
-
-    fn release_terminal_authority(
-        &self,
-        context: &OciAttachmentContext<'_>,
-        published_batch_state: Result<LaunchPortBatchState>,
-        auxiliary_batch_state: Result<LaunchPortBatchState>,
-        auxiliary_requests: &[PortLeaseRequest],
-        errors: &mut Vec<String>,
-    ) {
-        match published_batch_state {
-            Ok(LaunchPortBatchState::NeverBound) => {
-                if let Some(claim) = context.launch_claim
-                    && let Err(error) = self
-                        .ports
-                        .release_never_bound_requests(context.leases, claim)
-                {
-                    errors.push(error.to_string());
-                    return;
-                }
-            }
-            Ok(LaunchPortBatchState::RestartRetained) => {
-                if let Err(error) = self.ports.release_restart_retained_bindings(
-                    context.tenant_id,
-                    context.sandbox_id,
-                    context.bindings,
-                    context.leases,
-                ) {
-                    errors.push(error.to_string());
-                    return;
-                }
-            }
-            Ok(
-                LaunchPortBatchState::NetavarkClaimed(_)
-                | LaunchPortBatchState::ProviderOwned
-                | LaunchPortBatchState::TerminalNoEffect,
-            ) => {}
-            Err(_) => return,
-        }
-
-        if matches!(auxiliary_batch_state, Ok(LaunchPortBatchState::NeverBound))
-            && let Some(claim) = context.launch_claim
-            && let Err(error) = self
-                .ports
-                .release_never_bound_requests(auxiliary_requests, claim)
-        {
-            errors.push(error.to_string());
-            return;
-        }
-
-        if let Err(error) = deallocate_container_ips_after_confirmed_detach(
-            self.ipam,
-            context.layout,
-            context.sandbox_id,
-            &context.config.reservation_claim,
-            context.config.provider_kind(),
-        ) {
-            errors.push(error.to_string());
-            return;
-        }
-        errors.extend(
-            release_network_segment_hold(
-                self.allocator,
-                context.tenant_id,
-                context.sandbox_id,
-                &context.config.reservation_claim,
-            )
-            .into_iter()
-            .map(|error| error.to_string()),
-        );
     }
 }

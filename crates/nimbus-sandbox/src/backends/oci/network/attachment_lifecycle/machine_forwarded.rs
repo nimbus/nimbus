@@ -129,6 +129,8 @@ impl OciAttachmentLifecycle<'_> {
                 .map_err(recovery::before_provider_detach_failure)?;
         debug_assert!(!durable_detach.already_terminal);
         let durable_record = durable_detach.record;
+        let remove_namespace_after_detach =
+            !durable_detach.provider_absent || durable_detach.namespace_cleanup_required;
         let prepared_teardown = if durable_detach.provider_absent {
             None
         } else {
@@ -161,10 +163,16 @@ impl OciAttachmentLifecycle<'_> {
 
         let provider_detach = if let Some(prepared_teardown) = prepared_teardown {
             host.teardown_provider(self.ipam, context, prepared_teardown)
-                .and_then(|()| host.remove_namespace(context))
         } else {
             Ok(())
         };
+        let provider_detach = provider_detach.and_then(|()| {
+            if remove_namespace_after_detach {
+                host.remove_namespace(context)
+            } else {
+                Ok(())
+            }
+        });
         if let Err(error) = provider_detach {
             let _ = recovery::mark_cleanup_pending(&durable, &durable_record);
             return Err(recovery::cleanup_pending_failure(error));
