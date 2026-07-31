@@ -1,6 +1,6 @@
 # Storage Follow-Ups Closeout
 
-Status: `complete — all executable tickets closed (PRs #262-#270); FU13/FU14 remain as scoped open tickets`
+Status: `complete — all tickets closed (PRs #262-#271); one open item: live-endpoint probe of the transacted-Put size-violation shape`
 
 Owner directive 2026-07-30: "do or clear all the followup items and bugs we
 found with prs", plus run the SUC6.2 literal measurement (U7 override
@@ -19,6 +19,6 @@ exercised). Runs autonomously; PRs per concept; same fast-loop merge policy.
 | FU10 nimbus-system projection reconciliation flake | FU1 attribution | `complete` (PR #268) — PRODUCT defect: every projection redeclared all 19 system schemas on `_nimbus`, each appending a durable record behind the committer (~10s fixed setup on MySQL); redeclarations now answered from the snapshot; lane 60-86s → 6.4-6.9s; second fix-induced test instability caught by matched stats and rebaselined without relaxation |
 | FU11 BatchWriteItem validation ordering | FU3 pass-5 | `complete` (PR #267) — whole-request validation before any application (AWS's actual line: validation=whole-request, runtime=per-item); false 'DynamoDB semantics' comment corrected |
 | FU12 BatchWriteItem missing rejection rules | FU11 survey | `complete` (PR #269) — duplicate-item rejection (per (table, DocumentId), AWS message text) + 400 KiB per-item ceiling counted DynamoDB's way; 25-op limit proven pre-existing; 16 MB proven dead-code (listener body limit + 25×400KiB < 16MB); an AWS-illegal request found sitting in a pre-existing test |
-| FU13 400 KiB item ceiling missing on PutItem/UpdateItem/TransactWriteItems | FU12 survey | `planned` — validate_item_size is a one-line addition per path but each needs its own fail-before + AWS error-shape check (TransactWriteItems reports differently) |
-| FU14 extenddb item sizing undercounts nested collections | FU12 survey | `planned` — AWS adds 1 byte per List/Map element; extenddb_core::attribute_value_size omits it; belongs upstream in extenddb |
+| FU13 400 KiB item ceiling missing on PutItem/UpdateItem/TransactWriteItems | FU12 survey | `complete` (PR #271) — enforced on all three paths with per-path fail-before; UpdateItem measures the RESULTING item; TransactWriteItems cancels per-op with a `ValidationError` reason; plus the survey's sibling gap: the 4 MB aggregate transaction rule, rejected whole-request before planning per AWS's reject-vs-cancel split (deliberate test-pinned undercount: non-Put ops contribute their key; safe error direction). Open ticket: live-endpoint probe of whether AWS eagerly validates transacted Puts (flip-test named in proof). Proof: `proof/storage-follow-ups/fu13-fu14.md` |
+| FU14 extenddb item sizing undercounts nested collections | FU12 survey | `complete` (PR #271) — corrected sizing lives locally in `nimbus-dynamodb/src/item_size.rs` (extenddb is an external pinned dep): +1 byte per List/Map element, significant-digit numbers, set rules; ALL 400 KiB enforcement incl. FU12's batch path migrated onto it; witness item sized 409,600 by extenddb (was accepted) vs 409,610 correctly (rejected). Upstream extenddb contribution optional follow-up |
 | FU8 CLAUDE.md storage-features gotcha | SUC3.1 step 5 | `complete` (this commit) |
