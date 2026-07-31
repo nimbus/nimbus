@@ -36,6 +36,23 @@ pub const ITEM_TOO_LARGE_MESSAGE: &str = "Item size has exceeded the maximum all
 pub const UPDATED_ITEM_TOO_LARGE_MESSAGE: &str =
     "Item size to update has exceeded the maximum allowed size";
 
+/// DynamoDB's maximum aggregate size for one `TransactWriteItems` request.
+///
+/// "The aggregate size of the items in the transaction cannot exceed 4 MB" —
+/// binary units again, so 4,194,304 bytes. Unlike `BatchWriteItem`'s 16 MB
+/// rule this one is reachable: 100 ops of up to 400 KiB each is 40 MB, ten
+/// times this limit.
+pub const MAX_TRANSACTION_SIZE_BYTES: usize = 4 * 1024 * 1024;
+
+/// The message for a transaction over [`MAX_TRANSACTION_SIZE_BYTES`].
+///
+/// Phrased from AWS's own statement of the rejection condition. Unlike the two
+/// item-size messages above, AWS does not publish a wire string for this one:
+/// the code (`ValidationException`) and status (400) are documented, the
+/// wording is ours. See the FU13/FU14 proof.
+pub const TRANSACTION_TOO_LARGE_MESSAGE: &str =
+    "The aggregate size of the items in the transaction exceeded 4 MB";
+
 /// The DynamoDB-accounted size of `item` in bytes.
 ///
 /// Every attribute contributes its name's UTF-8 length plus

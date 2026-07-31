@@ -30,7 +30,10 @@ use crate::expression::{
     apply_update, build_maps, default_limits, evaluate_condition, parse_condition,
     parse_update_expression, project_item, reject_key_updates,
 };
-use crate::item_size::{UPDATED_ITEM_TOO_LARGE_MESSAGE, exceeds_max_item_size};
+use crate::item_size::{
+    MAX_TRANSACTION_SIZE_BYTES, TRANSACTION_TOO_LARGE_MESSAGE, UPDATED_ITEM_TOO_LARGE_MESSAGE,
+    exceeds_max_item_size, item_size_bytes,
+};
 use crate::tenant::caller_principal;
 
 /// The DynamoDB per-call item limit for TransactGetItems / TransactWriteItems.
@@ -132,16 +135,18 @@ const TRANSACTION_CANCELLED: &str =
 /// Otherwise all writes commit atomically (one storage transaction), with
 /// per-item update-time preconditions for serializability.
 ///
-/// An op whose item exceeds the 400 KiB ceiling — the item a Put writes, or the
-/// item an Update produces — cancels the transaction rather than raising
-/// `ValidationException`, carrying a `ValidationError` cancellation reason in
-/// that op's position.
+/// The two size rules land differently, as AWS documents them. A request whose
+/// aggregate item size exceeds 4 MB is *rejected* up front, before anything is
+/// read or planned. An individual op whose item exceeds the 400 KiB ceiling —
+/// the item a Put writes, or the item an Update produces — *cancels* the
+/// transaction, carrying a `ValidationError` cancellation reason in that op's
+/// position.
 ///
 /// # Errors
-/// `ValidationException` for an empty/over-100-op request or a malformed op;
-/// `ResourceNotFoundException` for a missing table;
-/// `TransactionCanceledException` when any condition fails or any item is over
-/// the 400 KiB ceiling.
+/// `ValidationException` for an empty/over-100-op request, an aggregate size
+/// over 4 MB, or a malformed op; `ResourceNotFoundException` for a missing
+/// table; `TransactionCanceledException` when any condition fails or any item
+/// is over the 400 KiB ceiling.
 pub fn transact_write_items(
     engine: &Arc<Engine>,
     context: &TenantIsolationContext,
@@ -157,6 +162,7 @@ pub fn transact_write_items(
             "Member must have length less than or equal to 100".to_owned(),
         ));
     }
+    validate_transaction_size(&input)?;
 
     let principal = caller_principal(context);
     let session = engine
@@ -215,6 +221,51 @@ pub fn transact_write_items(
         consumed_capacity: None,
         item_collection_metrics: None,
     })
+}
+
+/// Reject a transaction whose aggregate item size exceeds 4 MB, before any of
+/// it is read, planned, or applied.
+///
+/// AWS lists this among the conditions under which it "rejects the entire
+/// `TransactWriteItems` request" and — unlike the per-item 400 KiB ceiling —
+/// *not* among the circumstances under which it cancels one, so it is a
+/// whole-request validation rather than a cancellation.
+///
+/// Each op contributes what the request actually carries: a Put's item in full,
+/// and a key for Update, Delete, and ConditionCheck, whose stored items are not
+/// known until the transaction reads them. That undercounts a transaction of
+/// large updates, which errs toward accepting a request AWS would reject rather
+/// than rejecting one it would accept.
+fn validate_transaction_size(input: &TransactWriteItemsInput) -> Result<(), DynamoDbError> {
+    let total: usize = input
+        .transact_items
+        .iter()
+        .map(|transact| {
+            let put = transact
+                .put
+                .as_ref()
+                .map_or(0, |put| item_size_bytes(&put.item));
+            let update = transact
+                .update
+                .as_ref()
+                .map_or(0, |update| item_size_bytes(&update.key));
+            let delete = transact
+                .delete
+                .as_ref()
+                .map_or(0, |delete| item_size_bytes(&delete.key));
+            let check = transact
+                .condition_check
+                .as_ref()
+                .map_or(0, |check| item_size_bytes(&check.key));
+            put + update + delete + check
+        })
+        .sum();
+    if total > MAX_TRANSACTION_SIZE_BYTES {
+        return Err(DynamoDbError::ValidationException(
+            TRANSACTION_TOO_LARGE_MESSAGE.to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 /// `INSERT` for a newly created item, `MODIFY` when it already existed.
@@ -977,6 +1028,91 @@ mod tests {
         .expect("an item at exactly the limit is within it");
         assert!(read(&engine, &ctx, "big").is_some());
         assert!(read(&engine, &ctx, "fresh").is_some());
+    }
+
+    /// A `Put` op whose item is exactly `size` bytes: a `pk` and a `blob`.
+    fn sized_put(pk: &str, size: usize) -> serde_json::Value {
+        // The item is names "pk" (2) and "blob" (4), the key, and the blob.
+        let blob = "a".repeat(size - (2 + pk.len() + 4));
+        json!({ "Put": { "TableName": "Orders",
+            "Item": { "pk": {"S": pk}, "blob": {"S": blob} } } })
+    }
+
+    /// Puts totalling exactly [`MAX_TRANSACTION_SIZE_BYTES`]: ten of 400,000
+    /// bytes and one of 194,304. Every item is under the 400 KiB item ceiling,
+    /// so only the aggregate rule can reject them.
+    fn ops_at_exactly_the_aggregate_limit() -> Vec<serde_json::Value> {
+        let mut ops: Vec<serde_json::Value> = (0..10)
+            .map(|i| sized_put(&format!("p{i}"), 400_000))
+            .collect();
+        ops.push(sized_put("last", MAX_TRANSACTION_SIZE_BYTES - 10 * 400_000));
+        ops
+    }
+
+    #[test]
+    fn transact_write_over_the_aggregate_size_limit_is_validation_error() {
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
+        // Eleven items at the 400 KiB item ceiling: every op is individually
+        // legal, and 11 x 409,600 = 4,505,600 is over the 4 MiB aggregate.
+        let ops: Vec<serde_json::Value> = (0..11)
+            .map(|i| sized_put(&format!("p{i}"), crate::item_size::MAX_ITEM_SIZE_BYTES))
+            .collect();
+        let err = transact_write(&engine, &ctx, json!({ "TransactItems": ops }))
+            .expect_err("a transaction over 4 MiB must be rejected");
+        assert_eq!(err.error_type(), "ValidationException", "{err:?}");
+        assert_eq!(err.status_code(), 400, "{err:?}");
+        match &err {
+            DynamoDbError::ValidationException(message) => {
+                assert_eq!(message, TRANSACTION_TOO_LARGE_MESSAGE);
+            }
+            other => panic!("expected ValidationException, got {other:?}"),
+        }
+        // Rejected before anything was read or planned, so nothing was applied.
+        assert!(
+            read(&engine, &ctx, "p0").is_none(),
+            "an over-size transaction must not apply any of its ops"
+        );
+    }
+
+    #[test]
+    fn transact_write_under_the_aggregate_size_limit_is_accepted() {
+        let (engine, ctx, _t) = fixture();
+        create_orders(&engine, &ctx);
+        // Eleven items of 380,000 bytes is 4,180,000 — within 4 MiB. The check
+        // must not reject a large but legal transaction.
+        let ops: Vec<serde_json::Value> = (0..11)
+            .map(|i| sized_put(&format!("p{i}"), 380_000))
+            .collect();
+        transact_write(&engine, &ctx, json!({ "TransactItems": ops }))
+            .expect("a transaction under the aggregate limit is accepted");
+        assert!(read(&engine, &ctx, "p0").is_some());
+        assert!(read(&engine, &ctx, "p10").is_some());
+    }
+
+    #[test]
+    fn the_aggregate_counts_a_put_item_in_full_and_other_ops_by_their_key() {
+        // Exactly 4 MiB is within the limit — the comparison is
+        // strictly greater-than, as it is for the per-item ceiling.
+        let mut ops = ops_at_exactly_the_aggregate_limit();
+        let at_limit: TransactWriteItemsInput =
+            serde_json::from_value(json!({ "TransactItems": ops.clone() })).unwrap();
+        assert!(
+            validate_transaction_size(&at_limit).is_ok(),
+            "a transaction of exactly 4 MiB is within the limit"
+        );
+
+        // Adding a Delete — which carries no item, only a 3-byte key — pushes
+        // the request over. That is only true if a non-Put op's key counts.
+        ops.push(json!({ "Delete": { "TableName": "Orders", "Key": { "pk": {"S": "x"} } } }));
+        let over: TransactWriteItemsInput =
+            serde_json::from_value(json!({ "TransactItems": ops })).unwrap();
+        match validate_transaction_size(&over) {
+            Err(DynamoDbError::ValidationException(message)) => {
+                assert_eq!(message, TRANSACTION_TOO_LARGE_MESSAGE);
+            }
+            other => panic!("a Delete's key must count toward the aggregate, got {other:?}"),
+        }
     }
 
     /// A failing condition and an oversized item in one request: the condition
