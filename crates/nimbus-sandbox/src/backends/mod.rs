@@ -1,6 +1,7 @@
 mod capabilities;
 pub(crate) mod conmon;
 pub mod container;
+pub(crate) mod inspection;
 pub mod krun;
 pub(crate) mod oci;
 pub(crate) mod poll;

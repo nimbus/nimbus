@@ -615,6 +615,146 @@ async fn stop_service_for_decision_async_requires_exact_service_grant() {
 }
 
 #[tokio::test]
+async fn retained_stopping_service_blocks_replacement_and_explicit_stop_converges_once() {
+    let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+    let backend = Arc::new(StubSandboxBackend::new(usize::MAX));
+    let manager = ServiceManager::new(
+        Arc::new(StubServiceDefinitionCatalog {
+            launches: BTreeMap::from([(
+                "db".to_owned(),
+                image_service_backend("db", "postgres:16"),
+            )]),
+        }),
+        backend.clone(),
+    )
+    .with_activation_poll_interval(Duration::from_millis(1))
+    .with_activation_timeout(Duration::from_millis(10));
+    let isolation = TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
+    let key = super::super::types::TenantServiceKey::new(&tenant_id, "db");
+    let handle = backend.sandbox_handle(&tenant_id, "db", SandboxStatus::Stopping);
+    backend
+        .handles
+        .lock()
+        .expect("backend handle map should not be poisoned")
+        .insert(handle.id.as_str().to_owned(), handle.clone());
+    manager
+        .state
+        .lock()
+        .expect("manager state should not be poisoned")
+        .handles
+        .insert(key, handle.clone());
+    let retained = retained_stopping_inspection(handle);
+    backend.report_inspection(retained.clone());
+
+    let observed = manager
+        .inspect_service_lifecycle_for_context_async(&isolation, "db")
+        .await
+        .expect("typed service inspection should succeed")
+        .expect("retained service should remain visible");
+    assert_eq!(observed, retained);
+
+    let start_error = manager
+        .start_service_for_context_async(&isolation, "db", HostCallCancellation::default())
+        .await
+        .expect_err("retained cleanup must block a replacement rather than activate it");
+    assert!(
+        start_error.to_string().contains("did not become ready"),
+        "the retained service should remain fenced on its existing lifecycle: {start_error}"
+    );
+    assert_eq!(
+        backend.image_starts.load(Ordering::SeqCst),
+        0,
+        "lazy activation must not create a replacement while cleanup is retained"
+    );
+
+    let stopped = manager
+        .stop_service_for_context_async(&isolation, "db")
+        .await
+        .expect("explicit stop should converge retained cleanup")
+        .expect("stopped handle should remain observable");
+    assert_eq!(stopped.status, SandboxStatus::Stopped);
+    assert!(stopped.published_endpoints.is_empty());
+    assert_eq!(backend.stop_calls.load(Ordering::SeqCst), 1);
+
+    assert!(
+        manager
+            .stop_service_for_context_async(&isolation, "db")
+            .await
+            .expect("stop replay should be idempotent")
+            .is_none()
+    );
+    assert_eq!(
+        backend.stop_calls.load(Ordering::SeqCst),
+        1,
+        "cleanup convergence must execute at most once after final removal"
+    );
+}
+
+#[tokio::test]
+async fn service_inspection_rejects_crossed_identity_before_cache_or_lifecycle_effects() {
+    let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+    let isolation = TenantIsolationContext::system(tenant_id.clone(), "runtime_service_registry");
+
+    for case in ["sandbox-id", "tenant", "service-name", "backend"] {
+        let backend = Arc::new(StubSandboxBackend::new(usize::MAX));
+        let manager = ServiceManager::new(
+            Arc::new(StubServiceDefinitionCatalog {
+                launches: BTreeMap::new(),
+            }),
+            backend.clone(),
+        );
+        let key = super::super::types::TenantServiceKey::new(&tenant_id, "db");
+        let expected = backend.sandbox_handle(&tenant_id, "db", SandboxStatus::Ready);
+        backend
+            .handles
+            .lock()
+            .expect("backend handle map should not be poisoned")
+            .insert(expected.id.as_str().to_owned(), expected.clone());
+        manager
+            .state
+            .lock()
+            .expect("manager state should not be poisoned")
+            .handles
+            .insert(key.clone(), expected.clone());
+
+        let mut crossed = expected.clone();
+        match case {
+            "sandbox-id" => crossed.id = SandboxId::new("crossed-service-sandbox"),
+            "tenant" => {
+                crossed.tenant_id =
+                    TenantId::new("crossed-tenant").expect("crossed tenant should be valid");
+            }
+            "service-name" => crossed.name = "crossed-service".to_owned(),
+            "backend" => crossed.backend = SandboxBackendKind::Container,
+            _ => unreachable!("the identity table is exhaustive"),
+        }
+        backend.report_inspection_for(&expected.id, SandboxInspection::provider_reported(crossed));
+
+        let error = manager
+            .inspect_service_lifecycle_for_context_async(&isolation, "db")
+            .await
+            .expect_err("crossed service inspection identity must fail closed");
+
+        assert!(
+            error.to_string().contains("crossed inspection identity"),
+            "{case}: rejection must name the backend contract failure: {error}"
+        );
+        assert_eq!(
+            manager
+                .state
+                .lock()
+                .expect("manager state should not be poisoned")
+                .handles
+                .get(&key),
+            Some(&expected),
+            "{case}: rejected evidence must not replace or evict the cached handle"
+        );
+        assert_eq!(backend.image_starts.load(Ordering::SeqCst), 0, "{case}");
+        assert_eq!(backend.stop_calls.load(Ordering::SeqCst), 0, "{case}");
+    }
+}
+
+#[tokio::test]
 async fn restart_service_for_context_async_stops_then_starts_service() {
     let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
     let backend = Arc::new(StubSandboxBackend::new(1));

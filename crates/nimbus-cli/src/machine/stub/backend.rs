@@ -1,7 +1,7 @@
 use nimbus::{
     Error, SandboxBackend, SandboxBackendKind, SandboxError, SandboxHandle, SandboxId, SandboxSpec,
 };
-use nimbus_sandbox::SandboxFuture;
+use nimbus_sandbox::{SandboxFuture, SandboxInspection};
 
 use super::client::MachineApiClient;
 
@@ -43,7 +43,7 @@ impl SandboxBackend for ForwardedMachineApiSandboxBackend {
         Box::pin(async move { Err(SandboxError::InvalidSpec { message }) })
     }
 
-    fn inspect(&self, _id: &SandboxId) -> SandboxFuture<Option<SandboxHandle>> {
+    fn inspect(&self, _id: &SandboxId) -> SandboxFuture<Option<SandboxInspection>> {
         Box::pin(async move {
             Err(SandboxError::BackendUnavailable {
                 message: unsupported_machine_api_backend_message(),

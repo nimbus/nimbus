@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use nimbus_core::{Error, TenantId};
 use nimbus_runtime::HostCallCancellation;
-use nimbus_sandbox::{SandboxHandle, SandboxStatus};
+use nimbus_sandbox::{SandboxCleanupObservation, SandboxHandle, SandboxStatus};
 use nimbus_tenant::{
     TenantIsolationContext, TenantIsolationDecision, TenantIsolationPolicyInput,
     TenantServiceGrantPolicyDecision, WorkloadAttributes,
@@ -178,18 +178,19 @@ impl ServiceManager {
             DesiredWorkloadState::Stopped,
         )?;
         let previous_handle = self.current_handle(&key);
-        let refreshed_handle = self.refresh_handle_async(&key).await?;
-        let handle_existed_in_backend = refreshed_handle.is_some();
-        let Some(handle) = refreshed_handle.or(previous_handle) else {
+        let refreshed_inspection = self.refresh_inspection_async(&key).await?;
+        let cleanup_is_final = refreshed_inspection
+            .as_ref()
+            .is_some_and(|inspection| inspection.cleanup == SandboxCleanupObservation::Finalized);
+        let handle_existed_in_backend = refreshed_inspection.is_some();
+        let Some(handle) = refreshed_inspection
+            .map(|inspection| inspection.handle)
+            .or(previous_handle)
+        else {
             return Ok(None);
         };
 
-        if handle_existed_in_backend
-            && !matches!(
-                handle.status,
-                SandboxStatus::Stopped | SandboxStatus::Stopping
-            )
-        {
+        if handle_existed_in_backend && !cleanup_is_final {
             self.sandbox_backend
                 .stop(&handle.id)
                 .await

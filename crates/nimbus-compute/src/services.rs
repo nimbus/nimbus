@@ -342,8 +342,9 @@ pub async fn service_lifecycle(
                 return Err(service_not_found(tenant_context.tenant_id(), service_name));
             }
             manager
-                .inspect_service_for_context_async(tenant_context, service_name)
+                .inspect_service_lifecycle_for_context_async(tenant_context, service_name)
                 .await?
+                .map(|inspection| inspection.handle)
         }
         ServiceLifecycleVerb::Start => Some(
             manager

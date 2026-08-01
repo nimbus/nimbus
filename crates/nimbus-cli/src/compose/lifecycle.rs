@@ -316,13 +316,22 @@ pub(super) async fn stop_service_target(
         .inspect(&target.sandbox_id)
         .await
         .map_err(|error| backend_operation_error("inspect", tenant, &target.service_name, error))?;
+    if let Some(inspection) = refreshed.as_ref() {
+        validate_compose_inspection_identity(
+            backend,
+            tenant,
+            &target.service_name,
+            &target.sandbox_id,
+            inspection,
+        )?;
+    }
 
-    if refreshed
-        .as_ref()
-        .is_none_or(|handle| !is_active_status(handle.status))
-    {
+    if refreshed.as_ref().is_none_or(|inspection| {
+        !is_active_status(inspection.handle.status)
+            && inspection.cleanup == nimbus_sandbox::SandboxCleanupObservation::Finalized
+    }) {
         let status = refreshed
-            .map(|handle| handle.status)
+            .map(|inspection| inspection.handle.status)
             .unwrap_or(target.status);
         return Ok(ServiceLifecycleOutcome {
             action: ServiceLifecycleAction::AlreadyStopped,
@@ -337,11 +346,21 @@ pub(super) async fn stop_service_target(
         .stop(&target.sandbox_id)
         .await
         .map_err(|error| backend_operation_error("stop", tenant, &target.service_name, error))?;
-    let status = backend
+    let stopped_inspection = backend
         .inspect(&target.sandbox_id)
         .await
-        .map_err(|error| backend_operation_error("inspect", tenant, &target.service_name, error))?
-        .map(|handle| handle.status)
+        .map_err(|error| backend_operation_error("inspect", tenant, &target.service_name, error))?;
+    if let Some(inspection) = stopped_inspection.as_ref() {
+        validate_compose_inspection_identity(
+            backend,
+            tenant,
+            &target.service_name,
+            &target.sandbox_id,
+            inspection,
+        )?;
+    }
+    let status = stopped_inspection
+        .map(|inspection| inspection.handle.status)
         .unwrap_or(SandboxStatus::Stopped);
 
     Ok(ServiceLifecycleOutcome {
@@ -353,7 +372,7 @@ pub(super) async fn stop_service_target(
     })
 }
 
-async fn resolve_live_service_handle(
+pub(super) async fn resolve_live_service_handle(
     state_view: &KrunSandboxStateView,
     backend: &dyn SandboxBackend,
     tenant: &TenantId,
@@ -372,8 +391,64 @@ async fn resolve_live_service_handle(
         .inspect(&details.summary.sandbox_id)
         .await
         .map_err(|error| backend_operation_error("inspect", tenant, service_name, error))?;
+    if let Some(inspection) = refreshed.as_ref() {
+        validate_compose_inspection_identity(
+            backend,
+            tenant,
+            service_name,
+            &details.summary.sandbox_id,
+            inspection,
+        )?;
+    }
 
-    Ok(refreshed.filter(|handle| is_active_status(handle.status)))
+    match refreshed {
+        Some(inspection)
+            if inspection.cleanup != nimbus_sandbox::SandboxCleanupObservation::Finalized =>
+        {
+            Ok(Some(inspection.handle))
+        }
+        Some(inspection) if is_active_status(inspection.handle.status) => {
+            Err(Error::Internal(format!(
+                "sandbox backend returned cleanup-final inspection with active status {:?} for \
+                 compose service {service_name} tenant {tenant}",
+                inspection.handle.status
+            )))
+        }
+        Some(_) => Ok(None),
+        None => Err(Error::Internal(format!(
+            "sandbox backend returned no inspection evidence for persisted compose service \
+             {service_name} tenant {tenant}; cleanup finality is unknown and replacement \
+             remains fenced"
+        ))),
+    }
+}
+
+fn validate_compose_inspection_identity(
+    backend: &dyn SandboxBackend,
+    tenant: &TenantId,
+    service_name: &str,
+    sandbox_id: &nimbus::SandboxId,
+    inspection: &nimbus_sandbox::SandboxInspection,
+) -> Result<(), Error> {
+    let observed = &inspection.handle;
+    if observed.id == *sandbox_id
+        && observed.tenant_id == *tenant
+        && observed.name == service_name
+        && observed.backend == backend.kind()
+    {
+        return Ok(());
+    }
+
+    Err(Error::Internal(format!(
+        "sandbox backend returned crossed inspection identity for compose service {service_name} \
+         tenant {tenant}: expected sandbox {sandbox_id} tenant {tenant} name {service_name} \
+         backend {:?}, observed sandbox {} tenant {} name {} backend {:?}",
+        backend.kind(),
+        observed.id,
+        observed.tenant_id,
+        observed.name,
+        observed.backend
+    )))
 }
 
 fn backend_operation_error(

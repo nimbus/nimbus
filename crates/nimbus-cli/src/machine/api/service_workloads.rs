@@ -19,7 +19,8 @@ use nimbus_node::{
     NodeBackendCapabilitySource, RunnerSpec, StatusEvidenceWriter, TenantWorkloadPhase,
 };
 use nimbus_sandbox::{
-    MachinePortForwardReceipt,
+    MachinePortForwardReceipt, SandboxCleanupObservation, SandboxExecutionObservation,
+    SandboxInspection, SandboxRestartAssessment, SandboxRestartIneligibility,
     backends::container::{
         ContainerSandboxBackend, ContainerSandboxStateView, MachinePortAbsenceEvidence,
     },
@@ -52,7 +53,7 @@ pub(crate) trait MachineApiNodeWorkloadFacade: Send + Sync {
     fn inspect<'a>(
         &'a self,
         id: &'a SandboxId,
-    ) -> MachineApiServiceFuture<'a, Option<SandboxHandle>>;
+    ) -> MachineApiServiceFuture<'a, Option<SandboxInspection>>;
     fn stop<'a>(&'a self, id: &'a SandboxId) -> MachineApiServiceFuture<'a, ()>;
     fn exposed_machine_port_receipts<'a>(
         &'a self,
@@ -167,7 +168,7 @@ where
     fn inspect<'a>(
         &'a self,
         id: &'a SandboxId,
-    ) -> MachineApiServiceFuture<'a, Option<SandboxHandle>> {
+    ) -> MachineApiServiceFuture<'a, Option<SandboxInspection>> {
         Box::pin(async move {
             let Some(details) = self
                 .state_view
@@ -176,8 +177,19 @@ where
             else {
                 return Ok(None);
             };
+            let Some(base) = self
+                .bundle_materializer
+                .inspect(id)
+                .await
+                .map_err(sandbox_error_to_http_error)?
+            else {
+                return Ok(None);
+            };
+            if base.cleanup == SandboxCleanupObservation::Finalized {
+                return Ok(Some(base));
+            }
             let bundle_dir = bundle_dir_from_manifest_path(&details.manifest_path)?;
-            let status = self
+            let observed_phase = self
                 .inspect_service_workload(
                     details.summary.tenant_id.as_str(),
                     &details.summary.service_name,
@@ -185,25 +197,67 @@ where
                     &details.resources,
                 )
                 .await?;
-            let handle = SandboxHandle::new(
-                details.summary.tenant_id,
-                details.summary.sandbox_id,
-                details.summary.service_name,
-                SandboxBackendKind::Container,
-                details.summary.status,
-                details.summary.published_endpoints,
-            );
-            let canonical = match status {
-                Some(phase) => {
-                    self.refresh_plan_only_manifest_status(
-                        &handle.id,
-                        sandbox_status_from_node_phase(phase),
+            let provider_evidence = format!("{observed_phase:?}");
+            let mut handle = base.handle.clone();
+            let (execution, restart, cleanup) =
+                if base.cleanup == SandboxCleanupObservation::Retained {
+                    handle.status = SandboxStatus::Stopping;
+                    (
+                        base.execution,
+                        base.restart,
+                        SandboxCleanupObservation::Retained,
                     )
-                    .await?
-                }
-                None => self.mark_plan_only_manifest_stopped(&handle.id).await?,
-            };
-            Ok(canonical)
+                } else {
+                    match observed_phase {
+                        Some(phase) => {
+                            let observed_status = sandbox_status_from_node_phase(phase);
+                            if matches!(
+                                observed_status,
+                                SandboxStatus::Stopped
+                                    | SandboxStatus::Failed
+                                    | SandboxStatus::Stopping
+                            ) {
+                                handle.status = SandboxStatus::Stopping;
+                                (
+                                    SandboxExecutionObservation::Present,
+                                    SandboxRestartAssessment::Ineligible {
+                                        reason: SandboxRestartIneligibility::CleanupPending,
+                                    },
+                                    SandboxCleanupObservation::Retained,
+                                )
+                            } else {
+                                handle.status = observed_status;
+                                (
+                                    SandboxExecutionObservation::Present,
+                                    SandboxRestartAssessment::Ineligible {
+                                        reason: SandboxRestartIneligibility::RuntimePresent,
+                                    },
+                                    SandboxCleanupObservation::NotRequired,
+                                )
+                            }
+                        }
+                        None => {
+                            handle.status = SandboxStatus::Stopping;
+                            (
+                                SandboxExecutionObservation::AbsentWithoutExit,
+                                SandboxRestartAssessment::Ineligible {
+                                    reason: SandboxRestartIneligibility::RuntimeAbsenceUnproven,
+                                },
+                                SandboxCleanupObservation::Retained,
+                            )
+                        }
+                    }
+                };
+            if handle.status != SandboxStatus::Ready {
+                handle.published_endpoints.clear();
+            }
+            Ok(Some(base.with_provider_projection_evidence(
+                handle,
+                execution,
+                restart,
+                cleanup,
+                provider_evidence.as_bytes(),
+            )))
         })
     }
 
@@ -330,15 +384,6 @@ where
             Err(error) if error.status == StatusCode::NOT_FOUND => Ok(None),
             Err(error) => Err(error),
         }
-    }
-
-    async fn mark_plan_only_manifest_stopped(
-        &self,
-        id: &SandboxId,
-    ) -> Result<Option<SandboxHandle>, MachineApiHttpError> {
-        self.bundle_materializer
-            .mark_plan_only_service_workload_stopped(id)
-            .map_err(sandbox_error_to_http_error)
     }
 
     async fn refresh_plan_only_manifest_status(
@@ -549,7 +594,7 @@ impl MachineApiNodeWorkloadFacade for TestSandboxBackendNodeWorkloadFacade {
     fn inspect<'a>(
         &'a self,
         id: &'a SandboxId,
-    ) -> MachineApiServiceFuture<'a, Option<SandboxHandle>> {
+    ) -> MachineApiServiceFuture<'a, Option<SandboxInspection>> {
         Box::pin(async move {
             let backend_id = self
                 .identities
@@ -558,15 +603,19 @@ impl MachineApiNodeWorkloadFacade for TestSandboxBackendNodeWorkloadFacade {
                 .get(id.as_str())
                 .map(|identity| identity.backend_id.clone())
                 .unwrap_or_else(|| id.clone());
-            let mut handle = self
+            let inspection = self
                 .backend
                 .inspect(&backend_id)
                 .await
                 .map_err(sandbox_error_to_http_error)?;
-            if let Some(handle) = &mut handle {
+            Ok(inspection.map(|inspection| {
+                let mut handle = inspection.handle.clone();
                 handle.id = id.clone();
-            }
-            Ok(handle)
+                let execution = inspection.execution;
+                let restart = inspection.restart;
+                let cleanup = inspection.cleanup;
+                inspection.with_provider_projection(handle, execution, restart, cleanup)
+            }))
         })
     }
 
@@ -725,7 +774,7 @@ impl MachineApiNodeWorkloadFacade for TestContainerBackendNodeWorkloadFacade {
     fn inspect<'a>(
         &'a self,
         id: &'a SandboxId,
-    ) -> MachineApiServiceFuture<'a, Option<SandboxHandle>> {
+    ) -> MachineApiServiceFuture<'a, Option<SandboxInspection>> {
         Box::pin(async move {
             self.backend
                 .inspect(id)
@@ -1046,7 +1095,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn guest_node_workload_service_marks_missing_units_stopped_in_container_state() {
+    async fn guest_node_workload_service_projects_node_state_without_writing_container_state() {
         let temp_dir = tempfile::tempdir().expect("temp dir");
         let container_config = ContainerSandboxBackendConfig::plan_only(
             temp_dir.path().join("bundles"),
@@ -1079,43 +1128,80 @@ mod tests {
             .expect("start should reconcile");
 
         assert_eq!(handle.id, sandbox_id);
+        let initial_details = service
+            .state_view
+            .inspect(&handle.id)
+            .expect("state view should load")
+            .expect("manifest should remain present");
+        let initial_manifest =
+            std::fs::read(&initial_details.manifest_path).expect("manifest should be readable");
+        assert_eq!(initial_details.summary.status, SandboxStatus::Ready);
         backend.mark_workload_missing();
 
         let inspected = service
             .inspect(&handle.id)
             .await
-            .expect("missing node unit should inspect as stopped")
+            .expect("missing node unit should inspect as retained")
             .expect("container manifest should remain present");
-        assert_eq!(inspected.status, SandboxStatus::Stopped);
-        let summary = service
+        assert_eq!(inspected.handle.status, SandboxStatus::Stopping);
+        assert_eq!(
+            inspected.execution,
+            SandboxExecutionObservation::AbsentWithoutExit
+        );
+        assert_eq!(inspected.cleanup, SandboxCleanupObservation::Retained);
+        let repeated_missing = service
+            .inspect(&handle.id)
+            .await
+            .expect("repeated missing node observation should succeed")
+            .expect("container manifest should remain present");
+        assert_eq!(
+            repeated_missing, inspected,
+            "unchanged guest and container evidence must return an equal inspection and version"
+        );
+        let missing_details = service
             .state_view
             .inspect(&handle.id)
             .expect("state view should load")
-            .expect("manifest should remain present")
-            .summary;
-        assert_eq!(summary.status, SandboxStatus::Stopped);
+            .expect("manifest should remain present");
+        assert_eq!(missing_details.summary.status, SandboxStatus::Ready);
+        assert_eq!(
+            std::fs::read(&missing_details.manifest_path).expect("manifest should remain readable"),
+            initial_manifest,
+            "inspection must not persist the missing-node projection"
+        );
 
         backend.mark_workload_present();
-        let stale_ready = service
+        let present = service
             .inspect(&handle.id)
             .await
-            .expect("stale node readiness should remain an observation")
-            .expect("terminal container manifest should remain present");
-        assert_eq!(
-            stale_ready.status,
-            SandboxStatus::Stopped,
-            "the machine API must return the canonical terminal callback result"
+            .expect("present node readiness should remain an observation")
+            .expect("container manifest should remain present");
+        assert_eq!(present.handle.status, SandboxStatus::Ready);
+        assert_eq!(present.execution, SandboxExecutionObservation::Present);
+        assert_eq!(present.cleanup, SandboxCleanupObservation::NotRequired);
+        assert_ne!(
+            present.version, inspected.version,
+            "the comparison token must detect changed node-provider evidence"
         );
-        let summary = service
+        let repeated_present = service
+            .inspect(&handle.id)
+            .await
+            .expect("repeated present node observation should succeed")
+            .expect("container manifest should remain present");
+        assert_eq!(
+            repeated_present, present,
+            "unchanged present evidence must remain exactly repeatable"
+        );
+        let present_details = service
             .state_view
             .inspect(&handle.id)
             .expect("state view should reload")
-            .expect("terminal manifest should remain present")
-            .summary;
+            .expect("manifest should remain present");
         assert_eq!(
-            summary.status,
-            SandboxStatus::Stopped,
-            "stale node readiness must not resurrect durable container state"
+            std::fs::read(&present_details.manifest_path)
+                .expect("manifest should remain readable after present observation"),
+            initial_manifest,
+            "inspection must not persist the present-node projection"
         );
 
         backend.mark_workload_missing();
@@ -1124,6 +1210,21 @@ mod tests {
             .await
             .expect("missing node unit should stop idempotently");
         assert!(!backend.calls().contains(&"stop"));
+        let finalized = service
+            .inspect(&handle.id)
+            .await
+            .expect("finalized bundle should remain inspectable")
+            .expect("finalized bundle evidence should remain present");
+        assert_eq!(finalized.handle.status, SandboxStatus::Stopped);
+        assert_eq!(
+            finalized.cleanup,
+            SandboxCleanupObservation::Finalized,
+            "outer node absence must not regress exact bundle finality"
+        );
+        assert!(
+            finalized.handle.published_endpoints.is_empty(),
+            "a finalized guest workload cannot regain published endpoints"
+        );
     }
 
     #[test]

@@ -1,6 +1,10 @@
 //! Startup-reconciliation admission fences preserve existing-workload cleanup.
 
 use super::*;
+use crate::inspection::{
+    SandboxCleanupObservation, SandboxExecutionObservation, SandboxRestartAssessment,
+    SandboxRestartBlocker,
+};
 
 fn inject_startup_reconciliation_failure(backend: &mut ContainerSandboxBackend) {
     backend.startup_reconciliation_error = Some(Arc::<str>::from(
@@ -157,7 +161,7 @@ fn startup_reconciliation_failure_allows_exact_explicit_stop() {
 }
 
 #[test]
-fn startup_reconciliation_failure_allows_exact_natural_exit_cleanup() {
+fn startup_reconciliation_failure_keeps_natural_exit_read_only_until_explicit_stop() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let spec = sample_spec();
     let id = SandboxId::new("natural-exit-startup-fence");
@@ -216,21 +220,27 @@ fn startup_reconciliation_failure_allows_exact_natural_exit_cleanup() {
 
     let inspected = backend
         .inspect_sync(&id)
-        .expect("natural-exit cleanup should retain exact authority")
-        .expect("terminal workload should remain inspectable");
-    assert_eq!(inspected.status, SandboxStatus::Failed);
-    assert_ne!(
+        .expect("natural-exit inspection should retain exact authority")
+        .expect("exited workload should remain inspectable");
+    assert_eq!(inspected.handle.status, SandboxStatus::Stopping);
+    assert!(inspected.handle.published_endpoints.is_empty());
+    assert_eq!(
+        inspected.execution,
+        SandboxExecutionObservation::Exited { exit_code: 17 }
+    );
+    assert_eq!(inspected.cleanup, SandboxCleanupObservation::Retained);
+    assert_eq!(
         std::fs::read(&authority_path).expect("active authority should remain readable"),
         authority_before,
-        "natural-exit cleanup must durably release exact network authority"
+        "natural-exit inspection must not release exact network authority"
     );
     assert!(
         backend
             .egress_proxies
             .readiness(&manifest.spec.tenant_id, &manifest.handle.id)
-            .expect("post-cleanup readiness should inspect")
-            .is_none(),
-        "natural-exit cleanup must remove the exact PEP registration"
+            .expect("post-inspection readiness should inspect")
+            .is_some(),
+        "natural-exit inspection must not remove the exact PEP registration"
     );
     assert!(
         readiness_before.is_ready(),
@@ -238,12 +248,34 @@ fn startup_reconciliation_failure_allows_exact_natural_exit_cleanup() {
     );
     let persisted = backend
         .read_manifest(&id)
+        .expect("retained manifest should inspect")
+        .expect("retained manifest should remain durable");
+    assert_eq!(persisted, manifest);
+
+    backend
+        .stop_sync(&id)
+        .expect("explicit stop must retain cleanup authority despite startup failure");
+    assert_ne!(
+        std::fs::read(&authority_path).expect("released authority should remain readable"),
+        authority_before,
+        "explicit stop must durably release exact network authority"
+    );
+    assert!(
+        backend
+            .egress_proxies
+            .readiness(&manifest.spec.tenant_id, &manifest.handle.id)
+            .expect("post-stop readiness should inspect")
+            .is_none(),
+        "explicit stop must remove the exact PEP registration"
+    );
+    let persisted = backend
+        .read_manifest(&id)
         .expect("terminal manifest should inspect")
         .expect("terminal manifest should remain durable");
-    assert_eq!(persisted.status, SandboxStatus::Failed);
+    assert_eq!(persisted.status, SandboxStatus::Stopped);
     assert!(
         persisted.has_terminal_network_finality(),
-        "natural exit must publish terminal status only after exact cleanup"
+        "explicit stop must publish terminal status only after exact cleanup"
     );
 }
 
@@ -308,10 +340,23 @@ fn startup_reconciliation_failure_keeps_restart_eligible_inspection_read_only() 
         .inspect_sync(&id)
         .expect("startup-fenced inspection should remain available")
         .expect("restart-eligible workload should remain inspectable");
+    assert_eq!(inspected.handle.status, SandboxStatus::Stopping);
+    assert!(inspected.handle.published_endpoints.is_empty());
     assert_eq!(
-        inspected, manifest.handle,
-        "inspection must return the unchanged durable projection"
+        inspected.execution,
+        SandboxExecutionObservation::Exited { exit_code: 17 }
     );
+    assert_eq!(
+        inspected.restart,
+        SandboxRestartAssessment::Candidate {
+            exit_code: 17,
+            completed_restarts: 0,
+            retry_delay_millis: 1_000,
+            persisted_not_before_millis: None,
+            blocker: Some(SandboxRestartBlocker::StartupReconciliationUnavailable),
+        }
+    );
+    assert_eq!(inspected.cleanup, SandboxCleanupObservation::Retained);
     assert_eq!(
         std::fs::read(&manifest.conmon_layout.manifest_path)
             .expect("canonical manifest bytes should remain readable"),

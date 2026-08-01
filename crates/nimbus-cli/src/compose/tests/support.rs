@@ -1,5 +1,6 @@
 use super::*;
 use nimbus::SandboxBackend;
+use nimbus_sandbox::SandboxInspection;
 
 #[derive(Debug, Parser)]
 pub(super) struct RootCli {
@@ -146,12 +147,13 @@ pub(super) fn sample_spec(tenant: &TenantId, service_name: &str) -> SandboxSpec 
 }
 
 pub(super) fn stub_handle(
+    tenant: &TenantId,
     id: &SandboxId,
     service_name: &str,
     status: SandboxStatus,
 ) -> SandboxHandle {
     SandboxHandle::new(
-        nimbus::TenantId::new("tenant").expect("tenant id should parse"),
+        tenant.clone(),
         id.clone(),
         service_name,
         SandboxBackendKind::Krun,
@@ -163,6 +165,7 @@ pub(super) fn stub_handle(
 #[derive(Default)]
 pub(super) struct StubBackend {
     pub(super) handles: Mutex<BTreeMap<String, SandboxHandle>>,
+    pub(super) inspections: Mutex<BTreeMap<String, SandboxInspection>>,
     pub(super) started_services: Mutex<Vec<String>>,
     pub(super) stopped_ids: Mutex<Vec<String>>,
 }
@@ -178,6 +181,18 @@ impl StubBackend {
                 .insert(handle.id.as_str().to_owned(), handle);
         }
         backend
+    }
+
+    pub(super) fn report_inspection(&self, inspection: SandboxInspection) {
+        let id = inspection.handle.id.clone();
+        self.report_inspection_for(&id, inspection);
+    }
+
+    pub(super) fn report_inspection_for(&self, id: &SandboxId, inspection: SandboxInspection) {
+        self.inspections
+            .lock()
+            .expect("inspections lock should hold")
+            .insert(id.as_str().to_owned(), inspection);
     }
 }
 
@@ -202,7 +217,7 @@ impl SandboxBackend for StubMachineApiSandboxBackend {
         Box::pin(async move { Ok(handle) })
     }
 
-    fn inspect(&self, _id: &SandboxId) -> SandboxFuture<Option<SandboxHandle>> {
+    fn inspect(&self, _id: &SandboxId) -> SandboxFuture<Option<SandboxInspection>> {
         Box::pin(async move { Ok(None) })
     }
 
@@ -219,6 +234,7 @@ impl SandboxBackend for StubBackend {
     fn start(&self, spec: SandboxSpec) -> SandboxFuture<SandboxHandle> {
         let service_name = spec.display_name().to_owned();
         let handle = stub_handle(
+            &spec.tenant_id,
             &SandboxId::new(format!("{service_name}-01stub")),
             &service_name,
             SandboxStatus::Starting,
@@ -234,14 +250,23 @@ impl SandboxBackend for StubBackend {
         Box::pin(async move { Ok(handle) })
     }
 
-    fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxHandle>> {
+    fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxInspection>> {
+        if let Some(inspection) = self
+            .inspections
+            .lock()
+            .expect("inspections lock should hold")
+            .get(id.as_str())
+            .cloned()
+        {
+            return Box::pin(async move { Ok(Some(inspection)) });
+        }
         let handle = self
             .handles
             .lock()
             .expect("handles lock should hold")
             .get(id.as_str())
             .cloned();
-        Box::pin(async move { Ok(handle) })
+        Box::pin(async move { Ok(handle.map(SandboxInspection::provider_reported)) })
     }
 
     fn stop(&self, id: &SandboxId) -> SandboxFuture<()> {
@@ -249,14 +274,14 @@ impl SandboxBackend for StubBackend {
             .lock()
             .expect("stopped ids lock should hold")
             .push(id.as_str().to_owned());
-        if let Some(handle) = self
-            .handles
+        self.handles
             .lock()
             .expect("handles lock should hold")
-            .get_mut(id.as_str())
-        {
-            handle.status = SandboxStatus::Stopped;
-        }
+            .remove(id.as_str());
+        self.inspections
+            .lock()
+            .expect("inspections lock should hold")
+            .remove(id.as_str());
         Box::pin(async move { Ok(()) })
     }
 }

@@ -8,9 +8,11 @@ use nimbus_egress::{EgressPolicy, EgressRule};
 use nimbus_network::{EndpointProtocol, PublishedEndpoint};
 use nimbus_runtime::HostCallCancellation;
 use nimbus_sandbox::{
-    SandboxBackend, SandboxBackendKind, SandboxError, SandboxFuture, SandboxHandle, SandboxId,
+    SandboxBackend, SandboxBackendKind, SandboxCleanupObservation, SandboxError,
+    SandboxExecutionObservation, SandboxFuture, SandboxHandle, SandboxId, SandboxInspection,
     SandboxMountSpec, SandboxOciBuildSpec, SandboxOciImageSource, SandboxOwnerSpec,
-    SandboxProcessSpec, SandboxRootSpec, SandboxSpec, SandboxStatus,
+    SandboxProcessSpec, SandboxRestartAssessment, SandboxRestartBlocker, SandboxRootSpec,
+    SandboxSpec, SandboxStatus,
 };
 
 use crate::{
@@ -73,6 +75,7 @@ struct StubSandboxBackend {
     handle_name_override: Option<String>,
     stop_barrier: Option<Arc<StopBarrier>>,
     handles: Mutex<BTreeMap<String, SandboxHandle>>,
+    inspection_overrides: Mutex<BTreeMap<String, SandboxInspection>>,
 }
 
 impl StubSandboxBackend {
@@ -90,6 +93,7 @@ impl StubSandboxBackend {
             handle_name_override: None,
             stop_barrier: None,
             handles: Mutex::new(BTreeMap::new()),
+            inspection_overrides: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -113,6 +117,18 @@ impl StubSandboxBackend {
             .lock()
             .expect("failed stop id set should not be poisoned")
             .insert(id.to_owned());
+    }
+
+    fn report_inspection(&self, inspection: SandboxInspection) {
+        let id = inspection.handle.id.clone();
+        self.report_inspection_for(&id, inspection);
+    }
+
+    fn report_inspection_for(&self, id: &SandboxId, inspection: SandboxInspection) {
+        self.inspection_overrides
+            .lock()
+            .expect("inspection override map should not be poisoned")
+            .insert(id.as_str().to_owned(), inspection);
     }
 
     fn sandbox_handle(
@@ -212,8 +228,17 @@ impl SandboxBackend for StubSandboxBackend {
         Box::pin(async move { Ok(handle) })
     }
 
-    fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxHandle>> {
+    fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxInspection>> {
         let inspect_call = self.inspect_calls.fetch_add(1, Ordering::SeqCst) + 1;
+        if let Some(inspection) = self
+            .inspection_overrides
+            .lock()
+            .expect("inspection override map should not be poisoned")
+            .get(id.as_str())
+            .cloned()
+        {
+            return Box::pin(async move { Ok(Some(inspection)) });
+        }
         let mut handles = self
             .handles
             .lock()
@@ -225,7 +250,7 @@ impl SandboxBackend for StubSandboxBackend {
             }
             handle
         });
-        Box::pin(async move { Ok(handle) })
+        Box::pin(async move { Ok(handle.map(SandboxInspection::provider_reported)) })
     }
 
     fn stop(&self, id: &SandboxId) -> SandboxFuture<()> {
@@ -242,6 +267,10 @@ impl SandboxBackend for StubSandboxBackend {
         self.handles
             .lock()
             .expect("backend lock should not be poisoned")
+            .remove(id.as_str());
+        self.inspection_overrides
+            .lock()
+            .expect("inspection override map should not be poisoned")
             .remove(id.as_str());
         let stop_barrier = self.stop_barrier.clone();
         Box::pin(async move {
@@ -312,6 +341,23 @@ fn standalone_resource_spec(tenant_id: &TenantId, display_name: &str) -> Sandbox
         SandboxBackendKind::Krun,
         SandboxRootSpec::oci_image_reference("registry.example.com/task:latest"),
         SandboxProcessSpec::new(vec!["task".to_owned()]),
+    )
+}
+
+fn retained_stopping_inspection(mut handle: SandboxHandle) -> SandboxInspection {
+    handle.status = SandboxStatus::Stopping;
+    handle.published_endpoints.clear();
+    SandboxInspection::provider_reported(handle.clone()).with_provider_projection(
+        handle,
+        SandboxExecutionObservation::Exited { exit_code: 42 },
+        SandboxRestartAssessment::Candidate {
+            exit_code: 42,
+            completed_restarts: 1,
+            retry_delay_millis: 2_000,
+            persisted_not_before_millis: Some(9_000),
+            blocker: Some(SandboxRestartBlocker::StartupReconciliationUnavailable),
+        },
+        SandboxCleanupObservation::Retained,
     )
 }
 

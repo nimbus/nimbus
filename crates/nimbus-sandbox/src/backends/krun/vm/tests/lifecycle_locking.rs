@@ -3,8 +3,305 @@
 use super::support::*;
 use crate::backends::oci::conmon::OciConmonLayout;
 use crate::backends::oci::network::{OciNetworkLayout, default_network_attachment_id};
+use crate::inspection::{SandboxCleanupObservation, SandboxObservationUnknownReason};
+use std::sync::{Arc, Barrier};
+use std::time::Instant;
 
 const ASYNC_COMPLETION_TIMEOUT: Duration = Duration::from_secs(10);
+
+fn snapshot_inspection_tree(root: &Path) -> BTreeMap<PathBuf, Option<Vec<u8>>> {
+    fn visit(base: &Path, current: &Path, snapshot: &mut BTreeMap<PathBuf, Option<Vec<u8>>>) {
+        let mut entries = match fs::read_dir(current) {
+            Ok(entries) => entries
+                .map(|entry| entry.expect("test artifact entry should inspect"))
+                .collect::<Vec<_>>(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) => panic!("test artifact directory should inspect: {error}"),
+        };
+        entries.sort_by_key(fs::DirEntry::file_name);
+        for entry in entries {
+            let path = entry.path();
+            let relative = path
+                .strip_prefix(base)
+                .expect("test artifact should remain under its fixture root")
+                .to_path_buf();
+            let metadata = entry
+                .metadata()
+                .expect("test artifact metadata should inspect");
+            if metadata.is_dir() {
+                snapshot.insert(relative, None);
+                visit(base, &path, snapshot);
+            } else {
+                snapshot.insert(
+                    relative,
+                    Some(fs::read(&path).expect("test artifact should read")),
+                );
+            }
+        }
+    }
+
+    let mut snapshot = BTreeMap::new();
+    visit(root, root, &mut snapshot);
+    snapshot
+}
+
+#[test]
+fn missing_krun_manifest_inspection_creates_no_state() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let workload_root = temp_dir.path().join("missing-krun-root");
+    let backend =
+        KrunSandboxBackend::new(KrunSandboxBackendConfig::under_root(workload_root.clone()));
+    let id = SandboxId::new("missing-krun-inspection");
+
+    let before = snapshot_inspection_tree(&workload_root);
+    assert!(
+        backend
+            .inspect_sync(&id)
+            .expect("missing manifest inspection should succeed")
+            .is_none()
+    );
+    assert_eq!(
+        snapshot_inspection_tree(&workload_root),
+        before,
+        "a query for a missing manifest must not create a directory, lock, or other artifact"
+    );
+}
+
+#[test]
+fn nonfinal_krun_plan_only_terminal_or_shutdown_projection_is_retained() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let mut config = KrunSandboxBackendConfig::under_root(temp_dir.path().to_path_buf());
+    config.start_mode = KrunStartMode::PlanOnly;
+    let backend = KrunSandboxBackend::new(config);
+
+    for (suffix, status, shutdown_requested) in [
+        ("stopped", SandboxStatus::Stopped, false),
+        ("failed", SandboxStatus::Failed, false),
+        ("shutdown-ready", SandboxStatus::Ready, true),
+    ] {
+        let mut manifest = backend
+            .plan_start_with_id(
+                &sample_spec(),
+                &SandboxId::new(format!("krun-plan-only-retained-{suffix}")),
+                None,
+                None,
+            )
+            .expect("retained krun plan-only fixture should plan")
+            .manifest;
+        backend
+            .write_manifest(&manifest)
+            .expect("valid pre-crash krun plan-only fixture should persist");
+        manifest.status = status;
+        manifest.handle.status = status;
+        manifest.shutdown_requested = shutdown_requested;
+        std::fs::write(
+            &manifest.conmon_layout.manifest_path,
+            serde_json::to_vec(&manifest)
+                .expect("contradictory legacy krun plan-only fixture should serialize"),
+        )
+        .expect("contradictory legacy krun plan-only fixture should replace durable bytes");
+
+        let inspection = backend
+            .inspect_sync(&manifest.handle.id)
+            .expect("retained krun plan-only fixture should inspect")
+            .expect("retained krun plan-only manifest should remain visible");
+
+        assert_eq!(
+            inspection.handle.status,
+            SandboxStatus::Stopping,
+            "{suffix}"
+        );
+        assert_eq!(
+            inspection.cleanup,
+            SandboxCleanupObservation::Retained,
+            "{suffix}"
+        );
+        assert!(
+            inspection.handle.published_endpoints.is_empty(),
+            "{suffix}: retained or contradictory PlanOnly evidence cannot publish"
+        );
+    }
+}
+
+#[test]
+fn krun_inspection_requires_an_existing_lock_without_recreating_it() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let mut config = KrunSandboxBackendConfig::under_root(temp_dir.path().to_path_buf());
+    config.start_mode = KrunStartMode::PlanOnly;
+    let backend = KrunSandboxBackend::new(config);
+    let manifest = backend
+        .plan_start_with_id(
+            &sample_spec(),
+            &SandboxId::new("krun-missing-inspection-lock"),
+            None,
+            None,
+        )
+        .expect("inspection fixture should plan")
+        .manifest;
+    backend
+        .write_manifest(&manifest)
+        .expect("inspection fixture should persist");
+    let lock_path = manifest
+        .conmon_layout
+        .container_state_dir
+        .join(super::super::lifecycle::KRUN_LIFECYCLE_LOCK_FILE);
+    fs::remove_file(&lock_path).expect("fixture lock should be removable");
+    let manifest_before =
+        fs::read(&manifest.conmon_layout.manifest_path).expect("manifest bytes should be readable");
+
+    let error = backend
+        .inspect_sync(&manifest.handle.id)
+        .expect_err("a manifest without synchronization authority must fail closed");
+
+    assert!(
+        error
+            .to_string()
+            .contains("failed to open existing krun inspection lock")
+            && error
+                .to_string()
+                .contains("inspection cannot create synchronization state"),
+        "missing-lock ambiguity must remain named: {error}"
+    );
+    assert!(
+        !lock_path.exists(),
+        "inspection must not recreate a missing lifecycle lock"
+    );
+    assert_eq!(
+        fs::read(&manifest.conmon_layout.manifest_path)
+            .expect("manifest bytes should remain readable"),
+        manifest_before,
+        "missing-lock failure must preserve the durable snapshot"
+    );
+}
+
+#[test]
+fn krun_inspection_lock_timeout_is_bounded_and_byte_stable() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let mut config = KrunSandboxBackendConfig::under_root(temp_dir.path().to_path_buf());
+    config.start_mode = KrunStartMode::PlanOnly;
+    let backend = KrunSandboxBackend::new(config);
+    let manifest = backend
+        .plan_start_with_id(
+            &sample_spec(),
+            &SandboxId::new("krun-inspection-lock-timeout"),
+            None,
+            None,
+        )
+        .expect("inspection fixture should plan")
+        .manifest;
+    backend
+        .write_manifest(&manifest)
+        .expect("inspection fixture should persist");
+    let manifest_before =
+        fs::read(&manifest.conmon_layout.manifest_path).expect("manifest bytes should be readable");
+    let lifecycle = backend
+        .lock_launch_lifecycle(&manifest)
+        .expect("fixture should own the exclusive lifecycle lock");
+    let started = Instant::now();
+
+    let error = match backend
+        .lock_current_inspection_with_timeout_for_test(&manifest, Duration::from_millis(30))
+    {
+        Ok(_) => panic!("contended inspection must reach its bounded deadline"),
+        Err(error) => error,
+    };
+
+    assert!(
+        error
+            .to_string()
+            .contains("timed out acquiring existing krun inspection lock")
+            && error.to_string().contains("observation remains unknown"),
+        "lock ambiguity must fail closed with a named diagnostic: {error}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "the injected inspection deadline must remain bounded"
+    );
+    assert_eq!(
+        fs::read(&manifest.conmon_layout.manifest_path)
+            .expect("manifest bytes should remain readable"),
+        manifest_before,
+        "a timed-out query must not alter the durable snapshot"
+    );
+    drop(lifecycle);
+}
+
+#[test]
+fn concurrent_and_fresh_krun_inspectors_return_exact_equal_evidence() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let mut config = KrunSandboxBackendConfig::under_root(temp_dir.path().to_path_buf());
+    config.start_mode = KrunStartMode::PlanOnly;
+    let backend = KrunSandboxBackend::new(config.clone());
+    let mut manifest = backend
+        .plan_start_with_id(
+            &sample_spec(),
+            &SandboxId::new("krun-concurrent-inspection"),
+            None,
+            None,
+        )
+        .expect("inspection fixture should plan")
+        .manifest;
+    backend
+        .write_manifest(&manifest)
+        .expect("inspection fixture should persist");
+    let manifest_before =
+        fs::read(&manifest.conmon_layout.manifest_path).expect("manifest bytes should be readable");
+    let barrier = Arc::new(Barrier::new(3));
+    let mut inspectors = Vec::new();
+    for _ in 0..2 {
+        let inspect_backend = backend.clone();
+        let inspect_id = manifest.handle.id.clone();
+        let inspect_barrier = Arc::clone(&barrier);
+        inspectors.push(thread::spawn(move || {
+            inspect_barrier.wait();
+            inspect_backend.inspect_sync(&inspect_id)
+        }));
+    }
+    barrier.wait();
+    let first = inspectors
+        .remove(0)
+        .join()
+        .expect("first inspector should join")
+        .expect("first inspection should succeed")
+        .expect("manifest should remain present");
+    let second = inspectors
+        .remove(0)
+        .join()
+        .expect("second inspector should join")
+        .expect("second inspection should succeed")
+        .expect("manifest should remain present");
+    assert_eq!(second, first);
+    assert_eq!(
+        fs::read(&manifest.conmon_layout.manifest_path)
+            .expect("manifest bytes should remain readable"),
+        manifest_before,
+        "concurrent read locks must not publish a manifest"
+    );
+
+    let fresh_backend = KrunSandboxBackend::new(config);
+    let fresh = fresh_backend
+        .inspect_sync(&manifest.handle.id)
+        .expect("fresh backend inspection should succeed")
+        .expect("manifest should remain present");
+    assert_eq!(
+        fresh, first,
+        "process-local construction cannot change authenticated evidence"
+    );
+
+    manifest.next_restart_at_millis = Some(7_000);
+    backend
+        .write_manifest(&manifest)
+        .expect("durable evidence substitution should persist");
+    let substituted = backend
+        .inspect_sync(&manifest.handle.id)
+        .expect("substituted inspection should succeed")
+        .expect("manifest should remain present");
+    assert_eq!(substituted.handle, first.handle);
+    assert_ne!(
+        substituted.version, first.version,
+        "the comparison token must detect a durable snapshot substitution"
+    );
+}
 
 #[test]
 fn fresh_krun_lifecycle_lock_bootstraps_only_its_private_parent() {
@@ -151,9 +448,19 @@ fn inspect_rereads_only_after_acquiring_the_krun_lifecycle_lock() {
         .expect("inspection should succeed")
         .expect("manifest should remain visible");
     inspector.join().expect("inspection thread should join");
+    assert_eq!(inspected.handle.status, SandboxStatus::Stopped);
+    assert!(
+        inspected.handle.published_endpoints.is_empty(),
+        "terminal observation must not republish stale durable endpoints"
+    );
+    assert_eq!(inspected.cleanup, SandboxCleanupObservation::Finalized);
     assert_eq!(
-        inspected, changed.handle,
-        "inspection must reread the durable manifest after acquiring the lock"
+        backend
+            .read_manifest(&changed.handle.id)
+            .expect("changed manifest should remain readable")
+            .expect("changed manifest should remain present"),
+        changed,
+        "inspection must reread without changing the durable winner"
     );
 }
 
@@ -193,19 +500,184 @@ fn explicitly_absent_runtime_without_exit_receipt_is_fenced_nonterminal() {
         .inspect_sync(&sandbox_id)
         .expect("absence observation should remain inspectable")
         .expect("manifest should remain durable");
-    assert_eq!(observed.status, SandboxStatus::Stopping);
-    assert!(observed.published_endpoints.is_empty());
+    assert_eq!(observed.handle.status, SandboxStatus::Stopping);
+    assert!(observed.handle.published_endpoints.is_empty());
+    assert_eq!(
+        observed.execution,
+        SandboxExecutionObservation::AbsentWithoutExit
+    );
+    assert_eq!(
+        observed.restart,
+        SandboxRestartAssessment::Ineligible {
+            reason: SandboxRestartIneligibility::RuntimeAbsenceUnproven,
+        }
+    );
+    assert_eq!(observed.cleanup, SandboxCleanupObservation::Retained);
     let fenced = backend
         .read_manifest(&sandbox_id)
         .expect("fenced manifest should inspect")
         .expect("fenced manifest should remain durable");
-    assert_eq!(fenced.status, SandboxStatus::Stopping);
-    assert_eq!(fenced.handle.status, SandboxStatus::Stopping);
+    assert_eq!(
+        fenced, manifest,
+        "inspection must not persist its projection"
+    );
     assert_eq!(fenced.launch_authority, KrunLaunchAuthority::ProviderOwned);
     assert!(
         !fenced.shutdown_requested,
         "unexpected absence must not invent a final-stop decision"
     );
+}
+
+#[test]
+fn krun_runtime_state_matrix_is_read_only_and_nonpublishing() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::under_root(
+        temp_dir.path().to_path_buf(),
+    ));
+    let mut manifest = backend
+        .plan_start_with_id(
+            &sample_spec_for_tenant("krun-inspection-state-matrix", "api")
+                .with_port_binding(SandboxPortBinding::tcp("api", 18117, 8080)),
+            &SandboxId::new("krun-inspection-state-matrix"),
+            None,
+            None,
+        )
+        .expect("state-matrix fixture should plan")
+        .manifest;
+    let authority_path = nimbus_network::LocalNetworkStateStore::authority_path_for(
+        &backend.config.network_state_root,
+    );
+    backend
+        .write_manifest(&manifest)
+        .expect("pending-launch fixture should persist");
+    let pending_manifest_before = fs::read(&manifest.conmon_layout.manifest_path)
+        .expect("pending manifest bytes should read");
+    let pending_authority_before =
+        fs::read(&authority_path).expect("pending network authority should read");
+    let pending = backend
+        .inspect_sync(&manifest.handle.id)
+        .expect("pending launch should inspect")
+        .expect("pending manifest should remain visible");
+    assert_eq!(pending.handle.status, SandboxStatus::Starting);
+    assert!(pending.handle.published_endpoints.is_empty());
+    assert_eq!(
+        pending.execution,
+        SandboxExecutionObservation::Unknown {
+            reason: SandboxObservationUnknownReason::LaunchHandoffPending,
+        }
+    );
+    assert_eq!(
+        pending.restart,
+        SandboxRestartAssessment::Ineligible {
+            reason: SandboxRestartIneligibility::RuntimeAbsenceUnproven,
+        }
+    );
+    assert_eq!(pending.cleanup, SandboxCleanupObservation::Retained);
+    assert_eq!(
+        fs::read(&manifest.conmon_layout.manifest_path)
+            .expect("pending manifest bytes should remain readable"),
+        pending_manifest_before,
+        "pending inspection must not publish or rewrite launch state"
+    );
+    assert_eq!(
+        fs::read(&authority_path).expect("pending network authority should remain readable"),
+        pending_authority_before,
+        "pending inspection must not adopt or release reserved network authority"
+    );
+
+    manifest.launch_authority = KrunLaunchAuthority::ProviderOwned;
+
+    for (provider_status, expected_status, expected_restart, expected_cleanup) in [
+        (
+            "created",
+            SandboxStatus::Starting,
+            SandboxRestartIneligibility::RuntimePresent,
+            SandboxCleanupObservation::NotRequired,
+        ),
+        (
+            "creating",
+            SandboxStatus::Starting,
+            SandboxRestartIneligibility::RuntimePresent,
+            SandboxCleanupObservation::NotRequired,
+        ),
+        (
+            "paused",
+            SandboxStatus::Stopping,
+            SandboxRestartIneligibility::CleanupPending,
+            SandboxCleanupObservation::Retained,
+        ),
+        (
+            "stopped",
+            SandboxStatus::Stopping,
+            SandboxRestartIneligibility::CleanupPending,
+            SandboxCleanupObservation::Retained,
+        ),
+        (
+            "provider-unknown",
+            SandboxStatus::Stopping,
+            SandboxRestartIneligibility::CleanupPending,
+            SandboxCleanupObservation::Retained,
+        ),
+    ] {
+        manifest.conmon_launch.state_command = CommandSpec::new("/bin/sh").args([
+            "-c".to_owned(),
+            format!(
+                "printf '%s\\n' '{{\"id\":\"{}\",\"status\":\"{provider_status}\"}}'",
+                manifest.handle.id
+            ),
+        ]);
+        backend
+            .write_manifest(&manifest)
+            .expect("state-matrix fixture should persist");
+        let manifest_before =
+            fs::read(&manifest.conmon_layout.manifest_path).expect("manifest bytes should read");
+        let authority_before = fs::read(&authority_path).expect("network authority should read");
+
+        let inspected = backend
+            .inspect_sync(&manifest.handle.id)
+            .expect("runtime state should inspect")
+            .expect("manifest should remain visible");
+        assert_eq!(
+            inspected.handle.status, expected_status,
+            "{provider_status}"
+        );
+        assert!(
+            inspected.handle.published_endpoints.is_empty(),
+            "{provider_status}: a non-Ready runtime must not publish endpoints"
+        );
+        assert_eq!(
+            inspected.execution,
+            SandboxExecutionObservation::Present,
+            "{provider_status}"
+        );
+        assert_eq!(
+            inspected.restart,
+            SandboxRestartAssessment::Ineligible {
+                reason: expected_restart,
+            },
+            "{provider_status}"
+        );
+        assert_eq!(inspected.cleanup, expected_cleanup, "{provider_status}");
+        assert_eq!(
+            backend
+                .inspect_sync(&manifest.handle.id)
+                .expect("repeated runtime state should inspect")
+                .expect("manifest should remain visible"),
+            inspected,
+            "{provider_status}: unchanged provider evidence must remain exact"
+        );
+        assert_eq!(
+            fs::read(&manifest.conmon_layout.manifest_path)
+                .expect("manifest bytes should remain readable"),
+            manifest_before,
+            "{provider_status}: inspection must not persist its projection"
+        );
+        assert_eq!(
+            fs::read(&authority_path).expect("network authority should remain readable"),
+            authority_before,
+            "{provider_status}: inspection must not mutate network authority"
+        );
+    }
 }
 
 #[test]
@@ -265,19 +737,21 @@ fn explicitly_absent_runtime_with_inaccessible_pidfile_fails_closed() {
     );
 }
 
-/// NNC0.6a fail-before baseline for NNCF20. The barrier is inside the actual
-/// krun provider-launch entry selected by inspect restart policy. Withdrawal
-/// persists while inspection holds a stale manifest; release proves inspection
-/// still performs and republishes the restart side effect.
+/// NNC0.6a regression for NNCF20. Inspection races a durable withdrawal and
+/// must return the coordinator's current retained snapshot without entering
+/// the provider-launch authority that the historical fail-before exposed.
 #[test]
-#[ignore = "NNC0.6a expected red until NNC5.6/NNC6.4a make inspect side-effect-free and fence restart"]
 fn nnc0_6a_krun_inspect_must_not_restart_after_withdrawal() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let restart_probe = RestartLaunchTestProbe::new(Duration::from_secs(1));
-    let backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::under_root(
+    let mut backend = KrunSandboxBackend::new(KrunSandboxBackendConfig::under_root(
         temp_dir.path().to_path_buf(),
     ))
     .with_restart_launch_test_probe(restart_probe.clone());
+    // NNC5.6 characterizes the inspection edge itself. Host startup
+    // reconciliation is a separate admission fence and must not short-circuit
+    // this semantic regression fixture.
+    backend.startup_network_reconciliation_error = None;
     let sandbox_id = SandboxId::new("nnc0-6a-krun");
     let mut manifest = backend
         .plan_start_with_id(
@@ -309,46 +783,109 @@ fn nnc0_6a_krun_inspect_must_not_restart_after_withdrawal() {
     manifest.egress_proxy = None;
     manifest.launch_authority = KrunLaunchAuthority::ProviderOwned;
     manifest.conmon_launch.delete_command = CommandSpec::new("/usr/bin/true");
+    manifest.conmon_launch.state_command = CommandSpec::new("/bin/sh").args([
+        "-c".to_owned(),
+        format!(
+            "printf '%s\\n' 'container `{0}` does not exist: open \
+             `/run/crun/{0}/status`: No such file or directory' >&2; exit 1",
+            manifest.handle.id
+        ),
+    ]);
     manifest.next_restart_at_millis = Some(0);
     fs::write(&manifest.conmon_layout.exit_status_file, "42\n")
         .expect("failed exit should persist");
     backend
         .write_manifest(&manifest)
         .expect("restart-eligible manifest should persist");
+    let manifest_before =
+        fs::read(&manifest.conmon_layout.manifest_path).expect("manifest bytes should read");
+    let authority_path = nimbus_network::LocalNetworkStateStore::authority_path_for(
+        &backend.config.network_state_root,
+    );
+    let authority_before =
+        fs::read(&authority_path).expect("network authority should remain durable");
 
-    let inspect_backend = backend.clone();
-    let inspect_id = sandbox_id.clone();
-    let inspect_thread = thread::spawn(move || inspect_backend.inspect_sync(&inspect_id));
-    if !restart_probe.wait_until_entered() {
-        let inspect_result = inspect_thread
-            .join()
-            .expect("inspect thread should join after a missing barrier");
-        panic!(
-            "inspect must reach the provider-launch barrier through restart policy; \
-             inspect completed instead with {inspect_result:?}"
-        );
-    }
+    let inspected = backend
+        .inspect_sync(&sandbox_id)
+        .expect("restart-eligible inspection should succeed")
+        .expect("manifest should remain inspectable");
+    assert_eq!(inspected.handle.status, SandboxStatus::Stopping);
+    assert!(inspected.handle.published_endpoints.is_empty());
+    assert_eq!(
+        inspected.execution,
+        SandboxExecutionObservation::Exited { exit_code: 42 }
+    );
+    assert_eq!(
+        inspected.restart,
+        SandboxRestartAssessment::Candidate {
+            exit_code: 42,
+            completed_restarts: 0,
+            retry_delay_millis: 1_000,
+            persisted_not_before_millis: Some(0),
+            blocker: None,
+        }
+    );
+    assert_eq!(inspected.cleanup, SandboxCleanupObservation::Retained);
+    let repeated = backend
+        .inspect_sync(&sandbox_id)
+        .expect("repeated inspection should succeed")
+        .expect("manifest should remain inspectable");
+    assert_eq!(repeated, inspected);
+    fs::write(&manifest.conmon_layout.exit_status_file, "43\n")
+        .expect("substitute exit evidence should persist");
+    let substituted = backend
+        .inspect_sync(&sandbox_id)
+        .expect("substituted inspection should succeed")
+        .expect("manifest should remain inspectable");
+    assert_eq!(
+        substituted.execution,
+        SandboxExecutionObservation::Exited { exit_code: 43 }
+    );
+    assert_ne!(
+        substituted.version, inspected.version,
+        "changing only provider evidence must change the comparison version"
+    );
+    fs::write(&manifest.conmon_layout.exit_status_file, "42\n")
+        .expect("original exit evidence should restore");
+    let restored = backend
+        .inspect_sync(&sandbox_id)
+        .expect("restored inspection should succeed")
+        .expect("manifest should remain inspectable");
+    assert_eq!(
+        restored, inspected,
+        "restoring provider evidence must restore byte-stable inspection evidence"
+    );
+    assert_eq!(
+        fs::read(&manifest.conmon_layout.manifest_path)
+            .expect("manifest bytes should remain readable"),
+        manifest_before
+    );
+    assert_eq!(
+        fs::read(&authority_path).expect("network authority should remain readable"),
+        authority_before
+    );
+    assert_eq!(restart_probe.effect_count(), 0);
 
     let mut withdrawn = manifest;
     withdrawn.shutdown_requested = true;
     withdrawn.next_restart_at_millis = None;
-    withdrawn.status = SandboxStatus::Stopped;
-    withdrawn.handle.status = SandboxStatus::Stopped;
+    withdrawn.status = SandboxStatus::Stopping;
+    withdrawn.handle.status = SandboxStatus::Stopping;
     withdrawn.handle.published_endpoints.clear();
     backend
         .write_manifest(&withdrawn)
-        .expect("coordinator withdrawal should persist before launch release");
+        .expect("coordinator withdrawal should persist");
 
-    restart_probe.release();
-    let inspected = inspect_thread
-        .join()
-        .expect("inspect thread should join")
-        .expect("current inspect restart should complete through the test provider")
+    let withdrawn_inspection = backend
+        .inspect_sync(&sandbox_id)
+        .expect("withdrawn inspection should succeed")
         .expect("manifest should remain inspectable");
+    assert_eq!(withdrawn_inspection.handle.status, SandboxStatus::Stopping);
     assert_eq!(
-        inspected.status,
-        SandboxStatus::Starting,
-        "precondition: stale inspection currently reactivates the withdrawn manifest"
+        withdrawn_inspection.restart,
+        SandboxRestartAssessment::Ineligible {
+            reason: SandboxRestartIneligibility::ShutdownRequested,
+        }
     );
 
     assert_eq!(

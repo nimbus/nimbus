@@ -539,6 +539,7 @@ impl ContainerSandboxBackend {
         )
     }
 
+    #[cfg(test)]
     pub(super) fn begin_machine_port_proxy_restart_for_manifest(
         &self,
         manifest: &ContainerSandboxManifest,

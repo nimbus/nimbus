@@ -364,7 +364,7 @@ impl MachineApiNodeWorkloadFacade for AbsentRetryNodeWorkloadFacade {
     fn inspect<'a>(
         &'a self,
         _id: &'a SandboxId,
-    ) -> MachineApiServiceFuture<'a, Option<SandboxHandle>> {
+    ) -> MachineApiServiceFuture<'a, Option<nimbus_sandbox::SandboxInspection>> {
         Box::pin(async move { Ok(None) })
     }
 
@@ -448,14 +448,15 @@ impl MachineApiNodeWorkloadFacade for ReceiptlessNodeWorkloadFacade {
     fn inspect<'a>(
         &'a self,
         id: &'a SandboxId,
-    ) -> MachineApiServiceFuture<'a, Option<SandboxHandle>> {
+    ) -> MachineApiServiceFuture<'a, Option<nimbus_sandbox::SandboxInspection>> {
         Box::pin(async move {
             Ok(self
                 .handle
                 .lock()
                 .expect("receiptless handle lock")
                 .clone()
-                .filter(|handle| &handle.id == id))
+                .filter(|handle| &handle.id == id)
+                .map(nimbus_sandbox::SandboxInspection::provider_reported))
         })
     }
 

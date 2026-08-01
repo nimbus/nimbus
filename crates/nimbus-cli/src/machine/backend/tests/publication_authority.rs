@@ -19,7 +19,11 @@ use nimbus_network::{
     PortLeaseAccounting, PortLeaseFence, PortLeasePhase, PortLeaseRecord, PortLeaseRequest,
     PortProtocol, PortPublicationIntent, PortRequestMode,
 };
-use nimbus_sandbox::{MachinePortForwardOutcome, MachinePortForwardReceipt};
+use nimbus_sandbox::{
+    MachinePortForwardOutcome, MachinePortForwardReceipt, SandboxCleanupObservation,
+    SandboxExecutionObservation, SandboxInspection, SandboxRestartAssessment,
+    SandboxRestartBlocker,
+};
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
@@ -638,7 +642,11 @@ async fn forwarded_inspect_leaves_parent_publication_authority_byte_unchanged() 
         .expect("inspect should succeed")
         .expect("started handle should inspect");
 
-    assert_eq!(inspected, started);
+    assert_eq!(
+        inspected,
+        scripted_inspection(&started),
+        "the forwarded adapter must preserve every typed field and the exact comparison version"
+    );
     assert_eq!(
         before,
         authority_bytes_if_exists(&parent_root),
@@ -870,11 +878,12 @@ async fn handle_scripted_request(
             let started = last_started
                 .as_ref()
                 .ok_or_else(|| "inspect script requires a prior start".to_owned())?;
+            let inspection = scripted_inspection(&started.handle);
             write_json_response(
                 &mut stream,
                 &json!({
                     "sandbox_id": started.handle.id,
-                    "handle": started.handle,
+                    "inspection": inspection,
                 }),
             )
             .await?;
@@ -1008,6 +1017,21 @@ fn stop_response(
         "forwarder_authority": authority,
         "confirmed_absent_evidence": receipts,
     }))
+}
+
+fn scripted_inspection(handle: &SandboxHandle) -> SandboxInspection {
+    SandboxInspection::provider_reported(handle.clone()).with_provider_projection(
+        handle.clone(),
+        SandboxExecutionObservation::Exited { exit_code: 42 },
+        SandboxRestartAssessment::Candidate {
+            exit_code: 42,
+            completed_restarts: 1,
+            retry_delay_millis: 2_000,
+            persisted_not_before_millis: Some(9_000),
+            blocker: Some(SandboxRestartBlocker::StartupReconciliationUnavailable),
+        },
+        SandboxCleanupObservation::Retained,
+    )
 }
 
 fn receipt(

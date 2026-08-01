@@ -13,8 +13,8 @@ use nimbus_runtime::{
 };
 use nimbus_sandbox::{
     SandboxBackend, SandboxBackendKind, SandboxError, SandboxFuture, SandboxHandle, SandboxId,
-    SandboxMountSpec, SandboxOciImageSource, SandboxOwnerSpec, SandboxProcessSpec, SandboxRootSpec,
-    SandboxSpec, SandboxStatus,
+    SandboxInspection, SandboxMountSpec, SandboxOciImageSource, SandboxOwnerSpec,
+    SandboxProcessSpec, SandboxRootSpec, SandboxSpec, SandboxStatus,
 };
 use nimbus_services::ServiceManager;
 use nimbus_services::{RuntimeServiceRegistry, ServiceBackend};
@@ -227,14 +227,14 @@ impl SandboxBackend for HarnessSandboxBackend {
         Box::pin(async move { result })
     }
 
-    fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxHandle>> {
+    fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxInspection>> {
         let handle = self
             .handles
             .lock()
             .expect("sandbox handles lock should not be poisoned")
             .get(id.as_str())
             .cloned();
-        Box::pin(async move { Ok(handle) })
+        Box::pin(async move { Ok(handle.map(SandboxInspection::provider_reported)) })
     }
 
     fn stop(&self, id: &SandboxId) -> SandboxFuture<()> {

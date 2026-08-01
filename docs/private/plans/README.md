@@ -74,7 +74,7 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC5.4a complete; NNC5.5
+- `nimbus-network-control-plane-plan.md` - `active; NNC5.6 complete; NNC6.1
   in progress`. The Linux sovereignty tripwire is complete with a root-safe,
   raw-artifact-derived evidence contract, 70/70 deterministic tests, 62/62
   adversarial verifier cases, fully dispositioned full+narrow Sol reviews, and
@@ -181,6 +181,34 @@ extension-registry seam before the second concern edits `extensions.rs`.
   raised one claim about `container/runtime/lifecycle.rs`; exact module routing
   proves that file is test-only, so the claim is rejected. No third review is
   warranted. NNC5.5 is complete in one exact checkpoint; no push or PR.
+  NNC5.6 has R1-R14 green after its full and narrow item reviews. One typed
+  sandbox-owned inspection carries handle, execution, restart, cleanup, and
+  opaque snapshot evidence through services, compute, Compose,
+  guest/forwarded Machine API, and every backend implementation. Container and
+  Krun inspection now use
+  existing-only shared locks, pure restart assessment, and bounded
+  child/process-group observation; they cannot restart, clean, repair PEP,
+  release authority, publish endpoints, or write manifests. Exited/absent
+  retained workloads remain non-publishable `Stopping`, and crossed
+  ID/tenant/name/backend evidence is rejected before cache or lifecycle
+  effects. The full Sol/xhigh/fast review's seven accepted findings are
+  corrected: guest finality is monotonic, retained Compose ownership blocks
+  replacement, command output is truly bounded, process-group/reap ownership
+  is explicit, external evidence participates in comparison versions, and
+  contradictory PlanOnly states cannot publish. A related post-reap numeric
+  process-group race exposed during full-suite convergence is also corrected.
+  The sole narrow correction review found two incomplete corrections:
+  unavailable inspection still authorized Compose replacement, and two
+  Container terminal branches omitted raw runner-handoff bytes from their
+  versions. Both reproduced exactly as 0/2, correct to 2/2, and pass full
+  affected gates. Final affected behavior is 2,104/2,104 with 27 declared skips;
+  live verifier is 25/25 and aggregate mutations are 158/158. NNC6.4a still
+  owns desired-generation-fenced restart; NNC8.3 still owns orphan
+  cleanup/finalization/reuse. Both permitted Sol/xhigh/fast reviews are
+  dispositioned, no third review ran or is warranted, and NNC5.6 is one exact
+  69-path HEAD checkpoint. NNC6.1 now owns the read-only census and injection
+  of the existing shared manager/registry into compute; executable work waits
+  for its acceptance freeze.
   Cleanup, release, finalization, and reuse stay in NNC8.3. Machine forwarding obeys
   NNC5.2a's common lifecycle; runtime absence, workload status, readiness persistence,
   cleanup convergence, and inspect/restart policy stay in their named later

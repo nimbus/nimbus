@@ -3,9 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use hyper::{Body, Request, StatusCode};
-use nimbus::{
-    Error, SandboxHandle, SandboxId, SandboxPortBinding, SandboxRootSpec, SandboxSpec, TenantId,
-};
+use nimbus::{Error, SandboxId, SandboxPortBinding, SandboxRootSpec, SandboxSpec, TenantId};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -29,7 +27,7 @@ use nimbus_machine::api::{
     machine_api_service_sandbox_logs_path, machine_api_service_sandbox_path,
     machine_api_service_sandbox_process_snapshot_path, machine_api_service_sandbox_stop_path,
 };
-use nimbus_sandbox::MachinePortForwardOutcome;
+use nimbus_sandbox::{MachinePortForwardOutcome, SandboxInspection};
 
 const SOCKET_IO_TIMEOUT: Duration = Duration::from_secs(2);
 const SOCKET_MUTATION_IO_TIMEOUT: Duration = Duration::from_secs(30);
@@ -198,11 +196,25 @@ impl MachineApiClient {
     pub(crate) fn inspect_service_sandbox(
         &self,
         sandbox_id: &SandboxId,
-    ) -> Result<Option<SandboxHandle>, Error> {
-        self.get_json::<MachineApiServiceSandboxInspectResponse>(&machine_api_service_sandbox_path(
-            sandbox_id.as_str(),
-        ))
-        .map(|response| response.handle)
+    ) -> Result<Option<SandboxInspection>, Error> {
+        let response = self.get_json::<MachineApiServiceSandboxInspectResponse>(
+            &machine_api_service_sandbox_path(sandbox_id.as_str()),
+        )?;
+        if response.sandbox_id != *sandbox_id {
+            return Err(Error::InvalidInput(format!(
+                "machine API inspection response sandbox {} does not match requested sandbox {}",
+                response.sandbox_id, sandbox_id
+            )));
+        }
+        if let Some(inspection) = response.inspection.as_ref()
+            && inspection.handle.id != *sandbox_id
+        {
+            return Err(Error::InvalidInput(format!(
+                "machine API inspection evidence sandbox {} does not match requested sandbox {}",
+                inspection.handle.id, sandbox_id
+            )));
+        }
+        Ok(response.inspection)
     }
 
     pub(crate) fn stop_service_sandbox(
@@ -689,11 +701,11 @@ mod tests {
     };
     use nimbus_machine::MachineForwarderAuthority;
     use nimbus_network::{NetworkPlanId, NetworkResourceGeneration};
-    use nimbus_sandbox::SandboxFuture;
     use nimbus_sandbox::backends::container::{
         ContainerSandboxBackend, ContainerSandboxBackendConfig, ContainerStartMode,
         OciMachinePortForwarderConfig,
     };
+    use nimbus_sandbox::{SandboxFuture, SandboxInspection};
     use tempfile::{Builder, TempDir};
 
     use super::{
@@ -960,7 +972,15 @@ mod tests {
             .inspect_service_sandbox(&image_handle.id)
             .expect("inspect should succeed")
             .expect("started sandbox should inspect");
-        assert_eq!(inspected, image_handle);
+        assert_eq!(inspected.handle, image_handle);
+        let repeated = client
+            .inspect_service_sandbox(&image_handle.id)
+            .expect("repeated inspect should succeed")
+            .expect("started sandbox should remain inspectable");
+        assert_eq!(
+            repeated, inspected,
+            "the Unix JSON path and mapped test facade must preserve every typed field and version"
+        );
 
         client
             .stop_service_sandbox(&tenant_id, &image_handle.id, &image_bindings)
@@ -1506,9 +1526,9 @@ mod tests {
 
     #[test]
     fn inspect_service_sandbox_encodes_hostile_id_into_request_path() {
-        // `handle: null` keeps the body minimal while staying a valid
+        // `inspection: null` keeps the body minimal while staying a valid
         // MachineApiServiceSandboxInspectResponse so the client returns Ok.
-        let response_body = "{\"sandbox_id\":\"../../etc/passwd\",\"handle\":null}".to_string();
+        let response_body = "{\"sandbox_id\":\"../../etc/passwd\",\"inspection\":null}".to_string();
         let request = capture_machine_api_request_line(&response_body, |client| {
             client
                 .inspect_service_sandbox(&SandboxId::new("../../etc/passwd"))
@@ -1521,6 +1541,57 @@ mod tests {
             ),
             "hostile id must collapse to one safe segment with no raw `/` or `..`: {request}"
         );
+    }
+
+    #[test]
+    fn inspect_service_sandbox_rejects_crossed_outer_response_identity() {
+        let requested = SandboxId::new("expected-sandbox");
+        let response_body = "{\"sandbox_id\":\"crossed-sandbox\",\"inspection\":null}".to_owned();
+        capture_machine_api_request_line(&response_body, |client| {
+            let error = client
+                .inspect_service_sandbox(&requested)
+                .expect_err("crossed response identity must fail closed");
+            assert!(
+                error.to_string().contains("crossed-sandbox")
+                    && error.to_string().contains("expected-sandbox")
+                    && error
+                        .to_string()
+                        .contains("does not match requested sandbox"),
+                "the crossed outer identity must remain explicit: {error}"
+            );
+        });
+    }
+
+    #[test]
+    fn inspect_service_sandbox_rejects_crossed_inner_evidence_identity() {
+        let requested = SandboxId::new("expected-sandbox");
+        let crossed_handle = SandboxHandle::new(
+            TenantId::new("tenant").expect("tenant should validate"),
+            SandboxId::new("crossed-sandbox"),
+            "api",
+            SandboxBackendKind::Container,
+            SandboxStatus::Stopping,
+            Vec::new(),
+        );
+        let inspection = SandboxInspection::provider_reported(crossed_handle);
+        let response_body = serde_json::json!({
+            "sandbox_id": requested,
+            "inspection": inspection,
+        })
+        .to_string();
+        capture_machine_api_request_line(&response_body, |client| {
+            let error = client
+                .inspect_service_sandbox(&SandboxId::new("expected-sandbox"))
+                .expect_err("crossed inspection evidence must fail closed");
+            assert!(
+                error.to_string().contains("crossed-sandbox")
+                    && error.to_string().contains("expected-sandbox")
+                    && error
+                        .to_string()
+                        .contains("does not match requested sandbox"),
+                "the crossed inner identity must remain explicit: {error}"
+            );
+        });
     }
 
     #[test]
@@ -1744,14 +1815,14 @@ mod tests {
             Box::pin(async move { Ok(handle) })
         }
 
-        fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxHandle>> {
+        fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxInspection>> {
             let handle = self
                 .handles
                 .lock()
                 .expect("stub backend lock should not be poisoned")
                 .get(id.as_str())
                 .cloned();
-            Box::pin(async move { Ok(handle) })
+            Box::pin(async move { Ok(handle.map(SandboxInspection::provider_reported)) })
         }
 
         fn stop(&self, id: &SandboxId) -> SandboxFuture<()> {

@@ -1,6 +1,10 @@
 //! Exact runtime-absence projection proofs.
 
 use super::*;
+use crate::inspection::{
+    SandboxCleanupObservation, SandboxExecutionObservation, SandboxRestartAssessment,
+    SandboxRestartIneligibility,
+};
 
 #[test]
 fn explicitly_absent_container_runtime_without_receipts_withdraws_ready_projection() {
@@ -37,6 +41,8 @@ fn explicitly_absent_container_runtime_without_receipts_withdraws_ready_projecti
     backend
         .write_manifest(&manifest)
         .expect("ready provider-owned fixture should persist");
+    let manifest_before = std::fs::read(&manifest.conmon_layout.manifest_path)
+        .expect("canonical manifest bytes should be readable");
     let authority_path = nimbus_network::LocalNetworkStateStore::authority_path_for(
         &backend.config.network_state_root,
     );
@@ -48,20 +54,39 @@ fn explicitly_absent_container_runtime_without_receipts_withdraws_ready_projecti
         .expect("explicit absence should remain inspectable")
         .expect("the durable sandbox should remain visible");
     assert_eq!(
-        observed.status,
+        observed.handle.status,
         SandboxStatus::Stopping,
         "authenticated runtime absence must withdraw a false Ready projection"
     );
     assert!(
-        observed.published_endpoints.is_empty(),
+        observed.handle.published_endpoints.is_empty(),
         "a sandbox without a runtime must not retain visible endpoints"
     );
+    assert_eq!(
+        observed.execution,
+        SandboxExecutionObservation::AbsentWithoutExit
+    );
+    assert_eq!(
+        observed.restart,
+        SandboxRestartAssessment::Ineligible {
+            reason: SandboxRestartIneligibility::RuntimeAbsenceUnproven,
+        }
+    );
+    assert_eq!(observed.cleanup, SandboxCleanupObservation::Retained);
     let fenced = backend
         .read_manifest(&sandbox_id)
         .expect("fenced manifest should inspect")
         .expect("fenced manifest should remain durable");
-    assert_eq!(fenced.status, SandboxStatus::Stopping);
-    assert_eq!(fenced.handle.status, SandboxStatus::Stopping);
+    assert_eq!(
+        fenced, manifest,
+        "inspection must not persist its projection"
+    );
+    assert_eq!(
+        std::fs::read(&manifest.conmon_layout.manifest_path)
+            .expect("canonical manifest bytes should remain readable"),
+        manifest_before,
+        "runtime absence observation must be byte-stable"
+    );
     assert!(
         !fenced.shutdown_requested,
         "runtime absence alone must not invent a final-stop decision"

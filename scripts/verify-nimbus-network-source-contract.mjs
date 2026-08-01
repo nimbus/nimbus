@@ -12,12 +12,14 @@ const validModes = new Set([
   "address-is-not-identity",
   "sandbox-effect-locality",
   "sealed-effect-capabilities",
+  "side-effect-free-sandbox-inspection",
 ]);
 if (!validModes.has(mode)) {
   process.stderr.write(
     "usage: verify-nimbus-network-source-contract.mjs " +
       "[forbidden-dependencies-effects|single-definition-owner|address-is-not-identity|" +
-      "sandbox-effect-locality|sealed-effect-capabilities]\n",
+      "sandbox-effect-locality|sealed-effect-capabilities|" +
+      "side-effect-free-sandbox-inspection]\n",
   );
   process.exit(2);
 }
@@ -806,6 +808,431 @@ function verifySealedEffectCapabilities() {
   }
 }
 
+function verifySideEffectFreeSandboxInspection() {
+  const sandboxSources = walkRust("crates/nimbus-sandbox/src");
+  const servicesSources = walkRust("crates/nimbus-services/src");
+  const computeSources = walkRust("crates/nimbus-compute/src");
+  const machineSources = walkRust("crates/nimbus-machine/src");
+  const cliSources = walkRust("crates/nimbus-cli/src");
+  const networkSources = walkRust(networkSourceRoot);
+  const allSources = [
+    ...sandboxSources,
+    ...servicesSources,
+    ...computeSources,
+    ...machineSources,
+    ...cliSources,
+  ];
+  const requiredSource = (sources, file) => {
+    const candidate = sources.find((entry) => entry.file === file);
+    if (!candidate) {
+      errors.push(`required inspection contract source missing: ${file}`);
+      return { file, source: "" };
+    }
+    return candidate;
+  };
+  const appendTo = (sources, file, text) => {
+    const candidate = requiredSource(sources, file);
+    candidate.source += `\n${text}\n`;
+  };
+  const replaceIn = (sources, file, before, after) => {
+    const candidate = requiredSource(sources, file);
+    if (!candidate.source.includes(before)) {
+      errors.push(`inspection self-test mutation target missing: ${file}:${before}`);
+      return;
+    }
+    candidate.source = candidate.source.replace(before, after);
+  };
+
+  if (process.env.NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD === "1") {
+    const mutation =
+      process.env.NIMBUS_NETWORK_VERIFY_TEST_INSPECTION_MUTATION ?? "";
+    const inspectionFile =
+      "crates/nimbus-sandbox/src/backends/container/runtime/inspection.rs";
+    const injectedEffect = {
+      "inspection-restart":
+        "fn injected() { mark_restart_decision_after_exit(); }",
+      "inspection-launch": "fn injected() { launch_manifest(); }",
+      "inspection-reset": "fn injected() { reset_runtime_for_restart(); }",
+      "inspection-release": "fn injected() { release_network_authority(); }",
+      "inspection-cleanup": "fn injected() { cleanup_provider_artifacts(); }",
+      "inspection-finalize": "fn injected() { finalize_network_release(); }",
+      "inspection-pep-start":
+        "fn injected() { ensure_egress_proxy_running_with_release_authority(); }",
+      "inspection-write":
+        "fn injected() { write_existing_workload_manifest(); }",
+      "inspection-effect-barrier": "fn injected() { persist_effect_barrier(); }",
+    }[mutation];
+    if (injectedEffect) {
+      appendTo(sandboxSources, inspectionFile, injectedEffect);
+    } else if (mutation === "creating-lock") {
+      replaceIn(
+        sandboxSources,
+        "crates/nimbus-sandbox/src/backends/container/runtime/runner.rs",
+        ".write(true)\n        .open(&lock_path)",
+        ".write(true)\n        .create(true)\n        .open(&lock_path)",
+      );
+    } else if (mutation === "third-inspect-owner") {
+      appendTo(
+        sandboxSources,
+        "crates/nimbus-sandbox/src/backends/mod.rs",
+        "fn inspect_sync() {}",
+      );
+    } else if (mutation === "handle-only-trait") {
+      appendTo(
+        sandboxSources,
+        "crates/nimbus-sandbox/src/backend.rs",
+        "fn inspect_handle(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxHandle>>;",
+      );
+    } else if (mutation === "handle-only-machine-dto") {
+      replaceIn(
+        machineSources,
+        "crates/nimbus-machine/src/api.rs",
+        "pub inspection: Option<SandboxInspection>",
+        "pub inspection: Option<SandboxHandle>",
+      );
+    } else if (mutation === "missing-krun-classifier") {
+      replaceIn(
+        sandboxSources,
+        "crates/nimbus-sandbox/src/backends/krun/vm/inspection.rs",
+        "let restart = assess_restart(RestartAssessmentInput",
+        "let restart = bypassed_restart_classifier(RestartAssessmentInput",
+      );
+    } else if (mutation === "discarded-service-assessment") {
+      appendTo(
+        servicesSources,
+        "crates/nimbus-services/src/manager/handles.rs",
+        "fn discard_assessment(inspection: SandboxInspection) -> SandboxInspection { SandboxInspection::provider_reported(inspection.handle) }",
+      );
+    } else if (mutation === "cleanup-retained-eviction") {
+      replaceIn(
+        servicesSources,
+        "crates/nimbus-services/src/manager/handles.rs",
+        "&& inspection.cleanup == SandboxCleanupObservation::Finalized",
+        "",
+      );
+    } else if (mutation === "fabricated-forwarded-candidate") {
+      replaceIn(
+        cliSources,
+        "crates/nimbus-cli/src/machine/backend.rs",
+        "client.inspect_service_sandbox(&sandbox_id)",
+        "{ let _ = nimbus_sandbox::SandboxInspection::provider_reported(handle); client.inspect_service_sandbox(&sandbox_id) }",
+      );
+    } else if (mutation === "implicit-launch-caller") {
+      appendTo(
+        sandboxSources,
+        "crates/nimbus-sandbox/src/backends/container/runtime/status.rs",
+        "fn inspect_and_launch(backend: &ContainerSandboxBackend, manifest: &mut ContainerSandboxManifest) { let _ = backend.launch_manifest(manifest, true); }",
+      );
+    } else if (mutation === "nimbus-network-effect") {
+      appendTo(
+        networkSources,
+        "crates/nimbus-network/src/lib.rs",
+        "fn provider_effect() { let _ = std::process::Command::new(\"netavark\"); }",
+      );
+    } else if (mutation) {
+      errors.push(`unknown inspection self-test mutation: ${mutation}`);
+    }
+  }
+
+  const only = (...files) => new Set(files);
+  requireExactOwner(
+    sandboxSources,
+    "sandbox inspect_sync",
+    /\bfn\s+inspect_sync\s*\(/g,
+    only(
+      "crates/nimbus-sandbox/src/backends/container/runtime/inspection.rs",
+      "crates/nimbus-sandbox/src/backends/krun/vm/inspection.rs",
+    ),
+    2,
+  );
+
+  const backendContract = requiredSource(
+    sandboxSources,
+    "crates/nimbus-sandbox/src/backend.rs",
+  ).source;
+  if (
+    !/\bfn\s+inspect\s*\([^)]*&SandboxId[^)]*\)\s*->\s*SandboxFuture\s*<\s*Option\s*<\s*SandboxInspection\s*>\s*>/.test(
+      backendContract,
+    ) ||
+    /\bfn\s+inspect[A-Za-z0-9_]*\s*\([^)]*&SandboxId[^)]*\)\s*->\s*SandboxFuture\s*<\s*Option\s*<\s*(?:crate::)?SandboxHandle\s*>\s*>/.test(
+      backendContract,
+    )
+  ) {
+    errors.push(
+      "SandboxBackend::inspect must expose the typed SandboxInspection contract only",
+    );
+  }
+
+  const inspectionFiles = new Set([
+    "crates/nimbus-sandbox/src/backends/container/runtime/inspection.rs",
+    "crates/nimbus-sandbox/src/backends/krun/vm/inspection.rs",
+  ]);
+  const inspectionSources = sandboxSources.filter((candidate) =>
+    inspectionFiles.has(candidate.file),
+  );
+  for (const file of inspectionFiles) {
+    requiredSource(sandboxSources, file);
+  }
+  const forbiddenInspectionEffect =
+    /\b(?:maybe_restart_after_exit|mark_restart_decision_after_exit|launch_manifest|reset_runtime(?:_for_restart)?|release_[A-Za-z0-9_]*|cleanup_[A-Za-z0-9_]*|finalize_[A-Za-z0-9_]*|ensure_egress_proxy_running[A-Za-z0-9_]*|start_egress_proxy[A-Za-z0-9_]*|write_manifest|write_existing_workload_manifest|persist_effect_barrier|execute_prepared_container_network_[A-Za-z0-9_]*)\s*\(|\.\s*(?:stop_with_assignment|apply|expose_one|withdraw_one)\s*\(/;
+  const inspectionEffect = firstMatch(
+    inspectionSources,
+    forbiddenInspectionEffect,
+  );
+  if (inspectionEffect) {
+    errors.push(`inspection acquired provider-effect authority: ${inspectionEffect}`);
+  }
+
+  requireExactOwner(
+    sandboxSources,
+    "pure restart classifier",
+    /\bfn\s+assess_restart\s*\(/g,
+    only("crates/nimbus-sandbox/src/backends/inspection.rs"),
+    1,
+  );
+  requireExactOwner(
+    sandboxSources,
+    "restart classifier consumers",
+    /\bassess_restart\s*\(\s*RestartAssessmentInput\b/g,
+    inspectionFiles,
+    2,
+  );
+  const classifier = requiredSource(
+    sandboxSources,
+    "crates/nimbus-sandbox/src/backends/inspection.rs",
+  ).source;
+  if (
+    /\b(?:Instant|SystemTime|OffsetDateTime)\s*::|\b(?:std::)?fs::|\bCommand\s*::\s*new\s*\(|\b(?:maybe_restart_after_exit|mark_restart_decision_after_exit|reset_runtime(?:_for_restart)?|write_manifest|write_existing_workload_manifest|persist_effect_barrier|launch_manifest|cleanup_[A-Za-z0-9_]*|release_[A-Za-z0-9_]*)\s*\(/.test(
+      classifier,
+    )
+  ) {
+    errors.push("restart classifier performs clock, filesystem, process, or mutation work");
+  }
+
+  const functionBody = (source, functionName) => {
+    const name = functionName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const match = source.match(new RegExp(`\\bfn\\s+${name}\\s*\\(`));
+    if (!match) return "";
+    const start = source.indexOf("{", match.index);
+    if (start < 0) return "";
+    let depth = 1;
+    let cursor = start + 1;
+    while (cursor < source.length && depth > 0) {
+      if (source.at(cursor) === "{") depth += 1;
+      else if (source.at(cursor) === "}") depth -= 1;
+      cursor += 1;
+    }
+    return source.slice(start, cursor);
+  };
+  for (const [file, functionName] of [
+    [
+      "crates/nimbus-sandbox/src/backends/container/runtime/runner.rs",
+      "lock_current_inspection_with_timeout",
+    ],
+    [
+      "crates/nimbus-sandbox/src/backends/krun/vm/lifecycle.rs",
+      "lock_current_inspection_with_timeout",
+    ],
+  ]) {
+    const source = requiredSource(sandboxSources, file).source;
+    const body = functionBody(source, functionName);
+    if (
+      !body ||
+      !/\.open\s*\(\s*&lock_path\s*\)/.test(body) ||
+      !/\btry_lock_shared\s*\(/.test(body) ||
+      !/\b(?:read_manifest|read_runner_manifest)\s*\(/.test(body) ||
+      /\.create(?:_new)?\s*\(|\bFile\s*::\s*create(?:_new)?\s*\(|\bcreate_dir(?:_all)?\s*\(/.test(
+        body,
+      )
+    ) {
+      errors.push(
+        `inspection lock must open existing shared state and reread the manifest: ${file}`,
+      );
+    }
+  }
+
+  const machineApi = requiredSource(
+    machineSources,
+    "crates/nimbus-machine/src/api.rs",
+  ).source;
+  if (
+    !/\bstruct\s+MachineApiServiceSandboxInspectResponse\s*\{[^}]*\binspection\s*:\s*Option\s*<\s*SandboxInspection\s*>/s.test(
+      machineApi,
+    )
+  ) {
+    errors.push("Machine API inspection DTO must carry the complete SandboxInspection");
+  }
+
+  const forwardedBackend = requiredSource(
+    cliSources,
+    "crates/nimbus-cli/src/machine/backend.rs",
+  ).source;
+  const forwardedClient = requiredSource(
+    cliSources,
+    "crates/nimbus-cli/src/machine/client.rs",
+  ).source;
+  const forwardedStub = requiredSource(
+    cliSources,
+    "crates/nimbus-cli/src/machine/stub/client.rs",
+  ).source;
+  const forwardedInspect = functionBody(forwardedBackend, "inspect");
+  if (
+    /\b(?:provider_reported|with_provider_projection(?:_evidence)?)\s*\(/.test(
+      forwardedInspect,
+    ) ||
+    !/\bclient\s*\.\s*inspect_service_sandbox\s*\(/.test(forwardedInspect) ||
+    !/\bOk\s*\(\s*response\s*\.\s*inspection\s*\)/.test(forwardedClient) ||
+    !/inspection\s*\.\s*handle\s*\.\s*id\s*!=\s*\*sandbox_id/.test(
+      forwardedClient,
+    ) ||
+    !/Result\s*<\s*Option\s*<\s*SandboxInspection\s*>/.test(forwardedStub)
+  ) {
+    errors.push(
+      "forwarded Machine API must preserve typed evidence and authenticate its identity",
+    );
+  }
+
+  const guestFacade = requiredSource(
+    cliSources,
+    "crates/nimbus-cli/src/machine/api/service_workloads.rs",
+  ).source;
+  if (
+    !/\bbase\s*\.\s*with_provider_projection_evidence\s*\(/.test(guestFacade) ||
+    !/\bMachineApiServiceFuture\s*<\s*'a\s*,\s*Option\s*<\s*SandboxInspection\s*>\s*>/.test(
+      guestFacade,
+    )
+  ) {
+    errors.push("guest-node inspection must preserve and extend typed evidence");
+  }
+
+  const serviceHandles = requiredSource(
+    servicesSources,
+    "crates/nimbus-services/src/manager/handles.rs",
+  ).source;
+  const serviceActivation = requiredSource(
+    servicesSources,
+    "crates/nimbus-services/src/manager/activation.rs",
+  ).source;
+  const serviceDefinitions = requiredSource(
+    servicesSources,
+    "crates/nimbus-services/src/manager/definitions.rs",
+  ).source;
+  const serviceSandboxes = requiredSource(
+    servicesSources,
+    "crates/nimbus-services/src/manager/sandboxes.rs",
+  ).source;
+  const composeLifecycle = requiredSource(
+    cliSources,
+    "crates/nimbus-cli/src/compose/lifecycle.rs",
+  ).source;
+  const computeServices = requiredSource(
+    computeSources,
+    "crates/nimbus-compute/src/services.rs",
+  ).source;
+  const computeSandboxes = requiredSource(
+    computeSources,
+    "crates/nimbus-compute/src/sandboxes.rs",
+  ).source;
+  if (
+    !/\brefresh_inspection_async\b/.test(serviceHandles) ||
+    !/Result\s*<\s*Option\s*<\s*SandboxInspection\s*>/.test(serviceHandles) ||
+    !/\bvalidate_service_inspection_identity\s*\(/.test(serviceHandles) ||
+    !/\bpub\s+async\s+fn\s+inspect_service_lifecycle_for_context_async\s*\([^)]*\)\s*->\s*Result\s*<\s*Option\s*<\s*SandboxInspection\s*>\s*,\s*Error\s*>/s.test(
+      serviceHandles,
+    ) ||
+    !/\bpub\s+async\s+fn\s+inspect_sandbox_resource_async\s*\([^)]*\)\s*->\s*Result\s*<\s*Option\s*<\s*\(\s*SandboxResource\s*,\s*(?:nimbus_sandbox::)?SandboxInspection\s*\)\s*>\s*,\s*Error\s*>/s.test(
+      serviceSandboxes,
+    ) ||
+    /\bSandboxInspection\s*::\s*provider_reported\s*\(/.test(serviceHandles) ||
+    !/inspection\s*\.\s*cleanup\s*==\s*SandboxCleanupObservation\s*::\s*Finalized/.test(
+      serviceHandles,
+    ) ||
+    !/cleanup_is_final/.test(serviceActivation) ||
+    !/inspection\s*\.\s*cleanup\s*!=\s*SandboxCleanupObservation\s*::\s*Finalized/.test(
+      serviceDefinitions,
+    ) ||
+    !/inspection\s*\.\s*cleanup\s*!=\s*SandboxCleanupObservation\s*::\s*Finalized/.test(
+      serviceSandboxes,
+    ) ||
+    !/inspection\s*\.\s*cleanup\s*==\s*nimbus_sandbox\s*::\s*SandboxCleanupObservation\s*::\s*Finalized/.test(
+      composeLifecycle,
+    ) ||
+    !/\binspect_service_lifecycle_for_context_async\s*\(/.test(
+      computeServices,
+    ) ||
+    !/\(resource\s*,\s*_inspection\)/.test(computeSandboxes) ||
+    !/\bvalidate_sandbox_inspection_identity\s*\(/.test(serviceSandboxes) ||
+    !/\bvalidate_compose_inspection_identity\s*\(/.test(composeLifecycle)
+  ) {
+    errors.push(
+      "services, compute, and Compose must retain typed cleanup-pending inspection evidence",
+    );
+  }
+
+  const portableEffect = firstMatch(
+    networkSources,
+    /\b(?:std|tokio)\s*::\s*process\s*::|\bCommand\s*::\s*new\s*\(|\b(?:TcpListener|UdpSocket|UnixListener|TcpSocket|Socket)\s*::\s*bind\s*\(|\b(?:TcpStream|UnixStream)\s*::\s*connect(?:_timeout)?\s*\(/,
+  );
+  if (portableEffect) {
+    errors.push(`nimbus-network acquired an inspection/provider effect: ${portableEffect}`);
+  }
+  const networkWorktreeChanges = execFileSync(
+    "git",
+    [
+      "status",
+      "--porcelain",
+      "--untracked-files=all",
+      "--",
+      "crates/nimbus-network",
+    ],
+    { encoding: "utf8" },
+  ).trim();
+  if (networkWorktreeChanges) {
+    errors.push("NNC5.6 changed the transport-free nimbus-network crate");
+  }
+
+  requireExactOwner(
+    sandboxSources,
+    "launch_manifest callers",
+    /\.\s*launch_manifest\s*\(/g,
+    only(
+      "crates/nimbus-sandbox/src/backends/container/runtime/direct_execution.rs",
+      "crates/nimbus-sandbox/src/backends/krun/vm/lifecycle.rs",
+    ),
+    2,
+  );
+  const containerLaunchBody = functionBody(
+    requiredSource(
+      sandboxSources,
+      "crates/nimbus-sandbox/src/backends/container/runtime/direct_execution.rs",
+    ).source,
+    "execute_start_after_preflight_with_cleanup",
+  );
+  const krunLaunchBody = functionBody(
+    requiredSource(
+      sandboxSources,
+      "crates/nimbus-sandbox/src/backends/krun/vm/lifecycle.rs",
+    ).source,
+    "execute_start_after_preflight",
+  );
+  if (
+    [...containerLaunchBody.matchAll(/\.\s*launch_manifest\s*\(/g)].length !== 1 ||
+    [...krunLaunchBody.matchAll(/\.\s*launch_manifest\s*\(/g)].length !== 1
+  ) {
+    errors.push(
+      "launch_manifest calls must remain inside the two explicit start command bodies",
+    );
+  }
+
+  const staleHandleOnly = firstMatch(
+    allSources,
+    /\bfn\s+inspect[A-Za-z0-9_]*(?:\s*<'[^>]+>)?\s*\([^)]*&SandboxId[^)]*\)\s*->\s*(?:SandboxFuture|MachineApiServiceFuture\s*<\s*'[^,>]+\s*,)\s*<?\s*Option\s*<\s*(?:crate::)?SandboxHandle\s*>/,
+  );
+  if (staleHandleOnly) {
+    errors.push(`handle-only sandbox inspection seam remains: ${staleHandleOnly}`);
+  }
+}
+
 if (mode === "forbidden-dependencies-effects") {
   verifyForbiddenDependenciesAndEffects();
 } else if (mode === "single-definition-owner") {
@@ -814,6 +1241,8 @@ if (mode === "forbidden-dependencies-effects") {
   verifyAddressIsNotIdentity();
 } else if (mode === "sandbox-effect-locality") {
   verifySandboxEffectLocality();
+} else if (mode === "side-effect-free-sandbox-inspection") {
+  verifySideEffectFreeSandboxInspection();
 } else {
   verifySealedEffectCapabilities();
 }

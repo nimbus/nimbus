@@ -141,3 +141,132 @@ async fn sandbox_create_records_desired_workload() {
     assert_eq!(desired.generation(), resource.generation);
     assert_eq!(desired.binding_key(), Some(workload_id.as_str()));
 }
+
+#[tokio::test]
+async fn retained_stopping_standalone_sandbox_explicit_stop_converges_once() {
+    let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+    let backend = Arc::new(StubSandboxBackend::new(1));
+    let manager = ServiceManager::new(
+        Arc::new(StubServiceDefinitionCatalog {
+            launches: BTreeMap::new(),
+        }),
+        backend.clone(),
+    );
+    let resource = manager
+        .create_sandbox_resource_for_context_async(
+            &TenantIsolationContext::system(tenant_id.clone(), "sandbox.resource.create"),
+            "worker",
+            standalone_resource_spec(&tenant_id, "task"),
+            BTreeMap::new(),
+        )
+        .await
+        .expect("standalone sandbox should start");
+    let retained = retained_stopping_inspection(resource.handle.clone());
+    backend.report_inspection(retained.clone());
+
+    let observed = manager
+        .inspect_sandbox_resource_async(&tenant_id, &resource.id)
+        .await
+        .expect("typed standalone inspection should succeed")
+        .expect("retained sandbox should remain visible");
+    assert_eq!(observed.1, retained);
+    assert_eq!(observed.0.handle.status, SandboxStatus::Stopping);
+
+    let stopped = manager
+        .stop_sandbox_resource_async(&tenant_id, &resource.id)
+        .await
+        .expect("explicit stop should converge retained cleanup")
+        .expect("stopped resource should remain recorded");
+    assert_eq!(stopped.handle.status, SandboxStatus::Stopped);
+    assert!(stopped.handle.published_endpoints.is_empty());
+    assert_eq!(backend.stop_calls.load(Ordering::SeqCst), 1);
+
+    assert!(
+        manager
+            .stop_sandbox_resource_async(&tenant_id, &resource.id)
+            .await
+            .expect("stop replay should be idempotent")
+            .is_none()
+    );
+    assert_eq!(
+        backend.stop_calls.load(Ordering::SeqCst),
+        1,
+        "cleanup convergence must execute at most once after backend finality"
+    );
+    let desired = manager
+        .desired_workload_snapshot()
+        .workloads()
+        .find(|workload| workload.workload_id() == format!("sandbox:{}", resource.id))
+        .cloned()
+        .expect("explicit stop should retain desired-state evidence");
+    assert_eq!(
+        desired.desired_state(),
+        nimbus_workloads::DesiredWorkloadState::Stopped
+    );
+}
+
+#[tokio::test]
+async fn sandbox_inspection_rejects_crossed_identity_before_resource_or_lifecycle_effects() {
+    let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+
+    for case in ["sandbox-id", "tenant", "name", "backend"] {
+        let backend = Arc::new(StubSandboxBackend::new(1));
+        let manager = ServiceManager::new(
+            Arc::new(StubServiceDefinitionCatalog {
+                launches: BTreeMap::new(),
+            }),
+            backend.clone(),
+        );
+        let resource = manager
+            .create_sandbox_resource_for_context_async(
+                &TenantIsolationContext::system(tenant_id.clone(), "sandbox.resource.create"),
+                "worker",
+                standalone_resource_spec(&tenant_id, "task"),
+                BTreeMap::new(),
+            )
+            .await
+            .expect("standalone sandbox should start");
+        let before = resource.clone();
+        let mut crossed = resource.handle.clone();
+        match case {
+            "sandbox-id" => crossed.id = SandboxId::new("crossed-resource-sandbox"),
+            "tenant" => {
+                crossed.tenant_id =
+                    TenantId::new("crossed-tenant").expect("crossed tenant should be valid");
+            }
+            "name" => crossed.name = "crossed-resource".to_owned(),
+            "backend" => crossed.backend = SandboxBackendKind::Container,
+            _ => unreachable!("the identity table is exhaustive"),
+        }
+        backend.report_inspection_for(
+            &resource.handle.id,
+            SandboxInspection::provider_reported(crossed),
+        );
+
+        let error = manager
+            .inspect_sandbox_resource_async(&tenant_id, &resource.id)
+            .await
+            .expect_err("crossed standalone inspection identity must fail closed");
+
+        assert!(
+            error.to_string().contains("crossed inspection identity"),
+            "{case}: rejection must name the backend contract failure: {error}"
+        );
+        assert_eq!(
+            manager
+                .state
+                .lock()
+                .expect("manager state should not be poisoned")
+                .sandbox_resources
+                .get(&resource.id),
+            Some(&before),
+            "{case}: rejected evidence must not update or evict the resource"
+        );
+        assert_eq!(
+            backend.image_starts.load(Ordering::SeqCst),
+            1,
+            "{case}: inspection must not start a replacement"
+        );
+        assert_eq!(backend.stop_calls.load(Ordering::SeqCst), 0, "{case}");
+    }
+}

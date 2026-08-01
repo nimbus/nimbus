@@ -447,7 +447,7 @@ fn reserved_stop_releases_only_the_exact_unstarted_launch_batch() {
         .expect("stopped manifest should inspect")
         .expect("stopped manifest should remain durable");
     assert!(stopped.shutdown_requested);
-    assert_eq!(stopped.status, SandboxStatus::Stopped);
+    assert_eq!(stopped.handle.status, SandboxStatus::Stopped);
     assert_eq!(stopped.handle.status, SandboxStatus::Stopped);
     assert_eq!(stopped.launch_authority, KrunLaunchAuthority::Released);
 
@@ -509,7 +509,7 @@ fn adopting_stop_releases_exactly_when_allocator_still_proves_reserved() {
         .expect("stopped manifest should inspect")
         .expect("stopped manifest should remain durable");
     assert!(stopped.shutdown_requested);
-    assert_eq!(stopped.status, SandboxStatus::Stopped);
+    assert_eq!(stopped.handle.status, SandboxStatus::Stopped);
     assert_eq!(stopped.handle.status, SandboxStatus::Stopped);
     assert_eq!(
         stopped.launch_authority,
@@ -676,7 +676,7 @@ fn explicit_stop_cleanup_failure_remains_stopping_and_cannot_restart() {
         .expect("inspection must preserve cleanup-pending evidence")
         .expect("cleanup-pending workload should remain inspectable");
     assert_eq!(
-        observed.status,
+        observed.handle.status,
         SandboxStatus::Stopping,
         "inspection must not publish terminal state or invoke restart while cleanup is fenced"
     );

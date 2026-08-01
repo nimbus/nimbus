@@ -220,11 +220,11 @@ fn container_ready_rejects_active_pep_for_prior_desired_policy_attempt() {
         .expect("running stale-policy fixture should remain inspectable")
         .expect("running stale-policy fixture should remain visible");
     assert!(
-        observed.published_endpoints.is_empty(),
+        observed.handle.published_endpoints.is_empty(),
         "stale PEP policy evidence must withdraw published endpoints"
     );
     assert_eq!(
-        observed.status,
+        observed.handle.status,
         SandboxStatus::NotReady,
         "a running container must not report Ready while its PEP realizes the prior desired policy"
     );

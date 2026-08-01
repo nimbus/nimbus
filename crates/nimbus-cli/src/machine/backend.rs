@@ -494,7 +494,7 @@ impl SandboxBackend for ForwardedMachineApiSandboxBackend {
         }
     }
 
-    fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxHandle>> {
+    fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<nimbus_sandbox::SandboxInspection>> {
         let sandbox_id = id.clone();
         let client = self.client.clone();
         spawn_machine_api_operation("inspect", move || {
@@ -739,7 +739,7 @@ mod tests {
             .await
             .expect("inspect should succeed")
             .expect("handle should exist");
-        assert_eq!(inspected, image_handle);
+        assert_eq!(inspected.handle, image_handle);
 
         backend
             .stop(&image_handle.id)
@@ -1003,14 +1003,19 @@ mod tests {
             Box::pin(async move { Ok(handle) })
         }
 
-        fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxHandle>> {
+        fn inspect(
+            &self,
+            id: &SandboxId,
+        ) -> SandboxFuture<Option<nimbus_sandbox::SandboxInspection>> {
             let handle = self
                 .handles
                 .lock()
                 .expect("stub backend lock should not be poisoned")
                 .get(id.as_str())
                 .cloned();
-            Box::pin(async move { Ok(handle) })
+            Box::pin(
+                async move { Ok(handle.map(nimbus_sandbox::SandboxInspection::provider_reported)) },
+            )
         }
 
         fn stop(&self, id: &SandboxId) -> SandboxFuture<()> {

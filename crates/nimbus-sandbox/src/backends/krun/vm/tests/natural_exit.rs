@@ -11,7 +11,7 @@ use crate::backends::oci::network::{
 };
 
 #[test]
-fn natural_execute_exit_releases_exact_network_authority_before_terminal_status() {
+fn natural_execute_exit_is_observed_read_only_then_explicit_stop_releases_authority() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let spec = sample_spec_for_tenant("krun-natural-exit", "api");
     let recorder = Arc::new(RecordingSegmentAllocator::new(
@@ -48,23 +48,87 @@ fn natural_execute_exit_releases_exact_network_authority_before_terminal_status(
     fs::write(&manifest.conmon_layout.exit_status_file, b"0\n")
         .expect("natural exit should persist");
     let before_cleanup = recorder.operations().len();
+    let manifest_before =
+        fs::read(&manifest.conmon_layout.manifest_path).expect("manifest bytes should be readable");
+    let authority = LocalPortLeaseAuthority::open(&backend.config.network_state_root)
+        .expect("authority should open");
+    let pep_request = &manifest
+        .egress_proxy
+        .as_ref()
+        .expect("execute launch should reserve its PEP")
+        .port_lease;
+    assert!(
+        backend
+            .egress_proxies
+            .readiness(&manifest.spec.tenant_id, &manifest.handle.id)
+            .expect("missing PEP readiness should inspect")
+            .is_none(),
+        "precondition: no provider PEP has been started"
+    );
+    assert_eq!(
+        authority
+            .inspect(pep_request.lease_id())
+            .expect("PEP lease should inspect")
+            .expect("reserved evidence should remain durable")
+            .phase(),
+        nimbus_network::PortLeasePhase::Reserved,
+        "precondition: provider listener authority remains reserved"
+    );
 
     let inspected = backend
         .inspect_sync(&manifest.handle.id)
-        .expect("natural exit reconciliation should succeed")
-        .expect("terminal workload should remain inspectable");
-    assert_eq!(inspected.status, SandboxStatus::Stopped);
-    assert!(inspected.published_endpoints.is_empty());
-    let persisted = backend
-        .read_manifest(&manifest.handle.id)
-        .expect("terminal manifest should inspect")
-        .expect("terminal manifest should remain durable");
-    assert_eq!(persisted.status, SandboxStatus::Stopped);
-    assert_eq!(persisted.last_exit_code, Some(0));
-    assert!(
-        persisted.shutdown_requested,
-        "natural exit must durably publish shutdown intent before terminal cleanup"
+        .expect("natural exit observation should succeed")
+        .expect("exited workload should remain inspectable");
+    assert_eq!(inspected.handle.status, SandboxStatus::Stopping);
+    assert!(inspected.handle.published_endpoints.is_empty());
+    assert_eq!(
+        inspected.execution,
+        SandboxExecutionObservation::Exited { exit_code: 0 }
     );
+    assert_eq!(
+        inspected.restart,
+        SandboxRestartAssessment::Ineligible {
+            reason: SandboxRestartIneligibility::PolicyNever,
+        }
+    );
+    assert_eq!(inspected.cleanup, SandboxCleanupObservation::Retained);
+    let repeated = backend
+        .inspect_sync(&manifest.handle.id)
+        .expect("repeated natural-exit observation should succeed")
+        .expect("exited workload should remain inspectable");
+    assert_eq!(repeated, inspected);
+    assert_eq!(
+        fs::read(&manifest.conmon_layout.manifest_path)
+            .expect("manifest bytes should remain readable"),
+        manifest_before,
+        "inspection must not persist natural-exit cleanup state"
+    );
+    assert_eq!(
+        &recorder.operations()[before_cleanup..],
+        [],
+        "inspection must not invoke allocator cleanup"
+    );
+    assert!(
+        backend
+            .egress_proxies
+            .readiness(&manifest.spec.tenant_id, &manifest.handle.id)
+            .expect("post-inspection PEP readiness should inspect")
+            .is_none(),
+        "inspection must not repair or start a missing PEP"
+    );
+    assert_eq!(
+        authority
+            .inspect(pep_request.lease_id())
+            .expect("PEP lease should inspect")
+            .expect("reserved evidence should remain durable")
+            .phase(),
+        nimbus_network::PortLeasePhase::Reserved,
+        "inspection must not adopt, bind, or release the missing PEP authority"
+    );
+
+    backend
+        .stop_sync(&manifest.handle.id)
+        .expect("explicit stop should converge natural-exit cleanup");
     assert_eq!(
         &recorder.operations()[before_cleanup..],
         [
@@ -96,13 +160,6 @@ fn natural_execute_exit_releases_exact_network_authority_before_terminal_status(
         "terminal status may publish only after exact tenant/workload attachment convergence and \
          read-only absence verification"
     );
-    let authority = LocalPortLeaseAuthority::open(&backend.config.network_state_root)
-        .expect("authority should reopen");
-    let pep_request = &manifest
-        .egress_proxy
-        .as_ref()
-        .expect("execute launch should reserve its PEP")
-        .port_lease;
     assert_eq!(
         authority
             .inspect(pep_request.lease_id())
@@ -112,26 +169,23 @@ fn natural_execute_exit_releases_exact_network_authority_before_terminal_status(
         nimbus_network::PortLeasePhase::Released
     );
 
-    let operations_after_first_inspection = recorder.operations();
-    let repeated = backend
+    let operations_after_stop = recorder.operations();
+    let terminal = backend
         .inspect_sync(&manifest.handle.id)
-        .expect("released natural-exit cleanup must be idempotently inspectable")
+        .expect("released explicit cleanup must be idempotently inspectable")
         .expect("terminal workload should remain inspectable");
-    assert_eq!(repeated.status, SandboxStatus::Stopped);
-    assert!(repeated.published_endpoints.is_empty());
+    assert_eq!(terminal.handle.status, SandboxStatus::Stopped);
+    assert!(terminal.handle.published_endpoints.is_empty());
+    assert_eq!(terminal.cleanup, SandboxCleanupObservation::Finalized);
     assert_eq!(
-        &recorder.operations()[operations_after_first_inspection.len()..],
-        [SegmentAllocatorOperation::InspectAttachment(
-            manifest.spec.tenant_id.clone(),
-            default_network_attachment_id(&manifest.handle.id),
-        )],
-        "repeated terminal inspection may verify exact absence read-only, but must not replay \
-         provider or allocation cleanup"
+        recorder.operations(),
+        operations_after_stop,
+        "terminal inspection must not replay provider or allocation cleanup"
     );
 }
 
 #[test]
-fn natural_execute_exit_cleanup_failure_remains_stopping_with_exact_fence() {
+fn explicit_stop_cleanup_failure_after_natural_exit_remains_stopping_with_exact_fence() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let spec = sample_spec_for_tenant("krun-natural-exit-failure", "api");
     let recorder = Arc::new(
@@ -171,10 +225,26 @@ fn natural_execute_exit_cleanup_failure_remains_stopping_with_exact_fence() {
         .expect("running-shaped manifest should persist");
     fs::write(&manifest.conmon_layout.exit_status_file, b"0\n")
         .expect("natural exit should persist");
+    let manifest_before =
+        fs::read(&manifest.conmon_layout.manifest_path).expect("manifest bytes should be readable");
+    let operations_before = recorder.operations();
+
+    let inspected = backend
+        .inspect_sync(&manifest.handle.id)
+        .expect("inspection must not enter cleanup")
+        .expect("exited workload should remain inspectable");
+    assert_eq!(inspected.handle.status, SandboxStatus::Stopping);
+    assert_eq!(inspected.cleanup, SandboxCleanupObservation::Retained);
+    assert_eq!(
+        fs::read(&manifest.conmon_layout.manifest_path)
+            .expect("manifest bytes should remain readable"),
+        manifest_before
+    );
+    assert_eq!(recorder.operations(), operations_before);
 
     let error = backend
-        .inspect_sync(&manifest.handle.id)
-        .expect_err("failed cleanup must not publish a terminal state");
+        .stop_sync(&manifest.handle.id)
+        .expect_err("explicit cleanup failure must not publish a terminal state");
     assert!(
         error
             .to_string()
@@ -187,7 +257,10 @@ fn natural_execute_exit_cleanup_failure_remains_stopping_with_exact_fence() {
         .expect("retry checkpoint should remain durable");
     assert_eq!(persisted.status, SandboxStatus::Stopping);
     assert_eq!(persisted.handle.status, SandboxStatus::Stopping);
-    assert_eq!(persisted.last_exit_code, Some(0));
+    assert_eq!(
+        persisted.last_exit_code, None,
+        "inspection must not have persisted the observed exit before explicit cleanup failed"
+    );
     assert!(persisted.handle.published_endpoints.is_empty());
     assert_eq!(
         persisted.launch_authority,

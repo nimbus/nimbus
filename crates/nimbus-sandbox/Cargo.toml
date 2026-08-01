@@ -28,6 +28,7 @@ shell-words.workspace = true
 sha2.workspace = true
 tar = "0.4"
 thiserror.workspace = true
+tempfile.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 ulid.workspace = true
@@ -38,7 +39,6 @@ workspace-hack = { version = "0.1", path = "../workspace-hack" }
 [dev-dependencies]
 futures.workspace = true
 proptest = "1"
-tempfile.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }

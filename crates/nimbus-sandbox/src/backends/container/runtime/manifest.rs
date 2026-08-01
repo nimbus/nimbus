@@ -74,6 +74,7 @@ impl ContainerSandboxBackend {
 
     pub(super) fn write_manifest(&self, manifest: &ContainerSandboxManifest) -> Result<()> {
         self.ensure_startup_reconciliation_ready()?;
+        super::runner::ensure_runner_handoff_lock_artifact(manifest)?;
         self.write_existing_workload_manifest(manifest)
     }
 

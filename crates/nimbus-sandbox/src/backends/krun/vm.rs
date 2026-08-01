@@ -21,9 +21,12 @@ use crate::backends::conmon::lifecycle::RestartLaunchTestProbe;
 use crate::backends::conmon::lifecycle::detect_runtime_status as detect_conmon_runtime_status;
 use crate::backends::conmon::lifecycle::{
     RuntimeStatusProbe, configured_stop_signal, configured_stop_timeout, ensure_linux_host,
-    read_exit_code, read_pid, remove_if_exists, restart_backoff_delay,
-    restart_policy_allows_restart, run_status_best_effort, run_status_checked, runtime_state,
+    read_exit_code, read_pid, run_status_best_effort, run_status_checked, runtime_state,
     signal_process, wait_for_path,
+};
+#[cfg(test)]
+use crate::backends::conmon::lifecycle::{
+    remove_if_exists, restart_backoff_delay, restart_policy_allows_restart,
 };
 use crate::backends::conmon::spec_resolve::{
     merge_env_overrides, resolve_process_spec, resolve_root_spec, slugify,
@@ -70,6 +73,7 @@ use nimbus_network::{NetworkReservationClaim, PublishedEndpoint};
 
 mod attachment_recovery;
 mod creator;
+mod inspection;
 mod lifecycle;
 mod manifest_publication;
 mod network_composition;
@@ -616,7 +620,7 @@ impl SandboxBackend for KrunSandboxBackend {
         Box::pin(async move { backend.start_sync(spec) })
     }
 
-    fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxHandle>> {
+    fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<crate::SandboxInspection>> {
         let backend = self.clone();
         let sandbox_id = id.clone();
         Box::pin(async move { backend.inspect_sync(&sandbox_id) })

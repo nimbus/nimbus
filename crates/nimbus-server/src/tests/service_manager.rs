@@ -16,8 +16,8 @@ use nimbus_network::{EndpointProtocol, PublishedEndpoint};
 use nimbus_runtime::HostCallCancellation;
 use nimbus_sandbox::{
     SandboxBackend, SandboxBackendKind, SandboxError, SandboxFuture, SandboxHandle, SandboxId,
-    SandboxOciImageSource, SandboxOwnerSpec, SandboxProcessSpec, SandboxRootSpec, SandboxSpec,
-    SandboxStatus,
+    SandboxInspection, SandboxOciImageSource, SandboxOwnerSpec, SandboxProcessSpec,
+    SandboxRootSpec, SandboxSpec, SandboxStatus,
 };
 use nimbus_services::{
     RuntimeServiceRegistry, ServiceBackend, ServiceDefinitionCatalog, ServiceManager,
@@ -137,17 +137,17 @@ impl SandboxBackend for ReadySandboxBackend {
         }
     }
 
-    fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxHandle>> {
+    fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxInspection>> {
         let id = id.as_str().to_owned();
         Box::pin(async move {
             let parts = id.strip_prefix("sandbox-").unwrap_or(&id);
             let (tenant, service) = parts.rsplit_once('-').unwrap_or(("tenant", "db"));
             let tenant_id = TenantId::new(tenant).expect("test tenant id should parse");
-            Ok(Some(Self::handle(
+            Ok(Some(SandboxInspection::provider_reported(Self::handle(
                 &tenant_id,
                 service,
                 SandboxStatus::Ready,
-            )))
+            ))))
         })
     }
 
@@ -958,6 +958,16 @@ async fn operator_service_lifecycle_routes_support_explicit_verbs_and_get() {
     assert_eq!(get_body["readiness"], json!("ready"));
     assert_eq!(get_body["health"], json!("healthy"));
     assert_eq!(get_body["endpoints"][0]["name"], json!("postgres"));
+    assert_eq!(
+        backend.image_starts.load(Ordering::SeqCst),
+        1,
+        "service GET must not start or replace the inspected sandbox"
+    );
+    assert_eq!(
+        backend.stop_calls.load(Ordering::SeqCst),
+        0,
+        "service GET must not command lifecycle teardown"
+    );
 
     let stop = server
         .client()

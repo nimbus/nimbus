@@ -2,9 +2,9 @@
 
 use std::time::Duration;
 
-use crate::backends::readiness_probe::{
-    DEFAULT_READINESS_PROBE_TIMEOUT, ReadinessProbeProvider, application_readiness_status,
-};
+use crate::backends::readiness_probe::DEFAULT_READINESS_PROBE_TIMEOUT;
+#[cfg(test)]
+use crate::backends::readiness_probe::{ReadinessProbeProvider, application_readiness_status};
 use crate::instance::SandboxStatus;
 use crate::spec::SandboxSpec;
 use nimbus_network::PublishedEndpoint;
@@ -12,6 +12,7 @@ use nimbus_network::PublishedEndpoint;
 use super::config::ContainerStartMode;
 use super::manifest::ContainerSandboxManifest;
 
+#[cfg(test)]
 pub(super) fn running_status(
     manifest: &ContainerSandboxManifest,
     provider: &dyn ReadinessProbeProvider,
@@ -24,7 +25,7 @@ pub(super) fn running_status(
     )
 }
 
-fn readiness_probe_timeout(manifest: &ContainerSandboxManifest) -> Duration {
+pub(super) fn readiness_probe_timeout(manifest: &ContainerSandboxManifest) -> Duration {
     manifest
         .image_metadata
         .healthcheck

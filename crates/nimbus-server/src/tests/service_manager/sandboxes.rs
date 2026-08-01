@@ -112,6 +112,16 @@ async fn sandbox_resource_routes_are_id_addressed_and_do_not_publish_services() 
     assert_eq!(get.status(), StatusCode::OK);
     let get_body = get.json::<Value>().await.expect("get should parse");
     assert_sandbox_resource_response_redacts_launch_details(&get_body);
+    assert_eq!(
+        backend.image_starts.load(Ordering::SeqCst),
+        1,
+        "sandbox GET must not start or replace the inspected resource"
+    );
+    assert_eq!(
+        backend.stop_calls.load(Ordering::SeqCst),
+        0,
+        "sandbox GET must not command lifecycle teardown"
+    );
 
     let stop = server
         .client()

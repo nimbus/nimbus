@@ -881,7 +881,7 @@ async fn service_sandbox_id_routes_ignore_standalone_sandbox_records() {
     );
     assert!(inspect_response.contains("200 OK"), "{inspect_response}");
     assert!(
-        inspect_response.contains("\"handle\":null"),
+        inspect_response.contains("\"inspection\":null"),
         "{inspect_response}"
     );
 
@@ -1229,7 +1229,7 @@ impl SandboxBackend for RecordingStartBackend {
         })
     }
 
-    fn inspect(&self, _id: &SandboxId) -> SandboxFuture<Option<SandboxHandle>> {
+    fn inspect(&self, _id: &SandboxId) -> SandboxFuture<Option<nimbus_sandbox::SandboxInspection>> {
         Box::pin(async move { Ok(None) })
     }
 
@@ -1278,7 +1278,7 @@ impl SandboxBackend for RefreshingInspectBackend {
         Box::pin(async move { Err(SandboxError::InvalidSpec { message }) })
     }
 
-    fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxHandle>> {
+    fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<nimbus_sandbox::SandboxInspection>> {
         let state_root = self.state_root.clone();
         let sandbox_id = id.clone();
         let inspected_ids = Arc::clone(&self.inspected_ids);
@@ -1300,13 +1300,15 @@ impl SandboxBackend for RefreshingInspectBackend {
                 SandboxStatus::Ready,
                 endpoints.clone(),
             );
-            Ok(Some(SandboxHandle::new(
-                nimbus::TenantId::new("svc-demo").expect("tenant id should parse"),
-                sandbox_id,
-                "demo",
-                SandboxBackendKind::Container,
-                SandboxStatus::Ready,
-                endpoints,
+            Ok(Some(nimbus_sandbox::SandboxInspection::provider_reported(
+                SandboxHandle::new(
+                    nimbus::TenantId::new("svc-demo").expect("tenant id should parse"),
+                    sandbox_id,
+                    "demo",
+                    SandboxBackendKind::Container,
+                    SandboxStatus::Ready,
+                    endpoints,
+                ),
             )))
         })
     }
@@ -1343,7 +1345,10 @@ impl MachineApiNodeWorkloadFacade for BlockedNodeWorkloadFacade {
     fn inspect<'a>(
         &'a self,
         _id: &'a SandboxId,
-    ) -> super::service_workloads::MachineApiServiceFuture<'a, Option<SandboxHandle>> {
+    ) -> super::service_workloads::MachineApiServiceFuture<
+        'a,
+        Option<nimbus_sandbox::SandboxInspection>,
+    > {
         Box::pin(async move {
             Err(MachineApiHttpError {
                 status: StatusCode::SERVICE_UNAVAILABLE,

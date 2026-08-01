@@ -5,18 +5,19 @@ use std::net::{SocketAddr, TcpStream};
 use std::time::{Duration, Instant};
 
 use nimbus_network::{EndpointProtocol, PublishedEndpoint};
+use serde::Serialize;
 
 use crate::instance::SandboxStatus;
 
 pub(crate) const DEFAULT_READINESS_PROBE_TIMEOUT: Duration = Duration::from_millis(1_000);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub(crate) enum ReadinessProbeTarget {
     Tcp(SocketAddr),
     Http(SocketAddr),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) enum ReadinessProbeObservation {
     Ready,
     NotReady { reason: String },
@@ -25,6 +26,21 @@ pub(crate) enum ReadinessProbeObservation {
 
 pub(crate) trait ReadinessProbeProvider: Send + Sync {
     fn probe(&self, target: ReadinessProbeTarget, timeout: Duration) -> ReadinessProbeObservation;
+}
+
+/// Exact application-readiness provider evidence used by one status
+/// projection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct ApplicationReadinessEvidence {
+    target: Option<ReadinessProbeTarget>,
+    observation: Option<ReadinessProbeObservation>,
+    status: SandboxStatus,
+}
+
+impl ApplicationReadinessEvidence {
+    pub(crate) fn status(&self) -> SandboxStatus {
+        self.status
+    }
 }
 
 #[derive(Debug, Default)]
@@ -44,25 +60,39 @@ impl ReadinessProbeProvider for SocketReadinessProbeProvider {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn application_readiness_status(
     current: SandboxStatus,
     endpoints: &[PublishedEndpoint],
     timeout: Duration,
     provider: &dyn ReadinessProbeProvider,
 ) -> SandboxStatus {
-    let Some(target) = readiness_probe_target(endpoints) else {
-        return SandboxStatus::Ready;
-    };
-    match provider.probe(target, timeout) {
-        ReadinessProbeObservation::Ready => SandboxStatus::Ready,
-        ReadinessProbeObservation::NotReady { .. } | ReadinessProbeObservation::Unknown { .. }
-            if matches!(current, SandboxStatus::Ready | SandboxStatus::NotReady) =>
-        {
+    inspect_application_readiness(current, endpoints, timeout, provider).status()
+}
+
+pub(crate) fn inspect_application_readiness(
+    current: SandboxStatus,
+    endpoints: &[PublishedEndpoint],
+    timeout: Duration,
+    provider: &dyn ReadinessProbeProvider,
+) -> ApplicationReadinessEvidence {
+    let target = readiness_probe_target(endpoints);
+    let observation = target.map(|target| provider.probe(target, timeout));
+    let status = match observation.as_ref() {
+        None | Some(ReadinessProbeObservation::Ready) => SandboxStatus::Ready,
+        Some(
+            ReadinessProbeObservation::NotReady { .. } | ReadinessProbeObservation::Unknown { .. },
+        ) if matches!(current, SandboxStatus::Ready | SandboxStatus::NotReady) => {
             SandboxStatus::NotReady
         }
-        ReadinessProbeObservation::NotReady { .. } | ReadinessProbeObservation::Unknown { .. } => {
-            SandboxStatus::Starting
-        }
+        Some(
+            ReadinessProbeObservation::NotReady { .. } | ReadinessProbeObservation::Unknown { .. },
+        ) => SandboxStatus::Starting,
+    };
+    ApplicationReadinessEvidence {
+        target,
+        observation,
+        status,
     }
 }
 

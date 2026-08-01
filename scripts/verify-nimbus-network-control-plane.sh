@@ -36,6 +36,7 @@ NNC53_ATTACHMENT_READINESS_CONTRACT="scripts/nimbus-network-control-plane/attach
 NNC54_ATTACHMENT_CRASH_CONTRACT="scripts/nimbus-network-control-plane/attachment-crash-convergence-contract.sh"
 NNC54A_MACHINE_BATCH_CONTRACT="scripts/nimbus-network-control-plane/machine-forwarded-batch-convergence-contract.sh"
 NNC55_EFFECT_LOCALITY_CONTRACT="scripts/nimbus-network-control-plane/effect-locality-contract.sh"
+NNC56_SIDE_EFFECT_FREE_INSPECTION_CONTRACT="scripts/nimbus-network-control-plane/side-effect-free-sandbox-inspection-contract.sh"
 
 # shellcheck source=scripts/nimbus-network-control-plane/attachment-ordering-contract.sh
 . "${NNC52A_ATTACHMENT_ORDERING_CONTRACT}"
@@ -49,6 +50,8 @@ NNC55_EFFECT_LOCALITY_CONTRACT="scripts/nimbus-network-control-plane/effect-loca
 . "${NNC54A_MACHINE_BATCH_CONTRACT}"
 # shellcheck source=scripts/nimbus-network-control-plane/effect-locality-contract.sh
 . "${NNC55_EFFECT_LOCALITY_CONTRACT}"
+# shellcheck source=scripts/nimbus-network-control-plane/side-effect-free-sandbox-inspection-contract.sh
+. "${NNC56_SIDE_EFFECT_FREE_INSPECTION_CONTRACT}"
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -882,7 +885,7 @@ NODE
   elif ! grep -q '^FAIL NNCV005 no-duplicate-port-allocation-authority' "${temporary}/legacy-port-authority.out" ||
     grep -q '^PASS NNCV005 no-duplicate-port-allocation-authority' "${temporary}/legacy-port-authority.out" ||
     [ "$(grep -c '^FAIL ' "${temporary}/legacy-port-authority.out")" -ne 1 ] ||
-    ! grep -q '^Summary: 23 passed, 1 failed$' "${temporary}/legacy-port-authority.out"; then
+    ! grep -q '^Summary: 24 passed, 1 failed$' "${temporary}/legacy-port-authority.out"; then
     printf 'SELFTEST FAIL legacy port authority did not produce an exclusive NNCV005 failure\n'
     self_fail=$((self_fail + 1))
   else
@@ -1578,11 +1581,19 @@ NODE
     self_fail=$((self_fail + 1))
   fi
 
+  if declare -F run_nnc56_side_effect_free_inspection_self_tests >/dev/null 2>&1; then
+    run_nnc56_side_effect_free_inspection_self_tests "${script}" "${temporary}" ||
+      self_fail=$((self_fail + $?))
+  else
+    printf 'SELFTEST FAIL side-effect-free inspection contract helper is missing\n'
+    self_fail=$((self_fail + 1))
+  fi
+
   if [ "${self_fail}" -ne 0 ]; then
     printf 'self-test: %d failed\n' "${self_fail}"
     exit 1
   fi
-  printf 'self-test: 139 passed, 0 failed\n'
+  printf 'self-test: 158 passed, 0 failed\n'
 }
 
 if [ "${1:-}" = "--self-test" ]; then
@@ -1621,6 +1632,7 @@ verify_nnc54_attachment_crash_convergence
 verify_nnc54a_machine_forwarded_batch_convergence
 verify_nnc55_sandbox_effect_locality
 verify_nnc55_sealed_effect_capabilities
+verify_nnc56_side_effect_free_sandbox_inspection
 
 printf '\nSummary: %d passed, %d failed\n' "${PASS_COUNT}" "${FAIL_COUNT}"
 if [ "${FAIL_COUNT}" -ne 0 ]; then

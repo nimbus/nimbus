@@ -37,7 +37,7 @@ pub(super) use test_probe::{
 
 pub(super) const RUNNER_MANIFEST_POINTER_FILE: &str = ".nimbus-container-manifest";
 pub(super) const RUNNER_HANDOFF_DECISION_FILE: &str = ".nimbus-runner-handoff-decision.json";
-const RUNNER_HANDOFF_LOCK_FILE: &str = ".nimbus-runner-handoff.lock";
+pub(super) const RUNNER_HANDOFF_LOCK_FILE: &str = ".nimbus-runner-handoff.lock";
 const RUNNER_HANDOFF_DECISION_STAGE_FILE: &str = ".nimbus-runner-handoff-decision.stage";
 const RUNNER_HANDOFF_PHASE_STAGE_FILE: &str = ".nimbus-runner-handoff-phase.stage";
 const RUNNER_HANDOFF_DECISION_VERSION: u32 = 6;
@@ -54,20 +54,8 @@ pub(super) struct RunnerHandoffGuard {
     _lock: File,
 }
 
-/// Read authority for one PlanOnly prepared-runner observation.
-///
-/// The guard keeps the same OS handoff lock held through the caller's
-/// observation. Terminal cancellation is a distinct authenticated projection;
-/// it never grants ordinary status-mutation authority.
-pub(super) struct PlanOnlyInspection {
-    _handoff: RunnerHandoffGuard,
-    durably_cancelled: bool,
-}
-
-impl PlanOnlyInspection {
-    pub(super) fn is_durably_cancelled(&self) -> bool {
-        self.durably_cancelled
-    }
+pub(super) struct RunnerInspectionGuard {
+    _lock: File,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -683,6 +671,84 @@ pub(super) fn lock_current_execute_lifecycle_for_backend(
     lock_current_execute_lifecycle(manifest, Some(backend))
 }
 
+/// Acquire the existing lifecycle lock in shared mode and authenticate the
+/// exact manifest snapshot used by a read-only inspection.
+///
+/// Unlike command-side lifecycle locking, this query seam never creates a
+/// directory or lock artifact. A missing synchronization artifact is an
+/// explicit ambiguity and therefore fails closed.
+pub(super) fn lock_current_inspection_for_backend(
+    backend: &ContainerSandboxBackend,
+    manifest: &ContainerSandboxManifest,
+) -> Result<(RunnerInspectionGuard, ContainerSandboxManifest)> {
+    lock_current_inspection_with_timeout(backend, manifest, RUNNER_HANDOFF_LOCK_TIMEOUT)
+}
+
+#[cfg(test)]
+pub(super) fn lock_current_inspection_for_backend_with_timeout_for_test(
+    backend: &ContainerSandboxBackend,
+    manifest: &ContainerSandboxManifest,
+    timeout: Duration,
+) -> Result<(RunnerInspectionGuard, ContainerSandboxManifest)> {
+    lock_current_inspection_with_timeout(backend, manifest, timeout)
+}
+
+fn lock_current_inspection_with_timeout(
+    backend: &ContainerSandboxBackend,
+    manifest: &ContainerSandboxManifest,
+    timeout: Duration,
+) -> Result<(RunnerInspectionGuard, ContainerSandboxManifest)> {
+    #[cfg(not(test))]
+    let _ = backend;
+    let lock_path = manifest
+        .conmon_layout
+        .container_state_dir
+        .join(RUNNER_HANDOFF_LOCK_FILE);
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .map_err(|error| SandboxError::OperationFailed {
+            message: format!(
+                "failed to open existing container inspection lock {}: {error}; \
+                 inspection cannot create synchronization state",
+                lock_path.display()
+            ),
+        })?;
+    let deadline = Instant::now() + timeout;
+    loop {
+        match FileExt::try_lock_shared(&lock) {
+            Ok(()) => break,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                #[cfg(test)]
+                if let Some(probe) = backend.runner_lifecycle_lock_test_probe.as_ref() {
+                    probe.record_contended()?;
+                }
+                if Instant::now() >= deadline {
+                    return Err(SandboxError::OperationFailed {
+                        message: format!(
+                            "timed out acquiring existing container inspection lock {}; \
+                             observation remains unknown",
+                            lock_path.display()
+                        ),
+                    });
+                }
+                thread::sleep(RUNNER_HANDOFF_LOCK_RETRY);
+            }
+            Err(error) => {
+                return Err(SandboxError::OperationFailed {
+                    message: format!(
+                        "failed to acquire existing container inspection lock {}: {error}",
+                        lock_path.display()
+                    ),
+                });
+            }
+        }
+    }
+    let persisted = read_runner_manifest(&manifest.conmon_layout.manifest_path)?;
+    Ok((RunnerInspectionGuard { _lock: lock }, persisted))
+}
+
 fn lock_current_execute_lifecycle(
     manifest: &ContainerSandboxManifest,
     test_observer: Option<&ContainerSandboxBackend>,
@@ -768,33 +834,21 @@ pub(super) fn lock_plan_only_status_update(
     Ok(handoff)
 }
 
-/// Authenticate a read of one PlanOnly prepared-runner manifest.
+/// Authenticate the decision evidence for a PlanOnly prepared-runner snapshot.
 ///
-/// An undecided prepared manifest may proceed through the existing status
-/// projection path. A durably cancelled terminal manifest is observation-only:
-/// its Cancel decision authenticates immutable execution identity plus exact
-/// cleanup finality, and the caller must return without publishing.
-pub(super) fn lock_plan_only_inspection(
+/// The caller must hold `RunnerInspectionGuard` for this manifest. The helper
+/// only reads the existing decision record and never creates synchronization
+/// state.
+pub(super) fn plan_only_inspection_is_durably_cancelled(
     manifest: &ContainerSandboxManifest,
-) -> Result<PlanOnlyInspection> {
+) -> Result<bool> {
     require_prepared_runner_manifest(manifest)?;
-    let handoff = lock_runner_handoff(manifest)?;
-    let persisted = read_runner_manifest(&manifest.conmon_layout.manifest_path)?;
-    if persisted != *manifest || persisted.start_mode != ContainerStartMode::PlanOnly {
-        return Err(changed_runner_manifest_error(manifest));
-    }
     let decision_path = runner_handoff_decision_path(manifest);
     let Some(decision) = read_optional_runner_handoff_decision(&decision_path)? else {
-        return Ok(PlanOnlyInspection {
-            _handoff: handoff,
-            durably_cancelled: false,
-        });
+        return Ok(false);
     };
     validate_terminal_plan_only_cancellation(manifest, &decision)?;
-    Ok(PlanOnlyInspection {
-        _handoff: handoff,
-        durably_cancelled: true,
-    })
+    Ok(true)
 }
 
 fn claim_runner_handoff_decision(
@@ -999,6 +1053,31 @@ fn lock_runner_handoff(manifest: &ContainerSandboxManifest) -> Result<RunnerHand
         Some(Instant::now() + RUNNER_HANDOFF_LOCK_TIMEOUT),
         None,
     )
+}
+
+/// Establish the command-side synchronization artifact before the first
+/// manifest publication. Query-side inspection is intentionally forbidden
+/// from calling this creator.
+pub(super) fn ensure_runner_handoff_lock_artifact(
+    manifest: &ContainerSandboxManifest,
+) -> Result<()> {
+    let lock_path = manifest
+        .conmon_layout
+        .container_state_dir
+        .join(RUNNER_HANDOFF_LOCK_FILE);
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
+        .map(|_| ())
+        .map_err(|error| SandboxError::OperationFailed {
+            message: format!(
+                "failed to establish container lifecycle lock {} before manifest publication: {error}",
+                lock_path.display()
+            ),
+        })
 }
 
 fn converge_runner_lifecycle_lock(
@@ -1280,6 +1359,27 @@ pub(super) fn execute_handoff_phase(
             message: format!(
                 "Execute manifest {} contradicts a durable Cancel runner handoff",
                 manifest.handle.id
+            ),
+        }),
+    }
+}
+
+pub(super) fn execute_handoff_phase_with_evidence(
+    manifest: &ContainerSandboxManifest,
+) -> Result<(Option<RunnerHandoffPhase>, Vec<u8>)> {
+    let phase = execute_handoff_phase(manifest)?;
+    Ok((phase, inspection_handoff_evidence(manifest)?))
+}
+
+pub(super) fn inspection_handoff_evidence(manifest: &ContainerSandboxManifest) -> Result<Vec<u8>> {
+    let decision_path = runner_handoff_decision_path(manifest);
+    match std::fs::read(&decision_path) {
+        Ok(evidence) => Ok(evidence),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(SandboxError::OperationFailed {
+            message: format!(
+                "failed to read authenticated container handoff evidence {}: {error}",
+                decision_path.display()
             ),
         }),
     }

@@ -5,7 +5,7 @@ use nimbus_sandbox::{
     SandboxPortBinding, SandboxResourceLimits, SandboxStatus,
 };
 #[cfg(unix)]
-use nimbus_sandbox::{SandboxHandle, SandboxSpec};
+use nimbus_sandbox::{SandboxHandle, SandboxInspection, SandboxSpec};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -297,9 +297,10 @@ pub struct MachineApiServiceSandboxStartResponse {
 
 #[cfg(unix)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MachineApiServiceSandboxInspectResponse {
     pub sandbox_id: SandboxId,
-    pub handle: Option<SandboxHandle>,
+    pub inspection: Option<SandboxInspection>,
 }
 
 #[cfg(unix)]
@@ -511,7 +512,9 @@ mod tests {
     use nimbus_network::{NetworkProviderHandle, NetworkProviderId, NetworkResourceGeneration};
     #[cfg(unix)]
     use nimbus_sandbox::{
-        MachinePortForwardOutcome, SandboxOwnerSpec, SandboxProcessSpec, SandboxRootSpec,
+        MachinePortForwardOutcome, SandboxCleanupObservation, SandboxExecutionObservation,
+        SandboxOwnerSpec, SandboxProcessSpec, SandboxRestartAssessment, SandboxRestartBlocker,
+        SandboxRootSpec,
     };
 
     use super::*;
@@ -633,6 +636,45 @@ mod tests {
             SandboxBackendKind::Container,
             SandboxStatus::Ready,
             Vec::new(),
+        );
+        let inspection = SandboxInspection::provider_reported(handle.clone())
+            .with_provider_projection(
+                handle.clone(),
+                SandboxExecutionObservation::Exited { exit_code: 42 },
+                SandboxRestartAssessment::Candidate {
+                    exit_code: 42,
+                    completed_restarts: 1,
+                    retry_delay_millis: 2_000,
+                    persisted_not_before_millis: Some(9_000),
+                    blocker: Some(SandboxRestartBlocker::StartupReconciliationUnavailable),
+                },
+                SandboxCleanupObservation::Retained,
+            );
+        let inspect_response = MachineApiServiceSandboxInspectResponse {
+            sandbox_id: sandbox_id.clone(),
+            inspection: Some(inspection.clone()),
+        };
+        let inspect_value =
+            serde_json::to_value(&inspect_response).expect("inspection response should serialize");
+        assert_eq!(
+            serde_json::from_value::<MachineApiServiceSandboxInspectResponse>(
+                inspect_value.clone()
+            )
+            .expect("inspection response should deserialize"),
+            inspect_response,
+            "every typed inspection field and exact version must round trip"
+        );
+        assert_eq!(
+            inspect_response
+                .inspection
+                .as_ref()
+                .expect("inspection should remain present")
+                .version,
+            inspection.version
+        );
+        assert_unknown_field_rejected::<MachineApiServiceSandboxInspectResponse>(
+            inspect_value,
+            "inspection response",
         );
         let exposed = bindings
             .iter()

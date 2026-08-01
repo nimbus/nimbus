@@ -1,4 +1,5 @@
 use super::*;
+use crate::inspection::SandboxCleanupObservation;
 
 fn mark_prepared_service_runner(manifest: &mut ContainerSandboxManifest) {
     manifest.lifecycle_coordinator = ContainerLifecycleCoordinator::PreparedServiceRunner;
@@ -44,7 +45,11 @@ fn durably_cancelled_plan_only_workload_inspects_without_publication() {
         .inspect_sync(&manifest.handle.id)
         .expect("authenticated terminal cancellation should inspect")
         .expect("terminal workload should remain visible");
-    assert_eq!(inspected.status, SandboxStatus::Stopped);
+    assert_eq!(inspected.handle.status, SandboxStatus::Stopped);
+    assert!(
+        inspected.handle.published_endpoints.is_empty(),
+        "terminal plan-only evidence must not republish preview endpoints"
+    );
     assert_eq!(
         std::fs::read(&manifest.conmon_layout.manifest_path)
             .expect("terminal manifest bytes should reread"),
@@ -63,6 +68,60 @@ fn durably_cancelled_plan_only_workload_inspects_without_publication() {
     backend
         .stop_sync(&manifest.handle.id)
         .expect("terminal cancellation replay should remain idempotent");
+}
+
+#[test]
+fn nonfinal_plan_only_terminal_or_shutdown_projection_is_retained_and_nonpublishing() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let backend = sample_plan_only_backend(temp_dir.path());
+
+    for (suffix, status, shutdown_requested) in [
+        ("stopped", SandboxStatus::Stopped, false),
+        ("failed", SandboxStatus::Failed, false),
+        ("shutdown-ready", SandboxStatus::Ready, true),
+    ] {
+        let mut manifest = backend
+            .plan_start_with_id(
+                &sample_spec().with_port_binding(SandboxPortBinding::tcp("http", 18120, 8080)),
+                &SandboxId::new(format!("plan-only-retained-{suffix}")),
+                None,
+                None,
+            )
+            .expect("retained plan-only fixture should plan")
+            .manifest;
+        backend
+            .write_manifest(&manifest)
+            .expect("valid pre-crash plan-only fixture should persist");
+        manifest.status = status;
+        manifest.handle.status = status;
+        manifest.shutdown_requested = shutdown_requested;
+        std::fs::write(
+            &manifest.conmon_layout.manifest_path,
+            serde_json::to_vec(&manifest)
+                .expect("contradictory legacy plan-only fixture should serialize"),
+        )
+        .expect("contradictory legacy plan-only fixture should replace durable bytes");
+
+        let inspection = backend
+            .inspect_sync(&manifest.handle.id)
+            .expect("retained plan-only fixture should inspect")
+            .expect("retained plan-only manifest should remain visible");
+
+        assert_eq!(
+            inspection.handle.status,
+            SandboxStatus::Stopping,
+            "{suffix}"
+        );
+        assert_eq!(
+            inspection.cleanup,
+            SandboxCleanupObservation::Retained,
+            "{suffix}"
+        );
+        assert!(
+            inspection.handle.published_endpoints.is_empty(),
+            "{suffix}: retained or contradictory PlanOnly evidence cannot publish"
+        );
+    }
 }
 
 #[test]

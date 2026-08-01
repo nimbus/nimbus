@@ -274,13 +274,16 @@ fn plan_only_backend_lowers_through_generic_trait_surface() {
     let inspected = block_on(backend.inspect(&handle.id))
         .expect("inspect should succeed")
         .expect("plan-only sandbox should persist a manifest");
-    assert_eq!(inspected.id, handle.id);
+    assert_eq!(inspected.handle.id, handle.id);
 
     block_on(backend.stop(&handle.id)).expect("stop should succeed in plan-only mode");
     let stopped = block_on(backend.inspect(&handle.id))
         .expect("inspect after stop should succeed")
         .expect("stopped sandbox should still have a manifest");
-    assert_eq!(stopped.status, crate::instance::SandboxStatus::Stopped);
+    assert_eq!(
+        stopped.handle.status,
+        crate::instance::SandboxStatus::Stopped
+    );
 }
 
 #[test]
@@ -305,7 +308,7 @@ fn plan_only_backend_lowers_image_launch_through_generic_trait_surface() {
     let inspected = block_on(backend.inspect(&handle.id))
         .expect("inspect should succeed")
         .expect("plan-only image-backed sandbox should persist a manifest");
-    assert_eq!(inspected.id, handle.id);
+    assert_eq!(inspected.handle.id, handle.id);
 }
 
 #[test]
@@ -334,7 +337,7 @@ fn plan_only_backend_lowers_build_launch_through_generic_trait_surface() {
     let inspected = block_on(backend.inspect(&handle.id))
         .expect("inspect should succeed")
         .expect("plan-only build-backed sandbox should persist a manifest");
-    assert_eq!(inspected.id, handle.id);
+    assert_eq!(inspected.handle.id, handle.id);
     let manifest_path = manifest_path(temp_dir.path(), &spec, &handle.id);
     let manifest = fs::read_to_string(&manifest_path).expect("manifest should be readable");
     assert!(
@@ -922,8 +925,11 @@ fn oci_image_root_plan_only_previews_ports_without_reserving_them() {
     let first_inspected = block_on(backend.inspect(&first.id))
         .expect("inspect should succeed")
         .expect("first sandbox should be persisted");
-    assert_eq!(first_inspected.published_endpoints.len(), 1);
-    assert_eq!(first_inspected.published_endpoints[0].address.port(), 15000);
+    assert_eq!(first_inspected.handle.published_endpoints.len(), 1);
+    assert_eq!(
+        first_inspected.handle.published_endpoints[0].address.port(),
+        15000
+    );
 
     let mut second_spec = sparse_image_spec("second");
     second_spec.root = SandboxRootSpec::oci_image_reference(image_reference.clone());
@@ -932,9 +938,11 @@ fn oci_image_root_plan_only_previews_ports_without_reserving_them() {
     let second_inspected = block_on(backend.inspect(&second.id))
         .expect("inspect should succeed")
         .expect("second sandbox should be persisted");
-    assert_eq!(second_inspected.published_endpoints.len(), 1);
+    assert_eq!(second_inspected.handle.published_endpoints.len(), 1);
     assert_eq!(
-        second_inspected.published_endpoints[0].address.port(),
+        second_inspected.handle.published_endpoints[0]
+            .address
+            .port(),
         15000,
         "inert plan-only previews must not treat another manifest as allocation authority"
     );
@@ -948,8 +956,11 @@ fn oci_image_root_plan_only_previews_ports_without_reserving_them() {
     let third_inspected = block_on(backend.inspect(&third.id))
         .expect("inspect should succeed")
         .expect("third sandbox should be persisted");
-    assert_eq!(third_inspected.published_endpoints.len(), 1);
-    assert_eq!(third_inspected.published_endpoints[0].address.port(), 15000);
+    assert_eq!(third_inspected.handle.published_endpoints.len(), 1);
+    assert_eq!(
+        third_inspected.handle.published_endpoints[0].address.port(),
+        15000
+    );
 
     let third_bundle =
         fs::read_to_string(bundle_config_path(temp_dir.path(), &third_spec, &third.id))

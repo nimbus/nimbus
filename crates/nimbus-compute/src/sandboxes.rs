@@ -197,8 +197,8 @@ pub async fn get_sandbox(
     sandbox_id: &str,
 ) -> Result<SandboxResourceResponse, ComputeError> {
     let manager = service_manager(compute)?;
-    let resource = manager
-        .get_sandbox_resource_async(tenant_id, sandbox_id)
+    let (resource, _inspection) = manager
+        .inspect_sandbox_resource_async(tenant_id, sandbox_id)
         .await?
         .ok_or_else(|| sandbox_not_found(tenant_id, sandbox_id))?;
     Ok(SandboxResourceResponse::from_resource(resource))

@@ -1,6 +1,7 @@
 //! Provider cleanup finality, ordering, and generation-fencing proofs.
 
 use super::*;
+use crate::inspection::{SandboxCleanupObservation, SandboxExecutionObservation};
 
 #[test]
 fn release_execution_artifacts_stops_running_egress_proxy() {
@@ -291,15 +292,37 @@ fn natural_exit_preserves_terminal_ipam_until_segment_cleanup_finalizes() {
     backend
         .write_manifest(&manifest)
         .expect("running manifest should persist before inspection");
+    let manifest_before = std::fs::read(&manifest.conmon_layout.manifest_path)
+        .expect("manifest bytes should be readable");
+    let operations_before = recorder.operations();
+
+    let inspected = backend
+        .inspect_sync(&id)
+        .expect("inspection must not enter segment finalization")
+        .expect("exited workload should remain inspectable");
+    assert_eq!(inspected.handle.status, SandboxStatus::Stopping);
+    assert!(inspected.handle.published_endpoints.is_empty());
+    assert_eq!(
+        inspected.execution,
+        SandboxExecutionObservation::Exited { exit_code: 17 }
+    );
+    assert_eq!(inspected.cleanup, SandboxCleanupObservation::Retained);
+    assert_eq!(recorder.operations(), operations_before);
+    assert_eq!(
+        std::fs::read(&manifest.conmon_layout.manifest_path)
+            .expect("manifest bytes should remain readable"),
+        manifest_before,
+        "natural-exit inspection must be byte-stable"
+    );
 
     let error = backend
-        .inspect_sync(&id)
-        .expect_err("segment finalization failure must abort terminal publication");
+        .stop_sync(&id)
+        .expect_err("segment finalization failure must abort explicit terminal publication");
     assert!(
         error
             .to_string()
             .contains("injected segment finalization failure"),
-        "inspection must surface the cleanup failure: {error}"
+        "explicit stop must surface the cleanup failure: {error}"
     );
     let persisted = backend
         .read_manifest(&id)
@@ -326,14 +349,17 @@ fn natural_exit_preserves_terminal_ipam_until_segment_cleanup_finalizes() {
     .expect("exact terminal IPAM evidence must remain available for retry");
 
     recorder.clear_finalize_release_failure();
+    backend
+        .stop_sync(&id)
+        .expect("explicit cleanup retry should converge");
     let stopped = backend
         .inspect_sync(&id)
-        .expect("inspection retry should converge")
+        .expect("terminal inspection should succeed")
         .expect("manifest should remain visible");
     assert_eq!(
-        stopped.status,
-        SandboxStatus::Failed,
-        "a naturally absent runtime without a surviving pid file is observed as failed"
+        stopped.handle.status,
+        SandboxStatus::Stopped,
+        "explicit stop must publish terminal cleanup finality"
     );
     let terminal = backend
         .read_manifest(&id)

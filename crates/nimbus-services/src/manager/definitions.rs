@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use nimbus_core::{Error, TenantId};
-use nimbus_sandbox::SandboxStatus;
+use nimbus_sandbox::{SandboxCleanupObservation, SandboxStatus};
 use nimbus_tenant::TenantVolumePolicyDecision;
 use url::Url;
 
@@ -264,14 +264,15 @@ impl ServiceManager {
             }
         }
 
-        let refreshed = match self.refresh_handle_async(&key).await {
-            Ok(handle) => handle,
+        let refreshed = match self.refresh_inspection_async(&key).await {
+            Ok(inspection) => inspection,
             Err(error) => {
                 self.release_activation(&key);
                 return Err(error);
             }
         };
-        if let Some(handle) = refreshed.as_ref() {
+        if let Some(inspection) = refreshed.as_ref() {
+            let handle = &inspection.handle;
             let running = !matches!(
                 handle.status,
                 SandboxStatus::Stopped | SandboxStatus::Stopping | SandboxStatus::Failed
@@ -282,7 +283,7 @@ impl ServiceManager {
                     "service `{service_name}` for tenant `{tenant_id}` is running; stop it first or pass an authorized force delete policy"
                 )));
             }
-            if running {
+            if running || inspection.cleanup != SandboxCleanupObservation::Finalized {
                 self.sandbox_backend
                     .stop(&handle.id)
                     .await

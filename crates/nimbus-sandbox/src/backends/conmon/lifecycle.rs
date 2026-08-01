@@ -8,18 +8,23 @@ use std::{
     time::Duration as TestDuration,
 };
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-use crate::backends::oci::command::{CommandSpec, render_command_failure};
+use crate::backends::oci::command::{
+    CommandSpec, render_command_failure, run_bounded_command_output,
+};
 use crate::backends::poll::poll_until_deadline;
 use crate::error::{Result, SandboxError};
 use crate::instance::SandboxStatus;
 use crate::process::pid_is_alive;
-use crate::spec::{SandboxRestartPolicy, SandboxSpec};
+#[cfg(test)]
+use crate::spec::SandboxRestartPolicy;
+use crate::spec::SandboxSpec;
 
 const DEFAULT_RESTART_BACKOFF_INITIAL_MILLIS: u64 = 1_000;
 const DEFAULT_RESTART_BACKOFF_MAX_MILLIS: u64 = 60_000;
 pub(crate) const CREATOR_ATTEMPT_ANNOTATION: &str = "com.nimbus.creator-attempt";
+const RUNTIME_STATE_OBSERVATION_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Test-only semantic barrier at the provider launch entry. It lets a
 /// concurrent test persist withdrawal after inspection has chosen restart but
@@ -75,26 +80,6 @@ impl RestartLaunchTestProbe {
         Ok(())
     }
 
-    pub(crate) fn wait_until_entered(&self) -> bool {
-        let (lock, changed) = &*self.shared;
-        let state = lock
-            .lock()
-            .expect("restart launch test probe lock should not be poisoned");
-        let (state, _) = changed
-            .wait_timeout_while(state, self.timeout, |state| !state.entered)
-            .expect("restart launch test probe wait should not be poisoned");
-        state.entered
-    }
-
-    pub(crate) fn release(&self) {
-        let (lock, changed) = &*self.shared;
-        let mut state = lock
-            .lock()
-            .expect("restart launch test probe lock should not be poisoned");
-        state.released = true;
-        changed.notify_all();
-    }
-
     pub(crate) fn effect_count(&self) -> usize {
         self.shared
             .0
@@ -104,6 +89,7 @@ impl RestartLaunchTestProbe {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn restart_policy_allows_restart(
     policy: SandboxRestartPolicy,
     exit_code: i32,
@@ -159,12 +145,17 @@ pub(crate) struct RuntimeStatusProbe<'a> {
     pub(crate) current_status: SandboxStatus,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct DetectedRuntimeStatus {
     pub(crate) status: SandboxStatus,
     pub(crate) explicitly_absent: bool,
+    pub(crate) provider_state: RuntimeStateObservation,
+    pub(crate) provider_command_evidence: Option<RuntimeStateCommandEvidence>,
+    pub(crate) pidfile_evidence: Option<Vec<u8>>,
+    pub(crate) running_evidence: Vec<u8>,
 }
 
+#[cfg(test)]
 pub(crate) fn detect_runtime_status(
     probe: RuntimeStatusProbe<'_>,
     running_status: impl FnOnce() -> Result<SandboxStatus>,
@@ -185,9 +176,19 @@ pub(crate) fn inspect_runtime_artifact_presence(path: &Path, artifact: &str) -> 
     }
 }
 
+#[cfg(test)]
 pub(crate) fn observe_runtime_status(
     probe: RuntimeStatusProbe<'_>,
     running_status: impl FnOnce() -> Result<SandboxStatus>,
+) -> Result<DetectedRuntimeStatus> {
+    observe_runtime_status_with_evidence(probe, || {
+        running_status().map(|status| (status, Vec::new()))
+    })
+}
+
+pub(crate) fn observe_runtime_status_with_evidence(
+    probe: RuntimeStatusProbe<'_>,
+    running_status: impl FnOnce() -> Result<(SandboxStatus, Vec<u8>)>,
 ) -> Result<DetectedRuntimeStatus> {
     if inspect_runtime_artifact_presence(probe.exit_status_file, "exit-status receipt")? {
         let exit_code = read_exit_code(probe.exit_status_file)?;
@@ -198,48 +199,79 @@ pub(crate) fn observe_runtime_status(
                 SandboxStatus::Failed
             },
             explicitly_absent: false,
+            provider_state: RuntimeStateObservation::Present("exit-receipt".to_owned()),
+            provider_command_evidence: None,
+            pidfile_evidence: None,
+            running_evidence: std::fs::read(probe.exit_status_file).map_err(|error| {
+                SandboxError::OperationFailed {
+                    message: format!(
+                        "failed to read sandbox exit-status evidence {}: {error}",
+                        probe.exit_status_file.display()
+                    ),
+                }
+            })?,
         });
     }
 
-    let runtime_state = runtime_state(probe.state_command, probe.runtime_id)?;
+    let (runtime_state, provider_command_evidence) =
+        runtime_state_with_evidence(probe.state_command, probe.runtime_id)?;
     let explicitly_absent = runtime_state == RuntimeStateObservation::ExplicitlyAbsent;
-    let pidfile_present = if explicitly_absent {
-        inspect_runtime_artifact_presence(probe.pidfile, "pidfile")?
-    } else {
-        false
-    };
-    let status = match runtime_state {
+    let pidfile_evidence =
+        if explicitly_absent && inspect_runtime_artifact_presence(probe.pidfile, "pidfile")? {
+            Some(
+                std::fs::read(probe.pidfile).map_err(|error| SandboxError::OperationFailed {
+                    message: format!(
+                        "failed to read sandbox pidfile evidence {}: {error}",
+                        probe.pidfile.display()
+                    ),
+                })?,
+            )
+        } else {
+            None
+        };
+    let (status, running_evidence) = match &runtime_state {
         RuntimeStateObservation::Present(status) if status == "running" => running_status(),
         RuntimeStateObservation::Present(status) if status == "created" || status == "creating" => {
-            Ok(SandboxStatus::Starting)
+            Ok((SandboxStatus::Starting, Vec::new()))
         }
         RuntimeStateObservation::Present(status) if status == "stopped" => {
-            Ok(SandboxStatus::Stopped)
+            Ok((SandboxStatus::Stopped, Vec::new()))
         }
         RuntimeStateObservation::Present(status) if status == "paused" => {
-            Ok(SandboxStatus::Stopping)
+            Ok((SandboxStatus::Stopping, Vec::new()))
         }
-        RuntimeStateObservation::Present(_) => Ok(SandboxStatus::Failed),
-        RuntimeStateObservation::ExplicitlyAbsent if pidfile_present => {
-            if pid_is_alive(read_pid(probe.pidfile)?) {
-                Ok(SandboxStatus::Starting)
+        RuntimeStateObservation::Present(_) => Ok((SandboxStatus::Failed, Vec::new())),
+        RuntimeStateObservation::ExplicitlyAbsent if pidfile_evidence.is_some() => {
+            let pid_bytes = pidfile_evidence
+                .as_deref()
+                .expect("pidfile evidence is present in this branch");
+            let pid = parse_pid_evidence(probe.pidfile, pid_bytes)?;
+            if pid_is_alive(pid) {
+                Ok((SandboxStatus::Starting, Vec::new()))
             } else if probe.shutdown_requested {
-                Ok(SandboxStatus::Stopped)
+                Ok((SandboxStatus::Stopped, Vec::new()))
             } else {
-                Ok(SandboxStatus::Failed)
+                Ok((SandboxStatus::Failed, Vec::new()))
             }
         }
-        RuntimeStateObservation::ExplicitlyAbsent => Ok(match probe.current_status {
-            SandboxStatus::Stopped | SandboxStatus::Failed => probe.current_status,
-            SandboxStatus::Starting
-            | SandboxStatus::Ready
-            | SandboxStatus::NotReady
-            | SandboxStatus::Stopping => SandboxStatus::Stopping,
-        }),
+        RuntimeStateObservation::ExplicitlyAbsent => Ok((
+            match probe.current_status {
+                SandboxStatus::Stopped | SandboxStatus::Failed => probe.current_status,
+                SandboxStatus::Starting
+                | SandboxStatus::Ready
+                | SandboxStatus::NotReady
+                | SandboxStatus::Stopping => SandboxStatus::Stopping,
+            },
+            Vec::new(),
+        )),
     }?;
     Ok(DetectedRuntimeStatus {
         status,
         explicitly_absent,
+        provider_state: runtime_state,
+        provider_command_evidence: Some(provider_command_evidence),
+        pidfile_evidence,
+        running_evidence,
     })
 }
 
@@ -288,14 +320,31 @@ pub(crate) fn run_status_best_effort(command: &CommandSpec) -> Result<()> {
     })
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) enum RuntimeStateObservation {
     Present(String),
     ExplicitlyAbsent,
 }
 
+/// Exact bounded provider-process evidence behind a normalized runtime state.
+///
+/// The typed state drives projection. These bytes participate only in the
+/// inspection comparison token, so provider-output changes cannot disappear
+/// merely because they normalize to the same state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct RuntimeStateCommandEvidence {
+    status_success: bool,
+    status_code: Option<i32>,
+    status_debug: String,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
 enum RuntimeStateCommandOutcome {
-    Observation(RuntimeStateObservation),
+    Observation {
+        observation: RuntimeStateObservation,
+        evidence: RuntimeStateCommandEvidence,
+    },
     AmbiguousCompletedFailure(SandboxError),
 }
 
@@ -304,7 +353,20 @@ pub(crate) fn runtime_state(
     expected_runtime_id: &str,
 ) -> Result<RuntimeStateObservation> {
     match run_runtime_state_command(command, expected_runtime_id, None)? {
-        RuntimeStateCommandOutcome::Observation(observation) => Ok(observation),
+        RuntimeStateCommandOutcome::Observation { observation, .. } => Ok(observation),
+        RuntimeStateCommandOutcome::AmbiguousCompletedFailure(error) => Err(error),
+    }
+}
+
+fn runtime_state_with_evidence(
+    command: &CommandSpec,
+    expected_runtime_id: &str,
+) -> Result<(RuntimeStateObservation, RuntimeStateCommandEvidence)> {
+    match run_runtime_state_command(command, expected_runtime_id, None)? {
+        RuntimeStateCommandOutcome::Observation {
+            observation,
+            evidence,
+        } => Ok((observation, evidence)),
         RuntimeStateCommandOutcome::AmbiguousCompletedFailure(error) => Err(error),
     }
 }
@@ -316,7 +378,7 @@ pub(crate) fn runtime_state_for_creator_attempt(
     expected_attempt_id: &str,
 ) -> Result<RuntimeStateObservation> {
     match run_runtime_state_command(command, expected_runtime_id, Some(expected_attempt_id))? {
-        RuntimeStateCommandOutcome::Observation(observation) => Ok(observation),
+        RuntimeStateCommandOutcome::Observation { observation, .. } => Ok(observation),
         RuntimeStateCommandOutcome::AmbiguousCompletedFailure(error) => Err(error),
     }
 }
@@ -328,20 +390,28 @@ fn run_runtime_state_command(
 ) -> Result<RuntimeStateCommandOutcome> {
     let mut runtime_command = command.as_command();
     runtime_command.env("LC_ALL", "C");
-    let output = runtime_command
-        .output()
-        .map_err(|error| SandboxError::OperationFailed {
-            message: format!(
-                "failed to run runtime state command {}: {error}",
-                command.program.display()
-            ),
-        })?;
+    let output =
+        run_bounded_command_output(&mut runtime_command, RUNTIME_STATE_OBSERVATION_TIMEOUT)
+            .map_err(|error| SandboxError::OperationFailed {
+                message: format!(
+                    "runtime state command {} did not produce bounded evidence: {error}",
+                    command.program.display()
+                ),
+            })?;
+    let evidence = RuntimeStateCommandEvidence {
+        status_success: output.status.success(),
+        status_code: output.status.code(),
+        status_debug: format!("{:?}", output.status),
+        stdout: output.stdout.clone(),
+        stderr: output.stderr.clone(),
+    };
     if !output.status.success() {
         let diagnostic = render_command_failure(&output.stdout, &output.stderr);
         if crun_state_reports_missing_runtime(&output.stdout, &output.stderr, expected_runtime_id) {
-            return Ok(RuntimeStateCommandOutcome::Observation(
-                RuntimeStateObservation::ExplicitlyAbsent,
-            ));
+            return Ok(RuntimeStateCommandOutcome::Observation {
+                observation: RuntimeStateObservation::ExplicitlyAbsent,
+                evidence,
+            });
         }
         return Ok(RuntimeStateCommandOutcome::AmbiguousCompletedFailure(
             SandboxError::OperationFailed {
@@ -379,9 +449,10 @@ fn run_runtime_state_command(
             });
         }
     }
-    Ok(RuntimeStateCommandOutcome::Observation(
-        RuntimeStateObservation::Present(payload.status),
-    ))
+    Ok(RuntimeStateCommandOutcome::Observation {
+        observation: RuntimeStateObservation::Present(payload.status),
+        evidence,
+    })
 }
 
 /// Attempt runtime deletion and accept only an explicit post-effect absence.
@@ -509,12 +580,15 @@ fn wait_for_runtime_state_inner(
     let status = poll_until_deadline(Some(deadline), Duration::from_millis(200), || {
         Ok(
             match run_runtime_state_command(command, expected_runtime_id, expected_attempt_id)? {
-                RuntimeStateCommandOutcome::Observation(RuntimeStateObservation::Present(
-                    status,
-                )) if status == "created" || status == "running" => Some(status),
-                RuntimeStateCommandOutcome::Observation(
-                    RuntimeStateObservation::Present(_) | RuntimeStateObservation::ExplicitlyAbsent,
-                ) => None,
+                RuntimeStateCommandOutcome::Observation {
+                    observation: RuntimeStateObservation::Present(status),
+                    ..
+                } if status == "created" || status == "running" => Some(status),
+                RuntimeStateCommandOutcome::Observation {
+                    observation:
+                        RuntimeStateObservation::Present(_) | RuntimeStateObservation::ExplicitlyAbsent,
+                    ..
+                } => None,
                 RuntimeStateCommandOutcome::AmbiguousCompletedFailure(error) => {
                     last_ambiguous_observation = Some(error.to_string());
                     None
@@ -551,8 +625,18 @@ pub(crate) fn signal_process(signal: &str, pid: u32) -> Result<()> {
 }
 
 pub(crate) fn read_pid(path: &Path) -> Result<u32> {
-    let pid = std::fs::read_to_string(path).map_err(|error| SandboxError::OperationFailed {
+    let pid = std::fs::read(path).map_err(|error| SandboxError::OperationFailed {
         message: format!("failed to read sandbox pidfile {}: {error}", path.display()),
+    })?;
+    parse_pid_evidence(path, &pid)
+}
+
+fn parse_pid_evidence(path: &Path, pid: &[u8]) -> Result<u32> {
+    let pid = std::str::from_utf8(pid).map_err(|error| SandboxError::OperationFailed {
+        message: format!(
+            "failed to decode sandbox pid from {} as UTF-8: {error}",
+            path.display()
+        ),
     })?;
     pid.trim()
         .parse::<u32>()
@@ -575,22 +659,34 @@ pub(crate) fn wait_for_path(path: &Path, timeout: Duration) -> bool {
 }
 
 pub(crate) fn read_exit_code(path: &Path) -> Result<i32> {
-    let exit_status =
-        std::fs::read_to_string(path).map_err(|error| SandboxError::OperationFailed {
+    read_exit_code_evidence(path).map(|(exit_code, _evidence)| exit_code)
+}
+
+pub(crate) fn read_exit_code_evidence(path: &Path) -> Result<(i32, Vec<u8>)> {
+    let exit_status = std::fs::read(path).map_err(|error| SandboxError::OperationFailed {
+        message: format!(
+            "failed to read sandbox exit status {}: {error}",
+            path.display()
+        ),
+    })?;
+    let rendered =
+        std::str::from_utf8(&exit_status).map_err(|error| SandboxError::OperationFailed {
             message: format!(
-                "failed to read sandbox exit status {}: {error}",
+                "failed to decode sandbox exit status {} as UTF-8: {error}",
                 path.display()
             ),
         })?;
-    exit_status
-        .trim()
-        .parse::<i32>()
-        .map_err(|error| SandboxError::OperationFailed {
-            message: format!(
-                "failed to parse sandbox exit status {}: {error}",
-                path.display()
-            ),
-        })
+    let exit_code =
+        rendered
+            .trim()
+            .parse::<i32>()
+            .map_err(|error| SandboxError::OperationFailed {
+                message: format!(
+                    "failed to parse sandbox exit status {}: {error}",
+                    path.display()
+                ),
+            })?;
+    Ok((exit_code, exit_status))
 }
 
 pub(crate) fn remove_if_exists(path: &Path) -> Result<()> {
@@ -722,6 +818,27 @@ mod tests {
                 "identity rejection must name the expected runtime: {error}"
             );
         }
+    }
+
+    #[test]
+    fn runtime_state_observation_timeout_fails_closed_after_owned_termination() {
+        let command = CommandSpec::new("/bin/sh").args(["-c", "exec sleep 5"]);
+        let started = Instant::now();
+
+        let error = runtime_state(&command, "fixture")
+            .expect_err("a hung provider state query must not block inspection indefinitely");
+
+        assert!(
+            error
+                .to_string()
+                .contains("did not produce bounded evidence")
+                && error.to_string().contains("provider command exceeded 2s"),
+            "the timeout must remain a named ambiguity rather than absence or success: {error}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "the two-second provider observation budget must terminate and reap its child"
+        );
     }
 
     #[test]

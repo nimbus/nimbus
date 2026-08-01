@@ -1,4 +1,5 @@
 use super::*;
+use crate::compose::lifecycle::resolve_live_service_handle;
 
 #[test]
 fn resolve_service_down_targets_deduplicates_manifest_history_per_service_identity() {
@@ -87,14 +88,101 @@ async fn start_service_launch_starts_image_launches_and_validates_identity() {
 }
 
 #[tokio::test]
+async fn resolve_live_service_preserves_terminal_looking_retained_authority() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let workload_root = temp_dir.path().join("workloads");
+    let tenant = TenantId::new("svc-demo").expect("tenant should parse");
+    let sandbox_id = SandboxId::new("db-retained-authority");
+    write_manifest(
+        &workload_root,
+        sandbox_id.as_str(),
+        tenant.as_str(),
+        "db",
+        SandboxStatus::Stopped,
+    );
+    let state_view = KrunSandboxStateView::new(workload_root);
+    let stopped = stub_handle(&tenant, &sandbox_id, "db", SandboxStatus::Stopped);
+    let backend = StubBackend::with_handles([stopped.clone()]);
+    backend.report_inspection(nimbus_sandbox::SandboxInspection::provider_reported(
+        stopped.clone(),
+    ));
+
+    let resolved = resolve_live_service_handle(&state_view, &backend, &tenant, "db")
+        .await
+        .expect("retained evidence should resolve without replacement");
+
+    assert_eq!(
+        resolved,
+        Some(stopped),
+        "terminal-looking retained evidence must block a replacement start"
+    );
+    assert!(
+        backend
+            .started_services
+            .lock()
+            .expect("started services lock should hold")
+            .is_empty(),
+        "observation cannot activate a replacement workload"
+    );
+}
+
+#[tokio::test]
+async fn resolve_live_service_blocks_replacement_when_inspection_is_unavailable() {
+    let temp_dir = TempDir::new().expect("temporary directory should exist");
+    let workload_root = temp_dir.path().join("workloads");
+    let tenant = TenantId::new("svc-demo").expect("tenant should parse");
+    let sandbox_id = SandboxId::new("db-ambiguous-inspection");
+    write_manifest(
+        &workload_root,
+        sandbox_id.as_str(),
+        tenant.as_str(),
+        "db",
+        SandboxStatus::Stopped,
+    );
+    let state_view = KrunSandboxStateView::new(workload_root);
+    let backend = StubBackend::default();
+
+    let error = resolve_live_service_handle(&state_view, &backend, &tenant, "db")
+        .await
+        .expect_err("missing inspection evidence must not authorize replacement");
+
+    assert!(
+        error.to_string().contains("cleanup finality"),
+        "the ambiguity must name the missing finality evidence: {error}"
+    );
+    assert!(
+        backend
+            .started_services
+            .lock()
+            .expect("started services lock should hold")
+            .is_empty(),
+        "ambiguous inspection must stop compose before a replacement start"
+    );
+}
+
+#[tokio::test]
 async fn stop_service_target_stops_active_handles_and_reports_already_stopped_terminal_ones() {
     let tenant = TenantId::new("svc-demo").expect("tenant should parse");
     let active_id = SandboxId::new("db-01aaa");
-    let stopped_id = SandboxId::new("db-01bbb");
+    let stopping_id = SandboxId::new("db-01bbb");
+    let stopped_id = SandboxId::new("db-01ccc");
+    let stopped_handle = stub_handle(&tenant, &stopped_id, "db", SandboxStatus::Stopped);
     let backend = StubBackend::with_handles([
-        stub_handle(&active_id, "db", SandboxStatus::Ready),
-        stub_handle(&stopped_id, "db", SandboxStatus::Stopped),
+        stub_handle(&tenant, &active_id, "db", SandboxStatus::Ready),
+        stub_handle(&tenant, &stopping_id, "db", SandboxStatus::Stopping),
+        stopped_handle.clone(),
     ]);
+    backend.report_inspection(
+        nimbus_sandbox::SandboxInspection::provider_reported(stopped_handle.clone())
+            .with_provider_projection(
+                stopped_handle,
+                nimbus_sandbox::SandboxExecutionObservation::Exited { exit_code: 0 },
+                nimbus_sandbox::SandboxRestartAssessment::Ineligible {
+                    reason: nimbus_sandbox::SandboxRestartIneligibility::ShutdownRequested,
+                },
+                nimbus_sandbox::SandboxCleanupObservation::Finalized,
+            ),
+    );
 
     let stopped = stop_service_target(
         &backend,
@@ -109,6 +197,33 @@ async fn stop_service_target_stops_active_handles_and_reports_already_stopped_te
     .expect("active handle should stop");
     assert_eq!(stopped.action, ServiceLifecycleAction::Stopped);
     assert_eq!(stopped.status, SandboxStatus::Stopped);
+
+    let retained_stopping = stop_service_target(
+        &backend,
+        &tenant,
+        ServiceLifecycleTarget {
+            sandbox_id: stopping_id.clone(),
+            service_name: "db".to_owned(),
+            status: SandboxStatus::Stopping,
+        },
+    )
+    .await
+    .expect("Stopping with retained cleanup should run explicit teardown");
+    assert_eq!(retained_stopping.action, ServiceLifecycleAction::Stopped);
+    assert_eq!(retained_stopping.status, SandboxStatus::Stopped);
+
+    let replayed = stop_service_target(
+        &backend,
+        &tenant,
+        ServiceLifecycleTarget {
+            sandbox_id: stopping_id.clone(),
+            service_name: "db".to_owned(),
+            status: SandboxStatus::Stopping,
+        },
+    )
+    .await
+    .expect("stop replay after backend absence should no-op");
+    assert_eq!(replayed.action, ServiceLifecycleAction::AlreadyStopped);
 
     let already_stopped = stop_service_target(
         &backend,
@@ -130,14 +245,85 @@ async fn stop_service_target_stops_active_handles_and_reports_already_stopped_te
         .stopped_ids
         .lock()
         .expect("stopped ids lock should hold");
-    assert_eq!(stopped_ids.as_slice(), &[active_id.as_str().to_owned()]);
+    assert_eq!(
+        stopped_ids.as_slice(),
+        &[
+            active_id.as_str().to_owned(),
+            stopping_id.as_str().to_owned()
+        ]
+    );
+}
+
+#[tokio::test]
+async fn stop_service_target_rejects_crossed_identity_before_lifecycle_effects() {
+    let tenant = TenantId::new("svc-demo").expect("tenant should parse");
+    let sandbox_id = SandboxId::new("db-identity");
+
+    for case in ["sandbox-id", "tenant", "service-name", "backend"] {
+        let expected = stub_handle(&tenant, &sandbox_id, "db", SandboxStatus::Stopping);
+        let backend = StubBackend::with_handles([expected.clone()]);
+        let mut crossed = expected.clone();
+        match case {
+            "sandbox-id" => crossed.id = SandboxId::new("crossed-compose-sandbox"),
+            "tenant" => {
+                crossed.tenant_id =
+                    TenantId::new("crossed-tenant").expect("crossed tenant should parse");
+            }
+            "service-name" => crossed.name = "crossed-service".to_owned(),
+            "backend" => crossed.backend = SandboxBackendKind::Container,
+            _ => unreachable!("the identity table is exhaustive"),
+        }
+        backend.report_inspection_for(
+            &sandbox_id,
+            nimbus_sandbox::SandboxInspection::provider_reported(crossed),
+        );
+
+        let error = stop_service_target(
+            &backend,
+            &tenant,
+            ServiceLifecycleTarget {
+                sandbox_id: sandbox_id.clone(),
+                service_name: "db".to_owned(),
+                status: SandboxStatus::Stopping,
+            },
+        )
+        .await
+        .expect_err("crossed compose inspection identity must fail closed");
+
+        assert!(
+            error.to_string().contains("crossed inspection identity"),
+            "{case}: rejection must name the backend contract failure: {error}"
+        );
+        assert!(
+            backend
+                .stopped_ids
+                .lock()
+                .expect("stopped ids lock should hold")
+                .is_empty(),
+            "{case}: rejected evidence must not reach backend stop"
+        );
+        assert_eq!(
+            backend
+                .handles
+                .lock()
+                .expect("handles lock should hold")
+                .get(sandbox_id.as_str()),
+            Some(&expected),
+            "{case}: rejected evidence must not mutate the tracked handle"
+        );
+    }
 }
 
 #[tokio::test]
 async fn compose_lifecycle_localizes_sandbox_backend_lifecycle_calls() {
     let tenant = TenantId::new("svc-demo").expect("tenant should parse");
     let sandbox_id = SandboxId::new("db-01aaa");
-    let backend = StubBackend::with_handles([stub_handle(&sandbox_id, "db", SandboxStatus::Ready)]);
+    let backend = StubBackend::with_handles([stub_handle(
+        &tenant,
+        &sandbox_id,
+        "db",
+        SandboxStatus::Ready,
+    )]);
     let mut spec = sample_spec(&tenant, "db");
     spec.root = SandboxRootSpec::oci_image_reference("busybox:latest");
 

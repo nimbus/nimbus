@@ -24,21 +24,20 @@
 
 use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
-use std::process::{Child, Output};
 #[cfg(test)]
 use std::sync::{
     Mutex,
     atomic::{AtomicUsize, Ordering},
 };
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use crate::backends::oci::command::run_bounded_command_output;
 use crate::backends::oci::egress::EgressProxyAssignment;
 use crate::error::{Result, SandboxError};
 
 use super::OciNetworkLayout;
 
 const NFT_COMMAND_TIMEOUT: Duration = Duration::from_secs(2);
-const NFT_COMMAND_POLL_INTERVAL: Duration = Duration::from_millis(5);
 
 /// Honest observation of the exact deny-by-default namespace pin.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -275,7 +274,8 @@ fn inspect_netns_nftables(
         };
     }
 
-    let child = match Command::new("nsenter")
+    let mut command = Command::new("nsenter");
+    command
         .arg(format!("--net={}", netns_path.display()))
         .arg("--")
         .arg("nft")
@@ -284,22 +284,8 @@ fn inspect_netns_nftables(
         .arg("list")
         .arg("table")
         .arg("inet")
-        .arg("nimbus_egress_pin")
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-    {
-        Ok(child) => child,
-        Err(error) => {
-            return OciEgressPinObservation::Unknown {
-                reason: format!(
-                    "failed to run nsenter/nft while inspecting {}: {error}",
-                    netns_path.display()
-                ),
-            };
-        }
-    };
-    let output = match wait_for_command_output(child, NFT_COMMAND_TIMEOUT) {
+        .arg("nimbus_egress_pin");
+    let output = match run_bounded_command_output(&mut command, NFT_COMMAND_TIMEOUT) {
         Ok(output) => output,
         Err(error) => {
             return OciEgressPinObservation::Unknown {
@@ -317,106 +303,6 @@ fn inspect_netns_nftables(
         netns_path,
         expected_proxy,
     )
-}
-
-fn wait_for_command_output(child: Child, timeout: Duration) -> std::io::Result<Output> {
-    wait_for_command_output_with_termination(child, timeout, Child::kill)
-}
-
-fn wait_for_command_output_with_termination(
-    mut child: Child,
-    timeout: Duration,
-    mut terminate: impl FnMut(&mut Child) -> std::io::Result<()>,
-) -> std::io::Result<Output> {
-    let deadline = Instant::now() + timeout;
-    loop {
-        if let Some(status) = child.try_wait()? {
-            return collect_reaped_output(&mut child, status);
-        }
-        if Instant::now() >= deadline {
-            match terminate(&mut child) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::InvalidInput => {}
-                Err(error) => {
-                    let kind = error.kind();
-                    defer_child_reap(child)?;
-                    return Err(std::io::Error::new(
-                        kind,
-                        format!(
-                            "provider command termination failed; cleanup transferred to reaper: {error}"
-                        ),
-                    ));
-                }
-            }
-            let _ = child.wait()?;
-            let _ = collect_reaped_pipes(&mut child)?;
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                format!("provider command exceeded {timeout:?}"),
-            ));
-        }
-        std::thread::sleep(NFT_COMMAND_POLL_INTERVAL.min(timeout));
-    }
-}
-
-fn defer_child_reap(child: Child) -> std::io::Result<()> {
-    let (sender, receiver) = std::sync::mpsc::channel::<Child>();
-    let worker = std::thread::Builder::new()
-        .name("nimbus-nft-command-reaper".into())
-        .spawn(move || {
-            let Ok(mut child) = receiver.recv() else {
-                return;
-            };
-            let _ = child.kill();
-            let _ = child.wait();
-            let _ = collect_reaped_pipes(&mut child);
-        });
-    let _worker = match worker {
-        Ok(worker) => worker,
-        Err(spawn_error) => {
-            let mut child = child;
-            let _ = child.kill();
-            let _ = child.wait();
-            let _ = collect_reaped_pipes(&mut child);
-            return Err(spawn_error);
-        }
-    };
-    sender.send(child).map_err(|send_error| {
-        let mut child = send_error.0;
-        let _ = child.kill();
-        let _ = child.wait();
-        let _ = collect_reaped_pipes(&mut child);
-        std::io::Error::new(
-            std::io::ErrorKind::BrokenPipe,
-            "provider command reaper exited before accepting child ownership",
-        )
-    })
-}
-
-fn collect_reaped_output(
-    child: &mut Child,
-    status: std::process::ExitStatus,
-) -> std::io::Result<Output> {
-    let (stdout, stderr) = collect_reaped_pipes(child)?;
-    Ok(Output {
-        status,
-        stdout,
-        stderr,
-    })
-}
-
-fn collect_reaped_pipes(child: &mut Child) -> std::io::Result<(Vec<u8>, Vec<u8>)> {
-    use std::io::Read;
-
-    let mut stdout = Vec::new();
-    if let Some(mut pipe) = child.stdout.take() {
-        pipe.read_to_end(&mut stdout)?;
-    }
-    let mut stderr = Vec::new();
-    if let Some(mut pipe) = child.stderr.take() {
-        pipe.read_to_end(&mut stderr)?;
-    }
-    Ok((stdout, stderr))
 }
 
 fn inspect_pin_command_output(
@@ -634,9 +520,6 @@ fn pin_not_ready(reason: impl Into<String>) -> OciEgressPinObservation {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(unix)]
-    use std::process::{Command, Stdio};
-
     use super::*;
 
     fn assignment(host: &str, port: u16) -> EgressProxyAssignment {
@@ -970,58 +853,5 @@ mod tests {
             provider.inspect(&layout, &assignment),
             OciEgressPinObservation::Unknown { .. }
         ));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn provider_command_wait_kills_and_reaps_a_timed_out_child() {
-        let child = Command::new("sleep")
-            .arg("5")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("sleep child should spawn");
-        let started = Instant::now();
-        let error = wait_for_command_output(child, Duration::from_millis(20))
-            .expect_err("sleep must exceed the command deadline");
-
-        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
-        assert!(
-            started.elapsed() < Duration::from_secs(1),
-            "deadline enforcement must not wait for the original child duration"
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn provider_command_wait_retains_reap_ownership_when_termination_fails() {
-        let child = Command::new("sleep")
-            .arg("0.05")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("sleep child should spawn");
-        let pid = child.id() as libc::pid_t;
-        let error =
-            wait_for_command_output_with_termination(child, Duration::from_millis(1), |_| {
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::PermissionDenied,
-                    "injected termination failure",
-                ))
-            })
-            .expect_err("injected termination failure must remain an error");
-
-        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
-        std::thread::sleep(Duration::from_millis(200));
-        let status = unsafe { libc::waitpid(pid, std::ptr::null_mut(), libc::WNOHANG) };
-        assert_eq!(
-            status, -1,
-            "the timeout owner must transfer the child to a reaper"
-        );
-        assert_eq!(
-            std::io::Error::last_os_error().raw_os_error(),
-            Some(libc::ECHILD),
-            "the child must already be reaped rather than remain a zombie"
-        );
     }
 }

@@ -1,5 +1,6 @@
 use super::*;
 
+#[cfg(test)]
 pub(super) fn running_status(
     manifest: &KrunSandboxManifest,
     provider: &dyn ReadinessProbeProvider,
@@ -12,7 +13,7 @@ pub(super) fn running_status(
     )
 }
 
-fn readiness_probe_timeout(manifest: &KrunSandboxManifest) -> Duration {
+pub(super) fn readiness_probe_timeout(manifest: &KrunSandboxManifest) -> Duration {
     manifest
         .image_metadata
         .healthcheck

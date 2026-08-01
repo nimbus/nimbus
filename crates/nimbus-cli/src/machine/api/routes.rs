@@ -157,10 +157,10 @@ async fn machine_api_inspect_service_sandbox(
 ) -> Result<Json<MachineApiServiceSandboxInspectResponse>, MachineApiHttpError> {
     let workloads = require_service_workloads(&state)?;
     let sandbox_id = nimbus::SandboxId::new(sandbox_id);
-    let handle = workloads.inspect(&sandbox_id).await?;
+    let inspection = workloads.inspect(&sandbox_id).await?;
     Ok(Json(MachineApiServiceSandboxInspectResponse {
         sandbox_id,
-        handle,
+        inspection,
     }))
 }
 

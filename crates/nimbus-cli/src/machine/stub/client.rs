@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
-use nimbus::{Error, SandboxHandle, SandboxId, SandboxSpec, TenantId};
+use nimbus::{Error, SandboxId, SandboxSpec, TenantId};
+use nimbus_sandbox::SandboxInspection;
 
 use nimbus_machine::MachineForwarderAuthority;
 use nimbus_machine::api::{
@@ -71,7 +72,7 @@ impl MachineApiClient {
     pub(crate) fn inspect_service_sandbox(
         &self,
         _sandbox_id: &SandboxId,
-    ) -> Result<Option<SandboxHandle>, Error> {
+    ) -> Result<Option<SandboxInspection>, Error> {
         Err(unsupported_machine_api_client_error(&self.socket_path))
     }
 

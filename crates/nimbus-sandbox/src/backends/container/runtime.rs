@@ -9,6 +9,7 @@ mod direct_execution;
 mod effect_fence;
 mod egress_reload;
 mod execution_cleanup;
+mod inspection;
 mod launch;
 mod machine_port_publication;
 pub use machine_port_publication::MachinePortAbsenceEvidence;
@@ -17,6 +18,7 @@ mod manifest;
 mod network_composition;
 mod network_launch;
 mod provider_context;
+#[cfg(test)]
 mod restart;
 mod runner;
 mod status;
@@ -31,10 +33,13 @@ use crate::backends::capabilities::{
 };
 #[cfg(test)]
 use crate::backends::conmon::lifecycle::RestartLaunchTestProbe;
+#[cfg(test)]
 use crate::backends::conmon::lifecycle::{
-    RuntimeStatusProbe, configured_stop_signal, configured_stop_timeout,
-    detect_runtime_status as detect_conmon_runtime_status, ensure_linux_host, read_exit_code,
-    read_pid, run_status_checked, signal_process, wait_for_path,
+    RuntimeStatusProbe, detect_runtime_status as detect_conmon_runtime_status,
+};
+use crate::backends::conmon::lifecycle::{
+    configured_stop_signal, configured_stop_timeout, ensure_linux_host, read_exit_code, read_pid,
+    run_status_checked, signal_process, wait_for_path,
 };
 use crate::backends::oci::buildah::OciImageLaunchDefaults;
 use crate::backends::oci::builder::OciDockerfileBuilder;
@@ -77,12 +82,15 @@ use manifest::{
     ContainerNetworkPublicationMode, ContainerRunnerExecutionConfig, ContainerSandboxManifest,
     ContainerStartPlan,
 };
+#[cfg(test)]
 use restart::{ContainerRestartDecision, mark_restart_decision_after_exit};
 use runner::RUNNER_MANIFEST_POINTER_FILE;
 #[cfg(test)]
 use runner::RunnerLifecycleLockTestProbe;
 pub use runner::run_prepared_container_service_workload;
-use status::{running_status, synchronize_handle_status, visible_published_endpoints};
+#[cfg(test)]
+use status::running_status;
+use status::{synchronize_handle_status, visible_published_endpoints};
 
 #[derive(Clone)]
 pub struct ContainerSandboxBackend {
@@ -589,109 +597,6 @@ impl ContainerSandboxBackend {
         }
     }
 
-    fn inspect_sync(&self, id: &SandboxId) -> Result<Option<SandboxHandle>> {
-        let Some(mut manifest) = self.read_manifest(id)? else {
-            return Ok(None);
-        };
-        let _execute_lifecycle = if manifest.start_mode == ContainerStartMode::Execute {
-            let (lifecycle, current) =
-                runner::lock_current_execute_lifecycle_for_backend(self, &manifest)?;
-            manifest = current;
-            Some(lifecycle)
-        } else {
-            None
-        };
-        if manifest.start_mode == ContainerStartMode::Execute {
-            if let Some(phase) = runner::execute_handoff_phase(&manifest)? {
-                let status = match phase {
-                    runner::RunnerHandoffPhase::ClaimedBeforeEffects => manifest.status,
-                    runner::RunnerHandoffPhase::EffectsStarted => {
-                        self.detect_runtime_status(&manifest)?
-                    }
-                    runner::RunnerHandoffPhase::LifecyclePublished => {
-                        self.detect_runtime_status(&manifest)?
-                    }
-                    runner::RunnerHandoffPhase::Cancelled => {
-                        return Err(SandboxError::OperationFailed {
-                            message: format!(
-                                "Execute manifest {id} contradicts a cancelled runner handoff"
-                            ),
-                        });
-                    }
-                };
-                synchronize_handle_status(&mut manifest, status);
-                return Ok(Some(manifest.handle));
-            }
-            if manifest.launch_reservation_claim.is_some() {
-                // A direct start publishes its Execute manifest before the
-                // effect decision. No decision plus a live launch claim is the
-                // durable no-effect crash cut; inspection must remain read-only.
-                let status = manifest.status;
-                synchronize_handle_status(&mut manifest, status);
-                return Ok(Some(manifest.handle));
-            }
-        }
-        let plan_only_inspection = (manifest.start_mode == ContainerStartMode::PlanOnly
-            && manifest.lifecycle_coordinator
-                == ContainerLifecycleCoordinator::PreparedServiceRunner)
-            .then(|| runner::lock_plan_only_inspection(&manifest))
-            .transpose()?;
-        if plan_only_inspection
-            .as_ref()
-            .is_some_and(runner::PlanOnlyInspection::is_durably_cancelled)
-        {
-            return Ok(Some(manifest.handle));
-        }
-        if self.startup_reconciliation_error.is_some() {
-            if manifest.start_mode == ContainerStartMode::PlanOnly
-                || !crate::backends::conmon::lifecycle::inspect_runtime_artifact_presence(
-                    &manifest.conmon_layout.exit_status_file,
-                    "exit-status receipt",
-                )?
-            {
-                return Ok(Some(manifest.handle));
-            }
-            let exit_code = read_exit_code(&manifest.conmon_layout.exit_status_file)?;
-            if !manifest.shutdown_requested
-                && crate::backends::conmon::lifecycle::restart_policy_allows_restart(
-                    manifest.spec.lifecycle.restart_policy,
-                    exit_code,
-                    manifest.restart_count,
-                )
-            {
-                // Startup reconciliation may fence provider launch without
-                // disabling observation or exact cleanup. Preserve the
-                // durable projection and authority until a freshly reconciled
-                // backend may make the restart decision.
-                return Ok(Some(manifest.handle));
-            }
-        }
-        let restarted = manifest.start_mode == ContainerStartMode::Execute
-            && self.maybe_restart_after_exit(&mut manifest)?;
-        let status = match manifest.start_mode {
-            ContainerStartMode::PlanOnly => manifest.status,
-            ContainerStartMode::Execute if restarted => manifest.status,
-            ContainerStartMode::Execute => self.detect_runtime_status(&manifest)?,
-        };
-        if manifest.start_mode == ContainerStartMode::Execute
-            && !restarted
-            && manifest.conmon_layout.exit_status_file.exists()
-        {
-            manifest.last_exit_code =
-                Some(read_exit_code(&manifest.conmon_layout.exit_status_file)?);
-            // A natural exit that is not being restarted has become the
-            // winning terminal lifecycle decision. Record that decision
-            // before cleanup so the exact finality predicate can retire
-            // provider/IPAM retry evidence with the terminal manifest.
-            manifest.shutdown_requested = true;
-            manifest.next_restart_at_millis = None;
-            self.release_execution_artifacts(&mut manifest)?;
-        }
-        synchronize_handle_status(&mut manifest, status);
-        self.write_existing_workload_manifest(&manifest)?;
-        Ok(Some(manifest.handle))
-    }
-
     fn stop_sync(&self, id: &SandboxId) -> Result<()> {
         let Some(mut manifest) = self.read_manifest(id)? else {
             return Err(SandboxError::NotFound {
@@ -1034,18 +939,6 @@ impl ContainerSandboxBackend {
         Ok(plan)
     }
 
-    fn maybe_restart_after_exit(&self, manifest: &mut ContainerSandboxManifest) -> Result<bool> {
-        match mark_restart_decision_after_exit(manifest, nimbus_core::clock::system_now_millis())? {
-            ContainerRestartDecision::NotRestarting => Ok(false),
-            ContainerRestartDecision::WaitingForBackoff => Ok(true),
-            ContainerRestartDecision::RestartNow => {
-                self.reset_runtime_for_restart(manifest)?;
-                self.launch_manifest(manifest, false)?;
-                Ok(true)
-            }
-        }
-    }
-
     fn launch_manifest(
         &self,
         manifest: &mut ContainerSandboxManifest,
@@ -1183,6 +1076,7 @@ impl ContainerSandboxBackend {
         self.write_existing_workload_manifest(manifest)
     }
 
+    #[cfg(test)]
     fn detect_runtime_status(&self, manifest: &ContainerSandboxManifest) -> Result<SandboxStatus> {
         detect_conmon_runtime_status(
             RuntimeStatusProbe {
@@ -1454,7 +1348,7 @@ impl SandboxBackend for ContainerSandboxBackend {
         Box::pin(async move { backend.start_sync(spec) })
     }
 
-    fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxHandle>> {
+    fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<crate::SandboxInspection>> {
         let backend = self.clone();
         let sandbox_id = id.clone();
         Box::pin(async move { backend.inspect_sync(&sandbox_id) })

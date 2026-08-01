@@ -41,6 +41,10 @@ pub(super) use crate::backends::readiness_probe::{
     FixedReadinessProbeProvider, ReadinessProbeObservation, ReadinessProbeTarget,
     readiness_probe_target,
 };
+pub(super) use crate::inspection::{
+    SandboxCleanupObservation, SandboxExecutionObservation, SandboxRestartAssessment,
+    SandboxRestartBlocker, SandboxRestartIneligibility,
+};
 pub(super) use crate::instance::{SandboxId, SandboxStatus};
 pub(super) use crate::spec::{
     SandboxMountSpec, SandboxOciBuildSpec, SandboxOciImageSource, SandboxOwnerSpec,

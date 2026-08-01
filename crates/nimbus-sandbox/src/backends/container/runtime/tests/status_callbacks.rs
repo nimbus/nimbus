@@ -60,7 +60,7 @@ fn plan_only_stopped_callback_publishes_terminal_finality_and_replays_byte_exact
         .inspect_sync(&manifest.handle.id)
         .expect("authenticated terminal cancellation should inspect")
         .expect("terminal workload should remain observable");
-    assert_eq!(inspected.status, SandboxStatus::Stopped);
+    assert_eq!(inspected.handle.status, SandboxStatus::Stopped);
     assert_eq!(
         std::fs::read(&terminal.conmon_layout.manifest_path)
             .expect("terminal manifest bytes should reread"),

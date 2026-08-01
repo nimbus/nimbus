@@ -1,6 +1,10 @@
 //! Container restart-policy decisions and inspection boundaries.
 
 use super::*;
+use crate::inspection::{
+    SandboxCleanupObservation, SandboxExecutionObservation, SandboxRestartAssessment,
+    SandboxRestartIneligibility,
+};
 
 #[test]
 fn restart_decision_keeps_failed_container_starting_until_backoff_elapses() {
@@ -60,18 +64,20 @@ fn restart_decision_counts_due_failed_container_restart() {
     assert_eq!(manifest.handle.status, SandboxStatus::Starting);
 }
 
-/// NNC0.6a fail-before baseline for NNCF20. Inspection owns a stale manifest
-/// copy, reaches the provider-launch entry through restart policy, and parks.
-/// The coordinator then durably withdraws the workload before releasing that
-/// launch. No readiness outcome can satisfy this side-effect assertion.
+/// NNC0.6a regression for NNCF20. Inspection races a durable withdrawal and
+/// must return the coordinator's current retained snapshot without entering
+/// the provider-launch authority that the historical fail-before exposed.
 #[test]
-#[ignore = "NNC0.6a expected red until NNC5.6/NNC6.4a make inspect side-effect-free and fence restart"]
 fn nnc0_6a_container_inspect_must_not_restart_after_withdrawal() {
     let temp_dir = TempDir::new().expect("tempdir should build");
     let restart_probe = RestartLaunchTestProbe::new(Duration::from_secs(1));
-    let backend =
+    let mut backend =
         ContainerSandboxBackend::new(ContainerSandboxBackendConfig::under_root(temp_dir.path()))
             .with_restart_launch_test_probe(restart_probe.clone());
+    // NNC5.6 characterizes the inspection edge itself. Host startup
+    // reconciliation is a separate admission fence and must not short-circuit
+    // this semantic regression fixture.
+    backend.startup_reconciliation_error = None;
     let sandbox_id = SandboxId::new("nnc0-6a-container");
     let mut manifest = backend
         .plan_start_with_id(
@@ -82,47 +88,131 @@ fn nnc0_6a_container_inspect_must_not_restart_after_withdrawal() {
         )
         .expect("execute manifest should plan")
         .manifest;
+    let reservation_claim = manifest
+        .launch_reservation_claim
+        .as_ref()
+        .expect("restart fixture should begin with exact reserved authority")
+        .clone();
+    backend
+        .segment_allocator
+        .adopt_reserved_attachment(
+            &manifest.spec.tenant_id,
+            &default_network_attachment_id(&manifest.handle.id),
+            &reservation_claim,
+        )
+        .expect("restart fixture should adopt its exact attachment");
+    backend
+        .port_lease_coordinator_for_manifest(&manifest)
+        .expect("restart fixture should authenticate its port authority")
+        .release_never_bound_launch_claim(&reservation_claim)
+        .expect("fixture without provider listeners should release never-bound authority");
+    manifest.port_leases.clear();
+    manifest.egress_proxy = None;
+    manifest.launch_reservation_claim = None;
     manifest.conmon_launch.delete_command = CommandSpec::new("/usr/bin/true");
+    manifest.conmon_launch.state_command = CommandSpec::new("/bin/sh").args([
+        "-c".to_owned(),
+        format!(
+            "printf '%s\\n' 'container `{0}` does not exist: open \
+             `/run/crun/{0}/status`: No such file or directory' >&2; exit 1",
+            manifest.handle.id
+        ),
+    ]);
     manifest.next_restart_at_millis = Some(0);
     std::fs::write(&manifest.conmon_layout.exit_status_file, "42\n")
         .expect("failed exit should persist");
     backend
         .write_manifest(&manifest)
         .expect("restart-eligible manifest should persist");
+    let manifest_before =
+        std::fs::read(&manifest.conmon_layout.manifest_path).expect("manifest bytes should read");
+    let authority_path = nimbus_network::LocalNetworkStateStore::authority_path_for(
+        &backend.config.network_state_root,
+    );
+    let authority_before =
+        std::fs::read(&authority_path).expect("network authority should remain durable");
 
-    let inspect_backend = backend.clone();
-    let inspect_id = sandbox_id.clone();
-    let inspect_thread = thread::spawn(move || inspect_backend.inspect_sync(&inspect_id));
-    if !restart_probe.wait_until_entered() {
-        let inspect_result = inspect_thread
-            .join()
-            .expect("inspect thread should join after a missing barrier");
-        panic!(
-            "inspect must reach the provider-launch barrier through restart policy; \
-             inspect completed instead with {inspect_result:?}"
-        );
-    }
+    let inspected = backend
+        .inspect_sync(&sandbox_id)
+        .expect("restart-eligible inspection should succeed")
+        .expect("manifest should remain inspectable");
+    assert_eq!(inspected.handle.status, SandboxStatus::Stopping);
+    assert!(inspected.handle.published_endpoints.is_empty());
+    assert_eq!(
+        inspected.execution,
+        SandboxExecutionObservation::Exited { exit_code: 42 }
+    );
+    assert_eq!(
+        inspected.restart,
+        SandboxRestartAssessment::Candidate {
+            exit_code: 42,
+            completed_restarts: 0,
+            retry_delay_millis: 1_000,
+            persisted_not_before_millis: Some(0),
+            blocker: None,
+        }
+    );
+    assert_eq!(inspected.cleanup, SandboxCleanupObservation::Retained);
+    let repeated = backend
+        .inspect_sync(&sandbox_id)
+        .expect("repeated inspection should succeed")
+        .expect("manifest should remain inspectable");
+    assert_eq!(repeated, inspected);
+    std::fs::write(&manifest.conmon_layout.exit_status_file, "43\n")
+        .expect("substitute exit evidence should persist");
+    let substituted = backend
+        .inspect_sync(&sandbox_id)
+        .expect("substituted inspection should succeed")
+        .expect("manifest should remain inspectable");
+    assert_eq!(
+        substituted.execution,
+        SandboxExecutionObservation::Exited { exit_code: 43 }
+    );
+    assert_ne!(
+        substituted.version, inspected.version,
+        "changing only provider evidence must change the comparison version"
+    );
+    std::fs::write(&manifest.conmon_layout.exit_status_file, "42\n")
+        .expect("original exit evidence should restore");
+    let restored = backend
+        .inspect_sync(&sandbox_id)
+        .expect("restored inspection should succeed")
+        .expect("manifest should remain inspectable");
+    assert_eq!(
+        restored, inspected,
+        "restoring provider evidence must restore byte-stable inspection evidence"
+    );
+    assert_eq!(
+        std::fs::read(&manifest.conmon_layout.manifest_path)
+            .expect("manifest bytes should remain readable"),
+        manifest_before
+    );
+    assert_eq!(
+        std::fs::read(&authority_path).expect("network authority should remain readable"),
+        authority_before
+    );
+    assert_eq!(restart_probe.effect_count(), 0);
 
     let mut withdrawn = manifest;
     withdrawn.shutdown_requested = true;
     withdrawn.next_restart_at_millis = None;
-    withdrawn.status = SandboxStatus::Stopped;
-    withdrawn.handle.status = SandboxStatus::Stopped;
+    withdrawn.status = SandboxStatus::Stopping;
+    withdrawn.handle.status = SandboxStatus::Stopping;
     withdrawn.handle.published_endpoints.clear();
     backend
         .write_manifest(&withdrawn)
-        .expect("coordinator withdrawal should persist before launch release");
+        .expect("coordinator withdrawal should persist");
 
-    restart_probe.release();
-    let inspected = inspect_thread
-        .join()
-        .expect("inspect thread should join")
-        .expect("current inspect restart should complete through the test provider")
+    let withdrawn_inspection = backend
+        .inspect_sync(&sandbox_id)
+        .expect("withdrawn inspection should succeed")
         .expect("manifest should remain inspectable");
+    assert_eq!(withdrawn_inspection.handle.status, SandboxStatus::Stopping);
     assert_eq!(
-        inspected.status,
-        SandboxStatus::Starting,
-        "precondition: stale inspection currently reactivates the withdrawn manifest"
+        withdrawn_inspection.restart,
+        SandboxRestartAssessment::Ineligible {
+            reason: SandboxRestartIneligibility::ShutdownRequested,
+        }
     );
 
     assert_eq!(

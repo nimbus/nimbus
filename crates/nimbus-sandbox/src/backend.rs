@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use nimbus_core::TenantId;
 
 use crate::error::Result;
+use crate::inspection::SandboxInspection;
 use crate::instance::{SandboxHandle, SandboxId};
 use crate::spec::SandboxSpec;
 use nimbus_egress::EgressPolicy;
@@ -24,7 +25,7 @@ pub trait SandboxBackend: Send + Sync + 'static {
 
     fn start(&self, spec: SandboxSpec) -> SandboxFuture<SandboxHandle>;
 
-    fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxHandle>>;
+    fn inspect(&self, id: &SandboxId) -> SandboxFuture<Option<SandboxInspection>>;
 
     fn stop(&self, id: &SandboxId) -> SandboxFuture<()>;
 

@@ -11,6 +11,7 @@ pub mod backends;
 mod artifact_paths;
 mod backend;
 mod error;
+mod inspection;
 mod instance;
 mod process;
 mod spec;
@@ -20,6 +21,11 @@ pub use crate::backends::oci::network::{MachinePortForwardOutcome, MachinePortFo
 pub use crate::backends::oci::network::{OciNetworkProcess, OciNetworkProcessError};
 pub use backend::{SandboxBackend, SandboxBackendKind, SandboxFuture};
 pub use error::{Result, SandboxError};
+pub use inspection::{
+    SandboxCleanupObservation, SandboxExecutionObservation, SandboxInspection,
+    SandboxInspectionVersion, SandboxObservationUnknownReason, SandboxRestartAssessment,
+    SandboxRestartBlocker, SandboxRestartIneligibility,
+};
 pub use instance::{SandboxHandle, SandboxId, SandboxStatus};
 pub use spec::{
     SandboxLifecycleSpec, SandboxMountSource, SandboxMountSpec, SandboxOciBuildSpec,

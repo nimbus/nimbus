@@ -347,6 +347,59 @@ async fn delete_service_definition_serializes_with_in_flight_activation() {
 }
 
 #[tokio::test]
+async fn delete_service_definition_converges_retained_cleanup_before_removal() {
+    let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
+    let backend = Arc::new(StubSandboxBackend::new(usize::MAX));
+    let manager = ServiceManager::new(
+        Arc::new(StubServiceDefinitionCatalog {
+            launches: BTreeMap::new(),
+        }),
+        backend.clone(),
+    )
+    .with_activation_poll_interval(Duration::from_millis(1))
+    .with_activation_timeout(Duration::from_secs(1));
+    manager
+        .create_service_definition(
+            &tenant_id,
+            "worker",
+            image_service_backend("worker", "registry.example.com/worker:latest"),
+            BTreeMap::new(),
+        )
+        .expect("dynamic service definition should create");
+    let key = TenantServiceKey::new(&tenant_id, "worker");
+    let handle = backend.sandbox_handle(&tenant_id, "worker", SandboxStatus::Stopping);
+    backend
+        .handles
+        .lock()
+        .expect("backend lock should not be poisoned")
+        .insert(handle.id.as_str().to_owned(), handle.clone());
+    manager
+        .state
+        .lock()
+        .expect("manager state should not be poisoned")
+        .handles
+        .insert(key, handle.clone());
+    backend.report_inspection(retained_stopping_inspection(handle));
+
+    let removed = manager
+        .delete_service_definition_async(&tenant_id, "worker", 1, false)
+        .await
+        .expect("delete should explicitly converge retained cleanup before removal");
+
+    assert_eq!(removed.name, "worker");
+    assert_eq!(
+        backend.stop_calls.load(Ordering::SeqCst),
+        1,
+        "a Stopping projection is not cleanup finality and cannot skip backend teardown"
+    );
+    assert!(
+        manager
+            .service_definition_for_tenant(&tenant_id, "worker")
+            .is_none()
+    );
+}
+
+#[tokio::test]
 async fn force_delete_revalidates_generation_before_stopping_backend() {
     let tenant_id = TenantId::new("tenant").expect("tenant id should be valid");
     let backend = Arc::new(StubSandboxBackend::new(1));

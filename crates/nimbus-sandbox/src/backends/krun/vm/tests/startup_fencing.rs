@@ -173,7 +173,7 @@ fn startup_reconciliation_failure_allows_exact_explicit_stop() {
 }
 
 #[test]
-fn startup_reconciliation_failure_allows_exact_natural_exit_cleanup() {
+fn startup_reconciliation_failure_keeps_natural_exit_read_only_until_explicit_stop() {
     let temp_dir = TempDir::new().expect("temporary directory should exist");
     let spec = sample_spec_for_tenant("krun-startup-exit-fence", "api");
     let recorder = Arc::new(RecordingSegmentAllocator::new(
@@ -219,27 +219,53 @@ fn startup_reconciliation_failure_allows_exact_natural_exit_cleanup() {
     );
     let authority_before =
         fs::read(&authority_path).expect("active authority should remain durable");
+    let operations_before = recorder.operations();
     inject_startup_reconciliation_failure(&mut backend);
 
     let inspected = backend
         .inspect_sync(&manifest.handle.id)
-        .expect("natural-exit cleanup should retain exact authority")
-        .expect("terminal workload should remain inspectable");
-    assert_eq!(inspected.status, SandboxStatus::Failed);
-    assert_ne!(
+        .expect("natural-exit inspection should retain exact authority")
+        .expect("exited workload should remain inspectable");
+    assert_eq!(inspected.handle.status, SandboxStatus::Stopping);
+    assert!(inspected.handle.published_endpoints.is_empty());
+    assert_eq!(
+        inspected.execution,
+        SandboxExecutionObservation::Exited { exit_code: 17 }
+    );
+    assert_eq!(inspected.cleanup, SandboxCleanupObservation::Retained);
+    assert_eq!(
         fs::read(&authority_path).expect("active authority should remain readable"),
         authority_before,
-        "natural-exit cleanup must durably release exact network authority"
+        "natural-exit inspection must not release exact network authority"
+    );
+    let persisted = backend
+        .read_manifest(&manifest.handle.id)
+        .expect("retained manifest should inspect")
+        .expect("retained manifest should remain durable");
+    assert_eq!(persisted, manifest);
+    assert_eq!(
+        recorder.operations(),
+        operations_before,
+        "inspection must not invoke allocator cleanup"
+    );
+
+    backend
+        .stop_sync(&manifest.handle.id)
+        .expect("explicit stop must retain cleanup authority despite startup failure");
+    assert_ne!(
+        fs::read(&authority_path).expect("released authority should remain readable"),
+        authority_before,
+        "explicit stop must durably release exact network authority"
     );
     let persisted = backend
         .read_manifest(&manifest.handle.id)
         .expect("terminal manifest should inspect")
         .expect("terminal manifest should remain durable");
-    assert_eq!(persisted.status, SandboxStatus::Failed);
+    assert_eq!(persisted.status, SandboxStatus::Stopped);
     assert_eq!(persisted.launch_authority, KrunLaunchAuthority::Released);
     assert!(
-        recorder.operations().len() > 1,
-        "natural-exit cleanup must invoke authenticated segment convergence"
+        recorder.operations().len() > operations_before.len(),
+        "explicit stop must invoke authenticated segment convergence"
     );
 }
 
@@ -300,10 +326,23 @@ fn startup_reconciliation_failure_keeps_restart_eligible_inspection_read_only() 
         .inspect_sync(&manifest.handle.id)
         .expect("startup-fenced inspection should remain available")
         .expect("restart-eligible workload should remain inspectable");
+    assert_eq!(inspected.handle.status, SandboxStatus::Stopping);
+    assert!(inspected.handle.published_endpoints.is_empty());
     assert_eq!(
-        inspected, manifest.handle,
-        "inspection must return the unchanged durable projection"
+        inspected.execution,
+        SandboxExecutionObservation::Exited { exit_code: 17 }
     );
+    assert_eq!(
+        inspected.restart,
+        SandboxRestartAssessment::Candidate {
+            exit_code: 17,
+            completed_restarts: 0,
+            retry_delay_millis: 1_000,
+            persisted_not_before_millis: None,
+            blocker: Some(SandboxRestartBlocker::StartupReconciliationUnavailable),
+        }
+    );
+    assert_eq!(inspected.cleanup, SandboxCleanupObservation::Retained);
     assert_eq!(
         fs::read(&manifest.conmon_layout.manifest_path)
             .expect("canonical manifest bytes should remain readable"),

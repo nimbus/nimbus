@@ -1,13 +1,15 @@
 use std::io::Write;
 
-use super::readiness::{running_status, synchronize_handle_status};
+#[cfg(test)]
+use super::readiness::running_status;
+use super::readiness::synchronize_handle_status;
 use super::start::{ensure_guest_user_helper_available, hostname_for};
 use super::*;
-use crate::backends::conmon::lifecycle::{DetectedRuntimeStatus, RuntimeStateObservation};
+use crate::backends::conmon::lifecycle::RuntimeStateObservation;
 
 pub(super) type NetworkArtifactTeardownMode = AttachmentTeardownMode;
 
-const KRUN_LIFECYCLE_LOCK_FILE: &str = ".nimbus-krun-lifecycle.lock";
+pub(super) const KRUN_LIFECYCLE_LOCK_FILE: &str = ".nimbus-krun-lifecycle.lock";
 const KRUN_LIFECYCLE_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 const KRUN_LIFECYCLE_LOCK_RETRY: Duration = Duration::from_millis(25);
 
@@ -53,123 +55,11 @@ pub(super) struct KrunLifecycleGuard {
     _lock: std::fs::File,
 }
 
+pub(super) struct KrunInspectionGuard {
+    _lock: std::fs::File,
+}
+
 impl KrunSandboxBackend {
-    pub(super) fn inspect_sync(&self, id: &SandboxId) -> Result<Option<SandboxHandle>> {
-        let Some(observed) = self.read_manifest(id)? else {
-            return Ok(None);
-        };
-        let _lifecycle = self.lock_launch_lifecycle(&observed)?;
-        let Some(mut manifest) = self.read_manifest(id)? else {
-            return Ok(None);
-        };
-
-        if self.config.start_mode == KrunStartMode::Execute
-            && manifest.shutdown_requested
-            && manifest.status == SandboxStatus::Stopping
-            && manifest.launch_authority != KrunLaunchAuthority::Released
-        {
-            // NNC3.4 deliberately leaves recovery of nonterminal launch
-            // authority to NNC3.8. Inspection is only an observed projection:
-            // it must not manufacture terminal status while exact provider or
-            // reservation cleanup is still fenced.
-            return Ok(Some(manifest.handle));
-        }
-
-        if self.startup_network_reconciliation_error.is_some() {
-            if self.config.start_mode == KrunStartMode::PlanOnly
-                || !manifest.conmon_layout.exit_status_file.exists()
-            {
-                return Ok(Some(manifest.handle));
-            }
-            let exit_code = read_exit_code(&manifest.conmon_layout.exit_status_file)?;
-            if !manifest.shutdown_requested
-                && restart_policy_allows_restart(
-                    manifest.spec.lifecycle.restart_policy,
-                    exit_code,
-                    manifest.restart_count,
-                )
-            {
-                // A retained startup failure fences provider relaunch, not
-                // observation or exact final cleanup of an existing workload.
-                return Ok(Some(manifest.handle));
-            }
-        }
-        let restarted = self.config.start_mode == KrunStartMode::Execute
-            && self.maybe_restart_after_exit(&mut manifest)?;
-        let runtime_observation = match self.config.start_mode {
-            KrunStartMode::PlanOnly => None,
-            KrunStartMode::Execute if restarted => None,
-            KrunStartMode::Execute => Some(self.observe_runtime_status(&manifest)?),
-        };
-        let terminal_status = match self.config.start_mode {
-            KrunStartMode::PlanOnly => manifest.status,
-            KrunStartMode::Execute if restarted => manifest.status,
-            KrunStartMode::Execute => {
-                runtime_observation
-                    .expect("execute observation is present when restart did not occur")
-                    .status
-            }
-        };
-        if self.config.start_mode == KrunStartMode::Execute
-            && !restarted
-            && !manifest.shutdown_requested
-            && !manifest.conmon_layout.exit_status_file.exists()
-            && runtime_observation.is_some_and(|observation| observation.explicitly_absent)
-            && matches!(
-                manifest.launch_authority,
-                KrunLaunchAuthority::Adopted { .. } | KrunLaunchAuthority::ProviderOwned
-            )
-        {
-            // Provider absence without an exit receipt does not prove whether
-            // restart or final cleanup is desired. Withdraw the observed
-            // projection and retain exact authority for NNC3.8 reconciliation.
-            synchronize_handle_status(&mut manifest, SandboxStatus::Stopping);
-            self.write_manifest(&manifest)?;
-            return Ok(Some(manifest.handle));
-        }
-        if self.config.start_mode == KrunStartMode::Execute
-            && !restarted
-            && !manifest.shutdown_requested
-            && manifest.conmon_layout.exit_status_file.exists()
-        {
-            self.finalize_natural_exit(&mut manifest, terminal_status)?;
-        } else {
-            synchronize_handle_status(&mut manifest, terminal_status);
-        }
-        self.persist_effect_barrier(&manifest, "krun observed-state publication")?;
-        Ok(Some(manifest.handle))
-    }
-
-    /// Converge provider and durable network authority before publishing a
-    /// naturally exited VMM as terminal. A cleanup failure leaves a durable
-    /// `Stopping` checkpoint so the exact tenant/workload authority can retry.
-    fn finalize_natural_exit(
-        &self,
-        manifest: &mut KrunSandboxManifest,
-        terminal_status: SandboxStatus,
-    ) -> Result<()> {
-        manifest.last_exit_code = Some(read_exit_code(&manifest.conmon_layout.exit_status_file)?);
-        manifest.next_restart_at_millis = None;
-        if manifest.launch_authority == KrunLaunchAuthority::Released {
-            // A prior inspection may have durably published terminal authority
-            // before post-publication IPAM witness retirement succeeded. Do not
-            // replay provider cleanup from Released; republish the exact
-            // terminal projection so the outer effect barrier can idempotently
-            // retry witness retirement.
-            synchronize_handle_status(manifest, terminal_status);
-            return Ok(());
-        }
-        manifest.shutdown_requested = true;
-        synchronize_handle_status(manifest, SandboxStatus::Stopping);
-        self.persist_effect_barrier(manifest, "natural-exit cleanup intent")?;
-        self.release_network_artifacts(manifest, NetworkArtifactTeardownMode::Final)?;
-        self.cleanup_manifest_launch_artifacts(manifest)?;
-        manifest.launch_artifact = None;
-        manifest.launch_authority = KrunLaunchAuthority::Released;
-        synchronize_handle_status(manifest, terminal_status);
-        Ok(())
-    }
-
     pub(super) fn stop_sync(&self, id: &SandboxId) -> Result<()> {
         let Some(observed) = self.read_manifest(id)? else {
             return Err(SandboxError::NotFound {
@@ -269,6 +159,83 @@ impl KrunSandboxBackend {
         manifest: &KrunSandboxManifest,
     ) -> Result<KrunLifecycleGuard> {
         self.lock_launch_lifecycle_dir(&manifest.conmon_layout.container_state_dir)
+    }
+
+    pub(super) fn lock_current_inspection(
+        &self,
+        manifest: &KrunSandboxManifest,
+    ) -> Result<(KrunInspectionGuard, KrunSandboxManifest)> {
+        self.lock_current_inspection_with_timeout(manifest, KRUN_LIFECYCLE_LOCK_TIMEOUT)
+    }
+
+    #[cfg(test)]
+    pub(super) fn lock_current_inspection_with_timeout_for_test(
+        &self,
+        manifest: &KrunSandboxManifest,
+        timeout: Duration,
+    ) -> Result<(KrunInspectionGuard, KrunSandboxManifest)> {
+        self.lock_current_inspection_with_timeout(manifest, timeout)
+    }
+
+    fn lock_current_inspection_with_timeout(
+        &self,
+        manifest: &KrunSandboxManifest,
+        timeout: Duration,
+    ) -> Result<(KrunInspectionGuard, KrunSandboxManifest)> {
+        let lock_path = manifest
+            .conmon_layout
+            .container_state_dir
+            .join(KRUN_LIFECYCLE_LOCK_FILE);
+        let lock = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&lock_path)
+            .map_err(|error| SandboxError::OperationFailed {
+                message: format!(
+                    "failed to open existing krun inspection lock {}: {error}; \
+                     inspection cannot create synchronization state",
+                    lock_path.display()
+                ),
+            })?;
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            match FileExt::try_lock_shared(&lock) {
+                Ok(()) => break,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    #[cfg(test)]
+                    if let Some(probe) = self.lifecycle_lock_test_probe.as_ref() {
+                        probe.record_contended()?;
+                    }
+                    if std::time::Instant::now() >= deadline {
+                        return Err(SandboxError::OperationFailed {
+                            message: format!(
+                                "timed out acquiring existing krun inspection lock {}; \
+                                 observation remains unknown",
+                                lock_path.display()
+                            ),
+                        });
+                    }
+                    std::thread::sleep(KRUN_LIFECYCLE_LOCK_RETRY);
+                }
+                Err(error) => {
+                    return Err(SandboxError::OperationFailed {
+                        message: format!(
+                            "failed to acquire existing krun inspection lock {}: {error}",
+                            lock_path.display()
+                        ),
+                    });
+                }
+            }
+        }
+        let Some(persisted) = self.read_manifest(&manifest.handle.id)? else {
+            return Err(SandboxError::OperationFailed {
+                message: format!(
+                    "krun manifest {} disappeared while its inspection lock was held",
+                    manifest.handle.id
+                ),
+            });
+        };
+        Ok((KrunInspectionGuard { _lock: lock }, persisted))
     }
 
     pub(super) fn lock_launch_lifecycle_for(
@@ -517,24 +484,11 @@ impl KrunSandboxBackend {
         )
     }
 
-    fn observe_runtime_status(
+    #[cfg(test)]
+    pub(super) fn running_status_with_egress(
         &self,
         manifest: &KrunSandboxManifest,
-    ) -> Result<DetectedRuntimeStatus> {
-        crate::backends::conmon::lifecycle::observe_runtime_status(
-            RuntimeStatusProbe {
-                exit_status_file: &manifest.conmon_layout.exit_status_file,
-                state_command: &manifest.conmon_launch.state_command,
-                runtime_id: manifest.handle.id.as_str(),
-                pidfile: &manifest.conmon_layout.pidfile,
-                shutdown_requested: manifest.shutdown_requested,
-                current_status: manifest.status,
-            },
-            || self.running_status_with_egress(manifest),
-        )
-    }
-
-    fn running_status_with_egress(&self, manifest: &KrunSandboxManifest) -> Result<SandboxStatus> {
+    ) -> Result<SandboxStatus> {
         let application_status = running_status(manifest, self.readiness_probe_provider.as_ref());
         if self
             .host_managed_attachment_readiness(
@@ -549,35 +503,35 @@ impl KrunSandboxBackend {
         }
     }
 
-    fn maybe_restart_after_exit(&self, manifest: &mut KrunSandboxManifest) -> Result<bool> {
-        if manifest.shutdown_requested || !manifest.conmon_layout.exit_status_file.exists() {
-            return Ok(false);
-        }
-
-        let exit_code = read_exit_code(&manifest.conmon_layout.exit_status_file)?;
-        if !restart_policy_allows_restart(
-            manifest.spec.lifecycle.restart_policy,
-            exit_code,
-            manifest.restart_count,
-        ) {
-            return Ok(false);
-        }
-
-        manifest.last_exit_code = Some(exit_code);
-        let now_millis = nimbus_core::clock::system_now_millis();
-        let next_restart_at_millis = manifest.next_restart_at_millis.get_or_insert_with(|| {
-            now_millis.saturating_add(restart_backoff_delay(manifest.restart_count).as_millis() as u64)
-        });
-        if now_millis < *next_restart_at_millis {
-            synchronize_handle_status(manifest, SandboxStatus::Starting);
-            return Ok(true);
-        }
-
-        manifest.restart_count += 1;
-        manifest.next_restart_at_millis = None;
-        self.reset_runtime_for_restart(manifest)?;
-        self.launch_manifest(manifest, false)?;
-        Ok(true)
+    pub(super) fn running_status_with_egress_evidence(
+        &self,
+        manifest: &KrunSandboxManifest,
+    ) -> Result<(SandboxStatus, Vec<u8>)> {
+        let application = crate::backends::readiness_probe::inspect_application_readiness(
+            manifest.status,
+            &super::readiness::published_endpoints(&manifest.spec),
+            super::readiness::readiness_probe_timeout(manifest),
+            self.readiness_probe_provider.as_ref(),
+        );
+        let readiness = self.host_managed_attachment_readiness(
+            manifest,
+            self.authenticated_egress_readiness(manifest)?,
+        )?;
+        let status = if readiness.is_ready() {
+            application.status()
+        } else {
+            SandboxStatus::NotReady
+        };
+        let evidence =
+            serde_json::to_vec(&(&application, format!("{readiness:?}"))).map_err(|error| {
+                SandboxError::OperationFailed {
+                    message: format!(
+                        "failed to serialize krun readiness observation for {}: {error}",
+                        manifest.handle.id
+                    ),
+                }
+            })?;
+        Ok((status, evidence))
     }
 
     pub(super) fn launch_manifest(
@@ -1236,6 +1190,7 @@ impl KrunSandboxBackend {
             .map_err(Into::into)
     }
 
+    #[cfg(test)]
     pub(super) fn reset_runtime_for_restart(&self, manifest: &KrunSandboxManifest) -> Result<()> {
         self.delete_runtime_and_confirm_absent(manifest)
             .map_err(|error| SandboxError::OperationFailed {

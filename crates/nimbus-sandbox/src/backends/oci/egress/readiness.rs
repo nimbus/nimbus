@@ -62,6 +62,7 @@ pub(crate) enum EgressReloadAttachmentState {
 }
 
 impl EgressReadinessState {
+    #[cfg(test)]
     pub(crate) const fn is_missing_registration(&self) -> bool {
         matches!(
             self,

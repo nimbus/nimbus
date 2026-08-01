@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
 
 use nimbus_core::{Error, TenantId};
-use nimbus_sandbox::{SandboxHandle, SandboxOwnerSpec, SandboxSpec, SandboxStatus};
+use nimbus_sandbox::{
+    SandboxCleanupObservation, SandboxHandle, SandboxOwnerSpec, SandboxSpec, SandboxStatus,
+};
 use nimbus_tenant::{
     TenantIsolationContext, TenantIsolationDecision, TenantIsolationPolicyInput, WorkloadAttributes,
 };
@@ -156,6 +158,17 @@ impl ServiceManager {
         tenant_id: &TenantId,
         sandbox_id: &str,
     ) -> Result<Option<SandboxResource>, Error> {
+        Ok(self
+            .inspect_sandbox_resource_async(tenant_id, sandbox_id)
+            .await?
+            .map(|(resource, _inspection)| resource))
+    }
+
+    pub async fn inspect_sandbox_resource_async(
+        &self,
+        tenant_id: &TenantId,
+        sandbox_id: &str,
+    ) -> Result<Option<(SandboxResource, nimbus_sandbox::SandboxInspection)>, Error> {
         let current = self.current_sandbox_resource(tenant_id, sandbox_id)?;
         let Some(current) = current else {
             return Ok(None);
@@ -169,7 +182,7 @@ impl ServiceManager {
                     "failed to inspect sandbox resource `{sandbox_id}` for tenant {tenant_id}: {error}"
                 ))
             })?;
-        let Some(handle) = inspected else {
+        let Some(inspection) = inspected else {
             self.state
                 .lock()
                 .expect("manager lock should not be poisoned")
@@ -177,12 +190,8 @@ impl ServiceManager {
                 .remove(sandbox_id);
             return Ok(None);
         };
-        if handle.tenant_id != *tenant_id {
-            return Err(Error::PermissionDenied(format!(
-                "sandbox backend returned sandbox `{sandbox_id}` for tenant {}, but route requested tenant {tenant_id}",
-                handle.tenant_id
-            )));
-        }
+        let handle = &inspection.handle;
+        validate_sandbox_inspection_identity(tenant_id, sandbox_id, &current.handle, handle)?;
 
         let mut state = self
             .state
@@ -191,9 +200,9 @@ impl ServiceManager {
         let Some(resource) = state.sandbox_resources.get_mut(sandbox_id) else {
             return Ok(None);
         };
-        resource.handle = handle;
+        resource.handle = handle.clone();
         resource.updated_at_millis = now_millis();
-        Ok(Some(resource.clone()))
+        Ok(Some((resource.clone(), inspection)))
     }
 
     pub fn list_sandbox_resources_for_tenant(&self, tenant_id: &TenantId) -> Vec<SandboxResource> {
@@ -212,13 +221,13 @@ impl ServiceManager {
         tenant_id: &TenantId,
         sandbox_id: &str,
     ) -> Result<Option<SandboxResource>, Error> {
-        let Some(mut resource) = self.current_sandbox_resource(tenant_id, sandbox_id)? else {
+        let Some((mut resource, inspection)) = self
+            .inspect_sandbox_resource_async(tenant_id, sandbox_id)
+            .await?
+        else {
             return Ok(None);
         };
-        if !matches!(
-            resource.handle.status,
-            SandboxStatus::Stopped | SandboxStatus::Stopping
-        ) {
+        if inspection.cleanup != SandboxCleanupObservation::Finalized {
             self.sandbox_backend
                 .stop(&resource.handle.id)
                 .await
@@ -285,6 +294,35 @@ impl ServiceManager {
             .with_image(self.manager_image_policy()),
         )
     }
+}
+
+fn validate_sandbox_inspection_identity(
+    tenant_id: &TenantId,
+    sandbox_id: &str,
+    expected: &SandboxHandle,
+    observed: &SandboxHandle,
+) -> Result<(), Error> {
+    if observed.id == expected.id
+        && observed.tenant_id == *tenant_id
+        && observed.name == expected.name
+        && observed.backend == expected.backend
+    {
+        return Ok(());
+    }
+
+    Err(Error::Internal(format!(
+        "sandbox backend returned crossed inspection identity for resource `{sandbox_id}` tenant \
+         {tenant_id}: expected sandbox {} tenant {} name {} backend {:?}, observed sandbox {} \
+         tenant {} name {} backend {:?}",
+        expected.id,
+        tenant_id,
+        expected.name,
+        expected.backend,
+        observed.id,
+        observed.tenant_id,
+        observed.name,
+        observed.backend
+    )))
 }
 
 fn validate_sandbox_resource_spec(tenant_id: &TenantId, spec: &SandboxSpec) -> Result<(), Error> {

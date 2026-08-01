@@ -125,16 +125,16 @@ fn krun_inspect_withdraws_ready_projection_when_pep_dependency_is_absent_or_not_
         .expect("live runtime inspection should succeed")
         .expect("live runtime should remain inspectable");
     assert_eq!(
-        initially_ready.status,
+        initially_ready.handle.status,
         SandboxStatus::Ready,
         "precondition: a live runtime with its PEP must project Ready"
     );
     assert_eq!(
-        initially_ready.published_endpoints.len(),
+        initially_ready.handle.published_endpoints.len(),
         1,
         "precondition: Ready must visibly publish the desired endpoint"
     );
-    let published_endpoint = initially_ready.published_endpoints[0].clone();
+    let published_endpoint = initially_ready.handle.published_endpoints[0].clone();
     assert_eq!(published_endpoint.name, "published-api");
     assert_eq!(published_endpoint.address.port(), endpoint_port);
 
@@ -147,12 +147,12 @@ fn krun_inspect_withdraws_ready_projection_when_pep_dependency_is_absent_or_not_
         .expect("live runtime with lost attachment evidence should inspect")
         .expect("live runtime should remain inspectable");
     assert_eq!(
-        attachment_withdrawn.status,
+        attachment_withdrawn.handle.status,
         SandboxStatus::NotReady,
         "losing one required attachment facet must withdraw Ready"
     );
     assert!(
-        attachment_withdrawn.published_endpoints.is_empty(),
+        attachment_withdrawn.handle.published_endpoints.is_empty(),
         "attachment evidence loss must withdraw every endpoint"
     );
     fs::write(&manifest.network_layout.status_path, status_bytes)
@@ -162,12 +162,12 @@ fn krun_inspect_withdraws_ready_projection_when_pep_dependency_is_absent_or_not_
         .expect("restored exact attachment evidence should inspect")
         .expect("live runtime should remain inspectable");
     assert_eq!(
-        attachment_restored.status,
+        attachment_restored.handle.status,
         SandboxStatus::Ready,
         "restoring exact evidence should permit application readiness to recover"
     );
     assert_eq!(
-        attachment_restored.published_endpoints,
+        attachment_restored.handle.published_endpoints,
         vec![published_endpoint.clone()]
     );
 
@@ -187,6 +187,11 @@ fn krun_inspect_withdraws_ready_projection_when_pep_dependency_is_absent_or_not_
             .is_none(),
         "precondition: the workload stays live after its exact PEP is absent"
     );
+    let manifest_before_missing_pep_inspection =
+        fs::read(&manifest.conmon_layout.manifest_path).expect("manifest bytes should read");
+    let attachment_before_missing_pep_inspection =
+        fs::read(&manifest.network_layout.status_path).expect("attachment status should read");
+    let pin_effects_before_missing_pep_inspection = pin_provider.apply_count();
     let launch_error = backend
         .require_authenticated_egress_readiness(&manifest)
         .expect_err("the exact pre-spawn gate must reject the missing PEP dependency");
@@ -203,14 +208,42 @@ fn krun_inspect_withdraws_ready_projection_when_pep_dependency_is_absent_or_not_
         .expect("live runtime inspection should remain available")
         .expect("live runtime should remain inspectable");
     assert_eq!(
-        observed.status,
+        observed.handle.status,
         SandboxStatus::NotReady,
         "NNC4.5: inspection must withdraw Ready when the required PEP is absent or not ready"
     );
     assert!(
-        !observed.published_endpoints.contains(&published_endpoint)
-            && observed.published_endpoints.is_empty(),
+        !observed
+            .handle
+            .published_endpoints
+            .contains(&published_endpoint)
+            && observed.handle.published_endpoints.is_empty(),
         "PEP dependency loss must withdraw the same endpoint that was visible while Ready"
+    );
+    assert!(
+        backend
+            .egress_proxies
+            .readiness(&manifest.spec.tenant_id, &manifest.handle.id)
+            .expect("post-inspection PEP readiness should inspect")
+            .is_none(),
+        "inspection must not repair or start the missing PEP"
+    );
+    assert_eq!(
+        fs::read(&manifest.conmon_layout.manifest_path)
+            .expect("manifest bytes should remain readable"),
+        manifest_before_missing_pep_inspection,
+        "missing-PEP inspection must not persist a projection or repair checkpoint"
+    );
+    assert_eq!(
+        fs::read(&manifest.network_layout.status_path)
+            .expect("attachment status should remain readable"),
+        attachment_before_missing_pep_inspection,
+        "missing-PEP inspection must not replay attachment effects"
+    );
+    assert_eq!(
+        pin_provider.apply_count(),
+        pin_effects_before_missing_pep_inspection,
+        "missing-PEP inspection must not replay the egress-pin provider"
     );
 
     drop(endpoint_listener);
