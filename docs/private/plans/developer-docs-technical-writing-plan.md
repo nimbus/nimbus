@@ -3,7 +3,7 @@
 Status: `active` | Owner: this plan | Created: 2026-08-01
 Baseline: main @ 1ba104f876078551207ef0eabf90e214c9d1e4e3
 Proof root: `docs/private/plans/proof/developer-docs-technical-writing/`
-Next action: commit and push DTW3 to ready PR #272
+Next action: wait for PR #272 to merge, then run DTW9 cleanup
 
 ## Outcome
 
@@ -150,3 +150,4 @@ ready pull request targets main. DTW9 waits for that pull request to merge.
 | 2026-08-01 | PR | Opened the completed documentation change for review. | Ready PR #272 targets `main` from `codex/technical-writing-developer-docs`: https://github.com/nimbus/nimbus/pull/272 |
 | 2026-08-01 | DTW3 | Started the strict-mode pass requested after PR review. | Strict mode reported 30 diagnostics across 15 pages. |
 | 2026-08-01 | DTW3 | Completed strict-mode conformance and final verification. | Work commit `37c103fd3`. All 23 pages passed strict mode with zero diagnostics. Fifteen pages changed. Source-map coverage remained 23/23, protected content remained unchanged, Astro built 109 pages, and the site verifier passed 17/17 conditions. |
+| 2026-08-01 | PR | Updated ready PR #272 with the strict-mode pass. | Strict gate plan commit `57a4c3e56`; the PR remains open and is not a draft. |
