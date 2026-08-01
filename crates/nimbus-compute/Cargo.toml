@@ -33,6 +33,7 @@ nimbus-firebase = { path = "../nimbus-firebase" }
 nimbus-fs = { path = "../nimbus-fs" }
 nimbus-license = { path = "../nimbus-license" }
 nimbus-machine = { path = "../nimbus-machine" }
+nimbus-network = { path = "../nimbus-network" }
 nimbus-node = { path = "../nimbus-node" }
 nimbus-operator = { path = "../nimbus-operator" }
 nimbus-provenance = { path = "../nimbus-provenance" }

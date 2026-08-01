@@ -5,14 +5,19 @@ use std::sync::Arc;
 use nimbus_core::TenantId;
 use nimbus_engine::Engine;
 use nimbus_network::{
-    ListenerId, LocalNetworkManager, LocalNetworkStateStore, NetworkLeaseEpoch,
-    NetworkResourceGeneration, PortBindRealm, PortBindTarget, PortBindingSpec, PortExposure,
-    PortLeaseAccounting, PortLeaseFence, PortLeaseId, PortLeaseRequest, PortProtocol,
-    PortPublicationIntent, PortRequestMode,
+    ListenerId, LocalNetworkManager, LocalNetworkManagerBootstrap, LocalNetworkStateStore,
+    NetworkCapabilityRegistry, NetworkLeaseEpoch, NetworkResourceGeneration, PortBindRealm,
+    PortBindTarget, PortBindingSpec, PortExposure, PortLeaseAccounting, PortLeaseFence,
+    PortLeaseId, PortLeaseRequest, PortProtocol, PortPublicationIntent, PortRequestMode,
 };
 use nimbus_server::{PreboundServerListeners, ServeOptions};
 
 static MANAGER_TEST_SERIALIZER: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+fn freeze_empty(bootstrap: LocalNetworkManagerBootstrap) -> Arc<LocalNetworkManager> {
+    bootstrap
+        .freeze(NetworkCapabilityRegistry::new([]).expect("empty test registry should validate"))
+}
 
 #[cfg(unix)]
 #[test]
@@ -30,11 +35,11 @@ fn manager_derived_listener_authority_survives_alias_retarget_until_final_drop()
 
     let bootstrap =
         LocalNetworkManager::bootstrap(&alias).expect("fixture should claim node authority");
+    let manager = freeze_empty(bootstrap);
     let engine = Arc::new(
         Engine::new(root.path().join("engine")).expect("fixture engine should initialize"),
     );
-    let options = ServeOptions::new(engine, bootstrap.authority());
-    drop(bootstrap);
+    let options = ServeOptions::new(engine, manager);
 
     std::fs::remove_file(&alias).expect("original alias should be removed");
     symlink(&foreign_root, &alias).expect("alias should be retargeted");
@@ -77,12 +82,12 @@ async fn manager_derived_main_sibling_and_external_paths_retain_one_authority() 
     let bootstrap =
         LocalNetworkManager::bootstrap(&alias).expect("fixture should claim node authority");
     let authority = bootstrap.authority();
+    let manager = freeze_empty(bootstrap);
     let engine = Arc::new(
         Engine::new(root.path().join("engine")).expect("fixture engine should initialize"),
     );
-    let options = ServeOptions::new(engine, authority.clone());
+    let options = ServeOptions::new(engine, manager);
     let mut prebound = PreboundServerListeners::new(authority);
-    drop(bootstrap);
 
     std::fs::remove_file(&alias).expect("original alias should be removed");
     symlink(&foreign_root, &alias).expect("alias should be retargeted");
@@ -202,6 +207,7 @@ fn sandbox_shaped_reservation_conflicts_with_server_before_kernel_bind() {
     let bootstrap =
         LocalNetworkManager::bootstrap(&node_root).expect("node manager should initialize");
     let authority = bootstrap.authority();
+    let manager = freeze_empty(bootstrap);
     let selector =
         std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("selector should bind");
     let requested_addr = selector
@@ -237,7 +243,7 @@ fn sandbox_shaped_reservation_conflicts_with_server_before_kernel_bind() {
     let engine = Arc::new(
         Engine::new(root.path().join("engine")).expect("fixture engine should initialize"),
     );
-    let server = ServeOptions::new(engine, authority.clone());
+    let server = ServeOptions::new(engine, manager);
 
     let error = match server.prepare_main_listener(requested_addr) {
         Ok(_) => panic!("server must lose to the sandbox-shaped durable reservation"),

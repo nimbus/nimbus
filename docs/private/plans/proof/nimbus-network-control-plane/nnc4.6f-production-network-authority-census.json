@@ -963,9 +963,9 @@
     {
       "path": "crates/nimbus-server/src/construction.rs",
       "kind": "manager-derived-server-listener-authority",
-      "symbol": "from_router_options",
+      "symbol": "new",
       "ordinal": 1,
-      "line": 52,
+      "line": 45,
       "classification": "manager-derived-handle",
       "os_node_realm": "current-os-node",
       "evidence": "nnc4.6d"
@@ -975,7 +975,7 @@
       "kind": "direct-serve-options-reconstruction-declaration",
       "symbol": "reconstruct_direct",
       "ordinal": 1,
-      "line": 67,
+      "line": 61,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -985,7 +985,7 @@
       "kind": "direct-serve-options-reconstruction-declaration",
       "symbol": "reconstruct_direct_at",
       "ordinal": 1,
-      "line": 77,
+      "line": 71,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"
@@ -995,7 +995,7 @@
       "kind": "server-internal-direct-reconstruction",
       "symbol": "reconstruct_direct_at",
       "ordinal": 1,
-      "line": 82,
+      "line": 76,
       "classification": "test-fixture",
       "os_node_realm": "current-os-node",
       "evidence": "source-contract"

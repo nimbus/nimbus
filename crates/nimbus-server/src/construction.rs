@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use nimbus_engine::Engine;
-use nimbus_network::LocalNetworkAuthority;
+use nimbus_network::LocalNetworkManager;
 use nimbus_runtime::{
     EffectiveRuntimeScalingPlan, RuntimeAdaptiveControllerSettings, RuntimeHostResourceBudget,
     RuntimeLimits, RuntimeScalingPlanSet,
@@ -40,18 +40,11 @@ pub struct ServeOptions {
 }
 
 impl ServeOptions {
-    /// Construct server options under the process manager's node authority.
-    pub fn new(engine: Arc<Engine>, network_authority: LocalNetworkAuthority) -> Self {
-        Self::from_router_options(RouterOptions::new(engine), network_authority)
-    }
-
-    pub fn from_router_options(
-        router_options: RouterOptions,
-        network_authority: LocalNetworkAuthority,
-    ) -> Self {
-        let listener_leases = ServerListenerLeaseAuthority::new(network_authority);
+    /// Construct workload-capable server options under one process manager.
+    pub fn new(engine: Arc<Engine>, network_manager: Arc<LocalNetworkManager>) -> Self {
+        let listener_leases = ServerListenerLeaseAuthority::new(network_manager.authority());
         Self {
-            router_options,
+            router_options: RouterOptions::new(engine, network_manager),
             wire_adapters: Vec::new(),
             tls_config: None,
             listener_leases,
@@ -61,9 +54,10 @@ impl ServeOptions {
 
     /// Explicitly reconstruct the primitive listener authority once.
     ///
-    /// This direct embedder/test seam does not claim process-manager
-    /// composition. Production composition should inject a
-    /// [`LocalNetworkAuthority`] through [`Self::new`].
+    /// This protocol-only embedder/test seam does not claim process-manager
+    /// composition and cannot install workload lifecycle managers. Production
+    /// workload composition should inject an [`Arc<LocalNetworkManager>`]
+    /// through [`Self::new`].
     pub fn reconstruct_direct(engine: Arc<Engine>) -> std::io::Result<Self> {
         let state_root = engine.data_dir().to_path_buf();
         Self::reconstruct_direct_at(engine, state_root)
@@ -72,13 +66,13 @@ impl ServeOptions {
     /// Explicitly reconstruct the primitive listener authority at a root
     /// independent of engine persistence.
     ///
-    /// This is a direct embedder/test seam. Production process composition
-    /// should inject a manager-derived [`LocalNetworkAuthority`].
+    /// This is a protocol-only direct embedder/test seam. Production workload
+    /// composition should inject the manager through [`Self::new`].
     pub fn reconstruct_direct_at(
         engine: Arc<Engine>,
         state_root: impl AsRef<std::path::Path>,
     ) -> std::io::Result<Self> {
-        let router_options = RouterOptions::new(engine);
+        let router_options = RouterOptions::protocol_only(engine);
         let listener_leases = ServerListenerLeaseAuthority::reconstruct_direct(state_root)?;
         Ok(Self {
             router_options,

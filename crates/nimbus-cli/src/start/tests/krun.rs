@@ -1,5 +1,4 @@
 use super::*;
-use std::sync::Arc;
 use std::time::Duration;
 
 use nimbus_server::{RouterOptions, build_router};
@@ -41,19 +40,27 @@ async fn convex_runtime_query_starts_real_krun_service_from_compose_file_and_tea
     );
     println!("M5_PROJECT_KEY={}", context.control_plane.project_key);
     let selection = crate::compose::discovery::ResolvedComposeSelection::explicit(compose_path);
-    let service_manager = Arc::new(
-        crate::compose::load_host_backed_service_manager_for_selection_with_isolation_mode(
-            &selection,
-            &control_data_dir,
-            nimbus_tenant::TenantIsolationMode::LocalDevelopment,
-        )
-        .expect("compose-backed service manager should load")
-        .with_activation_poll_interval(Duration::from_millis(50))
-        .with_activation_timeout(Duration::from_secs(30)),
-    );
+    let network_path = base_dir.join("m5-network");
+    let network_root =
+        nimbus_operator::LocalNodeNetworkRoot::resolve_for_current_platform(Some(&network_path))
+            .expect("smoke network root should resolve");
+    let staged_network =
+        crate::network_composition::StagedLocalNetworkComposition::claim(&network_root)
+            .expect("smoke network manager should claim");
+    let prepared_network = crate::network_composition::PreparedLocalNetworkComposition::prepare(
+        staged_network,
+        Some(&selection),
+        &control_data_dir,
+        nimbus_tenant::TenantIsolationMode::LocalDevelopment,
+        nimbus_server::nimbus_owned_local_ingress_registration(false),
+    )
+    .expect("compose-backed network composition should prepare");
+    let service_manager = prepared_network
+        .local_service_manager()
+        .expect("compose-backed service manager should load");
     let fixture = EngineFixture::new(|path| nimbus::Engine::new(path));
     let server = ServerFixture::start(build_router(
-        RouterOptions::new(fixture.engine())
+        RouterOptions::new(fixture.engine(), prepared_network.manager())
             .with_convex_registry(registry)
             .with_service_manager(service_manager.clone()),
     ))

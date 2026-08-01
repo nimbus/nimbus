@@ -393,6 +393,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn lifecycle_command_prefers_running_local_server() {
         let temp = tempdir().expect("tempdir should build");
         let local_paths = sample_paths(temp.path());
@@ -406,6 +407,12 @@ mod tests {
         let manager = StubMachineLifecycleManager::new(roots.clone());
         let service =
             Arc::new(Engine::new(temp.path().join("data")).expect("service should create"));
+        let network_manager = nimbus_network::LocalNetworkManager::open(
+            temp.path().join("network"),
+            nimbus_network::NetworkCapabilityRegistry::new([])
+                .expect("empty test registry should validate"),
+        )
+        .expect("test network manager should initialize");
         let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .await
             .expect("listener should bind");
@@ -416,8 +423,7 @@ mod tests {
             .expect("server discovery should be recorded");
         let server_task = tokio::spawn(serve(
             listener,
-            ServeOptions::reconstruct_direct(service.clone())
-                .expect("machine test server authority should open")
+            ServeOptions::new(service.clone(), network_manager)
                 .with_local_server_security(Arc::new(LocalServerSecurityState::new(
                     local_paths.clone(),
                     token,

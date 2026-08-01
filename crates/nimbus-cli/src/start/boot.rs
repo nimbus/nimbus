@@ -256,7 +256,7 @@ async fn run_start_command_inner(
                         bindings.bind(&silo, verifier.clone())
                     })
             });
-    let mut serve_options = ServeOptions::new(engine.clone(), prepared_network.authority())
+    let mut serve_options = ServeOptions::new(engine.clone(), prepared_network.manager())
         .with_license(license_state)
         .with_runtime_host_resource_budget(runtime_host_resource_budget)
         .with_runtime_adaptive_controller_settings(runtime_adaptive_controller_settings)

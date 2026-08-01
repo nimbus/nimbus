@@ -114,7 +114,7 @@ use crate::adapters::firebase::grpc::generated::google::firestore::v1::{
 use crate::adapters::firebase::grpc::generated::google::r#type::LatLng as GrpcLatLng;
 
 fn router_for_engine(engine: Arc<Engine>) -> Router {
-    build_router(RouterOptions::new(engine))
+    build_router(RouterOptions::protocol_only(engine))
 }
 
 fn router_for_convex(engine: Arc<Engine>, convex_registry: ConvexRegistry) -> Router {
@@ -122,7 +122,7 @@ fn router_for_convex(engine: Arc<Engine>, convex_registry: ConvexRegistry) -> Ro
         std::num::NonZeroUsize::new(64).expect("test host parallelism is nonzero");
     let runtime_limits = convex_registry.runtime_limits();
     build_router(
-        RouterOptions::new(engine)
+        RouterOptions::protocol_only(engine)
             .with_runtime_limits(runtime_limits)
             .with_convex_registry(convex_registry)
             .with_runtime_host_resource_budget(
@@ -145,7 +145,7 @@ fn router_for_convex_with_tenancy(
         |auth, silo| auth.bind(&silo, verifier.clone()),
     );
     build_router(
-        RouterOptions::new(engine)
+        RouterOptions::protocol_only(engine)
             .with_runtime_limits(runtime_limits)
             .with_convex_registry(convex_registry)
             .with_convex_silo_auth(silo_auth)
@@ -367,11 +367,11 @@ async fn assert_convex_anonymous_ws_refused(server: &ServerFixture, tenant: &str
 }
 
 fn router_for_firebase(engine: Arc<Engine>, firebase_config: FirebaseConfig) -> Router {
-    build_router(RouterOptions::new(engine).with_firebase_config(firebase_config))
+    build_router(RouterOptions::protocol_only(engine).with_firebase_config(firebase_config))
 }
 
 fn router_for_license(engine: Arc<Engine>, license_state: LicenseState) -> Router {
-    build_router(RouterOptions::new(engine).with_license(license_state))
+    build_router(RouterOptions::protocol_only(engine).with_license(license_state))
 }
 
 #[tokio::test]

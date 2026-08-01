@@ -560,8 +560,9 @@ mod tests {
                 Vec::new(),
             ))
             .with_signed_access_key(ACCESS_KEY, tenant, SECRET);
-            let router =
-                build_router(RouterOptions::new(fixture.engine()).with_cloudflare_config(config));
+            let router = build_router(
+                RouterOptions::protocol_only(fixture.engine()).with_cloudflare_config(config),
+            );
             Self {
                 _fixture: fixture,
                 router,

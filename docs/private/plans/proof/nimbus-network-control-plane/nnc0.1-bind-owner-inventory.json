@@ -956,7 +956,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "adopt_external_main_listener",
       "ordinal": 1,
-      "line": 159
+      "line": 153
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -964,7 +964,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "serve_with_router_config",
       "ordinal": 1,
-      "line": 328
+      "line": 322
     },
     {
       "site_id": "server-main-listener-consumer",
@@ -972,7 +972,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "serve",
       "ordinal": 1,
-      "line": 377
+      "line": 371
     },
     {
       "site_id": "server-sibling-wire-listeners",
@@ -980,7 +980,7 @@
       "kind": "tcp-bind",
       "symbol": "serve_leased",
       "ordinal": 1,
-      "line": 488
+      "line": 482
     },
     {
       "site_id": "server-main-listener-consumer",

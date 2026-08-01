@@ -6706,6 +6706,7 @@ dependencies = [
  "nimbus-fs",
  "nimbus-license",
  "nimbus-machine",
+ "nimbus-network",
  "nimbus-node",
  "nimbus-operator",
  "nimbus-provenance",

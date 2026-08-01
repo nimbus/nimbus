@@ -19,6 +19,7 @@ use nimbus_convex::{ConvexRegistry, ConvexSiloAuthRegistry, ConvexTenancyConfig}
 use nimbus_engine::Engine;
 use nimbus_firebase::FirebaseConfig;
 use nimbus_license::LicenseState;
+use nimbus_network::LocalNetworkManager;
 use nimbus_operator::{LocalServerAuditEvent, LocalServerSecurityState};
 use nimbus_runtime::{
     EffectiveRuntimeScalingPlan, HostCallCancellation, RuntimeAdaptiveControllerSettings,
@@ -39,6 +40,7 @@ use crate::runtime_manager::RuntimeManager;
 
 pub struct ComputeStateConfig {
     pub engine: Arc<Engine>,
+    pub network_manager: Option<Arc<LocalNetworkManager>>,
     pub deployment: DeploymentConfig,
     pub control_plane: ControlPlaneConfig,
     pub node_services: NodeServicesConfig,
@@ -49,6 +51,7 @@ pub struct ComputeStateConfig {
 pub struct ComputeState {
     pub engine: Arc<Engine>,
     pub active_deployment: Arc<ActiveDeployment>,
+    network_manager: Option<Arc<LocalNetworkManager>>,
     system_convex_registry: Option<Arc<ConvexRegistry>>,
     control_plane: ControlPlaneConfig,
     node_services: NodeServicesConfig,
@@ -60,11 +63,13 @@ impl ComputeState {
     pub fn from_config(config: ComputeStateConfig) -> Self {
         let ComputeStateConfig {
             engine,
+            network_manager,
             deployment,
             control_plane,
             node_services,
             runtime,
         } = config;
+        Self::require_network_manager_for_workloads(&network_manager, &node_services);
         let node_services = node_services.resolve(engine.clone());
         let runtime_manager = RuntimeManager::new(engine.clone(), runtime.clone());
         let DeploymentConfig {
@@ -103,6 +108,7 @@ impl ComputeState {
         Self {
             engine,
             active_deployment: Arc::new(ActiveDeployment::new(active_deployment)),
+            network_manager,
             system_convex_registry,
             control_plane,
             node_services,
@@ -113,6 +119,28 @@ impl ComputeState {
 
     pub fn current_deployment(&self) -> Arc<DeploymentState> {
         self.active_deployment.current()
+    }
+
+    /// The one process-owned local network composition, when this compute
+    /// state was built for workload-capable serving.
+    ///
+    /// Protocol-only routers deliberately return `None`. The returned Arc is
+    /// the injected manager itself; compute never reopens its store or copies
+    /// its immutable capability registry.
+    pub fn network_manager(&self) -> Option<Arc<LocalNetworkManager>> {
+        self.network_manager.clone()
+    }
+
+    fn require_network_manager_for_workloads(
+        network_manager: &Option<Arc<LocalNetworkManager>>,
+        node_services: &NodeServicesConfig,
+    ) {
+        assert!(
+            network_manager.is_some()
+                || (node_services.service_manager().is_none()
+                    && node_services.machine_lifecycle_manager().is_none()),
+            "service and machine workload lifecycle requires the shared LocalNetworkManager"
+        );
     }
 
     pub fn runtime_service_registry(&self) -> Arc<dyn RuntimeServiceRegistry> {
@@ -508,6 +536,7 @@ mod tests {
         let engine = Arc::new(Engine::new(temp.path()).expect("engine should build"));
         let state = ComputeState::from_config(ComputeStateConfig {
             engine,
+            network_manager: None,
             deployment: DeploymentConfig::default().with_convex(ConvexRegistry::empty()),
             control_plane: ControlPlaneConfig::router_options_default(),
             node_services: empty_node_services()
@@ -582,6 +611,7 @@ mod tests {
         });
         let state = ComputeState::from_config(ComputeStateConfig {
             engine,
+            network_manager: None,
             deployment: DeploymentConfig::default(),
             control_plane: ControlPlaneConfig::router_options_default(),
             node_services: NodeServicesConfig::from_runtime_service_registry(teardown.clone()),
@@ -647,6 +677,7 @@ mod tests {
         );
         let state = ComputeState::from_config(ComputeStateConfig {
             engine,
+            network_manager: None,
             deployment: DeploymentConfig::default(),
             control_plane: ControlPlaneConfig::router_options_default(),
             node_services: empty_node_services()
@@ -693,6 +724,7 @@ mod tests {
         };
         let state = ComputeState::from_config(ComputeStateConfig {
             engine,
+            network_manager: None,
             deployment: DeploymentConfig::default()
                 .with_convex(ConvexRegistry::empty().with_runtime_limits(adapter_limits.clone()))
                 .with_system_convex_registry(
@@ -725,6 +757,45 @@ mod tests {
                 .expect("system registry should exist")
                 .runtime_limits(),
             expected_convex_limits
+        );
+    }
+
+    #[test]
+    fn compute_state_retains_the_exact_injected_network_manager_and_registry() {
+        let temp = tempdir().expect("service tempdir should build");
+        let engine = Arc::new(Engine::new(temp.path()).expect("engine should build"));
+        let manager = LocalNetworkManager::open(
+            temp.path().join("network"),
+            nimbus_network::NetworkCapabilityRegistry::new([])
+                .expect("empty registry should fail closed"),
+        )
+        .expect("network manager should build");
+        assert!(
+            !manager.authority_path().exists(),
+            "an empty manager should not materialize durable authority"
+        );
+        let state = ComputeState::from_config(ComputeStateConfig {
+            engine,
+            network_manager: Some(Arc::clone(&manager)),
+            deployment: DeploymentConfig::default(),
+            control_plane: ControlPlaneConfig::router_options_default(),
+            node_services: empty_node_services(),
+            runtime: RuntimeGovernorConfig::default(),
+        });
+
+        let first = state
+            .network_manager()
+            .expect("managed compute state should expose its manager");
+        let second = state
+            .network_manager()
+            .expect("repeated access should expose its manager");
+        assert!(Arc::ptr_eq(&first, &manager));
+        assert!(Arc::ptr_eq(&second, &manager));
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(first.capability_registry().selections().count(), 0);
+        assert!(
+            !manager.authority_path().exists(),
+            "read-only manager access must not materialize durable authority"
         );
     }
 }

@@ -74,7 +74,7 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC5.6 complete; NNC6.1
+- `nimbus-network-control-plane-plan.md` - `active; NNC6.1 complete; NNC6.1a
   in progress`. The Linux sovereignty tripwire is complete with a root-safe,
   raw-artifact-derived evidence contract, 70/70 deterministic tests, 62/62
   adversarial verifier cases, fully dispositioned full+narrow Sol reviews, and
@@ -206,9 +206,15 @@ extension-registry seam before the second concern edits `extensions.rs`.
   owns desired-generation-fenced restart; NNC8.3 still owns orphan
   cleanup/finalization/reuse. Both permitted Sol/xhigh/fast reviews are
   dispositioned, no third review ran or is warranted, and NNC5.6 is one exact
-  69-path HEAD checkpoint. NNC6.1 now owns the read-only census and injection
-  of the existing shared manager/registry into compute; executable work waits
-  for its acceptance freeze.
+  69-path HEAD checkpoint. NNC6.1 now carries one existing shared manager from
+  CLI composition through server construction into compute. Its sole full
+  item review accepted two boundary corrections: direct compute construction
+  now fences workload managers without that shared manager, and the identity
+  proof uses the production router-state handoff. Both corrections pass
+  focused behavior and exclusive NNCV025 mutations; the aggregate is 173/173.
+  The one permitted narrow correction review is clean at confidence 0.98; no
+  further NNC6.1 review is warranted. NNC6.1a's read-only sole-coordinator and
+  `NodeWorkloadReconciler` integration audit is next.
   Cleanup, release, finalization, and reuse stay in NNC8.3. Machine forwarding obeys
   NNC5.2a's common lifecycle; runtime absence, workload status, readiness persistence,
   cleanup convergence, and inspect/restart policy stay in their named later

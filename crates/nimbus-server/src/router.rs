@@ -9,6 +9,7 @@ use nimbus_compute::config::deployment::DeploymentConfig;
 use nimbus_compute::config::node_services::NodeServicesConfig;
 use nimbus_compute::config::runtime::RuntimeGovernorConfig;
 use nimbus_engine::Engine;
+use nimbus_network::LocalNetworkManager;
 use nimbus_runtime::{
     EffectiveRuntimeScalingPlan, RuntimeAdaptiveControllerSettings, RuntimeHostPressureSource,
     RuntimeHostResourceBudget, RuntimeLimits, RuntimeScalingPlanSet,
@@ -48,6 +49,7 @@ pub(crate) use cors::{is_allowed_local_cors_origin, is_configured_cors_origin};
 /// Canonical public option bundle for building a Nimbus HTTP/WebSocket router.
 pub struct RouterOptions {
     engine: Arc<Engine>,
+    network_manager: Option<Arc<LocalNetworkManager>>,
     deployment: DeploymentConfig,
     control_plane: ControlPlaneConfig,
     node_services: NodeServicesConfig,
@@ -56,9 +58,20 @@ pub struct RouterOptions {
 }
 
 impl RouterOptions {
-    pub fn new(engine: Arc<Engine>) -> Self {
+    /// Build a workload-capable router under one process network manager.
+    pub fn new(engine: Arc<Engine>, network_manager: Arc<LocalNetworkManager>) -> Self {
+        let mut options = Self::protocol_only(engine);
+        options.network_manager = Some(network_manager);
+        options
+    }
+
+    /// Build an explicitly protocol-only router with no workload lifecycle.
+    ///
+    /// This profile cannot install a service or machine lifecycle manager.
+    pub fn protocol_only(engine: Arc<Engine>) -> Self {
         Self {
             engine,
+            network_manager: None,
             deployment: DeploymentConfig::default(),
             control_plane: ControlPlaneConfig::router_options_default(),
             node_services: NodeServicesConfig::default(),
@@ -146,6 +159,7 @@ impl RouterOptions {
     }
 
     pub fn with_service_manager(mut self, service_manager: Arc<ServiceManager>) -> Self {
+        self.require_network_manager("service manager");
         self.node_services = self.node_services.with_service_manager(service_manager);
         self
     }
@@ -154,6 +168,7 @@ impl RouterOptions {
         mut self,
         machine_lifecycle_manager: Arc<dyn MachineLifecycleManager>,
     ) -> Self {
+        self.require_network_manager("machine lifecycle manager");
         self.node_services = self
             .node_services
             .with_machine_lifecycle_manager(machine_lifecycle_manager);
@@ -242,6 +257,7 @@ impl RouterOptions {
 
     pub(crate) fn into_build_config(self) -> RouterBuildConfig {
         let mut config = RouterBuildConfig::core(self.engine);
+        config.network_manager = self.network_manager;
         config.deployment = self.deployment;
         config
             .control_plane
@@ -251,10 +267,19 @@ impl RouterOptions {
         config.runtime = self.runtime;
         config
     }
+
+    fn require_network_manager(&self, component: &str) {
+        assert!(
+            self.network_manager.is_some(),
+            "{component} requires RouterOptions::new with the shared LocalNetworkManager; \
+             protocol-only construction cannot own workload lifecycle"
+        );
+    }
 }
 
 pub(crate) struct RouterBuildConfig {
     engine: Arc<Engine>,
+    network_manager: Option<Arc<LocalNetworkManager>>,
     deployment: DeploymentConfig,
     control_plane: ControlPlaneConfig,
     node_services: NodeServicesConfig,
@@ -262,10 +287,45 @@ pub(crate) struct RouterBuildConfig {
     runtime: RuntimeGovernorConfig,
 }
 
+struct PreparedRouterState {
+    state: Arc<AppState>,
+    cloud_functions_http_enabled: bool,
+    cors_allowed_origins: Vec<String>,
+}
+
+#[cfg(test)]
+struct TestNetworkManagerFixture {
+    _root: tempfile::TempDir,
+    manager: Arc<LocalNetworkManager>,
+}
+
+#[cfg(test)]
+fn shared_test_network_manager() -> Arc<LocalNetworkManager> {
+    static FIXTURE: std::sync::OnceLock<TestNetworkManagerFixture> = std::sync::OnceLock::new();
+    Arc::clone(
+        &FIXTURE
+            .get_or_init(|| {
+                let root = tempfile::tempdir().expect("shared network fixture root should build");
+                let manager = LocalNetworkManager::open(
+                    root.path().join("network"),
+                    nimbus_network::NetworkCapabilityRegistry::new([])
+                        .expect("empty test registry should validate"),
+                )
+                .expect("shared test network manager should build");
+                TestNetworkManagerFixture {
+                    _root: root,
+                    manager,
+                }
+            })
+            .manager,
+    )
+}
+
 impl RouterBuildConfig {
     pub(crate) fn core(engine: Arc<Engine>) -> Self {
         Self {
             engine,
+            network_manager: None,
             deployment: DeploymentConfig::default(),
             control_plane: ControlPlaneConfig::build_default(),
             node_services: NodeServicesConfig::default(),
@@ -422,6 +482,8 @@ impl RouterBuildConfig {
 
     #[cfg(test)]
     pub(crate) fn with_service_manager(mut self, service_manager: Arc<ServiceManager>) -> Self {
+        self.network_manager
+            .get_or_insert_with(shared_test_network_manager);
         self.node_services = self.node_services.with_service_manager(service_manager);
         self
     }
@@ -431,6 +493,8 @@ impl RouterBuildConfig {
         mut self,
         machine_lifecycle_manager: Arc<dyn MachineLifecycleManager>,
     ) -> Self {
+        self.network_manager
+            .get_or_insert_with(shared_test_network_manager);
         self.node_services = self
             .node_services
             .with_machine_lifecycle_manager(machine_lifecycle_manager);
@@ -503,9 +567,10 @@ impl RouterBuildConfig {
         Ok(())
     }
 
-    pub(crate) fn build(self) -> Router {
+    fn into_state(self) -> PreparedRouterState {
         let RouterBuildConfig {
             engine,
+            network_manager,
             deployment,
             control_plane,
             node_services,
@@ -534,6 +599,7 @@ impl RouterBuildConfig {
         let cors_allowed_origins = transport.cors_allowed_origins().to_owned();
         let state = Arc::new(AppState::from_config(AppStateConfig {
             engine,
+            network_manager,
             deployment: DeploymentConfig {
                 convex_registry,
                 system_convex_registry,
@@ -550,6 +616,19 @@ impl RouterBuildConfig {
             transport: transport.ensure_version_check(),
             runtime,
         }));
+        PreparedRouterState {
+            state,
+            cloud_functions_http_enabled,
+            cors_allowed_origins,
+        }
+    }
+
+    pub(crate) fn build(self) -> Router {
+        let PreparedRouterState {
+            state,
+            cloud_functions_http_enabled,
+            cors_allowed_origins,
+        } = self.into_state();
         let runtime_host_resource_budget = state.runtime_host_resource_budget();
         tracing::info!(
             host_millicpus = runtime_host_resource_budget.host_millicpus,
@@ -919,4 +998,178 @@ pub(crate) fn build_firebase_router(state: Arc<AppState>) -> Router<Arc<AppState
             "/google.firestore.v1.Firestore/{*grpc_method}",
             firestore_grpc_service,
         )
+}
+
+#[cfg(test)]
+mod network_manager_tests {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    use nimbus_sandbox::{
+        SandboxBackend, SandboxBackendKind, SandboxFuture, SandboxHandle, SandboxId,
+        SandboxInspection, SandboxSpec,
+    };
+    use nimbus_services::EmptyServiceDefinitionCatalog;
+
+    use super::*;
+
+    struct EffectForbiddenSandboxBackend;
+
+    impl SandboxBackend for EffectForbiddenSandboxBackend {
+        fn kind(&self) -> SandboxBackendKind {
+            SandboxBackendKind::Krun
+        }
+
+        fn start(&self, _spec: SandboxSpec) -> SandboxFuture<SandboxHandle> {
+            panic!("protocol-only refusal must happen before sandbox effects")
+        }
+
+        fn inspect(&self, _id: &SandboxId) -> SandboxFuture<Option<SandboxInspection>> {
+            panic!("protocol-only refusal must happen before sandbox effects")
+        }
+
+        fn stop(&self, _id: &SandboxId) -> SandboxFuture<()> {
+            panic!("protocol-only refusal must happen before sandbox effects")
+        }
+    }
+
+    struct EffectForbiddenMachineLifecycleManager;
+
+    impl MachineLifecycleManager for EffectForbiddenMachineLifecycleManager {
+        fn create_machine<'a>(
+            &'a self,
+            _request: crate::machine_lifecycle::MachineCreateRequest,
+        ) -> crate::machine_lifecycle::MachineLifecycleFuture<'a> {
+            panic!("protocol-only refusal must happen before machine effects")
+        }
+
+        fn start_machine<'a>(
+            &'a self,
+            _name: &'a str,
+        ) -> crate::machine_lifecycle::MachineLifecycleFuture<'a> {
+            panic!("protocol-only refusal must happen before machine effects")
+        }
+
+        fn stop_machine<'a>(
+            &'a self,
+            _name: &'a str,
+        ) -> crate::machine_lifecycle::MachineLifecycleFuture<'a> {
+            panic!("protocol-only refusal must happen before machine effects")
+        }
+
+        fn update_machine<'a>(
+            &'a self,
+            _request: crate::machine_lifecycle::MachineUpdateRequest,
+        ) -> crate::machine_lifecycle::MachineLifecycleFuture<'a> {
+            panic!("protocol-only refusal must happen before machine effects")
+        }
+
+        fn delete_machine<'a>(
+            &'a self,
+            _name: &'a str,
+        ) -> crate::machine_lifecycle::MachineLifecycleFuture<'a> {
+            panic!("protocol-only refusal must happen before machine effects")
+        }
+    }
+
+    fn app_state_from_build(build: RouterBuildConfig) -> Arc<AppState> {
+        build.into_state().state
+    }
+
+    #[test]
+    fn managed_router_preserves_one_manager_arc_through_compute_state() {
+        let root = tempfile::tempdir().expect("fixture root should build");
+        let manager = shared_test_network_manager();
+        let engine =
+            Arc::new(Engine::new(root.path().join("engine")).expect("engine should initialize"));
+        let options = RouterOptions::new(Arc::clone(&engine), Arc::clone(&manager));
+        assert!(Arc::ptr_eq(
+            options
+                .network_manager
+                .as_ref()
+                .expect("managed router should retain its manager"),
+            &manager
+        ));
+        let build = options.into_build_config();
+        assert!(Arc::ptr_eq(
+            build
+                .network_manager
+                .as_ref()
+                .expect("build config should retain its manager"),
+            &manager
+        ));
+        let state = app_state_from_build(build);
+        let compute_manager = state
+            .network_manager()
+            .expect("compute state should retain its manager");
+        assert!(Arc::ptr_eq(&compute_manager, &manager));
+        assert!(std::ptr::eq(
+            compute_manager.capability_registry(),
+            manager.capability_registry()
+        ));
+    }
+
+    #[test]
+    fn protocol_only_router_refuses_both_workload_manager_families() {
+        let root = tempfile::tempdir().expect("fixture root should build");
+        let engine = Arc::new(Engine::new(root.path()).expect("engine should initialize"));
+        let protocol_state = app_state_from_build(
+            RouterOptions::protocol_only(Arc::clone(&engine)).into_build_config(),
+        );
+        assert!(protocol_state.network_manager().is_none());
+
+        let service_manager = Arc::new(ServiceManager::new(
+            Arc::new(EmptyServiceDefinitionCatalog),
+            Arc::new(EffectForbiddenSandboxBackend),
+        ));
+        let service_refusal = catch_unwind(AssertUnwindSafe(|| {
+            RouterOptions::protocol_only(Arc::clone(&engine))
+                .with_service_manager(Arc::clone(&service_manager));
+        }));
+        assert!(
+            service_refusal.is_err(),
+            "protocol-only service-manager builder must refuse before installation"
+        );
+        let service_state_refusal = catch_unwind(AssertUnwindSafe(|| {
+            AppState::from_config(AppStateConfig {
+                engine: Arc::clone(&engine),
+                network_manager: None,
+                deployment: DeploymentConfig::default(),
+                control_plane: ControlPlaneConfig::router_options_default(),
+                node_services: NodeServicesConfig::default().with_service_manager(service_manager),
+                transport: TransportConfig::default(),
+                runtime: RuntimeGovernorConfig::default(),
+            });
+        }));
+        assert!(
+            service_state_refusal.is_err(),
+            "compute state must reject a service manager without the shared network manager"
+        );
+
+        let machine_manager: Arc<dyn MachineLifecycleManager> =
+            Arc::new(EffectForbiddenMachineLifecycleManager);
+        let machine_refusal = catch_unwind(AssertUnwindSafe(|| {
+            RouterOptions::protocol_only(Arc::clone(&engine))
+                .with_machine_lifecycle_manager(Arc::clone(&machine_manager));
+        }));
+        assert!(
+            machine_refusal.is_err(),
+            "protocol-only machine-manager builder must refuse before installation"
+        );
+        let machine_state_refusal = catch_unwind(AssertUnwindSafe(|| {
+            AppState::from_config(AppStateConfig {
+                engine,
+                network_manager: None,
+                deployment: DeploymentConfig::default(),
+                control_plane: ControlPlaneConfig::router_options_default(),
+                node_services: NodeServicesConfig::default()
+                    .with_machine_lifecycle_manager(machine_manager),
+                transport: TransportConfig::default(),
+                runtime: RuntimeGovernorConfig::default(),
+            });
+        }));
+        assert!(
+            machine_state_refusal.is_err(),
+            "compute state must reject a machine manager without the shared network manager"
+        );
+    }
 }

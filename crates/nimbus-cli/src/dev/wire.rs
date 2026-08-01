@@ -451,7 +451,11 @@ mod tests {
             nimbus::Engine::new(root.path().join("engine"))
                 .expect("fixture engine should initialize"),
         );
-        let options = nimbus_server::ServeOptions::new(engine, authority.clone())
+        let manager = bootstrap.freeze(
+            nimbus_network::NetworkCapabilityRegistry::new([])
+                .expect("empty test registry should validate"),
+        );
+        let options = nimbus_server::ServeOptions::new(engine, manager)
             .with_prebound_listener_authority(&prepared.listeners)
             .expect("main and every sibling must share manager provenance and primitive authority");
         let requested_main = "127.0.0.1:0"

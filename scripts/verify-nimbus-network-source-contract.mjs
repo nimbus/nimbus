@@ -13,13 +13,14 @@ const validModes = new Set([
   "sandbox-effect-locality",
   "sealed-effect-capabilities",
   "side-effect-free-sandbox-inspection",
+  "compute-network-manager-injection",
 ]);
 if (!validModes.has(mode)) {
   process.stderr.write(
     "usage: verify-nimbus-network-source-contract.mjs " +
       "[forbidden-dependencies-effects|single-definition-owner|address-is-not-identity|" +
       "sandbox-effect-locality|sealed-effect-capabilities|" +
-      "side-effect-free-sandbox-inspection]\n",
+      "side-effect-free-sandbox-inspection|compute-network-manager-injection]\n",
   );
   process.exit(2);
 }
@@ -521,7 +522,13 @@ function allMatches(sources, pattern) {
   return found;
 }
 
-function requireExactOwner(sources, label, pattern, allowedFiles, expectedCount) {
+function requireExactOwner(
+  sources,
+  label,
+  pattern,
+  allowedFiles,
+  expectedCount,
+) {
   const found = allMatches(sources, pattern);
   const misplaced = found.filter((match) => !allowedFiles.has(match.file));
   if (found.length !== expectedCount || misplaced.length) {
@@ -695,7 +702,9 @@ function verifySealedEffectCapabilities() {
   );
 
   const requiredSource = (file) => {
-    const source = sandboxSources.find((candidate) => candidate.file === file)?.source;
+    const source = sandboxSources.find(
+      (candidate) => candidate.file === file,
+    )?.source;
     if (!source) errors.push(`required capability owner missing: ${file}`);
     return source ?? "";
   };
@@ -733,26 +742,36 @@ function verifySealedEffectCapabilities() {
     errors.push("AttachmentHostEffects must remain lifecycle-private");
   }
   if (
-    [...netavark.matchAll(/\bpub\s*\(\s*super\s*\)\s+struct\s+PreparedNetavark(?:Setup|Teardown)\b/g)]
-      .length !== 2
+    [
+      ...netavark.matchAll(
+        /\bpub\s*\(\s*super\s*\)\s+struct\s+PreparedNetavark(?:Setup|Teardown)\b/g,
+      ),
+    ].length !== 2
   ) {
     errors.push("prepared Netavark capabilities must remain network-private");
   }
   if (
-    [...netns.matchAll(/\bpub\s*\(\s*super\s*\)\s+fn\s+(?:create|remove)_persistent_network_namespace\b/g)]
-      .length !== 2
+    [
+      ...netns.matchAll(
+        /\bpub\s*\(\s*super\s*\)\s+fn\s+(?:create|remove)_persistent_network_namespace\b/g,
+      ),
+    ].length !== 2
   ) {
     errors.push("namespace effects must remain network-private");
   }
   if (/\bpub[^{;\n]*\buse\s+netns\b/.test(networkRoot)) {
-    errors.push("namespace effects must not be reexported from the network root");
+    errors.push(
+      "namespace effects must not be reexported from the network root",
+    );
   }
   const widenedSandboxCapability = firstMatch(
     sandboxSources,
     /\bpub\s*\(\s*crate\s*\)\s+(?:trait\s+AttachmentHostEffects|struct\s+PreparedNetavark(?:Setup|Teardown)|fn\s+(?:create|remove)_persistent_network_namespace)\b|\bpub[^{;\n]*\buse\s+netns\b/,
   );
   if (widenedSandboxCapability) {
-    errors.push(`privileged sandbox capability widened: ${widenedSandboxCapability}`);
+    errors.push(
+      `privileged sandbox capability widened: ${widenedSandboxCapability}`,
+    );
   }
   if (
     !/\btrait\s+OciEgressPinObserver\b/.test(egressPin) ||
@@ -760,7 +779,9 @@ function verifySealedEffectCapabilities() {
       egressPin,
     )
   ) {
-    errors.push("egress-pin observation and mutation capabilities are not separated");
+    errors.push(
+      "egress-pin observation and mutation capabilities are not separated",
+    );
   }
   if (
     /\bOciEgressPinProvider\b/.test(readiness) ||
@@ -793,10 +814,12 @@ function verifySealedEffectCapabilities() {
   const injectedSeal =
     process.env.NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD === "1" &&
     !process.env.NIMBUS_NETWORK_VERIFY_TEST_SEALED_EFFECT_CAPABILITY_PATH
-      ? process.env.NIMBUS_NETWORK_VERIFY_TEST_SEALED_EFFECT_CAPABILITY ?? ""
+      ? (process.env.NIMBUS_NETWORK_VERIFY_TEST_SEALED_EFFECT_CAPABILITY ?? "")
       : "";
   if (/\bOciEgressPinProvider\b/.test(injectedSeal)) {
-    errors.push("attachment readiness mutation fixture acquired apply authority");
+    errors.push(
+      "attachment readiness mutation fixture acquired apply authority",
+    );
   }
 
   const portableCapability = firstMatch(
@@ -804,7 +827,9 @@ function verifySealedEffectCapabilities() {
     /\b(?:NetworkProvider|ForwardingProvider|IngressProvider|NameProvider|CertificateProvider|PreparedNetavark|OciNetwork|netns_path|provider_effect|effect_callback)\b/,
   );
   if (portableCapability) {
-    errors.push(`portable crate acquired provider-effect capability: ${portableCapability}`);
+    errors.push(
+      `portable crate acquired provider-effect capability: ${portableCapability}`,
+    );
   }
 }
 
@@ -837,7 +862,9 @@ function verifySideEffectFreeSandboxInspection() {
   const replaceIn = (sources, file, before, after) => {
     const candidate = requiredSource(sources, file);
     if (!candidate.source.includes(before)) {
-      errors.push(`inspection self-test mutation target missing: ${file}:${before}`);
+      errors.push(
+        `inspection self-test mutation target missing: ${file}:${before}`,
+      );
       return;
     }
     candidate.source = candidate.source.replace(before, after);
@@ -860,7 +887,8 @@ function verifySideEffectFreeSandboxInspection() {
         "fn injected() { ensure_egress_proxy_running_with_release_authority(); }",
       "inspection-write":
         "fn injected() { write_existing_workload_manifest(); }",
-      "inspection-effect-barrier": "fn injected() { persist_effect_barrier(); }",
+      "inspection-effect-barrier":
+        "fn injected() { persist_effect_barrier(); }",
     }[mutation];
     if (injectedEffect) {
       appendTo(sandboxSources, inspectionFile, injectedEffect);
@@ -927,7 +955,7 @@ function verifySideEffectFreeSandboxInspection() {
       appendTo(
         networkSources,
         "crates/nimbus-network/src/lib.rs",
-        "fn provider_effect() { let _ = std::process::Command::new(\"netavark\"); }",
+        'fn provider_effect() { let _ = std::process::Command::new("netavark"); }',
       );
     } else if (mutation) {
       errors.push(`unknown inspection self-test mutation: ${mutation}`);
@@ -980,7 +1008,9 @@ function verifySideEffectFreeSandboxInspection() {
     forbiddenInspectionEffect,
   );
   if (inspectionEffect) {
-    errors.push(`inspection acquired provider-effect authority: ${inspectionEffect}`);
+    errors.push(
+      `inspection acquired provider-effect authority: ${inspectionEffect}`,
+    );
   }
 
   requireExactOwner(
@@ -1006,7 +1036,9 @@ function verifySideEffectFreeSandboxInspection() {
       classifier,
     )
   ) {
-    errors.push("restart classifier performs clock, filesystem, process, or mutation work");
+    errors.push(
+      "restart classifier performs clock, filesystem, process, or mutation work",
+    );
   }
 
   const functionBody = (source, functionName) => {
@@ -1060,7 +1092,9 @@ function verifySideEffectFreeSandboxInspection() {
       machineApi,
     )
   ) {
-    errors.push("Machine API inspection DTO must carry the complete SandboxInspection");
+    errors.push(
+      "Machine API inspection DTO must carry the complete SandboxInspection",
+    );
   }
 
   const forwardedBackend = requiredSource(
@@ -1102,7 +1136,9 @@ function verifySideEffectFreeSandboxInspection() {
       guestFacade,
     )
   ) {
-    errors.push("guest-node inspection must preserve and extend typed evidence");
+    errors.push(
+      "guest-node inspection must preserve and extend typed evidence",
+    );
   }
 
   const serviceHandles = requiredSource(
@@ -1174,7 +1210,9 @@ function verifySideEffectFreeSandboxInspection() {
     /\b(?:std|tokio)\s*::\s*process\s*::|\bCommand\s*::\s*new\s*\(|\b(?:TcpListener|UdpSocket|UnixListener|TcpSocket|Socket)\s*::\s*bind\s*\(|\b(?:TcpStream|UnixStream)\s*::\s*connect(?:_timeout)?\s*\(/,
   );
   if (portableEffect) {
-    errors.push(`nimbus-network acquired an inspection/provider effect: ${portableEffect}`);
+    errors.push(
+      `nimbus-network acquired an inspection/provider effect: ${portableEffect}`,
+    );
   }
   const networkWorktreeChanges = execFileSync(
     "git",
@@ -1216,7 +1254,8 @@ function verifySideEffectFreeSandboxInspection() {
     "execute_start_after_preflight",
   );
   if (
-    [...containerLaunchBody.matchAll(/\.\s*launch_manifest\s*\(/g)].length !== 1 ||
+    [...containerLaunchBody.matchAll(/\.\s*launch_manifest\s*\(/g)].length !==
+      1 ||
     [...krunLaunchBody.matchAll(/\.\s*launch_manifest\s*\(/g)].length !== 1
   ) {
     errors.push(
@@ -1229,7 +1268,311 @@ function verifySideEffectFreeSandboxInspection() {
     /\bfn\s+inspect[A-Za-z0-9_]*(?:\s*<'[^>]+>)?\s*\([^)]*&SandboxId[^)]*\)\s*->\s*(?:SandboxFuture|MachineApiServiceFuture\s*<\s*'[^,>]+\s*,)\s*<?\s*Option\s*<\s*(?:crate::)?SandboxHandle\s*>/,
   );
   if (staleHandleOnly) {
-    errors.push(`handle-only sandbox inspection seam remains: ${staleHandleOnly}`);
+    errors.push(
+      `handle-only sandbox inspection seam remains: ${staleHandleOnly}`,
+    );
+  }
+}
+
+function verifyComputeNetworkManagerInjection() {
+  const computeSources = walkRust("crates/nimbus-compute/src");
+  const serverSources = walkRust("crates/nimbus-server/src");
+  const cliSources = walkRust("crates/nimbus-cli/src");
+  const requiredSource = (sources, file) => {
+    const candidate = sources.find((entry) => entry.file === file);
+    if (!candidate) {
+      errors.push(`required compute-manager source missing: ${file}`);
+      return { file, source: "" };
+    }
+    return candidate;
+  };
+  const replaceIn = (sources, file, before, after) => {
+    const candidate = requiredSource(sources, file);
+    if (!candidate.source.includes(before)) {
+      errors.push(
+        `compute-manager self-test mutation target missing: ${file}:${before}`,
+      );
+      return;
+    }
+    candidate.source = candidate.source.replace(before, after);
+  };
+  let computeManifest = fs.existsSync("crates/nimbus-compute/Cargo.toml")
+    ? fs.readFileSync("crates/nimbus-compute/Cargo.toml", "utf8")
+    : "";
+
+  if (process.env.NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD === "1") {
+    const mutation =
+      process.env.NIMBUS_NETWORK_VERIFY_TEST_COMPUTE_MANAGER_MUTATION ?? "";
+    if (mutation === "missing-compute-dependency") {
+      computeManifest = computeManifest.replace(
+        'nimbus-network = { path = "../nimbus-network" }',
+        "",
+      );
+    } else if (mutation === "missing-config-manager") {
+      replaceIn(
+        computeSources,
+        "crates/nimbus-compute/src/state.rs",
+        "pub network_manager: Option<Arc<LocalNetworkManager>>",
+        "pub omitted_network_manager: ()",
+      );
+    } else if (mutation === "missing-state-manager") {
+      replaceIn(
+        computeSources,
+        "crates/nimbus-compute/src/state.rs",
+        "pub active_deployment: Arc<ActiveDeployment>,\n    network_manager: Option<Arc<LocalNetworkManager>>",
+        "pub active_deployment: Arc<ActiveDeployment>,\n    omitted_network_manager: ()",
+      );
+    } else if (mutation === "missing-compute-accessor") {
+      replaceIn(
+        computeSources,
+        "crates/nimbus-compute/src/state.rs",
+        "pub fn network_manager(&self)",
+        "pub fn omitted_network_manager(&self)",
+      );
+    } else if (mutation === "missing-compute-profile-fence") {
+      replaceIn(
+        computeSources,
+        "crates/nimbus-compute/src/state.rs",
+        "Self::require_network_manager_for_workloads(&network_manager, &node_services);",
+        "",
+      );
+    } else if (mutation === "copied-capability-registry") {
+      const state = requiredSource(
+        computeSources,
+        "crates/nimbus-compute/src/state.rs",
+      );
+      state.source +=
+        "\nfn copied_registry(manager: &LocalNetworkManager) { let _ = manager.capability_registry().clone(); }\n";
+    } else if (mutation === "hidden-prepared-manager") {
+      replaceIn(
+        cliSources,
+        "crates/nimbus-cli/src/network_composition.rs",
+        "pub(crate) fn manager(&self) -> Arc<LocalNetworkManager>",
+        "pub(crate) fn hidden_manager(&self) -> Arc<LocalNetworkManager>",
+      );
+    } else if (mutation === "authority-only-start") {
+      replaceIn(
+        cliSources,
+        "crates/nimbus-cli/src/start/boot.rs",
+        "ServeOptions::new(engine.clone(), prepared_network.manager())",
+        "ServeOptions::new(engine.clone(), prepared_network.authority())",
+      );
+    } else if (mutation === "authority-only-serve") {
+      replaceIn(
+        serverSources,
+        "crates/nimbus-server/src/construction.rs",
+        "network_manager: Arc<LocalNetworkManager>",
+        "network_authority: LocalNetworkAuthority",
+      );
+    } else if (mutation === "manager-less-router") {
+      replaceIn(
+        serverSources,
+        "crates/nimbus-server/src/router.rs",
+        "pub fn new(engine: Arc<Engine>, network_manager: Arc<LocalNetworkManager>)",
+        "pub fn new(engine: Arc<Engine>)",
+      );
+    } else if (mutation === "missing-router-build-handoff") {
+      replaceIn(
+        serverSources,
+        "crates/nimbus-server/src/router.rs",
+        "network_manager,\n            deployment: DeploymentConfig {",
+        "network_manager: None,\n            deployment: DeploymentConfig {",
+      );
+    } else if (mutation === "protocol-service-bypass") {
+      replaceIn(
+        serverSources,
+        "crates/nimbus-server/src/router.rs",
+        "self.require_network_manager(",
+        "bypassed_network_manager_guard(",
+      );
+    } else if (mutation === "protocol-machine-bypass") {
+      const router = requiredSource(
+        serverSources,
+        "crates/nimbus-server/src/router.rs",
+      );
+      const target = "self.require_network_manager(";
+      const index = router.source.lastIndexOf(target);
+      if (index < 0) {
+        errors.push(
+          "compute-manager self-test mutation target missing: machine network-manager guard",
+        );
+      } else {
+        router.source =
+          router.source.slice(0, index) +
+          "bypassed_network_manager_guard(" +
+          router.source.slice(index + target.length);
+      }
+    } else if (mutation === "parallel-compute-manager") {
+      const state = requiredSource(
+        computeSources,
+        "crates/nimbus-compute/src/state.rs",
+      );
+      state.source +=
+        '\nfn parallel_manager() { let _ = LocalNetworkManager::bootstrap("parallel"); }\n';
+    } else if (mutation === "parallel-server-manager") {
+      const construction = requiredSource(
+        serverSources,
+        "crates/nimbus-server/src/construction.rs",
+      );
+      construction.source +=
+        '\nfn parallel_manager() { let _ = LocalNetworkManager::open("parallel", todo!()); }\n';
+    } else if (mutation) {
+      errors.push(`unknown compute-manager self-test mutation: ${mutation}`);
+    }
+  }
+
+  if (
+    !/^nimbus-network\s*=\s*\{\s*path\s*=\s*"\.\.\/nimbus-network"\s*\}\s*$/m.test(
+      computeManifest,
+    )
+  ) {
+    errors.push("nimbus-compute must depend directly on nimbus-network");
+  }
+
+  const computeState = requiredSource(
+    computeSources,
+    "crates/nimbus-compute/src/state.rs",
+  ).source;
+  const managerFields = [
+    ...computeState.matchAll(
+      /\bnetwork_manager\s*:\s*Option\s*<\s*Arc\s*<\s*LocalNetworkManager\s*>\s*>/g,
+    ),
+  ];
+  if (managerFields.length < 2) {
+    errors.push(
+      "ComputeStateConfig and ComputeState must both retain the injected manager",
+    );
+  }
+  if (
+    !/\bpub\s+fn\s+network_manager\s*\(\s*&self\s*\)\s*->\s*Option\s*<\s*Arc\s*<\s*LocalNetworkManager\s*>\s*>\s*\{[^}]*self\.network_manager\.clone\(\)/s.test(
+      computeState,
+    )
+  ) {
+    errors.push(
+      "ComputeState must return the retained manager Arc without reconstruction",
+    );
+  }
+  if (/capability_registry\s*\(\s*\)\s*\.\s*clone\s*\(/.test(computeState)) {
+    errors.push("ComputeState must not copy the manager capability registry");
+  }
+  if (
+    !/Self\s*::\s*require_network_manager_for_workloads\s*\(\s*&network_manager\s*,\s*&node_services\s*\)/s.test(
+      computeState,
+    ) ||
+    !/fn\s+require_network_manager_for_workloads[\s\S]*?network_manager\.is_some\(\)[\s\S]*?service_manager\(\)\.is_none\(\)[\s\S]*?machine_lifecycle_manager\(\)\.is_none\(\)/.test(
+      computeState,
+    )
+  ) {
+    errors.push(
+      "ComputeState must reject workload lifecycle without the shared manager",
+    );
+  }
+
+  const cliComposition = requiredSource(
+    cliSources,
+    "crates/nimbus-cli/src/network_composition.rs",
+  ).source;
+  const managerAccessors = [
+    ...cliComposition.matchAll(
+      /\bpub\s*\(\s*crate\s*\)\s+fn\s+manager\s*\(\s*&self\s*\)\s*->\s*Arc\s*<\s*LocalNetworkManager\s*>/g,
+    ),
+  ];
+  if (managerAccessors.length < 2) {
+    errors.push(
+      "frozen and prepared CLI composition must expose the retained manager Arc",
+    );
+  }
+  const startBoot = requiredSource(
+    cliSources,
+    "crates/nimbus-cli/src/start/boot.rs",
+  ).source;
+  if (
+    !/ServeOptions\s*::\s*new\s*\(\s*engine\.clone\(\)\s*,\s*prepared_network\.manager\(\)\s*\)/s.test(
+      startBoot,
+    ) ||
+    /ServeOptions\s*::\s*new\s*\([^;]*prepared_network\.authority\(\)/s.test(
+      startBoot,
+    )
+  ) {
+    errors.push(
+      "CLI start must inject the prepared manager rather than an authority-only view",
+    );
+  }
+
+  const serverConstruction = requiredSource(
+    serverSources,
+    "crates/nimbus-server/src/construction.rs",
+  ).source;
+  if (
+    !/\bpub\s+fn\s+new\s*\(\s*engine\s*:\s*Arc\s*<\s*Engine\s*>\s*,\s*network_manager\s*:\s*Arc\s*<\s*LocalNetworkManager\s*>\s*\)/s.test(
+      serverConstruction,
+    ) ||
+    !/ServerListenerLeaseAuthority\s*::\s*new\s*\(\s*network_manager\.authority\(\)\s*\)/s.test(
+      serverConstruction,
+    ) ||
+    !/RouterOptions\s*::\s*new\s*\(\s*engine\s*,\s*network_manager\s*\)/s.test(
+      serverConstruction,
+    )
+  ) {
+    errors.push(
+      "ServeOptions must derive listeners and compute from one manager Arc",
+    );
+  }
+
+  const serverRouter = requiredSource(
+    serverSources,
+    "crates/nimbus-server/src/router.rs",
+  ).source;
+  if (
+    !/\bnetwork_manager\s*:\s*Option\s*<\s*Arc\s*<\s*LocalNetworkManager\s*>\s*>/.test(
+      serverRouter,
+    ) ||
+    !/\bpub\s+fn\s+new\s*\(\s*engine\s*:\s*Arc\s*<\s*Engine\s*>\s*,\s*network_manager\s*:\s*Arc\s*<\s*LocalNetworkManager\s*>\s*\)/s.test(
+      serverRouter,
+    ) ||
+    !/\bpub\s+fn\s+protocol_only\s*\(\s*engine\s*:\s*Arc\s*<\s*Engine\s*>\s*\)/s.test(
+      serverRouter,
+    ) ||
+    [...serverRouter.matchAll(/self\.require_network_manager\s*\(/g)].length !==
+      2 ||
+    !/fn\s+require_network_manager\s*\([^)]*\)\s*\{[^}]*network_manager\.is_some\(\)/s.test(
+      serverRouter,
+    ) ||
+    !/fn\s+into_state[\s\S]*?AppState\s*::\s*from_config\s*\(\s*AppStateConfig\s*\{[\s\S]*?\bnetwork_manager\s*,/.test(
+      serverRouter,
+    ) ||
+    !/pub\s*\(\s*crate\s*\)\s+fn\s+build\s*\(\s*self\s*\)[\s\S]*?self\.into_state\(\)/.test(
+      serverRouter,
+    )
+  ) {
+    errors.push(
+      "managed and protocol-only RouterOptions must be explicit and workload-fenced",
+    );
+  }
+
+  const serverState = requiredSource(
+    serverSources,
+    "crates/nimbus-server/src/state.rs",
+  ).source;
+  if (
+    !/\bnetwork_manager\s*:\s*Option\s*<\s*Arc\s*<\s*LocalNetworkManager\s*>\s*>/.test(
+      serverState,
+    ) ||
+    !/ComputeStateConfig\s*\{[^}]*\bnetwork_manager\s*,/s.test(serverState)
+  ) {
+    errors.push(
+      "AppState must preserve the exact manager into ComputeStateConfig",
+    );
+  }
+
+  const forbiddenConstruction = firstMatch(
+    [...computeSources, ...serverSources],
+    /\bLocalNetworkManager\s*::\s*(?:open|bootstrap)\s*\(/,
+  );
+  if (forbiddenConstruction) {
+    errors.push(
+      `compute/server constructed a parallel manager: ${forbiddenConstruction}`,
+    );
   }
 }
 
@@ -1243,6 +1586,8 @@ if (mode === "forbidden-dependencies-effects") {
   verifySandboxEffectLocality();
 } else if (mode === "side-effect-free-sandbox-inspection") {
   verifySideEffectFreeSandboxInspection();
+} else if (mode === "compute-network-manager-injection") {
+  verifyComputeNetworkManagerInjection();
 } else {
   verifySealedEffectCapabilities();
 }

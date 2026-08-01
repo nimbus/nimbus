@@ -3,6 +3,7 @@ use std::sync::Arc;
 use axum::response::{IntoResponse, Response};
 use nimbus_core::Error;
 use nimbus_engine::Engine;
+use nimbus_network::LocalNetworkManager;
 
 use crate::config::transport::TransportConfig;
 use crate::error_envelope::StructuredHttpError;
@@ -20,6 +21,7 @@ pub(crate) use nimbus_compute::state::{
 
 pub(crate) struct AppStateConfig {
     pub(crate) engine: Arc<Engine>,
+    pub(crate) network_manager: Option<Arc<LocalNetworkManager>>,
     pub(crate) deployment: DeploymentConfig,
     pub(crate) control_plane: ControlPlaneConfig,
     pub(crate) node_services: NodeServicesConfig,
@@ -55,6 +57,7 @@ impl AppState {
     pub(crate) fn from_config(config: AppStateConfig) -> Self {
         let AppStateConfig {
             engine,
+            network_manager,
             deployment,
             control_plane,
             node_services,
@@ -63,6 +66,7 @@ impl AppState {
         } = config;
         let compute = ComputeState::from_config(ComputeStateConfig {
             engine,
+            network_manager,
             deployment,
             control_plane,
             node_services,

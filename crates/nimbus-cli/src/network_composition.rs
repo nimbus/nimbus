@@ -151,9 +151,8 @@ pub(crate) struct FrozenLocalNetworkComposition {
 }
 
 impl FrozenLocalNetworkComposition {
-    #[cfg(test)]
-    pub(crate) fn manager(&self) -> &Arc<LocalNetworkManager> {
-        &self.manager
+    pub(crate) fn manager(&self) -> Arc<LocalNetworkManager> {
+        Arc::clone(&self.manager)
     }
 
     pub(crate) fn authority(&self) -> LocalNetworkAuthority {
@@ -277,6 +276,10 @@ impl PreparedLocalNetworkComposition {
 
     pub(crate) fn authority(&self) -> LocalNetworkAuthority {
         self.frozen.authority()
+    }
+
+    pub(crate) fn manager(&self) -> Arc<LocalNetworkManager> {
+        self.frozen.manager()
     }
 
     pub(crate) fn authenticate_requested_root(
@@ -688,17 +691,24 @@ mod tests {
             nimbus_server::nimbus_owned_local_ingress_registration(false),
         )
         .expect("server-only composition should freeze");
+        let authority_existed_before = server_only.authority().authority_path().exists();
+        let first_manager = server_only.manager();
+        let second_manager = server_only.manager();
+        assert!(Arc::ptr_eq(&first_manager, &second_manager));
+        assert!(std::ptr::eq(
+            first_manager.capability_registry(),
+            server_only.frozen.manager().capability_registry()
+        ));
+        assert_eq!(first_manager.capability_registry().selections().count(), 0);
         assert_eq!(
-            server_only
-                .frozen
-                .manager()
-                .capability_registry()
-                .selections()
-                .count(),
-            0
+            server_only.authority().authority_path().exists(),
+            authority_existed_before,
+            "repeated manager access must not materialize durable authority"
         );
         assert!(server_only.local_service_manager().is_none());
         assert!(!server_only.requires_forwarded_service_manager());
+        drop(first_manager);
+        drop(second_manager);
         drop(server_only);
 
         let compose_path = root.path().join("compose.yaml");
