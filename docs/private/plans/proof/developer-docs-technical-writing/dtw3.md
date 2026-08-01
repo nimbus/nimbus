@@ -65,3 +65,9 @@ Results:
 - Astro built 109 pages and emitted `llms.txt`, `llms-full.txt`, and
   `llms-small.txt`.
 - The site verifier passed all 17 conditions.
+
+## Pull request update
+
+Ready PR #272 includes work commit `37c103fd3` and plan commit `57a4c3e56`.
+The PR remains open against `main` and is not a draft:
+https://github.com/nimbus/nimbus/pull/272
