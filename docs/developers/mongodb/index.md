@@ -8,19 +8,19 @@ sidebar:
 
 Nimbus speaks the MongoDB wire protocol natively. In this tutorial you run
 a Nimbus server, connect the official Node.js `mongodb` driver to it,
-insert a document, and query it back. No codegen, no schema files — the
-stock driver is the client.
+insert a document, and query it back. You do not need codegen or schema files.
+The stock driver is the client.
 
-Every Nimbus server serves the MongoDB endpoint by default — `nimbus
-start` and `nimbus dev` alike (`--no-mongodb` switches it off, and
-embedders opt in through the API — see
-[the embedding alternative](#embedding-alternative) below). In an app
-directory, `nimbus dev` goes further: when it sees a `mongodb` dependency
-in your `package.json`, it writes a ready-to-use connection URL to your
-app's `.env.local` as `NIMBUS_MONGODB_URL`, so the client below collapses
-to `new MongoClient(process.env.NIMBUS_MONGODB_URL)`. The steps below use
-`nimbus start` with explicit credentials — the long-lived server shape.
-Everything the driver sees is plain MongoDB.
+Every Nimbus server serves the MongoDB endpoint by default. This applies to
+`nimbus start` and `nimbus dev`. Use `--no-mongodb` to switch it off. Embedders
+opt in through [the embedding alternative](#embedding-alternative).
+
+In an app directory, `nimbus dev` detects a `mongodb` dependency in
+`package.json`. It writes a ready-to-use connection URL to `.env.local` as
+`NIMBUS_MONGODB_URL`. The client can then use
+`new MongoClient(process.env.NIMBUS_MONGODB_URL)`. The steps below use
+`nimbus start` with explicit credentials for a long-lived server. The driver
+sees plain MongoDB.
 
 ## What you need
 
@@ -29,7 +29,7 @@ Everything the driver sees is plain MongoDB.
 
 ## 1. Start the server
 
-The endpoint requires SCRAM-SHA-256 credentials; the password is env-only
+The endpoint requires SCRAM-SHA-256 credentials. The password is env-only
 so it never appears in process listings:
 
 ```bash
@@ -37,21 +37,20 @@ NIMBUS_MONGODB_PASSWORD=app-secret \
   nimbus start --mongodb-username app-user
 ```
 
-The server logs both listeners — the HTTP API on `127.0.0.1:8080` and the
-MongoDB endpoint on `127.0.0.1:27017`. If another process already holds
-`27017`, the listener is skipped with a warning — pass `--mongodb-port`
-to pin a different port (a busy explicit port is a hard error instead of
-a skip).
+The server logs both listeners. The HTTP API uses `127.0.0.1:8080`, and the
+MongoDB endpoint uses `127.0.0.1:27017`. If another process holds `27017`,
+Nimbus skips the listener and logs a warning. Pass `--mongodb-port` to set a
+different port. Nimbus treats a busy explicit port as a hard error.
 
-Without credential flags, the server still serves the endpoint: it
-generates a credential pair on first boot and persists it at
-`wire-credentials.json` (owner-only, `0600`) in its data directory.
-`nimbus dev` is the shape that hands those generated credentials to your
-app via `.env.local`.
+Without credential flags, the server still serves the endpoint. It generates
+a credential pair on the first boot. It stores the pair in
+`wire-credentials.json` in its data directory. This owner-only file has mode
+`0600`. `nimbus dev` gives those generated credentials to your app through
+`.env.local`.
 
 The MongoDB endpoint always binds to loopback. The server refuses to bind
-it to a network-reachable address — front it with a TLS-terminating proxy
-for remote access.
+it to a network-reachable address. For remote access, put a TLS-terminating
+proxy in front of the endpoint.
 
 ## 2. Create the client
 
@@ -87,9 +86,9 @@ Two parts of that connection string matter:
 - `app-user:app-secret` are the SCRAM-SHA-256 credentials the server was
   started with. Every data operation requires them.
 - The string names exactly one host. Nimbus is a single endpoint, not a
-  replica set — never pass a `replicaSet` option. With a single host the
-  driver connects directly; adding `directConnection=true` is harmless
-  but not required.
+  replica set. Do not pass a `replicaSet` option. With a single host, the
+  driver connects directly. Adding `directConnection=true` is harmless but
+  not required.
 
 ## 3. Run it
 
@@ -118,21 +117,23 @@ let options = ServeOptions::new(engine)
 
 ## What just happened
 
-- Connecting to the database `myapp` routed you to the Nimbus tenant
-  `myapp`. The tenant was created automatically on first write — see
-  [tenant isolation](/reference/mongodb/tenant-isolation/) for the mapping
-  rules.
-- The collection `messages` was created on first insert. Schema is
-  optional: a collection accepts any document shape.
-- The write went through the same engine as Nimbus's HTTP API. A document
-  inserted through the MongoDB driver is immediately visible to every other
-  Nimbus surface in the same tenant, and vice versa.
+**Tenant route.** Connecting to the database `myapp` routed you to the Nimbus
+tenant `myapp`. Nimbus created the tenant automatically on the first write.
+See [tenant isolation](/reference/mongodb/tenant-isolation/) for the mapping
+rules.
+
+**Collection creation.** Nimbus created the `messages` collection on the first
+insert. Schema is optional, so a collection accepts any document shape.
+
+**Shared engine.** The write used the same engine as Nimbus's HTTP API. Each
+Nimbus surface in the same tenant can immediately read a document inserted
+through the MongoDB driver. The reverse also applies.
 
 ## Next steps
 
-- [Driver examples](/developers/mongodb/examples/) — CRUD, aggregation,
+- [Driver examples](/developers/mongodb/examples/): CRUD, aggregation,
   transactions, and other languages.
-- [Supported drivers](/reference/mongodb/drivers/) — what works beyond
+- [Supported drivers](/reference/mongodb/drivers/): what works beyond
   Node.js.
-- [Supported operations](/reference/mongodb/operations/) — the exact
+- [Supported operations](/reference/mongodb/operations/): the exact
   command, filter, and update surface.

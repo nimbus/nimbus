@@ -6,26 +6,25 @@ sidebar:
   order: 1
 ---
 
-An adapter is a protocol front door. Your client speaks the wire protocol it
-already knows — Convex, Firestore, Cloud Functions, MongoDB, DynamoDB, or the
-native API — and Nimbus serves it from the same engine, storage layer, and
-tenant boundary as every other surface. Picking a door changes the shape of
-your calls, not where your data lives or how it is isolated. The design and
-its limits are explained in
-[the adapter boundary](/concepts/adapter-boundary/).
+An adapter is a protocol front door. Your client uses a known wire protocol,
+such as Convex, Firestore, Cloud Functions, MongoDB, DynamoDB, or the native
+API. Nimbus serves every protocol from the same engine, storage layer, and
+tenant boundary. Your choice changes the call shape. It does not change data
+location or isolation. [The adapter boundary](/concepts/adapter-boundary/)
+explains the design and its limits.
 
 ## How the surfaces are served
 
 Every server serves these surfaces by default. The Convex-compatible surface,
-the Firestore routes, and the native API share the main listener; MongoDB and
-DynamoDB each bind their own conventional port (`127.0.0.1:27017` and
-`127.0.0.1:8000`).
+the Firestore routes, and the native API share the main listener. MongoDB and
+DynamoDB bind their conventional ports: `127.0.0.1:27017` and
+`127.0.0.1:8000`.
 
 `nimbus dev` wires your app automatically, and it treats two kinds of surface
 differently.
 
-**One app adapter.** The adapter that owns your app's wiring, codegen, and
-watch loop is singular — exactly one is chosen:
+**One app adapter.** Nimbus selects exactly one adapter to own your app's
+wiring, codegen, and watch loop:
 
 | Nimbus sees | App adapter |
 | --- | --- |
@@ -33,9 +32,9 @@ watch loop is singular — exactly one is chosen:
 | a `firebase` dependency | Firestore |
 | a `firebase.json` | Cloud Functions |
 
-**Any number of wire surfaces.** These are a set, and they compose with any
-app adapter — a Convex app that also installs `mongodb` keeps its Convex dev
-loop *and* gets the MongoDB listener:
+**Any number of wire surfaces.** These surfaces compose with any app adapter.
+For example, a Convex app that installs `mongodb` keeps its Convex dev loop
+and gets the MongoDB listener:
 
 | Runtime dependency | Wire surface |
 | --- | --- |
@@ -44,18 +43,18 @@ loop *and* gets the MongoDB listener:
 | `@aws-sdk/client-s3` or `@aws-sdk/lib-storage` | [S3](/reference/s3/compatibility/) |
 
 Wire-surface detection reads only the runtime `dependencies` in your
-`package.json` — not `devDependencies`, `optionalDependencies`, or
-`peerDependencies` — because enabling one starts a listener, generates
+`package.json`. It does not read `devDependencies`, `optionalDependencies`,
+or `peerDependencies`. Enabling a surface starts a listener, generates
 credentials, and writes `.env.local`. A bare `aws-sdk` (v2) dependency is too
-broad to imply DynamoDB or S3, so it only produces a banner hint and never
-enables a surface.
+broad to imply DynamoDB or S3. It only produces a banner hint and never enables
+a surface.
 
-The Firestore, MongoDB, DynamoDB, and S3 surfaces can each be switched off with
-`nimbus start` flags (`--no-firestore`, `--no-mongodb`, `--no-dynamodb`,
-`--no-s3`); the Convex-compatible surface and the native API are always on.
-Under `nimbus dev` a wire surface is enabled by its runtime dependency (above)
-rather than a flag — remove the dependency to leave it off. Flags, ports, and
-credentials are in [configuration](/reference/configuration/).
+You can switch off the Firestore, MongoDB, DynamoDB, and S3 surfaces with
+`nimbus start` flags. Use `--no-firestore`, `--no-mongodb`, `--no-dynamodb`,
+or `--no-s3`. The Convex-compatible surface and the native API are always on.
+Under `nimbus dev`, a runtime dependency enables its wire surface. Remove the
+dependency to leave the surface off. See
+[configuration](/reference/configuration/) for flags, ports, and credentials.
 
 ## Which surface should you reach for?
 
@@ -68,10 +67,10 @@ credentials are in [configuration](/reference/configuration/).
 | [DynamoDB](/developers/dynamodb/) | you already have code on the AWS SDK | `@aws-sdk/client-dynamodb` | — |
 | [Native API](/developers/native/) | you want any language, with no SDK | plain HTTP and WebSocket | — |
 
-The ported-source surfaces (Convex, Firestore, Cloud Functions) carry a
-migration guide because you are moving existing source onto Nimbus. The
-driver surfaces (MongoDB, DynamoDB) and the native API need no migration —
-you point an existing client at a Nimbus endpoint and keep your code.
+The ported-source surfaces include Convex, Firestore, and Cloud Functions.
+Each has a migration guide for moving existing source to Nimbus. MongoDB,
+DynamoDB, and the native API need no migration. Point an existing client at a
+Nimbus endpoint and keep your code.
 
 Every surface ships runnable examples:
 [Convex](/developers/convex/examples/),
@@ -83,19 +82,19 @@ Every surface ships runnable examples:
 
 ## Compare what each one supports
 
-Surfaces are not interchangeable: each translates a different slice of the
-engine. [Adapter capabilities](/reference/adapter-capabilities/) puts all six
-side by side — CRUD, queries, indexes, subscriptions, transactions, schema
-validation, auth, tenant binding, and default ports — with links into each
-per-surface reference. The full per-surface compatibility matrices live in
-the [Reference](/reference/) section.
+Each surface translates a different part of the engine.
+[Adapter capabilities](/reference/adapter-capabilities/) compares all six
+surfaces. It covers CRUD, queries, indexes, subscriptions, transactions,
+schema validation, auth, tenant binding, and default ports. It also links to
+each surface reference. The full compatibility matrices are in the
+[Reference](/reference/) section.
 
 ## Other wire surfaces
 
-Nimbus serves protocol surfaces that are not app front doors and have no
-guides in this section: an [S3 API](/reference/s3/compatibility/) (wired by
-`nimbus dev` when you declare an AWS S3 client, as above), a
-[Cloudflare-compatible](/reference/cloudflare/compatibility/) Workers KV
-plane, and a [RESP (Redis)](/reference/kv/compatibility/) listener started
-with `nimbus kv`. Each is documented in the Reference section with its own
-maturity caveat.
+Nimbus also serves protocol surfaces that are not app front doors. This group
+includes an [S3 API](/reference/s3/compatibility/), which `nimbus dev` wires
+when you declare an AWS S3 client. It also includes a
+[Cloudflare-compatible](/reference/cloudflare/compatibility/) Workers KV plane
+and a [RESP (Redis)](/reference/kv/compatibility/) listener. Start the RESP
+listener with `nimbus kv`. The Reference section documents each surface and
+its maturity caveat.

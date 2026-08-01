@@ -6,14 +6,14 @@ sidebar:
 ---
 
 Nimbus runs Convex projects in place: it detects the `convex/` directory,
-swaps the `convex` dependency to its own provisioned package, runs codegen,
-and serves the same function and client APIs from a local binary. Most
-projects need only `nimbus dev` and a new deployment URL.
+swaps the `convex` dependency, and runs codegen. Its provisioned package
+serves the same function and client APIs from a local binary. Most projects
+need only `nimbus dev` and a new deployment URL.
 
 Before you start, scan the
 [compatibility reference](/reference/convex/compatibility/) for the surfaces
-your app uses. File storage, search indexes, and crons are not supported
-today — if your app depends on them, it is not ready to migrate.
+your app uses. Nimbus does not support file storage, search indexes, or crons
+today. An app that depends on them is not ready to migrate.
 
 ## What to change
 
@@ -44,8 +44,8 @@ the provisioned copy and reinstalls dependencies:
 
 The regenerated `convex/_generated/` files import from `convex/server`,
 `convex/browser`, and `convex/values`, and those imports must resolve to the
-Nimbus-compatible package rather than the hosted-Convex one — which the
-rewired dependency guarantees.
+Nimbus-compatible package. The rewired dependency prevents them from
+resolving to the hosted Convex package.
 
 ### 3. Update the deployment URL
 
@@ -58,7 +58,7 @@ http://localhost:3210/convex/demo
 Set whatever environment variable your clients read for the Convex
 deployment URL (for example `VITE_CONVEX_URL` or `NEXT_PUBLIC_CONVEX_URL`)
 to that value. You no longer need a `CONVEX_DEPLOYMENT` value from a hosted
-dashboard; `nimbus dev` records its local deployment in `.env.local` as
+dashboard. `nimbus dev` records its local deployment in `.env.local` as
 `NIMBUS_DEPLOYMENT`.
 
 ### 4. Let codegen regenerate `_generated/`
@@ -72,8 +72,8 @@ nimbus codegen --app .
 
 ### 5. Review your auth config
 
-`convex/auth.config.ts` (or `.js` — exactly one, not both) carries over with
-the same provider shapes:
+Keep exactly one auth config: `convex/auth.config.ts` or
+`convex/auth.config.js`. Nimbus supports the same provider shapes:
 
 - **OIDC**: `{ domain, applicationID }`. The token's audience must equal
   `applicationID`, and tokens with multiple audiences are rejected.
@@ -84,8 +84,8 @@ the same provider shapes:
 set those variables in the environment where `nimbus dev` executes.
 
 Nimbus binds each generated auth configuration to one deployment silo.
-The URL silo selects that trusted verifier before Nimbus examines a bearer;
-there is no global subject- or issuer-to-silo lookup. When deploying outside
+The URL silo selects that trusted verifier before Nimbus examines a bearer.
+There is no global subject- or issuer-to-silo lookup. When deploying outside
 the dev loop, name the silo explicitly:
 
 ```bash
@@ -97,55 +97,55 @@ without either value is refused before activation.
 
 ## What works unchanged
 
-- **Function authoring** — `query`, `mutation`, `action`, `httpAction`, and
+- **Function authoring:** `query`, `mutation`, `action`, `httpAction`, and
   their `internal` variants, with the same `args`/`handler` syntax.
-- **Schema** — `defineSchema`, `defineTable`, indexes, and the core
+- **Schema:** `defineSchema`, `defineTable`, indexes, and the core
   validator set (`v.string()`, `v.number()`, `v.id()`, `v.object()`,
   `v.union()`, and friends).
-- **Database access** — `ctx.db.get`/`insert`/`patch`/`delete` and the query
+- **Database access:** `ctx.db.get`/`insert`/`patch`/`delete` and the query
   builder (`withIndex`, `filter`, `order`, `take`, `collect`, `first`,
   `unique`, `paginate`).
-- **Scheduling** — `ctx.scheduler.runAfter` and `runAt` targeting mutations.
-- **HTTP actions** — `httpRouter` routes in `convex/http.ts`, served under
+- **Scheduling:** `ctx.scheduler.runAfter` and `runAt` targeting mutations.
+- **HTTP actions:** `httpRouter` routes in `convex/http.ts`, served under
   `{deploymentUrl}/http/...`.
-- **Node actions** — `"use node"` action modules run on Nimbus's
+- **Node actions:** `"use node"` action modules run on Nimbus's
   Node-compatible runtime (node-compat on V8, not a separate Node process).
   See [the two Convex runtimes](/developers/convex/runtimes/) for how the
   default and Node runtimes differ.
-- **Clients** — the `convex/react` hooks and the `convex/browser` HTTP and
+- **Clients:** the `convex/react` hooks and the `convex/browser` HTTP and
   WebSocket clients, including reactive query subscriptions.
 
 ## What to check
 
-- **`convex.json`** — read and honored. `node.nodeVersion` selects the Node
-  lane for your `"use node"` actions (`"20"`, `"22"`, `"24"`, or `"26"`;
-  default `"24"`), `node.externalPackages` is enforced at codegen — an
-  undeclared npm import in a `"use node"` module is a hard error — and
-  `functions` relocates the source directory. Setting `generateCommonJSApi`
-  emits a CommonJS `convex/_generated/api_cjs.cjs` alongside the ES module
-  one.
-- **File storage** — `ctx.storage` and the `_storage` system table are not
+- **`convex.json`:** Nimbus reads and applies this file. `node.nodeVersion`
+  selects the Node lane for your `"use node"` actions. Select `"20"`, `"22"`,
+  `"24"`, or `"26"`. The default is `"24"`. Codegen applies
+  `node.externalPackages` and rejects an undeclared npm import in a
+  `"use node"` module. The `functions` field relocates the source directory.
+  Setting `generateCommonJSApi` emits
+  `convex/_generated/api_cjs.cjs` beside the ES module file.
+- **File storage:** `ctx.storage` and the `_storage` system table are not
   available.
-- **Search** — full-text and vector search (`withSearchIndex`) are not
+- **Search:** full-text and vector search (`withSearchIndex`) are not
   available.
-- **Crons** — `cronJobs` from `convex/server` is not available.
-- **`db.replace`** — not available; use `ctx.db.patch` to update fields.
-- **Validators** — `v.int64()`, `v.bytes()`, `v.record()`, and
-  `v.float64()` are not available; see the
+- **Crons:** `cronJobs` from `convex/server` is not available.
+- **`db.replace`:** not available. Use `ctx.db.patch` to update fields.
+- **Validators:** `v.int64()`, `v.bytes()`, `v.record()`, and
+  `v.float64()` are not available. See the
   [compatibility reference](/reference/convex/compatibility/) for the
   supported set.
-- **`usePaginatedQuery`** — requires functions registered with the
+- **`usePaginatedQuery`:** requires functions registered with the
   `paginatedQuery` registrar (a Nimbus extension exported from
   `./_generated/server`). Plain `query` functions that call `.paginate()`
   still work with direct client calls, but not with the React pagination
   hook.
-- **System fields** — documents carry `_id` and `_creationTime` as on
+- **System fields:** documents carry `_id` and `_creationTime` as on
   Convex, plus a Nimbus-specific `_updateTime`.
 
 ## Run beyond dev
 
 `nimbus dev` is the local loop. To run a standalone server, use
-`nimbus start` — it does not auto-create a tenant, so follow the
+`nimbus start`. It does not auto-create a tenant, so follow the
 [self-host quickstart](/get-started/self-host/) to set one up. For the
 broader picture of what compatibility means, see
 [Coming from Convex](/get-started/from-convex/).

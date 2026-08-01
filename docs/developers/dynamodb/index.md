@@ -9,27 +9,31 @@ sidebar:
 Nimbus serves the DynamoDB wire protocol on a dedicated HTTP listener. The
 official AWS SDKs connect to it the same way they connect to DynamoDB
 Local: override the endpoint URL, keep everything else stock. No Nimbus
-SDK, no code changes beyond client construction.
+SDK is required. Only client construction changes.
 
-Every Nimbus server serves the endpoint by default — `nimbus start` and
-`nimbus dev` alike (`--no-dynamodb` switches it off; embedders opt in
-through the API — see
-[the embedding alternative](#embedding-alternative) below). In an app
-directory, `nimbus dev` goes further: when it sees an
-`@aws-sdk/client-dynamodb` dependency in your `package.json`, it writes
-the endpoint and a generated access key to your app's `.env.local` as
+Every Nimbus server serves the endpoint by default. This applies to
+`nimbus start` and `nimbus dev`. Use `--no-dynamodb` to switch it off.
+Embedders opt in through the API described in
+[the embedding alternative](#embedding-alternative).
+
+In an app directory,
+`nimbus dev` also detects an `@aws-sdk/client-dynamodb` dependency in your
+`package.json`. It writes the endpoint and a generated access key to
+your app's `.env.local` as
 `NIMBUS_DYNAMODB_*` keys. This guide talks to the endpoint with the AWS
 SDK for JavaScript v3.
 
 ## How the endpoint works
 
-- It listens on its own port — `127.0.0.1:8000` by default, the DynamoDB
-  Local convention — separate from the main Nimbus HTTP API.
-- It accepts the standard DynamoDB JSON protocol: `POST /` with an
-  `X-Amz-Target` header and an `application/x-amz-json-1.0` body. That is
-  what every AWS SDK sends, so any SDK with an endpoint override works.
-- Each AWS access key ID is bound server-side to one Nimbus tenant.
-  Requests authenticated with that key see only that tenant's tables.
+**Dedicated port.** The listener uses `127.0.0.1:8000` by default, which is
+the DynamoDB Local convention. It is separate from the main Nimbus HTTP API.
+
+**DynamoDB JSON protocol.** The listener accepts `POST /` requests with an
+`X-Amz-Target` header and an `application/x-amz-json-1.0` body. Each AWS SDK
+sends this format. Any SDK with an endpoint override therefore works.
+
+**Tenant binding.** Nimbus binds each AWS access key ID to one tenant.
+Requests with that key see only the bound tenant's tables.
 
 ## 1. Start the server
 
@@ -37,17 +41,17 @@ SDK for JavaScript v3.
 nimbus start
 ```
 
-The DynamoDB listener comes up on `127.0.0.1:8000` with the rest of the
-server. If another process already holds `8000`, the listener is skipped
-with a warning — pass `--dynamodb-port` to pin a different port (a busy
-explicit port is a hard error instead of a skip).
+The DynamoDB listener starts on `127.0.0.1:8000` with the rest of the server.
+If another process holds `8000`, Nimbus skips the listener and logs a warning.
+Pass `--dynamodb-port` to set a different port. Nimbus treats a busy explicit
+port as a hard error.
 
-Every request authenticates. With no access-key flags, the server binds a
-generated access key — persisted at `wire-credentials.json` (owner-only,
-`0600`) in its data directory — to the tenant `default`; `nimbus dev` is
-the shape that hands that key to your app via `.env.local`. To choose
-your own bindings, map an AWS access key ID (with its SigV4 signing
-secret) to a tenant explicitly:
+Every request authenticates. Without access-key flags, the server binds a
+generated access key to the `default` tenant. It stores the key in
+`wire-credentials.json` in its data directory. This owner-only file has mode
+`0600`. `nimbus dev` gives that key to your app through `.env.local`. To
+choose your bindings, map an AWS access key ID to a tenant. Include its SigV4
+signing secret:
 
 ```bash
 nimbus start --dynamodb-access-key AKIAACME:acme-secret:acme
@@ -56,8 +60,8 @@ nimbus start --dynamodb-access-key AKIAACME:acme-secret:acme
 Repeat `--dynamodb-access-key` for more tenants, or set the
 comma-separated `NIMBUS_DYNAMODB_ACCESS_KEYS` environment variable.
 Explicit bindings replace the generated default. Requests signed with an
-access key that is not registered are rejected with
-`UnrecognizedClientException` — the registry fails closed.
+unregistered access key receive `UnrecognizedClientException`. The registry
+fails closed.
 
 ### Embedding alternative
 
@@ -76,9 +80,9 @@ let dynamodb = DynamoDbConfig::default().with_signed_access_key(
 let options = ServeOptions::new(engine).with_dynamodb(dynamodb);
 ```
 
-The embedding API additionally offers a signature-skipping
-`insecure_dev_auth()` lookup mode for local development — any signature is
-accepted for a registered key, so the server refuses to bind it to a
+The embedding API also offers an `insecure_dev_auth()` lookup mode for local
+development. This mode skips signature verification and accepts any signature
+for a registered key. The server therefore refuses to bind this mode to a
 non-loopback address.
 
 ## 2. Point the AWS SDK at it
@@ -166,25 +170,27 @@ from AWS deployments collapses to create-use.
 
 ## Credentials and tenants
 
-- **The access key ID selects the tenant.** Two clients with different
-  registered keys are fully isolated from each other — different table
-  namespaces, different data.
-- **Strict SigV4 is the default.** Each request's signature is verified
-  against the registered secret, with the standard ±15-minute clock-skew
-  window. Unsigned or wrongly signed requests are rejected.
-- **Lookup mode is for loopback development only.** `insecure_dev_auth()`
-  skips signature verification; the server enforces that this mode never
-  binds to a network-reachable address.
+**The access key ID selects the tenant.** Clients with different registered
+keys use different table namespaces and data. Nimbus isolates them from each
+other.
+
+**Strict SigV4 is the default.** Nimbus verifies each request signature
+against the registered secret. It accepts the standard ±15-minute clock-skew
+window. Nimbus rejects unsigned or incorrectly signed requests.
+
+**Lookup mode is for loopback development only.** `insecure_dev_auth()` skips
+signature verification. The server prevents this mode from binding to a
+network-reachable address.
 
 ## Next steps
 
-- [Example app](/developers/dynamodb/examples/) — the shared tasks list
+- [Example app](/developers/dynamodb/examples/): the shared tasks list
   driven by the stock AWS SDK.
-- [Feature coverage](/reference/dynamodb/feature-coverage/) — every
+- [Feature coverage](/reference/dynamodb/feature-coverage/): every
   supported operation, by tier.
-- [Divergences](/reference/dynamodb/divergences/) — the documented
+- [Divergences](/reference/dynamodb/divergences/): the documented
   behavioral differences from AWS DynamoDB.
-- [SDK compatibility](/reference/dynamodb/sdk-compatibility/) — per-SDK
+- [SDK compatibility](/reference/dynamodb/sdk-compatibility/): per-SDK
   verification status.
-- [Readiness](/reference/dynamodb/readiness/) — security posture and
+- [Readiness](/reference/dynamodb/readiness/): security posture and
   operational limits.

@@ -6,8 +6,8 @@ sidebar:
 ---
 
 Recipes for common tasks against the Nimbus MongoDB endpoint, using stock
-MongoDB drivers. Each section is independent — jump to the task you need.
-If you haven't connected a driver yet, start with the
+MongoDB drivers. Each section is independent. Go to the task you need.
+If you have not connected a driver yet, start with the
 [tutorial](/developers/mongodb/).
 
 All examples assume a Nimbus server serving the MongoDB endpoint on
@@ -26,8 +26,8 @@ mongodb://<username>:<password>@<host>:<port>/<database>
   password, URL-encoded if they contain special characters.
 - The database name selects the [Nimbus tenant](/reference/mongodb/tenant-isolation/).
   If you omit it, you land in the tenant `default`.
-- Nimbus is a single endpoint, not a replica set — never pass a
-  `replicaSet` option. With a single host the driver connects directly;
+- Nimbus is a single endpoint, not a replica set. Do not pass a
+  `replicaSet` option. With a single host, the driver connects directly.
   appending `?directConnection=true` is harmless but not required.
 
 If your project uses the Nimbus CLI, the `@nimbus/mongodb` helper package
@@ -87,7 +87,7 @@ await client.close();
 
 Filters support implicit equality plus `$eq`, `$ne`, `$gt`, `$gte`, `$lt`,
 and `$lte`. Other filter operators (`$in`, `$or`, `$regex`, `$exists`, ...)
-are rejected with a `BadValue` error — see
+cause Nimbus to return a `BadValue` error. See
 [supported operations](/reference/mongodb/operations/) for the full surface.
 
 ## Upserts and findAndModify
@@ -135,10 +135,10 @@ pipeline never silently degrades.
 
 ## Use transactions
 
-Multi-document transactions work through standard driver sessions. Writes
-inside the transaction are isolated until commit; if a concurrent write
-conflicts, the commit fails with a `WriteConflict` error and your
-application decides whether to retry:
+Multi-document transactions work through standard driver sessions. Nimbus
+isolates writes inside the transaction until commit. If a concurrent write
+conflicts, the commit fails with a `WriteConflict` error. Your application
+decides whether to retry:
 
 ```javascript
 const session = client.startSession();
@@ -161,8 +161,8 @@ try {
 }
 ```
 
-A transaction stays within one database — one Nimbus tenant. Start separate
-transactions for separate tenants.
+A transaction stays within one database, which maps to one Nimbus tenant.
+Start separate transactions for separate tenants.
 
 ## Connect from Python
 
@@ -254,25 +254,29 @@ Two complete apps live under
 in the source repository. Run them in place from a checkout, against a Nimbus
 server serving the MongoDB endpoint:
 
-- **[Node (`node`)](https://github.com/nimbus/nimbus/tree/main/examples/mongodb/node)**
-  — a script using the stock `mongodb` driver and the `@nimbus/mongodb` URI
-  helper to run create, read, update, and read-again over a `messages`
-  collection.
-- **[Tasks](https://github.com/nimbus/nimbus/tree/main/examples/mongodb/tasks)**
-  — the shared [tasks](https://github.com/nimbus/nimbus/blob/main/examples/specs/tasks.md)
-  task list: create, list, toggle, and delete over a `tasks` collection, sorted
-  newest-first by `createdAt`. Because change streams are unavailable on this
-  surface, the live-update flow degrades to polling — the example re-reads the
-  list until a change appears rather than emulating a subscription.
+**[Node (`node`)](https://github.com/nimbus/nimbus/tree/main/examples/mongodb/node).**
+This script uses the stock `mongodb` driver and the `@nimbus/mongodb` URI
+helper. It runs create, read, update, and read-again operations on a `messages`
+collection.
 
-Both apps set `NIMBUS_MONGODB_USERNAME` and `NIMBUS_MONGODB_PASSWORD` (host and
-port default to `127.0.0.1:27017`); see each README for the exact run command.
+**[Tasks](https://github.com/nimbus/nimbus/tree/main/examples/mongodb/tasks).**
+This app implements the shared
+[tasks](https://github.com/nimbus/nimbus/blob/main/examples/specs/tasks.md)
+task list. It creates, lists, toggles, and deletes records in a `tasks`
+collection. The app sorts tasks newest-first by `createdAt`. Change streams
+are unavailable on this surface, so the live-update flow uses polling. The
+example reads the list until a change appears. It does not emulate a
+subscription.
+
+Both apps set `NIMBUS_MONGODB_USERNAME` and `NIMBUS_MONGODB_PASSWORD`. The host
+and port default to `127.0.0.1:27017`. See each README for the exact run
+command.
 
 ## Related pages
 
-- [Supported operations](/reference/mongodb/operations/) — the exact
+- [Supported operations](/reference/mongodb/operations/): the exact
   command, filter, update, and aggregation surface.
-- [Supported drivers](/reference/mongodb/drivers/) — driver and tool
+- [Supported drivers](/reference/mongodb/drivers/): driver and tool
   compatibility.
-- [Tenant isolation](/reference/mongodb/tenant-isolation/) — how database
+- [Tenant isolation](/reference/mongodb/tenant-isolation/): how database
   names map to tenants.
