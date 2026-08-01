@@ -210,6 +210,90 @@ verify_target_implementation() {
   fi
 }
 
+verify_operational_identity_cutover() {
+  if rg -q 'TenantWorkloadGeneration' crates --glob '*.rs'; then
+    add_error "legacy TenantWorkloadGeneration remains"
+  fi
+  if rg -q 'TenantWorkloadId' crates --glob '*.rs'; then
+    add_error "node-owned TenantWorkloadId remains"
+  fi
+  if rg -q 'DesiredWorkloadStore' crates --glob '*.rs'; then
+    add_error "DesiredWorkloadStore remains"
+  fi
+  if rg -q 'InMemoryDesiredWorkloadStore' crates --glob '*.rs'; then
+    add_error "InMemoryDesiredWorkloadStore remains"
+  fi
+  if rg -q 'DesiredWorkloadSnapshot' crates --glob '*.rs'; then
+    add_error "DesiredWorkloadSnapshot remains"
+  fi
+  if rg -q 'WorkloadController' crates --glob '*.rs'; then
+    add_error "WorkloadController remains"
+  fi
+
+  if rg -q \
+    'desired_workloads|desired_workload_snapshot|record_desired_service_workload|\.upsert_desired_workload\(' \
+    crates/nimbus-services/src/manager.rs \
+    crates/nimbus-services/src/manager; then
+    add_error "ServiceManager desired-state field, snapshot, or write authority remains"
+  fi
+
+  if ! rg -q -F 'desired_workloads: Vec<DesiredWorkload>' \
+    crates/nimbus-cli/src/workload_boot.rs ||
+    ! rg -q -F 'pub(crate) fn desired_workloads(&self) -> &[DesiredWorkload]' \
+      crates/nimbus-cli/src/workload_boot.rs; then
+    add_error "CLI planner is not a pure ordered Vec<DesiredWorkload>"
+  fi
+
+  if ! rg -q -F 'execution_id: WorkloadExecutionId' \
+    crates/nimbus-node/src/host_lifecycle.rs ||
+    ! rg -q -F 'let execution_id = spec.execution_id()?' \
+      crates/nimbus-node/src/host_lifecycle.rs ||
+    ! rg -q -F '"executionId": status.execution_id().as_str()' \
+      crates/nimbus-system/src/records/mod.rs; then
+    add_error "host lifecycle and observed status do not carry WorkloadExecutionId"
+  fi
+
+  if ! rg -q -F 'generation: WorkloadGeneration' \
+    crates/nimbus-workloads/src/tenant.rs ||
+    ! rg -q -F '"observedGeneration": status.observed_generation().to_string()' \
+      crates/nimbus-system/src/records/mod.rs ||
+    ! rg -q -F 'string("observedGeneration", true)' \
+      crates/nimbus-system/src/schema.rs; then
+    add_error "tenant spec and observed status do not use lossless WorkloadGeneration"
+  fi
+
+  if rg -q \
+    'sha2\.workspace|sanitize_unit_component|for_integration_test|NIMBUS_WORKLOAD_ID|nimbus-tw_' \
+    crates/nimbus-node/Cargo.toml crates/nimbus-node/src crates/nimbus-node/tests \
+    --glob '*.rs' --glob 'Cargo.toml'; then
+    add_error "legacy node identity derivation, selector, or unit convention remains"
+  fi
+
+  assigned_node_fences="$({
+    rg -n -F 'ensure_assigned_node_matches(&self.node_id' \
+      crates/nimbus-node/src/reconciler.rs 2>/dev/null || true
+  } | wc -l | tr -d ' ')"
+  if [ "${assigned_node_fences}" -ne 2 ]; then
+    add_error "node reconcile and inspect need exactly two pre-effect assigned-node fences, observed ${assigned_node_fences}"
+  fi
+
+  product_saga_store_implementations="$({
+    rg -n 'impl([^\n]|\n)*WorkloadSagaStore for' crates \
+      --glob '*.rs' --glob '!**/tests.rs' --glob '!**/tests/**' 2>/dev/null || true
+  } | wc -l | tr -d ' ')"
+  if [ "${product_saga_store_implementations}" -ne 0 ]; then
+    add_error "product saga-store implementation entered during cutover: ${product_saga_store_implementations}"
+  fi
+
+  product_saga_coordinator_constructions="$({
+    rg -n 'WorkloadSagaCoordinator::new\(' crates \
+      --glob '*.rs' --glob '!**/tests.rs' --glob '!**/tests/**' 2>/dev/null || true
+  } | wc -l | tr -d ' ')"
+  if [ "${product_saga_coordinator_constructions}" -ne 0 ]; then
+    add_error "production saga coordinator construction entered during cutover: ${product_saga_coordinator_constructions}"
+  fi
+}
+
 case "${MODE}" in
   decision)
     verify_decision_contract
@@ -217,8 +301,11 @@ case "${MODE}" in
   implementation)
     verify_target_implementation
     ;;
+  cutover)
+    verify_operational_identity_cutover
+    ;;
   *)
-    printf 'usage: %s [decision|implementation]\n' "$0" >&2
+    printf 'usage: %s [decision|implementation|cutover]\n' "$0" >&2
     exit 2
     ;;
 esac

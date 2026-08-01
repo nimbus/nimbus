@@ -1,6 +1,6 @@
 # NNC6.1c1 Operational Identity And Authority Cutover
 
-Status: `acceptance frozen; implementation not started`
+Status: `acceptance frozen; exact fail-before captured; product implementation not started`
 
 Starting checkpoint: `a0a802ea796e48ffe5431c74d6d08e9c3716ea5c`
 
@@ -315,9 +315,10 @@ exactly `0 passed, 12 failed`, one diagnostic for each condition:
 6. `WorkloadController` remains.
 7. `ServiceManager` desired state, snapshot API, or upsert authority remains.
 8. The CLI planner is not a pure ordered `Vec<DesiredWorkload>`.
-9. Host lifecycle does not derive and carry `WorkloadExecutionId` with exact
-   `execution_id` naming.
-10. `TenantWorkloadSpec` does not use `WorkloadGeneration`.
+9. Host lifecycle and observed status do not carry `WorkloadExecutionId` with
+   exact `execution_id` naming.
+10. `TenantWorkloadSpec` and observed status do not use lossless
+    `WorkloadGeneration` evidence.
 11. The node crate retains the legacy SHA-256/sanitizer/raw-test identity path,
     old journal selector, or old unit-name convention.
 12. Node reconcile and inspect do not both fence assigned-node mismatch before
@@ -326,6 +327,36 @@ exactly `0 passed, 12 failed`, one diagnostic for each condition:
 After implementation, the same mode must report `1 passed, 0 failed`.
 `implementation` mode remains expected-red at exactly `0 passed, 2 failed`,
 with only the NNC6.1d server adapter and NNC6.1e lazy-activation diagnostics.
+
+### Captured fail-before
+
+The acceptance checkpoint added only `cutover` mode. It did not edit product,
+manifest, lockfile, operational-proof, or legacy-verifier source. The result
+matched the frozen contract exactly:
+
+```text
+FAIL workload-saga-authority legacy TenantWorkloadGeneration remains
+FAIL workload-saga-authority node-owned TenantWorkloadId remains
+FAIL workload-saga-authority DesiredWorkloadStore remains
+FAIL workload-saga-authority InMemoryDesiredWorkloadStore remains
+FAIL workload-saga-authority DesiredWorkloadSnapshot remains
+FAIL workload-saga-authority WorkloadController remains
+FAIL workload-saga-authority ServiceManager desired-state field, snapshot, or write authority remains
+FAIL workload-saga-authority CLI planner is not a pure ordered Vec<DesiredWorkload>
+FAIL workload-saga-authority host lifecycle and observed status do not carry WorkloadExecutionId
+FAIL workload-saga-authority tenant spec and observed status do not use lossless WorkloadGeneration
+FAIL workload-saga-authority legacy node identity derivation, selector, or unit convention remains
+FAIL workload-saga-authority node reconcile and inspect need exactly two pre-effect assigned-node fences, observed 0
+Summary: 0 passed, 12 failed
+```
+
+Control modes remained exact:
+
+| Mode | Result |
+| --- | --- |
+| `decision` | `1 passed, 0 failed`; census `8/1/2/3/54/0` |
+| `implementation` | `0 passed, 3 failed`; old authority plus the NNC6.1d and NNC6.1e gaps |
+| Bash syntax and ShellCheck | pass |
 
 ## Acceptance Matrix
 
