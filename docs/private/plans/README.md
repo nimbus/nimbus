@@ -256,10 +256,17 @@ extension-registry seam before the second concern edits `extensions.rs`.
   correction review found one P2: the cardinality scan accepted non-struct
   duplicate owners. The corrected scan covers struct, enum, union, trait, and
   type declarations, and independent struct and enum mutations fail closed.
-  No third review ran. The exact item commit is next. The audit prospectively split the breaking
-  operational-ID and false in-memory-authority cutover into NNC6.1c1; NNC6.1d
-  retains the durable server adapter and first required workload-capable
-  compute injection, so no temporary no-op or production in-memory store exists.
+  No third review ran. NNC6.1c is committed at `a0a802ea7`. NNC6.1c1's
+  read-only audit has frozen its exact path allowlist and R1-R15 in
+  `proof/nimbus-network-control-plane/nnc6.1c1-operational-identity-authority-cutover.md`.
+  It will replace the parallel node identity/generation with the workloads-owned
+  execution seam, fence crossed node assignments before effects, preserve
+  lossless observed execution evidence, delete both false in-memory authorities
+  and all three services writes, and reduce the standalone implementation gaps
+  from three to exactly the two later owners. The current checkpoint remains
+  docs-only; its exact `0/12` fail-before precedes product edits. NNC6.1d retains
+  the durable server adapter and first required workload-capable compute
+  injection, so no temporary no-op or production in-memory store exists.
   Cleanup, release, finalization, and reuse stay in NNC8.3. Machine forwarding obeys
   NNC5.2a's common lifecycle; runtime absence, workload status, readiness persistence,
   cleanup convergence, and inspect/restart policy stay in their named later
