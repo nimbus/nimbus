@@ -6616,6 +6616,7 @@ dependencies = [
  "libc",
  "nimbus",
  "nimbus-assets",
+ "nimbus-compute",
  "nimbus-convex",
  "nimbus-core",
  "nimbus-crypto",

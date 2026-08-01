@@ -238,7 +238,7 @@ impl RunnerSpec {
     ) -> Result<HostLifecycleRequest> {
         let mut properties = vec![
             HostLifecycleProperty::Description(format!("Nimbus {} workload", self.kind.label())),
-            HostLifecycleProperty::Restart(HostRestartPolicy::OnFailure),
+            HostLifecycleProperty::Restart(HostRestartPolicy::No),
         ];
         if let Some(value) = self.memory_max_bytes {
             properties.push(HostLifecycleProperty::MemoryMaxBytes(value));
@@ -498,6 +498,34 @@ impl HostLifecycleRequest {
     pub fn with_trust_class(mut self, trust_class: RuntimePoolTrustClass) -> Self {
         self.trust_class = trust_class;
         self
+    }
+
+    pub(crate) fn ensure_external_restart_disabled(&self) -> Result<()> {
+        let restart_properties = self
+            .properties
+            .properties()
+            .iter()
+            .filter_map(|property| match property {
+                HostLifecycleProperty::Restart(policy) => Some(*policy),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let has_single_restart_property = restart_properties.len() <= 1;
+        if !has_single_restart_property {
+            return Err(Error::InvalidInput(
+                "node workload request must not contain duplicate Restart properties".to_owned(),
+            ));
+        }
+        if restart_properties
+            .first()
+            .is_some_and(|policy| *policy != HostRestartPolicy::No)
+        {
+            return Err(Error::PermissionDenied(
+                "node workload provider restart must be disabled; compute owns restart decisions"
+                    .to_owned(),
+            ));
+        }
+        Ok(())
     }
 }
 

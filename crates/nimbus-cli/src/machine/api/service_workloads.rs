@@ -13,10 +13,11 @@ use nimbus::TenantId;
 use nimbus::{
     Error, SandboxBackend, SandboxBackendKind, SandboxHandle, SandboxId, SandboxSpec, SandboxStatus,
 };
+use nimbus_compute::node_workloads::NodeWorkloadCoordinator;
 use nimbus_node::{
-    HostLifecycleBackend, HostLifecycleBackendKind, HostLifecyclePlan, HostLifecycleRequest,
-    HostLifecycleStatus, NodeAgent, NodeAgentAssignment, NodeAssignmentDisposition,
-    NodeBackendCapabilitySource, RunnerSpec, StatusEvidenceWriter, TenantWorkloadPhase,
+    HostLifecycleBackend, HostLifecycleBackendKind, HostLifecycleRequest, NodeAgent,
+    NodeAgentAssignment, NodeAssignmentDisposition, NodeBackendCapabilitySource, NodeIdentity,
+    RunnerSpec, StatusEvidenceWriter, TenantWorkloadPhase,
 };
 use nimbus_sandbox::{
     MachinePortForwardReceipt, SandboxCleanupObservation, SandboxExecutionObservation,
@@ -25,7 +26,7 @@ use nimbus_sandbox::{
         ContainerSandboxBackend, ContainerSandboxStateView, MachinePortAbsenceEvidence,
     },
 };
-use nimbus_workloads::{LocalEnforcementBinding, TenantWorkloadSpec};
+use nimbus_workloads::TenantWorkloadSpec;
 
 use crate::node_workload_executor::admit_workload_spec;
 
@@ -65,31 +66,34 @@ pub(crate) trait MachineApiNodeWorkloadFacade: Send + Sync {
     ) -> MachineApiServiceFuture<'a, Option<MachinePortAbsenceEvidence>>;
 }
 
-pub(crate) struct GuestNodeWorkloadService<B, W> {
-    node_agent: NodeAgent<B, W>,
+pub(crate) struct GuestNodeWorkloadService {
+    node_id: NodeIdentity,
+    coordinator: Arc<NodeWorkloadCoordinator>,
     bundle_materializer: Arc<ContainerSandboxBackend>,
     state_view: ContainerSandboxStateView,
 }
 
-impl<B, W> GuestNodeWorkloadService<B, W> {
-    pub(crate) fn new(
+impl GuestNodeWorkloadService {
+    pub(crate) fn new<B, W>(
         node_agent: NodeAgent<B, W>,
         bundle_materializer: Arc<ContainerSandboxBackend>,
         state_root: impl Into<PathBuf>,
-    ) -> Self {
+    ) -> Self
+    where
+        B: HostLifecycleBackend + NodeBackendCapabilitySource,
+        W: StatusEvidenceWriter,
+    {
+        let node_id = node_agent.node_id().clone();
         Self {
-            node_agent,
+            node_id,
+            coordinator: Arc::new(NodeWorkloadCoordinator::new(Arc::new(node_agent))),
             bundle_materializer,
             state_view: ContainerSandboxStateView::new(state_root),
         }
     }
 }
 
-impl<B, W> MachineApiNodeWorkloadFacade for GuestNodeWorkloadService<B, W>
-where
-    B: HostLifecycleBackend + NodeBackendCapabilitySource,
-    W: StatusEvidenceWriter,
-{
+impl MachineApiNodeWorkloadFacade for GuestNodeWorkloadService {
     fn kind(&self) -> SandboxBackendKind {
         SandboxBackendKind::Container
     }
@@ -97,8 +101,7 @@ where
     fn service_execution_blockers(&self) -> Vec<String> {
         let mut blockers = Vec::new();
         for capabilities in self
-            .node_agent
-            .capability_report()
+            .coordinator
             .backend_capabilities()
             .iter()
             .filter(|capabilities| {
@@ -313,11 +316,7 @@ where
     }
 }
 
-impl<B, W> GuestNodeWorkloadService<B, W>
-where
-    B: HostLifecycleBackend,
-    W: StatusEvidenceWriter,
-{
+impl GuestNodeWorkloadService {
     async fn reconcile_service_workload(
         &self,
         tenant_id: &str,
@@ -326,17 +325,14 @@ where
         resources: &nimbus::SandboxResourceLimits,
         stop: bool,
     ) -> Result<TenantWorkloadPhase, MachineApiHttpError> {
-        let spec = service_tenant_workload_spec(
-            tenant_id,
-            service_name,
-            self.node_agent.node_id().as_str(),
-            stop,
-        )?;
+        let spec =
+            service_tenant_workload_spec(tenant_id, service_name, self.node_id.as_str(), stop)?;
         let request = service_container_runner_request(bundle_dir, resources)?;
         let report = self
-            .node_agent
+            .coordinator
             .reconcile_assignments([NodeAgentAssignment::from_spec(spec.clone(), request)])
-            .await;
+            .await
+            .map_err(core_error_to_http)?;
         let Some(disposition) = report.dispositions().first() else {
             return Err(MachineApiHttpError {
                 status: StatusCode::INTERNAL_SERVER_ERROR,
@@ -372,17 +368,14 @@ where
         bundle_dir: &Path,
         resources: &nimbus::SandboxResourceLimits,
     ) -> Result<Option<TenantWorkloadPhase>, MachineApiHttpError> {
-        let spec = service_tenant_workload_spec(
-            tenant_id,
-            service_name,
-            self.node_agent.node_id().as_str(),
-            false,
-        )?;
+        let spec =
+            service_tenant_workload_spec(tenant_id, service_name, self.node_id.as_str(), false)?;
         let request = service_container_runner_request(bundle_dir, resources)?;
-        match self.inspect_node_status(spec, request).await {
+        let assignment = NodeAgentAssignment::from_spec(spec, request);
+        match self.coordinator.inspect_assignment(&assignment).await {
             Ok(status) => Ok(Some(status.phase())),
-            Err(error) if error.status == StatusCode::NOT_FOUND => Ok(None),
-            Err(error) => Err(error),
+            Err(Error::NotFound(_)) => Ok(None),
+            Err(error) => Err(core_error_to_http(error)),
         }
     }
 
@@ -394,22 +387,6 @@ where
         self.bundle_materializer
             .refresh_plan_only_service_workload_status(id, status)
             .map_err(sandbox_error_to_http_error)
-    }
-
-    async fn inspect_node_status(
-        &self,
-        spec: TenantWorkloadSpec,
-        request: HostLifecycleRequest,
-    ) -> Result<HostLifecycleStatus, MachineApiHttpError> {
-        let binding = LocalEnforcementBinding::from_spec(spec);
-        let plan =
-            HostLifecyclePlan::from_binding(&binding, request).map_err(core_error_to_http)?;
-        self.node_agent
-            .reconciler()
-            .backend()
-            .inspect(plan.workload_id().clone())
-            .await
-            .map_err(core_error_to_http)
     }
 }
 
@@ -875,7 +852,7 @@ mod tests {
         TenantWorkloadId, TenantWorkloadStatus,
     };
     use nimbus_sandbox::backends::container::ContainerSandboxBackendConfig;
-    use nimbus_workloads::NodeIdentity;
+    use nimbus_workloads::{LocalEnforcementBinding, NodeIdentity};
 
     use super::*;
 
@@ -1009,7 +986,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn guest_node_workload_service_uses_node_agent_and_typed_container_runner() {
+    async fn guest_node_workload_service_uses_compute_coordinator_and_typed_runner() {
         let temp_dir = tempfile::tempdir().expect("temp dir");
         let container_config = ContainerSandboxBackendConfig::plan_only(
             temp_dir.path().join("bundles"),
@@ -1091,6 +1068,12 @@ mod tests {
         }));
         assert!(plan.properties().properties().iter().any(|property| {
             matches!(property, HostLifecycleProperty::TasksMax(max) if *max == 512)
+        }));
+        assert!(plan.properties().properties().iter().any(|property| {
+            matches!(
+                property,
+                HostLifecycleProperty::Restart(nimbus_node::HostRestartPolicy::No)
+            )
         }));
     }
 

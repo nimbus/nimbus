@@ -12,12 +12,18 @@
 
 use std::error::Error;
 use std::path::PathBuf;
+#[cfg(target_os = "linux")]
+use std::sync::Arc;
 
 use clap::{Args, ValueEnum};
+#[cfg(target_os = "linux")]
+use nimbus_compute::node_workloads::NodeWorkloadCoordinator;
 use nimbus_node::{
     HostExecutable, HostLifecycleBackendKind, HostLifecycleFuture, HostLifecycleRequest,
     StatusEvidenceWrite, StatusEvidenceWriter,
 };
+#[cfg(target_os = "linux")]
+use nimbus_node::{NodeAgent, NodeAgentAssignment, NodeIdentity};
 use nimbus_tenant::{
     TenantIsolationContext, TenantIsolationPolicyInput, WorkloadAttributes, WorkloadLocation,
 };
@@ -181,9 +187,7 @@ pub(crate) fn lifecycle_request(
 pub(crate) async fn run_node_workload_executor_command(
     command: NodeWorkloadExecutorCommand,
 ) -> Result<(), Box<dyn Error>> {
-    use nimbus_node::{
-        BusKind, NodeWorkloadReconciler, SystemdTransientUnitBackend, ZbusSystemdClient,
-    };
+    use nimbus_node::{BusKind, SystemdTransientUnitBackend, ZbusSystemdClient};
 
     let bus = match command.bus {
         NodeWorkloadExecutorBus::Session => BusKind::Session,
@@ -198,7 +202,9 @@ pub(crate) async fn run_node_workload_executor_command(
     })?;
     let backend = SystemdTransientUnitBackend::new(client);
     let writer = JsonlStatusWriter::new(command.status_path.clone());
-    let reconciler = NodeWorkloadReconciler::new(backend, writer);
+    let node_id = NodeIdentity::new(&command.node_id)?;
+    let coordinator =
+        NodeWorkloadCoordinator::new(Arc::new(NodeAgent::new(node_id, backend, writer)));
 
     let spec = admit_workload_spec(
         &command.tenant,
@@ -207,11 +213,10 @@ pub(crate) async fn run_node_workload_executor_command(
         command.stop,
     )?;
     let request = lifecycle_request(&command.exec, &command.args)?;
+    let assignment = NodeAgentAssignment::from_spec(spec, request);
 
     loop {
-        let outcome = reconciler
-            .reconcile_spec(spec.clone(), request.clone())
-            .await?;
+        let outcome = coordinator.reconcile_assignment(assignment.clone()).await?;
         emit_node_workload_executor_info(format!(
             "workload {} desired={:?} action={:?}",
             outcome.workload_id().as_str(),

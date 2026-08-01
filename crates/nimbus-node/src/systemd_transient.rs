@@ -494,7 +494,7 @@ impl SystemdExecStart {
         })
     }
 
-    #[cfg(all(test, feature = "systemd-dbus-test-bus"))]
+    #[cfg(all(test, target_os = "linux", feature = "systemd-dbus-test-bus"))]
     pub(crate) fn for_test(executable: impl Into<String>, args: Vec<String>) -> Self {
         Self {
             executable: executable.into(),

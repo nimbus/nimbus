@@ -18,17 +18,19 @@ pub use memory_pressure::{
     CgroupV2CpuPressureThresholds, CgroupV2HostPressureSource, CgroupV2MemoryPressureSource,
     HostCpuPressureObservation, HostMemoryPressureObservation, HostPressureObservation,
 };
+pub use nimbus_workloads::NodeIdentity;
 pub(crate) use nimbus_workloads::{
-    LocalEnforcementBinding, NodeIdentity, TenantSystemEvidenceProjection,
-    TenantWorkloadDeletionState, TenantWorkloadSpec,
+    LocalEnforcementBinding, TenantSystemEvidenceProjection, TenantWorkloadDeletionState,
+    TenantWorkloadSpec,
 };
 #[cfg(test)]
 pub(crate) use nimbus_workloads::{TenantFinalizerRecord, TenantWorkloadGeneration};
 pub use reconciler::{
     NodeAgent, NodeAgentAssignment, NodeAgentCapabilityReport, NodeAgentReconcileReport,
     NodeAgentTransportAdmission, NodeAssignmentDisposition, NodeBackendCapabilitySource,
-    NodeWorkloadDesiredState, NodeWorkloadReconcileAction, NodeWorkloadReconcileOutcome,
-    NodeWorkloadReconciler, StatusEvidenceWrite, StatusEvidenceWriter,
+    NodeWorkloadDesiredState, NodeWorkloadReconcileAction, NodeWorkloadReconcileCapability,
+    NodeWorkloadReconcileOutcome, NodeWorkloadReconciler, StatusEvidenceWrite,
+    StatusEvidenceWriter,
 };
 pub use status::{
     NodeStatusAuthorizer, TenantNodeObservationIds, TenantObservedResourceUsage,

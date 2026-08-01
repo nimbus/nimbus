@@ -152,6 +152,25 @@ pub trait NodeBackendCapabilitySource: Send + Sync + 'static {
     fn node_backend_capabilities(&self) -> Vec<HostLifecycleBackendCapabilities>;
 }
 
+pub trait NodeWorkloadReconcileCapability: Send + Sync + 'static {
+    fn backend_capabilities(&self) -> Vec<HostLifecycleBackendCapabilities>;
+
+    fn reconcile_assignment<'a>(
+        &'a self,
+        assignment: NodeAgentAssignment,
+    ) -> HostLifecycleFuture<'a, NodeWorkloadReconcileOutcome>;
+
+    fn reconcile_assignments<'a>(
+        &'a self,
+        assignments: Vec<NodeAgentAssignment>,
+    ) -> HostLifecycleFuture<'a, NodeAgentReconcileReport>;
+
+    fn inspect_assignment<'a>(
+        &'a self,
+        assignment: &'a NodeAgentAssignment,
+    ) -> HostLifecycleFuture<'a, HostLifecycleStatus>;
+}
+
 impl NodeBackendCapabilitySource for DirectProcessBackend {
     fn node_backend_capabilities(&self) -> Vec<HostLifecycleBackendCapabilities> {
         vec![HostLifecycleBackendCapabilities::direct_process()]
@@ -291,6 +310,14 @@ where
     B: HostLifecycleBackend,
     W: StatusEvidenceWriter,
 {
+    pub async fn reconcile_assignment(
+        &self,
+        assignment: NodeAgentAssignment,
+    ) -> Result<NodeWorkloadReconcileOutcome> {
+        let NodeAgentAssignment { binding, request } = assignment;
+        self.reconciler.reconcile_binding(&binding, request).await
+    }
+
     pub async fn reconcile_assignments(
         &self,
         assignments: impl IntoIterator<Item = NodeAgentAssignment>,
@@ -299,11 +326,7 @@ where
         let mut dispositions = Vec::new();
         for assignment in assignments {
             let workload_uid = assignment.binding.spec().workload_uid().as_str().to_owned();
-            match self
-                .reconciler
-                .reconcile_binding(&assignment.binding, assignment.request)
-                .await
-            {
+            match self.reconcile_assignment(assignment).await {
                 Ok(outcome) => {
                     dispositions.push(NodeAssignmentDisposition::Reconciled {
                         workload_id: outcome.workload_id().clone(),
@@ -320,6 +343,46 @@ where
             }
         }
         NodeAgentReconcileReport::new(self.node_id.clone(), outcomes, dispositions)
+    }
+
+    pub async fn inspect_assignment(
+        &self,
+        assignment: &NodeAgentAssignment,
+    ) -> Result<HostLifecycleStatus> {
+        self.reconciler
+            .inspect_binding(assignment.binding(), assignment.request().clone())
+            .await
+    }
+}
+
+impl<B, W> NodeWorkloadReconcileCapability for NodeAgent<B, W>
+where
+    B: HostLifecycleBackend + NodeBackendCapabilitySource,
+    W: StatusEvidenceWriter,
+{
+    fn backend_capabilities(&self) -> Vec<HostLifecycleBackendCapabilities> {
+        self.capability_report().backend_capabilities().to_vec()
+    }
+
+    fn reconcile_assignment<'a>(
+        &'a self,
+        assignment: NodeAgentAssignment,
+    ) -> HostLifecycleFuture<'a, NodeWorkloadReconcileOutcome> {
+        Box::pin(async move { NodeAgent::reconcile_assignment(self, assignment).await })
+    }
+
+    fn reconcile_assignments<'a>(
+        &'a self,
+        assignments: Vec<NodeAgentAssignment>,
+    ) -> HostLifecycleFuture<'a, NodeAgentReconcileReport> {
+        Box::pin(async move { Ok(NodeAgent::reconcile_assignments(self, assignments).await) })
+    }
+
+    fn inspect_assignment<'a>(
+        &'a self,
+        assignment: &'a NodeAgentAssignment,
+    ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
+        Box::pin(async move { NodeAgent::inspect_assignment(self, assignment).await })
     }
 }
 
@@ -394,6 +457,7 @@ where
         binding: &LocalEnforcementBinding,
         request: HostLifecycleRequest,
     ) -> Result<NodeWorkloadReconcileOutcome> {
+        request.ensure_external_restart_disabled()?;
         let desired_state = NodeWorkloadDesiredState::from_spec(binding.spec());
         let plan = self.backend.validate(binding, request)?;
         let workload_id = plan.workload_id().clone();
@@ -410,6 +474,16 @@ where
             action,
             status,
         ))
+    }
+
+    pub async fn inspect_binding(
+        &self,
+        binding: &LocalEnforcementBinding,
+        request: HostLifecycleRequest,
+    ) -> Result<HostLifecycleStatus> {
+        request.ensure_external_restart_disabled()?;
+        let plan = self.backend.validate(binding, request)?;
+        self.backend.inspect(plan.workload_id().clone()).await
     }
 
     async fn reconcile_running(
@@ -573,6 +647,15 @@ mod tests {
         ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
             self.record("inspect");
             self.inner.inspect(workload_id)
+        }
+    }
+
+    impl<B> NodeBackendCapabilitySource for CountingBackend<B>
+    where
+        B: NodeBackendCapabilitySource,
+    {
+        fn node_backend_capabilities(&self) -> Vec<HostLifecycleBackendCapabilities> {
+            self.inner.node_backend_capabilities()
         }
     }
 
@@ -819,7 +902,7 @@ mod tests {
         .with_properties(
             HostLifecyclePropertySet::from_raw_systemd_properties([
                 ("Description", "Nimbus reconciled workload"),
-                ("Restart", "on-failure"),
+                ("Restart", "no"),
                 ("RestartSec", "3"),
                 ("MemoryMax", "536870912"),
                 ("CPUWeight", "100"),
@@ -996,6 +1079,58 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn node_capability_inspection_validates_and_observes_without_status_write() {
+        let backend = CountingBackend::new(DirectProcessBackend::new());
+        let writer = RecordingStatusEvidenceWriter::default();
+        let node_agent = NodeAgent::new(
+            NodeIdentity::new("node-a").expect("node id should parse"),
+            backend.clone(),
+            writer.clone(),
+        );
+        let assignment = NodeAgentAssignment::new(binding(), direct_request());
+        let capability: Arc<dyn NodeWorkloadReconcileCapability> = Arc::new(node_agent);
+
+        capability
+            .reconcile_assignments(vec![assignment.clone()])
+            .await
+            .expect("compute-issued reconcile should complete");
+        let writes_before_inspect = writer.writes().len();
+        let observed = capability
+            .inspect_assignment(&assignment)
+            .await
+            .expect("read-only capability inspection should observe the workload");
+
+        assert_eq!(observed.reason(), HostLifecycleStatusReason::Running);
+        assert_eq!(writer.writes().len(), writes_before_inspect);
+        assert_eq!(
+            backend.calls(),
+            vec![
+                "validate", "inspect", "start", "inspect", "validate", "inspect"
+            ],
+            "capability inspection must add only validation and observation"
+        );
+    }
+
+    #[test]
+    fn both_real_node_backends_implement_the_type_erased_capability() {
+        let direct: Arc<dyn NodeWorkloadReconcileCapability> = Arc::new(NodeAgent::new(
+            NodeIdentity::new("direct-node").expect("node id should parse"),
+            DirectProcessBackend::new(),
+            RecordingStatusEvidenceWriter::default(),
+        ));
+        let systemd: Arc<dyn NodeWorkloadReconcileCapability> = Arc::new(NodeAgent::new(
+            NodeIdentity::new("systemd-node").expect("node id should parse"),
+            SystemdTransientUnitBackend::unavailable("test host"),
+            RecordingStatusEvidenceWriter::default(),
+        ));
+
+        assert_eq!(direct.backend_capabilities().len(), 1);
+        assert_eq!(systemd.backend_capabilities().len(), 1);
+        assert!(direct.backend_capabilities()[0].available());
+        assert!(!systemd.backend_capabilities()[0].available());
+    }
+
     #[test]
     fn node_agent_reports_capabilities() {
         let node_agent = NodeAgent::new(
@@ -1072,6 +1207,19 @@ mod tests {
             7,
         ))
         .expect("invalid binding should materialize");
+
+        let capability: &dyn NodeWorkloadReconcileCapability = &node_agent;
+        let typed_error = capability
+            .reconcile_assignment(NodeAgentAssignment::new(invalid.clone(), systemd_request()))
+            .await
+            .expect_err("single-assignment capability should preserve the backend error");
+        let Error::InvalidInput(message) = typed_error else {
+            panic!("expected the original InvalidInput error, got {typed_error:?}");
+        };
+        assert!(
+            message.contains("DirectProcessBackend requires a direct_process plan"),
+            "typed error should preserve the validation reason: {message}"
+        );
 
         let report = node_agent
             .reconcile_assignments([
@@ -1280,6 +1428,64 @@ mod tests {
             writer.writes().is_empty(),
             "failed validation must not produce observed _nimbus status evidence"
         );
+    }
+
+    #[tokio::test]
+    async fn reconciler_rejects_provider_restart_and_duplicates_before_backend_validation() {
+        for policy in [HostRestartPolicy::OnFailure, HostRestartPolicy::Always] {
+            let backend = CountingBackend::new(DirectProcessBackend::new());
+            let writer = RecordingStatusEvidenceWriter::default();
+            let reconciler = NodeWorkloadReconciler::new(backend.clone(), writer.clone());
+            let request = HostLifecycleRequest::new(
+                HostLifecycleBackendKind::DirectProcess,
+                HostExecutable::trusted("/usr/libexec/nimbus/direct-workload")
+                    .expect("trusted executable should parse"),
+            )
+            .with_properties(HostLifecyclePropertySet::new([
+                HostLifecycleProperty::Restart(policy),
+            ]));
+
+            let inspect_error = reconciler
+                .inspect_binding(&binding(), request.clone())
+                .await
+                .expect_err("provider restart must fail before read-only backend inspection");
+            assert!(matches!(inspect_error, Error::PermissionDenied(_)));
+            let error = reconciler
+                .reconcile_binding(&binding(), request)
+                .await
+                .expect_err("provider restart must fail before backend validation");
+            assert!(matches!(error, Error::PermissionDenied(_)));
+            assert!(error.to_string().contains("compute owns restart decisions"));
+            assert!(backend.calls().is_empty());
+            assert!(writer.writes().is_empty());
+        }
+
+        let backend = CountingBackend::new(DirectProcessBackend::new());
+        let writer = RecordingStatusEvidenceWriter::default();
+        let reconciler = NodeWorkloadReconciler::new(backend.clone(), writer.clone());
+        let duplicate = HostLifecycleRequest::new(
+            HostLifecycleBackendKind::DirectProcess,
+            HostExecutable::trusted("/usr/libexec/nimbus/direct-workload")
+                .expect("trusted executable should parse"),
+        )
+        .with_properties(HostLifecyclePropertySet::new([
+            HostLifecycleProperty::Restart(HostRestartPolicy::No),
+            HostLifecycleProperty::Restart(HostRestartPolicy::No),
+        ]));
+
+        let inspect_error = reconciler
+            .inspect_binding(&binding(), duplicate.clone())
+            .await
+            .expect_err("duplicate restart properties must fail before backend inspection");
+        assert!(matches!(inspect_error, Error::InvalidInput(_)));
+        let error = reconciler
+            .reconcile_binding(&binding(), duplicate)
+            .await
+            .expect_err("duplicate restart properties must fail before backend validation");
+        assert!(matches!(error, Error::InvalidInput(_)));
+        assert!(error.to_string().contains("duplicate Restart"));
+        assert!(backend.calls().is_empty());
+        assert!(writer.writes().is_empty());
     }
 
     #[test]

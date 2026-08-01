@@ -13,6 +13,7 @@ pub mod deploy;
 pub mod execution;
 pub mod machine_lifecycle;
 pub mod machines;
+pub mod node_workloads;
 pub mod pagination;
 pub mod runtime_manager;
 pub mod sandbox_spec;

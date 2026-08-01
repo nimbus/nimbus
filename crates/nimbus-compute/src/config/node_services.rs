@@ -8,6 +8,7 @@ use nimbus_services::{
 use nimbus_tenant::TenantIsolationMode;
 
 use crate::machine_lifecycle::MachineLifecycleManager;
+use crate::node_workloads::NodeWorkloadCoordinator;
 
 #[derive(Clone)]
 enum RuntimeServiceSource {
@@ -76,6 +77,7 @@ impl RuntimeServiceSource {
 pub struct NodeServicesConfig {
     runtime_service_source: RuntimeServiceSource,
     machine_lifecycle_manager: Option<Arc<dyn MachineLifecycleManager>>,
+    node_workload_coordinator: Option<Arc<NodeWorkloadCoordinator>>,
     tenant_isolation_mode: TenantIsolationMode,
 }
 
@@ -84,6 +86,7 @@ impl Default for NodeServicesConfig {
         Self {
             runtime_service_source: RuntimeServiceSource::default_catalog(),
             machine_lifecycle_manager: None,
+            node_workload_coordinator: None,
             tenant_isolation_mode: TenantIsolationMode::default(),
         }
     }
@@ -107,6 +110,7 @@ impl NodeServicesConfig {
         Self {
             runtime_service_source: self.runtime_service_source.resolve(system_state_engine),
             machine_lifecycle_manager: self.machine_lifecycle_manager,
+            node_workload_coordinator: self.node_workload_coordinator,
             tenant_isolation_mode: self.tenant_isolation_mode,
         }
     }
@@ -133,6 +137,14 @@ impl NodeServicesConfig {
         self
     }
 
+    pub fn with_node_workload_coordinator(
+        mut self,
+        coordinator: Arc<NodeWorkloadCoordinator>,
+    ) -> Self {
+        self.node_workload_coordinator = Some(coordinator);
+        self
+    }
+
     pub fn with_tenant_isolation_mode(mut self, mode: TenantIsolationMode) -> Self {
         self.tenant_isolation_mode = mode;
         self
@@ -148,6 +160,10 @@ impl NodeServicesConfig {
 
     pub fn machine_lifecycle_manager(&self) -> Option<Arc<dyn MachineLifecycleManager>> {
         self.machine_lifecycle_manager.clone()
+    }
+
+    pub fn node_workload_coordinator(&self) -> Option<Arc<NodeWorkloadCoordinator>> {
+        self.node_workload_coordinator.clone()
     }
 
     pub fn tenant_isolation_mode(&self) -> TenantIsolationMode {

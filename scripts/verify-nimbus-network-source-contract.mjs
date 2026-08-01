@@ -14,13 +14,15 @@ const validModes = new Set([
   "sealed-effect-capabilities",
   "side-effect-free-sandbox-inspection",
   "compute-network-manager-injection",
+  "compute-node-workload-coordinator",
 ]);
 if (!validModes.has(mode)) {
   process.stderr.write(
     "usage: verify-nimbus-network-source-contract.mjs " +
       "[forbidden-dependencies-effects|single-definition-owner|address-is-not-identity|" +
       "sandbox-effect-locality|sealed-effect-capabilities|" +
-      "side-effect-free-sandbox-inspection|compute-network-manager-injection]\n",
+      "side-effect-free-sandbox-inspection|compute-network-manager-injection|" +
+      "compute-node-workload-coordinator]\n",
   );
   process.exit(2);
 }
@@ -1576,6 +1578,300 @@ function verifyComputeNetworkManagerInjection() {
   }
 }
 
+function verifyComputeNodeWorkloadCoordinator() {
+  const nodeSources = walkRust("crates/nimbus-node/src");
+  const computeSources = walkRust("crates/nimbus-compute/src");
+  const cliSources = walkRust("crates/nimbus-cli/src");
+  const systemSources = walkRust("crates/nimbus-system/src");
+  const requiredSource = (sources, file) => {
+    const candidate = sources.find((entry) => entry.file === file);
+    if (!candidate) {
+      errors.push(`required compute-node-coordinator source missing: ${file}`);
+      return { file, source: "" };
+    }
+    return candidate;
+  };
+  const replaceIn = (sources, file, before, after) => {
+    const candidate = requiredSource(sources, file);
+    if (!candidate.source.includes(before)) {
+      errors.push(
+        `compute-node-coordinator self-test mutation target missing: ${file}:${before}`,
+      );
+      return;
+    }
+    candidate.source = candidate.source.replace(before, after);
+  };
+  const functionBody = (source, functionName) => {
+    const escaped = functionName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const match = source.match(new RegExp(`\\bfn\\s+${escaped}\\s*\\(`));
+    if (!match) return "";
+    const start = source.indexOf("{", match.index);
+    if (start < 0) return "";
+    let depth = 1;
+    let cursor = start + 1;
+    while (cursor < source.length && depth > 0) {
+      if (source.at(cursor) === "{") depth += 1;
+      else if (source.at(cursor) === "}") depth -= 1;
+      cursor += 1;
+    }
+    return source.slice(start, cursor);
+  };
+  let computeManifest = fs.existsSync("crates/nimbus-compute/Cargo.toml")
+    ? fs.readFileSync("crates/nimbus-compute/Cargo.toml", "utf8")
+    : "";
+
+  if (process.env.NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD === "1") {
+    const mutation =
+      process.env.NIMBUS_NETWORK_VERIFY_TEST_COMPUTE_COORDINATOR_MUTATION ?? "";
+    if (mutation === "missing-node-capability") {
+      replaceIn(
+        nodeSources,
+        "crates/nimbus-node/src/reconciler.rs",
+        "pub trait NodeWorkloadReconcileCapability",
+        "pub trait OmittedNodeWorkloadReconcileCapability",
+      );
+    } else if (mutation === "missing-compute-coordinator") {
+      replaceIn(
+        computeSources,
+        "crates/nimbus-compute/src/node_workloads.rs",
+        "pub struct NodeWorkloadCoordinator",
+        "pub struct OmittedNodeWorkloadCoordinator",
+      );
+    } else if (mutation === "missing-state-coordinator") {
+      replaceIn(
+        computeSources,
+        "crates/nimbus-compute/src/config/node_services.rs",
+        "node_workload_coordinator: Option<Arc<NodeWorkloadCoordinator>>",
+        "omitted_node_workload_coordinator: ()",
+      );
+    } else if (mutation === "missing-profile-fence") {
+      replaceIn(
+        computeSources,
+        "crates/nimbus-compute/src/state.rs",
+        "node_workload_coordinator().is_none()",
+        "bypassed_node_workload_coordinator_fence()",
+      );
+    } else if (mutation === "direct-cli-reconcile") {
+      requiredSource(
+        cliSources,
+        "crates/nimbus-cli/src/node_workload_executor.rs",
+      ).source += "\nfn bypass(node_agent: NodeAgent<(), ()>) { node_agent.reconcile_assignment(todo!()); }\n";
+    } else if (mutation === "direct-guest-reconcile") {
+      requiredSource(
+        cliSources,
+        "crates/nimbus-cli/src/machine/api/service_workloads.rs",
+      ).source += "\nfn bypass(node_agent: NodeAgent<(), ()>) { node_agent.reconcile_assignments([]); }\n";
+    } else if (mutation === "direct-guest-inspect") {
+      requiredSource(
+        cliSources,
+        "crates/nimbus-cli/src/machine/api/service_workloads.rs",
+      ).source += "\nfn bypass(node_agent: NodeAgent<(), ()>) { node_agent.reconciler().backend().inspect(todo!()); }\n";
+    } else if (mutation === "runner-provider-restart") {
+      replaceIn(
+        nodeSources,
+        "crates/nimbus-node/src/host_lifecycle.rs",
+        "HostLifecycleProperty::Restart(HostRestartPolicy::No)",
+        "HostLifecycleProperty::Restart(HostRestartPolicy::OnFailure)",
+      );
+    } else if (mutation === "missing-restart-fence") {
+      replaceIn(
+        nodeSources,
+        "crates/nimbus-node/src/reconciler.rs",
+        "request.ensure_external_restart_disabled()?;",
+        "",
+      );
+    } else if (mutation === "duplicate-restart-accepted") {
+      replaceIn(
+        nodeSources,
+        "crates/nimbus-node/src/host_lifecycle.rs",
+        "restart_properties.len() <= 1",
+        "true",
+      );
+    } else if (mutation === "coordinator-desired-store") {
+      requiredSource(
+        computeSources,
+        "crates/nimbus-compute/src/node_workloads.rs",
+      ).source += "\nuse nimbus_workloads::DesiredWorkloadStore;\n";
+    } else if (mutation === "coordinator-network-authority") {
+      requiredSource(
+        computeSources,
+        "crates/nimbus-compute/src/node_workloads.rs",
+      ).source += "\nuse nimbus_network::LocalNetworkManager;\n";
+    } else if (mutation === "second-coordinator") {
+      requiredSource(
+        computeSources,
+        "crates/nimbus-compute/src/node_workloads.rs",
+      ).source += "\nstruct AnotherNodeWorkloadCoordinator;\n";
+    } else if (mutation === "early-workloads-dependency") {
+      computeManifest += '\nnimbus-workloads = { path = "../nimbus-workloads" }\n';
+    } else if (mutation) {
+      errors.push(`unknown compute-node-coordinator self-test mutation: ${mutation}`);
+    }
+  }
+
+  const nodeReconciler = requiredSource(
+    nodeSources,
+    "crates/nimbus-node/src/reconciler.rs",
+  ).source;
+  if (
+    !/pub\s+trait\s+NodeWorkloadReconcileCapability\s*:\s*Send\s*\+\s*Sync/.test(
+      nodeReconciler,
+    ) ||
+    !/impl\s*<[^>]*>\s+NodeWorkloadReconcileCapability\s+for\s+NodeAgent/.test(
+      nodeReconciler,
+    ) ||
+    !/fn\s+reconcile_assignment\s*<'a>/.test(nodeReconciler) ||
+    !/fn\s+reconcile_assignments\s*<'a>/.test(nodeReconciler) ||
+    !/fn\s+inspect_assignment\s*<'a>/.test(nodeReconciler)
+  ) {
+    errors.push(
+      "nimbus-node must expose one object-safe reconcile/inspect capability implemented by NodeAgent",
+    );
+  }
+
+  const computeCoordinator = requiredSource(
+    computeSources,
+    "crates/nimbus-compute/src/node_workloads.rs",
+  ).source;
+  if (
+    !/pub\s+struct\s+NodeWorkloadCoordinator\s*\{[^}]*Arc\s*<\s*dyn\s+NodeWorkloadReconcileCapability\s*>/s.test(
+      computeCoordinator,
+    ) ||
+    !/pub\s+async\s+fn\s+reconcile_assignment[\s\S]*?\.reconcile_assignment\s*\(/.test(
+      computeCoordinator,
+    ) ||
+    !/pub\s+async\s+fn\s+reconcile_assignments[\s\S]*?\.reconcile_assignments\s*\(/.test(
+      computeCoordinator,
+    ) ||
+    !/pub\s+async\s+fn\s+inspect_assignment[\s\S]*?\.inspect_assignment\s*\(/.test(
+      computeCoordinator,
+    )
+  ) {
+    errors.push(
+      "nimbus-compute must own one concrete coordinator over the node capability",
+    );
+  }
+  if (
+    /\bnimbus_workloads\b|\bDesiredWorkload(?:Store|State)?\b|\bnimbus_network\b|\bLocalNetworkManager\b|\bNetworkPlan\b|\bnimbus_system\b|\bSystemTenantStatusEvidenceWriter\b/.test(
+      computeCoordinator,
+    )
+  ) {
+    errors.push(
+      "compute node coordinator acquired desired-state, network, or projection authority",
+    );
+  }
+  const coordinatorDefinitions = firstMatch(
+    [...computeSources, ...cliSources],
+    /\bstruct\s+(?!NodeWorkloadCoordinator\b)[A-Za-z0-9_]*(?:NodeWorkload|Saga|Reconcile)[A-Za-z0-9_]*Coordinator\b/,
+  );
+  if (coordinatorDefinitions) {
+    errors.push(`second production workload coordinator exists: ${coordinatorDefinitions}`);
+  }
+
+  const nodeServices = requiredSource(
+    computeSources,
+    "crates/nimbus-compute/src/config/node_services.rs",
+  ).source;
+  const computeState = requiredSource(
+    computeSources,
+    "crates/nimbus-compute/src/state.rs",
+  ).source;
+  if (
+    !/node_workload_coordinator\s*:\s*Option\s*<\s*Arc\s*<\s*NodeWorkloadCoordinator\s*>\s*>/.test(
+      nodeServices,
+    ) ||
+    !/pub\s+fn\s+node_workload_coordinator\s*\(\s*&self\s*\)\s*->\s*Option\s*<\s*Arc\s*<\s*NodeWorkloadCoordinator\s*>\s*>/.test(
+      computeState,
+    ) ||
+    !/fn\s+require_network_manager_for_workloads[\s\S]*?node_workload_coordinator\(\)\.is_none\(\)/.test(
+      computeState,
+    )
+  ) {
+    errors.push(
+      "ComputeState must retain the optional coordinator and fence it from protocol-only profiles",
+    );
+  }
+
+  const nodeExecutor = requiredSource(
+    cliSources,
+    "crates/nimbus-cli/src/node_workload_executor.rs",
+  ).source;
+  const guestService = requiredSource(
+    cliSources,
+    "crates/nimbus-cli/src/machine/api/service_workloads.rs",
+  ).source;
+  if (
+    !/NodeWorkloadCoordinator\s*::\s*new\s*\(/.test(nodeExecutor) ||
+    !/\.reconcile_assignment\s*\(/.test(nodeExecutor) ||
+    /\bNodeWorkloadReconciler\b|node_agent\s*\.\s*reconcile_assignments?\s*\(/.test(
+      nodeExecutor,
+    )
+  ) {
+    errors.push("standalone node executor must route reconciliation through compute");
+  }
+  if (
+    !/NodeWorkloadCoordinator/.test(guestService) ||
+    !/\.reconcile_assignments\s*\(/.test(guestService) ||
+    !/\.inspect_assignment\s*\(/.test(guestService) ||
+    /node_agent\s*\.\s*reconcile_assignments?\s*\(|\.reconciler\s*\(\s*\)\s*\.\s*backend\s*\(\s*\)/.test(
+      guestService,
+    )
+  ) {
+    errors.push("guest Machine API must route reconcile and inspect through compute");
+  }
+
+  const hostLifecycle = requiredSource(
+    nodeSources,
+    "crates/nimbus-node/src/host_lifecycle.rs",
+  ).source;
+  const runnerBody = functionBody(hostLifecycle, "into_host_lifecycle_request");
+  const restartFenceBody = functionBody(
+    hostLifecycle,
+    "ensure_external_restart_disabled",
+  );
+  const reconcileBody = functionBody(nodeReconciler, "reconcile_binding");
+  if (
+    !/HostLifecycleProperty\s*::\s*Restart\s*\(\s*HostRestartPolicy\s*::\s*No\s*\)/.test(
+      runnerBody,
+    ) ||
+    /HostRestartPolicy\s*::\s*(?:OnFailure|Always)/.test(runnerBody)
+  ) {
+    errors.push("RunnerSpec must disable provider-owned tenant-workload restart");
+  }
+  if (
+    !/restart_properties\.len\(\)\s*<=\s*1/.test(restartFenceBody) ||
+    !/HostRestartPolicy\s*::\s*No/.test(restartFenceBody) ||
+    !/request\.ensure_external_restart_disabled\(\)\?;[\s\S]*?backend\.validate/.test(
+      reconcileBody,
+    )
+  ) {
+    errors.push(
+      "node reconciliation must reject provider restart and duplicates before backend validation",
+    );
+  }
+
+  if (
+    /^nimbus-workloads\s*=\s*\{\s*path\s*=\s*"\.\.\/nimbus-workloads"/m.test(
+      computeManifest,
+    )
+  ) {
+    errors.push("NNC6.1a must not take the NNC6.1b-owned workloads dependency");
+  }
+  const engineStatusWriters = [
+    ...systemSources
+      .map((entry) => entry.source)
+      .join("\n")
+      .matchAll(
+        /impl\s+StatusEvidenceWriter\s+for\s+SystemTenantStatusEvidenceWriter/g,
+      ),
+  ];
+  if (engineStatusWriters.length !== 1) {
+    errors.push(
+      `expected one system observed-status writer, found ${engineStatusWriters.length}`,
+    );
+  }
+}
+
 if (mode === "forbidden-dependencies-effects") {
   verifyForbiddenDependenciesAndEffects();
 } else if (mode === "single-definition-owner") {
@@ -1588,6 +1884,8 @@ if (mode === "forbidden-dependencies-effects") {
   verifySideEffectFreeSandboxInspection();
 } else if (mode === "compute-network-manager-injection") {
   verifyComputeNetworkManagerInjection();
+} else if (mode === "compute-node-workload-coordinator") {
+  verifyComputeNodeWorkloadCoordinator();
 } else {
   verifySealedEffectCapabilities();
 }

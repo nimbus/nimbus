@@ -43,6 +43,7 @@ libc.workspace = true
 nimbus = { path = "../nimbus", default-features = false, features = ["aws-kms"] }
 nimbus-assets = { path = "../nimbus-assets", features = ["js-packages", "templates"] }
 nimbus-convex = { path = "../nimbus-convex" }
+nimbus-compute = { path = "../nimbus-compute" }
 nimbus-core = { path = "../nimbus-core" }
 nimbus-crypto = { path = "../nimbus-crypto" }
 nimbus-fs = { path = "../nimbus-fs" }

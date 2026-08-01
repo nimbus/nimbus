@@ -36,6 +36,7 @@ use crate::config::deployment::DeploymentConfig;
 use crate::config::node_services::NodeServicesConfig;
 use crate::config::runtime::RuntimeGovernorConfig;
 use crate::machine_lifecycle::MachineLifecycleManager;
+use crate::node_workloads::NodeWorkloadCoordinator;
 use crate::runtime_manager::RuntimeManager;
 
 pub struct ComputeStateConfig {
@@ -138,7 +139,8 @@ impl ComputeState {
         assert!(
             network_manager.is_some()
                 || (node_services.service_manager().is_none()
-                    && node_services.machine_lifecycle_manager().is_none()),
+                    && node_services.machine_lifecycle_manager().is_none()
+                    && node_services.node_workload_coordinator().is_none()),
             "service and machine workload lifecycle requires the shared LocalNetworkManager"
         );
     }
@@ -173,6 +175,10 @@ impl ComputeState {
 
     pub fn machine_lifecycle_manager(&self) -> Option<Arc<dyn MachineLifecycleManager>> {
         self.node_services.machine_lifecycle_manager()
+    }
+
+    pub fn node_workload_coordinator(&self) -> Option<Arc<NodeWorkloadCoordinator>> {
+        self.node_services.node_workload_coordinator()
     }
 
     pub fn tenant_isolation_mode(&self) -> TenantIsolationMode {
@@ -439,10 +445,65 @@ pub async fn record_authenticated_usage(
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    use nimbus_node::{
+        HostLifecycleBackendCapabilities, HostLifecycleBackendKind, HostLifecycleFuture,
+        HostLifecycleStatus, NodeAgentAssignment, NodeAgentReconcileReport,
+        NodeWorkloadReconcileCapability, NodeWorkloadReconcileOutcome,
+    };
     use nimbus_runtime::{InvocationServiceBinding, InvocationServices};
     use tempfile::tempdir;
 
     use super::*;
+
+    #[derive(Default)]
+    struct EffectForbiddenNodeCapability {
+        calls: AtomicUsize,
+    }
+
+    impl NodeWorkloadReconcileCapability for EffectForbiddenNodeCapability {
+        fn backend_capabilities(&self) -> Vec<HostLifecycleBackendCapabilities> {
+            vec![HostLifecycleBackendCapabilities::new(
+                HostLifecycleBackendKind::DirectProcess,
+                true,
+            )]
+        }
+
+        fn reconcile_assignment<'a>(
+            &'a self,
+            _assignment: NodeAgentAssignment,
+        ) -> HostLifecycleFuture<'a, NodeWorkloadReconcileOutcome> {
+            Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::AcqRel);
+                Err(nimbus_core::Error::Internal(
+                    "node reconcile effect must not run".to_owned(),
+                ))
+            })
+        }
+
+        fn reconcile_assignments<'a>(
+            &'a self,
+            _assignments: Vec<NodeAgentAssignment>,
+        ) -> HostLifecycleFuture<'a, NodeAgentReconcileReport> {
+            Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::AcqRel);
+                Err(nimbus_core::Error::Internal(
+                    "node reconcile effect must not run".to_owned(),
+                ))
+            })
+        }
+
+        fn inspect_assignment<'a>(
+            &'a self,
+            _assignment: &'a NodeAgentAssignment,
+        ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
+            Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::AcqRel);
+                Err(nimbus_core::Error::Internal(
+                    "node inspect effect must not run".to_owned(),
+                ))
+            })
+        }
+    }
 
     #[test]
     fn active_deployment_keeps_previous_snapshot_arc_alive_after_activation() {
@@ -761,7 +822,7 @@ mod tests {
     }
 
     #[test]
-    fn compute_state_retains_the_exact_injected_network_manager_and_registry() {
+    fn compute_state_retains_the_exact_network_manager_registry_and_node_coordinator() {
         let temp = tempdir().expect("service tempdir should build");
         let engine = Arc::new(Engine::new(temp.path()).expect("engine should build"));
         let manager = LocalNetworkManager::open(
@@ -774,12 +835,15 @@ mod tests {
             !manager.authority_path().exists(),
             "an empty manager should not materialize durable authority"
         );
+        let capability = Arc::new(EffectForbiddenNodeCapability::default());
+        let coordinator = Arc::new(NodeWorkloadCoordinator::new(capability.clone()));
         let state = ComputeState::from_config(ComputeStateConfig {
             engine,
             network_manager: Some(Arc::clone(&manager)),
             deployment: DeploymentConfig::default(),
             control_plane: ControlPlaneConfig::router_options_default(),
-            node_services: empty_node_services(),
+            node_services: empty_node_services()
+                .with_node_workload_coordinator(Arc::clone(&coordinator)),
             runtime: RuntimeGovernorConfig::default(),
         });
 
@@ -793,9 +857,52 @@ mod tests {
         assert!(Arc::ptr_eq(&second, &manager));
         assert!(Arc::ptr_eq(&first, &second));
         assert_eq!(first.capability_registry().selections().count(), 0);
+        let injected_coordinator = state
+            .node_workload_coordinator()
+            .expect("managed compute state should expose its node coordinator");
+        assert!(Arc::ptr_eq(&injected_coordinator, &coordinator));
+        assert_eq!(capability.calls.load(Ordering::Acquire), 0);
         assert!(
             !manager.authority_path().exists(),
             "read-only manager access must not materialize durable authority"
         );
+    }
+
+    #[test]
+    fn protocol_only_compute_rejects_a_node_coordinator_before_capability_use() {
+        let temp = tempdir().expect("service tempdir should build");
+        let engine = Arc::new(Engine::new(temp.path()).expect("engine should build"));
+        let capability = Arc::new(EffectForbiddenNodeCapability::default());
+        let coordinator = Arc::new(NodeWorkloadCoordinator::new(capability.clone()));
+
+        let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            ComputeState::from_config(ComputeStateConfig {
+                engine,
+                network_manager: None,
+                deployment: DeploymentConfig::default(),
+                control_plane: ControlPlaneConfig::router_options_default(),
+                node_services: empty_node_services().with_node_workload_coordinator(coordinator),
+                runtime: RuntimeGovernorConfig::default(),
+            })
+        }));
+
+        assert!(rejected.is_err());
+        assert_eq!(capability.calls.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn protocol_only_compute_reports_no_node_workload_coordinator() {
+        let temp = tempdir().expect("service tempdir should build");
+        let engine = Arc::new(Engine::new(temp.path()).expect("engine should build"));
+        let state = ComputeState::from_config(ComputeStateConfig {
+            engine,
+            network_manager: None,
+            deployment: DeploymentConfig::default(),
+            control_plane: ControlPlaneConfig::router_options_default(),
+            node_services: empty_node_services(),
+            runtime: RuntimeGovernorConfig::default(),
+        });
+
+        assert!(state.node_workload_coordinator().is_none());
     }
 }

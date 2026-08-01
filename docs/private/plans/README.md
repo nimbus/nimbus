@@ -74,7 +74,7 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC6.1 complete; NNC6.1a
+- `nimbus-network-control-plane-plan.md` - `active; NNC6.1a complete; NNC6.1b
   in progress`. The Linux sovereignty tripwire is complete with a root-safe,
   raw-artifact-derived evidence contract, 70/70 deterministic tests, 62/62
   adversarial verifier cases, fully dispositioned full+narrow Sol reviews, and
@@ -213,8 +213,25 @@ extension-registry seam before the second concern edits `extensions.rs`.
   proof uses the production router-state handoff. Both corrections pass
   focused behavior and exclusive NNCV025 mutations; the aggregate is 173/173.
   The one permitted narrow correction review is clean at confidence 0.98; no
-  further NNC6.1 review is warranted. NNC6.1a's read-only sole-coordinator and
-  `NodeWorkloadReconciler` integration audit is next.
+  further NNC6.1 review is warranted. NNC6.1a's read-only audit, acceptance
+  freeze, exact NNCV026 expected-red, and product implementation are complete.
+  Its small compute coordinator, type-erased node capability,
+  provider-restart fence, and both caller routes are converging. The first
+  compile proved the direct CLI-to-compute dependency and lockfile metadata are
+  required; both were added to the frozen scope before either dependency file
+  was edited. Corrected focused behavior is 11/11 plus restart 1/1; affected
+  behavior was 1,059/1,059 with one child-only skip. The sole full Sol review
+  found two P3 issues: the standalone route masked typed reconcile errors, and
+  R3 lacked its valid protocol-only `None` assertion. Both are corrected.
+  Correction behavior passes 2/2, affected behavior passes 1,060/1,060 with
+  one child-only skip, and live verifier 27/27 passes. The direct-bypass
+  mutation fails only NNCV026 at 26/1, and all 14 affected NNCV026 mutations
+  pass exclusively. The earlier complete aggregate remains 187/187. The
+  Linux/session-systemd executor lane is cfg-excluded on the macOS owner host
+  and is not claimed as live provider evidence. The one narrow correction
+  review is clean at confidence 0.98, and no further NNC6.1a review is
+  warranted. NNC6.1b now owns the read-only workload-saga vocabulary, store,
+  durable-home, and engine mutation-path decision audit before implementation.
   Cleanup, release, finalization, and reuse stay in NNC8.3. Machine forwarding obeys
   NNC5.2a's common lifecycle; runtime absence, workload status, readiness persistence,
   cleanup convergence, and inspect/restart policy stay in their named later
