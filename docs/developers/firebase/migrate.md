@@ -7,14 +7,17 @@ sidebar:
 
 Move a Firestore-backed JavaScript app onto Nimbus while keeping your
 imports, data model, query shapes, and helper names. The migration target
-is Nimbus's first-party drop-in `firebase` package: it takes the stock npm
-name, so `firebase/app` and `firebase/firestore` imports stay exactly as
-they are — only the dependency resolution changes. The registry-published
-Google package is not the target, because its browser client depends on
-WebChannel transport that Nimbus intentionally defers.
+is Nimbus's first-party drop-in `firebase` package. It takes the stock npm
+name. Your `firebase/app` and `firebase/firestore` imports therefore stay
+exactly the same. Only dependency resolution changes. The registry-published
+Google package is not the target.
 
-Before you start, read [Use Firestore SDKs with Nimbus](/developers/firebase/)
-for the connection model, and keep the
+The Google package's browser client depends on WebChannel transport, which
+Nimbus intentionally defers.
+
+Before you start, read
+[Use Firestore SDKs with Nimbus](/developers/firebase/) for the connection
+model. Keep the
 [compatibility matrix](/reference/firebase/compatibility/) open as the
 precise support reference.
 
@@ -26,11 +29,11 @@ nimbus dev
 ```
 
 `nimbus dev` detects the `firebase` dependency, scans your sources to
-confirm every Firebase import is on the supported surface, and repoints
+confirm that each Firebase import uses the supported surface, and repoints
 the dependency at the drop-in package. If a file imports an uncovered
-surface (say `firebase/auth`), the scan refuses with the file, line, and
-import named, and nothing is changed — resolve that import first, then
-rerun.
+surface, such as `firebase/auth`, the scan refuses the change. The diagnostic
+names the file, line, and import. Resolve that import, then run the command
+again.
 
 To repoint without a dev session, provision directly:
 
@@ -39,16 +42,16 @@ nimbus packages provision firebase
 npm install
 ```
 
-Either way, the `nimbus` binary materializes its `firebase` package under
-`.nimbus/packages/firebase` — no registry access required — and rewrites
-your app's `firebase` dependency from the registry spec to
-`file:./.nimbus/packages/firebase`, swapping the provisioned package in
-for the upstream one.
+Both methods use the `firebase` package in the `nimbus` binary without
+registry access. Nimbus writes it under `.nimbus/packages/firebase`. It also
+rewrites your app's `firebase` dependency from the registry spec to
+`file:./.nimbus/packages/firebase`. The provisioned package then replaces the
+upstream package.
 
 ## 2. Keep your imports unchanged
 
-No import rewrite step exists in this migration: your `firebase/app` and
-`firebase/firestore` import lines are byte-identical before and after — only
+This migration does not rewrite imports. Your `firebase/app` and
+`firebase/firestore` import lines are byte-identical before and after. Only
 the dependency resolution changes.
 
 Common Firestore helpers keep the same names and signatures:
@@ -63,10 +66,9 @@ Common Firestore helpers keep the same names and signatures:
 - `runTransaction`
 - `deleteField`, `serverTimestamp`, `increment`, `arrayUnion`, `arrayRemove`
 
-What changes is the surface behind those names: the provisioned package
-implements the subset in the
-[compatibility matrix](/reference/firebase/compatibility/), so verify the
-features your app relies on before cutting over.
+The surface behind those names changes. The provisioned package implements
+the subset in the [compatibility matrix](/reference/firebase/compatibility/).
+Verify the features that your app needs before the cutover.
 
 ## 3. Point the SDK at Nimbus
 
@@ -84,13 +86,12 @@ const db = getFirestore(app);
 connectFirestoreEmulator(db, "127.0.0.1", 3210);
 ```
 
-Use the port your server listens on — `nimbus dev` serves on `3210`,
-`nimbus start` defaults to `8080`. The `projectId` maps directly to a
-Nimbus tenant id, and only the `(default)` database is supported.
-`nimbus dev` discovers the project id from your `.firebaserc` and creates
-the tenant automatically; every server serves the Firestore-compatible
-routes by default — see
-[Use Firestore SDKs with Nimbus](/developers/firebase/).
+Use the port on which your server listens. `nimbus dev` serves on `3210`, and
+`nimbus start` defaults to `8080`. The `projectId` maps directly to a Nimbus
+tenant id. Nimbus supports only the `(default)` database. `nimbus dev` reads
+the project id from your `.firebaserc` and creates the tenant automatically.
+Each server serves the Firestore-compatible routes by default. See
+[Use Firestore SDKs with Nimbus](/developers/firebase/) for details.
 
 ## 4. Keep REST first, opt into gRPC-Web deliberately
 
@@ -107,18 +108,20 @@ const db = initializeFirestore(app, {
 connectFirestoreEmulator(db, "127.0.0.1", 3210);
 ```
 
-`onSnapshot(...)` never uses gRPC-Web; it always runs over the binary
+`onSnapshot(...)` never uses gRPC-Web. It always runs over the binary
 [WebSocket Listen channel](/reference/firebase/websocket-listen/). In Node or
 other environments without a global `WebSocket`, supply an
 `experimentalWebSocketFactory` in the Firestore settings.
 
 ## 5. Migrate transactions, batches, and field transforms
 
-`writeBatch`, `runTransaction`, and the `FieldValue` sentinels
-(`deleteField`, `serverTimestamp`, `increment`, `arrayUnion`, `arrayRemove`)
-are supported and keep their Firestore semantics — batches commit
-atomically, and transactions cover point reads, query reads, staged writes,
-bounded retries, and rollback. Migrate this code unchanged, then verify the
+Nimbus supports `writeBatch`, `runTransaction`, and the `FieldValue` sentinels.
+The sentinels are `deleteField`, `serverTimestamp`, `increment`, `arrayUnion`,
+and `arrayRemove`. These APIs keep their Firestore semantics. Batches commit
+atomically.
+
+Transactions cover point reads, query reads, staged writes,
+bounded retries, and rollback. Migrate this code unchanged. Then verify the
 flows against your Nimbus endpoint.
 
 ## 6. Port Security Rules intent into application auth
@@ -134,10 +137,10 @@ checks instead of copying rules text:
 | `request.resource.data.ownerId == request.auth.uid` | Validate write input before commit so callers cannot claim another owner's identity. |
 | Role or claim checks on `request.auth.token.*` | Map the same claims into your auth context and check them in the application layer. |
 
-Bearer tokens sent by the provisioned `firebase` package resolve into an
-application principal on the covered read, write, transaction, and listener
-paths — see [Firebase auth](/reference/firebase/auth/) for exactly which
-inputs authenticate and which require server-side opt-in.
+Bearer tokens from the provisioned `firebase` package resolve into an
+application principal. This applies to the covered read, write, transaction,
+and listener paths. See [Firebase auth](/reference/firebase/auth/) for the
+inputs that authenticate and those that require server-side opt-in.
 
 ## 7. Verify against the boundaries
 
@@ -152,8 +155,9 @@ Do not assume any of the following during migration:
 - Firebase Emulator Suite control endpoints
 - a Firestore Security Rules engine
 
-These are intentional, documented boundaries — the full list with status
-labels is in the [compatibility matrix](/reference/firebase/compatibility/).
+These are intentional, documented boundaries. The
+[compatibility matrix](/reference/firebase/compatibility/) gives the full list
+with status labels.
 
 ## Suggested order
 

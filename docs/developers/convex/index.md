@@ -6,10 +6,10 @@ sidebar:
   order: 1
 ---
 
-Nimbus serves the Convex API from a single self-hosted binary: the same
-`convex/` project layout, the same function model, and the same client
-packages — no hosted service required. This guide takes you from an empty
-directory to working functions called from a client.
+Nimbus serves the Convex API from a single self-hosted binary. It supports the
+same `convex/` project layout, function model, and client packages. You do not
+need a hosted service. This guide starts with an empty directory and ends with
+client calls to working functions.
 
 New to Nimbus entirely? Start with the
 [developer quickstart](/get-started/quickstart/). Migrating an existing
@@ -18,8 +18,8 @@ Convex project? See [Migrate a Convex app](/developers/convex/migrate/).
 ## Prerequisites
 
 - Nimbus installed (see the [quickstart](/get-started/quickstart/)).
-- Node.js 22 or newer with `npm`. Nimbus runs codegen inside its own binary;
-  Node is only needed to install your project's npm dependencies.
+- Node.js 22 or newer with `npm`. Nimbus runs codegen inside its own binary.
+  You need Node only to install your project's npm dependencies.
 
 ## 1. Scaffold a project
 
@@ -30,8 +30,8 @@ cd my-app
 
 This creates backend files only: a schema, an example query and mutation,
 `package.json`, `tsconfig.json`, and `.gitignore`. Bring your own frontend.
-Pass `--install` to run `npm install` during init; otherwise `nimbus dev`
-installs missing packages on first run. The full file list is in the
+Pass `--install` to run `npm install` during init. Otherwise, `nimbus dev`
+installs missing packages on the first run. The full file list is in the
 [project layout reference](/reference/convex/project-layout/).
 
 ## 2. Start the dev loop
@@ -42,11 +42,11 @@ nimbus dev
 
 The dev server:
 
-- serves on `http://localhost:3210` and creates a `demo` tenant, so your
-  deployment URL is `http://localhost:3210/convex/demo`;
-- watches your source files, re-runs codegen on change, and activates the
-  updated functions — reactive subscriptions pick up the new results;
-- stores its data under `.nimbus/dev/` in your project.
+- Serves on `http://localhost:3210` and creates a `demo` tenant. Your
+  deployment URL is `http://localhost:3210/convex/demo`.
+- Watches your source files, runs codegen after changes, and activates the
+  updated functions. Reactive subscriptions receive the new results.
+- Stores its data under `.nimbus/dev/` in your project.
 
 Pass `--port` to change the port and `--once` to start without watching.
 
@@ -110,7 +110,7 @@ Each function kind gets a different `ctx`:
 - **Queries** read the database (`ctx.db.query`, `ctx.db.get`).
 - **Mutations** read and write (`ctx.db.insert`, `ctx.db.patch`,
   `ctx.db.delete`) and can schedule work with `ctx.scheduler`.
-- **Actions** have no database access; they call other functions through
+- **Actions** have no database access. They call other functions through
   `ctx.runQuery`, `ctx.runMutation`, and `ctx.runAction`, and can use
   `"use node"` modules for npm packages.
 
@@ -146,18 +146,18 @@ const client = new ConvexHttpClient("http://localhost:3210/convex/demo");
 const messages = await client.query(api.messages.list, {});
 ```
 
-Queries are reactive over the WebSocket clients; mutations and actions are
-invoked the same way with `useMutation`, `useAction`, or `client.mutation`.
+WebSocket clients make queries reactive. Invoke mutations and actions with
+`useMutation`, `useAction`, or `client.mutation`.
 
 ## Next steps
 
-- [Example apps](/developers/convex/examples/) — runnable React, browser, and
+- [Example apps](/developers/convex/examples/): runnable React, browser, and
   Node apps, plus the shared tasks list.
-- [Migrate a Convex app](/developers/convex/migrate/) — bring an existing
+- [Migrate a Convex app](/developers/convex/migrate/): bring an existing
   project over.
-- [Project layout](/reference/convex/project-layout/) — every file
+- [Project layout](/reference/convex/project-layout/): every file
   `nimbus init convex` creates and what codegen generates.
-- [Compatibility](/reference/convex/compatibility/) — the supported API
+- [Compatibility](/reference/convex/compatibility/): the supported API
   surface, validator set, and known gaps.
-- [Usage rules](/reference/convex/usage-rules/) — the contract for writing
+- [Usage rules](/reference/convex/usage-rules/): the contract for writing
   functions that run correctly on Nimbus.

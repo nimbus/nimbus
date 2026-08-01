@@ -59,10 +59,11 @@ and the missing package.
 
 ## Current limits
 
-Nimbus records Convex cloud-style package size references (45 MiB zipped,
-240 MiB unzipped) in the package metadata, but does not yet enforce those
-thresholds as deployment limits. Unsupported or unresolved package imports
-fail with precise diagnostics rather than ambiguous runtime errors.
+Nimbus records Convex cloud-style package size references in the package
+metadata. The references are 45 MiB zipped and 240 MiB unzipped. Nimbus does
+not yet enforce those thresholds as deployment limits. Unsupported or
+unresolved package imports fail with precise diagnostics instead of ambiguous
+runtime errors.
 
 Native addons, package-owned binaries, child-process tooling, raw server
 listeners, and persistent host filesystem assumptions are not in-process
@@ -72,10 +73,10 @@ specific package.
 
 ## What is verified
 
-Package support is canary-backed: real packages are exercised against the
-supported Node versions, covering application networking packages, common
-HTTP and SaaS SDKs, real Convex-compatible `"use node"` actions, and
-host-heavy diagnostic boundaries. See the
+Canary tests exercise real packages against the supported Node versions. They
+cover application networking packages, common HTTP and SaaS SDKs, and real
+Convex-compatible `"use node"` actions. They also cover host-heavy diagnostic
+boundaries. See the
 [package reference](/reference/runtimes/packages/) for the current matrix
 and the [compatibility contract](/reference/runtimes/node-compat/) for what
 the support statuses mean.

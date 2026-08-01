@@ -14,7 +14,7 @@ at Nimbus yet.
 
 The apps live under
 [`examples/firebase/`](https://github.com/nimbus/nimbus/tree/main/examples/firebase)
-in the source repository. Run them in place from a checkout — each imports the
+in the source repository. Run them in place from a checkout. Each imports the
 repository's workspace packages.
 
 ## Run any example
@@ -25,21 +25,25 @@ nimbus dev
 
 `nimbus dev` starts a local server with the Firestore-compatible routes. The
 Firestore project id is `demo`, which maps to the same-named Nimbus tenant.
-These apps are Firestore *clients* (a browser UI plus a support server) with no
-Nimbus function bundle to deploy, so there is no `nimbus deploy` step. Each app
-also has standalone `firebase:server:*` (the support server) and
-`firebase:example:*` (the Vite dev server) npm scripts, listed in its README —
-run them in place from a checkout.
+These apps are Firestore *clients*: a browser UI plus a support server. They
+have no Nimbus function bundle, so there is no `nimbus deploy` step. Each app
+also has standalone npm scripts.
+
+The `firebase:server:*` script runs the support server. The
+`firebase:example:*` script runs the Vite dev server. Each README lists the
+scripts. Run them in place from a checkout.
 
 ## The apps
 
-- **[Browser (`html`)](https://github.com/nimbus/nimbus/tree/main/examples/firebase/html)**
-  — a browser playground served by the Nimbus-provisioned `firebase` package.
-  It exercises `connectFirestoreEmulator`, `addDoc`, `getDocs`, `onSnapshot`,
-  `writeBatch`, `runTransaction`, `deleteDoc`, and the supported `FieldValue`
-  sentinels, and can switch unary calls between REST and gRPC-Web.
-- **[Tasks](https://github.com/nimbus/nimbus/tree/main/examples/firebase/tasks)**
-  — the shared [tasks](https://github.com/nimbus/nimbus/blob/main/examples/specs/tasks.md)
-  task list. Firestore CRUD calls create, toggle, and delete tasks; an
-  `onSnapshot` query keeps the newest-first list current without polling,
-  delivered through the Listen bridge. It implements the full spec.
+**[Browser (`html`)](https://github.com/nimbus/nimbus/tree/main/examples/firebase/html).**
+The Nimbus-provisioned `firebase` package serves this browser playground. The
+app covers `connectFirestoreEmulator`, `addDoc`, `getDocs`, `onSnapshot`,
+`writeBatch`, `runTransaction`, `deleteDoc`, and the supported `FieldValue`
+sentinels. It can switch unary calls between REST and gRPC-Web.
+
+**[Tasks](https://github.com/nimbus/nimbus/tree/main/examples/firebase/tasks).**
+This app implements the shared
+[tasks](https://github.com/nimbus/nimbus/blob/main/examples/specs/tasks.md)
+task list. Firestore CRUD calls create, toggle, and delete tasks. An
+`onSnapshot` query keeps the newest-first list current without polling. The
+Listen bridge delivers each update. The app implements the full spec.

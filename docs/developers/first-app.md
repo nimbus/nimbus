@@ -5,9 +5,9 @@ sidebar:
   order: 2
 ---
 
-In this tutorial you'll build a small chat backend and watch it update live:
-a schema, a query and a mutation, and a script that subscribes to results
-over WebSocket and sees new messages the moment they're written. Everything
+In this tutorial, you will build a small chat backend and watch it update live.
+You will add a schema, a query, a mutation, and a WebSocket subscription
+script. The script receives new messages when clients write them. Everything
 runs locally from one binary.
 
 You need Nimbus installed (see the
@@ -68,7 +68,7 @@ export const send = mutation({
 });
 ```
 
-Queries read the database; mutations write it. Both declare validators for
+Queries read the database. Mutations write it. Both declare validators for
 their arguments, so bad input is rejected before your code runs.
 
 ## 3. Start the dev server
@@ -77,11 +77,11 @@ their arguments, so bad input is rejected before your code runs.
 nimbus dev
 ```
 
-The dev server installs the project's npm dependencies if they're missing,
-runs codegen (producing `convex/_generated/`), creates a `demo` tenant, and
+The dev server installs missing npm dependencies and runs codegen. Codegen
+produces `convex/_generated/`. The server also creates a `demo` tenant and
 serves on `http://localhost:3210`. Your deployment URL is
-`http://localhost:3210/convex/demo`. Leave it running — it watches your
-files and re-deploys functions on every save.
+`http://localhost:3210/convex/demo`. Leave the server running. It watches your
+files and redeploys functions after each save.
 
 ## 4. Add a function and watch it deploy
 
@@ -99,12 +99,12 @@ export const byAuthor = query({
 });
 ```
 
-Save the file. The dev loop re-runs codegen and activates the new function
-immediately — no restart, no deploy step.
+Save the file. The dev loop runs codegen again and activates the new function
+immediately. You do not need to restart or deploy.
 
 ## 5. Subscribe to live results
 
-Now the payoff. Create `script.ts` in the project root:
+Create `script.ts` in the project root:
 
 ```typescript
 // script.ts
@@ -138,9 +138,8 @@ Run it in a second terminal:
 node --experimental-strip-types ./script.ts ada
 ```
 
-The script prints the current messages, sends one, and the subscription
-fires again with the updated list — the same reactive query a React app
-would consume.
+The script prints the current messages and sends one. The subscription then
+receives the updated list. A React app can consume the same reactive query.
 
 ## 6. See reactivity across clients
 
@@ -150,20 +149,20 @@ Open a third terminal and send a message as someone else:
 node --experimental-strip-types ./script.ts grace
 ```
 
-Watch the first script's output: Grace's message appears there instantly.
-No polling, no refresh — the server pushes new query results to every
-subscriber whose data changed.
+Watch the first script's output. Grace's message appears there immediately.
+The server pushes new query results to each subscriber whose data changed.
+The clients do not poll or refresh.
 
 ## What you built
 
-A typed backend with a schema, an indexed query, a mutation, and live
-subscriptions — served by one local process, with data persisted under
+A typed backend has a schema, an indexed query, a mutation, and live
+subscriptions. One local process serves the backend and stores data under
 `.nimbus/dev/` in your project.
 
 ## Next steps
 
-- [Build with the Convex API](/developers/convex/) — the full function
+- [Build with the Convex API](/developers/convex/): the full function
   model, schema rules, and calling functions from React.
-- [Authenticate users](/developers/auth/) — wire in your identity provider.
-- [Compatibility reference](/reference/convex/compatibility/) — the
+- [Authenticate users](/developers/auth/): wire in your identity provider.
+- [Compatibility reference](/reference/convex/compatibility/): the
   supported API surface.

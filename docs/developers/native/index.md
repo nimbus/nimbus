@@ -7,11 +7,11 @@ sidebar:
 ---
 
 Nimbus speaks plain HTTP and WebSocket, so any language with an HTTP client
-can use it — no SDK or codegen required. This guide walks through
+can use it without an SDK or codegen. This guide walks through
 authenticating, scoping requests to a tenant, working with documents, and
 subscribing to live query results.
 
-If you haven't run a server yet, start with the
+If you have not run a server yet, start with the
 [self-host quickstart](/get-started/self-host/).
 
 ## 1. Get the local admin token
@@ -44,9 +44,9 @@ curl -s http://localhost:8080/api/tenants \
 ```
 
 Requests without a valid credential get a `401` with code
-`auth.unauthorized`. Browser-based callers are additionally restricted to
-loopback origins — see the
-[HTTP API reference](/reference/native/http-api/) for the full access rules.
+`auth.unauthorized`. Browser-based callers must also use loopback origins. See
+the [HTTP API reference](/reference/native/http-api/) for the full access
+rules.
 
 ## 2. Scope requests to a tenant
 
@@ -82,7 +82,7 @@ The response is `201 Created` with the generated document id:
 {"id": "01jx2x9w7d2f0v6q8t3k5r9e1b"}
 ```
 
-Read it back — single documents and table listings are GET requests:
+Read it back. Single documents and table listings are GET requests:
 
 ```bash
 # One document
@@ -101,8 +101,8 @@ Returned documents carry three system fields alongside your own: `_id`,
 
 ## 4. Run queries
 
-POST a query object to filter, order, and limit results. `filters` is
-required — pass an empty array to match everything:
+POST a query object to filter, order, and limit results. The request requires
+`filters`. Pass an empty array to match everything:
 
 ```bash
 curl -s -X POST http://localhost:8080/api/tenants/demo/query \
@@ -172,7 +172,7 @@ frame catalog, handshake failure modes, and reconnect semantics are in the
 
 ## Handle errors
 
-Every error — HTTP or WebSocket — uses one envelope:
+HTTP and WebSocket errors use one envelope:
 
 ```json
 {
@@ -195,13 +195,13 @@ status mappings is in the [error reference](/reference/native/errors/).
 
 ## Next steps
 
-- [Example apps](/developers/native/examples/) — a browser playground and
+- [Example apps](/developers/native/examples/): a browser playground and
   the shared tasks list on the native SDK.
-- [HTTP API reference](/reference/native/http-api/) — every endpoint,
+- [HTTP API reference](/reference/native/http-api/): every endpoint,
   request shape, and response shape.
-- [WebSocket protocol reference](/reference/native/websocket-protocol/) —
+- [WebSocket protocol reference](/reference/native/websocket-protocol/):
   the `nimbus.v2` frame contract.
-- [Error reference](/reference/native/errors/) — error codes, severities,
+- [Error reference](/reference/native/errors/): error codes, severities,
   and status mappings.
-- [Agents](/agents/) — the same server's resource APIs through the
+- [Agents](/agents/): the same server's resource APIs through the
   JavaScript SDK.

@@ -5,15 +5,15 @@ sidebar:
   order: 3
 ---
 
-Nimbus verifies JWTs issued by your identity provider — Auth0, Clerk,
-Firebase Auth, Keycloak, or anything that speaks OIDC or publishes a JWKS —
-and exposes the verified identity to your functions through `ctx.auth`. This
-guide wires a provider into a Convex-style project.
+Nimbus verifies JWTs from Auth0, Clerk, Firebase Auth, Keycloak, and other
+identity providers. The provider must support OIDC or publish a JSON Web Key
+Set (JWKS). Nimbus exposes the verified identity through `ctx.auth`. This guide
+wires a provider into a Convex-style project.
 
 ## 1. Declare the provider
 
-Create `convex/auth.config.ts` (or `.js` — exactly one of the two) with a
-default export listing your providers.
+Create exactly one config file: `convex/auth.config.ts` or
+`convex/auth.config.js`. Add a default export that lists your providers.
 
 For an OIDC provider:
 
@@ -34,7 +34,7 @@ export default {
 - `applicationID` must equal the `aud` claim of the tokens your provider
   issues. Tokens with multiple audiences are rejected.
 
-For a provider that isn't a full OIDC issuer but publishes a JWKS:
+For a provider that is not a full OIDC issuer but publishes a JWKS:
 
 ```typescript
 // convex/auth.config.ts
@@ -51,9 +51,9 @@ export default {
 };
 ```
 
-The config is evaluated statically at codegen time. `process.env.*` reads
-are supported and resolve against the environment of the codegen run, so
-you can keep issuer URLs out of source:
+Codegen evaluates the config statically. It resolves `process.env.*` reads
+against the codegen environment. You can therefore keep issuer URLs out of
+source:
 
 ```typescript
 export default {
@@ -66,8 +66,8 @@ export default {
 };
 ```
 
-`nimbus dev` picks the config up on the next codegen pass; with a running
-dev loop that happens as soon as you save the file.
+`nimbus dev` loads the config on the next codegen pass. A running dev loop
+starts that pass when you save the file.
 
 ## 2. Send tokens from the client
 
@@ -99,9 +99,9 @@ export function App({ children }) {
 ```
 
 `useConvexAuth()` reports `{ isLoading, isAuthenticated }` from anywhere
-under the provider. Outside React, set the token directly on the client —
-either a string or an async fetcher that is re-invoked when the token needs
-refreshing — and clear it on sign-out:
+under the provider. Outside React, set the token directly on the client. Use
+either a string or an async fetcher that runs again when the token needs a
+refresh. Clear the token on sign-out:
 
 ```typescript
 client.setAuth(async () => await getFreshToken());
@@ -133,23 +133,22 @@ export const send = mutation({
 });
 ```
 
-`tokenIdentifier` has the form `issuer|subject` and is stable per user per
-provider — use it as the foreign key for user records. Authorization is
-your code: check the identity and decide what the caller may do; there is
-no separate rules language.
+`tokenIdentifier` has the form `issuer|subject` and is stable for each user
+and provider. Use it as the foreign key for user records. Your code owns
+authorization. Check the identity and decide what the caller may do. Nimbus
+has no separate rules language.
 
 ## What Nimbus verifies
 
 For each request token, Nimbus checks the signature against the provider's
-published keys, the issuer against your config, and — when `applicationID`
-is set — the audience. A request with no token runs your function with
-`getUserIdentity()` returning `null`; a request carrying an invalid or
-expired token is rejected with an authentication error before your function
-runs.
+published keys and the issuer against your config. When you set
+`applicationID`, Nimbus also checks the audience. A request without a token
+runs your function, and `getUserIdentity()` returns `null`. Nimbus rejects an
+invalid or expired token before your function runs.
 
 ## Next steps
 
-- [Compatibility reference](/reference/convex/compatibility/) — the full
+- [Compatibility reference](/reference/convex/compatibility/): the full
   authentication surface.
-- [Build with the Convex API](/developers/convex/) — functions, schema, and
+- [Build with the Convex API](/developers/convex/): functions, schema, and
   the dev loop.

@@ -8,7 +8,7 @@ sidebar:
 
 A runnable DynamoDB app that builds on Nimbus with the stock
 `@aws-sdk/client-dynamodb` client. The `@nimbus/dynamodb` helper supplies the
-endpoint, region, and credentials; everything else is the unchanged AWS SDK API.
+endpoint, region, and credentials. Everything else is the unchanged AWS SDK API.
 Read the [overview](/developers/dynamodb/) first if you have not pointed an AWS
 SDK at Nimbus yet.
 
@@ -22,13 +22,14 @@ in the source repository. Run it in place from a checkout.
 nimbus dev
 ```
 
-`nimbus dev` starts a local server with the DynamoDB listener on its own
-endpoint (`127.0.0.1:8000` by default) and, when it detects the AWS SDK
-dependency, writes the `NIMBUS_DYNAMODB_*` connection variables to
-`.env.local`. The access key id selects the Nimbus tenant. Then run the
-example app from its directory (see its README); it reads those variables
-and drives the DynamoDB endpoint directly — there is no Nimbus function
-bundle to deploy.
+`nimbus dev` starts a local server with the DynamoDB listener on a dedicated
+endpoint. The default is `127.0.0.1:8000`. When it detects the AWS SDK
+dependency, the command writes the `NIMBUS_DYNAMODB_*` connection variables to
+`.env.local`. The access key ID selects the Nimbus tenant.
+
+Then run the example app from its directory. Its README gives the command. The
+app reads those variables and drives the DynamoDB endpoint directly. It has no
+Nimbus function bundle to deploy.
 
 ## The app
 
@@ -39,15 +40,15 @@ table with a single string partition key, `id`, then drives the shared
 through standard AWS SDK commands:
 
 - `PutItem` creates an incomplete task with a stable id and creation time.
-- `Scan` reads every task; because a scan is unordered, the app sorts the
+- `Scan` reads every task. Because a scan is unordered, the app sorts the
   results client-side by `createdAt`, newest first.
 - `UpdateItem` toggles a task's `completed` flag.
 - `DeleteItem` removes a task.
 
 ## Live updates are polled
 
-DynamoDB has no live-query view on this surface, so the app cannot meet the
+DynamoDB has no live-query view on this surface. The app cannot meet the
 spec's no-polling subscription behavior. It satisfies the live-update flow by
-re-scanning `tasks` until a later read observes the change. This is polling, not
-a live subscription — the example records that gap directly rather than emulate
-one.
+re-scanning `tasks` until a later read observes the change. This is polling,
+not a live subscription. The example records that gap and does not emulate a
+subscription.

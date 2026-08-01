@@ -31,7 +31,7 @@ export const onMessageCreated = onDocumentCreated(
 
 ## Before you start
 
-- Install Nimbus — see the [developer quickstart](/get-started/quickstart/)
+- Install Nimbus. See the [developer quickstart](/get-started/quickstart/)
   for install options.
 - Install Node.js 22 or newer with `npm`. Cloud Functions code generation
   runs through the external Node toolchain.
@@ -47,11 +47,12 @@ cd my-functions-app
 nimbus dev
 ```
 
-`nimbus init cloud-functions` scaffolds a conventional Firebase layout:
-`firebase.json`, plus a `functions/` package with `package.json`,
-`tsconfig.json`, and a `src/index.ts` containing an `onRequest` handler and
-an `onDocumentCreated` trigger. `nimbus dev` finds the app root, runs
-codegen, and serves the local deployment, re-running codegen as you edit.
+`nimbus init cloud-functions` scaffolds a conventional Firebase layout. It
+creates `firebase.json` and a `functions/` package. The package contains
+`package.json`, `tsconfig.json`, and `src/index.ts`. The source file defines an
+`onRequest` handler and an `onDocumentCreated` trigger. `nimbus dev` finds the
+app root, runs codegen, and serves the local deployment. It runs codegen again
+when you edit the source.
 
 ## Bring an existing Firebase project
 
@@ -63,20 +64,20 @@ the project:
 nimbus dev
 ```
 
-`nimbus dev` walks up to the `firebase.json` root, detects the Cloud
-Functions app, runs codegen, and serves the local deployment — re-running
-codegen as you edit.
+`nimbus dev` walks up to the `firebase.json` root and detects the Cloud
+Functions app. It runs codegen and serves the local deployment. It runs
+codegen again when you edit the source.
 
-For an explicit or CI-shaped run without a dev session, generate artifacts
-and start the server from the project root, passing `--app-dir`
-explicitly (`nimbus start` does no source-tree discovery):
+For an explicit or CI-shaped run, generate artifacts from the project root.
+Then start the server with an explicit `--app-dir`. The `nimbus start`
+command does not discover the source tree:
 
 ```bash
 nimbus codegen
 nimbus start --app-dir .
 ```
 
-Test an HTTP handler — Firebase `onRequest` exports serve at
+Test an HTTP handler. Firebase `onRequest` exports serve at
 `/<exportName>` on the main server port (default `8080`):
 
 ```bash
@@ -93,7 +94,7 @@ Firestore document triggers run with:
 - **service-principal execution** (not the calling end-user principal)
 - **chain-depth limiting** so recursive write-back triggers stop at a
   configured depth instead of looping forever
-- **no-op suppression** — overwrites that change nothing do not emit
+- **no-op suppression**: overwrites that change nothing do not emit
   update events
 
 Write handlers to be idempotent: redelivery is possible by design.
@@ -111,11 +112,10 @@ Write handlers to be idempotent: redelivery is possible by design.
 ```
 
 Standalone Functions Framework packages must author
-`.nimbus/firebase/targets.json` themselves, because
-`functions.http(...)` and `functions.cloudEvent(...)` name targets without
-carrying binding metadata in source — see
-[Migrate Cloud Functions](/developers/cloud-functions/migrate/) for the
-file format.
+`.nimbus/firebase/targets.json`. The `functions.http(...)` and
+`functions.cloudEvent(...)` calls name targets without source binding
+metadata. See [Migrate Cloud Functions](/developers/cloud-functions/migrate/)
+for the file format.
 
 ## Deploy
 
@@ -129,9 +129,9 @@ environment variables. Omit `TARGET` to deploy to the running local server.
 
 ## Where next
 
-- [Example bundle](/developers/cloud-functions/examples/) — a runnable v2
+- [Example bundle](/developers/cloud-functions/examples/): a runnable v2
   bundle with a Firestore trigger and an HTTP handler.
-- [Migrate Cloud Functions](/developers/cloud-functions/migrate/) — the
+- [Migrate Cloud Functions](/developers/cloud-functions/migrate/): the
   step-by-step path for Firebase v2 and Functions Framework codebases.
 - [Cloud Functions compatibility](/reference/cloud-functions/compatibility/)
-  — the precise support matrix, option boundaries, and non-goals.
+  defines the precise support matrix, option boundaries, and non-goals.

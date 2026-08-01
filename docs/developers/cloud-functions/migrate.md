@@ -6,10 +6,10 @@ sidebar:
 ---
 
 Move Firebase Cloud Functions or standalone Functions Framework handlers
-onto Nimbus today. The goal is unchanged source imports for the covered
-surface — not a second Nimbus-specific handler API.
+onto Nimbus today. This migration keeps source imports unchanged for the
+covered surface. Nimbus does not add a second handler API.
 
-Two audiences are covered:
+This guide covers two audiences:
 
 1. Firebase v2 authors using `firebase-functions/v2/*`
 2. Standalone authors using `@google-cloud/functions-framework`
@@ -38,7 +38,7 @@ These imports stay unchanged for the covered surface:
 
 ## 2. Check your project layout
 
-**Firebase project** — the conventional layout is preserved, including
+**Firebase project:** Nimbus preserves the conventional layout, including
 `firebase.json` `functions.source` and multi-codebase layouts:
 
 ```text
@@ -122,10 +122,10 @@ up from the current directory, bounded by the nearest `.git`):
 nimbus dev
 ```
 
-For production-shaped startup, pass the app path explicitly — `nimbus
-start` does no walk-up. If the artifact contains `onRequest`, `onCall`, or
-Functions Framework HTTP targets, bind that deployment to an existing Nimbus
-tenant:
+For production-shaped startup, pass the app path explicitly. The `nimbus
+start` command does not walk up the directory tree. If the artifact contains
+`onRequest`, `onCall`, or Functions Framework HTTP targets, bind that
+deployment to an existing Nimbus tenant:
 
 ```bash
 NIMBUS_CLOUD_FUNCTIONS_TENANT=app-production nimbus start --app-dir .
@@ -139,9 +139,9 @@ NIMBUS_CLOUD_FUNCTIONS_TENANT=app-production \
 ```
 
 The binding is server configuration, not part of the request URL. It remains
-fixed when a new Cloud Functions artifact is deployed, so adding more tenants
+fixed when you deploy a new Cloud Functions artifact, so adding more tenants
 to the same Nimbus server cannot redirect an HTTP handler. Startup and deploy
-both refuse HTTP targets when the binding is missing. `nimbus dev` binds the
+both refuse HTTP targets when you omit the binding. `nimbus dev` binds the
 detected app to its auto-provisioned development tenant.
 
 ## 5. Know the HTTP path rules
@@ -152,8 +152,8 @@ detected app to its auto-provisioned development tenant.
 | Firebase `onRequest` | `/<exportName>` |
 | Firebase `onCall` | `/<exportName>` |
 
-For example, `export const hello = onRequest(...)` is served at `/hello` on
-the main server port.
+For example, Nimbus serves `export const hello = onRequest(...)` at `/hello`
+on the main server port.
 
 ## 6. Write for at-least-once delivery
 
@@ -162,8 +162,8 @@ journal-backed crash/restart replay, bounded retry, service-principal
 execution, and chain-depth limiting. Practically:
 
 - make handler code idempotent
-- expect follow-up writes to be retried
-- expect recursive trigger chains to be intentionally bounded
+- expect Nimbus to retry follow-up writes
+- expect Nimbus to bound recursive trigger chains
 
 ## 7. Stay inside the covered `firebase-admin` slice
 
@@ -176,8 +176,8 @@ The covered admin surface for handler bodies is:
 - `DocumentSnapshot.data()`, `get(fieldPath)`
 - covered `Timestamp` helpers
 
-Treat broader Admin SDK usage as unsupported rather than assuming parity —
-unsupported operations fail clearly instead of silently stubbing.
+Treat broader Admin SDK usage as unsupported. Unsupported operations fail
+clearly instead of returning silent stubs.
 
 ## 8. Respect the option boundaries
 
@@ -197,7 +197,7 @@ Fail-fast today:
 
 The covered callable slice includes the Firebase callable JSON envelope,
 default CORS behavior, `HttpsError` / `FunctionsErrorCode` mapping, and the
-unauthenticated baseline. App Check verification is deferred.
+unauthenticated baseline. Nimbus defers App Check verification.
 
 ## 9. Deploy
 
@@ -207,7 +207,7 @@ nimbus deploy <server-url> --token <deploy-token>
 
 ## Suggested order
 
-1. Confirm your app root is detected by running `nimbus codegen`.
+1. Run `nimbus codegen` and confirm that it detects your app root.
 2. Add `targets.json` for standalone Functions Framework targets if needed.
 3. Run `nimbus start --app-dir .` (or `nimbus dev`) and verify trigger and
    HTTP flows locally.

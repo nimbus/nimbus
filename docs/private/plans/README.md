@@ -39,6 +39,13 @@ bullet. Later phases should consume earlier seams instead of re-deriving them.
 
 ## Execution Order
 
+### Current Documentation Work
+
+- `developer-docs-technical-writing-plan.md` - `active`. Owns the controlled
+  writing pass for all 23 pages in `docs/developers/`, including source-map
+  claim preservation, documentation gates, and final conformance review. It
+  does not change product behavior or documentation structure.
+
 ### Phase 1 - Launch Safety And Egress Trust
 
 - `architecture-review-2026-07-plan.md` - `active`. Control plane for the

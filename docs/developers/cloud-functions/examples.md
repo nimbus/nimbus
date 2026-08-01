@@ -23,8 +23,8 @@ nimbus dev
 nimbus deploy [TARGET]
 ```
 
-Run from the example directory. `TARGET` is a URL or a configured target name;
-omit it to target your local server. Nimbus generates the functions bundle
+Run from the example directory. `TARGET` is a URL or a configured target name.
+Omit it to target your local server. Nimbus generates the functions bundle
 under `.nimbus/firebase/`.
 
 ## The app
@@ -32,8 +32,8 @@ under `.nimbus/firebase/`.
 **[Tasks](https://github.com/nimbus/nimbus/tree/main/examples/cloud-functions/tasks)**
 reacts to the shared `tasks` collection and exposes a plain HTTP handler:
 
-- `deriveTask` is an `onDocumentCreated` trigger. When a task document is
-  inserted, it writes a derived record to `taskDerivations`.
+- `deriveTask` is an `onDocumentCreated` trigger. When a client inserts a task
+  document, the trigger writes a derived record to `taskDerivations`.
 - `taskDetails` is an HTTP handler. It reads a task and its derived record by id
   and returns their current fields as JSON.
 
@@ -48,10 +48,10 @@ curl "http://localhost:8080/taskDetails?taskId=TASK_DOCUMENT_ID"
 Cloud Functions is handler code, not a task data client, so this surface
 implements the [tasks](https://github.com/nimbus/nimbus/blob/main/examples/specs/tasks.md)
 spec through a trigger rather than through create/read/update/delete calls. The
-observable behavior is a derived write that appears after a task is created, not
-a client subscription.
+observable behavior is a derived write that appears after a client creates a
+task. It is not a client subscription.
 
-Nimbus delivers Firestore triggers at least once, so the trigger is written to
-be idempotent: the derived document uses the source task's id as its own id and
-`set()` writes the complete value, so a retry overwrites the same document
-instead of duplicating it or double-counting.
+Nimbus delivers Firestore triggers at least once, so the trigger is
+idempotent. The derived document uses the source task's id as its own id.
+`set()` writes the complete value. A retry therefore overwrites the same
+document instead of duplicating it or double-counting.

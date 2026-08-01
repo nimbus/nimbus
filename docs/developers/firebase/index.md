@@ -6,12 +6,12 @@ sidebar:
   order: 1
 ---
 
-Nimbus speaks the Firestore wire protocol — REST, gRPC-Web, and a WebSocket
-`Listen` channel for live queries — and ships a first-party drop-in
-`firebase` package that mirrors the modular `firebase/app` and
-`firebase/firestore` API. Your imports, data model, query shapes, and
-helper names stay unchanged; the `nimbus` binary provisions the package
-locally and a `file:` dependency points `firebase` at it.
+Nimbus speaks the Firestore wire protocol through REST, gRPC-Web, and a
+WebSocket `Listen` channel for live queries. It ships a first-party drop-in
+`firebase` package. The package mirrors the modular `firebase/app` and
+`firebase/firestore` API. Your imports, data model, query shapes, and helper
+names stay unchanged. The `nimbus` binary provisions the package locally. A
+`file:` dependency points `firebase` at it.
 
 The supported client is the Nimbus-provisioned `firebase` package, not the
 registry-published Google package. The two share import paths and API
@@ -36,15 +36,15 @@ In your app directory, one command does the wiring:
 nimbus dev
 ```
 
-`nimbus dev` detects the `firebase` dependency in `package.json`, scans
-your sources to confirm every Firebase import is on the supported
-surface, and only then rewires the dependency at the drop-in package. If
-a file imports an uncovered surface (say `firebase/auth`), the scan
-refuses with the file, line, and import named — and your app is left
-untouched.
+`nimbus dev` detects the `firebase` dependency in `package.json`. It scans
+your sources to confirm that each Firebase import uses the supported surface.
+The command then rewires the dependency to the drop-in package. If a file
+imports an uncovered surface, such as `firebase/auth`, the scan refuses the
+change. The diagnostic names the file, line, and import. The command leaves
+your app untouched.
 
-To wire the dependency without a dev session — say, against a separate
-`nimbus start` server — provision it directly:
+To wire the dependency without a dev session, provision it directly. Use this
+method with a separate `nimbus start` server:
 
 ```bash
 # in your existing app directory
@@ -52,12 +52,12 @@ nimbus packages provision firebase
 npm install
 ```
 
-Either way, nothing is fetched from a registry: the package lands under
-`.nimbus/packages/firebase` in your app directory, and
-`dependencies.firebase` in your `package.json` is rewired to
-`file:./.nimbus/packages/firebase` — replacing a registry spec if one is
-there. Every stock `firebase/app` and `firebase/firestore` import then
-resolves to the provisioned package.
+Both methods use the package in the `nimbus` binary without registry access.
+Nimbus writes the package to `.nimbus/packages/firebase` in your app
+directory. It rewires `dependencies.firebase` in `package.json` to
+`file:./.nimbus/packages/firebase`. This value replaces an existing registry
+spec. Each stock `firebase/app` and `firebase/firestore` import then resolves
+to the provisioned package.
 
 ## 2. Initialize and connect
 
@@ -73,21 +73,21 @@ const db = getFirestore(app);
 connectFirestoreEmulator(db, "127.0.0.1", 3210);
 ```
 
-`connectFirestoreEmulator` redirects the SDK to a local host the same way it
-does against the Firebase emulator: it is host redirection, not Firebase
-Emulator Suite control-plane parity. Use the port your server listens on —
-`nimbus dev` serves on `3210`, `nimbus start` defaults to `8080`.
+`connectFirestoreEmulator` redirects the SDK to a local host as it does with
+the Firebase emulator. This is host redirection, not Firebase Emulator Suite
+control-plane parity. Use the port on which your server listens. `nimbus dev`
+serves on `3210`, and `nimbus start` defaults to `8080`.
 
 Two mapping rules matter here:
 
-- **Project is tenant.** The Firestore `projectId` maps directly to a Nimbus
-  tenant id. `nimbus dev` discovers your project id (from `.firebaserc`'s
-  default project, falling back to a `projectId` literal in your sources)
-  and creates the tenant automatically. On a self-hosted server the tenant
-  must exist — see the [self-host quickstart](/get-started/self-host/) for
-  creating one.
-- **Default database only.** Only the `(default)` Firestore database is
-  accepted; named databases are rejected.
+**Project is tenant.** The Firestore `projectId` maps directly to a Nimbus
+tenant id. `nimbus dev` first reads the default project from `.firebaserc`.
+Otherwise, it reads a `projectId` literal in your sources. It then creates the
+tenant automatically. On a self-hosted server, create the tenant first. See
+the [self-host quickstart](/get-started/self-host/) for instructions.
+
+**Default database only.** Nimbus accepts only the `(default)` Firestore
+database. It rejects named databases.
 
 ## 3. Write and read
 
@@ -130,8 +130,8 @@ Transport behavior is explicit rather than auto-negotiated:
   ```
 
 - `onSnapshot` listeners always use the binary-protobuf
-  [WebSocket Listen channel](/reference/firebase/websocket-listen/) — never
-  WebChannel and never long polling.
+  [WebSocket Listen channel](/reference/firebase/websocket-listen/). They
+  never use WebChannel or long polling.
 - In environments without a global `WebSocket`, pass an
   `experimentalWebSocketFactory` in the Firestore settings so listeners can
   open the watch connection.
@@ -155,13 +155,13 @@ covered, see the [compatibility matrix](/reference/firebase/compatibility/).
 
 ## Where next
 
-- [Example apps](/developers/firebase/examples/) — a browser playground and
+- [Example apps](/developers/firebase/examples/): a browser playground and
   the shared tasks list, built on stock Firestore imports.
-- [Migrate from Firebase](/developers/firebase/migrate/) — move an existing
+- [Migrate from Firebase](/developers/firebase/migrate/): move an existing
   Firestore app onto Nimbus step by step.
-- [Firestore compatibility](/reference/firebase/compatibility/) — the precise
+- [Firestore compatibility](/reference/firebase/compatibility/): the precise
   support matrix.
-- [Firebase auth](/reference/firebase/auth/) — how bearer tokens and emulator
+- [Firebase auth](/reference/firebase/auth/): how bearer tokens and emulator
   mock user tokens authenticate.
-- [WebSocket Listen](/reference/firebase/websocket-listen/) — the live-query
+- [WebSocket Listen](/reference/firebase/websocket-listen/): the live-query
   transport contract.
