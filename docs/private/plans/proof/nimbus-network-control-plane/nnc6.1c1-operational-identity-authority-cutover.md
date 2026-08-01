@@ -1,6 +1,6 @@
 # NNC6.1c1 Operational Identity And Authority Cutover
 
-Status: `acceptance frozen; exact fail-before captured; product implementation not started`
+Status: `complete; R1-R15 pass`
 
 Starting checkpoint: `a0a802ea796e48ffe5431c74d6d08e9c3716ea5c`
 
@@ -252,6 +252,7 @@ crates/nimbus-node/src/reconciler.rs
 crates/nimbus-node/src/status.rs
 crates/nimbus-node/src/systemd_transient.rs
 crates/nimbus-node/src/systemd_transient/zbus_client/mod.rs
+crates/nimbus-node/src/systemd_transient/zbus_client/properties.rs
 crates/nimbus-node/src/tests.rs
 crates/nimbus-node/tests/zbus_systemd_live.rs
 crates/nimbus-services/src/manager.rs
@@ -285,6 +286,14 @@ provider, or listener source. The node manifest may only delete `sha2`. The
 lockfile may change only if Cargo's resolved workspace metadata requires it.
 If the compiler requires another path, stop and amend this acceptance contract
 before editing it.
+
+The full item review found a missing R5 effect. Observed status retained a
+selector, but the systemd D-Bus property encoder did not materialize it.
+
+We made one post-freeze allowlist amendment:
+`crates/nimbus-node/src/systemd_transient/zbus_client/properties.rs`. This
+existing concept-owned encoder remains private to the node provider adapter.
+It introduces no new owner, dependency, or effect surface.
 
 ## Staged Implementation
 
@@ -362,21 +371,149 @@ Control modes remained exact:
 
 | Gate | Verifiable success criterion | State |
 | --- | --- | --- |
-| R1 | Dirty paths are a subset of the exact allowlist; the node manifest only drops `sha2`; no new dependency edge or network, compute, server, engine, sandbox, proxy, cluster, provider, or listener source change exists. | pending |
-| R2 | `TenantWorkloadGeneration` is absent from Rust source and public exports; affected admission, credential, egress, status, and evidence values use `WorkloadGeneration`. | pending |
-| R3 | `TenantWorkloadId` is absent from Rust source and public exports; direct process, systemd, node reconcile, Machine API tests, and live systemd tests use fields, accessors, and values typed as `WorkloadExecutionId`. | pending |
-| R4 | Operational ID tests prove same-input stability and changed UID/node/generation separation; missing assignment and wrong-agent-node cases deny before backend or status effects. | pending |
-| R5 | Systemd names use the full validated `wex_` ID and `NIMBUS_WORKLOAD_EXECUTION_ID`; direct/systemd happy, stop, inspect, absent, error, external-restart-denial, and proof-collector behavior passes. | pending |
-| R6 | `DesiredWorkloadStore`, `InMemoryDesiredWorkloadStore`, `DesiredWorkloadSnapshot`, `WorkloadController`, all three services upserts, the manager field, and snapshot API are absent without replacement authority or compatibility code. | pending |
-| R7 | CLI boot planning owns only an ordered `Vec<DesiredWorkload>`; exact compose order and one-to-one placement alignment pass without test-side sorting. | pending |
-| R8 | Service start/stop and sandbox create/stop/cleanup tests continue to prove actual handles, effects, observations, idempotency, and error behavior without asserting local desired-state persistence. System status records exact derived `executionId` and lossless decimal `observedGeneration`. | pending |
-| R9 | Product `WorkloadSagaStore` implementations and production `WorkloadSagaCoordinator` constructions remain exactly zero; NNCV027 implementation mode has only its two later-owned failures. | pending |
-| R10 | `cutover` mode records exact fail-before `0/12` and final `1/0`; decision mode is updated to the post-cutover census and passes. | pending |
-| R11 | Full `nimbus-workloads`, `nimbus-node`, `nimbus-services`, `nimbus-cli`, and `nimbus-system` affected suites pass with exact test and skip counts recorded. | pending |
-| R12 | All-target/all-feature checks, strict Clippy, and warning-denied rustdoc pass for all five affected crates. | pending |
-| R13 | Cargo metadata remains acyclic; `nimbus-network` has exactly `nimbus-core`; workloads and compute forbidden edges remain absent; portable effect scans remain empty. | pending |
-| R14 | Live network verifier, script syntax/ShellCheck, format/diff, technical-writing lint, docs, and site gates pass with exact counts. | pending |
-| R15 | After R1-R14 are green, exactly one full GPT-5.6 Sol/xhigh/fast review is dispositioned. Only a materially accepted executable defect permits one narrow correction review. | pending |
+| R1 | Dirty paths are a subset of the exact allowlist; the node manifest only drops `sha2`; no new dependency edge or network, compute, server, engine, sandbox, proxy, cluster, provider, or listener source change exists. | pass |
+| R2 | `TenantWorkloadGeneration` is absent from Rust source and public exports; affected admission, credential, egress, status, and evidence values use `WorkloadGeneration`. | pass |
+| R3 | `TenantWorkloadId` is absent from Rust source and public exports; direct process, systemd, node reconcile, Machine API tests, and live systemd tests use fields, accessors, and values typed as `WorkloadExecutionId`. | pass |
+| R4 | Operational ID tests prove same-input stability and changed UID/node/generation separation; missing assignment and wrong-agent-node cases deny before backend or status effects. | pass |
+| R5 | Systemd names use the full validated `wex_` ID and `NIMBUS_WORKLOAD_EXECUTION_ID`; direct/systemd happy, stop, inspect, absent, error, external-restart-denial, and proof-collector behavior passes. | pass |
+| R6 | `DesiredWorkloadStore`, `InMemoryDesiredWorkloadStore`, `DesiredWorkloadSnapshot`, `WorkloadController`, all three services upserts, the manager field, and snapshot API are absent without replacement authority or compatibility code. | pass |
+| R7 | CLI boot planning owns only an ordered `Vec<DesiredWorkload>`; exact compose order and one-to-one placement alignment pass without test-side sorting. | pass |
+| R8 | Service start/stop and sandbox create/stop/cleanup tests continue to prove actual handles, effects, observations, idempotency, and error behavior without asserting local desired-state persistence. System status records exact derived `executionId` and lossless decimal `observedGeneration`. | pass |
+| R9 | Product `WorkloadSagaStore` implementations and production `WorkloadSagaCoordinator` constructions remain exactly zero; NNCV027 implementation mode has only its two later-owned failures. | pass |
+| R10 | `cutover` mode records exact fail-before `0/12` and final `1/0`; decision mode is updated to the post-cutover census and passes. | pass |
+| R11 | Full `nimbus-workloads`, `nimbus-node`, `nimbus-services`, `nimbus-cli`, and `nimbus-system` affected suites pass with exact test and skip counts recorded. | pass |
+| R12 | All-target/all-feature checks, strict Clippy, and warning-denied rustdoc pass for all five affected crates. | pass |
+| R13 | Cargo metadata remains acyclic; `nimbus-network` has exactly `nimbus-core`; workloads and compute forbidden edges remain absent; portable effect scans remain empty. | pass |
+| R14 | Live network verifier, script syntax/ShellCheck, format/diff, technical-writing lint, docs, and site gates pass with exact counts. | pass |
+| R15 | After R1-R14 are green, exactly one full GPT-5.6 Sol/xhigh/fast review is dispositioned. Only a materially accepted executable defect permits one narrow correction review. | pass |
+
+## Initial Candidate-Freeze Verification
+
+The initial complete item was frozen above fail-before commit
+`85e1b4a8b25da13456ae7e34938030a4168fcc33`. The source and behavior audit
+found no unresolved item-owned defect before structured review. The full
+review later invalidated the initial R5 and R8 proof claims. This table records
+the evidence that admitted the item to review. It is not the final correction
+evidence.
+
+| Gate | Exact result |
+| --- | --- |
+| Owned-path and manifest audit | `37` implementation and recovery paths before proof and routing closeout, all in the frozen allowlist. `nimbus-node` only drops `sha2`; `Cargo.lock` drops that one resolved entry. No forbidden owner source changed. |
+| Legacy authority census | `TenantWorkloadGeneration`, `TenantWorkloadId`, `DesiredWorkloadStore`, `InMemoryDesiredWorkloadStore`, `DesiredWorkloadSnapshot`, and `WorkloadController` have zero Rust-source matches. Services desired-state fields, readers, and writes are zero. |
+| NNCV027 cutover | Historical fail-before `0 passed, 12 failed`; candidate `1 passed, 0 failed`. |
+| NNCV027 decision | `1 passed, 0 failed`; census `8/0/0/0/52/0` for reverse dependencies, old-store implementations, product in-memory authorities, production upserts, manager constructors, and recovery readers. |
+| NNCV027 implementation | Expected red `0 passed, 2 failed`. Only the NNC6.1d server adapter and NNC6.1e lazy-activation gaps remain. |
+| Product saga authority | Product `WorkloadSagaStore` implementations `0`; production `WorkloadSagaCoordinator` constructions `0`. Test-only implementations and constructions remain in their conformance suites. |
+| `nimbus-workloads` | `66 passed, 0 failed, 0 skipped`. |
+| `nimbus-node` | `50 passed, 0 failed, 0 skipped`. |
+| `nimbus-services` | `93 passed, 0 failed, 1 configured skip`. |
+| `nimbus-cli` | `938 passed, 0 failed, 1 configured skip`. |
+| `nimbus-system` | `72 passed, 0 failed, 0 skipped` with `NIMBUS_DISABLE_IMPLICIT_EXTERNAL_PROVIDER_FIXTURES=1`. This selects the hermetic lane; three local external-provider fixtures are not claimed. |
+| Affected build gates | All-target/all-feature check and strict Clippy pass for all five crates. Clippy used `-D warnings`; only inherited vendored Brotli diagnostics appeared. Warning-denied rustdoc passes for all five crates with the same inherited vendored diagnostics. |
+| Dependency and effect gates | Cargo metadata is acyclic. `nimbus-network` has exactly `nimbus-core`. Workloads/compute forbidden edges and portable effect scans remain empty. The compute-node source contract passes. |
+| Operational proof helpers | Bootc promotion and Machine service helpers pass. They require the `nimbus-wex_` unit, `NIMBUS_WORKLOAD_EXECUTION_ID`, and decimal-string observed generation. The bootc helper also rejects numeric generation evidence. |
+| Shared NSR verifier | Item-owned condition 5 and proof-collector condition 11c pass. The historical aggregate remains expected red at `9/21` because unrelated archived or absent roadmap inputs remain outside this item. |
+| Network verifier | Live verifier `27 passed, 0 failed`; full fail-closed mutation self-test `188 passed, 0 failed`. |
+| Repository hygiene | Bash syntax and ShellCheck pass for every changed shell script. `cargo fmt --all --check` and `git diff --check` pass. |
+| Documentation | Technical-writing lint passes on this item proof with `0` diagnostics. Docs pass `108` pages; site verification passes `17/17`. |
+
+The named behavior proofs are:
+
+- `stable_ids_are_deterministic_domain_separated_and_length_framed` and
+  `execution_id_requires_an_admitted_node_assignment` for canonical identity.
+- `node_agent_rejects_missing_or_crossed_assignment_before_backend_or_status_effects`
+  for the two pre-effect node fences.
+- `direct_process_backend_starts_inspects_and_stops_workloads`,
+  `backend_calls_start_transient_unit_and_maps_stop_inspect_status`, and
+  `systemd_reconciler_uses_transient_units_and_trusted_execstart` for lifecycle
+  substitution and observation.
+- `start_builds_ordered_desired_intents_for_compose_services` and
+  `compose_overrides_deduplicate_desired_intents_in_stable_order` for exact
+  intent and placement order.
+- `ensure_service_binding_async_starts_declared_image_service_once`,
+  `stop_service_for_context_async_stops_active_handle_and_clears_snapshot`,
+  `create_sandbox_resource_stops_backend_after_post_start_validation_errors`,
+  and `retained_stopping_standalone_sandbox_explicit_stop_converges_once` for
+  retained service and sandbox effects without false desired-state evidence.
+- `workload_status_projection_requires_system_or_operator_authority` for exact
+  execution ID and lossless `u64::MAX` observed generation.
+
+## Full Review And Accepted Corrections
+
+The sole full item review used GPT-5.6 Sol with xhigh reasoning and fast mode.
+It ran only after R1-R14 were green. Review thread
+`019fbeea-ce92-7a43-8717-7f7f1d12d63c` returned two P2 findings and assessed
+the candidate as incorrect at confidence `0.95`. We accepted both findings
+because source inspection and exact fail-before tests reproduced them.
+
+| Finding | Disposition and fail-before | Correction |
+| --- | --- | --- |
+| The node status advertised `NIMBUS_WORKLOAD_EXECUTION_ID` as a selector, but the transient unit did not emit that field and the collector's default journal format could not preserve it. | Accepted. Adding the required assertion to `start_transient_unit_request_uses_trusted_exec_and_allowlisted_properties` produced exact red `0 passed, 1 failed`, exit `100`: `the execution-id selector must be materialized as unit journal metadata`. | Both production and integration transient-unit requests carry one exact `LogExtraFields` value. The private zbus encoder emits systemd's `aay` shape with exact `FIELD=value` bytes. The collector uses journal export output and includes `NIMBUS_WORKLOAD_EXECUTION_ID`, `_SYSTEMD_UNIT`, and `MESSAGE`. |
+| The promotion gate checked independent prefixes and accepted node status from execution A with unit, cgroup, or journal evidence from execution B. | Accepted. A fixture that changed only the journal execution ID still passed the old gate, so the negative helper exited `1` with `expected promotion gate to reject mismatched workload execution identity`. | The gate derives canonical IDs from node status and accepts exactly one ID that matches the status unit and selector, unit list, unit `Id`, cgroup, journal unit header, and structured journal field. The helper retains the crossed-ID negative case. |
+
+The systemd source contract defines `LogExtraFields` as an array of byte arrays
+(`aay`). Each entry is one journal `FIELD=value`, and systemd validates the
+field name and UTF-8 value. The exact-source harness used the
+repository-resolved `zbus 5.15.0`. It compiled this item's private encoder and
+passed `2/2`, including the `aay` signature and exact execution-ID bytes.
+
+This proof records two macOS-to-Linux cross-check attempts as unavailable
+evidence, not passes. The first stopped in native dependencies because the initial Zig
+wrapper received an incompatible duplicate target. The corrected wrapper
+advanced through the native build and then stopped in third-party
+`libnghttp2` bindgen because the host has no Linux C sysroot. Neither failure
+reached or diagnosed Nimbus source. The exact-source harness closes the
+portable encoding proof. The existing Ubuntu live-systemd CI lane remains the
+real-daemon authority.
+
+## Correction-Candidate Verification
+
+| Gate | Exact result |
+| --- | --- |
+| Accepted finding fail-before | Journal materialization `0/1`, exit `100`; crossed-artifact promotion helper rejected the old gate with exit `1`. |
+| Exact private encoder source | Temporary harness against resolved `zbus 5.15.0`: `2 passed, 0 failed`; exact `aay` signature and bytes. |
+| `nimbus-node` | `50 passed, 0 failed, 0 skipped` with all features. |
+| Node quality gates | All-target/all-feature check, strict Clippy, and warning-denied rustdoc pass. Only inherited vendored Brotli diagnostics appear. |
+| Operational proof helpers | Bootc promotion helper and Machine service proof helper pass. The former rejects crossed execution identity across JSONL records, systemd blocks, and journal records, plus numeric generation. The latter proves export-format journal collection. |
+| Static script gates | Bash syntax and ShellCheck pass for all six changed shell scripts. The node D-Bus verifier's item-relevant NDB1-NDB6 conditions pass; its aggregate remains expected red at `6/10` because four missing archived-plan/doc inputs are outside this owner. |
+| NNCV027 | Cutover `1/0`; decision `1/0` at census `8/0/0/0/52/0`; implementation remains exact expected red `0/2`. |
+| Network and NSR verifiers | Live network verifier `27/27`. Item-owned NSR condition 5 and proof-collector condition 11c pass; the unrelated aggregate remains expected red at `9/21`. |
+| Repository hygiene | `cargo fmt --all --check`, staged diff checks, proof writing lint, docs `108`, and site `17/17` pass. |
+
+### Narrow Correction Review
+
+The one permitted narrow review used GPT-5.6 Sol with xhigh reasoning and fast
+mode. It confirmed the systemd `LogExtraFields` encoding and export collection,
+then found one P2 at confidence `0.97`. The overall correction confidence was
+`0.96`. We accepted the finding because the proof gate still used whole-file
+greps after it selected an execution-ID candidate.
+
+The exact fail-before fixture split unit A and selector A across two different
+JSONL records. The old gate stitched those records into one match, so the
+helper exited `1` with:
+
+```text
+expected promotion gate to reject cross-record workload execution identity stitching
+```
+
+The corrected gate now keeps every relationship inside its evidence record:
+
+- One node-status JSONL record must contain the exact unit, cgroup, systemd
+  selector, and execution-ID selector.
+- One systemd unit-list record must start with the exact unit.
+- One `# unit` block must contain both the exact `Id` and cgroup.
+- One journal export record under the exact unit block must contain both
+  `_SYSTEMD_UNIT=<unit>` and `NIMBUS_WORKLOAD_EXECUTION_ID=<id>`.
+
+Three negative fixtures cross identity across node-status records, systemd
+blocks, and journal records. The corrected Bootc helper rejects all three and
+accepts the complete evidence bundle. The Machine helper also proves the exact
+exported unit, execution ID, and message fields. Bash syntax and ShellCheck
+pass for every correction script.
+
+This was the sole narrow review. We corrected the accepted executable finding
+and reran its affected proofs. The item cadence forbids a third structured
+review, and no third review ran.
 
 ## Required Verification
 

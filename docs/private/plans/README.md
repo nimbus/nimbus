@@ -74,8 +74,14 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC6.1c complete; NNC6.1c1
-  in progress`. The Linux sovereignty tripwire is complete with a root-safe,
+- `nimbus-network-control-plane-plan.md` - `active; NNC6.1c1 complete; NNC6.1d
+  in progress`. Workloads-owned execution identity and generation now reach
+  operational node paths, false in-memory desired-state authorities are
+  deleted, and status, systemd, cgroup, and exported journal evidence
+  correlate one exact identity without cross-record stitching. The sole full
+  review's two P2s and sole narrow review's one P2 are corrected and proven;
+  no third review ran. The Linux sovereignty tripwire is
+  complete with a root-safe,
   raw-artifact-derived evidence contract, 70/70 deterministic tests, 62/62
   adversarial verifier cases, fully dispositioned full+narrow Sol reviews, and
   two source-matched LinuxKit PASS runs whose ordered pair proves fresh-process
@@ -256,15 +262,16 @@ extension-registry seam before the second concern edits `extensions.rs`.
   correction review found one P2: the cardinality scan accepted non-struct
   duplicate owners. The corrected scan covers struct, enum, union, trait, and
   type declarations, and independent struct and enum mutations fail closed.
-  No third review ran. NNC6.1c is committed at `a0a802ea7`. NNC6.1c1's
-  read-only audit has frozen its exact path allowlist and R1-R15 in
+  No third review ran. NNC6.1c is committed at `a0a802ea7`. NNC6.1c1 has
+  completed implementation and R1-R14 against the exact path allowlist in
   `proof/nimbus-network-control-plane/nnc6.1c1-operational-identity-authority-cutover.md`.
-  It will replace the parallel node identity/generation with the workloads-owned
-  execution seam, fence crossed node assignments before effects, preserve
-  lossless observed execution evidence, delete both false in-memory authorities
-  and all three services writes, and reduce the standalone implementation gaps
-  from three to exactly the two later owners. The current checkpoint remains
-  docs-only; its exact `0/12` fail-before precedes product edits. NNC6.1d retains
+  Workloads-owned execution identity and generation now drive node lifecycle.
+  Crossed or missing node assignments fail before effects. Observed generation
+  is lossless. Both false in-memory authorities and all three services writes
+  are deleted, and the standalone implementation contract has exactly the two
+  later-owned gaps. Affected suites pass `66/50/93/938/72`, the live verifier is
+  `27/27`, and its fail-closed self-test is `188/188`. The sole full
+  Sol/xhigh/fast item review is the remaining gate. NNC6.1d retains
   the durable server adapter and first required workload-capable compute
   injection, so no temporary no-op or production in-memory store exists.
   Cleanup, release, finalization, and reuse stay in NNC8.3. Machine forwarding obeys

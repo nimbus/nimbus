@@ -7,11 +7,9 @@ use nimbus_tenant::{
     TenantIsolationContext, TenantIsolationDecision, TenantIsolationPolicyInput,
     TenantServiceGrantPolicyDecision, WorkloadAttributes,
 };
+use nimbus_workloads::LocalEnforcementBinding;
 #[cfg(test)]
 use nimbus_workloads::TenantEgressReloadRequest;
-use nimbus_workloads::{
-    DesiredWorkload, DesiredWorkloadState, DesiredWorkloadStore, LocalEnforcementBinding,
-};
 use tokio::time::sleep;
 
 use super::ServiceManager;
@@ -114,11 +112,6 @@ impl ServiceManager {
         let binding = LocalEnforcementBinding::from_decision(decision)?;
         binding.service_access(service_name)?;
         let key = TenantServiceKey::new(tenant_id, service_name);
-        self.record_desired_service_workload(
-            tenant_id,
-            service_name,
-            DesiredWorkloadState::Running,
-        )?;
         if let Some(handle) = self.refresh_handle_async(&key).await?
             && !matches!(
                 handle.status,
@@ -172,11 +165,6 @@ impl ServiceManager {
         let binding = LocalEnforcementBinding::from_decision(decision)?;
         binding.service_access(service_name)?;
         let key = TenantServiceKey::new(tenant_id, service_name);
-        self.record_desired_service_workload(
-            tenant_id,
-            service_name,
-            DesiredWorkloadState::Stopped,
-        )?;
         let previous_handle = self.current_handle(&key);
         let refreshed_inspection = self.refresh_inspection_async(&key).await?;
         let cleanup_is_final = refreshed_inspection
@@ -285,25 +273,5 @@ impl ServiceManager {
                 .with_services(TenantServiceGrantPolicyDecision::new([service_name]))
                 .with_image(self.manager_image_policy()),
         )
-    }
-
-    fn record_desired_service_workload(
-        &self,
-        tenant_id: &TenantId,
-        service_name: &str,
-        desired_state: DesiredWorkloadState,
-    ) -> Result<(), Error> {
-        let generation = self
-            .service_definition_for_tenant(tenant_id, service_name)
-            .map(|definition| definition.generation)
-            .unwrap_or(1);
-        let desired =
-            DesiredWorkload::service(tenant_id.clone(), service_name, desired_state, generation)?;
-        self.state
-            .lock()
-            .expect("manager lock should not be poisoned")
-            .desired_workloads
-            .upsert_desired_workload(desired);
-        Ok(())
     }
 }

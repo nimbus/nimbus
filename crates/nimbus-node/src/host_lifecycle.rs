@@ -4,12 +4,11 @@ use std::pin::Pin;
 
 use nimbus_core::{Error, Result, non_empty};
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 
 use super::{
     LocalEnforcementBinding, NodeStatusAuthorizer, TenantWorkloadCondition,
     TenantWorkloadConditionStatus, TenantWorkloadConditionType, TenantWorkloadPhase,
-    TenantWorkloadSpec, TenantWorkloadStatus, TenantWorkloadStatusPatch,
+    TenantWorkloadSpec, TenantWorkloadStatus, TenantWorkloadStatusPatch, WorkloadExecutionId,
 };
 
 pub type HostLifecycleFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>>;
@@ -28,44 +27,13 @@ pub trait HostLifecycleBackend: Send + Sync + 'static {
 
     fn stop<'a>(
         &'a self,
-        workload_id: TenantWorkloadId,
+        execution_id: WorkloadExecutionId,
     ) -> HostLifecycleFuture<'a, HostLifecycleStatus>;
 
     fn inspect<'a>(
         &'a self,
-        workload_id: TenantWorkloadId,
+        execution_id: WorkloadExecutionId,
     ) -> HostLifecycleFuture<'a, HostLifecycleStatus>;
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
-pub struct TenantWorkloadId(String);
-
-impl TenantWorkloadId {
-    pub fn from_spec(spec: &TenantWorkloadSpec) -> Self {
-        let mut digest = Sha256::new();
-        digest.update(spec.workload_uid().as_str().as_bytes());
-        digest.update(b"\0");
-        digest.update(spec.decision_id().as_str().as_bytes());
-        Self(format!("tw_{:x}", digest.finalize()))
-    }
-
-    /// Build a workload id from a raw string for NDB5's live integration
-    /// tests, which need a unique id without a full `TenantWorkloadSpec`.
-    #[cfg(feature = "systemd-dbus-integration-tests")]
-    pub fn for_integration_test(value: impl Into<String>) -> Self {
-        Self(value.into())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    fn unit_component(&self) -> String {
-        sanitize_unit_component(self.as_str())
-            .chars()
-            .take(48)
-            .collect()
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -88,9 +56,15 @@ impl SystemdUnitKind {
 pub struct SystemdUnitName(String);
 
 impl SystemdUnitName {
-    pub fn for_workload(workload_id: &TenantWorkloadId, kind: SystemdUnitKind) -> Result<Self> {
-        let component = workload_id.unit_component();
-        Self::new(format!("nimbus-{component}.{}", kind.extension()))
+    pub fn for_execution(
+        execution_id: &WorkloadExecutionId,
+        kind: SystemdUnitKind,
+    ) -> Result<Self> {
+        Self::new(format!(
+            "nimbus-{}.{}",
+            execution_id.as_str(),
+            kind.extension()
+        ))
     }
 
     pub fn new(value: impl Into<String>) -> Result<Self> {
@@ -531,7 +505,7 @@ impl HostLifecycleRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostLifecyclePlan {
-    workload_id: TenantWorkloadId,
+    execution_id: WorkloadExecutionId,
     spec: TenantWorkloadSpec,
     backend: HostLifecycleBackendKind,
     unit_name: SystemdUnitName,
@@ -547,10 +521,10 @@ impl HostLifecyclePlan {
         request: HostLifecycleRequest,
     ) -> Result<Self> {
         let spec = binding.spec().clone();
-        let workload_id = TenantWorkloadId::from_spec(&spec);
-        let unit_name = SystemdUnitName::for_workload(&workload_id, SystemdUnitKind::Service)?;
+        let execution_id = spec.execution_id()?;
+        let unit_name = SystemdUnitName::for_execution(&execution_id, SystemdUnitKind::Service)?;
         Ok(Self {
-            workload_id,
+            execution_id,
             spec,
             backend: request.backend,
             unit_name,
@@ -561,8 +535,8 @@ impl HostLifecyclePlan {
         })
     }
 
-    pub fn workload_id(&self) -> &TenantWorkloadId {
-        &self.workload_id
+    pub fn execution_id(&self) -> &WorkloadExecutionId {
+        &self.execution_id
     }
 
     pub fn spec(&self) -> &TenantWorkloadSpec {
@@ -698,7 +672,7 @@ pub enum HostLifecycleStatusReason {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct HostLifecycleStatus {
-    workload_id: TenantWorkloadId,
+    execution_id: WorkloadExecutionId,
     unit_name: SystemdUnitName,
     phase: TenantWorkloadPhase,
     reason: HostLifecycleStatusReason,
@@ -708,7 +682,7 @@ pub struct HostLifecycleStatus {
 
 impl HostLifecycleStatus {
     pub(crate) fn new_for_backend(
-        workload_id: TenantWorkloadId,
+        execution_id: WorkloadExecutionId,
         unit_name: SystemdUnitName,
         phase: TenantWorkloadPhase,
         reason: HostLifecycleStatusReason,
@@ -716,7 +690,7 @@ impl HostLifecycleStatus {
         lifecycle_evidence: TenantWorkloadLifecycleEvidence,
     ) -> Self {
         Self {
-            workload_id,
+            execution_id,
             unit_name,
             phase,
             reason,
@@ -766,7 +740,7 @@ impl HostLifecycleStatus {
         let lifecycle_evidence =
             TenantWorkloadLifecycleEvidence::from_plan(plan, reason).with_message(message.clone());
         Self {
-            workload_id: plan.workload_id.clone(),
+            execution_id: plan.execution_id.clone(),
             unit_name: plan.unit_name.clone(),
             phase,
             reason,
@@ -801,8 +775,8 @@ impl HostLifecycleStatus {
         NodeStatusAuthorizer.authorize(plan.spec(), patch)
     }
 
-    pub fn workload_id(&self) -> &TenantWorkloadId {
-        &self.workload_id
+    pub fn execution_id(&self) -> &WorkloadExecutionId {
+        &self.execution_id
     }
 
     pub fn unit_name(&self) -> &SystemdUnitName {
@@ -918,34 +892,6 @@ fn high_cardinality_evidence_value(value: impl Into<String>, field: &str) -> Res
     Ok(value)
 }
 
-fn sanitize_unit_component(raw: &str) -> String {
-    let mut previous_dash = false;
-    let mut sanitized = String::new();
-    for byte in raw.bytes() {
-        let ch = byte as char;
-        let next = if ch.is_ascii_alphanumeric() || ch == '_' {
-            ch.to_ascii_lowercase()
-        } else {
-            '-'
-        };
-        if next == '-' {
-            if !previous_dash {
-                sanitized.push(next);
-            }
-            previous_dash = true;
-        } else {
-            sanitized.push(next);
-            previous_dash = false;
-        }
-    }
-    let sanitized = sanitized.trim_matches('-').to_string();
-    if sanitized.is_empty() {
-        "workload".to_string()
-    } else {
-        sanitized
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -957,7 +903,7 @@ mod tests {
 
     #[derive(Default, Clone)]
     struct FakeHostLifecycleBackend {
-        statuses: Arc<Mutex<BTreeMap<TenantWorkloadId, HostLifecycleStatus>>>,
+        statuses: Arc<Mutex<BTreeMap<WorkloadExecutionId, HostLifecycleStatus>>>,
     }
 
     impl HostLifecycleBackend for FakeHostLifecycleBackend {
@@ -982,28 +928,28 @@ mod tests {
                 statuses
                     .lock()
                     .expect("fake backend lock should not be poisoned")
-                    .insert(plan.workload_id().clone(), status.clone());
+                    .insert(plan.execution_id().clone(), status.clone());
                 status.to_workload_status(&plan)
             })
         }
 
         fn stop<'a>(
             &'a self,
-            workload_id: TenantWorkloadId,
+            execution_id: WorkloadExecutionId,
         ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
             let statuses = Arc::clone(&self.statuses);
             Box::pin(async move {
                 let mut statuses = statuses
                     .lock()
                     .expect("fake backend lock should not be poisoned");
-                let previous = statuses.get(&workload_id).cloned().ok_or_else(|| {
+                let previous = statuses.get(&execution_id).cloned().ok_or_else(|| {
                     Error::NotFound(format!(
                         "fake lifecycle backend has no workload {}",
-                        workload_id.as_str()
+                        execution_id.as_str()
                     ))
                 })?;
                 let stopped = HostLifecycleStatus {
-                    workload_id: workload_id.clone(),
+                    execution_id: execution_id.clone(),
                     unit_name: previous.unit_name().clone(),
                     phase: TenantWorkloadPhase::Deleting,
                     reason: HostLifecycleStatusReason::Stopped,
@@ -1015,26 +961,26 @@ mod tests {
                     )
                     .with_message(Some("fake backend stopped workload".to_string())),
                 };
-                statuses.insert(workload_id, stopped.clone());
+                statuses.insert(execution_id, stopped.clone());
                 Ok(stopped)
             })
         }
 
         fn inspect<'a>(
             &'a self,
-            workload_id: TenantWorkloadId,
+            execution_id: WorkloadExecutionId,
         ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
             let statuses = Arc::clone(&self.statuses);
             Box::pin(async move {
                 statuses
                     .lock()
                     .expect("fake backend lock should not be poisoned")
-                    .get(&workload_id)
+                    .get(&execution_id)
                     .cloned()
                     .ok_or_else(|| {
                         Error::NotFound(format!(
                             "fake lifecycle backend has no workload {}",
-                            workload_id.as_str()
+                            execution_id.as_str()
                         ))
                     })
             })
@@ -1077,28 +1023,21 @@ mod tests {
             "/usr/libexec/nimbus/workload-launcher"
         );
         assert_eq!(plan.args(), &["--tenant-workload".to_string()]);
-        assert!(
-            plan.unit_name().as_str().starts_with("nimbus-tw_"),
-            "unit name should derive from workload ID, not raw tenant input"
+        let expected_execution_id = binding
+            .spec()
+            .execution_id()
+            .expect("assigned workload should have an execution id");
+        assert_eq!(plan.execution_id(), &expected_execution_id);
+        assert_eq!(
+            plan.unit_name().as_str(),
+            format!("nimbus-{}.service", expected_execution_id.as_str())
         );
-        assert!(plan.unit_name().as_str().ends_with(".service"));
         assert_eq!(plan.properties().properties().len(), 3);
         assert_eq!(plan.properties().properties()[0].name(), "Description");
     }
 
     #[test]
-    fn systemd_unit_names_are_sanitized_and_reject_raw_escape_shapes() {
-        let malicious = sanitize_unit_component("Tenant A/../../bad; unit\nname");
-        assert!(!malicious.contains('/'));
-        assert!(!malicious.contains(';'));
-        assert!(!malicious.contains(".."));
-        assert!(!malicious.contains(char::is_whitespace));
-
-        let workload_id = TenantWorkloadId("tw_Tenant A/../../bad; unit\nname".to_string());
-        let unit = SystemdUnitName::for_workload(&workload_id, SystemdUnitKind::Service)
-            .expect("derived unit name should sanitize");
-        assert_eq!(unit.as_str(), "nimbus-tw_tenant-a-bad-unit-name.service");
-
+    fn systemd_unit_names_reject_raw_escape_shapes() {
         assert!(SystemdUnitName::new("nimbus/escape.service").is_err());
         assert!(SystemdUnitName::new("nimbus bad.service").is_err());
         assert!(SystemdUnitName::new("nimbus..bad.service").is_err());
@@ -1307,7 +1246,7 @@ mod tests {
         let plan = backend
             .validate(&binding, request())
             .expect("fake backend should validate admitted binding");
-        let workload_id = plan.workload_id().clone();
+        let execution_id = plan.execution_id().clone();
 
         let started = backend
             .start(plan)
@@ -1316,19 +1255,19 @@ mod tests {
         assert_eq!(started.phase(), TenantWorkloadPhase::Running);
 
         let inspected = backend
-            .inspect(workload_id.clone())
+            .inspect(execution_id.clone())
             .await
             .expect("fake backend should track started workload");
         assert_eq!(inspected.reason(), HostLifecycleStatusReason::Running);
 
         let stopped = backend
-            .stop(workload_id.clone())
+            .stop(execution_id.clone())
             .await
             .expect("fake backend should stop tracked workload");
         assert_eq!(stopped.reason(), HostLifecycleStatusReason::Stopped);
 
         let inspected = backend
-            .inspect(workload_id)
+            .inspect(execution_id)
             .await
             .expect("fake backend should update stopped state");
         assert_eq!(inspected.reason(), HostLifecycleStatusReason::Stopped);

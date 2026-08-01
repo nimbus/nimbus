@@ -9,7 +9,7 @@
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "${REPO_ROOT}"
+cd "${REPO_ROOT}" || exit 1
 
 PLAN_ACTIVE="docs/private/plans/service-sandbox-node-reconciliation-plan.md"
 PLAN_ARCHIVE="docs/private/plans/archive/service-sandbox-node-reconciliation-plan.md"
@@ -76,6 +76,8 @@ machine_api_direct_container_lifecycle_leaks() {
 
 # --- 1. NSR0 control-plane registration --------------------------------------
 C="1. NSR0 control plane, proof bundle, and verifier are registered"
+# `/goal` is a literal documentation anchor.
+# shellcheck disable=SC2016
 if [[ -f "${PLAN}" ]] \
   && grep -Eq 'Status: (active control plane|archived complete)' "${PLAN}" \
   && grep -q 'Control Plane Protocol' "${PLAN}" \
@@ -122,18 +124,23 @@ else
   fail "${C}" "canonical Compose trigger-policy tests are missing"
 fi
 
-# --- 5. NSR2a desired-state/controller seam -----------------------------------
-C="5. NSR2a WorkloadController, desired state, and route integration are implemented"
-if crates_grep 'struct WorkloadController' \
-  && crates_grep 'DesiredWorkloadStore' \
-  && crates_grep 'desired_workload_replay_after_restart' \
-  && crates_grep 'record_desired_service_workload' \
-  && crates_grep 'desired_workload_snapshot' \
-  && crates_grep 'service_start_records_desired_workload' \
-  && crates_grep 'sandbox_create_records_desired_workload'; then
+# --- 5. NSR2a ordered desired-intent planning ---------------------------------
+C="5. NSR2a CLI builds ordered desired intents without a false durable authority"
+if crates_grep 'WorkloadSagaStore' \
+  && crates_grep 'start_builds_ordered_desired_intents_for_compose_services' \
+  && crates_grep 'compose_overrides_deduplicate_desired_intents_in_stable_order' \
+  && ! crates_grep 'WorkloadController' \
+  && ! crates_grep 'DesiredWorkloadStore' \
+  && ! crates_grep 'InMemoryDesiredWorkloadStore' \
+  && ! crates_grep 'DesiredWorkloadSnapshot' \
+  && ! crates_grep 'desired_workload_replay_after_restart' \
+  && ! crates_grep 'record_desired_service_workload' \
+  && ! crates_grep 'desired_workload_snapshot' \
+  && ! crates_grep 'service_start_records_desired_workload' \
+  && ! crates_grep 'sandbox_create_records_desired_workload'; then
   pass "${C}"
 else
-  fail "${C}" "WorkloadController/DesiredWorkloadStore, route integration, or desired-workload tests missing"
+  fail "${C}" "ordered CLI desired-intent tests are missing or obsolete in-memory desired-state authorities/tests remain"
 fi
 
 # --- 6. NSR2b scheduler/placement has no lifecycle side effects ---------------
@@ -348,6 +355,8 @@ fi
 
 # --- 17. NSR11 docs/source-map stale claims -----------------------------------
 C="17. NSR11 stale docs and command-surface drift are fixed"
+# Backticks are literal architecture-doc anchors.
+# shellcheck disable=SC2016
 if grep -q 'node-workload-executor' "${NODE_DBUS_DOC}" \
   && ! grep -q 'ServiceManager.*nimbus-server' "${MICROVM_DOC}" \
   && ! grep -q '`data`' ARCHITECTURE.md \

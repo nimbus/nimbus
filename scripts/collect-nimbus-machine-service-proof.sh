@@ -388,7 +388,7 @@ if [[ -n "${root_ssh_identity_path}" && -n "${root_ssh_port}" && -f "${root_ssh_
     -i "${root_ssh_identity_path}"
     -p "${root_ssh_port}"
     root@127.0.0.1
-    "/bin/sh -lc 'systemctl list-units \"nimbus-tw_*.service\" --all --no-pager --no-legend 2>&1 || true'"
+    "/bin/sh -lc 'systemctl list-units \"nimbus-wex_*.service\" --all --no-pager --no-legend 2>&1 || true'"
   )
   guest_systemd_unit_status_cmd=(
     ssh
@@ -402,7 +402,7 @@ if [[ -n "${root_ssh_identity_path}" && -n "${root_ssh_port}" && -f "${root_ssh_
     -i "${root_ssh_identity_path}"
     -p "${root_ssh_port}"
     root@127.0.0.1
-    "/bin/sh -lc 'units=\$(systemctl list-units \"nimbus-tw_*.service\" --all --no-pager --no-legend 2>/dev/null | awk \"{print \\\$1}\"); if [ -z \"\$units\" ]; then printf \"%s\n\" \"missing nimbus-tw_ transient service units\"; exit 66; fi; for unit in \$units; do printf \"# unit %s\n\" \"\$unit\"; systemctl show --no-pager --property=Id,LoadState,ActiveState,SubState,MainPID,ControlGroup \"\$unit\" || true; done'"
+    "/bin/sh -lc 'units=\$(systemctl list-units \"nimbus-wex_*.service\" --all --no-pager --no-legend 2>/dev/null | awk \"{print \\\$1}\"); if [ -z \"\$units\" ]; then printf \"%s\n\" \"missing nimbus-wex_ transient service units\"; exit 66; fi; for unit in \$units; do printf \"# unit %s\n\" \"\$unit\"; systemctl show --no-pager --property=Id,LoadState,ActiveState,SubState,MainPID,ControlGroup \"\$unit\" || true; done'"
   )
   guest_node_workload_journal_cmd=(
     ssh
@@ -416,7 +416,7 @@ if [[ -n "${root_ssh_identity_path}" && -n "${root_ssh_port}" && -f "${root_ssh_
     -i "${root_ssh_identity_path}"
     -p "${root_ssh_port}"
     root@127.0.0.1
-    "/bin/sh -lc 'units=\$(systemctl list-units \"nimbus-tw_*.service\" --all --no-pager --no-legend 2>/dev/null | awk \"{print \\\$1}\"); if [ -z \"\$units\" ]; then printf \"%s\n\" \"missing nimbus-tw_ transient service units\"; exit 66; fi; for unit in \$units; do printf \"# journal unit %s\n\" \"\$unit\"; journalctl -b -u \"\$unit\" --no-pager -n 120 || true; done'"
+    "/bin/sh -lc 'units=\$(systemctl list-units \"nimbus-wex_*.service\" --all --no-pager --no-legend 2>/dev/null | awk \"{print \\\$1}\"); if [ -z \"\$units\" ]; then printf \"%s\n\" \"missing nimbus-wex_ transient service units\"; exit 66; fi; for unit in \$units; do printf \"# journal unit %s\n\" \"\$unit\"; journalctl -b -u \"\$unit\" --output=export --output-fields=NIMBUS_WORKLOAD_EXECUTION_ID,_SYSTEMD_UNIT,MESSAGE --no-pager -n 120 || true; done'"
   )
   guest_typed_runner_path_cmd=(
     ssh

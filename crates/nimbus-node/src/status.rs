@@ -6,8 +6,8 @@ use nimbus_tenant::{
     TenantIsolationEventResult, TenantIsolationEventValue,
 };
 use nimbus_workloads::{
-    NodeIdentity, TenantFinalizerRecord, TenantSystemEvidenceProjection, TenantWorkloadGeneration,
-    TenantWorkloadSpec, TenantWorkloadUid,
+    NodeIdentity, TenantFinalizerRecord, TenantSystemEvidenceProjection, TenantWorkloadSpec,
+    TenantWorkloadUid, WorkloadExecutionId, WorkloadGeneration,
 };
 use serde::Serialize;
 
@@ -292,7 +292,7 @@ impl TenantWorkloadStatusPatchTarget {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TenantWorkloadStatusPatch {
     workload_uid: TenantWorkloadUid,
-    observed_generation: TenantWorkloadGeneration,
+    observed_generation: WorkloadGeneration,
     decision_id: TenantIsolationDecisionId,
     writer_node_id: Option<NodeIdentity>,
     target: TenantWorkloadStatusPatchTarget,
@@ -339,7 +339,7 @@ impl TenantWorkloadStatusPatch {
         self
     }
 
-    pub fn with_observed_generation(mut self, generation: TenantWorkloadGeneration) -> Self {
+    pub fn with_observed_generation(mut self, generation: WorkloadGeneration) -> Self {
         self.observed_generation = generation;
         self
     }
@@ -399,7 +399,7 @@ impl TenantWorkloadStatusPatch {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct TenantWorkloadStatus {
     workload_uid: TenantWorkloadUid,
-    observed_generation: TenantWorkloadGeneration,
+    observed_generation: WorkloadGeneration,
     decision_id: TenantIsolationDecisionId,
     writer_node_id: NodeIdentity,
     target: TenantWorkloadStatusPatchTarget,
@@ -418,8 +418,16 @@ impl TenantWorkloadStatus {
         &self.workload_uid
     }
 
-    pub fn observed_generation(&self) -> TenantWorkloadGeneration {
+    pub fn observed_generation(&self) -> WorkloadGeneration {
         self.observed_generation
+    }
+
+    pub fn execution_id(&self) -> WorkloadExecutionId {
+        WorkloadExecutionId::for_execution(
+            &self.workload_uid,
+            &self.writer_node_id,
+            self.observed_generation,
+        )
     }
 
     pub fn decision_id(&self) -> &TenantIsolationDecisionId {

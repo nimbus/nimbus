@@ -482,7 +482,7 @@ fn dev_auto_discovers_compose_for_local_development() {
 }
 
 #[test]
-fn dev_uses_workload_controller_for_compose_services() {
+fn dev_builds_ordered_desired_intents_for_compose_services() {
     let temp = tempdir().expect("tempdir should build");
     create_source_root(temp.path(), "convex");
     fs::write(
@@ -521,12 +521,11 @@ services:
         &crate::workload_boot::default_local_node_capacity().expect("local node should build"),
     )
     .expect("dev workload-control plan should resolve");
-    let mut workload_ids = workload_plan
+    let workload_ids = workload_plan
         .desired_workloads()
-        .into_iter()
+        .iter()
         .map(|workload| workload.workload_id().to_owned())
         .collect::<Vec<_>>();
-    workload_ids.sort();
 
     assert_eq!(
         workload_plan.compose_files(),

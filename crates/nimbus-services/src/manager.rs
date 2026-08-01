@@ -2,7 +2,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use nimbus_sandbox::SandboxBackend;
-use nimbus_workloads::{DesiredWorkloadSnapshot, DesiredWorkloadStore};
 use tokio::sync::Notify;
 
 mod activation;
@@ -137,14 +136,6 @@ impl ServiceManager {
             .service_evidence_writer
             .lock()
             .expect("service evidence writer lock should not be poisoned") = writer;
-    }
-
-    pub fn desired_workload_snapshot(&self) -> DesiredWorkloadSnapshot {
-        self.state
-            .lock()
-            .expect("manager lock should not be poisoned")
-            .desired_workloads
-            .snapshot_desired_workloads()
     }
 
     #[cfg(test)]

@@ -5,8 +5,8 @@ use nimbus_sandbox::SandboxResourceCharge;
 use nimbus_workloads::{
     LocalEnforcementBinding, NodeIdentity, TenantCredentialProjectionRequest,
     TenantCredentialProjectionScope, TenantEgressReloadRequest, TenantFinalizerRecord,
-    TenantPolicyArea, TenantPolicyLifecycle, TenantWorkloadDeletionState, TenantWorkloadGeneration,
-    TenantWorkloadSpec, policy_lifecycle,
+    TenantPolicyArea, TenantPolicyLifecycle, TenantWorkloadDeletionState, TenantWorkloadSpec,
+    WorkloadGeneration, policy_lifecycle,
 };
 
 use super::*;
@@ -182,6 +182,7 @@ fn lifecycle_evidence_audit_events_keep_high_cardinality_ids_out_of_metric_label
     let spec = binding.spec();
     let authorizer = NodeStatusAuthorizer;
     let projection = binding.system_evidence_projection();
+    let execution_id = "wex_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     let lifecycle = TenantWorkloadLifecycleEvidence::for_observed_unit(
         HostLifecycleBackendKind::SystemdTransientUnit,
         &SystemdUnitName::new("nimbus-tw-highcard.service").expect("unit should parse"),
@@ -195,7 +196,7 @@ fn lifecycle_evidence_audit_events_keep_high_cardinality_ids_out_of_metric_label
     .with_journal_selectors([
         HostLifecycleJournalSelectorEvidence::new("_SYSTEMD_UNIT", "nimbus-tw-highcard.service")
             .expect("journal selector should parse"),
-        HostLifecycleJournalSelectorEvidence::new("NIMBUS_WORKLOAD_ID", "tw_highcard")
+        HostLifecycleJournalSelectorEvidence::new("NIMBUS_WORKLOAD_EXECUTION_ID", execution_id)
             .expect("journal selector should parse"),
     ]);
     let node_ids = TenantNodeObservationIds::new()
@@ -232,6 +233,7 @@ fn lifecycle_evidence_audit_events_keep_high_cardinality_ids_out_of_metric_label
     for high_cardinality in [
         spec.decision_id().as_str(),
         spec.workload_uid().as_str(),
+        execution_id,
         "nimbus-tw-highcard.service",
         "/org/freedesktop/systemd1/job/9001",
         "/system.slice/nimbus-tw-highcard.service",
@@ -303,6 +305,11 @@ fn node_status_authorizer_accepts_observed_status_for_assigned_node() {
 
     assert_eq!(status.workload_uid(), spec.workload_uid());
     assert_eq!(status.observed_generation(), spec.generation());
+    assert_eq!(
+        status.execution_id(),
+        spec.execution_id()
+            .expect("assigned workload should have an execution id")
+    );
     assert_eq!(status.decision_id(), spec.decision_id());
     assert_eq!(status.writer_node_id().as_str(), "node-a");
     assert_eq!(status.phase(), TenantWorkloadPhase::Running);
@@ -344,7 +351,7 @@ fn node_status_authorizer_rejects_wrong_node_stale_generation_and_desired_mutati
         authorizer.authorize(
             spec,
             TenantWorkloadStatusPatch::observed_status(spec)
-                .with_observed_generation(TenantWorkloadGeneration::new(6)),
+                .with_observed_generation(WorkloadGeneration::new(6)),
         ),
         "referenced generation 6",
     );
@@ -447,7 +454,7 @@ fn credential_projection_requires_admitted_scope_node_generation_invocation_and_
                 "runtime",
             )
             .expect("credential request should build")
-            .with_generation(TenantWorkloadGeneration::new(6)),
+            .with_generation(WorkloadGeneration::new(6)),
         ),
         "referenced generation 6",
     );

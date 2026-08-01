@@ -7,7 +7,7 @@ use super::{
     HostLifecycleBackendCapabilities, HostLifecycleFuture, HostLifecyclePlan, HostLifecycleRequest,
     HostLifecycleStatus, HostLifecycleStatusReason, LocalEnforcementBinding, NodeIdentity,
     SystemdDbusClient, SystemdTransientUnitBackend, TenantSystemEvidenceProjection,
-    TenantWorkloadDeletionState, TenantWorkloadId, TenantWorkloadSpec, TenantWorkloadStatus,
+    TenantWorkloadDeletionState, TenantWorkloadSpec, TenantWorkloadStatus, WorkloadExecutionId,
     ensure_status_matches_projection,
 };
 
@@ -73,7 +73,7 @@ pub enum NodeWorkloadReconcileAction {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NodeWorkloadReconcileOutcome {
-    workload_id: TenantWorkloadId,
+    execution_id: WorkloadExecutionId,
     desired_state: NodeWorkloadDesiredState,
     action: NodeWorkloadReconcileAction,
     status: TenantWorkloadStatus,
@@ -106,7 +106,7 @@ impl NodeAgentAssignment {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NodeAssignmentDisposition {
     Reconciled {
-        workload_id: TenantWorkloadId,
+        execution_id: WorkloadExecutionId,
         action: NodeWorkloadReconcileAction,
     },
     Failed {
@@ -314,6 +314,10 @@ where
         &self,
         assignment: NodeAgentAssignment,
     ) -> Result<NodeWorkloadReconcileOutcome> {
+        assignment
+            .binding()
+            .spec()
+            .ensure_assigned_node_matches(&self.node_id, "node workload reconciliation")?;
         let NodeAgentAssignment { binding, request } = assignment;
         self.reconciler.reconcile_binding(&binding, request).await
     }
@@ -329,7 +333,7 @@ where
             match self.reconcile_assignment(assignment).await {
                 Ok(outcome) => {
                     dispositions.push(NodeAssignmentDisposition::Reconciled {
-                        workload_id: outcome.workload_id().clone(),
+                        execution_id: outcome.execution_id().clone(),
                         action: outcome.action(),
                     });
                     outcomes.push(outcome);
@@ -349,6 +353,10 @@ where
         &self,
         assignment: &NodeAgentAssignment,
     ) -> Result<HostLifecycleStatus> {
+        assignment
+            .binding()
+            .spec()
+            .ensure_assigned_node_matches(&self.node_id, "node workload inspection")?;
         self.reconciler
             .inspect_binding(assignment.binding(), assignment.request().clone())
             .await
@@ -388,21 +396,21 @@ where
 
 impl NodeWorkloadReconcileOutcome {
     fn new(
-        workload_id: TenantWorkloadId,
+        execution_id: WorkloadExecutionId,
         desired_state: NodeWorkloadDesiredState,
         action: NodeWorkloadReconcileAction,
         status: TenantWorkloadStatus,
     ) -> Self {
         Self {
-            workload_id,
+            execution_id,
             desired_state,
             action,
             status,
         }
     }
 
-    pub fn workload_id(&self) -> &TenantWorkloadId {
-        &self.workload_id
+    pub fn execution_id(&self) -> &WorkloadExecutionId {
+        &self.execution_id
     }
 
     pub fn desired_state(&self) -> NodeWorkloadDesiredState {
@@ -460,7 +468,7 @@ where
         request.ensure_external_restart_disabled()?;
         let desired_state = NodeWorkloadDesiredState::from_spec(binding.spec());
         let plan = self.backend.validate(binding, request)?;
-        let workload_id = plan.workload_id().clone();
+        let execution_id = plan.execution_id().clone();
         let (action, status) = match desired_state {
             NodeWorkloadDesiredState::Running => self.reconcile_running(&plan).await?,
             NodeWorkloadDesiredState::Stopped => self.reconcile_stopped(&plan).await?,
@@ -469,7 +477,7 @@ where
         let write = StatusEvidenceWrite::new(&projection, &status)?;
         self.writer.write_status(write).await?;
         Ok(NodeWorkloadReconcileOutcome::new(
-            workload_id,
+            execution_id,
             desired_state,
             action,
             status,
@@ -483,15 +491,15 @@ where
     ) -> Result<HostLifecycleStatus> {
         request.ensure_external_restart_disabled()?;
         let plan = self.backend.validate(binding, request)?;
-        self.backend.inspect(plan.workload_id().clone()).await
+        self.backend.inspect(plan.execution_id().clone()).await
     }
 
     async fn reconcile_running(
         &self,
         plan: &HostLifecyclePlan,
     ) -> Result<(NodeWorkloadReconcileAction, TenantWorkloadStatus)> {
-        let workload_id = plan.workload_id().clone();
-        match self.backend.inspect(workload_id.clone()).await {
+        let execution_id = plan.execution_id().clone();
+        match self.backend.inspect(execution_id.clone()).await {
             Ok(status) if is_running_enough(&status) => Ok((
                 NodeWorkloadReconcileAction::ObservedRunning,
                 status.to_workload_status(plan)?,
@@ -504,7 +512,7 @@ where
             // redundant `StartTransientUnit`.
             Ok(_) | Err(Error::NotFound(_)) => {
                 self.backend.start(plan.clone()).await?;
-                let observed = self.backend.inspect(workload_id).await?;
+                let observed = self.backend.inspect(execution_id).await?;
                 Ok((
                     NodeWorkloadReconcileAction::Started,
                     observed.to_workload_status(plan)?,
@@ -518,8 +526,8 @@ where
         &self,
         plan: &HostLifecyclePlan,
     ) -> Result<(NodeWorkloadReconcileAction, TenantWorkloadStatus)> {
-        let workload_id = plan.workload_id().clone();
-        let inspected = match self.backend.inspect(workload_id.clone()).await {
+        let execution_id = plan.execution_id().clone();
+        let inspected = match self.backend.inspect(execution_id.clone()).await {
             Ok(status) => status,
             Err(Error::NotFound(_)) => {
                 let observed = HostLifecycleStatus::from_backend_state(
@@ -539,8 +547,8 @@ where
                 inspected.to_workload_status(plan)?,
             ));
         }
-        self.backend.stop(workload_id.clone()).await?;
-        let observed = self.backend.inspect(workload_id).await?;
+        self.backend.stop(execution_id.clone()).await?;
+        let observed = self.backend.inspect(execution_id).await?;
         Ok((
             NodeWorkloadReconcileAction::Stopped,
             observed.to_workload_status(plan)?,
@@ -635,18 +643,18 @@ mod tests {
 
         fn stop<'a>(
             &'a self,
-            workload_id: TenantWorkloadId,
+            execution_id: WorkloadExecutionId,
         ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
             self.record("stop");
-            self.inner.stop(workload_id)
+            self.inner.stop(execution_id)
         }
 
         fn inspect<'a>(
             &'a self,
-            workload_id: TenantWorkloadId,
+            execution_id: WorkloadExecutionId,
         ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
             self.record("inspect");
-            self.inner.inspect(workload_id)
+            self.inner.inspect(execution_id)
         }
     }
 
@@ -757,7 +765,7 @@ mod tests {
                     "/org/freedesktop/systemd1/job/101",
                 )?;
                 let status = SystemdUnitStatus::new(
-                    request.workload_id().clone(),
+                    request.execution_id().clone(),
                     request.unit_name().clone(),
                     "active",
                     "running",
@@ -783,7 +791,7 @@ mod tests {
             Box::pin(async move {
                 self.record("stop_unit");
                 let status = SystemdUnitStatus::new(
-                    request.workload_id().clone(),
+                    request.execution_id().clone(),
                     request.unit_name().clone(),
                     "inactive",
                     "dead",
@@ -810,7 +818,7 @@ mod tests {
                     .clone()
                     .unwrap_or_else(|| {
                         SystemdUnitStatus::new(
-                            request.workload_id().clone(),
+                            request.execution_id().clone(),
                             request.unit_name().clone(),
                             "inactive",
                             "dead",
@@ -821,10 +829,11 @@ mod tests {
         }
     }
 
-    fn admitted_decision(
+    fn admitted_decision_for_location(
         workload_name: &str,
         invocation_id: &str,
         generation: u64,
+        workload_location: WorkloadLocation,
     ) -> TenantIsolationDecision {
         let context = TenantIsolationContext::application(
             TenantId::new("tenant-a").expect("tenant id should parse"),
@@ -839,7 +848,7 @@ mod tests {
             "node.reconciler",
         )
         .with_deployment_generation(generation)
-        .with_workload_location(WorkloadLocation::new().with_node_id("node-a"));
+        .with_workload_location(workload_location);
         let policy = RuntimePolicy::new(RuntimeLimits::application_web_standard());
         let workload = WorkloadAttributes::runtime_function(
             workload_name,
@@ -859,6 +868,19 @@ mod tests {
         context
             .admit_decision(input)
             .expect("decision should admit matching tenant authority")
+    }
+
+    fn admitted_decision(
+        workload_name: &str,
+        invocation_id: &str,
+        generation: u64,
+    ) -> TenantIsolationDecision {
+        admitted_decision_for_location(
+            workload_name,
+            invocation_id,
+            generation,
+            WorkloadLocation::new().with_node_id("node-a"),
+        )
     }
 
     fn binding() -> LocalEnforcementBinding {
@@ -1112,6 +1134,83 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn node_agent_rejects_missing_or_crossed_assignment_before_backend_or_status_effects() {
+        let backend = CountingBackend::new(DirectProcessBackend::new());
+        let writer = RecordingStatusEvidenceWriter::default();
+        let node_agent = NodeAgent::new(
+            NodeIdentity::new("node-b").expect("node id should parse"),
+            backend.clone(),
+            writer.clone(),
+        );
+        let missing_node_binding =
+            LocalEnforcementBinding::from_decision(&admitted_decision_for_location(
+                "messages:send",
+                "invoke-without-node",
+                7,
+                WorkloadLocation::new(),
+            ))
+            .expect("binding without a node should materialize");
+        let missing_node_assignment =
+            NodeAgentAssignment::new(missing_node_binding, direct_request());
+        let assignment = NodeAgentAssignment::new(binding(), direct_request());
+
+        let missing_reconcile_error = node_agent
+            .reconcile_assignment(missing_node_assignment.clone())
+            .await
+            .expect_err("missing assignment must fail before reconciliation");
+        assert!(matches!(
+            missing_reconcile_error,
+            Error::PermissionDenied(_)
+        ));
+        assert!(
+            missing_reconcile_error
+                .to_string()
+                .contains("admitted spec has no assigned node")
+        );
+
+        let missing_inspect_error = node_agent
+            .inspect_assignment(&missing_node_assignment)
+            .await
+            .expect_err("missing assignment must fail before inspection");
+        assert!(matches!(missing_inspect_error, Error::PermissionDenied(_)));
+        assert!(
+            missing_inspect_error
+                .to_string()
+                .contains("admitted spec has no assigned node")
+        );
+
+        let reconcile_error = node_agent
+            .reconcile_assignment(assignment.clone())
+            .await
+            .expect_err("crossed assignment must fail before reconciliation");
+        assert!(matches!(reconcile_error, Error::PermissionDenied(_)));
+        assert!(
+            reconcile_error
+                .to_string()
+                .contains("assigned to node node-a")
+        );
+
+        let inspect_error = node_agent
+            .inspect_assignment(&assignment)
+            .await
+            .expect_err("crossed assignment must fail before inspection");
+        assert!(matches!(inspect_error, Error::PermissionDenied(_)));
+        assert!(
+            inspect_error
+                .to_string()
+                .contains("assigned to node node-a")
+        );
+        assert!(
+            backend.calls().is_empty(),
+            "crossed assignment must not validate or invoke the backend"
+        );
+        assert!(
+            writer.writes().is_empty(),
+            "crossed assignment must not write status evidence"
+        );
+    }
+
     #[test]
     fn both_real_node_backends_implement_the_type_erased_capability() {
         let direct: Arc<dyn NodeWorkloadReconcileCapability> = Arc::new(NodeAgent::new(
@@ -1281,14 +1380,14 @@ mod tests {
 
         fn stop<'a>(
             &'a self,
-            workload_id: TenantWorkloadId,
+            execution_id: WorkloadExecutionId,
         ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
-            self.inner.stop(workload_id)
+            self.inner.stop(execution_id)
         }
 
         fn inspect<'a>(
             &'a self,
-            _workload_id: TenantWorkloadId,
+            _execution_id: WorkloadExecutionId,
         ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
             Box::pin(async move {
                 Err(Error::InvalidInput(
@@ -1404,7 +1503,7 @@ mod tests {
                 .expect("systemd status should carry lifecycle evidence")
                 .cgroup_path()
                 .expect("systemd evidence should include cgroup")
-                .contains("nimbus-tw_")
+                .contains("nimbus-wex_")
         );
         assert_eq!(writer.writes().len(), 2);
     }
@@ -1497,7 +1596,7 @@ mod tests {
             .authorize(
                 spec,
                 crate::TenantWorkloadStatusPatch::observed_status(spec).with_observed_generation(
-                    crate::TenantWorkloadGeneration::new(spec.generation().as_u64() - 1),
+                    crate::WorkloadGeneration::new(spec.generation().as_u64() - 1),
                 ),
             )
             .expect_err("stale generation should fail before status write");

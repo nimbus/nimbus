@@ -224,14 +224,15 @@ Every tenant gets an isolated persistence namespace. `nimbus-tenant` owns
 isolation decisions, workload identity, and admission policy; `nimbus-system`
 owns the system tenant's records and projections.
 
-**Workload-identity ladder.** Three deliberately separate types carry a
+**Workload-identity ladder.** Four deliberately separate types carry a
 workload's identity through the stack, each anchored to a different concern:
 
 | Layer | Type | Home | Role |
 | --- | --- | --- | --- |
 | Routing key | `WorkloadId` | `nimbus-core/src/types.rs` | Opaque routing key. Lives in `nimbus-core` on purpose: `nimbus-proxy`'s per-workload PEP registry keys on it without depending on `nimbus-sandbox`. |
 | Admitted identity | `WorkloadIdentity` | `nimbus-tenant/src/identity.rs` | Rich projection, constructible only via `from_decision(&TenantIsolationDecision)`; renders SPIFFE-shaped `subject()`/`spiffe_id()` strings. |
-| Node-local name | `TenantWorkloadId` | `nimbus-node/src/host_lifecycle.rs` | systemd unit naming. |
+| Tenant-qualified admitted UID | `TenantWorkloadUid` | `nimbus-workloads/src/tenant.rs` | Stable admitted workload incarnation derived from workload identity and decision. |
+| Generation-scoped execution | `WorkloadExecutionId` | `nimbus-workloads/src/saga.rs` | Derived from admitted UID, assigned node, and `WorkloadGeneration`; node backends, systemd units, and observed status consume it. |
 
 `WorkloadIdentity` stays in `nimbus-tenant` rather than moving into a
 dedicated identity crate: construction is gated on holding a real

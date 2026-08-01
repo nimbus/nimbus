@@ -1,4 +1,4 @@
-use nimbus_core::{DocumentId, Error, Mutation, TableName, TenantId};
+use nimbus_core::{DocumentId, Error, FieldType, Mutation, TableName, TenantId};
 use nimbus_engine::Engine;
 use nimbus_testing::{AdmittedDecisionScenario, EngineFixture};
 use serde_json::{Value, json};
@@ -36,6 +36,28 @@ fn assert_system_index_fields(
     let actual_fields = index.fields.iter().map(String::as_str).collect::<Vec<_>>();
 
     assert_eq!(actual_fields, fields);
+}
+
+fn assert_system_field(
+    schemas: &[nimbus_core::TableSchema],
+    table: SystemTable,
+    field_name: &str,
+    field_type: FieldType,
+    required: bool,
+) {
+    let table_name = table_name(table);
+    let schema = schemas
+        .iter()
+        .find(|schema| schema.table == table_name)
+        .expect("system table schema should exist");
+    let field = schema
+        .fields
+        .iter()
+        .find(|field| field.name == field_name)
+        .expect("system table field should exist");
+
+    assert_eq!(field.field_type, field_type);
+    assert_eq!(field.required, required);
 }
 
 #[test]
@@ -85,6 +107,20 @@ fn system_table_schemas_are_valid_and_cover_control_plane_contract() {
         SystemTable::CronJobs,
         "by_tenantId_and_status",
         &["tenantId", "status"],
+    );
+    assert_system_field(
+        &schemas,
+        SystemTable::WorkloadStatus,
+        "executionId",
+        FieldType::String,
+        true,
+    );
+    assert_system_field(
+        &schemas,
+        SystemTable::WorkloadStatus,
+        "observedGeneration",
+        FieldType::String,
+        true,
     );
     for schema in schemas {
         schema
@@ -891,7 +927,7 @@ async fn workload_status_projection_requires_system_or_operator_authority() {
     let engine = fixture.engine();
     let scenario = AdmittedDecisionScenario::new()
         .with_surface("system_tenant.workload_status.test")
-        .with_generation(3);
+        .with_generation(u64::MAX);
     let context = scenario.context();
     let binding = scenario.binding();
     let spec = binding.spec();
@@ -971,8 +1007,17 @@ async fn workload_status_projection_requires_system_or_operator_authority() {
         .expect("workload status document should exist");
     assert_eq!(document.fields.get("tenantId"), Some(&json!("tenant-a")));
     assert_eq!(
+        document.fields.get("executionId"),
+        Some(&json!(status.execution_id().as_str()))
+    );
+    assert_eq!(
         document.fields.get("decisionId"),
         Some(&json!(spec.decision_id().as_str()))
+    );
+    assert_eq!(
+        document.fields.get("observedGeneration"),
+        Some(&json!(u64::MAX.to_string())),
+        "workload generations must remain lossless beyond the JSON integer range"
     );
     assert_eq!(document.fields.get("phase"), Some(&json!("running")));
     assert_eq!(

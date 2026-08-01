@@ -11,7 +11,12 @@ proof_dir="${tmp_dir}/proof"
 service_proof_dir="${tmp_dir}/service-proof"
 bad_proof_dir="${tmp_dir}/bad-proof"
 bad_service_proof_dir="${tmp_dir}/bad-service-proof"
-mkdir -p "${release_dir}" "${proof_dir}" "${service_proof_dir}" "${bad_proof_dir}" "${bad_service_proof_dir}"
+bad_generation_service_proof_dir="${tmp_dir}/bad-generation-service-proof"
+bad_execution_service_proof_dir="${tmp_dir}/bad-execution-service-proof"
+bad_cross_record_service_proof_dir="${tmp_dir}/bad-cross-record-service-proof"
+bad_cross_unit_service_proof_dir="${tmp_dir}/bad-cross-unit-service-proof"
+bad_cross_journal_service_proof_dir="${tmp_dir}/bad-cross-journal-service-proof"
+mkdir -p "${release_dir}" "${proof_dir}" "${service_proof_dir}" "${bad_proof_dir}" "${bad_service_proof_dir}" "${bad_generation_service_proof_dir}" "${bad_execution_service_proof_dir}" "${bad_cross_record_service_proof_dir}" "${bad_cross_unit_service_proof_dir}" "${bad_cross_journal_service_proof_dir}"
 
 expected_tag="v9.9.9"
 digest="sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -212,24 +217,25 @@ content-type: text/plain
 ok
 EOF
 cat >"${service_proof_dir}/guest-node-agent-status.txt" <<'EOF'
-{"projection":{"decision_id":"tid_local-demo_service_db","tenant_id":"local-demo","surface":"node.workload_executor","authority_class":"operator","workload_uid":"tw_local-demo_db","workload_subject":"db","generation":1},"status":{"workload_uid":"tw_local-demo_db","observed_generation":1,"decision_id":"tid_local-demo_service_db","writer_node_id":"machine-os-guest-node","target":"status","phase":"ready","conditions":[{"type":"ready","status":"true","reason":"Ready"}],"observed_usage":{},"node_observation_ids":{},"lifecycle_evidence":{"backend":"systemd_transient_unit","unit_name":"nimbus-tw_local-demo-db.service","job_path":"/org/freedesktop/systemd1/job/991","process_id":2002,"cgroup_path":"/system.slice/nimbus-tw_local-demo-db.service","journal_selectors":[{"field":"_SYSTEMD_UNIT","value":"nimbus-tw_local-demo-db.service"},{"field":"NIMBUS_WORKLOAD_ID","value":"tw_local-demo_db"}],"status_reason":"ready","message":null},"cleanup_progress":null,"diagnostics":{},"evidence_correlation_ids":["nimbus-tw_local-demo-db.service","/org/freedesktop/systemd1/job/991","pid:2002","/system.slice/nimbus-tw_local-demo-db.service"]}}
+{"projection":{"decision_id":"tid_local-demo_service_db","tenant_id":"local-demo","surface":"node.workload_executor","authority_class":"operator","workload_uid":"twu_1111111111111111111111111111111111111111111111111111111111111111","workload_subject":"db","generation":"1"},"status":{"workload_uid":"twu_1111111111111111111111111111111111111111111111111111111111111111","observed_generation":"1","decision_id":"tid_local-demo_service_db","writer_node_id":"machine-os-guest-node","target":"status","phase":"ready","conditions":[{"type":"ready","status":"true","reason":"Ready"}],"observed_usage":{},"node_observation_ids":{},"lifecycle_evidence":{"backend":"systemd_transient_unit","unit_name":"nimbus-wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23.service","job_path":"/org/freedesktop/systemd1/job/991","process_id":2002,"cgroup_path":"/system.slice/nimbus-wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23.service","journal_selectors":[{"field":"_SYSTEMD_UNIT","value":"nimbus-wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23.service"},{"field":"NIMBUS_WORKLOAD_EXECUTION_ID","value":"wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23"}],"status_reason":"ready","message":null},"cleanup_progress":null,"diagnostics":{},"evidence_correlation_ids":["nimbus-wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23.service","/org/freedesktop/systemd1/job/991","pid:2002","/system.slice/nimbus-wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23.service"]}}
 EOF
 cat >"${service_proof_dir}/guest-systemd-transient-units.txt" <<'EOF'
-nimbus-tw_local-demo-db.service loaded active running Nimbus tenant workload tw_local-demo_db
+nimbus-wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23.service loaded active running Nimbus workload execution wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23
 EOF
 cat >"${service_proof_dir}/guest-systemd-transient-unit-status.txt" <<'EOF'
-# unit nimbus-tw_local-demo-db.service
-Id=nimbus-tw_local-demo-db.service
+# unit nimbus-wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23.service
+Id=nimbus-wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23.service
 LoadState=loaded
 ActiveState=active
 SubState=running
 MainPID=2002
-ControlGroup=/system.slice/nimbus-tw_local-demo-db.service
+ControlGroup=/system.slice/nimbus-wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23.service
 EOF
 cat >"${service_proof_dir}/guest-node-workload-journal.txt" <<'EOF'
-# journal unit nimbus-tw_local-demo-db.service
-NIMBUS_WORKLOAD_ID=tw_local-demo_db
-nimbus-container-runner started
+# journal unit nimbus-wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23.service
+_SYSTEMD_UNIT=nimbus-wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23.service
+NIMBUS_WORKLOAD_EXECUTION_ID=wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23
+MESSAGE=nimbus-container-runner started
 EOF
 cat >"${service_proof_dir}/guest-typed-runner-path.txt" <<'EOF'
 -rwxr-xr-x. root root system_u:object_r:bin_t:s0 /usr/libexec/nimbus/nimbus-container-runner
@@ -242,6 +248,107 @@ bash "${repo_root}/scripts/verify-bootc-default-promotion-gate.sh" \
   --expected-tag "${expected_tag}" \
   >"${tmp_dir}/good.out"
 grep -F "verified: bootc default promotion gate" "${tmp_dir}/good.out" >/dev/null
+
+cp -R "${service_proof_dir}/." "${bad_generation_service_proof_dir}/"
+sed 's/"observed_generation":"1"/"observed_generation":1/' \
+  "${service_proof_dir}/guest-node-agent-status.txt" \
+  >"${bad_generation_service_proof_dir}/guest-node-agent-status.txt"
+if bash "${repo_root}/scripts/verify-bootc-default-promotion-gate.sh" \
+  --release-dir "${release_dir}" \
+  --guest-proof-dir "${proof_dir}" \
+  --service-proof-dir "${bad_generation_service_proof_dir}" \
+  --expected-tag "${expected_tag}" \
+  >"${tmp_dir}/bad-generation.out" 2>&1; then
+  echo "expected promotion gate to reject lossy numeric workload-generation evidence" >&2
+  exit 1
+fi
+grep -F "node-agent observed generation" "${tmp_dir}/bad-generation.out" >/dev/null
+
+cp -R "${service_proof_dir}/." "${bad_execution_service_proof_dir}/"
+sed 's/wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23/wex_8231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23/g' \
+  "${service_proof_dir}/guest-node-workload-journal.txt" \
+  >"${bad_execution_service_proof_dir}/guest-node-workload-journal.txt"
+if bash "${repo_root}/scripts/verify-bootc-default-promotion-gate.sh" \
+  --release-dir "${release_dir}" \
+  --guest-proof-dir "${proof_dir}" \
+  --service-proof-dir "${bad_execution_service_proof_dir}" \
+  --expected-tag "${expected_tag}" \
+  >"${tmp_dir}/bad-execution.out" 2>&1; then
+  echo "expected promotion gate to reject mismatched workload execution identity" >&2
+  exit 1
+fi
+grep -F "workload execution identity" "${tmp_dir}/bad-execution.out" >/dev/null
+
+cp -R "${service_proof_dir}/." "${bad_cross_record_service_proof_dir}/"
+sed 's/"value":"wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23"/"value":"wex_8231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23"/g' \
+  "${service_proof_dir}/guest-node-agent-status.txt" \
+  >"${bad_cross_record_service_proof_dir}/guest-node-agent-status.txt"
+sed \
+  -e 's/wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23/wex_8231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23/g' \
+  -e 's/"value":"wex_8231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23"/"value":"wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23"/g' \
+  "${service_proof_dir}/guest-node-agent-status.txt" \
+  >>"${bad_cross_record_service_proof_dir}/guest-node-agent-status.txt"
+if bash "${repo_root}/scripts/verify-bootc-default-promotion-gate.sh" \
+  --release-dir "${release_dir}" \
+  --guest-proof-dir "${proof_dir}" \
+  --service-proof-dir "${bad_cross_record_service_proof_dir}" \
+  --expected-tag "${expected_tag}" \
+  >"${tmp_dir}/bad-cross-record.out" 2>&1; then
+  echo "expected promotion gate to reject cross-record workload execution identity stitching" >&2
+  exit 1
+fi
+grep -F "workload execution identity" "${tmp_dir}/bad-cross-record.out" >/dev/null
+
+cp -R "${service_proof_dir}/." "${bad_cross_unit_service_proof_dir}/"
+cat >"${bad_cross_unit_service_proof_dir}/guest-systemd-transient-unit-status.txt" <<'EOF'
+# unit nimbus-wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23.service
+Id=nimbus-wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23.service
+LoadState=loaded
+ActiveState=active
+SubState=running
+MainPID=2002
+ControlGroup=/system.slice/nimbus-wex_8231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23.service
+# unit nimbus-wex_8231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23.service
+Id=nimbus-wex_8231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23.service
+LoadState=loaded
+ActiveState=active
+SubState=running
+MainPID=2003
+ControlGroup=/system.slice/nimbus-wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23.service
+EOF
+if bash "${repo_root}/scripts/verify-bootc-default-promotion-gate.sh" \
+  --release-dir "${release_dir}" \
+  --guest-proof-dir "${proof_dir}" \
+  --service-proof-dir "${bad_cross_unit_service_proof_dir}" \
+  --expected-tag "${expected_tag}" \
+  >"${tmp_dir}/bad-cross-unit.out" 2>&1; then
+  echo "expected promotion gate to reject cross-block systemd unit evidence" >&2
+  exit 1
+fi
+grep -F "workload execution identity" "${tmp_dir}/bad-cross-unit.out" >/dev/null
+
+cp -R "${service_proof_dir}/." "${bad_cross_journal_service_proof_dir}/"
+cat >"${bad_cross_journal_service_proof_dir}/guest-node-workload-journal.txt" <<'EOF'
+# journal unit nimbus-wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23.service
+_SYSTEMD_UNIT=nimbus-wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23.service
+NIMBUS_WORKLOAD_EXECUTION_ID=wex_8231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23
+MESSAGE=nimbus-container-runner started
+
+# journal unit nimbus-wex_8231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23.service
+_SYSTEMD_UNIT=nimbus-wex_8231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23.service
+NIMBUS_WORKLOAD_EXECUTION_ID=wex_9231c5a122d1c1f66c3f470aef24b4ae76c4ef9a83601ee5a9e0babe46484b23
+MESSAGE=nimbus-container-runner started
+EOF
+if bash "${repo_root}/scripts/verify-bootc-default-promotion-gate.sh" \
+  --release-dir "${release_dir}" \
+  --guest-proof-dir "${proof_dir}" \
+  --service-proof-dir "${bad_cross_journal_service_proof_dir}" \
+  --expected-tag "${expected_tag}" \
+  >"${tmp_dir}/bad-cross-journal.out" 2>&1; then
+  echo "expected promotion gate to reject cross-record journal evidence" >&2
+  exit 1
+fi
+grep -F "workload execution identity" "${tmp_dir}/bad-cross-journal.out" >/dev/null
 
 cp -R "${proof_dir}/." "${bad_proof_dir}/"
 cat >"${bad_proof_dir}/guest-selinux-avc-check.txt" <<'EOF'
@@ -272,4 +379,4 @@ if bash "${repo_root}/scripts/verify-bootc-default-promotion-gate.sh" \
 fi
 grep -F "guest-node-agent-status.txt" "${tmp_dir}/bad-service.out" >/dev/null
 
-printf 'verified: bootc default promotion gate helper accepts complete evidence and rejects failed SELinux or missing node-agent proof\n'
+printf 'verified: bootc promotion helper accepts complete evidence and rejects lossy generation, crossed identity records or blocks, failed SELinux, and missing node-agent proof\n'

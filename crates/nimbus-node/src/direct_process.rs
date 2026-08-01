@@ -7,8 +7,8 @@ use serde::Serialize;
 use super::{
     HostBackendObservedState, HostLifecycleBackend, HostLifecycleBackendKind, HostLifecycleFuture,
     HostLifecyclePlan, HostLifecycleRequest, HostLifecycleStatus, HostLifecycleStatusReason,
-    LocalEnforcementBinding, TenantWorkloadId, TenantWorkloadLifecycleEvidence,
-    TenantWorkloadStatus,
+    LocalEnforcementBinding, TenantWorkloadLifecycleEvidence, TenantWorkloadStatus,
+    WorkloadExecutionId,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -23,21 +23,21 @@ impl DirectProcessBackend {
         }
     }
 
-    pub fn logs(&self, workload_id: &TenantWorkloadId) -> Result<Vec<String>> {
+    pub fn logs(&self, execution_id: &WorkloadExecutionId) -> Result<Vec<String>> {
         let state = self
             .state
             .lock()
             .expect("direct process backend lock should not be poisoned");
-        let record = state.record(workload_id)?;
+        let record = state.record(execution_id)?;
         Ok(record.logs.clone())
     }
 
-    pub fn evidence(&self, workload_id: &TenantWorkloadId) -> Result<DirectProcessEvidence> {
+    pub fn evidence(&self, execution_id: &WorkloadExecutionId) -> Result<DirectProcessEvidence> {
         let state = self
             .state
             .lock()
             .expect("direct process backend lock should not be poisoned");
-        let record = state.record(workload_id)?;
+        let record = state.record(execution_id)?;
         Ok(record.evidence.clone())
     }
 }
@@ -79,15 +79,15 @@ impl HostLifecycleBackend for DirectProcessBackend {
             let workload_status = status.to_workload_status(&plan)?;
             let evidence = DirectProcessEvidence::from_plan(&plan, process_id);
             let logs = vec![
-                format!("direct-process:{}:validated", plan.workload_id().as_str()),
+                format!("direct-process:{}:validated", plan.execution_id().as_str()),
                 format!(
                     "direct-process:{}:started:{}",
-                    plan.workload_id().as_str(),
+                    plan.execution_id().as_str(),
                     process_id
                 ),
             ];
             state.records.insert(
-                plan.workload_id().clone(),
+                plan.execution_id().clone(),
                 DirectProcessRecord {
                     plan,
                     status,
@@ -102,14 +102,14 @@ impl HostLifecycleBackend for DirectProcessBackend {
 
     fn stop<'a>(
         &'a self,
-        workload_id: TenantWorkloadId,
+        execution_id: WorkloadExecutionId,
     ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
         let state = Arc::clone(&self.state);
         Box::pin(async move {
             let mut state = state
                 .lock()
                 .expect("direct process backend lock should not be poisoned");
-            let record = state.record_mut(&workload_id)?;
+            let record = state.record_mut(&execution_id)?;
             let status = HostLifecycleStatus::from_backend_state(
                 &record.plan,
                 HostBackendObservedState::Stopped,
@@ -117,7 +117,7 @@ impl HostLifecycleBackend for DirectProcessBackend {
             record.status = status.clone();
             record.logs.push(format!(
                 "direct-process:{}:stopped:{}",
-                workload_id.as_str(),
+                execution_id.as_str(),
                 record.process_id
             ));
             Ok(status)
@@ -126,14 +126,14 @@ impl HostLifecycleBackend for DirectProcessBackend {
 
     fn inspect<'a>(
         &'a self,
-        workload_id: TenantWorkloadId,
+        execution_id: WorkloadExecutionId,
     ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
         let state = Arc::clone(&self.state);
         Box::pin(async move {
             let state = state
                 .lock()
                 .expect("direct process backend lock should not be poisoned");
-            Ok(state.record(&workload_id)?.status.clone())
+            Ok(state.record(&execution_id)?.status.clone())
         })
     }
 }
@@ -141,7 +141,7 @@ impl HostLifecycleBackend for DirectProcessBackend {
 #[derive(Debug, Default)]
 struct DirectProcessState {
     next_process_id: u64,
-    records: BTreeMap<TenantWorkloadId, DirectProcessRecord>,
+    records: BTreeMap<WorkloadExecutionId, DirectProcessRecord>,
 }
 
 impl DirectProcessState {
@@ -150,8 +150,8 @@ impl DirectProcessState {
         10_000 + self.next_process_id
     }
 
-    fn record(&self, workload_id: &TenantWorkloadId) -> Result<&DirectProcessRecord> {
-        self.records.get(workload_id).ok_or_else(|| {
+    fn record(&self, execution_id: &WorkloadExecutionId) -> Result<&DirectProcessRecord> {
+        self.records.get(execution_id).ok_or_else(|| {
             // A missing workload is `NotFound`, not `InvalidInput`: the request
             // was well-formed, the unit simply does not exist yet. The
             // reconciler relies on this distinction to start an absent workload
@@ -159,16 +159,19 @@ impl DirectProcessState {
             // (InvalidInput) instead of masking it with a redundant start.
             Error::NotFound(format!(
                 "direct process backend has no workload {}",
-                workload_id.as_str()
+                execution_id.as_str()
             ))
         })
     }
 
-    fn record_mut(&mut self, workload_id: &TenantWorkloadId) -> Result<&mut DirectProcessRecord> {
-        self.records.get_mut(workload_id).ok_or_else(|| {
+    fn record_mut(
+        &mut self,
+        execution_id: &WorkloadExecutionId,
+    ) -> Result<&mut DirectProcessRecord> {
+        self.records.get_mut(execution_id).ok_or_else(|| {
             Error::NotFound(format!(
                 "direct process backend has no workload {}",
-                workload_id.as_str()
+                execution_id.as_str()
             ))
         })
     }
@@ -186,7 +189,7 @@ struct DirectProcessRecord {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DirectProcessEvidence {
     process_id: u64,
-    workload_id: TenantWorkloadId,
+    execution_id: WorkloadExecutionId,
     unit_name: String,
     executable: String,
     args: Vec<String>,
@@ -196,7 +199,7 @@ impl DirectProcessEvidence {
     fn from_plan(plan: &HostLifecyclePlan, process_id: u64) -> Self {
         Self {
             process_id,
-            workload_id: plan.workload_id().clone(),
+            execution_id: plan.execution_id().clone(),
             unit_name: plan.unit_name().as_str().to_string(),
             executable: plan.executable().as_str().to_string(),
             args: plan.args().to_vec(),
@@ -207,8 +210,8 @@ impl DirectProcessEvidence {
         self.process_id
     }
 
-    pub fn workload_id(&self) -> &TenantWorkloadId {
-        &self.workload_id
+    pub fn execution_id(&self) -> &WorkloadExecutionId {
+        &self.execution_id
     }
 
     pub fn unit_name(&self) -> &str {
@@ -265,7 +268,7 @@ mod tests {
         let plan = backend
             .validate(&binding, request())
             .expect("direct process plan should validate from binding");
-        let workload_id = plan.workload_id().clone();
+        let execution_id = plan.execution_id().clone();
 
         let started = backend
             .start(plan)
@@ -274,19 +277,19 @@ mod tests {
         assert_eq!(started.phase(), TenantWorkloadPhase::Running);
 
         let inspected = backend
-            .inspect(workload_id.clone())
+            .inspect(execution_id.clone())
             .await
             .expect("started workload should inspect");
         assert_eq!(inspected.reason(), HostLifecycleStatusReason::Running);
 
         let stopped = backend
-            .stop(workload_id.clone())
+            .stop(execution_id.clone())
             .await
             .expect("started workload should stop");
         assert_eq!(stopped.reason(), HostLifecycleStatusReason::Stopped);
 
         let inspected = backend
-            .inspect(workload_id)
+            .inspect(execution_id)
             .await
             .expect("stopped workload should inspect");
         assert_eq!(inspected.reason(), HostLifecycleStatusReason::Stopped);
@@ -299,30 +302,32 @@ mod tests {
         let plan = backend
             .validate(&binding, request())
             .expect("direct process plan should validate");
-        let workload_id = plan.workload_id().clone();
+        let execution_id = plan.execution_id().clone();
         backend
             .start(plan)
             .await
             .expect("direct process start should succeed");
 
         let evidence = backend
-            .evidence(&workload_id)
+            .evidence(&execution_id)
             .expect("evidence should be recorded");
         assert_eq!(evidence.process_id(), 10_001);
-        assert_eq!(evidence.workload_id(), &workload_id);
-        assert!(evidence.unit_name().starts_with("nimbus-tw_"));
+        assert_eq!(evidence.execution_id(), &execution_id);
+        assert!(evidence.unit_name().starts_with("nimbus-wex_"));
         assert_eq!(evidence.executable(), "/bin/nimbus-direct-test");
         assert_eq!(
             evidence.args(),
             &["--mode".to_string(), "smoke".to_string()]
         );
 
-        let logs = backend.logs(&workload_id).expect("logs should be recorded");
+        let logs = backend
+            .logs(&execution_id)
+            .expect("logs should be recorded");
         assert_eq!(
             logs,
             vec![
-                format!("direct-process:{}:validated", workload_id.as_str()),
-                format!("direct-process:{}:started:10001", workload_id.as_str()),
+                format!("direct-process:{}:validated", execution_id.as_str()),
+                format!("direct-process:{}:started:10001", execution_id.as_str()),
             ]
         );
     }
@@ -352,7 +357,7 @@ mod tests {
         let plan = backend
             .validate(&binding, request())
             .expect("direct process plan should validate");
-        let unknown = plan.workload_id().clone();
+        let unknown = plan.execution_id().clone();
 
         let error = backend
             .inspect(unknown.clone())

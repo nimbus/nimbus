@@ -1694,7 +1694,7 @@ function verifyComputeNodeWorkloadCoordinator() {
       requiredSource(
         computeSources,
         "crates/nimbus-compute/src/node_workloads.rs",
-      ).source += "\nuse nimbus_workloads::DesiredWorkloadStore;\n";
+      ).source += "\nuse nimbus_workloads::WorkloadSagaStore;\n";
     } else if (mutation === "coordinator-network-authority") {
       requiredSource(
         computeSources,
@@ -1763,7 +1763,7 @@ function verifyComputeNodeWorkloadCoordinator() {
     );
   }
   if (
-    /\bnimbus_workloads\b|\bDesiredWorkload(?:Store|State)?\b|\bnimbus_network\b|\bLocalNetworkManager\b|\bNetworkPlan\b|\bnimbus_system\b|\bSystemTenantStatusEvidenceWriter\b/.test(
+    /\bnimbus_workloads\b|\bWorkloadSagaStore\b|\bnimbus_network\b|\bLocalNetworkManager\b|\bNetworkPlan\b|\bnimbus_system\b|\bSystemTenantStatusEvidenceWriter\b/.test(
       computeCoordinator,
     )
   ) {

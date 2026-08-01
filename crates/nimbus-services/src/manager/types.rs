@@ -2,7 +2,6 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use nimbus_core::{Error, TenantId};
 use nimbus_sandbox::{SandboxError, SandboxHandle};
-use nimbus_workloads::InMemoryDesiredWorkloadStore;
 
 use crate::{SandboxResource, ServiceDefinition, SessionResource};
 
@@ -30,7 +29,6 @@ pub(super) struct ServiceManagerState {
     pub(super) sandbox_resources: BTreeMap<String, SandboxResource>,
     pub(super) sessions: BTreeMap<String, SessionResource>,
     pub(super) session_channels: BTreeMap<SessionChannelKey, SessionChannelState>,
-    pub(super) desired_workloads: InMemoryDesiredWorkloadStore,
     pub(super) activations_in_progress: BTreeSet<TenantServiceKey>,
     pub(super) next_definition_version: u64,
     pub(super) next_sandbox_resource_version: u64,

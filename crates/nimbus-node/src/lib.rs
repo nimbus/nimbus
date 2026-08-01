@@ -12,19 +12,19 @@ pub use host_lifecycle::{
     HostLifecycleJournalSelectorEvidence, HostLifecyclePlan, HostLifecycleProperty,
     HostLifecyclePropertySet, HostLifecycleRequest, HostLifecycleStatus, HostLifecycleStatusReason,
     HostRestartPolicy, RunnerKind, RunnerSpec, RuntimePoolTrustClass, RuntimePoolTrustState,
-    SystemdUnitKind, SystemdUnitName, TenantWorkloadId, TenantWorkloadLifecycleEvidence,
+    SystemdUnitKind, SystemdUnitName, TenantWorkloadLifecycleEvidence,
 };
 pub use memory_pressure::{
     CgroupV2CpuPressureThresholds, CgroupV2HostPressureSource, CgroupV2MemoryPressureSource,
     HostCpuPressureObservation, HostMemoryPressureObservation, HostPressureObservation,
 };
-pub use nimbus_workloads::NodeIdentity;
 pub(crate) use nimbus_workloads::{
     LocalEnforcementBinding, TenantSystemEvidenceProjection, TenantWorkloadDeletionState,
     TenantWorkloadSpec,
 };
+pub use nimbus_workloads::{NodeIdentity, WorkloadExecutionId};
 #[cfg(test)]
-pub(crate) use nimbus_workloads::{TenantFinalizerRecord, TenantWorkloadGeneration};
+pub(crate) use nimbus_workloads::{TenantFinalizerRecord, WorkloadGeneration};
 pub use reconciler::{
     NodeAgent, NodeAgentAssignment, NodeAgentCapabilityReport, NodeAgentReconcileReport,
     NodeAgentTransportAdmission, NodeAssignmentDisposition, NodeBackendCapabilitySource,

@@ -8,9 +8,11 @@ use super::{
     HostLifecycleBackendKind, HostLifecycleFuture, HostLifecycleJournalSelectorEvidence,
     HostLifecyclePlan, HostLifecycleProperty, HostLifecycleRequest, HostLifecycleStatus,
     HostLifecycleStatusReason, HostRestartPolicy, LocalEnforcementBinding, SystemdUnitKind,
-    SystemdUnitName, TenantWorkloadId, TenantWorkloadLifecycleEvidence, TenantWorkloadPhase,
-    TenantWorkloadStatus,
+    SystemdUnitName, TenantWorkloadLifecycleEvidence, TenantWorkloadPhase, TenantWorkloadStatus,
+    WorkloadExecutionId,
 };
+
+const WORKLOAD_EXECUTION_JOURNAL_FIELD: &str = "NIMBUS_WORKLOAD_EXECUTION_ID";
 
 /// Live `zbus_systemd`-backed `SystemdDbusClient`. Present only on Linux when
 /// the `systemd-dbus` feature is enabled; otherwise the backend keeps its
@@ -139,13 +141,13 @@ where
 
     fn stop<'a>(
         &'a self,
-        workload_id: TenantWorkloadId,
+        execution_id: WorkloadExecutionId,
     ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
         Box::pin(async move {
             self.ensure_capable()?;
             let response = self
                 .client
-                .stop_unit(SystemdStopUnitRequest::for_workload(workload_id)?)
+                .stop_unit(SystemdStopUnitRequest::for_execution(execution_id)?)
                 .await?;
             response.status().to_host_lifecycle_status()
         })
@@ -153,13 +155,13 @@ where
 
     fn inspect<'a>(
         &'a self,
-        workload_id: TenantWorkloadId,
+        execution_id: WorkloadExecutionId,
     ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
         Box::pin(async move {
             self.ensure_capable()?;
             let status = self
                 .client
-                .inspect_unit(SystemdInspectUnitRequest::for_workload(workload_id)?)
+                .inspect_unit(SystemdInspectUnitRequest::for_execution(execution_id)?)
                 .await?;
             status.to_host_lifecycle_status()
         })
@@ -339,7 +341,7 @@ pub struct SystemdStartTransientUnitRequest {
     unit_name: SystemdUnitName,
     mode: StartTransientMode,
     properties: Vec<SystemdDbusProperty>,
-    workload_id: TenantWorkloadId,
+    execution_id: WorkloadExecutionId,
     cgroup_path: String,
     journal_selectors: Vec<SystemdJournalSelector>,
 }
@@ -355,8 +357,9 @@ impl SystemdStartTransientUnitRequest {
         let mut properties = vec![
             SystemdDbusProperty::Description(format!(
                 "Nimbus tenant workload {}",
-                plan.workload_id().as_str()
+                plan.execution_id().as_str()
             )),
+            SystemdDbusProperty::LogExtraFields(vec![execution_journal_field(plan.execution_id())]),
             SystemdDbusProperty::ExecStart(SystemdExecStart::from_plan(plan)?),
         ];
         properties.extend(
@@ -369,11 +372,14 @@ impl SystemdStartTransientUnitRequest {
             unit_name: plan.unit_name().clone(),
             mode: StartTransientMode::Replace,
             properties,
-            workload_id: plan.workload_id().clone(),
+            execution_id: plan.execution_id().clone(),
             cgroup_path: cgroup_path_for_unit(plan.unit_name()),
             journal_selectors: vec![
                 SystemdJournalSelector::new("_SYSTEMD_UNIT", plan.unit_name().as_str())?,
-                SystemdJournalSelector::new("NIMBUS_WORKLOAD_ID", plan.workload_id().as_str())?,
+                SystemdJournalSelector::new(
+                    WORKLOAD_EXECUTION_JOURNAL_FIELD,
+                    plan.execution_id().as_str(),
+                )?,
             ],
         })
     }
@@ -384,17 +390,18 @@ impl SystemdStartTransientUnitRequest {
     /// `StartTransientMode::Fail` so a stale unit surfaces instead of being
     /// silently replaced.
     #[cfg(feature = "systemd-dbus-integration-tests")]
-    pub fn for_integration_test(
-        workload_id: TenantWorkloadId,
+    pub fn for_integration_execution(
+        execution_id: WorkloadExecutionId,
         executable: impl Into<String>,
         args: Vec<String>,
     ) -> Result<Self> {
-        let unit_name = systemd_unit_for_workload(&workload_id)?;
+        let unit_name = systemd_unit_for_execution(&execution_id)?;
         let properties = vec![
             SystemdDbusProperty::Description(format!(
                 "Nimbus NDB5 integration test {}",
-                workload_id.as_str()
+                execution_id.as_str()
             )),
+            SystemdDbusProperty::LogExtraFields(vec![execution_journal_field(&execution_id)]),
             SystemdDbusProperty::ExecStart(SystemdExecStart {
                 executable: executable.into(),
                 args,
@@ -405,12 +412,15 @@ impl SystemdStartTransientUnitRequest {
             cgroup_path: cgroup_path_for_unit(&unit_name),
             journal_selectors: vec![
                 SystemdJournalSelector::new("_SYSTEMD_UNIT", unit_name.as_str())?,
-                SystemdJournalSelector::new("NIMBUS_WORKLOAD_ID", workload_id.as_str())?,
+                SystemdJournalSelector::new(
+                    WORKLOAD_EXECUTION_JOURNAL_FIELD,
+                    execution_id.as_str(),
+                )?,
             ],
             unit_name,
             mode: StartTransientMode::Fail,
             properties,
-            workload_id,
+            execution_id,
         })
     }
 
@@ -426,8 +436,8 @@ impl SystemdStartTransientUnitRequest {
         &self.properties
     }
 
-    pub fn workload_id(&self) -> &TenantWorkloadId {
-        &self.workload_id
+    pub fn execution_id(&self) -> &WorkloadExecutionId {
+        &self.execution_id
     }
 
     pub fn cgroup_path(&self) -> &str {
@@ -448,6 +458,7 @@ pub enum SystemdDbusProperty {
     MemoryMax(u64),
     CpuWeight(u64),
     TasksMax(u64),
+    LogExtraFields(Vec<String>),
     ExecStart(SystemdExecStart),
 }
 
@@ -473,9 +484,17 @@ impl SystemdDbusProperty {
             Self::MemoryMax(_) => "MemoryMax",
             Self::CpuWeight(_) => "CPUWeight",
             Self::TasksMax(_) => "TasksMax",
+            Self::LogExtraFields(_) => "LogExtraFields",
             Self::ExecStart(_) => "ExecStart",
         }
     }
+}
+
+fn execution_journal_field(execution_id: &WorkloadExecutionId) -> String {
+    format!(
+        "{WORKLOAD_EXECUTION_JOURNAL_FIELD}={}",
+        execution_id.as_str()
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -577,23 +596,23 @@ impl SystemdStartTransientUnitResponse {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SystemdStopUnitRequest {
-    workload_id: TenantWorkloadId,
+    execution_id: WorkloadExecutionId,
     unit_name: SystemdUnitName,
     mode: StartTransientMode,
 }
 
 impl SystemdStopUnitRequest {
-    pub fn for_workload(workload_id: TenantWorkloadId) -> Result<Self> {
-        let unit_name = systemd_unit_for_workload(&workload_id)?;
+    pub fn for_execution(execution_id: WorkloadExecutionId) -> Result<Self> {
+        let unit_name = systemd_unit_for_execution(&execution_id)?;
         Ok(Self {
-            workload_id,
+            execution_id,
             mode: StartTransientMode::Replace,
             unit_name,
         })
     }
 
-    pub fn workload_id(&self) -> &TenantWorkloadId {
-        &self.workload_id
+    pub fn execution_id(&self) -> &WorkloadExecutionId {
+        &self.execution_id
     }
 
     pub fn unit_name(&self) -> &SystemdUnitName {
@@ -607,21 +626,21 @@ impl SystemdStopUnitRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SystemdInspectUnitRequest {
-    workload_id: TenantWorkloadId,
+    execution_id: WorkloadExecutionId,
     unit_name: SystemdUnitName,
 }
 
 impl SystemdInspectUnitRequest {
-    pub fn for_workload(workload_id: TenantWorkloadId) -> Result<Self> {
-        let unit_name = systemd_unit_for_workload(&workload_id)?;
+    pub fn for_execution(execution_id: WorkloadExecutionId) -> Result<Self> {
+        let unit_name = systemd_unit_for_execution(&execution_id)?;
         Ok(Self {
-            workload_id,
+            execution_id,
             unit_name,
         })
     }
 
-    pub fn workload_id(&self) -> &TenantWorkloadId {
-        &self.workload_id
+    pub fn execution_id(&self) -> &WorkloadExecutionId {
+        &self.execution_id
     }
 
     pub fn unit_name(&self) -> &SystemdUnitName {
@@ -654,7 +673,7 @@ impl SystemdStopUnitResponse {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SystemdUnitStatus {
-    workload_id: TenantWorkloadId,
+    execution_id: WorkloadExecutionId,
     unit_name: SystemdUnitName,
     active_state: String,
     sub_state: String,
@@ -666,7 +685,7 @@ pub struct SystemdUnitStatus {
 
 impl SystemdUnitStatus {
     pub fn new(
-        workload_id: TenantWorkloadId,
+        execution_id: WorkloadExecutionId,
         unit_name: SystemdUnitName,
         active_state: impl Into<String>,
         sub_state: impl Into<String>,
@@ -674,10 +693,10 @@ impl SystemdUnitStatus {
         let cgroup_path = cgroup_path_for_unit(&unit_name);
         let journal_selectors = vec![
             SystemdJournalSelector::new("_SYSTEMD_UNIT", unit_name.as_str())?,
-            SystemdJournalSelector::new("NIMBUS_WORKLOAD_ID", workload_id.as_str())?,
+            SystemdJournalSelector::new(WORKLOAD_EXECUTION_JOURNAL_FIELD, execution_id.as_str())?,
         ];
         Ok(Self {
-            workload_id,
+            execution_id,
             unit_name,
             active_state: active_state.into(),
             sub_state: sub_state.into(),
@@ -719,8 +738,8 @@ impl SystemdUnitStatus {
         status_from_observed(self, observed)
     }
 
-    pub fn workload_id(&self) -> &TenantWorkloadId {
-        &self.workload_id
+    pub fn execution_id(&self) -> &WorkloadExecutionId {
+        &self.execution_id
     }
 
     pub fn unit_name(&self) -> &SystemdUnitName {
@@ -808,7 +827,7 @@ fn status_from_observed(
         lifecycle_evidence = lifecycle_evidence.with_process_id(u64::from(main_pid));
     }
     Ok(HostLifecycleStatus::new_for_backend(
-        status.workload_id.clone(),
+        status.execution_id.clone(),
         status.unit_name.clone(),
         phase,
         reason,
@@ -828,8 +847,8 @@ fn journal_selector_evidence(
         .collect()
 }
 
-fn systemd_unit_for_workload(workload_id: &TenantWorkloadId) -> Result<SystemdUnitName> {
-    SystemdUnitName::for_workload(workload_id, SystemdUnitKind::Service)
+fn systemd_unit_for_execution(execution_id: &WorkloadExecutionId) -> Result<SystemdUnitName> {
+    SystemdUnitName::for_execution(execution_id, SystemdUnitKind::Service)
 }
 
 fn cgroup_path_for_unit(unit_name: &SystemdUnitName) -> String {
@@ -906,7 +925,7 @@ mod tests {
                     "/org/freedesktop/systemd1/job/42",
                 )?;
                 let status = SystemdUnitStatus::new(
-                    request.workload_id().clone(),
+                    request.execution_id().clone(),
                     request.unit_name().clone(),
                     "activating",
                     "start",
@@ -934,7 +953,7 @@ mod tests {
                     .lock()
                     .expect("fake client lock should not be poisoned") = Some(request.clone());
                 let status = SystemdUnitStatus::new(
-                    request.workload_id().clone(),
+                    request.execution_id().clone(),
                     request.unit_name().clone(),
                     "inactive",
                     "dead",
@@ -959,7 +978,7 @@ mod tests {
                     .clone()
                     .unwrap_or_else(|| {
                         SystemdUnitStatus::new(
-                            request.workload_id().clone(),
+                            request.execution_id().clone(),
                             request.unit_name().clone(),
                             "active",
                             "running",
@@ -1011,7 +1030,7 @@ mod tests {
 
         assert_eq!(request.unit_name(), plan.unit_name());
         assert_eq!(request.mode().as_dbus_str(), "replace");
-        assert_eq!(request.workload_id(), plan.workload_id());
+        assert_eq!(request.execution_id(), plan.execution_id());
         assert!(
             request.cgroup_path().contains(plan.unit_name().as_str()),
             "cgroup path should correlate to unit"
@@ -1020,9 +1039,20 @@ mod tests {
             selector.field() == "_SYSTEMD_UNIT" && selector.value() == plan.unit_name().as_str()
         }));
         assert!(request.journal_selectors().iter().any(|selector| {
-            selector.field() == "NIMBUS_WORKLOAD_ID"
-                && selector.value() == plan.workload_id().as_str()
+            selector.field() == "NIMBUS_WORKLOAD_EXECUTION_ID"
+                && selector.value() == plan.execution_id().as_str()
         }));
+        assert!(
+            request.properties().iter().any(|property| matches!(
+                property,
+                SystemdDbusProperty::LogExtraFields(fields)
+                    if fields == &[format!(
+                        "{WORKLOAD_EXECUTION_JOURNAL_FIELD}={}",
+                        plan.execution_id().as_str()
+                    )]
+            )),
+            "the execution-id selector must be materialized as unit journal metadata"
+        );
 
         let exec = request
             .properties()
@@ -1093,7 +1123,7 @@ mod tests {
         let plan = backend
             .validate(&binding, request())
             .expect("systemd plan should validate");
-        let workload_id = plan.workload_id().clone();
+        let execution_id = plan.execution_id().clone();
 
         let started = backend
             .start(plan)
@@ -1107,7 +1137,7 @@ mod tests {
         );
 
         let inspected = backend
-            .inspect(workload_id.clone())
+            .inspect(execution_id.clone())
             .await
             .expect("inspect should map fake D-Bus status");
         assert_eq!(
@@ -1116,7 +1146,7 @@ mod tests {
         );
 
         let stopped = backend
-            .stop(workload_id)
+            .stop(execution_id)
             .await
             .expect("stop should map fake D-Bus status");
         assert_eq!(

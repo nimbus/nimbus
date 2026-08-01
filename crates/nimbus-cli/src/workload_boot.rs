@@ -3,8 +3,7 @@ use std::path::{Path, PathBuf};
 use nimbus::{Error, TenantId};
 use nimbus_tenant::TenantIsolationMode;
 use nimbus_workloads::{
-    DesiredWorkload, DesiredWorkloadSnapshot, DesiredWorkloadState, InMemoryDesiredWorkloadStore,
-    NodeCapacity, PlacementPlan, WorkloadController, WorkloadScheduler,
+    DesiredWorkload, DesiredWorkloadState, NodeCapacity, PlacementPlan, WorkloadScheduler,
 };
 
 use crate::compose::discovery::ResolvedComposeSelection;
@@ -14,7 +13,7 @@ pub(crate) struct WorkloadControlBootPlan {
     tenant_id: TenantId,
     tenant_isolation_mode: TenantIsolationMode,
     compose_files: Vec<PathBuf>,
-    desired_workloads: DesiredWorkloadSnapshot,
+    desired_workloads: Vec<DesiredWorkload>,
     placement_plans: Vec<PlacementPlan>,
 }
 
@@ -45,8 +44,8 @@ impl WorkloadControlBootPlan {
     }
 
     #[cfg(test)]
-    pub(crate) fn desired_workloads(&self) -> Vec<&DesiredWorkload> {
-        self.desired_workloads.workloads().collect()
+    pub(crate) fn desired_workloads(&self) -> &[DesiredWorkload] {
+        &self.desired_workloads
     }
 
     #[cfg(test)]
@@ -70,8 +69,8 @@ pub(crate) fn plan_compose_services(
         control_data_dir,
         tenant_isolation_mode,
     )?;
-    let mut controller = WorkloadController::new(InMemoryDesiredWorkloadStore::default());
     let scheduler = WorkloadScheduler::new();
+    let mut desired_workloads = Vec::with_capacity(context.plan.services.len());
     let mut placement_plans = Vec::new();
 
     for service_name in context.plan.services.keys() {
@@ -81,15 +80,15 @@ pub(crate) fn plan_compose_services(
             DesiredWorkloadState::Running,
             1,
         )?;
-        let recorded = controller.record_desired_workload(desired);
-        placement_plans.push(scheduler.schedule(&recorded, nodes));
+        placement_plans.push(scheduler.schedule(&desired, nodes));
+        desired_workloads.push(desired);
     }
 
     Ok(WorkloadControlBootPlan {
         tenant_id: context.control_plane.local_tenant_id,
         tenant_isolation_mode,
         compose_files: selection.files.clone(),
-        desired_workloads: controller.snapshot(),
+        desired_workloads,
         placement_plans,
     })
 }
@@ -137,13 +136,10 @@ services:
     }
 
     fn workload_ids(plan: &WorkloadControlBootPlan) -> Vec<String> {
-        let mut ids = plan
-            .desired_workloads()
-            .into_iter()
+        plan.desired_workloads()
+            .iter()
             .map(|workload| workload.workload_id().to_owned())
-            .collect::<Vec<_>>();
-        ids.sort();
-        ids
+            .collect()
     }
 
     #[test]
@@ -186,7 +182,7 @@ services:
     }
 
     #[test]
-    fn start_uses_workload_controller_for_compose_services() {
+    fn start_builds_ordered_desired_intents_for_compose_services() {
         let temp = tempdir().expect("tempdir should build");
         let compose_path = write_compose_fixture(temp.path(), compose_body());
         let command = parse_start([
@@ -221,6 +217,59 @@ services:
             plan.desired_workloads()
                 .iter()
                 .all(|workload| workload.tenant_id() == plan.tenant_id())
+        );
+    }
+
+    #[test]
+    fn compose_overrides_deduplicate_desired_intents_in_stable_order() {
+        let temp = tempdir().expect("tempdir should build");
+        let base_path = write_compose_fixture(
+            temp.path(),
+            r#"
+name: Demo Stack
+services:
+  zeta:
+    image: ghcr.io/acme/zeta@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  api:
+    image: ghcr.io/acme/api@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+"#,
+        );
+        let override_path = temp.path().join("compose.override.yaml");
+        fs::write(
+            &override_path,
+            r#"
+services:
+  api:
+    image: ghcr.io/acme/api@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+  worker:
+    image: ghcr.io/acme/worker@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+"#,
+        )
+        .expect("override fixture should write");
+        let selection =
+            resolve_compose_selection(&[base_path.clone(), override_path.clone()], temp.path())
+                .expect("compose selection should resolve")
+                .expect("explicit compose selection should exist");
+
+        let plan = plan_compose_services(
+            &selection,
+            &temp.path().join("control"),
+            TenantIsolationMode::Production,
+            &default_local_node_capacity().expect("local node should build"),
+        )
+        .expect("merged workload-control plan should resolve");
+
+        assert_eq!(plan.compose_files(), &[base_path, override_path]);
+        assert_eq!(
+            workload_ids(&plan),
+            ["service:api", "service:worker", "service:zeta"]
+        );
+        assert_eq!(plan.placement_plan_count(), plan.desired_workload_count());
+        assert!(
+            plan.placement_plans()
+                .iter()
+                .zip(plan.desired_workloads())
+                .all(|(placement, desired)| placement.workload_id() == desired.workload_id())
         );
     }
 

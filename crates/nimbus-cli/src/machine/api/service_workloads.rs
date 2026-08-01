@@ -849,7 +849,7 @@ mod tests {
     use nimbus_node::{
         HostBackendObservedState, HostLifecycleBackendCapabilities, HostLifecycleFuture,
         HostLifecyclePlan, HostLifecycleProperty, HostLifecycleStatus, StatusEvidenceWrite,
-        TenantWorkloadId, TenantWorkloadStatus,
+        TenantWorkloadStatus, WorkloadExecutionId,
     };
     use nimbus_sandbox::backends::container::ContainerSandboxBackendConfig;
     use nimbus_workloads::{LocalEnforcementBinding, NodeIdentity};
@@ -918,7 +918,7 @@ mod tests {
 
         fn stop<'a>(
             &'a self,
-            _workload_id: TenantWorkloadId,
+            _execution_id: WorkloadExecutionId,
         ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
             Box::pin(async move {
                 self.record("stop");
@@ -933,7 +933,7 @@ mod tests {
 
         fn inspect<'a>(
             &'a self,
-            _workload_id: TenantWorkloadId,
+            _execution_id: WorkloadExecutionId,
         ) -> HostLifecycleFuture<'a, HostLifecycleStatus> {
             Box::pin(async move {
                 self.record("inspect");

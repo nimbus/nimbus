@@ -40,6 +40,9 @@ fn encode_property(property: &SystemdDbusProperty) -> Result<(String, OwnedValue
         SystemdDbusProperty::MemoryMax(bytes) => ("MemoryMax", u64_value(*bytes)),
         SystemdDbusProperty::CpuWeight(weight) => ("CPUWeight", u64_value(*weight)),
         SystemdDbusProperty::TasksMax(max) => ("TasksMax", u64_value(*max)),
+        SystemdDbusProperty::LogExtraFields(fields) => {
+            ("LogExtraFields", log_extra_fields_value(fields)?)
+        }
         SystemdDbusProperty::ExecStart(exec) => ("ExecStart", exec_start_value(exec)?),
     };
     Ok((name.to_string(), value))
@@ -57,6 +60,14 @@ fn exec_start_value(exec: &SystemdExecStart) -> Result<OwnedValue> {
         ignore_failure: exec.ignore_failure(),
     };
     to_owned(Value::from(vec![command]))
+}
+
+fn log_extra_fields_value(fields: &[String]) -> Result<OwnedValue> {
+    let fields = fields
+        .iter()
+        .map(|field| field.as_bytes().to_vec())
+        .collect::<Vec<_>>();
+    to_owned(Value::from(fields))
 }
 
 fn restart_str(policy: HostRestartPolicy) -> &'static str {
@@ -105,6 +116,10 @@ mod tests {
             SystemdDbusProperty::MemoryMax(1024),
             SystemdDbusProperty::CpuWeight(50),
             SystemdDbusProperty::TasksMax(64),
+            SystemdDbusProperty::LogExtraFields(vec![
+                "NIMBUS_WORKLOAD_EXECUTION_ID=wex_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    .to_string(),
+            ]),
         ])
         .expect("scalar properties should encode");
 
@@ -118,6 +133,19 @@ mod tests {
         assert_eq!(find(&props, "MemoryMax"), &OwnedValue::from(1024u64));
         assert_eq!(find(&props, "TasksMax"), &OwnedValue::from(64u64));
         assert_eq!(find(&props, "RestartUSec"), &OwnedValue::from(2_000_000u64));
+        assert_eq!(
+            find(&props, "LogExtraFields").value_signature().to_string(),
+            "aay"
+        );
+        let journal_fields: Vec<Vec<u8>> = find(&props, "LogExtraFields")
+            .try_clone()
+            .expect("journal fields should clone")
+            .try_into()
+            .expect("journal fields should decode as byte arrays");
+        assert_eq!(
+            journal_fields,
+            vec![b"NIMBUS_WORKLOAD_EXECUTION_ID=wex_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_vec()]
+        );
         // Description / Restart are strings.
         assert_eq!(
             find(&props, "Description").value_signature().to_string(),

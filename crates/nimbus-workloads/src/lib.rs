@@ -9,10 +9,9 @@ mod tenant;
 
 pub use assignment::{NodeAssignment, WorkloadStatusUpdate};
 pub use desired::{
-    DesiredWorkload, DesiredWorkloadKind, DesiredWorkloadSnapshot, DesiredWorkloadState,
-    DesiredWorkloadStore, EmbeddedNodeClient, InMemoryDesiredWorkloadStore,
-    WorkloadChannelDescriptor, WorkloadController, WorkloadEvaluation, WorkloadEventQueue,
-    WorkloadExecutionPhase, WorkloadExecutionStatus, WorkloadExecutor,
+    DesiredWorkload, DesiredWorkloadKind, DesiredWorkloadState, EmbeddedNodeClient,
+    WorkloadChannelDescriptor, WorkloadEvaluation, WorkloadEventQueue, WorkloadExecutionPhase,
+    WorkloadExecutionStatus, WorkloadExecutor,
 };
 pub use saga::{
     WORKLOAD_SAGA_FORMAT_VERSION, WorkloadActivationIntent, WorkloadAdmissionEvidence,
@@ -39,8 +38,8 @@ pub use tenant::{
     TenantCredentialProjectionPolicy, TenantCredentialProjectionRequest,
     TenantCredentialProjectionScope, TenantEgressReloadRequest, TenantFinalizerRecord,
     TenantPolicyArea, TenantPolicyLifecycle, TenantServiceProjection, TenantStorageProjection,
-    TenantSystemEvidenceProjection, TenantWorkloadDeletionState, TenantWorkloadGeneration,
-    TenantWorkloadResourcePolicy, TenantWorkloadSpec, TenantWorkloadUid, policy_lifecycle,
+    TenantSystemEvidenceProjection, TenantWorkloadDeletionState, TenantWorkloadResourcePolicy,
+    TenantWorkloadSpec, TenantWorkloadUid, policy_lifecycle,
 };
 
 pub(crate) use desired::validate_component;

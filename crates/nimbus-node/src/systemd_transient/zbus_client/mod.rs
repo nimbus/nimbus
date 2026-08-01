@@ -254,7 +254,7 @@ impl SystemdDbusClient for ZbusSystemdClient {
             // After a successful stop the transient unit is inactive/dead (and
             // typically garbage-collected). Report that terminal status.
             let status = SystemdUnitStatus::new(
-                request.workload_id().clone(),
+                request.execution_id().clone(),
                 request.unit_name().clone(),
                 "inactive",
                 "dead",
@@ -270,13 +270,13 @@ impl SystemdDbusClient for ZbusSystemdClient {
     ) -> HostLifecycleFuture<'a, SystemdUnitStatus> {
         Box::pin(async move {
             let unit_name = request.unit_name().clone();
-            let workload_id = request.workload_id().clone();
+            let execution_id = request.execution_id().clone();
             let unit_path = match self.manager.get_unit(unit_name.as_str().to_string()).await {
                 Ok(path) => path,
                 // An unloaded unit (never started, or already GC'd after stop)
                 // is reported as inactive/dead rather than an error.
                 Err(err) if is_no_such_unit(&err) => {
-                    return SystemdUnitStatus::new(workload_id, unit_name, "inactive", "dead");
+                    return SystemdUnitStatus::new(execution_id, unit_name, "inactive", "dead");
                 }
                 Err(err) => return Err(map_zbus(err)),
             };
@@ -296,7 +296,7 @@ impl SystemdDbusClient for ZbusSystemdClient {
                 .map_err(map_zbus)?;
             let main_pid = service.main_pid().await.map_err(map_zbus)?;
             let mut status =
-                SystemdUnitStatus::new(workload_id, unit_name, active_state, sub_state)?;
+                SystemdUnitStatus::new(execution_id, unit_name, active_state, sub_state)?;
             if main_pid != 0 {
                 status = status.with_main_pid(main_pid);
             }

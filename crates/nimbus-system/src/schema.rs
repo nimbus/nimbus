@@ -357,8 +357,9 @@ pub(crate) fn system_table_schemas() -> Result<Vec<TableSchema>> {
             &[
                 string("tenantId", true),
                 string("workloadUid", true),
+                string("executionId", true),
                 string("decisionId", true),
-                number("observedGeneration", true),
+                string("observedGeneration", true),
                 string("nodeId", true),
                 string("phase", true),
                 string("target", true),

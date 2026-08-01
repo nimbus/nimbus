@@ -10,7 +10,8 @@ use nimbus_core::{Error, Result, non_empty};
 use nimbus_tenant::TenantIsolationDecisionId;
 use serde::Serialize;
 
-use super::{NodeIdentity, TenantWorkloadGeneration, TenantWorkloadSpec, TenantWorkloadUid};
+use super::{NodeIdentity, TenantWorkloadSpec, TenantWorkloadUid};
+use crate::WorkloadGeneration;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TenantCredentialProjectionPolicy {
@@ -66,7 +67,7 @@ impl TenantCredentialProjectionScope {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TenantCredentialProjectionRequest {
     workload_uid: TenantWorkloadUid,
-    generation: TenantWorkloadGeneration,
+    generation: WorkloadGeneration,
     decision_id: TenantIsolationDecisionId,
     requester_node_id: Option<NodeIdentity>,
     runtime_invocation_id: Option<String>,
@@ -127,7 +128,7 @@ impl TenantCredentialProjectionRequest {
         self
     }
 
-    pub fn with_generation(mut self, generation: TenantWorkloadGeneration) -> Self {
+    pub fn with_generation(mut self, generation: WorkloadGeneration) -> Self {
         self.generation = generation;
         self
     }
@@ -156,7 +157,7 @@ impl TenantCredentialProjectionRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TenantCredentialProjectionBinding {
     workload_uid: TenantWorkloadUid,
-    generation: TenantWorkloadGeneration,
+    generation: WorkloadGeneration,
     decision_id: TenantIsolationDecisionId,
     scope: TenantCredentialProjectionScope,
     workload_subject: String,
@@ -168,7 +169,7 @@ impl TenantCredentialProjectionBinding {
         &self.workload_uid
     }
 
-    pub fn generation(&self) -> TenantWorkloadGeneration {
+    pub fn generation(&self) -> WorkloadGeneration {
         self.generation
     }
 
@@ -309,7 +310,7 @@ mod tests {
                     "runtime",
                 )
                 .expect("credential request should build")
-                .with_generation(TenantWorkloadGeneration::new(6)),
+                .with_generation(WorkloadGeneration::new(6)),
             ),
             "referenced generation 6",
         );

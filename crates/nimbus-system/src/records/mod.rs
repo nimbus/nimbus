@@ -251,6 +251,7 @@ pub(crate) async fn record_tenant_workload_status_async(
     });
     let diagnostics = serde_json::to_value(status.diagnostics())
         .map_err(|error| Error::Serialization(error.to_string()))?;
+    let execution_id = status.execution_id();
     upsert_system_document_async(
         engine,
         SystemTable::WorkloadStatus,
@@ -258,8 +259,9 @@ pub(crate) async fn record_tenant_workload_status_async(
         object_fields(json!({
             "tenantId": projection.tenant_id().as_str(),
             "workloadUid": projection.workload_uid().as_str(),
+            "executionId": execution_id.as_str(),
             "decisionId": projection.decision_id().as_str(),
-            "observedGeneration": status.observed_generation().as_u64(),
+            "observedGeneration": status.observed_generation().to_string(),
             "nodeId": status.writer_node_id().as_str(),
             "phase": status.phase().label(),
             "target": status.target().label(),

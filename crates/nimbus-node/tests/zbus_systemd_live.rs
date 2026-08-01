@@ -11,20 +11,26 @@
 #![cfg(all(target_os = "linux", feature = "systemd-dbus-integration-tests"))]
 
 use std::time::Duration;
+use std::{collections::hash_map::DefaultHasher, hash::Hash, hash::Hasher};
 
 use nimbus_node::{
     BusKind, SystemdDbusClient, SystemdInspectUnitRequest, SystemdStartTransientUnitRequest,
-    SystemdStopUnitRequest, TenantWorkloadId, ZbusSystemdClient,
+    SystemdStopUnitRequest, WorkloadExecutionId, ZbusSystemdClient,
 };
 
 /// Unique per-invocation workload id so concurrent / repeated runs never
 /// collide on a unit name.
-fn unique_workload_id(tag: &str) -> TenantWorkloadId {
+fn unique_execution_id(tag: &str) -> WorkloadExecutionId {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("system clock should be after the unix epoch")
         .as_nanos();
-    TenantWorkloadId::for_integration_test(format!("ndb5-{tag}-{}-{nanos}", std::process::id()))
+    let mut hasher = DefaultHasher::new();
+    tag.hash(&mut hasher);
+    std::process::id().hash(&mut hasher);
+    nanos.hash(&mut hasher);
+    WorkloadExecutionId::try_from(format!("wex_{:064x}", hasher.finish()))
+        .expect("derived live-test execution id should be valid")
 }
 
 /// Connect to the session bus. A failure here is a hard test failure: the CI
@@ -45,10 +51,10 @@ async fn session_client() -> ZbusSystemdClient {
 #[tokio::test]
 async fn start_inspect_stop_roundtrip_against_session_systemd() {
     let client = session_client().await;
-    let workload = unique_workload_id("roundtrip");
+    let workload = unique_execution_id("roundtrip");
 
     // Start a long-lived sleep so the unit is reliably observable as running.
-    let start = SystemdStartTransientUnitRequest::for_integration_test(
+    let start = SystemdStartTransientUnitRequest::for_integration_execution(
         workload.clone(),
         "/usr/bin/sleep",
         vec!["30".to_string()],
@@ -69,7 +75,7 @@ async fn start_inspect_stop_roundtrip_against_session_systemd() {
     // Inspect: the unit should be active/running with a main PID.
     let status = client
         .inspect_unit(
-            SystemdInspectUnitRequest::for_workload(workload.clone())
+            SystemdInspectUnitRequest::for_execution(workload.clone())
                 .expect("inspect request should build"),
         )
         .await
@@ -89,7 +95,7 @@ async fn start_inspect_stop_roundtrip_against_session_systemd() {
     // Stop, correlated with its JobRemoved completion.
     let stop = client
         .stop_unit(
-            SystemdStopUnitRequest::for_workload(workload.clone())
+            SystemdStopUnitRequest::for_execution(workload.clone())
                 .expect("stop request should build"),
         )
         .await
@@ -100,7 +106,7 @@ async fn start_inspect_stop_roundtrip_against_session_systemd() {
     // `inspect_unit` reports as inactive/dead via the NoSuchUnit path).
     let after = client
         .inspect_unit(
-            SystemdInspectUnitRequest::for_workload(workload)
+            SystemdInspectUnitRequest::for_execution(workload)
                 .expect("inspect request should build"),
         )
         .await
@@ -116,11 +122,11 @@ async fn start_inspect_stop_roundtrip_against_session_systemd() {
 #[tokio::test]
 async fn failed_unit_is_observable_via_inspect() {
     let client = session_client().await;
-    let workload = unique_workload_id("failexec");
+    let workload = unique_execution_id("failexec");
 
     // `/usr/bin/false` exits non-zero immediately; the start job completes and
     // the unit then enters `failed`, which inspect must surface.
-    let start = SystemdStartTransientUnitRequest::for_integration_test(
+    let start = SystemdStartTransientUnitRequest::for_integration_execution(
         workload.clone(),
         "/usr/bin/false",
         Vec::new(),
@@ -137,7 +143,7 @@ async fn failed_unit_is_observable_via_inspect() {
     for _ in 0..50 {
         let status = client
             .inspect_unit(
-                SystemdInspectUnitRequest::for_workload(workload.clone())
+                SystemdInspectUnitRequest::for_execution(workload.clone())
                     .expect("inspect request should build"),
             )
             .await
@@ -157,7 +163,7 @@ async fn failed_unit_is_observable_via_inspect() {
     // collides with another run.
     let _ = client
         .stop_unit(
-            SystemdStopUnitRequest::for_workload(workload).expect("stop request should build"),
+            SystemdStopUnitRequest::for_execution(workload).expect("stop request should build"),
         )
         .await;
 }

@@ -59,13 +59,13 @@ verify_decision_contract() {
   fi
 
   require_exact_count \
-    "desired store implementation count" 1 \
+    "desired store implementation count" 0 \
     'impl DesiredWorkloadStore for' crates
   require_exact_count \
-    "service-manager constructor census" 54 \
+    "service-manager constructor census" 52 \
     'ServiceManager::new\(' crates
   require_exact_count \
-    "service-manager desired-write census" 3 \
+    "service-manager desired-write census" 0 \
     '\.upsert_desired_workload\(' crates/nimbus-services/src/manager
 
   workloads_dependents="$(
@@ -101,11 +101,7 @@ verify_decision_contract() {
         $0 !~ /\/tests\.rs$/
       '
   )"
-  expected_product_authority_paths="$(
-    printf '%s\n' \
-      'crates/nimbus-cli/src/workload_boot.rs' \
-      'crates/nimbus-services/src/manager/types.rs'
-  )"
+  expected_product_authority_paths=""
   if [ "${product_authority_paths}" != "${expected_product_authority_paths}" ]; then
     add_error "product in-memory authority paths changed: expected [${expected_product_authority_paths}], observed [${product_authority_paths}]"
   fi
@@ -120,11 +116,7 @@ verify_decision_contract() {
       --glob '!**/tests/**' 2>&1
   )"
   desired_read_status=$?
-  expected_desired_read_calls="$(
-    printf '%s\n' \
-      'crates/nimbus-cli/src/workload_boot.rs:controller.snapshot(' \
-      'crates/nimbus-services/src/manager.rs:.snapshot_desired_workloads('
-  )"
+  expected_desired_read_calls=""
   if [ "${desired_read_status}" -gt 1 ]; then
     add_error "desired-workload read-surface scan failed with status ${desired_read_status}: ${desired_read_calls}"
   else
@@ -132,15 +124,6 @@ verify_decision_contract() {
     if [ "${desired_read_calls}" != "${expected_desired_read_calls}" ]; then
       add_error "desired-workload production read calls changed: expected [${expected_desired_read_calls}], observed [${desired_read_calls}]"
     fi
-  fi
-
-  if ! rg -q -F 'desired_workloads: InMemoryDesiredWorkloadStore' \
-    crates/nimbus-services/src/manager/types.rs; then
-    add_error "current ServiceManagerState in-memory authority changed without NNC6.1c ledger update"
-  fi
-  if ! rg -q -F 'WorkloadController::new(InMemoryDesiredWorkloadStore::default())' \
-    crates/nimbus-cli/src/workload_boot.rs; then
-    add_error "current CLI in-memory planner changed without NNC6.1c ledger update"
   fi
 
   forbidden_network="$(rg -n \
@@ -248,7 +231,9 @@ verify_operational_identity_cutover() {
     crates/nimbus-node/src/host_lifecycle.rs ||
     ! rg -q -F 'let execution_id = spec.execution_id()?' \
       crates/nimbus-node/src/host_lifecycle.rs ||
-    ! rg -q -F '"executionId": status.execution_id().as_str()' \
+    ! rg -q -F 'let execution_id = status.execution_id();' \
+      crates/nimbus-system/src/records/mod.rs ||
+    ! rg -q -F '"executionId": execution_id.as_str()' \
       crates/nimbus-system/src/records/mod.rs; then
     add_error "host lifecycle and observed status do not carry WorkloadExecutionId"
   fi
@@ -320,7 +305,7 @@ fi
 
 if [ "${MODE}" = "decision" ]; then
   printf '%s\n' \
-    'Census: reverse-dependencies=8 store-implementations=1 product-in-memory-authorities=2 production-upserts=3 manager-constructors=54 recovery-readers=0'
+    'Census: reverse-dependencies=8 store-implementations=0 product-in-memory-authorities=0 production-upserts=0 manager-constructors=52 recovery-readers=0'
 fi
 printf 'PASS workload-saga-authority %s\n' "${MODE}"
 printf 'Summary: 1 passed, 0 failed\n'

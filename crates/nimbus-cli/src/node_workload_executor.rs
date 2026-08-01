@@ -219,7 +219,7 @@ pub(crate) async fn run_node_workload_executor_command(
         let outcome = coordinator.reconcile_assignment(assignment.clone()).await?;
         emit_node_workload_executor_info(format!(
             "workload {} desired={:?} action={:?}",
-            outcome.workload_id().as_str(),
+            outcome.execution_id().as_str(),
             outcome.desired_state(),
             outcome.action(),
         ));

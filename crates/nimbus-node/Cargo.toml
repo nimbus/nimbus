@@ -18,7 +18,6 @@ nimbus-runtime = { path = "../nimbus-runtime" }
 nimbus-tenant = { path = "../nimbus-tenant" }
 nimbus-workloads = { path = "../nimbus-workloads" }
 serde.workspace = true
-sha2.workspace = true
 futures = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
