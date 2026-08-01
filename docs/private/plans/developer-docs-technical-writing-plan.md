@@ -3,12 +3,12 @@
 Status: `active` | Owner: this plan | Created: 2026-08-01
 Baseline: main @ 1ba104f876078551207ef0eabf90e214c9d1e4e3
 Proof root: `docs/private/plans/proof/developer-docs-technical-writing/`
-Next action: wait for PR #272 to merge, then run DTW9 cleanup
+Next action: commit and push DTW3 to ready PR #272
 
 ## Outcome
 
 > All pages under `docs/developers/` preserve their verified technical
-> claims and pass the technical-writing linter in developer mode. The Nimbus
+> claims and pass the technical-writing linter in strict mode. The Nimbus
 > documentation gates also pass.
 
 ## Architecture
@@ -40,6 +40,7 @@ existing Developers group and keeps each page in its current Diataxis mode.
 | DTW0 | Capture the developer-doc baseline and source-map coverage. | `done` | 2026-08-01: 23 files, 2,984 lines, and 406 diagnostics. All 23 files have source-map rows. See `proof/developer-docs-technical-writing/dtw0.md`. |
 | DTW1 | Revise developer documentation without changing technical meaning. | `done` | 2026-08-01: all 23 pages reviewed, 22 revised, 23 passed the linter with zero errors and 30 warnings. See `proof/developer-docs-technical-writing/dtw1.md`. |
 | DTW2 | Run conformance, documentation, build, and review gates. | `done` | 2026-08-01: all writing, source-map, protected-content, link, private-fence, site-build, and review gates passed. Autoreview classified the branch as documentation-only and reported no findings. Ready PR #272 targets main. See `proof/developer-docs-technical-writing/dtw2.md`. |
+| DTW3 | Apply strict-mode conformance to all developer documentation. | `done` | 2026-08-01: work commit `37c103fd3`. All 23 pages pass strict mode with zero diagnostics. Source-map coverage is 23/23, protected content is unchanged, the site built 109 pages, and all 17 site conditions pass. See `proof/developer-docs-technical-writing/dtw3.md`. |
 | DTW9 | Clean up after the final pull request merges. | `todo` | Trigger: merge of the final pull request. |
 
 ## Tasks
@@ -86,6 +87,23 @@ existing Developers group and keeps each page in its current Diataxis mode.
   `bash scripts/verify-nimbus-docs-site.sh`,
   `npm --prefix website run build`, and the Nimbus pre-PR review gate.
 
+### DTW3 Apply strict-mode conformance
+
+- Problem: developer mode permits 30 warnings that strict mode treats as
+  failures.
+- Owning seam and paths: `docs/developers/`, the DTW3 proof file, and this
+  plan.
+- Steps: revise each strict-mode diagnostic, repeat the protected-content
+  review, and rerun all documentation gates.
+- Acceptance: all 23 pages pass strict mode with zero diagnostics. All
+  source-map, protected-content, link, private-fence, and site-build checks
+  pass.
+- Fail-before: strict mode reports 30 diagnostics across 15 pages.
+- Verification: run the technical-writing linter with `--mode strict`, the
+  source-map and fenced-content comparison, `git diff --check`,
+  `bash scripts/check-docs.sh`, `npm --prefix website run build`, and
+  `bash scripts/verify-nimbus-docs-site.sh`.
+
 ### DTW9 Clean up
 
 - Problem: a merged plan must not remain as an active control plane.
@@ -118,7 +136,7 @@ continue with the next eligible task. Preserve facts, code, commands,
 identifiers, links, source-map evidence, and Diataxis boundaries. Do not add
 product claims or edit code. Stop only at a valid stop state from the plans
 skill. Before stopping, update the ledger, the log, and the next action. The
-goal is met when DTW0 through DTW2 are terminal, all final gates pass, and the
+goal is met when DTW0 through DTW3 are terminal, all final gates pass, and the
 ready pull request targets main. DTW9 waits for that pull request to merge.
 ```
 
@@ -130,3 +148,5 @@ ready pull request targets main. DTW9 waits for that pull request to merge.
 | 2026-08-01 | DTW1 | Revised the Developers group with protected-content checks. | All 23 pages passed the developer-mode linter with zero errors and 30 warnings. `git diff --check` passed. |
 | 2026-08-01 | DTW2 | Ran the documentation, conformance, and review gates. | The developer corpus has zero lint errors, all 23 pages retain source-map coverage, fenced content is unchanged, the site built 109 pages, and all 17 site conditions passed. Autoreview classified the branch as documentation-only and reported no findings. |
 | 2026-08-01 | PR | Opened the completed documentation change for review. | Ready PR #272 targets `main` from `codex/technical-writing-developer-docs`: https://github.com/nimbus/nimbus/pull/272 |
+| 2026-08-01 | DTW3 | Started the strict-mode pass requested after PR review. | Strict mode reported 30 diagnostics across 15 pages. |
+| 2026-08-01 | DTW3 | Completed strict-mode conformance and final verification. | Work commit `37c103fd3`. All 23 pages passed strict mode with zero diagnostics. Fifteen pages changed. Source-map coverage remained 23/23, protected content remained unchanged, Astro built 109 pages, and the site verifier passed 17/17 conditions. |
