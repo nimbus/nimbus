@@ -83,8 +83,8 @@ await client.close();
 
 Two parts of that connection string matter:
 
-- `app-user:app-secret` are the SCRAM-SHA-256 credentials the server was
-  started with. Every data operation requires them.
+- `app-user:app-secret` are the server's SCRAM-SHA-256 startup credentials.
+  Every data operation requires them.
 - The string names exactly one host. Nimbus is a single endpoint, not a
   replica set. Do not pass a `replicaSet` option. With a single host, the
   driver connects directly. Adding `directConnection=true` is harmless but

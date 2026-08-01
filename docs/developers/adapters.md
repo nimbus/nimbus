@@ -13,7 +13,7 @@ tenant boundary. Your choice changes the call shape. It does not change data
 location or isolation. [The adapter boundary](/concepts/adapter-boundary/)
 explains the design and its limits.
 
-## How the surfaces are served
+## How Nimbus serves the surfaces
 
 Every server serves these surfaces by default. The Convex-compatible surface,
 the Firestore routes, and the native API share the main listener. MongoDB and

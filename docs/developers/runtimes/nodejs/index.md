@@ -13,7 +13,7 @@ This also applies to an npm SDK that expects Node APIs.
 
 ## Opt in with `"use node"`
 
-Put `"use node"` as the first statement of a Convex-compatible action module:
+Start a Convex-compatible action module with `"use node"`:
 
 ```typescript
 "use node";

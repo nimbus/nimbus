@@ -67,8 +67,9 @@ export default defineSchema({
 
 The schema file is optional: a table without a schema accepts documents of
 any shape. Adding a schema enforces the declared fields and makes the
-generated types precise. The supported validators are listed in the
-[compatibility reference](/reference/convex/compatibility/).
+generated types precise. The
+[compatibility reference](/reference/convex/compatibility/) lists the supported
+validators.
 
 ## 4. Write functions
 

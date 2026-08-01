@@ -8,8 +8,8 @@ sidebar:
 
 Nimbus serves the DynamoDB wire protocol on a dedicated HTTP listener. The
 official AWS SDKs connect to it the same way they connect to DynamoDB
-Local: override the endpoint URL, keep everything else stock. No Nimbus
-SDK is required. Only client construction changes.
+Local: override the endpoint URL, keep everything else stock. You do not need
+a Nimbus SDK. Only client construction changes.
 
 Every Nimbus server serves the endpoint by default. This applies to
 `nimbus start` and `nimbus dev`. Use `--no-dynamodb` to switch it off.

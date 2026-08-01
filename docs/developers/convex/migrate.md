@@ -76,12 +76,12 @@ Keep exactly one auth config: `convex/auth.config.ts` or
 `convex/auth.config.js`. Nimbus supports the same provider shapes:
 
 - **OIDC**: `{ domain, applicationID }`. The token's audience must equal
-  `applicationID`, and tokens with multiple audiences are rejected.
+  `applicationID`, and Nimbus rejects tokens with multiple audiences.
 - **Custom JWT**: `{ type: "customJwt", issuer, jwks, algorithm }` with an
   optional `applicationID`. The algorithm must be `RS256` or `ES256`.
 
-`process.env` reads in the auth config are resolved when codegen runs, so
-set those variables in the environment where `nimbus dev` executes.
+Codegen resolves `process.env` reads in the auth config. Set those variables
+in the environment where `nimbus dev` executes.
 
 Nimbus binds each generated auth configuration to one deployment silo.
 The URL silo selects that trusted verifier before Nimbus examines a bearer.
@@ -92,8 +92,8 @@ the dev loop, name the silo explicitly:
 nimbus deploy [TARGET] --convex-silo demo
 ```
 
-`NIMBUS_CONVEX_SILO` is the environment-variable equivalent. A Convex deploy
-without either value is refused before activation.
+`NIMBUS_CONVEX_SILO` is the environment-variable equivalent. Nimbus refuses
+activation for a Convex deploy without either value.
 
 ## What works unchanged
 

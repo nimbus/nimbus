@@ -117,8 +117,8 @@ const owners = await tasks.distinct("owner");
 
 ## Aggregate
 
-The pipeline stages `$match`, `$sort`, `$limit`, `$skip`, `$project`,
-`$addFields`, `$count`, `$group`, and `$unwind` are supported:
+Nimbus supports the pipeline stages `$match`, `$sort`, `$limit`, `$skip`,
+`$project`, `$addFields`, `$count`, `$group`, and `$unwind`:
 
 ```javascript
 const byOwner = await tasks
@@ -130,8 +130,8 @@ const byOwner = await tasks
   .toArray();
 ```
 
-Unsupported stages are rejected with an error naming the stage, so a
-pipeline never silently degrades.
+Nimbus rejects an unsupported stage and names it in the error. A pipeline
+never silently degrades.
 
 ## Use transactions
 
@@ -237,7 +237,7 @@ await acme.insertOne({ sku: "A-1" });
 const none = await globex.find({ sku: "A-1" }).toArray(); // []
 ```
 
-Tenants are created automatically on first access. Database names must be
+Nimbus creates tenants automatically on first access. Database names must be
 valid tenant IDs: ASCII letters, digits, `_`, and `-`, up to 128 characters.
 
 ## Change streams are not supported

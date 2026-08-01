@@ -40,15 +40,15 @@ table with a single string partition key, `id`, then drives the shared
 through standard AWS SDK commands:
 
 - `PutItem` creates an incomplete task with a stable id and creation time.
-- `Scan` reads every task. Because a scan is unordered, the app sorts the
+- `Scan` reads every task without ordering the results. The app sorts the
   results client-side by `createdAt`, newest first.
 - `UpdateItem` toggles a task's `completed` flag.
 - `DeleteItem` removes a task.
 
-## Live updates are polled
+## The app polls for live updates
 
 DynamoDB has no live-query view on this surface. The app cannot meet the
-spec's no-polling subscription behavior. It satisfies the live-update flow by
-re-scanning `tasks` until a later read observes the change. This is polling,
-not a live subscription. The example records that gap and does not emulate a
-subscription.
+spec's no-polling subscription behavior. To complete the live-update flow, the
+app scans `tasks` repeatedly until a later read observes the change. This
+process polls DynamoDB. It does not provide a live subscription. The example
+records that gap and does not emulate a subscription.

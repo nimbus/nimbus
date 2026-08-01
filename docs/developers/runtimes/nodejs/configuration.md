@@ -46,7 +46,7 @@ Allowed values:
 | `"24"` | Run eligible Node action modules against the Node24 Active LTS target; the default |
 | `"26"` | Run eligible Node action modules against the Node26 Current/non-LTS target |
 
-If no value is configured, Nimbus uses Node24. Any other value fails codegen
+If you omit the value, Nimbus uses Node24. Any other value fails codegen
 with an error listing the accepted versions.
 
 The default is a routing default, not an evidence priority. The
@@ -64,9 +64,9 @@ nimbus dev --once --debug-node-apis
 nimbus codegen --app . --debug-node-apis
 ```
 
-Diagnostics point to the importing module and explain whether `"use node"`
-is missing, instead of silently bundling unsupported Node-only code into the
-default runtime.
+Diagnostics identify the importing module and report whether it lacks
+`"use node"`. Nimbus does not silently bundle unsupported Node-only code into
+the default runtime.
 
 ## Specifier rules
 
@@ -77,15 +77,15 @@ import fs from "fs";
 import fsPromises from "node:fs/promises";
 ```
 
-Specifier support does not imply full built-in compatibility. The supported
-surface is bounded by the
+Specifier support does not imply full built-in compatibility. The
 [Node API reference](/reference/runtimes/node-apis/) and the
-[compatibility contract](/reference/runtimes/node-compat/).
+[compatibility contract](/reference/runtimes/node-compat/) define the supported
+surface.
 
 ## Local authoring toolchain
 
 Authoring flows (codegen and dependency install) run through your locally
 installed Node toolchain, which is separate from the runtime compatibility
 target your functions execute against. Nimbus verifies Node.js 22.x as the
-authoring baseline: older versions are rejected, and newer majors proceed
+authoring baseline. It rejects older versions. It permits newer major versions
 with a best-effort compatibility warning.
