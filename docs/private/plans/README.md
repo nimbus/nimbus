@@ -74,7 +74,7 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC6.1a complete; NNC6.1b
+- `nimbus-network-control-plane-plan.md` - `active; NNC6.1b complete; NNC6.1c
   in progress`. The Linux sovereignty tripwire is complete with a root-safe,
   raw-artifact-derived evidence contract, 70/70 deterministic tests, 62/62
   adversarial verifier cases, fully dispositioned full+narrow Sol reviews, and
@@ -230,8 +230,23 @@ extension-registry seam before the second concern edits `extensions.rs`.
   Linux/session-systemd executor lane is cfg-excluded on the macOS owner host
   and is not claimed as live provider evidence. The one narrow correction
   review is clean at confidence 0.98, and no further NNC6.1a review is
-  warranted. NNC6.1b now owns the read-only workload-saga vocabulary, store,
-  durable-home, and engine mutation-path decision audit before implementation.
+  warranted. NNC6.1b has candidate-frozen the workload-saga decision before
+  implementation: `nimbus-workloads` owns portable state and the object-safe CAS
+  port, `nimbus-compute` is the sole transition writer, and `nimbus-server` owns
+  the `_nimbus._workload_sagas` adapter through
+  `Engine::begin_mutation_execution_unit`. The decision proof records the exact
+  current census, phase graph, schema, ambiguity rules, dependency edges, and
+  seven expected-red implementation gaps. Its sole full Sol review found five
+  accepted defects and one claim rejected against the current three-path
+  Engine contract. The corrected decision now defines higher-generation
+  successor promotion, mandatory typed recovery evidence, complete-payload
+  transition IDs, lossless decimal counters, and an exact full-census helper.
+  Final census `7/1/2/3/54/0`, decision `1/1`, expected-red `0/7`, live
+  structure `27/27`, writing/script/format/diff, docs `108`, and site `17/17`
+  pass. The full review's five accepted findings and the sole narrow review's
+  two accepted precision gaps are corrected; one mutation-path claim is
+  source-rejected, and no third review ran. NNC6.1c now owns the read-only
+  substitution/call-graph audit before workloads vocabulary or injection edits.
   Cleanup, release, finalization, and reuse stay in NNC8.3. Machine forwarding obeys
   NNC5.2a's common lifecycle; runtime absence, workload status, readiness persistence,
   cleanup convergence, and inspect/restart policy stay in their named later
