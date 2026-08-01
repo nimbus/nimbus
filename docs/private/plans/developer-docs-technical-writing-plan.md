@@ -3,7 +3,7 @@
 Status: `active` | Owner: this plan | Created: 2026-08-01
 Baseline: main @ 1ba104f876078551207ef0eabf90e214c9d1e4e3
 Proof root: `docs/private/plans/proof/developer-docs-technical-writing/`
-Next action: commit the review checkpoint, then run the DTW2 pre-PR review
+Next action: push the branch and open the ready pull request against main
 
 ## Outcome
 
@@ -39,7 +39,7 @@ existing Developers group and keeps each page in its current Diataxis mode.
 |---|---|---|---|
 | DTW0 | Capture the developer-doc baseline and source-map coverage. | `done` | 2026-08-01: 23 files, 2,984 lines, and 406 diagnostics. All 23 files have source-map rows. See `proof/developer-docs-technical-writing/dtw0.md`. |
 | DTW1 | Revise developer documentation without changing technical meaning. | `done` | 2026-08-01: all 23 pages reviewed, 22 revised, 23 passed the linter with zero errors and 30 warnings. See `proof/developer-docs-technical-writing/dtw1.md`. |
-| DTW2 | Run conformance, documentation, build, and review gates. | `in_progress` | 2026-08-01: writing, source-map, protected-content, link, private-fence, and site-build checks pass. Pre-PR review remains. See `proof/developer-docs-technical-writing/dtw2.md`. |
+| DTW2 | Run conformance, documentation, build, and review gates. | `done` | 2026-08-01: all writing, source-map, protected-content, link, private-fence, site-build, and review gates passed. Autoreview classified the branch as documentation-only and reported no findings. See `proof/developer-docs-technical-writing/dtw2.md`. |
 | DTW9 | Clean up after the final pull request merges. | `todo` | Trigger: merge of the final pull request. |
 
 ## Tasks
@@ -128,4 +128,4 @@ ready pull request targets main. DTW9 waits for that pull request to merge.
 |---|---|---|---|
 | 2026-08-01 | DTW0 | Captured the developer documentation baseline. | The developer-mode linter reported 406 diagnostics: 317 errors and 89 warnings. The 23 files contain 2,984 lines, and all 23 have source-map rows. |
 | 2026-08-01 | DTW1 | Revised the Developers group with protected-content checks. | All 23 pages passed the developer-mode linter with zero errors and 30 warnings. `git diff --check` passed. |
-| 2026-08-01 | DTW2 | Ran the documentation and conformance gates. | The developer corpus has zero lint errors, all 23 pages retain source-map coverage, fenced content is unchanged, the site built 109 pages, and all 17 site conditions passed. The clean-worktree pre-PR review remains. |
+| 2026-08-01 | DTW2 | Ran the documentation, conformance, and review gates. | The developer corpus has zero lint errors, all 23 pages retain source-map coverage, fenced content is unchanged, the site built 109 pages, and all 17 site conditions passed. Autoreview classified the branch as documentation-only and reported no findings. |

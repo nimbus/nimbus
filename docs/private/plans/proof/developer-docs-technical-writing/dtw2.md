@@ -59,5 +59,12 @@ change does not modify the dependency manifest or lock file.
 
 ## Pre-PR review
 
-Pending. The Nimbus autoreview requires a clean worktree. The review will run
-after the review checkpoint commit, and this proof will record its result.
+Command:
+
+```bash
+NIMBUS_AUTOREVIEW="${AGENTS_HOME:-$HOME/.agents}/skills/nimbus-autoreview/scripts/nimbus-autoreview"
+"$NIMBUS_AUTOREVIEW" --gate pre-pr --mode auto
+```
+
+Result: exit status 0. The automatic gate classified the branch as having no
+substantive code changes and skipped code review. It reported no findings.
