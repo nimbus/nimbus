@@ -69,7 +69,7 @@ export const send = mutation({
 ```
 
 Queries read the database. Mutations write it. Both declare validators for
-their arguments, so bad input is rejected before your code runs.
+their arguments, so Nimbus rejects bad input before your code runs.
 
 ## 3. Start the dev server
 

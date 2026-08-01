@@ -122,7 +122,7 @@ Nimbus's default runtime adds several globals to the web-standard scope. They
 include `WebSocket`, `URL`, `structuredClone`, and timer functions such as
 `setTimeout`. This is a **superset** of the globals that Convex documents for
 its default runtime. Code can behave differently if it detects a runtime by an
-absent global. Code that only uses expected globals is unaffected.
+absent global. Code that uses only expected globals behaves the same.
 
 ## Related pages
 

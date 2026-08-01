@@ -150,7 +150,7 @@ Do not assume any of the following during migration:
   (the provisioned package is the supported client)
 - Node Admin SDK (`firebase-admin`) parity
 - mobile or native SDK parity
-- named databases (only `(default)` is accepted)
+- named databases (Nimbus accepts only `(default)`)
 - browser offline persistence, bundles, or `namedQuery`
 - Firebase Emulator Suite control endpoints
 - a Firestore Security Rules engine

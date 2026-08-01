@@ -32,7 +32,7 @@ export default {
 - `domain` is the token issuer. Nimbus discovers the signing keys from
   `{domain}/.well-known/openid-configuration`.
 - `applicationID` must equal the `aud` claim of the tokens your provider
-  issues. Tokens with multiple audiences are rejected.
+  issues. Nimbus rejects tokens with multiple audiences.
 
 For a provider that is not a full OIDC issuer but publishes a JWKS:
 

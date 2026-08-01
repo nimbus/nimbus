@@ -6,9 +6,9 @@ sidebar:
 ---
 
 Node action modules can use npm packages through a staged package pipeline.
-Package support is explicit so the runtime stays deterministic: dependencies
-are resolved and staged during codegen, never fetched or installed during
-invocation.
+Package support is explicit so the runtime stays deterministic. Codegen
+resolves and stages dependencies. The runtime never fetches or installs them
+during invocation.
 
 The [package reference](/reference/runtimes/packages/) is the support matrix
 for packages. It separates positive in-process support from packages that
@@ -16,8 +16,8 @@ require service or microVM routing.
 
 ## Externalize packages
 
-Use `node.externalPackages` in `convex.json` to tell codegen which package
-imports should be treated as external Node packages:
+Use `node.externalPackages` in `convex.json` to make codegen treat package
+imports as external Node packages:
 
 ```json
 {
@@ -71,7 +71,7 @@ support claims. They require a service or microVM route unless the
 [package reference](/reference/runtimes/packages/) says otherwise for a
 specific package.
 
-## What is verified
+## What canary tests verify
 
 Canary tests exercise real packages against the supported Node versions. They
 cover application networking packages, common HTTP and SaaS SDKs, and real

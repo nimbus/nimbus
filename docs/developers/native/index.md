@@ -17,7 +17,8 @@ If you have not run a server yet, start with the
 ## 1. Get the local admin token
 
 A server started with `nimbus start` protects its native API with a local
-admin token. The token is created on first boot and stored as a JSON file:
+admin token. Nimbus creates the token on first boot and stores it as a JSON
+file:
 
 | Platform | Token file |
 | --- | --- |
@@ -50,7 +51,7 @@ rules.
 
 ## 2. Scope requests to a tenant
 
-Every data operation is scoped to a tenant through the URL path:
+The URL path scopes every data operation to a tenant:
 `/api/tenants/{tenant_id}/...`. Create a tenant first:
 
 ```bash
@@ -66,8 +67,8 @@ subscriptions never cross tenant boundaries.
 
 ## 3. Insert and read documents
 
-Insert a document by naming a table and its fields. Tables are created
-implicitly on first write:
+Insert a document by naming a table and its fields. Nimbus creates tables
+implicitly on the first write:
 
 ```bash
 curl -s -X POST http://localhost:8080/api/tenants/demo/documents \
@@ -117,12 +118,12 @@ curl -s -X POST http://localhost:8080/api/tenants/demo/query \
 ```
 
 For large result sets, use `/query/paginated` with a `page_size` and follow
-the returned cursor. Both endpoints, all filter operators, and the paginated
-shapes are listed in the [HTTP API reference](/reference/native/http-api/).
+the returned cursor. The [HTTP API reference](/reference/native/http-api/)
+lists both endpoints, all filter operators, and the paginated shapes.
 
 ## 5. Subscribe to live results over WebSocket
 
-The same query can be registered as a subscription: the server pushes a
+You can register the same query as a subscription. The server pushes a
 fresh snapshot whenever a mutation changes the result. Connect to `/ws`
 with the `nimbus.v2` subprotocol and identify the tenant with an
 `X-Tenant-Id` header or a `tenant_id` query parameter.
