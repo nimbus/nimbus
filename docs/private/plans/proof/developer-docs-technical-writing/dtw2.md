@@ -68,3 +68,9 @@ NIMBUS_AUTOREVIEW="${AGENTS_HOME:-$HOME/.agents}/skills/nimbus-autoreview/script
 
 Result: exit status 0. The automatic gate classified the branch as having no
 substantive code changes and skipped code review. It reported no findings.
+
+## Pull request
+
+Ready PR #272 targets `main` from
+`codex/technical-writing-developer-docs`:
+https://github.com/nimbus/nimbus/pull/272
