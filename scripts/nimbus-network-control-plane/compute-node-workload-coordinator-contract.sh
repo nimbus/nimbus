@@ -32,7 +32,8 @@ run_nnc61a_compute_node_workload_coordinator_self_tests() {
     coordinator-desired-store
     coordinator-network-authority
     second-coordinator
-    early-workloads-dependency
+    duplicate-saga-coordinator
+    duplicate-saga-coordinator-enum
   )
 
   for mutation in "${nnc61a_mutations[@]}"; do

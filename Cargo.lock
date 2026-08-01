@@ -6716,6 +6716,7 @@ dependencies = [
  "nimbus-services",
  "nimbus-system",
  "nimbus-tenant",
+ "nimbus-workloads",
  "serde",
  "serde_json",
  "tempfile",
@@ -7418,9 +7419,12 @@ dependencies = [
 name = "nimbus-workloads"
 version = "0.1.45"
 dependencies = [
+ "futures",
  "nimbus-core",
+ "nimbus-network",
  "nimbus-tenant",
  "serde",
+ "serde_json",
  "sha2 0.10.9",
  "workspace-hack",
 ]

@@ -84,7 +84,7 @@ verify_decision_contract() {
       '
   )"
   metadata_status=$?
-  expected_workloads_dependents='["nimbus-bridge","nimbus-cli","nimbus-node","nimbus-server","nimbus-services","nimbus-system","nimbus-testing"]'
+  expected_workloads_dependents='["nimbus-bridge","nimbus-cli","nimbus-compute","nimbus-node","nimbus-server","nimbus-services","nimbus-system","nimbus-testing"]'
   if [ "${metadata_status}" -ne 0 ]; then
     add_error "cargo metadata could not resolve nimbus-workloads reverse dependencies"
   elif [ "${workloads_dependents}" != "${expected_workloads_dependents}" ]; then
@@ -233,7 +233,7 @@ fi
 
 if [ "${MODE}" = "decision" ]; then
   printf '%s\n' \
-    'Census: reverse-dependencies=7 store-implementations=1 product-in-memory-authorities=2 production-upserts=3 manager-constructors=54 recovery-readers=0'
+    'Census: reverse-dependencies=8 store-implementations=1 product-in-memory-authorities=2 production-upserts=3 manager-constructors=54 recovery-readers=0'
 fi
 printf 'PASS workload-saga-authority %s\n' "${MODE}"
 printf 'Summary: 1 passed, 0 failed\n'

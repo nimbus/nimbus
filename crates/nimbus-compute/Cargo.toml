@@ -42,6 +42,7 @@ nimbus-sandbox = { path = "../nimbus-sandbox" }
 nimbus-services = { path = "../nimbus-services" }
 nimbus-system = { path = "../nimbus-system" }
 nimbus-tenant = { path = "../nimbus-tenant" }
+nimbus-workloads = { path = "../nimbus-workloads" }
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true

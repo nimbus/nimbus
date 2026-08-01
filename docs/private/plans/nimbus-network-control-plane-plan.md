@@ -1,6 +1,6 @@
 # Nimbus Network Control Plane Plan
 
-Status: `active; NNC6.1b complete; NNC6.1c in progress`
+Status: `active; NNC6.1c complete; NNC6.1c1 in progress`
 
 Owner: this plan is the sole implementation control plane for the
 transport-free `nimbus-network` crate and the connectivity-resource lifecycle
@@ -36,24 +36,24 @@ ledger transition.
 
 | Field | Current value |
 | --- | --- |
-| Plan status | `active; NNC6.1b complete; NNC6.1c in progress` |
+| Plan status | `active; NNC6.1c complete; NNC6.1c1 in progress` |
 | Current band | `NNC6 — compute orchestration and exact lifecycle order` |
-| Current item | `NNC6.1c — workloads-owned vocabulary and required store injection` |
-| Last completed item | `NNC6.1b — workload-saga vocabulary, store, and durable-home decision` |
-| Next action | Begin NNC6.1c with a read-only substitution/call-graph audit, freeze its exact owned paths and fail-before tests, then implement only after that item acceptance is explicit. |
-| Current acceptance checkpoint | NNC6.1b R1-R15 are green. The full review's five accepted findings and the narrow review's two accepted findings are corrected; one full-review claim is source-rejected against the three canonical Engine paths. NNC6.1c product implementation has not begun. |
+| Current item | `NNC6.1c1 — operational workload identity cutover and false-authority deletion` |
+| Last completed item | `NNC6.1c — portable workload-saga vocabulary, store port, and uncomposed compute coordinator` |
+| Next action | From the clean NNC6.1c checkpoint, record its resolved commit hash, then run the NNC6.1c1 read-only substitution and owned-path audit before edits. |
+| Current acceptance checkpoint | R1-R15 are green after the sole full review's eight accepted findings and the sole narrow review's one accepted finding. Corrected behavior is `31/19/10`; affected libraries are `243/243`; live verifier is `27/27`; NNCV026 is `15/15`; NNCV027 is `1/1` decision and exact expected-red `0/3` implementation. |
 | Owner branch | `codex/nimbus-network-architecture-audit` |
 | Owner worktree | `/Users/jack/src/github.com/nimbus/nimbus-network-architecture-audit` |
 | Audit base | Original architecture audit: `b69007a78a220847812370d9418049f1253f0384`. |
 | Execution base | Rebased without conflicts onto `origin/main` at `9c2d4f150c60f43dfdc0a3f1ec6550942e26ab8f` after NNC0.0. |
-| Last checkpoint commit | `9cc2330666fb8f1b031337ad35d044604e594c93` (NNC6.1a). |
-| Audit dirty state | The NNC6.1b closeout candidate owns only the canonical plan, routing index, item proof, and decision contract helper. No product source or manifest changed. The original checkout's user-owned paths and the `machine-os` companion remain untouched. |
-| Latest dirty-state checkpoint | NNC6.1b is complete in the four owned paths and awaits its exact item commit from starting checkpoint `9cc2330666fb8f1b031337ad35d044604e594c93`. NNC6.1c has no owned product edit yet. |
-| Current item review | NNC6.1b used exactly one full GPT-5.6 Sol/xhigh/fast review and one permitted narrow correction review. All findings are dispositioned, final proofs pass, and no third review ran or is warranted. NNC6.1c review has not started. |
+| Last checkpoint commit | `78ebdc3328ddb13fdb32f9f71da900144d118f1e` (NNC6.1b). NNC6.1c is the commit containing this transition; record its resolved hash before NNC6.1c1 edits. |
+| Audit dirty state | NNC6.1c owns only the exact manifest/lockfile, tenant validated-serde, workloads saga/store, uncomposed compute coordinator, NNCV026/NNCV027 verifier, plan/routing, and proof paths named in its item ledger. No service, CLI, node, server, system, network source, Engine, sandbox, proxy, provider, listener, cluster, original-checkout, or companion-repository path changed. |
+| Latest dirty-state checkpoint | NNC6.1c started from clean `78ebdc3328ddb13fdb32f9f71da900144d118f1e`. Its durable item checkpoint contains exactly the 23 owned paths. The narrow-review enum mutation legitimately raises the aggregate verifier total to `188`. NNC6.1c1 has no source edit yet. |
+| Current item review | NNC6.1c used one full and one narrow GPT-5.6 Sol/xhigh/fast review. The full review's eight accepted findings and narrow review's one accepted P2 are corrected and proven. No third NNC6.1c review ran. NNC6.1c1 has no structured review. |
 | Execution mode | Autonomous implementation goal active; commit each completed item with its ledger/evidence checkpoint; no push or PR without separate authority. Per owner direction on 2026-07-24, all future structured autoreviews use `gpt-5.6-sol` at `xhigh` reasoning with fast mode explicitly enabled; do not use Claude Opus 4.8. |
-| Last verification | NNC6.1 focused behavior `10/10`; compute `72/72`; CLI `937/937` with one declared ignore; server `509` passed with `26` declared ignores plus the two inherited parent-lineage failures; listener integration `4/4`; check, Clippy, rustdoc, format/diff/script quality, docs `108`, site `17/17`, live verifier `26/26`, and corrected mutations `173/173` are green. |
-| Latest verification checkpoint | Final NNC6.1b census `7/1/2/3/54/0`, decision `1/1`, exact expected-red `0/7`, live verifier `27/27`, technical-writing lint `1` file with `0` diagnostics, syntax, ShellCheck, Cargo format, diff, docs `108`, and site `17/17` pass. Helper SHA-256 is `2452eee9ee9e8e00da441f09d16f4b2ce4dc85ae4d4fffaf3db47b0c2635816c`. |
-| Blocking decision | No blocker. Commit the complete NNC6.1b checkpoint, then continue the dependency-ready NNC6.1c audit. |
+| Last verification | NNC6.1c corrected saga/store/coordinator behavior is `31/19/10`; affected compute, tenant, and workloads libraries are `84/93/66`, or `243/243` total. Affected check, strict Clippy, warning-denied rustdoc, format, diff, script quality, metadata, authority, and effect gates pass. |
+| Latest verification checkpoint | Live verifier `27/27`, NNCV026 mutations `15/15`, NNCV027 decision `1/1`, expected-red implementation `0/3`, metadata profiles `3/3` acyclic, and deferred-authority hashes all pass. NNCV008 recognizes NNC6.1c1 and matches the sole active row. The final executable/script digest is `087907f9669c4673343d2011c3caeab3bd9bcb3ba066eabc65855e640baaeac7`. |
+| Blocking decision | No blocker. Complete the exact NNC6.1c checkpoint commit, then audit NNC6.1c1 from its clean base. |
 
 Recovery protocol:
 
@@ -929,7 +929,7 @@ The logical key is `WorkloadSagaKey { TenantId, WorkloadId }`.
 `WorkloadSagaId` is a stable `wsg_` identity derived from the length-delimited
 key under `nimbus.workloads.saga.id.v1`. An admitted `TenantWorkloadUid` and a
 generation-scoped `WorkloadExecutionId` remain incarnation and execution
-evidence. NNC6.1c replaces the current node-local `TenantWorkloadId` authority
+evidence. NNC6.1c1 replaces the current node-local `TenantWorkloadId` authority
 with a projection of `WorkloadExecutionId`. None of these types is the logical
 saga key.
 
@@ -1144,6 +1144,13 @@ nimbus-compute -> nimbus-workloads
 `nimbus-network -> nimbus-core` remains the network crate's only outgoing
 workspace edge. `nimbus-workloads -> nimbus-engine|nimbus-server|nimbus-system`
 and `nimbus-compute -> nimbus-server|nimbus-storage` remain forbidden.
+
+NNC6.1c constructs no production store or coordinator. NNC6.1c1 performs the
+breaking operational identity cutover and deletes the service and CLI
+in-memory desired-state authorities. NNC6.1d then owns both the first durable
+server adapter and its required workload-capable `ComputeState` injection.
+This order keeps every checkpoint compilable without a no-op store, a
+production in-memory substitute, or an optional workload-capable coordinator.
 
 ### `PortLease` semantics
 
@@ -1518,8 +1525,9 @@ Dependencies: NNC3-NNC5.
 | NNC6.1 | Inject the shared network manager/registry into `ComputeStateConfig` and `ComputeState`. | All supported workload entrypoints receive the same instance; no adapter constructs a parallel manager. |
 | NNC6.1a | Name compute as sole cross-domain saga coordinator and integrate `nimbus-node::NodeWorkloadReconciler`. | Static/source proof finds no second coordinator; existing node reconciliation order tests remain canonical and pass. |
 | NNC6.1b | Finalize workload-saga vocabulary, store interface, and durable home before implementation. | The decision proof records the complete mechanically checked census, logical and execution identities, lossless counters, complete-payload transition ID, active/successor generation rules, closed phase/evidence variants, object-safe CAS port, `_nimbus._workload_sagas` format-version-1 schema and indexes, canonical execution-unit route, both target edges, forbidden edges, ambiguous-result rules, and one later owner for every behavioral proof. The decision contract passes, while its implementation mode fails with the seven named target gaps. |
-| NNC6.1c | Implement workloads-owned vocabulary and required injection without a second authority. | Metadata shows both `workloads -> network` and `compute -> workloads`; exhaustive identity, counter-wire, transition-ID, active/successor, phase/evidence, legal-edge, overflow, and store conformance tests pass; node execution identity is a projection of workloads-owned `WorkloadExecutionId`; `ServiceManagerState` and the CLI boot planner no longer construct authoritative in-memory stores; one required store reaches the distinct compute saga coordinator; NNCV026 accepts the planned edge without weakening its node-coordinator guard. |
-| NNC6.1d | Implement the server-owned durable workload-saga adapter and transition contract. | The strict nested codec, lossless decimal counters, and idempotent schema bootstrap protect `_nimbus._workload_sagas`; every application protocol denies reserved tenant access; two contenders produce one CAS winner; exact replay adds no commit; document, indexes, and journal remain atomic; ambiguous commit cuts require a fresh read and produce zero provider effects until resolved. |
+| NNC6.1c | Implement portable workloads-owned saga vocabulary, store port, and an uncomposed compute coordinator. | Metadata shows both `workloads -> network` and `compute -> workloads`; exhaustive identity, decimal-counter wire, transition-ID, active/successor, phase/evidence, legal-edge, overflow, paging, and two-implementation store-conformance tests pass; the coordinator requires the store port and has no production construction or effect authority; NNCV026 accepts the planned edge, enforces exactly one canonical saga coordinator, and makes all 15 mutations fail exclusively; the old authorities remain byte-unchanged for NNC6.1c1. |
+| NNC6.1c1 | Cut over operational workload identity and delete false in-memory desired-state authorities. | `TenantWorkloadGeneration`, node-owned `TenantWorkloadId`, `DesiredWorkloadStore`, its in-memory implementation/snapshot/controller, all three `ServiceManager` desired-state writes, and the CLI desired-state map are deleted without aliases or compatibility shims; node and Machine API use workloads-owned `WorkloadExecutionId`; the CLI planner is a pure ordered intent collection; no production saga store or coordinator is introduced. |
+| NNC6.1d | Implement the server-owned durable workload-saga adapter, transition contract, and required compute injection. | The strict nested codec, lossless decimal counters, and idempotent schema bootstrap protect `_nimbus._workload_sagas`; every application protocol denies reserved tenant access; two contenders produce one CAS winner; exact replay adds no commit; document, indexes, and journal remain atomic; ambiguous commit cuts require a fresh read and produce zero provider effects until resolved; workload-capable `ComputeState` requires the server adapter while protocol-only profiles remain explicitly uncomposed. |
 | NNC6.1e | Subordinate services lazy activation, restart recovery, and retirement inputs to the compute saga. | A killed process is replaced by a genuinely fresh process over Engine durability, without a handed-over snapshot, and chooses activate, publish, compensate, cleanup retention, successor withdrawal, or exact higher-generation promotion at every named phase; lazy activation and tenant teardown cannot write desire or call effects outside compute. |
 | NNC6.2 | Compile admitted tenant/service/sandbox intent into `NetworkPlan` above the contract crate. | Admission failure makes zero lease/provider calls; network never imports tenant policy. |
 | NNC6.3 | Implement provision choreography. | Observer asserts exact admit→reserve→start→attach→publish→observe order for Convex, Cloud Functions, sandbox API, and service API paths. |
@@ -1737,7 +1745,8 @@ grep input, skipped lane, or unavailable provider cannot be reported as pass.
   shared lease and identity contracts.
 - `nimbus-node::NodeWorkloadReconciler` remains the node workload reconciliation
   seam. NNC6 integrates network phase/ticket evidence into that ordering rather
-  than creating a parallel node reconciler. Its current `TenantWorkloadId`
+  than creating a parallel node reconciler. In NNC6.1c1, its current
+  `TenantWorkloadId`
   becomes a projection of workloads-owned `WorkloadExecutionId`, so node does
   not retain a second execution-identity authority.
 - `nimbus-workloads` owns portable desired-workload/saga vocabulary and its
@@ -1841,7 +1850,7 @@ named dependency/owner decision and the next safe action.
 | NNC3 — cross-process port leases | `done` | Full conflict/bind matrix, every owner migrated, old allocators deleted. | NNC3.1-NNC3.9 are complete with exact proofs; every production listener owner is classified, the obsolete sandbox authority vocabulary is deleted, and the live verifier is 15/15. |
 | NNC4 — capabilities/sovereignty | `done` | Named negative matrix, evidence-based seams, machine modes, offline local profile. | NNC4.1-NNC4.7 are complete; the final tripwire proof records deterministic, adversarial, structured-review, and two-process privileged evidence. |
 | NNC5 — sandbox attachment lifecycle | `done` | Shared implementation, complete readiness, ambiguity/crash convergence. | NNC5.1-NNC5.6 are complete with exact proofs; one deep sandbox adapter owns attachment effects and ambiguity, both host-managed providers share crash/recovery/readiness contracts, Machine forwarding has exact publication convergence, inspection is side-effect-free, and the final live verifier is 25/25. |
-| NNC6 — compute choreography | `in_progress` | Exact provision/teardown observers across every workload/retirement path. | NNC6.1-NNC6.1b are complete. NNC6.1c is the sole current item and begins with a read-only substitution/call-graph audit before product edits. |
+| NNC6 — compute choreography | `in_progress` | Exact provision/teardown observers across every workload/retirement path. | NNC6.1-NNC6.1c are complete. NNC6.1c1 is the sole current item; it owns the operational identity cutover and false-authority deletion before NNC6.1d adds durable composition. |
 | NNC7 — integrations/projections | `todo` | Protocol parity, stable service/machine handles, rebuild-safe projections, TLS guard. | — |
 | NNC8 — recovery/fencing | `todo` | Failure table and crash/stale/ambiguity model fully closed. | — |
 | NNC9 — closeout | `todo` | Seam checklist, static verifier, sovereign proof, docs truth, repo gates. | — |
@@ -1925,8 +1934,9 @@ checkpoint.
 | NNC6.1 | `done` | Final evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc6.1-compute-network-manager-injection.md`. One existing shared manager Arc flows from CLI composition through server construction into compute; workload-capable profiles cannot omit it; protocol-only profiles remain explicit; and no adapter constructs a parallel manager. Expected-red `25/1`; focused `10/10`; compute `72/72`; CLI `937/937` plus one ignore; server `509` plus 26 ignores and only two inherited failures; listener integration `4/4`; live `26/26`; mutations `173/173`, including all 15 NNCV025 cases; affected quality/docs gates pass. The full review's two accepted P2s are corrected and proven, its P1 is source-rejected, and the sole narrow review is clean at `0.98`. No further review is warranted. |
 | NNC6.1a | `done` | Final evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc6.1a-compute-node-workload-coordinator.md`. Compute owns one concrete coordinator over the object-safe node capability. Both production adapters route reconcile/inspect only through compute; the node seam preserves exact local ordering and rejects provider restart before effects. The full review's two P3 findings are corrected: the standalone single-assignment route retains typed lifecycle errors, and protocol-only compute returns `None`. Correction `2/2`; affected `1,060/1,060` with one child-only skip; live verifier `27/27`; NNCV026 mutations `14/14`; earlier aggregate `187/187`; affected quality/docs gates pass. The one narrow review is clean at `0.98`; no further review is warranted. |
 | NNC6.1b | `done` | Final evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc6.1b-workload-saga-vocabulary-store-durable-home.md`. Workloads owns one logical multi-generation saga, complete transition identity, lossless counters, exact phase/evidence matrices, and an object-safe CAS port; compute is sole transition writer; server owns the reserved Engine adapter through the canonical execution-unit path. Census `7/1/2/3/54/0`, decision `1/1`, exact expected-red `0/7`, verifier `27/27`, writing/script/format/diff, docs `108`, and site `17/17` pass. The full review's five accepted findings and narrow review's two accepted findings are corrected; one mutation-path claim is source-rejected. Exactly one full and one narrow review ran. Helper SHA-256 `2452eee9ee9e8e00da441f09d16f4b2ce4dc85ae4d4fffaf3db47b0c2635816c`. No product code, push, or PR. |
-| NNC6.1c | `in_progress` | **Dependency:** NNC6.1b is complete in the immediately preceding exact checkpoint candidate. **Owner:** implement workloads-owned saga vocabulary, store port, both direct dependency edges, required composition injection, and removal of the two production in-memory authorities without moving durable Engine adaptation out of NNC6.1d. **Current state:** no NNC6.1c product edit or review has started. **Owned paths:** none yet; the read-only audit must freeze them before implementation. **Last green:** NNC6.1b final census `7/1/2/3/54/0`, decision `1/1`, expected-red `0/7`, verifier `27/27`, and docs/quality gates. **Next:** perform the read-only substitution/call-graph audit and freeze exact paths, constructor migration, fail-before behavior, NNCV026 adjustment, and per-phase conformance tests. **Blocker:** none. |
-| NNC6.1d | `todo` | — |
+| NNC6.1c | `done` | Final evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc6.1c-workload-saga-vocabulary-store.md`. Workloads owns validated portable saga identity, lossless counters, complete transition identity, active/successor lifecycle, evidence matrices, and an object-safe three-operation store port. Compute owns one uncomposed coordinator with no product construction or effect authority. Corrected saga/store/coordinator behavior is `31/19/10`; affected libraries are `243/243`; metadata profiles are `3/3` acyclic; live verifier is `27/27`; NNCV026 is `15/15`; NNCV027 remains exact `1/1` decision and expected-red `0/3` implementation. The sole full review's eight accepted findings and sole narrow review's one accepted P2 are corrected and proven; no third review ran. Final executable/script SHA-256 is `087907f9669c4673343d2011c3caeab3bd9bcb3ba066eabc65855e640baaeac7`. No push or PR. |
+| NNC6.1c1 | `in_progress` | **Dependency:** NNC6.1c is complete in the checkpoint containing this transition. **Owner:** breaking operational-ID cutover plus deletion of the two false in-memory authorities and all three physical writes. It cannot construct the durable adapter or inject a production coordinator. **Owned paths:** none yet; the read-only audit may edit only the plan and its proof to freeze the exact list before product edits. **Last green:** NNC6.1c R1-R15 and its exact 23-path candidate from `78ebdc3328ddb13fdb32f9f71da900144d118f1e`. **Next:** record the NNC6.1c commit hash, then run the read-only substitution and owned-path audit. **Blocker:** none. |
+| NNC6.1d | `todo` | **Dependency:** NNC6.1c1. **Owner:** server Engine adapter, strict codec/schema/OCC/ambiguity proofs, and the first required production saga-store injection into workload-capable compute composition. |
 | NNC6.1e | `todo` | — |
 | NNC6.2 | `todo` | — |
 | NNC6.3 | `todo` | — |

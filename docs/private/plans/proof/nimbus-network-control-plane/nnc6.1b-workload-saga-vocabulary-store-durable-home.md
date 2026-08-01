@@ -74,7 +74,7 @@ The current lifecycle order also differs by route:
 | Tenant teardown | Stops and removes resources without a desired-state transition. |
 
 The CLI boot planner creates a second desired-state map. Product execution
-uses that map only for counts and logs. NNC6.1c converts this code to a pure
+uses that map only for counts and logs. NNC6.1c1 converts this code to a pure
 plan builder or removes it.
 
 ## Frozen Ownership
@@ -112,14 +112,14 @@ The portable identity ladder is:
 | `WorkloadSagaId` | Stable `wsg_` identity derived from the saga key with domain-separated SHA-256. |
 | `TenantWorkloadUid` | Admission-incarnation evidence. It is not the logical saga key. |
 | `WorkloadExecutionId` | Stable generation-scoped execution identity derived from admitted workload UID, node identity, and desired generation. |
-| `TenantWorkloadId` | Current node-local systemd identity. NNC6.1c replaces it with a projection of `WorkloadExecutionId`, not a second identity authority. |
+| `TenantWorkloadId` | Current node-local systemd identity. NNC6.1c1 replaces it with a projection of `WorkloadExecutionId`, not a second identity authority. |
 
 The derivation domain is `nimbus.workloads.saga.id.v1`. The derivation hashes
 length-delimited tenant and workload bytes. An IP address, socket address,
 port, PID, provider handle, manifest path, or node-local name never enters the
 derivation.
 
-NNC6.1c replaces `TenantWorkloadGeneration` with one serializable
+NNC6.1c1 replaces `TenantWorkloadGeneration` with one serializable
 `WorkloadGeneration`. The type allows an explicit `u64` value and exposes
 `checked_next`. It never uses saturating arithmetic.
 
@@ -543,11 +543,12 @@ without rejecting the distinct compute-owned saga coordinator.
 | Proof obligation | Owning item |
 | --- | --- |
 | Portable IDs, complete transition-payload digest, phases, generation rollover, exhaustive legal edges, serialization, overflow, and in-memory conformance adapter | NNC6.1c |
-| Portable `WorkloadExecutionId` and removal of node-local identity authority | NNC6.1c |
+| Portable `WorkloadExecutionId` | NNC6.1c |
+| Removal of node-local identity authority | NNC6.1c1 |
 | Closed active/successor intent, admission, phase-detail, effect-reference, owner-observation, and inspection-requirement variants | NNC6.1c |
 | Both direct dependency edges and cycle proof | NNC6.1c |
-| Required store injection and removal of service and CLI in-memory authorities | NNC6.1c |
-| Server codec, lossless decimal-counter wire form, schema bootstrap, reserved access boundary, execution-unit CAS, and atomic commit | NNC6.1d |
+| Removal of service and CLI in-memory authorities | NNC6.1c1 |
+| Server codec, lossless decimal-counter wire form, schema bootstrap, reserved access boundary, execution-unit CAS, atomic commit, and required production store injection | NNC6.1d |
 | Missing and current-revision contention | NNC6.1d |
 | Exact replay, divergent replay, stale generation, and ambiguous commit recovery | NNC6.1d |
 | Fresh Engine and fresh-process recovery from every tagged phase detail without snapshot handoff | NNC6.1d and NNC6.1e |
@@ -583,8 +584,8 @@ The expected result is seven named failures:
 6. Missing server-owned durable adapter.
 7. Lazy activation still bypasses compute.
 
-NNC6.1c and NNC6.1d evolve this helper into NNCV027. Before marking it green,
-they add exclusive mutation cases for each authority and route rule.
+NNC6.1c through NNC6.1d evolve this helper into NNCV027. Before marking it
+green, they add exclusive mutation cases for each authority and route rule.
 
 ## Acceptance Ledger
 

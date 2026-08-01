@@ -565,11 +565,11 @@ if (offset < 0) {
   process.stdout.write("Item Checkpoint Ledger heading missing");
   process.exit(1);
 }
-const itemPattern = /^\| (NNC\d+\.\d+[a-z]?) \|/gm;
+const itemPattern = /^\| (NNC\d+\.\d+(?:[a-z]\d*)?) \|/gm;
 const planned = [...text.slice(0, offset).matchAll(itemPattern)].map(match => match[1]);
 const tick = String.fromCharCode(96);
 const rows = text.slice(offset).split("\n")
-  .filter(line => /^\| NNC\d+\.\d+[a-z]? \|/.test(line))
+  .filter(line => /^\| NNC\d+\.\d+(?:[a-z]\d*)? \|/.test(line))
   .map(line => line.split("|").slice(1, -1).map(cell => cell.trim()))
   .map(cells => ({id: cells[0], status: cells[1].replaceAll(tick, ""), evidence: cells.slice(2).join("|").trim()}));
 const unique = values => new Set(values).size === values.length;
@@ -1615,7 +1615,7 @@ NODE
     printf 'self-test: %d failed\n' "${self_fail}"
     exit 1
   fi
-  printf 'self-test: 187 passed, 0 failed\n'
+  printf 'self-test: 188 passed, 0 failed\n'
 }
 
 if [ "${1:-}" = "--self-test" ]; then

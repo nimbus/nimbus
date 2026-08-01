@@ -14,7 +14,12 @@ workspace = true
 
 [dependencies]
 nimbus-core = { path = "../nimbus-core" }
+nimbus-network = { path = "../nimbus-network" }
 nimbus-tenant = { path = "../nimbus-tenant" }
 serde.workspace = true
+serde_json.workspace = true
 sha2.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
+
+[dev-dependencies]
+futures.workspace = true

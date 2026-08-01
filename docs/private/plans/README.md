@@ -74,7 +74,7 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC6.1b complete; NNC6.1c
+- `nimbus-network-control-plane-plan.md` - `active; NNC6.1c complete; NNC6.1c1
   in progress`. The Linux sovereignty tripwire is complete with a root-safe,
   raw-artifact-derived evidence contract, 70/70 deterministic tests, 62/62
   adversarial verifier cases, fully dispositioned full+narrow Sol reviews, and
@@ -245,8 +245,21 @@ extension-registry seam before the second concern edits `extensions.rs`.
   structure `27/27`, writing/script/format/diff, docs `108`, and site `17/17`
   pass. The full review's five accepted findings and the sole narrow review's
   two accepted precision gaps are corrected; one mutation-path claim is
-  source-rejected, and no third review ran. NNC6.1c now owns the read-only
-  substitution/call-graph audit before workloads vocabulary or injection edits.
+  source-rejected, and no third review ran. NNC6.1c's portable vocabulary,
+  store port, direct edges, uncomposed coordinator, and verifier adjustment are
+  implemented. Its pre-review acceptance audit found three executable defects
+  and four coverage, cardinality, or ledger gaps; all seven are corrected. The
+  sole full Sol/xhigh/fast item review then found eight defects. All eight have
+  fail-before or direct source evidence and corrected proofs. Corrected R1-R14
+  are green at saga/store/coordinator `31/19/10`, affected libraries `243/243`,
+  live verifier `27/27`, and final NNCV026 mutations `15/15`. The sole narrow
+  correction review found one P2: the cardinality scan accepted non-struct
+  duplicate owners. The corrected scan covers struct, enum, union, trait, and
+  type declarations, and independent struct and enum mutations fail closed.
+  No third review ran. The exact item commit is next. The audit prospectively split the breaking
+  operational-ID and false in-memory-authority cutover into NNC6.1c1; NNC6.1d
+  retains the durable server adapter and first required workload-capable
+  compute injection, so no temporary no-op or production in-memory store exists.
   Cleanup, release, finalization, and reuse stay in NNC8.3. Machine forwarding obeys
   NNC5.2a's common lifecycle; runtime absence, workload status, readiness persistence,
   cleanup convergence, and inspect/restart policy stay in their named later

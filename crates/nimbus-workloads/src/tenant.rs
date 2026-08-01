@@ -4,7 +4,7 @@ use nimbus_tenant::{
     TenantQuotaPolicyDecision, TenantServiceAccessDecision, TenantStorageAccessDecision,
     WorkloadIdentity,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 mod credential_projection;
@@ -14,16 +14,31 @@ pub use credential_projection::{
     TenantCredentialProjectionRequest, TenantCredentialProjectionScope,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub struct NodeIdentity(String);
 
 impl NodeIdentity {
     pub fn new(value: impl Into<String>) -> Result<Self> {
-        Ok(Self(non_empty(value, "node identity")?))
+        value.into().try_into()
     }
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl TryFrom<String> for NodeIdentity {
+    type Error = Error;
+
+    fn try_from(value: String) -> Result<Self> {
+        Ok(Self(non_empty(value, "node identity")?))
+    }
+}
+
+impl From<NodeIdentity> for String {
+    fn from(value: NodeIdentity) -> Self {
+        value.0
     }
 }
 
@@ -40,7 +55,8 @@ impl TenantWorkloadGeneration {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub struct TenantWorkloadUid(String);
 
 impl TenantWorkloadUid {
@@ -58,6 +74,42 @@ impl TenantWorkloadUid {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+}
+
+impl TryFrom<String> for TenantWorkloadUid {
+    type Error = Error;
+
+    fn try_from(value: String) -> Result<Self> {
+        validate_digest_id(&value, "twu", "tenant workload uid")?;
+        Ok(Self(value))
+    }
+}
+
+impl From<TenantWorkloadUid> for String {
+    fn from(value: TenantWorkloadUid) -> Self {
+        value.0
+    }
+}
+
+fn validate_digest_id(value: &str, prefix: &str, label: &str) -> Result<()> {
+    let Some(digest) = value
+        .strip_prefix(prefix)
+        .and_then(|rest| rest.strip_prefix('_'))
+    else {
+        return Err(Error::InvalidInput(format!(
+            "{label} must use the `{prefix}_<sha256>` form"
+        )));
+    };
+    if digest.len() != 64
+        || digest
+            .bytes()
+            .any(|byte| !byte.is_ascii_digit() && !(b'a'..=b'f').contains(&byte))
+    {
+        return Err(Error::InvalidInput(format!(
+            "{label} must contain 64 lowercase hexadecimal digest characters"
+        )));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

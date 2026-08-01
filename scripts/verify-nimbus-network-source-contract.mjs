@@ -1280,6 +1280,9 @@ function verifyComputeNetworkManagerInjection() {
   const computeSources = walkRust("crates/nimbus-compute/src");
   const serverSources = walkRust("crates/nimbus-server/src");
   const cliSources = walkRust("crates/nimbus-cli/src");
+  let computeManifest = fs.existsSync("crates/nimbus-compute/Cargo.toml")
+    ? fs.readFileSync("crates/nimbus-compute/Cargo.toml", "utf8")
+    : "";
   const requiredSource = (sources, file) => {
     const candidate = sources.find((entry) => entry.file === file);
     if (!candidate) {
@@ -1298,10 +1301,6 @@ function verifyComputeNetworkManagerInjection() {
     }
     candidate.source = candidate.source.replace(before, after);
   };
-  let computeManifest = fs.existsSync("crates/nimbus-compute/Cargo.toml")
-    ? fs.readFileSync("crates/nimbus-compute/Cargo.toml", "utf8")
-    : "";
-
   if (process.env.NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD === "1") {
     const mutation =
       process.env.NIMBUS_NETWORK_VERIFY_TEST_COMPUTE_MANAGER_MUTATION ?? "";
@@ -1579,10 +1578,18 @@ function verifyComputeNetworkManagerInjection() {
 }
 
 function verifyComputeNodeWorkloadCoordinator() {
-  const nodeSources = walkRust("crates/nimbus-node/src");
-  const computeSources = walkRust("crates/nimbus-compute/src");
-  const cliSources = walkRust("crates/nimbus-cli/src");
-  const systemSources = walkRust("crates/nimbus-system/src");
+  const productionSources = walkRust("crates").filter(
+    (entry) =>
+      entry.file.includes("/src/") &&
+      !entry.file.endsWith("/tests.rs") &&
+      !entry.file.includes("/tests/"),
+  );
+  const sourcesUnder = (prefix) =>
+    productionSources.filter((entry) => entry.file.startsWith(prefix));
+  const nodeSources = sourcesUnder("crates/nimbus-node/src/");
+  const computeSources = sourcesUnder("crates/nimbus-compute/src/");
+  const cliSources = sourcesUnder("crates/nimbus-cli/src/");
+  const systemSources = sourcesUnder("crates/nimbus-system/src/");
   const requiredSource = (sources, file) => {
     const candidate = sources.find((entry) => entry.file === file);
     if (!candidate) {
@@ -1616,10 +1623,6 @@ function verifyComputeNodeWorkloadCoordinator() {
     }
     return source.slice(start, cursor);
   };
-  let computeManifest = fs.existsSync("crates/nimbus-compute/Cargo.toml")
-    ? fs.readFileSync("crates/nimbus-compute/Cargo.toml", "utf8")
-    : "";
-
   if (process.env.NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD === "1") {
     const mutation =
       process.env.NIMBUS_NETWORK_VERIFY_TEST_COMPUTE_COORDINATOR_MUTATION ?? "";
@@ -1702,8 +1705,16 @@ function verifyComputeNodeWorkloadCoordinator() {
         computeSources,
         "crates/nimbus-compute/src/node_workloads.rs",
       ).source += "\nstruct AnotherNodeWorkloadCoordinator;\n";
-    } else if (mutation === "early-workloads-dependency") {
-      computeManifest += '\nnimbus-workloads = { path = "../nimbus-workloads" }\n';
+    } else if (mutation === "duplicate-saga-coordinator") {
+      requiredSource(
+        productionSources,
+        "crates/nimbus-server/src/lib.rs",
+      ).source += "\npub struct WorkloadSagaCoordinator;\n";
+    } else if (mutation === "duplicate-saga-coordinator-enum") {
+      requiredSource(
+        productionSources,
+        "crates/nimbus-server/src/lib.rs",
+      ).source += "\npub enum WorkloadSagaCoordinator { Duplicate }\n";
     } else if (mutation) {
       errors.push(`unknown compute-node-coordinator self-test mutation: ${mutation}`);
     }
@@ -1762,10 +1773,25 @@ function verifyComputeNodeWorkloadCoordinator() {
   }
   const coordinatorDefinitions = firstMatch(
     [...computeSources, ...cliSources],
-    /\bstruct\s+(?!NodeWorkloadCoordinator\b)[A-Za-z0-9_]*(?:NodeWorkload|Saga|Reconcile)[A-Za-z0-9_]*Coordinator\b/,
+    /\bstruct\s+(?!NodeWorkloadCoordinator\b)(?!WorkloadSagaCoordinator\b)[A-Za-z0-9_]*(?:NodeWorkload|Saga|Reconcile)[A-Za-z0-9_]*Coordinator\b/,
   );
   if (coordinatorDefinitions) {
     errors.push(`second production workload coordinator exists: ${coordinatorDefinitions}`);
+  }
+  const sagaCoordinatorOwners = productionSources.flatMap((entry) =>
+    [
+      ...entry.source.matchAll(
+        /\b(?:pub(?:\s*\([^)]*\))?\s+)?(?:struct|enum|union|trait|type)\s+WorkloadSagaCoordinator\b/g,
+      ),
+    ].map(() => entry.file),
+  );
+  if (
+    sagaCoordinatorOwners.length !== 1 ||
+    sagaCoordinatorOwners[0] !== "crates/nimbus-compute/src/workload_saga.rs"
+  ) {
+    errors.push(
+      `exactly one WorkloadSagaCoordinator must exist in its compute owner: ${sagaCoordinatorOwners.join(",") || "none"}`,
+    );
   }
 
   const nodeServices = requiredSource(
@@ -1850,13 +1876,6 @@ function verifyComputeNodeWorkloadCoordinator() {
     );
   }
 
-  if (
-    /^nimbus-workloads\s*=\s*\{\s*path\s*=\s*"\.\.\/nimbus-workloads"/m.test(
-      computeManifest,
-    )
-  ) {
-    errors.push("NNC6.1a must not take the NNC6.1b-owned workloads dependency");
-  }
   const engineStatusWriters = [
     ...systemSources
       .map((entry) => entry.source)
