@@ -46,7 +46,7 @@ ledger transition.
 | Owner worktree | `/Users/jack/src/github.com/nimbus/nimbus-network-architecture-audit` |
 | Audit base | Original architecture audit: `b69007a78a220847812370d9418049f1253f0384`. |
 | Execution base | Rebased without conflicts onto `origin/main` at `9c2d4f150c60f43dfdc0a3f1ec6550942e26ab8f` after NNC0.0. |
-| Last checkpoint commit | `2204fa8d7a886b3557709932f02944961c629c4b` (NNC6.1e exact reviewed item). |
+| Last checkpoint commit | `c2dc4b4c0666f4d21dcca1788e3079d3c8bdf4e6` (NNC6.2 durable compiler audit and prospective NNC6.2a split). |
 | Audit dirty state | NNC6.2 changes are limited to its compiler audit proof and canonical plan/routing split. Product and script paths remain clean. |
 | Latest dirty-state checkpoint | The source audit selected a pure compute-owned compiler and found that the current saga tuple cannot reconstruct a complete plan before first reservation. NNC6.2 remains the compiler item. NNC6.2a now owns the durable compiled-plan carrier and fresh-process replay. NNC6.1e1 remains the later lifecycle ingress. NNC6.2 has no product edits. |
 | Current item review | NNC6.1e's review cadence is exhausted: one full GPT-5.6 Sol/xhigh/fast pass, zero findings, confidence `0.90`, no correction review. NNC6.2 has not reached candidate freeze and must not run structured review during its audit or implementation. |

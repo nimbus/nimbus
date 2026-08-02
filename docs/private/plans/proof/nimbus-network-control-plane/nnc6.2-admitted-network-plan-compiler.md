@@ -4,6 +4,8 @@ Status: `audit complete. fail-before packet pending. no product edits`
 
 Starting checkpoint: `9b2f6f91f5ff429a10dfe1979291806e167d8d8e`
 
+Durable audit checkpoint: `c2dc4b4c0666f4d21dcca1788e3079d3c8bdf4e6`
+
 Owner: `docs/private/plans/nimbus-network-control-plane-plan.md` NNC6.2
 
 NNC6.2 adds one pure compiler in `nimbus-compute`. The compiler converts an
@@ -24,7 +26,7 @@ The source audit found a separate durability gap. NNC6.2a now owns that gap.
 | Starting HEAD | `9b2f6f91f5ff429a10dfe1979291806e167d8d8e` |
 | Last completed item | `NNC6.1e`, commit `2204fa8d7a886b3557709932f02944961c629c4b` |
 | Current item | `NNC6.2` |
-| Current dirty paths | This proof and its canonical plan and routing updates only. |
+| Current dirty paths | None after the durable audit commit. |
 | Product state | No NNC6.2 product edit exists. |
 | Next action | Commit this audit checkpoint. Add the expected-red tests and static verifier cases before compiler implementation. |
 | Structured review | Not allowed before C1-C17 and all item gates pass on a candidate-frozen diff. |
