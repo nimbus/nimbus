@@ -8,6 +8,8 @@ Durable audit checkpoints: `c2dc4b4c0666f4d21dcca1788e3079d3c8bdf4e6`,
 `e403741bad68555af4e580b80e04c4fae73ce014`, and
 `e183c7b8fe28cf88ff7dcb81f01c25d6b47b4cd1`
 
+Durable item commit: `0977c17d93f3b39f18b33d504193c6eee6e9ba50`
+
 Owner: `docs/private/plans/nimbus-network-control-plane-plan.md` NNC6.2
 
 NNC6.2 adds one pure compiler in `nimbus-compute`. The compiler converts an
@@ -31,7 +33,7 @@ The source audit found a separate durability gap. NNC6.2a now owns that gap.
 | Current dirty paths | NNC6.2's frozen compute, workloads, tenant, sandbox, identity, verifier, census, proof, and recovery paths only. The child-process harness moved to its concept-owned compute test child. No Cargo manifest or saga path changed. |
 | Product state | The pure compiler now rejects source-sovereignty relaxation before selection, and the portable payload retains the tenant-qualified workload identity, complete capability requirements, exact selection, resources, derived readiness, and every envelope field needed for strict decoding. C1-C18 and the affected correction gates are green. No lifecycle or provider effect is routed. |
 | Last green | Affected behavior `1,477/1,477` with 27 declared skips; affected all-feature and workspace all-target checks; strict Clippy; warning-denied rustdoc; focused workloads `14/14`; focused compute `15/15` with one child-only ignore; NNCV028 `18/18` plus `6/6`; aggregate `29/29`; exact aggregate arithmetic `198 + 6 = 204`; complete split-bound mutation coverage; format/diff; Bash/ShellCheck; docs 108; and site `17/17`. |
-| Next action | Stage the final ledger-only rows, confirm the final executable/static-proof digest is unchanged and no unstaged path exists, then commit the exact NNC6.2 item. |
+| Next action | Begin NNC6.2a's read-only durable-carrier, strict-codec, crash-cut, and zero-command replay audit; do not edit product code until its own proof freezes an allowlist. |
 | Structured review | The one full Sol/xhigh/fast item review reported six findings at confidence `0.98`: five accepted/corrected and one source-contract rejection. The sole narrow Sol/xhigh/fast review confirmed the five behavioral corrections and reported one accepted P3 exact-count defect at confidence `0.96`. Review cadence is exhausted; no third review is allowed. |
 | Corrected candidate identity | The exact 23-path candidate was staged with no unstaged path at pre-ledger tree `0ebb9ba62ce52476b9b060a59946dabd00e4e9cf`; its complete staged patch SHA-256 was `c80a0425150b33a8cb6ec2705244411003cc5d6aa2a0a0f24ab2ced107e53574`. The frozen `crates/` plus `scripts/` executable/static-proof SHA-256 is `37a0eb67766208c4484854da0371884025a670ccba2f4b6788cdac11428fd481`; this ledger-only identity row does not alter it. |
 | Final post-review candidate identity | After the sole narrow review's accepted count correction, the exact 23-path pre-ledger staged tree is `1ae690409c2c05c1474b52af7cec5242b97605a0`; complete staged patch SHA-256 `9a749f90cdeaca9b2e210c6359a892693f30dbce5526f48748f1fc136d2fc048`; final `crates/` plus `scripts/` executable/static-proof SHA-256 `c149dd56fc0908581c0a0ac0d168891b52446e20ec86707cdbb2877d43a7e813`. This final ledger-only row does not alter the executable digest. |
@@ -838,7 +840,7 @@ for proof wording, ledger updates, formatting, or elapsed time.
 | Candidate gates | `done` | Affected checks/Clippy/rustdoc, workspace all-target check, format/diff, Bash/ShellCheck, NNCV028 `18/18` plus `6/6`, aggregate `29/29`, exact `198 + 6 = 204` arithmetic, complete split-bound aggregate coverage, docs 108, and site `17/17` are green after the count-only correction. |
 | Full structured review | `done` | One Sol/xhigh/fast item review reported six findings at confidence `0.98`; five accepted executable defects are corrected and one source-contract finding is rejected with evidence. No second full review is allowed. |
 | Narrow correction review | `done` | The sole Sol/xhigh/fast correction review confirmed the five behavioral corrections and reported one P3 arithmetic defect: HEAD's 198 cases plus six new counted mutations equals 204, not 203. The finding is accepted; no third review is permitted. |
-| Item commit | `pending` | Commit only after the ledger and recovery header contain final evidence. |
+| Item commit | `done` | Exact reviewed item commit `0977c17d93f3b39f18b33d504193c6eee6e9ba50`; routing transition only follows. No push or PR. |
 
 ## NNC6.2a Handoff
 
