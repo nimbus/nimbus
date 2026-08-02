@@ -74,7 +74,7 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC6.1c1 complete; NNC6.1d
+- `nimbus-network-control-plane-plan.md` - `active; NNC6.1d complete; NNC6.1e
   in progress`. Workloads-owned execution identity and generation now reach
   operational node paths, false in-memory desired-state authorities are
   deleted, and status, systemd, cgroup, and exported journal evidence
@@ -281,8 +281,11 @@ extension-registry seam before the second concern edits `extensions.rs`.
   saga-ID inter-page recovery, bounded child terminate/reap, exact verifier
   child `27/1`, live verifier `28/28`, and aggregate mutations `188/188` pass.
   The one narrow Sol/xhigh/fast correction review is clean at confidence
-  `0.97`; no further NNC6.1d review is warranted. Its exact item commit is
-  pending. NNC6.1d retains the durable server adapter.
+  `0.97`; no further NNC6.1d review is warranted. NNC6.1d is durable at
+  `60c0a1b23`. NNC6.1e now owns the read-only lifecycle-routing audit and
+  expected-red contract for subordinating lazy activation, restart recovery,
+  and retirement inputs to the compute saga. NNC6.1d retains the durable server
+  adapter.
   It also requires the first workload-capable compute injection. No temporary
   no-op or production in-memory store exists.
   Cleanup, release, finalization, and reuse stay in NNC8.3. Machine forwarding obeys

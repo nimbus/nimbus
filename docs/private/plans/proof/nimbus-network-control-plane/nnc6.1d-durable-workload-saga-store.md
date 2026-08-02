@@ -1,6 +1,6 @@
 # NNC6.1d Durable Workload Saga Store
 
-Status: `acceptance complete; exact item commit pending`
+Status: `complete`
 
 Starting checkpoint: `a098db7b5ca83acae9f6d3ee8046826a4d60bd67`
 
@@ -475,11 +475,12 @@ review.
 | Verifier/mutations | Live verifier `28/28`; direct `decision`, `cutover`, and `durable-store` each pass `1/1`; `implementation` remains the required NNC6.1e red at `0/1`; the final aggregate verifier self-test passes `188/188`. The NNCV005 mutation now requires the exact `27 passed, 1 failed` child summary and rejects a synthetic `26/1` result. The first final attempt exposed the missing `Last green` recovery field through 134 contaminated exclusivity failures; restoring that required ledger field made a representative NNCV015 child exact at `27/1` and the complete rerun green without weakening a verifier. |
 | Format/docs | Rustfmt and `git diff --check` pass. Docs are link-clean at 108 pages, and the site verifier passes `17/17`. |
 | Structured review | The sole full GPT-5.6 Sol/xhigh/fast review ran with one P2 and two P3 findings at overall confidence `0.95`; all three are accepted and corrected with the evidence above. The one permitted narrow GPT-5.6 Sol/xhigh/fast correction review is clean with zero findings at confidence `0.97`. No further review is warranted. |
-| Durable item commit | pending |
+| Durable item commit | `60c0a1b2388630ce26638d0da84f84f9b76a9c8a` (`feat(network): add durable workload saga store`) |
 
 ## Recovery Checkpoint
 
 - The starting commit is durable at `a098db7b5`.
+- The completed item is durable at `60c0a1b2388630ce26638d0da84f84f9b76a9c8a`.
 - Every visible dirty path and the ignored proof path remain inside the frozen
   allowlist. No Engine, storage, network, system-schema, services-lifecycle,
   sandbox, proxy, egress, cluster, CLI, or provider source changed.
