@@ -24,7 +24,7 @@ use nimbus_testing::{
 };
 use nimbus_workloads::{
     CompiledWorkloadNetworkPlan, DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity,
-    WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadDesiredDigest, WorkloadGeneration,
+    WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadGeneration,
     WorkloadNetworkAttachmentBlueprint, WorkloadNetworkDependencyListenerBlueprint,
     WorkloadNetworkIntent, WorkloadNetworkListenerBlueprint, WorkloadNetworkPlanContent,
     WorkloadNetworkPlanIdentity, WorkloadNetworkPortRequestMode, WorkloadNetworkRouteBlueprint,
@@ -200,7 +200,11 @@ fn populated_record() -> (WorkloadSagaRecord, CompiledWorkloadNetworkPlan) {
         DesiredWorkloadKind::Sandbox,
         DesiredWorkloadState::Running,
         WorkloadGeneration::new(NETWORK_GENERATION),
-        WorkloadDesiredDigest::sha256("nnc62a-fixed-desired-workload"),
+        nimbus_workloads::WorkloadExecutableIntent::new(
+            nimbus_workloads::WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
+            r#"{"fixture":"nnc62a-fixed-desired-workload"}"#,
+        )
+        .expect("fixed executable should validate"),
         WorkloadNetworkIntent::new(compiled.clone()),
         WorkloadActivationIntent::ActivateWhenAttached,
         WorkloadPublicationIntent::PublishWhenReady,

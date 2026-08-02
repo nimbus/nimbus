@@ -10,15 +10,16 @@ use nimbus_network::{
 };
 use nimbus_workloads::{
     CompiledWorkloadNetworkPlan, DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity,
-    WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadDesiredDigest,
-    WorkloadEffectReferences, WorkloadGeneration, WorkloadInspectionRequirement,
-    WorkloadNetworkIntent, WorkloadNetworkPlanContent, WorkloadNetworkPlanIdentity,
-    WorkloadOwnerEvidenceDigest, WorkloadOwnerObservation, WorkloadPhaseDetail,
-    WorkloadPublicationIntent, WorkloadPublicationReference, WorkloadSagaCommit,
-    WorkloadSagaExpected, WorkloadSagaFuture, WorkloadSagaIntent, WorkloadSagaIntentUpdate,
-    WorkloadSagaKey, WorkloadSagaPage, WorkloadSagaPageRequest, WorkloadSagaPhase,
-    WorkloadSagaRecord, WorkloadSagaStore, WorkloadSagaStoreError, WorkloadSagaTenantPage,
-    WorkloadSagaTenantPageRequest, WorkloadTerminalEvidenceDigest, WorkloadTerminalObservation,
+    WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadEffectReferences,
+    WorkloadExecutableEncoding, WorkloadExecutableIntent, WorkloadGeneration,
+    WorkloadInspectionRequirement, WorkloadNetworkIntent, WorkloadNetworkPlanContent,
+    WorkloadNetworkPlanIdentity, WorkloadOwnerEvidenceDigest, WorkloadOwnerObservation,
+    WorkloadPhaseDetail, WorkloadPublicationIntent, WorkloadPublicationReference,
+    WorkloadSagaCommit, WorkloadSagaExpected, WorkloadSagaFuture, WorkloadSagaIntent,
+    WorkloadSagaIntentUpdate, WorkloadSagaKey, WorkloadSagaPage, WorkloadSagaPageRequest,
+    WorkloadSagaPhase, WorkloadSagaRecord, WorkloadSagaStore, WorkloadSagaStoreError,
+    WorkloadSagaTenantPage, WorkloadSagaTenantPageRequest, WorkloadTerminalEvidenceDigest,
+    WorkloadTerminalObservation,
 };
 
 use super::{WorkloadSagaAction, WorkloadSagaCoordinator, WorkloadSagaDecision};
@@ -84,7 +85,11 @@ fn intent(
         DesiredWorkloadKind::Sandbox,
         desired_state,
         WorkloadGeneration::new(generation),
-        WorkloadDesiredDigest::sha256([seed, 1]),
+        WorkloadExecutableIntent::new(
+            WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
+            format!(r#"{{"fixtureSeed":{seed}}}"#),
+        )
+        .expect("fixture executable is valid"),
         WorkloadNetworkIntent::new(compiled_plan(
             &tenant_id,
             label,

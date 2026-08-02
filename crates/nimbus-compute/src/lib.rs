@@ -22,5 +22,6 @@ pub mod scheduling;
 pub mod service_manager;
 pub mod services;
 pub mod state;
+pub mod workload_executable;
 pub mod workload_network_plan;
 pub mod workload_saga;

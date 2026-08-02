@@ -13,14 +13,15 @@ use nimbus_network::{
 };
 use nimbus_workloads::{
     CompiledWorkloadNetworkPlan, DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity,
-    WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadDesiredDigest,
-    WorkloadEffectReferences, WorkloadGeneration, WorkloadNetworkIntent,
-    WorkloadNetworkPlanContent, WorkloadNetworkPlanIdentity, WorkloadOwnerEvidenceDigest,
-    WorkloadOwnerObservation, WorkloadPhaseDetail, WorkloadPublicationIntent, WorkloadSagaCommit,
-    WorkloadSagaError, WorkloadSagaExpected, WorkloadSagaFuture, WorkloadSagaIntent,
-    WorkloadSagaIntentUpdate, WorkloadSagaKey, WorkloadSagaPage, WorkloadSagaPageRequest,
-    WorkloadSagaPhase, WorkloadSagaRecord, WorkloadSagaStore, WorkloadSagaStoreError,
-    WorkloadSagaTenantPage, WorkloadSagaTenantPageRequest,
+    WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadEffectReferences,
+    WorkloadExecutableEncoding, WorkloadExecutableIntent, WorkloadGeneration,
+    WorkloadNetworkIntent, WorkloadNetworkPlanContent, WorkloadNetworkPlanIdentity,
+    WorkloadOwnerEvidenceDigest, WorkloadOwnerObservation, WorkloadPhaseDetail,
+    WorkloadPublicationIntent, WorkloadSagaCommit, WorkloadSagaError, WorkloadSagaExpected,
+    WorkloadSagaFuture, WorkloadSagaIntent, WorkloadSagaIntentUpdate, WorkloadSagaKey,
+    WorkloadSagaPage, WorkloadSagaPageRequest, WorkloadSagaPhase, WorkloadSagaRecord,
+    WorkloadSagaStore, WorkloadSagaStoreError, WorkloadSagaTenantPage,
+    WorkloadSagaTenantPageRequest,
 };
 use tokio::sync::Notify;
 
@@ -175,7 +176,11 @@ fn intent(
         DesiredWorkloadKind::Sandbox,
         desired_state,
         WorkloadGeneration::new(generation),
-        WorkloadDesiredDigest::sha256([seed, 1]),
+        WorkloadExecutableIntent::new(
+            WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
+            format!(r#"{{"fixtureSeed":{seed}}}"#),
+        )
+        .expect("fixture executable is valid"),
         WorkloadNetworkIntent::new(compiled_plan(&tenant_id, label, generation, activation)),
         activation,
         WorkloadPublicationIntent::Withheld,

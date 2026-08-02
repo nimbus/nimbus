@@ -300,7 +300,7 @@ struct TestNetworkManagerFixture {
 }
 
 #[cfg(test)]
-fn shared_test_network_manager() -> Arc<LocalNetworkManager> {
+pub(crate) fn shared_test_network_manager() -> Arc<LocalNetworkManager> {
     static FIXTURE: std::sync::OnceLock<TestNetworkManagerFixture> = std::sync::OnceLock::new();
     Arc::clone(
         &FIXTURE

@@ -4,14 +4,13 @@ use nimbus_core::{TenantId, WorkloadId};
 use nimbus_network::PublishedEndpointId;
 use nimbus_workloads::{
     DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity, WorkloadActivationIntent,
-    WorkloadAdmissionEvidence, WorkloadDesiredDigest, WorkloadEffectReferences,
-    WorkloadFailureEvidence, WorkloadGeneration, WorkloadInspectionRequirement,
-    WorkloadNetworkIntent, WorkloadOwnerEvidenceDigest, WorkloadOwnerObservation,
-    WorkloadPhaseDetail, WorkloadPublicationIntent, WorkloadPublicationReference,
-    WorkloadSagaCommit, WorkloadSagaExpected, WorkloadSagaIntent, WorkloadSagaIntentUpdate,
-    WorkloadSagaPhase, WorkloadSagaRecord, WorkloadSagaStore, WorkloadSagaStoreError,
-    WorkloadSagaTenantCursor, WorkloadSagaTenantPageRequest, WorkloadTerminalEvidenceDigest,
-    WorkloadTerminalObservation,
+    WorkloadAdmissionEvidence, WorkloadEffectReferences, WorkloadFailureEvidence,
+    WorkloadGeneration, WorkloadInspectionRequirement, WorkloadNetworkIntent,
+    WorkloadOwnerEvidenceDigest, WorkloadOwnerObservation, WorkloadPhaseDetail,
+    WorkloadPublicationIntent, WorkloadPublicationReference, WorkloadSagaCommit,
+    WorkloadSagaExpected, WorkloadSagaIntent, WorkloadSagaIntentUpdate, WorkloadSagaPhase,
+    WorkloadSagaRecord, WorkloadSagaStore, WorkloadSagaStoreError, WorkloadSagaTenantCursor,
+    WorkloadSagaTenantPageRequest, WorkloadTerminalEvidenceDigest, WorkloadTerminalObservation,
 };
 
 use super::super::EngineWorkloadSagaStore;
@@ -674,10 +673,14 @@ fn workload_intent(
         DesiredWorkloadKind::Sandbox,
         desired_state,
         WorkloadGeneration::new(generation),
-        WorkloadDesiredDigest::sha256(format!(
-            "{}-{generation}-{desired_state:?}",
-            key.workload_id().as_str()
-        )),
+        nimbus_workloads::WorkloadExecutableIntent::new(
+            nimbus_workloads::WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
+            format!(
+                r#"{{"fixture":"{}-{generation}-{desired_state:?}"}}"#,
+                key.workload_id().as_str()
+            ),
+        )
+        .expect("fixture executable is valid"),
         WorkloadNetworkIntent::new(compiled_network_plan(
             key.tenant_id(),
             key.workload_id().as_str(),

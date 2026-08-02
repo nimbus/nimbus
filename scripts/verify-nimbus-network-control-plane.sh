@@ -43,6 +43,7 @@ NNC61D_WORKLOAD_SAGA_AUTHORITY_CONTRACT="scripts/nimbus-network-control-plane/wo
 NNC62_WORKLOAD_NETWORK_PLAN_COMPILER_CONTRACT="scripts/nimbus-network-control-plane/workload-network-plan-compiler-contract.sh"
 NNC62A_WORKLOAD_NETWORK_PLAN_DURABILITY_CONTRACT="scripts/nimbus-network-control-plane/workload-network-plan-durability-contract.sh"
 NNC61E1_WORKLOAD_SAGA_INGRESS_CONTRACT="scripts/nimbus-network-control-plane/workload-saga-ingress-contract.sh"
+NNC63A_WORKLOAD_EXECUTABLE_CONTRACT="scripts/nimbus-network-control-plane/workload-executable-carrier-contract.sh"
 
 # shellcheck source=scripts/nimbus-network-control-plane/attachment-ordering-contract.sh
 . "${NNC52A_ATTACHMENT_ORDERING_CONTRACT}"
@@ -1020,7 +1021,7 @@ NODE
   elif ! grep -q '^FAIL NNCV005 no-duplicate-port-allocation-authority' "${temporary}/legacy-port-authority.out" ||
     grep -q '^PASS NNCV005 no-duplicate-port-allocation-authority' "${temporary}/legacy-port-authority.out" ||
     [ "$(grep -c '^FAIL ' "${temporary}/legacy-port-authority.out")" -ne 1 ] ||
-    ! grep -q '^Summary: 30 passed, 1 failed$' "${temporary}/legacy-port-authority.out"; then
+    ! grep -q '^Summary: 31 passed, 1 failed$' "${temporary}/legacy-port-authority.out"; then
     printf 'SELFTEST FAIL legacy port authority did not produce an exclusive NNCV005 failure\n'
     self_fail=$((self_fail + 1))
   else
@@ -1791,11 +1792,27 @@ NODE
     sed -n '1,180p' "${temporary}/nnc61e1-contract-self-test.out"
   fi
 
+  if [ ! -f "${NNC63A_WORKLOAD_EXECUTABLE_CONTRACT}" ]; then
+    printf 'SELFTEST FAIL NNCV031 workload executable helper is missing\n'
+    self_fail=$((self_fail + 1))
+  elif ! bash "${NNC63A_WORKLOAD_EXECUTABLE_CONTRACT}" --self-test \
+    >"${temporary}/nnc63a-contract-self-test.out" 2>&1; then
+    printf 'SELFTEST FAIL NNCV031 workload executable mutation suite failed\n'
+    sed -n '1,180p' "${temporary}/nnc63a-contract-self-test.out"
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^NNC6\.3a executable contract self-test: 13 passed, 0 failed$' \
+    "${temporary}/nnc63a-contract-self-test.out"; then
+    printf 'SELFTEST FAIL NNCV031 workload executable mutation count is not exact\n'
+    self_fail=$((self_fail + 1))
+  else
+    sed -n '1,180p' "${temporary}/nnc63a-contract-self-test.out"
+  fi
+
   if [ "${self_fail}" -ne 0 ]; then
     printf 'self-test: %d failed\n' "${self_fail}"
     exit 1
   fi
-  printf 'self-test: 228 passed, 0 failed\n'
+  printf 'self-test: 241 passed, 0 failed\n'
 }
 
 if [ "${1:-}" = "--self-test" ]; then
@@ -1903,6 +1920,24 @@ verify_nnc61e1_workload_saga_ingress() {
   fi
 }
 
+verify_nnc63a_workload_executable_carrier() {
+  if [ ! -f "${NNC63A_WORKLOAD_EXECUTABLE_CONTRACT}" ]; then
+    fail "NNCV031" "strict-workload-executable-carrier" \
+      "missing ${NNC63A_WORKLOAD_EXECUTABLE_CONTRACT}"
+    return
+  fi
+
+  executable_error="$(
+    bash "${NNC63A_WORKLOAD_EXECUTABLE_CONTRACT}" --check 2>&1
+  )"
+  executable_contract_exit=$?
+  if [ "${executable_contract_exit}" -eq 0 ]; then
+    pass "NNCV031" "strict-workload-executable-carrier"
+  else
+    fail "NNCV031" "strict-workload-executable-carrier" "${executable_error}"
+  fi
+}
+
 printf 'Nimbus network control-plane static verifier\n'
 printf 'Repo: %s\n\n' "${REPO_ROOT}"
 
@@ -1937,6 +1972,7 @@ verify_nnc61d_durable_workload_saga_store
 verify_nnc62_workload_network_plan_compiler
 verify_nnc62a_workload_network_plan_durability
 verify_nnc61e1_workload_saga_ingress
+verify_nnc63a_workload_executable_carrier
 
 printf '\nSummary: %d passed, %d failed\n' "${PASS_COUNT}" "${FAIL_COUNT}"
 if [ "${FAIL_COUNT}" -ne 0 ]; then

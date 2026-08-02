@@ -219,8 +219,13 @@ macro_rules! define_sha256_digest {
 
 define_sha256_digest!(
     WorkloadDesiredDigest,
-    b"nimbus.workloads.desired.digest.v1\0",
+    b"nimbus.workloads.desired.digest.v2\0",
     "workload desired digest must be 64 lowercase hexadecimal characters"
+);
+define_sha256_digest!(
+    WorkloadExecutableContentDigest,
+    b"nimbus.workloads.executable.content.v1\0",
+    "workload executable content digest must be 64 lowercase hexadecimal characters"
 );
 define_sha256_digest!(
     WorkloadOwnerEvidenceDigest,
@@ -417,6 +422,7 @@ pub struct WorkloadSagaIntent {
     desired_state: DesiredWorkloadState,
     generation: WorkloadGeneration,
     desired_digest: WorkloadDesiredDigest,
+    executable: WorkloadExecutableIntent,
     network: WorkloadNetworkIntent,
     activation: WorkloadActivationIntent,
     publication: WorkloadPublicationIntent,
@@ -430,6 +436,7 @@ struct WorkloadSagaIntentWire {
     desired_state: DesiredWorkloadState,
     generation: WorkloadGeneration,
     desired_digest: WorkloadDesiredDigest,
+    executable: WorkloadExecutableIntent,
     network: WorkloadNetworkIntent,
     activation: WorkloadActivationIntent,
     publication: WorkloadPublicationIntent,
@@ -442,17 +449,24 @@ impl<'de> Deserialize<'de> for WorkloadSagaIntent {
         D: Deserializer<'de>,
     {
         let wire = WorkloadSagaIntentWire::deserialize(deserializer)?;
-        Self::new(
+        let expected_digest = wire.desired_digest;
+        let intent = Self::new(
             wire.kind,
             wire.desired_state,
             wire.generation,
-            wire.desired_digest,
+            wire.executable,
             wire.network,
             wire.activation,
             wire.publication,
             wire.admission,
         )
-        .map_err(serde::de::Error::custom)
+        .map_err(serde::de::Error::custom)?;
+        if intent.desired_digest != expected_digest {
+            return Err(serde::de::Error::custom(
+                "workload desired digest does not match complete desired intent",
+            ));
+        }
+        Ok(intent)
     }
 }
 
@@ -462,17 +476,29 @@ impl WorkloadSagaIntent {
         kind: DesiredWorkloadKind,
         desired_state: DesiredWorkloadState,
         generation: WorkloadGeneration,
-        desired_digest: WorkloadDesiredDigest,
+        executable: WorkloadExecutableIntent,
         network: WorkloadNetworkIntent,
         activation: WorkloadActivationIntent,
         publication: WorkloadPublicationIntent,
         admission: WorkloadAdmissionEvidence,
     ) -> Result<Self, WorkloadSagaError> {
+        executable.validate()?;
+        let desired_digest = derive_desired_digest(
+            kind,
+            desired_state,
+            generation,
+            &executable,
+            &network,
+            activation,
+            publication,
+            &admission,
+        )?;
         let intent = Self {
             kind,
             desired_state,
             generation,
             desired_digest,
+            executable,
             network,
             activation,
             publication,
@@ -483,6 +509,23 @@ impl WorkloadSagaIntent {
     }
 
     pub(super) fn validate(&self) -> Result<(), WorkloadSagaError> {
+        self.executable.validate()?;
+        if self.desired_digest
+            != derive_desired_digest(
+                self.kind,
+                self.desired_state,
+                self.generation,
+                &self.executable,
+                &self.network,
+                self.activation,
+                self.publication,
+                &self.admission,
+            )?
+        {
+            return Err(WorkloadSagaError::InvalidDigest(
+                "workload desired digest does not match complete desired intent",
+            ));
+        }
         if self.generation.as_u64() != self.network.generation().as_u64() {
             return Err(WorkloadSagaError::InvalidIntent(
                 "network generation must match workload generation",
@@ -525,6 +568,10 @@ impl WorkloadSagaIntent {
         self.desired_digest
     }
 
+    pub fn executable(&self) -> &WorkloadExecutableIntent {
+        &self.executable
+    }
+
     pub fn network(&self) -> &WorkloadNetworkIntent {
         &self.network
     }
@@ -540,6 +587,46 @@ impl WorkloadSagaIntent {
     pub fn admission(&self) -> &WorkloadAdmissionEvidence {
         &self.admission
     }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkloadDesiredDigestPayload<'a> {
+    kind: DesiredWorkloadKind,
+    desired_state: DesiredWorkloadState,
+    generation: WorkloadGeneration,
+    executable: &'a WorkloadExecutableIntent,
+    network: &'a WorkloadNetworkIntent,
+    activation: WorkloadActivationIntent,
+    publication: WorkloadPublicationIntent,
+    admission: &'a WorkloadAdmissionEvidence,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn derive_desired_digest(
+    kind: DesiredWorkloadKind,
+    desired_state: DesiredWorkloadState,
+    generation: WorkloadGeneration,
+    executable: &WorkloadExecutableIntent,
+    network: &WorkloadNetworkIntent,
+    activation: WorkloadActivationIntent,
+    publication: WorkloadPublicationIntent,
+    admission: &WorkloadAdmissionEvidence,
+) -> Result<WorkloadDesiredDigest, WorkloadSagaError> {
+    let payload = WorkloadDesiredDigestPayload {
+        kind,
+        desired_state,
+        generation,
+        executable,
+        network,
+        activation,
+        publication,
+        admission,
+    };
+    let canonical = serde_json::to_vec(&payload).map_err(|_| {
+        WorkloadSagaError::InvalidIntent("complete workload desired intent cannot be encoded")
+    })?;
+    Ok(WorkloadDesiredDigest::sha256(canonical))
 }
 
 /// Stable reference to one generation-scoped execution.
@@ -1337,10 +1424,15 @@ impl WorkloadFailureEvidence {
         self.redacted_evidence_digest
     }
 }
+mod executable;
 mod state;
 
 mod network;
 
+pub use executable::{
+    MAX_WORKLOAD_EXECUTABLE_CONTENT_BYTES, WORKLOAD_EXECUTABLE_FORMAT_VERSION,
+    WorkloadExecutableEncoding, WorkloadExecutableIntent,
+};
 pub use network::{WorkloadNetworkIntent, WorkloadNetworkReference};
 use state::validate_phase_detail;
 pub use state::{WorkloadSagaIntentUpdate, WorkloadSagaRecord, WorkloadSagaTransition};

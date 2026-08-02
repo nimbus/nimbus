@@ -9,12 +9,12 @@ use nimbus_network::{
 };
 use nimbus_workloads::{
     CompiledWorkloadNetworkPlan, DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity,
-    WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadDesiredDigest,
-    WorkloadEffectReferences, WorkloadNetworkIntent, WorkloadNetworkPlanContent,
-    WorkloadNetworkPlanIdentity, WorkloadOwnerEvidenceDigest, WorkloadOwnerObservation,
-    WorkloadPhaseDetail, WorkloadPublicationIntent, WorkloadSagaCommit, WorkloadSagaExpected,
-    WorkloadSagaFuture, WorkloadSagaKey, WorkloadSagaPage, WorkloadSagaPageRequest,
-    WorkloadSagaRecord, WorkloadSagaStore, WorkloadSagaStoreError, WorkloadSagaTenantPage,
+    WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadEffectReferences,
+    WorkloadNetworkIntent, WorkloadNetworkPlanContent, WorkloadNetworkPlanIdentity,
+    WorkloadOwnerEvidenceDigest, WorkloadOwnerObservation, WorkloadPhaseDetail,
+    WorkloadPublicationIntent, WorkloadSagaCommit, WorkloadSagaExpected, WorkloadSagaFuture,
+    WorkloadSagaKey, WorkloadSagaPage, WorkloadSagaPageRequest, WorkloadSagaRecord,
+    WorkloadSagaStore, WorkloadSagaStoreError, WorkloadSagaTenantPage,
     WorkloadSagaTenantPageRequest,
 };
 
@@ -155,7 +155,11 @@ fn initial_record(label: &str) -> WorkloadSagaRecord {
         DesiredWorkloadKind::Sandbox,
         DesiredWorkloadState::Running,
         nimbus_workloads::WorkloadGeneration::new(1),
-        WorkloadDesiredDigest::sha256(format!("desired-{label}")),
+        nimbus_workloads::WorkloadExecutableIntent::new(
+            nimbus_workloads::WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
+            format!(r#"{{"fixture":"desired-{label}"}}"#),
+        )
+        .expect("fixture executable is valid"),
         WorkloadNetworkIntent::new(compiled_plan(&tenant_id, label)),
         WorkloadActivationIntent::ActivateWhenAttached,
         WorkloadPublicationIntent::Withheld,

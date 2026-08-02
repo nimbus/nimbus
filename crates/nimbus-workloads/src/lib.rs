@@ -21,9 +21,11 @@ pub use network_plan::{
     WorkloadNetworkPlanIdentity, WorkloadNetworkPortRequestMode, WorkloadNetworkRouteBlueprint,
 };
 pub use saga::{
+    MAX_WORKLOAD_EXECUTABLE_CONTENT_BYTES, WORKLOAD_EXECUTABLE_FORMAT_VERSION,
     WORKLOAD_SAGA_FORMAT_VERSION, WORKLOAD_SAGA_RECOVERY_ORDER, WorkloadActivationIntent,
     WorkloadAdmissionEvidence, WorkloadCleanupPendingDetail, WorkloadDesiredDigest,
-    WorkloadEffectReferences, WorkloadExecutionId, WorkloadExecutionReference,
+    WorkloadEffectReferences, WorkloadExecutableContentDigest, WorkloadExecutableEncoding,
+    WorkloadExecutableIntent, WorkloadExecutionId, WorkloadExecutionReference,
     WorkloadFailureEvidence, WorkloadGeneration, WorkloadInspectionRequirement,
     WorkloadNetworkIntent, WorkloadNetworkReference, WorkloadOwnerEvidenceDigest,
     WorkloadOwnerObservation, WorkloadPhaseDetail, WorkloadProvisionDetail,

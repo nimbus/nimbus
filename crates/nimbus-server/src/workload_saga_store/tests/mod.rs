@@ -10,10 +10,10 @@ use nimbus_network::{
 };
 use nimbus_workloads::{
     CompiledWorkloadNetworkPlan, DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity,
-    WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadDesiredDigest,
-    WorkloadEffectReferences, WorkloadNetworkIntent, WorkloadNetworkPlanContent,
-    WorkloadNetworkPlanIdentity, WorkloadOwnerEvidenceDigest, WorkloadOwnerObservation,
-    WorkloadPhaseDetail, WorkloadPublicationIntent, WorkloadSagaKey, WorkloadSagaRecord,
+    WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadEffectReferences,
+    WorkloadNetworkIntent, WorkloadNetworkPlanContent, WorkloadNetworkPlanIdentity,
+    WorkloadOwnerEvidenceDigest, WorkloadOwnerObservation, WorkloadPhaseDetail,
+    WorkloadPublicationIntent, WorkloadSagaKey, WorkloadSagaRecord,
 };
 
 use super::codec::encode_workload_saga_record;
@@ -24,6 +24,7 @@ mod codec;
 mod compiled_plan_durability;
 mod composition;
 mod durability;
+mod executable_durability;
 mod ingress;
 mod recovery;
 mod store;
@@ -64,7 +65,11 @@ fn initial_record_with_counters_and_seed(
         DesiredWorkloadKind::Sandbox,
         DesiredWorkloadState::Running,
         nimbus_workloads::WorkloadGeneration::new(generation),
-        WorkloadDesiredDigest::sha256(format!("desired-{label}-{seed}")),
+        nimbus_workloads::WorkloadExecutableIntent::new(
+            nimbus_workloads::WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
+            format!(r#"{{"fixture":"desired-{label}-{seed}"}}"#),
+        )
+        .expect("fixture executable is valid"),
         WorkloadNetworkIntent::new(compiled_network_plan(
             &tenant_id,
             &format!("{label}-{seed}"),

@@ -12,9 +12,9 @@ use super::super::schema::{exact_table_schema, workload_saga_table, workload_sag
 use super::{document_for, engine, initial_record};
 
 #[test]
-fn exact_schema_has_nineteen_fields_four_indexes_and_system_policy() {
+fn exact_schema_has_twenty_fields_four_indexes_and_system_policy() {
     let schema = exact_table_schema();
-    assert_eq!(schema.fields.len(), 19);
+    assert_eq!(schema.fields.len(), 20);
     assert_eq!(
         schema
             .fields
@@ -38,6 +38,7 @@ fn exact_schema_has_nineteen_fields_four_indexes_and_system_policy() {
             ("desiredState", true),
             ("desiredGeneration", true),
             ("desiredDigest", true),
+            ("executable", true),
             ("sagaRevision", true),
             ("phase", true),
             ("recoveryEligible", true),
@@ -279,7 +280,7 @@ async fn pre_persist_failure_leaves_no_document_index_or_journal_effect() {
     assert_all_index_projections_are_empty(&engine, &record).await;
 }
 
-async fn assert_all_index_projections(
+pub(super) async fn assert_all_index_projections(
     engine: &std::sync::Arc<nimbus_engine::Engine>,
     record: &nimbus_workloads::WorkloadSagaRecord,
 ) {

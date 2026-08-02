@@ -10,7 +10,7 @@ fn strict_codec_round_trips_one_exact_compiled_plan_and_max_counters() {
     let fields = encode_workload_saga_record(&record).expect("record should encode");
 
     assert_eq!(WORKLOAD_SAGA_FORMAT_VERSION, 2);
-    assert_eq!(fields.len(), 17);
+    assert_eq!(fields.len(), 18);
     assert_eq!(
         fields.get("desiredGeneration"),
         Some(&json!(u64::MAX.to_string()))
@@ -28,6 +28,13 @@ fn strict_codec_round_trips_one_exact_compiled_plan_and_max_counters() {
         Some(&json!(u64::MAX.to_string()))
     );
     assert_eq!(fields.get("recoveryEligible"), Some(&Value::Bool(true)));
+    assert_eq!(
+        fields.get("executable"),
+        Some(
+            &serde_json::to_value(record.active_intent().executable())
+                .expect("portable executable should encode")
+        )
+    );
     assert!(!fields.contains_key("successorIntent"));
     assert!(!fields.contains_key("failure"));
     for legacy in ["networkPlanId", "networkGeneration", "networkPlanDigest"] {
@@ -83,7 +90,7 @@ fn strict_codec_rejects_unknown_crossed_and_noncanonical_record_fields() {
 fn strict_codec_rejects_missing_null_legacy_and_partial_compiled_plan_shapes() {
     let record = initial_record("codec-missing");
 
-    for required in ["phaseDetail", "compiledNetworkPlan"] {
+    for required in ["phaseDetail", "executable", "compiledNetworkPlan"] {
         let mut missing = document_for(&record);
         missing.fields.remove(required);
         assert_eq!(

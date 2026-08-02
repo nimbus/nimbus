@@ -74,7 +74,7 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC6.3 complete; NNC6.3a
+- `nimbus-network-control-plane-plan.md` - `active; NNC6.3a complete; NNC6.3b
   in progress`. NNC6.1e's R1-R15 portable discovery, pure recovery decisions,
   and distinct-process durability proof are green; its sole full Sol/xhigh/fast
   review reported zero findings at confidence `0.90`. NNC6.2 now owns the
@@ -153,7 +153,29 @@ extension-registry seam before the second concern edits `extensions.rs`.
   `13/13`, live verifier `31/31`, and retained mutations `228/228`. The sole
   narrow Sol/xhigh/fast correction review is clean at `0.99`; the four
   docs-only review corrections did not trigger another full review. NNC6.3a
-  now owns the active strict executable-carrier and closed-digest row.
+  now owns the active strict executable-carrier and closed-digest row. E1-E20
+  are green after its sole complete-item Sol/xhigh/fast review returned five P2
+  and three P3 findings at confidence `0.98`. Seven findings are accepted and
+  corrected; the claim that the nested successor decoder lacked
+  `deny_unknown_fields` is source-rejected, with an exact nested-field
+  regression added. Workloads owns one redacting bounded v1 carrier; compute alone
+  encodes and strictly decodes `SandboxSpec`, the desired digest is derived
+  over the complete intent, and the Engine adapter persists one required
+  executable object. Decode errors no longer retain secret-bearing serde
+  sources; a non-default egress rule round-trips exactly. The physical
+  corruption proof now drives the real Engine execution-unit and store paths
+  and proves exact document, four-index, and journal behavior. Full affected
+  suites pass workloads `106/106`, compute `122/122` plus one ignore, and
+  server `549/549` plus 30 ignores. NNCV031 passes `25/25` and `13/13`; its
+  staged-path census, real Debug leak mutation, and strict legacy-format
+  mutation fail closed. The live aggregate passes `32/32`, and exact retained
+  plus additive adversarial coverage is `178 + 62 + 1 = 241`. Strict Clippy,
+  proof lint, scripts, format/diff, docs `108`, and site `17/17` are green. The
+  sole narrow Sol/xhigh/fast review validated every executable correction and
+  found one accepted P3 in stale staged-state wording at confidence `0.98`.
+  The ledger now matches the staged 30-path candidate and reviewed identity.
+  No further review is warranted. NNC6.3a is staged for its exact item commit;
+  NNC6.3b is dependency-ready and has no dirty path.
   Network resource identity is retained
   tenant-qualified and rederived for every attachment, route,
   listener, endpoint, and lease; it never uses the mutable decision digest,

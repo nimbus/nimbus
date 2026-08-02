@@ -105,7 +105,11 @@ fn intent_with(
         },
         desired_state,
         WorkloadGeneration::new(generation),
-        WorkloadDesiredDigest::sha256([seed, 1]),
+        WorkloadExecutableIntent::new(
+            WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
+            format!(r#"{{"fixtureSeed":{seed}}}"#),
+        )
+        .expect("fixture executable should validate"),
         WorkloadNetworkIntent::new(compiled_network_plan(
             &tenant_id,
             workload_label,
@@ -1095,6 +1099,114 @@ fn desired_generation_rules_distinguish_replay_divergence_stale_and_replacement(
         WorkloadGeneration::new(3)
     );
     assert_eq!(replaced.phase_detail(), with_successor.phase_detail());
+}
+
+#[test]
+fn desired_digest_binds_complete_intent() {
+    let intent = running_intent(1, WorkloadPublicationIntent::Withheld);
+    let replacement = WorkloadExecutableIntent::new(
+        WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
+        r#"{"fixture":"crossed-executable"}"#,
+    )
+    .expect("replacement executable should validate");
+
+    let mut crossed_executable = serde_json::to_value(&intent).unwrap();
+    crossed_executable["executable"] = serde_json::to_value(&replacement).unwrap();
+    let error = serde_json::from_value::<WorkloadSagaIntent>(crossed_executable)
+        .expect_err("crossed executable must invalidate the complete desired digest");
+    assert!(
+        error
+            .to_string()
+            .contains("workload desired digest does not match complete desired intent")
+    );
+
+    let mut crossed_admission = serde_json::to_value(&intent).unwrap();
+    crossed_admission["admission"]["assignedNode"] = json!("node-crossed-admission");
+    let error = serde_json::from_value::<WorkloadSagaIntent>(crossed_admission)
+        .expect_err("crossed admission must invalidate the complete desired digest");
+    assert!(
+        error
+            .to_string()
+            .contains("workload desired digest does not match complete desired intent")
+    );
+
+    let divergent = WorkloadSagaIntent::new(
+        intent.kind(),
+        intent.desired_state(),
+        intent.generation(),
+        replacement,
+        intent.network().clone(),
+        intent.activation(),
+        intent.publication(),
+        intent.admission().clone(),
+    )
+    .expect("divergent complete desired intent should validate independently");
+    assert_ne!(divergent.desired_digest(), intent.desired_digest());
+    let record = WorkloadSagaRecord::new(key("tenant-a", "workload-a"), intent).unwrap();
+    assert!(matches!(
+        record.apply_intent(divergent),
+        Err(WorkloadSagaError::EqualGenerationConflict(_))
+    ));
+}
+
+#[test]
+fn exact_successor_retains_executable() {
+    let active = record_at_ready(WorkloadPublicationIntent::Withheld);
+    let successor = stopped_intent(2);
+    assert_ne!(
+        active.active_intent().executable(),
+        successor.executable(),
+        "fixture must distinguish active and successor executable content"
+    );
+
+    let WorkloadSagaIntentUpdate::Transition(with_successor) =
+        active.apply_intent(successor.clone()).unwrap()
+    else {
+        panic!("higher generation should queue one exact successor");
+    };
+    let durable: WorkloadSagaRecord =
+        serde_json::from_value(serde_json::to_value(with_successor).unwrap())
+            .expect("queued successor should round-trip through strict durable shape");
+    let retained = durable
+        .successor_intent()
+        .expect("successor should remain queued");
+    assert_eq!(retained.executable(), successor.executable());
+    assert_eq!(
+        retained.executable().canonical_content(),
+        successor.executable().canonical_content()
+    );
+    assert_eq!(
+        retained.executable().content_digest(),
+        successor.executable().content_digest()
+    );
+
+    let mut crossed = serde_json::to_value(&durable).unwrap();
+    crossed["successorIntent"]["executable"] = serde_json::to_value(
+        WorkloadExecutableIntent::new(
+            WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
+            r#"{"fixture":"crossed-successor"}"#,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        serde_json::from_value::<WorkloadSagaRecord>(crossed).is_err(),
+        "a crossed queued successor must fail before a transition exists"
+    );
+
+    let mut unknown = serde_json::to_value(&durable).unwrap();
+    unknown["successorIntent"]["compatibilityCache"] = json!("forbidden");
+    assert!(
+        serde_json::from_value::<WorkloadSagaRecord>(unknown).is_err(),
+        "an unknown queued-successor field must fail strict intent decoding"
+    );
+
+    let promoted = finish_teardown(&durable).promote_successor().unwrap();
+    assert_eq!(promoted.active_intent(), &successor);
+    assert_eq!(
+        promoted.active_intent().executable(),
+        successor.executable()
+    );
 }
 
 #[test]

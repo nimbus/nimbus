@@ -11,11 +11,12 @@ use serde_json::json;
 use super::*;
 use crate::{
     DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity, TenantWorkloadUid,
-    WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadDesiredDigest,
-    WorkloadEffectReferences, WorkloadGeneration, WorkloadNetworkDependencyListenerBlueprint,
-    WorkloadNetworkPlanContent, WorkloadNetworkPlanIdentity, WorkloadPhaseDetail,
-    WorkloadPublicationIntent, WorkloadPublicationReference, WorkloadSagaError,
-    WorkloadSagaIntentUpdate, WorkloadSagaKey, WorkloadSagaPhase, WorkloadSagaRecord,
+    WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadEffectReferences,
+    WorkloadExecutableEncoding, WorkloadExecutableIntent, WorkloadGeneration,
+    WorkloadNetworkDependencyListenerBlueprint, WorkloadNetworkPlanContent,
+    WorkloadNetworkPlanIdentity, WorkloadPhaseDetail, WorkloadPublicationIntent,
+    WorkloadPublicationReference, WorkloadSagaError, WorkloadSagaIntentUpdate, WorkloadSagaKey,
+    WorkloadSagaPhase, WorkloadSagaRecord,
 };
 
 fn tenant(label: &str) -> TenantId {
@@ -82,7 +83,10 @@ fn saga_intent(
         DesiredWorkloadKind::Sandbox,
         DesiredWorkloadState::Running,
         WorkloadGeneration::new(workload_generation),
-        WorkloadDesiredDigest::sha256([seed]),
+        WorkloadExecutableIntent::new(
+            WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
+            format!(r#"{{"fixtureSeed":{seed}}}"#),
+        )?,
         WorkloadNetworkIntent::new(compiled_plan(
             tenant_id,
             workload_label,
@@ -284,7 +288,11 @@ fn saga_intent_rejects_activation_and_publication_crossings() {
             DesiredWorkloadKind::Sandbox,
             DesiredWorkloadState::Running,
             WorkloadGeneration::new(11),
-            WorkloadDesiredDigest::sha256("correlation"),
+            WorkloadExecutableIntent::new(
+                WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
+                r#"{"fixture":"correlation"}"#,
+            )
+            .expect("fixture executable should validate"),
             WorkloadNetworkIntent::new(plan.clone()),
             activation,
             publication,

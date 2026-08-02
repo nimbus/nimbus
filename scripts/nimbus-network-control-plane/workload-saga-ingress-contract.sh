@@ -6,6 +6,7 @@ set -u
 REPO_ROOT="${NIMBUS_NETWORK_NNC61E1_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 SCRIPT_PATH="${REPO_ROOT}/scripts/nimbus-network-control-plane/workload-saga-ingress-contract.sh"
 AUDIT_CHECKPOINT="f7638e2fd73c4b3b5316ac74a8d1dc8ba2cb5675"
+COMPLETION_CHECKPOINT="26df5075d7dab582a4c9602e248993eabd8eab49"
 COMPUTE_ROOT="crates/nimbus-compute/src/workload_saga.rs"
 INGRESS="crates/nimbus-compute/src/workload_saga/ingress.rs"
 INGRESS_TESTS="crates/nimbus-compute/src/workload_saga/ingress/tests.rs"
@@ -95,26 +96,16 @@ verify_surface() {
       add_error "NNC6.1e1 audit checkpoint is missing: ${AUDIT_CHECKPOINT}"
       changed_paths=""
     else
-      if ! committed_paths="$(
-        git -C "${REPO_ROOT}" diff --name-only "${AUDIT_CHECKPOINT}..HEAD" 2>/dev/null
+      if ! git -C "${REPO_ROOT}" cat-file -e "${COMPLETION_CHECKPOINT}^{commit}" 2>/dev/null; then
+        add_error "NNC6.1e1 completion checkpoint is missing: ${COMPLETION_CHECKPOINT}"
+        committed_paths=""
+      elif ! committed_paths="$(
+        git -C "${REPO_ROOT}" diff --name-only "${AUDIT_CHECKPOINT}..${COMPLETION_CHECKPOINT}" 2>/dev/null
       )"; then
         add_error "NNC6.1e1 committed source range is unreadable"
         committed_paths=""
       fi
-      if ! working_paths="$(git -C "${REPO_ROOT}" diff --name-only 2>/dev/null)"; then
-        add_error "NNC6.1e1 working source diff is unreadable"
-        working_paths=""
-      fi
-      if ! untracked_paths="$(
-        git -C "${REPO_ROOT}" ls-files --others --exclude-standard 2>/dev/null
-      )"; then
-        add_error "NNC6.1e1 untracked source census is unreadable"
-        untracked_paths=""
-      fi
-      changed_paths="$(
-        printf '%s\n%s\n%s\n' "${committed_paths}" "${working_paths}" "${untracked_paths}" |
-          sort -u
-      )"
+      changed_paths="$(printf '%s\n' "${committed_paths}" | sort -u)"
     fi
   fi
 

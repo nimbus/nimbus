@@ -62,6 +62,7 @@ pub(crate) fn exact_table_schema() -> TableSchema {
             field("desiredState", FieldType::String, true),
             field("desiredGeneration", FieldType::String, true),
             field("desiredDigest", FieldType::String, true),
+            field("executable", FieldType::Object, true),
             field("sagaRevision", FieldType::String, true),
             field("phase", FieldType::String, true),
             field("recoveryEligible", FieldType::Boolean, true),

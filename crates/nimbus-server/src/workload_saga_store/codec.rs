@@ -4,7 +4,7 @@ use nimbus_core::{Document, DocumentId};
 use nimbus_workloads::{WorkloadSagaRecord, WorkloadSagaStoreError};
 use serde_json::{Map, Value, json};
 
-const REQUIRED_FIELDS: [&str; 17] = [
+const REQUIRED_FIELDS: [&str; 18] = [
     "formatVersion",
     "sagaId",
     "tenantId",
@@ -13,6 +13,7 @@ const REQUIRED_FIELDS: [&str; 17] = [
     "desiredState",
     "desiredGeneration",
     "desiredDigest",
+    "executable",
     "sagaRevision",
     "phase",
     "recoveryEligible",
@@ -46,6 +47,7 @@ pub(crate) fn encode_workload_saga_record(
     copy(&mut fields, "desiredState", active, "desiredState")?;
     copy(&mut fields, "desiredGeneration", active, "generation")?;
     copy(&mut fields, "desiredDigest", active, "desiredDigest")?;
+    copy(&mut fields, "executable", active, "executable")?;
     copy(&mut fields, "sagaRevision", portable, "revision")?;
     copy(&mut fields, "phase", portable, "phase")?;
     fields.insert(
@@ -84,6 +86,7 @@ pub(crate) fn decode_workload_saga_record(
             "desiredState": required(fields, "desiredState")?,
             "generation": required(fields, "desiredGeneration")?,
             "desiredDigest": required(fields, "desiredDigest")?,
+            "executable": required(fields, "executable")?,
             "network": required(fields, "compiledNetworkPlan")?,
             "activation": required(fields, "activationIntent")?,
             "publication": required(fields, "publicationIntent")?,

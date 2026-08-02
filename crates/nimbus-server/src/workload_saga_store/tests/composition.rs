@@ -8,7 +8,6 @@ use nimbus_compute::workload_saga::{
     WorkloadSagaAction, WorkloadSagaCoordinator, WorkloadSagaDecision,
 };
 use nimbus_core::Error;
-use nimbus_network::{LocalNetworkManager, NetworkCapabilityRegistry};
 use nimbus_testing::{
     ProcessRoleSpec, SubprocessCrashCutHarness, run_crash_cut_child, run_crash_recovery_child,
 };
@@ -45,7 +44,7 @@ const RECOVERY_MATRIX_WRITE_MODE: &str = "write";
 const RECOVERY_MATRIX_READ_MODE: &str = "recover";
 const RECOVERY_MATRIX_BOUNDARY: &str = "workload-saga.phase-matrix-durable";
 const RECOVERY_MATRIX_OBSERVATION: &str =
-    "matrix-30-9bdcd50077c9fa5db309f2c22610fda321c0062f66459cd9f41e122cb5abb80c";
+    "matrix-30-10ef8f05526b8777eda74ed8bbe18cd634964dd988f6a319010b5de7f51c5e43";
 const RECOVERY_MATRIX_TIMEOUT: Duration = Duration::from_secs(20);
 const RECOVERY_MATRIX_PID_PREFIX: &str = "NIMBUS_NNC61E_PROCESS_ID";
 
@@ -574,11 +573,7 @@ async fn bounded_child_wait_terminates_and_reaps_stalled_child() {
 async fn managed_server_state_retains_one_manager_and_engine_saga_coordinator() {
     let root = tempfile::tempdir().expect("fixture root should build");
     let engine = engine(&root);
-    let manager = LocalNetworkManager::open(
-        root.path().join("network"),
-        NetworkCapabilityRegistry::new([]).expect("empty capability registry should validate"),
-    )
-    .expect("network manager should open");
+    let manager = crate::router::shared_test_network_manager();
     let state = AppState::from_config(AppStateConfig {
         engine: Arc::clone(&engine),
         network_manager: Some(Arc::clone(&manager)),

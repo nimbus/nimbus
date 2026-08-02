@@ -14,12 +14,13 @@ use nimbus_tenant::TenantIsolationDecisionId;
 use super::*;
 use crate::{
     CompiledWorkloadNetworkPlan, DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity,
-    TenantWorkloadUid, WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadDesiredDigest,
-    WorkloadEffectReferences, WorkloadGeneration, WorkloadInspectionRequirement,
-    WorkloadNetworkIntent, WorkloadNetworkPlanContent, WorkloadNetworkPlanIdentity,
-    WorkloadOwnerEvidenceDigest, WorkloadOwnerObservation, WorkloadPhaseDetail,
-    WorkloadPublicationIntent, WorkloadPublicationReference, WorkloadSagaIntent, WorkloadSagaPhase,
-    WorkloadSagaTransitionId, WorkloadTerminalEvidenceDigest, WorkloadTerminalObservation,
+    TenantWorkloadUid, WorkloadActivationIntent, WorkloadAdmissionEvidence,
+    WorkloadEffectReferences, WorkloadExecutableEncoding, WorkloadExecutableIntent,
+    WorkloadGeneration, WorkloadInspectionRequirement, WorkloadNetworkIntent,
+    WorkloadNetworkPlanContent, WorkloadNetworkPlanIdentity, WorkloadOwnerEvidenceDigest,
+    WorkloadOwnerObservation, WorkloadPhaseDetail, WorkloadPublicationIntent,
+    WorkloadPublicationReference, WorkloadSagaIntent, WorkloadSagaPhase, WorkloadSagaTransitionId,
+    WorkloadTerminalEvidenceDigest, WorkloadTerminalObservation,
 };
 
 fn require_object_safe_store(_: &dyn WorkloadSagaStore) {}
@@ -1360,7 +1361,11 @@ fn intent_with_publication(
         DesiredWorkloadKind::Service,
         desired_state,
         WorkloadGeneration::new(1),
-        WorkloadDesiredDigest::sha256(key.workload_id().as_str()),
+        WorkloadExecutableIntent::new(
+            WorkloadExecutableEncoding::SandboxSpecCanonicalJsonV1,
+            format!(r#"{{"workload":"{}"}}"#, key.workload_id().as_str()),
+        )
+        .unwrap(),
         WorkloadNetworkIntent::new(compiled_plan),
         activation,
         publication,
