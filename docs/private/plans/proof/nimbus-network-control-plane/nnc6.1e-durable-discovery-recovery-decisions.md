@@ -536,7 +536,7 @@ repeat review under the frozen cadence.
 | Field | Value |
 | --- | --- |
 | Current item | NNC6.1e |
-| Last durable commit | `daba135061ed9cfd74a777c3d91a1a3aec7a2a80` (NNC6.1e audit/split checkpoint) |
+| Last durable commit | `2204fa8d7a886b3557709932f02944961c629c4b` (NNC6.1e exact reviewed item) |
 | Current owned paths | Frozen NNC6.1e allowlist: portable store paging, pure compute decisions, private Engine adapter/process proof, verifier scripts, and canonical plan/proof ledgers. |
 | Last green | Product behavior `195/195` with one child-only ignore; live verifier `28/28`; focused mutations `10/10`; aggregate mutations `198/198`; affected check/Clippy/rustdoc; syntax/ShellCheck; format/diff. |
 | Current expected red | None for NNC6.1e. Historical `implementation` mode remains red solely for NNC6.1e1's later-owned runtime lazy-activation cutover. |

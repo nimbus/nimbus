@@ -298,7 +298,8 @@ extension-registry seam before the second concern edits `extensions.rs`.
   live verifier `28/28`, focused NNC6.1e mutations `10/10`, aggregate mutations
   `198/198`, docs `108`, and site `17/17`; no provider-effect path changed. The
   exact reviewed staged tree is `8c9d522263522a874848e6a9516c86fcad931e86`;
-  no correction review was warranted. NNC6.2 begins with a read-only
+  the exact item is durable at `2204fa8d7`, and no correction review was
+  warranted. NNC6.2 begins with a read-only
   substitution/caller audit and a frozen fail-before proof before product edits.
   It also requires the first workload-capable compute injection. No temporary
   no-op or production in-memory store exists.
