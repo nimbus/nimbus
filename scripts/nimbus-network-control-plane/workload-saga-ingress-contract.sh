@@ -228,6 +228,7 @@ verify_surface() {
     $0 == "docs/private/plans/nimbus-network-control-plane-plan.md" { next }
     $0 == "docs/private/plans/README.md" { next }
     $0 == "docs/private/plans/proof/nimbus-network-control-plane/nnc6.1e1-durable-workload-saga-ingress.md" { next }
+    $0 ~ /^docs\/private\/plans\/proof\/nimbus-network-control-plane\/nnc[0-9][0-9A-Za-z._-]*\.md$/ { next }
     { print }
   ')"
   if [ -n "${unexpected}" ]; then
@@ -312,6 +313,16 @@ run_self_test() {
   fixture="${self_test_root}/fixture"
   write_fixture "${fixture}"
   failures=0
+  proof_output="${self_test_root}/later-proof-path.out"
+  if NIMBUS_NETWORK_NNC61E1_ROOT="${fixture}" \
+    NIMBUS_NETWORK_NNC61E1_TEST_CHANGED_PATHS="docs/private/plans/proof/nimbus-network-control-plane/nnc6.3-later-item-proof.md" \
+    bash "${fixture}/scripts/nimbus-network-control-plane/workload-saga-ingress-contract.sh" \
+    >"${proof_output}" 2>&1; then
+    printf 'SELFTEST PASS NNCV030 later item proof is not classified as product source\n'
+  else
+    printf 'SELFTEST FAIL NNCV030 later item proof was classified as product source\n'
+    failures=$((failures + 1))
+  fi
   for mutation in \
     missing-ingress \
     duplicate-submit \
@@ -360,7 +371,7 @@ run_self_test() {
     printf 'NNC6.1e1 ingress contract self-test: %d failed\n' "${failures}"
     return 1
   fi
-  printf 'NNC6.1e1 ingress contract self-test: 12 passed, 0 failed\n'
+  printf 'NNC6.1e1 ingress contract self-test: 13 passed, 0 failed\n'
 }
 
 case "${1:-}" in

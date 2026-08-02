@@ -984,18 +984,21 @@ run_self_test() {
   fi
 
   invalid_checkpoint_plan="${temporary}/invalid-checkpoint-plan.md"
-  node - "${PLAN}" "${invalid_checkpoint_plan}" <<'NODE'
+  if ! node - "${PLAN}" "${invalid_checkpoint_plan}" <<'NODE'
 const fs = require("fs");
 const [source, target] = process.argv.slice(2);
 const text = fs.readFileSync(source, "utf8");
 const invalid = text.replace(
-  /(\| Last checkpoint commit \| `)[0-9a-f]{40}/,
-  "$1" + "0".repeat(40),
+  /^(\| Last checkpoint commit \|.*?`)[0-9a-f]{40}(`.*\|)$/m,
+  "$1" + "0".repeat(40) + "$2",
 );
 if (invalid === text) process.exit(1);
 fs.writeFileSync(target, invalid);
 NODE
-  if NIMBUS_NETWORK_VERIFY_PLAN="${invalid_checkpoint_plan}" \
+  then
+    printf 'SELFTEST FAIL nonexistent checkpoint fixture could not be built\n'
+    self_fail=$((self_fail + 1))
+  elif NIMBUS_NETWORK_VERIFY_PLAN="${invalid_checkpoint_plan}" \
     NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
     "${script}" >"${temporary}/invalid-checkpoint.out" 2>&1; then
     printf 'SELFTEST FAIL nonexistent checkpoint unexpectedly exited zero\n'
@@ -1017,7 +1020,7 @@ NODE
   elif ! grep -q '^FAIL NNCV005 no-duplicate-port-allocation-authority' "${temporary}/legacy-port-authority.out" ||
     grep -q '^PASS NNCV005 no-duplicate-port-allocation-authority' "${temporary}/legacy-port-authority.out" ||
     [ "$(grep -c '^FAIL ' "${temporary}/legacy-port-authority.out")" -ne 1 ] ||
-    ! grep -q '^Summary: 29 passed, 1 failed$' "${temporary}/legacy-port-authority.out"; then
+    ! grep -q '^Summary: 30 passed, 1 failed$' "${temporary}/legacy-port-authority.out"; then
     printf 'SELFTEST FAIL legacy port authority did not produce an exclusive NNCV005 failure\n'
     self_fail=$((self_fail + 1))
   else
@@ -1780,7 +1783,7 @@ NODE
     printf 'SELFTEST FAIL NNCV030 workload-saga ingress mutation suite failed\n'
     sed -n '1,180p' "${temporary}/nnc61e1-contract-self-test.out"
     self_fail=$((self_fail + 1))
-  elif ! grep -q '^NNC6\.1e1 ingress contract self-test: 12 passed, 0 failed$' \
+  elif ! grep -q '^NNC6\.1e1 ingress contract self-test: 13 passed, 0 failed$' \
     "${temporary}/nnc61e1-contract-self-test.out"; then
     printf 'SELFTEST FAIL NNCV030 workload-saga ingress mutation count is not exact\n'
     self_fail=$((self_fail + 1))
@@ -1792,7 +1795,7 @@ NODE
     printf 'self-test: %d failed\n' "${self_fail}"
     exit 1
   fi
-  printf 'self-test: 227 passed, 0 failed\n'
+  printf 'self-test: 228 passed, 0 failed\n'
 }
 
 if [ "${1:-}" = "--self-test" ]; then

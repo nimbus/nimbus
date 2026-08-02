@@ -74,7 +74,7 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC6.1e1 complete; NNC6.3
+- `nimbus-network-control-plane-plan.md` - `active; NNC6.3 complete; NNC6.3a
   in progress`. NNC6.1e's R1-R15 portable discovery, pure recovery decisions,
   and distinct-process durability proof are green; its sole full Sol/xhigh/fast
   review reported zero findings at confidence `0.90`. NNC6.2 now owns the
@@ -112,9 +112,13 @@ extension-registry seam before the second concern edits `extensions.rs`.
   cancellation semantics, and later-owner map are frozen in
   `proof/nimbus-network-control-plane/nnc6.1e1-durable-workload-saga-ingress.md`.
   The bounded ingress remains candidate-frozen after its complete-item review.
-  NNC6.3/NNC6.4a/NNC6.5/
-  NNC6.6 retain every effectful caller cutover, including standalone Compose;
-  NNC6.1e2 retains final fresh-process convergence.
+  NNC6.3 is the read-only provision substitution audit. It prospectively
+  splits executable durability and pure provision decisions into
+  NNC6.3a-NNC6.3b. Revised NNC6.4 atomically adds real provider commands,
+  replaces every native/runtime/Compose/Machine provision caller, and deletes
+  every coarse path in the same item. NNC6.4a/NNC6.5/NNC6.6 retain restart,
+  teardown, and resolution caller cutover; NNC6.1e2 retains final fresh-process
+  convergence.
   The existing sole coordinator now owns one effect-free `submit_intent` seam:
   one load, at most one CAS, one ambiguity read only after an ambiguous CAS,
   and no decision before exact confirmed durability. Missing, replay,
@@ -132,9 +136,24 @@ extension-registry seam before the second concern edits `extensions.rs`.
   proof header at overall confidence `0.96`; production ingress semantics were
   judged consistent. All three findings are corrected. The sole narrow
   correction review is clean at `0.94`; no third review ran. I1-I20, docs 108,
-  and site `17/17` are green. NNC6.3 now owns the active row. Its first action
-  is a read-only substitution, caller, desired-spec, and effect census before
-  any effectful caller edit.
+  and site `17/17` are green. NNC6.3 completed the read-only row. Its
+  source census proves that Container/Krun `start` is still monolithic, the
+  saga lacks executable content, native callers lack admitted node/selection
+  inputs, `ServiceManager` mixes naming and effects, and Compose bypasses the
+  Engine-backed saga. Cloud Functions is corrected to a snapshot-only negative
+  case. The sole Sol/xhigh/fast audit review found four planning defects, all
+  accepted: temporary legacy authorities, missing publication ownership,
+  missing definite-error behavior, and an incomplete machine/node sink census.
+  The corrected split makes NNC6.3b pure and NNC6.4 one atomic replacement,
+  assigns idempotent owner-local publication after workload readiness, records
+  definite failures without later effects, and names every forwarded/guest/node
+  start sink. The final gate also found that NNCV030 misclassified later
+  canonical proof records as NNC6.1e1 source. Its narrow classifier correction
+  keeps arbitrary product paths fail-closed; focused checks pass `10/10` and
+  `13/13`, live verifier `31/31`, and retained mutations `228/228`. The sole
+  narrow Sol/xhigh/fast correction review is clean at `0.99`; the four
+  docs-only review corrections did not trigger another full review. NNC6.3a
+  now owns the active strict executable-carrier and closed-digest row.
   Network resource identity is retained
   tenant-qualified and rederived for every attachment, route,
   listener, endpoint, and lease; it never uses the mutable decision digest,
@@ -356,10 +375,11 @@ extension-registry seam before the second concern edits `extensions.rs`.
   provision/restart/teardown effects, and final convergence. It is split before
   implementation: NNC6.1e owns bounded tenant paging plus the effect-free
   all-phase decision proof; NNC6.1e1 follows NNC6.2a and owns durable submission
-  plus confirmed pure decisions; NNC6.1e2 follows NNC6.3-NNC6.6 and closes
-  startup recovery plus tenant retirement. NNC6.1d retains the durable server
-  adapter, NNC6.3/NNC6.4a/NNC6.5/NNC6.6 retain caller cutover and provider
-  choreography, and NNC8.3 retains cleanup finalization/reuse.
+  plus confirmed pure decisions; NNC6.1e2 follows NNC6.3a-NNC6.3b and
+  NNC6.4-NNC6.6 and closes startup recovery plus tenant retirement. NNC6.1d
+  retains the durable server adapter; the NNC6.3 split plus NNC6.4-NNC6.6
+  retain caller cutover and provider choreography; and NNC8.3 retains cleanup
+  finalization/reuse.
   The candidate proves affected behavior `195/195` with one child-only ignore,
   live verifier `28/28`, focused NNC6.1e mutations `10/10`, aggregate mutations
   `198/198`, docs `108`, and site `17/17`; no provider-effect path changed. The
