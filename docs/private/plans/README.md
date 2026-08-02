@@ -78,8 +78,11 @@ extension-registry seam before the second concern edits `extensions.rs`.
   in progress`. NNC6.1e's R1-R15 portable discovery, pure recovery decisions,
   and distinct-process durability proof are green; its sole full Sol/xhigh/fast
   review reported zero findings at confidence `0.90`. NNC6.2 now owns the
-  admitted-intent to exact `NetworkPlan` compiler audit and implementation. It
-  does not cut over lifecycle effects. Workloads-owned execution identity and generation now reach
+  pure admitted-intent to exact `NetworkPlan` compiler. Its completed audit
+  found that the current saga tuple cannot reconstruct full desired network
+  state before first reservation. NNC6.2a now owns the durable compiled-plan
+  carrier and fresh-process replay. NNC6.1e1 remains the later lifecycle
+  ingress and caller cutover. Workloads-owned execution identity and generation now reach
   operational node paths, false in-memory desired-state authorities are
   deleted, and status, systemd, cgroup, and exported journal evidence
   correlate one exact identity without cross-record stitching. The sole full
