@@ -9,6 +9,7 @@ cd "${REPO_ROOT}" || exit 1
 MODE="${1:-decision}"
 PLAN="docs/private/plans/nimbus-network-control-plane-plan.md"
 PROOF="docs/private/plans/proof/nimbus-network-control-plane/nnc6.1b-workload-saga-vocabulary-store-durable-home.md"
+DURABLE_PROOF="docs/private/plans/proof/nimbus-network-control-plane/nnc6.1d-durable-workload-saga-store.md"
 ERRORS=()
 
 add_error() {
@@ -24,6 +25,26 @@ require_file() {
 require_plan_text() {
   if ! rg -q -F -- "$1" "${PLAN}"; then
     add_error "plan lacks frozen contract text: $1"
+  fi
+}
+
+require_source_text() {
+  file="$1"
+  text="$2"
+  label="$3"
+  if [ ! -f "${file}" ]; then
+    add_error "${label}: missing ${file}"
+  elif ! rg -q -F -- "${text}" "${file}"; then
+    add_error "${label}: ${file} lacks [${text}]"
+  fi
+}
+
+forbid_source_text() {
+  file="$1"
+  pattern="$2"
+  label="$3"
+  if [ -f "${file}" ] && rg -q -- "${pattern}" "${file}"; then
+    add_error "${label}: forbidden source remains in ${file}"
   fi
 }
 
@@ -263,19 +284,189 @@ verify_operational_identity_cutover() {
   fi
 
   product_saga_store_implementations="$({
-    rg -n 'impl([^\n]|\n)*WorkloadSagaStore for' crates \
-      --glob '*.rs' --glob '!**/tests.rs' --glob '!**/tests/**' 2>/dev/null || true
+    while IFS= read -r source; do
+      sed '/^#\[cfg(test)\]/,$d' "${source}" |
+        rg -n 'impl WorkloadSagaStore for' || true
+    done < <(
+      rg -l 'impl WorkloadSagaStore for' crates \
+        --glob '*.rs' --glob '!**/tests.rs' --glob '!**/tests/**' 2>/dev/null || true
+    )
   } | wc -l | tr -d ' ')"
-  if [ "${product_saga_store_implementations}" -ne 0 ]; then
-    add_error "product saga-store implementation entered during cutover: ${product_saga_store_implementations}"
+  if [ "${product_saga_store_implementations}" -ne 1 ]; then
+    add_error "production saga-store implementation count: expected 1, observed ${product_saga_store_implementations}"
   fi
 
   product_saga_coordinator_constructions="$({
     rg -n 'WorkloadSagaCoordinator::new\(' crates \
       --glob '*.rs' --glob '!**/tests.rs' --glob '!**/tests/**' 2>/dev/null || true
   } | wc -l | tr -d ' ')"
-  if [ "${product_saga_coordinator_constructions}" -ne 0 ]; then
-    add_error "production saga coordinator construction entered during cutover: ${product_saga_coordinator_constructions}"
+  if [ "${product_saga_coordinator_constructions}" -ne 1 ]; then
+    add_error "production saga coordinator construction count: expected 1, observed ${product_saga_coordinator_constructions}"
+  fi
+}
+
+verify_durable_store_contract() {
+  require_file "${DURABLE_PROOF}"
+
+  require_source_text \
+    crates/nimbus-server/src/workload_saga_store.rs \
+    'pub(crate) struct EngineWorkloadSagaStore' \
+    "server-owned durable saga adapter"
+  require_source_text \
+    crates/nimbus-server/src/workload_saga_store.rs \
+    'impl WorkloadSagaStore for EngineWorkloadSagaStore' \
+    "server-owned store-port implementation"
+  require_source_text \
+    crates/nimbus-server/src/workload_saga_store.rs \
+    'begin_mutation_execution_unit' \
+    "Engine execution-unit mutation path"
+  require_source_text \
+    crates/nimbus-server/src/workload_saga_store.rs \
+    'AtomicWrite::Set' \
+    "whole-record CAS write"
+  require_source_text \
+    crates/nimbus-server/src/workload_saga_store.rs \
+    'commit()' \
+    "single Engine commit point"
+
+  require_source_text \
+    crates/nimbus-server/src/workload_saga_store/schema.rs \
+    '_workload_sagas' \
+    "reserved workload-saga table"
+  require_source_text \
+    crates/nimbus-server/src/workload_saga_store/schema.rs \
+    'by_recovery' \
+    "immutable-identity recovery index"
+  require_source_text \
+    crates/nimbus-server/src/workload_saga_store/schema.rs \
+    '"recoveryEligible", "sagaId"' \
+    "eligible immutable saga cursor index"
+  require_source_text \
+    crates/nimbus-server/src/workload_saga_store/schema.rs \
+    'reconcile_index_metadata' \
+    "no-churn logical schema comparison"
+  require_source_text \
+    crates/nimbus-server/src/workload_saga_store/schema.rs \
+    'prepare_exact_schema' \
+    "exact schema bootstrap"
+  forbid_source_text \
+    crates/nimbus-system/src/schema.rs \
+    '_workload_sagas' \
+    "workload-saga table must remain outside SystemTable"
+
+  require_source_text \
+    crates/nimbus-server/src/workload_saga_store/codec.rs \
+    'encode_workload_saga_record' \
+    "strict physical encoder"
+  require_source_text \
+    crates/nimbus-server/src/workload_saga_store/codec.rs \
+    'decode_workload_saga_record' \
+    "strict physical decoder"
+  require_source_text \
+    crates/nimbus-server/src/workload_saga_store/codec.rs \
+    'validate_physical_shape' \
+    "closed physical codec"
+  require_source_text \
+    crates/nimbus-workloads/src/saga/state.rs \
+    '#[serde(deny_unknown_fields, rename_all = "camelCase")]' \
+    "closed portable saga codec"
+
+  require_source_text \
+    crates/nimbus-workloads/src/saga.rs \
+    'pub const WORKLOAD_SAGA_RECOVERY_ORDER' \
+    "workloads-owned recovery order"
+  require_source_text \
+    crates/nimbus-workloads/src/saga.rs \
+    'pub const fn recovery_order' \
+    "workloads-owned recovery rank"
+  require_source_text \
+    crates/nimbus-workloads/src/store.rs \
+    'Self::new(record.saga_id().clone())' \
+    "immutable recovery cursor identity"
+  require_source_text \
+    crates/nimbus-server/src/workload_saga_store/recovery.rs \
+    'value: Value::String(cursor.saga_id().as_str().to_owned())' \
+    "server immutable recovery cursor fence"
+  require_source_text \
+    crates/nimbus-server/src/workload_saga_store/recovery.rs \
+    'requires_recovery' \
+    "portable recovery eligibility"
+
+  require_source_text \
+    crates/nimbus-compute/src/state.rs \
+    'pub enum ComputeWorkloadComposition' \
+    "explicit compute composition profile"
+  require_source_text \
+    crates/nimbus-compute/src/state.rs \
+    'ProtocolOnly' \
+    "protocol-only compute profile"
+  require_source_text \
+    crates/nimbus-compute/src/state.rs \
+    'Managed {' \
+    "managed compute profile"
+  require_source_text \
+    crates/nimbus-compute/src/state.rs \
+    'workload_saga_coordinator: Option<Arc<WorkloadSagaCoordinator>>' \
+    "retained sole workload-saga coordinator"
+  require_source_text \
+    crates/nimbus-compute/src/workload_saga.rs \
+    'resolve_ambiguous_commit' \
+    "fresh-read ambiguity resolver"
+
+  require_exact_count \
+    "product saga-store implementation count" 1 \
+    'impl WorkloadSagaStore for EngineWorkloadSagaStore' \
+    crates/nimbus-server/src
+  product_saga_coordinator_constructions="$({
+    for source in \
+      crates/nimbus-compute/src/state.rs \
+      crates/nimbus-compute/src/workload_saga.rs \
+      crates/nimbus-server/src/state.rs \
+      crates/nimbus-server/src/router.rs \
+      crates/nimbus-server/src/workload_saga_store.rs; do
+      if [ -f "${source}" ]; then
+        sed '/^#\[cfg(test)\]/,$d' "${source}"
+      fi
+    done
+  } | rg -c 'WorkloadSagaCoordinator::new\(' || true)"
+  product_saga_coordinator_constructions="${product_saga_coordinator_constructions:-0}"
+  if [ "${product_saga_coordinator_constructions}" -ne 1 ]; then
+    add_error "production saga coordinator construction count: expected 1, observed ${product_saga_coordinator_constructions}"
+  fi
+
+  require_source_text \
+    crates/nimbus-core/src/types.rs \
+    'pub fn is_nimbus_reserved(&self) -> bool' \
+    "canonical reserved-tenant predicate"
+  for reserved_consumer in \
+    crates/nimbus-system/src/identity.rs \
+    crates/nimbus-cloud-functions/src/http/tenant_binding.rs \
+    crates/nimbus-convex/src/silo_auth.rs \
+    crates/nimbus-convex/src/tenancy.rs \
+    crates/nimbus-dynamodb/src/tenant.rs \
+    crates/nimbus-firebase/src/project_tenant_registry.rs \
+    crates/nimbus-kv/src/server.rs \
+    crates/nimbus-mongodb/src/credential_registry.rs \
+    crates/nimbus-mongodb/src/commands/tenant.rs \
+    crates/nimbus-s3/src/auth.rs; do
+    require_source_text \
+      "${reserved_consumer}" \
+      '.is_nimbus_reserved()' \
+      "canonical reserved-tenant consumer"
+  done
+
+  forbid_source_text \
+    crates/nimbus-server/src/workload_saga_store.rs \
+    'nimbus_storage|TcpListener|UdpSocket|nimbus_(network|sandbox|services|proxy|egress)' \
+    "durable saga adapter effect boundary"
+  forbid_source_text \
+    crates/nimbus-server/src/workload_saga_store/recovery.rs \
+    'nimbus_storage|TcpListener|UdpSocket|nimbus_(network|sandbox|services|proxy|egress)' \
+    "durable recovery adapter effect boundary"
+
+  if rg -q 'InMemoryWorkloadSagaStore' crates \
+    --glob '*.rs' --glob '!**/tests.rs' --glob '!**/tests/**'; then
+    add_error "production in-memory workload-saga store is forbidden"
   fi
 }
 
@@ -289,8 +480,11 @@ case "${MODE}" in
   cutover)
     verify_operational_identity_cutover
     ;;
+  durable-store)
+    verify_durable_store_contract
+    ;;
   *)
-    printf 'usage: %s [decision|implementation|cutover]\n' "$0" >&2
+    printf 'usage: %s [decision|implementation|cutover|durable-store]\n' "$0" >&2
     exit 2
     ;;
 esac

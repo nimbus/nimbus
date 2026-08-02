@@ -332,7 +332,7 @@
       "verification": "source-occurrence",
       "category": "pre-bound-consumer",
       "path": "crates/nimbus-kv/src/server.rs",
-      "line": 266,
+      "line": 268,
       "symbol": "serve",
       "authority_kinds": [
         "listener-ownership-slot"
@@ -748,7 +748,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "serve",
       "ordinal": 1,
-      "line": 266
+      "line": 268
     },
     {
       "site_id": "kv-prebound-listener",
@@ -756,7 +756,7 @@
       "kind": "listener-ownership-slot",
       "symbol": "adopt_listener",
       "ordinal": 1,
-      "line": 280
+      "line": 282
     },
     {
       "site_id": "network-port-lease-authority",
@@ -1141,7 +1141,7 @@
       "kind": "ambiguous-instance-bind",
       "symbol": "from_operator_spec",
       "ordinal": 1,
-      "line": 125,
+      "line": 136,
       "reason": "Binds trusted Convex tenant metadata to a registry; it is an identity mapping rather than a network effect."
     },
     {
@@ -1173,7 +1173,7 @@
       "kind": "ambiguous-associated-bind",
       "symbol": "bind_listener",
       "ordinal": 1,
-      "line": 275,
+      "line": 277,
       "reason": "Delegates to the already-classified nimbus-kv listener adapter; crate::listener::bind is not a socket associated function or a second allocation authority."
     },
     {
@@ -1181,7 +1181,7 @@
       "kind": "ambiguous-instance-bind",
       "symbol": "from_operator_spec",
       "ordinal": 1,
-      "line": 190,
+      "line": 176,
       "reason": "Binds trusted MongoDB credentials to a registry; it is not a socket bind or descriptor adoption."
     },
     {

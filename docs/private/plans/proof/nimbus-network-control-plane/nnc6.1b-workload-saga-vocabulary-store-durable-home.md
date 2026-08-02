@@ -384,6 +384,7 @@ The table fields are:
 | `desiredDigest` | string | yes |
 | `sagaRevision` | string | yes |
 | `phase` | string | yes |
+| `recoveryEligible` | boolean | yes |
 | `phaseDetail` | object | yes |
 | `networkPlanId` | string | yes |
 | `networkGeneration` | string | yes |
@@ -410,10 +411,22 @@ The exact index set is:
 
 ```text
 by_tenantId_and_workloadId(tenantId, workloadId)
-by_phase(phase)
+by_phase(recoveryEligible, phase, sagaId)
 by_tenantId_and_phase(tenantId, phase)
 by_desiredState_and_phase(desiredState, phase)
 ```
+
+NNC6.1d source-derived amendment: the original NNC6.1b decision used the
+single-field `by_phase(phase)` index. The implementation audit proved that it
+could bound returned rows without bounding the provider's work before the saga
+cursor. A second source check proved `(phase, sagaId)` alone still mixes
+recoverable records with prepare-only `NetworkAttached` and quiescent
+`Recorded` records. NNC6.1d therefore adds one codec-verified
+`recoveryEligible` physical projection and strengthens the same logical index
+to `by_phase(recoveryEligible, phase, sagaId)`. Each recovery request can now
+perform at most the requested page plus one lookahead row of indexed work. The
+projection is derived from `requires_recovery`; this amendment changes no
+portable record, transition, or store-port authority.
 
 The Engine document ID equals the canonical `WorkloadSagaId`. The adapter
 validates agreement among the document ID, saga ID, tenant ID, and workload

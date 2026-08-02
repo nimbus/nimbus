@@ -39,6 +39,7 @@ NNC55_EFFECT_LOCALITY_CONTRACT="scripts/nimbus-network-control-plane/effect-loca
 NNC56_SIDE_EFFECT_FREE_INSPECTION_CONTRACT="scripts/nimbus-network-control-plane/side-effect-free-sandbox-inspection-contract.sh"
 NNC61_COMPUTE_NETWORK_MANAGER_CONTRACT="scripts/nimbus-network-control-plane/compute-network-manager-injection-contract.sh"
 NNC61A_COMPUTE_NODE_COORDINATOR_CONTRACT="scripts/nimbus-network-control-plane/compute-node-workload-coordinator-contract.sh"
+NNC61D_WORKLOAD_SAGA_AUTHORITY_CONTRACT="scripts/nimbus-network-control-plane/workload-saga-authority-contract.sh"
 
 # shellcheck source=scripts/nimbus-network-control-plane/attachment-ordering-contract.sh
 . "${NNC52A_ATTACHMENT_ORDERING_CONTRACT}"
@@ -891,7 +892,7 @@ NODE
   elif ! grep -q '^FAIL NNCV005 no-duplicate-port-allocation-authority' "${temporary}/legacy-port-authority.out" ||
     grep -q '^PASS NNCV005 no-duplicate-port-allocation-authority' "${temporary}/legacy-port-authority.out" ||
     [ "$(grep -c '^FAIL ' "${temporary}/legacy-port-authority.out")" -ne 1 ] ||
-    ! grep -q '^Summary: 26 passed, 1 failed$' "${temporary}/legacy-port-authority.out"; then
+    ! grep -q '^Summary: 27 passed, 1 failed$' "${temporary}/legacy-port-authority.out"; then
     printf 'SELFTEST FAIL legacy port authority did not produce an exclusive NNCV005 failure\n'
     self_fail=$((self_fail + 1))
   else
@@ -1627,6 +1628,24 @@ if [ $# -ne 0 ]; then
   exit 2
 fi
 
+verify_nnc61d_durable_workload_saga_store() {
+  if [ ! -f "${NNC61D_WORKLOAD_SAGA_AUTHORITY_CONTRACT}" ]; then
+    fail "NNCV027" "durable-workload-saga-store" \
+      "missing ${NNC61D_WORKLOAD_SAGA_AUTHORITY_CONTRACT}"
+    return
+  fi
+
+  error="$(
+    bash "${NNC61D_WORKLOAD_SAGA_AUTHORITY_CONTRACT}" durable-store 2>&1
+  )"
+  status=$?
+  if [ "${status}" -eq 0 ]; then
+    pass "NNCV027" "durable-workload-saga-store"
+  else
+    fail "NNCV027" "durable-workload-saga-store" "${error}"
+  fi
+}
+
 printf 'Nimbus network control-plane static verifier\n'
 printf 'Repo: %s\n\n' "${REPO_ROOT}"
 
@@ -1657,6 +1676,7 @@ verify_nnc55_sealed_effect_capabilities
 verify_nnc56_side_effect_free_sandbox_inspection
 verify_nnc61_compute_network_manager_injection
 verify_nnc61a_compute_node_workload_coordinator
+verify_nnc61d_durable_workload_saga_store
 
 printf '\nSummary: %d passed, %d failed\n' "${PASS_COUNT}" "${FAIL_COUNT}"
 if [ "${FAIL_COUNT}" -ne 0 ]; then

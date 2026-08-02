@@ -137,11 +137,13 @@ impl CredentialRegistry {
                     constant_time_eq(binding.username.as_bytes(), username.as_bytes());
                 let password_matches =
                     constant_time_eq(binding.password.as_bytes(), password.as_bytes());
-                (username_matches & password_matches).then(|| binding.clone())
+                (username_matches & password_matches & !binding.tenant.is_nimbus_reserved())
+                    .then(|| binding.clone())
             }),
             None => {
                 let mut matches = self.bindings.values().filter(|binding| {
                     constant_time_eq(binding.password.as_bytes(), password.as_bytes())
+                        & !binding.tenant.is_nimbus_reserved()
                 });
                 let binding = matches.next()?;
                 if matches.next().is_some() {
@@ -1141,5 +1143,29 @@ mod tests {
             registry.authenticate(None, &shared_password).is_none(),
             "password-only authentication must reject ambiguous bindings"
         );
+    }
+
+    #[test]
+    fn reserved_tenant_bindings_never_authenticate() {
+        for reserved in ["_nimbus", "_reserved"] {
+            let tenant = TenantId::new(reserved).expect("reserved tenant should validate");
+            let direct = CredentialRegistry::new().bind(reserved, "secret", tenant.clone());
+            assert!(direct.authenticate(Some(reserved), "secret").is_none());
+            assert!(direct.authenticate(None, "secret").is_none());
+
+            let single = CredentialRegistry::single_dev(tenant.clone(), "single-secret");
+            assert!(
+                single
+                    .authenticate(Some(reserved), "single-secret")
+                    .is_none()
+            );
+
+            let (generated, credential) = CredentialRegistry::generated_dev(tenant);
+            assert!(
+                generated
+                    .authenticate(Some(&credential.username), &credential.password)
+                    .is_none()
+            );
+        }
     }
 }

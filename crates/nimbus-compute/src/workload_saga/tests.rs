@@ -160,6 +160,35 @@ fn store_with_cas(
     Arc::new(RecordingStore::new(Ok(None), result, Ok(empty_page())))
 }
 
+fn ambiguous_store(
+    load_result: Result<Option<WorkloadSagaRecord>, WorkloadSagaStoreError>,
+) -> Arc<RecordingStore> {
+    Arc::new(RecordingStore::new(
+        load_result,
+        Err(WorkloadSagaStoreError::Ambiguous),
+        Ok(empty_page()),
+    ))
+}
+
+fn valid_competing_successor(current: &WorkloadSagaRecord) -> WorkloadSagaRecord {
+    let references = current.phase_detail().references();
+    let detail = WorkloadPhaseDetail::teardown(
+        nimbus_workloads::WorkloadSagaPhase::WithdrawalCommitted,
+        current.active_intent(),
+        current.phase(),
+        references,
+        Vec::new(),
+    )
+    .expect("fixture teardown detail is valid");
+    current
+        .advance(
+            nimbus_workloads::WorkloadSagaPhase::WithdrawalCommitted,
+            detail,
+            None,
+        )
+        .expect("fixture competing successor is valid")
+}
+
 #[test]
 fn coordinator_requires_a_dyn_store() {
     let constructor: fn(Arc<dyn WorkloadSagaStore>) -> WorkloadSagaCoordinator =
@@ -257,16 +286,101 @@ async fn conflict_is_preserved_after_one_cas_without_retry() {
 }
 
 #[tokio::test]
-async fn ambiguity_is_preserved_after_one_cas_without_retry() {
-    let current = initial_record("ambiguous");
+async fn ambiguous_commit_confirmed_by_exact_next_is_applied_without_retry() {
+    let current = initial_record("ambiguous-next");
     let next = valid_successor(&current);
-    let store = store_with_cas(Err(WorkloadSagaStoreError::Ambiguous));
+    let store = ambiguous_store(Ok(Some(next.clone())));
     let coordinator = WorkloadSagaCoordinator::new(store.clone());
 
-    let result = coordinator.commit_loaded(Some(&current), next).await;
+    let result = coordinator
+        .commit_loaded(Some(&current), next.clone())
+        .await;
+
+    assert_eq!(result, Ok(WorkloadSagaCommit::Applied));
+    let calls = store.calls();
+    assert_eq!(calls.loads, vec![next.key().clone()]);
+    assert_eq!(calls.compare_and_swaps.len(), 1);
+}
+
+#[tokio::test]
+async fn ambiguous_commit_with_exact_old_record_remains_ambiguous_without_retry() {
+    let current = initial_record("ambiguous-old");
+    let next = valid_successor(&current);
+    let store = ambiguous_store(Ok(Some(current.clone())));
+    let coordinator = WorkloadSagaCoordinator::new(store.clone());
+
+    let result = coordinator
+        .commit_loaded(Some(&current), next.clone())
+        .await;
 
     assert_eq!(result, Err(WorkloadSagaStoreError::Ambiguous));
-    assert_eq!(store.calls().compare_and_swaps.len(), 1);
+    let calls = store.calls();
+    assert_eq!(calls.loads, vec![next.key().clone()]);
+    assert_eq!(calls.compare_and_swaps.len(), 1);
+}
+
+#[tokio::test]
+async fn ambiguous_commit_with_missing_record_remains_ambiguous_without_retry() {
+    let current = initial_record("ambiguous-missing");
+    let next = valid_successor(&current);
+    let store = ambiguous_store(Ok(None));
+    let coordinator = WorkloadSagaCoordinator::new(store.clone());
+
+    let result = coordinator
+        .commit_loaded(Some(&current), next.clone())
+        .await;
+
+    assert_eq!(result, Err(WorkloadSagaStoreError::Ambiguous));
+    let calls = store.calls();
+    assert_eq!(calls.loads, vec![next.key().clone()]);
+    assert_eq!(calls.compare_and_swaps.len(), 1);
+}
+
+#[tokio::test]
+async fn ambiguous_commit_with_competing_record_becomes_typed_conflict_without_retry() {
+    let current = initial_record("ambiguous-competing");
+    let next = valid_successor(&current);
+    let competing = valid_competing_successor(&current);
+    let store = ambiguous_store(Ok(Some(competing.clone())));
+    let coordinator = WorkloadSagaCoordinator::new(store.clone());
+
+    let result = coordinator
+        .commit_loaded(Some(&current), next.clone())
+        .await;
+
+    assert_eq!(
+        result,
+        Err(WorkloadSagaStoreError::Conflict {
+            expected: WorkloadSagaExpected::Revision(current.revision()),
+            observed: Some(competing.revision()),
+        })
+    );
+    let calls = store.calls();
+    assert_eq!(calls.loads, vec![next.key().clone()]);
+    assert_eq!(calls.compare_and_swaps.len(), 1);
+}
+
+#[tokio::test]
+async fn ambiguous_commit_fails_closed_when_fresh_truth_cannot_be_loaded() {
+    let current = initial_record("ambiguous-load-error");
+    let next = valid_successor(&current);
+
+    for expected in [
+        WorkloadSagaStoreError::Corrupt,
+        WorkloadSagaStoreError::Unavailable,
+    ] {
+        let store = ambiguous_store(Err(expected.clone()));
+        let coordinator = WorkloadSagaCoordinator::new(store.clone());
+
+        let result = coordinator
+            .commit_loaded(Some(&current), next.clone())
+            .await;
+
+        assert_eq!(result, Err(expected));
+        let calls = store.calls();
+        assert_eq!(calls.loads, vec![next.key().clone()]);
+        assert_eq!(calls.compare_and_swaps.len(), 1);
+    }
 }
 
 #[tokio::test]

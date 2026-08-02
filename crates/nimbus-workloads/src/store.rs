@@ -6,8 +6,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use crate::{
-    WorkloadSagaError, WorkloadSagaId, WorkloadSagaKey, WorkloadSagaPhase, WorkloadSagaRecord,
-    WorkloadSagaRevision,
+    WorkloadSagaError, WorkloadSagaId, WorkloadSagaKey, WorkloadSagaRecord, WorkloadSagaRevision,
 };
 
 pub const MAX_WORKLOAD_SAGA_PAGE_SIZE: u16 = 256;
@@ -64,23 +63,12 @@ impl From<WorkloadSagaError> for WorkloadSagaStoreError {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkloadSagaRecoveryCursor {
-    phase: WorkloadSagaPhase,
     saga_id: WorkloadSagaId,
 }
 
 impl WorkloadSagaRecoveryCursor {
-    pub fn new(
-        phase: WorkloadSagaPhase,
-        saga_id: WorkloadSagaId,
-    ) -> Result<Self, WorkloadSagaStoreError> {
-        if !phase.is_recoverable() {
-            return Err(WorkloadSagaStoreError::InvalidTransition(
-                WorkloadSagaError::InvalidTransition(
-                    "recovery cursor cannot name a quiescent phase",
-                ),
-            ));
-        }
-        Ok(Self { phase, saga_id })
+    pub fn new(saga_id: WorkloadSagaId) -> Self {
+        Self { saga_id }
     }
 
     pub fn for_record(record: &WorkloadSagaRecord) -> Result<Self, WorkloadSagaStoreError> {
@@ -91,22 +79,15 @@ impl WorkloadSagaRecoveryCursor {
                 ),
             ));
         }
-        Ok(Self {
-            phase: record.phase(),
-            saga_id: record.saga_id().clone(),
-        })
-    }
-
-    pub fn phase(&self) -> WorkloadSagaPhase {
-        self.phase
+        Ok(Self::new(record.saga_id().clone()))
     }
 
     pub fn saga_id(&self) -> &WorkloadSagaId {
         &self.saga_id
     }
 
-    fn order_key(&self) -> (u8, &WorkloadSagaId) {
-        (self.phase.recovery_order(), &self.saga_id)
+    fn order_key(&self) -> &WorkloadSagaId {
+        &self.saga_id
     }
 }
 
@@ -176,7 +157,7 @@ impl WorkloadSagaPage {
             {
                 return Err(WorkloadSagaStoreError::InvalidTransition(
                     WorkloadSagaError::InvalidEvidence(
-                        "workload saga page is duplicated, unsorted, or cursor-regressing",
+                        "workload saga page is duplicated, identity-unsorted, or cursor-regressing",
                     ),
                 ));
             }

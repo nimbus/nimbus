@@ -504,6 +504,9 @@ impl RouterBuildConfig {
     pub(crate) async fn prepare_system_tenant(&self) -> nimbus_core::Result<()> {
         nimbus_system::prepare_system_tenant_async(&self.engine, self.transport.listen_addr())
             .await?;
+        if self.network_manager.is_some() {
+            crate::workload_saga_store::prepare_for_server(&self.engine).await?;
+        }
         if let Some(registry) = self.deployment.convex_registry.as_ref() {
             let summary = registry.deploy_summary();
             let input =

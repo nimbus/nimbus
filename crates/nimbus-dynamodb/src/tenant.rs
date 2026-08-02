@@ -41,17 +41,13 @@ pub enum AuthMode {
     LookupOnly,
 }
 
-/// Tenants whose id begins with this prefix are Nimbus-internal — e.g. the
-/// DynamoDB access-key store's `_nimbus_ddb_system`. An access key must never
-/// bind or resolve to one, or an authenticated request could read another
-/// tenant's stored credentials out of an internal table.
-pub(crate) const RESERVED_TENANT_PREFIX: &str = "_nimbus";
-
-/// Whether `tenant` is a reserved Nimbus-internal tenant (see
-/// [`RESERVED_TENANT_PREFIX`]).
+/// Whether `tenant` belongs to the canonical Nimbus-reserved namespace.
+///
+/// This wrapper remains while key-management and dispatch callers use the
+/// DynamoDB-owned name. [`TenantId`] owns the classification rule.
 #[must_use]
 pub(crate) fn is_reserved_tenant(tenant: &TenantId) -> bool {
-    tenant.as_str().starts_with(RESERVED_TENANT_PREFIX)
+    tenant.is_nimbus_reserved()
 }
 
 /// One access key's binding: the tenant it scopes to, plus the secret access
@@ -179,7 +175,7 @@ impl AccessKeyRegistry {
     pub fn tenants(&self) -> Vec<TenantId> {
         let mut tenants: Vec<TenantId> = Vec::new();
         for binding in self.bindings.values() {
-            if !tenants.contains(&binding.tenant) {
+            if !binding.tenant.is_nimbus_reserved() && !tenants.contains(&binding.tenant) {
                 tenants.push(binding.tenant.clone());
             }
         }
@@ -401,13 +397,28 @@ mod tests {
             registry.resolve("AKIAEVIL"),
             Err(DynamoDbError::UnrecognizedClientException(_))
         ));
+
+        let registry = AccessKeyRegistry::new().bind("AKIAOTHER", tenant("_reserved"));
+        assert!(matches!(
+            registry.resolve("AKIAOTHER"),
+            Err(DynamoDbError::UnrecognizedClientException(_))
+        ));
     }
 
     #[test]
     fn is_reserved_tenant_flags_the_internal_prefix() {
         assert!(is_reserved_tenant(&tenant("_nimbus_ddb_system")));
         assert!(is_reserved_tenant(&tenant("_nimbus_other")));
+        assert!(is_reserved_tenant(&tenant("_reserved")));
         assert!(!is_reserved_tenant(&tenant("acme")));
+    }
+
+    #[test]
+    fn tenant_enumeration_excludes_reserved_bindings() {
+        let registry = AccessKeyRegistry::new()
+            .bind("AKIAAPP", tenant("tenant-a"))
+            .bind("AKIAINTERNAL", tenant("_reserved"));
+        assert_eq!(registry.tenants(), vec![tenant("tenant-a")]);
     }
 
     #[test]

@@ -80,12 +80,17 @@ impl SiloTeamRegistry {
 
     #[must_use]
     pub fn bind(mut self, silo: &TenantId, team: TeamId) -> Self {
-        self.bindings.insert(silo.as_str().to_string(), team);
+        if !silo.is_nimbus_reserved() {
+            self.bindings.insert(silo.as_str().to_string(), team);
+        }
         self
     }
 
     #[must_use]
     pub fn team_for_silo(&self, silo: &TenantId) -> Option<&TeamId> {
+        if silo.is_nimbus_reserved() {
+            return None;
+        }
         self.bindings.get(silo.as_str())
     }
 
@@ -120,6 +125,12 @@ impl SiloTeamRegistry {
             }
             let silo_id = TenantId::new(silo)
                 .map_err(|e| spec_error(format!("invalid silo→team binding `{entry}`: {e}")))?;
+            if silo_id.is_nimbus_reserved() {
+                return Err(spec_error(format!(
+                    "invalid silo→team binding `{entry}`: silo `{silo}` is reserved for \
+                     Nimbus-internal use"
+                )));
+            }
             let team_id = TeamId::new(team)
                 .map_err(|e| spec_error(format!("invalid silo→team binding `{entry}`: {e}")))?;
             registry = registry.bind(&silo_id, team_id);
@@ -337,5 +348,25 @@ mod tests {
         assert!(SiloTeamRegistry::from_operator_spec("no-colon").is_err());
         assert!(SiloTeamRegistry::from_operator_spec("silo:").is_err());
         assert!(SiloTeamRegistry::from_operator_spec(":team").is_err());
+    }
+
+    #[test]
+    fn reserved_silos_never_enter_application_anonymous_policy() {
+        for reserved in ["_nimbus", "_reserved"] {
+            let registry = SiloTeamRegistry::new().bind(&tenant(reserved), team("team-a"));
+            assert!(registry.team_for_silo(&tenant(reserved)).is_none());
+            assert!(registry.silos().is_empty());
+
+            let config = ConvexTenancyConfig::new()
+                .with_silo_teams(registry)
+                .with_anonymous_team(team("team-a"));
+            assert!(matches!(
+                config.authorize_anonymous_silo_selection(&tenant(reserved)),
+                Err(ConvexTeamAuthzError::UnregisteredSilo { .. })
+            ));
+
+            let spec = format!("{reserved}:team-a");
+            assert!(SiloTeamRegistry::from_operator_spec(&spec).is_err());
+        }
     }
 }

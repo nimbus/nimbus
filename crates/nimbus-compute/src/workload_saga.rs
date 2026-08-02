@@ -47,7 +47,12 @@ impl WorkloadSagaCoordinator {
                 WorkloadSagaExpected::Missing
             }
         };
-        self.store.compare_and_swap(expected, next).await
+        match self.store.compare_and_swap(expected, next.clone()).await {
+            Err(WorkloadSagaStoreError::Ambiguous) => {
+                self.resolve_ambiguous_commit(loaded, expected, &next).await
+            }
+            result => result,
+        }
     }
 
     pub async fn list_recoverable(
@@ -55,6 +60,25 @@ impl WorkloadSagaCoordinator {
         request: WorkloadSagaPageRequest,
     ) -> Result<WorkloadSagaPage, WorkloadSagaStoreError> {
         self.store.list_recoverable(request).await
+    }
+
+    async fn resolve_ambiguous_commit(
+        &self,
+        loaded: Option<&WorkloadSagaRecord>,
+        expected: WorkloadSagaExpected,
+        next: &WorkloadSagaRecord,
+    ) -> Result<WorkloadSagaCommit, WorkloadSagaStoreError> {
+        let observed = self.store.load(next.key()).await?;
+        if observed.as_ref() == Some(next) {
+            return Ok(WorkloadSagaCommit::Applied);
+        }
+        if observed.is_none() || observed.as_ref() == loaded {
+            return Err(WorkloadSagaStoreError::Ambiguous);
+        }
+        Err(WorkloadSagaStoreError::Conflict {
+            expected,
+            observed: observed.as_ref().map(WorkloadSagaRecord::revision),
+        })
     }
 }
 

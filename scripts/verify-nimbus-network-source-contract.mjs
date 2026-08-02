@@ -1313,8 +1313,8 @@ function verifyComputeNetworkManagerInjection() {
       replaceIn(
         computeSources,
         "crates/nimbus-compute/src/state.rs",
-        "pub network_manager: Option<Arc<LocalNetworkManager>>",
-        "pub omitted_network_manager: ()",
+        "network_manager: Arc<LocalNetworkManager>",
+        "omitted_network_manager: ()",
       );
     } else if (mutation === "missing-state-manager") {
       replaceIn(
@@ -1334,7 +1334,7 @@ function verifyComputeNetworkManagerInjection() {
       replaceIn(
         computeSources,
         "crates/nimbus-compute/src/state.rs",
-        "Self::require_network_manager_for_workloads(&network_manager, &node_services);",
+        "Self::require_protocol_only_node_services(&node_services);",
         "",
       );
     } else if (mutation === "copied-capability-registry") {
@@ -1434,14 +1434,16 @@ function verifyComputeNetworkManagerInjection() {
     computeSources,
     "crates/nimbus-compute/src/state.rs",
   ).source;
-  const managerFields = [
-    ...computeState.matchAll(
-      /\bnetwork_manager\s*:\s*Option\s*<\s*Arc\s*<\s*LocalNetworkManager\s*>\s*>/g,
-    ),
-  ];
-  if (managerFields.length < 2) {
+  if (
+    !/pub\s+enum\s+ComputeWorkloadComposition\s*\{[\s\S]*?ProtocolOnly[\s\S]*?Managed\s*\{[\s\S]*?network_manager\s*:\s*Arc\s*<\s*LocalNetworkManager\s*>[\s\S]*?saga_store\s*:\s*Arc\s*<\s*dyn\s+WorkloadSagaStore\s*>/s.test(
+      computeState,
+    ) ||
+    !/\bnetwork_manager\s*:\s*Option\s*<\s*Arc\s*<\s*LocalNetworkManager\s*>\s*>/.test(
+      computeState,
+    )
+  ) {
     errors.push(
-      "ComputeStateConfig and ComputeState must both retain the injected manager",
+      "managed composition and ComputeState must retain the injected manager",
     );
   }
   if (
@@ -1457,15 +1459,15 @@ function verifyComputeNetworkManagerInjection() {
     errors.push("ComputeState must not copy the manager capability registry");
   }
   if (
-    !/Self\s*::\s*require_network_manager_for_workloads\s*\(\s*&network_manager\s*,\s*&node_services\s*\)/s.test(
+    !/ComputeWorkloadComposition\s*::\s*ProtocolOnly\s*=>\s*\{[\s\S]*?Self\s*::\s*require_protocol_only_node_services\s*\(\s*&node_services\s*\)/s.test(
       computeState,
     ) ||
-    !/fn\s+require_network_manager_for_workloads[\s\S]*?network_manager\.is_some\(\)[\s\S]*?service_manager\(\)\.is_none\(\)[\s\S]*?machine_lifecycle_manager\(\)\.is_none\(\)/.test(
+    !/fn\s+require_protocol_only_node_services[\s\S]*?service_manager\(\)\.is_none\(\)[\s\S]*?machine_lifecycle_manager\(\)\.is_none\(\)[\s\S]*?node_workload_coordinator\(\)\.is_none\(\)/.test(
       computeState,
     )
   ) {
     errors.push(
-      "ComputeState must reject workload lifecycle without the shared manager",
+      "protocol-only compute must reject every workload lifecycle capability",
     );
   }
 
@@ -1559,10 +1561,15 @@ function verifyComputeNetworkManagerInjection() {
     !/\bnetwork_manager\s*:\s*Option\s*<\s*Arc\s*<\s*LocalNetworkManager\s*>\s*>/.test(
       serverState,
     ) ||
-    !/ComputeStateConfig\s*\{[^}]*\bnetwork_manager\s*,/s.test(serverState)
+    !/match\s+network_manager\s*\{[\s\S]*?Some\s*\(\s*network_manager\s*\)[\s\S]*?ComputeWorkloadComposition\s*::\s*Managed\s*\{[\s\S]*?network_manager[\s\S]*?saga_store[\s\S]*?None\s*=>\s*ComputeWorkloadComposition\s*::\s*ProtocolOnly/s.test(
+      serverState,
+    ) ||
+    !/ComputeStateConfig\s*\{[^}]*\bworkload_composition\s*,/s.test(
+      serverState,
+    )
   ) {
     errors.push(
-      "AppState must preserve the exact manager into ComputeStateConfig",
+      "AppState must preserve the manager and saga store as explicit compute composition",
     );
   }
 
@@ -1809,7 +1816,7 @@ function verifyComputeNodeWorkloadCoordinator() {
     !/pub\s+fn\s+node_workload_coordinator\s*\(\s*&self\s*\)\s*->\s*Option\s*<\s*Arc\s*<\s*NodeWorkloadCoordinator\s*>\s*>/.test(
       computeState,
     ) ||
-    !/fn\s+require_network_manager_for_workloads[\s\S]*?node_workload_coordinator\(\)\.is_none\(\)/.test(
+    !/fn\s+require_protocol_only_node_services[\s\S]*?node_workload_coordinator\(\)\.is_none\(\)/.test(
       computeState,
     )
   ) {

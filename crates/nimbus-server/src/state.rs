@@ -4,6 +4,7 @@ use axum::response::{IntoResponse, Response};
 use nimbus_core::Error;
 use nimbus_engine::Engine;
 use nimbus_network::LocalNetworkManager;
+use nimbus_workloads::WorkloadSagaStore;
 
 use crate::config::transport::TransportConfig;
 use crate::error_envelope::StructuredHttpError;
@@ -15,9 +16,11 @@ pub(crate) use nimbus_compute::config::deployment::DeploymentConfig;
 pub(crate) use nimbus_compute::config::node_services::NodeServicesConfig;
 pub(crate) use nimbus_compute::config::runtime::RuntimeGovernorConfig;
 pub(crate) use nimbus_compute::state::{
-    ComputeError, ComputeState, ComputeStateConfig, DeploymentState, RequestCancellationGuard,
-    record_authenticated_usage,
+    ComputeError, ComputeState, ComputeStateConfig, ComputeWorkloadComposition, DeploymentState,
+    RequestCancellationGuard, record_authenticated_usage,
 };
+
+use crate::workload_saga_store::EngineWorkloadSagaStore;
 
 pub(crate) struct AppStateConfig {
     pub(crate) engine: Arc<Engine>,
@@ -64,9 +67,20 @@ impl AppState {
             transport,
             runtime,
         } = config;
+        let workload_composition = match network_manager {
+            Some(network_manager) => {
+                let saga_store: Arc<dyn WorkloadSagaStore> =
+                    Arc::new(EngineWorkloadSagaStore::new(Arc::clone(&engine)));
+                ComputeWorkloadComposition::Managed {
+                    network_manager,
+                    saga_store,
+                }
+            }
+            None => ComputeWorkloadComposition::ProtocolOnly,
+        };
         let compute = ComputeState::from_config(ComputeStateConfig {
             engine,
-            network_manager,
+            workload_composition,
             deployment,
             control_plane,
             node_services,

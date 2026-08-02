@@ -22,6 +22,7 @@ mod tenant;
 #[cfg(test)]
 mod tenant_isolation_drift;
 mod tls;
+mod workload_saga_store;
 mod ws;
 
 // CP1: runtime execution, artifact/provenance admission, machine lifecycle,

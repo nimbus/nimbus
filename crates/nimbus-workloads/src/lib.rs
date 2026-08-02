@@ -14,15 +14,16 @@ pub use desired::{
     WorkloadExecutionStatus, WorkloadExecutor,
 };
 pub use saga::{
-    WORKLOAD_SAGA_FORMAT_VERSION, WorkloadActivationIntent, WorkloadAdmissionEvidence,
-    WorkloadCleanupPendingDetail, WorkloadDesiredDigest, WorkloadEffectReferences,
-    WorkloadExecutionId, WorkloadExecutionReference, WorkloadFailureEvidence, WorkloadGeneration,
-    WorkloadInspectionRequirement, WorkloadNetworkIntent, WorkloadNetworkReference,
-    WorkloadOwnerEvidenceDigest, WorkloadOwnerObservation, WorkloadPhaseDetail,
-    WorkloadProvisionDetail, WorkloadPublicationIntent, WorkloadPublicationReference,
-    WorkloadRecordedDetail, WorkloadSagaError, WorkloadSagaId, WorkloadSagaIntent,
-    WorkloadSagaIntentUpdate, WorkloadSagaKey, WorkloadSagaPhase, WorkloadSagaRecord,
-    WorkloadSagaRevision, WorkloadSagaTransition, WorkloadSagaTransitionId, WorkloadTeardownDetail,
+    WORKLOAD_SAGA_FORMAT_VERSION, WORKLOAD_SAGA_RECOVERY_ORDER, WorkloadActivationIntent,
+    WorkloadAdmissionEvidence, WorkloadCleanupPendingDetail, WorkloadDesiredDigest,
+    WorkloadEffectReferences, WorkloadExecutionId, WorkloadExecutionReference,
+    WorkloadFailureEvidence, WorkloadGeneration, WorkloadInspectionRequirement,
+    WorkloadNetworkIntent, WorkloadNetworkReference, WorkloadOwnerEvidenceDigest,
+    WorkloadOwnerObservation, WorkloadPhaseDetail, WorkloadProvisionDetail,
+    WorkloadPublicationIntent, WorkloadPublicationReference, WorkloadRecordedDetail,
+    WorkloadSagaError, WorkloadSagaId, WorkloadSagaIntent, WorkloadSagaIntentUpdate,
+    WorkloadSagaKey, WorkloadSagaPhase, WorkloadSagaRecord, WorkloadSagaRevision,
+    WorkloadSagaTransition, WorkloadSagaTransitionId, WorkloadTeardownDetail,
     WorkloadTerminalEvidenceDigest, WorkloadTerminalObservation,
 };
 pub use scheduling::{

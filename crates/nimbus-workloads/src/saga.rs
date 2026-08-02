@@ -897,6 +897,31 @@ pub enum WorkloadSagaPhase {
     CleanupPending,
 }
 
+/// Stable phase order for bounded durable-saga recovery scans.
+///
+/// The list covers every phase. Recovery adapters must still apply
+/// [`WorkloadSagaRecord::requires_recovery`] because phase alone cannot
+/// distinguish quiescent records such as prepare-only attachments or a
+/// `Recorded` record without a queued successor.
+pub const WORKLOAD_SAGA_RECOVERY_ORDER: [WorkloadSagaPhase; 16] = [
+    WorkloadSagaPhase::IntentCommitted,
+    WorkloadSagaPhase::NetworkReserved,
+    WorkloadSagaPhase::WorkloadPrepared,
+    WorkloadSagaPhase::NetworkAttached,
+    WorkloadSagaPhase::WorkloadActivated,
+    WorkloadSagaPhase::Ready,
+    WorkloadSagaPhase::Published,
+    WorkloadSagaPhase::Observed,
+    WorkloadSagaPhase::WithdrawalCommitted,
+    WorkloadSagaPhase::Withdrawn,
+    WorkloadSagaPhase::Drained,
+    WorkloadSagaPhase::WorkloadStopped,
+    WorkloadSagaPhase::NetworkDetached,
+    WorkloadSagaPhase::NetworkReleased,
+    WorkloadSagaPhase::CleanupPending,
+    WorkloadSagaPhase::Recorded,
+];
+
 impl WorkloadSagaPhase {
     pub fn is_provision(self) -> bool {
         matches!(
@@ -928,7 +953,8 @@ impl WorkloadSagaPhase {
         !matches!(self, Self::Observed | Self::Recorded)
     }
 
-    pub(crate) const fn recovery_order(self) -> u8 {
+    /// Returns this phase's stable rank in [`WORKLOAD_SAGA_RECOVERY_ORDER`].
+    pub const fn recovery_order(self) -> u8 {
         match self {
             Self::IntentCommitted => 0,
             Self::NetworkReserved => 1,

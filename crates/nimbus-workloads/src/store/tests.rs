@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, RwLock};
 
 use futures::executor::block_on;
@@ -12,7 +12,7 @@ use crate::{
     WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadDesiredDigest,
     WorkloadEffectReferences, WorkloadGeneration, WorkloadNetworkIntent,
     WorkloadOwnerEvidenceDigest, WorkloadOwnerObservation, WorkloadPhaseDetail,
-    WorkloadPublicationIntent, WorkloadSagaIntent, WorkloadSagaTransitionId,
+    WorkloadPublicationIntent, WorkloadSagaIntent, WorkloadSagaPhase, WorkloadSagaTransitionId,
 };
 
 fn require_object_safe_store(_: &dyn WorkloadSagaStore) {}
@@ -24,6 +24,38 @@ fn store_port_is_object_safe_send_and_sync() {
     let _ = require_object_safe_store;
     require_send_sync::<MutexMapStore>();
     require_send_sync::<RwLockAppendLogStore>();
+}
+
+#[test]
+fn recovery_order_is_complete_unique_and_stable() {
+    let expected = [
+        WorkloadSagaPhase::IntentCommitted,
+        WorkloadSagaPhase::NetworkReserved,
+        WorkloadSagaPhase::WorkloadPrepared,
+        WorkloadSagaPhase::NetworkAttached,
+        WorkloadSagaPhase::WorkloadActivated,
+        WorkloadSagaPhase::Ready,
+        WorkloadSagaPhase::Published,
+        WorkloadSagaPhase::Observed,
+        WorkloadSagaPhase::WithdrawalCommitted,
+        WorkloadSagaPhase::Withdrawn,
+        WorkloadSagaPhase::Drained,
+        WorkloadSagaPhase::WorkloadStopped,
+        WorkloadSagaPhase::NetworkDetached,
+        WorkloadSagaPhase::NetworkReleased,
+        WorkloadSagaPhase::CleanupPending,
+        WorkloadSagaPhase::Recorded,
+    ];
+    assert_eq!(crate::WORKLOAD_SAGA_RECOVERY_ORDER, expected);
+
+    let unique = crate::WORKLOAD_SAGA_RECOVERY_ORDER
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    assert_eq!(unique.len(), crate::WORKLOAD_SAGA_RECOVERY_ORDER.len());
+    for (rank, phase) in crate::WORKLOAD_SAGA_RECOVERY_ORDER.into_iter().enumerate() {
+        assert_eq!(usize::from(phase.recovery_order()), rank);
+    }
+    assert!(crate::WORKLOAD_SAGA_RECOVERY_ORDER.contains(&WorkloadSagaPhase::Recorded));
 }
 
 #[derive(Default)]
@@ -258,7 +290,7 @@ fn build_recovery_page(
     mut records: Vec<WorkloadSagaRecord>,
 ) -> Result<WorkloadSagaPage, WorkloadSagaStoreError> {
     records.retain(WorkloadSagaRecord::requires_recovery);
-    records.sort_by(|left, right| left.recovery_key().cmp(&right.recovery_key()));
+    records.sort_by(|left, right| left.saga_id().cmp(right.saga_id()));
     if let Some(after) = request.after() {
         records.retain(|record| {
             WorkloadSagaRecoveryCursor::for_record(record)
@@ -425,7 +457,7 @@ fn assert_recovery_paging_contract<S: StoreConformance>() {
     persist_history(&store, &prepared_only);
 
     let mut expected = [first, second, third];
-    expected.sort_by(|left, right| left.recovery_key().cmp(&right.recovery_key()));
+    expected.sort_by(|left, right| left.saga_id().cmp(right.saga_id()));
 
     let first_request = WorkloadSagaPageRequest::new(None, 2).unwrap();
     let first_page = block_on(store.list_recoverable(first_request)).unwrap();
@@ -507,12 +539,10 @@ fn page_request_accepts_limits_one_and_256() {
 }
 
 #[test]
-fn recovery_cursor_rejects_terminal_phase() {
+fn recovery_cursor_constructor_names_only_immutable_saga_identity() {
     let terminal = stopped_record("cursor-terminal");
-    assert!(matches!(
-        WorkloadSagaRecoveryCursor::new(terminal.phase(), terminal.saga_id().clone()),
-        Err(WorkloadSagaStoreError::InvalidTransition(_))
-    ));
+    let cursor = WorkloadSagaRecoveryCursor::new(terminal.saga_id().clone());
+    assert_eq!(cursor.saga_id(), terminal.saga_id());
 }
 
 #[test]
@@ -590,13 +620,13 @@ fn page_rejects_duplicate_records() {
 }
 
 #[test]
-fn page_rejects_unsorted_saga_ids_within_a_phase() {
+fn page_rejects_unsorted_saga_ids() {
     let request = WorkloadSagaPageRequest::new(None, 2).unwrap();
     let mut records = vec![
         running_record("unsorted-a", WorkloadActivationIntent::ActivateWhenAttached),
         running_record("unsorted-b", WorkloadActivationIntent::ActivateWhenAttached),
     ];
-    records.sort_by(|left, right| left.recovery_key().cmp(&right.recovery_key()));
+    records.sort_by(|left, right| left.saga_id().cmp(right.saga_id()));
     records.reverse();
     assert!(matches!(
         WorkloadSagaPage::new(&request, records, false),
@@ -605,7 +635,7 @@ fn page_rejects_unsorted_saga_ids_within_a_phase() {
 }
 
 #[test]
-fn page_rejects_unsorted_phases() {
+fn page_order_is_independent_of_mutable_phase() {
     let initial = running_record(
         "unsorted-phase-initial",
         WorkloadActivationIntent::ActivateWhenAttached,
@@ -617,15 +647,15 @@ fn page_rejects_unsorted_phases() {
         ),
         WorkloadSagaPhase::NetworkReserved,
     );
+    let mut records = vec![reserved, initial];
+    records.sort_by(|left, right| left.saga_id().cmp(right.saga_id()));
     let request = WorkloadSagaPageRequest::new(None, 2).unwrap();
-    assert!(matches!(
-        WorkloadSagaPage::new(&request, vec![reserved, initial], false),
-        Err(WorkloadSagaStoreError::InvalidTransition(_))
-    ));
+    let page = WorkloadSagaPage::new(&request, records.clone(), false).unwrap();
+    assert_eq!(page.records(), records);
 }
 
 #[test]
-fn page_advances_deterministically_by_phase_then_saga_id() {
+fn page_advances_deterministically_by_immutable_saga_id() {
     let mut intent_records = [
         running_record(
             "deterministic-b",
@@ -636,7 +666,7 @@ fn page_advances_deterministically_by_phase_then_saga_id() {
             WorkloadActivationIntent::ActivateWhenAttached,
         ),
     ];
-    intent_records.sort_by(|left, right| left.recovery_key().cmp(&right.recovery_key()));
+    intent_records.sort_by(|left, right| left.saga_id().cmp(right.saga_id()));
     let reserved = advance_to(
         &running_record(
             "deterministic-reserved",
@@ -644,11 +674,12 @@ fn page_advances_deterministically_by_phase_then_saga_id() {
         ),
         WorkloadSagaPhase::NetworkReserved,
     );
-    let records = vec![
+    let mut records = vec![
         intent_records[0].clone(),
         intent_records[1].clone(),
         reserved,
     ];
+    records.sort_by(|left, right| left.saga_id().cmp(right.saga_id()));
     let request = WorkloadSagaPageRequest::new(None, 3).unwrap();
     let page = WorkloadSagaPage::new(&request, records.clone(), true).unwrap();
     assert_eq!(page.records(), records);
@@ -679,7 +710,7 @@ fn page_next_cursor_matches_final_record_when_more_exists() {
         running_record("cursor-a", WorkloadActivationIntent::ActivateWhenAttached),
         running_record("cursor-b", WorkloadActivationIntent::ActivateWhenAttached),
     ];
-    records.sort_by(|left, right| left.recovery_key().cmp(&right.recovery_key()));
+    records.sort_by(|left, right| left.saga_id().cmp(right.saga_id()));
     let expected = WorkloadSagaRecoveryCursor::for_record(&records[1]).unwrap();
     let page = WorkloadSagaPage::new(&request, records, true).unwrap();
     assert_eq!(page.next_cursor(), Some(&expected));

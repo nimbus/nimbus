@@ -40,20 +40,6 @@ use std::fmt;
 use nimbus_core::{Error, PrincipalContext, Result, TenantId};
 use serde_json::Value;
 
-/// Tenants whose id begins with this prefix are Nimbus-internal. A Firebase
-/// project must never resolve to one, or an authenticated request could reach an
-/// internal store. nimbus-core exposes no shared reserved-tenant check today, so
-/// the prefix is defined locally per adapter, mirroring the DynamoDB
-/// `AccessKeyRegistry` and MongoDB `CredentialRegistry` `RESERVED_TENANT_PREFIX`.
-pub(crate) const RESERVED_TENANT_PREFIX: &str = "_nimbus";
-
-/// Whether `tenant` is a reserved Nimbus-internal tenant (see
-/// [`RESERVED_TENANT_PREFIX`]).
-#[must_use]
-pub(crate) fn is_reserved_tenant(tenant: &TenantId) -> bool {
-    tenant.as_str().starts_with(RESERVED_TENANT_PREFIX)
-}
-
 /// The Firebase ID token issuer host whose final path segment is the project id.
 /// A genuine Firebase ID token carries `iss = https://securetoken.google.com/
 /// <project-id>`; the issuer survives token verification while `aud` does not, so
@@ -199,7 +185,7 @@ impl ProjectTenantRegistry {
                 ))
             })?,
         };
-        if is_reserved_tenant(&tenant) {
+        if tenant.is_nimbus_reserved() {
             return Err(Error::PermissionDenied(format!(
                 "Firebase project `{project_id}` resolves to reserved Nimbus-internal tenant \
                  `{tenant}`; refused"
@@ -260,7 +246,7 @@ impl ProjectTenantRegistry {
                     "invalid Firebase project binding `{entry}`: {error}"
                 ))
             })?;
-            if is_reserved_tenant(&tenant_id) {
+            if tenant_id.is_nimbus_reserved() {
                 return Err(spec_error(format!(
                     "invalid Firebase project binding `{entry}`: tenant `{tenant}` is reserved for \
                      Nimbus-internal use"
@@ -446,17 +432,19 @@ mod tests {
 
     #[test]
     fn reserved_tenant_is_refused_in_both_modes() {
-        let strict = ProjectTenantRegistry::new().bind("proj", tenant("_nimbus_internal"));
-        assert!(matches!(
-            strict.resolve("proj"),
-            Err(Error::PermissionDenied(_))
-        ));
+        for reserved in ["_nimbus_internal", "_reserved"] {
+            let strict = ProjectTenantRegistry::new().bind("proj", tenant(reserved));
+            assert!(matches!(
+                strict.resolve("proj"),
+                Err(Error::PermissionDenied(_))
+            ));
 
-        let identity = ProjectTenantRegistry::identity();
-        assert!(matches!(
-            identity.resolve("_nimbus_internal"),
-            Err(Error::PermissionDenied(_))
-        ));
+            let identity = ProjectTenantRegistry::identity();
+            assert!(matches!(
+                identity.resolve(reserved),
+                Err(Error::PermissionDenied(_))
+            ));
+        }
     }
 
     #[test]
@@ -480,6 +468,7 @@ mod tests {
         assert!(ProjectTenantRegistry::from_operator_spec("proj:").is_err());
         assert!(ProjectTenantRegistry::from_operator_spec(":tenant").is_err());
         assert!(ProjectTenantRegistry::from_operator_spec("proj:_nimbus_internal").is_err());
+        assert!(ProjectTenantRegistry::from_operator_spec("proj:_reserved").is_err());
     }
 
     #[test]

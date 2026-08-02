@@ -27,6 +27,7 @@ use nimbus_runtime::{
 };
 use nimbus_services::{RuntimeServiceRegistry, ServiceManager};
 use nimbus_tenant::TenantIsolationMode;
+use nimbus_workloads::WorkloadSagaStore;
 use tempfile::TempDir;
 use tracing::warn;
 
@@ -38,10 +39,22 @@ use crate::config::runtime::RuntimeGovernorConfig;
 use crate::machine_lifecycle::MachineLifecycleManager;
 use crate::node_workloads::NodeWorkloadCoordinator;
 use crate::runtime_manager::RuntimeManager;
+use crate::workload_saga::WorkloadSagaCoordinator;
+
+/// Explicit workload-lifecycle capabilities available to a compute state.
+pub enum ComputeWorkloadComposition {
+    /// Protocol serving without workload lifecycle authority.
+    ProtocolOnly,
+    /// Workload-capable serving over one network manager and durable saga store.
+    Managed {
+        network_manager: Arc<LocalNetworkManager>,
+        saga_store: Arc<dyn WorkloadSagaStore>,
+    },
+}
 
 pub struct ComputeStateConfig {
     pub engine: Arc<Engine>,
-    pub network_manager: Option<Arc<LocalNetworkManager>>,
+    pub workload_composition: ComputeWorkloadComposition,
     pub deployment: DeploymentConfig,
     pub control_plane: ControlPlaneConfig,
     pub node_services: NodeServicesConfig,
@@ -53,6 +66,7 @@ pub struct ComputeState {
     pub engine: Arc<Engine>,
     pub active_deployment: Arc<ActiveDeployment>,
     network_manager: Option<Arc<LocalNetworkManager>>,
+    workload_saga_coordinator: Option<Arc<WorkloadSagaCoordinator>>,
     system_convex_registry: Option<Arc<ConvexRegistry>>,
     control_plane: ControlPlaneConfig,
     node_services: NodeServicesConfig,
@@ -64,13 +78,25 @@ impl ComputeState {
     pub fn from_config(config: ComputeStateConfig) -> Self {
         let ComputeStateConfig {
             engine,
-            network_manager,
+            workload_composition,
             deployment,
             control_plane,
             node_services,
             runtime,
         } = config;
-        Self::require_network_manager_for_workloads(&network_manager, &node_services);
+        let (network_manager, workload_saga_coordinator) = match workload_composition {
+            ComputeWorkloadComposition::ProtocolOnly => {
+                Self::require_protocol_only_node_services(&node_services);
+                (None, None)
+            }
+            ComputeWorkloadComposition::Managed {
+                network_manager,
+                saga_store,
+            } => (
+                Some(network_manager),
+                Some(Arc::new(WorkloadSagaCoordinator::new(saga_store))),
+            ),
+        };
         let node_services = node_services.resolve(engine.clone());
         let runtime_manager = RuntimeManager::new(engine.clone(), runtime.clone());
         let DeploymentConfig {
@@ -110,6 +136,7 @@ impl ComputeState {
             engine,
             active_deployment: Arc::new(ActiveDeployment::new(active_deployment)),
             network_manager,
+            workload_saga_coordinator,
             system_convex_registry,
             control_plane,
             node_services,
@@ -132,16 +159,18 @@ impl ComputeState {
         self.network_manager.clone()
     }
 
-    fn require_network_manager_for_workloads(
-        network_manager: &Option<Arc<LocalNetworkManager>>,
-        node_services: &NodeServicesConfig,
-    ) {
+    /// The one compute-owned workload-saga coordinator, when this state was
+    /// built for workload-capable serving.
+    pub fn workload_saga_coordinator(&self) -> Option<Arc<WorkloadSagaCoordinator>> {
+        self.workload_saga_coordinator.clone()
+    }
+
+    fn require_protocol_only_node_services(node_services: &NodeServicesConfig) {
         assert!(
-            network_manager.is_some()
-                || (node_services.service_manager().is_none()
-                    && node_services.machine_lifecycle_manager().is_none()
-                    && node_services.node_workload_coordinator().is_none()),
-            "service and machine workload lifecycle requires the shared LocalNetworkManager"
+            node_services.service_manager().is_none()
+                && node_services.machine_lifecycle_manager().is_none()
+                && node_services.node_workload_coordinator().is_none(),
+            "service and machine workload lifecycle requires managed workload composition"
         );
     }
 
@@ -460,6 +489,46 @@ mod tests {
         calls: AtomicUsize,
     }
 
+    #[derive(Default)]
+    struct EffectForbiddenWorkloadSagaStore {
+        calls: AtomicUsize,
+    }
+
+    impl WorkloadSagaStore for EffectForbiddenWorkloadSagaStore {
+        fn load<'a>(
+            &'a self,
+            _key: &'a nimbus_workloads::WorkloadSagaKey,
+        ) -> nimbus_workloads::WorkloadSagaFuture<'a, Option<nimbus_workloads::WorkloadSagaRecord>>
+        {
+            Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::AcqRel);
+                Err(nimbus_workloads::WorkloadSagaStoreError::Unavailable)
+            })
+        }
+
+        fn compare_and_swap<'a>(
+            &'a self,
+            _expected: nimbus_workloads::WorkloadSagaExpected,
+            _next: nimbus_workloads::WorkloadSagaRecord,
+        ) -> nimbus_workloads::WorkloadSagaFuture<'a, nimbus_workloads::WorkloadSagaCommit>
+        {
+            Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::AcqRel);
+                Err(nimbus_workloads::WorkloadSagaStoreError::Unavailable)
+            })
+        }
+
+        fn list_recoverable<'a>(
+            &'a self,
+            _request: nimbus_workloads::WorkloadSagaPageRequest,
+        ) -> nimbus_workloads::WorkloadSagaFuture<'a, nimbus_workloads::WorkloadSagaPage> {
+            Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::AcqRel);
+                Err(nimbus_workloads::WorkloadSagaStoreError::Unavailable)
+            })
+        }
+    }
+
     impl NodeWorkloadReconcileCapability for EffectForbiddenNodeCapability {
         fn backend_capabilities(&self) -> Vec<HostLifecycleBackendCapabilities> {
             vec![HostLifecycleBackendCapabilities::new(
@@ -597,7 +666,7 @@ mod tests {
         let engine = Arc::new(Engine::new(temp.path()).expect("engine should build"));
         let state = ComputeState::from_config(ComputeStateConfig {
             engine,
-            network_manager: None,
+            workload_composition: ComputeWorkloadComposition::ProtocolOnly,
             deployment: DeploymentConfig::default().with_convex(ConvexRegistry::empty()),
             control_plane: ControlPlaneConfig::router_options_default(),
             node_services: empty_node_services()
@@ -672,7 +741,7 @@ mod tests {
         });
         let state = ComputeState::from_config(ComputeStateConfig {
             engine,
-            network_manager: None,
+            workload_composition: ComputeWorkloadComposition::ProtocolOnly,
             deployment: DeploymentConfig::default(),
             control_plane: ControlPlaneConfig::router_options_default(),
             node_services: NodeServicesConfig::from_runtime_service_registry(teardown.clone()),
@@ -738,7 +807,7 @@ mod tests {
         );
         let state = ComputeState::from_config(ComputeStateConfig {
             engine,
-            network_manager: None,
+            workload_composition: ComputeWorkloadComposition::ProtocolOnly,
             deployment: DeploymentConfig::default(),
             control_plane: ControlPlaneConfig::router_options_default(),
             node_services: empty_node_services()
@@ -785,7 +854,7 @@ mod tests {
         };
         let state = ComputeState::from_config(ComputeStateConfig {
             engine,
-            network_manager: None,
+            workload_composition: ComputeWorkloadComposition::ProtocolOnly,
             deployment: DeploymentConfig::default()
                 .with_convex(ConvexRegistry::empty().with_runtime_limits(adapter_limits.clone()))
                 .with_system_convex_registry(
@@ -821,8 +890,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn compute_state_retains_the_exact_network_manager_registry_and_node_coordinator() {
+    #[tokio::test]
+    async fn compute_state_retains_the_exact_managed_workload_composition() {
         let temp = tempdir().expect("service tempdir should build");
         let engine = Arc::new(Engine::new(temp.path()).expect("engine should build"));
         let manager = LocalNetworkManager::open(
@@ -837,9 +906,13 @@ mod tests {
         );
         let capability = Arc::new(EffectForbiddenNodeCapability::default());
         let coordinator = Arc::new(NodeWorkloadCoordinator::new(capability.clone()));
+        let saga_store = Arc::new(EffectForbiddenWorkloadSagaStore::default());
         let state = ComputeState::from_config(ComputeStateConfig {
             engine,
-            network_manager: Some(Arc::clone(&manager)),
+            workload_composition: ComputeWorkloadComposition::Managed {
+                network_manager: Arc::clone(&manager),
+                saga_store: saga_store.clone(),
+            },
             deployment: DeploymentConfig::default(),
             control_plane: ControlPlaneConfig::router_options_default(),
             node_services: empty_node_services()
@@ -861,6 +934,25 @@ mod tests {
             .node_workload_coordinator()
             .expect("managed compute state should expose its node coordinator");
         assert!(Arc::ptr_eq(&injected_coordinator, &coordinator));
+        let first_saga_coordinator = state
+            .workload_saga_coordinator()
+            .expect("managed compute state should expose its saga coordinator");
+        let second_saga_coordinator = state
+            .workload_saga_coordinator()
+            .expect("managed compute state should retain one saga coordinator");
+        assert!(Arc::ptr_eq(
+            &first_saga_coordinator,
+            &second_saga_coordinator
+        ));
+        let saga_key = nimbus_workloads::WorkloadSagaKey::new(
+            nimbus_core::TenantId::new("managed-composition").expect("fixture tenant is valid"),
+            nimbus_core::WorkloadId::new("managed-composition").expect("fixture workload is valid"),
+        );
+        assert_eq!(
+            first_saga_coordinator.load(&saga_key).await,
+            Err(nimbus_workloads::WorkloadSagaStoreError::Unavailable)
+        );
+        assert_eq!(saga_store.calls.load(Ordering::Acquire), 1);
         assert_eq!(capability.calls.load(Ordering::Acquire), 0);
         assert!(
             !manager.authority_path().exists(),
@@ -878,7 +970,7 @@ mod tests {
         let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             ComputeState::from_config(ComputeStateConfig {
                 engine,
-                network_manager: None,
+                workload_composition: ComputeWorkloadComposition::ProtocolOnly,
                 deployment: DeploymentConfig::default(),
                 control_plane: ControlPlaneConfig::router_options_default(),
                 node_services: empty_node_services().with_node_workload_coordinator(coordinator),
@@ -896,7 +988,7 @@ mod tests {
         let engine = Arc::new(Engine::new(temp.path()).expect("engine should build"));
         let state = ComputeState::from_config(ComputeStateConfig {
             engine,
-            network_manager: None,
+            workload_composition: ComputeWorkloadComposition::ProtocolOnly,
             deployment: DeploymentConfig::default(),
             control_plane: ControlPlaneConfig::router_options_default(),
             node_services: empty_node_services(),
@@ -904,5 +996,7 @@ mod tests {
         });
 
         assert!(state.node_workload_coordinator().is_none());
+        assert!(state.network_manager().is_none());
+        assert!(state.workload_saga_coordinator().is_none());
     }
 }

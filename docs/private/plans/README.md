@@ -268,12 +268,23 @@ extension-registry seam before the second concern edits `extensions.rs`.
   Workloads-owned execution identity and generation now drive node lifecycle.
   Crossed or missing node assignments fail before effects. Observed generation
   is lossless. Both false in-memory authorities and all three services writes
-  are deleted, and the standalone implementation contract has exactly the two
-  later-owned gaps. Affected suites pass `66/50/93/938/72`, the live verifier is
-  `27/27`, and its fail-closed self-test is `188/188`. The sole full
-  Sol/xhigh/fast item review is the remaining gate. NNC6.1d retains
-  the durable server adapter and first required workload-capable compute
-  injection, so no temporary no-op or production in-memory store exists.
+  are deleted; the item is durable at `a098db7b5`, and no further NNC6.1c1
+  review is warranted. NNC6.1d records its implementation and R1-R20 contract in
+  `proof/nimbus-network-control-plane/nnc6.1d-durable-workload-saga-store.md`.
+  Its pre-review candidate passed R1-R20: store `21/21`, compute `15/15`,
+  reserved prefix `21/21`, affected `1,537/1,537` with 32 skips, live verifier
+  `28/28`, aggregate self-test `188/188`, direct modes, affected quality gates,
+  docs `108`, and site `17/17`. The sole full Sol/xhigh/fast item review found
+  one P2 mutable-phase recovery-cursor defect and two P3 proof-harness defects;
+  all three are accepted and corrected. R1-R20 are green again: store `23/23`,
+  full workloads `67/67`, affected `1,539/1,539` with 32 skips, immutable
+  saga-ID inter-page recovery, bounded child terminate/reap, exact verifier
+  child `27/1`, live verifier `28/28`, and aggregate mutations `188/188` pass.
+  The one narrow Sol/xhigh/fast correction review is clean at confidence
+  `0.97`; no further NNC6.1d review is warranted. Its exact item commit is
+  pending. NNC6.1d retains the durable server adapter.
+  It also requires the first workload-capable compute injection. No temporary
+  no-op or production in-memory store exists.
   Cleanup, release, finalization, and reuse stay in NNC8.3. Machine forwarding obeys
   NNC5.2a's common lifecycle; runtime absence, workload status, readiness persistence,
   cleanup convergence, and inspect/restart policy stay in their named later
