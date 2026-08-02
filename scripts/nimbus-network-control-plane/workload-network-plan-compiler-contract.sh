@@ -357,8 +357,8 @@ verify_later_owner_routing() {
   if ! rg -q '^\| NNC6\.2a \| Persist the complete compiled network plan payload in workloads-owned saga intent\.' "${OWNER_PLAN}"; then
     add_error "NNC6.2a is not the canonical durable compiled-plan embedding owner"
   fi
-  if ! rg -q '^\| NNC6\.1e1 \| Route lazy activation and explicit service/sandbox lifecycle requests through a compute-owned saga ingress after NNC6\.2a\.' "${OWNER_PLAN}"; then
-    add_error "NNC6.1e1 is not the canonical lifecycle-ingress owner after NNC6.2a"
+  if ! rg -q '^\| NNC6\.1e1 \| Implement the bounded compute-owned durable workload-saga submission seam after NNC6\.2a\.' "${OWNER_PLAN}"; then
+    add_error "NNC6.1e1 is not the canonical durable workload-saga submission owner after NNC6.2a"
   fi
 }
 

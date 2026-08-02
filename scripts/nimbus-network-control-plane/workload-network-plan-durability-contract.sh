@@ -5,7 +5,14 @@ set -u
 
 REPO_ROOT="${NIMBUS_NETWORK_NNC62A_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 SCRIPT_PATH="${REPO_ROOT}/scripts/nimbus-network-control-plane/workload-network-plan-durability-contract.sh"
-STARTING_CHECKPOINT="15544998c20410fec30d89eca187cdc8d6527609"
+STARTING_CHECKPOINT="${NIMBUS_NETWORK_NNC62A_STARTING_CHECKPOINT:-15544998c20410fec30d89eca187cdc8d6527609}"
+COMPLETION_CHECKPOINT="${NIMBUS_NETWORK_NNC62A_COMPLETION_CHECKPOINT:-ba78303608a2a48f319e452fc585593c5140445e}"
+if [ "${NIMBUS_NETWORK_NNC62A_TEST_MUTATION:-}" = "missing-completion-checkpoint" ]; then
+  COMPLETION_CHECKPOINT="0000000000000000000000000000000000000000"
+fi
+if [ "${NIMBUS_NETWORK_NNC62A_TEST_MUTATION:-}" = "unreadable-source-diff" ]; then
+  STARTING_CHECKPOINT="0000000000000000000000000000000000000000"
+fi
 SAGA="crates/nimbus-workloads/src/saga.rs"
 SAGA_NETWORK="crates/nimbus-workloads/src/saga/network.rs"
 SAGA_STATE="crates/nimbus-workloads/src/saga/state.rs"
@@ -231,11 +238,17 @@ verify_owner_and_allowlist() {
     pass_check
   fi
 
-  changed="$({
-    git diff --name-only "${STARTING_CHECKPOINT}..HEAD" 2>/dev/null || true
-    git diff --name-only 2>/dev/null || true
-    git ls-files --others --exclude-standard 2>/dev/null || true
-  } | sort -u)"
+  if ! git cat-file -e "${COMPLETION_CHECKPOINT}^{commit}" 2>/dev/null; then
+    add_error "NNC6.2a completion checkpoint is missing: ${COMPLETION_CHECKPOINT}"
+    return
+  fi
+  if ! changed="$(
+    git diff --name-only "${STARTING_CHECKPOINT}..${COMPLETION_CHECKPOINT}" 2>/dev/null
+  )"; then
+    add_error "NNC6.2a frozen source diff is unreadable"
+    return
+  fi
+  changed="$(printf '%s\n' "${changed}" | sort -u)"
   if [ "${NIMBUS_NETWORK_NNC62A_TEST_MUTATION:-}" = "unexpected-path" ]; then
     changed="${changed}\ncrates/nimbus-network/src/provider_effect.rs"
   fi
@@ -314,6 +327,8 @@ run_self_test() {
     missing-action-plan \
     snapshot-handoff \
     effect-import \
+    missing-completion-checkpoint \
+    unreadable-source-diff \
     unexpected-path; do
     output="${self_test_root}/${mutation}.out"
     if NIMBUS_NETWORK_NNC62A_TEST_MUTATION="${mutation}" bash "${SCRIPT_PATH}" >"${output}" 2>&1; then
@@ -329,6 +344,8 @@ run_self_test() {
       missing-action-plan) expected='pure ReserveNetwork action does not carry exact compiled plan command material' ;;
       snapshot-handoff) expected='distinct-process proof permits snapshot/payload handoff' ;;
       effect-import) expected='distinct-process proof imports a network effect authority' ;;
+      missing-completion-checkpoint) expected='NNC6.2a completion checkpoint is missing' ;;
+      unreadable-source-diff) expected='NNC6.2a frozen source diff is unreadable' ;;
       unexpected-path) expected='source diff escapes the frozen NNC6.2a allowlist' ;;
     esac
     if ! rg -q -F "${expected}" "${output}"; then
@@ -342,7 +359,7 @@ run_self_test() {
     printf 'NNC6.2a contract self-test: %d failed\n' "${self_test_failures}"
     return 1
   fi
-  printf 'NNC6.2a contract self-test: 8 passed, 0 failed\n'
+  printf 'NNC6.2a contract self-test: 10 passed, 0 failed\n'
 }
 
 case "${1:-}" in

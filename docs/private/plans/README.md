@@ -103,7 +103,17 @@ extension-registry seam before the second concern edits `extensions.rs`.
   matrix lacked a direct inner-content field. The added duplicate
   `formatVersion` case passes focused `1/1` and workloads `96/96`; no executable
   code changed, and no third review ran or is warranted. Exact NNC6.2a item
-  commit `ba7830360` is durable; NNC6.1e1 now owns the active recovery row.
+  commit `ba7830360` is durable; NNC6.1e1 now owns the active recovery row. Its
+  three-lane source audit found that the earlier omnibus ingress wording would
+  persist `IntentCommitted` and then call coarse lifecycle methods that cannot
+  execute one exact saga phase idempotently. The prospectively corrected
+  NNC6.1e1 unit owns durable submission and confirmed pure decision only. Its
+  I1-I20 matrix, bounded outcome contract, exact initial allowlist, crash and
+  cancellation semantics, and later-owner map are frozen in
+  `proof/nimbus-network-control-plane/nnc6.1e1-durable-workload-saga-ingress.md`.
+  No product file or structured review has started. NNC6.3/NNC6.4a/NNC6.5/
+  NNC6.6 retain every effectful caller cutover, including standalone Compose;
+  NNC6.1e2 retains final fresh-process convergence.
   Network resource identity is retained
   tenant-qualified and rederived for every attachment, route,
   listener, endpoint, and lease; it never uses the mutable decision digest,
@@ -112,8 +122,8 @@ extension-registry seam before the second concern edits `extensions.rs`.
   audit found that the current saga tuple cannot reconstruct full desired
   network state before first reservation; the corrected carrier now reconstructs
   it exactly. NNC6.2a owns the durable compiled-plan carrier and fresh-process
-  replay. NNC6.1e1 remains the later
-  lifecycle ingress and caller cutover. Workloads-owned execution identity and generation now reach
+  replay. NNC6.1e1 now owns the bounded durable submission seam without caller
+  cutover. Workloads-owned execution identity and generation now reach
   operational node paths, false in-memory desired-state authorities are
   deleted, and status, systemd, cgroup, and exported journal evidence
   correlate one exact identity without cross-record stitching. The sole full
@@ -324,10 +334,11 @@ extension-registry seam before the second concern edits `extensions.rs`.
   tenant discovery, pure recovery decisions, admitted lifecycle ingress,
   provision/restart/teardown effects, and final convergence. It is split before
   implementation: NNC6.1e owns bounded tenant paging plus the effect-free
-  all-phase decision proof; NNC6.1e1 follows NNC6.2 and owns compute service
-  ingress; NNC6.1e2 follows NNC6.3-NNC6.6 and closes startup recovery plus
-  tenant retirement. NNC6.1d retains the durable server adapter, NNC6.3/NNC6.4a/NNC6.5
-  retain provider choreography, and NNC8.3 retains cleanup finalization/reuse.
+  all-phase decision proof; NNC6.1e1 follows NNC6.2a and owns durable submission
+  plus confirmed pure decisions; NNC6.1e2 follows NNC6.3-NNC6.6 and closes
+  startup recovery plus tenant retirement. NNC6.1d retains the durable server
+  adapter, NNC6.3/NNC6.4a/NNC6.5/NNC6.6 retain caller cutover and provider
+  choreography, and NNC8.3 retains cleanup finalization/reuse.
   The candidate proves affected behavior `195/195` with one child-only ignore,
   live verifier `28/28`, focused NNC6.1e mutations `10/10`, aggregate mutations
   `198/198`, docs `108`, and site `17/17`; no provider-effect path changed. The

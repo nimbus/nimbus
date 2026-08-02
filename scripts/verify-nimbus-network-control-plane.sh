@@ -1763,7 +1763,7 @@ NODE
     printf 'SELFTEST FAIL NNCV029 workload-network-plan durability mutation suite failed\n'
     sed -n '1,160p' "${temporary}/nnc62a-contract-self-test.out"
     self_fail=$((self_fail + 1))
-  elif ! grep -q '^NNC6\.2a contract self-test: 8 passed, 0 failed$' \
+  elif ! grep -q '^NNC6\.2a contract self-test: 10 passed, 0 failed$' \
     "${temporary}/nnc62a-contract-self-test.out"; then
     printf 'SELFTEST FAIL NNCV029 workload-network-plan durability mutation count is not exact\n'
     self_fail=$((self_fail + 1))
@@ -1775,7 +1775,7 @@ NODE
     printf 'self-test: %d failed\n' "${self_fail}"
     exit 1
   fi
-  printf 'self-test: 213 passed, 0 failed\n'
+  printf 'self-test: 215 passed, 0 failed\n'
 }
 
 if [ "${1:-}" = "--self-test" ]; then
