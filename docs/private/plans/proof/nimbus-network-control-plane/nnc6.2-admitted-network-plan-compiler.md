@@ -455,11 +455,18 @@ durable carrier change.
 ```text
 crates/nimbus-tenant/src/decision.rs
 crates/nimbus-tenant/src/policy_input.rs
+crates/nimbus-tenant/src/operator_policy/validation.rs
 crates/nimbus-tenant/src/tests.rs
 crates/nimbus-sandbox/src/lib.rs
 crates/nimbus-sandbox/src/backends/capabilities.rs
 crates/nimbus-sandbox/src/backends/capabilities/tests.rs
+crates/nimbus-sandbox/src/backends/oci/port_lease.rs
 ```
+
+The tenant validation path is admitted only to share one field validator
+between direct decision input and operator policy input. The OCI lease path is
+admitted only to consume one sandbox-owned PEP provider key. Neither edit may
+change admission meaning, allocate a port, or call a provider.
 
 ### Portable identity
 
