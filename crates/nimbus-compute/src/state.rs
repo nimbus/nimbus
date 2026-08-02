@@ -527,6 +527,18 @@ mod tests {
                 Err(nimbus_workloads::WorkloadSagaStoreError::Unavailable)
             })
         }
+
+        fn list_for_tenant<'a>(
+            &'a self,
+            _tenant_id: &'a nimbus_core::TenantId,
+            _request: nimbus_workloads::WorkloadSagaTenantPageRequest,
+        ) -> nimbus_workloads::WorkloadSagaFuture<'a, nimbus_workloads::WorkloadSagaTenantPage>
+        {
+            Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::AcqRel);
+                Err(nimbus_workloads::WorkloadSagaStoreError::Unavailable)
+            })
+        }
     }
 
     impl NodeWorkloadReconcileCapability for EffectForbiddenNodeCapability {

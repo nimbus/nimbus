@@ -8,7 +8,8 @@ use nimbus_workloads::{
     WorkloadNetworkIntent, WorkloadOwnerEvidenceDigest, WorkloadOwnerObservation,
     WorkloadPhaseDetail, WorkloadPublicationIntent, WorkloadSagaCommit, WorkloadSagaExpected,
     WorkloadSagaFuture, WorkloadSagaKey, WorkloadSagaPage, WorkloadSagaPageRequest,
-    WorkloadSagaRecord, WorkloadSagaStore, WorkloadSagaStoreError,
+    WorkloadSagaRecord, WorkloadSagaStore, WorkloadSagaStoreError, WorkloadSagaTenantPage,
+    WorkloadSagaTenantPageRequest,
 };
 
 use super::WorkloadSagaCoordinator;
@@ -18,6 +19,7 @@ struct RecordedCalls {
     loads: Vec<WorkloadSagaKey>,
     compare_and_swaps: Vec<(WorkloadSagaExpected, WorkloadSagaRecord)>,
     recovery_reads: Vec<WorkloadSagaPageRequest>,
+    tenant_reads: Vec<(TenantId, WorkloadSagaTenantPageRequest)>,
 }
 
 struct RecordingStore {
@@ -87,6 +89,21 @@ impl WorkloadSagaStore for RecordingStore {
                 .recovery_reads
                 .push(request);
             self.recovery_result.clone()
+        })
+    }
+
+    fn list_for_tenant<'a>(
+        &'a self,
+        tenant_id: &'a TenantId,
+        request: WorkloadSagaTenantPageRequest,
+    ) -> WorkloadSagaFuture<'a, WorkloadSagaTenantPage> {
+        Box::pin(async move {
+            self.calls
+                .lock()
+                .expect("recording store lock is healthy")
+                .tenant_reads
+                .push((tenant_id.clone(), request.clone()));
+            WorkloadSagaTenantPage::new(tenant_id, &request, Vec::new(), false)
         })
     }
 }

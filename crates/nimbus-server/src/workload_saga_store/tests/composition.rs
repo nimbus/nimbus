@@ -4,9 +4,18 @@ use std::process::{ExitStatus, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
 
+use nimbus_compute::workload_saga::{
+    WorkloadSagaAction, WorkloadSagaCoordinator, WorkloadSagaDecision,
+};
 use nimbus_core::Error;
 use nimbus_network::{LocalNetworkManager, NetworkCapabilityRegistry};
-use nimbus_workloads::{WorkloadSagaExpected, WorkloadSagaStore};
+use nimbus_testing::{
+    ProcessRoleSpec, SubprocessCrashCutHarness, run_crash_cut_child, run_crash_recovery_child,
+};
+use nimbus_workloads::{
+    DesiredWorkloadState, WorkloadSagaCommit, WorkloadSagaExpected, WorkloadSagaStore,
+};
+use sha2::{Digest, Sha256};
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Child;
 
@@ -18,6 +27,7 @@ use crate::state::{
 
 use super::super::EngineWorkloadSagaStore;
 use super::super::schema::{workload_saga_table, workload_saga_tenant};
+use super::recovery::{PROCESS_MATRIX_EXPECTATIONS, process_matrix_histories, process_matrix_key};
 use super::{engine, initial_record};
 
 const CHILD_MODE: &str = "NIMBUS_NNC61D_CHILD_MODE";
@@ -28,6 +38,16 @@ const CHILD_STALL_MARKER: &str = "NIMBUS_NNC61D_CHILD_STALLED";
 const CHILD_TEST_NAME: &str = "workload_saga_store::tests::composition::fresh_process_recovers_durable_truth_without_snapshot_handoff";
 const CHILD_TIMEOUT: Duration = Duration::from_secs(15);
 const STALLED_CHILD_TIMEOUT: Duration = Duration::from_secs(2);
+const RECOVERY_MATRIX_CHILD_TEST: &str =
+    "workload_saga_store::tests::composition::workload_saga_recovery_matrix_child";
+const RECOVERY_MATRIX_MODE_ENV: &str = "NIMBUS_NNC61E_RECOVERY_MATRIX_MODE";
+const RECOVERY_MATRIX_WRITE_MODE: &str = "write";
+const RECOVERY_MATRIX_READ_MODE: &str = "recover";
+const RECOVERY_MATRIX_BOUNDARY: &str = "workload-saga.phase-matrix-durable";
+const RECOVERY_MATRIX_OBSERVATION: &str =
+    "matrix-30-44ad8f3b626c2b503441c96a2bbb88181f1f3887040947e7c0323e533f2a9ea3";
+const RECOVERY_MATRIX_TIMEOUT: Duration = Duration::from_secs(20);
+const RECOVERY_MATRIX_PID_PREFIX: &str = "NIMBUS_NNC61E_PROCESS_ID";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ChildCompletion {
@@ -196,6 +216,255 @@ async fn run_child(mode: &'static str, root: &Path, deadline: Duration) -> Child
         stderr_error: stderr.error,
         detail,
     }
+}
+
+#[test]
+fn fresh_process_reopens_engine_and_plans_every_workload_saga_phase_without_snapshot_handoff() {
+    let root = tempfile::tempdir().expect("fixture root should build");
+    let result = SubprocessCrashCutHarness::new(RECOVERY_MATRIX_TIMEOUT)
+        .run(
+            root.path(),
+            RECOVERY_MATRIX_BOUNDARY,
+            RECOVERY_MATRIX_OBSERVATION,
+            recovery_matrix_child("phase-matrix-writer", RECOVERY_MATRIX_WRITE_MODE),
+            recovery_matrix_child("phase-matrix-recovery", RECOVERY_MATRIX_READ_MODE),
+        )
+        .unwrap_or_else(|error| panic!("workload-saga phase recovery failed: {error}"));
+
+    assert_eq!(result.boundary(), RECOVERY_MATRIX_BOUNDARY);
+    assert_eq!(result.observation(), RECOVERY_MATRIX_OBSERVATION);
+    assert_eq!(
+        result.crash_diagnostic().cleanup(),
+        "killed-at-boundary-and-reaped"
+    );
+    assert_eq!(result.crash_diagnostic().successful(), Some(false));
+    assert_eq!(result.recovery_diagnostic().successful(), Some(true));
+    assert_eq!(result.crash_diagnostic().role(), "phase-matrix-writer");
+    assert_eq!(result.recovery_diagnostic().role(), "phase-matrix-recovery");
+
+    let writer_pid = process_id(result.crash_diagnostic().stderr(), "writer");
+    let recovery_pid = process_id(result.recovery_diagnostic().stderr(), "recovery");
+    assert_ne!(
+        writer_pid, recovery_pid,
+        "recovery must execute in a distinct process"
+    );
+}
+
+#[test]
+#[ignore = "spawned only by the workload-saga phase recovery parent"]
+fn workload_saga_recovery_matrix_child() {
+    let mode =
+        std::env::var(RECOVERY_MATRIX_MODE_ENV).expect("recovery matrix child mode should be set");
+    match mode.as_str() {
+        RECOVERY_MATRIX_WRITE_MODE => run_crash_cut_child(|context| {
+            eprintln!("{RECOVERY_MATRIX_PID_PREFIX} writer {}", std::process::id());
+            let runtime = recovery_matrix_runtime()?;
+            let engine = Arc::new(
+                nimbus_engine::Engine::new(context.state_root())
+                    .map_err(|error| format!("writer Engine open failed: {error}"))?,
+            );
+            let store = EngineWorkloadSagaStore::new(engine);
+            runtime.block_on(persist_process_matrix(&store))?;
+            context.reach_boundary(RECOVERY_MATRIX_BOUNDARY)
+        })
+        .unwrap_or_else(|error| panic!("phase matrix writer failed: {error}")),
+        RECOVERY_MATRIX_READ_MODE => run_crash_recovery_child(|context| {
+            eprintln!(
+                "{RECOVERY_MATRIX_PID_PREFIX} recovery {}",
+                std::process::id()
+            );
+            let runtime = recovery_matrix_runtime()?;
+            runtime.block_on(recover_process_matrix(context.state_root()))
+        })
+        .unwrap_or_else(|error| panic!("phase matrix recovery failed: {error}")),
+        unknown => panic!("unknown recovery matrix child mode {unknown:?}"),
+    }
+}
+
+fn recovery_matrix_runtime() -> Result<tokio::runtime::Runtime, String> {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .map_err(|error| format!("recovery matrix runtime failed: {error}"))
+}
+
+async fn persist_process_matrix(store: &EngineWorkloadSagaStore) -> Result<(), String> {
+    let histories = process_matrix_histories();
+    if histories.len() != PROCESS_MATRIX_EXPECTATIONS.len() {
+        return Err(format!(
+            "writer matrix cardinality mismatch: {} histories for {} expectations",
+            histories.len(),
+            PROCESS_MATRIX_EXPECTATIONS.len()
+        ));
+    }
+
+    for (history, expectation) in histories.iter().zip(PROCESS_MATRIX_EXPECTATIONS) {
+        let latest = history
+            .last()
+            .ok_or_else(|| format!("empty history for {}", expectation.label))?;
+        if latest.key() != &process_matrix_key(expectation.label)
+            || latest.phase() != expectation.phase
+        {
+            return Err(format!(
+                "writer fixture mismatch for {}: key={} phase={:?}",
+                expectation.label,
+                latest.key().workload_id().as_str(),
+                latest.phase()
+            ));
+        }
+        for (index, record) in history.iter().enumerate() {
+            let expected = index
+                .checked_sub(1)
+                .map_or(WorkloadSagaExpected::Missing, |previous| {
+                    WorkloadSagaExpected::Revision(history[previous].revision())
+                });
+            let commit = store
+                .compare_and_swap(expected, record.clone())
+                .await
+                .map_err(|error| {
+                    format!(
+                        "writer failed to persist {} {:?}: {error}",
+                        expectation.label,
+                        record.phase()
+                    )
+                })?;
+            if commit != WorkloadSagaCommit::Applied {
+                return Err(format!(
+                    "writer did not newly persist {} {:?}: {commit:?}",
+                    expectation.label,
+                    record.phase()
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn recover_process_matrix(root: &Path) -> Result<String, String> {
+    let engine = Arc::new(
+        nimbus_engine::Engine::new(root)
+            .map_err(|error| format!("recovery Engine open failed: {error}"))?,
+    );
+    let store: Arc<dyn WorkloadSagaStore> = Arc::new(EngineWorkloadSagaStore::new(engine));
+    let coordinator = WorkloadSagaCoordinator::new(store);
+    let mut digest = Sha256::new();
+
+    for expectation in PROCESS_MATRIX_EXPECTATIONS {
+        let key = process_matrix_key(expectation.label);
+        let record = coordinator
+            .load(&key)
+            .await
+            .map_err(|error| format!("recovery load failed for {}: {error}", expectation.label))?
+            .ok_or_else(|| format!("recovery omitted {}", expectation.label))?;
+        if record.phase() != expectation.phase {
+            return Err(format!(
+                "recovery phase mismatch for {}: expected {:?}, observed {:?}",
+                expectation.label,
+                expectation.phase,
+                record.phase()
+            ));
+        }
+
+        let decision = WorkloadSagaDecision::for_record(&record)
+            .map_err(|error| format!("decision failed for {}: {error}", expectation.label))?;
+        let action = recovery_action_label(decision.action());
+        if decision.key() != record.key()
+            || decision.saga_id() != record.saga_id()
+            || decision.revision() != record.revision()
+            || decision.active_generation() != record.active_intent().generation()
+            || decision.target_phase() != expectation.target
+            || action != expectation.action
+        {
+            return Err(format!(
+                "recovery decision mismatch for {}: target={:?} action={action}",
+                expectation.label,
+                decision.target_phase()
+            ));
+        }
+        if let WorkloadSagaAction::InspectCleanup {
+            retained_references,
+            inspections,
+            ..
+        } = decision.action()
+            && (retained_references.is_empty() || inspections.len() != retained_references.len())
+        {
+            return Err(format!(
+                "cleanup decision failed to retain every reference for {}",
+                expectation.label
+            ));
+        }
+
+        digest.update(
+            format!(
+                "{}|{}|{}|{}|{}|{}|{}|{:?}\n",
+                expectation.label,
+                decision.key().tenant_id().as_str(),
+                decision.key().workload_id().as_str(),
+                decision.saga_id().as_str(),
+                decision.revision().as_u64(),
+                decision.active_generation().as_u64(),
+                decision.target_phase().recovery_order(),
+                decision.action(),
+            )
+            .as_bytes(),
+        );
+    }
+
+    Ok(format!(
+        "matrix-{}-{:x}",
+        PROCESS_MATRIX_EXPECTATIONS.len(),
+        digest.finalize()
+    ))
+}
+
+fn recovery_action_label(action: &WorkloadSagaAction) -> &'static str {
+    match action {
+        WorkloadSagaAction::ReserveNetwork { .. } => "reserve-network",
+        WorkloadSagaAction::PrepareWorkload { .. } => "prepare-workload",
+        WorkloadSagaAction::AttachNetwork { .. } => "attach-network",
+        WorkloadSagaAction::ActivateWorkload { .. } => "activate-workload",
+        WorkloadSagaAction::InspectReadiness { .. } => "inspect-readiness",
+        WorkloadSagaAction::Publish { .. } => "publish",
+        WorkloadSagaAction::ObservePublication { .. } => "observe-publication",
+        WorkloadSagaAction::WithdrawPublication { .. } => "withdraw-publication",
+        WorkloadSagaAction::DrainWorkload { .. } => "drain-workload",
+        WorkloadSagaAction::StopWorkload { .. } => "stop-workload",
+        WorkloadSagaAction::DetachNetwork { .. } => "detach-network",
+        WorkloadSagaAction::ReleaseNetwork { .. } => "release-network",
+        WorkloadSagaAction::RecordTerminalEvidence { .. } => "record-terminal-evidence",
+        WorkloadSagaAction::PromoteSuccessor { intent }
+            if intent.desired_state() == DesiredWorkloadState::Running =>
+        {
+            "promote-successor-running"
+        }
+        WorkloadSagaAction::PromoteSuccessor { .. } => "promote-successor-stopped",
+        WorkloadSagaAction::InspectCleanup { .. } => "inspect-cleanup",
+        WorkloadSagaAction::AdvanceWithoutEffect => "advance-without-effect",
+        WorkloadSagaAction::Quiescent => "quiescent",
+    }
+}
+
+fn recovery_matrix_child(role: &str, mode: &str) -> ProcessRoleSpec {
+    ProcessRoleSpec::new(
+        role,
+        std::env::current_exe().expect("current test executable should resolve"),
+    )
+    .arg("--exact")
+    .arg(RECOVERY_MATRIX_CHILD_TEST)
+    .arg("--ignored")
+    .arg("--nocapture")
+    .env(RECOVERY_MATRIX_MODE_ENV, mode)
+}
+
+fn process_id(stderr: &str, role: &str) -> u32 {
+    stderr
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix(&format!("{RECOVERY_MATRIX_PID_PREFIX} {role} "))
+                .and_then(|value| value.parse().ok())
+        })
+        .unwrap_or_else(|| panic!("missing {role} child process id in stderr:\n{stderr}"))
 }
 
 #[tokio::test]

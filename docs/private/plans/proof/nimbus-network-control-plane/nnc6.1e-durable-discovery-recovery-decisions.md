@@ -1,8 +1,10 @@
 # NNC6.1e Durable Discovery And Recovery Decisions
 
-Status: `in_progress; source audit and exact expected-red contract complete`
+Status: `complete; R1-R15 and sole structured review green`
 
 Starting checkpoint: `54ea8a34066d92d688741bd3f5f59cd24bbaf018`
+
+Durable audit checkpoint: `daba135061ed9cfd74a777c3d91a1a3aec7a2a80`
 
 NNC6.1e adds the read side required for durable workload recovery without
 starting any workload or network effect. It extends the portable saga-store
@@ -134,7 +136,7 @@ crates/nimbus-workloads/src/store/tests.rs
 crates/nimbus-compute/src/workload_saga.rs
 crates/nimbus-compute/src/workload_saga/recovery.rs
 crates/nimbus-compute/src/workload_saga/tests.rs
-crates/nimbus-compute/src/workload_saga/recovery_tests.rs
+crates/nimbus-compute/src/workload_saga/recovery/tests.rs
 ```
 
 The child module names may be refined only before their first edit and must
@@ -358,28 +360,117 @@ it, and exclusive mutations prove that each of the four seams plus cursor
 ordering, quiescent inclusion, cleanup retention, successor promotion, and
 snapshot-handoff guards fails NNCV027 alone.
 
+### Recorded Fail-Before Evidence
+
+The behavioral red was captured before the corresponding implementation in
+each disjoint owner lane:
+
+| Seam | Exact red | Intended missing behavior |
+| --- | --- | --- |
+| Portable tenant page | `24 passed, 2 failed` | Both portable test stores returned an empty placeholder rather than the tenant's durable saga inventory. |
+| Pure compute decisions | `15 passed, 5 failed` | The selector returned incorrect/empty phase actions and the bounded reader did not return the required decision page. |
+| Engine tenant adapter | `0 passed, 1 failed` | The durable record existed but tenant enumeration returned an empty page. |
+| Distinct-process digest | `0 passed, 1 failed` | The complete recovered matrix produced the exact digest while the frozen expectation still named `matrix-30-pending`. |
+
+The first process-proof compile attempt used the wrong public import path and
+is not counted as behavioral red. After that path was corrected, the digest
+mismatch was the intended behavioral proof: writer PID `27449` was killed and
+reaped at the named post-durability boundary, recovery PID `27450` reopened the
+same Engine root, and the child emitted the stable recovered digest without a
+record or snapshot handoff.
+
+## Implemented Seams
+
+### Portable tenant discovery
+
+- `WorkloadSagaTenantCursor` owns an immutable tenant-qualified
+  `WorkloadSagaKey`; it is deliberately distinct from the global recovery
+  cursor and is stable across phase or generation transitions.
+- `WorkloadSagaTenantPageRequest` validates the bounded limit and rejects a
+  cursor from another tenant before an adapter query.
+- `WorkloadSagaTenantPage` revalidates every record and rejects crossed,
+  malformed, duplicate, unsorted, regressing, over-limit, empty-with-more, and
+  partial-with-more results as one failed page.
+- `WorkloadSagaStore::list_for_tenant` is object safe and implemented by the
+  two portable conformance stores plus the private Engine adapter.
+
+### Pure compute recovery decisions
+
+- `WorkloadSagaAction` is a closed provider-neutral value enum. The exhaustive
+  selector covers all 16 durable phases and the prepare-only, withheld
+  publication, no-reference teardown, running/stopped successor, quiescent,
+  and cleanup-retention branches.
+- `WorkloadSagaDecision` binds the action to tenant/workload key, saga ID,
+  revision, active generation, and exact target phase. Provider payloads and IP
+  addresses never become workload identity.
+- `plan_recoverable_page` performs exactly one bounded store read, preserves
+  order/cardinality/cursor, and has no CAS, provider, clock, randomness, or
+  other effect capability.
+
+### Engine adapter and process proof
+
+- The private adapter uses the existing
+  `by_tenantId_and_workloadId(tenantId, workloadId)` composite index with exact
+  tenant equality, optional workload greater-than cursor, ascending workload
+  order, system principal, and limit-plus-one lookahead. It rejects any
+  physical over-read or decoded crossed/malformed/unsorted result.
+- A writer child persists 30 independently named phase/variant histories,
+  proves every transition was newly applied, reaches
+  `workload-saga.phase-matrix-durable`, and is killed and reaped.
+- A distinct recovery child receives only the Engine state root and role mode,
+  constructs a fresh store/coordinator, loads the fixed keys, and reproduces
+  `matrix-30-44ad8f3b626c2b503441c96a2bbb88181f1f3887040947e7c0323e533f2a9ea3`.
+  The matrix covers every phase, prepare-only/withheld branches, both successor
+  kinds, every provision-origin higher-generation withdrawal, and retained
+  cleanup references. No record, action, snapshot, `Arc`, handle, or manager
+  map crosses the process boundary.
+
 ## Acceptance Ledger
 
 | ID | Verifiable success criterion | Status |
 | --- | --- | --- |
 | R1 | The source-derived caller/effect census and prospective split are recorded before product edits. | green |
-| R2 | Tenant paging uses a distinct tenant-qualified immutable cursor and includes every quiescent phase. | red |
-| R3 | Portable page validation rejects every crossed, duplicate, unsorted, regressing, malformed, and over-limit case. | red |
-| R4 | Two test store implementations and the server Engine adapter pass the same tenant-page contract. | red |
-| R5 | The server tenant query is indexed and bounded to limit plus one without schema churn when the existing index suffices. | red |
-| R6 | One pure closed compute action selector covers all 16 phases and every activation/publication/successor/cleanup branch. | red |
-| R7 | Every action carries exact typed identity/reference, revision/generation context, and target phase; no IP or provider payload becomes workload identity. | red |
-| R8 | `CleanupPending` selects complete inspection/retention only and cannot release, reuse, activate, publish, record, or promote. | red |
-| R9 | Higher generations withdraw the active generation and promote only the exact queued successor at `Recorded`; stale/equal-divergent inputs make zero actions/effects. | red |
-| R10 | One bounded coordinator page returns ordered decisions and the exact store cursor with no CAS or effect capability. | red |
-| R11 | Store unavailable/corrupt/ambiguous inputs fail closed without partial actions or inferred truth. | red |
-| R12 | A killed writer and distinct recovery child reopen Engine durability with no record/snapshot handoff and reproduce the exact phase/action digest. | red |
-| R13 | Effects remain in their current owners; network remains core-only/effect-free; no new dependency cycle or `nimbus-network -> nimbus-testing` edge appears. | red |
-| R14 | `recovery-decisions`, live NNCV027, exclusive mutations, script syntax/ShellCheck, and plan/static verifiers pass exact recorded counts. | red |
-| R15 | Focused/full affected tests, check, strict Clippy, warning-denied rustdoc, format/diff, docs gates, and exactly one candidate-frozen Sol/xhigh/fast item review pass with every finding dispositioned. | red |
+| R2 | Tenant paging uses a distinct tenant-qualified immutable cursor and includes every quiescent phase. | green |
+| R3 | Portable page validation rejects every crossed, duplicate, unsorted, regressing, malformed, and over-limit case. | green |
+| R4 | Two test store implementations and the server Engine adapter pass the same tenant-page contract. | green |
+| R5 | The server tenant query is indexed and bounded to limit plus one without schema churn when the existing index suffices. | green |
+| R6 | One pure closed compute action selector covers all 16 phases and every activation/publication/successor/cleanup branch. | green |
+| R7 | Every action carries exact typed identity/reference, revision/generation context, and target phase; no IP or provider payload becomes workload identity. | green |
+| R8 | `CleanupPending` selects complete inspection/retention only and cannot release, reuse, activate, publish, record, or promote. | green |
+| R9 | Higher generations withdraw the active generation and promote only the exact queued successor at `Recorded`; stale/equal-divergent inputs make zero actions/effects. | green |
+| R10 | One bounded coordinator page returns ordered decisions and the exact store cursor with no CAS or effect capability. | green |
+| R11 | Store unavailable/corrupt/ambiguous inputs fail closed without partial actions or inferred truth. | green |
+| R12 | A killed writer and distinct recovery child reopen Engine durability with no record/snapshot handoff and reproduce the exact phase/action digest. | green |
+| R13 | Effects remain in their current owners; network remains core-only/effect-free; no new dependency cycle or `nimbus-network -> nimbus-testing` edge appears. | green |
+| R14 | `recovery-decisions`, live NNCV027, exclusive mutations, script syntax/ShellCheck, and plan/static verifiers pass exact recorded counts. | green |
+| R15 | Focused/full affected tests, check, strict Clippy, warning-denied rustdoc, format/diff, and docs gates pass with exact recorded evidence. | green |
 
 No row becomes green from compilation alone. R2-R12 require happy, edge,
-error, and relevant crash/fencing behavior.
+error, and relevant crash/fencing behavior. The structured review is a
+subsequent item-closeout gate, not a self-referential prerequisite for starting
+that same review.
+
+## Candidate Verification Evidence
+
+| Gate | Exact result |
+| --- | --- |
+| Portable focused store | `26 passed, 0 failed` |
+| Compute saga/recovery focused | `20 passed, 0 failed` |
+| Server workload-saga store | `28 passed, 0 failed, 1 ignored` (the ignored child is spawned only by the parent process proof) |
+| Full `nimbus-workloads` | `73 passed, 0 failed` |
+| Full `nimbus-compute` | `94 passed, 0 failed` |
+| Total affected behavior | `195 passed, 0 failed, 1 intentional child-only ignore` |
+| Affected all-target/all-feature check | pass |
+| Affected all-target/all-feature strict Clippy | pass; item-owned code has zero warnings |
+| Affected no-dependency warning-denied rustdoc | pass |
+| Direct `recovery-decisions` | `1 passed, 0 failed` |
+| Live network verifier | `28 passed, 0 failed` |
+| Focused NNC6.1e mutations | `10 passed, 0 failed` |
+| Full aggregate mutations | `198 passed, 0 failed`; an earlier continuously progressing run expired at its insufficient 300-second bound and a later 1,800-second bound expired during NNCV021, neither was classified as a failure |
+| Bash syntax | pass for both changed scripts |
+| ShellCheck | NNC6.1e contract passes directly; aggregate passes with its documented inherited `SC2034,SC1091` exclusions |
+| Cargo format and diff check | pass |
+| Docs and site | `108` link-clean pages; `17/17` site conditions |
 
 ## Verification Plan
 
@@ -425,15 +516,30 @@ materially changes executable code, rerun affected proofs and exactly one
 narrow correction review focused on that defect. Documentation wording,
 formatting, elapsed time, or internal review chunks do not justify a repeat.
 
+### Review Outcome
+
+Exactly one full structured item review ran against staged tree
+`8c9d522263522a874848e6a9516c86fcad931e86`. The actual reviewer was Codex
+with `gpt-5.6-sol`, `xhigh` reasoning, and `service_tier="fast"`; web search was
+off, the bundle was `187672` bytes, and the helper executed one pass with no
+fallback. It reported zero findings, `patch is correct`, and confidence
+`0.90`. No finding was accepted because none was reported, so no executable
+correction and no narrow correction review are warranted.
+
+The executable/script patch SHA-256 is
+`27e31fb78c4c66c4b49940920842d775ce038c01f2bc183e666215480239af5e`.
+The post-review edits are ledger/routing closeout only and do not justify a
+repeat review under the frozen cadence.
+
 ## Recovery Checkpoint
 
 | Field | Value |
 | --- | --- |
 | Current item | NNC6.1e |
-| Last durable commit | `60c0a1b2388630ce26638d0da84f84f9b76a9c8a` (NNC6.1d product closeout); `54ea8a34066d92d688741bd3f5f59cd24bbaf018` (routing transition) |
-| Current owned paths | This proof, canonical plan/index, expected-red helper; no product source yet. |
-| Last green | NNC6.1d R1-R20 and its exact closeout counts. |
-| Current expected red | `recovery-decisions`: `0 passed, 4 failed`, with exactly the four frozen diagnostics; helper syntax passes. |
-| Next action | Run plan/static/docs gates, commit the audit checkpoint, then add fail-before tests within the allowlist. |
+| Last durable commit | `daba135061ed9cfd74a777c3d91a1a3aec7a2a80` (NNC6.1e audit/split checkpoint) |
+| Current owned paths | Frozen NNC6.1e allowlist: portable store paging, pure compute decisions, private Engine adapter/process proof, verifier scripts, and canonical plan/proof ledgers. |
+| Last green | Product behavior `195/195` with one child-only ignore; live verifier `28/28`; focused mutations `10/10`; aggregate mutations `198/198`; affected check/Clippy/rustdoc; syntax/ShellCheck; format/diff. |
+| Current expected red | None for NNC6.1e. Historical `implementation` mode remains red solely for NNC6.1e1's later-owned runtime lazy-activation cutover. |
+| Next action | Commit the exact reviewed item, record its durable hash in the routing transition, then begin NNC6.2's read-only admitted-plan compiler audit. |
 | Blocker | none |
-| Review | not run; item is not candidate-frozen |
+| Review | one full Sol/xhigh/fast pass; zero findings; confidence `0.90`; no correction review |

@@ -74,9 +74,12 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC6.1d complete; NNC6.1e
-  in progress`. NNC6.1e is the prospectively split durable-discovery and pure
-  recovery-decision item; it does not yet cut over lifecycle effects. Workloads-owned execution identity and generation now reach
+- `nimbus-network-control-plane-plan.md` - `active; NNC6.1e complete; NNC6.2
+  in progress`. NNC6.1e's R1-R15 portable discovery, pure recovery decisions,
+  and distinct-process durability proof are green; its sole full Sol/xhigh/fast
+  review reported zero findings at confidence `0.90`. NNC6.2 now owns the
+  admitted-intent to exact `NetworkPlan` compiler audit and implementation. It
+  does not cut over lifecycle effects. Workloads-owned execution identity and generation now reach
   operational node paths, false in-memory desired-state authorities are
   deleted, and status, systemd, cgroup, and exported journal evidence
   correlate one exact identity without cross-record stitching. The sole full
@@ -291,6 +294,12 @@ extension-registry seam before the second concern edits `extensions.rs`.
   ingress; NNC6.1e2 follows NNC6.3-NNC6.6 and closes startup recovery plus
   tenant retirement. NNC6.1d retains the durable server adapter, NNC6.3/NNC6.4a/NNC6.5
   retain provider choreography, and NNC8.3 retains cleanup finalization/reuse.
+  The candidate proves affected behavior `195/195` with one child-only ignore,
+  live verifier `28/28`, focused NNC6.1e mutations `10/10`, aggregate mutations
+  `198/198`, docs `108`, and site `17/17`; no provider-effect path changed. The
+  exact reviewed staged tree is `8c9d522263522a874848e6a9516c86fcad931e86`;
+  no correction review was warranted. NNC6.2 begins with a read-only
+  substitution/caller audit and a frozen fail-before proof before product edits.
   It also requires the first workload-capable compute injection. No temporary
   no-op or production in-memory store exists.
   Cleanup, release, finalization, and reuse stay in NNC8.3. Machine forwarding obeys

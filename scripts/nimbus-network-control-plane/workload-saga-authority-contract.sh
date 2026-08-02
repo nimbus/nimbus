@@ -11,6 +11,12 @@ PLAN="docs/private/plans/nimbus-network-control-plane-plan.md"
 PROOF="docs/private/plans/proof/nimbus-network-control-plane/nnc6.1b-workload-saga-vocabulary-store-durable-home.md"
 DURABLE_PROOF="docs/private/plans/proof/nimbus-network-control-plane/nnc6.1d-durable-workload-saga-store.md"
 RECOVERY_PROOF="docs/private/plans/proof/nimbus-network-control-plane/nnc6.1e-durable-discovery-recovery-decisions.md"
+RECOVERY_STORE_SOURCE="${NIMBUS_NETWORK_VERIFY_RECOVERY_STORE_SOURCE:-crates/nimbus-workloads/src/store.rs}"
+RECOVERY_COMPUTE_ROOT_SOURCE="${NIMBUS_NETWORK_VERIFY_RECOVERY_COMPUTE_ROOT_SOURCE:-crates/nimbus-compute/src/workload_saga.rs}"
+RECOVERY_COMPUTE_SOURCE="${NIMBUS_NETWORK_VERIFY_RECOVERY_COMPUTE_SOURCE:-crates/nimbus-compute/src/workload_saga/recovery.rs}"
+RECOVERY_TENANT_ADAPTER_SOURCE="${NIMBUS_NETWORK_VERIFY_RECOVERY_TENANT_ADAPTER_SOURCE:-crates/nimbus-server/src/workload_saga_store/tenant_enumeration.rs}"
+RECOVERY_PROCESS_SOURCE="${NIMBUS_NETWORK_VERIFY_RECOVERY_PROCESS_SOURCE:-crates/nimbus-server/src/workload_saga_store/tests/composition.rs}"
+RECOVERY_MATRIX_SOURCE="${NIMBUS_NETWORK_VERIFY_RECOVERY_MATRIX_SOURCE:-crates/nimbus-server/src/workload_saga_store/tests/recovery.rs}"
 ERRORS=()
 
 add_error() {
@@ -474,31 +480,98 @@ verify_durable_store_contract() {
 verify_recovery_decision_contract() {
   require_file "${RECOVERY_PROOF}"
 
-  if ! rg -q 'pub struct WorkloadSagaTenantCursor' \
-      crates/nimbus-workloads/src/store.rs ||
-    ! rg -q 'pub struct WorkloadSagaTenantPageRequest' \
-      crates/nimbus-workloads/src/store.rs ||
-    ! rg -q 'pub struct WorkloadSagaTenantPage' \
-      crates/nimbus-workloads/src/store.rs ||
-    ! rg -q 'fn list_for_tenant' crates/nimbus-workloads/src/store.rs; then
+  if ! rg -q 'pub struct WorkloadSagaTenantCursor' "${RECOVERY_STORE_SOURCE}" ||
+    ! rg -q 'key: WorkloadSagaKey' "${RECOVERY_STORE_SOURCE}" ||
+    ! rg -q 'pub struct WorkloadSagaTenantPageRequest' "${RECOVERY_STORE_SOURCE}" ||
+    ! rg -q 'validate_for_tenant' "${RECOVERY_STORE_SOURCE}" ||
+    ! rg -q 'pub struct WorkloadSagaTenantPage' "${RECOVERY_STORE_SOURCE}" ||
+    ! rg -q 'crossed-tenant record' "${RECOVERY_STORE_SOURCE}" ||
+    ! rg -q -F 'workload saga tenant page is duplicated, identity-unsorted, or cursor-regressing' \
+      "${RECOVERY_STORE_SOURCE}" ||
+    ! rg -q 'claiming more records must fill its requested limit' "${RECOVERY_STORE_SOURCE}" ||
+    ! rg -q 'fn list_for_tenant' "${RECOVERY_STORE_SOURCE}"; then
     add_error "missing tenant-scoped workload-saga paging"
   fi
 
-  if ! rg -q 'pub enum WorkloadSagaAction' \
-    crates/nimbus-compute/src/workload_saga.rs \
-    crates/nimbus-compute/src/workload_saga 2>/dev/null; then
+  if ! rg -q -F 'pub enum WorkloadSagaAction' "${RECOVERY_COMPUTE_SOURCE}" ||
+    ! rg -q -F 'pub fn for_record' "${RECOVERY_COMPUTE_SOURCE}" ||
+    ! rg -q -F 'WorkloadSagaPhase::IntentCommitted' "${RECOVERY_COMPUTE_SOURCE}" ||
+    ! rg -q -F 'WorkloadSagaPhase::CleanupPending' "${RECOVERY_COMPUTE_SOURCE}" ||
+    ! rg -q -F 'PromoteSuccessor' "${RECOVERY_COMPUTE_SOURCE}" ||
+    ! rg -q -F 'retained_references: detail.retained_references().clone()' \
+      "${RECOVERY_COMPUTE_SOURCE}"; then
     add_error "missing pure compute workload-saga action selector"
   fi
 
-  if ! rg -q 'plan_recoverable_page' \
-    crates/nimbus-compute/src/workload_saga.rs \
-    crates/nimbus-compute/src/workload_saga 2>/dev/null; then
+  phase_count="$(
+    rg -o 'WorkloadSagaPhase::[A-Za-z]+' "${RECOVERY_COMPUTE_SOURCE}" |
+      sed 's/.*:://' |
+      sort -u |
+      wc -l |
+      tr -d ' '
+  )"
+  if [ "${phase_count}" -ne 16 ]; then
+    add_error "compute workload-saga action phase count: expected 16, observed ${phase_count}"
+  fi
+
+  for action in \
+    ReserveNetwork PrepareWorkload AttachNetwork ActivateWorkload \
+    InspectReadiness Publish ObservePublication WithdrawPublication \
+    DrainWorkload StopWorkload DetachNetwork ReleaseNetwork \
+    RecordTerminalEvidence PromoteSuccessor InspectCleanup \
+    AdvanceWithoutEffect Quiescent; do
+    if ! rg -q "WorkloadSagaAction::${action}" "${RECOVERY_COMPUTE_SOURCE}"; then
+      add_error "compute workload-saga action matrix omits ${action}"
+    fi
+  done
+
+  if ! rg -q -F 'plan_recoverable_page' "${RECOVERY_COMPUTE_SOURCE}" ||
+    ! rg -q -F 'self.store.list_recoverable(request).await?' "${RECOVERY_COMPUTE_SOURCE}" ||
+    ! rg -q -F 'WorkloadSagaDecision::for_record(record)?' "${RECOVERY_COMPUTE_SOURCE}"; then
     add_error "missing bounded compute recovery decision reader"
   fi
 
+  if rg -q 'compare_and_swap|commit_loaded|TcpListener|UdpSocket|SandboxBackend|ServiceManager|LocalNetworkManager|std::time|rand::' \
+      "${RECOVERY_COMPUTE_SOURCE}"; then
+    add_error "pure compute recovery decision seam gained mutation, effect, or ambient-input authority"
+  fi
+
+  if ! rg -q -F 'request.validate_for_tenant' "${RECOVERY_TENANT_ADAPTER_SOURCE}" ||
+    ! rg -q -F 'field: "tenantId"' "${RECOVERY_TENANT_ADAPTER_SOURCE}" ||
+    ! rg -q -F 'field: "workloadId"' "${RECOVERY_TENANT_ADAPTER_SOURCE}" ||
+    ! rg -q -F 'FilterOp::Gt' "${RECOVERY_TENANT_ADAPTER_SOURCE}" ||
+    ! rg -q -F 'OrderDirection::Asc' "${RECOVERY_TENANT_ADAPTER_SOURCE}" ||
+    ! rg -q -F 'saturating_add(1)' "${RECOVERY_TENANT_ADAPTER_SOURCE}" ||
+    ! rg -q -F 'PrincipalContext::system' "${RECOVERY_TENANT_ADAPTER_SOURCE}"; then
+    add_error "server tenant-scoped saga query is not exact, indexed, and limit-plus-one bounded"
+  fi
+
   if ! rg -q 'fresh_process_reopens_engine_and_plans_every_workload_saga_phase_without_snapshot_handoff' \
-    crates/nimbus-server/src/workload_saga_store/tests 2>/dev/null; then
+      "${RECOVERY_PROCESS_SOURCE}" ||
+    ! rg -q 'SubprocessCrashCutHarness' "${RECOVERY_PROCESS_SOURCE}" ||
+    ! rg -q 'run_crash_cut_child' "${RECOVERY_PROCESS_SOURCE}" ||
+    ! rg -q 'run_crash_recovery_child' "${RECOVERY_PROCESS_SOURCE}" ||
+    ! rg -q 'killed-at-boundary-and-reaped' "${RECOVERY_PROCESS_SOURCE}" ||
+    ! rg -q 'assert_ne!' "${RECOVERY_PROCESS_SOURCE}" ||
+    ! rg -q 'matrix-30-[0-9a-f]{64}' "${RECOVERY_PROCESS_SOURCE}" ||
+    ! rg -q 'PROCESS_MATRIX_EXPECTATIONS' "${RECOVERY_MATRIX_SOURCE}" ||
+    ! rg -q 'process-successor-from-observed' "${RECOVERY_MATRIX_SOURCE}" ||
+    ! rg -q 'process-cleanup-network' "${RECOVERY_MATRIX_SOURCE}" ||
+    ! rg -q 'process-recorded-quiescent' "${RECOVERY_MATRIX_SOURCE}"; then
     add_error "missing distinct-process all-phase recovery proof"
+  fi
+
+  if rg -q 'recordSnapshot|snapshotHandoff|serializedRecord|RECORD_SNAPSHOT|SNAPSHOT_HANDOFF_PAYLOAD|SERIALIZED_RECORD' \
+      "${RECOVERY_PROCESS_SOURCE}"; then
+    add_error "distinct-process recovery proof contains a record or snapshot handoff"
+  fi
+
+  if ! rg -q 'pub use recovery::' "${RECOVERY_COMPUTE_ROOT_SOURCE}"; then
+    add_error "compute recovery decisions are not exported from their canonical owner module"
+  fi
+
+  if rg -q '^nimbus-testing[[:space:]]*=' crates/nimbus-network/Cargo.toml; then
+    add_error "nimbus-network must not depend on nimbus-testing"
   fi
 }
 

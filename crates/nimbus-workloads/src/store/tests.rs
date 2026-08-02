@@ -3,16 +3,20 @@ use std::sync::{Mutex, RwLock};
 
 use futures::executor::block_on;
 use nimbus_core::{TenantId, WorkloadId};
-use nimbus_network::{NetworkPlanDigest, NetworkPlanId, NetworkResourceGeneration};
+use nimbus_network::{
+    NetworkPlanDigest, NetworkPlanId, NetworkResourceGeneration, PublishedEndpointId,
+};
 use nimbus_tenant::TenantIsolationDecisionId;
 
 use super::*;
 use crate::{
     DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity, TenantWorkloadUid,
     WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadDesiredDigest,
-    WorkloadEffectReferences, WorkloadGeneration, WorkloadNetworkIntent,
-    WorkloadOwnerEvidenceDigest, WorkloadOwnerObservation, WorkloadPhaseDetail,
-    WorkloadPublicationIntent, WorkloadSagaIntent, WorkloadSagaPhase, WorkloadSagaTransitionId,
+    WorkloadEffectReferences, WorkloadGeneration, WorkloadInspectionRequirement,
+    WorkloadNetworkIntent, WorkloadOwnerEvidenceDigest, WorkloadOwnerObservation,
+    WorkloadPhaseDetail, WorkloadPublicationIntent, WorkloadPublicationReference,
+    WorkloadSagaIntent, WorkloadSagaPhase, WorkloadSagaTransitionId,
+    WorkloadTerminalEvidenceDigest, WorkloadTerminalObservation,
 };
 
 fn require_object_safe_store(_: &dyn WorkloadSagaStore) {}
@@ -119,6 +123,21 @@ impl WorkloadSagaStore for MutexMapStore {
             build_recovery_page(&request, state.records.values().cloned().collect())
         })
     }
+
+    fn list_for_tenant<'a>(
+        &'a self,
+        tenant_id: &'a TenantId,
+        request: WorkloadSagaTenantPageRequest,
+    ) -> WorkloadSagaFuture<'a, WorkloadSagaTenantPage> {
+        Box::pin(async move {
+            let state = self.state.lock().expect("mutex map store lock");
+            build_tenant_page(
+                tenant_id,
+                &request,
+                state.records.values().cloned().collect(),
+            )
+        })
+    }
 }
 
 #[derive(Default)]
@@ -202,6 +221,17 @@ impl WorkloadSagaStore for RwLockAppendLogStore {
             build_recovery_page(&request, state.latest_records())
         })
     }
+
+    fn list_for_tenant<'a>(
+        &'a self,
+        tenant_id: &'a TenantId,
+        request: WorkloadSagaTenantPageRequest,
+    ) -> WorkloadSagaFuture<'a, WorkloadSagaTenantPage> {
+        Box::pin(async move {
+            let state = self.state.read().expect("append log store read lock");
+            build_tenant_page(tenant_id, &request, state.latest_records())
+        })
+    }
 }
 
 trait StoreConformance: WorkloadSagaStore + Default {
@@ -210,6 +240,8 @@ trait StoreConformance: WorkloadSagaStore + Default {
         transition_id: WorkloadSagaTransitionId,
         divergent_record: WorkloadSagaRecord,
     );
+
+    fn inject_latest(&self, record: WorkloadSagaRecord);
 }
 
 impl StoreConformance for MutexMapStore {
@@ -224,6 +256,14 @@ impl StoreConformance for MutexMapStore {
             .transition_claims
             .insert(transition_id, divergent_record);
     }
+
+    fn inject_latest(&self, record: WorkloadSagaRecord) {
+        self.state
+            .lock()
+            .expect("mutex map store lock")
+            .records
+            .insert(record.key().clone(), record);
+    }
 }
 
 impl StoreConformance for RwLockAppendLogStore {
@@ -237,6 +277,14 @@ impl StoreConformance for RwLockAppendLogStore {
             .expect("append log store write lock")
             .transition_claims
             .push((transition_id, divergent_record));
+    }
+
+    fn inject_latest(&self, record: WorkloadSagaRecord) {
+        self.state
+            .write()
+            .expect("append log store write lock")
+            .revisions
+            .push(record);
     }
 }
 
@@ -302,6 +350,23 @@ fn build_recovery_page(
     let has_more = records.len() > usize::from(request.limit());
     records.truncate(usize::from(request.limit()));
     WorkloadSagaPage::new(request, records, has_more)
+}
+
+fn build_tenant_page(
+    tenant_id: &TenantId,
+    request: &WorkloadSagaTenantPageRequest,
+    mut records: Vec<WorkloadSagaRecord>,
+) -> Result<WorkloadSagaTenantPage, WorkloadSagaStoreError> {
+    request.validate_for_tenant(tenant_id)?;
+    records.retain(|record| record.key().tenant_id() == tenant_id);
+    records.sort_by(|left, right| left.key().cmp(right.key()));
+    if let Some(after) = request.after() {
+        records.retain(|record| record.key() > after.order_key());
+    }
+    records.truncate(usize::from(request.limit()).saturating_add(1));
+    let has_more = records.len() > usize::from(request.limit());
+    records.truncate(usize::from(request.limit()));
+    WorkloadSagaTenantPage::new(tenant_id, request, records, has_more)
 }
 
 #[test]
@@ -422,6 +487,89 @@ fn assert_store_contract<S: StoreConformance>() {
     );
 
     assert_recovery_paging_contract::<S>();
+    assert_tenant_paging_contract::<S>();
+}
+
+fn assert_tenant_paging_contract<S: StoreConformance>() {
+    let store = S::default();
+    let tenant_id = TenantId::new("tenant-inventory").unwrap();
+    let mut expected = crate::WORKLOAD_SAGA_RECOVERY_ORDER
+        .into_iter()
+        .map(|phase| tenant_phase_record(&tenant_id, phase))
+        .collect::<Vec<_>>();
+    let prepare_only = prepare_only_attached_record_for_key(workload_key_for_tenant(
+        &tenant_id,
+        "phase-03-prepare-only",
+    ));
+    assert!(!prepare_only.requires_recovery());
+    expected.push(prepare_only);
+    expected.sort_by(|left, right| left.key().cmp(right.key()));
+    for record in &expected {
+        store.inject_latest(record.clone());
+    }
+    store.inject_latest(tenant_phase_record(
+        &TenantId::new("tenant-outsider").unwrap(),
+        WorkloadSagaPhase::Observed,
+    ));
+
+    let crossed = WorkloadSagaTenantPageRequest::new(
+        Some(WorkloadSagaTenantCursor::for_record(&tenant_phase_record(
+            &TenantId::new("tenant-crossed-cursor").unwrap(),
+            WorkloadSagaPhase::Observed,
+        ))),
+        3,
+    )
+    .unwrap();
+    assert!(matches!(
+        block_on(store.list_for_tenant(&tenant_id, crossed)),
+        Err(WorkloadSagaStoreError::InvalidTransition(
+            WorkloadSagaError::InvalidEvidence(_)
+        ))
+    ));
+
+    let mut after = None;
+    let mut observed = Vec::new();
+    loop {
+        let request = WorkloadSagaTenantPageRequest::new(after, 3).unwrap();
+        let page = block_on(store.list_for_tenant(&tenant_id, request)).unwrap();
+        assert_eq!(page.tenant_id(), &tenant_id);
+        assert!(
+            page.records()
+                .iter()
+                .all(|record| record.key().tenant_id() == &tenant_id)
+        );
+        observed.extend_from_slice(page.records());
+        let Some(next) = page.next_cursor().cloned() else {
+            break;
+        };
+        assert_eq!(
+            next,
+            WorkloadSagaTenantCursor::for_record(
+                page.records()
+                    .last()
+                    .expect("non-terminal page is nonempty")
+            )
+        );
+        after = Some(next);
+    }
+
+    assert_eq!(observed, expected);
+    assert_eq!(
+        observed
+            .iter()
+            .map(WorkloadSagaRecord::phase)
+            .collect::<BTreeSet<_>>(),
+        crate::WORKLOAD_SAGA_RECOVERY_ORDER
+            .into_iter()
+            .collect::<BTreeSet<_>>(),
+        "tenant inventory must include every active, quiescent, cleanup, and terminal phase"
+    );
+    assert!(
+        observed
+            .windows(2)
+            .all(|pair| pair[0].key() < pair[1].key()),
+        "tenant paging must be strictly increasing without duplicates"
+    );
 }
 
 fn assert_conflict(
@@ -536,6 +684,137 @@ fn page_request_accepts_limits_one_and_256() {
     let request = WorkloadSagaPageRequest::new(None, MAX_WORKLOAD_SAGA_PAGE_SIZE).unwrap();
     assert_eq!(minimum.limit(), 1);
     assert_eq!(request.limit(), MAX_WORKLOAD_SAGA_PAGE_SIZE);
+}
+
+#[test]
+fn tenant_page_request_rejects_zero_and_oversize_limits() {
+    for limit in [0, MAX_WORKLOAD_SAGA_PAGE_SIZE + 1] {
+        assert!(matches!(
+            WorkloadSagaTenantPageRequest::new(None, limit),
+            Err(WorkloadSagaStoreError::InvalidTransition(
+                WorkloadSagaError::InvalidCounter(_)
+            ))
+        ));
+    }
+}
+
+#[test]
+fn tenant_page_request_rejects_cross_tenant_cursor() {
+    let record = running_record_for_key(
+        workload_key_for_tenant(&TenantId::new("tenant-a").unwrap(), "cursor"),
+        WorkloadActivationIntent::ActivateWhenAttached,
+    );
+    let request =
+        WorkloadSagaTenantPageRequest::new(Some(WorkloadSagaTenantCursor::for_record(&record)), 1)
+            .unwrap();
+    assert!(matches!(
+        request.validate_for_tenant(&TenantId::new("tenant-b").unwrap()),
+        Err(WorkloadSagaStoreError::InvalidTransition(
+            WorkloadSagaError::InvalidEvidence(_)
+        ))
+    ));
+}
+
+#[test]
+fn tenant_page_rejects_cross_tenant_record() {
+    let tenant_id = TenantId::new("tenant-a").unwrap();
+    let request = WorkloadSagaTenantPageRequest::new(None, 1).unwrap();
+    let crossed = running_record_for_key(
+        workload_key_for_tenant(&TenantId::new("tenant-b").unwrap(), "crossed"),
+        WorkloadActivationIntent::ActivateWhenAttached,
+    );
+    assert!(matches!(
+        WorkloadSagaTenantPage::new(&tenant_id, &request, vec![crossed], false),
+        Err(WorkloadSagaStoreError::InvalidTransition(
+            WorkloadSagaError::InvalidEvidence(_)
+        ))
+    ));
+}
+
+#[test]
+fn tenant_page_rejects_duplicate_unsorted_and_regressing_records() {
+    let tenant_id = TenantId::new("tenant-order").unwrap();
+    let first = running_record_for_key(
+        workload_key_for_tenant(&tenant_id, "a"),
+        WorkloadActivationIntent::ActivateWhenAttached,
+    );
+    let second = running_record_for_key(
+        workload_key_for_tenant(&tenant_id, "b"),
+        WorkloadActivationIntent::ActivateWhenAttached,
+    );
+    let request = WorkloadSagaTenantPageRequest::new(None, 2).unwrap();
+    for records in [
+        vec![first.clone(), first.clone()],
+        vec![second.clone(), first.clone()],
+    ] {
+        assert!(matches!(
+            WorkloadSagaTenantPage::new(&tenant_id, &request, records, false),
+            Err(WorkloadSagaStoreError::InvalidTransition(
+                WorkloadSagaError::InvalidEvidence(_)
+            ))
+        ));
+    }
+
+    let after = WorkloadSagaTenantCursor::for_record(&first);
+    let regressing = WorkloadSagaTenantPageRequest::new(Some(after), 1).unwrap();
+    assert!(matches!(
+        WorkloadSagaTenantPage::new(&tenant_id, &regressing, vec![first], false),
+        Err(WorkloadSagaStoreError::InvalidTransition(
+            WorkloadSagaError::InvalidEvidence(_)
+        ))
+    ));
+}
+
+#[test]
+fn tenant_page_rejects_over_limit_and_empty_with_more() {
+    let tenant_id = TenantId::new("tenant-shape").unwrap();
+    let request = WorkloadSagaTenantPageRequest::new(None, 1).unwrap();
+    let first = running_record_for_key(
+        workload_key_for_tenant(&tenant_id, "a"),
+        WorkloadActivationIntent::ActivateWhenAttached,
+    );
+    let second = running_record_for_key(
+        workload_key_for_tenant(&tenant_id, "b"),
+        WorkloadActivationIntent::ActivateWhenAttached,
+    );
+    assert!(matches!(
+        WorkloadSagaTenantPage::new(&tenant_id, &request, vec![first, second], false),
+        Err(WorkloadSagaStoreError::InvalidTransition(
+            WorkloadSagaError::InvalidEvidence(_)
+        ))
+    ));
+    assert!(matches!(
+        WorkloadSagaTenantPage::new(&tenant_id, &request, Vec::new(), true),
+        Err(WorkloadSagaStoreError::InvalidTransition(
+            WorkloadSagaError::InvalidEvidence(_)
+        ))
+    ));
+
+    let partial_request = WorkloadSagaTenantPageRequest::new(None, 2).unwrap();
+    let partial = running_record_for_key(
+        workload_key_for_tenant(&tenant_id, "partial"),
+        WorkloadActivationIntent::ActivateWhenAttached,
+    );
+    assert!(matches!(
+        WorkloadSagaTenantPage::new(&tenant_id, &partial_request, vec![partial], true),
+        Err(WorkloadSagaStoreError::InvalidTransition(
+            WorkloadSagaError::InvalidEvidence(_)
+        ))
+    ));
+}
+
+#[test]
+fn tenant_cursor_is_stable_across_phase_changes() {
+    let tenant_id = TenantId::new("tenant-stable").unwrap();
+    let initial = running_record_for_key(
+        workload_key_for_tenant(&tenant_id, "stable"),
+        WorkloadActivationIntent::ActivateWhenAttached,
+    );
+    let reserved = advance_to(&initial, WorkloadSagaPhase::NetworkReserved);
+    assert_eq!(
+        WorkloadSagaTenantCursor::for_record(&initial),
+        WorkloadSagaTenantCursor::for_record(&reserved)
+    );
 }
 
 #[test]
@@ -731,6 +1010,252 @@ fn page_without_more_has_no_next_cursor() {
     assert_eq!(page.next_cursor(), None);
 }
 
+fn tenant_phase_record(tenant_id: &TenantId, phase: WorkloadSagaPhase) -> WorkloadSagaRecord {
+    let label = format!("phase-{:02}", phase.recovery_order());
+    let key = workload_key_for_tenant(tenant_id, &label);
+    if phase.is_provision() {
+        return provision_phase_record(key, phase);
+    }
+
+    let observed = provision_phase_record(key, WorkloadSagaPhase::Observed);
+    if phase == WorkloadSagaPhase::CleanupPending {
+        let references = observed.phase_detail().references();
+        let detail = WorkloadPhaseDetail::cleanup_pending(
+            observed.active_intent(),
+            observed.phase(),
+            references.clone(),
+            cleanup_inspections(observed.phase(), &references),
+        )
+        .unwrap();
+        return observed
+            .advance(WorkloadSagaPhase::CleanupPending, detail, None)
+            .unwrap();
+    }
+
+    let mut record = begin_teardown(&observed);
+    if phase == WorkloadSagaPhase::WithdrawalCommitted {
+        return record;
+    }
+    for target in [
+        WorkloadSagaPhase::Withdrawn,
+        WorkloadSagaPhase::Drained,
+        WorkloadSagaPhase::WorkloadStopped,
+        WorkloadSagaPhase::NetworkDetached,
+        WorkloadSagaPhase::NetworkReleased,
+    ] {
+        record = advance_teardown(&record, target);
+        if phase == target {
+            return record;
+        }
+    }
+    assert_eq!(phase, WorkloadSagaPhase::Recorded);
+    let WorkloadPhaseDetail::Teardown(detail) = record.phase_detail() else {
+        panic!("network-released fixture must carry teardown detail");
+    };
+    let terminal_digest =
+        WorkloadTerminalEvidenceDigest::for_observations(detail.terminal_observations()).unwrap();
+    record
+        .advance(
+            WorkloadSagaPhase::Recorded,
+            WorkloadPhaseDetail::recorded(record.active_intent(), terminal_digest),
+            None,
+        )
+        .unwrap()
+}
+
+fn provision_phase_record(key: WorkloadSagaKey, phase: WorkloadSagaPhase) -> WorkloadSagaRecord {
+    let saga_intent = intent_with_publication(
+        &key,
+        DesiredWorkloadState::Running,
+        WorkloadActivationIntent::ActivateWhenAttached,
+        WorkloadPublicationIntent::PublishWhenReady,
+    );
+    let publication =
+        WorkloadPublicationReference::new([PublishedEndpointId::generate()], &saga_intent).unwrap();
+    let mut record = WorkloadSagaRecord::new(key, saga_intent).unwrap();
+    if phase == WorkloadSagaPhase::IntentCommitted {
+        return record;
+    }
+    for target in [
+        WorkloadSagaPhase::NetworkReserved,
+        WorkloadSagaPhase::WorkloadPrepared,
+        WorkloadSagaPhase::NetworkAttached,
+        WorkloadSagaPhase::WorkloadActivated,
+        WorkloadSagaPhase::Ready,
+        WorkloadSagaPhase::Published,
+        WorkloadSagaPhase::Observed,
+    ] {
+        record = advance_provision(&record, target, &publication);
+        if phase == target {
+            return record;
+        }
+    }
+    panic!("{phase:?} is not a provision fixture phase")
+}
+
+fn advance_provision(
+    record: &WorkloadSagaRecord,
+    phase: WorkloadSagaPhase,
+    publication: &WorkloadPublicationReference,
+) -> WorkloadSagaRecord {
+    let publication = matches!(
+        phase,
+        WorkloadSagaPhase::Ready | WorkloadSagaPhase::Published | WorkloadSagaPhase::Observed
+    )
+    .then_some(publication.clone());
+    let references =
+        WorkloadEffectReferences::provision(record.active_intent(), publication).unwrap();
+    let network = references.network().unwrap().clone();
+    let execution = references.execution().unwrap().clone();
+    let rank = match phase {
+        WorkloadSagaPhase::NetworkReserved => 1,
+        WorkloadSagaPhase::WorkloadPrepared => 2,
+        WorkloadSagaPhase::NetworkAttached => 3,
+        WorkloadSagaPhase::WorkloadActivated => 4,
+        WorkloadSagaPhase::Ready => 5,
+        WorkloadSagaPhase::Published | WorkloadSagaPhase::Observed => 6,
+        _ => panic!("{phase:?} is not an advanced provision phase"),
+    };
+    let mut observations = Vec::new();
+    if rank >= 1 {
+        observations.push(WorkloadOwnerObservation::NetworkReserved {
+            reference: network.clone(),
+            evidence: WorkloadOwnerEvidenceDigest::sha256("network-reserved"),
+        });
+    }
+    if rank >= 2 {
+        observations.push(WorkloadOwnerObservation::ExecutionPrepared {
+            reference: execution.clone(),
+            evidence: WorkloadOwnerEvidenceDigest::sha256("execution-prepared"),
+        });
+    }
+    if rank >= 3 {
+        observations.push(WorkloadOwnerObservation::NetworkAttached {
+            reference: network.clone(),
+            evidence: WorkloadOwnerEvidenceDigest::sha256("network-attached"),
+        });
+    }
+    if rank >= 4 {
+        observations.push(WorkloadOwnerObservation::ExecutionActivated {
+            reference: execution.clone(),
+            evidence: WorkloadOwnerEvidenceDigest::sha256("execution-activated"),
+        });
+    }
+    if rank >= 5 {
+        observations.push(WorkloadOwnerObservation::Ready {
+            network,
+            execution,
+            evidence: WorkloadOwnerEvidenceDigest::sha256("ready"),
+        });
+    }
+    if rank >= 6 {
+        observations.push(WorkloadOwnerObservation::PublicationPresent {
+            reference: references.publication().unwrap().clone(),
+            evidence: WorkloadOwnerEvidenceDigest::sha256("publication-present"),
+        });
+    }
+    let detail =
+        WorkloadPhaseDetail::provision(phase, record.active_intent(), references, observations)
+            .unwrap();
+    record.advance(phase, detail, None).unwrap()
+}
+
+fn begin_teardown(record: &WorkloadSagaRecord) -> WorkloadSagaRecord {
+    let references = record.phase_detail().references();
+    let detail = WorkloadPhaseDetail::teardown(
+        WorkloadSagaPhase::WithdrawalCommitted,
+        record.active_intent(),
+        record.phase(),
+        references,
+        Vec::new(),
+    )
+    .unwrap();
+    record
+        .advance(WorkloadSagaPhase::WithdrawalCommitted, detail, None)
+        .unwrap()
+}
+
+fn advance_teardown(record: &WorkloadSagaRecord, phase: WorkloadSagaPhase) -> WorkloadSagaRecord {
+    let WorkloadPhaseDetail::Teardown(current) = record.phase_detail() else {
+        panic!("teardown fixture must carry teardown detail");
+    };
+    let references = current.retained_references().clone();
+    let rank = match phase {
+        WorkloadSagaPhase::Withdrawn => 1,
+        WorkloadSagaPhase::Drained => 2,
+        WorkloadSagaPhase::WorkloadStopped => 3,
+        WorkloadSagaPhase::NetworkDetached => 4,
+        WorkloadSagaPhase::NetworkReleased => 5,
+        _ => panic!("{phase:?} is not an advanced teardown phase"),
+    };
+    let mut observations = Vec::new();
+    if rank >= 1 {
+        observations.push(WorkloadTerminalObservation::PublicationAbsent {
+            reference: references.publication().unwrap().clone(),
+            evidence: WorkloadOwnerEvidenceDigest::sha256("publication-absent"),
+        });
+    }
+    if rank >= 2 {
+        observations.push(WorkloadTerminalObservation::ExecutionDrained {
+            reference: references.execution().unwrap().clone(),
+            evidence: WorkloadOwnerEvidenceDigest::sha256("execution-drained"),
+        });
+    }
+    if rank >= 3 {
+        observations.push(WorkloadTerminalObservation::ExecutionStopped {
+            reference: references.execution().unwrap().clone(),
+            evidence: WorkloadOwnerEvidenceDigest::sha256("execution-stopped"),
+        });
+    }
+    if rank >= 4 {
+        observations.push(WorkloadTerminalObservation::NetworkDetached {
+            reference: references.network().unwrap().clone(),
+            evidence: WorkloadOwnerEvidenceDigest::sha256("network-detached"),
+        });
+    }
+    if rank >= 5 {
+        observations.push(WorkloadTerminalObservation::NetworkReleased {
+            reference: references.network().unwrap().clone(),
+            evidence: WorkloadOwnerEvidenceDigest::sha256("network-released"),
+        });
+    }
+    let detail = WorkloadPhaseDetail::teardown(
+        phase,
+        record.active_intent(),
+        current.origin(),
+        references,
+        observations,
+    )
+    .unwrap();
+    record.advance(phase, detail, None).unwrap()
+}
+
+fn cleanup_inspections(
+    phase: WorkloadSagaPhase,
+    references: &WorkloadEffectReferences,
+) -> Vec<WorkloadInspectionRequirement> {
+    let mut inspections = Vec::new();
+    if let Some(reference) = references.network() {
+        inspections.push(WorkloadInspectionRequirement::Network {
+            reference: reference.clone(),
+            expected_phase: phase,
+        });
+    }
+    if let Some(reference) = references.execution() {
+        inspections.push(WorkloadInspectionRequirement::Execution {
+            reference: reference.clone(),
+            expected_phase: phase,
+        });
+    }
+    if let Some(reference) = references.publication() {
+        inspections.push(WorkloadInspectionRequirement::Publication {
+            reference: reference.clone(),
+            expected_phase: phase,
+        });
+    }
+    inspections
+}
+
 fn running_record(label: &str, activation: WorkloadActivationIntent) -> WorkloadSagaRecord {
     let key = workload_key(label);
     running_record_for_key(key, activation)
@@ -761,15 +1286,23 @@ fn stopped_record(label: &str) -> WorkloadSagaRecord {
 }
 
 fn prepare_only_attached_record(label: &str) -> WorkloadSagaRecord {
-    let initial = running_record(label, WorkloadActivationIntent::PrepareOnly);
+    prepare_only_attached_record_for_key(workload_key(label))
+}
+
+fn prepare_only_attached_record_for_key(key: WorkloadSagaKey) -> WorkloadSagaRecord {
+    let initial = running_record_for_key(key, WorkloadActivationIntent::PrepareOnly);
     let reserved = advance_to(&initial, WorkloadSagaPhase::NetworkReserved);
     let prepared = advance_to(&reserved, WorkloadSagaPhase::WorkloadPrepared);
     advance_to(&prepared, WorkloadSagaPhase::NetworkAttached)
 }
 
 fn workload_key(label: &str) -> WorkloadSagaKey {
+    workload_key_for_tenant(&TenantId::new(format!("tenant-{label}")).unwrap(), label)
+}
+
+fn workload_key_for_tenant(tenant_id: &TenantId, label: &str) -> WorkloadSagaKey {
     WorkloadSagaKey::new(
-        TenantId::new(format!("tenant-{label}")).unwrap(),
+        tenant_id.clone(),
         WorkloadId::new(format!("workload-{label}")).unwrap(),
     )
 }
@@ -779,9 +1312,22 @@ fn intent(
     desired_state: DesiredWorkloadState,
     activation: WorkloadActivationIntent,
 ) -> WorkloadSagaIntent {
+    intent_with_publication(
+        key,
+        desired_state,
+        activation,
+        WorkloadPublicationIntent::Withheld,
+    )
+}
+
+fn intent_with_publication(
+    key: &WorkloadSagaKey,
+    desired_state: DesiredWorkloadState,
+    activation: WorkloadActivationIntent,
+    publication: WorkloadPublicationIntent,
+) -> WorkloadSagaIntent {
     let plan_id =
         NetworkPlanId::for_tenant_workload_plan(key.tenant_id(), key.workload_id().as_str());
-    let publication = WorkloadPublicationIntent::Withheld;
     WorkloadSagaIntent::new(
         DesiredWorkloadKind::Service,
         desired_state,

@@ -10,12 +10,13 @@ use nimbus_engine::Engine;
 use nimbus_workloads::{
     WorkloadSagaCommit, WorkloadSagaExpected, WorkloadSagaFuture, WorkloadSagaKey,
     WorkloadSagaPage, WorkloadSagaPageRequest, WorkloadSagaRecord, WorkloadSagaStore,
-    WorkloadSagaStoreError,
+    WorkloadSagaStoreError, WorkloadSagaTenantPage, WorkloadSagaTenantPageRequest,
 };
 
 mod codec;
 mod recovery;
 mod schema;
+mod tenant_enumeration;
 
 use self::codec::{decode_workload_saga_record, encode_workload_saga_record};
 use self::schema::{prepare_exact_schema, workload_saga_table, workload_saga_tenant};
@@ -78,6 +79,17 @@ impl WorkloadSagaStore for EngineWorkloadSagaStore {
         Box::pin(async move {
             self.prepare().await?;
             recovery::list_recoverable(&self.engine, request).await
+        })
+    }
+
+    fn list_for_tenant<'a>(
+        &'a self,
+        tenant_id: &'a nimbus_core::TenantId,
+        request: WorkloadSagaTenantPageRequest,
+    ) -> WorkloadSagaFuture<'a, WorkloadSagaTenantPage> {
+        Box::pin(async move {
+            self.prepare().await?;
+            tenant_enumeration::list_for_tenant(&self.engine, tenant_id, request).await
         })
     }
 }

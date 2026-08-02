@@ -810,6 +810,128 @@ verify_sovereignty_tripwire_contract() {
   fi
 }
 
+run_nnc61e_recovery_decision_self_tests() {
+  script="$1"
+  temporary="$2"
+  nnc61e_fail=0
+  nnc61e_mutations=(
+    missing-tenant-cursor
+    missing-cursor-ordering
+    missing-quiescent-matrix
+    missing-selector
+    missing-action-row
+    missing-cleanup-retention
+    missing-successor-promotion
+    missing-bounded-reader
+    missing-kill-reap-proof
+    snapshot-handoff
+  )
+
+  for mutation in "${nnc61e_mutations[@]}"; do
+    fixture="${temporary}/nnc61e-${mutation}"
+    mkdir -p "${fixture}"
+    cp crates/nimbus-workloads/src/store.rs "${fixture}/store.rs"
+    cp crates/nimbus-compute/src/workload_saga.rs "${fixture}/compute-root.rs"
+    cp crates/nimbus-compute/src/workload_saga/recovery.rs "${fixture}/compute.rs"
+    cp crates/nimbus-server/src/workload_saga_store/tenant_enumeration.rs \
+      "${fixture}/tenant-adapter.rs"
+    cp crates/nimbus-server/src/workload_saga_store/tests/composition.rs \
+      "${fixture}/process.rs"
+    cp crates/nimbus-server/src/workload_saga_store/tests/recovery.rs \
+      "${fixture}/matrix.rs"
+
+    if ! node - "${mutation}" "${fixture}" <<'NODE'
+const fs = require("fs");
+const [mutation, root] = process.argv.slice(2);
+
+function replaceOne(name, before, after) {
+  const path = `${root}/${name}`;
+  const source = fs.readFileSync(path, "utf8");
+  const index = source.indexOf(before);
+  if (index < 0) throw new Error(`${mutation}: missing mutation anchor ${before}`);
+  fs.writeFileSync(path, source.slice(0, index) + after + source.slice(index + before.length));
+}
+
+switch (mutation) {
+  case "missing-tenant-cursor":
+    replaceOne("store.rs", "pub struct WorkloadSagaTenantCursor", "pub struct MissingWorkloadSagaTenantCursor");
+    break;
+  case "missing-cursor-ordering":
+    replaceOne(
+      "store.rs",
+      "workload saga tenant page is duplicated, identity-unsorted, or cursor-regressing",
+      "workload saga tenant page ordering guard removed",
+    );
+    break;
+  case "missing-quiescent-matrix":
+    {
+      const path = `${root}/matrix.rs`;
+      const source = fs.readFileSync(path, "utf8");
+      if (!source.includes("process-recorded-quiescent")) {
+        throw new Error(`${mutation}: missing quiescent matrix anchor`);
+      }
+      fs.writeFileSync(path, source.replaceAll("process-recorded-quiescent", "process-recorded-omitted"));
+    }
+    break;
+  case "missing-selector":
+    replaceOne("compute.rs", "pub enum WorkloadSagaAction", "pub enum MissingWorkloadSagaAction");
+    break;
+  case "missing-action-row":
+    replaceOne("compute.rs", "WorkloadSagaAction::ObservePublication", "WorkloadSagaAction::OmittedPublicationObservation");
+    break;
+  case "missing-cleanup-retention":
+    replaceOne(
+      "compute.rs",
+      "retained_references: detail.retained_references().clone()",
+      "retained_references: WorkloadEffectReferences::default()",
+    );
+    break;
+  case "missing-successor-promotion":
+    replaceOne("compute.rs", "WorkloadSagaAction::PromoteSuccessor", "WorkloadSagaAction::OmittedSuccessorPromotion");
+    break;
+  case "missing-bounded-reader":
+    replaceOne("compute.rs", "plan_recoverable_page", "omitted_recoverable_page");
+    break;
+  case "missing-kill-reap-proof":
+    replaceOne("process.rs", "killed-at-boundary-and-reaped", "unbounded-child-cleanup");
+    break;
+  case "snapshot-handoff":
+    fs.appendFileSync(`${root}/process.rs`, "\nconst SNAPSHOT_HANDOFF_PAYLOAD: &[u8] = b\"forbidden\";\n");
+    break;
+  default:
+    throw new Error(`unknown NNC6.1e mutation ${mutation}`);
+}
+NODE
+    then
+      printf 'SELFTEST FAIL NNC6.1e mutation fixture %s could not be built\n' "${mutation}"
+      nnc61e_fail=$((nnc61e_fail + 1))
+      continue
+    fi
+
+    output="${temporary}/nnc61e-${mutation}.out"
+    if NIMBUS_NETWORK_VERIFY_SELF_TEST_CHILD=1 \
+      NIMBUS_NETWORK_VERIFY_RECOVERY_STORE_SOURCE="${fixture}/store.rs" \
+      NIMBUS_NETWORK_VERIFY_RECOVERY_COMPUTE_ROOT_SOURCE="${fixture}/compute-root.rs" \
+      NIMBUS_NETWORK_VERIFY_RECOVERY_COMPUTE_SOURCE="${fixture}/compute.rs" \
+      NIMBUS_NETWORK_VERIFY_RECOVERY_TENANT_ADAPTER_SOURCE="${fixture}/tenant-adapter.rs" \
+      NIMBUS_NETWORK_VERIFY_RECOVERY_PROCESS_SOURCE="${fixture}/process.rs" \
+      NIMBUS_NETWORK_VERIFY_RECOVERY_MATRIX_SOURCE="${fixture}/matrix.rs" \
+      "${script}" >"${output}" 2>&1; then
+      printf 'SELFTEST FAIL NNC6.1e mutation %s unexpectedly exited zero\n' "${mutation}"
+      nnc61e_fail=$((nnc61e_fail + 1))
+    elif ! grep -q '^FAIL NNCV027 durable-workload-saga-authority' "${output}" ||
+      grep -q '^PASS NNCV027 durable-workload-saga-authority' "${output}" ||
+      [ "$(grep -c '^FAIL NNCV' "${output}")" -ne 1 ]; then
+      printf 'SELFTEST FAIL NNC6.1e mutation %s did not fail exclusively as NNCV027\n' "${mutation}"
+      nnc61e_fail=$((nnc61e_fail + 1))
+    else
+      printf 'SELFTEST PASS NNC6.1e mutation %s fails closed as NNCV027\n' "${mutation}"
+    fi
+  done
+
+  return "${nnc61e_fail}"
+}
+
 run_self_test() {
   temporary="$(mktemp -d "${TMPDIR:-/tmp}/nimbus-network-verifier-self-test.XXXXXX")" || {
     printf 'SELFTEST FAIL unable to create temporary directory\n'
@@ -1612,37 +1734,64 @@ NODE
     self_fail=$((self_fail + 1))
   fi
 
+  run_nnc61e_recovery_decision_self_tests "${script}" "${temporary}" ||
+    self_fail=$((self_fail + $?))
+
   if [ "${self_fail}" -ne 0 ]; then
     printf 'self-test: %d failed\n' "${self_fail}"
     exit 1
   fi
-  printf 'self-test: 188 passed, 0 failed\n'
+  printf 'self-test: 198 passed, 0 failed\n'
 }
 
 if [ "${1:-}" = "--self-test" ]; then
   run_self_test
   exit 0
 fi
+if [ "${1:-}" = "--self-test-nnc61e" ]; then
+  temporary="$(mktemp -d "${TMPDIR:-/tmp}/nimbus-network-nnc61e-self-test.XXXXXX")" || {
+    printf 'NNC6.1e self-test: unable to create temporary directory\n'
+    exit 1
+  }
+  trap 'rm -rf "${temporary}"' EXIT
+  run_nnc61e_recovery_decision_self_tests \
+    "${REPO_ROOT}/scripts/verify-nimbus-network-control-plane.sh" "${temporary}"
+  status=$?
+  if [ "${status}" -eq 0 ]; then
+    printf 'NNC6.1e self-test: 10 passed, 0 failed\n'
+    exit 0
+  fi
+  printf 'NNC6.1e self-test: %d failed\n' "${status}"
+  exit 1
+fi
 if [ $# -ne 0 ]; then
-  printf 'usage: %s [--self-test]\n' "$0" >&2
+  printf 'usage: %s [--self-test|--self-test-nnc61e]\n' "$0" >&2
   exit 2
 fi
 
 verify_nnc61d_durable_workload_saga_store() {
   if [ ! -f "${NNC61D_WORKLOAD_SAGA_AUTHORITY_CONTRACT}" ]; then
-    fail "NNCV027" "durable-workload-saga-store" \
+    fail "NNCV027" "durable-workload-saga-authority" \
       "missing ${NNC61D_WORKLOAD_SAGA_AUTHORITY_CONTRACT}"
     return
   fi
 
-  error="$(
+  durable_error="$(
     bash "${NNC61D_WORKLOAD_SAGA_AUTHORITY_CONTRACT}" durable-store 2>&1
   )"
-  status=$?
-  if [ "${status}" -eq 0 ]; then
-    pass "NNCV027" "durable-workload-saga-store"
+  durable_status=$?
+  recovery_error="$(
+    bash "${NNC61D_WORKLOAD_SAGA_AUTHORITY_CONTRACT}" recovery-decisions 2>&1
+  )"
+  recovery_status=$?
+  if [ "${durable_status}" -eq 0 ] && [ "${recovery_status}" -eq 0 ]; then
+    pass "NNCV027" "durable-workload-saga-authority"
   else
-    fail "NNCV027" "durable-workload-saga-store" "${error}"
+    error="${durable_error}"
+    if [ -n "${recovery_error}" ]; then
+      error="${error}${error:+$'\n'}${recovery_error}"
+    fi
+    fail "NNCV027" "durable-workload-saga-authority" "${error}"
   fi
 }
 

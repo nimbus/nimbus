@@ -19,6 +19,7 @@ mod composition;
 mod durability;
 mod recovery;
 mod store;
+mod tenant_enumeration;
 
 fn engine(root: &tempfile::TempDir) -> Arc<Engine> {
     Arc::new(Engine::new(root.path()).expect("fixture Engine should open"))

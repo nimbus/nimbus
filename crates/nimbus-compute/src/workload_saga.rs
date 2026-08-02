@@ -7,6 +7,10 @@ use nimbus_workloads::{
     WorkloadSagaPageRequest, WorkloadSagaRecord, WorkloadSagaStore, WorkloadSagaStoreError,
 };
 
+mod recovery;
+
+pub use recovery::{WorkloadSagaAction, WorkloadSagaDecision, WorkloadSagaDecisionPage};
+
 /// Sole cross-domain writer of portable workload-saga transitions.
 pub struct WorkloadSagaCoordinator {
     store: Arc<dyn WorkloadSagaStore>,

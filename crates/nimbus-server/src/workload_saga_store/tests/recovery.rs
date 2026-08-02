@@ -15,6 +15,8 @@ use nimbus_workloads::{
     WorkloadSagaRecoveryCursor, WorkloadSagaStore, WorkloadTerminalEvidenceDigest,
     WorkloadTerminalObservation,
 };
+use sha2::{Digest, Sha256};
+use ulid::Ulid;
 
 use super::super::EngineWorkloadSagaStore;
 use super::engine;
@@ -22,6 +24,211 @@ use super::engine;
 struct RecoveryFixtures {
     recoverable: Vec<Vec<WorkloadSagaRecord>>,
     quiescent: Vec<Vec<WorkloadSagaRecord>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) struct ProcessMatrixExpectation {
+    pub(super) label: &'static str,
+    pub(super) phase: WorkloadSagaPhase,
+    pub(super) target: WorkloadSagaPhase,
+    pub(super) action: &'static str,
+}
+
+pub(super) const PROCESS_MATRIX_EXPECTATIONS: &[ProcessMatrixExpectation] = &[
+    process_case(
+        "process-intent",
+        WorkloadSagaPhase::IntentCommitted,
+        WorkloadSagaPhase::NetworkReserved,
+        "reserve-network",
+    ),
+    process_case(
+        "process-network-reserved",
+        WorkloadSagaPhase::NetworkReserved,
+        WorkloadSagaPhase::WorkloadPrepared,
+        "prepare-workload",
+    ),
+    process_case(
+        "process-workload-prepared",
+        WorkloadSagaPhase::WorkloadPrepared,
+        WorkloadSagaPhase::NetworkAttached,
+        "attach-network",
+    ),
+    process_case(
+        "process-network-attached",
+        WorkloadSagaPhase::NetworkAttached,
+        WorkloadSagaPhase::WorkloadActivated,
+        "activate-workload",
+    ),
+    process_case(
+        "process-workload-activated",
+        WorkloadSagaPhase::WorkloadActivated,
+        WorkloadSagaPhase::Ready,
+        "inspect-readiness",
+    ),
+    process_case(
+        "process-ready",
+        WorkloadSagaPhase::Ready,
+        WorkloadSagaPhase::Published,
+        "publish",
+    ),
+    process_case(
+        "process-published",
+        WorkloadSagaPhase::Published,
+        WorkloadSagaPhase::Observed,
+        "observe-publication",
+    ),
+    process_case(
+        "process-observed",
+        WorkloadSagaPhase::Observed,
+        WorkloadSagaPhase::Observed,
+        "quiescent",
+    ),
+    process_case(
+        "process-withdrawal",
+        WorkloadSagaPhase::WithdrawalCommitted,
+        WorkloadSagaPhase::Withdrawn,
+        "withdraw-publication",
+    ),
+    process_case(
+        "process-withdrawn",
+        WorkloadSagaPhase::Withdrawn,
+        WorkloadSagaPhase::Drained,
+        "drain-workload",
+    ),
+    process_case(
+        "process-drained",
+        WorkloadSagaPhase::Drained,
+        WorkloadSagaPhase::WorkloadStopped,
+        "stop-workload",
+    ),
+    process_case(
+        "process-workload-stopped",
+        WorkloadSagaPhase::WorkloadStopped,
+        WorkloadSagaPhase::NetworkDetached,
+        "detach-network",
+    ),
+    process_case(
+        "process-network-detached",
+        WorkloadSagaPhase::NetworkDetached,
+        WorkloadSagaPhase::NetworkReleased,
+        "release-network",
+    ),
+    process_case(
+        "process-network-released",
+        WorkloadSagaPhase::NetworkReleased,
+        WorkloadSagaPhase::Recorded,
+        "record-terminal-evidence",
+    ),
+    process_case(
+        "process-recorded-stopped-successor",
+        WorkloadSagaPhase::Recorded,
+        WorkloadSagaPhase::Recorded,
+        "promote-successor-stopped",
+    ),
+    process_case(
+        "process-cleanup-complete",
+        WorkloadSagaPhase::CleanupPending,
+        WorkloadSagaPhase::CleanupPending,
+        "inspect-cleanup",
+    ),
+    process_case(
+        "process-attached-prepare-only",
+        WorkloadSagaPhase::NetworkAttached,
+        WorkloadSagaPhase::NetworkAttached,
+        "quiescent",
+    ),
+    process_case(
+        "process-ready-withheld",
+        WorkloadSagaPhase::Ready,
+        WorkloadSagaPhase::Observed,
+        "advance-without-effect",
+    ),
+    process_case(
+        "process-recorded-quiescent",
+        WorkloadSagaPhase::Recorded,
+        WorkloadSagaPhase::Recorded,
+        "quiescent",
+    ),
+    process_case(
+        "process-recorded-running-successor",
+        WorkloadSagaPhase::Recorded,
+        WorkloadSagaPhase::IntentCommitted,
+        "promote-successor-running",
+    ),
+    process_case(
+        "process-cleanup-network",
+        WorkloadSagaPhase::CleanupPending,
+        WorkloadSagaPhase::CleanupPending,
+        "inspect-cleanup",
+    ),
+    process_case(
+        "process-cleanup-execution",
+        WorkloadSagaPhase::CleanupPending,
+        WorkloadSagaPhase::CleanupPending,
+        "inspect-cleanup",
+    ),
+    process_case(
+        "process-successor-from-intent",
+        WorkloadSagaPhase::WithdrawalCommitted,
+        WorkloadSagaPhase::Withdrawn,
+        "advance-without-effect",
+    ),
+    process_case(
+        "process-successor-from-network-reserved",
+        WorkloadSagaPhase::WithdrawalCommitted,
+        WorkloadSagaPhase::Withdrawn,
+        "advance-without-effect",
+    ),
+    process_case(
+        "process-successor-from-workload-prepared",
+        WorkloadSagaPhase::WithdrawalCommitted,
+        WorkloadSagaPhase::Withdrawn,
+        "advance-without-effect",
+    ),
+    process_case(
+        "process-successor-from-network-attached",
+        WorkloadSagaPhase::WithdrawalCommitted,
+        WorkloadSagaPhase::Withdrawn,
+        "advance-without-effect",
+    ),
+    process_case(
+        "process-successor-from-workload-activated",
+        WorkloadSagaPhase::WithdrawalCommitted,
+        WorkloadSagaPhase::Withdrawn,
+        "advance-without-effect",
+    ),
+    process_case(
+        "process-successor-from-ready",
+        WorkloadSagaPhase::WithdrawalCommitted,
+        WorkloadSagaPhase::Withdrawn,
+        "withdraw-publication",
+    ),
+    process_case(
+        "process-successor-from-published",
+        WorkloadSagaPhase::WithdrawalCommitted,
+        WorkloadSagaPhase::Withdrawn,
+        "withdraw-publication",
+    ),
+    process_case(
+        "process-successor-from-observed",
+        WorkloadSagaPhase::WithdrawalCommitted,
+        WorkloadSagaPhase::Withdrawn,
+        "withdraw-publication",
+    ),
+];
+
+const fn process_case(
+    label: &'static str,
+    phase: WorkloadSagaPhase,
+    target: WorkloadSagaPhase,
+    action: &'static str,
+) -> ProcessMatrixExpectation {
+    ProcessMatrixExpectation {
+        label,
+        phase,
+        target,
+        action,
+    }
 }
 
 #[test]
@@ -325,7 +532,7 @@ fn provision_history(
     );
     let publication_reference =
         (publication == WorkloadPublicationIntent::PublishWhenReady).then(|| {
-            WorkloadPublicationReference::new([PublishedEndpointId::generate()], &intent)
+            WorkloadPublicationReference::new([publication_endpoint_id(label)], &intent)
                 .expect("fixture publication reference is valid")
         });
     let mut history =
@@ -471,6 +678,13 @@ fn provision_observations(
 }
 
 fn teardown_history(label: &str) -> Vec<WorkloadSagaRecord> {
+    teardown_history_with_successor(label, DesiredWorkloadState::Stopped)
+}
+
+fn teardown_history_with_successor(
+    label: &str,
+    successor_state: DesiredWorkloadState,
+) -> Vec<WorkloadSagaRecord> {
     let mut history = provision_history(
         label,
         WorkloadActivationIntent::ActivateWhenAttached,
@@ -480,8 +694,12 @@ fn teardown_history(label: &str) -> Vec<WorkloadSagaRecord> {
     let successor = workload_intent(
         current.key(),
         2,
-        DesiredWorkloadState::Stopped,
-        WorkloadActivationIntent::PrepareOnly,
+        successor_state,
+        if successor_state == DesiredWorkloadState::Running {
+            WorkloadActivationIntent::ActivateWhenAttached
+        } else {
+            WorkloadActivationIntent::PrepareOnly
+        },
         WorkloadPublicationIntent::Withheld,
     );
     let WorkloadSagaIntentUpdate::Transition(withdrawal) = current
@@ -708,6 +926,18 @@ fn evidence(label: &str) -> WorkloadOwnerEvidenceDigest {
     WorkloadOwnerEvidenceDigest::sha256(label)
 }
 
+fn publication_endpoint_id(label: &str) -> PublishedEndpointId {
+    let digest = Sha256::digest(label.as_bytes());
+    let mut identity = [0_u8; 16];
+    identity.copy_from_slice(&digest[..16]);
+    PublishedEndpointId::try_from(format!(
+        "{}_{}",
+        PublishedEndpointId::PREFIX,
+        Ulid::from(u128::from_be_bytes(identity))
+    ))
+    .expect("derived fixture endpoint identity is valid")
+}
+
 fn history_through_phase(
     mut history: Vec<WorkloadSagaRecord>,
     phase: WorkloadSagaPhase,
@@ -717,6 +947,224 @@ fn history_through_phase(
         .position(|record| record.phase() == phase)
         .expect("fixture history contains requested phase");
     history.truncate(index + 1);
+    history
+}
+
+pub(super) fn process_matrix_histories() -> Vec<Vec<WorkloadSagaRecord>> {
+    let mut histories = Vec::with_capacity(PROCESS_MATRIX_EXPECTATIONS.len());
+    for (label, phase) in [
+        ("process-intent", WorkloadSagaPhase::IntentCommitted),
+        (
+            "process-network-reserved",
+            WorkloadSagaPhase::NetworkReserved,
+        ),
+        (
+            "process-workload-prepared",
+            WorkloadSagaPhase::WorkloadPrepared,
+        ),
+        (
+            "process-network-attached",
+            WorkloadSagaPhase::NetworkAttached,
+        ),
+        (
+            "process-workload-activated",
+            WorkloadSagaPhase::WorkloadActivated,
+        ),
+        ("process-ready", WorkloadSagaPhase::Ready),
+        ("process-published", WorkloadSagaPhase::Published),
+        ("process-observed", WorkloadSagaPhase::Observed),
+    ] {
+        histories.push(history_through_phase(
+            provision_history(
+                label,
+                WorkloadActivationIntent::ActivateWhenAttached,
+                WorkloadPublicationIntent::PublishWhenReady,
+            ),
+            phase,
+        ));
+    }
+
+    for (label, phase) in [
+        ("process-withdrawal", WorkloadSagaPhase::WithdrawalCommitted),
+        ("process-withdrawn", WorkloadSagaPhase::Withdrawn),
+        ("process-drained", WorkloadSagaPhase::Drained),
+        (
+            "process-workload-stopped",
+            WorkloadSagaPhase::WorkloadStopped,
+        ),
+        (
+            "process-network-detached",
+            WorkloadSagaPhase::NetworkDetached,
+        ),
+        (
+            "process-network-released",
+            WorkloadSagaPhase::NetworkReleased,
+        ),
+        (
+            "process-recorded-stopped-successor",
+            WorkloadSagaPhase::Recorded,
+        ),
+    ] {
+        histories.push(history_through_phase(teardown_history(label), phase));
+    }
+
+    histories.push(cleanup_pending_history("process-cleanup-complete"));
+    histories.push(provision_history(
+        "process-attached-prepare-only",
+        WorkloadActivationIntent::PrepareOnly,
+        WorkloadPublicationIntent::Withheld,
+    ));
+    histories.push(history_through_phase(
+        provision_history(
+            "process-ready-withheld",
+            WorkloadActivationIntent::ActivateWhenAttached,
+            WorkloadPublicationIntent::Withheld,
+        ),
+        WorkloadSagaPhase::Ready,
+    ));
+    histories.push(vec![stopped_record("process-recorded-quiescent")]);
+    histories.push(teardown_history_with_successor(
+        "process-recorded-running-successor",
+        DesiredWorkloadState::Running,
+    ));
+    histories.push(cleanup_pending_at_phase(
+        "process-cleanup-network",
+        WorkloadSagaPhase::NetworkReserved,
+    ));
+    histories.push(cleanup_pending_at_phase(
+        "process-cleanup-execution",
+        WorkloadSagaPhase::WorkloadPrepared,
+    ));
+
+    for (label, phase) in [
+        (
+            "process-successor-from-intent",
+            WorkloadSagaPhase::IntentCommitted,
+        ),
+        (
+            "process-successor-from-network-reserved",
+            WorkloadSagaPhase::NetworkReserved,
+        ),
+        (
+            "process-successor-from-workload-prepared",
+            WorkloadSagaPhase::WorkloadPrepared,
+        ),
+        (
+            "process-successor-from-network-attached",
+            WorkloadSagaPhase::NetworkAttached,
+        ),
+        (
+            "process-successor-from-workload-activated",
+            WorkloadSagaPhase::WorkloadActivated,
+        ),
+        ("process-successor-from-ready", WorkloadSagaPhase::Ready),
+        (
+            "process-successor-from-published",
+            WorkloadSagaPhase::Published,
+        ),
+        (
+            "process-successor-from-observed",
+            WorkloadSagaPhase::Observed,
+        ),
+    ] {
+        histories.push(successor_withdrawal_history(label, phase));
+    }
+
+    assert_eq!(histories.len(), PROCESS_MATRIX_EXPECTATIONS.len());
+    histories
+}
+
+pub(super) fn process_matrix_key(label: &str) -> nimbus_workloads::WorkloadSagaKey {
+    workload_key(label)
+}
+
+fn cleanup_pending_at_phase(
+    label: &str,
+    last_safe_phase: WorkloadSagaPhase,
+) -> Vec<WorkloadSagaRecord> {
+    let mut history = history_through_phase(
+        provision_history(
+            label,
+            WorkloadActivationIntent::ActivateWhenAttached,
+            WorkloadPublicationIntent::PublishWhenReady,
+        ),
+        last_safe_phase,
+    );
+    let current = latest(&history);
+    let references = current.phase_detail().references();
+    let inspections = [
+        references
+            .network()
+            .map(|reference| WorkloadInspectionRequirement::Network {
+                reference: reference.clone(),
+                expected_phase: last_safe_phase,
+            }),
+        references
+            .execution()
+            .map(|reference| WorkloadInspectionRequirement::Execution {
+                reference: reference.clone(),
+                expected_phase: last_safe_phase,
+            }),
+        references
+            .publication()
+            .map(|reference| WorkloadInspectionRequirement::Publication {
+                reference: reference.clone(),
+                expected_phase: last_safe_phase,
+            }),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let detail = WorkloadPhaseDetail::cleanup_pending(
+        current.active_intent(),
+        last_safe_phase,
+        references,
+        inspections,
+    )
+    .expect("process cleanup detail is valid");
+    history.push(
+        current
+            .advance(
+                WorkloadSagaPhase::CleanupPending,
+                detail,
+                Some(
+                    WorkloadFailureEvidence::new(
+                        "process_unknown_effect",
+                        evidence("process-unknown-effect"),
+                    )
+                    .expect("process failure evidence is valid"),
+                ),
+            )
+            .expect("process cleanup transition is valid"),
+    );
+    history
+}
+
+fn successor_withdrawal_history(label: &str, origin: WorkloadSagaPhase) -> Vec<WorkloadSagaRecord> {
+    let mut history = history_through_phase(
+        provision_history(
+            label,
+            WorkloadActivationIntent::ActivateWhenAttached,
+            WorkloadPublicationIntent::PublishWhenReady,
+        ),
+        origin,
+    );
+    let current = latest(&history);
+    let successor = workload_intent(
+        current.key(),
+        2,
+        DesiredWorkloadState::Running,
+        WorkloadActivationIntent::ActivateWhenAttached,
+        WorkloadPublicationIntent::Withheld,
+    );
+    let WorkloadSagaIntentUpdate::Transition(withdrawal) = current
+        .apply_intent(successor)
+        .expect("higher generation must begin active-generation withdrawal")
+    else {
+        panic!("higher generation must produce a withdrawal transition");
+    };
+    assert_eq!(withdrawal.phase(), WorkloadSagaPhase::WithdrawalCommitted);
+    history.push(*withdrawal);
     history
 }
 

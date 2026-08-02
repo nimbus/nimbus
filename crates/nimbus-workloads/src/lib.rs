@@ -32,7 +32,8 @@ pub use scheduling::{
 pub use store::{
     MAX_WORKLOAD_SAGA_PAGE_SIZE, WorkloadSagaCommit, WorkloadSagaExpected, WorkloadSagaFuture,
     WorkloadSagaPage, WorkloadSagaPageRequest, WorkloadSagaRecoveryCursor, WorkloadSagaStore,
-    WorkloadSagaStoreError,
+    WorkloadSagaStoreError, WorkloadSagaTenantCursor, WorkloadSagaTenantPage,
+    WorkloadSagaTenantPageRequest,
 };
 pub use tenant::{
     LocalEnforcementBinding, NodeIdentity, TenantCredentialProjectionBinding,
