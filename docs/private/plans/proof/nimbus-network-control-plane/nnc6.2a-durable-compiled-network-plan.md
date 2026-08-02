@@ -1,6 +1,6 @@
 # NNC6.2a Durable Compiled Network Plan
 
-Status: `complete; exact item commit next`
+Status: `complete`
 
 Starting checkpoint: `15544998c20410fec30d89eca187cdc8d6527609`
 
@@ -25,11 +25,11 @@ fresh-process reconstruction, and source allowlist before product edits.
 | Last completed item | `NNC6.2`, item commit `0977c17d93f3b39f18b33d504193c6eee6e9ba50`; routing commit `15544998c20410fec30d89eca187cdc8d6527609` |
 | Current item | `NNC6.2a` |
 | Current product state | One strict saga-v2 carrier retains the complete compiled plan, the physical store owns one required `compiledNetworkPlan`, phase evidence retains only derived tuples, and pure recovery returns the exact plan before any reservation effect. |
-| Current dirty state | The durable audit checkpoint is `6869dc578`; 25 allowlisted implementation/static/proof paths are dirty before final routing-ledger closeout. No manifest, provider/effect, or `nimbus-network` path changed. |
+| Current dirty state | Exact 25-path item commit `ba78303608a2a48f319e452fc585593c5140445e` is durable; only this post-commit routing checkpoint is dirty. No manifest, provider/effect, or `nimbus-network` path changed. |
 | Last green | Historical and review reds are corrected; focused process proof `3/3`; affected behavior `844/844` with 29 declared skips; check, strict Clippy, warning-denied rustdoc, format/diff, Bash/ShellCheck; docs 108 and site `17/17`; NNCV029 `23/23` plus `8/8`; aggregate live `30/30`; complete mutation arithmetic `188 + 10 + 7 + 8 = 213`. |
-| Next action | Commit the exact 25-path NNC6.2a item, then record its durable hash and route to NNC6.1e1 without another review. |
+| Next action | Route through the canonical NNC6.1e1 recovery row and begin its read-only caller/effect/store audit; do not reopen NNC6.2a review. |
 | Structured review | The one full item review ran as GPT-5.6 Sol/xhigh/fast in thread `019fc276-0ac0-7642-ad9b-f67e213e786d`. It accepted two P2 findings at overall confidence `0.95`: duplicate JSON keys bypassed strict saga-v2 wire rejection, and the pinned predecessor proof could pass when its commit was unavailable. The sole narrow Sol/xhigh/fast correction review confirmed both implementations and accepted one P2 test-only gap at confidence `0.96`: the matrix did not directly repeat a retained-content field. A duplicate `formatVersion` case now closes that proof at focused `1/1` and workloads `96/96`; no executable code changed and no third review is warranted. |
-| Candidate identity | Historical 24-path pre-review identity: staged tree `eab90273367fc257b32896e798d8d8ba2c5e56df`, complete staged patch SHA-256 `6c981aa5c6dc247095b5606b27a74321f3a9f35b279b8d2d20c1b721a1ef47a4`, executable/static-proof SHA-256 `b8671625f7786638a0c00ab3c82c774fa4c7fdf13aa65064bc0771d74b82cdc1`. Corrected pre-narrow tree `ad8732e3c89d7f96221dd2636668e8d72a474725`, patch SHA-256 `39b64d749907c03017cf48e20a7b8043f756f45022becf93cac4c76286ba3538`, and executable/static-proof SHA-256 `9599c5ef1fac2e5088bf0288e93b28207105874f29bd32bd1437ee716d738b83`. Final post-narrow pre-ledger tree `40a81f6abbd4b05a182cc7c9562d7a416eb2a202`, patch SHA-256 `31e7d7f12b49922860a96955cbc6bd4590fe09ff90ab9d9c8de62806bee9fb9b`, and executable/static-proof SHA-256 `b98590aacfa16931a808511d504726c1485a663a781a322aa33c7702cafe3993`. |
+| Candidate identity | Historical 24-path pre-review identity: staged tree `eab90273367fc257b32896e798d8d8ba2c5e56df`, complete staged patch SHA-256 `6c981aa5c6dc247095b5606b27a74321f3a9f35b279b8d2d20c1b721a1ef47a4`, executable/static-proof SHA-256 `b8671625f7786638a0c00ab3c82c774fa4c7fdf13aa65064bc0771d74b82cdc1`. Corrected pre-narrow tree `ad8732e3c89d7f96221dd2636668e8d72a474725`, patch SHA-256 `39b64d749907c03017cf48e20a7b8043f756f45022becf93cac4c76286ba3538`, and executable/static-proof SHA-256 `9599c5ef1fac2e5088bf0288e93b28207105874f29bd32bd1437ee716d738b83`. Final post-narrow pre-ledger tree `40a81f6abbd4b05a182cc7c9562d7a416eb2a202`, patch SHA-256 `31e7d7f12b49922860a96955cbc6bd4590fe09ff90ab9d9c8de62806bee9fb9b`, and executable/static-proof SHA-256 `b98590aacfa16931a808511d504726c1485a663a781a322aa33c7702cafe3993`. Exact committed tree `e1e1cb0d9035dcb1a34018da9dcc9fadd58f1b65`, commit `ba78303608a2a48f319e452fc585593c5140445e`. |
 | Blocker | None. |
 
 ## Audit Verdict
@@ -486,4 +486,4 @@ Never use Opus 4.8 for this review.
 | Candidate quality gates | `done` | A18 is green at affected `844/844` with 29 declared skips and every recorded affected quality/docs gate. |
 | Full structured review | `done` | The one Sol/xhigh/fast item review accepted two P2 defects at overall confidence `0.95`; both are corrected with exact fail-before and green proofs. |
 | Narrow correction review | `done` | The sole narrow Sol/xhigh/fast review confirmed the implementations and found one accepted P2 test-only gap at confidence `0.96`; the direct inner-content duplicate case is green. No third review ran or is warranted. |
-| Item commit | `todo` | One exact reviewed NNC6.2a commit; no push or PR. |
+| Item commit | `done` | Exact reviewed commit `ba78303608a2a48f319e452fc585593c5140445e`, tree `e1e1cb0d9035dcb1a34018da9dcc9fadd58f1b65`; no push or PR. |

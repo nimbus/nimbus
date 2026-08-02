@@ -102,7 +102,8 @@ extension-registry seam before the second concern edits `extensions.rs`.
   implementations and found one accepted P2 test-only gap: the duplicate-key
   matrix lacked a direct inner-content field. The added duplicate
   `formatVersion` case passes focused `1/1` and workloads `96/96`; no executable
-  code changed, and no third review ran or is warranted.
+  code changed, and no third review ran or is warranted. Exact NNC6.2a item
+  commit `ba7830360` is durable; NNC6.1e1 now owns the active recovery row.
   Network resource identity is retained
   tenant-qualified and rederived for every attachment, route,
   listener, endpoint, and lease; it never uses the mutable decision digest,
