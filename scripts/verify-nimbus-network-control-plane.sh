@@ -42,6 +42,7 @@ NNC61A_COMPUTE_NODE_COORDINATOR_CONTRACT="scripts/nimbus-network-control-plane/c
 NNC61D_WORKLOAD_SAGA_AUTHORITY_CONTRACT="scripts/nimbus-network-control-plane/workload-saga-authority-contract.sh"
 NNC62_WORKLOAD_NETWORK_PLAN_COMPILER_CONTRACT="scripts/nimbus-network-control-plane/workload-network-plan-compiler-contract.sh"
 NNC62A_WORKLOAD_NETWORK_PLAN_DURABILITY_CONTRACT="scripts/nimbus-network-control-plane/workload-network-plan-durability-contract.sh"
+NNC61E1_WORKLOAD_SAGA_INGRESS_CONTRACT="scripts/nimbus-network-control-plane/workload-saga-ingress-contract.sh"
 
 # shellcheck source=scripts/nimbus-network-control-plane/attachment-ordering-contract.sh
 . "${NNC52A_ATTACHMENT_ORDERING_CONTRACT}"
@@ -1771,11 +1772,27 @@ NODE
     sed -n '1,160p' "${temporary}/nnc62a-contract-self-test.out"
   fi
 
+  if [ ! -f "${NNC61E1_WORKLOAD_SAGA_INGRESS_CONTRACT}" ]; then
+    printf 'SELFTEST FAIL NNCV030 workload-saga ingress helper is missing\n'
+    self_fail=$((self_fail + 1))
+  elif ! bash "${NNC61E1_WORKLOAD_SAGA_INGRESS_CONTRACT}" --self-test \
+    >"${temporary}/nnc61e1-contract-self-test.out" 2>&1; then
+    printf 'SELFTEST FAIL NNCV030 workload-saga ingress mutation suite failed\n'
+    sed -n '1,180p' "${temporary}/nnc61e1-contract-self-test.out"
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^NNC6\.1e1 ingress contract self-test: 12 passed, 0 failed$' \
+    "${temporary}/nnc61e1-contract-self-test.out"; then
+    printf 'SELFTEST FAIL NNCV030 workload-saga ingress mutation count is not exact\n'
+    self_fail=$((self_fail + 1))
+  else
+    sed -n '1,180p' "${temporary}/nnc61e1-contract-self-test.out"
+  fi
+
   if [ "${self_fail}" -ne 0 ]; then
     printf 'self-test: %d failed\n' "${self_fail}"
     exit 1
   fi
-  printf 'self-test: 215 passed, 0 failed\n'
+  printf 'self-test: 227 passed, 0 failed\n'
 }
 
 if [ "${1:-}" = "--self-test" ]; then
@@ -1865,6 +1882,24 @@ verify_nnc62a_workload_network_plan_durability() {
   fi
 }
 
+verify_nnc61e1_workload_saga_ingress() {
+  if [ ! -f "${NNC61E1_WORKLOAD_SAGA_INGRESS_CONTRACT}" ]; then
+    fail "NNCV030" "durable-workload-saga-ingress" \
+      "missing ${NNC61E1_WORKLOAD_SAGA_INGRESS_CONTRACT}"
+    return
+  fi
+
+  ingress_error="$(
+    bash "${NNC61E1_WORKLOAD_SAGA_INGRESS_CONTRACT}" --check 2>&1
+  )"
+  ingress_contract_exit=$?
+  if [ "${ingress_contract_exit}" -eq 0 ]; then
+    pass "NNCV030" "durable-workload-saga-ingress"
+  else
+    fail "NNCV030" "durable-workload-saga-ingress" "${ingress_error}"
+  fi
+}
+
 printf 'Nimbus network control-plane static verifier\n'
 printf 'Repo: %s\n\n' "${REPO_ROOT}"
 
@@ -1898,6 +1933,7 @@ verify_nnc61a_compute_node_workload_coordinator
 verify_nnc61d_durable_workload_saga_store
 verify_nnc62_workload_network_plan_compiler
 verify_nnc62a_workload_network_plan_durability
+verify_nnc61e1_workload_saga_ingress
 
 printf '\nSummary: %d passed, %d failed\n' "${PASS_COUNT}" "${FAIL_COUNT}"
 if [ "${FAIL_COUNT}" -ne 0 ]; then

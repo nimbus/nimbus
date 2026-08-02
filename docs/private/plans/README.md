@@ -114,6 +114,12 @@ extension-registry seam before the second concern edits `extensions.rs`.
   No product file or structured review has started. NNC6.3/NNC6.4a/NNC6.5/
   NNC6.6 retain every effectful caller cutover, including standalone Compose;
   NNC6.1e2 retains final fresh-process convergence.
+  NNC6.1e1 fail-before is now exact: a temporary compute compile probe exits
+  `101` with the missing result type and method; NNCV030 reports 17 frozen gaps
+  and is the sole aggregate failure at `30/1`; all 12 item mutations fail
+  closed. The probe file was deleted, no product path remains dirty, and no
+  structured review has run. Implementation begins only after the fail-before
+  checkpoint is durable.
   Network resource identity is retained
   tenant-qualified and rederived for every attachment, route,
   listener, endpoint, and lease; it never uses the mutable decision digest,

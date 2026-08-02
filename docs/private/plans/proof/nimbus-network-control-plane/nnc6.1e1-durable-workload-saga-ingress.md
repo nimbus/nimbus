@@ -1,6 +1,6 @@
 # NNC6.1e1 Durable Workload-Saga Ingress
 
-Status: `audit frozen; product implementation not started; expected red`
+Status: `fail-before frozen; product implementation not started; expected red`
 
 Starting checkpoint: `b0a97e4404cd8afc3b11fdbf2053fa12e0b1c3d7`
 
@@ -371,6 +371,56 @@ remains red with one failure because runtime lazy activation still bypasses the
 compute saga. That red now belongs to NNC6.3's caller cutover. NNC6.1e1 must not
 turn it green by moving a coarse effect call behind persistence.
 
+### Recorded Fail-Before Evidence
+
+The item-local compile probe added the frozen public type and method use to a
+temporary compute integration test. The command
+
+```text
+timeout 300 cargo check -p nimbus-compute --test nnc61e1_fail_before
+```
+
+exited `101` with exactly the two target surface errors:
+
+```text
+E0432: no ConfirmedWorkloadSagaIntent in workload_saga
+E0599: no method named submit_intent for &WorkloadSagaCoordinator
+```
+
+The temporary test was then deleted byte-for-byte. No product path remains
+dirty from the probe.
+
+The new item contract exits `1` with 17 exact gaps: missing concept-owned
+source, module/export, public ingress, internal raw commit, seven behavioral
+cases, and six process-proof seams. Its mutation suite is green `12/12` for:
+
+```text
+missing-ingress
+duplicate-submit
+public-raw-commit
+effect-import
+missing-replay-test
+missing-ambiguity-test
+missing-crossed-key-test
+missing-contention-harness
+missing-crash-harness
+duplicate-coordinator
+unexpected-path
+wrong-plan-route
+```
+
+The aggregate verifier is exact expected red:
+
+```text
+PASS NNCV000 through NNCV029
+FAIL NNCV030 durable-workload-saga-ingress
+Summary: 30 passed, 1 failed
+```
+
+The retained complete mutation baseline is `215/215`. NNCV030 adds 12 direct
+green fail-closed cases, so the frozen aggregate arithmetic is `227/227`.
+Product implementation may start only from this checkpoint.
+
 ## Acceptance Matrix
 
 | ID | Verifiable criterion | Required evidence |
@@ -412,7 +462,7 @@ The prospective freeze ran these checks before product implementation:
 | New proof technical-writing lint | Pass with warnings only. |
 | NNCV028 compiler contract | `18` direct checks and `7/7` fail-closed mutations. |
 | NNCV029 durability contract | `23` direct checks and `10/10` fail-closed mutations. The two new cases reject a missing completion checkpoint and unreadable frozen source range. |
-| Live aggregate verifier | `30/30`. |
+| Live aggregate verifier | Audit baseline `30/30`; after NNCV030 wiring, exact expected red `30/1` with NNCV030 as the sole failure. |
 | Aggregate mutation arithmetic | Prior durable baseline `213/213` plus two new targeted NNCV029 mutations equals `215/215`. An unsplit replay reached the unchanged bind-exemption prefix before its 600-second bound; this checkpoint does not misreport that timed-out replay as a new full pass. |
 | Script checks | Bash syntax and ShellCheck pass for both changed helpers. Aggregate ShellCheck passes with its established SC2034/SC1091 exclusions. |
 | Docs | `check-docs` passes `108` pages; docs-site verification passes `17/17`. |
@@ -443,7 +493,7 @@ non-material cleanup, elapsed time, or internal diff size.
 | Starting checkpoint | `b0a97e4404cd8afc3b11fdbf2053fa12e0b1c3d7` |
 | Audit state | Complete. Three independent read-only lanes plus owner inspection. No product file changed. |
 | Boundary decision | Durable submission and confirmed pure decision only. All caller/effect cutovers belong to NNC6.3/NNC6.4a/NNC6.5/NNC6.6/NNC6.1e2. |
-| Current expected red | Historical caller-cutover verifier `0/1`. Item-local ingress tests and NNCV030 do not exist yet. |
-| Current dirty scope | This proof, plan/index truth-up, and two historical verifier route/range corrections. |
-| Next safe action | If this checkpoint is dirty, commit it. Then add item-local fail-before tests and NNCV030 without invoking structured review. |
+| Current expected red | Compile probe `101` with E0432/E0599; NNCV030 reports 17 exact missing seams; aggregate `30/1`; historical caller cutover `0/1`. NNCV030 mutations pass `12/12`. |
+| Current dirty scope | NNCV030 helper, aggregate wiring, this proof, and plan/index recovery truth-up. No product path remains dirty. |
+| Next safe action | If this fail-before checkpoint is dirty, commit it. Then implement the bounded ingress and behavioral/process tests without touching effectful caller paths. |
 | Blocker | None. |
