@@ -38,22 +38,22 @@ ledger transition.
 | --- | --- |
 | Plan status | `active; NNC6.1d complete; NNC6.1e in progress` |
 | Current band | `NNC6 — compute orchestration and exact lifecycle order` |
-| Current item | `NNC6.1e — subordinate lazy activation, restart recovery, and retirement inputs to the compute saga` |
+| Current item | `NNC6.1e — durable tenant discovery and pure recovery decisions` |
 | Last completed item | `NNC6.1d — server Engine saga-store adapter and first production injection` |
-| Next action | Perform the read-only NNC6.1e substitution and lifecycle-routing audit, freeze one source-derived owner/allowlist and acceptance ledger, then capture the exact expected-red proof before product edits. |
-| Current acceptance checkpoint | NNC6.1d is complete and durable at `60c0a1b2388630ce26638d0da84f84f9b76a9c8a`: R1-R20 are green, corrected store is `23/23`, affected behavior is `1,539/1,539` with 32 skips, live verifier is `28/28`, aggregate mutation proof is `188/188`, and the one narrow correction review is clean at confidence `0.97`. NNC6.1e has no completion claim yet. |
+| Next action | Run the plan/static/docs gates for the frozen split, commit the audit checkpoint, then add the tenant-page and all-phase fail-before behavior before product implementation. |
+| Current acceptance checkpoint | NNC6.1d is complete and durable at `60c0a1b2388630ce26638d0da84f84f9b76a9c8a`. The NNC6.1e source audit and prospective split are frozen in `proof/nimbus-network-control-plane/nnc6.1e-durable-discovery-recovery-decisions.md`; direct `recovery-decisions` is the exact expected red at `0 passed, 4 failed`. NNC6.1e has no completion claim yet. |
 | Owner branch | `codex/nimbus-network-architecture-audit` |
 | Owner worktree | `/Users/jack/src/github.com/nimbus/nimbus-network-architecture-audit` |
 | Audit base | Original architecture audit: `b69007a78a220847812370d9418049f1253f0384`. |
 | Execution base | Rebased without conflicts onto `origin/main` at `9c2d4f150c60f43dfdc0a3f1ec6550942e26ab8f` after NNC0.0. |
 | Last checkpoint commit | `60c0a1b2388630ce26638d0da84f84f9b76a9c8a` (NNC6.1d complete). |
-| Audit dirty state | NNC6.1d is clean and durable. The only current dirty paths are the NNC6.1d closeout and NNC6.1e routing-ledger transition; no NNC6.1e product source has changed. |
-| Latest dirty-state checkpoint | NNC6.1d's server-private Engine adapter, exact schema/codec, CAS, ambiguity resolution, explicit compute composition, canonical reserved-tenant boundary, and NNCV027 verifier are durable. NNC6.1e is active only for read-only substitution/lifecycle routing audit and expected-red design. |
-| Current item review | NNC6.1d's sole full review and one narrow correction review are complete; no further NNC6.1d review is warranted. NNC6.1e has not reached candidate freeze and must not run structured autoreview during audit, fail-before, implementation, cleanup, or acceptance convergence. |
+| Audit dirty state | NNC6.1d is clean and durable. Current owned edits are limited to the NNC6.1e split, proof contract, routing ledger, and expected-red verifier; no NNC6.1e product source has changed. |
+| Latest dirty-state checkpoint | The read-only audit found no product recovery driver, no compute action chooser, direct lazy/restart/retirement bypasses, and no bounded way to enumerate quiescent tenant sagas. The split preserves NNC6.2, NNC6.3, NNC6.4a, NNC6.5, NNC6.6, and NNC8.3 ownership instead of pulling their effects or cleanup authority forward. |
+| Current item review | NNC6.1d's review cadence is exhausted. NNC6.1e has not reached candidate freeze; do not run structured autoreview during audit, fail-before, implementation, cleanup, or acceptance convergence. Run exactly one full Sol/xhigh/fast review only after all NNC6.1e criteria are green. |
 | Execution mode | Autonomous implementation goal active; commit each completed item with its ledger/evidence checkpoint; no push or PR without separate authority. Per owner direction on 2026-07-24, all future structured autoreviews use `gpt-5.6-sol` at `xhigh` reasoning with fast mode explicitly enabled; do not use Claude Opus 4.8. |
 | Last verification | Corrected store `23/23`, full workloads `67/67`, compute `15/15`, reserved prefix `21/21`, merged-PR fixture correction `2/2`, and the complete affected matrix `1,539/1,539` with 32 declared skips pass. Exact affected check, strict Clippy, rustdoc, Rustfmt, and diff checks pass. |
-| Latest verification checkpoint | Live verifier `28/28`; aggregate verifier self-test `188/188`; exact NNCV005 child `27/1`; direct `decision`, `cutover`, and `durable-store` each `1/1`; `implementation` remains the required NNC6.1e red at `0/1`; docs `108`; site `17/17`. |
-| Blocking decision | No blocker. Complete the NNC6.1e read-only audit and freeze its exact proof contract before source edits. |
+| Latest verification checkpoint | NNC6.1d live verifier `28/28`, aggregate self-test `188/188`, affected behavior `1,539/1,539` with 32 skips, docs `108`, and site `17/17` remain the last green baseline. NNC6.1e `recovery-decisions` fails exactly `0/4`; helper syntax passes; task and checkpoint ledgers match 98 unique IDs with no omissions. |
+| Blocking decision | No blocker. Freeze the split/proof and capture fail-before evidence; NNC6.1e is dependency-ready. |
 
 Recovery protocol:
 
@@ -1196,10 +1196,20 @@ than a recovery capability.
 
 The cutover adds no workspace edge, store implementation, coordinator
 construction, Engine adapter, lifecycle rerouting, or compatibility path.
-NNC6.1d remains the sole durable-adapter/composition owner and NNC6.1e remains
-the lifecycle-routing owner. Its exact fail-before is `0/12`; completion is
-`1/0`, while implementation mode remains deliberately red only for those two
-later owners.
+NNC6.1d remains the sole durable-adapter/composition owner. The source-derived
+NNC6.1e audit prospectively splits the later work before implementation:
+
+- NNC6.1e owns bounded tenant discovery, pure all-phase recovery decisions,
+  and an effect-free fresh-process decision proof;
+- NNC6.1e1 consumes NNC6.2's admitted `NetworkPlan` compiler and owns the
+  compute ingress for lazy and explicit service/sandbox lifecycle requests;
+- NNC6.1e2 runs after NNC6.3-NNC6.6 and owns final startup-recovery and tenant
+  retirement convergence.
+
+NNC6.3, NNC6.4a, and NNC6.5 retain provision, restart, and teardown effects;
+NNC8.3 retains cleanup resolution, finalization, release, and reuse authority.
+No split item may invent a placeholder network intent or promote an
+autoreview chunk into an implementation unit.
 
 ### `PortLease` semantics
 
@@ -1577,13 +1587,15 @@ Dependencies: NNC3-NNC5.
 | NNC6.1c | Implement portable workloads-owned saga vocabulary, store port, and an uncomposed compute coordinator. | Metadata shows both `workloads -> network` and `compute -> workloads`; exhaustive identity, decimal-counter wire, transition-ID, active/successor, phase/evidence, legal-edge, overflow, paging, and two-implementation store-conformance tests pass; the coordinator requires the store port and has no production construction or effect authority; NNCV026 accepts the planned edge, enforces exactly one canonical saga coordinator, and makes all 15 mutations fail exclusively; the old authorities remain byte-unchanged for NNC6.1c1. |
 | NNC6.1c1 | Cut over operational workload identity and delete false in-memory desired-state authorities. | The linked R1-R15 matrix passes: `TenantWorkloadGeneration`, node-owned `TenantWorkloadId`, `DesiredWorkloadStore`, its in-memory implementation/snapshot/controller, all three `ServiceManager` writes, and the CLI map are deleted without shims; exact `WorkloadExecutionId`/assigned-node fencing and lossless observed evidence pass; CLI intent order is deterministic; NNCV027 cutover is `1/0` and implementation has only its two later-owned gaps; product saga store/coordinator counts remain zero. |
 | NNC6.1d | Implement the server-owned durable workload-saga adapter, transition contract, and required compute injection. | The strict nested codec, lossless decimal counters, and idempotent schema bootstrap protect `_nimbus._workload_sagas`; every application protocol denies reserved tenant access; two contenders produce one CAS winner; exact replay adds no commit; document, indexes, and journal remain atomic; ambiguous commit cuts require a fresh read and produce zero provider effects until resolved; workload-capable `ComputeState` requires the server adapter while protocol-only profiles remain explicitly uncomposed. |
-| NNC6.1e | Subordinate services lazy activation, restart recovery, and retirement inputs to the compute saga. | A killed process is replaced by a genuinely fresh process over Engine durability, without a handed-over snapshot, and chooses activate, publish, compensate, cleanup retention, successor withdrawal, or exact higher-generation promotion at every named phase; lazy activation and tenant teardown cannot write desire or call effects outside compute. |
+| NNC6.1e | Add bounded tenant-scoped saga discovery and pure compute-owned recovery decisions. | A tenant cursor enumerates every durable saga, including quiescent `Observed` and prepare-only records, without reusing the recovery cursor; a pure exhaustive action selector covers all 16 phases plus activation/publication/successor/cleanup branches; and a distinct process reopening only the Engine root reproduces the exact action matrix without receiving a record snapshot or owning provider effects. |
 | NNC6.2 | Compile admitted tenant/service/sandbox intent into `NetworkPlan` above the contract crate. | Admission failure makes zero lease/provider calls; network never imports tenant policy. |
+| NNC6.1e1 | Route lazy activation and explicit service/sandbox lifecycle requests through a compute-owned saga ingress after NNC6.2. | Logical naming and read-only resolution remain services-owned; compute persists the complete admitted intent before issuing any command; store failure, ambiguity, stale generation, or conflict makes zero effects; and `ServiceManager` is no longer installed as an effectful runtime registry or an independent lifecycle decision authority. |
 | NNC6.3 | Implement provision choreography. | Observer asserts exact admit→reserve→start→attach→publish→observe order for Convex, Cloud Functions, sandbox API, and service API paths. |
 | NNC6.4 | Implement start-as-prepare, attach, then activation semantics for OCI. | No tenant instruction executes before same-generation attachment and required PEP readiness; backend contract test covers the ordering. |
 | NNC6.4a | Route eligible container/krun restarts through the same compute saga. | Withdrawal racing exit/inspection cannot restart; a fenced generation is vetoed; an admitted restart reacquires same-generation attachment and required PEP evidence before tenant execution. |
 | NNC6.5 | Implement teardown choreography. | Observer asserts withdraw→drain→stop→detach→release→record for stop, delete, failed start, and tenant retirement. |
 | NNC6.6 | Fence service resolution before awaited stop. | Concurrent lookup/stop test cannot acquire a newly routable cached handle after withdrawal begins. |
+| NNC6.1e2 | Close fresh-process startup recovery and tenant-retirement convergence after NNC6.1e1 and NNC6.3-NNC6.6. | A killed process is replaced by a genuinely fresh process over Engine durability, without handed-over state, and chooses activate, publish, inspect-before-compensate, cleanup retention, successor withdrawal, or exact higher-generation promotion at every named phase; startup recovery and tenant teardown enumerate durable authority and cannot write desire or call effects outside compute-issued, generation-fenced commands. |
 
 Band gate: every workload family uses one compute/network choreography and no
 caller invents an address, port, or cleanup order.
@@ -1899,7 +1911,7 @@ named dependency/owner decision and the next safe action.
 | NNC3 — cross-process port leases | `done` | Full conflict/bind matrix, every owner migrated, old allocators deleted. | NNC3.1-NNC3.9 are complete with exact proofs; every production listener owner is classified, the obsolete sandbox authority vocabulary is deleted, and the live verifier is 15/15. |
 | NNC4 — capabilities/sovereignty | `done` | Named negative matrix, evidence-based seams, machine modes, offline local profile. | NNC4.1-NNC4.7 are complete; the final tripwire proof records deterministic, adversarial, structured-review, and two-process privileged evidence. |
 | NNC5 — sandbox attachment lifecycle | `done` | Shared implementation, complete readiness, ambiguity/crash convergence. | NNC5.1-NNC5.6 are complete with exact proofs; one deep sandbox adapter owns attachment effects and ambiguity, both host-managed providers share crash/recovery/readiness contracts, Machine forwarding has exact publication convergence, inspection is side-effect-free, and the final live verifier is 25/25. |
-| NNC6 — compute choreography | `in_progress` | Exact provision/teardown observers across every workload/retirement path. | NNC6.1-NNC6.1d are complete. NNC6.1e is the sole current item and owns routing lazy activation, restart recovery, and retirement inputs through the durable compute saga without taking provider effects from their current owners. |
+| NNC6 — compute choreography | `in_progress` | Exact provision/teardown observers across every workload/retirement path. | NNC6.1-NNC6.1d are complete. NNC6.1e is the sole current item and owns bounded durable discovery plus the pure recovery-decision plane. NNC6.1e1 follows NNC6.2; NNC6.1e2 is the post-NNC6.3-NNC6.6 convergence gate. Provider effects remain with their named owners. |
 | NNC7 — integrations/projections | `todo` | Protocol parity, stable service/machine handles, rebuild-safe projections, TLS guard. | — |
 | NNC8 — recovery/fencing | `todo` | Failure table and crash/stale/ambiguity model fully closed. | — |
 | NNC9 — closeout | `todo` | Seam checklist, static verifier, sovereign proof, docs truth, repo gates. | — |
@@ -1986,13 +1998,15 @@ checkpoint.
 | NNC6.1c | `done` | Final evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc6.1c-workload-saga-vocabulary-store.md`. Workloads owns validated portable saga identity, lossless counters, complete transition identity, active/successor lifecycle, evidence matrices, and an object-safe three-operation store port. Compute owns one uncomposed coordinator with no product construction or effect authority. Corrected saga/store/coordinator behavior is `31/19/10`; affected libraries are `243/243`; metadata profiles are `3/3` acyclic; live verifier is `27/27`; NNCV026 is `15/15`; NNCV027 remains exact `1/1` decision and expected-red `0/3` implementation. The sole full review's eight accepted findings and sole narrow review's one accepted P2 are corrected and proven; no third review ran. Final executable/script SHA-256 is `087907f9669c4673343d2011c3caeab3bd9bcb3ba066eabc65855e640baaeac7`. No push or PR. |
 | NNC6.1c1 | `done` | Final evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc6.1c1-operational-identity-authority-cutover.md`. Workloads-owned generation and execution identity are canonical through operational node paths; crossed/missing node assignments fail before effects; system projection preserves lossless generation; both false in-memory desired-state authorities and all three service writes are deleted. The exact systemd unit, cgroup, selectors, and exported journal fields correlate within one node-status record and the corresponding systemd and journal records. Affected suites pass `66/50/93/938/72`; private encoder `2/2`; live verifier `27/27`; self-test `188/188`; NNCV027 cutover and decision `1/0`; implementation remains expected red `0/2`; docs `108`; site `17/17`. The sole full review's two P2s and sole narrow review's one P2 have exact fail-before and corrected proofs. No third review ran. No push or PR. |
 | NNC6.1d | `done` | Final evidence: `docs/private/plans/proof/nimbus-network-control-plane/nnc6.1d-durable-workload-saga-store.md`; durable commit `60c0a1b2388630ce26638d0da84f84f9b76a9c8a`. The server owns one strict Engine saga-store adapter and 21-field/four-index schema; workloads owns the portable record, immutable recovery cursor, and recovery priority; compute owns the sole coordinator and fresh-read ambiguity resolution. Corrected server store `23/23`, workloads `67/67`, compute `15/15`, reserved prefix `21/21`, affected behavior `1,539/1,539` with 32 skips, quality gates, live verifier `28/28`, aggregate mutations `188/188`, docs `108`, and site `17/17` pass. The sole full review's one P2 and two P3 findings are corrected; the one narrow review is clean at confidence `0.97`. No further review, push, or PR. |
-| NNC6.1e | `in_progress` | **Dependency:** NNC6.1d is complete at `60c0a1b23`. **Owner:** compute-only saga lifecycle decisions with services lazy activation, node/sandbox restart evidence, and tenant/workload retirement as subordinate inputs; existing effect owners execute only issued commands. **Owned paths:** plan/proof routing only until the source-derived audit freezes the exact product allowlist. **Last green:** NNC6.1d closeout above plus NNCV027 `implementation` expected red `0/1` for the remaining lazy-activation bypass. **Acceptance:** fresh-process Engine recovery chooses the exact named action at every phase; lazy activation, restart, and retirement cannot write desire or call effects outside compute; active/successor generation and cleanup-retention fences remain exact. **Next:** inventory every production lifecycle caller and recovery reader, map each to the coordinator/store/effect seam, freeze behavioral and crash-cut proofs, then capture fail-before. **Blocker:** none. |
+| NNC6.1e | `in_progress` | **Dependency:** NNC6.1d is complete at `60c0a1b23`. **Owner:** portable tenant-scoped store paging, pure compute recovery decisions, and the effect-free fresh-process decision proof. **Owned paths:** exact allowlist in `proof/nimbus-network-control-plane/nnc6.1e-durable-discovery-recovery-decisions.md`; services, sandbox, node, machine, network, proxy, and provider effects are forbidden. **Last green:** NNC6.1d closeout above; split ledger 98/98 and helper syntax pass. **Expected red:** direct `recovery-decisions` is exactly `0/4` with the four frozen diagnostics. **Acceptance:** R1-R15 in the proof are green, including all-phase/variant decisions, quiescent tenant discovery, cleanup retention, exact successor promotion, bounded recovery, and no snapshot handoff. **Next:** commit this audit checkpoint, add fail-before behavior, then implement within the allowlist. **Blocker:** none. |
 | NNC6.2 | `todo` | — |
+| NNC6.1e1 | `todo` | **Dependency:** NNC6.1e and NNC6.2. Owns compute saga ingress for lazy and explicit service/sandbox lifecycle requests; it may not invent a placeholder `NetworkPlan` or absorb provider effects. |
 | NNC6.3 | `todo` | — |
 | NNC6.4 | `todo` | — |
 | NNC6.4a | `todo` | — |
 | NNC6.5 | `todo` | — |
 | NNC6.6 | `todo` | — |
+| NNC6.1e2 | `todo` | **Dependency:** NNC6.1e1 and NNC6.3-NNC6.6. Owns final startup-recovery and tenant-retirement convergence against the original NNC6.1e acceptance; NNC8.3 retains cleanup finalization and reuse. |
 | NNC7.1 | `todo` | — |
 | NNC7.1a | `todo` | — |
 | NNC7.2 | `todo` | — |

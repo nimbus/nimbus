@@ -75,7 +75,8 @@ extension-registry seam before the second concern edits `extensions.rs`.
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
 - `nimbus-network-control-plane-plan.md` - `active; NNC6.1d complete; NNC6.1e
-  in progress`. Workloads-owned execution identity and generation now reach
+  in progress`. NNC6.1e is the prospectively split durable-discovery and pure
+  recovery-decision item; it does not yet cut over lifecycle effects. Workloads-owned execution identity and generation now reach
   operational node paths, false in-memory desired-state authorities are
   deleted, and status, systemd, cgroup, and exported journal evidence
   correlate one exact identity without cross-record stitching. The sole full
@@ -282,10 +283,14 @@ extension-registry seam before the second concern edits `extensions.rs`.
   child `27/1`, live verifier `28/28`, and aggregate mutations `188/188` pass.
   The one narrow Sol/xhigh/fast correction review is clean at confidence
   `0.97`; no further NNC6.1d review is warranted. NNC6.1d is durable at
-  `60c0a1b23`. NNC6.1e now owns the read-only lifecycle-routing audit and
-  expected-red contract for subordinating lazy activation, restart recovery,
-  and retirement inputs to the compute saga. NNC6.1d retains the durable server
-  adapter.
+  `60c0a1b23`. The NNC6.1e audit found that the original row combined durable
+  tenant discovery, pure recovery decisions, admitted lifecycle ingress,
+  provision/restart/teardown effects, and final convergence. It is split before
+  implementation: NNC6.1e owns bounded tenant paging plus the effect-free
+  all-phase decision proof; NNC6.1e1 follows NNC6.2 and owns compute service
+  ingress; NNC6.1e2 follows NNC6.3-NNC6.6 and closes startup recovery plus
+  tenant retirement. NNC6.1d retains the durable server adapter, NNC6.3/NNC6.4a/NNC6.5
+  retain provider choreography, and NNC8.3 retains cleanup finalization/reuse.
   It also requires the first workload-capable compute injection. No temporary
   no-op or production in-memory store exists.
   Cleanup, release, finalization, and reuse stay in NNC8.3. Machine forwarding obeys

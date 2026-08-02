@@ -10,6 +10,7 @@ MODE="${1:-decision}"
 PLAN="docs/private/plans/nimbus-network-control-plane-plan.md"
 PROOF="docs/private/plans/proof/nimbus-network-control-plane/nnc6.1b-workload-saga-vocabulary-store-durable-home.md"
 DURABLE_PROOF="docs/private/plans/proof/nimbus-network-control-plane/nnc6.1d-durable-workload-saga-store.md"
+RECOVERY_PROOF="docs/private/plans/proof/nimbus-network-control-plane/nnc6.1e-durable-discovery-recovery-decisions.md"
 ERRORS=()
 
 add_error() {
@@ -470,6 +471,37 @@ verify_durable_store_contract() {
   fi
 }
 
+verify_recovery_decision_contract() {
+  require_file "${RECOVERY_PROOF}"
+
+  if ! rg -q 'pub struct WorkloadSagaTenantCursor' \
+      crates/nimbus-workloads/src/store.rs ||
+    ! rg -q 'pub struct WorkloadSagaTenantPageRequest' \
+      crates/nimbus-workloads/src/store.rs ||
+    ! rg -q 'pub struct WorkloadSagaTenantPage' \
+      crates/nimbus-workloads/src/store.rs ||
+    ! rg -q 'fn list_for_tenant' crates/nimbus-workloads/src/store.rs; then
+    add_error "missing tenant-scoped workload-saga paging"
+  fi
+
+  if ! rg -q 'pub enum WorkloadSagaAction' \
+    crates/nimbus-compute/src/workload_saga.rs \
+    crates/nimbus-compute/src/workload_saga 2>/dev/null; then
+    add_error "missing pure compute workload-saga action selector"
+  fi
+
+  if ! rg -q 'plan_recoverable_page' \
+    crates/nimbus-compute/src/workload_saga.rs \
+    crates/nimbus-compute/src/workload_saga 2>/dev/null; then
+    add_error "missing bounded compute recovery decision reader"
+  fi
+
+  if ! rg -q 'fresh_process_reopens_engine_and_plans_every_workload_saga_phase_without_snapshot_handoff' \
+    crates/nimbus-server/src/workload_saga_store/tests 2>/dev/null; then
+    add_error "missing distinct-process all-phase recovery proof"
+  fi
+}
+
 case "${MODE}" in
   decision)
     verify_decision_contract
@@ -483,8 +515,11 @@ case "${MODE}" in
   durable-store)
     verify_durable_store_contract
     ;;
+  recovery-decisions)
+    verify_recovery_decision_contract
+    ;;
   *)
-    printf 'usage: %s [decision|implementation|cutover|durable-store]\n' "$0" >&2
+    printf 'usage: %s [decision|implementation|cutover|durable-store|recovery-decisions]\n' "$0" >&2
     exit 2
     ;;
 esac
