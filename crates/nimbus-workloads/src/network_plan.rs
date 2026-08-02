@@ -1240,6 +1240,143 @@ struct CompiledWorkloadNetworkPlanWire {
     content: WorkloadNetworkPlanContent,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SagaNetworkPlanWire {
+    plan_id: NetworkPlanId,
+    #[serde(deserialize_with = "deserialize_saga_network_generation")]
+    generation: NetworkResourceGeneration,
+    content_digest: NetworkPlanContentDigest,
+    requirements: NetworkCapabilityRequirements,
+    readiness_requirements: Vec<NetworkReadinessRequirement>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct SagaWorkloadNetworkPlanIdentityWire {
+    tenant_id: TenantId,
+    workload_incarnation_key: String,
+    #[serde(deserialize_with = "deserialize_saga_network_generation")]
+    generation: NetworkResourceGeneration,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct SagaWorkloadNetworkPlanContentWire {
+    format_version: u32,
+    identity: SagaWorkloadNetworkPlanIdentityWire,
+    capability_requirements: NetworkCapabilityRequirements,
+    #[serde(default)]
+    capability_selection: Option<NetworkCapabilitySelection>,
+    #[serde(default)]
+    attachment: Option<WorkloadNetworkAttachmentBlueprintWire>,
+    routes: Vec<WorkloadNetworkRouteBlueprintWire>,
+    listeners: Vec<WorkloadNetworkListenerBlueprintWire>,
+    dependency_listeners: Vec<WorkloadNetworkDependencyListenerBlueprintWire>,
+    activation: WorkloadActivationIntent,
+    publication: WorkloadPublicationIntent,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SagaCompiledWorkloadNetworkPlanWire {
+    plan: SagaNetworkPlanWire,
+    content: SagaWorkloadNetworkPlanContentWire,
+}
+
+fn deserialize_saga_network_generation<'de, Deserializer>(
+    deserializer: Deserializer,
+) -> Result<NetworkResourceGeneration, Deserializer::Error>
+where
+    Deserializer: serde::Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    if value.is_empty()
+        || (value.len() > 1 && value.starts_with('0'))
+        || value.bytes().any(|byte| !byte.is_ascii_digit())
+    {
+        return Err(serde::de::Error::custom(
+            "network generation must be canonical unsigned decimal text",
+        ));
+    }
+    value
+        .parse()
+        .map(NetworkResourceGeneration::new)
+        .map_err(|_| {
+            serde::de::Error::custom("network generation must be canonical unsigned decimal text")
+        })
+}
+
+pub(crate) fn deserialize_saga_compiled_network_plan<'de, Deserializer>(
+    deserializer: Deserializer,
+) -> Result<CompiledWorkloadNetworkPlan, Deserializer::Error>
+where
+    Deserializer: serde::Deserializer<'de>,
+{
+    let wire = SagaCompiledWorkloadNetworkPlanWire::deserialize(deserializer)?;
+    if wire.content.format_version != WORKLOAD_NETWORK_PLAN_FORMAT_VERSION {
+        return Err(serde::de::Error::custom(
+            WorkloadNetworkPlanError::UnsupportedFormatVersion {
+                candidate: wire.content.format_version,
+            },
+        ));
+    }
+    let identity = WorkloadNetworkPlanIdentity::new(
+        wire.content.identity.tenant_id,
+        wire.content.identity.workload_incarnation_key,
+        wire.content.identity.generation,
+    )
+    .map_err(serde::de::Error::custom)?;
+    let attachment = wire
+        .content
+        .attachment
+        .map(WorkloadNetworkAttachmentBlueprintWire::into_blueprint)
+        .transpose()
+        .map_err(serde::de::Error::custom)?;
+    let routes = wire
+        .content
+        .routes
+        .into_iter()
+        .map(WorkloadNetworkRouteBlueprintWire::into_blueprint)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(serde::de::Error::custom)?;
+    let listeners = wire
+        .content
+        .listeners
+        .into_iter()
+        .map(WorkloadNetworkListenerBlueprintWire::into_blueprint)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(serde::de::Error::custom)?;
+    let dependency_listeners = wire
+        .content
+        .dependency_listeners
+        .into_iter()
+        .map(WorkloadNetworkDependencyListenerBlueprintWire::into_blueprint)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(serde::de::Error::custom)?;
+    let content = WorkloadNetworkPlanContent::new(
+        identity,
+        wire.content.capability_requirements,
+        wire.content.capability_selection,
+        attachment,
+        routes,
+        listeners,
+        dependency_listeners,
+        wire.content.activation,
+        wire.content.publication,
+    )
+    .map_err(serde::de::Error::custom)?;
+    let plan = NetworkPlan::new(
+        wire.plan.plan_id,
+        wire.plan.generation,
+        wire.plan.content_digest,
+        wire.plan.requirements,
+    )
+    .with_readiness_requirements(wire.plan.readiness_requirements)
+    .map_err(serde::de::Error::custom)?;
+    CompiledWorkloadNetworkPlan::new(plan, content).map_err(serde::de::Error::custom)
+}
+
 impl CompiledWorkloadNetworkPlan {
     /// Derive the only valid plan envelope for exact retained content.
     pub fn from_content(

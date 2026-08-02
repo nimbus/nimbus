@@ -4,7 +4,7 @@ use nimbus_core::{Document, DocumentId};
 use nimbus_workloads::{WorkloadSagaRecord, WorkloadSagaStoreError};
 use serde_json::{Map, Value, json};
 
-const REQUIRED_FIELDS: [&str; 19] = [
+const REQUIRED_FIELDS: [&str; 17] = [
     "formatVersion",
     "sagaId",
     "tenantId",
@@ -17,9 +17,7 @@ const REQUIRED_FIELDS: [&str; 19] = [
     "phase",
     "recoveryEligible",
     "phaseDetail",
-    "networkPlanId",
-    "networkGeneration",
-    "networkPlanDigest",
+    "compiledNetworkPlan",
     "activationIntent",
     "publicationIntent",
     "admission",
@@ -55,9 +53,10 @@ pub(crate) fn encode_workload_saga_record(
         Value::Bool(record.requires_recovery()),
     );
     copy(&mut fields, "phaseDetail", portable, "phaseDetail")?;
-    copy(&mut fields, "networkPlanId", network, "planId")?;
-    copy(&mut fields, "networkGeneration", network, "generation")?;
-    copy(&mut fields, "networkPlanDigest", network, "digest")?;
+    fields.insert(
+        "compiledNetworkPlan".to_owned(),
+        Value::Object(network.clone()),
+    );
     copy(&mut fields, "activationIntent", active, "activation")?;
     copy(&mut fields, "publicationIntent", active, "publication")?;
     copy(&mut fields, "admission", active, "admission")?;
@@ -85,11 +84,7 @@ pub(crate) fn decode_workload_saga_record(
             "desiredState": required(fields, "desiredState")?,
             "generation": required(fields, "desiredGeneration")?,
             "desiredDigest": required(fields, "desiredDigest")?,
-            "network": {
-                "planId": required(fields, "networkPlanId")?,
-                "generation": required(fields, "networkGeneration")?,
-                "digest": required(fields, "networkPlanDigest")?,
-            },
+            "network": required(fields, "compiledNetworkPlan")?,
             "activation": required(fields, "activationIntent")?,
             "publication": required(fields, "publicationIntent")?,
             "admission": required(fields, "admission")?,

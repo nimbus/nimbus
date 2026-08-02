@@ -74,7 +74,7 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC6.2 complete; NNC6.2a
+- `nimbus-network-control-plane-plan.md` - `active; NNC6.2a complete; NNC6.1e1
   in progress`. NNC6.1e's R1-R15 portable discovery, pure recovery decisions,
   and distinct-process durability proof are green; its sole full Sol/xhigh/fast
   review reported zero findings at confidence `0.90`. NNC6.2 now owns the
@@ -88,22 +88,30 @@ extension-registry seam before the second concern edits `extensions.rs`.
   site `17/17` gates are green. Its sole narrow Sol/xhigh/fast review confirmed
   the behavioral corrections and found one accepted P3 arithmetic defect;
   exact `198 + 6 = 204` reporting is corrected and proven. Review cadence is
-  exhausted. Exact item commit `0977c17d9` is durable. NNC6.2a's independent
-  read-only durable carrier/replay audit is complete, and its A1-A18 contract,
-  exact source allowlist, saga/transition-v2 break, one physical compiled
-  object, derived phase tuples, unchanged Engine adapter, and bounded
-  no-snapshot process proof are frozen in
-  `proof/nimbus-network-control-plane/nnc6.2a-durable-compiled-network-plan.md`.
-  NNCV029 mutations pass `8/8`; its live expected-red names only the missing
-  product seams, which are the next implementation checkpoint. Network
-  resource identity is retained
+  exhausted. Exact item commit `0977c17d9` is durable. NNC6.2a's complete
+  candidate now retains one strict saga-v2 compiled plan, one required physical
+  object, derived phase tuples, the unchanged Engine adapter, a pure exact-plan
+  reservation value, and bounded no-snapshot distinct-process replay. Its
+  A1-A18 criteria are green after its one candidate-frozen full review accepted
+  two P2 corrections: strict typed saga-v2 decoding now rejects duplicate keys,
+  and the predecessor contract fails closed when its pinned commit is absent.
+  Focused durability is `3/3`, affected behavior is `844/844` with 29 declared
+  skips, NNCV029 is `23/23` plus `8/8`, aggregate live is `30/30`, complete
+  mutation arithmetic is `188 + 10 + 7 + 8 = 213`, and all affected quality
+  gates pass. Its sole narrow Sol/xhigh/fast correction review confirmed both
+  implementations and found one accepted P2 test-only gap: the duplicate-key
+  matrix lacked a direct inner-content field. The added duplicate
+  `formatVersion` case passes focused `1/1` and workloads `96/96`; no executable
+  code changed, and no third review ran or is warranted.
+  Network resource identity is retained
   tenant-qualified and rederived for every attachment, route,
   listener, endpoint, and lease; it never uses the mutable decision digest,
   address, or port. Source-bearing sovereignty cannot be relaxed, and the
   exact portable content authenticates the complete plan envelope. Its completed
   audit found that the current saga tuple cannot reconstruct full desired
-  network state before first reservation. NNC6.2a now owns the durable
-  compiled-plan carrier and fresh-process replay. NNC6.1e1 remains the later
+  network state before first reservation; the corrected carrier now reconstructs
+  it exactly. NNC6.2a owns the durable compiled-plan carrier and fresh-process
+  replay. NNC6.1e1 remains the later
   lifecycle ingress and caller cutover. Workloads-owned execution identity and generation now reach
   operational node paths, false in-memory desired-state authorities are
   deleted, and status, systemd, cgroup, and exported journal evidence

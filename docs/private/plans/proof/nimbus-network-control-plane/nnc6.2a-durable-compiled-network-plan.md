@@ -1,6 +1,6 @@
 # NNC6.2a Durable Compiled Network Plan
 
-Status: `audit and NNCV029 expected-red complete; implementation ready`
+Status: `complete; exact item commit next`
 
 Starting checkpoint: `15544998c20410fec30d89eca187cdc8d6527609`
 
@@ -24,11 +24,12 @@ fresh-process reconstruction, and source allowlist before product edits.
 | Starting HEAD | `15544998c20410fec30d89eca187cdc8d6527609` |
 | Last completed item | `NNC6.2`, item commit `0977c17d93f3b39f18b33d504193c6eee6e9ba50`; routing commit `15544998c20410fec30d89eca187cdc8d6527609` |
 | Current item | `NNC6.2a` |
-| Current product state | The pure compiler emits a complete strict portable value, but the saga and physical store retain only its plan ID, network generation, and digest. Exact resources cannot be recovered at `IntentCommitted`. |
-| Current dirty state | This proof, its NNCV029 expected-red contract, and routing-ledger wording only. No product source is edited before this contract is durable. |
-| Last green | NNC6.2 C1-C18, affected behavior `1,477/1,477` with 27 declared skips, NNCV028 `18/18` plus `6/6`, aggregate `29/29` with exact 204-case coverage, and all recorded quality/docs gates. |
-| Next action | Commit the frozen NNC6.2a audit/expected-red checkpoint, then implement only the allowlisted portable carrier, strict codec/schema, derived references, pure decision handoff, and process proof. |
-| Structured review | Not started. Exactly one full GPT-5.6 Sol/xhigh/fast review runs only after A1-A18 and all candidate gates are green and the complete item is frozen. |
+| Current product state | One strict saga-v2 carrier retains the complete compiled plan, the physical store owns one required `compiledNetworkPlan`, phase evidence retains only derived tuples, and pure recovery returns the exact plan before any reservation effect. |
+| Current dirty state | The durable audit checkpoint is `6869dc578`; 25 allowlisted implementation/static/proof paths are dirty before final routing-ledger closeout. No manifest, provider/effect, or `nimbus-network` path changed. |
+| Last green | Historical and review reds are corrected; focused process proof `3/3`; affected behavior `844/844` with 29 declared skips; check, strict Clippy, warning-denied rustdoc, format/diff, Bash/ShellCheck; docs 108 and site `17/17`; NNCV029 `23/23` plus `8/8`; aggregate live `30/30`; complete mutation arithmetic `188 + 10 + 7 + 8 = 213`. |
+| Next action | Commit the exact 25-path NNC6.2a item, then record its durable hash and route to NNC6.1e1 without another review. |
+| Structured review | The one full item review ran as GPT-5.6 Sol/xhigh/fast in thread `019fc276-0ac0-7642-ad9b-f67e213e786d`. It accepted two P2 findings at overall confidence `0.95`: duplicate JSON keys bypassed strict saga-v2 wire rejection, and the pinned predecessor proof could pass when its commit was unavailable. The sole narrow Sol/xhigh/fast correction review confirmed both implementations and accepted one P2 test-only gap at confidence `0.96`: the matrix did not directly repeat a retained-content field. A duplicate `formatVersion` case now closes that proof at focused `1/1` and workloads `96/96`; no executable code changed and no third review is warranted. |
+| Candidate identity | Historical 24-path pre-review identity: staged tree `eab90273367fc257b32896e798d8d8ba2c5e56df`, complete staged patch SHA-256 `6c981aa5c6dc247095b5606b27a74321f3a9f35b279b8d2d20c1b721a1ef47a4`, executable/static-proof SHA-256 `b8671625f7786638a0c00ab3c82c774fa4c7fdf13aa65064bc0771d74b82cdc1`. Corrected pre-narrow tree `ad8732e3c89d7f96221dd2636668e8d72a474725`, patch SHA-256 `39b64d749907c03017cf48e20a7b8043f756f45022becf93cac4c76286ba3538`, and executable/static-proof SHA-256 `9599c5ef1fac2e5088bf0288e93b28207105874f29bd32bd1437ee716d738b83`. Final post-narrow pre-ledger tree `40a81f6abbd4b05a182cc7c9562d7a416eb2a202`, patch SHA-256 `31e7d7f12b49922860a96955cbc6bd4590fe09ff90ab9d9c8de62806bee9fb9b`, and executable/static-proof SHA-256 `b98590aacfa16931a808511d504726c1485a663a781a322aa33c7702cafe3993`. |
 | Blocker | None. |
 
 ## Audit Verdict
@@ -270,6 +271,7 @@ NNC6.2a does not:
 Product edits are limited to these paths:
 
 ```text
+crates/nimbus-workloads/src/network_plan.rs
 crates/nimbus-workloads/src/saga.rs
 crates/nimbus-workloads/src/saga/network.rs
 crates/nimbus-workloads/src/saga/network/tests.rs
@@ -287,11 +289,13 @@ crates/nimbus-server/src/workload_saga_store/tests/durability.rs
 crates/nimbus-server/src/workload_saga_store/tests/recovery.rs
 crates/nimbus-server/src/workload_saga_store/tests/tenant_enumeration.rs
 crates/nimbus-server/src/workload_saga_store/tests/compiled_plan_durability.rs
+crates/nimbus-server/src/workload_saga_store/tests/composition.rs
 ```
 
 Static proof, evidence, and routing edits are limited to:
 
 ```text
+scripts/nimbus-network-control-plane/workload-network-plan-compiler-contract.sh
 scripts/nimbus-network-control-plane/workload-network-plan-durability-contract.sh
 scripts/verify-nimbus-network-control-plane.sh
 docs/private/plans/proof/nimbus-network-control-plane/nnc6.2a-durable-compiled-network-plan.md
@@ -299,10 +303,37 @@ docs/private/plans/nimbus-network-control-plane-plan.md
 docs/private/plans/README.md
 ```
 
+Post-implementation aggregate verification exposed one required predecessor
+handoff in `workload-network-plan-compiler-contract.sh`: its NNC6.2
+candidate-time `git diff HEAD` check necessarily mistakes the authorized
+NNC6.2a `saga.rs` edit for an NNC6.2 scope escape. NNC6.2a may replace only
+that transient dirty-worktree assertion with a durable check of NNC6.2's exact
+item commit (`0977c17d93f3b39f18b33d504193c6eee6e9ba50`). The predecessor
+contract must retain its ban on direct compiled-payload ownership in
+`saga.rs`; NNCV029 remains the sole live owner of the complete carrier and
+NNC6.2a source allowlist. No other NNCV028 behavior or mutation may change.
+
 No `Cargo.toml`, `Cargo.lock`, `nimbus-network`, `nimbus-tenant`,
 `nimbus-sandbox`, `nimbus-services`, `nimbus-system`, `nimbus-proxy`, or
 provider-effect path is allowlisted. A newly discovered required path pauses
 implementation until this proof records the source evidence and owner reason.
+
+The full item review supplied the required source evidence for adding
+`crates/nimbus-workloads/src/network_plan.rs`: saga-v2 had to decode through a
+typed, duplicate-detecting decimal-generation wire instead of first collapsing
+JSON into `serde_json::Value`. The wire belongs beside the existing private
+plan/content/blueprint wire types and reconstructs the same validated
+`CompiledWorkloadNetworkPlan`; it does not change NNC6.2's compiler or content
+contract. This is the sole post-freeze product-path expansion.
+
+The first full server acceptance run produced `637/638` and an exact stale
+observation mismatch in NNC6.1e's existing distinct-process phase matrix:
+recovered saga-v2/complete-plan truth deterministically emitted
+`matrix-30-9bdcd50077c9fa5db309f2c22610fda321c0062f66459cd9f41e122cb5abb80c`
+while the test still pinned the saga-v1/tuple digest. Therefore
+`tests/composition.rs` is allowlisted only to replace that one observation
+constant. The writer/recovery roles, 30-case matrix, state-root-only handoff,
+boundary, timeout, PID, and kill/reap assertions must remain byte-unchanged.
 
 ## Fail-Before Packet
 
@@ -408,6 +439,19 @@ Record exact pass, skip, ignored, mutation, schema-field, index, process PID,
 cleanup, and verifier counts. A skipped child/provider lane is never reported
 as passing evidence.
 
+## Candidate Gate Evidence
+
+| Gate | Exact result |
+| --- | --- |
+| Focused corrections | Compiled-plan durability `3/3`; its child role remains test-harness-only and ignored in ordinary execution. The bounded parent proves distinct writer/recovery PIDs, `killed-at-boundary-and-reaped`, `exited-and-reaped`, exact stderr cardinality, and a 4 KiB ceiling on both streams. |
+| Full affected behavior | `nimbus-workloads` `96/96`; `nimbus-compute` `110/110` with one declared skip; `nimbus-server` `638/638` with 28 declared skips. Total `844/844`, 29 declared skips. |
+| Physical contract | Exact schema has 17 required plus two optional fields and the same four indexes. Codec and process proofs retain the populated attachment, route, listener, dependency listener, selection, requirements, readiness, canonical bytes, and both digests. |
+| Affected quality | All-target/all-feature check and strict Clippy pass for workloads, compute, and server. Warning-denied rustdoc, `cargo fmt --all --check`, and `git diff --check` pass. |
+| Dependency/effect proof | Metadata reports `nimbus-core` as `nimbus-network`'s sole workspace dependency. NNCV029 passes `23/23`; the aggregate live verifier passes `30/30`; no manifest or forbidden effect path changed. |
+| Adversarial proof | The bounded full prefix completed every aggregate mutation through NNCV026: 188 cases. Its one-hour outer bound ended during NNCV027's tenth case, after nine clean NNCV027 outcomes. A disjoint canonical tail then passed NNCV027 `10/10`, corrected NNCV028 `7/7`, and NNCV029 `8/8`. Exact complete coverage is `188 + 10 + 7 + 8 = 213`; partial NNCV027 outcomes are not double-counted. |
+| Review corrections | Duplicate-field fail-before was exactly `0/1` with 95 filtered, then the typed top-level/carrier-member/generation matrix passed `1/1` with 95 filtered. NNCV028 now fails closed when the pinned NNC6.2 item commit is missing and its mutation matrix passes `7/7`. The narrow review's proof-only gap added a direct duplicate `formatVersion` content case; focused `1/1`, workloads `96/96`, and strict workloads Clippy pass afterward. |
+| Script and docs quality | Bash syntax and scoped ShellCheck pass; the aggregate retains its documented inherited `SC2034,SC1091` exclusions. Docs pass 108 pages and the site passes `17/17`. |
+
 ## Review Cadence
 
 Do not run structured autoreview during audit, fail-before work,
@@ -433,13 +477,13 @@ Never use Opus 4.8 for this review.
 | Pure action/process decision | `done` | D7-D8 freeze complete effect-free command material and exact crash reconstruction without snapshot handoff. |
 | Source allowlist | `done` | The exact product/static/docs paths are frozen above; no manifest or provider/effect path is allowed. |
 | NNCV029 expected red | `done` | Direct live exit is exactly `1` on the named missing carrier/v2/correlation/codec/action/process seams; helper mutations pass `8/8`; aggregate live proof is exactly `29 passed, 1 failed` at NNCV029. Bash syntax, direct and aggregate ShellCheck, and diff checks pass. |
-| Historical behavioral fail-before | `todo` | Record exact F1-F12 commands/results without weakening existing green baselines. |
-| Portable carrier and correlations | `todo` | A1-A8. |
-| Strict physical codec/schema | `todo` | A9-A10. |
-| Store and distinct-process proof | `todo` | A11-A13 and A16. |
-| Pure decision/zero-command proof | `todo` | A14-A15. |
-| Dependency/static acceptance | `todo` | A17. |
-| Candidate quality gates | `todo` | A18 except structured review. |
-| Full structured review | `todo` | Exactly one Sol/xhigh/fast item review after candidate freeze. |
-| Narrow correction review | `not warranted` | Changes only if the full review produces an accepted executable defect. |
+| Historical behavioral fail-before | `done` | Workloads carrier/generation cases fail exactly `0 passed; 2 failed; 87 filtered`, exit `101`: the tuple omits plan/content/identity/listener bytes and accepts crossed generation. Server physical/IntentCommitted cases fail exactly `0 passed; 2 failed; 566 filtered`, exit `101`: no compiled physical object or exact plan/content bytes exist. NNCV029's direct live failures cover v2/correlation/codec/action/process absence; mutations are `8/8`. Existing strict compiled-plan and store baselines remain unmodified. |
+| Portable carrier and correlations | `done` | A1-A8 pass with one complete carrier, derived references, strict v2, and exact active/successor correlation. |
+| Strict physical codec/schema | `done` | A9-A10 pass with 17 required plus two optional fields, four unchanged indexes, and exact populated bytes. |
+| Store and distinct-process proof | `done` | A11-A13 and A16 pass, including exact replay, ambiguity/atomicity baselines, distinct PIDs, cleanup, and bounded diagnostics. |
+| Pure decision/zero-command proof | `done` | A14-A15 pass; reservation carries the exact validated plan and no effect authority entered. |
+| Dependency/static acceptance | `done` | A17 passes at NNCV029 `23/23` plus `8/8`, aggregate `30/30`, and exact 213-case complete coverage. |
+| Candidate quality gates | `done` | A18 is green at affected `844/844` with 29 declared skips and every recorded affected quality/docs gate. |
+| Full structured review | `done` | The one Sol/xhigh/fast item review accepted two P2 defects at overall confidence `0.95`; both are corrected with exact fail-before and green proofs. |
+| Narrow correction review | `done` | The sole narrow Sol/xhigh/fast review confirmed the implementations and found one accepted P2 test-only gap at confidence `0.96`; the direct inner-content duplicate case is green. No third review ran or is warranted. |
 | Item commit | `todo` | One exact reviewed NNC6.2a commit; no push or PR. |

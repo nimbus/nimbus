@@ -1,9 +1,7 @@
 use std::collections::BTreeSet;
 
 use nimbus_core::{TenantId, WorkloadId};
-use nimbus_network::{
-    NetworkPlanDigest, NetworkPlanId, NetworkResourceGeneration, PublishedEndpointId,
-};
+use nimbus_network::PublishedEndpointId;
 use nimbus_workloads::{
     DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity, WorkloadActivationIntent,
     WorkloadAdmissionEvidence, WorkloadDesiredDigest, WorkloadEffectReferences,
@@ -18,7 +16,7 @@ use nimbus_workloads::{
 
 use super::super::EngineWorkloadSagaStore;
 use super::super::tenant_enumeration::decode_tenant_page;
-use super::{document_for, engine};
+use super::{compiled_network_plan, document_for, engine};
 
 #[tokio::test]
 async fn tenant_inventory_isolated_stably_ordered_bounded_indexed_and_durable_after_reopen() {
@@ -680,11 +678,13 @@ fn workload_intent(
             "{}-{generation}-{desired_state:?}",
             key.workload_id().as_str()
         )),
-        WorkloadNetworkIntent::new(
-            NetworkPlanId::for_tenant_workload_plan(key.tenant_id(), key.workload_id().as_str()),
-            NetworkResourceGeneration::new(generation),
-            NetworkPlanDigest::from_bytes([u8::try_from(generation).unwrap(); 32]),
-        ),
+        WorkloadNetworkIntent::new(compiled_network_plan(
+            key.tenant_id(),
+            key.workload_id().as_str(),
+            generation,
+            activation,
+            publication,
+        )),
         activation,
         publication,
         WorkloadAdmissionEvidence::new(

@@ -5,9 +5,7 @@ use std::fmt::{self, Display, Formatter};
 use std::str::FromStr;
 
 use nimbus_core::{TenantId, WorkloadId};
-use nimbus_network::{
-    NetworkPlanDigest, NetworkPlanId, NetworkResourceGeneration, PublishedEndpointId,
-};
+use nimbus_network::PublishedEndpointId;
 use nimbus_tenant::TenantIsolationDecisionId;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
@@ -15,7 +13,7 @@ use sha2::{Digest, Sha256};
 use crate::{DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity, TenantWorkloadUid};
 
 /// Portable saga format understood by this crate.
-pub const WORKLOAD_SAGA_FORMAT_VERSION: u32 = 1;
+pub const WORKLOAD_SAGA_FORMAT_VERSION: u32 = 2;
 
 /// A rejected workload-saga value or transition.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -362,66 +360,6 @@ impl WorkloadExecutionId {
     }
 }
 
-/// Complete provider-neutral network intent carried by every saga generation.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct WorkloadNetworkIntent {
-    plan_id: NetworkPlanId,
-    #[serde(with = "network_generation_decimal")]
-    generation: NetworkResourceGeneration,
-    digest: NetworkPlanDigest,
-}
-
-impl WorkloadNetworkIntent {
-    pub fn new(
-        plan_id: NetworkPlanId,
-        generation: NetworkResourceGeneration,
-        digest: NetworkPlanDigest,
-    ) -> Self {
-        Self {
-            plan_id,
-            generation,
-            digest,
-        }
-    }
-
-    pub fn plan_id(&self) -> &NetworkPlanId {
-        &self.plan_id
-    }
-
-    pub fn generation(&self) -> NetworkResourceGeneration {
-        self.generation
-    }
-
-    pub fn digest(&self) -> NetworkPlanDigest {
-        self.digest
-    }
-}
-
-mod network_generation_decimal {
-    use super::*;
-
-    pub fn serialize<S>(value: &NetworkResourceGeneration, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&value.as_u64().to_string())
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<NetworkResourceGeneration, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = String::deserialize(deserializer)?;
-        parse_decimal(
-            &value,
-            "network generation must be canonical unsigned decimal text",
-        )
-        .map(NetworkResourceGeneration::new)
-        .map_err(serde::de::Error::custom)
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkloadActivationIntent {
@@ -545,6 +483,21 @@ impl WorkloadSagaIntent {
     }
 
     pub(super) fn validate(&self) -> Result<(), WorkloadSagaError> {
+        if self.generation.as_u64() != self.network.generation().as_u64() {
+            return Err(WorkloadSagaError::InvalidIntent(
+                "network generation must match workload generation",
+            ));
+        }
+        if self.activation != self.network.compiled_plan().content().activation() {
+            return Err(WorkloadSagaError::InvalidIntent(
+                "network activation must match workload activation",
+            ));
+        }
+        if self.publication != self.network.compiled_plan().content().publication() {
+            return Err(WorkloadSagaError::InvalidIntent(
+                "network publication must match workload publication",
+            ));
+        }
         if self.desired_state == DesiredWorkloadState::Stopped
             && (self.activation != WorkloadActivationIntent::PrepareOnly
                 || self.publication != WorkloadPublicationIntent::Withheld)
@@ -586,25 +539,6 @@ impl WorkloadSagaIntent {
 
     pub fn admission(&self) -> &WorkloadAdmissionEvidence {
         &self.admission
-    }
-}
-
-/// Stable reference to network-manager desired state.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct WorkloadNetworkReference {
-    intent: WorkloadNetworkIntent,
-}
-
-impl WorkloadNetworkReference {
-    pub fn for_intent(intent: &WorkloadSagaIntent) -> Self {
-        Self {
-            intent: intent.network.clone(),
-        }
-    }
-
-    pub fn intent(&self) -> &WorkloadNetworkIntent {
-        &self.intent
     }
 }
 
@@ -723,14 +657,14 @@ impl WorkloadExecutionReference {
 #[serde(rename_all = "camelCase")]
 pub struct WorkloadPublicationReference {
     endpoints: Vec<PublishedEndpointId>,
-    network: WorkloadNetworkIntent,
+    network: WorkloadNetworkReference,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct WorkloadPublicationReferenceWire {
     endpoints: Vec<PublishedEndpointId>,
-    network: WorkloadNetworkIntent,
+    network: WorkloadNetworkReference,
 }
 
 impl<'de> Deserialize<'de> for WorkloadPublicationReference {
@@ -771,7 +705,7 @@ impl WorkloadPublicationReference {
         }
         Ok(Self {
             endpoints,
-            network: intent.network.clone(),
+            network: WorkloadNetworkReference::for_intent(intent),
         })
     }
 
@@ -779,7 +713,7 @@ impl WorkloadPublicationReference {
         &self.endpoints
     }
 
-    pub fn network(&self) -> &WorkloadNetworkIntent {
+    pub fn network(&self) -> &WorkloadNetworkReference {
         &self.network
     }
 
@@ -794,7 +728,7 @@ impl WorkloadPublicationReference {
 
     fn validate_for(&self, intent: &WorkloadSagaIntent) -> Result<(), WorkloadSagaError> {
         self.validate_intrinsic()?;
-        if self.network != intent.network {
+        if self.network != WorkloadNetworkReference::for_intent(intent) {
             return Err(WorkloadSagaError::InvalidEvidence(
                 "publication reference is crossed with another network intent",
             ));
@@ -1405,6 +1339,9 @@ impl WorkloadFailureEvidence {
 }
 mod state;
 
+mod network;
+
+pub use network::{WorkloadNetworkIntent, WorkloadNetworkReference};
 use state::validate_phase_detail;
 pub use state::{WorkloadSagaIntentUpdate, WorkloadSagaRecord, WorkloadSagaTransition};
 #[cfg(test)]

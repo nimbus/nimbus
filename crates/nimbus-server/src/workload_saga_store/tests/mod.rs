@@ -2,11 +2,17 @@ use std::sync::Arc;
 
 use nimbus_core::{Document, TenantId, WorkloadId};
 use nimbus_engine::Engine;
-use nimbus_network::{NetworkPlanDigest, NetworkPlanId, NetworkResourceGeneration};
+use nimbus_network::{
+    NetworkAttachmentCapabilitySet, NetworkCapabilityRequirements, NetworkControlPlaneLocality,
+    NetworkEndpointCapabilitySet, NetworkForwardingCapabilitySet, NetworkIngressCapabilitySet,
+    NetworkLifecycleCapabilitySet, NetworkManagementMode, NetworkResourceGeneration,
+    NetworkSovereigntyRequirements,
+};
 use nimbus_workloads::{
-    DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity, WorkloadActivationIntent,
-    WorkloadAdmissionEvidence, WorkloadDesiredDigest, WorkloadEffectReferences,
-    WorkloadNetworkIntent, WorkloadOwnerEvidenceDigest, WorkloadOwnerObservation,
+    CompiledWorkloadNetworkPlan, DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity,
+    WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadDesiredDigest,
+    WorkloadEffectReferences, WorkloadNetworkIntent, WorkloadNetworkPlanContent,
+    WorkloadNetworkPlanIdentity, WorkloadOwnerEvidenceDigest, WorkloadOwnerObservation,
     WorkloadPhaseDetail, WorkloadPublicationIntent, WorkloadSagaKey, WorkloadSagaRecord,
 };
 
@@ -15,6 +21,7 @@ use super::schema::workload_saga_table;
 
 mod ambiguity;
 mod codec;
+mod compiled_plan_durability;
 mod composition;
 mod durability;
 mod recovery;
@@ -57,11 +64,13 @@ fn initial_record_with_counters_and_seed(
         DesiredWorkloadState::Running,
         nimbus_workloads::WorkloadGeneration::new(generation),
         WorkloadDesiredDigest::sha256(format!("desired-{label}-{seed}")),
-        WorkloadNetworkIntent::new(
-            NetworkPlanId::for_tenant_workload_plan(&tenant_id, label),
-            NetworkResourceGeneration::new(network_generation),
-            NetworkPlanDigest::from_bytes([0x31; 32]),
-        ),
+        WorkloadNetworkIntent::new(compiled_network_plan(
+            &tenant_id,
+            &format!("{label}-{seed}"),
+            network_generation,
+            WorkloadActivationIntent::ActivateWhenAttached,
+            WorkloadPublicationIntent::Withheld,
+        )),
         WorkloadActivationIntent::ActivateWhenAttached,
         WorkloadPublicationIntent::Withheld,
         WorkloadAdmissionEvidence::new(
@@ -76,6 +85,42 @@ fn initial_record_with_counters_and_seed(
     )
     .expect("fixture intent is valid");
     WorkloadSagaRecord::new(key, intent).expect("initial record is valid")
+}
+
+pub(super) fn compiled_network_plan(
+    tenant_id: &TenantId,
+    workload_incarnation: &str,
+    generation: u64,
+    activation: WorkloadActivationIntent,
+    publication: WorkloadPublicationIntent,
+) -> CompiledWorkloadNetworkPlan {
+    let identity = WorkloadNetworkPlanIdentity::new(
+        tenant_id.clone(),
+        workload_incarnation,
+        NetworkResourceGeneration::new(generation),
+    )
+    .expect("fixture network identity is valid");
+    let requirements = NetworkCapabilityRequirements::new(
+        NetworkAttachmentCapabilitySet::new(NetworkManagementMode::NimbusHostManaged, [], []),
+        NetworkEndpointCapabilitySet::new([], [], [], [], []),
+        NetworkIngressCapabilitySet::new([]),
+        NetworkForwardingCapabilitySet::new([]),
+        NetworkLifecycleCapabilitySet::new([]),
+        NetworkSovereigntyRequirements::new(NetworkControlPlaneLocality::LocalOnly, [], true),
+    );
+    let content = WorkloadNetworkPlanContent::new(
+        identity,
+        requirements,
+        None,
+        None,
+        [],
+        [],
+        [],
+        activation,
+        publication,
+    )
+    .expect("fixture network content is valid");
+    CompiledWorkloadNetworkPlan::from_content(content).expect("fixture network plan is valid")
 }
 
 fn valid_successor(current: &WorkloadSagaRecord) -> WorkloadSagaRecord {

@@ -5,6 +5,7 @@ set -u
 
 REPO_ROOT="${NIMBUS_NETWORK_NNC62_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 SCRIPT_PATH="${REPO_ROOT}/scripts/nimbus-network-control-plane/workload-network-plan-compiler-contract.sh"
+ITEM_COMMIT="0977c17d93f3b39f18b33d504193c6eee6e9ba50"
 COMPUTE_COMPILER="crates/nimbus-compute/src/workload_network_plan.rs"
 PORTABLE_PAYLOAD="crates/nimbus-workloads/src/network_plan.rs"
 WORKLOAD_SAGA="crates/nimbus-workloads/src/saga.rs"
@@ -176,9 +177,18 @@ NODE
   if rg -n 'CompiledWorkloadNetworkPlan|WorkloadNetworkPlanContent' "${WORKLOAD_SAGA}" >/dev/null; then
     add_error "NNC6.2 embedded the compiled payload in saga.rs; NNC6.2a owns durable embedding"
   fi
-  saga_changes="$(git diff --name-only HEAD -- "${WORKLOAD_SAGA}")"
-  if [ -n "${saga_changes}" ]; then
-    add_error "NNC6.2 changed saga.rs even though NNC6.2a owns durable embedding: ${saga_changes}"
+  item_commit="${ITEM_COMMIT}"
+  if [ "${NIMBUS_NETWORK_NNC62_TEST_MUTATION:-}" = "missing-item-commit" ]; then
+    item_commit="0000000000000000000000000000000000000000"
+  fi
+  if ! git cat-file -e "${item_commit}^{commit}" 2>/dev/null; then
+    add_error "NNC6.2 item commit is unavailable for ownership verification: ${item_commit}"
+  elif ! saga_changes="$(
+    git diff-tree --no-commit-id --name-only -r "${item_commit}" -- "${WORKLOAD_SAGA}" 2>/dev/null
+  )"; then
+    add_error "NNC6.2 item commit could not be inspected for saga ownership: ${item_commit}"
+  elif [ -n "${saga_changes}" ]; then
+    add_error "NNC6.2 item commit changed saga.rs even though NNC6.2a owns durable embedding: ${saga_changes}"
   fi
 }
 
@@ -403,7 +413,8 @@ run_self_test() {
     extra-oci-caller \
     decision-bound-identity \
     uncorrelated-envelope \
-    uncorrelated-resource-id; do
+    uncorrelated-resource-id \
+    missing-item-commit; do
     output="${self_test_root}/${mutation}.out"
     if NIMBUS_NETWORK_NNC62_TEST_MUTATION="${mutation}" bash "${SCRIPT_PATH}" >"${output}" 2>&1; then
       printf 'SELFTEST FAIL NNCV028 %s unexpectedly passed\n' "${mutation}"
@@ -417,6 +428,7 @@ run_self_test() {
       decision-bound-identity) expected='pure compiler gained effects, ambient input, epoch assignment, random identity, or provider-handle authority' ;;
       uncorrelated-envelope) expected='compiled payload lacks a content-derived envelope constructor' ;;
       uncorrelated-resource-id) expected='portable content does not rederive tenant-qualified resource identity through identity.attachment_id' ;;
+      missing-item-commit) expected='NNC6.2 item commit is unavailable for ownership verification' ;;
     esac
     if ! rg -q -F "${expected}" "${output}"; then
       printf 'SELFTEST FAIL NNCV028 %s missed diagnostic %s\n' "${mutation}" "${expected}"
@@ -430,7 +442,7 @@ run_self_test() {
     printf 'NNC6.2 contract self-test: %d failed\n' "${self_test_failures}"
     return 1
   fi
-  printf 'NNC6.2 contract self-test: 6 passed, 0 failed\n'
+  printf 'NNC6.2 contract self-test: 7 passed, 0 failed\n'
 }
 
 case "${1:-}" in

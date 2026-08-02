@@ -1,9 +1,7 @@
 use std::collections::BTreeSet;
 
 use nimbus_core::{TenantId, WorkloadId};
-use nimbus_network::{
-    NetworkPlanDigest, NetworkPlanId, NetworkResourceGeneration, PublishedEndpointId,
-};
+use nimbus_network::PublishedEndpointId;
 use nimbus_workloads::{
     DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity, WORKLOAD_SAGA_RECOVERY_ORDER,
     WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadDesiredDigest,
@@ -19,7 +17,7 @@ use sha2::{Digest, Sha256};
 use ulid::Ulid;
 
 use super::super::EngineWorkloadSagaStore;
-use super::engine;
+use super::{compiled_network_plan, engine};
 
 struct RecoveryFixtures {
     recoverable: Vec<Vec<WorkloadSagaRecord>>,
@@ -900,13 +898,13 @@ fn workload_intent(
             "{}-{generation}-{desired_state:?}",
             key.workload_id().as_str()
         )),
-        WorkloadNetworkIntent::new(
-            NetworkPlanId::for_tenant_workload_plan(key.tenant_id(), key.workload_id().as_str()),
-            NetworkResourceGeneration::new(generation),
-            NetworkPlanDigest::from_bytes(
-                [u8::try_from(generation).expect("fixture generation fits u8"); 32],
-            ),
-        ),
+        WorkloadNetworkIntent::new(compiled_network_plan(
+            key.tenant_id(),
+            key.workload_id().as_str(),
+            generation,
+            activation,
+            publication,
+        )),
         activation,
         publication,
         WorkloadAdmissionEvidence::new(

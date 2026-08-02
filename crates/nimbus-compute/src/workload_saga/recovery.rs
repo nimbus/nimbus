@@ -1,12 +1,12 @@
 //! Pure recovery decisions derived from durable workload-saga records.
 
 use nimbus_workloads::{
-    DesiredWorkloadState, WorkloadActivationIntent, WorkloadEffectReferences,
-    WorkloadExecutionReference, WorkloadGeneration, WorkloadInspectionRequirement,
-    WorkloadNetworkReference, WorkloadPhaseDetail, WorkloadPublicationIntent,
-    WorkloadPublicationReference, WorkloadSagaError, WorkloadSagaId, WorkloadSagaIntent,
-    WorkloadSagaKey, WorkloadSagaPageRequest, WorkloadSagaPhase, WorkloadSagaRecord,
-    WorkloadSagaRecoveryCursor, WorkloadSagaRevision, WorkloadSagaStoreError,
+    CompiledWorkloadNetworkPlan, DesiredWorkloadState, WorkloadActivationIntent,
+    WorkloadEffectReferences, WorkloadExecutionReference, WorkloadGeneration,
+    WorkloadInspectionRequirement, WorkloadNetworkReference, WorkloadPhaseDetail,
+    WorkloadPublicationIntent, WorkloadPublicationReference, WorkloadSagaError, WorkloadSagaId,
+    WorkloadSagaIntent, WorkloadSagaKey, WorkloadSagaPageRequest, WorkloadSagaPhase,
+    WorkloadSagaRecord, WorkloadSagaRecoveryCursor, WorkloadSagaRevision, WorkloadSagaStoreError,
     WorkloadTerminalEvidenceDigest,
 };
 
@@ -17,6 +17,7 @@ use super::WorkloadSagaCoordinator;
 pub enum WorkloadSagaAction {
     ReserveNetwork {
         reference: WorkloadNetworkReference,
+        plan: CompiledWorkloadNetworkPlan,
     },
     PrepareWorkload {
         reference: WorkloadExecutionReference,
@@ -88,6 +89,7 @@ impl WorkloadSagaDecision {
                 WorkloadSagaPhase::NetworkReserved,
                 WorkloadSagaAction::ReserveNetwork {
                     reference: WorkloadNetworkReference::for_intent(record.active_intent()),
+                    plan: record.active_intent().network().compiled_plan().clone(),
                 },
             ),
             WorkloadSagaPhase::NetworkReserved => (

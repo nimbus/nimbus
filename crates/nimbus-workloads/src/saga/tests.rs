@@ -2,11 +2,18 @@ use std::any::TypeId;
 
 use nimbus_core::{TenantId, WorkloadId};
 use nimbus_network::{
-    NetworkPlanDigest, NetworkPlanId, NetworkResourceGeneration, PublishedEndpointId,
+    NetworkAttachmentCapabilitySet, NetworkCapabilityRequirements, NetworkControlPlaneLocality,
+    NetworkEndpointCapabilitySet, NetworkForwardingCapabilitySet, NetworkIngressCapabilitySet,
+    NetworkLifecycleCapabilitySet, NetworkManagementMode, NetworkProviderId,
+    NetworkResourceGeneration, NetworkSovereigntyRequirements, PublishedEndpointId,
 };
 use serde_json::json;
 
 use super::*;
+use crate::{
+    CompiledWorkloadNetworkPlan, WorkloadNetworkDependencyListenerBlueprint,
+    WorkloadNetworkPlanContent, WorkloadNetworkPlanIdentity,
+};
 
 const TWO_TO_53: u64 = 9_007_199_254_740_992;
 
@@ -37,6 +44,49 @@ fn workload_uid(byte: u8) -> TenantWorkloadUid {
         .expect("fixture workload uid should validate")
 }
 
+fn compiled_network_plan(
+    tenant_id: &TenantId,
+    workload_label: &str,
+    generation: u64,
+    activation: WorkloadActivationIntent,
+    publication: WorkloadPublicationIntent,
+    seed: u8,
+) -> CompiledWorkloadNetworkPlan {
+    let identity = WorkloadNetworkPlanIdentity::new(
+        tenant_id.clone(),
+        workload_label,
+        NetworkResourceGeneration::new(generation),
+    )
+    .expect("network identity should validate");
+    let requirements = NetworkCapabilityRequirements::new(
+        NetworkAttachmentCapabilitySet::new(NetworkManagementMode::NimbusHostManaged, [], []),
+        NetworkEndpointCapabilitySet::new([], [], [], [], []),
+        NetworkIngressCapabilitySet::new([]),
+        NetworkForwardingCapabilitySet::new([]),
+        NetworkLifecycleCapabilitySet::new([]),
+        NetworkSovereigntyRequirements::new(NetworkControlPlaneLocality::LocalOnly, [], true),
+    );
+    let dependency = WorkloadNetworkDependencyListenerBlueprint::new(
+        &identity,
+        format!("dependency-{seed}"),
+        NetworkProviderId::for_registration_key(&format!("provider-{seed}")),
+    )
+    .expect("network dependency should validate");
+    let content = WorkloadNetworkPlanContent::new(
+        identity,
+        requirements,
+        None,
+        None,
+        [],
+        [],
+        [dependency],
+        activation,
+        publication,
+    )
+    .expect("network content should validate");
+    CompiledWorkloadNetworkPlan::from_content(content).expect("network plan should compile")
+}
+
 fn intent_with(
     tenant_label: &str,
     workload_label: &str,
@@ -56,11 +106,14 @@ fn intent_with(
         desired_state,
         WorkloadGeneration::new(generation),
         WorkloadDesiredDigest::sha256([seed, 1]),
-        WorkloadNetworkIntent::new(
-            NetworkPlanId::for_tenant_workload_plan(&tenant_id, workload_label),
-            NetworkResourceGeneration::new(generation.saturating_add(u64::from(seed))),
-            NetworkPlanDigest::from_bytes([seed; 32]),
-        ),
+        WorkloadNetworkIntent::new(compiled_network_plan(
+            &tenant_id,
+            workload_label,
+            generation,
+            activation,
+            publication,
+            seed,
+        )),
         activation,
         publication,
         WorkloadAdmissionEvidence::new(
@@ -405,7 +458,7 @@ fn rehash_encoded_record(record: &mut serde_json::Value) {
     let encoded_payload = serde_json::to_vec(&payload).unwrap();
     record["lastTransition"]["transitionId"] = json!(derive_id(
         WorkloadSagaTransitionId::PREFIX,
-        b"nimbus.workloads.saga.transition.v1",
+        b"nimbus.workloads.saga.transition.v2",
         &[std::str::from_utf8(&encoded_payload).unwrap()],
     ));
 }
@@ -473,7 +526,8 @@ fn nested_counter_wire_is_decimal_text_and_strict() {
         value["activeIntent"]["generation"],
         json!(TWO_TO_53.to_string())
     );
-    assert!(value["activeIntent"]["network"]["generation"].is_string());
+    assert!(value["activeIntent"]["network"]["plan"]["generation"].is_string());
+    assert!(value["activeIntent"]["network"]["content"]["identity"]["generation"].is_string());
     assert_eq!(value["revision"], json!("0"));
     assert_eq!(value["lastTransition"]["resultingRevision"], json!("0"));
     assert_eq!(
@@ -483,7 +537,14 @@ fn nested_counter_wire_is_decimal_text_and_strict() {
 
     for path in [
         &["activeIntent", "generation"][..],
-        &["activeIntent", "network", "generation"][..],
+        &["activeIntent", "network", "plan", "generation"][..],
+        &[
+            "activeIntent",
+            "network",
+            "content",
+            "identity",
+            "generation",
+        ][..],
         &["revision"][..],
         &["lastTransition", "resultingRevision"][..],
         &["phaseDetail", "value", "completedGeneration"][..],
@@ -1311,19 +1372,14 @@ fn transition_id_binds_every_active_intent_network_and_revision_field() {
     let encoded = serde_json::to_value(&base).unwrap();
     let alternate_intent = intent_with(
         "tenant-a",
-        "workload-a",
+        "workload-b",
         2,
         DesiredWorkloadState::Running,
         WorkloadActivationIntent::PrepareOnly,
         WorkloadPublicationIntent::PublishWhenReady,
         3,
     );
-    let mut alternate = serde_json::to_value(&alternate_intent).unwrap();
-    alternate["network"]["planId"] = serde_json::to_value(NetworkPlanId::for_tenant_workload_plan(
-        &tenant("tenant-a"),
-        "workload-b",
-    ))
-    .unwrap();
+    let alternate = serde_json::to_value(&alternate_intent).unwrap();
     let reject = |candidate| {
         assert!(serde_json::from_value::<WorkloadSagaRecord>(candidate).is_err());
     };
@@ -1341,9 +1397,20 @@ fn transition_id_binds_every_active_intent_network_and_revision_field() {
     candidate["activeIntent"]["desiredDigest"] = alternate["desiredDigest"].clone();
     reject(candidate);
 
-    for field in ["planId", "generation", "digest"] {
+    for path in [
+        "/plan/plan_id",
+        "/plan/generation",
+        "/plan/content_digest",
+        "/content/identity/generation",
+        "/content/dependencyListeners",
+    ] {
         let mut candidate = encoded.clone();
-        candidate["activeIntent"]["network"][field] = alternate["network"][field].clone();
+        *candidate["activeIntent"]["network"]
+            .pointer_mut(path)
+            .expect("network field should exist") = alternate["network"]
+            .pointer(path)
+            .expect("alternate network field should exist")
+            .clone();
         reject(candidate);
     }
 
@@ -1525,7 +1592,7 @@ fn record_deserialization_rejects_forged_illegal_source_edge() {
     let encoded_payload = serde_json::to_vec(&payload).unwrap();
     let transition_id = derive_id(
         WorkloadSagaTransitionId::PREFIX,
-        b"nimbus.workloads.saga.transition.v1",
+        b"nimbus.workloads.saga.transition.v2",
         &[std::str::from_utf8(&encoded_payload).unwrap()],
     );
     let mut forged_record = serde_json::to_value(&reserved).unwrap();

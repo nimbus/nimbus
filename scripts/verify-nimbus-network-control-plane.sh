@@ -1016,7 +1016,7 @@ NODE
   elif ! grep -q '^FAIL NNCV005 no-duplicate-port-allocation-authority' "${temporary}/legacy-port-authority.out" ||
     grep -q '^PASS NNCV005 no-duplicate-port-allocation-authority' "${temporary}/legacy-port-authority.out" ||
     [ "$(grep -c '^FAIL ' "${temporary}/legacy-port-authority.out")" -ne 1 ] ||
-    ! grep -q '^Summary: 28 passed, 1 failed$' "${temporary}/legacy-port-authority.out"; then
+    ! grep -q '^Summary: 29 passed, 1 failed$' "${temporary}/legacy-port-authority.out"; then
     printf 'SELFTEST FAIL legacy port authority did not produce an exclusive NNCV005 failure\n'
     self_fail=$((self_fail + 1))
   else
@@ -1747,7 +1747,7 @@ NODE
     printf 'SELFTEST FAIL NNCV028 workload-network-plan compiler mutation suite failed\n'
     sed -n '1,120p' "${temporary}/nnc62-contract-self-test.out"
     self_fail=$((self_fail + 1))
-  elif ! grep -q '^NNC6\.2 contract self-test: 6 passed, 0 failed$' \
+  elif ! grep -q '^NNC6\.2 contract self-test: 7 passed, 0 failed$' \
     "${temporary}/nnc62-contract-self-test.out"; then
     printf 'SELFTEST FAIL NNCV028 workload-network-plan compiler mutation count is not exact\n'
     self_fail=$((self_fail + 1))
@@ -1775,7 +1775,7 @@ NODE
     printf 'self-test: %d failed\n' "${self_fail}"
     exit 1
   fi
-  printf 'self-test: 212 passed, 0 failed\n'
+  printf 'self-test: 213 passed, 0 failed\n'
 }
 
 if [ "${1:-}" = "--self-test" ]; then

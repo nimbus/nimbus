@@ -4,19 +4,22 @@ use std::sync::{Mutex, RwLock};
 use futures::executor::block_on;
 use nimbus_core::{TenantId, WorkloadId};
 use nimbus_network::{
-    NetworkPlanDigest, NetworkPlanId, NetworkResourceGeneration, PublishedEndpointId,
+    NetworkAttachmentCapabilitySet, NetworkCapabilityRequirements, NetworkControlPlaneLocality,
+    NetworkEndpointCapabilitySet, NetworkForwardingCapabilitySet, NetworkIngressCapabilitySet,
+    NetworkLifecycleCapabilitySet, NetworkManagementMode, NetworkResourceGeneration,
+    NetworkSovereigntyRequirements, PublishedEndpointId,
 };
 use nimbus_tenant::TenantIsolationDecisionId;
 
 use super::*;
 use crate::{
-    DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity, TenantWorkloadUid,
-    WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadDesiredDigest,
+    CompiledWorkloadNetworkPlan, DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity,
+    TenantWorkloadUid, WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadDesiredDigest,
     WorkloadEffectReferences, WorkloadGeneration, WorkloadInspectionRequirement,
-    WorkloadNetworkIntent, WorkloadOwnerEvidenceDigest, WorkloadOwnerObservation,
-    WorkloadPhaseDetail, WorkloadPublicationIntent, WorkloadPublicationReference,
-    WorkloadSagaIntent, WorkloadSagaPhase, WorkloadSagaTransitionId,
-    WorkloadTerminalEvidenceDigest, WorkloadTerminalObservation,
+    WorkloadNetworkIntent, WorkloadNetworkPlanContent, WorkloadNetworkPlanIdentity,
+    WorkloadOwnerEvidenceDigest, WorkloadOwnerObservation, WorkloadPhaseDetail,
+    WorkloadPublicationIntent, WorkloadPublicationReference, WorkloadSagaIntent, WorkloadSagaPhase,
+    WorkloadSagaTransitionId, WorkloadTerminalEvidenceDigest, WorkloadTerminalObservation,
 };
 
 fn require_object_safe_store(_: &dyn WorkloadSagaStore) {}
@@ -1326,18 +1329,39 @@ fn intent_with_publication(
     activation: WorkloadActivationIntent,
     publication: WorkloadPublicationIntent,
 ) -> WorkloadSagaIntent {
-    let plan_id =
-        NetworkPlanId::for_tenant_workload_plan(key.tenant_id(), key.workload_id().as_str());
+    let identity = WorkloadNetworkPlanIdentity::new(
+        key.tenant_id().clone(),
+        key.workload_id().as_str(),
+        NetworkResourceGeneration::new(1),
+    )
+    .unwrap();
+    let requirements = NetworkCapabilityRequirements::new(
+        NetworkAttachmentCapabilitySet::new(NetworkManagementMode::NimbusHostManaged, [], []),
+        NetworkEndpointCapabilitySet::new([], [], [], [], []),
+        NetworkIngressCapabilitySet::new([]),
+        NetworkForwardingCapabilitySet::new([]),
+        NetworkLifecycleCapabilitySet::new([]),
+        NetworkSovereigntyRequirements::new(NetworkControlPlaneLocality::LocalOnly, [], true),
+    );
+    let content = WorkloadNetworkPlanContent::new(
+        identity,
+        requirements,
+        None,
+        None,
+        [],
+        [],
+        [],
+        activation,
+        publication,
+    )
+    .unwrap();
+    let compiled_plan = CompiledWorkloadNetworkPlan::from_content(content).unwrap();
     WorkloadSagaIntent::new(
         DesiredWorkloadKind::Service,
         desired_state,
         WorkloadGeneration::new(1),
         WorkloadDesiredDigest::sha256(key.workload_id().as_str()),
-        WorkloadNetworkIntent::new(
-            plan_id,
-            NetworkResourceGeneration::new(1),
-            NetworkPlanDigest::from_bytes([0x31; 32]),
-        ),
+        WorkloadNetworkIntent::new(compiled_plan),
         activation,
         publication,
         WorkloadAdmissionEvidence::new(

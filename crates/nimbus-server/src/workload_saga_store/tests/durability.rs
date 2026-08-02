@@ -1,5 +1,6 @@
 use nimbus_core::{
-    Error, Filter, FilterOp, OrderBy, OrderDirection, PrincipalContext, Query, SequenceNumber,
+    Error, FieldType, Filter, FilterOp, OrderBy, OrderDirection, PrincipalContext, Query,
+    SequenceNumber,
 };
 use nimbus_engine::{Fault, commit_fault_labels};
 use nimbus_workloads::{
@@ -11,9 +12,17 @@ use super::super::schema::{exact_table_schema, workload_saga_table, workload_sag
 use super::{document_for, engine, initial_record};
 
 #[test]
-fn exact_schema_has_twenty_one_fields_four_indexes_and_system_policy() {
+fn exact_schema_has_nineteen_fields_four_indexes_and_system_policy() {
     let schema = exact_table_schema();
-    assert_eq!(schema.fields.len(), 21);
+    assert_eq!(schema.fields.len(), 19);
+    assert_eq!(
+        schema
+            .fields
+            .iter()
+            .find(|field| field.name == "compiledNetworkPlan")
+            .map(|field| field.field_type),
+        Some(FieldType::Object)
+    );
     assert_eq!(
         schema
             .fields
@@ -33,9 +42,7 @@ fn exact_schema_has_twenty_one_fields_four_indexes_and_system_policy() {
             ("phase", true),
             ("recoveryEligible", true),
             ("phaseDetail", true),
-            ("networkPlanId", true),
-            ("networkGeneration", true),
-            ("networkPlanDigest", true),
+            ("compiledNetworkPlan", true),
             ("activationIntent", true),
             ("publicationIntent", true),
             ("admission", true),
@@ -221,7 +228,18 @@ async fn one_transition_atomically_publishes_document_indexes_and_one_journal_co
         .await
         .expect("journal should read after transition");
     assert_eq!(after.len(), before.len() + 1);
-    assert_eq!(store.load(record.key()).await, Ok(Some(record.clone())));
+    let loaded = store
+        .load(record.key())
+        .await
+        .expect("atomic record should load")
+        .expect("atomic record should exist");
+    assert_eq!(loaded, record);
+    assert_eq!(
+        serde_json::to_vec(loaded.active_intent().network())
+            .expect("loaded compiled plan should encode"),
+        serde_json::to_vec(record.active_intent().network())
+            .expect("expected compiled plan should encode")
+    );
     assert_all_index_projections(&engine, &record).await;
 }
 

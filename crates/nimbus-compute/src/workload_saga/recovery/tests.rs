@@ -3,18 +3,22 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use nimbus_core::{TenantId, WorkloadId};
 use nimbus_network::{
-    NetworkPlanDigest, NetworkPlanId, NetworkResourceGeneration, PublishedEndpointId,
+    NetworkAttachmentCapabilitySet, NetworkCapabilityRequirements, NetworkControlPlaneLocality,
+    NetworkEndpointCapabilitySet, NetworkForwardingCapabilitySet, NetworkIngressCapabilitySet,
+    NetworkLifecycleCapabilitySet, NetworkManagementMode, NetworkResourceGeneration,
+    NetworkSovereigntyRequirements, PublishedEndpointId,
 };
 use nimbus_workloads::{
-    DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity, WorkloadActivationIntent,
-    WorkloadAdmissionEvidence, WorkloadDesiredDigest, WorkloadEffectReferences, WorkloadGeneration,
-    WorkloadInspectionRequirement, WorkloadNetworkIntent, WorkloadOwnerEvidenceDigest,
-    WorkloadOwnerObservation, WorkloadPhaseDetail, WorkloadPublicationIntent,
-    WorkloadPublicationReference, WorkloadSagaCommit, WorkloadSagaExpected, WorkloadSagaFuture,
-    WorkloadSagaIntent, WorkloadSagaIntentUpdate, WorkloadSagaKey, WorkloadSagaPage,
-    WorkloadSagaPageRequest, WorkloadSagaPhase, WorkloadSagaRecord, WorkloadSagaStore,
-    WorkloadSagaStoreError, WorkloadSagaTenantPage, WorkloadSagaTenantPageRequest,
-    WorkloadTerminalEvidenceDigest, WorkloadTerminalObservation,
+    CompiledWorkloadNetworkPlan, DesiredWorkloadKind, DesiredWorkloadState, NodeIdentity,
+    WorkloadActivationIntent, WorkloadAdmissionEvidence, WorkloadDesiredDigest,
+    WorkloadEffectReferences, WorkloadGeneration, WorkloadInspectionRequirement,
+    WorkloadNetworkIntent, WorkloadNetworkPlanContent, WorkloadNetworkPlanIdentity,
+    WorkloadOwnerEvidenceDigest, WorkloadOwnerObservation, WorkloadPhaseDetail,
+    WorkloadPublicationIntent, WorkloadPublicationReference, WorkloadSagaCommit,
+    WorkloadSagaExpected, WorkloadSagaFuture, WorkloadSagaIntent, WorkloadSagaIntentUpdate,
+    WorkloadSagaKey, WorkloadSagaPage, WorkloadSagaPageRequest, WorkloadSagaPhase,
+    WorkloadSagaRecord, WorkloadSagaStore, WorkloadSagaStoreError, WorkloadSagaTenantPage,
+    WorkloadSagaTenantPageRequest, WorkloadTerminalEvidenceDigest, WorkloadTerminalObservation,
 };
 
 use super::{WorkloadSagaAction, WorkloadSagaCoordinator, WorkloadSagaDecision};
@@ -28,6 +32,43 @@ fn key(label: &str) -> WorkloadSagaKey {
         tenant(label),
         WorkloadId::new(format!("workload-{label}")).expect("fixture workload is valid"),
     )
+}
+
+fn compiled_plan(
+    tenant_id: &TenantId,
+    label: &str,
+    generation: u64,
+    activation: WorkloadActivationIntent,
+    publication: WorkloadPublicationIntent,
+) -> CompiledWorkloadNetworkPlan {
+    let identity = WorkloadNetworkPlanIdentity::new(
+        tenant_id.clone(),
+        format!("fixture-{label}"),
+        NetworkResourceGeneration::new(generation),
+    )
+    .expect("fixture network identity is valid");
+    let requirements = NetworkCapabilityRequirements::new(
+        NetworkAttachmentCapabilitySet::new(NetworkManagementMode::NimbusHostManaged, [], []),
+        NetworkEndpointCapabilitySet::new([], [], [], [], []),
+        NetworkIngressCapabilitySet::new([]),
+        NetworkForwardingCapabilitySet::new([]),
+        NetworkLifecycleCapabilitySet::new([]),
+        NetworkSovereigntyRequirements::new(NetworkControlPlaneLocality::LocalOnly, [], true),
+    );
+    let content = WorkloadNetworkPlanContent::new(
+        identity,
+        requirements,
+        None,
+        None,
+        [],
+        [],
+        [],
+        activation,
+        publication,
+    )
+    .expect("fixture network content is valid");
+    CompiledWorkloadNetworkPlan::from_content(content)
+        .expect("fixture compiled network plan is valid")
 }
 
 fn intent(
@@ -44,11 +85,13 @@ fn intent(
         desired_state,
         WorkloadGeneration::new(generation),
         WorkloadDesiredDigest::sha256([seed, 1]),
-        WorkloadNetworkIntent::new(
-            NetworkPlanId::for_tenant_workload_plan(&tenant_id, &format!("{label}-{generation}")),
-            NetworkResourceGeneration::new(generation),
-            NetworkPlanDigest::from_bytes([seed; 32]),
-        ),
+        WorkloadNetworkIntent::new(compiled_plan(
+            &tenant_id,
+            label,
+            generation,
+            activation,
+            publication,
+        )),
         activation,
         publication,
         WorkloadAdmissionEvidence::new(
@@ -479,6 +522,11 @@ fn selector_covers_every_phase_with_exact_typed_action_and_fences() {
             reference: nimbus_workloads::WorkloadNetworkReference::for_intent(
                 intent_committed.active_intent(),
             ),
+            plan: intent_committed
+                .active_intent()
+                .network()
+                .compiled_plan()
+                .clone(),
         },
     );
 
@@ -719,6 +767,26 @@ fn selector_covers_every_phase_with_exact_typed_action_and_fences() {
             inspections: cleanup_detail.inspections().to_vec(),
         },
     );
+}
+
+#[test]
+fn intent_committed_decision_carries_exact_compiled_network_plan() {
+    let record = provision_record(
+        "complete-reservation",
+        WorkloadSagaPhase::IntentCommitted,
+        WorkloadActivationIntent::ActivateWhenAttached,
+        WorkloadPublicationIntent::Withheld,
+    );
+    let decision = WorkloadSagaDecision::for_record(&record).expect("record is valid");
+    let WorkloadSagaAction::ReserveNetwork { reference, plan } = decision.action() else {
+        panic!("IntentCommitted must produce one complete pure reservation value");
+    };
+
+    assert_eq!(plan, record.active_intent().network().compiled_plan());
+    assert_eq!(reference.plan_id(), plan.plan().plan_id());
+    assert_eq!(reference.generation(), plan.plan().generation());
+    assert_eq!(reference.digest(), plan.plan().digest());
+    assert!(record.phase_detail().references().is_empty());
 }
 
 #[test]

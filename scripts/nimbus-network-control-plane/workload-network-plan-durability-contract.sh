@@ -60,7 +60,7 @@ verify_complete_carrier() {
   fi
   compact_network="$(printf '%s\n' "${network_source}" | tr '\n' ' ')"
   if ! printf '%s\n' "${compact_network}" |
-    rg -q 'WorkloadNetworkIntent[^{]*\{[^}]*compiled_plan:[[:space:]]*CompiledWorkloadNetworkPlan'; then
+    rg -q 'WorkloadNetworkIntent([^{;]*\{[^}]*compiled_plan:[[:space:]]*CompiledWorkloadNetworkPlan|\([[:space:]]*CompiledWorkloadNetworkPlan[[:space:]]*\))'; then
     add_error "WorkloadNetworkIntent does not own exactly one complete CompiledWorkloadNetworkPlan"
   else
     pass_check
@@ -242,6 +242,7 @@ verify_owner_and_allowlist() {
   unexpected="$(printf '%s\n' "${changed}" | awk '
     NF == 0 { next }
     $0 == "crates/nimbus-workloads/src/saga.rs" { next }
+    $0 == "crates/nimbus-workloads/src/network_plan.rs" { next }
     $0 == "crates/nimbus-workloads/src/saga/network.rs" { next }
     $0 == "crates/nimbus-workloads/src/saga/network/tests.rs" { next }
     $0 == "crates/nimbus-workloads/src/saga/state.rs" { next }
@@ -258,6 +259,8 @@ verify_owner_and_allowlist() {
     $0 == "crates/nimbus-server/src/workload_saga_store/tests/recovery.rs" { next }
     $0 == "crates/nimbus-server/src/workload_saga_store/tests/tenant_enumeration.rs" { next }
     $0 == "crates/nimbus-server/src/workload_saga_store/tests/compiled_plan_durability.rs" { next }
+    $0 == "crates/nimbus-server/src/workload_saga_store/tests/composition.rs" { next }
+    $0 == "scripts/nimbus-network-control-plane/workload-network-plan-compiler-contract.sh" { next }
     $0 == "scripts/nimbus-network-control-plane/workload-network-plan-durability-contract.sh" { next }
     $0 == "scripts/verify-nimbus-network-control-plane.sh" { next }
     $0 == "docs/private/plans/proof/nimbus-network-control-plane/nnc6.2a-durable-compiled-network-plan.md" { next }

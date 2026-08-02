@@ -104,7 +104,7 @@ fn transition_id(payload: &TransitionIdentityPayload<'_>) -> WorkloadSagaTransit
         .expect("closed validated workload transition payload always serializes");
     WorkloadSagaTransitionId(derive_id(
         WorkloadSagaTransitionId::PREFIX,
-        b"nimbus.workloads.saga.transition.v1",
+        b"nimbus.workloads.saga.transition.v2",
         &[std::str::from_utf8(&encoded).expect("JSON is valid UTF-8")],
     ))
 }
@@ -526,8 +526,33 @@ impl WorkloadSagaRecord {
             ));
         }
         self.active_intent.validate()?;
+        if self
+            .active_intent
+            .network()
+            .compiled_plan()
+            .content()
+            .identity()
+            .tenant_id()
+            != self.key.tenant_id()
+        {
+            return Err(WorkloadSagaError::InvalidIntent(
+                "active network plan tenant must match workload saga tenant",
+            ));
+        }
         if let Some(successor) = &self.successor_intent {
             successor.validate()?;
+            if successor
+                .network()
+                .compiled_plan()
+                .content()
+                .identity()
+                .tenant_id()
+                != self.key.tenant_id()
+            {
+                return Err(WorkloadSagaError::InvalidIntent(
+                    "successor network plan tenant must match workload saga tenant",
+                ));
+            }
             if successor.generation <= self.active_intent.generation {
                 return Err(WorkloadSagaError::InvalidIntent(
                     "successor generation must be higher than active generation",
