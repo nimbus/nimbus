@@ -74,7 +74,7 @@ extension-registry seam before the second concern edits `extensions.rs`.
 
 ### Phase 3 - Network, Sandbox, And Machine Execution
 
-- `nimbus-network-control-plane-plan.md` - `active; NNC6.2a complete; NNC6.1e1
+- `nimbus-network-control-plane-plan.md` - `active; NNC6.1e1 complete; NNC6.3
   in progress`. NNC6.1e's R1-R15 portable discovery, pure recovery decisions,
   and distinct-process durability proof are green; its sole full Sol/xhigh/fast
   review reported zero findings at confidence `0.90`. NNC6.2 now owns the
@@ -111,15 +111,30 @@ extension-registry seam before the second concern edits `extensions.rs`.
   I1-I20 matrix, bounded outcome contract, exact initial allowlist, crash and
   cancellation semantics, and later-owner map are frozen in
   `proof/nimbus-network-control-plane/nnc6.1e1-durable-workload-saga-ingress.md`.
-  No product file or structured review has started. NNC6.3/NNC6.4a/NNC6.5/
+  The bounded ingress remains candidate-frozen after its complete-item review.
+  NNC6.3/NNC6.4a/NNC6.5/
   NNC6.6 retain every effectful caller cutover, including standalone Compose;
   NNC6.1e2 retains final fresh-process convergence.
-  NNC6.1e1 fail-before is now exact: a temporary compute compile probe exits
-  `101` with the missing result type and method; NNCV030 reports 17 frozen gaps
-  and is the sole aggregate failure at `30/1`; all 12 item mutations fail
-  closed. The probe file was deleted, no product path remains dirty, and no
-  structured review has run. Implementation begins only after the fail-before
-  checkpoint is durable.
+  The existing sole coordinator now owns one effect-free `submit_intent` seam:
+  one load, at most one CAS, one ambiguity read only after an ambiguous CAS,
+  and no decision before exact confirmed durability. Missing, replay,
+  successor, stale, divergent, conflict, ambiguity, crossed-key, and
+  cancellation behavior passes `10/10`; corrected two-process convergence and
+  pre/post durability crash cuts pass `2/2` with one child-only ignore and 20
+  repeated lanes (`40/40` parent executions). The winner now waits for an
+  atomic contender acknowledgement, and the pre-durability child enters a
+  parked submission CAS before the parent kills it. Compute remains `120/120`
+  plus one ignore; the unsplit server lane passes `640/640` with 29 skips.
+  NNCV030 passes 10 direct checks and `12/12` mutations; aggregate live is
+  `31/31`; affected quality, docs 108, and site `17/17` gates pass. I1-I18 are
+  green. No effectful caller or manifest changed. The one full actual
+  Sol/xhigh/fast review accepted those two process-proof defects plus one stale
+  proof header at overall confidence `0.96`; production ingress semantics were
+  judged consistent. All three findings are corrected. The sole narrow
+  correction review is clean at `0.94`; no third review ran. I1-I20, docs 108,
+  and site `17/17` are green. NNC6.3 now owns the active row. Its first action
+  is a read-only substitution, caller, desired-spec, and effect census before
+  any effectful caller edit.
   Network resource identity is retained
   tenant-qualified and rederived for every attachment, route,
   listener, endpoint, and lease; it never uses the mutable decision digest,

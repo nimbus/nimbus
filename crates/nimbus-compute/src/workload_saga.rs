@@ -7,8 +7,10 @@ use nimbus_workloads::{
     WorkloadSagaPageRequest, WorkloadSagaRecord, WorkloadSagaStore, WorkloadSagaStoreError,
 };
 
+mod ingress;
 mod recovery;
 
+pub use ingress::{ConfirmedWorkloadSagaIntent, WorkloadSagaIngressDisposition};
 pub use recovery::{WorkloadSagaAction, WorkloadSagaDecision, WorkloadSagaDecisionPage};
 
 /// Sole cross-domain writer of portable workload-saga transitions.
@@ -28,7 +30,7 @@ impl WorkloadSagaCoordinator {
         self.store.load(key).await
     }
 
-    pub async fn commit_loaded(
+    async fn commit_loaded(
         &self,
         loaded: Option<&WorkloadSagaRecord>,
         next: WorkloadSagaRecord,
@@ -73,6 +75,12 @@ impl WorkloadSagaCoordinator {
         next: &WorkloadSagaRecord,
     ) -> Result<WorkloadSagaCommit, WorkloadSagaStoreError> {
         let observed = self.store.load(next.key()).await?;
+        if observed
+            .as_ref()
+            .is_some_and(|record| record.key() != next.key())
+        {
+            return Err(WorkloadSagaStoreError::Corrupt);
+        }
         if observed.as_ref() == Some(next) {
             return Ok(WorkloadSagaCommit::Applied);
         }

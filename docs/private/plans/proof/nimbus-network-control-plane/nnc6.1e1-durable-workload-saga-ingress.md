@@ -1,6 +1,6 @@
 # NNC6.1e1 Durable Workload-Saga Ingress
 
-Status: `fail-before frozen; product implementation not started; expected red`
+Status: `complete; I1-I20 green`
 
 Starting checkpoint: `b0a97e4404cd8afc3b11fdbf2053fa12e0b1c3d7`
 
@@ -485,15 +485,73 @@ code, rerun the affected proofs and one narrow correction review focused on
 that defect. Do not rerun for proof wording, ledger updates, formatting,
 non-material cleanup, elapsed time, or internal diff size.
 
+## Candidate Verification
+
+The pre-ledger executable candidate contains five exact paths. Its staged tree
+is `13edd9a528fbb60eee8c11819d8a9224537a680a`. Its complete staged patch SHA-256
+is
+`6e3b1f1600e0f00b0000fd3e6da441d6fd64e0c3c880955e7ab05c1628edf4a2`.
+Ledger-only edits do not change those executable bytes.
+
+| Gate | Candidate result |
+| --- | --- |
+| Ingress behavioral matrix | `10/10`: exact missing, replay, every active provision successor, terminal/stopped, typed stale/divergent/invalid, conflict, complete ambiguity, crossed-key, and bounded pre-commit cancellation outcomes pass. |
+| Distinct-process proof | `2/2` parent proofs pass with one child-only ignore. The corrected lane also passes 20 consecutive repetitions, or `40/40` parent-test executions. Same intent converges on one exact record. Divergent equal-generation intent produces one winner and one typed conflict. The winner cannot submit until the second process acknowledges contention. The pre-durability child runs `submit_intent` through its load and into a parked CAS before the kill; recovery reveals no record. After durability, a fresh process recovers the exact record and decision without snapshot handoff. |
+| Full compute | `120/120` pass. One compiler child-only test is ignored. |
+| Full server | The post-correction unsplit lane passes `640/640` with 29 declared skips. No fixture is filtered and no retained-authority collision occurs. |
+| Affected compile/lint/docs | Post-correction all-target compute/server check, strict server Clippy, warning-denied compute/server rustdoc, format, and both diff checks pass. The initial correction Clippy run found one local `never_loop`; the composition was simplified and the exact rerun is green. Docs pass `108` link-clean pages and the site gate passes `17/17`. |
+| Static and adversarial | NNCV030 passes `10` direct checks and `12/12` fail-closed mutations. The live aggregate is `31/31`. The retained complete mutation arithmetic is `215 + 12 = 227`. |
+| Seam audit | One coordinator and one public submission method remain. No manifest, effectful caller, provider, compiler, naming, policy, system-projection, or `nimbus-network` path changed. `nimbus-network -> nimbus-core` remains its only workspace edge. |
+| Modularity | Coordinator root is 99 lines, ingress is 104, concept-owned behavioral tests are 760, and corrected process proofs are 495. No modularity threshold is crossed. |
+
+I1-I20 are green. The full item review is completely dispositioned, and the
+one narrow correction review is clean. The ledger-bearing item commit contains
+this proof, the recovery transition, and the exact reviewed executable tree.
+
+## Complete-Item Review And Corrections
+
+The sole full structured review ran through the Nimbus autoreview wrapper with
+actual GPT-5.6 Sol, xhigh reasoning, fast mode, tools enabled, and no fallback.
+Detached review object `0ccac9af65ee288d777780a4d1c6e29124304e6c`
+has starting checkpoint `b0a97e4404cd8afc3b11fdbf2053fa12e0b1c3d7`
+as its parent, so the one review covered both durable checkpoint commits and
+the staged candidate without moving `HEAD`. TruffleHog was clean. The review
+reported three findings and rated the pre-correction candidate incorrect at
+confidence `0.96`.
+
+| Finding | Disposition | Correction and proof |
+| --- | --- | --- |
+| P2: the pre-durability crash child did not invoke `submit_intent` or enter CAS. | Accepted. This failed I12's required ingress crash cut. | `PreCommitCrashStore` delegates the real Engine-backed load, acknowledges entry from its `compare_and_swap`, and parks before any durable write. The child spawns the real submission, waits boundedly for that checkpoint, proves the task has not returned, and only then reports the kill boundary. Fresh-process recovery observes no record. |
+| P2: winner/contender classification depended on whether the loser happened to see a temporary lock before it disappeared. | Accepted. This made I11 scheduler-dependent. | The first owner now waits for an atomic contender acknowledgement before submission. The contender retains that acknowledgement until it acquires the released single-writer lock. Thus the winner cannot commit and unlink before the other process has observed ownership. Focused `2/2`, 20 repeated lanes or `40/40` parent executions, and full server `640/640` pass. |
+| P3: the proof header still described expected-red fail-before state. | Accepted. The stale recovery direction could restart implementation work. | The header now records correction verification and the pending narrow review. Plan/index recovery text carries the same state. |
+
+The production ingress implementation did not change. The accepted executable
+findings changed only the required process proof, so affected process/full-server,
+check, strict Clippy, rustdoc, static, format, and diff proofs were rerun. The
+one allowed narrow correction review must examine only these two test defects
+and their proof truthfulness.
+
+Actual GPT-5.6 Sol, xhigh reasoning, and fast mode
+reviewed correction object `176bc9d82d9e6ef819a76e9a51d7772eed5425e6`,
+whose parent is complete-item review object `0ccac9af65ee288d777780a4d1c6e29124304e6c`.
+It reported zero findings and rated the patch correct at confidence `0.94`.
+The reviewer confirmed both bounded process corrections and the recorded
+focused, repeated, full-server, static, and docs evidence. No third review ran
+or is warranted.
+
 ## Recovery Checkpoint
 
 | Field | Value |
 | --- | --- |
 | Current item | `NNC6.1e1` |
 | Starting checkpoint | `b0a97e4404cd8afc3b11fdbf2053fa12e0b1c3d7` |
-| Audit state | Complete. Three independent read-only lanes plus owner inspection. No product file changed. |
+| Audit state | Complete and durable. Three independent read-only lanes plus owner inspection; fail-before commit `f8bd2b923166cea6413866cf7012accaab970106`. |
 | Boundary decision | Durable submission and confirmed pure decision only. All caller/effect cutovers belong to NNC6.3/NNC6.4a/NNC6.5/NNC6.6/NNC6.1e2. |
-| Current expected red | Compile probe `101` with E0432/E0599; NNCV030 reports 17 exact missing seams; aggregate `30/1`; historical caller cutover `0/1`. NNCV030 mutations pass `12/12`. |
-| Current dirty scope | NNCV030 helper, aggregate wiring, this proof, and plan/index recovery truth-up. No product path remains dirty. |
-| Next safe action | If this fail-before checkpoint is dirty, commit it. Then implement the bounded ingress and behavioral/process tests without touching effectful caller paths. |
+| Current acceptance | I1-I20 green. Ingress `10/10`; process `2/2` plus one child-only ignore and 20 repeated lanes (`40/40` parent executions); compute `120/120` plus one ignore; unsplit server `640/640` plus 29 skips; NNCV030 direct `10`, mutations `12/12`, aggregate `31/31`; affected check/strict Clippy/rustdoc/format/diff/docs gates pass. |
+| Final scope | Five exact compute/server candidate paths plus this proof, canonical plan, and routing index. No manifest, effectful caller, provider, compiler, naming, policy, projection, or `nimbus-network` path changed. |
+| Complete-item review | Actual GPT-5.6 Sol/xhigh/fast, no fallback, three accepted findings at overall confidence `0.96`. Production ingress semantics were judged consistent; two process-proof defects and one stale status were corrected. |
+| Narrow correction review | Actual GPT-5.6 Sol/xhigh/fast, no fallback, zero findings, patch correct at confidence `0.94`; correction object `176bc9d82d9e6ef819a76e9a51d7772eed5425e6`. Review cadence exhausted. |
+| Candidate identity | Corrected executable tree `c58924152386425107a6623bf08289258692eff3`; five-path patch SHA-256 `0d7fbd10c14c26fd10c5b4840a8df33b967bcbdb1aec09c85827f52b9d715063`; complete staged tree before final docs result wording `cb9ce45a3b2fe2c9e32e79fc7551cadff290662c`. |
+| Durability | The exact ledger-bearing NNC6.1e1 item commit contains this proof and recovery transition. Verify it with `git cat-file -e HEAD:docs/private/plans/proof/nimbus-network-control-plane/nnc6.1e1-durable-workload-saga-ingress.md`. |
+| Next safe action | Begin NNC6.3 with the frozen read-only substitution and executable-spec ownership audit. Do not edit effectful callers until that item's fail-before boundary is durable. |
 | Blocker | None. |

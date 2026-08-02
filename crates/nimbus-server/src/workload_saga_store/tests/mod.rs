@@ -24,6 +24,7 @@ mod codec;
 mod compiled_plan_durability;
 mod composition;
 mod durability;
+mod ingress;
 mod recovery;
 mod store;
 mod tenant_enumeration;
