@@ -41,6 +41,7 @@ NNC61_COMPUTE_NETWORK_MANAGER_CONTRACT="scripts/nimbus-network-control-plane/com
 NNC61A_COMPUTE_NODE_COORDINATOR_CONTRACT="scripts/nimbus-network-control-plane/compute-node-workload-coordinator-contract.sh"
 NNC61D_WORKLOAD_SAGA_AUTHORITY_CONTRACT="scripts/nimbus-network-control-plane/workload-saga-authority-contract.sh"
 NNC62_WORKLOAD_NETWORK_PLAN_COMPILER_CONTRACT="scripts/nimbus-network-control-plane/workload-network-plan-compiler-contract.sh"
+NNC62A_WORKLOAD_NETWORK_PLAN_DURABILITY_CONTRACT="scripts/nimbus-network-control-plane/workload-network-plan-durability-contract.sh"
 
 # shellcheck source=scripts/nimbus-network-control-plane/attachment-ordering-contract.sh
 . "${NNC52A_ATTACHMENT_ORDERING_CONTRACT}"
@@ -1754,11 +1755,27 @@ NODE
     sed -n '1,120p' "${temporary}/nnc62-contract-self-test.out"
   fi
 
+  if [ ! -f "${NNC62A_WORKLOAD_NETWORK_PLAN_DURABILITY_CONTRACT}" ]; then
+    printf 'SELFTEST FAIL NNCV029 workload-network-plan durability helper is missing\n'
+    self_fail=$((self_fail + 1))
+  elif ! bash "${NNC62A_WORKLOAD_NETWORK_PLAN_DURABILITY_CONTRACT}" --self-test \
+    >"${temporary}/nnc62a-contract-self-test.out" 2>&1; then
+    printf 'SELFTEST FAIL NNCV029 workload-network-plan durability mutation suite failed\n'
+    sed -n '1,160p' "${temporary}/nnc62a-contract-self-test.out"
+    self_fail=$((self_fail + 1))
+  elif ! grep -q '^NNC6\.2a contract self-test: 8 passed, 0 failed$' \
+    "${temporary}/nnc62a-contract-self-test.out"; then
+    printf 'SELFTEST FAIL NNCV029 workload-network-plan durability mutation count is not exact\n'
+    self_fail=$((self_fail + 1))
+  else
+    sed -n '1,160p' "${temporary}/nnc62a-contract-self-test.out"
+  fi
+
   if [ "${self_fail}" -ne 0 ]; then
     printf 'self-test: %d failed\n' "${self_fail}"
     exit 1
   fi
-  printf 'self-test: 204 passed, 0 failed\n'
+  printf 'self-test: 212 passed, 0 failed\n'
 }
 
 if [ "${1:-}" = "--self-test" ]; then
@@ -1830,6 +1847,24 @@ verify_nnc62_workload_network_plan_compiler() {
   fi
 }
 
+verify_nnc62a_workload_network_plan_durability() {
+  if [ ! -f "${NNC62A_WORKLOAD_NETWORK_PLAN_DURABILITY_CONTRACT}" ]; then
+    fail "NNCV029" "workload-network-plan-durability" \
+      "missing ${NNC62A_WORKLOAD_NETWORK_PLAN_DURABILITY_CONTRACT}"
+    return
+  fi
+
+  durability_error="$(
+    bash "${NNC62A_WORKLOAD_NETWORK_PLAN_DURABILITY_CONTRACT}" --check 2>&1
+  )"
+  durability_contract_exit=$?
+  if [ "${durability_contract_exit}" -eq 0 ]; then
+    pass "NNCV029" "workload-network-plan-durability"
+  else
+    fail "NNCV029" "workload-network-plan-durability" "${durability_error}"
+  fi
+}
+
 printf 'Nimbus network control-plane static verifier\n'
 printf 'Repo: %s\n\n' "${REPO_ROOT}"
 
@@ -1862,6 +1897,7 @@ verify_nnc61_compute_network_manager_injection
 verify_nnc61a_compute_node_workload_coordinator
 verify_nnc61d_durable_workload_saga_store
 verify_nnc62_workload_network_plan_compiler
+verify_nnc62a_workload_network_plan_durability
 
 printf '\nSummary: %d passed, %d failed\n' "${PASS_COUNT}" "${FAIL_COUNT}"
 if [ "${FAIL_COUNT}" -ne 0 ]; then

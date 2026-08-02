@@ -88,8 +88,15 @@ extension-registry seam before the second concern edits `extensions.rs`.
   site `17/17` gates are green. Its sole narrow Sol/xhigh/fast review confirmed
   the behavioral corrections and found one accepted P3 arithmetic defect;
   exact `198 + 6 = 204` reporting is corrected and proven. Review cadence is
-  exhausted. Exact item commit `0977c17d9` is durable; NNC6.2a's read-only
-  durable carrier/replay audit is next. Network resource identity is retained
+  exhausted. Exact item commit `0977c17d9` is durable. NNC6.2a's independent
+  read-only durable carrier/replay audit is complete, and its A1-A18 contract,
+  exact source allowlist, saga/transition-v2 break, one physical compiled
+  object, derived phase tuples, unchanged Engine adapter, and bounded
+  no-snapshot process proof are frozen in
+  `proof/nimbus-network-control-plane/nnc6.2a-durable-compiled-network-plan.md`.
+  NNCV029 mutations pass `8/8`; its live expected-red names only the missing
+  product seams, which are the next implementation checkpoint. Network
+  resource identity is retained
   tenant-qualified and rederived for every attachment, route,
   listener, endpoint, and lease; it never uses the mutable decision digest,
   address, or port. Source-bearing sovereignty cannot be relaxed, and the
